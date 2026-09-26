@@ -7,6 +7,7 @@
 
 extern "C" void InitializeDataSections();
 extern "C" void MH3_OSExceptionInit(CpuContext*);
+extern "C" void MH3_OSInterruptInit(CpuContext*);
 
 void SystemBridge::DumpCpuState(std::ostream& out, const CpuContext* cpu) {
     if (!cpu) return;
@@ -57,6 +58,11 @@ int main(int argc, char** argv) {
             MH3_OSExceptionInit(&cpu);
             if (Memory::Read32(0x80797798) != 0x80003000 || Memory::Read32(0x80003038) != 0x804CB930)
                 throw std::runtime_error("MH3 exception table initialization failed");
+            Memory::Write32(0x800030BC, 0xFFFFFFFF);
+            MH3_OSInterruptInit(&cpu);
+            if (Memory::Read32(0x80797828) != 0x80003040 || Memory::Read32(0x800030BC) != 0 ||
+                Memory::Read32(0x800000C4) != 0xFFFFFFF0 || Memory::Read32(0x80003010) != 0x804D1A70)
+                throw std::runtime_error("MH3 interrupt initialization failed");
             std::cout << "MH3 runtime self-test passed\n";
             return 0;
         }

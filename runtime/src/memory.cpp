@@ -3,7 +3,10 @@
 #include "memory.h"
 #include <array>
 #include <cstring>
+#include <cstdlib>
 #include <sstream>
+
+extern "C" void DumpHostStackTraceForRuntimeHelper();
 
 namespace {
 std::vector<uint8_t> mem1, mem2;
@@ -56,7 +59,12 @@ void Memory::Init(size_t size) {
 uint8_t* Memory::GetPointer(uint32_t address) { return GetPointer(address, 1); }
 uint8_t* Memory::GetPointer(uint32_t address, size_t length) {
     auto* pointer = resolve(address, length);
-    if (!pointer) throw AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO");
+    if (!pointer) {
+        // Capture before stack unwinding; this avoids requiring an interactive
+        // debugger authorization for routine hardware-service bring-up.
+        if (std::getenv("MH3_TRACE_ERRORS")) DumpHostStackTraceForRuntimeHelper();
+        throw AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO");
+    }
     return pointer;
 }
 bool Memory::Contains(uint32_t address, size_t length) { return resolve(address, length) != nullptr; }
