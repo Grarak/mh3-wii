@@ -77,11 +77,36 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80000020, 0x0D15EA5E);
         Memory::Write32(0x80000028, 24 * 1024 * 1024);
         Memory::Write32(0x8000002C, 0x23);
-        Memory::Write32(0x80000030, 0x807AFCB8);
+        Memory::Write32(0x80000030, 0x807B1CC0); // __ArenaLo, from OSInit
         Memory::Write32(0x80000034, 0x81800000);
         Memory::Write32(0x800000CC, 1); // PAL
         Memory::Write32(0x800000F8, 243000000);
         Memory::Write32(0x800000FC, 729000000);
+        // This disc's TMD requests IOS55 (system title 00000001-00000037).
+        // IOS metadata and arena limits follow Dolphin's IOS/VersionInfo.cpp.
+        // https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/VersionInfo.cpp
+        Memory::Write32(0x800000F0, 0x01800000);
+        Memory::Write32(0x80003100, 0x01800000);
+        Memory::Write32(0x80003104, 0x01800000);
+        Memory::Write32(0x80003108, 0x81800000);
+        Memory::Write32(0x8000310C, 0x807B1CC0);
+        Memory::Write32(0x80003110, 0x81800000);
+        Memory::Write32(0x80003118, 0x04000000);
+        Memory::Write32(0x8000311C, 0x04000000);
+        Memory::Write32(0x80003120, 0x93600000);
+        Memory::Write32(0x80003124, 0x90000800);
+        Memory::Write32(0x80003128, 0x935E0000);
+        Memory::Write32(0x80003130, 0x935E0000);
+        Memory::Write32(0x80003134, 0x93600000);
+        Memory::Write32(0x80003138, 0x11);
+        Memory::Write32(0x8000313C, 0xFF01);
+        Memory::Write32(0x80003140, 0x0037161F);
+        Memory::Write32(0x80003144, 0x00030110);
+        Memory::Write32(0x80003148, 0x93600000);
+        Memory::Write32(0x8000314C, 0x93620000);
+        Memory::Write32(0x80003180, 0x524D4850);
+        Memory::Write32(0x80003188, 0x0037161F);
+        Memory::Write32(0x80003194, 0x524D4850);
         cpu.gpr[1] = 0x807AFCB8;
         cpu.msr = 0x8000;
         TranslatedFunctionRegistry::Finalize();

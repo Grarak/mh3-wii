@@ -10,8 +10,16 @@ extern "C" void MH3_EXIGetID(CpuContext*);
 extern "C" void MH3_SIInit(CpuContext*);
 extern "C" void MH3_OSInitSram(CpuContext*);
 extern "C" void MH3_UnlockSram(CpuContext*);
+extern "C" void MH3_OSGetResetCode(CpuContext*);
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    MH3_OSGetResetCode(cpu);
+    if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
+    Memory::Write32(0x8074F740, 1);
+    Memory::Write32(0x8074F744, 0x1234);
+    MH3_OSGetResetCode(cpu);
+    if (cpu->gpr[3] != 0x80001234) throw std::runtime_error("Saved reset code failed");
+    Memory::Write32(0x8074F740, 0);
     MH3_EXIInit(cpu);
     cpu->gpr[5] = 0x80001100;
     Memory::Write32(cpu->gpr[5], 0xFFFFFFFF);
