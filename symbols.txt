@@ -1,0 +1,4 @@
+# Verified RMHP08 entries that have no standard stack prologue or export name.
+# Default thread-switch callback installed in the data section: single blr.
+804d3d40 DefaultThreadSwitchCallback
+804d2870 OSRegisterShutdownFunction

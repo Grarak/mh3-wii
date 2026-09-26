@@ -1,8 +1,8 @@
 # Monster Hunter Tri static recompilation for macOS
 
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
-but it is not playable yet.** The current boot passes Wii interrupt initialization
-and stops in EXI device initialization on an unimplemented read from `0xCD00680C`.
+but it is not playable yet.** The current boot passes device and initial thread setup. Host services are
+still being implemented; see the runtime progress section below.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -14,13 +14,14 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 - European disc ID `RMHP08`, extracted from the supplied RVZ.
 - DOL SHA-256 `db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162`.
 - Entry `0x80006310`, r13 `0x8079B2E0`, r2 `0x8079FF60`, verified from boot instructions.
-- 19,241 statically translated functions; translator reports zero unsupported
+- Over 19,000 statically translated functions; translator reports zero unsupported
   instructions and zero invalid SSA functions. This is not proof of full-game coverage.
 - Function discovery uses 758 executable SEL exports, 72 verified compiler
   save/restore thunks, and speculative standard stack-frame starts.
 - `build/native/MH3` is a linked macOS ARM64 executable.
 - Runtime self-test passes RAM aliasing, big-endian access, translated stack stores,
-  unmapped MMIO rejection, and MH3 exception/interrupt-table initialization.
+  unmapped MMIO rejection, MH3 exception/interrupt-table initialization, device
+  state, and SRAM persistence/checksums.
 - A synthetic translator regression passes for full native replacements, wrappers
   that require original code, and ordinary callees.
 
@@ -82,11 +83,19 @@ programming at `0x804D1460` now have native replacements preserving the guest
 interrupt table, masks and external exception handler. Native interrupt delivery
 from host services still requires scheduler integration.
 
-Current boot stops at `EXIInit` (`0x804B16C0`), reading the EXI channel-0 transfer
-control register at `0xCD00680C`. With `MH3_TRACE_ERRORS=1`, runtime failures emit
-symbolized native backtraces before unwinding, so routine diagnosis needs no LLDB
-authorization. The recorded call chain is `func_80006310` → `func_804CB040`
-(`OSInit`) → `func_804B16C0` (`EXIInit`).
+EXI and SI initialization now retain guest queues and interrupt bindings. Absent
+GameCube expansion devices report absence. The SRAM host service maintains a
+64-byte settings image in `saves/sram.bin` (override the directory with
+`MH3_USER_DIR`), with checksum and lock/interrupt semantics. Tests use a temporary
+directory and never modify real saved settings.
+
+The translated default thread-switch callback is explicitly seeded in
+`symbols.txt`. Hardware-only DSP bootstrap and MI/BAT setup are replaced at their
+OS boundaries; the latter preserves interrupt bindings and the original
+shutdown-list registration. This does not implement audio playback or scheduling.
+
+With `MH3_TRACE_ERRORS=1`, runtime failures emit symbolized native backtraces
+before unwinding, so routine diagnosis needs no LLDB authorization.
 
 Remaining requirements for a playable port include:
 
