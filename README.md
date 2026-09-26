@@ -2,7 +2,8 @@
 
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
 but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
-initial thread, and arena setup. It reaches system-configuration startup and stops at the unimplemented `/dev/fs` device.
+initial thread, and arena setup. It passes system configuration and reaches DVD startup, stopping at the
+unimplemented `/dev/di` device.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -102,17 +103,26 @@ supplied disc's TMD. IOS55 metadata follows
 With `MH3_TRACE_ERRORS=1`, runtime failures emit symbolized native backtraces
 before unwinding, so routine diagnosis needs no LLDB authorization.
 
-The latest run passes `IPCCltInit` and STM initialization and prints the SDK
-system-configuration banner. It stops when ISFS initialization opens `/dev/fs`.
-IOS synchronous open/close/read/write now use a private NAND root at
+The latest run passes IPC, STM, NAND and system-configuration initialization
+and prints the SDK DVD banner. It stops when DVD initialization opens `/dev/di`.
+IOS synchronous open/close/read/write use a private NAND root at
 `$MH3_USER_DIR/nand` (default `saves/nand`), preserving file modes and offsets.
 Opening does not create files. Path traversal and symlink following are rejected.
-Unknown devices and unimplemented direct IPC operations still fail explicitly.
+`/dev/es` exposes the TMD-verified title ID and data directory. `/dev/fs` can be
+opened, but its filesystem-control operations are not implemented yet.
+
+Asynchronous file operations enqueue results. A wrapper around the original
+`SCCheckStatus` pumps a bounded batch of callbacks while preserving CPU state;
+this lets the SDK load saved configuration or apply its existing defaults when
+files are absent. General scheduler event delivery remains to be connected.
+WiiConnect24 request/time devices explicitly report unavailable, allowing the
+SDK's offline path to continue. Unknown devices still fail explicitly.
 
 STM event subscriptions remain pending; host events write the guest output and
-queue callback records. Scheduler delivery of those callbacks remains to be
-connected. Tests cover file persistence, missing files, path isolation, duplicate
-subscriptions, and event completion. STM protocol behavior was checked against
+queue callback records. LED/dimming settings are retained, and event-hook release
+queues its completion. Tests cover file persistence, modes, missing files, path
+isolation, ES identity, asynchronous error delivery, callback CPU preservation,
+and STM subscriptions/events. STM protocol behavior was checked against
 [Dolphin's STM implementation](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/STM/STM.cpp).
 
 Remaining requirements for a playable port include:

@@ -18,6 +18,19 @@ extern "C" void MH3_IOSClose(CpuContext*);
 extern "C" void MH3_IOSRead(CpuContext*);
 extern "C" void MH3_IOSWrite(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext*);
+extern "C" void MH3_IOSIoctlv(CpuContext*);
+extern "C" void MH3_IOSOpenAsync(CpuContext*);
+
+namespace {
+bool callbackObserved = false;
+void TestIosCallback(CpuContext* cpu) {
+    if (static_cast<int32_t>(cpu->gpr[3]) != -106 || cpu->gpr[4] != 0x12345678)
+        throw std::runtime_error("IOS callback arguments were not delivered");
+    callbackObserved = true;
+    cpu->gpr[14] = 0xDEADBEEF;
+    cpu->lr = 0;
+}
+}
 
 void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_OSGetResetCode(cpu);
@@ -130,4 +143,42 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         Memory::Read32(0x80001400) != 0x20000 || TakeIosCompletion())
         throw std::runtime_error("STM event delivery failed");
     cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    fd = open("/dev/es", 0);
+    Memory::Write32(0x80001500, 0x80001600);
+    Memory::Write32(0x80001504, 8);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x20;
+    cpu->gpr[5] = 0; cpu->gpr[6] = 1; cpu->gpr[7] = 0x80001500;
+    MH3_IOSIoctlv(cpu);
+    if (cpu->gpr[3] || Memory::Read64(0x80001600) != 0x00010000524D4850ull)
+        throw std::runtime_error("ES title identity failed");
+    Memory::Write32(0x80001508, 0x80001700);
+    Memory::Write32(0x8000150C, 30);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x1D;
+    cpu->gpr[5] = 1; cpu->gpr[6] = 1; cpu->gpr[7] = 0x80001500;
+    MH3_IOSIoctlv(cpu);
+    if (cpu->gpr[3] || std::string(reinterpret_cast<char*>(Memory::GetPointer(0x80001700, 30))) !=
+        "/title/00010000/524d4850/data")
+        throw std::runtime_error("ES data directory failed");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    // A missing file is an asynchronous operation result, not a queue failure.
+    open("/missing", 1); // also writes the test path into guest memory
+    cpu->gpr[3] = 0x80001200; cpu->gpr[4] = 1;
+    cpu->gpr[5] = 0x804DB9B0; cpu->gpr[6] = 0x12345678;
+    MH3_IOSOpenAsync(cpu);
+    auto fileCompletion = TakeIosCompletion();
+    if (cpu->gpr[3] || !fileCompletion || fileCompletion->result != -106 ||
+        fileCompletion->callback != 0x804DB9B0 || fileCompletion->argument != 0x12345678)
+        throw std::runtime_error("IOS asynchronous error completion failed");
+    // Test-only registration; never included in the production guest map.
+    AbiTrampoline<decltype(TestIosCallback)> testCallback(
+        0x81700000, "IOS callback test", TestIosCallback, FunctionKind::Native,
+        false, 0, 0, 0, TestIosCallback);
+    TranslatedFunctionRegistry::Finalize();
+    cpu->gpr[3] = 0x80001200; cpu->gpr[4] = 1;
+    cpu->gpr[5] = 0x81700000; cpu->gpr[6] = 0x12345678;
+    MH3_IOSOpenAsync(cpu);
+    cpu->gpr[14] = 0x1234; cpu->lr = 0x5678;
+    PumpIosCompletions(cpu);
+    if (!callbackObserved || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678 || TakeIosCompletion())
+        throw std::runtime_error("IOS callback CPU-state preservation failed");
 }
