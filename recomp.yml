@@ -1,0 +1,38 @@
+schema_version: 1
+workspace_root: .
+
+project:
+  id: mh3-rmhp08
+  display_name: Monster Hunter Tri PAL
+  game_id: RMHP08
+  region: P
+
+memory:
+  base: 0x80000000
+  size: 0x01800000
+  sda_base: 0x8079B2E0
+  sda2_base: 0x8079FF60
+
+inputs:
+  dol:
+    path: Assets/DATA/sys/main.dol
+    sha256: db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162
+
+translation:
+  function_map:
+    path: build/MAP.txt
+  entry_points:
+    - 0x80006310
+  allow_unsupported_instructions: false
+
+# Mario Kart's address-specific native registrations must not be used for MH3.
+runtime:
+  native_registration_root: runtime/src
+  native_abi_directories: []
+
+output:
+  root: generated
+  functions: functions
+  runtime_config: RuntimeConfig.h
+  data_initializer: data_sections_init.cpp
+  base_manifest: ../build/base/mh3_base_manifest.json
