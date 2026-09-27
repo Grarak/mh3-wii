@@ -20,19 +20,32 @@ are large. Runs must use unique names. See [controls](controller-bringup.md) for
 the keyboard layout.
 
 For a Dolphin reference run, `./scripts/run-dolphin-reference.sh --name reference-1
---post-chief --dump-frames -b` uses the extracted ISO, a fresh per-run NAND at
+--post-chief --pipe-controller --dump-frames -b` uses the extracted ISO, a fresh per-run NAND at
 `logs/dolphin-runs/reference-1/user/Wii`, and the same post-Chief save. The
 launcher copies `saves/nand`, overwrites slot one with the fixture, and verifies
 that the copy matches byte for byte. Run names must be unique. Its emulated Wii
-Remote has a Classic Controller extension and `scripts/dolphin-classic.ini`
-maps the keyboard to the same layout as this port. `--dump-frames` writes native
+Remote has a Classic Controller extension. `--pipe-controller` configures Dolphin's
+built-in named-pipe device and enables background input, allowing direct control
+without a movie or an active Dolphin window. For example, run
+`python3 scripts/dolphin-input.py --run reference-1 tap A` to press Classic A, or
+`python3 scripts/dolphin-input.py --run reference-1 stick 0 -1 --seconds 1` to
+move forward. The pipe accepts Classic buttons, D-pad, and left-stick input;
+without `--pipe-controller`, `scripts/dolphin-classic.ini` maps the keyboard to
+the same layout as this port. `--dump-frames` writes native
 Dolphin frames under `logs/dolphin-runs/reference-1/user/Dump/Frames`. The script
 requires an installed Dolphin.app and desktop display access. Dolphin was cloned
 at `build/dolphin-src` for source comparison; that checkout is ignored by Git.
-Frame dumping was verified through the title and file-select screens. A Classic
-Controller movie can navigate those menus, though choosing Continue from the
-post-Chief save needs more precise input timing. The new-game route is another
-way to reach a Dolphin gameplay reference. Stop a finished named run with
+The direct pipe was verified by skipping the opening cinematic with A, advancing
+from the title screen, selecting Continue and the post-Chief character, loading
+Village, and moving to the dock edge. Dolphin holds the character on the dock
+when the stick continues pointing off its edge. The route to a field map is from
+the village dock through the fish market, up the stone stairs, and across the
+upper-right bridge. Pressing A at the `Exit to Moga Woods` marker loaded Area 1
+with its field HUD and map. Dolphin's pipe backend is generic: `PipeDevice`
+exposes button and axis inputs, while `WiimoteNew.ini` binds those inputs to
+the Classic Controller extension. `BackgroundInput = True` is necessary for
+unfocused or batch reference runs; Dolphin's video-interface poll otherwise
+gates controller input. Stop a finished named run with
 `./scripts/stop-dolphin-reference.sh reference-1`; the helper checks the stored
 PID and command line, sends TERM, escalates to KILL if needed, and verifies exit.
 
