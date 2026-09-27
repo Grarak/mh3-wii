@@ -6,7 +6,7 @@ Workspace: `/Users/willi/Projects/mh3` (macOS ARM64). This is a static PowerPC �
 
 **Current priority:** use **Vulkan through MoltenVK**, explicitly document required GPU features, and eliminate Aurora's staging-buffer → GPU-buffer copy. Preserve the necessary guest-RAM → render snapshot CPU copy for now. After that, optimize dominant GX decoding/copying costs and frame pacing. The Vulkan switch is requested work, **not implemented yet**.
 
-Last verified implementation commit: `eccf5f1` (bounded asynchronous Metal frame encoding). This handover describes both that baseline and unfinished local changes. Run `git status --short` before editing; do not discard the work in progress.
+Last verified implementation commit: `eccf5f1` (bounded asynchronous Metal frame encoding). This handover describes both that baseline and the subsequent unfinished implementation checkpoint. Run `git status --short` before editing; do not discard the work in progress.
 
 User requirements:
 
@@ -87,9 +87,9 @@ python3 scripts/dolphin-input.py --run ref-next stick 0 -1 --seconds 1
 
 Dolphin source clone: `build/dolphin-src`. Classic extension + `BackgroundInput=True` are essential. Built-in pipe input works in the installed release; no movie or desktop input automation needed. Reference launcher checks fixture bytes. Optional `--gdb-port 23457`, then `python3 scripts/dolphin-gdb.py 23457`; launcher enables DebugModeEnabled, necessary for JIT guest breakpoints. Starts paused. Commands and savestate/screenshot tooling are described in `docs/gameplay-debugging.md` and script help. Never leave old Dolphin runs consuming resources during benchmarks.
 
-## Current uncommitted copy-removal work
+## Copy-removal work-in-progress checkpoint
 
-Files: `runtime/CMakeLists.txt`, `scripts/aurora-efb.cmake`, new `scripts/patch_aurora_shared_buffers.py`. These are deliberately **not included in the handover documentation commit**: implementation is unvalidated work in progress. Unrelated `.vscode/` and the cheat HTML should not be swept into commits.
+Files: `runtime/CMakeLists.txt`, `scripts/aurora-efb.cmake`, new `scripts/patch_aurora_shared_buffers.py`. These are saved in a separate **work-in-progress implementation commit** after the handover documentation commit: implementation remains unvalidated. Unrelated `.vscode/` and the cheat HTML should not be swept into commits.
 
 The overlay reuses Aurora's mapped staging ring directly as shader/index/uniform buffers, removing four destination allocations/copies when supported. Ring layout: vertex 3 MiB at 0, uniforms 24 MiB at 3 MiB, indices 2 MiB at 27 MiB, storage 8 MiB at 29 MiB (37 MiB total). Bind groups and tex-copy uniform/index offsets are adjusted. Existing unmap, slot rotation and MapAsync completion protect GPU/CPU ownership; recheck this carefully with mid-frame flushes and async encoding.
 

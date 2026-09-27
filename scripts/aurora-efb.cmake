@@ -1,3 +1,4 @@
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 # Build a local source overlay; never modify the shared Aurora checkout.
 get_target_property(mh3_gx_source_dir aurora_gx SOURCE_DIR)
 set(mh3_common_original "${mh3_gx_source_dir}/lib/gfx/common.cpp")
@@ -13,6 +14,10 @@ string(REPLACE "${mh3_begin_original}"
 set(mh3_common_overlay "${CMAKE_BINARY_DIR}/mh3-aurora/common.cpp")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/mh3-aurora")
 file(WRITE "${mh3_common_overlay}.in" "${mh3_common_text}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/patch_aurora_shared_buffers.py")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/patch_aurora_shared_buffers.py"
+  common "${mh3_common_overlay}.in" COMMAND_ERROR_IS_FATAL ANY)
 configure_file("${mh3_common_overlay}.in" "${mh3_common_overlay}" COPYONLY)
 get_target_property(mh3_gx_sources aurora_gx SOURCES)
 set(mh3_gx_patched_sources)
@@ -99,4 +104,36 @@ foreach(mh3_viewport_relative IN ITEMS lib/gx/command_processor.cpp lib/dolphin/
   set_property(TARGET aurora_gx PROPERTY SOURCES "${mh3_viewport_sources}")
   set_source_files_properties("${mh3_viewport_overlay}" TARGET_DIRECTORY aurora_gx
     PROPERTIES INCLUDE_DIRECTORIES "${mh3_viewport_original_dir}")
+endforeach()
+
+# Shared-buffer feature request and offset-aware consumers.
+foreach(mh3_shared_spec IN ITEMS "aurora_core|lib/webgpu/gpu.cpp|gpu"
+    "aurora_gx|lib/gx/pipeline.cpp|pipeline" "aurora_gx|lib/gfx/tex_copy_conv.cpp|tex_copy")
+  string(REPLACE "|" ";" mh3_shared_parts "${mh3_shared_spec}")
+  list(GET mh3_shared_parts 0 mh3_shared_target)
+  list(GET mh3_shared_parts 1 mh3_shared_relative)
+  list(GET mh3_shared_parts 2 mh3_shared_kind)
+  set(mh3_shared_original "${mh3_gx_source_dir}/${mh3_shared_relative}")
+  set(mh3_shared_overlay "${CMAKE_BINARY_DIR}/mh3-aurora/${mh3_shared_relative}")
+  get_filename_component(mh3_shared_dir "${mh3_shared_overlay}" DIRECTORY)
+  get_filename_component(mh3_shared_include "${mh3_shared_original}" DIRECTORY)
+  file(MAKE_DIRECTORY "${mh3_shared_dir}")
+  configure_file("${mh3_shared_original}" "${mh3_shared_overlay}.in" COPYONLY)
+  execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/patch_aurora_shared_buffers.py"
+    "${mh3_shared_kind}" "${mh3_shared_overlay}.in" COMMAND_ERROR_IS_FATAL ANY)
+  configure_file("${mh3_shared_overlay}.in" "${mh3_shared_overlay}" COPYONLY)
+  get_target_property(mh3_shared_sources ${mh3_shared_target} SOURCES)
+  list(FIND mh3_shared_sources "${mh3_shared_original}" mh3_shared_index)
+  if(mh3_shared_index EQUAL -1)
+    message(FATAL_ERROR "Shared-buffer source not found: ${mh3_shared_original}")
+  endif()
+  list(REMOVE_AT mh3_shared_sources ${mh3_shared_index})
+  list(APPEND mh3_shared_sources "${mh3_shared_overlay}")
+  set_property(TARGET ${mh3_shared_target} PROPERTY SOURCES "${mh3_shared_sources}")
+  set_source_files_properties("${mh3_shared_overlay}" TARGET_DIRECTORY ${mh3_shared_target}
+    PROPERTIES INCLUDE_DIRECTORIES "${mh3_shared_include}")
+  if(mh3_shared_kind STREQUAL "gpu" AND MH3_ENABLE_GPU_VALIDATION)
+    set_property(SOURCE "${mh3_shared_overlay}" TARGET_DIRECTORY ${mh3_shared_target}
+      APPEND PROPERTY COMPILE_DEFINITIONS MH3_ENABLE_GPU_VALIDATION=1)
+  endif()
 endforeach()
