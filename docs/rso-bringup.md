@@ -11,6 +11,7 @@ still require explicit support.
 | lobby_data | `0x808C76A0` | `0x808C7ED8` |
 | demo_data | `0x8097D080` | `0x80992FC8` |
 | quest_data | `0x809D3DC0` | `0x809D60C4` |
+| map_village (overlay) | `0x8097D080` | `0x8097D22C` |
 
 Every initialized section of each offline-linked image matched a snapshot after
 the original guest linker finished. The first module used `rso-boot-mem1.bin`;
@@ -94,3 +95,32 @@ then reloads com and lobby at their original addresses and verifies their full
 text checksums again. It stops at the next module's untranslated prolog
 `0x8097D22C`, with base `0x8097D080`; the optional MEM1 snapshot is retained at
 `logs/rso-lifetime-mem1.bin` for identifying that new binding.
+
+## Village map overlay
+
+`map_village.rso` loads at the demo module's former base. Its initialized
+sections, including all 388 text bytes, match the offline-linked image in
+`logs/rso-lifetime-mem1.bin`. The source image is SHA-256 pinned.
+
+`scripts/translate_rso_overlays.py` runs the same strict PPC-to-C++ translator
+against a separate analysis DOL, then gives the six generated bootstrap
+functions unique host symbols. It does not change guest addresses or initialize
+module RAM; the original guest loader still supplies all code/data and runs the
+prolog. Generated source remains ignored, alongside the other translations.
+The generator checks metadata/source hashes, rejects unexpected function seeds
+and cross-profile ABI dependencies, and requires zero unsupported instructions
+and zero invalid SSA functions. Run it as part of `scripts/translate.sh`.
+
+Indirect calls/jumps consult the active overlay before boot dispatch. The
+overlay cannot replace an active demo binding. Its prolog verifies linked text
+before activation, unknown targets inside active overlay text cannot fall
+through to demo code, and SDK unlink deactivates the correct profile even when
+two profiles share a base. Generator tests cover host-symbol isolation and
+rejection of unsafe cross-profile calls; runtime tests exercise overlap
+ownership, wrong-image rejection, and the actual generated object-chain leaf.
+
+Validation: overlay-emission/linker/native-discovery tests and both CTest suites
+pass. In `logs/map-village-boot.log`, the original loader unloads the boot
+modules, reloads com/lobby, verifies the village overlay, and executes its
+prolog. Loading then stops at an independent main-DOL indirect jump target
+`0x800ACBF8`; playable Village rendering is not yet verified.

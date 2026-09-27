@@ -596,6 +596,7 @@ inline void InvokeIndirectJump(uint32_t target, CpuContext* ctx) {
     // This is essential for tail calls via bctr where the 'this' pointer (r3)
     // must be passed correctly to the target function.
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+    if (target >= 0x80800000u && target < 0x81800000u && RecompMod::TryDispatchRsoOverlay(target, cpu)) return;
     if (TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu)) {
         return;
     }
@@ -644,6 +645,7 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
         ReportMissingCpuTarget(target, cpu);
     }
     ApplyRuntimeCallOptions(target, cpu);
+    if (target >= 0x80800000u && target < 0x81800000u && RecompMod::TryDispatchRsoOverlay(target, cpu)) return;
     if (TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu)) {
         return;
     }
