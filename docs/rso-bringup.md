@@ -1,8 +1,8 @@
 # Static RSO bring-up
 
 Five boot modules are included in static C++ translation with fixed-address
-bindings for the verified RMHP08 files. Alternate addresses, other modules, and
-unload/reload lifetimes still require explicit support.
+bindings for the verified RMHP08 files. Alternate addresses and other modules
+still require explicit support.
 
 | Module | Base | Prolog |
 | --- | --- | --- |
@@ -67,3 +67,30 @@ SDK unlink routine. The current fixed-address bindings protect text indefinitely
 so they cannot yet support this legitimate unload. The next implementation must
 track module lifetime, reject stale translated execution, and reverify linked
 text on reload; disabling executable protection globally would be incorrect.
+
+## Module lifetime handling
+
+The host now wraps the original SDK unlink routine. For a verified, linked
+module it checks the current text checksum, marks the binding inactive, and
+removes only that module's exact executable-write range before running the
+original unlink code. Other executable ranges remain protected. Dispatch to
+inactive module code is rejected; the verification prolog remains reachable so
+a reloaded image can be checked before its constructors execute. Same-address
+reload restores protection only after the full linked-text checksum matches.
+
+The pinned boot modules have no imports from one another, so unlinking one
+does not require changing another active module's text. Arbitrary new modules
+and alternate load addresses still require their own translation/binding.
+Generated internal calls run within the active module's synchronous call tree;
+this is not a concurrent module-unload implementation.
+
+Range tests cover unaligned ranges crossing pages, physical/cached/uncached
+aliases, duplicate registration, neighboring protected code on a shared page,
+unload/reload writes, and rejection of stale RSO dispatch.
+
+Validation: both build variants pass CTest; linker and native-discovery tests
+also pass. The Metal run `logs/rso-lifetime-boot.log` unloads com/lobby/demo/quest,
+then reloads com and lobby at their original addresses and verifies their full
+text checksums again. It stops at the next module's untranslated prolog
+`0x8097D22C`, with base `0x8097D080`; the optional MEM1 snapshot is retained at
+`logs/rso-lifetime-mem1.bin` for identifying that new binding.

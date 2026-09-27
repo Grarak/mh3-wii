@@ -419,6 +419,8 @@ MKW_PPC_FORCE_INLINE bool TryDispatchResolvedCpuTarget(const TranslatedFunctionI
         return false;
     }
 
+    if (info->address >= 0x80800000u && info->address < 0x81800000u)
+        RecompMod::CheckRsoExecution(info->address);
     RecompMod::ScopedTranslatedExecutionAddress translatedExecution(info->address);
     PpcNonvolatileFprGuard fprGuard(cpu, NonvolatileFprGuardMaskFor(info));
     PpcNonvolatileGprGuard gprGuard(cpu, ShouldPreserveNonvolatileGprsForRawCpuCall(info));
@@ -435,6 +437,8 @@ inline bool TryDispatchRawCpuTarget(const RawDispatchRecord* record, CpuContext*
     if (!record || !record->entry) {
         return false;
     }
+    if (record->address >= 0x80800000u && record->address < 0x81800000u)
+        RecompMod::CheckRsoExecution(record->address);
     RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
     PpcNonvolatileGprGuard gprGuard(cpu, record->preserveNonvolatileGprs);
     PpcNonvolatileFprGuard fprGuard(cpu, record->nonvolatileFprWriteMask);
@@ -449,6 +453,8 @@ inline bool TryDispatchRawCpuTarget(const RawDispatchRecord* record, CpuContext*
 
 template <uint32_t Target>
 inline void DispatchKnownTranslatedCpuTargetStatic(CpuContext* cpu) {
+    if constexpr (Target >= 0x80800000u && Target < 0x81800000u)
+        RecompMod::CheckRsoExecution(Target);
     const auto invokeKnownTranslated = [&]() {
         KnownTranslatedCpuCall<Target>::Entry(cpu);
     };
