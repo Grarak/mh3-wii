@@ -250,3 +250,32 @@ writes `startup-500.bmp`, `startup-1000.bmp`, and so on. Without the interval,
 the existing `MH3_CAPTURE_FRAME` option still captures one frame. Captures are
 requested before Aurora seals the frame, accounting for its frame-index advance.
 The first two captures were checked during a real native boot.
+
+## Display lists and indexed XF loads
+
+Character-scene setup reaches `GX_CMD_CALL_DL` (`0x40`). The guest stream now
+resolves its big-endian address/byte count against RAM and recursively processes
+the list through the same bridge. Nested lists preserve CP/BP state, masks and
+texture revisions, then return to the parent FIFO stream. Raw guest display-list
+pointers never reach Aurora's decoder. Lists must end on a command boundary;
+RAM bounds, the existing 16 MiB packet limit, and a 16-level nesting limit are
+checked. Tests cover fragmented calls, nested ordering/state, short RAM views,
+truncated commands and self-recursion. The live display-list boot progressed to
+indexed XF opcode `0x20` (`logs/display-list-ready.log`).
+
+Indexed XF opcodes `20/28/30/38` now resolve the appropriate CP matrix-array base
+and stride, check the complete source extent, and emit an equivalent direct XF
+load with the original big-endian bytes. Supported destinations match Aurora's
+full position, normal, texture and post-transform matrices plus in-light ranges.
+Unsupported partial matrices/destinations fail explicitly instead of allowing
+Aurora's decoder to skip them. Tests cover all four selectors, fragmented
+commands, source offsets, byte order, short bounds and partial-matrix rejection.
+
+Both build variants pass their runtime/audio tests (plus SDL input tests on
+Metal). The indexed-XF boot executes these commands and reaches Aurora draw
+admission (`logs/indexed-xf-ready.log`), which rejects an oversized storage
+allocation. The current vertex-array conversion supplies the entire remaining
+RAM region as `array.size`; Aurora's `admit_draw` and `handle_draw_unmerged`
+reserve/upload that whole region into an 8 MiB staging buffer. The next change
+must derive the needed array extents from actual draw indices and element
+formats rather than increasing buffers or truncating arrays arbitrarily.

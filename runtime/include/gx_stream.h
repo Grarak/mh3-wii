@@ -30,6 +30,7 @@ private:
     std::array<uint32_t, 256> bp{};
     std::array<uint32_t, 256> cp{};
     std::array<bool, 8> textureBound{};
+    unsigned displayListDepth = 0;
     uint32_t bpMask = 0xFFFFFF, textureRevision = 0;
     std::array<uint8_t, 37> TexturePacket(unsigned slot, const ArrayResolver& resolver);
     size_t VertexSize(unsigned format) const;
