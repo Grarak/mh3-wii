@@ -19,16 +19,22 @@ Frame capture frequency is set with `--capture-interval N` (default 5); captures
 are large. Runs must use unique names. See [controls](controller-bringup.md) for
 the keyboard layout.
 
-For a Dolphin reference run, `./scripts/run-dolphin-reference.sh --post-chief
---dump-frames -b` uses the extracted ISO, an isolated `logs/dolphin-user` NAND,
-and the same post-Chief save. Its emulated Wii Remote has a Classic Controller
-extension and `scripts/dolphin-classic.ini` maps the keyboard to the same layout
-as this port. `--dump-frames` writes native Dolphin frames under
-`logs/dolphin-user/Dump/Frames`. The script requires an installed Dolphin.app and
-desktop display access. Dolphin was cloned at `build/dolphin-src` for source
-comparison; that checkout is ignored by Git. Frame dumping was verified at the
-wrist-strap screen, but an automated Dolphin gameplay replay has not yet been
-established.
+For a Dolphin reference run, `./scripts/run-dolphin-reference.sh --name reference-1
+--post-chief --dump-frames -b` uses the extracted ISO, a fresh per-run NAND at
+`logs/dolphin-runs/reference-1/user/Wii`, and the same post-Chief save. The
+launcher copies `saves/nand`, overwrites slot one with the fixture, and verifies
+that the copy matches byte for byte. Run names must be unique. Its emulated Wii
+Remote has a Classic Controller extension and `scripts/dolphin-classic.ini`
+maps the keyboard to the same layout as this port. `--dump-frames` writes native
+Dolphin frames under `logs/dolphin-runs/reference-1/user/Dump/Frames`. The script
+requires an installed Dolphin.app and desktop display access. Dolphin was cloned
+at `build/dolphin-src` for source comparison; that checkout is ignored by Git.
+Frame dumping was verified through the title and file-select screens. A Classic
+Controller movie can navigate those menus, though choosing Continue from the
+post-Chief save needs more precise input timing. The new-game route is another
+way to reach a Dolphin gameplay reference. Stop a finished named run with
+`./scripts/stop-dolphin-reference.sh reference-1`; the helper checks the stored
+PID and command line, sends TERM, escalates to KILL if needed, and verifies exit.
 
 The executable retains `-O1 -gline-tables-only -ffp-contract=off` for generated
 PPC C++ (`runtime/CMakeLists.txt`). An `-O2` Metal build passed all three CTest
@@ -47,6 +53,10 @@ implausible movement in the native build. Horizontal collision is therefore not
 validated, and reaching Moga Woods or a quest map remains outstanding. The
 ground-hit functions at `0x80291D34`, `0x802963CC`, `0x802968D4`, `0x80296A5C`,
 `0x80296B28`, and `0x80296BA4` are labeled in `symbols.txt` for follow-up.
+Temporary counters on a dock-edge replay showed about 2,000 calls to
+`hit_ground_comon`, including hundreds of successful ground hits. Its bounds and
+triangle helpers also returned hits. `findInterSection3` at `0x802959FC` was
+not called during that replay, so it is unlikely to explain the dock failure.
 The generated signed-area function preserves the original PPC subtraction,
 single-precision multiplication, raw-bit one-ULP correction, and edge-class
 operations. Dolphin's interpreter performs corresponding forced-single
