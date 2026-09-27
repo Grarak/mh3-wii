@@ -13,7 +13,7 @@ include(../generated/build_shards/shards.cmake)
 add_executable(MH3
   src/main.cpp src/memory.cpp src/os_boot.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp
-  src/device_tests.cpp src/ios.cpp src/disc_image.cpp src/video_interface.cpp
+  src/device_tests.cpp src/ios.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})
