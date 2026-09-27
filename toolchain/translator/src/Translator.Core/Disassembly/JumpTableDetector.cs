@@ -383,6 +383,29 @@ internal static class JumpTableDetector
 
     private static bool TryFindUpperBound(IReadOnlyList<PpcInstruction> ordered, int startIndex, string register, out int upperBound)
     {
+        // Compilers commonly compare the logical selector, then shift it into
+        // a different register for lwzx. Follow that definition before looking
+        // for comparisons: an older comparison of the destination register
+        // describes a different value (MH3 VIInit used r0 for both purposes).
+        for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
+        {
+            var ins = ordered[i];
+            if (ins.Operands.Count == 0 || ins.Operands[0] is not PpcRegisterOperand dest ||
+                !RegistersEqual(dest.Name, register)) continue;
+            if (ins.Mnemonic is "cmpwi" or "cmplwi" or "stw" or "stwu" or "sth" or "stb") continue;
+            var wordScale = ins.Mnemonic == "slwi" && ins.Operands.Count == 3 &&
+                ins.Operands[2] is PpcImmediateOperand { Value: 2 };
+            wordScale |= ins.Mnemonic == "rlwinm" && ins.Operands.Count == 5 &&
+                ins.Operands[2] is PpcImmediateOperand { Value: 2 } &&
+                ins.Operands[3] is PpcImmediateOperand { Value: 0 } &&
+                ins.Operands[4] is PpcImmediateOperand { Value: 29 };
+            if (wordScale && ins.Operands[1] is PpcRegisterOperand source)
+            {
+                register = source.Name;
+                startIndex = i;
+            }
+            break;
+        }
         // Preferred: compare directly on the same register used for lwzx indexing.
         for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
         {

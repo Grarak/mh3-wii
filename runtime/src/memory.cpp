@@ -1,6 +1,7 @@
 // Checked guest RAM for the initial MH3 runtime. MMIO is intentionally fatal
 // until the corresponding host service is implemented. No CPU interpretation.
 #include "memory.h"
+#include "video_interface.h"
 #include <array>
 #include <cstring>
 #include <cstdlib>
@@ -29,11 +30,18 @@ uint8_t* resolve(uint32_t address, size_t length) {
     return region->data() + physical;
 }
 template<class T> T read(uint32_t address) {
+    if constexpr (std::is_same_v<T, uint16_t>) {
+        uint16_t value;
+        if (ReadVideoRegister16(address, value)) return value;
+    }
     T value;
     std::memcpy(&value, Memory::GetPointer(address, sizeof(T)), sizeof(T));
     return MemoryInline::MaybeByteSwap(value);
 }
 template<class T> void write(uint32_t address, T value) {
+    if constexpr (std::is_same_v<T, uint16_t>) {
+        if (WriteVideoRegister16(address, value)) return;
+    }
     RecompMod::CheckExecutableWrite(address, sizeof(T), value);
     auto encoded = MemoryInline::MaybeByteSwap(value);
     std::memcpy(Memory::GetPointer(address, sizeof(T)), &encoded, sizeof(T));
@@ -49,6 +57,7 @@ Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::stri
     : std::runtime_error(accessMessage(addr, reason)), address_(addr), length_(length), reason_(reason) {}
 
 void Memory::Init(size_t size) {
+    ResetVideoInterface();
     mem1.assign(size, 0);
     mem2.assign(64 * 1024 * 1024, 0);
     for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
