@@ -9,6 +9,7 @@ struct IosCompletion {
 };
 // The host scheduler must deliver queued callbacks at a guest-safe boundary.
 std::optional<IosCompletion> TakeIosCompletion();
+void QueueIosCompletion(IosCompletion completion);
 void TriggerStmEvent(uint32_t event);
 struct CpuContext;
 void PumpIosCompletions(CpuContext* cpu);
