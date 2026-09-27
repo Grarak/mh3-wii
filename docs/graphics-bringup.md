@@ -133,6 +133,7 @@ are explicitly rejected. Register identity is documented in
 [Dolphin WII_IPC.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/HW/WII_IPC.cpp).
 Tests cover WUD startup/idempotence and GPIO aliasing/rejection.
 
-Latest verified boot reaches the AI library initialization banner and stops at
+The next boot reached the AI library initialization banner and stopped at
 `0xCD006C00` from `0x8046DC00`, called through
-`80046CE4 -> 800EEB44 -> 800E8794`. Audio-interface support is next.
+`80046CE4 -> 800EEB44 -> 800E8794`. AI register support now passes that point;
+see [audio bring-up](audio-bringup.md) for the current DSP boundary.

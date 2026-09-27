@@ -8,7 +8,8 @@ commands to Aurora Metal. It completes three initial display copies and a Metal 
 delivers the first VI retrace, and executes the first RSO module’s compiled
 prolog and constructors. It passes locked-cache and GameCube controller
 initialization and the original WPAD channel setup, then stops at an
-unimplemented audio-interface register (`0xCD006C00`). The host controller bridge
+unimplemented DSP control register (`0xCC00500A`) during AX initialization.
+The original AI initialization now completes; audio output remains unfinished. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch

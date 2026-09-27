@@ -2,6 +2,7 @@
 // until the corresponding host service is implemented. No CPU interpretation.
 #include "memory.h"
 #include "video_interface.h"
+#include "audio_interface.h"
 #include "gx_host.h"
 #include <array>
 #include <cstring>
@@ -40,6 +41,8 @@ uint8_t* resolve(uint32_t address, size_t length) {
 }
 template<class T> T read(uint32_t address) {
     if constexpr (std::is_same_v<T, uint32_t>) {
+        uint32_t audioValue;
+        if (ReadAudioRegister32(address, audioValue)) return audioValue;
         if ((address >> 30) != 1 && (address & 0x3FFFFFFF) == 0x0D0000C0)
             return sensorBarOutput;
     }
@@ -55,6 +58,7 @@ template<class T> T read(uint32_t address) {
 }
 template<class T> void write(uint32_t address, T value) {
     if constexpr (std::is_same_v<T, uint32_t>) {
+        if (WriteAudioRegister32(address, value)) return;
         if ((address >> 30) != 1 && (address & 0x3FFFFFFF) == 0x0D0000C0) {
             // GPIOB_OUT bit 8 controls the sensor bar. Other output devices
             // require their own implementation; do not silently acknowledge them.
@@ -88,6 +92,7 @@ Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::stri
 
 void Memory::Init(size_t size) {
     ResetVideoInterface();
+    ResetAudioInterface();
     ResetGxRegisters();
     mem1.assign(size, 0);
     mem2.assign(64 * 1024 * 1024, 0);

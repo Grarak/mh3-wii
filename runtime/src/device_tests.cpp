@@ -1,6 +1,7 @@
 #include "abi_bridge.h"
 #include "ios_host.h"
 #include "video_interface.h"
+#include "audio_interface.h"
 #include "gx_host.h"
 #include "gx_stream.h"
 #include <array>
@@ -47,6 +48,38 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    {
+        AudioInterfaceState ai;
+        ai.Reset(0);
+        if (ai.Read(0, 1000000) != 0x42 || ai.Read(8, 1000000))
+            throw std::runtime_error("AI reset/stopped state failed");
+        ai.Write(12, 48, 1000000);
+        ai.Write(0, 0x43, 1000000);
+        // Many sub-sample reads must retain fractional elapsed time.
+        for (uint64_t t = 1000100; t <= 2000000; t += 100) ai.Read(8, t);
+        if (ai.Read(8, 2000000) != 48 || !(ai.Read(0, 2000000) & 8))
+            throw std::runtime_error("AI 48 kHz clock/interrupt failed");
+        ai.Write(0, 0x49, 2000000); // clear interrupt and switch stream to 32 kHz
+        if (ai.Read(8, 3000000) != 80 || (ai.Read(0, 3000000) & 8))
+            throw std::runtime_error("AI rate switch/interrupt acknowledge failed");
+        ai.Write(0, 0x40, 3000000);
+        if (ai.Read(8, 9000000) != 80) throw std::runtime_error("AI stop failed");
+        ai.Write(0, 0x62, 9000000);
+        if (ai.Read(8, 9000000) || ai.Read(0, 9000000) != 0x42)
+            throw std::runtime_error("AI counter reset failed");
+        ai.Write(8, 0xFFFFFFF0, 9000000);
+        ai.Write(12, 0x10, 9000000);
+        ai.Write(0, 0x43, 9000000);
+        if (ai.Read(8, 10000000) != 0x20 || !(ai.Read(0, 10000000) & 8))
+            throw std::runtime_error("AI counter wrap failed");
+        Memory::Write32(0xCD006C04, 0x1234);
+        if (Memory::Read32(0xCC006C04) != 0x1234 || Memory::Read32(0x0D006C04) != 0x1234)
+            throw std::runtime_error("AI register aliases failed");
+        uint32_t value;
+        if (ReadAudioRegister32(0x4D006C00, value) || ReadAudioRegister32(0xCD006C01, value) ||
+            ReadAudioRegister32(0xCD006C10, value))
+            throw std::runtime_error("AI accepted an invalid register");
+    }
     {
         const auto saved = *cpu;
         cpu->gpr[13] = 0x8079B2E0;
