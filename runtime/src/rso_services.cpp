@@ -2,6 +2,10 @@
 #include "village_boot.h"
 #include "generated/rso_binding.h"
 #include "generated/rso_overlays/map_village.h"
+#include "generated/rso_overlays/quest_field.h"
+#include "generated/rso_overlays/enemy_field.h"
+#include "generated/rso_overlays/map01_field.h"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -12,6 +16,8 @@ struct Module {
     uint32_t base, text, size, prolog;
     uint64_t checksum;
     bool active = false;
+    const RawDispatchRecord* records = nullptr;
+    unsigned count = 0;
 };
 Module modules[]{
     {"hbm_data.rso", HbmBinding::Base, HbmBinding::Text, HbmBinding::Size, 0x8081A8A4, HbmBinding::Checksum},
@@ -20,7 +26,13 @@ Module modules[]{
     {"demo_data.rso", DemoBinding::Base, DemoBinding::Text, DemoBinding::Size, 0x80992FC8, DemoBinding::Checksum},
     {"quest_data.rso", QuestBinding::Base, QuestBinding::Text, QuestBinding::Size, 0x809D60C4, QuestBinding::Checksum},
     {"map_village.rso", MapVillageBinding::Base, MapVillageBinding::Text, MapVillageBinding::Size,
-     MapVillageBinding::Prolog, MapVillageBinding::Checksum},
+     MapVillageBinding::Prolog, MapVillageBinding::Checksum, false, MapVillageBinding::Records, MapVillageBinding::Count},
+    {"quest_data.rso (field)", QuestFieldBinding::Base, QuestFieldBinding::Text, QuestFieldBinding::Size,
+     QuestFieldBinding::Prolog, QuestFieldBinding::Checksum, false, QuestFieldBinding::Records, QuestFieldBinding::Count},
+    {"em_data.rso", EnemyFieldBinding::Base, EnemyFieldBinding::Text, EnemyFieldBinding::Size,
+     EnemyFieldBinding::Prolog, EnemyFieldBinding::Checksum, false, EnemyFieldBinding::Records, EnemyFieldBinding::Count},
+    {"map01.rso", Map01FieldBinding::Base, Map01FieldBinding::Text, Map01FieldBinding::Size,
+     Map01FieldBinding::Prolog, Map01FieldBinding::Checksum, false, Map01FieldBinding::Records, Map01FieldBinding::Count},
 };
 uint64_t TextChecksum(uint32_t text, uint32_t size) {
     const auto* bytes = Memory::GetPointer(text, size);
@@ -65,19 +77,27 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base,
 }
 
 bool RecompMod::TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu) {
-    using namespace MapVillageBinding;
-    if (address < Text || address >= Text + Size) return false;
-    auto& overlay = modules[5];
-    if (!overlay.active) {
-        // Boot's demo image owns this address range until the SDK unlinks it.
-        for (const auto& module : modules)
-            if (module.active && Text < module.text + module.size && module.text < Text + Size) return false;
-        if (address != Prolog || cpu->gpr[3] != Base) return false;
-        VerifyModule(cpu, overlay.name, Base, Text, Size, Checksum);
+    Module* owner = nullptr;
+    for (auto& module : modules)
+        if (module.active && address >= module.text && address < module.text + module.size) {
+            owner = &module;
+            break;
+        }
+    if (owner && !owner->records) return false;
+    if (!owner) {
+        for (auto& module : modules) {
+            if (!module.records || address != module.prolog || cpu->gpr[3] != module.base) continue;
+            VerifyModule(cpu, module.name, module.base, module.text, module.size, module.checksum);
+            owner = &module;
+            break;
+        }
     }
-    for (const auto& record : Records)
-        if (record.address == address) return TryDispatchRawCpuTarget(&record, cpu);
-    // Never fall through to boot translations for an active overlay's text.
+    if (!owner) return false;
+    const auto* end = owner->records + owner->count;
+    const auto* record = std::lower_bound(owner->records, end, address,
+        [](const RawDispatchRecord& candidate, uint32_t target) { return candidate.address < target; });
+    if (record != end && record->address == address) return TryDispatchRawCpuTarget(record, cpu);
+    // An active overlay must never fall through to an overlapping boot image.
     ReportMissingCpuTarget(address, cpu);
 }
 
@@ -112,6 +132,16 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
         Memory::Read32(node + 4) == 0xB6 && Memory::Read32(node + 8) == 0xA5;
     Memory::Write32(chain, oldChain);
     if (!dispatched || !correct) throw std::runtime_error("Overlay dispatch selected the wrong compiled image");
+    overlay.active = false;
+    cpu->gpr[3] = QuestFieldBinding::Base;
+    modules[2].active = true;
+    const bool stoleLobby = RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu);
+    modules[2].active = false;
+    if (stoleLobby) throw std::runtime_error("Field quest overlay intercepted active lobby code");
+    rejected = false;
+    try { RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu); }
+    catch (const std::runtime_error&) { rejected = true; }
+    if (!rejected || modules[6].active) throw std::runtime_error("Field quest overlay accepted an unverified image");
 }
 
 extern "C" void func_804DB614(CpuContext*);

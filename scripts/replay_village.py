@@ -67,6 +67,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default="village-replay", help="run name under logs/replays")
     parser.add_argument("--dock-edge", action="store_true", help="continue right from free movement toward the dock edge")
+    parser.add_argument("--moga-woods", action="store_true", help="follow the dock route and select Exit to Moga Woods")
     parser.add_argument("--fresh", action="store_true", help="start from the original save and replay the Chief dialogue")
     parser.add_argument("--profile", action="store_true", help="log process CPU and Metal completion time per display copy")
     parser.add_argument("--capture-interval", type=int, default=5, help="capture every N display copies (default: 5)")
@@ -136,7 +137,7 @@ def main():
         print(f"Post-Chief checkpoint loaded at frame {frame}: {path}", flush=True)
     else:
         frame = replay_opening_dialogue(run, frame, process, args.max_pulses, input_path)
-    if args.dock_edge:
+    if args.dock_edge or args.moga_woods:
         if gate := os.environ.get("MH3_CALL_TRACE_GATE"):
             Path(gate).touch()
         controller(input_path, x=511)
@@ -144,6 +145,11 @@ def main():
         controller(input_path)
         frame, path = wait_for_frame(run, frame, process, 30)
         print(f"Dock-route capture at frame {frame}: {path}", flush=True)
+    if args.moga_woods:
+        controller(input_path, buttons=0x10)
+        time.sleep(0.25)
+        controller(input_path)
+        print("Selected Exit to Moga Woods", flush=True)
     print(f"Game remains running as PID {process.pid}; input: {input_path}")
 
 

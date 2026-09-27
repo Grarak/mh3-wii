@@ -124,3 +124,43 @@ pass. In `logs/map-village-boot.log`, the original loader unloads the boot
 modules, reloads com/lobby, verifies the village overlay, and executes its
 prolog. Loading then stops at an independent main-DOL indirect jump target
 `0x800ACBF8`; playable Village rendering is not yet verified.
+
+## Offline field and Moga Woods profiles
+
+`LoadFieldModuleSet` (`0x80040BFC`) loads common, quest and enemy modules.
+Quest is relocated from its boot base `0x809D3DC0` to `0x808C76A0` when
+entering the field, so calling the boot translation at the new address is
+incorrect. Enemy follows at `0x80972F40`. `LoadMapOverlayById` (`0x80040E4C`)
+then selects map01 for Moga Woods at `0x80AA4500`. The full file inventory and
+static filename/selection tables are documented in `module-inventory.md`.
+
+The overlay generator now supports `quest_field`, `enemy_field`, and
+`map01_field` profiles in addition to the village profile. Each uses a pinned
+source hash and independently relocated analysis image. It emits unique host
+symbols and includes the closure of typed callees from the same translation
+pass, avoiding assumptions about the boot translation's optimized ABI.
+CPU-context calls use lifetime-aware runtime dispatch. Generated guest
+addresses and loader behavior are unchanged. The runtime selects the active
+profile, checks its linked text at prolog entry, and retains the existing
+unlink/write-protection checks. Overlay records are sorted for binary lookup.
+
+A large quest export (`pl_effect_sub`) exceeds the translator's default
+8,192-instruction disassembly budget. The CLI now accepts explicit
+`--max-instructions` and `--max-bytes` limits; overlay generation requests
+32,768 instructions and 262,144 bytes. Budget overruns, unsupported
+instructions and invalid SSA still fail. Defaults for other translations
+are unchanged. The field profiles emit 351 quest, 84 enemy and 6 map
+entries with zero unsupported instructions and zero invalid SSA functions.
+
+`python3 scripts/replay_village.py --name woods-check --moga-woods` reuses an
+isolated copy of the post-Chief save, follows the dock route, and selects the
+exit. This is input automation, not a savestate or an in-memory scene patch.
+
+Validation: `logs/replays/woods-map01` verifies all four active field modules,
+renders Moga Woods with its HUD/minimap and first-entry Chief/tutorial pages,
+and accepts movement after those pages close (captures 1860 and 5700).
+The runtime self-test includes field-versus-lobby ownership and wrong-image
+rejection; it passes. Six linker tests, three overlay-emission tests, native
+replacement-discovery regression, and five translator command/disassembly
+tests pass. Regenerating map01 produces identical function output (21,739
+unchanged files). Loading time is a separate optimization item in `TODO.md`.
