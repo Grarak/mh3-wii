@@ -42,8 +42,16 @@ void WriteCrashArtifacts(std::string_view reason, std::string_view details, cons
 }
 }
 
+#ifdef MH3_HAS_AURORA
+int RunGraphicsCheck(int argc, char** argv);
+#endif
+
 int main(int argc, char** argv) {
     try {
+#ifdef MH3_HAS_AURORA
+        if (argc == 2 && std::string_view(argv[1]) == "--graphics-check")
+            return RunGraphicsCheck(argc, argv);
+#endif
         if (argc == 6 && std::string_view(argv[1]) == "--disc-read") {
             DiscImage disc(argv[2]);
             const auto size = std::stoull(argv[4], nullptr, 0);
