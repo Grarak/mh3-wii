@@ -6,6 +6,8 @@
 namespace {
 std::array<uint16_t, 60> registers{};
 std::array<uint8_t, 256> encoder{};
+bool retraceActive = false, secondField = false;
+uint16_t retraceLine = 1;
 const auto epoch = std::chrono::steady_clock::now();
 bool Offset(uint32_t address, uint32_t& offset) {
     // Only physical, cached and uncached aliases of the VI register block.
@@ -19,6 +21,7 @@ bool Offset(uint32_t address, uint32_t& offset) {
 void ResetVideoInterface() {
     registers.fill(0);
     encoder.fill(0);
+    retraceActive = secondField = false;
     // PAL interlaced scanout established by the host boot environment. VIInit
     // reads the active mode to construct its timing and framebuffer state.
     registers[1] = 0x0101;
@@ -26,6 +29,10 @@ void ResetVideoInterface() {
 bool ReadVideoRegister16(uint32_t address, uint16_t& value) {
     uint32_t offset;
     if (!Offset(address, offset)) return false;
+    if (retraceActive && (offset == 0x2C || offset == 0x2E)) {
+        value = offset == 0x2C ? retraceLine : 1;
+        return true;
+    }
     if (offset == 0x2C || offset == 0x2E) {
         const bool pal = ((registers[1] >> 8) & 3) == 1;
         const uint64_t period = pal ? 20000000 : 16683333;
@@ -60,3 +67,16 @@ extern "C" void MH3_VIEncoderSend(CpuContext* ctx) {
     ctx->gpr[3] = 1;
 }
 REGISTER_NATIVE_FUNCTION(0x804E9C20, MH3_VIEncoderSend);
+
+uint64_t VideoRetracePeriodNs() {
+    return ((registers[1] >> 8) & 3) == 1 ? 20000000 : 16683333;
+}
+void BeginVideoRetrace() {
+    const bool pal = ((registers[1] >> 8) & 3) == 1;
+    const bool interlaced = !(registers[1] & 4);
+    retraceLine = interlaced && secondField ? (pal ? 313 : 263) : 1;
+    registers[(secondField && interlaced ? 0x34 : 0x30) / 2] |= 0x8000;
+    retraceActive = true;
+    secondField = !secondField;
+}
+void EndVideoRetrace() { retraceActive = false; }

@@ -2,6 +2,7 @@
 #include "generated/RuntimeConfig.h"
 #include "disc_image.h"
 #include <fstream>
+#include <filesystem>
 #include <cstdlib>
 #include <execinfo.h>
 #include <iostream>
@@ -91,6 +92,23 @@ int main(int argc, char** argv) {
         InitializeDataSections();
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
+        // The apploader normally installs the FST in reserved high MEM1.
+        // The SDK's DVDOpen walks this guest table, independently of the host
+        // partition reader. Keep it outside both advertised MEM1 arenas.
+        const char* discOverride = std::getenv("MH3_DISC_DIR");
+        const auto fstPath = std::filesystem::path(discOverride ? discOverride : "Assets/DATA") / "sys/fst.bin";
+        std::ifstream fst(fstPath, std::ios::binary | std::ios::ate);
+        const auto fstLength = fst ? fst.tellg() : std::streampos(-1);
+        if (fstLength < 12 || fstLength > 1024 * 1024) throw std::runtime_error("Invalid or missing boot FST");
+        const uint32_t fstSize = static_cast<uint32_t>(fstLength);
+        const uint32_t arenaHi = (0x81800000u - fstSize) & ~31u;
+        fst.seekg(0);
+        fst.read(reinterpret_cast<char*>(Memory::GetPointer(arenaHi, fstSize)), fstSize);
+        if (!fst || Memory::Read8(arenaHi) != 1 || Memory::Read32(arenaHi + 8) < 1 ||
+            uint64_t(Memory::Read32(arenaHi + 8)) * 12 > fstSize)
+            throw std::runtime_error("Invalid boot FST root");
+        Memory::Write32(0x80000038, arenaHi);
+        Memory::Write32(0x8000003C, fstSize);
         // Standard Wii boot information, with MH3's own arena boundary.
         Memory::Write32(0x80000000, 0x524D4850); // RMHP
         Memory::Write16(0x80000004, 0x3038); // 08
@@ -98,7 +116,7 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80000028, 24 * 1024 * 1024);
         Memory::Write32(0x8000002C, 0x23);
         Memory::Write32(0x80000030, 0x807B1CC0); // __ArenaLo, from OSInit
-        Memory::Write32(0x80000034, 0x81800000);
+        Memory::Write32(0x80000034, arenaHi);
         Memory::Write32(0x800000CC, 1); // PAL
         Memory::Write32(0x800000F8, 243000000);
         Memory::Write32(0x800000FC, 729000000);
@@ -110,7 +128,7 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80003104, 0x01800000);
         Memory::Write32(0x80003108, 0x81800000);
         Memory::Write32(0x8000310C, 0x807B1CC0);
-        Memory::Write32(0x80003110, 0x81800000);
+        Memory::Write32(0x80003110, arenaHi);
         Memory::Write32(0x80003118, 0x04000000);
         Memory::Write32(0x8000311C, 0x04000000);
         Memory::Write32(0x80003120, 0x93600000);

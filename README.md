@@ -5,7 +5,8 @@ but it is not playable yet.** The current boot prints the original Revolution OS
 initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
 function, passes video-interface initialization, and sends GX initialization
 commands to Aurora Metal. It completes three initial display copies and a Metal GPU completion wait,
-then waits for unimplemented VI retrace delivery.
+delivers the first VI retrace, and loads the first RSO module. Execution then
+stops at that module’s untranslated entry point (`0x8081A8A4`).
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -109,7 +110,7 @@ before unwinding, so routine diagnosis needs no LLDB authorization.
 Boot now passes IPC, STM, NAND, system configuration, DVD initialization and
 C++ constructors. The latest trace enters game main (`0x8003F278`), passes
 the original `VIInit` (`0x804E7B00`), and reaches GX initialization. The Metal build now consumes guest GX setup commands and converts vertex-array
-addresses; it binds eight initial textures, completes display copies, and next waits for VI retrace.
+addresses; it binds eight initial textures, completes display copies, and delivers retrace callbacks. The next boundary is RSO static translation.
 The DOL constructor/destructor tables are explicitly seeded for static translation,
 including constructor stubs with no ordinary stack prologue.
 IOS synchronous open/close/read/write use a private NAND root at
@@ -190,8 +191,8 @@ are ignored by `.gitignore` and must remain out of source commits.
 
 The scoped host VI interface retains register state and supplies beam positions;
 the original VI timing and framebuffer setup still runs. Analog encoder writes
-are retained by a native I2C boundary. Retrace interrupts and scanout are not yet
-connected. Static jump-table discovery follows a scaled selector back to its
+are retained by a native I2C boundary. Retrace delivery is connected at VIWaitForRetrace boundaries; general
+preemptive interrupt delivery and scanout selection remain incomplete. Static jump-table discovery follows a scaled selector back to its
 logical register, fixing the VI format switch; all nine jump-table tests pass.
 
 The GX bridge frames fragmented CP/BP/XF commands and forwards complete packets
@@ -219,3 +220,15 @@ for the renderer worker and Dawn queue completion, then signals the SDK flag,
 callback, and wait queue while preserving caller CPU state. The latest run logged
 successful Metal completion and was sampled in `VIWaitForRetrace` (`0x804E8050`)
 through the guest scheduler. The spinning test process was then stopped.
+
+`VIWaitForRetrace` now paces the host to PAL/NTSC field timing and invokes MH3's
+original VI handler with a latched beam position. That preserves pending register
+updates and game callbacks. The boundary also services host window events and
+queued IOS completions. SI sampling configuration stays in the original SDK
+state, and asynchronous STM presentation controls enqueue completions.
+
+The boot FST is installed in reserved high MEM1, excluded from the advertised
+arenas. DVD command-status polling now pumps IOS completions without reentering
+the callback pump. MH3 successfully reads `mh3.sel` and `01/hbm_data.rso`, then
+calls the latter's prolog at `0x8081A8A4` (module base `0x808196E0`). That code has
+not been statically translated yet, so runtime dispatch stops explicitly.

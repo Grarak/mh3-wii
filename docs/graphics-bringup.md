@@ -69,3 +69,25 @@ A native sample after successful Metal completion located the next wait:
 Raw asynchronous finish/token packets remain guarded until their event delivery
 is implemented. Copy tests cover stride/address decoding, exact framebuffer
 bounds, and rejection of unsupported scaling and texture-copy modes.
+
+Retrace delivery is now cooperative at `VIWaitForRetrace` (`0x804E8050`). It
+paces a host deadline, services IOS completions and window events, latches the
+field boundary and VI interrupt status, then invokes the original handler at
+`0x804E6F30` using the current guest OS context from `0x800000D4`. The caller CPU
+state is restored, and the SDK counter must advance exactly once. Field/control
+bits were checked against
+[Dolphin VideoInterface.h](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/HW/VideoInterface.h).
+This does not provide arbitrary preemptive interrupts outside service boundaries.
+
+The first handler invocation also required SISetXY (`0x804DEC10`) and queued STM
+immediate controls. SISetXY retains the exact SDK polling word at `0x8062A8A4`.
+After retrace, an absent boot FST caused DVDOpen to fail. Boot now installs the
+real FST at the top of MEM1 and reduces both arena-high fields accordingly.
+A sample then showed the module loader polling DVDGetCommandBlockStatus
+(`0x804AACC0`); this boundary now pumps queued IOS callbacks before the original
+status query, with nested pumping suppressed.
+
+Latest stop: `hbm_data.rso` prolog at `0x8081A8A4`. The original loader produced
+module base `0x808196E0`, section 1 offset `0xF0`, and prolog offset `0x10D4`,
+which exactly match the target. The file has 18 sections and its text section is
+`0x2AC28` bytes. RSO static translation/dispatch is the next required work.
