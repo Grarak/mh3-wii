@@ -7,9 +7,9 @@ function, passes video-interface initialization, and sends GX initialization
 commands to Aurora Metal. It completes three initial display copies and a Metal GPU completion wait,
 delivers the first VI retrace, and executes the first RSO module’s compiled
 prolog and constructors. It passes locked-cache and GameCube controller
-initialization and the original WPAD channel setup, then stops at an
-scaled GX display copy that still needs line-count conversion. AI/AX and DMA
-setup now complete. Native PCM mixing, DMA timing, and host channel conversion
+initialization and the original WPAD channel setup. AI/AX and DMA
+setup now complete, followed by a scaled display copy and a second Metal GPU
+completion wait. Startup then stalls before the next retrace callback. Native PCM mixing, DMA timing, and host channel conversion
 pass tests; a separate SDL playback-device check passes. In-game audio callback
 execution is not yet verified. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.

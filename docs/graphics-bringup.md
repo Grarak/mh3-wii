@@ -137,3 +137,18 @@ The next boot reached the AI library initialization banner and stopped at
 `0xCD006C00` from `0x8046DC00`, called through
 `80046CE4 -> 800EEB44 -> 800E8794`. AI register support now passes that point;
 see [audio bring-up](audio-bringup.md) for the current DSP boundary.
+
+
+Display-copy Y scaling now converts the EFB source interval count to XFB lines
+before checking destination RAM and passing dimensions to Aurora. BP copy bit 10
+selects reciprocal versus direct scaling; reciprocal zero is rejected. This
+matches the copy path in [Dolphin BPStructs.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/BPStructs.cpp).
+Unlike the SDK allocation helper, this command bridge does not round the copy
+height up to an allocation estimate. Tests cover direct and reciprocal scaling,
+fractional truncation, zero scale, and exact/one-byte-short destination buffers.
+Both native and Metal builds pass their runtime and audio tests. The Metal boot
+passes the previously rejected scaled copy and completes a second GPU wait; it
+then stalls before another retrace or audio completion callback.
+The process sample locates the stall in the original scheduler:
+`800401A8 -> 804D5320 -> 804D4F20 -> 804D4360` (the last function spins).
+This is the next thread/event integration boundary, not a Metal queue wait.
