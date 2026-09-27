@@ -64,3 +64,5 @@ arithmetic; this static comparison has not yet identified a translator defect
 or established that these ground-hit functions implement the missing wall
 collision. `RMH.ini` in Dolphin enables CPU EFB access for Tri, so globally
 disabling EFB synchronization would change the game's configured behavior.
+On 2026-09-27, upstream WiiCompiled `main` was still at `85f2501`, the same
+commit as the local translator, so there was no newer decompiler change to test.
