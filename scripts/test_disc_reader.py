@@ -4,6 +4,7 @@ import struct
 import subprocess
 import tempfile
 from pathlib import Path
+from prepare_partition import prepare
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / 'build/native/MH3'
@@ -35,6 +36,32 @@ with tempfile.TemporaryDirectory(prefix='mh3-disc-test-') as directory:
     assert read(root, 0x43E, 4, output) == b'\0' * 4
     read(root, 0x3108, 1, output, False)
     read(root, 0x3000 + len(fst), 1, output, False)
+    # Preserve actual nonzero gap bytes and verify cross-extent reads.
+    partition = bytearray(b'\xA5' * 0xF800)
+    partition[:len(boot)] = boot
+    partition[0x3000:0x3000 + len(fst)] = fst
+    # Two decrypted physical sectors: the 0x400-byte hash blocks must disappear.
+    iso = bytearray(0x80000)
+    struct.pack_into('>II', iso, 0x40000, 1, 0x40020 // 4)
+    struct.pack_into('>II', iso, 0x40020, 0x50000 // 4, 0)
+    struct.pack_into('>II', iso, 0x502B8, 0x20000 // 4, 0x10000 // 4)
+    for i in range(2):
+        start = 0x70000 + i * 0x8000
+        iso[start:start + 0x400] = b'H' * 0x400
+        iso[start + 0x400:start + 0x8000] = partition[i * 0x7C00:(i + 1) * 0x7C00]
+    iso_path = root / 'source.iso'
+    iso_path.write_bytes(iso)
+    prepare(iso_path, root)
+    assert (root / 'partition.bin').read_bytes() == partition
+    assert read(root, 0x3106, 6, output) == b'GH' + b'\xA5' * 4
+    assert read(root, 0x7BFE, 4, output) == b'\xA5' * 4
+    read(root, len(partition) - 1, 2, output, False)
+    (root / 'partition.bin').write_bytes(b'bad')
+    read(root, 0x3100, 1, output, False)
+    partition[0] ^= 1
+    (root / 'partition.bin').write_bytes(partition)
+    read(root, 0x3100, 1, output, False)
+    (root / 'partition.bin').unlink()
     (root / 'files/a').write_bytes(b'bad')
     read(root, 0x3100, 1, output, False)
 

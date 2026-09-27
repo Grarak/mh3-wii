@@ -47,7 +47,7 @@ a later boot boundary may no longer satisfy that condition. Local linked images,
 analysis DOLs, generated code and snapshots stay under ignored build directories.
 
 The Metal boot verifies and executes all five compiled prologs, prints media
-version `1002121503`, then stops on unextracted disc padding at partition byte
-`968250889`. Both native and Metal runtime/audio tests pass. Translation emits
+version `1002121503`, and passes the former disc-padding boundary at partition byte
+`968250889` with the preserved partition image. Both native and Metal runtime/audio tests pass. Translation emits
 20,639 functions; this remains incomplete game coverage. Evidence is in
 `logs/boot-rsos-run.log`.
