@@ -1,6 +1,7 @@
 #include "abi_bridge.h"
 #include "video_interface.h"
 #include "ios_host.h"
+#include "audio_dma.h"
 #include <chrono>
 #include <thread>
 #include <cstdio>
@@ -21,6 +22,7 @@ extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
     ServiceHostGraphicsEvents();
 #endif
     PumpIosCompletions(cpu);
+    ServiceAudioDma(cpu);
     const auto saved = *cpu;
     const uint32_t before = Memory::Read32(saved.gpr[13] - 0x379C);
     BeginVideoRetrace();

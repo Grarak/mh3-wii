@@ -60,8 +60,34 @@ copying it from the existing sibling WiiCompiled checkout only if absent. The
 file remains ignored, as do game assets. `WIICOMPILED_AUDIO_ROOT` can select a
 different local source checkout. Source attribution is in `toolchain/ORIGIN.md`.
 
-Latest boot passes DSP-task setup and reaches `AIInitDMA` (`0x8046DAF0`), called
-from `0x80470930`. It stops at `0xCC005030` while programming buffer `0x806FD5E0`,
-length `0x180` (96 stereo PCM frames). The next required work is paced DMA
-completion/callback delivery and a host PCM output device; the native mixer test
-does not prove audible in-game output.
+Boot then passed DSP-task setup and reached `AIInitDMA` (`0x8046DAF0`), called
+from `0x80470930`. It stopped at `0xCC005030` while programming buffer `0x806FD5E0`,
+length `0x180` (96 stereo PCM frames). The DMA/output bridge below now passes that setup boundary.
+
+
+Audio DMA entry points `8046DAF0`, `8046DB70`, `8046DB90`, `8046DBB0`,
+`8046DBC0`, and `8046DBE0` now manage the buffer, enable state, remaining bytes,
+and register queries. Address/length masks match the SDK register encoding.
+The bridge uses elapsed monotonic time and the AI DMA sample-rate bit. A
+384-byte buffer takes 3 ms at 32 kHz or 2 ms at 48 kHz. Catch-up is bounded to
+16 blocks per service call, retaining remaining elapsed time. Each completion
+joins the mixer, queues PCM, invokes the guest DMA callback with interrupts
+masked, then services AX resume callbacks. A reentrancy guard and full CPU-state
+restoration protect guest execution.
+
+Service points currently are VIWaitForRetrace and AIGetDMABytesLeft. General
+thread scheduling and audio servicing during other long waits remain incomplete.
+The SDL output converts big-endian Wii R/L frames to host L/R frames, accepts
+32/48 kHz, and bounds queued latency at 250 ms with an explicit drop diagnostic.
+DMA callback stack switching to a dedicated SDK stack is not implemented.
+
+`--audio-self-test` now also verifies block timing, partial bytes remaining,
+carry across blocks, stop behavior, and conversion of the mixer's 96-frame
+stereo ramp. `build/metal/MH3 --audio-output-check` passed against the actual
+macOS SDL output device with 100 ms of silence. This proves device opening and
+queue submission, not audible game output.
+
+Latest boot passes DMA setup, returns to graphics initialization, and stops on
+`GX scaled display copy requires line-count conversion`, with LR `0x8003F460`.
+It stops before a DMA completion service point, so callback execution during
+gameplay is still unverified.
