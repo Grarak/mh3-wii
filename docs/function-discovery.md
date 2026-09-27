@@ -1,5 +1,9 @@
 # Additional indirect function discovery
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 The RMHP08 SEL exports and standard stack-prologue scan omit leaf virtual methods.
 Entering save selection exposed two such calls:
 

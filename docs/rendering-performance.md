@@ -1,5 +1,9 @@
 # Viewport correction and performance investigation
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 ## Rendering
 
 MH3 programs a 640×448 viewport in PAL mode, displayed as 640×528 by the native

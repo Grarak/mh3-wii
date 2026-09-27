@@ -1,5 +1,9 @@
 # CPU framebuffer color reads
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 Selecting New Game calls MH3's `GXPeekARGB` at `0x804B6A10` from the luminance
 readback loop near `0x80057708`. The SDK reads `0xC8000000 | x << 2 | y << 12`
 after `GXDrawDone`. Previously this reached the unmapped-MMIO guard.
@@ -35,7 +39,7 @@ Validation:
 
 - Runtime tests cover address aliases, coordinate limits, invalid addresses,
   out-of-bounds reads, color precision and alpha modes.
-- `build/metal/MH3 --efb-check` uploads two known color patterns to the actual
+- `build/linux-arm64/MH3 --efb-check` uploads two known color patterns to the actual
   Metal framebuffer and verifies both snapshots, row offsets, aliases, and
   alpha-mode changes. The extended check also verifies poke/peek coherence,
   dirty-rectangle upload, preservation of neighboring pixels, and retention

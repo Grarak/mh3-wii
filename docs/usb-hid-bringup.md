@@ -1,5 +1,9 @@
 # IOS55 USB HID startup
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 MH3 opens `/dev/usb/hid` when entering its save-selection interface. The native
 boundary reports HID v4 version `0x40001` and an empty Wii USB device list. Host
 keyboard/gamepad input continues through the WPAD bridge; USB passthrough is not

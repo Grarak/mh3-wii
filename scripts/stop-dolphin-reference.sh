@@ -19,7 +19,7 @@ fi
 is_this_run() {
   local command
   command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-  [[ $command == *'/Dolphin '* && $command == *"-u $run/user "* ]]
+  [[ ($command == *'/Dolphin '* || $command == *'dolphin-emu '*) && $command == *"-u $run/user "* ]]
 }
 if ! is_this_run; then
   echo "Dolphin run $1 is not running"

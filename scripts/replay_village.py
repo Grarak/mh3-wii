@@ -63,15 +63,20 @@ def wait_for_frame(directory, previous, process, timeout):
     raise TimeoutError(f"No frame after {previous} within {timeout}s")
 
 
+def default_binary():
+    """Match scripts/target.sh."""
+    return ROOT / os.environ.get("MH3_BUILD_DIR", "build/linux-arm64") / "MH3"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default="village-replay", help="run name under logs/replays")
     parser.add_argument("--dock-edge", action="store_true", help="continue right from free movement toward the dock edge")
     parser.add_argument("--moga-woods", action="store_true", help="follow the dock route and select Exit to Moga Woods")
     parser.add_argument("--fresh", action="store_true", help="start from the original save and replay the Chief dialogue")
-    parser.add_argument("--profile", action="store_true", help="log process CPU and Metal completion time per display copy")
+    parser.add_argument("--profile", action="store_true", help="log process CPU and Vulkan completion time per display copy")
     parser.add_argument("--capture-interval", type=int, default=5, help="capture every N display copies (default: 5)")
-    parser.add_argument("--binary", type=Path, default=ROOT / "build/metal/MH3", help="native executable to benchmark")
+    parser.add_argument("--binary", type=Path, default=default_binary(), help="native executable to benchmark")
     parser.add_argument("--max-pulses", type=int, default=120)
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.name):

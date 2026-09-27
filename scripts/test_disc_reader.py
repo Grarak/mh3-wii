@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the native partition reader against independent bytes and real assets."""
+import os
 import struct
 import subprocess
 import tempfile
@@ -7,7 +8,8 @@ from pathlib import Path
 from prepare_partition import prepare
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / 'build/native/MH3'
+# CPU-only runtime from scripts/build.sh; MH3_BINARY overrides it.
+BINARY = Path(os.environ.get('MH3_BINARY', ROOT / 'build/linux-arm64-cpu/MH3'))
 
 
 def read(root, offset, size, output, succeeds=True):

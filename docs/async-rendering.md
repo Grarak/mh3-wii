@@ -1,5 +1,9 @@
 # macOS asynchronous frame encoding
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 MH3 now uses Aurora's bounded frame worker on macOS. The existing Aurora worker
 was disabled on Apple because it also prepared ImGui/SDL frames and presented
 through AppKit. Both require the main thread.

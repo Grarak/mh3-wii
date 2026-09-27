@@ -1,5 +1,9 @@
 # Static RSO bring-up
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 Five boot modules are included in static C++ translation with fixed-address
 bindings for the verified RMHP08 files. Alternate addresses and other modules
 still require explicit support.

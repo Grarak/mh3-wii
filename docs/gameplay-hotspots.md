@@ -1,5 +1,9 @@
 # Current-build gameplay hotspot breakdown — 2026-09-27
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 Profiled release commit f44f156, -O1, all diagnostic flags OFF, Metal renderer,
 post-Chief PAL save and 4:3 presentation. No Dolphin run or concurrent build.
 Two ten-second macOS `sample` captures: 5,239 main-thread samples standing at

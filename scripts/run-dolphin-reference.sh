@@ -32,9 +32,15 @@ while (( $# )); do
   esac
   shift
 done
-app=/Applications/Dolphin.app/Contents/MacOS/Dolphin
-if [[ ! -x "$app" ]]; then
-  echo 'Install Dolphin first: brew install --cask dolphin' >&2
+if [[ -n ${DOLPHIN_BIN:-} ]]; then
+  app=$DOLPHIN_BIN
+elif [[ $(uname -s) == Darwin ]]; then
+  app=/Applications/Dolphin.app/Contents/MacOS/Dolphin
+else
+  app=$(command -v dolphin-emu || true)
+fi
+if [[ -z $app || ! -x $app ]]; then
+  echo 'Install Dolphin first (macOS: brew install --cask dolphin; Linux: dolphin-emu), or set DOLPHIN_BIN' >&2
   exit 1
 fi
 if [[ ! -f build/disc-decrypted.iso ]]; then

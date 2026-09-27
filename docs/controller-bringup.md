@@ -1,5 +1,9 @@
 # Native Classic Controller input
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 The Metal build exposes one virtual Classic Controller on channel 0, backed by
 keyboard input and the first SDL gamepad. The original game code still performs
 button transitions and stick processing. The bridge supplies raw WPAD reports,

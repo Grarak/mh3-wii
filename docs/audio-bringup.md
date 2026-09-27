@@ -1,5 +1,9 @@
 # Audio bring-up
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 The original AI initializer at `0x8046DC00` now completes and boot reaches AX/DSP
 initialization. This is register/clock support, not audible output. PCM device
 output, DSP command processing, and interrupt delivery are still unfinished.
@@ -83,7 +87,7 @@ DMA callback stack switching to a dedicated SDK stack is not implemented.
 
 `--audio-self-test` now also verifies block timing, partial bytes remaining,
 carry across blocks, stop behavior, and conversion of the mixer's 96-frame
-stereo ramp. `build/metal/MH3 --audio-output-check` passed against the actual
+stereo ramp. `build/linux-arm64/MH3 --audio-output-check` passed against the actual
 macOS SDL output device with 100 ms of silence. This proves device opening and
 queue submission, not audible game output.
 

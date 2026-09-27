@@ -1,5 +1,9 @@
 # Gameplay debugging
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 `./scripts/replay_village.py --name my-run` copies `saves/nand` into
 `logs/replays/my-run/user/nand`, overlays `fixtures/post-chief-data00.bin` on the
 copied first save slot, boots `--village`, and waits for an unobstructed village

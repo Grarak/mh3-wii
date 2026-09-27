@@ -1,5 +1,9 @@
 # Long-lived switch-table bases
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 Village loading reaches the main-DOL rendering function at `0x800AC35C`.
 Its switch at `0x800ACB78` loads a target from `0x80593A28` using selector
 `r26`. The table's page register `r22` is initialized at `0x800AC6F4`, beyond

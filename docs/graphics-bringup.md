@@ -1,5 +1,9 @@
 # Graphics bring-up evidence
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 MH3's renderer setup at `0x8003FD30` calls GX initialization at `0x804B3D10`
 with a FIFO pointer from `r13-0x46C0` and a size of `0x80000`. The returned
 FIFO object is stored at `r13-0x46BC`.
@@ -245,7 +249,7 @@ video output, not complete movie playback, audio synchronization, or gameplay.
 
 For a sequence of actual rendered frames, set `MH3_CAPTURE_PATH` to a BMP path
 and `MH3_CAPTURE_INTERVAL` to a positive frame interval. For example,
-`MH3_CAPTURE_PATH=logs/startup.bmp MH3_CAPTURE_INTERVAL=500 build/metal/MH3`
+`MH3_CAPTURE_PATH=logs/startup.bmp MH3_CAPTURE_INTERVAL=500 build/linux-arm64/MH3`
 writes `startup-500.bmp`, `startup-1000.bmp`, and so on. Without the interval,
 the existing `MH3_CAPTURE_FRAME` option still captures one frame. Captures are
 requested before Aurora seals the frame, accounting for its frame-index advance.

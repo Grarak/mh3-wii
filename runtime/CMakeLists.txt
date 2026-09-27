@@ -4,6 +4,17 @@ option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrument
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
 option(MH3_ENABLE_GPU_VALIDATION "Keep Dawn API validation enabled for renderer checks" OFF)
 option(MH3_ENABLE_GX_DIAGNOSTICS "Enable controlled renderer isolation and state logging" OFF)
+# Supported target: arm64 (aarch64) Linux, rendering through Dawn's Vulkan
+# backend. MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts configurable for
+# development only; they are not a supported product.
+option(MH3_ALLOW_UNSUPPORTED_HOST "Configure on a host other than arm64 Linux" OFF)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  if(NOT MH3_ALLOW_UNSUPPORTED_HOST)
+    message(FATAL_ERROR "MH3 targets arm64 Linux; this is ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}. "
+      "Cross-compile with cmake/toolchains/linux-arm64.cmake, or set MH3_ALLOW_UNSUPPORTED_HOST=ON.")
+  endif()
+  message(WARNING "Configuring for unsupported host ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
+endif()
 if(MH3_AURORA_ROOT)
   enable_language(C)
   add_subdirectory("${MH3_AURORA_ROOT}" "${CMAKE_BINARY_DIR}/aurora")
@@ -25,6 +36,9 @@ add_executable(MH3
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})
 target_include_directories(MH3 PRIVATE include ..)
+# glibc's backtrace_symbols only names functions in the dynamic symbol table,
+# so export ours for symbolized MH3_TRACE_ERRORS stack traces.
+set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
 target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-O1;-gline-tables-only;-ffp-contract=off>)
 if(MH3_ENABLE_GUEST_CALL_TRACE)
   target_sources(MH3 PRIVATE src/guest_call_trace.cpp)
@@ -53,6 +67,9 @@ if(TARGET aurora::core)
     target_link_libraries(MH3 PRIVATE absl::flat_hash_map)
   endif()
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
+  if(NOT DAWN_ENABLE_VULKAN)
+    message(FATAL_ERROR "MH3 renders through Vulkan; the selected Dawn has no Vulkan backend")
+  endif()
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi dawn::webgpu_dawn)
 endif()

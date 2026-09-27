@@ -13,8 +13,10 @@ copies. Aurora's original source is kept intact.
 Common libraries (Dawn, SDL, Abseil, fmt, PNG, FreeType, zlib, ImGui, SQLite,
 xxHash, zstd and Tracy) are **not committed here**. Aurora's existing CMake
 providers find installed packages or fetch pinned versions into the build tree,
-as in WiiCompiled. A first build may require network access. The currently
-selected macOS Dawn package supports Metal; Vulkan support remains pending.
+as in WiiCompiled. A first build may require network access. The target is
+arm64 Linux: Dawn comes from the pinned prebuilt `linux-aarch64` package
+(`v20260603.191052`), which includes the Vulkan backend MH3 requires. See
+[arm64 Linux and Vulkan](linux-arm64.md).
 
 The translator and its notices are already included under `toolchain/`.
 `runtime/assets/dsp/dsp_coef.bin` is the free Dolphin DSP coefficient table,
@@ -27,7 +29,7 @@ ROM-derived assets available:
 
 ```sh
 ./scripts/build-aurora.sh
-ctest --test-dir build/metal --output-on-failure
+ctest --test-dir build/linux-arm64 --output-on-failure
 ./scripts/run.sh --village
 ```
 

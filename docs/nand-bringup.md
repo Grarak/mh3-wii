@@ -1,5 +1,9 @@
 # Native NAND save storage
 
+> Platform note: results in this document were recorded on the earlier macOS
+> ARM64/Metal build. The port now targets arm64 Linux with Vulkan; see
+> [arm64 Linux and Vulkan](linux-arm64.md) for what has been re-verified.
+
 The original game save setup now creates and reopens its system file, six
 character-save slots, network data, and save banner. Files live under
 `saves/nand` (or `$MH3_USER_DIR/nand`). A Metal frame capture shows the original
