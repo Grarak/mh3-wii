@@ -12,6 +12,7 @@
 - [ ] Further improve frame pacing/full-speed gameplay. Profile repeated Aurora
   array/uniform uploads, then the labelled audio filter before a reference-checked
   readable rewrite. Keep -O1 unless measured gains justify changing it.
+  Current idle/movement breakdown and ranked targets: `docs/gameplay-hotspots.md`.
 - [ ] Verify village building collisions later (dock boundary regression passes).
 - [x] Verify Dolphin's background savestate/screenshot pipe.
 - [ ] Extend fast state replay to reusable field checkpoints.
