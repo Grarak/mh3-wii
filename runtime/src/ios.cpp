@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <memory>
 #include <iostream>
 #include <map>
@@ -37,10 +38,50 @@ DiscImage& Disc() {
 int32_t Error() {
     switch (errno) {
     case ENOENT: return -106;
+    case EEXIST: return -105;
     case EACCES: case EPERM: case ELOOP: return -102;
     case ENOSPC: return -108;
     default: return -101;
     }
+}
+std::filesystem::path NandRoot() {
+    const char* user = std::getenv("MH3_USER_DIR");
+    return (user ? std::filesystem::path(user) : std::filesystem::path("saves")) / "nand";
+}
+bool ValidNandPath(const std::string& path, bool allowRoot = false) {
+    if (path.empty() || path.size() >= 64 || path[0] != '/' || path.find("//") != std::string::npos ||
+        (path.size() == 1 && !allowRoot)) return false;
+    for (const auto& part : std::filesystem::path(path.substr(1)))
+        if (part == ".." || part == "." || part.empty()) return false;
+    return true;
+}
+// Persist Wii metadata on the inode, so native renames preserve it and NAND
+// cluster accounting does not include host-only sidecar files. This port has
+// one title: UID 0x1000, group 0x3038 (verified in RMHP08's TMD).
+using NandMetadata = std::array<uint8_t, 10>;
+constexpr NandMetadata defaultMetadata{0, 0, 0x10, 0, 0x30, 0x38, 3, 3, 3, 0};
+#ifdef __APPLE__
+constexpr const char* metadataName = "org.mh3.nand";
+#else
+constexpr const char* metadataName = "user.mh3.nand";
+#endif
+int SetMetadata(int fd, const NandMetadata& metadata) {
+#ifdef __APPLE__
+    const int result = ::fsetxattr(fd, metadataName, metadata.data(), metadata.size(), 0, 0);
+#else
+    const int result = ::fsetxattr(fd, metadataName, metadata.data(), metadata.size(), 0);
+#endif
+    return result == 0 ? 0 : Error();
+}
+int GetMetadata(int fd, NandMetadata& metadata) {
+#ifdef __APPLE__
+    const auto size = ::fgetxattr(fd, metadataName, metadata.data(), metadata.size(), 0, 0);
+    if (size < 0 && errno == ENOATTR) { metadata = defaultMetadata; return 0; }
+#else
+    const auto size = ::fgetxattr(fd, metadataName, metadata.data(), metadata.size());
+    if (size < 0 && errno == ENODATA) { metadata = defaultMetadata; return 0; }
+#endif
+    return size == metadata.size() ? 0 : size < 0 ? Error() : -101;
 }
 std::string GuestPath(uint32_t address) {
     std::string path;
@@ -55,13 +96,11 @@ std::string GuestPath(uint32_t address) {
 // Resolve every component relative to the private NAND root without following
 // symlinks, and reject traversal before opening any host file.
 int OpenNandPath(const std::string& path, int finalFlags, bool allowRoot = false) {
-    if (path.empty() || path[0] != '/' || path.find("//") != std::string::npos ||
-        (path.size() == 1 && !allowRoot)) return -4;
+    if (!ValidNandPath(path, allowRoot)) return -4;
     std::filesystem::path relative = path.substr(1);
     for (const auto& part : relative)
         if (part == ".." || part == "." || part.empty()) return -4;
-    const char* user = std::getenv("MH3_USER_DIR");
-    auto root = (user ? std::filesystem::path(user) : std::filesystem::path("saves")) / "nand";
+    const auto root = NandRoot();
     int dir = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (dir < 0) return Error();
     auto end = relative.end();
@@ -78,10 +117,125 @@ int OpenNandPath(const std::string& path, int finalFlags, bool allowRoot = false
     }
     return dir;
 }
+int InitializeNand() {
+    const auto root = NandRoot();
+    std::filesystem::create_directories(root.parent_path());
+    if (::mkdir(root.c_str(), 0700) != 0 && errno != EEXIST) return Error();
+    // IOS and title installation normally provide these parents. No game
+    // settings or save contents are synthesized, and existing files survive.
+    constexpr const char* directories[]{"/tmp", "/sys", "/shared2", "/title",
+        "/title/00010000", "/title/00010001", "/title/00010004",
+        "/title/00010000/524d4850", "/title/00010000/524d4850/data"};
+    for (const auto* path : directories) {
+        const std::filesystem::path entry(path);
+        const int parent = OpenNandPath(entry.parent_path().string(), O_RDONLY | O_DIRECTORY, true);
+        if (parent < 0) return parent;
+        const auto name = entry.filename().string();
+        const bool created = ::mkdirat(parent, name.c_str(), 0700) == 0;
+        if (!created && errno != EEXIST) { const int error = Error(); ::close(parent); return error; }
+        const int child = ::openat(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        const int error = child < 0 ? Error() : created ? SetMetadata(child, defaultMetadata) : 0;
+        if (child >= 0) ::close(child);
+        ::close(parent);
+        if (error) return error;
+    }
+    return 0;
+}
+int CreateNandEntry(const std::string& path, bool directory, const NandMetadata& metadata) {
+    if (!ValidNandPath(path)) return -101;
+    const std::filesystem::path entry(path);
+    const int parent = OpenNandPath(entry.parent_path().string(), O_RDONLY | O_DIRECTORY, true);
+    if (parent < 0) return parent;
+    const auto name = entry.filename().string();
+    int child;
+    if (directory) {
+        if (::mkdirat(parent, name.c_str(), 0700) != 0) {
+            const int error = Error(); ::close(parent); return error;
+        }
+        child = ::openat(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    } else child = ::openat(parent, name.c_str(), O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW, 0600);
+    const int result = child < 0 ? Error() : SetMetadata(child, metadata);
+    if (child >= 0) ::close(child);
+    ::close(parent);
+    return result;
+}
+int RenameNandEntry(const std::string& from, const std::string& to) {
+    if (!ValidNandPath(from) || !ValidNandPath(to)) return -101;
+    const std::filesystem::path source(from), target(to);
+    const int sourceDir = OpenNandPath(source.parent_path().string(), O_RDONLY | O_DIRECTORY, true);
+    if (sourceDir < 0) return sourceDir;
+    const int targetDir = OpenNandPath(target.parent_path().string(), O_RDONLY | O_DIRECTORY, true);
+    if (targetDir < 0) { ::close(sourceDir); return targetDir; }
+    struct stat info{};
+    int result = 0;
+    if (::fstatat(sourceDir, source.filename().c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) result = Error();
+    else if (!S_ISREG(info.st_mode) && !S_ISDIR(info.st_mode)) result = -102;
+    if (!result) {
+        if (::fstatat(targetDir, target.filename().c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0) {
+            if (!S_ISREG(info.st_mode)) result = -102;
+        } else if (errno != ENOENT) result = Error();
+    }
+    if (!result && ::renameat(sourceDir, source.filename().c_str(), targetDir, target.filename().c_str()) != 0)
+        result = Error();
+    ::close(sourceDir); ::close(targetDir);
+    return result;
+}
+int RemoveNandTree(int parent, const char* name, bool execute, unsigned depth = 0) {
+    if (depth > 64) return -101;
+    struct stat info{};
+    if (::fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) != 0) return Error();
+    const bool directory = S_ISDIR(info.st_mode);
+    if (!directory && !S_ISREG(info.st_mode)) return -102;
+    for (const auto& [handle, file] : files) {
+        struct stat opened{};
+        if (::fstat(file.host, &opened) == 0 && opened.st_dev == info.st_dev && opened.st_ino == info.st_ino)
+            return -111; // ISFS InUse
+    }
+    if (directory) {
+        const int fd = ::openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        if (fd < 0) return Error();
+        DIR* raw = ::fdopendir(fd);
+        if (!raw) { const int error = Error(); ::close(fd); return error; }
+        std::unique_ptr<DIR, decltype(&::closedir)> entries(raw, ::closedir);
+        while (true) {
+            errno = 0;
+            const auto* entry = ::readdir(raw);
+            if (!entry) { if (errno) return Error(); break; }
+            const std::string_view child(entry->d_name);
+            if (child == "." || child == "..") continue;
+            const int result = RemoveNandTree(fd, entry->d_name, execute, depth + 1);
+            if (result) return result;
+        }
+    }
+    if (execute && ::unlinkat(parent, name, directory ? AT_REMOVEDIR : 0) != 0) return Error();
+    return 0;
+}
+int DeleteNandEntry(const std::string& path) {
+    if (!ValidNandPath(path)) return -101;
+    const std::filesystem::path entry(path);
+    const int parent = OpenNandPath(entry.parent_path().string(), O_RDONLY | O_DIRECTORY, true);
+    if (parent < 0) return parent;
+    // Validate the entire subtree before removing any file (including InUse).
+    int result = RemoveNandTree(parent, entry.filename().c_str(), false);
+    if (!result) result = RemoveNandTree(parent, entry.filename().c_str(), true);
+    ::close(parent);
+    return result;
+}
 int OpenFile(const std::string& path, uint32_t mode) {
     if (mode < 1 || mode > 3) return -4;
     const int dir = OpenNandPath(path, mode == 1 ? O_RDONLY : mode == 2 ? O_WRONLY : O_RDWR);
     if (dir < 0) return dir;
+    struct stat info{};
+    if (::fstat(dir, &info) != 0) { const int error = Error(); ::close(dir); return error; }
+    if (!S_ISREG(info.st_mode)) { ::close(dir); return -101; }
+    NandMetadata metadata;
+    const int metadataResult = GetMetadata(dir, metadata);
+    if (metadataResult) { ::close(dir); return metadataResult; }
+    const uint32_t owner = (uint32_t(metadata[0]) << 24) | (uint32_t(metadata[1]) << 16) |
+                           (uint32_t(metadata[2]) << 8) | metadata[3];
+    const uint16_t group = (uint16_t(metadata[4]) << 8) | metadata[5];
+    const uint8_t allowed = owner == 0x1000 ? metadata[6] : group == 0x3038 ? metadata[7] : metadata[8];
+    if ((allowed & mode) != mode) { ::close(dir); return -102; }
     const uint32_t handle = nextHandle++;
     files.emplace(handle, File{dir, mode});
     return handle;
@@ -145,6 +299,10 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
     if (path == "/dev/stm/immediate" || path == "/dev/stm/eventhook" ||
         path == "/dev/fs" || path == "/dev/es" || path == "/dev/di") {
         if (path == "/dev/di") (void)Disc();
+        if (path == "/dev/fs") {
+            const int result = InitializeNand();
+            if (result) { ctx->gpr[3] = result; return; }
+        }
         uint32_t handle = nextHandle++;
         devices.emplace(handle, path);
         ctx->gpr[3] = handle;
@@ -163,9 +321,10 @@ extern "C" void MH3_IOSClose(CpuContext* ctx) {
     }
     auto it = files.find(ctx->gpr[3]);
     if (it == files.end()) { ctx->gpr[3] = -4; return; }
+    const int syncError = (it->second.mode & 2) && ::fsync(it->second.host) != 0 ? Error() : 0;
     int result = ::close(it->second.host);
     files.erase(it);
-    ctx->gpr[3] = result == 0 ? 0 : Error();
+    ctx->gpr[3] = syncError ? syncError : result == 0 ? 0 : Error();
 }
 REGISTER_NATIVE_FUNCTION(0x804BC810, MH3_IOSClose);
 extern "C" void MH3_IOSRead(CpuContext* ctx) {
@@ -190,6 +349,20 @@ extern "C" void MH3_IOSWrite(CpuContext* ctx) {
     ctx->gpr[3] = count < 0 ? Error() : count;
 }
 REGISTER_NATIVE_FUNCTION(0x804BCC80, MH3_IOSWrite);
+void SeekFile(CpuContext* ctx) {
+    const auto it = files.find(ctx->gpr[3]);
+    if (it == files.end() || ctx->gpr[5] > 2) { ctx->gpr[3] = -101; return; }
+    struct stat info{};
+    const auto current = ::lseek(it->second.host, 0, SEEK_CUR);
+    if (current < 0 || ::fstat(it->second.host, &info) != 0) { ctx->gpr[3] = Error(); return; }
+    // IOS uses 32-bit offsets, including modular relative/end offsets, and
+    // rejects seeks beyond EOF (unlike POSIX).
+    const uint32_t base = ctx->gpr[5] == 0 ? 0 : ctx->gpr[5] == 1 ? current : info.st_size;
+    const uint32_t position = base + ctx->gpr[4];
+    if (position > uint64_t(info.st_size)) { ctx->gpr[3] = -101; return; }
+    const auto result = ::lseek(it->second.host, position, SEEK_SET);
+    ctx->gpr[3] = result < 0 ? Error() : result;
+}
 
 // STM event hooks remain pending until a real host reset/power event. In
 // particular, installing the hook must not immediately call the guest handler.
@@ -197,7 +370,8 @@ REGISTER_NATIVE_FUNCTION(0x804BCC80, MH3_IOSWrite);
 extern "C" void MH3_IOSIoctl(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
     auto it = devices.find(ctx->gpr[3]);
-    if (it != devices.end() && (it->second == "/dev/di" || it->second == "/dev/stm/immediate")) {
+    if (files.contains(ctx->gpr[3]) || (it != devices.end() &&
+        (it->second == "/dev/di" || it->second == "/dev/stm/immediate" || it->second == "/dev/fs"))) {
         const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
         if (!callback) { ctx->gpr[3] = -4; return; }
         MH3_IOSIoctl(ctx);
@@ -224,9 +398,72 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION(0x804BCE70, MH3_IOSIoctlAsync);
 
 extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
+    if (const auto file = files.find(ctx->gpr[3]); file != files.end()) {
+        if (ctx->gpr[4] != 11) throw std::runtime_error("IOS file ioctl not implemented: " + std::to_string(ctx->gpr[4]));
+        if (ctx->gpr[8] < 8 || !Memory::Contains(ctx->gpr[7], 8)) { ctx->gpr[3] = -101; return; }
+        struct stat info{};
+        const auto offset = ::lseek(file->second.host, 0, SEEK_CUR);
+        if (offset < 0 || ::fstat(file->second.host, &info) != 0) { ctx->gpr[3] = Error(); return; }
+        Memory::Write32(ctx->gpr[7], info.st_size);
+        Memory::Write32(ctx->gpr[7] + 4, offset);
+        ctx->gpr[3] = 0; return;
+    }
     const auto device = devices.find(ctx->gpr[3]);
     if (device == devices.end()) { ctx->gpr[3] = -4; return; }
     const uint32_t command = ctx->gpr[4];
+    if (device->second == "/dev/fs") {
+        const uint32_t input = ctx->gpr[5], inputSize = ctx->gpr[6], output = ctx->gpr[7], outputSize = ctx->gpr[8];
+        if (command == 7) {
+            if (inputSize < 64 || !Memory::Contains(input, 64)) { ctx->gpr[3] = -101; return; }
+            const auto path = GuestPath(input);
+            ctx->gpr[3] = DeleteNandEntry(path);
+            if (std::getenv("MH3_TRACE_ERRORS"))
+                std::cerr << "MH3 NAND delete: " << path << " -> " << int32_t(ctx->gpr[3]) << '\n';
+            return;
+        }
+        if (command == 8) {
+            if (inputSize < 128 || !Memory::Contains(input, 128)) { ctx->gpr[3] = -101; return; }
+            const auto from = GuestPath(input), to = GuestPath(input + 64);
+            ctx->gpr[3] = RenameNandEntry(from, to);
+            if (std::getenv("MH3_TRACE_ERRORS"))
+                std::cerr << "MH3 NAND rename: " << from << " -> " << to << ": " << int32_t(ctx->gpr[3]) << '\n';
+            return;
+        }
+        if (command == 3 || command == 9 || command == 5) {
+            if (inputSize < 74 || !Memory::Contains(input, inputSize)) { ctx->gpr[3] = -101; return; }
+            auto metadata = defaultMetadata;
+            for (unsigned i = 0; i < 4; ++i) metadata[6 + i] = Memory::Read8(input + 70 + i);
+            if (metadata[6] > 3 || metadata[7] > 3 || metadata[8] > 3) { ctx->gpr[3] = -101; return; }
+            const auto path = GuestPath(input + 6);
+            int result;
+            if (command == 5) {
+                for (unsigned i = 0; i < 6; ++i) metadata[i] = Memory::Read8(input + i);
+                const int fd = OpenNandPath(path, O_RDONLY);
+                result = fd < 0 ? fd : SetMetadata(fd, metadata);
+                if (fd >= 0) ::close(fd);
+            } else result = CreateNandEntry(path, command == 3, metadata);
+            if (std::getenv("MH3_TRACE_ERRORS"))
+                std::cerr << "MH3 NAND command " << command << ": " << path << " -> " << result << '\n';
+            ctx->gpr[3] = result; return;
+        }
+        if (command == 6) {
+            if (inputSize < 64 || outputSize < 74 || !Memory::Contains(input, 64) || !Memory::Contains(output, outputSize)) {
+                ctx->gpr[3] = -101; return;
+            }
+            const auto path = GuestPath(input);
+            const int fd = OpenNandPath(path, O_RDONLY, true);
+            if (fd < 0) { ctx->gpr[3] = fd; return; }
+            NandMetadata metadata;
+            const int result = GetMetadata(fd, metadata);
+            ::close(fd);
+            if (result) { ctx->gpr[3] = result; return; }
+            for (unsigned i = 0; i < 74; ++i) Memory::Write8(output + i, 0);
+            for (unsigned i = 0; i < 6; ++i) Memory::Write8(output + i, metadata[i]);
+            for (size_t i = 0; i < path.size(); ++i) Memory::Write8(output + 6 + i, path[i]);
+            for (unsigned i = 0; i < 4; ++i) Memory::Write8(output + 70 + i, metadata[6 + i]);
+            ctx->gpr[3] = 0; return;
+        }
+    }
     if (device->second == "/dev/di") {
         // IOS DI command buffer contains byte length and word-addressed offset.
         // DI uses success=1 (unlike ordinary IOS success=0).
@@ -392,6 +629,14 @@ extern "C" void MH3_IOSReadAsync(CpuContext* ctx) {
     AsyncFile(ctx, MH3_IOSRead, ctx->gpr[6], ctx->gpr[7]);
 }
 REGISTER_NATIVE_FUNCTION(0x804BC970, MH3_IOSReadAsync);
+extern "C" void MH3_IOSWriteAsync(CpuContext* ctx) {
+    AsyncFile(ctx, MH3_IOSWrite, ctx->gpr[6], ctx->gpr[7]);
+}
+REGISTER_NATIVE_FUNCTION(0x804BCB80, MH3_IOSWriteAsync);
+extern "C" void MH3_IOSSeekAsync(CpuContext* ctx) {
+    AsyncFile(ctx, SeekFile, ctx->gpr[6], ctx->gpr[7]);
+}
+REGISTER_NATIVE_FUNCTION(0x804BCD90, MH3_IOSSeekAsync);
 extern "C" void MH3_IOSCloseAsync(CpuContext* ctx) {
     AsyncFile(ctx, MH3_IOSClose, ctx->gpr[4], ctx->gpr[5]);
 }
