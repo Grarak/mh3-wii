@@ -23,6 +23,7 @@ public:
     using TextureCopySink = std::function<void(const TextureCopy&)>;
     void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {},
                const CopySink& copy = {}, const TextureCopySink& textureCopy = {});
+    unsigned PixelFormat() const { return bp[0x43] & 7; }
     size_t PendingBytes() const { return pending.size(); }
 private:
     std::vector<uint8_t> pending;

@@ -13,7 +13,9 @@ and [RSO bindings](docs/rso-bringup.md).
 Classic Controller reports drive movie skipping and title-menu navigation.
 Selecting Begin the Game passes HID and keyboard initialization and renders all
 six save slots. File selection and the main menu work. Selecting New Game now
-reaches an unimplemented direct framebuffer access at `0xC8000000`. See [controls](docs/controller-bringup.md),
+completes its CPU framebuffer read/modify/write loop, then reaches an
+unimplemented GX display-list command while preparing the character scene.
+See [framebuffer support](docs/efb-color-bringup.md). See [controls](docs/controller-bringup.md),
 [HID startup](docs/usb-hid-bringup.md), and [function discovery](docs/function-discovery.md).
 The SDL gamepad source passes a virtual-device mapping/hotplug test; live game
 input validation so far uses the diagnostic controller file. Native PCM mixing and DMA tests pass, and
