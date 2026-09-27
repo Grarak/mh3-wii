@@ -15,6 +15,12 @@ loading. It requires an existing valid save and restores normal controls when
 the village module loads. A controller button or stick movement cancels the
 shortcut. See [Village startup](docs/village-startup.md).
 
+For repeatable gameplay debugging, `./scripts/replay_village.py --name my-run`
+boots an isolated copy of the post-Chief save and leaves the game running for
+controller-file input. See [gameplay debugging](docs/gameplay-debugging.md) for
+the checkpoint, Dolphin Classic Controller profile, frame captures, and current
+performance and collision findings.
+
 Verified boot behavior includes OS/IOS55 and DVD initialization, five statically
 translated RSO modules, the Nintendo wrist-strap screen, the Capcom logo, and THP
 movie playback. The runtime creates and reopens the NAND system file, six
