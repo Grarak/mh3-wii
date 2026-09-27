@@ -13,10 +13,11 @@ and [RSO bindings](docs/rso-bringup.md).
 Classic Controller reports drive movie skipping and title-menu navigation.
 Selecting Begin the Game passes HID and keyboard initialization and renders all
 six save slots. File selection and the main menu work. Selecting New Game now
-completes its CPU framebuffer read/modify/write loop, then reaches an
+completes its CPU framebuffer read/modify/write loop, then reaches
 the animated character scene. Display lists, indexed matrix loads, and bounded
-vertex uploads execute. The scene still has repeated smaller images and missing
-UI; frame/copy sequencing is under investigation.
+vertex uploads execute. Separating intermediate GPU fences from display presentation fixes the repeated
+images and restores the character-creation UI and skin rendering. Gameplay is
+not yet verified.
 See [framebuffer support](docs/efb-color-bringup.md). See [controls](docs/controller-bringup.md),
 [HID startup](docs/usb-hid-bringup.md), and [function discovery](docs/function-discovery.md).
 The SDL gamepad source passes a virtual-device mapping/hotplug test; live game

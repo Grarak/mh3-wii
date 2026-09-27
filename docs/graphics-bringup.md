@@ -297,3 +297,17 @@ is submitted. Native and Metal test suites pass. The live run
 previous storage-capacity failure. Captures show repeated smaller images and
 missing UI, so frame/copy sequencing still needs correction before gameplay is
 usable. Evidence includes `logs/array-range-ready-4200.bmp` and later frames.
+
+## GPU fences and display presentation
+
+GXDrawDone now submits intermediate work synchronously and resumes the same
+EFB without presenting or advancing the frame. Only a pending GXCopyDisp ends
+the host frame. Subsequent host frames preserve EFB contents; guest copy-clear
+commands determine when to clear them. A local Aurora source overlay shares
+Aurora's submission lock and leaves the sibling checkout unchanged.
+
+The actual Metal EFB test checks preservation across an intermediate fence and
+frame-index advancement at display completion. All three Metal CTests pass.
+The live run (`logs/frame-fence-boot.log`, frame 1717) reaches character creation
+with its complete UI and correctly colored skin; the recursive smaller images
+are gone. This verifies character creation rendering, not gameplay.
