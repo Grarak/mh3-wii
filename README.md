@@ -12,8 +12,8 @@ setup now complete, followed by a scaled display copy and a second Metal GPU
 completion wait. Host-timed sleeps service the original alarm queue, retraces,
 disc completions, and audio DMA. Boot now renders the Nintendo wrist-strap screen through native Metal, verified
 with a frame capture. It creates and reopens the NAND system file, six character-save slots, network
-data, and save banner. Startup now stops at the next untranslated RSO prolog,
-`com_data.rso` at `0x8086907C`. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
+data, and save banner. All five initial RSO prologs now execute as compiled native code. Startup prints
+the media version, then stops on a disc read extending into unextracted padding. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
 channel conversion pass tests; real boot opens SDL audio and executes DMA and
 AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.
