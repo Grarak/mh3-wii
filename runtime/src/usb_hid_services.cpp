@@ -11,3 +11,14 @@ extern "C" void MH3_HIDInitAsync(CpuContext* cpu) {
     PumpIosCompletions(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80528B90, MH3_HIDInitAsync, "MH3_HIDInitAsync");
+
+extern "C" void func_80528D40(CpuContext*);
+// Keyboard teardown has the matching stack-flag wait at 0x8056CB60.
+// Shutdown cancels the outstanding enumeration, then its SDK callback closes
+// the IOS handle and invokes the caller's completion. Deliver that chain before
+// returning to the tight wait; do not fabricate its completion flag.
+extern "C" void MH3_HIDCloseAsync(CpuContext* cpu) {
+    func_80528D40(cpu);
+    PumpIosCompletions(cpu);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80528D40, MH3_HIDCloseAsync, "MH3_HIDCloseAsync");

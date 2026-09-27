@@ -32,3 +32,21 @@ after selecting Begin the Game. It proceeds into save-selection layout code,
 where the next independent boundary is missing translated font target
 `0x80507094`. Gameplay remains unverified. Both native and Metal runtime/audio
 CTest suites pass.
+
+## Keyboard shutdown on the Village transition
+
+The character-to-mode transition also tears down the keyboard. A native stack
+sample (`logs/village-sample.txt`) identifies its tight wait at `0x8056CB60` in
+`0x8056CAF8`. The caller invokes HID shutdown at `0x80528D40` through the SDK
+thunk `0x80527940`; shutdown queues command 7, whose callback closes the IOS
+handle and invokes the game's stack-flag completion.
+
+A wrapper now runs the original shutdown call and pumps the real completion
+chain before returning to that wait, matching the initialization wrapper. No
+guest flags or successful return values are synthesized.
+
+Both native/Metal test suites and the native-discovery regression pass. The
+live run `logs/hid-close-boot.log` passes the keyboard shutdown wait after
+selecting Village. It then reaches a separate executable-write guard at
+`0x808692C2` from `0x8021F40C` during the module transition; gameplay remains
+unverified.
