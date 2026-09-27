@@ -51,6 +51,26 @@
 # This function reads the PAL float 6000.0 at 0x8079D8D4 through r2 - 9868;
 # the published PAL cheat overwrites that unrelated constant.
 80350114 ActorLargeDistanceThresholdCheck
+# Calls the sweep setup, then reads actor +0x364 contact mask and builds
+# per-contact status at +0x369 / the global contact-list table. This wrapper
+# did not run during the observed village path in either native or Dolphin.
+8025ff70 ActorSweepContactListUpdate
+# Reads +868 and the contact-list table when evaluating a directional query.
+802601fc CollisionContactDirectionQuery
+# Checks actor +0x369 and +0x364, then scans the global per-contact table.
+8027d0b4 ActorContactTableFlagQuery
+# Calls ActorContactTableFlagQuery in the broader actor update path.
+80229f30 ActorStateUpdateDispatcher
+# Two actor state-machine handlers dispatch on byte +5; the broader update at
+# 0x80266F94 calls the sweep/contact-list wrapper only when byte +0x582 is set.
+80256a58 ActorStateByte5HandlerA
+80256f04 ActorStateByte5HandlerB
+80266f94 ActorContactUpdateGate
+# Computes a planar direction from two positions, calls the float angle helper
+# and converts its result to a 16-bit heading. 0x80464488 forces that helper's
+# returned angle to single precision.
+80050aa4 PlanarDirectionToHeading16
+80464488 ForceSingleAngleWrapper
 # Calls an inlined one-instruction leaf and returns the original r3 pointer.
 802955a8 SweepCollisionIdentityLeaf
 # A second active ground probe stores a surface ID at actor +1268.

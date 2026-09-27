@@ -48,6 +48,19 @@ unfocused or batch reference runs; Dolphin's video-interface poll otherwise
 gates controller input. Stop a finished named run with
 `./scripts/stop-dolphin-reference.sh reference-1`; the helper checks the stored
 PID and command line, sends TERM, escalates to KILL if needed, and verifies exit.
+For direct guest-code inspection, add `--gdb-port 23457` to the reference
+launcher and run `python3 scripts/dolphin-gdb.py 23457` in another terminal.
+The guest starts paused; type `continue`, use `dolphin-input.py`, then
+`interrupt`, `break ADDRESS`, `regs`, or `read ADDRESS SIZE` as needed. The
+launcher sets Dolphin's `[Interface] DebugModeEnabled = True` along with the
+GDB port: the release binary includes the GDB stub, but its JIT checks guest
+breakpoints only with this setting. A breakpoint at `0x8029513C` triggered on
+village load. At the dock boundary, a breakpoint at `0x80295360` showed the
+land sweep returning `r3 = 1`; at `0x80295534`, the flag writer had `r25 = 0`
+and `r31 = 1`, giving player `+868 = 1`. The player position at offsets
+`+60/+64/+68` was `(2739.26, 467.45, -567.51)` and remained identical after
+holding the stick right another 2.5 seconds. This reference run used the same
+post-Chief NAND fixture and was stopped with the named-run helper.
 
 The executable retains `-O1 -gline-tables-only -ffp-contract=off` for generated
 PPC C++ (`runtime/CMakeLists.txt`). An `-O2` Metal build passed all three CTest
@@ -89,7 +102,36 @@ few carried nonzero contact bits. A candidate branch from `0x802920F0` reaches
 `0x80292A40 -> 0x80293568 -> 0x80293AE0` when it examines land geometry.
 The same gated replay observed 225, 26, and 25 calls along those three edges,
 respectively. At both patch sites, the running game's `r2` was `0x8079FF60`.
-These functions are labeled in `symbols.txt`. To reproduce the call graph,
+A second gated dock replay sampled the original float on every call: it was
+`1.0` (`0x3F800000`) at all 711 sweep setups and 25 normalizer calls. The
+native build has not accidentally zeroed the Gecko code's source constant.
+A focused native contact replay observed 789 candidate returns: 564 were
+`-1`, 202 were `0`, 12 were `2`, and 11 were `1`. The 26 visits to the flag
+writer at `0x80295534` had `r31 = 1` but nonzero `r25` angular offsets; the
+resulting contact bits ranged from bit 11 to bit 28 and never included bit 0.
+The same held-right input took the native hunter from about
+`(470, 179, -379)` to `(4987, 114, -156)` across open water. Dolphin was held
+at `(2739, 467, -568)` on the dock, so the observed flag difference is not yet
+a matched-position math comparison. The code path after a hit calls
+`0x80050AA4` to convert a planar vector into a 16-bit heading, then subtracts
+the actor heading at `+88` to select one of 32 contact bits. The contact-bit
+reader functions at `0x8025FF70`, `0x802601FC`, and `0x8027D0B4` are labeled
+in `symbols.txt`. An expanded native call trace
+(`logs/replays/trace-contact-consumers/calls.csv`) recorded 1,516 calls to
+`0x8027D0B4`, the actor contact-table flag query, but none to `0x8025FF70`
+or `0x802601FC` during movement and subsequent idle. Dolphin's guest
+breakpoint at `0x8025FF70` likewise did not trigger during village load,
+movement, or idle, whereas `0x8029513C` triggered on village load and
+`0x8027D0B4` triggered after village movement. The absent contact-list update
+wrapper is therefore not by itself a native call-graph divergence. The
+`0x8027D0B4` breakpoint entered from `0x80229F30` with `r3` pointing to an
+actor; its assembly checks bytes at actor `+0x369`, the mask at `+0x364`, and
+a global per-contact table. Another actor update at `0x80266F94` calls the
+contact-list wrapper only under its `+0x582` byte gate. A matched-position
+comparison of the sweep's
+contact math remains necessary to explain the missing wall block.
+
+To reproduce the call graph,
 run `python3 scripts/trace_guest_calls.py enable`, configure with
 `-DMH3_ENABLE_GUEST_CALL_TRACE=ON`, build, and set `MH3_CALL_TRACE` to the CSV
 path. Optionally set `MH3_CALL_TRACE_GATE` to a marker path; `--dock-edge`

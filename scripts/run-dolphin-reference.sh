@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 dump_frames=False
 post_chief=False
 pipe_controller=False
+gdb_port=-1
+debug_mode=False
 dolphin_args=()
 run_name=
 while (( $# )); do
@@ -11,6 +13,14 @@ while (( $# )); do
     --dump-frames) dump_frames=True ;;
     --post-chief) post_chief=True ;;
     --pipe-controller) pipe_controller=True ;;
+    --gdb-port)
+      if (( $# < 2 )) || [[ ! $2 =~ ^[0-9]+$ ]] || (( 10#$2 < 1024 || 10#$2 > 65535 )); then
+        echo '--gdb-port requires a TCP port from 1024 to 65535' >&2
+        exit 2
+      fi
+      gdb_port=$2
+      debug_mode=True
+      shift ;;
     --name)
       if (( $# < 2 )) || [[ ! $2 =~ ^[A-Za-z0-9_-]+$ ]]; then
         echo '--name requires letters, digits, underscores or hyphens' >&2
@@ -91,6 +101,10 @@ cat > "$user/GameSettings/RMHP08.ini" <<'EOF'
 WiimoteSource0 = 1
 EOF
 cat > "$user/Config/Dolphin.ini" <<EOF
+[General]
+GDBPort = $gdb_port
+[Interface]
+DebugModeEnabled = $debug_mode
 [Input]
 BackgroundInput = True
 [Wiimote]
