@@ -26,3 +26,24 @@ Both rebuilt runtime test suites pass. The Metal run
 `logs/long-switch-boot.log` passes the former indirect jump and advances to
 2,529 display copies before a separate GX packet-consumption mismatch.
 Gameplay remains unverified.
+
+## Large item switch
+
+After palette uploads were implemented, Village startup reached the item
+dispatch in `0x80229F30`. Its `bctr` at `0x80229FDC` indexes the table at
+`0x805C1D68`, bounded by `cmplwi r5,0x27A`: 635 entries and 251 distinct
+targets. The former 512-entry scan limit left it unresolved. Selector one
+points to the containing function's epilogue at `0x80231000`, which must
+execute with that function's resident registers and stack.
+
+The bounded table limit is now 4,096 entries (16 KiB). Every entry is still
+read and validated before recognition succeeds. Tests cover the real table
+size, the new maximum, exceeding the maximum, and an invalid final entry;
+all 21 switch-detector tests pass. Regeneration emits the missing target as
+a local switch/goto and retains zero unsupported instructions and invalid
+SSA functions.
+
+Both rebuilt runtime suites pass. The live run `logs/large-switch-boot.log`
+passes the former dispatch failure and renders the player, village scenery,
+NPCs, and Village Chief dialogue (frame 2121). Further interaction validation
+is tracked in the project README.
