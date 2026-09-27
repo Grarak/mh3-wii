@@ -46,3 +46,10 @@ diagnostic input skipped the opening movie, opened the title menu with A, and
 changed the highlighted entry with the D-pad. Evidence: `logs/controller-boot.log`
 and its numbered frame captures. Physical host input and gameplay require further
 validation.
+
+A separate Metal-build CTest now attaches an SDL virtual gamepad and exercises
+`ReadHostController()` without the diagnostic-file or sample override. It passes
+face-button/D-pad mapping, stick ranges and Y inversion, analog/digital trigger
+mapping, release, disconnect fallback, and reconnection. It uses SDL's dummy video
+driver and does not require an unlocked desktop. Physical hardware and focused
+keyboard input are still not manually verified.
