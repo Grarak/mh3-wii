@@ -30,9 +30,10 @@ private:
     std::vector<uint8_t> pending;
     std::array<uint32_t, 256> bp{};
     std::array<uint32_t, 256> cp{};
+    std::array<ArrayView, 16> boundArrays{};
     std::array<bool, 8> textureBound{};
     unsigned displayListDepth = 0;
-    uint32_t bpMask = 0xFFFFFF, textureRevision = 0;
+    uint32_t bpMask = 0xFFFFFF, paletteRevision = 0;
     struct PaletteMemory {
         std::array<uint8_t, 1024 * 1024> bytes{};
         std::array<bool, 32768> loadedLines{};
@@ -47,6 +48,6 @@ private:
     struct Attribute { unsigned descriptor = 0, bytes = 0, indices = 1; };
     std::array<Attribute, 12> Attributes(unsigned format) const;
     static std::array<uint8_t, 16> ArrayPacket(unsigned slot, ArrayView view);
-    void BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver) const;
+    void BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver);
     size_t VertexSize(unsigned format) const;
 };

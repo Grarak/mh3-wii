@@ -72,6 +72,7 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    RunVideoTimingSelfTests();
     RunControllerSelfTests(cpu);
     RunRsoOverlaySelfTests(cpu);
     {
@@ -439,6 +440,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         std::array<uint32_t, 12> sizes{};
         uint32_t available = 64 * 1024 * 1024;
         unsigned draws = 0;
+        unsigned arrayPackets = 0;
         auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
             if (address < 0x1000 || address >= 0x1C00 || (address & 255))
                 throw std::runtime_error("Draw array base mismatch");
@@ -446,6 +448,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         };
         auto receive = [&](std::span<const uint8_t> packet) {
             if (packet[0] == 0x50) {
+                ++arrayPackets;
                 const unsigned slot = packet[2] - 0x10;
                 if (slot >= 12) throw std::runtime_error("Unexpected draw array slot");
                 sizes[slot] = (uint32_t(packet[11]) << 24) | (uint32_t(packet[12]) << 16) |
@@ -467,13 +470,17 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         arrays.Write(vertices, receive, resolve);
         if (draws != 1 || sizes[0] != 1212 || sizes[1] != 120 || sizes[2] != 12 || sizes[4] != 48)
             throw std::runtime_error("Per-draw indexed array extents/NBT3 failed");
+        const unsigned firstArrayPackets = arrayPackets;
+        arrays.Write(vertices, receive, resolve);
+        if (draws != 2 || arrayPackets != firstArrayPackets)
+            throw std::runtime_error("Unchanged draw redundantly rebound vertex arrays");
         for (unsigned slot : {3, 5, 6, 7, 8, 9, 10, 11})
             if (sizes[slot]) throw std::runtime_error("Unused draw array was uploaded");
         // A later draw may use less of the same source; don't retain the RAM-region size.
         auto smaller = std::vector<uint8_t>(std::begin(vertices), std::end(vertices));
         smaller[5] = 2;
         arrays.Write(smaller, receive, resolve);
-        if (sizes[0] != 36 || draws != 2) throw std::runtime_error("Draw array extent did not shrink");
+        if (sizes[0] != 36 || draws != 3) throw std::runtime_error("Draw array extent did not shrink");
         cp(0x50, 2 << 11); cp(0x60, 0); cp(0x70, (1 << 9) | (3 << 10)); cp(0xB1, 20);
         const uint8_t nbt[]{0x90, 0, 1, 4};
         arrays.Write(nbt, receive, resolve);
@@ -482,17 +489,18 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         bool rejected = false;
         try { arrays.Write(nbt, receive, resolve); }
         catch (const std::runtime_error&) { rejected = true; }
-        if (!rejected || draws != 3) throw std::runtime_error("Out-of-RAM draw was emitted");
+        if (!rejected || draws != 4) throw std::runtime_error("Out-of-RAM draw was emitted");
     }
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
         GuestGxStream textureStream;
         std::vector<uint8_t> metadata;
+        std::vector<uint8_t> textureBytes(bytes);
         auto textureSink = [&](std::span<const uint8_t> packet) {
             if (packet[0] == 0x50) metadata.assign(packet.begin(), packet.end());
         };
         auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
             if (address != 0x100000) throw std::runtime_error("GX texture address scaling failed");
-            return {0x0123456789ABCDEFULL, bytes};
+            return {reinterpret_cast<uintptr_t>(textureBytes.data()), bytes};
         };
         auto bpWrite = [&](uint8_t reg, uint32_t value) {
             const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
@@ -509,10 +517,21 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             bpWrite(0x94, 0x100000 >> 5);
         } catch (const std::runtime_error&) { passed = false; }
         if (passed != shouldPass) throw std::runtime_error("GX texture footprint validation failed");
-        if (passed && (metadata.size() != 37 || metadata[2] != 0x30 || metadata[4] != 1 ||
-            metadata[11] != 0xEF || metadata[15] != width || metadata[19] != height ||
+        if (passed && (metadata.size() != 37 || metadata[2] != 0x30 ||
+            metadata[15] != width || metadata[19] != height ||
             metadata[23] != format || metadata[28] != mips))
             throw std::runtime_error("GX texture metadata encoding failed");
+        if (passed) {
+            const auto version = std::vector<uint8_t>(metadata.begin() + 33, metadata.end());
+            const uint8_t repeat[]{0x61,0x94,0,0x80,0};
+            textureStream.Write(repeat, textureSink, resolve);
+            if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
+                throw std::runtime_error("Unchanged GX texture lost its cache identity");
+            textureBytes[0] ^= 0xFF;
+            textureStream.Write(repeat, textureSink, resolve);
+            if (std::equal(version.begin(), version.end(), metadata.begin() + 33))
+                throw std::runtime_error("Rewritten GX texture kept a stale cache identity");
+        }
     };
     textureCase(4, 4, 4, false, 32, true);
     textureCase(6, 5, 5, false, 255, false);
@@ -527,6 +546,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     {
         GuestGxStream paletteStream;
         std::array<uint8_t, 512> source{};
+        std::vector<uint8_t> textureBytes(32768);
         const uint8_t paletteList[]{0x61,0x64,0,0x80,0, 0x61,0x65,0,6,0};
         source[0] = 0xF8; source[1] = 0x00;
         uint32_t available = source.size();
@@ -534,7 +554,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         auto receive = [&](std::span<const uint8_t> p) { packets.emplace_back(p.begin(), p.end()); };
         auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
             if (address == 0x100000) return {reinterpret_cast<uintptr_t>(source.data()), available};
-            if (address == 0x200000) return {0x12340000, 32768};
+            if (address == 0x200000) return {reinterpret_cast<uintptr_t>(textureBytes.data()), uint32_t(textureBytes.size())};
             if (address == 0x300000) return {reinterpret_cast<uintptr_t>(paletteList), sizeof(paletteList)};
             throw std::runtime_error("Unexpected TLUT source address");
         };

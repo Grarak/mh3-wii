@@ -10,3 +10,4 @@ void EndVideoRetrace();
 
 struct CpuContext;
 void ServiceVideoRetrace(CpuContext* cpu);
+void RunVideoTimingSelfTests();

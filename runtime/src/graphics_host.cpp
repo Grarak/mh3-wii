@@ -13,6 +13,7 @@
 #include <aurora/event.h>
 #include <dolphin/gx.h>
 #include <chrono>
+#include <ctime>
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
@@ -56,6 +57,21 @@ void FlushHostEfbPokes() {
     efbDirty = false;
 }
 uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0, guestDraws = 0, guestTextureCopies = 0;
+uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
+uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
+struct FrameProfile {
+    using Clock = std::chrono::steady_clock;
+    uint32_t interval = 0;
+    uint64_t workerNs = 0, gpuNs = 0, completionNs = 0;
+    uint64_t minCopyNs = UINT64_MAX, maxCopyNs = 0, measuredCopies = 0;
+    uint64_t lastCopies = 0, lastCommands = 0, lastArrays = 0, lastTextures = 0, lastDraws = 0;
+    uint64_t lastTextureCopies = 0, lastEfbSnapshots = 0, lastEfbPeeks = 0;
+    uint64_t lastTextureCopyNs = 0, lastEfbSnapshotNs = 0;
+    Clock::time_point started = Clock::now();
+    Clock::time_point previousCopy{};
+    std::clock_t cpuStarted = std::clock();
+};
+FrameProfile profile;
 void ShutdownGraphics() {
     if (initialized) {
         if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
@@ -82,6 +98,13 @@ void InitializeGraphics(int argc, char** argv) {
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
     initialized = true;
+    if (const char* interval = std::getenv("MH3_PROFILE_FRAMES")) {
+        const auto value = std::stoul(interval);
+        if (!value || value > UINT32_MAX) throw std::runtime_error("MH3_PROFILE_FRAMES must be a positive 32-bit number");
+        profile.interval = static_cast<uint32_t>(value);
+        profile.started = FrameProfile::Clock::now();
+        profile.cpuStarted = std::clock();
+    }
     std::atexit(ShutdownGraphics);
     if (info.backend != BACKEND_METAL) throw std::runtime_error("Aurora did not select Metal");
     aurora::gx::fifo::init();
@@ -144,6 +167,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         ++guestCopies;
         displayCopyPending = true;
     }, [](const GuestGxStream::TextureCopy& copy) {
+        const auto started = FrameProfile::Clock::now();
         GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
         GXSetTexCopyDst(copy.width, copy.height, static_cast<GXTexFmt>(copy.format), copy.halfScale ? GX_TRUE : GX_FALSE);
         auto* destination = reinterpret_cast<void*>(copy.destination);
@@ -153,6 +177,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         if (!aurora_flush_efb_copy_to_ram(destination))
             throw std::runtime_error("GX texture-copy readback failed");
         ++guestTextureCopies;
+        guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
     });
 }
 
@@ -164,6 +189,7 @@ void ServiceHostGraphicsEvents() {
 
 void CompleteHostGraphics() {
     if (!initialized) return;
+    const auto completionStart = FrameProfile::Clock::now();
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
     if (frameActive && !displayCopyPending) {
@@ -179,6 +205,7 @@ void CompleteHostGraphics() {
         aurora_end_frame(); frameActive = false; displayCopyPending = false;
     }
     aurora_wait_for_frame_worker();
+    const auto afterWorker = FrameProfile::Clock::now();
     // Wait for actual submitted GPU work, not just the renderer worker's CPU
     // submission. Shared state remains valid even if WaitAny times out.
     auto result = std::make_shared<wgpu::QueueWorkDoneStatus>(wgpu::QueueWorkDoneStatus::Error);
@@ -187,6 +214,59 @@ void CompleteHostGraphics() {
     const auto wait = aurora::webgpu::g_instance.WaitAny(future, 10000000000ULL);
     if (wait != wgpu::WaitStatus::Success || *result != wgpu::QueueWorkDoneStatus::Success)
         throw std::runtime_error("GXDrawDone failed while waiting for Metal completion");
+    const auto afterGpu = FrameProfile::Clock::now();
+    if (profile.interval) {
+        auto ns = [](auto end, auto start) { return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); };
+        profile.completionNs += ns(afterGpu, completionStart);
+        profile.workerNs += ns(afterWorker, completionStart);
+        profile.gpuNs += ns(afterGpu, afterWorker);
+        if (guestCopies > profile.measuredCopies) {
+            if (profile.previousCopy != FrameProfile::Clock::time_point{}) {
+                const auto copyNs = uint64_t(ns(afterGpu, profile.previousCopy));
+                profile.minCopyNs = std::min(profile.minCopyNs, copyNs);
+                profile.maxCopyNs = std::max(profile.maxCopyNs, copyNs);
+            }
+            profile.previousCopy = afterGpu;
+            profile.measuredCopies = guestCopies;
+        }
+        const auto frames = guestCopies - profile.lastCopies;
+        if (frames >= profile.interval) {
+            const auto wallMs = ns(afterGpu, profile.started) / 1e6 / frames;
+            const auto cpuMs = double(std::clock() - profile.cpuStarted) * 1000 / CLOCKS_PER_SEC / frames;
+            std::fprintf(stderr,
+                "MH3 profile: %llu display copies; %.2f ms wall/copy, %.2f ms process CPU/copy, "
+                "%.2f ms GX completion/copy (%.2f ms worker, %.2f ms GPU queue), "
+                "%.2f..%.2f ms copy interval, "
+                "%llu GX commands/copy, %llu draws/copy, %llu arrays/copy, %llu textures/copy, "
+                "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy\n",
+                static_cast<unsigned long long>(frames), wallMs, cpuMs, profile.completionNs / 1e6 / frames,
+                profile.workerNs / 1e6 / frames, profile.gpuNs / 1e6 / frames,
+                profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
+                static_cast<unsigned long long>((guestCommands - profile.lastCommands) / frames),
+                static_cast<unsigned long long>((guestDraws - profile.lastDraws) / frames),
+                static_cast<unsigned long long>((guestArrays - profile.lastArrays) / frames),
+                static_cast<unsigned long long>((guestTextures - profile.lastTextures) / frames),
+                static_cast<unsigned long long>((guestTextureCopies - profile.lastTextureCopies) / frames),
+                (guestTextureCopyNs - profile.lastTextureCopyNs) / 1e6 / frames,
+                static_cast<unsigned long long>((guestEfbSnapshots - profile.lastEfbSnapshots) / frames),
+                (guestEfbSnapshotNs - profile.lastEfbSnapshotNs) / 1e6 / frames,
+                static_cast<unsigned long long>((guestEfbPeeks - profile.lastEfbPeeks) / frames));
+            profile.lastCopies = guestCopies;
+            profile.lastCommands = guestCommands;
+            profile.lastArrays = guestArrays;
+            profile.lastTextures = guestTextures;
+            profile.lastDraws = guestDraws;
+            profile.lastTextureCopies = guestTextureCopies;
+            profile.lastEfbSnapshots = guestEfbSnapshots;
+            profile.lastEfbPeeks = guestEfbPeeks;
+            profile.lastTextureCopyNs = guestTextureCopyNs;
+            profile.lastEfbSnapshotNs = guestEfbSnapshotNs;
+            profile.workerNs = profile.gpuNs = profile.completionNs = 0;
+            profile.minCopyNs = UINT64_MAX; profile.maxCopyNs = 0;
+            profile.started = afterGpu;
+            profile.cpuStarted = std::clock();
+        }
+    }
     gpuSynchronized = true;
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
@@ -194,13 +274,17 @@ void CompleteHostGraphics() {
 }
 
 uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
+    ++guestEfbPeeks;
     using namespace aurora::webgpu;
     if (!initialized || !gpuSynchronized || guestStream.PendingBytes())
         throw std::runtime_error("EFB color peek requires a completed GXDrawDone boundary");
-    aurora_wait_for_frame_worker();
     const auto& source = g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved : g_frameBuffer;
     if (!source.texture) throw std::runtime_error("EFB color texture is unavailable");
     if (efbPixels.empty() || efbWidth != source.size.width || efbHeight != source.size.height) {
+        // Thousands of CPU peeks can follow one snapshot. New GX commands
+        // discard efbPixels, so only the first peek needs the worker wait.
+        aurora_wait_for_frame_worker();
+        const auto started = FrameProfile::Clock::now();
         efbWidth = source.size.width; efbHeight = source.size.height;
         efbBgra = source.format == wgpu::TextureFormat::BGRA8Unorm ||
                   source.format == wgpu::TextureFormat::BGRA8UnormSrgb;
@@ -228,6 +312,8 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         const auto* pixels = static_cast<const uint8_t*>(buffer.GetConstMappedRange(0, bytes));
         if (!pixels) throw std::runtime_error("Metal EFB color readback has no mapped data");
         efbPixels.assign(pixels, pixels + bytes);
+        ++guestEfbSnapshots;
+        guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
         buffer.Unmap();
         static unsigned snapshots = 0;
         if (++snapshots <= 3) std::fprintf(stderr, "MH3 EFB color snapshot %u: %ux%u, format %u\n",

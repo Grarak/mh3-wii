@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include <stdexcept>
 
 #ifdef MH3_HAS_AURORA
 void ServiceHostGraphicsEvents();
@@ -15,13 +16,22 @@ void ServiceHostGraphicsEvents();
 namespace {
 using Clock = std::chrono::steady_clock;
 auto nextRetrace = Clock::now();
+Clock::time_point AdvanceRetraceDeadline(Clock::time_point deadline,
+                                         Clock::time_point now, Clock::duration period) {
+    if (now < deadline) return deadline;
+    return deadline + period * ((now - deadline) / period + 1);
+}
 }
 
 void ServiceVideoRetrace(CpuContext* cpu) {
     ServiceHostController(cpu);
     const auto now = Clock::now();
     if (now < nextRetrace) return;
-    nextRetrace = now + std::chrono::nanoseconds(VideoRetracePeriodNs());
+    // Keep the VI phase fixed. The old "now + period" reset inserted a fresh
+    // full retrace delay after every slow CPU frame, worsening both FPS and
+    // pacing; missed retraces should be skipped, not accumulated or restarted.
+    nextRetrace = AdvanceRetraceDeadline(nextRetrace, now,
+        std::chrono::nanoseconds(VideoRetracePeriodNs()));
     const auto saved = *cpu;
     const uint32_t before = Memory::Read32(saved.gpr[13] - 0x379C);
     BeginVideoRetrace();
@@ -40,8 +50,6 @@ void ServiceVideoRetrace(CpuContext* cpu) {
     if (after <= 3) std::fprintf(stderr, "MH3 VI retrace delivered: %u\n", after);
 }
 extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
-    if (nextRetrace <= Clock::now())
-        nextRetrace = Clock::now() + std::chrono::nanoseconds(VideoRetracePeriodNs());
     std::this_thread::sleep_until(nextRetrace);
 #ifdef MH3_HAS_AURORA
     ServiceHostGraphicsEvents();
@@ -52,3 +60,13 @@ extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
     ServiceVideoRetrace(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804E8050, MH3_VIWaitForRetrace, "MH3_VIWaitForRetrace");
+
+void RunVideoTimingSelfTests() {
+    const auto start = Clock::time_point{};
+    const auto period = std::chrono::milliseconds(20);
+    const auto deadline = start + period;
+    if (AdvanceRetraceDeadline(deadline, start + std::chrono::milliseconds(19), period) != deadline ||
+        AdvanceRetraceDeadline(deadline, deadline, period) != start + period * 2 ||
+        AdvanceRetraceDeadline(deadline, start + std::chrono::milliseconds(105), period) != start + period * 6)
+        throw std::runtime_error("VI deadline phase/catch-up regression");
+}
