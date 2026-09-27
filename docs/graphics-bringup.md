@@ -92,5 +92,29 @@ module base `0x808196E0`, section 1 offset `0xF0`, and prolog offset `0x10D4`,
 which exactly match the target. The file has 18 sections and its text section is
 `0x2AC28` bytes. The first module is now statically translated, including its
 constructor table, and executes successfully. See [RSO bring-up](rso-bringup.md).
-The latest stop is locked-cache address `0xE0000000`, reached through
+The subsequent stop was locked-cache address `0xE0000000`, reached through
 `80046CE4 -> 800CF448 -> 800D3330 -> 8007A464 -> 80502CF8 -> 804CCEF0`.
+
+NW4R G3D initialization enables the locked L1 cache through `0x804CCEF0`.
+Its helper at `0x804CCE20` clears 512 cache lines of 32 bytes beginning at
+`0xE0000000`. The runtime now provides that separate 16 KiB region, with checked
+bounds and no ordinary MEM1/MEM2 aliases. This handles the direct loads/stores
+used during initialization; cache DMA and arbitrary BAT remapping are not yet
+implemented. The independent locked-L1 address space is also described in
+[Dolphin's memory map](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/HW/Memmap.h).
+
+The subsequent indirect jump to `0x804C2AE0` is an allocator vtable thunk, not a
+switch case. The table at `0x8079F730` is installed by `0x804C2B20` and contains
+allocation/free tail thunks at `0x804C2AE0` and `0x804C2AF0`. Both are now explicit
+function seeds, since neither has a stack prologue.
+
+PAD startup then queries the four GameCube SI channels. The native SIGetType
+binding at `0x804DF360` reports `SI_ERROR_NO_RESPONSE` (8) and updates the SDK
+cached type at `0x8062A8B8 + 4*channel`. The original SIGetTypeAsync sees a completed
+query and invokes its original callback with interrupts masked. This represents
+absent physical GameCube devices; it does not provide host PAD/WPAD input.
+
+The leaf wireless initialization callback at `0x80479C20` is also now an explicit
+seed, verified in the five-entry callback table at DOL file offset `0x56FDF8`.
+Latest verified boot stop: opening Bluetooth USB device `/dev/usb/oh1/57e/305`
+from `0x804E5250`. The runtime still requires a Bluetooth/WPAD host implementation.

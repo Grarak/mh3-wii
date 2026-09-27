@@ -2,3 +2,9 @@
 # Default thread-switch callback installed in the data section: single blr.
 804d3d40 DefaultThreadSwitchCallback
 804d2870 OSRegisterShutdownFunction
+# Allocator vtable at 0x8079F730, installed by 0x804C2B20.
+804c2ae0 MEMAllocatorAllocThunk
+804c2af0 MEMAllocatorFreeThunk
+# Leaf callback in the five-entry table at DOL file offset 0x56FDF8.
+# Called by 0x8047AA10 during wireless-controller initialization.
+80479c20 WirelessInitCallback

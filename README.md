@@ -6,8 +6,9 @@ initial thread, and arena setup. It passes OS/DVD initialization and C++ constru
 function, passes video-interface initialization, and sends GX initialization
 commands to Aurora Metal. It completes three initial display copies and a Metal GPU completion wait,
 delivers the first VI retrace, and executes the first RSO module’s compiled
-prolog and constructors. Execution then stops during game initialization at an
-unimplemented locked-cache access (`0xE0000000`).
+prolog and constructors. It passes locked-cache and GameCube controller
+initialization, then stops at the unimplemented Bluetooth USB device
+(`/dev/usb/oh1/57e/305`).
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
