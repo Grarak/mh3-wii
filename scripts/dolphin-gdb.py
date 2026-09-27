@@ -8,6 +8,7 @@ Launch a reference run with --gdb-port PORT. The guest starts paused; use
 import argparse
 import select
 import socket
+import struct
 import sys
 import time
 
@@ -64,7 +65,8 @@ def main() -> None:
     remote = Remote(args.port)
     running = False
     print("Connected to Dolphin PPC GDB stub. Commands: continue, interrupt, pc,"
-          " regs, read ADDR SIZE, break ADDR, clear ADDR, step, quit", flush=True)
+          " regs, freg N, read ADDR SIZE, write ADDR HEX, break ADDR,"
+          " clear ADDR, sample ACTOR COUNT, step, quit", flush=True)
     while True:
         ready, _, _ = select.select([sys.stdin, remote.socket], [], [])
         if remote.socket in ready:
@@ -105,15 +107,44 @@ def main() -> None:
                 for i in range(0, 32, 4):
                     print(" ".join(f"r{n:02}={values[n*8:n*8+8]}"
                                    for n in range(i, i + 4)), flush=True)
+            elif command == "freg" and len(parts) == 2:
+                number = int(parts[1], 0)
+                if not 0 <= number < 32:
+                    raise ValueError("FPR number must be 0..31")
+                bits = remote.query(f"p{number + 32:x}")
+                value = struct.unpack(">d", bytes.fromhex(bits))[0]
+                print(f"f{number}={value!r} bits=0x{bits}", flush=True)
             elif command == "read" and len(parts) == 3:
                 address, size = int(parts[1], 0), int(parts[2], 0)
                 if not 1 <= size <= 4096:
                     raise ValueError("SIZE must be 1..4096")
                 print(remote.query(f"m{address:x},{size:x}"), flush=True)
+            elif command == "write" and len(parts) == 3:
+                address = int(parts[1], 0)
+                payload = bytes.fromhex(parts[2])
+                if not 1 <= len(payload) <= 4096:
+                    raise ValueError("HEX must encode 1..4096 bytes")
+                print(remote.query(f"M{address:x},{len(payload):x}:{payload.hex()}"),
+                      flush=True)
             elif command in ("break", "clear") and len(parts) == 2:
                 address = int(parts[1], 0)
                 operation = "Z" if command == "break" else "z"
                 print(remote.query(f"{operation}0,{address:x},4"), flush=True)
+            elif command == "sample" and len(parts) == 3:
+                actor, count = int(parts[1], 0), int(parts[2], 0)
+                if not 1 <= count <= 500:
+                    raise ValueError("COUNT must be 1..500")
+                for index in range(count):
+                    remote.send("c")
+                    stop = remote.receive()
+                    registers = remote.query("g")
+                    position = remote.query(f"m{actor + 60:x},c")
+                    mask = remote.query(f"m{actor + 868:x},4")
+                    x, y, z = struct.unpack(">fff", bytes.fromhex(position))
+                    result = int(registers[3 * 8:4 * 8], 16)
+                    print(f"{index}: stop={stop} r3={result:#x} "
+                          f"xyz=({x:.3f}, {y:.3f}, {z:.3f}) mask={mask}",
+                          flush=True)
             else:
                 print("Unknown command", flush=True)
         except (OSError, ValueError, RuntimeError, EOFError) as error:

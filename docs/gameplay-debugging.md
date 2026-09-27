@@ -222,3 +222,9 @@ OFF; `nm` confirms the collision-check and guest-trace entry points are absent.
 The full translator suite passes 656/658 tests; the two failures both throw
 “Could not find repository root” in upstream `ProjectPathsForTests`, before
 translation (RetroRewind fixture and production-project policy tests).
+
+The reference launcher's experimental `mh3-debug` pipe maps A/B to Dolphin
+save/load slot 1, with `HotkeysRequireFocus=False`. Send with
+`dolphin-input.py --run NAME --debug tap A`. The background hotkey setting
+was added after the last reference run, so save/load through this pipe still
+needs verification; it is not yet a confirmed fast-reproduction workflow.

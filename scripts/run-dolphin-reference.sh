@@ -63,6 +63,13 @@ cp scripts/dolphin-classic.ini "$user/Config/WiimoteNew.ini"
 if [[ $pipe_controller == True ]]; then
   mkdir "$user/Pipes"
   mkfifo "$user/Pipes/mh3"
+  mkfifo "$user/Pipes/mh3-debug"
+  cat > "$user/Config/Hotkeys.ini" <<'EOF'
+[Hotkeys]
+Device = Pipe/0/mh3-debug
+Save State/Save State Slot 1 = `Button A`
+Load State/Load State Slot 1 = `Button B`
+EOF
   cat > "$user/Config/WiimoteNew.ini" <<'EOF'
 [Wiimote1]
 Device = Pipe/0/mh3
@@ -103,6 +110,7 @@ EOF
 cat > "$user/Config/Dolphin.ini" <<EOF
 [General]
 GDBPort = $gdb_port
+HotkeysRequireFocus = False
 [Interface]
 DebugModeEnabled = $debug_mode
 [Input]
@@ -115,6 +123,7 @@ DumpFramesSilent = True
 EOF
 cat > "$user/Config/GFX.ini" <<'EOF'
 [Settings]
+AspectRatio = 2
 DumpFramesAsImages = True
 EOF
 echo "Dolphin user directory and frame dumps: $user" >&2
