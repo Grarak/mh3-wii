@@ -116,5 +116,23 @@ absent physical GameCube devices; it does not provide host PAD/WPAD input.
 
 The leaf wireless initialization callback at `0x80479C20` is also now an explicit
 seed, verified in the five-entry callback table at DOL file offset `0x56FDF8`.
-Latest verified boot stop: opening Bluetooth USB device `/dev/usb/oh1/57e/305`
-from `0x804E5250`. The runtime still requires a Bluetooth/WPAD host implementation.
+The next verified boot stop was opening Bluetooth USB device `/dev/usb/oh1/57e/305`
+from `0x804E5250`.
+
+
+WUD startup is now a native library boundary at `0x804FD450`, following
+WiiCompiled's use of host controller services. It preserves the SDK's startup
+flag and ready status at `0x80761668`, with zero connected remotes. The original
+WPAD initializer still initializes its four channel blocks, callbacks, settings,
+and polling alarm. Raw Bluetooth USB transport is not implemented. Host
+keyboard/gamepad sample delivery and periodic WPAD servicing remain unfinished.
+
+The initializer's sensor-bar GPIO output (bit 8 of `GPIOB_OUT`, physical
+`0x0D0000C0`) is latched across its valid register aliases. Other output devices
+are explicitly rejected. Register identity is documented in
+[Dolphin WII_IPC.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/HW/WII_IPC.cpp).
+Tests cover WUD startup/idempotence and GPIO aliasing/rejection.
+
+Latest verified boot reaches the AI library initialization banner and stops at
+`0xCD006C00` from `0x8046DC00`, called through
+`80046CE4 -> 800EEB44 -> 800E8794`. Audio-interface support is next.

@@ -7,8 +7,9 @@ function, passes video-interface initialization, and sends GX initialization
 commands to Aurora Metal. It completes three initial display copies and a Metal GPU completion wait,
 delivers the first VI retrace, and executes the first RSO module’s compiled
 prolog and constructors. It passes locked-cache and GameCube controller
-initialization, then stops at the unimplemented Bluetooth USB device
-(`/dev/usb/oh1/57e/305`).
+initialization and the original WPAD channel setup, then stops at an
+unimplemented audio-interface register (`0xCD006C00`). The host controller bridge
+is initialized with no connected remote; keyboard/gamepad input is still pending.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling

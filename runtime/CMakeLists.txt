@@ -12,7 +12,7 @@ endif()
 include(../generated/build_shards/shards.cmake)
 add_executable(MH3
   src/main.cpp src/memory.cpp src/os_boot.cpp src/os_devices.cpp src/abi_bridge.cpp
-  src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp
+  src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp
   src/device_tests.cpp src/ios.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
