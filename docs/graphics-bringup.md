@@ -87,7 +87,10 @@ A sample then showed the module loader polling DVDGetCommandBlockStatus
 (`0x804AACC0`); this boundary now pumps queued IOS callbacks before the original
 status query, with nested pumping suppressed.
 
-Latest stop: `hbm_data.rso` prolog at `0x8081A8A4`. The original loader produced
+The next stop was `hbm_data.rso` prolog at `0x8081A8A4`. The original loader produced
 module base `0x808196E0`, section 1 offset `0xF0`, and prolog offset `0x10D4`,
 which exactly match the target. The file has 18 sections and its text section is
-`0x2AC28` bytes. RSO static translation/dispatch is the next required work.
+`0x2AC28` bytes. The first module is now statically translated, including its
+constructor table, and executes successfully. See [RSO bring-up](rso-bringup.md).
+The latest stop is locked-cache address `0xE0000000`, reached through
+`80046CE4 -> 800CF448 -> 800D3330 -> 8007A464 -> 80502CF8 -> 804CCEF0`.

@@ -38,6 +38,18 @@ void WriteCrashArtifacts(std::string_view reason, std::string_view details, cons
 [[noreturn]] void FatalMissingGuestTarget(uint32_t target, CpuContext* cpu) noexcept {
     std::cerr << "Missing translated target 0x" << std::hex << target << std::dec << '\n';
     SystemBridge::DumpCpuState(cpu);
+    // Optional diagnostic input for offline module translation. Never generated
+    // as part of a normal run, and never used as executable host code.
+    if (const char* path = std::getenv("MH3_MISSING_TARGET_MEM1_DUMP")) {
+        try {
+            std::ofstream dump(path, std::ios::binary | std::ios::trunc);
+            dump.write(reinterpret_cast<const char*>(Memory::GetPointer(0x80000000, 0x1800000)), 0x1800000);
+            if (!dump) throw std::runtime_error("write failed");
+            std::cerr << "MEM1 diagnostic snapshot: " << path << '\n';
+        } catch (const std::exception& error) {
+            std::cerr << "Cannot write MEM1 diagnostic snapshot: " << error.what() << '\n';
+        }
+    }
     DumpHostStackTraceForRuntimeHelper();
     std::exit(1);
 }
