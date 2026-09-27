@@ -91,6 +91,43 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     });
     const std::vector<uint8_t> expected{0x50, 0, 0x13, 1, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0, 0, 0x12, 0x34, 0};
     if (delivered != expected) throw std::runtime_error("GX host array command encoding failed");
+    auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
+        GuestGxStream textureStream;
+        std::vector<uint8_t> metadata;
+        auto textureSink = [&](std::span<const uint8_t> packet) {
+            if (packet[0] == 0x50) metadata.assign(packet.begin(), packet.end());
+        };
+        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address != 0x100000) throw std::runtime_error("GX texture address scaling failed");
+            return {0x0123456789ABCDEFULL, bytes};
+        };
+        auto bpWrite = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            textureStream.Write(command, textureSink, resolve);
+        };
+        bool passed = true;
+        try {
+            bpWrite(0x80, mips ? 0xC0 : 0x80);
+            bpWrite(0x88, (format << 20) | ((height - 1) << 10) | (width - 1));
+            // A masked width update must preserve format/height, and its mask
+            // must not leak into the following image-address write.
+            bpWrite(0xFE, 0x3FF);
+            bpWrite(0x88, 0xF00000 | (width - 1));
+            bpWrite(0x94, 0x100000 >> 5);
+        } catch (const std::runtime_error&) { passed = false; }
+        if (passed != shouldPass) throw std::runtime_error("GX texture footprint validation failed");
+        if (passed && (metadata.size() != 37 || metadata[2] != 0x30 || metadata[4] != 1 ||
+            metadata[11] != 0xEF || metadata[15] != width || metadata[19] != height ||
+            metadata[23] != format || metadata[28] != mips))
+            throw std::runtime_error("GX texture metadata encoding failed");
+    };
+    textureCase(4, 4, 4, false, 32, true);
+    textureCase(6, 5, 5, false, 255, false);
+    textureCase(6, 5, 5, false, 256, true);
+    textureCase(14, 9, 9, false, 128, true);
+    textureCase(6, 4, 4, true, 191, false);
+    textureCase(6, 4, 4, true, 192, true);
+    textureCase(8, 4, 4, false, 1024, false);
     MH3_OSGetResetCode(cpu);
     if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
     Memory::Write32(0x8074F740, 1);

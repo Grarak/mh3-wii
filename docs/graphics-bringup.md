@@ -15,9 +15,8 @@ GX initialization establishes these guest MMIO pointers:
 
 The static FIFO object is at `0x807490E0`. Initialization calls `0x804B4C40`
 with this object, base, and size, then `0x804B4DD0` and `0x804B4FB0` with the
-object. These correspond to FIFO base, CPU FIFO, and GP FIFO setup. The host register interface now lets this setup execute. Boot reaches texture
-setup inside GX initialization and stops before forwarding an unconverted
-texture address.
+object. These correspond to FIFO base, CPU FIFO, and GP FIFO setup. The host register interface now lets this setup execute. Boot completes GX initialization and stops on the first display-copy trigger
+(`BP 0x52`) in the game renderer setup.
 
 Preserve MH3's own guest GX state initialization or reconstruct its verified
 layout when replacing these boundaries. WiiCompiled's Mario Kart addresses and
@@ -37,10 +36,21 @@ submission. It does not exercise these guest boundaries or prove game rendering.
 The register masks were checked against
 [Dolphin CommandProcessor.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/CommandProcessor.cpp).
 The bridge intentionally leaves unsupported CP status/metrics and other MMIO
-unmapped. The FIFO command decoder rejects texture pointers, display lists,
+unmapped. The FIFO command decoder rejects TLUT/palette commands, display lists,
 indexed XF loads, draw packets, copy triggers, and token/finish events until
 those paths have validated conversions and completion handling.
 
-The latest native boot consumed 103 guest commands through Aurora, including
-16 converted vertex-array bindings, before the texture-address guard stopped it.
+The latest native boot consumed 298 commands through Aurora, including
+16 converted vertex-array bindings and eight texture bindings, before the
+display-copy guard stopped it.
 This is setup-state verification, not a rendered game frame.
+
+Texture image addresses (BP image3) are converted into Aurora's 0x50/0x0030
+metadata packet. Image dimensions, format, and mip filtering come from shadowed
+BP registers with one-shot write-mask semantics. The resolver validates the
+whole tiled image/mip chain within guest RAM. A new texture revision on binding
+prevents reusing cached data across reloads of the same guest address. Paletted
+formats remain rejected until their TLUT storage and ownership are implemented.
+The next boundary is GXCopyDisp at `0x804B7B80`, called three times by renderer
+setup at `0x8003FE4C`, `0x8003FE58`, and `0x8003FE68`, followed by draw completion
+at `0x804B67E0`.

@@ -2,6 +2,46 @@
 #include <stdexcept>
 #include <array>
 #include <string>
+#include <algorithm>
+
+std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayResolver& resolver) {
+    if (!resolver) throw std::runtime_error("Guest GX texture requires host pointer conversion");
+    const unsigned bank = slot < 4 ? 0x80 : 0xA0;
+    const unsigned index = slot & 3;
+    const auto image = bp[bank + 8 + index];
+    const uint32_t width = (image & 1023) + 1, height = ((image >> 10) & 1023) + 1;
+    const uint32_t format = (image >> 20) & 15;
+    unsigned tileW = 4, tileH = 4, tileBytes = 32;
+    switch (format) {
+    case 0: case 14: tileW = tileH = 8; break; // I4, CMPR
+    case 1: case 2: tileW = 8; break; // I8, IA4
+    case 3: case 4: case 5: break; // IA8, RGB565, RGB5A3
+    case 6: tileBytes = 64; break; // RGBA8
+    default: throw std::runtime_error("Guest GX texture format requires palette/format support: " + std::to_string(format));
+    }
+    const bool mips = ((bp[bank + index] >> 5) & 3) != 0;
+    uint32_t needed = 0, w = width, h = height;
+    do {
+        needed += ((w + tileW - 1) / tileW) * ((h + tileH - 1) / tileH) * tileBytes;
+        if (!mips || (w == 1 && h == 1)) break;
+        w = std::max(1u, w / 2); h = std::max(1u, h / 2);
+    } while (true);
+    const uint32_t guest = bp[bank + 20 + index] << 5;
+    const auto view = resolver(guest);
+    if (view.size < needed) throw std::runtime_error("Guest GX texture exceeds its RAM region");
+    std::array<uint8_t, 37> out{};
+    out[0] = 0x50; out[2] = 0x30; out[3] = slot;
+    for (unsigned i = 0; i < 8; ++i) out[4 + i] = uint64_t(view.address) >> (56 - 8 * i);
+    auto put = [&](unsigned offset, uint32_t value) {
+        for (unsigned i = 0; i < 4; ++i) out[offset + i] = value >> (24 - 8 * i);
+    };
+    put(12, width); put(16, height); put(20, format);
+    // Non-paletted formats have no TLUT; a fresh revision prevents stale data
+    // when the game rewrites a texture at an existing guest address.
+    out[28] = mips;
+    put(29, guest); put(33, ++textureRevision);
+    return out;
+}
 
 void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver) {
     if (bytes.size() > 1024 * 1024 || pending.size() + bytes.size() > 1024 * 1024)
@@ -41,10 +81,29 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
         }
         if (p[0] == 0x61) {
             const auto reg = p[1];
-            if ((reg >= 0x94 && reg <= 0x97) || (reg >= 0xB4 && reg <= 0xB7) || reg == 0x64 || reg == 0x65)
-                throw std::runtime_error("Guest GX texture/TLUT address requires host pointer conversion");
+            const uint32_t value = (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 8) | p[4];
+            if (reg == 0xFE) bpMask = value;
+            else {
+                bp[reg] = (bp[reg] & ~bpMask) | (value & bpMask);
+                bpMask = 0xFFFFFF;
+            }
+            if (reg == 0x64 || reg == 0x65)
+                throw std::runtime_error("Guest GX TLUT address requires host pointer conversion");
+            const unsigned bank = reg >= 0xA0 ? 0xA0 : 0x80;
+            const unsigned group = (reg - bank) & ~3u;
+            if (reg >= bank && reg < bank + 24 && (group == 0 || group == 4 || group == 8 || group == 20)) {
+                const unsigned slot = (reg & 3) + (bank == 0xA0 ? 4 : 0);
+                if (group == 20) textureBound[slot] = true;
+                if (textureBound[slot]) {
+                    const auto metadata = TexturePacket(slot, resolver);
+                    sink(std::span<const uint8_t>(p, length));
+                    sink(metadata);
+                    offset += length;
+                    continue;
+                }
+            }
             if (reg == 0x52 || reg == 0x45 || reg == 0x47 || reg == 0x48)
-                throw std::runtime_error("Guest GX copy/token/finish requires event integration");
+                throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
         }
         sink(std::span<const uint8_t>(p, length));
         offset += length;

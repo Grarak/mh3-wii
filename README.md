@@ -4,7 +4,7 @@
 but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
 initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
 function, passes video-interface initialization, and sends GX initialization
-commands to Aurora Metal. It currently stops on texture-address conversion.
+commands to Aurora Metal. It currently stops on the first display-copy trigger (`BP 0x52`).
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -108,7 +108,7 @@ before unwinding, so routine diagnosis needs no LLDB authorization.
 Boot now passes IPC, STM, NAND, system configuration, DVD initialization and
 C++ constructors. The latest trace enters game main (`0x8003F278`), passes
 the original `VIInit` (`0x804E7B00`), and reaches GX initialization. The Metal build now consumes guest GX setup commands and converts vertex-array
-addresses; its next unsupported boundary is texture-address conversion.
+addresses; it binds eight initial textures and next stops at display-copy integration.
 The DOL constructor/destructor tables are explicitly seeded for static translation,
 including constructor stubs with no ordinary stack prologue.
 IOS synchronous open/close/read/write use a private NAND root at
@@ -196,8 +196,16 @@ logical register, fixing the VI format switch; all nine jump-table tests pass.
 The GX bridge frames fragmented CP/BP/XF commands and forwards complete packets
 in guest byte order. Vertex-array addresses become Aurora host-pointer commands,
 bounded to the containing MEM1/MEM2 region. Both ordinary and 64-bit FIFO writes
-use this path. Texture/TLUT addresses, drawing, display lists, copies, and GPU
-completion events still stop explicitly where their bridges are missing.
+use this path. Non-paletted texture addresses are converted with tiled/mipmap footprint checks.
+Palette/TLUT handling, drawing, display lists, copies, and GPU completion events
+still stop explicitly where their bridges are missing.
 Scoped CP/PE/PI registers preserve the original guest FIFO initialization state;
 this is not a complete hardware model. Tests cover fragmented command framing,
 array conversion, rejection of unconverted pointers, and register aliases/masks.
+
+The latest Metal boot returns from GX initialization, consumes 298 commands,
+converts 16 vertex-array bindings, and binds eight textures. Supported image
+formats are I4/I8/IA4/IA8/RGB565/RGB5A3/RGBA8/CMPR. The bridge preserves masked BP
+register updates and checks every tiled mip level against accessible guest RAM.
+Tests include block rounding, mip-chain bounds, masked writes, metadata byte
+order, and rejection of indexed formats pending palette integration.

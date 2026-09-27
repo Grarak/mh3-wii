@@ -19,11 +19,11 @@ namespace {
 bool initialized = false;
 bool frameActive = false;
 GuestGxStream guestStream;
-uint64_t guestCommands = 0, guestArrays = 0;
+uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0;
 void ShutdownGraphics() {
     if (initialized) {
-        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions\n",
-            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays));
+        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings\n",
+            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures));
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
@@ -65,6 +65,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         if (consumed != packet.size()) throw std::runtime_error("Aurora did not consume the complete GX command");
         ++guestCommands;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
+        if (packet[0] == 0x50 && packet[1] == 0 && packet[2] == 0x30) ++guestTextures;
     }, [](uint32_t address) -> GuestGxStream::ArrayView {
         const uint32_t physical = address & 0x3FFFFFFF;
         uint32_t size;
