@@ -6,9 +6,12 @@
   texture upload and shader/pipeline creation. Compare cold and warm runs
   with Dolphin using the same post-Chief save and 4:3 presentation.
   Reproduce with `scripts/replay_village.py --name NAME --moga-woods`.
-- [ ] Profile CPU/GPU frame time and pacing during movement after the collision
-  fix. Identify hot decompiled functions and rewrite verified hot paths in
-  readable C++ where useful; retain -O1 until measured gains justify changing it.
+- [x] Initial CPU profile and RAM-access optimization after the collision fix:
+  field CPU ~57→42 ms, displayed frame interval ~67→50 ms. See
+  `docs/rendering-performance.md` for measurements and function labels.
+- [ ] Further improve frame pacing/full-speed gameplay. Profile repeated Aurora
+  array/uniform uploads, then the labelled audio filter before a reference-checked
+  readable rewrite. Keep -O1 unless measured gains justify changing it.
 - [ ] Verify village building collisions later (dock boundary regression passes).
 - [x] Verify Dolphin's background savestate/screenshot pipe.
 - [ ] Extend fast state replay to reusable field checkpoints.

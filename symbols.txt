@@ -90,3 +90,15 @@
 80040bfc LoadFieldModuleSet
 80040e4c LoadMapOverlayById
 800405fc LoadRsoImage
+
+# September rendering profile: descriptive observations, not recovered SDK names.
+# Emits FIFO opcode 0x40 + display-list address/size via inline 8009A064.
+8009a064 EmitGxCallDisplayList
+8009a0dc SubmitResolvedDisplayList
+# Sets render state and invokes SubmitResolvedDisplayList.
+80087b34 SetupAndSubmitDisplayList
+# Large render dispatch path; most inclusive samples are inside the host GX bridge.
+80076a58 RenderDisplayListDispatch
+# Three-channel floating-point delay/filter processing in the audio callback chain.
+# Exact effect/SDK identity remains unverified.
+80475880 AudioThreeChannelFilterCallback
