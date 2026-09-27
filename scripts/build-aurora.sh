@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p logs
+python3 scripts/prepare_audio_assets.py
 cmake -S runtime -B build/metal -G Ninja \
   -DMH3_AURORA_ROOT="${AURORA_ROOT:-$PWD/../Wiicompiled/aurora-main}" \
   -DFETCHCONTENT_BASE_DIR="$PWD/build/aurora/_deps" \
