@@ -35,6 +35,8 @@ extern "C" void MH3_IOSIoctlv(CpuContext*);
 extern "C" void MH3_IOSIoctlvAsync(CpuContext*);
 extern "C" void MH3_IOSOpenAsync(CpuContext*);
 void RunSleepSelfTests(CpuContext*);
+extern "C" void PPC_WriteSpr(uint32_t, uint32_t);
+extern "C" uint32_t PPC_ReadSpr(uint32_t);
 
 namespace {
 bool callbackObserved = false;
@@ -132,6 +134,44 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         Memory::Contains(0xE0003FFC, 8) || Memory::Contains(0xE0004000, 1) ||
         Memory::Contains(0x20000000, 4) || Memory::Contains(0xA0000000, 4))
         throw std::runtime_error("Locked-cache mapping/bounds failed");
+    {
+        const auto saved = *cpu;
+        std::array<uint8_t, 4096> pattern;
+        for (size_t i = 0; i < pattern.size(); ++i) pattern[i] = uint8_t(i * 37 + i / 32);
+        std::copy(pattern.begin(), pattern.end(), Memory::GetPointer(0x80020000, pattern.size()));
+        PPC_WriteSpr(922, 0x00020000); // zero length means 128 cache lines
+        Memory::Write8(0xE0001000, 0xFF);
+        PPC_WriteSpr(923, 0xE0001000); // programming without a trigger does not copy
+        if (Memory::Read8(0xE0001000) != 0xFF) throw std::runtime_error("DMA setup changed cache");
+        PPC_WriteSpr(923, 0xE0001012); // trigger RAM -> locked cache
+        if (!std::equal(pattern.begin(), pattern.end(), Memory::GetPointer(0xE0001000, 4096)) ||
+            PPC_ReadSpr(923) != 0xE0001010 || PPC_ReadSpr(922) != 0x00020000)
+            throw std::runtime_error("Locked-cache DMA load/completion failed");
+        // Both length fields matter: 7 lines, to MEM2, with bytes beyond the
+        // destination kept intact. DMA preserves guest byte order.
+        Memory::Write8(0x90020100, 0xEE);
+        PPC_WriteSpr(922, 0x10020021); // aligned address 0x10020020, length upper=1
+        PPC_WriteSpr(923, 0xE000100E); // 7 lines, cache -> RAM
+        if (!std::equal(pattern.begin(), pattern.begin() + 224, Memory::GetPointer(0x90020020, 224)) ||
+            Memory::Read8(0x90020100) != 0xEE || (PPC_ReadSpr(923) & 2))
+            throw std::runtime_error("Locked-cache DMA store/length failed");
+        // Reject the whole request before writing any destination bytes.
+        const auto expectRejected = [&](uint32_t upper, uint32_t lower) {
+            PPC_WriteSpr(922, upper);
+            bool rejected = false;
+            try { PPC_WriteSpr(923, lower); }
+            catch (const std::runtime_error&) { rejected = true; }
+            if (!rejected) throw std::runtime_error("Invalid locked-cache DMA accepted");
+        };
+        expectRejected(0x00020000, 0xE0003FF2); // 4096 bytes past cache end
+        expectRejected(0x017FFFE0, 0xE000101A); // 2 lines past MEM1 end
+        expectRejected(0x0C008000, 0xE0001016); // MMIO is not RAM
+        expectRejected(0x80020000, 0xE0001016); // effective address is not physical
+        PPC_WriteSpr(920, 0x0F000000);
+        if (PPC_ReadSpr(920) & 0x0F000000) throw std::runtime_error("DMA queue count is writable");
+        PPC_WriteSpr(922, 0); PPC_WriteSpr(923, 0);
+        *cpu = saved;
+    }
     if (Memory::Read16(0xCC002002) != 0x0101)
         throw std::runtime_error("VI initial PAL mode failed");
     Memory::Write16(0xCC002048, 0x2828);

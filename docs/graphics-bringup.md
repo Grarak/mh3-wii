@@ -221,3 +221,24 @@ LR `804B26AC`, input `935E1020`, length `4C`, callback `804B2450`. The boot reac
 652 display copies, 1292 draw packets and 648 texture copies. Save-filesystem
 creation and metadata, plus host input and further game initialization, remain
 unfinished.
+
+## Opening movie and locked-cache DMA
+
+SPR 922/923 now implement the transfers issued by MH3's original LCLoad/LCStore
+code. DMAU supplies the physical RAM address and upper length bits; DMAL supplies
+the cache address, lower length bits, direction, and trigger. Zero encoded length
+means 128 32-byte lines. Copies complete synchronously and clear the trigger;
+the queue count is zero. Hardware transfer latency is not modeled.
+
+The bridge validates entire RAM/cache ranges before copying and retains the
+executable-write guard. It supports MEM1/MEM2 and the allocated 16 KiB locked
+cache; MMIO/EFB DMA and other cache ranges still fail explicitly. Register fields
+were checked against [Dolphin's Broadway declarations](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/PowerPC/Gekko.h)
+and the local SDK instructions at `0x804CCF60` and `0x804CCF90`.
+
+Tests cover both directions, split length fields, zero/max length, byte order,
+trigger/completion state, and invalid ranges. Native and Metal runtime/audio tests
+pass. Real startup logs 4096/4096/2048-byte cache-to-MEM2 transfers and renders the
+opening movie's underwater scene at captured frame 1100. Local evidence:
+`logs/lc-dma-boot.log` and `logs/lc-dma-frame-1100.png`. A rendered frame verifies
+video output, not complete movie playback, audio synchronization, or gameplay.
