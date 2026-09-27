@@ -204,3 +204,20 @@ copies. Input and gameplay are still unverified.
 
 To capture a frame, set `MH3_CAPTURE_PATH` to an absolute BMP output path and
 optionally `MH3_CAPTURE_FRAME` (default 30) when launching the Metal build.
+
+
+The following IOS bridge now passes the raw IPC boundary above: `IOSIoctlvAsync`
+at `804BD220` queues results from the existing synchronous handler. FS command
+12 implements directory usage (16 KiB clusters and file/directory counts),
+using descriptor-relative traversal with no symlink following. Missing paths
+return errors; no save data or usage values are fabricated. Tests cover nested
+accounting, asynchronous success/error results, invalid paths and symlink
+isolation, including rejecting repeated leading slashes in file opens.
+Protocol references: [Dolphin FileSystemProxy.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/FS/FileSystemProxy.cpp)
+and [HostBackend/FS.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/FS/HostBackend/FS.cpp).
+
+The next actual boot stop is asynchronous `/dev/fs` command 3 (create directory),
+LR `804B26AC`, input `935E1020`, length `4C`, callback `804B2450`. The boot reaches
+652 display copies, 1292 draw packets and 648 texture copies. Save-filesystem
+creation and metadata, plus host input and further game initialization, remain
+unfinished.

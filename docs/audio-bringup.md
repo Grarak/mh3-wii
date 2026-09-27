@@ -91,5 +91,5 @@ The scaled-copy and timed-wait bridges now pass the initial DMA service boundary
 `logs/alarm-boot.log` confirms SDL device opening at 32 kHz, three logged DMA
 completions with guest callbacks, two retraces, and original OS alarm callbacks.
 The subsequent graphics bridge renders the wrist-strap screen and stops at a
-direct IOS IPC request with LR `0x804BBF60`.
+NAND directory-creation request with LR `0x804B26AC`.
 This verifies startup callback execution, not audible music or gameplay audio.
