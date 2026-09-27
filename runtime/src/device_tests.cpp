@@ -631,6 +631,47 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         std::filesystem::exists(nand / "tmp/mh3-test") || erase("/tmp/mh3-test") != -106)
         throw std::runtime_error("NAND recursive delete/error handling failed");
     cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    fd = open("/dev/usb/hid", 0);
+    const auto hidRequest = [&](uint32_t command, uint32_t outputSize = 0x600) {
+        cpu->gpr[3] = fd; cpu->gpr[4] = command;
+        cpu->gpr[5] = 0; cpu->gpr[6] = 0;
+        cpu->gpr[7] = 0x80002000; cpu->gpr[8] = outputSize;
+        cpu->gpr[9] = 0x804D6320; cpu->gpr[10] = 0xA55A;
+        MH3_IOSIoctlAsync(cpu);
+    };
+    hidRequest(6, 0x20);
+    auto hidCompletion = TakeIosCompletion();
+    if (cpu->gpr[3] || !hidCompletion || hidCompletion->result != 0x40001 || hidCompletion->argument != 0xA55A)
+        throw std::runtime_error("USB HID version completion failed");
+    Memory::Write32(0x80002004, 0x12345678);
+    hidRequest(0, 4);
+    if (int32_t(cpu->gpr[3]) != -4 || TakeIosCompletion()) throw std::runtime_error("USB HID accepted bad enumeration buffer");
+    hidRequest(0);
+    hidCompletion = TakeIosCompletion();
+    if (cpu->gpr[3] || !hidCompletion || hidCompletion->result ||
+        Memory::Read32(0x80002000) != 0xFFFFFFFF || Memory::Read32(0x80002004) != 0x12345678)
+        throw std::runtime_error("USB HID empty enumeration failed");
+    hidRequest(0);
+    if (cpu->gpr[3] || TakeIosCompletion()) throw std::runtime_error("USB HID subscription must remain pending");
+    hidRequest(0);
+    if (int32_t(cpu->gpr[3]) != -8 || TakeIosCompletion()) throw std::runtime_error("USB HID replaced an outstanding subscription");
+    hidRequest(7, 0);
+    const auto hidCancelled = TakeIosCompletion();
+    const auto hidShutdown = TakeIosCompletion();
+    if (cpu->gpr[3] || !hidCancelled || hidCancelled->result != -1 || !hidShutdown || hidShutdown->result)
+        throw std::runtime_error("USB HID shutdown did not cancel the subscription");
+    hidRequest(0);
+    hidCompletion = TakeIosCompletion();
+    if (!hidCompletion || hidCompletion->result) throw std::runtime_error("USB HID did not enumerate after shutdown");
+    hidRequest(0);
+    if (TakeIosCompletion()) throw std::runtime_error("USB HID subscription completed without a change");
+    cpu->gpr[3] = fd; cpu->gpr[4] = 2; cpu->gpr[5] = 0x80002000; cpu->gpr[6] = 32;
+    MH3_IOSIoctl(cpu);
+    if (int32_t(cpu->gpr[3]) != -6) throw std::runtime_error("USB HID accepted a transfer to an absent device");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    hidCompletion = TakeIosCompletion();
+    if (cpu->gpr[3] || !hidCompletion || hidCompletion->result != -1 || TakeIosCompletion())
+        throw std::runtime_error("USB HID close did not release the pending request");
     fd = open("/dev/stm/immediate", 0);
     cpu->gpr[3] = fd; cpu->gpr[4] = 0x5001;
     cpu->gpr[5] = 0x80001400; cpu->gpr[6] = 20;

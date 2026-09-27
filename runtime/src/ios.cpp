@@ -26,6 +26,8 @@ std::map<uint32_t, File> files;
 std::map<uint32_t, std::string> devices;
 struct EventHook { uint32_t fd, output, callback, argument; };
 std::optional<EventHook> eventHook;
+struct HidState { bool changed = true; std::optional<EventHook> hook; };
+std::map<uint32_t, HidState> hidDevices;
 std::deque<IosCompletion> completions;
 std::array<uint8_t, 20> ledSettings{}, dimmingSettings{};
 uint32_t nextHandle = 100;
@@ -300,7 +302,7 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
         ctx->gpr[3] = -6; return;
     }
     if (path == "/dev/stm/immediate" || path == "/dev/stm/eventhook" ||
-        path == "/dev/fs" || path == "/dev/es" || path == "/dev/di") {
+        path == "/dev/fs" || path == "/dev/es" || path == "/dev/di" || path == "/dev/usb/hid") {
         if (path == "/dev/di") (void)Disc();
         if (path == "/dev/fs") {
             const int result = InitializeNand();
@@ -308,6 +310,7 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
         }
         uint32_t handle = nextHandle++;
         devices.emplace(handle, path);
+        if (path == "/dev/usb/hid") hidDevices.emplace(handle, HidState{});
         ctx->gpr[3] = handle;
         return;
     }
@@ -319,6 +322,14 @@ REGISTER_NATIVE_FUNCTION(0x804BC500, MH3_IOSOpen);
 extern "C" void MH3_IOSClose(CpuContext* ctx) {
     if (devices.erase(ctx->gpr[3])) {
         if (eventHook && eventHook->fd == ctx->gpr[3]) eventHook.reset();
+        if (const auto hid = hidDevices.find(ctx->gpr[3]); hid != hidDevices.end()) {
+            if (hid->second.hook) {
+                const auto hook = *hid->second.hook;
+                Memory::Write32(hook.output, 0xFFFFFFFF);
+                completions.push_back({hook.callback, -1, hook.argument});
+            }
+            hidDevices.erase(hid);
+        }
         ctx->gpr[3] = 0;
         return;
     }
@@ -373,8 +384,28 @@ void SeekFile(CpuContext* ctx) {
 extern "C" void MH3_IOSIoctl(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
     auto it = devices.find(ctx->gpr[3]);
+    if (it != devices.end() && it->second == "/dev/usb/hid" && ctx->gpr[4] == 0) {
+        // HID v4 GETDEVICECHANGE: enumerate once, then retain the subscription
+        // until a change or shutdown. There are no Wii USB HID peripherals;
+        // keyboard/gamepad input is supplied separately through WPAD.
+        if (!ctx->gpr[7] || ctx->gpr[8] != 0x600 ||
+            !Memory::Contains(ctx->gpr[7], 0x600) || !ctx->gpr[9]) {
+            ctx->gpr[3] = -4; return;
+        }
+        auto& state = hidDevices.at(ctx->gpr[3]);
+        if (state.hook) { ctx->gpr[3] = -8; return; }
+        if (state.changed) {
+            Memory::Write32(ctx->gpr[7], 0xFFFFFFFF); // end of device list
+            completions.push_back({ctx->gpr[9], 0, ctx->gpr[10]});
+            state.changed = false;
+        } else {
+            state.hook = EventHook{ctx->gpr[3], ctx->gpr[7], ctx->gpr[9], ctx->gpr[10]};
+        }
+        ctx->gpr[3] = 0; return;
+    }
     if (files.contains(ctx->gpr[3]) || (it != devices.end() &&
-        (it->second == "/dev/di" || it->second == "/dev/stm/immediate" || it->second == "/dev/fs"))) {
+        (it->second == "/dev/di" || it->second == "/dev/stm/immediate" || it->second == "/dev/fs" ||
+         it->second == "/dev/usb/hid"))) {
         const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
         if (!callback) { ctx->gpr[3] = -4; return; }
         MH3_IOSIoctl(ctx);
@@ -414,6 +445,29 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
     const auto device = devices.find(ctx->gpr[3]);
     if (device == devices.end()) { ctx->gpr[3] = -4; return; }
     const uint32_t command = ctx->gpr[4];
+    if (device->second == "/dev/usb/hid") {
+        // IOS55 HID v4 protocol: Dolphin Core/IOS/USB/USB_HID/HIDv4.cpp
+        // and RMHP08 HID initialization at 0x80528AF0.
+        if (command == 6) { ctx->gpr[3] = 0x40001; return; }
+        if (command == 1) { ctx->gpr[3] = 0; return; } // SET_SUSPEND is an IOS no-op
+        if (command == 7) {
+            auto& state = hidDevices.at(ctx->gpr[3]);
+            if (state.hook) {
+                const auto hook = *state.hook;
+                Memory::Write32(hook.output, 0xFFFFFFFF);
+                completions.push_back({hook.callback, -1, hook.argument});
+                state.hook.reset(); state.changed = true;
+            }
+            ctx->gpr[3] = 0; return;
+        }
+        if ((command >= 2 && command <= 5) || command == 8) {
+            const uint32_t expected = command == 8 ? 8 : 32;
+            ctx->gpr[3] = !ctx->gpr[5] || ctx->gpr[6] != expected ||
+                !Memory::Contains(ctx->gpr[5], expected) ? -4 : -6;
+            return; // No attached device matches any IOS ID.
+        }
+        throw std::runtime_error("USB HID ioctl needs a host implementation: " + std::to_string(command));
+    }
     if (device->second == "/dev/fs") {
         const uint32_t input = ctx->gpr[5], inputSize = ctx->gpr[6], output = ctx->gpr[7], outputSize = ctx->gpr[8];
         if (command == 7) {
