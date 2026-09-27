@@ -2,6 +2,7 @@
 #include "generated/RuntimeConfig.h"
 #include "disc_image.h"
 #include "audio_dma.h"
+#include "village_boot.h"
 #include <chrono>
 #include <thread>
 #include <fstream>
@@ -125,6 +126,8 @@ int main(int argc, char** argv) {
             RunAudioSelfTests(&cpu);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
+        else if (argc != 1) throw std::runtime_error("Unknown option; use --village for automatic File 1 / character 1 startup");
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
         // The apploader normally installs the FST in reserved high MEM1.

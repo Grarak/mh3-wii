@@ -1,8 +1,19 @@
 # Monster Hunter Tri static recompilation for macOS
 
-**Work in progress: the native ARM64 executable builds, plays the opening movie,
-and accepts input on the title menu, but gameplay is not verified yet.** Aurora
-renders through native Metal; MoltenVK is not required.
+**The native ARM64 executable runs the village, NPC dialogue, and player movement.**
+It uses static PowerPC-to-C++ recompilation and Aurora's native Metal backend;
+MoltenVK is not required. This is an experimental port, with full-game coverage
+and quest progression still unverified.
+
+Run the built game with `./scripts/run.sh`. Keyboard controls include Space for
+A, Left Shift for B, WASD for movement, arrow keys for the D-pad, and Enter for
+Plus. See [controls](docs/controller-bringup.md) for the complete mapping.
+
+To enter Village without navigating menus, run `./scripts/run.sh --village`.
+This automatically selects File 1's first character through normal boot and
+loading. It requires an existing valid save and restores normal controls when
+the village module loads. A controller button or stick movement cancels the
+shortcut. See [Village startup](docs/village-startup.md).
 
 Verified boot behavior includes OS/IOS55 and DVD initialization, five statically
 translated RSO modules, the Nintendo wrist-strap screen, the Capcom logo, and THP
@@ -16,8 +27,13 @@ six save slots. File selection and the main menu work. Selecting New Game now
 completes its CPU framebuffer read/modify/write loop, then reaches
 the animated character scene. Display lists, indexed matrix loads, and bounded
 vertex uploads execute. Separating intermediate GPU fences from display presentation fixes the repeated
-images and restores the character-creation UI and skin rendering. Gameplay is
-not yet verified.
+images and restores the character-creation UI and skin rendering. A saved
+character reopens successfully. Selecting Village now unloads the menu modules,
+activates the statically compiled village overlay, and renders the player,
+scenery, NPCs, and the Village Chief's introductory dialogue. Palette uploads,
+staging-capacity submissions, and the large item switch execute on this path.
+The introductory conversation advances and closes; left-stick movement moves
+the character and updates the camera in the village.
 See [framebuffer support](docs/efb-color-bringup.md). See [controls](docs/controller-bringup.md),
 [HID startup](docs/usb-hid-bringup.md), and [function discovery](docs/function-discovery.md).
 The SDL gamepad source passes a virtual-device mapping/hotplug test; live game
@@ -194,7 +210,7 @@ and standard-header visibility without changing the sibling checkout.
 
 `build/metal/MH3 --graphics-check` initializes native Metal, opens a 640×480
 window, submits 30 frames, and exits. This checks the host renderer path only;
-the guest GX bridge is partial and actual game frames are still incomplete. Renderer caches
+the guest GX bridge remains partial. Renderer caches
 are kept under `saves/graphics`. On this Apple M2 Max, the check selected Metal,
 created a BGRA8Unorm presentation surface, submitted all 30 frames, and exited
 successfully. The Aurora-linked executable also passes the runtime self-test.

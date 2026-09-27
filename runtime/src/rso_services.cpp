@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "village_boot.h"
 #include "generated/rso_binding.h"
 #include "generated/rso_overlays/map_village.h"
 #include <iostream>
@@ -59,6 +60,7 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base,
     if (!profile) throw std::runtime_error("RSO binding has no lifetime profile");
     RecompMod::RegisterExecutableRange(text, text + size, name);
     profile->active = true;
+    if (std::string_view(name) == "map_village.rso") FinishVillageBoot();
     std::cerr << "MH3 RSO: verified " << name << " static binding\n";
 }
 

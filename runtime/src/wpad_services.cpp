@@ -1,5 +1,6 @@
 #include "abi_bridge.h"
 #include "controller_host.h"
+#include "village_boot.h"
 #include "ios_host.h"
 #include <array>
 #include <chrono>
@@ -72,7 +73,7 @@ void CompleteController(uint32_t callback, uint32_t channel, int32_t result) {
 
 extern "C" void MH3_WPADProbe(CpuContext* cpu) {
     const auto channel = cpu->gpr[3];
-    const auto sample = ReadHostController();
+    const auto sample = ReadGameController();
     const auto status = ControllerStatus(channel, sample);
     if (cpu->gpr[4] && channel < 4) Memory::Write32(cpu->gpr[4], status ? 0xFD : 2);
     cpu->gpr[3] = status;
@@ -81,7 +82,7 @@ REGISTER_NATIVE_FUNCTION(0x804EF040, MH3_WPADProbe);
 
 extern "C" void MH3_WPADSetDataFormat(CpuContext* cpu) {
     const auto channel = cpu->gpr[3], format = cpu->gpr[4];
-    auto status = ControllerStatus(channel, ReadHostController());
+    auto status = ControllerStatus(channel, ReadGameController());
     const auto block = ControlBlock(channel);
     if (!status && !block) status = -2;
     if (!status && !(format <= 2 || (format >= 6 && format <= 8))) status = -4;
@@ -96,7 +97,7 @@ REGISTER_NATIVE_FUNCTION(0x804EF2A0, MH3_WPADSetDataFormat);
 
 extern "C" void MH3_WPADRead(CpuContext* cpu) {
     const auto channel = cpu->gpr[3];
-    const auto sample = ReadHostController();
+    const auto sample = ReadGameController();
     const auto status = ControllerStatus(channel, sample);
     const auto block = ControlBlock(channel);
     const auto size = status || !block ? 0x2Au : ReportSize(Memory::Read32(block + 0x8B8));
@@ -106,7 +107,7 @@ REGISTER_NATIVE_FUNCTION(0x804EF9D0, MH3_WPADRead);
 
 extern "C" void MH3_WPADGetInfoAsync(CpuContext* cpu) {
     const auto channel = cpu->gpr[3], output = cpu->gpr[4], callback = cpu->gpr[5];
-    auto status = ControllerStatus(channel, ReadHostController());
+    auto status = ControllerStatus(channel, ReadGameController());
     if (!status && !output) status = -4;
     if (!status) {
         for (uint32_t offset = 0; offset < 0x18; offset += 4) Memory::Write32(output + offset, 0);
@@ -123,7 +124,7 @@ REGISTER_NATIVE_FUNCTION(0x804EF3C0, MH3_WPADGetInfoAsync);
 // enabling hardware that the host bridge does not supply returns invalid.
 extern "C" void MH3_WPADControlDpd(CpuContext* cpu) {
     const auto channel = cpu->gpr[3];
-    auto status = ControllerStatus(channel, ReadHostController());
+    auto status = ControllerStatus(channel, ReadGameController());
     if (!status && cpu->gpr[4]) status = -4;
     CompleteController(cpu->gpr[5], channel, status); cpu->gpr[3] = status;
 }
@@ -141,7 +142,7 @@ void ServiceHostController(CpuContext* cpu, bool force) {
     next = now + std::chrono::milliseconds(5);
     const auto block = ControlBlock(0);
     if (!block) return;
-    const auto sample = ReadHostController();
+    const auto sample = ReadGameController();
     if (sample.connected != wasConnected) {
         CompleteController(Memory::Read32(block + 0x8A4), 0, sample.connected ? 0 : -1);
         if (sample.connected) CompleteController(Memory::Read32(block + 0x8A0), 0, 2);
