@@ -64,7 +64,8 @@ internal static class JumpTableDetector
 
         var entriesAreRelative = false;
         if (!TryResolveLisAddiConstant(ordered, loadIndex, baseReg.Name, out var tableBase) &&
-            !TryResolvePcRelativeLoadedConstant(ordered, loadIndex, baseReg.Name, image, out tableBase))
+            !TryResolvePcRelativeLoadedConstant(ordered, loadIndex, baseReg.Name, image, out tableBase) &&
+            !TryResolveLongLivedTableBase(ordered, indexByAddress, loadIndex, baseReg.Name, functionStart, out tableBase))
         {
             return false;
         }
@@ -221,6 +222,94 @@ internal static class JumpTableDetector
 
         value = 0;
         return false;
+    }
+
+    private static bool TryResolveLongLivedTableBase(
+        IReadOnlyList<PpcInstruction> ordered, IReadOnlyDictionary<uint, int> indexByAddress,
+        int loadIndex, string register, uint functionStart, out uint value)
+    {
+        value = 0;
+        // An invariant table-page register can be initialized well before the
+        // bounded local switch pattern (for example outside a rendering loop).
+        // Only extend the search for a nonvolatile GPR, and prove its definition
+        // along the decoded control-flow paths instead of guessing an address.
+        for (var addIndex = loadIndex - 1; addIndex >= 0 && loadIndex - addIndex <= 6; --addIndex)
+        {
+            var add = ordered[addIndex];
+            if (!WritesGpr(add, register)) continue;
+            if (add.Mnemonic != "addi" || add.Operands.Count != 3 ||
+                add.Operands[1] is not PpcRegisterOperand source ||
+                add.Operands[2] is not PpcImmediateOperand low ||
+                source.Name.Length < 2 || !int.TryParse(source.Name.AsSpan(1), out var number) ||
+                number < 14 || number > 31) return false;
+            for (var definition = addIndex - 1; definition >= 0; --definition)
+            {
+                var high = ordered[definition];
+                if (high.Mnemonic != "lis" || high.Operands.Count != 2 ||
+                    high.Operands[0] is not PpcRegisterOperand dest || !RegistersEqual(dest.Name, source.Name) ||
+                    high.Operands[1] is not PpcImmediateOperand immediate) continue;
+                if (!DefinitionReachesEveryPath(ordered, indexByAddress, functionStart,
+                        high.Address, add.Address, source.Name)) return false;
+                value = unchecked((uint)((immediate.Value << 16) + (short)low.Value));
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    private static bool DefinitionReachesEveryPath(
+        IReadOnlyList<PpcInstruction> ordered, IReadOnlyDictionary<uint, int> indexByAddress,
+        uint start, uint definition, uint use, string register)
+    {
+        var pending = new Queue<(uint Address, bool Defined)>();
+        var visited = new HashSet<(uint Address, bool Defined)>();
+        pending.Enqueue((start, false));
+        var reached = false;
+        while (pending.TryDequeue(out var state))
+        {
+            if (!visited.Add(state) || !indexByAddress.TryGetValue(state.Address, out var index)) continue;
+            var ins = ordered[index];
+            if (ins.Address == use)
+            {
+                if (!state.Defined) return false;
+                reached = true;
+            }
+            var defined = ins.Address == definition || (state.Defined && !WritesGpr(ins, register));
+            if (!ins.IsCall)
+                foreach (var target in ins.BranchTargets) pending.Enqueue((target, defined));
+            if (ins.IsCall || (!ins.IsReturn && ins.Mnemonic != "bctr" &&
+                              (ins.BranchTargets.Count == 0 || ins.IsConditionalBranch)))
+                pending.Enqueue((ins.EndAddress, defined));
+        }
+        return reached;
+    }
+
+    private static bool WritesGpr(PpcInstruction ins, string register)
+    {
+        // Calls preserve r14-r31 under the PPC ABI. This helper is used for
+        // nonvolatile dataflow, and for the short addi-to-lwzx definition chain.
+        if (ins.IsCall) return register is "r0" or "r3" or "r4" or "r5" or "r6" or
+            "r7" or "r8" or "r9" or "r10" or "r11" or "r12";
+        if (ins.Mnemonic is "lswi" or "lswx" or "lscbx") return true;
+        if (ins.Mnemonic.EndsWith("u", StringComparison.Ordinal) ||
+            ins.Mnemonic.EndsWith("ux", StringComparison.Ordinal))
+        {
+            if (ins.Operands.Count > 1 && ins.Operands[1] is PpcDisplacementOperand displacement &&
+                RegistersEqual(displacement.BaseRegister, register)) return true;
+            if (ins.Operands.Count > 2 && ins.Operands[1] is PpcRegisterOperand indexedBase &&
+                RegistersEqual(indexedBase.Name, register)) return true;
+        }
+        if (ins.Mnemonic == "lmw" && ins.Operands.Count > 0 && ins.Operands[0] is PpcRegisterOperand first &&
+            int.TryParse(first.Name.AsSpan(1), out var firstNumber) &&
+            int.TryParse(register.AsSpan(1), out var number) && number >= firstNumber) return true;
+        if (ins.Mnemonic.StartsWith("st", StringComparison.Ordinal) ||
+            ins.Mnemonic.StartsWith("cmp", StringComparison.Ordinal) ||
+            ins.Mnemonic.StartsWith("mt", StringComparison.Ordinal) ||
+            ins.Mnemonic.StartsWith("dc", StringComparison.Ordinal) ||
+            ins.Mnemonic.StartsWith("ic", StringComparison.Ordinal)) return false;
+        return ins.Operands.Count > 0 && ins.Operands[0] is PpcRegisterOperand destination &&
+            RegistersEqual(destination.Name, register);
     }
 
     private static bool TryResolvePcRelativeLoadedConstant(
