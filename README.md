@@ -9,9 +9,11 @@ delivers the first VI retrace, and executes the first RSO module’s compiled
 prolog and constructors. It passes locked-cache and GameCube controller
 initialization and the original WPAD channel setup. AI/AX and DMA
 setup now complete, followed by a scaled display copy and a second Metal GPU
-completion wait. Startup then stalls before the next retrace callback. Native PCM mixing, DMA timing, and host channel conversion
-pass tests; a separate SDL playback-device check passes. In-game audio callback
-execution is not yet verified. The host controller bridge
+completion wait. Host-timed sleeps service the original alarm queue, retraces,
+disc completions, and audio DMA. Boot now reaches its first GX primitive packet,
+which still requires vertex decoding. Native PCM mixing, DMA timing, and host
+channel conversion pass tests; real boot opens SDL audio and executes DMA and
+AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch

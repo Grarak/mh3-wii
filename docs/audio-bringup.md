@@ -75,7 +75,7 @@ joins the mixer, queues PCM, invokes the guest DMA callback with interrupts
 masked, then services AX resume callbacks. A reentrancy guard and full CPU-state
 restoration protect guest execution.
 
-Service points currently are VIWaitForRetrace and AIGetDMABytesLeft. General
+Service points currently are VIWaitForRetrace, OSSleepTicks, and AIGetDMABytesLeft. General
 thread scheduling and audio servicing during other long waits remain incomplete.
 The SDL output converts big-endian Wii R/L frames to host L/R frames, accepts
 32/48 kHz, and bounds queued latency at 250 ms with an explicit drop diagnostic.
@@ -87,7 +87,8 @@ stereo ramp. `build/metal/MH3 --audio-output-check` passed against the actual
 macOS SDL output device with 100 ms of silence. This proves device opening and
 queue submission, not audible game output.
 
-Latest boot passes DMA setup, returns to graphics initialization, and stops on
-`GX scaled display copy requires line-count conversion`, with LR `0x8003F460`.
-It stops before a DMA completion service point, so callback execution during
-gameplay is still unverified.
+The scaled-copy and timed-wait bridges now pass the initial DMA service boundary.
+`logs/alarm-boot.log` confirms SDL device opening at 32 kHz, three logged DMA
+completions with guest callbacks, two retraces, and original OS alarm callbacks.
+The next stop is the first GX primitive packet (`0x80`), with LR `0x804B6F2C`.
+This verifies startup callback execution, not audible music or gameplay audio.

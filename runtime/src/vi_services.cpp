@@ -2,6 +2,7 @@
 #include "video_interface.h"
 #include "ios_host.h"
 #include "audio_dma.h"
+#include "os_alarm.h"
 #include <chrono>
 #include <thread>
 #include <cstdio>
@@ -10,19 +11,15 @@
 void ServiceHostGraphicsEvents();
 #endif
 
-extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
-    using Clock = std::chrono::steady_clock;
-    static auto next = Clock::now();
-    const auto period = std::chrono::nanoseconds(VideoRetracePeriodNs());
+namespace {
+using Clock = std::chrono::steady_clock;
+auto nextRetrace = Clock::now();
+}
+
+void ServiceVideoRetrace(CpuContext* cpu) {
     const auto now = Clock::now();
-    next += period;
-    if (next < now) next = now + period;
-    std::this_thread::sleep_until(next);
-#ifdef MH3_HAS_AURORA
-    ServiceHostGraphicsEvents();
-#endif
-    PumpIosCompletions(cpu);
-    ServiceAudioDma(cpu);
+    if (now < nextRetrace) return;
+    nextRetrace = now + std::chrono::nanoseconds(VideoRetracePeriodNs());
     const auto saved = *cpu;
     const uint32_t before = Memory::Read32(saved.gpr[13] - 0x379C);
     BeginVideoRetrace();
@@ -39,5 +36,17 @@ extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
     const uint32_t after = Memory::Read32(saved.gpr[13] - 0x379C);
     if (after != before + 1) throw std::runtime_error("VI handler did not deliver a retrace");
     if (after <= 3) std::fprintf(stderr, "MH3 VI retrace delivered: %u\n", after);
+}
+extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
+    if (nextRetrace <= Clock::now())
+        nextRetrace = Clock::now() + std::chrono::nanoseconds(VideoRetracePeriodNs());
+    std::this_thread::sleep_until(nextRetrace);
+#ifdef MH3_HAS_AURORA
+    ServiceHostGraphicsEvents();
+#endif
+    PumpIosCompletions(cpu);
+    ServiceAudioDma(cpu);
+    ServiceOsAlarms(cpu);
+    ServiceVideoRetrace(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804E8050, MH3_VIWaitForRetrace, "MH3_VIWaitForRetrace");

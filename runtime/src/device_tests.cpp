@@ -4,6 +4,7 @@
 #include "audio_interface.h"
 #include "gx_host.h"
 #include "gx_stream.h"
+#include "os_alarm.h"
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -29,10 +30,23 @@ extern "C" void MH3_IOSWrite(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext*);
 extern "C" void MH3_IOSIoctlv(CpuContext*);
 extern "C" void MH3_IOSOpenAsync(CpuContext*);
+void RunSleepSelfTests(CpuContext*);
 
 namespace {
 bool callbackObserved = false;
 unsigned callbackDepth = 0, maxCallbackDepth = 0, callbackCount = 0;
+unsigned alarmCallbacks = 0;
+bool failAlarm = false;
+void TestAlarmCallback(CpuContext* cpu) {
+    if (cpu->gpr[3] != 0x80003000 || cpu->gpr[4] != 0x80004000 ||
+        (cpu->msr & 0x8000) || Memory::Read32(cpu->gpr[13] - 14992) != 1 ||
+        Memory::Read32(0x800000D4) == 0x80004000)
+        throw std::runtime_error("Alarm callback context incorrect");
+    ++alarmCallbacks;
+    ServiceOsAlarms(cpu); // no recursive delivery
+    cpu->gpr[14] = 0;
+    if (failAlarm) throw std::runtime_error("test alarm exception");
+}
 void TestIosCallback(CpuContext* cpu) {
     if (static_cast<int32_t>(cpu->gpr[3]) != -106 || cpu->gpr[4] != 0x12345678)
         throw std::runtime_error("IOS callback arguments were not delivered");
@@ -428,6 +442,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     AbiTrampoline<decltype(TestIosCallback)> testCallback(
         0x81700000, "IOS callback test", TestIosCallback, FunctionKind::Native,
         false, 0, 0, 0, TestIosCallback);
+    AbiTrampoline<decltype(TestAlarmCallback)> testAlarm(
+        0x81700010, "OS alarm test", TestAlarmCallback, FunctionKind::Native,
+        false, 0, 0, 0, TestAlarmCallback);
     TranslatedFunctionRegistry::Finalize();
     for (unsigned i = 0; i < 2; ++i) {
         cpu->gpr[3] = 0x80001200; cpu->gpr[4] = 1;
@@ -438,4 +455,49 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     PumpIosCompletions(cpu);
     if (!callbackObserved || callbackCount != 2 || maxCallbackDepth != 1 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678 || TakeIosCompletion())
         throw std::runtime_error("IOS callback CPU-state preservation failed");
+    RunSleepSelfTests(cpu);
+    const auto alarmSaved = *cpu;
+    cpu->gpr[1] = 0x817FF000;
+    cpu->msr |= 0x8000;
+    Memory::Write32(0x800000D4, 0x80004000);
+    Memory::Write32(0x800000C0, 0x4000);
+    Memory::Write32(cpu->gpr[13] - 14992, 0);
+    const auto queue = cpu->gpr[13] - 0x3B10;
+    auto queueAlarm = [&](uint64_t period) {
+        for (uint32_t i = 0; i < 0x30; i += 4) Memory::Write32(0x80003000 + i, 0);
+        Memory::Write32(queue, 0x80003000);
+        Memory::Write32(queue + 4, 0x80003000);
+        Memory::Write32(0x80003000, 0x81700010);
+        Memory::Write64(0x80003018, period);
+    };
+    queueAlarm(0);
+    ServiceOsAlarms(cpu);
+    if (alarmCallbacks != 1 || Memory::Read32(queue) || Memory::Read32(queue + 4) ||
+        Memory::Read32(0x80003000) || cpu->gpr[14] != 0x1234 || !(cpu->msr & 0x8000) ||
+        Memory::Read32(0x800000D4) != 0x80004000 || Memory::Read32(0x800000C0) != 0x4000 ||
+        Memory::Read32(cpu->gpr[13] - 14992))
+        throw std::runtime_error("One-shot alarm dequeue/context restoration failed");
+    queueAlarm(60'750'000); // one second; InsertAlarm must skip expired periods
+    ServiceOsAlarms(cpu);
+    if (alarmCallbacks != 2 || Memory::Read32(queue) != 0x80003000 ||
+        Memory::Read32(0x80003000) != 0x81700010 || !Memory::Read64(0x80003008))
+        throw std::runtime_error("Periodic alarm was not reinserted");
+    ServiceOsAlarms(cpu);
+    if (alarmCallbacks != 2) throw std::runtime_error("Periodic alarm fired before its next deadline");
+    cpu->gpr[3] = 0x80003000;
+    InvokeIndirectCpu(0x804CBE80, cpu); // original OSCancelAlarm remains interoperable
+    if (Memory::Read32(queue) || Memory::Read32(queue + 4) || Memory::Read32(0x80003000))
+        throw std::runtime_error("Original alarm cancellation failed");
+    queueAlarm(0);
+    failAlarm = true;
+    bool alarmRejected = false;
+    try { ServiceOsAlarms(cpu); } catch (const std::runtime_error&) { alarmRejected = true; }
+    failAlarm = false;
+    if (!alarmRejected || Memory::Read32(0x800000D4) != 0x80004000 ||
+        Memory::Read32(cpu->gpr[13] - 14992))
+        throw std::runtime_error("Alarm exception context restoration failed");
+    queueAlarm(0);
+    ServiceOsAlarms(cpu);
+    if (alarmCallbacks != 4) throw std::runtime_error("Alarm service remained locked after exception");
+    *cpu = alarmSaved;
 }

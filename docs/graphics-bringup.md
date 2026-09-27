@@ -152,3 +152,24 @@ then stalls before another retrace or audio completion callback.
 The process sample locates the stall in the original scheduler:
 `800401A8 -> 804D5320 -> 804D4F20 -> 804D4360` (the last function spins).
 This is the next thread/event integration boundary, not a Metal queue wait.
+
+
+The scheduler stall above originates in `OSSleepTicks` (`804D5320`). A native
+host-timed wait now services IOS completions, audio, alarms and retraces at
+roughly 1 ms intervals. It preserves CPU state and explicitly rejects runnable
+threads requiring a fiber switch. This is not yet a general thread scheduler.
+
+In PAL startup MH3 uses its periodic OS alarm (`8003F590`) for the 60 Hz frame
+counter, rather than VI alone. Host decrementer delivery now consumes the
+original SDK alarm queue at r13-3B10, preserving the original setters,
+cancellation and periodic InsertAlarm routine (`804CBB30`). Callback delivery
+uses a temporary guest context, masks interrupts, disables scheduling during
+the callback, and restores state even when a callback fails. A reentrancy guard
+and bounded queue draining prevent recursive servicing. Tests cover one-shot
+removal, periodic rearming, early delivery prevention, original cancellation,
+CPU/context restoration and callback exceptions.
+
+The Metal boot now delivers both MH3's frame-timing alarm and the original
+WPAD polling callback (`804ED6B0`). It advances to GX opcode `0x80` (primitive
+packet), LR `804B6F2C`, after 439 commands and four display copies. Vertex packet
+decoding is the next graphics boundary. No gameplay is claimed.
