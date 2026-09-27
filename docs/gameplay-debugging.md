@@ -175,3 +175,50 @@ collision. `RMH.ini` in Dolphin enables CPU EFB access for Tri, so globally
 disabling EFB synchronization would change the game's configured behavior.
 On 2026-09-27, upstream WiiCompiled `main` was still at `85f2501`, the same
 commit as the local translator, so there was no newer decompiler change to test.
+
+### Paired-single vector-scale argument defect (2026-09-27)
+
+Matched Dolphin/native inputs isolated a real translation defect in
+`LandSweepTriangleCandidateFilter` (`0x80292524`). With identical sweep data,
+triangle bytes and position, native returned candidate `1` while Dolphin
+returned `0`. The call to `VectorScaleWrapper` (`0x80051F44`) at guest
+`0x80292674` passed a packed paired-single dot product as a scalar double.
+The scale helper then broadcast that misinterpreted double, producing a
+projected X bit pattern of `0x513603DA` instead of a nearby world coordinate.
+Adding PS0-to-double normalization at the call boundary made the isolated
+candidate result agree with Dolphin.
+
+The translator now infers scalar arguments used as lane-zero multipliers
+of `ps_muls0`/`ps_madds0`, including through `fmr` wrappers. This allows its
+existing call-boundary normalization to handle the case automatically;
+there is no hand patch to generated collision functions. Lane-one multipliers
+are excluded because they require PS1. `PairedScaleArgumentAbiTests` covers
+the wrapper and leaf inference. The debug-only `MH3_ENABLE_COLLISION_CHECK`
+CMake option (default OFF) adds `MH3 --collision-check` and a CTest case with
+the captured geometry, independent of renderer, save navigation and timing.
+This counterexample proves the numeric defect, but village dock/building
+replays are still required to establish the full gameplay fix.
+
+Dolphin reference runs now force `AspectRatio = 2` (4:3), matching native.
+The comparison above uses world coordinates and memory bytes, so it does
+not depend on screen aspect ratio. `dolphin-gdb.py freg N` reads scalar FPR
+values; `write ADDRESS HEX` supports controlled guest-memory experiments.
+
+After full regeneration, the isolated native check reports `candidate=0`
+and `point-in-triangle=0`, matching Dolphin. All six focused ABI tests and
+the native runtime self-test pass. The regeneration script also now accepts
+labels in hash-verified boot-RSO executable ranges, so the inspected overlay
+labels no longer abort the normal translation pipeline.
+
+The post-Chief native replay `logs/replays/collision-abi-fixed` now remains
+on the dock and shows “Exit to Moga Woods” after the same 16-second rightward
+input that previously crossed open water. Another ten seconds of held right
+also leaves the hunter on the walkway (captures 1470 and 2790). Selecting the
+exit reaches a separate missing translated target, `0x808C99A4`, with caller
+LR `0x80040CDC`, after village/lobby unlink; map-transition support remains
+unfinished. This verifies the reported dock failure, not every building or
+collision primitive. The final executable is rebuilt with both debug options
+OFF; `nm` confirms the collision-check and guest-trace entry points are absent.
+The full translator suite passes 656/658 tests; the two failures both throw
+“Could not find repository root” in upstream `ProjectPathsForTests`, before
+translation (RetroRewind fixture and production-project policy tests).

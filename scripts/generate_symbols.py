@@ -118,13 +118,24 @@ def main():
                     int(s["address"], 16) + s["bytes"] for s in text):
                 raise ValueError(f"Invalid {label} function pointer {address:08x}")
             symbols.setdefault(address, f"{label}_{address:08X}")
+    # Labels may also refer to the hash-pinned boot RSOs added to the analysis
+    # image by prepare_rso_translation.py. Validate their executable ranges.
+    from prepare_rso_translation import MODULES, Rso
+    boot_text = []
+    for module, base, digest in MODULES:
+        data = (ROOT / f"Assets/DATA/files/01/{module}_data.rso").read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError(f"Unverified boot RSO: {module}")
+        offset, size = Rso(data).sections[1]
+        boot_text.append((base + offset, base + offset + size))
     for line in (ROOT / "symbols.txt").read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
         address, name = line.split(maxsplit=1)
         address = int(address, 16)
-        if address % 4 or not any(int(s["address"], 16) <= address < int(s["address"], 16) + s["bytes"] for s in text):
+        if address % 4 or not (any(int(s["address"], 16) <= address < int(s["address"], 16) + s["bytes"] for s in text)
+                               or any(start <= address < end for start, end in boot_text)):
             raise ValueError(f"Verified function lies outside executable sections: {line}")
         symbols[address] = name
     for section in text:

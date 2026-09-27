@@ -885,6 +885,17 @@ public sealed class InferredGuestFunctionAbiProvider : IGuestFunctionAbiProvider
             return;
         }
 
+        // The multiplier of these paired operations reads PS0 only. Generated
+        // callees represent incoming scalar FPRs as doubles, then broadcast
+        // them for the paired helper. A packed caller value must therefore be
+        // normalized at this boundary, including through vector-scale wrappers.
+        if ((target.Equals("PPC_PsMuls0", StringComparison.OrdinalIgnoreCase) ||
+             target.Equals("PPC_PsMadds0", StringComparison.OrdinalIgnoreCase)) &&
+            arguments.Count >= 2)
+        {
+            MarkScalarUse(arguments[1], aliases, scalarArgs);
+        }
+
         if (!IsScalarHelperConsumer(target))
         {
             return;

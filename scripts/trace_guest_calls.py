@@ -29,6 +29,7 @@ TARGETS = {
     0x80292A40, 0x80293568, 0x80293AE0,  # PAL wall-cheat candidate chain
     0x8025FF70, 0x802601FC, 0x8027D0B4,  # readers of player +868 flags
     0x80256A58, 0x80256F04, 0x80266F94,  # contact-update callers
+    0x80292524,                        # sweep triangle candidate filter
 }
 HELPER = ('// MH3_GUEST_CALL_TRACE_BEGIN\n#include "guest_call_trace.h"\n'
           '#include <bit>\n// MH3_GUEST_CALL_TRACE_END\n')
@@ -44,6 +45,17 @@ def instrument_function(body: str, address: int) -> tuple[str, int]:
     if signature not in body:
         raise RuntimeError(f"Missing expected function signature {address:08X}")
     entry = f'    MKW_GUEST_TRACE_CALL(0, 0x{address:08X}u, ctx->lr - 4);\n'
+    if address == 0x802920F0:
+        # Preserve the three vector inputs and radius before the sweep mutates
+        # the proposed position. This permits a like-for-like Dolphin probe.
+        for register in (3, 4, 5):
+            for axis in range(3):
+                entry += (f'    MKW_GUEST_TRACE_CALL(0xFFFFFFF6u, {register * 4 + axis}u, '
+                          f'MemoryInline::FlatRead32(ctx->gpr[{register}] + {axis * 4}));\n')
+        entry += ('    MKW_GUEST_TRACE_CALL(0xFFFFFFF6u, 24u, '
+                  'std::bit_cast<uint32_t>(static_cast<float>(ctx->fpr[1].d)));\n')
+        for register in (6, 7, 8, 9):
+            entry += f'    MKW_GUEST_TRACE_CALL(0xFFFFFFF6u, {register + 24}u, ctx->gpr[{register}]);\n'
     if address in (0x8029513C, 0x80293AE0):
         # Both PAL Gecko patches replace an lfs from r2 - 14184. Record r2
         # and the actual original constant during movement.
@@ -73,6 +85,18 @@ def instrument_function(body: str, address: int) -> tuple[str, int]:
                 f'ctx->lr - 4); {call};{after} }} while (false);')
 
     body, count = CALL.subn(replace, body)
+    if address == 0x80292524:
+        marker = 'loc_80292980:\n{\n'
+        probe = '    if (r3 != 0) {\n'
+        for register, size, base in ((29, 36, 0), (30, 56, 64), (27, 12, 128)):
+            probe += f'        MKW_GUEST_TRACE_CALL(0xFFFFFFF5u, {base + 60}u, r{register});\n'
+            for offset in range(0, size, 4):
+                probe += (f'        MKW_GUEST_TRACE_CALL(0xFFFFFFF5u, {base + offset}u, '
+                          f'MemoryInline::FlatRead32(r{register} + {offset}));\n')
+        probe += '    }\n'
+        if marker not in body:
+            raise RuntimeError('Missing triangle candidate return block')
+        body = body.replace(marker, marker + probe, 1)
     if address == 0x802952F4:
         marker = 'loc_80295534:\n{\n'
         if marker not in body:
@@ -158,7 +182,7 @@ def summarize(path: Path) -> None:
         if source == 0xFFFFFFF8:
             contact_bits[target, _site] += 1
             continue
-        if source == 0xFFFFFFF7:
+        if source in (0xFFFFFFF7, 0xFFFFFFF6, 0xFFFFFFF5):
             continue
         if source:
             direct_edges[source, target] += 1

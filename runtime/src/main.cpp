@@ -17,6 +17,9 @@ extern "C" void MH3_OSExceptionInit(CpuContext*);
 extern "C" void MH3_OSInterruptInit(CpuContext*);
 void RunDeviceSelfTests(CpuContext*);
 void RunAudioSelfTests(CpuContext*);
+#ifdef MH3_ENABLE_COLLISION_CHECK
+int RunCollisionCheck(CpuContext*);
+#endif
 
 void SystemBridge::DumpCpuState(std::ostream& out, const CpuContext* cpu) {
     if (!cpu) return;
@@ -110,6 +113,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         InitializeDataSections();
+#ifdef MH3_ENABLE_COLLISION_CHECK
+        if (argc == 2 && std::string_view(argv[1]) == "--collision-check")
+            return RunCollisionCheck(&cpu);
+#endif
 #ifdef MH3_HAS_AURORA
         if (argc == 2 && std::string_view(argv[1]) == "--audio-output-check") {
             RunAudioSelfTests(&cpu);
