@@ -43,7 +43,7 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     return out;
 }
 
-void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver) {
+void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver, const CopySink& copy) {
     if (bytes.size() > 1024 * 1024 || pending.size() + bytes.size() > 1024 * 1024)
         throw std::runtime_error("Guest GX command buffer exceeds 1 MiB");
     pending.insert(pending.end(), bytes.begin(), bytes.end());
@@ -102,7 +102,26 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                     continue;
                 }
             }
-            if (reg == 0x52 || reg == 0x45 || reg == 0x47 || reg == 0x48)
+            if (reg == 0x52) {
+                const uint32_t trigger = bp[reg];
+                if (!(trigger & 0x4000)) throw std::runtime_error("GX texture copy requires a RAM/cache bridge");
+                if (!copy || !resolver) throw std::runtime_error("GX display copy requires a host surface bridge");
+                const uint32_t width = (bp[0x4D] & 1023) * 16;
+                const uint32_t sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1;
+                const uint32_t scale = bp[0x4E] & 511;
+                // Scaling changes XFB line count. Preserve the exact unscaled
+                // path first; other modes remain explicit until validated.
+                if (scale != 0 && scale != 256) throw std::runtime_error("GX scaled display copy requires line-count conversion");
+                if (width == 0 || width > 1024) throw std::runtime_error("GX display copy has invalid stride");
+                const auto view = resolver(bp[0x4B] << 5);
+                if (uint64_t(width) * sourceHeight * 2 > view.size)
+                    throw std::runtime_error("GX display copy exceeds guest framebuffer RAM");
+                sink(std::span<const uint8_t>(p, length));
+                copy({view.address, width, sourceHeight, (trigger & 0x800) != 0});
+                offset += length;
+                continue;
+            }
+            if (reg == 0x45 || reg == 0x47 || reg == 0x48)
                 throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
         }
         sink(std::span<const uint8_t>(p, length));
