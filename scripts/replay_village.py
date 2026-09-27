@@ -137,6 +137,8 @@ def main():
     else:
         frame = replay_opening_dialogue(run, frame, process, args.max_pulses, input_path)
     if args.dock_edge:
+        if gate := os.environ.get("MH3_CALL_TRACE_GATE"):
+            Path(gate).touch()
         controller(input_path, x=511)
         time.sleep(16)
         controller(input_path)
