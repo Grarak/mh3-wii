@@ -51,3 +51,19 @@ version `1002121503`, and passes the former disc-padding boundary at partition b
 `968250889` with the preserved partition image. Both native and Metal runtime/audio tests pass. Translation emits
 20,639 functions; this remains incomplete game coverage. Evidence is in
 `logs/boot-rsos-run.log`.
+
+## Village transition: module lifetime boundary
+
+After the HID shutdown fix, `logs/hid-close-boot.log` reaches the original
+module unload path and stops at executable write `0x808692C2`. The recorded LR
+`0x804DAE18` identifies the relocation call inside SDK import unlinking
+(`0x804DAD48`), not an arbitrary game patch. It replaces the com module's
+resolved import with its unresolved handler (`0x808694CC`).
+
+The high-level SDK unlink routine `0x804DB614` removes a module from the linked
+list, unlinks imports in both directions, and reverses its section addresses.
+The game's unload routine `0x800409B8` runs module epilogs before invoking that
+SDK unlink routine. The current fixed-address bindings protect text indefinitely,
+so they cannot yet support this legitimate unload. The next implementation must
+track module lifetime, reject stale translated execution, and reverify linked
+text on reload; disabling executable protection globally would be incorrect.
