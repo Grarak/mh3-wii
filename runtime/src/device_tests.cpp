@@ -366,15 +366,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             const uint8_t command[]{8, reg, uint8_t(value >> 24), uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
             for (auto byte : command) vertices.Write(std::span(&byte, 1), receive);
         };
+        auto resolveFramingArray = [](uint32_t) -> GuestGxStream::ArrayView { return {0x10000000, 0x1000000}; };
         const auto fmt = opcode & 7;
         setCp(0x50, lo); setCp(0x60, hi);
         setCp(0x70 + fmt, a); setCp(0x80 + fmt, b); setCp(0x90 + fmt, c);
-        vertices.Write(std::span(packet).first(2), receive);
-        vertices.Write(std::span(packet).subspan(2, packet.size() - 3), receive);
+        vertices.Write(std::span(packet).first(2), receive, resolveFramingArray);
+        vertices.Write(std::span(packet).subspan(2, packet.size() - 3), receive, resolveFramingArray);
         if (draws || vertices.PendingBytes() != packet.size() - 1)
             throw std::runtime_error("GX emitted an incomplete vertex packet");
         const uint8_t tail[]{packet.back(), 0};
-        vertices.Write(tail, receive);
+        vertices.Write(tail, receive, resolveFramingArray);
         if (draws != 1 || nops != 1 || vertices.PendingBytes())
             throw std::runtime_error("GX vertex packet framing lost the next command");
     };
@@ -393,6 +394,56 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     // More than 1 MiB, and the full 16-bit vertex count, with direct XYZ+NBT floats.
     vertexCase((1 << 9) | (1 << 11), 0, 9 | (1 << 9) | (4 << 10), 0, 0, 48, 65535, 0x90);
     vertexCase(0, 0, 0, 0, 0, 0, 0, 0xBF);
+    {
+        GuestGxStream arrays;
+        std::array<uint32_t, 12> sizes{};
+        uint32_t available = 64 * 1024 * 1024;
+        unsigned draws = 0;
+        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address < 0x1000 || address >= 0x1C00 || (address & 255))
+                throw std::runtime_error("Draw array base mismatch");
+            return {uintptr_t(0x10000000) + address, available};
+        };
+        auto receive = [&](std::span<const uint8_t> packet) {
+            if (packet[0] == 0x50) {
+                const unsigned slot = packet[2] - 0x10;
+                if (slot >= 12) throw std::runtime_error("Unexpected draw array slot");
+                sizes[slot] = (uint32_t(packet[11]) << 24) | (uint32_t(packet[12]) << 16) |
+                              (uint32_t(packet[13]) << 8) | packet[14];
+            } else if (packet[0] >= 0x80) ++draws;
+        };
+        auto cp = [&](uint8_t reg, uint32_t value) {
+            const uint8_t packet[]{8, reg, uint8_t(value >> 24), uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            arrays.Write(packet, receive, resolve);
+        };
+        for (unsigned slot = 0; slot < 12; ++slot) cp(0xA0 + slot, 0x1000 + slot * 256);
+        cp(0xB0, 12); cp(0xB1, 12); cp(0xB2, 4); cp(0xB4, 8);
+        cp(0x50, 1 | (3 << 9) | (3 << 11) | (2 << 13)); cp(0x60, 3);
+        cp(0x70, 9 | 0x80000200u | (4 << 10) | (5 << 14) | (9 << 21));
+        const uint8_t vertices[]{0x90, 0, 2,
+            0, 0, 100, 0, 1, 0, 7, 0, 3, 2, 0, 5,
+            3, 0, 1,   0, 9, 0, 2, 0, 4, 0, 0, 1};
+        sizes.fill(0);
+        arrays.Write(vertices, receive, resolve);
+        if (draws != 1 || sizes[0] != 1212 || sizes[1] != 120 || sizes[2] != 12 || sizes[4] != 48)
+            throw std::runtime_error("Per-draw indexed array extents/NBT3 failed");
+        for (unsigned slot : {3, 5, 6, 7, 8, 9, 10, 11})
+            if (sizes[slot]) throw std::runtime_error("Unused draw array was uploaded");
+        // A later draw may use less of the same source; don't retain the RAM-region size.
+        auto smaller = std::vector<uint8_t>(std::begin(vertices), std::end(vertices));
+        smaller[5] = 2;
+        arrays.Write(smaller, receive, resolve);
+        if (sizes[0] != 36 || draws != 2) throw std::runtime_error("Draw array extent did not shrink");
+        cp(0x50, 2 << 11); cp(0x60, 0); cp(0x70, (1 << 9) | (3 << 10)); cp(0xB1, 20);
+        const uint8_t nbt[]{0x90, 0, 1, 4};
+        arrays.Write(nbt, receive, resolve);
+        if (sizes[1] != 98) throw std::runtime_error("Single-index NBT extent failed");
+        available = 97;
+        bool rejected = false;
+        try { arrays.Write(nbt, receive, resolve); }
+        catch (const std::runtime_error&) { rejected = true; }
+        if (!rejected || draws != 3) throw std::runtime_error("Out-of-RAM draw was emitted");
+    }
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
         GuestGxStream textureStream;
         std::vector<uint8_t> metadata;

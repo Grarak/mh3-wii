@@ -279,3 +279,21 @@ RAM region as `array.size`; Aurora's `admit_draw` and `handle_draw_unmerged`
 reserve/upload that whole region into an 8 MiB staging buffer. The next change
 must derive the needed array extents from actual draw indices and element
 formats rather than increasing buffers or truncating arrays arbitrarily.
+
+## Draw-scoped vertex-array bounds
+
+The framer now shares one VAT/VCD attribute layout between packet sizing and
+index scanning. Before each indexed draw, it supplies Aurora with only the
+prefix ending at the highest referenced element, including the element's full
+byte extent. NBT3 uses three independent three-component elements; ordinary NBT
+uses one nine-component element. Direct attributes and matrix-index bytes are
+skipped correctly. Each extent is checked against accessible guest RAM. Buffer
+capacities are unchanged.
+
+Tests cover mixed matrix/direct/index8/index16 framing, all attributes, NBT and
+NBT3 extents, smaller subsequent draws, and rejection before an out-of-RAM draw
+is submitted. Native and Metal test suites pass. The live run
+(`logs/array-range-ready.log`) now renders the animated character, passing the
+previous storage-capacity failure. Captures show repeated smaller images and
+missing UI, so frame/copy sequencing still needs correction before gameplay is
+usable. Evidence includes `logs/array-range-ready-4200.bmp` and later frames.

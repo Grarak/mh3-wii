@@ -33,5 +33,9 @@ private:
     unsigned displayListDepth = 0;
     uint32_t bpMask = 0xFFFFFF, textureRevision = 0;
     std::array<uint8_t, 37> TexturePacket(unsigned slot, const ArrayResolver& resolver);
+    struct Attribute { unsigned descriptor = 0, bytes = 0, indices = 1; };
+    std::array<Attribute, 12> Attributes(unsigned format) const;
+    static std::array<uint8_t, 16> ArrayPacket(unsigned slot, ArrayView view);
+    void BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver) const;
     size_t VertexSize(unsigned format) const;
 };
