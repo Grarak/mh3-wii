@@ -1,25 +1,24 @@
 # Monster Hunter Tri static recompilation for macOS
 
-**Work in progress: the native ARM64 executable builds and begins executing MH3,
-but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
-initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
-function, passes video-interface initialization, and sends GX initialization
-commands to Aurora Metal. It completes three initial display copies and a Metal GPU completion wait,
-delivers the first VI retrace, and executes the first RSO module’s compiled
-prolog and constructors. It passes locked-cache and GameCube controller
-initialization and the original WPAD channel setup. AI/AX and DMA
-setup now complete, followed by a scaled display copy and a second Metal GPU
-completion wait. Host-timed sleeps service the original alarm queue, retraces,
-disc completions, and audio DMA. Boot now renders the Nintendo wrist-strap screen through native Metal, verified
-with a frame capture. It creates and reopens the NAND system file, six character-save slots, network
-data, and save banner. All five initial RSO prologs now execute as compiled native code. Startup prints
-the media version, renders the Capcom logo, and enters THP movie playback.
-Exact preserved partition bytes now satisfy reads into disc padding. Locked-cache DMA now moves the decoded movie buffers into RAM, and a Metal
-frame capture verifies the opening movie’s underwater scene. The full intro reaches the title screen. Classic Controller reports now drive
-movie skipping and title-menu navigation; gameplay remains unverified. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
-channel conversion pass tests; real boot opens SDL audio and executes DMA and
-AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge supplies keyboard/SDL gamepad input as a Classic
-Controller. See [controls and validation](docs/controller-bringup.md).
+**Work in progress: the native ARM64 executable builds, plays the opening movie,
+and accepts input on the title menu, but gameplay is not verified yet.** Aurora
+renders through native Metal; MoltenVK is not required.
+
+Verified boot behavior includes OS/IOS55 and DVD initialization, five statically
+translated RSO modules, the Nintendo wrist-strap screen, the Capcom logo, and THP
+movie playback. The runtime creates and reopens the NAND system file, six
+character-save slots, network data, and save banner. See [NAND bring-up](docs/nand-bringup.md)
+and [RSO bindings](docs/rso-bringup.md).
+
+Classic Controller reports drive movie skipping and title-menu navigation.
+Selecting Begin the Game passes HID and keyboard initialization and renders all
+six save slots. File selection and the main menu work. Selecting New Game now
+reaches an unimplemented direct framebuffer access at `0xC8000000`. See [controls](docs/controller-bringup.md),
+[HID startup](docs/usb-hid-bringup.md), and [function discovery](docs/function-discovery.md).
+The SDL gamepad source passes a virtual-device mapping/hotplug test; live game
+input validation so far uses the diagnostic controller file. Native PCM mixing and DMA tests pass, and
+real boot opens SDL audio and executes AX callbacks; audible output remains
+unverified.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -34,7 +33,7 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 - Over 20,000 statically translated functions; translator reports zero unsupported
   instructions and zero invalid SSA functions. This is not proof of full-game coverage.
 - Function discovery uses 758 executable SEL exports, 72 verified compiler
-  save/restore thunks, and speculative standard stack-frame starts.
+  save/restore thunks, and speculative stack-frame/indirect-function discovery.
 - `build/native/MH3` is a linked macOS ARM64 executable.
 - Runtime self-test passes RAM aliasing, big-endian access, translated stack stores,
   unmapped MMIO rejection, MH3 exception/interrupt-table initialization, device
