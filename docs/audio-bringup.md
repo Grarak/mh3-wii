@@ -90,5 +90,6 @@ queue submission, not audible game output.
 The scaled-copy and timed-wait bridges now pass the initial DMA service boundary.
 `logs/alarm-boot.log` confirms SDL device opening at 32 kHz, three logged DMA
 completions with guest callbacks, two retraces, and original OS alarm callbacks.
-The next stop is the first GX primitive packet (`0x80`), with LR `0x804B6F2C`.
+The subsequent graphics bridge renders the wrist-strap screen and stops at a
+direct IOS IPC request with LR `0x804BBF60`.
 This verifies startup callback execution, not audible music or gameplay audio.

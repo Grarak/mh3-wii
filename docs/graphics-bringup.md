@@ -173,3 +173,34 @@ The Metal boot now delivers both MH3's frame-timing alarm and the original
 WPAD polling callback (`804ED6B0`). It advances to GX opcode `0x80` (primitive
 packet), LR `804B6F2C`, after 439 commands and four display copies. Vertex packet
 decoding is the next graphics boundary. No gameplay is claimed.
+
+
+## Guest drawing and framebuffer texture copies
+
+Vertex packets (`80..BF`, including all eight VAT slots) now accumulate until
+their complete payload is present. The framer tracks CP vertex descriptors and
+VAT A/B/C words, with matrix-index bytes, direct numeric/color formats, index8,
+index16, and NBT3's three indices. It preserves bytes for Aurora's existing
+vertex decoder and allows the largest 16-bit-count packets within a bounded
+16 MiB buffer. Tests cover fragmented headers/registers/payloads, all primitive
+opcodes, cross-word texture formats, an oversized packet, and the following
+command boundary.
+
+Color EFB-to-texture copies now translate source/destination dimensions and
+format bits, validate tiled RAM footprints and row strides, and use Aurora's
+`GXCopyTex`. Immediate `aurora_flush_efb_copy_to_ram` downloads Wii-tiled data
+before guest execution resumes, keeping even inlined RAM reads coherent. This
+is deliberately synchronous and may be expensive. I4/I8/IA4/IA8/RGB565/RGB5A3/
+RGBA8 contiguous output is supported, including half-scale copies; depth,
+channel-select and strided output remain explicit boundaries. Tests cover all
+seven supported formats, exact/short RAM bounds, stride rejection and half scale.
+
+The real Metal boot renders the Nintendo wrist-strap screen. Capture evidence:
+`logs/mh3-frame-100.png`, converted from Aurora's BMP capture. Both native and
+Metal test suites pass. The next stop is `Unimplemented direct IPC register
+operation`, LR `804BBF60`, request buffer `935E0020`. Before that stop the bridge
+consumes 122703 commands, 1286 draw packets, 645 texture copies and 649 display
+copies. Input and gameplay are still unverified.
+
+To capture a frame, set `MH3_CAPTURE_PATH` to an absolute BMP output path and
+optionally `MH3_CAPTURE_FRAME` (default 30) when launching the Metal build.
