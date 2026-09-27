@@ -325,3 +325,28 @@ verifies retained pixels and the unchanged frame counter. The live run in
 `logs/staging-split-boot.log` passes the former packet-consumption failure and
 reaches 2,609 display copies before encountering a guest TLUT address requiring
 host-pointer conversion. Village gameplay remains unverified.
+
+## Indexed textures and palette memory
+
+The guest framer supports C4, C8, and C14X2 texture footprints and snapshots
+TLUT DMA transfers into persistent palette memory. It interprets the guest
+transfer count in 32-byte lines and the destination in 512-byte units, then
+selects palette format from each texture unit's TLUT register. These hardware
+fields are cross-checked against Dolphin's
+[BP definitions](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/BPMemory.h)
+and [TLUT loading](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/BPStructs.cpp).
+
+Before sampled indexed draws, the bridge supplies Aurora with a host palette
+pointer, format, entry count, and revision. Palette-only updates also refresh
+the texture revision to invalidate Aurora's resolved-texture memo. Overlapping
+uploads preserve untouched palette bytes, and display-list calls share palette
+state. Unsupported formats, short source RAM, and incomplete palettes fail
+explicitly. Palettes currently require all entries for their texture format
+to have been loaded.
+
+Both runtime suites pass. Regressions cover indexed texture sizes, fragmented
+loads, RAM snapshots, palette cache reuse/reload, IA8/RGB565/RGB5A3 metadata,
+overlapping updates, display-list state, unloaded palettes, and short RAM.
+The final live run (`logs/tlut-final-boot.log`) passes the palette boundary and
+executes 1,844,379 draws before a separate unrecognized 635-entry switch jumps
+to `0x80231000`. Its last capture is black; village gameplay is not verified.
