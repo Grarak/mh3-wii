@@ -130,6 +130,17 @@ void InitializeGraphics(int argc, char** argv) {
 }
 }
 
+void SealDisplayFrame() {
+    // Aurora advances its frame index while sealing, before capture encoding.
+    const auto frame = aurora::gfx::current_frame() + 1;
+    if (captureInterval && frame % captureInterval == 0) {
+        const auto path = capturePath.parent_path() /
+            (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
+        aurora_request_frame_capture(frame, path.c_str());
+    }
+    aurora_end_frame(); frameActive = false; displayCopyPending = false;
+}
+
 void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     FlushHostEfbPokes();
     efbPixels.clear();
@@ -193,6 +204,9 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         ++guestTextureCopies;
         guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
     });
+    // GXCopyDisp is the presentation boundary. Seal its owned draw data now,
+    // letting Metal encoding overlap guest work before GXDrawDone/next GX use.
+    if (displayCopyPending) SealDisplayFrame();
 }
 
 void ServiceHostGraphicsEvents() {
@@ -209,14 +223,7 @@ void CompleteHostGraphics() {
     if (frameActive && !displayCopyPending) {
         if (!mh3_aurora_flush_draws()) throw std::runtime_error("GXDrawDone could not resume the in-progress frame");
     } else if (frameActive) {
-        // Aurora advances its frame index while sealing, before capture encoding.
-        const auto frame = aurora::gfx::current_frame() + 1;
-        if (captureInterval && frame % captureInterval == 0) {
-            const auto path = capturePath.parent_path() /
-                (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
-            aurora_request_frame_capture(frame, path.c_str());
-        }
-        aurora_end_frame(); frameActive = false; displayCopyPending = false;
+        SealDisplayFrame();
     }
     aurora_wait_for_frame_worker();
     const auto afterWorker = FrameProfile::Clock::now();

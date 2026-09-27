@@ -19,3 +19,8 @@
 - [x] Fix dark top/left edges in village and Moga Woods. Aurora decoded GX
   viewport origins with bias 340 instead of 342; fixed both decoder and native
   encoder in a local source overlay. See `docs/rendering-performance.md`.
+
+- [x] Enable bounded asynchronous completed-frame Metal encoding on macOS while
+  keeping AppKit/SDL on the main thread. See `docs/async-rendering.md`.
+- [ ] Move expensive GX decode/array preparation off-thread with explicit guest
+  resource ownership; the new frame worker does not move that work yet.
