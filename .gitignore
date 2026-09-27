@@ -1,6 +1,6 @@
 *.rvz
 *.iso
-Assets/
+/Assets/
 tools/
 generated/
 build/

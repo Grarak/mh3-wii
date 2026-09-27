@@ -32,7 +32,7 @@ Older prose in README/gameplay debugging describes historical failures; use the 
 
 ## Build and run the verified Metal baseline
 
-Prerequisites already local: Clang (Homebrew LLVM), CMake, Ninja, Python 3, project-local .NET SDK, extracted EU assets. Aurora is `/Users/willi/Projects/Wiicompiled/aurora-main`. Build dependencies/assets are ignored by Git, so a new machine needs extraction and dependency setup from README.
+Prerequisites already local: Clang (Homebrew LLVM), CMake, Ninja, Python 3, project-local .NET SDK, extracted EU assets. Aurora is now included at `aurora-main/` in this repository. Its common dependencies still use the existing system-package/download providers. Build dependencies/assets are ignored by Git, so a new machine needs extraction and dependency setup from README.
 
 ```sh
 cd /Users/willi/Projects/mh3
@@ -129,11 +129,15 @@ Other outstanding work:
 - `runtime/src/memory.cpp`: guest RAM backing and fast paths.
 - `scripts/aurora-efb.cmake`: build-local renderer overlays (do not edit shared Aurora).
 - `scripts/patch_aurora_async.py`: worker/main ownership changes, fail-closed anchors.
-- Shared Aurora `lib/gfx/common.cpp`: ring, push, bind groups, end-batch copies, frame encode.
-- Shared Aurora `lib/webgpu/gpu.cpp`: adapter/device features and toggles.
-- Shared Aurora `lib/gx/pipeline.cpp`, `lib/gfx/tex_copy_conv.cpp`: buffer bindings.
+- Local Aurora `lib/gfx/common.cpp`: ring, push, bind groups, end-batch copies, frame encode.
+- Local Aurora `lib/webgpu/gpu.cpp`: adapter/device features and toggles.
+- Local Aurora `lib/gx/pipeline.cpp`, `lib/gfx/tex_copy_conv.cpp`: buffer bindings.
 - `symbols.txt`, `docs/function-discovery.md`: guest labels/discovery.
 - `docs/async-rendering.md`, `docs/rendering-performance.md`, `TODO.md`: verified work and follow-ups.
 - `logs/hotspots-field-{idle,moving}.txt`, `logs/async-field-sample.txt`, `logs/replays/async-render`, `logs/replays/async-off`: local evidence, ignored by Git.
 
 macOS `sample` sometimes freezes a newly launched binary for ~60 seconds during its first warmup and produces only two samples. Do not use that as performance evidence; a subsequent same-process sample worked. Avoid lldb/admin-dependent flows while the user is away. Latest shared-validation replay was stopped; verify process ownership before killing anything else.
+
+## Standalone checkout update
+
+Aurora is now tracked at `aurora-main/`, matching WiiCompiled’s layout. The build defaults to this local copy; `AURORA_ROOT` remains an optional override. The DSP coefficients are tracked at `runtime/assets/dsp/dsp_coef.bin`; the preparation script no longer defaults to the sibling checkout. Common libraries remain normal CMake-managed dependencies, not vendored copies. The sibling WiiCompiled checkout was not modified. See `docs/aurora-dependency.md`.

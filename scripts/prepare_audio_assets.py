@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 target = ROOT / 'Assets/DSP/dsp_coef.bin'
 if not target.exists():
-    source = Path(os.environ.get('WIICOMPILED_AUDIO_ROOT', str(ROOT.parent / 'Wiicompiled'))) / 'runtime/assets/dsp/dsp_coef.bin'
+    source = Path(os.environ.get('WIICOMPILED_AUDIO_ROOT', str(ROOT))) / 'runtime/assets/dsp/dsp_coef.bin'
     data = source.read_bytes()
 else:
     data = target.read_bytes()
