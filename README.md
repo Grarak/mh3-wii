@@ -2,8 +2,8 @@
 
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
 but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
-initial thread, and arena setup. It passes system configuration and reaches DVD startup, stopping at the
-unimplemented `/dev/di` device.
+initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
+function, and stops in video-interface initialization at `0xCC002002`.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -46,6 +46,7 @@ Translate, generate the build graph, compile, and test:
 ./scripts/translate.sh
 ./scripts/build.sh
 python3 scripts/test_native_discovery.py
+python3 scripts/test_disc_reader.py
 ctest --test-dir build/native --output-on-failure
 ```
 
@@ -103,8 +104,11 @@ supplied disc's TMD. IOS55 metadata follows
 With `MH3_TRACE_ERRORS=1`, runtime failures emit symbolized native backtraces
 before unwinding, so routine diagnosis needs no LLDB authorization.
 
-The latest run passes IPC, STM, NAND and system-configuration initialization
-and prints the SDK DVD banner. It stops when DVD initialization opens `/dev/di`.
+Boot now passes IPC, STM, NAND, system configuration, DVD initialization and
+C++ constructors. The latest trace reaches game main (`0x8003F278`) and
+`VIInit` (`0x804E7B00`), which reads unimplemented video register `0xCC002002`.
+The DOL constructor/destructor tables are explicitly seeded for static translation,
+including constructor stubs with no ordinary stack prologue.
 IOS synchronous open/close/read/write use a private NAND root at
 `$MH3_USER_DIR/nand` (default `saves/nand`), preserving file modes and offsets.
 Opening does not create files. Path traversal and symlink following are rejected.
@@ -124,6 +128,20 @@ queues its completion. Tests cover file persistence, modes, missing files, path
 isolation, ES identity, asynchronous error delivery, callback CPU preservation,
 and STM subscriptions/events. STM protocol behavior was checked against
 [Dolphin's STM implementation](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/STM/STM.cpp).
+
+`DiscImage` maps the extracted partition's system files and FST file extents
+back to their original byte offsets. It validates metadata, directory bounds,
+file lengths and overlapping extents. Unextracted gaps are rejected. Tests cover
+cross-file reads, gaps, size mismatches and exact bytes from 13 real assets.
+`MH3_DISC_DIR` selects the extracted partition root (default `Assets/DATA`).
+
+The IOS disc service supports inquiry, disc ID, partition reads, cover/status
+queries and asynchronous completion records. Delivery outside the configuration
+poll remains part of scheduler integration. It does not emulate arbitrary raw
+physical-disc reads. ES ticket views preserve the supplied ticket metadata;
+the fresh host NAND reports no prior consumption records. Protocol references:
+[Dolphin DI](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/DI/DI.h),
+[ES formats](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/ES/Formats.h).
 
 Remaining requirements for a playable port include:
 

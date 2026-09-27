@@ -1,10 +1,12 @@
 #include "abi_bridge.h"
 #include "ios_host.h"
+#include "disc_image.h"
 #include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <fcntl.h>
 #include <iostream>
 #include <map>
@@ -22,6 +24,12 @@ std::optional<EventHook> eventHook;
 std::deque<IosCompletion> completions;
 std::array<uint8_t, 20> ledSettings{}, dimmingSettings{};
 uint32_t nextHandle = 100;
+uint32_t lastDiscPosition = 0;
+DiscImage& Disc() {
+    const char* path = std::getenv("MH3_DISC_DIR");
+    static DiscImage image(path ? path : "Assets/DATA");
+    return image;
+}
 int32_t Error() {
     switch (errno) {
     case ENOENT: return -106;
@@ -98,7 +106,8 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
         ctx->gpr[3] = -6; return;
     }
     if (path == "/dev/stm/immediate" || path == "/dev/stm/eventhook" ||
-        path == "/dev/fs" || path == "/dev/es") {
+        path == "/dev/fs" || path == "/dev/es" || path == "/dev/di") {
+        if (path == "/dev/di") (void)Disc();
         uint32_t handle = nextHandle++;
         devices.emplace(handle, path);
         ctx->gpr[3] = handle;
@@ -148,8 +157,17 @@ REGISTER_NATIVE_FUNCTION(0x804BCC80, MH3_IOSWrite);
 // STM event hooks remain pending until a real host reset/power event. In
 // particular, installing the hook must not immediately call the guest handler.
 // Protocol reference: Dolphin Core/IOS/STM/STM.cpp, IOCTL_STM_EVENTHOOK.
+extern "C" void MH3_IOSIoctl(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
     auto it = devices.find(ctx->gpr[3]);
+    if (it != devices.end() && it->second == "/dev/di") {
+        const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
+        if (!callback) { ctx->gpr[3] = -4; return; }
+        MH3_IOSIoctl(ctx);
+        completions.push_back({callback, static_cast<int32_t>(ctx->gpr[3]), argument});
+        ctx->gpr[3] = 0;
+        return;
+    }
     if (it != devices.end() && it->second == "/dev/stm/eventhook" && ctx->gpr[4] == 0x1000) {
         if (ctx->gpr[8] < 4 || !Memory::Contains(ctx->gpr[7], ctx->gpr[8]) || !ctx->gpr[9]) {
             ctx->gpr[3] = -4; return;
@@ -171,6 +189,41 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
     const auto device = devices.find(ctx->gpr[3]);
     if (device == devices.end()) { ctx->gpr[3] = -4; return; }
     const uint32_t command = ctx->gpr[4];
+    if (device->second == "/dev/di") {
+        // IOS DI command buffer contains byte length and word-addressed offset.
+        // DI uses success=1 (unlike ordinary IOS success=0).
+        const uint32_t input = ctx->gpr[5], output = ctx->gpr[7], capacity = ctx->gpr[8];
+        if (ctx->gpr[6] != 0x20 || !Memory::Contains(input, 0x20)) {
+            ctx->gpr[3] = 32; return;
+        }
+        if (command == 0x12) {
+            if (capacity < 0x20 || !Memory::Contains(output, 0x20)) { ctx->gpr[3] = 32; return; }
+            for (uint32_t i = 0; i < 0x20; ++i) Memory::Write8(output + i, 0);
+            // Retail Wii inquiry values recorded in Dolphin DVDInterface.cpp.
+            Memory::Write32(output, 2);
+            Memory::Write32(output + 4, 0x20060526);
+            Memory::Write32(output + 8, 0x41000000);
+            ctx->gpr[3] = 1; return;
+        }
+        if (command == 0x70 || command == 0x71) {
+            const uint32_t length = command == 0x70 ? 0x20 : Memory::Read32(input + 4);
+            const uint32_t position = command == 0x70 ? 0 : Memory::Read32(input + 8);
+            if (length > capacity || !Memory::Contains(output, length)) { ctx->gpr[3] = 32; return; }
+            auto bytes = Disc().Read(uint64_t(position) * 4, length);
+            for (uint32_t i = 0; i < length; ++i) Memory::Write8(output + i, bytes[i]);
+            lastDiscPosition = position;
+            ctx->gpr[3] = 1; return;
+        }
+        if (command == 0x7A || command == 0x88 || command == 0x83 || command == 0xE0) {
+            if (capacity < 4 || !Memory::Contains(output, 4)) { ctx->gpr[3] = 32; return; }
+            Memory::Write32(output, command == 0x88 ? 2 : command == 0x83 ? lastDiscPosition : 0);
+            ctx->gpr[3] = 1; return;
+        }
+        // The host-mounted disc is present and has no physical cover interrupt.
+        if (command == 0x86 || command == 0x85 || command == 0x87 || command == 0x89 || command == 0x7E) {
+            ctx->gpr[3] = 1; return;
+        }
+    }
     if (device->second == "/dev/stm/immediate") {
         // Hardware presentation settings, retained without driving Wii LEDs.
         // IDs/layout: Dolphin Core/IOS/STM/STM.h and MH3 0x804D6230.
@@ -204,6 +257,40 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
     const uint32_t vectors = ctx->gpr[7];
     if (inputs > 16 || outputs > 16 || !Memory::Contains(vectors, (inputs + outputs) * 8)) {
         ctx->gpr[3] = -4; return;
+    }
+    if (device->second == "/dev/es" && command == 0x16 && inputs == 1 && outputs == 2) {
+        // New host NAND has no ticket-consumption records. The original SDK
+        // still checks the ticket's own time-limit fields after this query.
+        const uint32_t countOut = Memory::Read32(vectors + 16);
+        if (Memory::Read32(vectors + 4) != 8 || !Memory::Contains(Memory::Read32(vectors), 8) ||
+            Memory::Read32(vectors + 20) != 4 || !Memory::Contains(countOut, 4)) {
+            ctx->gpr[3] = -4; return;
+        }
+        Memory::Write32(countOut, 0);
+        ctx->gpr[3] = 0; return;
+    }
+    if (device->second == "/dev/es" && command == 0x1B && inputs == 1 && outputs == 1) {
+        const uint32_t input = Memory::Read32(vectors), inputSize = Memory::Read32(vectors + 4);
+        const uint32_t output = Memory::Read32(vectors + 8), outputSize = Memory::Read32(vectors + 12);
+        if (outputSize != 0xD8 || !Memory::Contains(output, outputSize)) { ctx->gpr[3] = -4; return; }
+        std::array<uint8_t, 0x2A4> ticket{};
+        if (!input && !inputSize) {
+            const char* root = std::getenv("MH3_DISC_DIR");
+            std::ifstream file((root ? std::filesystem::path(root) : "Assets/DATA") / "ticket.bin", std::ios::binary);
+            file.read(reinterpret_cast<char*>(ticket.data()), ticket.size());
+            if (!file) throw std::runtime_error("Unable to read disc ticket for ES view");
+        } else {
+            if (inputSize != ticket.size() || !Memory::Contains(input, inputSize)) { ctx->gpr[3] = -4; return; }
+            for (uint32_t i = 0; i < ticket.size(); ++i) ticket[i] = Memory::Read8(input + i);
+        }
+        // RSA2048 ticket v0 view: version, 3 padding bytes, then ticket ID
+        // through time limits. Layout verified against Dolphin ES/Formats.h.
+        if (ticket[0] || ticket[1] != 1 || ticket[2] || ticket[3] != 1 || ticket[0x1BC] != 0) {
+            ctx->gpr[3] = -4; return;
+        }
+        Memory::Write32(output, 0);
+        for (uint32_t i = 0; i < 0xD4; ++i) Memory::Write8(output + 4 + i, ticket[0x1D0 + i]);
+        ctx->gpr[3] = 0; return;
     }
     if (device->second == "/dev/es" && outputs == 1 &&
         ((command == 0x20 && inputs == 0) || (command == 0x1D && inputs == 1))) {

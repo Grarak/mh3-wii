@@ -159,6 +159,21 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (cpu->gpr[3] || std::string(reinterpret_cast<char*>(Memory::GetPointer(0x80001700, 30))) !=
         "/title/00010000/524d4850/data")
         throw std::runtime_error("ES data directory failed");
+    for (uint32_t i = 0; i < 0x2A4; ++i) Memory::Write8(0x80001800 + i, 0);
+    Memory::Write32(0x80001800, 0x00010001);
+    for (uint32_t i = 0; i < 0xD4; ++i) Memory::Write8(0x800019D0 + i, i);
+    Memory::Write32(0x80001500, 0x80001800);
+    Memory::Write32(0x80001504, 0x2A4);
+    Memory::Write32(0x80001508, 0x80001B00);
+    Memory::Write32(0x8000150C, 0xD8);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x1B;
+    cpu->gpr[5] = 1; cpu->gpr[6] = 1; cpu->gpr[7] = 0x80001500;
+    MH3_IOSIoctlv(cpu);
+    if (cpu->gpr[3] || Memory::Read32(0x80001B00))
+        throw std::runtime_error("ES ticket view header failed");
+    for (uint32_t i = 0; i < 0xD4; ++i)
+        if (Memory::Read8(0x80001B04 + i) != i)
+            throw std::runtime_error("ES ticket view contents failed");
     cpu->gpr[3] = fd; MH3_IOSClose(cpu);
     // A missing file is an asynchronous operation result, not a queue failure.
     open("/missing", 1); // also writes the test path into guest memory

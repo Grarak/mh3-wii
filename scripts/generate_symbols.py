@@ -23,6 +23,23 @@ def main():
     by_sel = {s["index"] + 1: s for s in text}
     symbols = {0x80006310: "__start", 0x804CB5A0: "OSExceptionInit",
                0x804CB930: "OSDefaultExceptionHandler"}
+    # Startup iterates these null-terminated tables, including tail-call
+    # constructor stubs that have no standard stack prologue.
+    for base, label in [(0x8056FAA0, "ctor"), (0x8056FC20, "dtor")]:
+        section = next(s for s in inventory["sections"] if int(s["address"], 16) == base)
+        terminated = False
+        for offset in range(0, section["bytes"], 4):
+            address = struct.unpack_from(">I", dol, section["file_offset"] + offset)[0]
+            if address == 0:
+                terminated = True
+                continue
+            if terminated or address % 4 or not any(
+                int(s["address"], 16) <= address < int(s["address"], 16) + s["bytes"] for s in text
+            ):
+                raise ValueError(f"Invalid {label} table entry {address:08x}")
+            symbols.setdefault(address, f"{label}_{address:08X}")
+        if not terminated:
+            raise ValueError(f"Unterminated {label} table")
     for line in (ROOT / "symbols.txt").read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
