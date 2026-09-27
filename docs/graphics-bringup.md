@@ -242,3 +242,11 @@ pass. Real startup logs 4096/4096/2048-byte cache-to-MEM2 transfers and renders 
 opening movie's underwater scene at captured frame 1100. Local evidence:
 `logs/lc-dma-boot.log` and `logs/lc-dma-frame-1100.png`. A rendered frame verifies
 video output, not complete movie playback, audio synchronization, or gameplay.
+
+For a sequence of actual rendered frames, set `MH3_CAPTURE_PATH` to a BMP path
+and `MH3_CAPTURE_INTERVAL` to a positive frame interval. For example,
+`MH3_CAPTURE_PATH=logs/startup.bmp MH3_CAPTURE_INTERVAL=500 build/metal/MH3`
+writes `startup-500.bmp`, `startup-1000.bmp`, and so on. Without the interval,
+the existing `MH3_CAPTURE_FRAME` option still captures one frame. Captures are
+requested before Aurora seals the frame, accounting for its frame-index advance.
+The first two captures were checked during a real native boot.
