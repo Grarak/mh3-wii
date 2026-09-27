@@ -311,3 +311,17 @@ frame-index advancement at display completion. All three Metal CTests pass.
 The live run (`logs/frame-fence-boot.log`, frame 1717) reaches character creation
 with its complete UI and correctly colored skin; the recursive smaller images
 are gone. This verifies character creation rendering, not gameplay.
+
+## Staging-capacity submissions
+
+Aurora's decoder returns before a draw when its current staging batch is full.
+The guest bridge now calls Aurora's `split_staging_batch` outside the decoder
+lock and retries that complete command once. This preserves the active EFB,
+viewport/scissor, and presentation state without advancing the display frame.
+A second failure remains an explicit error rather than an unbounded retry.
+
+All three Metal CTests pass. The actual Metal EFB check also forces a split and
+verifies retained pixels and the unchanged frame counter. The live run in
+`logs/staging-split-boot.log` passes the former packet-consumption failure and
+reaches 2,609 display copies before encountering a guest TLUT address requiring
+host-pointer conversion. Village gameplay remains unverified.
