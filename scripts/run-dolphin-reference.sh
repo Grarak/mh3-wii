@@ -67,6 +67,7 @@ if [[ $pipe_controller == True ]]; then
   cat > "$user/Config/Hotkeys.ini" <<'EOF'
 [Hotkeys]
 Device = Pipe/0/mh3-debug
+General/Take Screenshot = `Button X`
 Save State/Save State Slot 1 = `Button A`
 Load State/Load State Slot 1 = `Button B`
 EOF
@@ -104,6 +105,8 @@ EOF
   echo "Live controller pipe: $user/Pipes/mh3" >&2
 fi
 cat > "$user/GameSettings/RMHP08.ini" <<'EOF'
+[Wii]
+Widescreen = False
 [Controls]
 WiimoteSource0 = 1
 EOF

@@ -164,3 +164,11 @@ rejection; it passes. Six linker tests, three overlay-emission tests, native
 replacement-discovery regression, and five translator command/disassembly
 tests pass. Regenerating map01 produces identical function output (21,739
 unchanged files). Loading time is a separate optimization item in `TODO.md`.
+
+Further traversal in `logs/replays/woods-map01` reaches the Area 1 lookout
+introduction and its stamina/camera tutorials. Area 1 → Area 3 loads
+successfully (transition capture 16380; rendered Area 3 capture 16800),
+accepts movement, and returns to Area 1 (capture 17340) without a missing
+translated target or runtime stop. The top/left dark-band rendering report
+is tracked separately in `TODO.md`; viewport/fog misalignment is a hypothesis,
+not a verified cause.

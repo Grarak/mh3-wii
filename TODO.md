@@ -10,4 +10,8 @@
   fix. Identify hot decompiled functions and rewrite verified hot paths in
   readable C++ where useful; retain -O1 until measured gains justify changing it.
 - [ ] Verify village building collisions later (dock boundary regression passes).
-- [ ] Verify Dolphin's background savestate pipe and improve fast state replay.
+- [x] Verify Dolphin's background savestate/screenshot pipe.
+- [ ] Extend fast state replay to reusable field checkpoints.
+- [x] Fix dark top/left edges in village and Moga Woods. Aurora decoded GX
+  viewport origins with bias 340 instead of 342; fixed both decoder and native
+  encoder in a local source overlay. See `docs/rendering-performance.md`.
