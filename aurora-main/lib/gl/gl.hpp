@@ -155,6 +155,8 @@ public:
 private:
   ProgramDesc m_desc;
   uint64_t m_vertexHash = 0, m_fragmentHash = 0;
+  std::array<float, 4> m_alphaReferences{};
+  bool m_usesAlphaReferences = false;
   bool m_usesDiscard = false, m_replacesDepth = false;
   GLuint m_program = 0;
   bool m_failed = false;

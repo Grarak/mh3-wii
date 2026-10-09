@@ -1,4 +1,6 @@
 #include "../gl/gl.hpp"
+#include "../gfx/port_capture.hpp"
+#include "alpha_compare.hpp"
 #include "device.hpp"
 #include "draw_memory.hpp"
 #include "raster.hpp"
@@ -39,7 +41,7 @@ struct TextureEntry {
   unsigned pins = 0;
 };
 struct NativeProgram {
-  std::unique_ptr<PatchedProgram> program;
+  std::shared_ptr<PatchedProgram> program;
   std::vector<std::pair<std::string, int>> samplers;
   std::map<std::string, std::array<float, 4>> uniforms;
   bool buffer0 = false;
@@ -271,6 +273,7 @@ public:
   State state;
   std::map<GLuint, TextureEntry> textures;
   std::map<GLuint, NativeProgram> programs;
+  std::map<std::pair<uint64_t, uint64_t>, std::weak_ptr<PatchedProgram>> patchedPrograms;
   std::map<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
   GLuint nextName = 1;
@@ -448,9 +451,11 @@ GLuint framebuffer(GLuint color, GLuint depth) noexcept {
 }
 void bind_framebuffer(GLuint color, GLuint depth) noexcept { guarded([&] { renderer().bind_target(color, depth); }); }
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
-  m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
-  m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
   guarded([&] {
+    m_usesAlphaReferences = parameterize_alpha_references(m_desc.fragment, m_alphaReferences);
+    gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment);
+    m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
+    m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
     const auto* binary = fragment_binary(m_fragmentHash);
     m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
     m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
@@ -469,7 +474,13 @@ GLuint Program::get() noexcept {
     if (m_program) return m_program;
     auto& r = renderer();
     NativeProgram native;
-    native.program = std::make_unique<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
+    auto& shared = r.patchedPrograms[{m_vertexHash, m_fragmentHash}];
+    native.program = shared.lock();
+    if (!native.program) {
+      native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
+      shared = native.program;
+    }
+    if (m_usesAlphaReferences) native.uniforms.emplace("aur_alpha_refs", m_alphaReferences);
     for (const auto& [name, unit] : m_desc.samplers) {
       const auto* parameter = sceGxmProgramFindParameterByName(fragment_binary(m_fragmentHash), name.c_str());
       if (parameter && sceGxmProgramParameterGetCategory(parameter) == SCE_GXM_PARAMETER_CATEGORY_SAMPLER) {

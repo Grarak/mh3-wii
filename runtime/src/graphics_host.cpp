@@ -1,4 +1,7 @@
 #include "gx_host.h"
+#ifdef __vita__
+#include "../vita/platform.h"
+#endif
 #include "memory.h"
 #include "game_step.h"
 #include "gx_stream.h"
@@ -564,6 +567,9 @@ template void SubmitGuestGxFixed<4>(const uint8_t*);
 // game FPS counts display copies; host
 // FPS counts frames the render thread actually swapped.
 void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nominalHz) {
+#ifdef __vita__
+    ReportVitaMemory();
+#endif
 #ifdef MH3_DEVELOPMENT
     static const bool enabled = std::getenv("MH3_STATS") != nullptr;
     if (!enabled || !initialized) return;
@@ -584,9 +590,10 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         (presents - lastPresents) / seconds, (skipped - lastSkipped) / seconds,
         static_cast<long long>(guestCopies - presents - skipped), g_mkwHostNiActive ? "set" : "clear");
     const auto high = aurora::gfx::staging_high_water();
-    std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %zu idx %zu uniform %zu storage %zu (KiB)\n",
+    std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %llu idx %llu uniform %llu storage %llu (KiB)\n",
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
-                 size_t(high[0] >> 10), size_t(high[2] >> 10), size_t(high[1] >> 10), size_t(high[3] >> 10));
+                 static_cast<unsigned long long>(high[0] >> 10), static_cast<unsigned long long>(high[2] >> 10),
+                 static_cast<unsigned long long>(high[1] >> 10), static_cast<unsigned long long>(high[3] >> 10));
     last = now;
     lastTicks = ticks;
     lastCopies = guestCopies;
@@ -636,14 +643,20 @@ void CompleteHostGraphics() {
         if (frames >= profile.interval) {
             const auto wallMs = ns(afterGpu, profile.started) / 1e6 / frames;
             const auto cpuMs = double(std::clock() - profile.cpuStarted) * 1000 / CLOCKS_PER_SEC / frames;
+#ifdef __vita__
+            // Vita's libc clock is process elapsed time, including waits.
+            constexpr const char* cpuClockLabel = "Vita process elapsed";
+#else
+            constexpr const char* cpuClockLabel = "process CPU";
+#endif
             std::fprintf(stderr,
-                "MH3 profile: %llu display copies; %.2f ms wall/copy, %.2f ms process CPU/copy, "
+                "MH3 profile: %llu display copies; %.2f ms wall/copy, %.2f ms %s/copy, "
                 "%.2f ms GX completion/copy (%.2f ms worker, %.2f ms GPU queue), "
                 "%.2f..%.2f ms copy interval, "
                 "%llu GX commands/copy, %llu draws/copy, %llu arrays/copy, %llu textures/copy, "
                 "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy; "
                 "last frame %u host draws + %u merged into them; %.1f texture hashes/copy, %.1f TMEM invalidations/copy\n",
-                static_cast<unsigned long long>(frames), wallMs, cpuMs, profile.completionNs / 1e6 / frames,
+                static_cast<unsigned long long>(frames), wallMs, cpuMs, cpuClockLabel, profile.completionNs / 1e6 / frames,
                 profile.workerNs / 1e6 / frames, profile.gpuNs / 1e6 / frames,
                 profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
                 static_cast<unsigned long long>((GuestGxStream::commandCount - profile.lastCommands) / frames),

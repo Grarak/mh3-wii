@@ -7,6 +7,7 @@
 #include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/power.h>
+#include <psp2/appmgr.h>
 #include <cstdio>
 #include <algorithm>
 #include <cstdlib>
@@ -71,5 +72,38 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     std::fprintf(stderr, "MH3 Vita clocks: CPU %d, bus %d, GPU %d, crossbar %d MHz (set %d/%d/%d/%d)\n",
         scePowerGetArmClockFrequency(), scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency(),
         scePowerGetGpuXbarClockFrequency(), armClock, busClock, gpuClock, xbarClock);
+    ReportVitaMemory();
+}
+
+void ReportVitaMemory() {
+    static uint64_t last = 0, peakMain = 0;
+    const uint64_t now = sceKernelGetProcessTimeWide();
+    if (last && now - last < 1000000) return;
+    last = now;
+    static bool budgetAvailable = true;
+    if (budgetAvailable) {
+        SceAppMgrBudgetInfo info{};
+        info.size = sizeof(info);
+        const int result = sceAppMgrGetBudgetInfo(&info);
+        if (result >= 0 && info.total_user_rw_mem && info.free_user_rw <= info.total_user_rw_mem &&
+            info.free_extra_mem <= info.total_extra_mem) {
+            const uint64_t main = uint64_t(info.total_user_rw_mem) - info.free_user_rw +
+                                  uint64_t(info.total_extra_mem) - info.free_extra_mem;
+            peakMain = std::max(peakMain, main);
+            std::fprintf(stderr, "MH3 Vita budget: main %.2f MiB, peak %.2f MiB; CDRAM %.2f MiB; phycont %.2f MiB\n",
+                main / 1048576.0, peakMain / 1048576.0,
+                (info.total_cdram_mem - info.free_cdram_mem) / 1048576.0,
+                (info.total_phycont_mem - info.free_phycont_mem) / 1048576.0);
+            if (main >= 365000000) throw std::runtime_error("Vita main RAM exceeds the 365 MB port limit");
+            return;
+        }
+        budgetAvailable = false;
+        std::fprintf(stderr, "MH3 Vita: per-app budget unavailable (0x%08x); reporting free partitions only\n", unsigned(result));
+    }
+    SceKernelFreeMemorySizeInfo memory{};
+    memory.size = sizeof(memory);
+    if (sceKernelGetFreeMemorySize(&memory) >= 0)
+        std::fprintf(stderr, "MH3 Vita free: main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB\n",
+            memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
 }
 
