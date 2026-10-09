@@ -35,6 +35,19 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
         Check(SDL_SetAudioStreamFormat(stream, &spec, nullptr));
         streamRate = rate;
     }
+#ifdef MH3_DEVELOPMENT
+    // MH3_AUDIO_DUMP=file: every guest PCM block as raw s16le stereo at the
+    // rate printed at open (playback drops below do not apply).
+    static FILE* dump = [] {
+        const char* path = std::getenv("MH3_AUDIO_DUMP");
+        return path ? std::fopen(path, "wb") : nullptr;
+    }();
+    if (dump) {
+        const auto pcm = DecodeWiiPcm(data, bytes);
+        std::fwrite(pcm.data(), 1, bytes, dump);
+        std::fflush(dump);
+    }
+#endif
     // Bound host latency after long guest stalls while still delivering the
     // corresponding guest completion callbacks. Report dropped audio explicitly.
     if (SDL_GetAudioStreamQueued(stream) > int(rate)) {

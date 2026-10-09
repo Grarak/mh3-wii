@@ -502,12 +502,25 @@ inline float PpcFmaFloatViaDoubleInline(float a, float b, float c)
     return static_cast<float>(sum);
 }
 
+// MH3_INEXACT_FMA (an experiment, never a release build): every guest fused
+// multiply-add is a separate multiply and add, rounding twice.
+inline double PpcFmaDoubleInline(double a, double b, double c)
+{
+#if defined(MH3_INEXACT_FMA)
+    return a * b + c;
+#else
+    return std::fma(a, b, c);
+#endif
+}
+
 // Float fused multiply-add: one instruction where the host has it; the
 // Cortex-A9 (VFPv3/NEONv1, whose vmla rounds twice) uses the exact double form
 // instead of glibc's software fmaf.
 inline float PpcFmaFloatInline(float a, float b, float c)
 {
-#if defined(__arm__) && !defined(__ARM_FEATURE_FMA)
+#if defined(MH3_INEXACT_FMA)
+    return a * b + c;
+#elif defined(__arm__) && !defined(__ARM_FEATURE_FMA)
     return PpcFmaFloatViaDoubleInline(a, b, c);
 #else
     return std::fma(a, b, c);
@@ -542,7 +555,7 @@ inline double PpcAccurateSingleMaddIntermediateInline(double a, double c, double
     // Recover the direction of that discarded error for those tie cases.
     const double roundedC = PpcForce25BitInline(c);
     const double signedB = Subtract ? -b : b;
-    double result = std::fma(a, roundedC, signedB);
+    double result = PpcFmaDoubleInline(a, roundedC, signedB);
     const uint64_t resultBits = PpcBitCastToU64Inline(result);
     constexpr uint64_t kDiscardedMask = 0x000000001FFFFFFFULL;
     constexpr uint64_t kEvenTie = 0x0000000010000000ULL;
@@ -550,7 +563,7 @@ inline double PpcAccurateSingleMaddIntermediateInline(double a, double c, double
     {
         const double aPrime = signedB - result;
         const double bPrime = result + aPrime;
-        const double deltaA = std::fma(a, roundedC, aPrime);
+        const double deltaA = PpcFmaDoubleInline(a, roundedC, aPrime);
         const double deltaB = signedB - bPrime;
         const double error = deltaA + deltaB;
         if (error != 0.0)
@@ -575,23 +588,23 @@ inline double PpcFmulsNoNiInline(double a, double c)
 
 inline double PpcFmaddInline(double a, double c, double b)
 {
-    return std::fma(a, c, b);
+    return PpcFmaDoubleInline(a, c, b);
 }
 
 inline double PpcFmsubInline(double a, double c, double b)
 {
-    return std::fma(a, c, -b);
+    return PpcFmaDoubleInline(a, c, -b);
 }
 
 inline double PpcFnmaddInline(double a, double c, double b)
 {
-    const double result = std::fma(a, c, b);
+    const double result = PpcFmaDoubleInline(a, c, b);
     return std::isnan(result) ? result : -result;
 }
 
 inline double PpcFnmsubInline(double a, double c, double b)
 {
-    const double result = std::fma(a, c, -b);
+    const double result = PpcFmaDoubleInline(a, c, -b);
     return std::isnan(result) ? result : -result;
 }
 
