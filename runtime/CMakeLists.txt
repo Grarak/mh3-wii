@@ -621,10 +621,10 @@ if(MH3_DEVELOPMENT AND NOT VITA)
   target_sources(MH3 PRIVATE src/debug_port.cpp)
 endif()
 
-# MH3_ONLINE_AUTO, the online autopilot: development builds.
-if(MH3_DEVELOPMENT)
-  target_sources(MH3 PRIVATE src/net/online_auto.cpp)
-endif()
+# MH3_ONLINE_AUTO, the online autopilot. In every build: its ports (traced
+# wrappers of the online screens and the quest session) are native in the
+# generated dispatch tables, which all configurations share.
+target_sources(MH3 PRIVATE src/net/online_auto.cpp)
 
 # MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it
 # does not rebuild the generated shards.
@@ -700,3 +700,29 @@ if(NOT MH3_DEVELOPMENT)
     endif()
   endforeach()
 endif()
+
+# prepare_native_dispatch.py takes every port registered under src/ as native
+# and leaves it out of the generated dispatch tables, in every configuration:
+# a file with ports that this build does not compile leaves their translated
+# functions undispatched, and the game stops at its start ("omits translated
+# winner").
+get_target_property(mh3_compiled_sources MH3 SOURCES)
+set(mh3_compiled_paths "")
+
+foreach(mh3_source IN LISTS mh3_compiled_sources)
+  cmake_path(ABSOLUTE_PATH mh3_source BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE OUTPUT_VARIABLE mh3_source_path)
+  list(APPEND mh3_compiled_paths "${mh3_source_path}")
+endforeach()
+
+foreach(mh3_source IN LISTS native_dispatch_sources)
+  if(NOT mh3_source MATCHES "\\.cpp$")
+    continue()
+  endif()
+
+  file(STRINGS "${mh3_source}" mh3_ports REGEX "^[ \t]*(REGISTER_NATIVE_FUNCTION|PPC_NATIVE_OVERRIDE|GX_FATAL_STUB)")
+  cmake_path(NORMAL_PATH mh3_source OUTPUT_VARIABLE mh3_source_path)
+
+  if(mh3_ports AND NOT mh3_source_path IN_LIST mh3_compiled_paths)
+    message(FATAL_ERROR "${mh3_source} registers native ports but this configuration does not compile it: the generated dispatch tables leave its functions out")
+  endif()
+endforeach()

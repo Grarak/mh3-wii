@@ -1,4 +1,5 @@
-// The online autopilot (development builds): MH3_ONLINE_AUTO takes a --city
+// The online autopilot (development builds; release builds keep its ports,
+// which then only trace): MH3_ONLINE_AUTO takes a --city
 // launch through the online screens and into a quest without input, and the
 // debug port's `online` command runs the quest circle commands by hand
 // (net_ctrl.cpp).
@@ -619,6 +620,7 @@ std::string Command(CpuContext* cpu, std::istringstream& in) {
 
 extern "C" void func_8044E4FC(CpuContext* cpu);
 extern "C" void MH3_OnlineScreens(CpuContext* cpu) {
+#ifdef MH3_DEVELOPMENT
     static const bool configured = [] {
         if (const char* spec = std::getenv("MH3_ONLINE_AUTO")) {
             plan = Parse(spec);
@@ -628,6 +630,7 @@ extern "C" void MH3_OnlineScreens(CpuContext* cpu) {
         return true;
     }();
     (void)configured;
+#endif
     const uint32_t work = Work();
     uint16_t keys = 0;
     ++frame;
@@ -638,7 +641,12 @@ extern "C" void MH3_OnlineScreens(CpuContext* cpu) {
         if (plan.on) {
             GuestFrame guard(cpu, 0x10);
             keys = Choose(work);
-            RunCircle(cpu, work, SkipMovie());
+#ifdef MH3_DEVELOPMENT
+            const bool movie = SkipMovie();
+#else
+            const bool movie = false;
+#endif
+            RunCircle(cpu, work, movie);
         }
     }
 

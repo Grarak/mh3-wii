@@ -1,4 +1,4 @@
-// The online autopilot (development builds, online_auto.cpp).
+// The online autopilot (online_auto.cpp).
 #pragma once
 
 #include "abi_bridge.h"
