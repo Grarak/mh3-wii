@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string_view>
 
 namespace {
 
@@ -687,6 +688,36 @@ extern "C" void MH3_CheatBedEntry(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80214754, MH3_CheatBedEntry, "CheatBedEntry");
 
+namespace {
+
+// The character's name in the save data: 17 bytes from +3.
+constexpr uint32_t kName = 0x3, kNameSize = 17;
+
+void WriteName(uint32_t user, std::string_view name, uint32_t size) {
+    for (uint32_t i = 0; i < size; ++i)
+        Memory::Write8(user + kName + i, i < name.size() ? uint8_t(name[i]) : 0);
+}
+
+} // namespace
+
+// PlLoadUserData (0x80049FE0, player): the player's work filled from the
+// save data, the name to its +0x5CA. Profile name modifier (C2 at US
+// 0x8004A0E0, EU 0x8004A144) wrote the typed name into the save data just
+// before the name is copied; here before the call (nothing earlier in it
+// reads the name).
+extern "C" void func_80049FE0(CpuContext* ctx);
+
+extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
+    const std::string_view name = Cheats::Text(Id::ProfileNameModifier);
+
+    if (On(Id::ProfileNameModifier) && !name.empty() && UserData() != 0)
+        WriteName(UserData(), name, kNameSize);
+
+    func_80049FE0(ctx);
+}
+
+REGISTER_NATIVE_FUNCTION_AS(0x80049FE0, MH3_CheatLoadUserData, "CheatLoadUserData");
+
 namespace Cheats {
 
 // Language changer: the US code hooked the title menu to step the language
@@ -695,6 +726,13 @@ namespace Cheats {
 void StepItems() {
     if (On(Id::LanguageChanger))
         Memory::Write8(kSystem + 9, uint8_t(Value(Id::LanguageChanger)));
+
+    // Name change (US 0x900E0573 to 0x900E057A, the save data's +3): the
+    // typed name's 7 characters, the rest 0.
+    const std::string_view name = Text(Id::NameChange);
+
+    if (On(Id::NameChange) && !name.empty() && ::UserData() != 0)
+        WriteName(::UserData(), name, 8);
 }
 
 } // namespace Cheats

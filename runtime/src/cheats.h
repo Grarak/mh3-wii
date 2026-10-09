@@ -16,6 +16,7 @@
 #include "memory.h"
 
 #include <cstdint>
+#include <string_view>
 
 namespace Cheats {
 
@@ -115,6 +116,7 @@ enum class Id : uint16_t {
     BoxItemsX99,
     InfiniteResources,
     InfiniteFunds,
+    ProfileNameModifier,
     SuperSpeed,
     BullyActionRepeater,
     MoonJump,
@@ -160,6 +162,7 @@ enum class Id : uint16_t {
     BossLevel,
     SkillerInfiniteTime,
     SexChange,
+    NameChange,
     InfiniteHp,
     InfiniteStamina,
     InfiniteAir,
@@ -334,6 +337,9 @@ inline int32_t Value(Id id) {
 // The switches of the codes that their buttons turn on and off (the Gecko
 // "CC" lines): on while the cheat is and its buttons have switched it on.
 bool Toggled(Id id);
+
+// The name a cheat with a typed value was given (empty: none).
+std::string_view Text(Id id);
 
 // The infinite time codes' buttons, held this step: they run the quest's
 // time out (quest_clock.cpp).

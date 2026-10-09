@@ -211,6 +211,7 @@ constexpr Entry kEntries[]{
     {Id::BoxItemsX99, {kBully, "All item box items x99", "Item box stacks get a count of 99 when the box is listed."}},
     {Id::InfiniteResources, {kBully, "Infinite ressources", "Moga Woods resources become 99,999,999 when shown."}},
     {Id::InfiniteFunds, {kBully, "Infinite funds", "Money becomes 99,999,999 when shown."}},
+    {Id::ProfileNameModifier, {kBully, "Profile name modifier", "The character gets the typed name as it loads; saving keeps it (16 characters at most).", {}, {}, 0, 16}},
     {Id::SuperSpeed, {kBully, "Super speed", "The buttons switch it on and off: the hunter's motions play five times as fast.", kActivators}},
     {Id::BullyActionRepeater, {kBully, "Action repeater", "The buttons restart the hunter's current action.", kActivators}},
     {Id::MoonJump, {kBully, "Moon jump", "Hold A+B to rise (not with Free fly)."}},
@@ -256,6 +257,7 @@ constexpr Entry kEntries[]{
     {Id::BossLevel, {kSkiller, "Set boss/s level to", "The quest's large monsters' level byte.", {}, {0, 255}}},
     {Id::SkillerInfiniteTime, {kSkiller, "Inf time arena/quests (finish mission press __)", "The quest clock stops; the buttons run the time out.", kActivators}},
     {Id::SexChange, {kSkiller, "Sex change", "The character's sex (0 male, 1 female); loads with the character.", {}, {0, 1}}},
+    {Id::NameChange, {kSkiller, "Name change", "The character's name is the typed one (7 characters at most).", {}, {}, 0, 7}},
     {Id::InfiniteHp, {kSkiller, "Inf HP", "Health and recoverable health stay full."}},
     {Id::InfiniteStamina, {kSkiller, "Inf stamina", "Stamina stays full."}},
     {Id::InfiniteAir, {kSkiller, "Inf air", "The oxygen gauge stays full."}},
@@ -436,6 +438,9 @@ const std::array<Cheat, size_t(Id::Count)> kList = [] {
 
 size_t g_selected[size_t(Id::Count)];
 
+// The typed names (the cheats with a textLength).
+std::string g_text[size_t(Id::Count)];
+
 bool HasRange(const Cheat& cheat) {
     return cheat.options.empty() && cheat.range.max > cheat.range.min;
 }
@@ -514,6 +519,10 @@ constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly, I
 
 bool Toggled(Id id) {
     return On(id) && g_toggled[size_t(id)];
+}
+
+std::string_view Text(Id id) {
+    return g_text[size_t(id)];
 }
 
 bool QuestEndPressed() {
@@ -627,7 +636,30 @@ std::string ValueLabel(size_t cheat) {
     if (HasRange(c))
         return std::to_string(g_value[cheat]);
 
+    if (c.textLength)
+        return g_text[cheat].empty() ? "none typed" : g_text[cheat];
+
     return {};
+}
+
+size_t TextLength(size_t cheat) {
+    return kList[cheat].textLength;
+}
+
+std::string Text(size_t cheat) {
+    return g_text[cheat];
+}
+
+bool SetText(size_t cheat, std::string_view text) {
+    if (text.size() > TextLength(cheat))
+        return false;
+
+    for (char c : text)
+        if (c < 32 || c > 126)
+            return false;
+
+    g_text[cheat] = text;
+    return true;
 }
 
 size_t EnabledCount() {
@@ -683,7 +715,10 @@ bool EnableByName(std::string_view name, std::string_view value) {
         if (Key(name) != Key(kList[i].name) || !Key(kList[i].group).starts_with(Key(group)))
             continue;
 
-        if (!value.empty()) {
+        if (TextLength(i)) {
+            if (!SetText(i, value))
+                return false;
+        } else if (!value.empty()) {
             const size_t choices = Choices(i);
             size_t choice = choices;
 

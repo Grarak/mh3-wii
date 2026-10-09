@@ -33,6 +33,7 @@ struct Cheat {
     std::span<const Option> options;
     Range range;        // when there are no options and max > min
     uint8_t defaultOption = 0;
+    uint8_t textLength = 0; // a typed name of up to this many characters instead
 };
 
 std::span<const Cheat> List();
@@ -50,8 +51,14 @@ void Select(size_t cheat, size_t choice);
 std::string ValueLabel(size_t cheat);
 size_t EnabledCount();
 
+// The typed text of a cheat that takes one (TextLength not 0): printable
+// ASCII, at most TextLength characters; SetText refuses anything else.
+size_t TextLength(size_t cheat);
+std::string Text(size_t cheat);
+bool SetText(size_t cheat, std::string_view text);
+
 // Turns a cheat on by name, with a value by option label or number (empty:
-// its default). Returns false for an unknown name or value. Letters and
+// its default) or its text. Returns false for an unknown name or value. Letters and
 // digits count, in any case; "Group:name" picks the cheat of that group
 // (or of the groups starting with it) when several lists have the name, else
 // the first in the list.

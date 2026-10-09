@@ -269,13 +269,33 @@ at `+0x13a`) and `803AD4E0` (eight star buckets). Composition requires the
 ordinary `0x300c4/0x300c5` quest modes and preserves the base map's day/night
 selection. No new game code or guessed spawn tables are generated.
 
-Cheats currently offers two native toggles: `No damage` and
-`No action stamina drain`. They call the existing gameplay ports directly and
-apply to the current game launch. The stamina toggle covers the continuous
-action drains implemented in `stamina.cpp`; it is not a general inventory or
-save editor. Gecko code lists are not interpreted: PPC instruction patches
-cannot change code that has already been statically translated. The user's
-untracked `cheats.txt` and `cheats/` are untouched.
+Cheats lists the codes of the RMHE08 (US) Gecko code lists, ported to this
+EU disc, in groups by the lists' author tags: Basic (`No damage` and
+`No action stamina drain`), Stuff, Seth@WiiPlaza, Bully@Wiiplaza, Skiller,
+Argon and Doudley. The Cheats page shows how many codes of each group are on;
+a group's page lists its codes with On/Off and, where a code has a value,
+the value in brackets. X toggles the selected code and Left/Right changes its
+value: an option (an item, a multiplier, a range), the buttons of a code
+that left them to the user (L+R or SELECT with a d-pad direction), or for
+the two name codes the name, typed on the system keyboard. The main menu's
+detail line names the active codes. Toggles apply to the current launch, in
+development and release builds. `MH3 --cheat <name>[=<value>]` (repeatable,
+with any other option) turns one on from the command line: letters and
+digits of the name count, `Group:name` picks between lists that share a
+name, and the value is an option's label, a number or the name.
+
+No Gecko code is interpreted at runtime: PPC instruction patches cannot
+change code that has already been statically translated. Each code is native
+code instead (`runtime/src/cheat_*.cpp`, the table in `cheats.cpp`): writes
+to the game's data at the EU addresses once per logic step, as the code
+handler wrote them once per frame; hooks in the native ports of the patched
+functions (health, stamina, timers, the quest clock, the jump and run
+actions); or wrappers registered at a translated function's address that
+change its arguments, a small-data constant it loads, or its result. The 20
+codes that only work online (cities, lobby, chat, friends, servers, quest
+board) and Bully's button activator template are not in the table. The
+user's untracked `cheats.txt` and `cheats/` are only read while porting;
+the build does not use them.
 
 ## Build and verification
 
@@ -402,7 +422,8 @@ directory gives the missing-disc message. `MH3_USER_DIR` holds the saves and
   imgui's `stb_truetype`, at the same 18-pixel em as the PVF font;
 - messages draw as a panel over the page and close with Cross, Circle or
   Start (after 2.5 s while an input script runs);
-- the quest-name keyboard is the Vita's: on the host Name keeps its value;
+- the keyboard (quest names, the two name cheats) is the Vita's: on the host
+  the name keeps its value;
 - no kubridge check.
 
 Input is `MH3_LAUNCHER_INPUT`, or the host's controls read as the game's
@@ -460,7 +481,7 @@ Build: `scripts/build-vita.sh` (development, the default). Release check:
 
 1. **Tour** (`launcher-tour-1`): `tour-custom-quest.tsv`;
    `scripts/dev/devkit-heartbeat.sh build/vita-devkit/launcher-tour-1 --launcher --timeout 600`.
-   Expect in the log: `cheats: no damage on, no action stamina drain on`,
+   Expect in the log: `cheat No damage on`, `cheat No action stamina drain on`,
    `quest-name keyboard open` with the keyboard over the editor on HDMI for
    2.5 s, `custom quest saved: Custom The Horned Dragon (template 1027,
    encounter 1046, 4 stars)` twice, each with the `saved` message dialog,

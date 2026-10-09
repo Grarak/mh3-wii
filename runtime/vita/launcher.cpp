@@ -300,34 +300,42 @@ void Message(const std::string& text) {
     sceMsgDialogTerm();
 }
 
-// The system keyboard (SceImeDialog, part of SceCommonDialog like the message).
-void EditName(std::string& name) {
-    std::array<SceWChar16, 44> initial{}, output{};
+// The system keyboard (SceImeDialog, part of SceCommonDialog like the
+// message): a name of up to `length` characters, `what` ("quest name") in
+// its title and log lines.
+void TypeName(std::string& name, const std::string& what, size_t length) {
+    std::array<SceWChar16, 44> initial{}, output{}, title{};
+    length = std::min(length, initial.size() - 1);
 
-    for (size_t i = 0; i < std::min(name.size(), initial.size() - 1); ++i)
+    for (size_t i = 0; i < std::min(name.size(), length); ++i)
         initial[i] = uint8_t(name[i]);
 
-    const SceWChar16 title[] = {'Q', 'u', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e', 0};
+    for (size_t i = 0; i < std::min(what.size(), title.size() - 1); ++i)
+        title[i] = uint8_t(i == 0 ? std::toupper(static_cast<unsigned char>(what[i])) : what[i]);
+
+    std::string key = what;
+    std::replace(key.begin(), key.end(), ' ', '-');
+
     SceImeDialogParam param{};
     sceImeDialogParamInit(&param);
     param.type = SCE_IME_TYPE_BASIC_LATIN;
     param.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
-    param.title = title;
-    param.maxTextLength = initial.size() - 1;
+    param.title = title.data();
+    param.maxTextLength = length;
     param.initialText = initial.data();
     param.inputTextBuffer = output.data();
 
     if (const int error = sceImeDialogInit(&param); error < 0)
-        throw std::runtime_error("Cannot open the quest-name keyboard (error " + std::to_string(error) + ")");
+        throw std::runtime_error("Cannot open the " + key + " keyboard (error " + std::to_string(error) + ")");
 
-    Log("quest-name keyboard open");
+    Log("%s keyboard open", key.c_str());
     RunDialog(sceImeDialogGetStatus, sceImeDialogAbort);
     SceImeDialogResult result{};
     sceImeDialogGetResult(&result);
     sceImeDialogTerm();
 
     if (result.button != SCE_IME_DIALOG_BUTTON_ENTER) {
-        Log("quest-name keyboard closed without a name");
+        Log("%s keyboard closed without a name", key.c_str());
         return;
     }
 
@@ -338,7 +346,7 @@ void EditName(std::string& name) {
             break;
 
         if (c < 32 || c > 126)
-            throw std::runtime_error("Use printable Latin characters for quest names");
+            throw std::runtime_error("Use printable Latin characters for " + what + "s");
 
         value += char(c);
     }
@@ -350,7 +358,7 @@ void EditName(std::string& name) {
     if (!value.empty())
         name = std::move(value);
 
-    Log("quest name: %s", name.c_str());
+    Log("%s: %s", what.c_str(), name.c_str());
 }
 #else
 // A panel over the last menu frame; Cross, Circle or Start closes it.
@@ -401,8 +409,9 @@ void Message(const std::string& text) {
 }
 
 // No system keyboard on a development host: the name stays as it is.
-void EditName(const std::string& name) {
-    Log("quest-name keyboard: the Vita's system keyboard; the host keeps \"%s\"", name.c_str());
+void TypeName(const std::string& name, std::string what, size_t) {
+    std::replace(what.begin(), what.end(), ' ', '-');
+    Log("%s keyboard: the Vita's system keyboard; the host keeps \"%s\"", what.c_str(), name.c_str());
 }
 #endif
 class Input {
@@ -912,7 +921,9 @@ bool Run() {
 
                 const size_t cheat = groupCheats[std::min(selected, groupCheats.size() - 1)];
                 detail = cheats[cheat].detail;
-                footer = LauncherCheats::Choices(cheat) ? "X Toggle   Left / Right Value   O Back   L / R Page" : "X Toggle   O Back   D-pad Move   L / R Page";
+                footer = LauncherCheats::Choices(cheat) ? "X Toggle   Left / Right Value   O Back   L / R Page"
+                         : LauncherCheats::TextLength(cheat) ? "X Toggle   Left / Right Type the name   O Back   L / R Page"
+                                                             : "X Toggle   O Back   D-pad Move   L / R Page";
                 break;
             }
             }
@@ -982,7 +993,7 @@ bool Run() {
 
                 if (page == Page::Editor && (direction || accept)) {
                     if (selected == 0 && accept)
-                        EditName(edit.name);
+                        TypeName(edit.name, "quest name", 43);
 
                     const auto cycle = [&](size_t index, size_t count) {
                         return (index + count + (direction ? direction : 1)) % count;
@@ -1050,6 +1061,11 @@ bool Run() {
 
                     if (choices) {
                         LauncherCheats::Select(cheat, (LauncherCheats::Selected(cheat) + choices + direction) % choices);
+                        Log("cheat %s: %s", LauncherCheats::List()[cheat].name, LauncherCheats::ValueLabel(cheat).c_str());
+                    } else if (const size_t length = LauncherCheats::TextLength(cheat)) {
+                        std::string name = LauncherCheats::Text(cheat);
+                        TypeName(name, "hunter name", length);
+                        LauncherCheats::SetText(cheat, name);
                         Log("cheat %s: %s", LauncherCheats::List()[cheat].name, LauncherCheats::ValueLabel(cheat).c_str());
                     }
 

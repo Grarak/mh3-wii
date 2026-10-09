@@ -1543,6 +1543,7 @@
 801f5a1c BoxPagesDraw
 801f5e50 BoxPageDraw
 80214754 BedEntry
+80049fe0 PlLoadUserData
 # Cheats in the monsters' functions (cheat_monsters.cpp)
 8011e6bc MonsterHealthAdd
 80132004 MonsterMaxHealth
