@@ -270,10 +270,11 @@ ordinary `0x300c4/0x300c5` quest modes and preserves the base map's day/night
 selection. No new game code or guessed spawn tables are generated.
 
 Cheats lists the codes of the RMHE08 (US) Gecko code lists, ported to this
-EU disc, in groups by the lists' author tags: Basic (`No damage` and
-`No action stamina drain`), Stuff (43), Seth@WiiPlaza (10), Bully@Wiiplaza
-(30), Skiller (80), Argon (6) and Doudley (88), 257 codes and the two Basic
-toggles. The Cheats page shows how many codes of each group are on;
+EU disc, in groups by the lists' author tags: Basic (`No damage`,
+`No action stamina drain` and `All items in the item box`, the launcher's
+own), Stuff (43), Seth@WiiPlaza (10), Bully@Wiiplaza (30), Skiller (80),
+Argon (6) and Doudley (88), 257 codes and the three Basic entries. The
+Cheats page shows how many codes of each group are on;
 a group's page lists its codes with On/Off and, where a code has a value,
 the value in brackets. X toggles the selected code and Left/Right changes its
 value: an option (an item, a multiplier, a range), the buttons of a code
@@ -298,6 +299,22 @@ codes that only work online (cities, lobby, chat, friends, servers, quest
 board) and Bully's button activator template are not in the table. The
 user's untracked `cheats.txt` and `cheats/` are only read while porting;
 the build does not use them.
+
+`All items in the item box` fills the box once a launch, when a character
+first loads (PlLoadUserData, 0x80049FE0). The box is the save data's
+(u16 item, s16 count) slots from +0x180, 100 a page (ItemBoxSlots,
+0x8004AED4). BoxPages (0x8004AE6C) gives 4 pages, 6 once the Organizer
+Guide (item 0x244) was obtained and 2 more with the Pack Rat Guide (0x245):
+the obtained bits at the save data's +0x4AD8 (ItemObtained 0x8004D38C,
+ItemObtainedSet 0x8004D318), which adding an item to the pouch or the box
+sets. The cheat sets both bits, as getting the two guides does, so the box
+has its largest 8 pages (800 slots, up to the talismans at +0xE00); it
+empties them and stores every item through the game's ItemBoxAdd
+(0x8004BF08: at most 99 a slot, the item marked obtained), the count
+chosen (99, 10 or 1) each. The item table (GetItemData 0x8029F740,
+ItemName 0x8029F68C) has items 1 to 0x2EA; ItemNotStorable (0x8004B098)
+refuses 223 No Item, 438 BBQ with Mask and 439 No Mask, and 30 entries
+named `ERR<n>` are placeholders, which leaves 713 items in slots 0 to 712.
 
 The lists' authors copied each other's codes, so 31 of the 288 ported codes
 did the same for the player as another code (the same patched instruction,

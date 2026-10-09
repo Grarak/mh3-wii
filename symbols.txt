@@ -1526,6 +1526,12 @@
 8004baa0 ItemAdd
 80272e94 PlayerItemUse
 8004ae6c BoxPages
+8004aed4 ItemBoxSlots
+8004b098 ItemNotStorable
+8004bdbc ItemSlotsAddStacked
+8004bf08 ItemBoxAdd
+8004d318 ItemObtainedSet
+8004d38c ItemObtained
 8004b770 MaterialCount
 8004c620 TalismanToBox
 8004cd34 CanWearArmor

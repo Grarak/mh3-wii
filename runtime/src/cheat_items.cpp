@@ -43,6 +43,14 @@ constexpr uint32_t kTalismanSlots = 800; // 8 pages of 100
 
 constexpr uint32_t GetItemData = 0x8029F740; // GetItemData__FUs (item): +3 u8 stack size, +0xC u32 price
 
+// Items obtained: a bit each at the save data's +0x4AD8, set when an item is
+// added to the pouch or the box (ItemObtainedSet), read by ItemObtained.
+constexpr uint32_t ItemObtained = 0x8004D38C;    // (save data, item): 1 when set
+constexpr uint32_t ItemObtainedSet = 0x8004D318; // (save data, item)
+
+// The two books that enlarge the box (BoxPages).
+constexpr uint32_t kOrganizerGuide = 0x244, kPackRatGuide = 0x245;
+
 } // namespace
 
 // 0x8004BAA0 (item, s16 change, slots, slot count, notify, max): adds to an
@@ -139,9 +147,11 @@ extern "C" void MH3_CheatPlayerItemUse(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80272E94, MH3_CheatPlayerItemUse, "CheatPlayerItemUse");
 
-// 0x8004AE6C (save data): the box's pages, 4, or 6 with flag 0x244, and 2
-// more with flag 0x245 (0x8004D38C (save data, flag): 1 when set). Item/equip
-// boxes have 8 pages (US 0x8004AE20, EU 0x8004AE84) starts at 8.
+// 0x8004AE6C (save data): the box's pages, 4, or 6 once the Organizer Guide
+// (item 0x244) was obtained, and 2 more once the Pack Rat Guide (0x245) was
+// (ItemObtained 0x8004D38C (save data, item): 1 when its bit at +0x4AD8 is
+// set). Item/equip boxes have 8 pages (US 0x8004AE20, EU 0x8004AE84) starts
+// at 8.
 extern "C" void MH3_BoxPages(CpuContext* ctx) {
     uint32_t pages = 0;
 
@@ -151,10 +161,10 @@ extern "C" void MH3_BoxPages(CpuContext* ctx) {
         const uint32_t save = frame.Arg(3);
         pages = On(Id::Boxes8Pages) ? 8 : 4;
 
-        if (game.Call<0x8004D38C>({save, 0x244}) == 1)
+        if (game.Call<ItemObtained>({save, kOrganizerGuide}) == 1)
             pages = 6;
 
-        if (game.Call<0x8004D38C>({save, 0x245}) == 1)
+        if (game.Call<ItemObtained>({save, kPackRatGuide}) == 1)
             pages += 2;
     }
 
@@ -679,6 +689,46 @@ namespace {
 // The character's name in the save data: 17 bytes from +3.
 constexpr uint32_t kName = 0x3, kNameSize = 17;
 
+// The item box: (u16 item, s16 count) slots from +0x180, as many as
+// ItemBoxSlots (0x8004AED4) says: 100 a page, BoxPages' 4 to 8 (800 slots
+// reach the talismans at +0xE00). ItemBoxAdd (0x8004BF08: item, count, s16*
+// slot) stores an item as the game does: none of what ItemNotStorable
+// (0x8004B098) names (0, 223 No Item, 438 BBQ with Mask, 439 No Mask), at
+// most 99 a slot (ItemSlotsAddStacked 0x8004BDBC), the item marked as
+// obtained, nothing once the box is full.
+constexpr uint32_t ItemBoxSlots = 0x8004AED4, ItemBoxAdd = 0x8004BF08;
+
+// The items: GetItemData and ItemName (0x8029F740, 0x8029F68C) take 0 to
+// 0x2EA. These 30 are placeholders, named "ERR" and their number less one
+// in the item names; without them and ItemNotStorable's, 713 items remain.
+constexpr uint32_t kLastItem = 0x2EA;
+constexpr uint16_t kPlaceholders[]{90, 114, 148, 156, 158, 159, 160, 161, 162, 163, 165, 168, 179, 218, 243,
+                                   246, 257, 258, 259, 260, 261, 262, 263, 271, 272, 369, 370, 371, 372, 373};
+
+bool g_boxFilled = false;
+
+// All items in the item box: the box at its largest (both guides obtained,
+// as getting them does: 8 pages), its slots emptied, then every item in
+// turn.
+void FillItemBox(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t save = UserData();
+    game.Call<ItemObtainedSet>({save, kOrganizerGuide});
+    game.Call<ItemObtainedSet>({save, kPackRatGuide});
+
+    const uint32_t slots = game.Call<ItemBoxSlots>({save}) & 0xFFFF;
+
+    for (uint32_t i = 0; i < slots; ++i)
+        Memory::Write32(save + kItemBox + 4 * i, 0);
+
+    const auto count = uint32_t(Value(Id::AllItems));
+
+    for (uint32_t item = 1; item <= kLastItem; ++item)
+        if (std::find(std::begin(kPlaceholders), std::end(kPlaceholders), item) == std::end(kPlaceholders))
+            game.Call<ItemBoxAdd>({item, count, frame[0x10]});
+}
+
 } // namespace
 
 // PlLoadUserData (0x80049FE0, player): the player's work filled from the
@@ -686,7 +736,8 @@ constexpr uint32_t kName = 0x3, kNameSize = 17;
 // name modifier, C2 at US 0x8004A0E0, EU 0x8004A144) wrote the typed name
 // into the save data just before the name is copied; here before the call
 // (nothing earlier in it reads the name). Skiller's Name change wrote the
-// same field (7 characters) each frame.
+// same field (7 characters) each frame. All items in the item box fills the
+// box here once a launch, when a character has first loaded.
 extern "C" void func_80049FE0(CpuContext* ctx);
 
 extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
@@ -695,6 +746,11 @@ extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
     if (On(Id::ProfileNameModifier) && !name.empty() && UserData() != 0)
         for (uint32_t i = 0; i < kNameSize; ++i)
             Memory::Write8(UserData() + kName + i, i < name.size() ? uint8_t(name[i]) : 0);
+
+    if (On(Id::AllItems) && !g_boxFilled && UserData() != 0) {
+        g_boxFilled = true;
+        FillItemBox(ctx);
+    }
 
     func_80049FE0(ctx);
 }

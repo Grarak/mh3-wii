@@ -130,6 +130,11 @@ constexpr Option kSkinTones[]{
     {"200", 0x200}, {"214", 0x214}, {"228", 0x228}, {"23C", 0x23C}, {"250", 0x250}, {"264", 0x264},
 };
 
+// All items in the item box: a slot's count (the box holds 99 at most).
+constexpr Option kItemCounts[]{
+    {"99", 99}, {"10", 10}, {"1", 1},
+};
+
 // Bowgun barrel ranges, as the code's notes listed them (hundredths).
 constexpr Option kBarrelRanges[]{
     {"0.30", 30}, {"0.50", 50}, {"0.70", 70}, {"1.00", 100}, {"3.00", 300}, {"4.00", 400},
@@ -152,6 +157,7 @@ constexpr const char* kGroups[]{kBasic, kStuff, kSeth, kBully, kSkiller, kArgon,
 constexpr Entry kEntries[]{
     {Id::NoDamage, {kBasic, "No damage", "The hunter takes no damage."}},
     {Id::NoStaminaDrain, {kBasic, "No action stamina drain", "Running, guarding and other continuous actions cost no stamina."}},
+    {Id::AllItems, {kBasic, "All items in the item box", "As the character first loads, the item box grows to its 8 pages (both box guides obtained), is emptied and gets this many of every item (713).", kItemCounts}},
 
     {Id::GalleryClips, {kStuff, "Unlock all gallery clips", "Every movie of the gallery can be watched; saved with the game."}},
     {Id::TurnItUpTo11, {kStuff, "Turn it up to 11", "Music volume past the option's maximum."}},
@@ -555,7 +561,7 @@ void ConsumePresses() {
 void Step(CpuContext*) {
     static const bool any = [] {
         for (size_t i = 0; i < size_t(Id::Count); ++i)
-            if (g_on[i] && Id(i) != Id::NoDamage && Id(i) != Id::NoStaminaDrain)
+            if (g_on[i] && Id(i) != Id::NoDamage && Id(i) != Id::NoStaminaDrain && Id(i) != Id::AllItems)
                 return true;
         return false;
     }();
