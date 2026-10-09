@@ -1865,14 +1865,17 @@ LayerPass layer_pass_mode() {
 }
 
 // Whether the draw about to be made can go to the half-resolution pass:
-// blended over (source alpha or premultiplied) or added, without depth
-// writes, on the scene's own target. Skinned meshes (characters) stay.
-bool deferrable_layer(Renderer& r, GLuint program, bool skinned, bool effect) {
+// a perspective (3D scene) draw, blended over (source alpha or premultiplied)
+// or added, depth tested without depth writes, on the scene's own target.
+// Skinned meshes (characters), 2D and UI stay full size.
+bool deferrable_layer(Renderer& r, GLuint program, const ShadedBlocks& blocks, bool skinned, bool effect) {
   const auto& s = r.state;
   const auto& raster = s.raster;
   const auto mode = layer_pass_mode();
 
-  if (mode == LayerPass::Off || (effect && mode != LayerPass::All) || r.replayingLayers || r.layerFlushes >= MaxLayerFlushes || s.display || !s.color || !s.depth || skinned)
+  // 2D and UI draws (orthographic) always stay full size.
+  if (mode == LayerPass::Off || (effect && mode != LayerPass::All) || !blocks.perspective || r.replayingLayers || r.layerFlushes >= MaxLayerFlushes || s.display || !s.color ||
+      !s.depth || skinned)
     return false;
 
   // The scene's own target, not an offscreen capture.
@@ -1885,6 +1888,11 @@ bool deferrable_layer(Renderer& r, GLuint program, bool skinned, bool effect) {
   const bool destinations = raster.dstColor == GL_ONE_MINUS_SRC_ALPHA || raster.dstColor == GL_ONE;
 
   if (!(raster.blend && raster.colorEquation == GL_FUNC_ADD && sources && destinations && !raster.depthWrite && raster.colorMask[0] && raster.colorMask[1] && raster.colorMask[2]))
+    return false;
+
+  // Only layers tested against the scene's depth (the map's and the effects'):
+  // 2D draws (the title menu, HUD, layouts) test nothing and stay full size.
+  if (!raster.depthTest || raster.depthFunc == GL_ALWAYS)
     return false;
 
   // The running scene must store its depth for the pass to read; else the
@@ -2004,7 +2012,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   auto& r = renderer();
 
   // a_bones: a skinned mesh.
-  if (deferrable_layer(r, program, inputs.location[10] >= 0, false)) {
+  if (deferrable_layer(r, program, blocks, inputs.location[10] >= 0, false)) {
     r.layers.push_back({r.state, [&r, id = buffer.get(), data = buffer.data(), layout, inputs, vertexOffset, vertexCount, indexOffset, indexCount, program, blocks, textureUnits] {
                           // A mesh retired meanwhile is left out.
                           if (const auto found = r.meshes.find(id); found != r.meshes.end() && found->second.data() == data)
@@ -2033,7 +2041,7 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
 
     auto& r = renderer();
 
-    if (deferrable_layer(r, program, false, true)) {
+    if (deferrable_layer(r, program, blocks, false, true)) {
       r.layers.push_back({r.state, [&r, geometry, coordinates, program, blocks, textureUnits] { shaded_geometry_now(r, geometry, coordinates, program, blocks, textureUnits); }});
       return;
     }
@@ -2077,7 +2085,7 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, G
 
     auto& r = renderer();
 
-    if (deferrable_layer(r, program, false, true)) {
+    if (deferrable_layer(r, program, blocks, false, true)) {
       r.layers.push_back({r.state, [&r, vertices, quads, program, blocks, textureUnits] { shaded_quads_now(r, vertices, quads, program, blocks, textureUnits); }});
       return;
     }

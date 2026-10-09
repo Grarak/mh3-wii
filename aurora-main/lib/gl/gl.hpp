@@ -443,6 +443,9 @@ struct ShadedBlocks {
   uint32_t sceneBytes = 0;
   uint64_t sceneRevision = 0;
   UniformBlock material, animated;
+  // Drawn under a perspective projection (the 3D scene, its effects): only
+  // these may go to the Vita's half-resolution layer pass, never 2D or UI.
+  bool perspective = false;
 };
 
 // Shader input locations 0..9 (position, normal, color0, uv0..2, PN selector,
