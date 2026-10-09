@@ -77,7 +77,7 @@ void Enqueue(void*, uint32_t node, uint8_t category, double origin, double span)
 
 struct WalkAdapter {
     GuestCall call;
-    uint32_t view_address, temporary_address, context;
+    uint32_t view_address, context;
 };
 
 uint32_t Count(void*, unsigned set) {
@@ -96,18 +96,27 @@ void Initialized(void*, uint32_t node) {
     Memory::Write8(node + 9, 1);
 }
 
-int Query(void* user, unsigned kind) {
-    auto& call = static_cast<WalkAdapter*>(user)->call;
+// The traverse's filters, read where their getters read them. The player's
+// split-screen record (0x802BED34): the second one when the split byte
+// (0x800470BC) and MyPlayerIndex are both set.
+uint32_t PlayerRecord() {
+    return Memory::Read8(0x8065b4d6) && Memory::Read8(0x8065aa87) ? 0x806be158 : 0x806bdc60;
+}
 
+int SecondFilter() {
+    return Memory::Read8(PlayerRecord() + 0x284) == 1;
+}
+
+int Query(void*, unsigned kind) {
     switch (kind) {
     case MH3_SCENE_QUERY_DISABLED:
-        return int8_t(call(0x800D0788));
+        return int8_t(Memory::Read8(0x8065b2d7));
     case MH3_SCENE_QUERY_PLAYER_FILTER:
-        return int32_t(call(0x802BE400));
+        return !SecondFilter() && Memory::Read8(PlayerRecord() + 0x188) == 1;
     case MH3_SCENE_QUERY_PLAYER_INDEX:
-        return int8_t(call(0x800CF3E8));
+        return int8_t(Memory::Read8(0x8065aa87));
     case MH3_SCENE_QUERY_SECOND_FILTER:
-        return int32_t(call(0x802BE450));
+        return SecondFilter();
     default:
         MH3_THROW(std::runtime_error("Native scene query is invalid"));
     }
@@ -130,8 +139,11 @@ void ApplyView(void* user, uint32_t object, const float*) {
     adapter.call.Virtual(object, 12, {4, 0, adapter.view_address});
 }
 
-int Visibility(void* user, uint32_t identity, const float view[12]) {
-    auto& adapter = *static_cast<WalkAdapter*>(user);
+// A scene object's root matrices (0x8007B5A8): world, then two more 3x4
+// matrices, the view third. An effect's matrix (0x800A6124) is at +58.
+constexpr uint32_t kObjectWorld = 0xC, kObjectView = 0x6C, kEffectMatrix = 0x58;
+
+int Visibility(void*, uint32_t identity, const float view[12]) {
     mh3_scene_node node;
     ReadNode(nullptr, identity, &node);
     float point[3]{}, view_z = 0;
@@ -139,15 +151,11 @@ int Visibility(void* user, uint32_t identity, const float view[12]) {
     if (node.flags & 1)
         for (unsigned i = 0; i < 3; ++i)
             point[i] = node.position[i];
-    else if (node.type < 2) {
-        const uint32_t matrix = adapter.call(0x8007B5A8, {node.object, 2});
-        view_z = Memory::ReadFloat32(matrix + 44);
-    } else if (node.type == 2) {
-        const uint32_t matrix = adapter.call(0x800A6124, {node.object});
-
+    else if (node.type < 2)
+        view_z = Memory::ReadFloat32(node.object + kObjectView + 44);
+    else if (node.type == 2)
         for (unsigned i = 0; i < 3; ++i)
-            point[i] = Memory::ReadFloat32(matrix + 12 + i * 16);
-    }
+            point[i] = Memory::ReadFloat32(node.object + kEffectMatrix + 12 + i * 16);
 
     const int visible = mh3_scene_visible(&node, view, point, view_z);
 
@@ -157,16 +165,14 @@ int Visibility(void* user, uint32_t identity, const float view[12]) {
     return visible;
 }
 
-float WorldY(void* user, uint32_t object, uint8_t type) {
-    auto& adapter = *static_cast<WalkAdapter*>(user);
-
-    if (type < 2) {
-        adapter.call(0x80081778, {object, 0, adapter.temporary_address});
-        return Memory::ReadFloat32(adapter.temporary_address + 44);
-    }
+// A model's world matrix word +44, which the original reads from a copy
+// (0x80081778); an effect's matrix word +28.
+float WorldY(void*, uint32_t object, uint8_t type) {
+    if (type < 2)
+        return Memory::ReadFloat32(object + kObjectWorld + 44);
 
     if (type == 2)
-        return Memory::ReadFloat32(adapter.call(0x800A6124, {object}) + 28);
+        return Memory::ReadFloat32(object + kEffectMatrix + 28);
 
     return 0;
 }
@@ -179,7 +185,7 @@ void EnqueueWalk(void* user, uint32_t node, uint8_t category, float, float) {
 void Traverse(CpuContext* cpu, uint32_t camera, uint8_t filter) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_TRAVERSE);
     GuestFrame frame(cpu, 0xc0);
-    WalkAdapter adapter{{cpu}, frame[0x40], frame[0x10], 0};
+    WalkAdapter adapter{{cpu}, frame[0x40], 0};
     adapter.call(0x800753F8, {camera, adapter.view_address});
     const uint32_t context = adapter.call(0x80047298, {camera});
     adapter.context = context;
@@ -495,20 +501,12 @@ extern "C" void MH3_SceneQueueTraverse(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E3E80, MH3_SceneQueueTraverse, "SceneQueueTraverse");
 extern "C" void MH3_SceneQueueVisible(CpuContext* cpu) {
-    const uint32_t node = cpu->gpr[3], matrix = cpu->gpr[4];
-    uint32_t result;
-    {
-        GuestFrame frame(cpu, 0x10);
-        WalkAdapter adapter{{cpu}, matrix, 0, 0};
-        float view[12];
+    float view[12];
 
-        for (unsigned i = 0; i < 12; ++i)
-            view[i] = Memory::ReadFloat32(matrix + i * 4);
+    for (unsigned i = 0; i < 12; ++i)
+        view[i] = Memory::ReadFloat32(cpu->gpr[4] + i * 4);
 
-        result = Visibility(&adapter, node, view);
-    }
-
-    cpu->gpr[3] = result;
+    cpu->gpr[3] = Visibility(nullptr, cpu->gpr[3], view);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E41AC, MH3_SceneQueueVisible, "SceneQueueVisible");
 extern "C" void MH3_SceneQueueEnqueue(CpuContext* cpu) {
