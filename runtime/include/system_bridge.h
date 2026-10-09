@@ -37,6 +37,11 @@ void MarkFatalErrorReported();
 // snapshots a developer can walk offline.
 namespace RuntimeCrash {
 
+// Appends a report that stops the game, with the guest CPU state, to the crash
+// log (main.cpp: ux0:/data/mh3-wii/crash.txt on the Vita, beside the saves
+// elsewhere). Never throws.
+void AppendCrashLog(std::string_view what, const struct CpuContext* cpu) noexcept;
+
 // Writes crash_<reason>.txt (and, once per process, the guest memory
 // snapshots) into the current run's log folder. Safe to call from any fatal
 // path; never throws.

@@ -4,8 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-// What main sets to add to a fatal report: the guest CPU state.
-inline void (*fatalReportHook)() = nullptr;
+// What main sets to add to a fatal report: the guest CPU state, and the
+// report in the crash log (on the Vita stderr reaches only a devkit's TTY).
+inline void (*fatalReportHook)(const char* what) = nullptr;
 
 // Stops the game with a message, as an exception that reached main's report
 // did: the message, then the hook's report, then exit status 1, at once (other
@@ -24,7 +25,7 @@ inline void (*fatalReportHook)() = nullptr;
     std::fflush(stderr);
 
     if (fatalReportHook)
-        fatalReportHook();
+        fatalReportHook(what);
 
     std::fflush(nullptr);
     std::_Exit(1);

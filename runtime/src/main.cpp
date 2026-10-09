@@ -15,12 +15,14 @@
 #include <chrono>
 #include <thread>
 #include <fstream>
+#include <sstream>
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "vita_launcher.h"
+#include <psp2/kernel/clib.h>
 #else
 #include "vita_launcher.h"
 #include "launcher_screen.h"
@@ -72,14 +74,46 @@ void ShowRuntimeFatalPopup(std::string_view category, std::string_view details) 
 void MarkFatalErrorReported() {}
 void SetRuntimeExitCode(int) {}
 namespace RuntimeCrash {
+// Every report that stops the game, with the guest CPU state, also goes to
+// crash.txt (appended) and, on the Vita, through sceClibPrintf, which the
+// console shows in any build: ux0:/data/mh3-wii/crash.txt there, beside the
+// saves elsewhere (MH3_USER_DIR, default saves/). Host crashes that report
+// nothing (a data abort) leave the system's core dump instead.
+void AppendCrashLog(std::string_view what, const CpuContext* cpu) noexcept {
+    std::ostringstream report;
+    report << "MH3 runtime stopped: " << what << '\n';
+    SystemBridge::DumpCpuState(report, cpu);
+    const std::string text = report.str();
+#ifdef __vita__
+    for (size_t at = 0; at < text.size();) {
+        const size_t end = std::min(text.find('\n', at), text.size());
+        sceClibPrintf("%.*s\n", int(end - at), text.data() + at);
+        at = end + 1;
+    }
+
+    const std::string path = "ux0:/data/mh3-wii/crash.txt";
+#else
+    const char* user = std::getenv("MH3_USER_DIR");
+    const std::string path = std::string(user ? user : "saves") + "/crash.txt";
+#endif
+    std::ofstream out(path, std::ios::app);
+
+    if (out)
+        out << text << '\n';
+}
+
 void WriteCrashArtifacts(std::string_view reason, std::string_view details, const uint32_t*) noexcept {
     std::cerr << reason << ": " << details << '\n';
     SystemBridge::DumpCpuState(TryGetCpuContext());
+    AppendCrashLog(std::string(reason) + ": " + std::string(details), TryGetCpuContext());
 }
 
 [[noreturn]] void FatalMissingGuestTarget(uint32_t target, CpuContext* cpu) noexcept {
-    std::cerr << "Missing translated target 0x" << std::hex << target << std::dec << '\n';
+    char what[64];
+    std::snprintf(what, sizeof what, "Missing translated target 0x%08x", target);
+    std::cerr << what << '\n';
     SystemBridge::DumpCpuState(cpu);
+    AppendCrashLog(what, cpu);
     DumpHostStackTraceForRuntimeHelper();
     std::exit(1);
 }
@@ -222,7 +256,11 @@ void PrepareVitaGameData() {
 
 int main(int argc, char** argv) {
     // A failure that stops the game reports the guest CPU state.
-    fatalReportHook = [] { SystemBridge::DumpCpuState(&GetPersistentCpuContext()); };
+    fatalReportHook = [](const char* what) {
+        SystemBridge::DumpCpuState(&GetPersistentCpuContext());
+        RuntimeCrash::AppendCrashLog(what, &GetPersistentCpuContext());
+    };
+
     aurora::fatal_handler = [](const char* what) { MH3Fatal(what); };
     InstallLegacyGxPanicHandler();
 #ifdef __vita__
@@ -507,6 +545,7 @@ int main(int argc, char** argv) {
     catch (const std::exception& error) {
         std::cerr << "MH3 runtime stopped: " << error.what() << '\n';
         SystemBridge::DumpCpuState(&GetPersistentCpuContext());
+        RuntimeCrash::AppendCrashLog(error.what(), &GetPersistentCpuContext());
         return 1;
     }
 #endif
