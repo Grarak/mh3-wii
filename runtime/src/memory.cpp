@@ -78,7 +78,8 @@ void HardwareWrite(uint32_t address, T value) {
     }
     if ((address >> 30) != 1 && (address & 0x3FFFFF00) == 0x0C008000) {
         const auto encoded = MemoryInline::MaybeByteSwap(value);
-        SubmitGuestGxBytes(reinterpret_cast<const uint8_t*>(&encoded), sizeof(T));
+        if constexpr (sizeof(T) <= 4) SubmitGuestGxFixed<sizeof(T)>(reinterpret_cast<const uint8_t*>(&encoded));
+        else SubmitGuestGxBytes(reinterpret_cast<const uint8_t*>(&encoded), sizeof(T));
         return;
     }
     if constexpr (std::is_same_v<T, uint16_t>) {
@@ -119,9 +120,11 @@ bool Memory::Contains(uint32_t address, size_t length) { return GuestFlat::IsMap
 // FIFO scalar writes preserve the guest's big-endian command encoding.
 #ifndef MH3_HAS_AURORA
 void SubmitGuestGxBytes(const uint8_t*, size_t) { throw std::runtime_error("GX requires the Aurora-linked build"); }
+template <size_t N>
+void SubmitGuestGxFixed(const uint8_t* data) { SubmitGuestGxBytes(data, N); }
 #endif
 extern "C" void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }
-extern "C" void GX_HLE_FIFO_Write8(uint8_t v) { SubmitGuestGxBytes(&v, 1); }
-extern "C" void GX_HLE_FIFO_Write16(uint16_t v) { const uint8_t b[]{uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxBytes(b, 2); }
-extern "C" void GX_HLE_FIFO_Write32(uint32_t v) { const uint8_t b[]{uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxBytes(b, 4); }
+extern "C" void GX_HLE_FIFO_Write8(uint8_t v) { SubmitGuestGxFixed<1>(&v); }
+extern "C" void GX_HLE_FIFO_Write16(uint16_t v) { const uint8_t b[]{uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxFixed<2>(b); }
+extern "C" void GX_HLE_FIFO_Write32(uint32_t v) { const uint8_t b[]{uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxFixed<4>(b); }
 extern "C" void GX_HLE_FIFO_WriteFloat(float v) { uint32_t bits; std::memcpy(&bits, &v, 4); GX_HLE_FIFO_Write32(bits); }

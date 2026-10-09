@@ -83,6 +83,14 @@ public:
         std::memcpy(filling.bytes.get() + filling.size, data, size);
         filling.size += size;
     }
+    // A fixed-size FIFO write: a store into the filling chunk, not a memcpy call.
+    template <size_t N>
+    bool Append(const uint8_t* data) {
+        if (filling.size + N > filling.capacity) [[unlikely]] return false;
+        std::memcpy(filling.bytes.get() + filling.size, data, N);
+        filling.size += N;
+        return true;
+    }
     // Waits until the worker processed everything submitted; rethrows its failure.
     void Drain() {
         if (filling.size) HandOff();
@@ -480,6 +488,15 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     if (gxWorker) gxWorker->Submit(data, size);
     else ProcessGuestGxBytes(data, size);
 }
+
+template <size_t N>
+void SubmitGuestGxFixed(const uint8_t* data) {
+    if (!gpuSynchronized && gxWorker && gxWorker->Append<N>(data)) [[likely]] return;
+    SubmitGuestGxBytes(data, N);
+}
+template void SubmitGuestGxFixed<1>(const uint8_t*);
+template void SubmitGuestGxFixed<2>(const uint8_t*);
+template void SubmitGuestGxFixed<4>(const uint8_t*);
 
 // MH3_STATS: once per second, separate game speed from rendered FPS.
 // Game speed is retrace periods the frame pacer stepped (frames * budget)
