@@ -3,6 +3,7 @@
  * Project, FloatUtils.cpp; also present in isa/ppc_isa_float.h. The remaining
  * typed matrix/producer implementation is original to this project. */
 #include "mh3_model_view.h"
+#include "mh3_madd.h"
 #include <assert.h>
 #include <math.h>
 #include <string.h>
@@ -36,8 +37,8 @@ static mh3_matrix33 upper(const mh3_matrix34 *matrix) {
 static void concat(const mh3_matrix34 *a,const mh3_matrix34 *b,int array,mh3_matrix34 *out) {
     mh3_matrix34 result;
     for(size_t r=0;r<3;r++) for(size_t c=0;c<4;c++) {
-        float value=fmaf(a->v[r][2],b->v[2][c],fmaf(a->v[r][1],b->v[1][c],a->v[r][0]*b->v[0][c]));
-        if(c>=2) value=fmaf(c==3?1.0f:0.0f,a->v[r][array?c:3],value);
+        float value=mh3_madd(a->v[r][2],b->v[2][c],mh3_madd(a->v[r][1],b->v[1][c],a->v[r][0]*b->v[0][c]));
+        if(c>=2) value=mh3_madd(c==3?1.0f:0.0f,a->v[r][array?c:3],value);
         result.v[r][c]=value;
     }
     *out=result;
@@ -77,17 +78,17 @@ static int inverse_normal(const mh3_matrix34 *matrix,mh3_matrix33 *normal) {
     mh3_matrix33 out;
     for(size_t r=0;r<3;r++) for(size_t c=0;c<3;c++) {
         size_t a=(r+1)%3,b=(r+2)%3,x=(c+1)%3,y=(c+2)%3;
-        out.v[r][c]=fmaf(matrix->v[a][x],matrix->v[b][y],-(matrix->v[a][y]*matrix->v[b][x]));
+        out.v[r][c]=mh3_madd(matrix->v[a][x],matrix->v[b][y],-(matrix->v[a][y]*matrix->v[b][x]));
     }
-    float det=fmaf(matrix->v[2][0],out.v[2][0],
-                   fmaf(matrix->v[1][0],out.v[1][0],matrix->v[0][0]*out.v[0][0]));
+    float det=mh3_madd(matrix->v[2][0],out.v[2][0],
+                   mh3_madd(matrix->v[1][0],out.v[1][0],matrix->v[0][0]*out.v[0][0]));
     if(fabsf(det)<1.0e-36f) {*normal=upper(matrix);return 0;}
     float reciprocal=reciprocal_seed(det);
     /* At finite seed saturation the original subtract-then-negate yields -0
      * for either determinant sign. Keep that sign explicit across host FMA
      * lowering, which can choose different signed-zero fused forms. */
     if(reciprocal==0.0f && isfinite(det)) reciprocal=-0.0f;
-    else reciprocal=-fmaf(reciprocal,det*reciprocal,-(reciprocal+reciprocal));
+    else reciprocal=-mh3_madd(reciprocal,det*reciprocal,-(reciprocal+reciprocal));
     for(size_t r=0;r<3;r++) for(size_t c=0;c<3;c++) out.v[r][c]*=reciprocal;
     *normal=out;return 1;
 }
@@ -96,8 +97,8 @@ static int inverse34(const mh3_matrix34 *matrix,mh3_matrix34 *out) {
     mh3_matrix34 result;
     for(size_t r=0;r<3;r++) {
         for(size_t c=0;c<3;c++) result.v[r][c]=normal.v[c][r];
-        result.v[r][3]=-fmaf(result.v[r][2],matrix->v[2][3],
-                            fmaf(result.v[r][1],matrix->v[1][3],result.v[r][0]*matrix->v[0][3]));
+        result.v[r][3]=-mh3_madd(result.v[r][2],matrix->v[2][3],
+                            mh3_madd(result.v[r][1],matrix->v[1][3],result.v[r][0]*matrix->v[0][3]));
     }
     *out=result;return 1;
 }

@@ -129,7 +129,11 @@ static inline float ppc_rsqrte(float x) {
     double rsqrt_d = frsqrte((double)x);
     float nwork0 = (float)(rsqrt_d * rsqrt_d);
     float nwork1 = (float)(rsqrt_d * 0.5);
+#if defined(__arm__) && !defined(__ARM_FEATURE_FMA)
+    nwork0 = -nwork0 * x + 3.0f; /* vmla: glibc's fmaf is software on VFPv3 */
+#else
     nwork0 = fmaf(-nwork0, x, 3.0f);
+#endif
     return nwork0 * nwork1;
 }
 

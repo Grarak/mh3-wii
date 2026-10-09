@@ -1,4 +1,5 @@
 #include "mh3_model_matrices.h"
+#include "mh3_madd.h"
 #include <math.h>
 #include <string.h>
 #include <float.h>
@@ -48,12 +49,12 @@ void mh3_matrix_concat(const mh3_matrix34 *a,const mh3_matrix34 *b,mh3_matrix34 
     mh3_matrix34 product; size_t r,c;
     if (!a || !b || !out) return;
     /* Preserve the verified matrix library's multiplication order while using
-     * ordinary scalar floats and explicit fused operations. Output may alias. */
+     * ordinary scalar floats and mh3_madd (fused where the host has it). Output may alias. */
     for (r=0;r<3;r++) for (c=0;c<4;c++) {
         float v=a->v[r][0]*b->v[0][c];
-        v=fmaf(a->v[r][1],b->v[1][c],v);
-        v=fmaf(a->v[r][2],b->v[2][c],v);
-        product.v[r][c]=fmaf(c==3?1.0f:0.0f,a->v[r][3],v);
+        v=mh3_madd(a->v[r][1],b->v[1][c],v);
+        v=mh3_madd(a->v[r][2],b->v[2][c],v);
+        product.v[r][c]=mh3_madd(c==3?1.0f:0.0f,a->v[r][3],v);
     }
     *out=product;
 }
@@ -62,9 +63,9 @@ mh3_res_status mh3_matrix_inverse_normal(const mh3_matrix34 *m,mh3_matrix33 *out
     if (!m || !out) return MH3_RES_INVALID;
     for (r=0;r<3;r++) for (c=0;c<3;c++) {
         size_t a=(r+1)%3,b=(r+2)%3,x=(c+1)%3,y=(c+2)%3;
-        n.v[r][c]=fmaf(m->v[a][x],m->v[b][y],-(m->v[a][y]*m->v[b][x]));
+        n.v[r][c]=mh3_madd(m->v[a][x],m->v[b][y],-(m->v[a][y]*m->v[b][x]));
     }
-    det=fmaf(m->v[0][2],n.v[0][2],fmaf(m->v[0][1],n.v[0][1],m->v[0][0]*n.v[0][0]));
+    det=mh3_madd(m->v[0][2],n.v[0][2],mh3_madd(m->v[0][1],n.v[0][1],m->v[0][0]*n.v[0][0]));
     /* 80330E78 tests |det| against the binary32 constant at 8079D6F0.
      * NaNs are intentionally not classified as singular by this comparison. */
     if (fabsf(det)<1.0e-36f) return MH3_RES_ABSENT;
@@ -72,7 +73,7 @@ mh3_res_status mh3_matrix_inverse_normal(const mh3_matrix34 *m,mh3_matrix33 *out
     *out=n; return MH3_RES_OK;
 }
 static mh3_vec3 normalized(mh3_vec3 v) {
-    float length_squared=fmaf(v.v[2],v.v[2],v.v[0]*v.v[0])+v.v[1]*v.v[1];
+    float length_squared=mh3_madd(v.v[2],v.v[2],v.v[0]*v.v[0])+v.v[1]*v.v[1];
     float reciprocal=1.0f/sqrtf(length_squared); size_t i;
     for (i=0;i<3;i++) v.v[i]*=reciprocal;
     return v;

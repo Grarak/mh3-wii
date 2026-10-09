@@ -1,4 +1,5 @@
 #include "mh3_effect_draw.h"
+#include "mh3_madd.h"
 #include <math.h>
 #include <string.h>
 
@@ -100,10 +101,10 @@ void mh3_effect_billboard_axes(mh3_effect_billboard *out,const float matrix[12],
     out->axis_x[0]=a*c;out->axis_x[1]=a*s;out->axis_y[0]=b*s;out->axis_y[1]=-b*c;
 }
 void mh3_effect_billboard_quad(const mh3_effect_billboard *d,const float position[3],float w,float h,float angle,float sine,float cosine,mh3_effect_quad *q){
-    float center[3];for(uint32_t r=0;r<3;r++){const float *m=d->matrix+4*r;center[r]=angle==0?fmaf(m[2],position[2],m[0]*position[0])+fmaf(m[3],1,m[1]*position[1]):((m[0]*position[0]+m[1]*position[1])+m[2]*position[2])+m[3];}
+    float center[3];for(uint32_t r=0;r<3;r++){const float *m=d->matrix+4*r;center[r]=angle==0?mh3_madd(m[2],position[2],m[0]*position[0])+mh3_madd(m[3],1,m[1]*position[1]):((m[0]*position[0]+m[1]*position[1])+m[2]*position[2])+m[3];}
     float ax=d->axis_x[0],ay=d->axis_x[1],bx=d->axis_y[0],by=d->axis_y[1],px=d->pivot[0],py=d->pivot[1];
     if(angle==0){
-        float ox=-fmaf(w,px,-px),oy=-fmaf(h,py,-py),cx=fmaf(bx,oy,fmaf(ax,ox,center[0])),cy=fmaf(by,oy,fmaf(ay,ox,center[1]));
+        float ox=-mh3_madd(w,px,-px),oy=-mh3_madd(h,py,-py),cx=mh3_madd(bx,oy,mh3_madd(ax,ox,center[0])),cy=mh3_madd(by,oy,mh3_madd(ay,ox,center[1]));
         float ux=ax*w,uy=ay*w,vx=bx*h,vy=by*h;
         q->position[0][0]=cx-(ux-vx);q->position[0][1]=cy-(uy-vy);q->position[1][0]=cx-(ux+vx);q->position[1][1]=cy-(uy+vy);
         q->position[2][0]=cx+(ux-vx);q->position[2][1]=cy+(uy-vy);q->position[3][0]=cx+(ux+vx);q->position[3][1]=cy+(uy+vy);

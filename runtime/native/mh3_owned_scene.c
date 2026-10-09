@@ -1,5 +1,6 @@
 #include "mh3_owned_scene.h"
 #include "mh3_material_state.h"
+#include "mh3_madd.h"
 #include <assert.h>
 #include <math.h>
 #include <string.h>
@@ -206,8 +207,8 @@ static uint32_t maya(const mh3_owned_local *local,const mh3_matrix34 *parent,con
     else if(local->flags&0x20u) {
         *world=*parent;float translation[3];
         for(unsigned k=0;k<3;k++) translation[k]=(flags&UINT32_C(0x80000000))?local->rt.v[k][3]:scale->v[k]*local->rt.v[k][3];
-        for(unsigned r=0;r<3;r++) world->v[r][3]=fmaf(parent->v[r][2],translation[2],parent->v[r][0]*translation[0])+
-            fmaf(parent->v[r][3],1.0f,parent->v[r][1]*translation[1]);
+        for(unsigned r=0;r<3;r++) world->v[r][3]=mh3_madd(parent->v[r][2],translation[2],parent->v[r][0]*translation[0])+
+            mh3_madd(parent->v[r][3],1.0f,parent->v[r][1]*translation[1]);
     } else {
         mh3_matrix34 rt=local->rt;
         if(!(flags&UINT32_C(0x80000000))) for(unsigned k=0;k<3;k++) rt.v[k][3]*=scale->v[k];
