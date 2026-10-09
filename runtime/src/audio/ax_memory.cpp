@@ -14,32 +14,23 @@
 #include <cstring>
 
 namespace AxDspHle {
-namespace {
-
-std::atomic<bool> g_loggedMixAddressOutOfRange{false};
-
-} // namespace
-
 uint32_t g_axTaskPtr = kAxDspTaskAddr;
 
-// The state the worker-safe accessors in ax_internal.h resolve against; the
-// invariant they preserve is documented there.
+// Raw MEM1/MEM2 bases for owner admission and serial execution.
+// Worker accessors resolve only t_privateMixMemory.
 std::atomic<uint8_t*> g_mixMem1{nullptr};
 std::atomic<uint8_t*> g_mixMem2{nullptr};
 
 thread_local bool t_onMixWorker = false;
+thread_local PrivateMixMemory* t_privateMixMemory = nullptr;
 
-// A guest access the worker had to skip is a real, audible degradation, so it
-// reaches stderr unconditionally - but only once, because the site it fires from
-// runs per voice per 3 ms frame.
-void ReportMixAddressOutOfRange(uint32_t addr, size_t bytes) {
-    if (g_loggedMixAddressOutOfRange.exchange(true, std::memory_order_relaxed)) {
-        return;
-    }
-    RT_LOGF(RT_TAG_AUDIO,
-                 "worker skipped a guest access outside MEM1/MEM2 at 0x%08X (%llu bytes)\n",
-                 addr, static_cast<unsigned long long>(bytes));
-    std::fflush(stderr);
+// A missing admitted span is a failed epoch, never silence or a skipped write.
+[[noreturn]] void ReportMixAddressOutOfRange(uint32_t addr, size_t bytes) {
+    char message[160];
+    std::snprintf(message, sizeof(message),
+        "AX private job accessed an unadmitted range at 0x%08X (%llu bytes)",
+        addr, static_cast<unsigned long long>(bytes));
+    throw std::runtime_error(message);
 }
 
 void RefreshMixMemoryMap() {
@@ -143,6 +134,20 @@ AramAliases AramAliasesFor(uint32_t addr) {
 } // namespace
 
 bool ResolveAramWindow(uint32_t addr, AramWindow& window) {
+    if (t_onMixWorker) {
+        const AramAliases aliases = AramAliasesFor(addr);
+        uint32_t begin = 0, end = 0;
+        const uint8_t* host = nullptr;
+        if (t_privateMixMemory && t_privateMixMemory->Window(aliases.physical, begin, end, host)) {
+            window.begin = addr - (aliases.physical - begin);
+            window.end = window.begin + (end - begin);
+            window.host = host;
+            window.generation = g_aramWindowGeneration.load(std::memory_order_relaxed);
+            return true;
+        }
+        window = {};
+        return false;
+    }
     // A window is page-aligned and smaller than both the MEM1 wrap mask and the MEM2 size,
     // so every address inside it maps contiguously and keeps the MEM1/MEM2 selector bit.
     const uint32_t begin = addr & ~(kAramWindowSize - 1u);
@@ -191,6 +196,7 @@ uint8_t ReadAramByteSlow(uint32_t addr) {
     if (const uint8_t* host = MixResolveRange(aliases.cached, 1)) {
         return *host;
     }
+    if (t_onMixWorker) ReportMixAddressOutOfRange(addr, 1);
     // Nothing else backs DSP ARAM: real AX traffic is MEM1/MEM2, and no code
     // path in the runtime ever writes a separate ARAM store, so an address that
     // resolves to neither alias reads as silence.
@@ -203,7 +209,7 @@ void WriteGuestS32Buffer(uint32_t addr, const int* src, size_t count) {
     }
     // AX mix buffers are contiguous guest ranges; resolve the range once instead
     // of paying a per-word address translation.
-    if (uint8_t* host = MixResolveRange(addr, count * sizeof(uint32_t))) {
+    if (uint8_t* host = MixResolveWriteRange(addr, count * sizeof(uint32_t))) {
         AxMixKernels::StoreBigEndian32(host, src, count);
         return;
     }

@@ -3,6 +3,7 @@
 #include "native_graphics.h"
 #include "model_assets.h"
 #include "native_frame_statistics.h"
+#include "audio/ax_dsp.h"
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
@@ -406,6 +407,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     static uint64_t lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
                     lastSkipped = aurora_skipped_frame_count();
     static auto lastWaits = aurora::gfx::staging_wait_counters();
+    static auto previousAx = AxDspHle::GetMixWorkerStats();
 #ifdef AURORA_GXM
     static auto previousDisplay = aurora::gxm::display_statistics();
 #endif
@@ -447,6 +449,25 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         residency.model_bytes / 1048576.0, residency.retired_model_bytes / 1048576.0,
         residency.main_spill_bytes / 1048576.0, residency.phycont_spill_bytes / 1048576.0);
 #endif
+    const auto ax = AxDspHle::GetMixWorkerStats();
+    const uint64_t axJobs = ax.submitted - previousAx.submitted;
+    std::fprintf(stderr, "MH3 AX: private %.1f jobs/s (%llu completed/%llu published), serial %llu rejected %llu failed %llu, snapshot %.2f KiB avg/%.2f max-ever, active PBs %u last\n",
+        axJobs / seconds, static_cast<unsigned long long>(ax.completed - previousAx.completed),
+        static_cast<unsigned long long>(ax.published - previousAx.published),
+        static_cast<unsigned long long>(ax.serial - previousAx.serial),
+        static_cast<unsigned long long>(ax.rejected - previousAx.rejected),
+        static_cast<unsigned long long>(ax.failed - previousAx.failed),
+        axJobs ? double(ax.totalJobBytes - previousAx.totalJobBytes) / (1024.0 * axJobs) : 0.0,
+        ax.maxJobBytes / 1024.0, ax.lastActivePbs);
+    std::fprintf(stderr, "MH3 AX: prepare %.2f worker %.2f join %.2f publish %.2f ms/s; max-ever prepare %.3f worker %.3f join %.3f ms; storage %.3f MiB, worker %s thread %x core %d affinity %x core0-checked %s; reverb owner\n",
+        double(ax.prepareNs - previousAx.prepareNs) / (1e6 * seconds),
+        double(ax.workerNs - previousAx.workerNs) / (1e6 * seconds),
+        double(ax.waitNs - previousAx.waitNs) / (1e6 * seconds),
+        double(ax.publishNs - previousAx.publishNs) / (1e6 * seconds),
+        ax.maxPrepareNs / 1e6, ax.maxWorkerNs / 1e6, ax.maxWaitNs / 1e6,
+        ax.storageBytes / 1048576.0, ax.workerRunning ? "live" : "off", unsigned(ax.workerThread),
+        ax.workerCore, unsigned(ax.workerAffinity), ax.core0Checked ? "yes" : "no");
+    previousAx = ax;
     const auto high = aurora::gfx::staging_high_water();
     std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %llu idx %llu uniform %llu storage %llu (KiB)\n",
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),

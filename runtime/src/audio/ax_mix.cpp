@@ -30,9 +30,19 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
+#include <exception>
 
 namespace AxDspHle {
+#ifdef MH3_AX_PRIVATE_JOB_TEST
+void PrivateMixTestHook();
+#endif
 namespace {
+
+uint64_t MixTimeNs() {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
 // The DSP mixes in parallel with the CPU on the Wii, so the mix runs on its own
 // thread wherever there is a core for it: dispatch hands the command list over
@@ -42,7 +52,13 @@ bool MixWorkerWanted() {
 #ifdef MH3_DEVELOPMENT
     if (const char* value = std::getenv("MH3_AX_MIX_WORKER")) return value[0] != '0';
 #endif
+#ifdef __vita__
+    // The Vita SDK's sysconf(_SC_NPROCESSORS_ONLN) returns EINVAL, so its
+    // hardware_concurrency hint is zero. Job admission and startup prove safety.
+    return true;
+#else
     return std::thread::hardware_concurrency() > 1;
+#endif
 }
 
 std::filesystem::path FindDspCoefficientRom() {
@@ -75,7 +91,10 @@ public:
         m_lastAuxVolumes.fill(0x8000);
     }
 
-    ~AXWii() { ShutdownMixWorker(); }
+    ~AXWii() {
+        try { ShutdownMixWorker(); }
+        catch (const std::exception& error) { ReportMixWorkerFailure(error.what()); }
+    }
 
     void Initialize() {
         // Every entry point that resets or reconfigures mix state joins the
@@ -98,9 +117,8 @@ public:
         m_pbLayout = PBLayout::Unknown;
         m_commandLayout = AXCommandLayout::Auto;
         m_ucodeCrc = 0;
-        m_auxOutCount = 0;
-        m_auxInCount = 0;
-        m_deferredAux = false;
+        m_privateMemory.Reset();
+        m_privateJob = false;
         LoadResamplingCoefficients();
         PushMail(kDspInit);
     }
@@ -127,15 +145,51 @@ public:
     }
 
     void JoinMix() {
+        const uint64_t waitStart = m_privateJob ? MixTimeNs() : 0;
         if (m_mixThread.joinable()) {
             std::unique_lock<std::mutex> lock(m_mixMutex);
             m_mixIdle.wait(lock, [this] { return !m_mixPending && !m_mixBusy; });
         }
-        PublishAuxOutputs();
+        if (waitStart) {
+            const uint64_t elapsed = MixTimeNs() - waitStart;
+            m_stats.waitNs += elapsed;
+            m_stats.maxWaitNs = std::max(m_stats.maxWaitNs, elapsed);
+        }
+        if (m_mixFailure) {
+            const auto failure = m_mixFailure;
+            m_mixFailure = nullptr;
+            RestoreMixState();
+            m_privateMemory.Reset();
+            m_privateJob = false;
+            std::rethrow_exception(failure);
+        }
+        if (m_privateJob) {
+            const uint64_t publishStart = MixTimeNs();
+            m_privateMemory.Publish();
+            m_stats.publishNs += MixTimeNs() - publishStart;
+            ++m_stats.published;
+            m_privateJob = false;
+        }
+    }
+
+    MixWorkerStats Stats() {
+        std::lock_guard<std::mutex> lock(m_mixMutex);
+        auto result = m_stats;
+        result.workerRunning = m_mixThread.joinable() && m_mixStartup.Ready();
+        result.core0Checked = m_mixStartup.Ready() && m_mixStartup.core0Required;
+        result.workerThread = m_mixStartup.threadId;
+        result.workerCore = m_mixStartup.cpuId;
+        result.workerAffinity = m_mixStartup.affinityMask;
+        result.storageBytes = sizeof(m_privateMemory) + sizeof(m_savedMixState) +
+            sizeof(m_admissionPbs) + sizeof(m_admissionWrites);
+        return result;
     }
 
     void ShutdownMixWorker() {
+        std::exception_ptr failure;
+        try { JoinMix(); } catch (...) { failure = std::current_exception(); }
         if (!m_mixThread.joinable()) {
+            if (failure) std::rethrow_exception(failure);
             return;
         }
         {
@@ -144,9 +198,11 @@ public:
         }
         m_mixWake.notify_all();
         m_mixThread.join();
+        if (failure) std::rethrow_exception(failure);
     }
 
     void SetMixWorkerEnabled(bool enabled) {
+        JoinMix();
         std::lock_guard<std::mutex> lock(m_mutex);
         m_mixWorkerEnabled = enabled;
     }
@@ -196,18 +252,8 @@ public:
     }
 
 private:
-    // What DispatchCommandList has to know about a command list before it is
-    // allowed to leave the guest thread.
     struct CommandListScan {
         uint32_t outputCommands = 0;
-        uint32_t auxInputCount = 0;
-        // Three blocks per MIX_AUX* (x3) plus four per UPL_AUX* (x2) = 17.
-        std::array<uint32_t, 24> auxInputAddrs{};
-    };
-
-    struct AuxBlock {
-        uint32_t addr = 0;
-        std::array<int32_t, kAxSamplesPerFrame> data{};
     };
 
     enum Cmd : uint16_t {
@@ -306,6 +352,7 @@ private:
             m_mailState = MailState::WaitingForCmdListSize;
             break;
         case kMailReset:
+            JoinMix(); // DONE must not expose an epoch that can later overwrite a reset.
             PushMail(kDspDone);
             m_mailState = MailState::WaitingForCmdListSize;
             break;
@@ -316,19 +363,13 @@ private:
     }
 
     void CopyCmdList(uint32_t addr, uint32_t sizeWords) {
-        if (sizeWords > m_cmdList.size()) {
-            // Truncating a command list drops whole commands
-            if (!m_loggedCmdListTruncated.exchange(true, std::memory_order_relaxed)) {
-                RT_LOGF(RT_TAG_AUDIO,
-                             "command list of %u words exceeds the %llu-word buffer; truncating\n",
-                             sizeWords, static_cast<unsigned long long>(m_cmdList.size()));
-                std::fflush(stderr);
-            }
-            sizeWords = static_cast<uint32_t>(m_cmdList.size());
-        }
-        for (uint32_t i = 0; i < sizeWords; ++i) {
+        // The mailbox size is a halfword. Preserve every word even on the
+        // complete serial fallback; a larger list is never silently truncated.
+        if (!sizeWords || !Memory::Contains(addr, sizeWords * sizeof(uint16_t)))
+            throw std::runtime_error("AX command list is empty or outside guest RAM");
+        if (m_cmdList.size() < sizeWords) m_cmdList.resize(sizeWords);
+        for (uint32_t i = 0; i < sizeWords; ++i)
             m_cmdList[i] = Memory::Read16(addr + i * 2);
-        }
     }
 
     // Everything that must be observed at mail time happens here, before the mix leaves the
@@ -346,21 +387,34 @@ private:
         }
 
         CommandListScan scan{};
-        ScanCommandList(layout, &scan);
-        for (uint32_t i = 0; i < scan.outputCommands; ++i) {
-            PushMail(kDspSync);
-        }
+        if (!ScanCommandList(layout, &scan))
+            throw std::runtime_error("AX command list is malformed or missing END");
 
-        const bool deferred = m_mixWorkerEnabled && EnsureMixWorker();
-        m_deferredAux = deferred;
-        m_auxInCount = 0;
-        if (deferred) {
-            for (uint32_t i = 0; i < scan.auxInputCount && m_auxInCount < m_auxIn.size(); ++i) {
-                AuxBlock& block = m_auxIn[m_auxInCount++];
-                block.addr = scan.auxInputAddrs[i];
-                ReadGuestS32Buffer(block.addr, block.data.data(), kAxSamplesPerFrame);
-            }
+        // Admission, copies and startup all finish before OUTPUT's sync mails.
+        // A rejected job executes the entire serial list with its original order.
+        const uint64_t prepareStart = m_mixWorkerEnabled ? MixTimeNs() : 0;
+        const bool admitted = m_mixWorkerEnabled && PreparePrivateJob(layout);
+        if (prepareStart) {
+            const uint64_t elapsed = MixTimeNs() - prepareStart;
+            m_stats.prepareNs += elapsed;
+            m_stats.maxPrepareNs = std::max(m_stats.maxPrepareNs, elapsed);
+            if (!admitted) ++m_stats.rejected;
         }
+        const bool deferred = admitted && EnsureMixWorker();
+        m_privateJob = deferred;
+        if (deferred) {
+            ++m_stats.submitted;
+            m_stats.lastJobBytes = m_privateMemory.Bytes();
+            m_stats.totalJobBytes += m_stats.lastJobBytes;
+            m_stats.maxJobBytes = std::max(m_stats.maxJobBytes, m_stats.lastJobBytes);
+            m_stats.lastActivePbs = m_admissionActivePbs;
+            SaveMixState();
+            g_aramWindowGeneration.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            ++m_stats.serial;
+            m_privateMemory.Reset();
+        }
+        for (uint32_t i = 0; i < scan.outputCommands; ++i) PushMail(kDspSync);
 
         m_mixLayout = layout;
         m_mixCmdListSize = m_cmdListSize;
@@ -384,28 +438,12 @@ private:
     bool ScanCommandList(AXCommandLayout layout, CommandListScan* scan) const {
         uint32_t idx = 0;
         bool end = false;
-        auto addAuxInput = [&](uint32_t addr, uint32_t blocks) {
-            if (!scan) {
-                return;
-            }
-            for (uint32_t block = 0; block < blocks; ++block) {
-                if (scan->auxInputCount >= scan->auxInputAddrs.size()) {
-                    return;
-                }
-                scan->auxInputAddrs[scan->auxInputCount++] =
-                    addr + block * kAxSamplesPerFrame * static_cast<uint32_t>(sizeof(int32_t));
-            }
-        };
-        auto wordAddress = [&](uint32_t base) {
-            return Hilo(m_cmdList[base], m_cmdList[base + 1]);
-        };
 
         while (!end) {
             if (!CanReadWords(idx, 1)) {
                 return false;
             }
             const uint16_t cmd = m_cmdList[idx++];
-            const uint32_t operandBase = idx;
             auto skip = [&](uint32_t words) {
                 if (!CanReadWords(idx, words)) {
                     return false;
@@ -434,17 +472,10 @@ private:
             case CMD_MIX_AUXB:
             case CMD_MIX_AUXC:
                 if (!skip(5)) return false;
-                // volume, write address, read address; the mix reads three
-                // consecutive 96-word blocks from the read address.
-                addAuxInput(wordAddress(operandBase + 3), 3);
                 break;
             case CMD_UPL_AUXA_MIX_LRSC:
             case CMD_UPL_AUXB_MIX_LRSC:
                 if (!skip(13)) return false;
-                // volume then six addresses; [2..5] are read back.
-                for (uint32_t slot = 2; slot < 6; ++slot) {
-                    addAuxInput(wordAddress(operandBase + 1 + slot * 2), 1);
-                }
                 break;
             case CMD_COMPRESSOR:
                 if (!skip(4)) return false;
@@ -467,12 +498,194 @@ private:
         return idx <= m_cmdListSize;
     }
 
+    struct AdmissionRange { uint32_t begin, end; };
+    std::array<AdmissionRange, 256> m_admissionPbs{};
+    std::array<AdmissionRange, PrivateMixMemory::kMaxSpans> m_admissionWrites{};
+    size_t m_admissionPbCount = 0, m_admissionWriteCount = 0;
+    uint32_t m_admissionActivePbs = 0;
+
+    bool AddJobRange(uint32_t addr, size_t bytes, bool write = false, bool pb = false) {
+        uint32_t physical;
+        uint8_t* host = MixResolveRange(addr, bytes);
+        if (!host || !NormalizeMixAddress(addr, bytes, physical)) return false;
+        if (write && !pb) {
+            if (m_admissionWriteCount == m_admissionWrites.size()) return false;
+            m_admissionWrites[m_admissionWriteCount++] = {physical, physical + uint32_t(bytes)};
+        }
+        return m_privateMemory.Add(addr, bytes, host, write);
+    }
+
+    bool PreparePBChain(uint32_t addr) {
+        if (m_pbLayout == PBLayout::Unknown) return false;
+        std::array<PBSegment, 3> segments{};
+        const size_t segmentCount = PBSegmentsForLayout(m_pbLayout, segments);
+        const size_t pbBytes = segments[segmentCount - 1].guestOffset + segments[segmentCount - 1].byteCount;
+        while (addr) {
+            if (m_admissionPbCount == m_admissionPbs.size()) return false;
+            constexpr size_t headerBytes = offsetof(AXPBWii, running) + sizeof(uint16_t);
+            if (!MixResolveRange(addr, headerBytes)) return false;
+            const bool running = MixRead16(addr + offsetof(AXPBWii, running)) == 1;
+            uint32_t physical;
+            const size_t bytes = running ? pbBytes : headerBytes;
+            if (!NormalizeMixAddress(addr, bytes, physical)) return false;
+            const AdmissionRange range{physical, physical + uint32_t(bytes)};
+            for (size_t i = 0; i < m_admissionPbCount; ++i) {
+                const auto& previous = m_admissionPbs[i];
+                if (range.begin < previous.end && previous.begin < range.end) return false;
+            }
+            m_admissionPbs[m_admissionPbCount++] = range;
+            if (!AddJobRange(addr, bytes, running, true)) return false;
+            if (!running) {
+                addr = Hilo(MixRead16(addr), MixRead16(addr + 2));
+                continue;
+            }
+            ++m_admissionActivePbs;
+            AXPBWii voice{};
+            ReadPBWithLayout(addr, voice, m_pbLayout);
+            const uint32_t ratio = Hilo(voice.src.ratio_hi, voice.src.ratio_lo);
+            // Retain the uint32 resampler's exact no-wrap read count. Unusual
+            // ratios use the complete serial route rather than a huge snapshot.
+            if (ratio > 0x00400000u) return false;
+            const uint32_t reads = voice.src_type <= 1 ?
+                uint32_t((uint64_t(voice.src.cur_addr_frac) + uint64_t(ratio) * kAxSamplesPerFrame) >> 16) :
+                kAxSamplesPerFrame;
+            uint32_t spanBegin = 0, spanEnd = 0;
+            bool haveSpan = false;
+            auto flush = [&] {
+                if (!haveSpan) return true;
+                const bool result = AddJobRange(spanBegin, spanEnd - spanBegin);
+                haveSpan = false;
+                return result;
+            };
+            const bool traced = Accelerator::VisitSampleReads(voice, reads,
+                [&](uint32_t aram, uint32_t count) {
+                    const uint32_t normalized = aram & 0x10000000u ?
+                        (0x10000000u | (aram & uint32_t(Memory::kMem2Size - 1))) :
+                        (aram & 0x01ffffffu);
+                    uint32_t check;
+                    if (!NormalizeMixAddress(normalized, count, check)) return false;
+                    if (haveSpan && normalized >= spanBegin && normalized <= spanEnd) {
+                        spanEnd = std::max(spanEnd, normalized + count);
+                        return true;
+                    }
+                    if (!flush()) return false;
+                    spanBegin = normalized;
+                    spanEnd = normalized + count;
+                    haveSpan = true;
+                    return true;
+                });
+            if (!traced || !flush()) return false;
+            addr = Hilo(voice.next_pb_hi, voice.next_pb_lo);
+        }
+        return true;
+    }
+
+    bool PreparePrivateJob(AXCommandLayout layout) {
+        m_privateMemory.Reset();
+        m_admissionPbCount = m_admissionWriteCount = 0;
+        m_admissionActivePbs = 0;
+        // Old per-ms updates can rewrite links/sample descriptors and require a
+        // separate admission proof. The canonical MH3 ucode uses New commands.
+        bool valid = layout != AXCommandLayout::Old;
+        uint32_t idx = 0, processes = 0, compressors = 0;
+        auto address = [&] { return ReadAddress(idx); };
+        auto input = [&](uint32_t addr, size_t bytes) { return AddJobRange(addr, bytes); };
+        auto output = [&](uint32_t addr, size_t bytes, bool skipZero = false) {
+            return (skipZero && !addr) || AddJobRange(addr, bytes, true);
+        };
+        while (valid && idx < m_cmdListSize) {
+            const Cmd cmd = DecodeCommand(m_cmdList[idx++], layout).cmd;
+            uint32_t addr = 0, addr2 = 0;
+            switch (cmd) {
+            case CMD_SETUP:
+                valid = input(address(), kAxBusCount * 6); break;
+            case CMD_ADD_TO_LR:
+            case CMD_SUB_TO_LR:
+                valid = input(address(), kAxSamplesPerFrame * 4); break;
+            case CMD_ADD_SUB_TO_LR:
+                valid = input(address(), kAxSamplesPerFrame * 8); break;
+            case CMD_PROCESS:
+                addr = address();
+                valid = ++processes == 1 && PreparePBChain(addr); break;
+            case CMD_MIX_AUXA:
+            case CMD_MIX_AUXB:
+            case CMD_MIX_AUXC:
+                ++idx; addr = address(); addr2 = address();
+                valid = (!addr || output(addr, kAxSamplesPerFrame * 12)) &&
+                        input(addr2, kAxSamplesPerFrame * 12); break;
+            case CMD_UPL_AUXA_MIX_LRSC:
+            case CMD_UPL_AUXB_MIX_LRSC: {
+                ++idx;
+                std::array<uint32_t, 6> addresses{};
+                for (auto& at : addresses) at = address();
+                for (uint32_t channel = 0; channel < 3 && valid; ++channel)
+                    valid = output(addresses[0] + channel * kAxSamplesPerFrame * 4,
+                                   kAxSamplesPerFrame * 4, true);
+                if (valid) valid = output(addresses[1], kAxSamplesPerFrame * 4, true);
+                for (uint32_t slot = 2; slot < 6 && valid; ++slot)
+                    valid = input(addresses[slot], kAxSamplesPerFrame * 4);
+                break;
+            }
+            case CMD_COMPRESSOR: {
+                idx += 2; addr = address();
+                constexpr uint32_t frameBytes = kAxSamplesPerFrame * 2;
+                valid = ++compressors == 1 && input(addr + m_compressorPos * frameBytes, frameBytes);
+                if (valid && m_compressorPos)
+                    valid = input(addr + (10 + m_compressorPos) * frameBytes, frameBytes);
+                break;
+            }
+            case CMD_OUTPUT:
+            case CMD_OUTPUT_DPL2:
+                if (OutputCarriesVolume(layout)) ++idx;
+                addr = address(); addr2 = address();
+                valid = output(addr, kAxSamplesPerFrame * 4, true) &&
+                        output(addr2, kAxSamplesPerFrame * 4);
+                if (valid && cmd == CMD_OUTPUT_DPL2)
+                    valid = output(addr + kAxSamplesPerFrame * 4, kAxSamplesPerFrame * 4, true);
+                break;
+            case CMD_WM_OUTPUT:
+                for (unsigned channel = 0; channel < 4; ++channel) {
+                    addr = address();
+                    if (valid) valid = output(addr, kAxWiimoteSamplesPerFrame * 2);
+                }
+                break;
+            case CMD_END:
+                idx = m_cmdListSize; break;
+            default:
+                valid = false; break;
+            }
+        }
+        // An output that rewrites a PB can change a later link or sample
+        // descriptor, invalidating the address-only admission walk.
+        for (size_t i = 0; i < m_admissionPbCount && valid; ++i)
+            for (size_t j = 0; j < m_admissionWriteCount && valid; ++j) {
+                const auto& pb = m_admissionPbs[i];
+                const auto& write = m_admissionWrites[j];
+                valid = !(pb.begin < write.end && write.begin < pb.end);
+            }
+        valid = valid && m_privateMemory.Seal();
+        if (!valid) {
+            if (!m_loggedAdmissionFallback.exchange(true, std::memory_order_relaxed)) {
+                RT_LOGF(RT_TAG_AUDIO, "AX private admission rejected; executing the complete serial command list\n");
+                std::fflush(stderr);
+            }
+            m_privateMemory.Reset();
+        } else if (!m_loggedPrivateJob) {
+            m_loggedPrivateJob = true;
+            RT_LOGF(RT_TAG_AUDIO, "AX private epoch: %u PBs, %llu source/result bytes, %llu spans; %llu-byte storage\n",
+                unsigned(m_admissionPbCount), static_cast<unsigned long long>(m_privateMemory.Bytes()),
+                static_cast<unsigned long long>(m_privateMemory.SpanCount()),
+                static_cast<unsigned long long>(sizeof(m_privateMemory)));
+            std::fflush(stderr);
+        }
+        return valid;
+    }
+
     void ExecuteCommandList(AXCommandLayout layout, uint32_t cmdListSize) {
         uint32_t idx = 0;
         uint32_t oldPbAddr = 0;
         const bool newFilter = m_ucodeCrc != 0 ? UCodeUsesNewFilter(m_ucodeCrc) : layout != AXCommandLayout::Old;
         bool end = false;
-        m_auxOutCount = 0;
         while (!end && idx < cmdListSize) {
             const uint16_t cmd = m_cmdList[idx++];
             uint16_t volume = 0;
@@ -796,8 +1009,21 @@ private:
 
     static void CopyStructToGuest(uint32_t addr, size_t guestOffset, const char* src, size_t structOffset,
                                   size_t byteCount) {
+        if (t_onMixWorker) {
+            const uint32_t begin = addr + static_cast<uint32_t>(guestOffset);
+            const uint8_t* guest = MixResolveRange(begin, byteCount);
+            if (!guest) ReportMixAddressOutOfRange(begin, byteCount);
+            for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
+                uint16_t previous;
+                std::memcpy(&previous, guest + i, sizeof(previous));
+                const uint16_t value = *reinterpret_cast<const uint16_t*>(src + structOffset + i);
+                if (MemoryInline::ByteSwap16(previous) != value)
+                    MixWrite16(begin + static_cast<uint32_t>(i), value);
+            }
+            return;
+        }
         if (uint8_t* guest =
-                MixResolveRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
+                MixResolveWriteRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
             for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
                 BigEndian::Write16(
                     guest + i, *reinterpret_cast<const uint16_t*>(src + structOffset + i));
@@ -969,10 +1195,8 @@ private:
         m_commandLayout = CommandLayoutForUCode(crc);
     }
 
-    // PB write-back goes straight into guest memory even from the worker, deliberately:
-    // the CPU's only PB chain access is __AXServiceVPB, reached from __AXSyncPBs before
-    // the mail that starts a mix (and after the previous mix was joined), so guest and mix
-    // never touch a PB concurrently. Shadowing it would only risk a stale-snapshot clobber.
+    // The private epoch retains PB updates until an owner consumer joins.
+    // Unchanged PB halfwords are not replayed over later owner writes.
     void WritePB(uint32_t addr, const AXPBWii& pb) const {
         if (m_pbLayout == PBLayout::Unknown) {
             return;
@@ -1275,10 +1499,8 @@ private:
             pcm[i * 2] = right;
             pcm[i * 2 + 1] = left;
         }
-        // The AI frame (contiguous right/left interleaved) lands in guest memory directly
-        // even from the worker: its only reader, PushAudioBlock, runs after Audio_HLE_Tick
-        // has joined the worker, so the guest never observes a half-written frame.
-        if (uint8_t* host = MixResolveRange(lrAddr, pcm.size() * sizeof(int16_t))) {
+        // Worker PCM remains private until the DMA/owner consumer joins.
+        if (uint8_t* host = MixResolveWriteRange(lrAddr, pcm.size() * sizeof(int16_t))) {
             for (size_t i = 0; i < pcm.size(); ++i) {
                 BigEndian::Write16(host + i * sizeof(uint16_t), static_cast<uint16_t>(pcm[i]));
             }
@@ -1301,63 +1523,14 @@ private:
         }
     }
 
-    // Aux OUT/IN stay off guest memory during a deferred mix, since __AXProcessAux reads a mix
-    // result inside the same __AXOutNewFrame that produced it: OUT shadows to a host buffer
-    // JoinMix publishes one AX frame later (a 3 ms older reverb tap, not a dry-signal change),
-    // and IN snapshots at mail time to match a synchronous mix. Reads check this frame's shadow
-    // first, so a same-buffer write/read still behaves like a synchronous read-back.
+    // Aux shares the same byte view as every other job range. Exact and
+    // partial aliases see prior writes in authored command order, without a
+    // separate per-block shadow cap or an extra audio epoch.
     void WriteAuxOutBuffer(uint32_t addr, const int* src, uint32_t count) {
-        if (!m_deferredAux) {
-            WriteGuestS32Buffer(addr, src, count);
-            return;
-        }
-        if (addr == 0) {
-            return;
-        }
-        if (m_auxOutCount >= m_auxOut.size()) {
-            ReportAuxShadowOverflow();
-            return;
-        }
-        AuxBlock& block = m_auxOut[m_auxOutCount++];
-        block.addr = addr;
-        std::memcpy(block.data.data(), src, count * sizeof(int32_t));
+        WriteGuestS32Buffer(addr, src, count);
     }
-
     void ReadAuxInBuffer(uint32_t addr, int* dst, uint32_t count) {
-        if (m_deferredAux) {
-            for (uint32_t i = m_auxOutCount; i-- > 0;) {
-                if (m_auxOut[i].addr == addr) {
-                    std::memcpy(dst, m_auxOut[i].data.data(), count * sizeof(int32_t));
-                    return;
-                }
-            }
-            for (uint32_t i = 0; i < m_auxInCount; ++i) {
-                if (m_auxIn[i].addr == addr) {
-                    std::memcpy(dst, m_auxIn[i].data.data(), count * sizeof(int32_t));
-                    return;
-                }
-            }
-        }
         ReadGuestS32Buffer(addr, dst, count);
-    }
-
-    // Guest thread only, with the worker joined.
-    void PublishAuxOutputs() {
-        for (uint32_t i = 0; i < m_auxOutCount; ++i) {
-            WriteGuestS32Buffer(m_auxOut[i].addr, m_auxOut[i].data.data(), kAxSamplesPerFrame);
-        }
-        // Publish exactly once: __AXProcessAux may process the aux buffer in
-        // place, so replaying the shadow at the next join would overwrite the
-        // reverb result the guest just computed.
-        m_auxOutCount = 0;
-    }
-
-    void ReportAuxShadowOverflow() {
-        if (m_loggedAuxShadowOverflow.exchange(true, std::memory_order_relaxed)) {
-            return;
-        }
-        RT_LOGF(RT_TAG_AUDIO, "aux-out shadow overflow; dropped an aux upload\n");
-        std::fflush(stderr);
     }
 
     bool EnsureMixWorker() {
@@ -1428,16 +1601,27 @@ private:
                 m_mixBusy = true;
             }
 
+            const uint64_t workerStart = MixTimeNs();
+            std::exception_ptr failure;
+            t_privateMixMemory = &m_privateMemory;
             try {
                 ExecuteCommandList(m_mixLayout, m_mixCmdListSize);
-            } catch (const std::exception& error) {
-                ReportMixWorkerFailure(error.what());
+#ifdef MH3_AX_PRIVATE_JOB_TEST
+                PrivateMixTestHook(); // Fixture-only exception after private writes.
+#endif
             } catch (...) {
-                ReportMixWorkerFailure("unknown exception");
+                failure = std::current_exception();
             }
+            t_privateMixMemory = nullptr;
 
             {
                 std::lock_guard<std::mutex> lock(m_mixMutex);
+                const uint64_t elapsed = MixTimeNs() - workerStart;
+                m_stats.workerNs += elapsed;
+                m_stats.maxWorkerNs = std::max(m_stats.maxWorkerNs, elapsed);
+                if (failure) ++m_stats.failed;
+                else ++m_stats.completed;
+                m_mixFailure = failure;
                 m_mixBusy = false;
             }
             m_mixIdle.notify_all();
@@ -1456,7 +1640,7 @@ private:
     MailState m_mailState = MailState::WaitingForCmdListSize;
     bool m_toDspBusy = false;
     uint32_t m_cmdListSize = 0;
-    std::array<uint16_t, 512> m_cmdList{};
+    std::vector<uint16_t> m_cmdList = std::vector<uint16_t>(512);
     std::deque<uint32_t> m_cpuMails;
     uint32_t m_lastCpuMail = 0;
     uint32_t m_compressorPos = 0;
@@ -1487,17 +1671,32 @@ private:
     AXCommandLayout m_mixLayout = AXCommandLayout::New;
     uint32_t m_mixCmdListSize = 0;
     std::atomic<bool> m_loggedMixWorkerFailure{false};
-    std::atomic<bool> m_loggedAuxShadowOverflow{false};
     std::atomic<bool> m_loggedUnknownCommand{false};
-    std::atomic<bool> m_loggedCmdListTruncated{false};
 
-    // Aux marshalling. m_deferredAux is written by the guest thread before the
-    // worker is signalled and read by whichever thread runs the mix.
-    bool m_deferredAux = false;
-    uint32_t m_auxOutCount = 0;
-    uint32_t m_auxInCount = 0;
-    std::array<AuxBlock, 24> m_auxOut{};
-    std::array<AuxBlock, 24> m_auxIn{};
+    bool m_privateJob = false;
+    PrivateMixMemory m_privateMemory;
+    std::exception_ptr m_mixFailure;
+    MixWorkerStats m_stats;
+    std::atomic<bool> m_loggedAdmissionFallback{false};
+    bool m_loggedPrivateJob = false;
+    struct MixState {
+        decltype(m_bus) bus;
+        decltype(m_wmBus) wmBus;
+        uint32_t compressorPos;
+        uint16_t mainVolume;
+        decltype(m_lastAuxVolumes) auxVolumes;
+    } m_savedMixState{};
+    void SaveMixState() {
+        m_savedMixState = {m_bus, m_wmBus, m_compressorPos, m_lastMainVolume, m_lastAuxVolumes};
+    }
+    void RestoreMixState() {
+        m_bus = m_savedMixState.bus;
+        m_wmBus = m_savedMixState.wmBus;
+        m_compressorPos = m_savedMixState.compressorPos;
+        m_lastMainVolume = m_savedMixState.mainVolume;
+        m_lastAuxVolumes = m_savedMixState.auxVolumes;
+    }
+
 };
 
 AXWii& Instance() {
@@ -1625,6 +1824,10 @@ void ShutdownMixWorker() {
 
 void SetMixWorkerEnabled(bool enabled) {
     Instance().SetMixWorkerEnabled(enabled);
+}
+
+MixWorkerStats GetMixWorkerStats() {
+    return Instance().Stats();
 }
 
 } // namespace AxDspHle

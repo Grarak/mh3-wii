@@ -52,7 +52,7 @@ mh3_native_material_state ReadNativeModelMaterialGroup(uint32_t address,
         if(address>UINT32_MAX-32) throw std::runtime_error("Material pipeline address overflows");
         address+=32;
     }
-    const auto block=ReadNativeLiveMaterialBlock(address,kind);
+    const auto& block=ReadNativeLiveMaterialBlockView(address,kind);
     if(mh3_model_material_fields_select(&block.fields,kind,count,&selected)!=MH3_PACK_OK)
         throw std::runtime_error("Material submit requires an unsupported or unproduced typed field");
     return selected;

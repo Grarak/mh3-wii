@@ -2,6 +2,7 @@
 // device models for hardware. An MMIO access no device claims is fatal until
 // the corresponding host service is implemented. No CPU interpretation.
 #include "memory.h"
+#include "audio/ax_dsp.h"
 #include "video_interface.h"
 #include "audio_interface.h"
 #include "gx_host.h"
@@ -105,6 +106,8 @@ Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::stri
 
 void Memory::Init(size_t size) {
     if (size != kMem1Size) throw std::runtime_error("MEM1 is 24 MiB");
+    // Publish and stop before either host remapping or Vita backing zeroing.
+    AxDspHle::ShutdownMixWorker();
     ResetVideoInterface();
     ResetAudioInterface();
     ResetGxRegisters();

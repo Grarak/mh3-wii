@@ -67,6 +67,10 @@ struct NativeLiveMaterialBlock {
     uint64_t resident_generation,origin_offset,source_generation;
 };
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_material_block kind);
+/* Owner-only immediate read view. The cache owns these bytes; consume them
+ * before any producer publication, source write/retirement or guest callback.
+ * Mutable setters must use ReadNativeLiveMaterialBlock's private snapshot. */
+const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,mh3_model_material_block kind);
 /* Mapping belongs to a certified pipeline source extent. Mutable/copy blocks
  * keep the admitted origin; unknown writes retire them. No live command read. */
 void ReadNativeModelCoordinateMap(uint32_t pipeline,uint8_t mapping[8],uint8_t* known);

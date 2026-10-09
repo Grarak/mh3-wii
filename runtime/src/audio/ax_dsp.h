@@ -19,9 +19,9 @@ uint32_t ReadMailFromDSP();
 uint32_t AssertTask(uint32_t taskPtr);
 void ServiceDeferredCallbacks();
 
-// INVARIANT: no guest code may observe mix output before this returns. Called from
-// Audio_HLE_Tick before the AI DMA block reaches the backend and before the AI callback
-// runs __AXOutNewFrame, the two places guest code reads the mix's PB/output/aux data.
+// Publishes the private epoch before a guest audio consumer or mutation.
+// Audio DMA calls this before queueing PCM and invoking the AI callback; native
+// PB synchronization, reset, mode switching and memory teardown also drain.
 // Cheap when the mix already finished (the normal case).
 void JoinMixWorker();
 
@@ -30,6 +30,19 @@ void JoinMixWorker();
 void ShutdownMixWorker();
 
 void SetMixWorkerEnabled(bool enabled);
+
+// Owner diagnostics; durations include admission/copy, numeric work and the
+// completion wait/publication separately. No guest callbacks run on the worker.
+struct MixWorkerStats {
+    uint64_t submitted = 0, completed = 0, published = 0, rejected = 0, failed = 0, serial = 0;
+    uint64_t prepareNs = 0, workerNs = 0, waitNs = 0, publishNs = 0;
+    uint64_t maxPrepareNs = 0, maxWorkerNs = 0, maxWaitNs = 0;
+    uint64_t lastJobBytes = 0, maxJobBytes = 0, totalJobBytes = 0, storageBytes = 0;
+    uint32_t lastActivePbs = 0;
+    int workerThread = 0, workerCore = -1, workerAffinity = 0;
+    bool workerRunning = false, core0Checked = false;
+};
+MixWorkerStats GetMixWorkerStats();
 
 void InitAram();
 

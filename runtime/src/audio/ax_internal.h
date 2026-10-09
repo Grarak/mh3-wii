@@ -3,6 +3,7 @@
 // AX/DSP HLE internals shared within this directory; ax_dsp.h is the public surface.
 // Hot accessors stay header-inline because the shipped build links runtime shards without LTO.
 
+#include "ax_private_memory.h"
 #include "isa/big_endian.h"
 #include "memory.h"
 
@@ -49,22 +50,25 @@ constexpr uint32_t kAxRequestCallback = 0x80470830u;
 
 extern uint32_t g_axTaskPtr;
 
-// The mix worker resolves guest addresses via the MEM1/MEM2 region bases below.
+// Only the owner resolves guest addresses through these MEM1/MEM2 bases.
 extern std::atomic<uint8_t*> g_mixMem1;
 extern std::atomic<uint8_t*> g_mixMem2;
 
-// True only on the mix worker thread. Guest-thread callers keep the exact
-// fallback behaviour they had before (Memory::Read*/Write*, which materializes
-// deferred reads and reports access violations); the worker instead fails safe.
+// Worker accesses use one sealed, private epoch; they never resolve guest RAM.
+// Owner callers retain their normal guest-memory fallback.
 extern thread_local bool t_onMixWorker;
+extern thread_local PrivateMixMemory* t_privateMixMemory;
 
-void ReportMixAddressOutOfRange(uint32_t addr, size_t bytes);
+[[noreturn]] void ReportMixAddressOutOfRange(uint32_t addr, size_t bytes);
 
 void RefreshMixMemoryMap();
 
 // Host pointer for a guest range that lies entirely inside MEM1 or MEM2 through
 // any of their physical/cached/uncached aliases; nullptr otherwise.
 inline uint8_t* MixResolveRange(uint32_t addr, size_t bytes) {
+    if (t_onMixWorker) {
+        return t_privateMixMemory ? t_privateMixMemory->Resolve(addr, bytes) : nullptr;
+    }
     if (bytes == 0 || bytes > Memory::kMem2Size) {
         return nullptr;
     }
@@ -116,6 +120,13 @@ inline uint8_t* MixResolveRange(uint32_t addr, size_t bytes) {
     return nullptr;
 }
 
+inline uint8_t* MixResolveWriteRange(uint32_t addr, size_t bytes) {
+    if (t_onMixWorker) {
+        return t_privateMixMemory ? t_privateMixMemory->Resolve(addr, bytes, true) : nullptr;
+    }
+    return MixResolveRange(addr, bytes);
+}
+
 // One body for the two guest widths the mix reads, so the worker-safety fallback above can
 // only ever be got right or wrong once; stays header-inline since the shipped build has no LTO.
 template <typename T>
@@ -147,7 +158,7 @@ inline uint16_t MixRead16(uint32_t addr) { return MixReadBE<uint16_t>(addr); }
 inline uint32_t MixRead32(uint32_t addr) { return MixReadBE<uint32_t>(addr); }
 
 inline void MixWrite16(uint32_t addr, uint16_t value) {
-    if (uint8_t* host = MixResolveRange(addr, sizeof(uint16_t))) {
+    if (uint8_t* host = MixResolveWriteRange(addr, sizeof(uint16_t))) {
         BigEndian::Write16(host, value);
         return;
     }
@@ -189,8 +200,8 @@ struct AramWindow {
     const uint8_t* host = nullptr;
 };
 
-// Bumped whenever the AX HLE (re)initializes so a cached host window can never
-// outlive the guest memory mapping it was resolved against.
+// Bumped on initialization and private epoch submission so a cached window
+// cannot survive guest remapping or the reuse of a different private snapshot.
 extern std::atomic<uint32_t> g_aramWindowGeneration;
 
 uint8_t ReadAramByteSlow(uint32_t addr);
@@ -539,6 +550,16 @@ public:
         m_host = nullptr;
         const uint32_t size = m_format & 3u;
         const uint32_t first = std::min(m_start, m_current);
+        if (t_onMixWorker && size <= 2) {
+            const uint32_t currentByte = size == 0 ? m_current >> 1 : size == 1 ? m_current : m_current * 2;
+            AramWindow window;
+            if (ResolveAramWindow(currentByte, window)) {
+                m_host = window.host;
+                m_hostBegin = window.begin;
+                m_hostSize = window.end - window.begin;
+                return;
+            }
+        }
         if ((m_current & 0x80000000u) == 0 && size <= 2 && m_end >= first && m_end - first < 0x01000000u) {
             const uint32_t begin = size == 0 ? first >> 1 : size == 1 ? first : first * 2;
             const uint32_t end = size == 0 ? (m_end >> 1) + 2 : size == 1 ? m_end + 2 : m_end * 2 + 4;
@@ -548,6 +569,44 @@ public:
                 m_hostSize = end - begin;
             }
         }
+    }
+
+    // Address-only admission walk for this epoch. Sample values and decoder
+    // history never choose an address. This follows ReadSample's frame header,
+    // end, looping and stopped-read transitions without decoding on the owner.
+    template <typename Visitor>
+    static bool VisitSampleReads(const AXPBWii& pb, uint32_t count, Visitor&& visit) {
+        uint32_t start = Hilo(pb.audio_addr.loop_addr_hi, pb.audio_addr.loop_addr_lo) & 0x3fffffffu;
+        uint32_t end = Hilo(pb.audio_addr.end_addr_hi, pb.audio_addr.end_addr_lo) & 0x3fffffffu;
+        uint32_t current = Hilo(pb.audio_addr.cur_addr_hi, pb.audio_addr.cur_addr_lo) & 0xbfffffffu;
+        const uint16_t format = pb.audio_addr.sample_format;
+        if (format != 0 && format != 0x19 && format != 0x0a) return false;
+        bool stopped = false;
+        const uint32_t size = format & 3u, decode = (format >> 2) & 3u;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (stopped) break;
+            if (!visit(size == 0 ? current >> 1 : size == 1 ? current : current * 2,
+                       size == 2 ? 2u : 1u)) return false;
+            uint8_t step = 2;
+            if (decode == 0) {
+                ++current;
+                if ((end & 0xf) == 0 && current == end) current = start + 1;
+                else if ((end & 0xf) == 1 && current == end - 1) current = start;
+                else if ((current & 15) == 0) {
+                    if (!visit((current & ~15u) >> 1, 1u)) return false;
+                    current += 2;
+                    step += 2;
+                }
+            } else if (decode != 1) {
+                ++current;
+            }
+            if (current == end + step - 1) {
+                current = start;
+                stopped = !pb.audio_addr.looping;
+            }
+            current &= 0xbfffffffu;
+        }
+        return true;
     }
 
     int16_t ReadSample() {
@@ -640,6 +699,15 @@ public:
         if (m_host && offset < m_hostSize) [[likely]] {
             return m_host[offset];
         }
+        if (t_onMixWorker) {
+            AramWindow window;
+            if (ResolveAramWindow(addr, window)) {
+                m_host = window.host;
+                m_hostBegin = window.begin;
+                m_hostSize = window.end - window.begin;
+                return m_host[addr - m_hostBegin];
+            }
+        }
         return ReadAramByte(addr);
     }
 
@@ -675,9 +743,9 @@ private:
     uint16_t m_pred_scale = 0;
     bool m_reads_stopped = false;
     bool m_read = false;
-    const uint8_t* m_host = nullptr;
-    uint32_t m_hostBegin = 0;
-    uint32_t m_hostSize = 0;
+    mutable const uint8_t* m_host = nullptr;
+    mutable uint32_t m_hostBegin = 0;
+    mutable uint32_t m_hostSize = 0;
 };
 
 }

@@ -432,7 +432,7 @@ uint64_t NextNativeMaterialRevision() {
     if(material_revision==UINT64_MAX) throw std::runtime_error("Native material producer revision overflow");
     return ++material_revision;
 }
-NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_material_block kind) {
+const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,mh3_model_material_block kind) {
     Initialize();address=Canonical(address,1);const auto key=LiveKey(address,kind);
     const auto cached=live_blocks.find(key);if(cached!=live_blocks.end()) return cached->second;
     mh3_source_identity identity{};Checked(mh3_source_resolve(&tracker,address,1,&identity));
@@ -459,12 +459,15 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_m
         }
         NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state,address,source.bytes,kind,
             pack.handle,pack.generation,identity.partition_offset,generation};
-        block.fields.generation=NextNativeMaterialRevision();live_blocks.emplace(key,block);return block;
+        block.fields.generation=NextNativeMaterialRevision();return live_blocks.emplace(key,std::move(block)).first->second;
     }
     std::ostringstream detail;
     detail<<"Material block has no admitted typed source extent: address=0x"<<std::hex<<address
           <<" kind="<<std::dec<<uint32_t(kind)<<" partition_offset=0x"<<std::hex<<identity.partition_offset;
     throw std::runtime_error(detail.str());
+}
+NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_material_block kind) {
+    return ReadNativeLiveMaterialBlockView(address,kind);
 }
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
     if(!block.fields.generation || block.fields.generation>material_revision ||
@@ -480,7 +483,7 @@ void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
 }
 void ReadNativeModelCoordinateMap(uint32_t pipeline,uint8_t mapping[8],uint8_t* known) {
     if(!mapping || !known) throw std::runtime_error("Native coordinate mapping requires outputs");
-    const auto block=ReadNativeLiveMaterialBlock(pipeline,MH3_MODEL_MATERIAL_PIPELINE);
+    const auto& block=ReadNativeLiveMaterialBlockView(pipeline,MH3_MODEL_MATERIAL_PIPELINE);
     for(const auto& pack:packs) if(pack.handle==block.resident_handle && pack.generation==block.resident_generation) {
         const auto origin=pack.origins.find(std::make_pair(block.origin_offset,uint32_t(MH3_MODEL_MATERIAL_PIPELINE)));
         if(origin==pack.origins.end()) break;

@@ -44,11 +44,13 @@ struct Snapshot {
     static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
     static uint8_t* Mem2() { return Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size); }
     void Save() {
+        AxDspHle::JoinMixWorker();
         bytes.resize(Memory::kMem1Size + Memory::kMem2Size);
         std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
         std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
     }
     void Restore() const {
+        AxDspHle::JoinMixWorker();
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
     }

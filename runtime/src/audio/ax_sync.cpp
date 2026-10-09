@@ -9,6 +9,7 @@
 // past it is stopped, depopped and freed. Priority 0 voices only depop. The
 // data cache invalidates and flushes around it do nothing here.
 #include "abi_bridge.h"
+#include "ax_dsp.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -185,6 +186,7 @@ void DepopPort(CpuContext* ctx) { Depop(ctx->gpr[3]); }
 } // namespace
 
 extern "C" void MH3_AXSyncPBs(CpuContext* ctx) {
+    AxDspHle::JoinMixWorker();
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AXSyncPBs");
     if (check) [[unlikely]] {
@@ -197,6 +199,7 @@ extern "C" void MH3_AXSyncPBs(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80471590, MH3_AXSyncPBs, "AXSyncPBs");
 
 extern "C" void MH3_AXSyncPB(CpuContext* ctx) {
+    AxDspHle::JoinMixWorker();
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AXSyncPB");
     if (check) [[unlikely]] {
@@ -209,6 +212,7 @@ extern "C" void MH3_AXSyncPB(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80471040, MH3_AXSyncPB, "AXSyncPB");
 
 extern "C" void MH3_AXDepopVoice(CpuContext* ctx) {
+    AxDspHle::JoinMixWorker();
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AXDepopVoice");
     if (check) [[unlikely]] {
