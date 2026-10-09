@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 // These firmware exports are in the SDK stub library but absent from its header.
 extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSurface*, SceBool);
@@ -354,6 +355,28 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
         attribute.componentCount = input.components;
         attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
       }
+      // GXM requires every attribute the program reads to be bound; GL feeds
+      // absent ones the constant (0, 0, 0, 1). Instance-indexed, a plain draw
+      // reads element 0 of the defaults stream for every vertex.
+      for (unsigned i = 0, total = sceGxmProgramGetParameterCount(m_vertexBinary); i < total; ++i) {
+        const auto* parameter = sceGxmProgramGetParameter(m_vertexBinary, i);
+        if (sceGxmProgramParameterGetCategory(parameter) != SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE)
+          continue;
+        const unsigned reg = sceGxmProgramParameterGetResourceIndex(parameter);
+        if (std::any_of(attributes, attributes + count, [&](const SceGxmVertexAttribute& bound) { return bound.regIndex == reg; }))
+          continue;
+        if (count == 16 || streamCount == 16)
+          throw std::runtime_error("Native vertex defaults exceed hardware layout limits");
+        if (m_defaultStream < 0) {
+          m_defaultStream = int(streamCount++);
+          streams[m_defaultStream] = {16, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)};
+        }
+        auto& attribute = attributes[count++];
+        attribute.streamIndex = uint16_t(m_defaultStream);
+        attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+        attribute.componentCount = uint8_t(std::clamp(sceGxmProgramParameterGetComponentCount(parameter), 1u, 4u));
+        attribute.regIndex = uint16_t(reg);
+      }
     } else
       for (unsigned stream = 0; stream < 2; ++stream) {
         const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, stream ? "instance_id" : "vertex_id");
@@ -367,7 +390,18 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
         attribute.componentCount = 1;
         attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
       }
-    check(sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, streamCount, &m_vertex), "patch vertex program");
+    if (const int error = sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, streamCount, &m_vertex); error < 0) {
+      char text[96];
+      std::snprintf(text, sizeof(text), "GXM patch vertex program %016llx failed: %08x;", static_cast<unsigned long long>(vertexHash), unsigned(error));
+      std::string layout = text;
+      for (unsigned i = 0; i < count; ++i) {
+        const auto& a = attributes[i];
+        std::snprintf(text, sizeof(text), " [stream %u offset %u format %u x%u reg %u stride %u]", a.streamIndex, a.offset, unsigned(a.format), a.componentCount, a.regIndex,
+                      streams[a.streamIndex].stride);
+        layout += text;
+      }
+      throw std::runtime_error(layout);
+    }
   } catch (...) {
     release();
     throw;

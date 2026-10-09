@@ -23,6 +23,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 
@@ -142,7 +143,9 @@ public:
     const float ids[4]{0, 1, 2, 3};
     const uint16_t indices[6]{0, 1, 2, 2, 1, 3};
     std::memcpy(utility.data(), ids, sizeof(ids));
+    const float defaults[4]{0, 0, 0, 1};
     std::memcpy(static_cast<char*>(utility.data()) + 64, indices, sizeof(indices));
+    std::memcpy(static_cast<char*>(utility.data()) + DefaultAttributesOffset, defaults, sizeof(defaults));
   }
   ~Renderer() {
     device.finish();
@@ -254,7 +257,7 @@ public:
     auto blend = blend_info(state.raster, state.blendColor);
     if (!state.display && !state.color)
       blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
-    native.program->bind(blend, output_format());
+    bind_program(*native.program, blend);
     if (native.buffer0) {
       if (!state.uniformValid)
         throw std::runtime_error("Native shader requires an unbound uniform range");
@@ -300,7 +303,7 @@ public:
     auto blend = blend_info(state.raster, state.blendColor);
     if (!state.display && !state.color)
       blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
-    program.bind(blend, output_format());
+    bind_program(program, blend);
     draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
     for (const auto& [samplerName, slot] : native.samplers) {
       const auto& bound = state.textures.at(units.at(slot));
@@ -312,6 +315,11 @@ public:
       const auto sampled = sampling_view(source, desc);
       check(sceGxmSetFragmentTexture(device.context(), slot, &sampled), "bind shaded texture");
     }
+  }
+  void bind_program(PatchedProgram& program, const SceGxmBlendInfo& blend) {
+    program.bind(blend, output_format());
+    if (program.default_stream() >= 0)
+      check(sceGxmSetVertexStream(device.context(), program.default_stream(), static_cast<char*>(utility.data()) + DefaultAttributesOffset), "bind default vertex attributes");
   }
   void utility_draw(uint32_t count) {
     check(sceGxmSetVertexStream(device.context(), 0, utility.data()), "bind utility vertex IDs");
@@ -415,6 +423,9 @@ public:
   PixelClip clip;
   PatchedProgram clearProgram, presentProgram;
   std::unique_ptr<PatchedProgram> nativeGeometryPrograms[2];
+  // Utility block: quad vertex IDs at 0, quad indices at 64, the constant
+  // attribute defaults at DefaultAttributesOffset.
+  static constexpr size_t DefaultAttributesOffset = 128;
   MappedMemory utility;
   State state;
   std::map<GLuint, TextureEntry> textures;
@@ -426,6 +437,14 @@ public:
   std::map<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
   GLuint nextName = 1;
+  gxm::ResidencyStatistics residency() const {
+    auto result = pool.statistics();
+    for (const auto& mesh : meshes)
+      result.model_bytes += mesh.second.size();
+    for (const auto& mesh : retiredMeshes)
+      result.retired_model_bytes += mesh.second.size();
+    return result;
+  }
 };
 struct RenderContext {
   SDL_Window* window = nullptr;
@@ -433,13 +452,17 @@ struct RenderContext {
   std::unique_ptr<Renderer> renderer;
 };
 RenderContext* g_context = nullptr;
+// Residency snapshot for readers off the owner thread (stats reporting).
+std::mutex g_residencyLock;
+gxm::ResidencyStatistics g_residency;
+std::atomic<bool> g_residencyRequested{true};
 // Packs are immutable once added. Only metadata is read by the GX producer;
 // file reads and texture allocation remain on the render thread.
 gfx::NativeTextureSet g_nativeTextures;
 Caps g_caps;
-Renderer& renderer() {
+Renderer& renderer(unsigned line = __builtin_LINE()) {
   if (!g_context || !on_render_thread() || !g_context->renderer)
-    throw std::runtime_error("Native operation called outside the GXM context owner");
+    throw std::runtime_error("Native operation at renderer.cpp:" + std::to_string(line) + " called outside the GXM context owner");
   return *g_context->renderer;
 }
 constexpr std::array<FormatInfo, 19> FormatInfos{{
@@ -1029,7 +1052,7 @@ void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) n
     auto blend = blend_info(r.state.raster, r.state.blendColor);
     if (!r.state.display && !r.state.color)
       blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
-    program->bind(blend, r.output_format());
+    r.bind_program(*program, blend);
     if (textured) {
       const auto& binding = r.state.textures[0];
       if (!binding.texture)
@@ -1202,6 +1225,11 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
     }
     r.device.flip();
     r.collect();
+    if (g_residencyRequested.exchange(false, std::memory_order_relaxed)) {
+      const auto residency = r.residency();
+      std::lock_guard lock(g_residencyLock);
+      g_residency = residency;
+    }
   });
 }
 std::pair<uint32_t, uint32_t> drawable_size() noexcept {
@@ -1227,14 +1255,12 @@ void read_pixels(GLuint id, uint32_t x, uint32_t y, uint32_t width, uint32_t hei
 
 namespace aurora::gxm {
 ResidencyStatistics residency_statistics() noexcept {
-  return gl::guarded([] {
-    const auto& r = gl::renderer();
-    auto result = r.pool.statistics();
-    for (const auto& mesh : r.meshes)
-      result.model_bytes += mesh.second.size();
-    for (const auto& mesh : r.retiredMeshes)
-      result.retired_model_bytes += mesh.second.size();
-    return result;
-  });
+  if (!gl::on_render_thread()) {
+    // The owner refreshes the snapshot at its next present.
+    gl::g_residencyRequested.store(true, std::memory_order_relaxed);
+    std::lock_guard lock(gl::g_residencyLock);
+    return gl::g_residency;
+  }
+  return gl::guarded([] { return gl::renderer().residency(); });
 }
 } // namespace aurora::gxm

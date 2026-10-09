@@ -92,6 +92,9 @@ public:
   void set_fragment_uniform(const char* name, const float* values, unsigned count);
   bool uses_discard() const noexcept { return sceGxmProgramIsDiscardUsed(m_boundFragmentBinary ? m_boundFragmentBinary : m_fragmentBinary); }
   bool replaces_depth() const noexcept { return sceGxmProgramIsDepthReplaceUsed(m_boundFragmentBinary ? m_boundFragmentBinary : m_fragmentBinary); }
+  // Vertex stream that supplies attributes the inputs left unbound; it reads
+  // one 16-byte F32 (0, 0, 0, 1) element. Negative when every attribute is bound.
+  int default_stream() const noexcept { return m_defaultStream; }
 
 private:
   Device& m_device;
@@ -106,6 +109,7 @@ private:
   std::map<uint64_t, SceGxmFragmentProgram*> m_fragments;
   void* m_vertexDefault = nullptr;
   void* m_fragmentDefault = nullptr;
+  int m_defaultStream = -1;
   void release() noexcept;
 };
 } // namespace aurora::gxm
