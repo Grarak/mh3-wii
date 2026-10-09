@@ -230,13 +230,15 @@ mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch
     }
     if((batch->position_required&~next.position_valid) || (batch->normal_required&~next.normal_valid) ||
        (batch->texture_required&~next.texture_valid)) return MH3_RES_ABSENT;
+    /* Explicit classification avoids VitaSDK's per-float __fpclassifyf call
+     * while retaining every finite-value admission check. */
     for(unsigned slot=0;slot<10;slot++) {
         if((batch->position_required|batch->position_known)&(1u<<slot))
-            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++) if(!isfinite(next.position[slot].v[r][c])) return MH3_RES_INVALID;
+            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++) if(!__builtin_isfinite(next.position[slot].v[r][c])) return MH3_RES_INVALID;
         if((batch->normal_required|batch->normal_known)&(1u<<slot))
-            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<3;c++) if(!isfinite(next.normal[slot].v[r][c])) return MH3_RES_INVALID;
+            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<3;c++) if(!__builtin_isfinite(next.normal[slot].v[r][c])) return MH3_RES_INVALID;
         if((batch->texture_required|batch->texture_known)&(1u<<slot))
-            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++) if(!isfinite(next.texture[slot].v[r][c])) return MH3_RES_INVALID;
+            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++) if(!__builtin_isfinite(next.texture[slot].v[r][c])) return MH3_RES_INVALID;
     }
     *out=next;return MH3_RES_OK;
 }

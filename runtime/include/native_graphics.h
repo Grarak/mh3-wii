@@ -49,6 +49,9 @@ const mh3_native_material_state& GetNativeMaterialState();
 //       model hits, model misses, configuration hashes, suffix hashes.
 // 9..11: live base entries, live model variants, fixed cache allocation bytes.
 void GetNativeMaterialPreparationStatistics(uint64_t statistics[12]);
+// Owner-only cumulative program memo hits (base/model), map lookups
+// (base/model), full config equality checks and memo-dropping suffix changes.
+void GetNativeMaterialProgramStatistics(uint64_t statistics[6]);
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) { SetNativeMaterial(material); }
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // Direct compact resident mesh boundary. Caller supplies typed live uniforms;

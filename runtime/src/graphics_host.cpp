@@ -415,6 +415,11 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         GetNativeMaterialPreparationStatistics(counters.data());
         return counters;
     }();
+    static std::array<uint64_t, 6> previousPrograms = [] {
+        std::array<uint64_t, 6> counters{};
+        GetNativeMaterialProgramStatistics(counters.data());
+        return counters;
+    }();
 #ifdef AURORA_GXM
     static auto previousDisplay = aurora::gxm::display_statistics();
 #endif
@@ -487,6 +492,14 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         materialRate(7), materialRate(8), static_cast<unsigned long long>(material[9]),
         static_cast<unsigned long long>(material[10]), material[11] / 1048576.0);
     previousMaterial = material;
+    std::array<uint64_t, 6> programs{};
+    GetNativeMaterialProgramStatistics(programs.data());
+    const auto programRate = [&](size_t counter) {
+        return double(programs[counter] - previousPrograms[counter]) / seconds;
+    };
+    std::fprintf(stderr, "MH3 material: program memo base/model hits %.1f/%.1f/s, map lookups %.1f/%.1f/s, full config comparisons %.1f/s, suffix replacements %.1f/s\n",
+        programRate(0), programRate(1), programRate(2), programRate(3), programRate(4), programRate(5));
+    previousPrograms = programs;
     const auto feedback = aurora::scene_feedback_stats();
     std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
         double(feedback.allocations - previousFeedback.allocations) / seconds,

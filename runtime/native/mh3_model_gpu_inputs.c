@@ -6,9 +6,11 @@
 static mh3_matrix34 identity(void) {
     const mh3_matrix34 matrix={{{1,0,0,0},{0,1,0,0},{0,0,1,0}}};return matrix;
 }
+/* Explicit classification keeps VitaSDK's isfinite macro from calling
+ * __fpclassifyf for every validated float. NaN/Inf checks remain strict. */
 static int finite_matrix(const mh3_matrix34 *matrix) {
     for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++)
-        if(!isfinite(matrix->v[r][c])) return 0;
+        if(!__builtin_isfinite(matrix->v[r][c])) return 0;
     return 1;
 }
 static int attribute(const mh3_pack_layout *layout,unsigned semantic) {
@@ -41,7 +43,7 @@ static int nonzero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_te
             for(unsigned r=0;r<3;r++) row[c]+=gen->post.v[2][r]*gen->main.v[r][c];
             if(c==3) row[c]+=gen->post.v[2][3];
         }
-        if(!isfinite(row[c])) return 0;
+        if(!__builtin_isfinite(row[c])) return 0;
     }
     if(gen->source_row>=5 || gen->input_ab11) {row[3]+=row[2];row[2]=0;}
     float lo=row[3],hi=row[3];magnitude=fabsf(row[3]);
@@ -51,7 +53,7 @@ static int nonzero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_te
         if(gen->source_row==0) {a=mesh->mesh.bounds_min[c];b=mesh->mesh.bounds_max[c];}
         else if(gen->source_row==2) {a=0;b=1;}
         else return 0;
-        if(!isfinite(a)||!isfinite(b)||a>b) return 0;
+        if(!__builtin_isfinite(a)||!__builtin_isfinite(b)||a>b) return 0;
         a*=row[c];b*=row[c];
         lo+=fminf(a,b);hi+=fmaxf(a,b);magnitude+=fmaxf(fabsf(a),fabsf(b));
     }
@@ -66,7 +68,7 @@ static int nonzero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_te
         if(c<3 && !(c==2 && (gen->source_row>=5 || gen->input_ab11))) {
             if(gen->source_row==0) {
                 const float low=mesh->mesh.bounds_min[c],high=mesh->mesh.bounds_max[c];
-                if(!isfinite(low)||!isfinite(high)||low>high) return 0;
+                if(!__builtin_isfinite(low)||!__builtin_isfinite(high)||low>high) return 0;
                 extent=fmaxf(fabsf(low),fabsf(high));
             } else if(gen->source_row!=2) return 0;
         }
@@ -74,7 +76,7 @@ static int nonzero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_te
     }
     magnitude+=fabsf(gen->post.v[2][3]);
     const float error=64*FLT_EPSILON*fmaxf(1,magnitude);
-    if(!isfinite(lo)||!isfinite(hi)||!isfinite(error)) return 0;
+    if(!__builtin_isfinite(lo)||!__builtin_isfinite(hi)||!__builtin_isfinite(error)) return 0;
     return lo>error?1:hi < -error?-1:0;
 }
 /* Certify the actual vertex equation, not a cancelling composed float row.
@@ -85,8 +87,8 @@ static int zero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_texge
     if(!gen->projection || gen->normalize || !gen->post_identity) return 0;
     for(unsigned c=0;c<4;c++) if(gen->main.v[2][c]!=0) return 0;
     if(gen->source_row==0) {
-        for(unsigned c=0;c<3;c++) if(!isfinite(mesh->mesh.bounds_min[c]) ||
-            !isfinite(mesh->mesh.bounds_max[c]) || mesh->mesh.bounds_min[c]>mesh->mesh.bounds_max[c]) return 0;
+        for(unsigned c=0;c<3;c++) if(!__builtin_isfinite(mesh->mesh.bounds_min[c]) ||
+            !__builtin_isfinite(mesh->mesh.bounds_max[c]) || mesh->mesh.bounds_min[c]>mesh->mesh.bounds_max[c]) return 0;
         return 1;
     }
     if(gen->source_row==2) {
@@ -131,7 +133,7 @@ static unsigned indexed_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_g
 mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
     uint8_t mask,int normal_required,float near_z,float far_z,mh3_model_gpu_inputs *out) {
     if(!mesh||!out||!mesh->palette||!mesh->projection||!mesh->material||mesh->layout.count>16||
-       normal_required<0||normal_required>1||!isfinite(near_z)||!isfinite(far_z)) return MH3_RES_INVALID;
+       normal_required<0||normal_required>1||!__builtin_isfinite(near_z)||!__builtin_isfinite(far_z)) return MH3_RES_INVALID;
     mh3_model_gpu_inputs result;memset(&result,0,sizeof result);
     result.matrix_index_mask=(uint16_t)((mesh->layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)&0x1ffu);
     result.position=result.normal=identity();
@@ -168,12 +170,12 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
         result.position_palette[0]=result.position;
     }
     for(unsigned i=0;i<16;i++) {
-        if(!isfinite(mesh->projection[i])) return MH3_RES_INVALID;
+        if(!__builtin_isfinite(mesh->projection[i])) return MH3_RES_INVALID;
         result.projection[i]=mesh->projection[i];
     }
     for(unsigned i=0;i<4;i++) {
         result.projection[8+i]=near_z<=far_z?-mesh->projection[8+i]:mesh->projection[8+i]+mesh->projection[12+i];
-        if(!isfinite(result.projection[8+i])) return MH3_RES_INVALID;
+        if(!__builtin_isfinite(result.projection[8+i])) return MH3_RES_INVALID;
     }
     if(normal_required) {
         if(!attribute(&mesh->layout,1)) return MH3_RES_ABSENT;
