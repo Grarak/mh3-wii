@@ -125,6 +125,11 @@ struct NativeShaderFragmentKey {
 NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant);
 NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& variant);
 
+// The variant's fragment is the pure modulate one with fog, which takes the
+// fog blend folded into the vertex colour: its draws set draw.channel.w bit 17
+// for the vertex program (fog_blend).
+bool NativeShaderFoldsFog(const NativeShaderVariant& variant);
+
 // The complete domain: every key of a valid variant, each once. The bank
 // generator (scripts/vita_shader_bank.cpp) compiles exactly these.
 std::vector<NativeShaderVertexKey> NativeShaderVertexKeys();

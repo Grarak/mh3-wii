@@ -247,6 +247,24 @@ float fog_amount(vec4 clip) {
     g = mix(g, g * g, scene.fog_curve.z);
     return clamp(scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0 * g), 0.0, 1.0);
 }
+
+// The fog blend as the fragment takes it (v_fog): f times the fog colour and
+// 1 - f, one multiply-add there. For the pure modulate fragment
+// (draw.channel.w bit 17, kFoldFog in native_material.cpp) 1 - f goes into the
+// vertex colour instead and w is zero, so that fragment is texel * colour +
+// fog. That is approximate: the triangle interpolates the colour's product
+// with 1 - f instead of multiplying the interpolated values.
+vec4 fog_blend(vec4 clip, inout vec4 color) {
+    float f = fog_amount(clip);
+    vec4 blend = vec4(f * scene.fog_color.rgb, 1.0 - f);
+
+    if ((draw.channel.w & 0x20000) != 0) {
+        color.rgb *= blend.w;
+        blend.w = 0.0;
+    }
+
+    return blend;
+}
 )GLSL";
 
 constexpr const char* GlslMeshVertex = R"GLSL(
@@ -277,7 +295,7 @@ out vec4 v_color0;
 out vec2 v_uv0;
 out vec2 v_uv1;
 out vec2 v_uv2;
-out float v_fog;
+out vec4 v_fog;
 // mode.x source: 0 model position, 1 model normal, 2 role coordinate attribute.
 // mode.y bits: 1 projective (three-row result), 2 normalize, 4 main identity,
 // 8 post identity, 16 main from the palette slot in the role selector, 32 post
@@ -357,7 +375,7 @@ void main() {
 #else
     v_color0 = light_channel(position, vec3(0.0), vertex);
 #endif
-    v_fog = fog_amount(projected);
+    v_fog = fog_blend(projected, v_color0);
     projected.xy += projected.w * draw.viewport.zw;
     TEXGEN_OUTPUTS
     gl_Position = vec4(projected.x, -projected.y, 2.0 * projected.z - projected.w, projected.w);
@@ -378,13 +396,13 @@ out vec4 v_color0;
 out vec2 v_uv0;
 out vec2 v_uv1;
 out vec2 v_uv2;
-out float v_fog;
+out vec4 v_fog;
 vec2 affine(vec3 uv) { return uv.z != 0.0 ? uv.xy / uv.z : uv.xy; }
 void main() {
     v_color0 = light_channel(a_view_position, a_normal, a_color0);
     // a_position is GL clip space (z in [-w, w]); fog reads the GX depth.
     vec4 p = a_position;
-    v_fog = fog_amount(vec4(p.xy, 0.5 * (p.z + p.w), p.w));
+    v_fog = fog_blend(vec4(p.xy, 0.5 * (p.z + p.w), p.w), v_color0);
     v_uv0 = affine(a_uv0);
     v_uv1 = affine(a_uv1);
     v_uv2 = affine(a_uv2);
@@ -402,7 +420,7 @@ in vec4 v_color0;
 in vec2 v_uv0;
 in vec2 v_uv1;
 in vec2 v_uv2;
-in float v_fog;
+in vec4 v_fog;
 uniform sampler2D u_texture0;
 uniform sampler2D u_texture1;
 uniform sampler2D u_texture2;
@@ -484,7 +502,10 @@ void main() {
 #if TEXTURES > 2
     t2 = texture(u_texture2, v_uv2, TEXTURE_BIAS.z);
 #endif
-#if MODULATE && PURE_MODULATE
+#if MODULATE && PURE_MODULATE && FOG
+    // The vertices folded the fog blend into the colour (fog_blend).
+    vec4 result = t0 * v_color0 + v_fog;
+#elif MODULATE && PURE_MODULATE
     vec4 result;
     result.rg = clamp(t0.rg * v_color0.rg, 0.0, 1.0);
     result.ba = clamp(t0.ba * v_color0.ba, 0.0, 1.0);
@@ -529,9 +550,9 @@ void main() {
     if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
 #endif
-#if FOG
-    // v_fog is the amount the vertices computed (fog_amount).
-    result.rgb = mix(result.rgb, scene.fog_color.rgb, v_fog);
+#if FOG && !(MODULATE && PURE_MODULATE)
+    // f times the fog colour and 1 - f, as the vertices computed them (fog_blend).
+    result.rgb = result.rgb * v_fog.w + v_fog.rgb;
 #endif
 #if TARGET_ALPHA_ONE
     result.a = 1.0;
@@ -738,6 +759,19 @@ float fog_amount(float4 clip) {
     g = lerp(g, g * g, scene.fog_curve.z);
     return saturate(scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0f * g));
 }
+
+// The fog blend as the fragment takes it (as the GLSL fog_blend).
+float4 fog_blend(float4 clip, inout float4 color) {
+    float f = fog_amount(clip);
+    float4 blend = float4(f * scene.fog_color.rgb, 1.0f - f);
+
+    if ((draw.channel.w & 0x20000) != 0) {
+        color.rgb *= blend.w;
+        blend.w = 0.0f;
+    }
+
+    return blend;
+}
 )CG";
 
 constexpr const char* CgMeshVertex = R"CG(
@@ -799,7 +833,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
           float a_select, float a_select0, float a_select1, float a_select2,
 #endif
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
-          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float out v_fog : TEXCOORD3) {
+          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
 #if SKINNED
     // M = sum weight * row matrix; its normal matrix is the inverse-transpose
     // (cofactor / det), the plain 3x3 when singular, as the game's view pass.
@@ -837,7 +871,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
 #else
     v_color0 = light_channel(position, float3(0.0f, 0.0f, 0.0f), vertex);
 #endif
-    v_fog = fog_amount(projected);
+    v_fog = fog_blend(projected, v_color0);
     projected.xy += projected.w * draw.viewport.zw;
     TEXGEN_OUTPUTS
     v_position = float4(projected.x, projected.y, 2.0f * projected.z - projected.w, projected.w);
@@ -848,10 +882,10 @@ constexpr const char* CgGeometryVertex = R"CG(
 float2 affine(float3 uv) { return uv.z != 0.0f ? uv.xy / uv.z : uv.xy; }
 void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_color0, float3 a_uv0, float3 a_uv1, float3 a_uv2,
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
-          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float out v_fog : TEXCOORD3) {
+          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
     v_color0 = light_channel(a_view_position, a_normal, a_color0);
     float4 p = a_position;
-    v_fog = fog_amount(float4(p.xy, 0.5f * (p.z + p.w), p.w));
+    v_fog = fog_blend(float4(p.xy, 0.5f * (p.z + p.w), p.w), v_color0);
     v_uv0 = affine(a_uv0);
     v_uv1 = affine(a_uv1);
     v_uv2 = affine(a_uv2);
@@ -941,7 +975,7 @@ real alpha_input(int i, real4 t0, real4 t1, real4 t2, real4 v) {
 #define LERP_SWIZZLE shade.color_input[2].swizzle.x
 #endif
 #endif
-real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, real v_fog : TEXCOORD3,
+real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, real4 v_fog : TEXCOORD3,
             uniform sampler2D u_texture0 : TEXUNIT0, uniform sampler2D u_texture1 : TEXUNIT1, uniform sampler2D u_texture2 : TEXUNIT2) : COLOR {
     real4 t0 = real4(1.0h, 1.0h, 1.0h, 1.0h), t1 = t0, t2 = t0;
 #if TEXTURES > 0
@@ -954,7 +988,12 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     t2 = tex2D(u_texture2, v_uv2);
 #endif
     real4 v = v_color0;
-#if MODULATE && PURE_MODULATE
+#if MODULATE && PURE_MODULATE && FOG
+    // The vertices folded the fog blend into the colour (fog_blend): one
+    // multiply-add, no saturation (texel and colour are in [0, 1], the colour
+    // at most 1 - f). psp2shaderperf modulate_t1_pure_fog_linear 7 -> 1 cycle.
+    real4 result = t0 * v + v_fog;
+#elif MODULATE && PURE_MODULATE
     real4 result;
     result.rg = saturate(t0.rg * v.rg);
     result.ba = saturate(t0.ba * v.ba);
@@ -1007,10 +1046,11 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
 #endif
-#if FOG
-    // v_fog is the amount the vertices computed (fog_amount): psp2shaderperf
-    // modulate_t1_pure_fog_linear 12 -> 7 cycles.
-    result.rgb = lerp(result.rgb, scene.fog_color.rgb, v_fog);
+#if FOG && !(MODULATE && PURE_MODULATE)
+    // f times the fog colour and 1 - f, as the vertices computed them
+    // (fog_blend): one multiply-add instead of the blend's two
+    // (modulate_t1_fog_linear 11 -> 10 cycles).
+    result.rgb = result.rgb * v_fog.w + v_fog.rgb;
 #endif
 #if TARGET_ALPHA_ONE
     result.a = 1.0h;
@@ -1118,6 +1158,10 @@ NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant
             key.texgen[role] = variant.texgen[role];
         }
     return key;
+}
+
+bool NativeShaderFoldsFog(const NativeShaderVariant& variant) {
+    return variant.fog && PureModulate(variant);
 }
 
 NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& variant) {

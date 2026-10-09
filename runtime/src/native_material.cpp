@@ -545,6 +545,12 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     return variant;
 }
 
+// The pure modulate fragment with fog takes the fog blend folded into the
+// vertex colour (fog_blend in native_shader_source.cpp): draw.channel.w bit
+// 17 tells the vertex program, which every fragment variant shares, to do it
+// (NativeShaderFoldsFog).
+constexpr int32_t kFoldFog = 0x20000;
+
 // ---- Material uniforms in GPU memory (docs/native-material-gpu.md) ----
 // Every draw whose material has a GPU block uses it; the rest take the
 // per-draw Shade uniforms (mh3_shade_fill).
@@ -1483,11 +1489,15 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         }
     }
 
+    auto variant = ShadeVariant(shading, NativeShaderVertex::Mesh, lighting);
+
+    if (NativeShaderFoldsFog(variant))
+        vertex.channel[3] |= kFoldFog;
+
     std::memcpy(vertexBlock, &vertex, sizeof vertex);
     std::memset(reinterpret_cast<char*>(vertexBlock) + sizeof vertex, 0, MH3_SHADE_FRAGMENT_OFFSET - sizeof vertex);
     float bias[4];
     const auto units = ShadeTextures(shading, bias);
-    auto variant = ShadeVariant(shading, NativeShaderVertex::Mesh, lighting);
     variant.skinned = skinned;
     std::copy(kinds.begin(), kinds.end(), variant.texgen);
     std::optional<aurora::gl::ShadedBlocks> blocks;
@@ -1580,6 +1590,10 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     float bias[4];
     const auto units = ShadeTextures(shading, bias);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Geometry, lighting);
+
+    if (NativeShaderFoldsFog(variant))
+        vertexBlock->channel[3] |= kFoldFog;
+
     std::optional<aurora::gl::ShadedBlocks> blocks;
 
     if (gpu) {
