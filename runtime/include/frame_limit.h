@@ -5,6 +5,6 @@
 // frames are shown (PaceNativeFramePacket, docs/frame-packet-ring.md). Off,
 // it waits only for a free packet slot and the render thread skips to the
 // newest packet. A launcher sets it before the game starts: the game's render
-// thread start applies it. The development MH3_PROFILE=unpaced turns it off.
+// thread start applies it.
 bool FrameLimitSetting();
 void SetFrameLimitSetting(bool limit);

@@ -210,8 +210,7 @@ before it, parked until the render thread signals that take, so every frame
 it makes is shown ([packet ring](frame-packet-ring.md#the-game-thread-limiter)).
 Off, the game thread runs ahead, the render thread draws the newest frame
 and skips the others, and motion can judder. The game's render thread start,
-after the hand-off, applies it; the development `MH3_PROFILE=unpaced` turns
-it off too.
+after the hand-off, applies it.
 
 `Start game` goes through the game's own intro movie and title. Only the
 Classic Controller's A (the Vita's Circle) skips the intro: Plus (Start) does

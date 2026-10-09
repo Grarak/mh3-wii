@@ -22,9 +22,8 @@
 // which the worker has a copy of. MH3_PORT_CHECK=ScnGroupCalcWorld compares
 // the root's split pass with the original in one thread (MH3_VARIABLE_STEP=0;
 // the worker's stack and scratch, which the original leaves alone, differ).
-// The split is on by default (MH3_PROFILE=serial-world turns it off in
-// development builds). The MH3 world split line (development) shows each
-// side's time.
+// The split is on in every build. The MH3 world split line (development)
+// shows each side's time.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "guest_worker.h"
@@ -38,9 +37,6 @@
 #endif
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
-#endif
-#ifdef MH3_DEVELOPMENT
-#include "dev_options.h"
 #endif
 
 namespace {
@@ -132,19 +128,12 @@ void RunWorkerShare(CpuContext* cpu, void*) {
     RunShare(cpu, workerShare);
 }
 
-// On by default (MH3_PROFILE=serial-world, development, keeps the pass on the
-// game thread). With the draw on the inline game thread the split saved
-// 0.4 ms/frame of logic and the draw lost as much, reading the matrices the
-// worker wrote on another core; the overlapped draw reads them on its own core
+// In every build: the overlapped draw reads the matrices on its own core
 // either way, and the split gains about 2 logical fps (docs/guest-worker.md).
 bool SplitAllowed() {
 #ifdef MH3_DEVELOPMENT
-    static const bool serial = ProfileOptions().Has("serial-world") && !PortCheck::Enabled("ScnGroupCalcWorld");
-
-    if (serial)
-        return false;
-    // Other port checks compare whole RAM around their own call and need the
-    // game thread's order; this one checks the split pass itself.
+    // Port checks compare whole RAM around their own call and need the game
+    // thread's order; ScnGroupCalcWorld checks the split pass itself.
     if (PortCheck::Set() && !PortCheck::Enabled("ScnGroupCalcWorld"))
         return false;
 #endif

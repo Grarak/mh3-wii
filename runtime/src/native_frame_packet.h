@@ -67,8 +67,8 @@ bool NativeRenderThreadRunning();
 
 // Begins the next packet; it records draws only when render is true.
 // Game thread, before a frame: the game thread limiter. Waits while one
-// published packet (two with MH3_PROFILE=queue=2) waits for the render thread
-// (the limit off: only until the next packet's slot is free).
+// published packet waits for the render thread (the limit off: only until the
+// next packet's slot is free).
 void PaceNativeFramePacket();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();
@@ -84,7 +84,7 @@ void PublishNativeFramePacket(std::string capture);
 void BeginNativeFramePacketTail();
 void EndNativeFramePacketTail();
 
-// The draw thread's scene graph walk (game_frame.cpp PrepareOnDrawThread) runs
+// The draw thread's scene graph walk (game_frame.cpp LaunchScenePrepare) runs
 // beside the game thread's recording of the layers: it records nothing
 // (development builds check), and model lookups admit it
 // (FindNativeModelNodeViews).
@@ -136,8 +136,8 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept;
 // the last call; resets them.
 void TakeNativePacketSnapshotCounts(uint32_t out[3][6]);
 
-// Development, draw-thread mode: the records logic steps made before their
-// draw since the last call (BeginNativeFramePacketTail).
+// Development: the records made before the scene's handoff since the last
+// call (BeginNativeFramePacketTail).
 uint32_t TakeNativeRecordsBeforeDraw();
 
 // Game thread: time spent waiting for the render thread to take the last

@@ -1,9 +1,8 @@
 // Host threads that run guest code beside the game thread: translated
 // functions and native ports, each on its own CPU context and guest stack.
 // The guest worker runs the deferred effect calculation (effect_step.cpp) and
-// the split world pass (scene_world.cpp); on the Vita it runs on core 3,
-// which the port otherwise leaves idle. The draw thread runs the frame's draw
-// (docs/pipelined-draw.md).
+// the split world pass (scene_world.cpp). The draw thread runs the frame's
+// draw beside the next logic step (docs/pipelined-draw.md).
 //
 // Work is handed over whole: a thread submits a job and later waits for it.
 // While a job runs, the submitter must not touch the guest state the job
@@ -55,11 +54,9 @@ class GuestThread {
     // have been waited for.
     void Submit(const CpuContext& seed, Job job, void* data);
 
-    // Waits until the submitted job has finished; returns at once when none
-    // is pending. It spins, unless `park`: then it blocks after a short spin,
-    // leaving its core to a thread that shares it (on the Vita a spinning
-    // thread keeps a core from other threads of its priority).
-    void Wait(bool park = false);
+    // Waits (spinning) until the submitted job has finished; returns at once
+    // when none is pending.
+    void Wait();
 
     // True from Submit until the job finishes.
     bool Pending() const;
@@ -164,10 +161,8 @@ namespace DrawThread {
 // Guest stack bytes for the draw, reserved below the worker's at boot.
 inline constexpr uint32_t kGuestStackBytes = 64 * 1024;
 
-// While the game thread waits for the draw (stage 1 of
-// docs/pipelined-draw.md) the draw thread runs on the game thread's core 2,
-// and the guest worker keeps core 3 for the effect calculation the draw waits
-// for.
+// The overlapped draw (docs/pipelined-draw.md) puts the draw thread on core 3
+// and the guest worker on core 0 (MH3StartDrawOverlap, game_frame.cpp).
 
 // The draw thread.
 GuestThread& Thread();

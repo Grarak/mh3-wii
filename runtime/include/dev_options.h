@@ -7,6 +7,7 @@
 //
 // `known` names the tool's flags and options; an unknown name=value item is
 // reported, and so is an unknown bare word when the tool takes no list.
+// `retired` names removed items, reported as removed and otherwise ignored.
 #pragma once
 
 #include <cstdint>
@@ -25,7 +26,8 @@ public:
         Allowed // other bare words form the tool's list (Words())
     };
 
-    DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None) : variable_(variable) {
+    DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None, std::initializer_list<std::string_view> retired = {})
+        : variable_(variable) {
         const char* text = std::getenv(variable);
 
         if (!text)
@@ -52,6 +54,9 @@ public:
 
             for (const std::string_view k : known)
                 listed |= k == name;
+
+            if (!listed && Retired(retired, name))
+                continue;
 
             if (equals != std::string_view::npos) {
                 if (!listed)
@@ -115,6 +120,18 @@ public:
     }
 
 private:
+    bool Retired(std::initializer_list<std::string_view> retired, std::string_view name) const {
+        for (const std::string_view r : retired) {
+            if (r != name)
+                continue;
+
+            std::fprintf(stderr, "MH3: %s: '%.*s' is ignored; it was removed (docs/flags.md)\n", variable_, int(name.size()), name.data());
+            return true;
+        }
+
+        return false;
+    }
+
     void Unknown(std::string_view item) const {
         std::fprintf(stderr, "MH3: %s: unknown option '%.*s' (docs/flags.md)\n", variable_, int(item.size()), item.data());
     }
@@ -235,23 +252,17 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,serial-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,serial-prepare][,census]:
+// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,prepare[,prepare-frames=FIRST-LAST]][,census]:
 // the frame profile and GX counters every N frames (graphics_host.cpp), the
 // per-draw split timers (game_frame.cpp), the render thread's sampled split,
-// serial frames, dropped draw kinds, unpaced packets and the packets the game
-// thread limiter lets wait (native_frame_packet.cpp), material geometry screen area
-// (native_material.cpp), the disc image's read speed (rom_image.cpp), the
-// scene's world matrix pass on the game thread alone instead of split with the
-// guest worker (serial-world; scene_world.cpp), the
-// model preparation counters (model_catalog.cpp), the frame's draw on the draw
-// thread while the game thread waits (draw-thread), or on the game thread
-// (draw-inline) instead of beside the next logic step, the scene graph walk
-// on the game thread instead of the draw thread's beside the layers
-// (serial-prepare; game_frame.cpp, docs/pipelined-draw.md), and the census of
-// the model draws
-// (native_material.cpp).
+// serial frames and dropped draw kinds (native_frame_packet.cpp), material
+// geometry screen area (native_material.cpp), the disc image's read speed
+// (disc_image.cpp), the model preparation counters (model_catalog.cpp), and the
+// census of the model draws (native_material.cpp). The removed A/B items of
+// paths now taken in every build are reported as removed.
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "queue", "disc", "serial-world", "prepare", "prepare-frames", "draw-thread", "draw-inline", "serial-prepare", "census"});
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "disc", "prepare", "prepare-frames", "census"}, DevOptions::Words::None,
+                                    {"unpaced", "queue", "serial-world", "draw-thread", "draw-inline", "serial-prepare"});
     return options;
 }
 

@@ -14,6 +14,7 @@
 #include "abi_bridge.h"
 #include "cheats.h"
 #include "draw_pages.h"
+#include "fatal.h"
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
@@ -23,8 +24,10 @@
 #include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "native_owner.h"
+#include "port_check.h"
 #include "village_boot.h"
 #include <initializer_list>
+#include <stdexcept>
 #include <utility>
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
@@ -299,59 +302,11 @@ struct FrameSplit {
 } split;
 #endif
 
-// The draw section of the frame body: the scene, fonts and fade overlay, the
-// fade timers (and the grabbed screen's restore), the HUD and the movie.
-// Inline it runs in that order; with the draw thread (docs/pipelined-draw.md)
-// it splits: GameSideSection on the game thread first, its records moved
-// behind the scene's (BeginNativeFramePacketTail), then SceneSection on the
-// draw thread.
-void DrawSection(CpuContext* ctx, bool render) {
-    auto call = [ctx](uint32_t fn) {
-        InvokeIndirectCpu(fn, ctx);
-        return ctx->gpr[3];
-    };
-
-#ifdef MH3_DEVELOPMENT
-#define MH3_SPLIT(bucket) split.Lap(split.bucket)
-#else
-#define MH3_SPLIT(bucket)
-#endif
-    if (render) {
-        DrawPages::DrawBegins(ctx->gpr[1]);
-        call(DrawScene);
-        {
-            MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
-            call(flfntFlush);
-        }
-
-        MH3_SPLIT_SCOPE(MH3_SPLIT_FADE);
-        call(DrawFadeOverlay);
-    }
-
-    // Joined in DrawAll; this runs the calls of a frame that drew no scene.
-    EffectStep::Join(ctx);
-    MH3_SPLIT(draw);
-    call(TickFades);
-
-    if (render && Memory::Read8(kSystem + kScreenGrab)) {
-        Memory::Write8(kSystem + kScreenGrab, 0);
-        call(RestoreGrabbedScreen);
-    }
-
-    MH3_SPLIT(logic);
-
-    if (render) {
-        {
-            MH3_SPLIT_SCOPE(MH3_SPLIT_HUD);
-            call(DrawHud);
-        }
-
-        MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
-        call(MovieDraw);
-        DrawPages::DrawEnds();
-    }
-#undef MH3_SPLIT
-}
+// The draw section of the frame body is the scene, fonts and fade overlay,
+// the fade timers (and the grabbed screen's restore), the HUD and the movie.
+// With the draw thread (docs/pipelined-draw.md) it splits: GameSideSection on
+// the game thread first, its records moved behind the scene's
+// (BeginNativeFramePacketTail), then SceneSection on the draw thread.
 
 // The draw thread's part: the 3D scene the frame draw left to it
 // (frame_draw.cpp) and the effect calculation's join.
@@ -381,17 +336,7 @@ void SceneHandoff() {
 // With the overlapped draw (docs/pipelined-draw.md), the single view's scene
 // graph walk runs on the draw thread, from the handoff's state, while the
 // game thread draws the layers after the scene; the game thread joins it
-// before the scene's job. MH3_PROFILE=serial-prepare (development) walks it on
-// the game thread instead.
-bool PrepareOnDrawThread() {
-#ifdef MH3_DEVELOPMENT
-    static const bool serial = ProfileOptions().Has("serial-prepare");
-    return !serial;
-#else
-    return true;
-#endif
-}
-
+// before the scene's job.
 bool prepareLaunched = false;
 
 #ifdef MH3_DEVELOPMENT
@@ -468,14 +413,17 @@ void JoinScenePrepare() {
 
 // The game thread's part, which reads gameplay state directly (the HUD layers,
 // the font stack): the whole draw section but the 3D scene, in its order.
-void GameSideSection(CpuContext* ctx, bool render, bool overlapped) {
+void GameSideSection(CpuContext* ctx, bool render) {
     GuestFrame frame(ctx, 0x10);
     auto call = [ctx](uint32_t fn) { InvokeIndirectCpu(fn, ctx); };
     sceneHandedOff = false;
 
     if (render) {
         FrameDraw::SetSceneHandoff(SceneHandoff);
-        FrameDraw::SetScenePrepareLaunch(overlapped && PrepareOnDrawThread() ? LaunchScenePrepare : nullptr);
+
+        // Port checks compare and restore whole RAM around a call: nothing
+        // may run beside the game thread, so the walk stays on it.
+        FrameDraw::SetScenePrepareLaunch(PortCheck::Set() ? nullptr : LaunchScenePrepare);
         call(DrawScene);
         FrameDraw::SetScenePrepareLaunch(nullptr);
         FrameDraw::SetSceneHandoff(nullptr);
@@ -516,77 +464,44 @@ void GameSideSection(CpuContext* ctx, bool render, bool overlapped) {
     EndNativeFramePacketTail();
 }
 
-// MH3_PROFILE=draw-thread (development, docs/pipelined-draw.md): the scene
-// runs on the draw thread while the game thread waits, after the game thread
-// recorded the game-side part.
-bool DrawOnThread() {
-#ifdef MH3_DEVELOPMENT
-    static const bool enabled = ProfileOptions().Has("draw-thread") && DrawThread::Thread().Available();
-    return enabled;
-#else
-    return false;
-#endif
-}
-
-struct DrawJob {
-    bool render, publish;
-};
-
+// The draw thread's job: the scene of the frame the game thread handed over
+// (its render flag), then the frame's end, which publishes its packet.
 void RunDrawJob(CpuContext* cpu, void* data) {
-    const auto& job = *static_cast<DrawJob*>(data);
-    SceneSection(cpu, job.render);
-
-    // Overlapped, the draw thread ends the frame it drew.
-    if (job.publish)
-        EndNativeGraphicsFrame();
+    SceneSection(cpu, *static_cast<bool*>(data));
+    EndNativeGraphicsFrame();
 }
 
-// The overlapped draw (docs/pipelined-draw.md stage 3), in every build where
-// the draw thread can run: as draw-thread, but the game thread does not wait
-// for the scene. At the handoff it waits for the previous scene (which
-// published its packet), begins this frame's packet, records the game side,
-// launches the effect calculation and hands the scene over; the next logic
-// step runs beside it. The draw thread runs on core 3, the guest worker on
-// core 0. MH3_PROFILE=draw-inline (development) draws on the game thread
-// instead, draw-thread with the game thread waiting.
-bool DrawOverlap() {
-    static const bool enabled = [] {
-#ifdef MH3_DEVELOPMENT
-        if (ProfileOptions().Has("draw-inline") || ProfileOptions().Has("draw-thread"))
-            return false;
-#endif
-        if (!DrawThread::Thread().Available())
-            return false;
-
-        DrawThread::Thread().SetCore(3);
-        GuestWorker::Thread().SetCore(0);
-
-        // The draw thread spins 1 ms after a job, which catches the next of
-        // a burst (the scene draw shortly after the walk), then parks:
-        // spinning through all its idle time kept its core busy for nothing
-        // and starved other threads (a parked wake costs 0.1-1.9 ms on the
-        // devkit).
-        DrawThread::Thread().SetIdleSpin(1000);
-        EffectStep::SetOverlap(true);
-        SetNativeFrameOverlap(true);
-        SetModelInvalidateDeferral(true);
-        return true;
-    }();
-    return enabled;
-}
-
-DrawJob overlapJob{};
+bool overlapRender = false;
 } // namespace
 
-// Decided before the first frame begins (native_frame.cpp), so every frame's
-// packet begins the same way.
-bool MH3DrawOverlapMode() {
-    return DrawOverlap();
+// The overlapped draw (docs/pipelined-draw.md stage 3), in every build: at the
+// handoff the game thread waits for the previous scene (which published its
+// packet), begins this frame's packet, records the game side, launches the
+// effect calculation and hands the scene over to the draw thread; the next
+// logic step runs beside it. The draw thread runs on core 3, the guest worker
+// on core 0. Started before the first frame begins (native_frame.cpp), so
+// every frame's packet begins the same way.
+void MH3StartDrawOverlap() {
+    static bool started = false;
+
+    if (std::exchange(started, true))
+        return;
+
+    if (!DrawThread::Thread().Available())
+        MH3_THROW(std::runtime_error("Draw thread without a guest stack or work area"));
+
+    DrawThread::Thread().SetCore(3);
+    GuestWorker::Thread().SetCore(0);
+
+    // The draw thread spins 1 ms after a job, which catches the next of a
+    // burst (the scene draw shortly after the walk), then parks: spinning
+    // through all its idle time kept its core busy for nothing and starved
+    // other threads (a parked wake costs 0.1-1.9 ms on the devkit).
+    DrawThread::Thread().SetIdleSpin(1000);
+    EffectStep::SetOverlap(true);
+    SetNativeFrameOverlap(true);
+    SetModelInvalidateDeferral(true);
 }
-
-namespace {
-
-} // namespace
 
 extern "C" void MH3_GameFrame(CpuContext* ctx) {
     const CpuContext saved = *ctx;
@@ -714,25 +629,21 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         Memory::Write8(kSystem + kFramePhase, 3);
         MH3_SPLIT(logic);
 
-        if (DrawOverlap()) {
+        // The overlapped draw started before the first frame began
+        // (MH3StartDrawOverlap).
+        DrawThread::Thread().Wait();
+        ApplyDeferredDrawCacheRetirements();
+        BeginOverlappedNativeGraphicsFrame();
+        GameSideSection(ctx, render);
+        EffectStep::Launch(*ctx);
+        overlapRender = render;
+        NativeFrameSubmittedToDraw();
+        DrawThread::Thread().Submit(*ctx, RunDrawJob, &overlapRender);
+
+        // Under port checks the next logic step waits for the draw (see the
+        // walk above).
+        if (PortCheck::Set())
             DrawThread::Thread().Wait();
-            ApplyDeferredDrawCacheRetirements();
-            BeginOverlappedNativeGraphicsFrame();
-            GameSideSection(ctx, render, true);
-            EffectStep::Launch(*ctx);
-            overlapJob = {render, true};
-            NativeFrameSubmittedToDraw();
-            DrawThread::Thread().Submit(*ctx, RunDrawJob, &overlapJob);
-        } else if (DrawOnThread()) {
-            // Stage 1 of docs/pipelined-draw.md: the same section on the draw
-            // thread, the game thread waiting.
-            GameSideSection(ctx, render, false);
-            DrawJob job{render, false};
-            DrawThread::Thread().Submit(*ctx, RunDrawJob, &job);
-            DrawThread::Thread().Wait(true);
-        } else {
-            DrawSection(ctx, render);
-        }
 
         MH3_SPLIT(draw);
         call(PauseHook);
