@@ -190,6 +190,10 @@ struct ShadeState {
     uint64_t lastKey = 0;
     const ShadeEntry* last = nullptr;
     std::unordered_map<uint64_t, aurora::gl::ProgramPtr> programs;
+    // The last draw's program (consecutive draws mostly share one); the
+    // map's nodes keep their address until it is cleared.
+    uint64_t lastProgramKey = 0;
+    aurora::gl::ProgramPtr* lastProgram = nullptr;
     mh3_shade_scene scene{};
     // built is the render thread's lighting revision of the scene block;
     // upload counts rebuilt scene blocks.
@@ -247,6 +251,8 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
                          uint64_t(variant.overlay) << 10 | uint64_t(variant.alpha_test) << 11 | uint64_t(variant.fog) << 12 | uint64_t(variant.texgen[0]) << 13 | uint64_t(variant.texgen[1]) << 16 |
                          uint64_t(variant.texgen[2]) << 19 | uint64_t(variant.linear_fog) << 22 | uint64_t(variant.pure_modulate) << 23 | uint64_t(variant.target_alpha_one) << 24 |
                          uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26;
+    if (shade.lastProgram && key == shade.lastProgramKey)
+        return *shade.lastProgram;
     auto& program = shade.programs[key];
     if (!program) {
         auto sources = NativeShaderSource(variant);
@@ -277,6 +283,8 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
         desc.blocks = {{"Draw", 0}, {"Scene", 1}, {"Palette", 2}, {"Shade", 3}, {"Material", 4}, {"Animated", 5}};
         program = std::make_shared<aurora::gl::Program>(std::move(desc));
     }
+    shade.lastProgramKey = key;
+    shade.lastProgram = &program;
     return program;
 }
 struct ShadeLighting {
@@ -1273,7 +1281,7 @@ void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matr
     PublishNativeModelTextureMatrix(selector, matrix, matrix3x4, owner);
     // Materials republish their post matrices per draw; only a change advances
     // the revision the frame packet captures on.
-    const bool same = destination->known && destination->matrix3x4 == matrix3x4 && !std::memcmp(destination->values.data(), matrix, 48);
+    const bool same = selector >= 64 && destination->known && destination->matrix3x4 == matrix3x4 && BytesEqual(destination->values.data(), matrix, 48);
     if (selector >= 64 && (selector - 64) / 3 < m.postSrt.size() && m.postSrt[(selector - 64) / 3].pure) {
         m.postSrt[(selector - 64) / 3].pure = false;
         ++m.srtRevision;
@@ -1600,6 +1608,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
 }
 void ClearNativeMaterialPrograms() {
     shade.programs.clear();
+    shade.lastProgram = nullptr;
     // Records stay (CPU classifications); their GPU blocks go with the context.
     for (unsigned i = 0; i < MaxMaterialRecords; ++i)
         if (recordBlocks.state[i] == 1)

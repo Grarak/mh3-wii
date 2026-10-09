@@ -17,6 +17,8 @@ size_t NativeModelGPUAllocationBytes(uint32_t payload_bytes);
 size_t NativeModelGPUResidentBytes();
 // Logical frame serial advances on skipped and canceled game frames too.
 uint32_t NativeModelGPUFrameSerial();
+// Advances whenever a payload is registered, unregistered or cleared.
+uint64_t NativeModelGPURevision();
 struct NativeModelGPUView {
     const aurora::gl::NativeMeshBuffer* buffer;
     const aurora::gl::MeshLayout* layout;

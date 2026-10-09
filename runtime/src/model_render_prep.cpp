@@ -38,6 +38,9 @@ mh3_res_span Span(const uint8_t* data, size_t size) {
     return {data, size};
 }
 ModelPrepMirror renderMirror;
+// Whether a preparation ran on the render mirror since it was last forgotten
+// (only ExecuteModelPrep writes it): restores in a row forget it once.
+bool renderMirrorUsed = true;
 uint32_t pendingInvalidate = 0;
 // Game thread: the shared records of captured material scopes, keyed by the
 // material and its selected resource slots, with the live typed blocks they
@@ -354,7 +357,10 @@ ModelPrepMirror& RenderModelPrepMirror() {
     return renderMirror;
 }
 void ForgetNativeModelPrepCaches() {
+    if (!renderMirrorUsed)
+        return;
     renderMirror.Invalidate(0x7ff);
+    renderMirrorUsed = false;
 }
 uint32_t TakeNativeModelPrepInvalidate() {
     const uint32_t fields = pendingInvalidate;
@@ -549,6 +555,8 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
 
 void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPrepInputs& in, const ModelPrepSrt* srt, const mh3_matrix34* direct_position,
                       const mh3_matrix34* direct_normal, ModelPrepShapeResult* shape) {
+    if (&mirror == &renderMirror)
+        renderMirrorUsed = true;
     if (in.invalidate)
         mirror.Invalidate(in.invalidate);
     if (in.selectors)

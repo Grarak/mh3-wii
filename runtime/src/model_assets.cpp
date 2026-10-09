@@ -410,6 +410,21 @@ bool FindNativeModelSource(uint64_t offset, uint64_t* file_offset, uint32_t* fil
     return true;
 }
 namespace {
+// Render thread: the pack whose demand and GPU residency the last mesh draw
+// established, in which frame and model GPU registry revision. A model's
+// meshes draw in a row, and a pack demanded in the current frame is not
+// evicted: while neither changes, its next draws skip the lock and lookups.
+struct ResidentDraw {
+    uintptr_t handle = 0;
+    uint64_t epoch = 0, revision = 0;
+    uint32_t frame = 0;
+} lastResident;
+bool LastResident(uintptr_t handle, uint64_t epoch) {
+    return handle == lastResident.handle && epoch == lastResident.epoch && NativeModelGPUFrameSerial() == lastResident.frame && NativeModelGPURevision() == lastResident.revision;
+}
+void NoteResident(uintptr_t handle, uint64_t epoch, uint32_t frame) {
+    lastResident = {handle, epoch, NativeModelGPURevision(), frame};
+}
 void ObserveDemand(Manager& m, uintptr_t handle, uint64_t epoch) {
     auto& asset = Find(m, handle, epoch);
     const uint32_t frame = NativeModelGPUFrameSerial();
@@ -429,7 +444,7 @@ void ObserveDemand(Manager& m, uintptr_t handle, uint64_t epoch) {
 }
 } // namespace
 void ObserveNativeModelAssetDemand(uintptr_t handle, uint64_t epoch) {
-    if (!manager)
+    if (!manager || LastResident(handle, epoch))
         return;
     std::lock_guard lock(manager->lock);
     ObserveDemand(*manager, handle, epoch);
@@ -438,12 +453,16 @@ bool EnsureNativeModelAssetGPU(uintptr_t handle, uint64_t epoch) {
     // Direct native renderer probes retain their own GPU owner/pack lifetime.
     if (!manager)
         return true;
+    if (LastResident(handle, epoch))
+        return true;
     auto& m = *manager;
     std::lock_guard lock(m.lock);
     auto& asset = Find(m, handle, epoch);
     ObserveDemand(m, handle, epoch);
-    if (asset.gpuRegistered)
+    if (asset.gpuRegistered) {
+        NoteResident(handle, epoch, m.demandFrame);
         return true;
+    }
     const size_t cost = NativeModelGPUAllocationBytes(asset.pack.gpu_bytes);
     while (NativeModelGPUResidentBytes() > MaxGPUBytes - cost) {
         if (!EvictOneGPU(m, handle)) {
@@ -454,6 +473,7 @@ bool EnsureNativeModelAssetGPU(uintptr_t handle, uint64_t epoch) {
     const auto name = asset.path.string();
     RegisterNativeModelGPU(asset.pack, name.c_str(), handle, epoch);
     asset.gpuRegistered = true;
+    NoteResident(handle, epoch, m.demandFrame);
     return true;
 }
 bool ReadNativeModelPackFile(uintptr_t handle, uint64_t epoch, NativeModelPackFile* out) {
