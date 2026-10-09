@@ -738,3 +738,32 @@ extern "C" void MH3_DVDGetCommandBlockStatus(CpuContext* ctx) {
     func_804AACC0(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804AACC0, MH3_DVDGetCommandBlockStatus, "MH3_DVDGetCommandBlockStatus");
+
+// DVDGetDriveStatus (0x804AAD90), decompiled with Ghidra. The frame counter's
+// retrace callbacks sample it every retrace.
+extern "C" void MH3_DVDGetDriveStatus(CpuContext* ctx) {
+    enum : int32_t {
+        kFatalError = -0x3D74,    // s32 FatalErrorFlag
+        kPausing = -0x3D78,       // s32 PausingFlag
+        kExecuting = -0x3CF0,     // DVDCommandBlock* executing
+    };
+    constexpr uint32_t kDummyCommandBlock = 0x80748A20;
+    const CpuContext saved = *ctx;
+    const uint32_t sda = saved.gpr[13];
+    ctx->msr &= ~0x8000u; // OSDisableInterrupts (inlined)
+    uint32_t status;
+    if (Memory::Read32(sda + uint32_t(kFatalError))) status = 0xFFFFFFFF;
+    else if (Memory::Read32(sda + uint32_t(kPausing))) status = 8; // DVD_STATE_PAUSING
+    else {
+        const uint32_t executing = Memory::Read32(sda + uint32_t(kExecuting));
+        if (!executing || executing == kDummyCommandBlock) status = 0;
+        else {
+            ctx->gpr[3] = executing;
+            InvokeIndirectCpu(0x804AACC0, ctx); // DVDGetCommandBlockStatus
+            status = ctx->gpr[3];
+        }
+    }
+    *ctx = saved; // OSRestoreInterrupts
+    ctx->gpr[3] = status;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804AAD90, MH3_DVDGetDriveStatus, "DVDGetDriveStatus");

@@ -115,3 +115,54 @@
 804e9130 VISetNextFrameBuffer
 # `sc; blr`
 804777d0 SystemCall
+# Frame-counter retrace callbacks (VI post-retrace / OS periodic alarm), installed by 0x8003F5F0.
+8003f5c8 CountRetraceCallback
+8003f590 CountRetraceAlarm
+8003f5b8 IncrementRetraceCount
+8003f5f0 InstallRetraceCounter
+804aad90 DVDGetDriveStatus
+804aacc0 DVDGetCommandBlockStatus
+804e9220 VIGetRetraceCount
+804d5d30 OSSetResetCallback
+804d5e20 OSSetPowerCallback
+804cdd30 OSPanic
+# Movie player (movie.cpp): per-frame decode + draw; Movie_draw_sub tail-calls it.
+804344f8 MovieDrawFrame
+80434ffc MovieDecodeFrame
+804351c4 MovieDrawTexture
+80434688 MovieFrameDrawn
+# Soft reset (HOME): fade out / hold / fade in, reset hooks.
+800d2230 ResetFade
+800d26c4 ClearFadeCounters
+800cee20 IsSaveIdle
+800cf26c GetOnlineMode
+803c4878 IsEventDemoState4
+804360a0 IsNetworkBusy
+# Timers that convert seconds to frames with the fps float at 0x8065B4D0.
+8012e9cc TimedCheckByKind
+802ea658 PlayerSkillTimers
+8039d174 QuestResultInit
+8045e620 rand
+# Main loop per-frame body (0x80046D98): one fixed logic step (RunTasks) then its draw (DrawScene + HUD/fades).
+80046d98 GameFrame
+800416f8 RunTasks
+80049308 DrawScene
+8003ff20 FrameSetup
+8003fffc DisplayCopy
+80041f6c PollControllers
+80046e98 Setup2DProjection
+80046efc UpdateScene
+80435b54 MovieUpdate
+8044e258 NetworkResetCheck
+800586a0 GrabScreen
+80044af4 TickSystemTimers
+800582ec DrawFadeOverlay
+800581a4 TickFades
+80058f84 RestoreGrabbedScreen
+800d10b0 DrawHud
+80435d84 MovieDrawOverlay
+800d2678 PauseHook
+800d298c OverlayHook
+80048890 ClearDrawBuckets
+80048ffc ClearDrawSlots
+8028d7dc StaffRollUpdate

@@ -27,7 +27,8 @@
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
 #include "efb_copy_trace.h"
 #endif
-namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); void require_frame_render() noexcept; }
+namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); void require_frame_render() noexcept;
+    std::array<uint64_t, 4> staging_high_water() noexcept; uint64_t staging_split_count() noexcept; }
 
 namespace aurora::gx::fifo {
 void init();
@@ -66,8 +67,8 @@ uint64_t guestCopies = 0;
 #include "gx_diagnostics.inc"
 #endif
 // Stats (MH3_STATS line, MH3_PROFILE_FRAMES profile, GX counters) are built
-// only with MH3_ENABLE_STATS; MH3_STAT(...) compiles its argument away otherwise.
-#ifdef MH3_ENABLE_STATS
+// only with MH3_DEVELOPMENT; MH3_STAT(...) compiles its argument away otherwise.
+#ifdef MH3_DEVELOPMENT
 #define MH3_STAT(...) __VA_ARGS__
 uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestDraws = 0, guestTextureCopies = 0;
 uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
@@ -115,7 +116,7 @@ void InitializeGraphics(int argc, char** argv) {
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
     initialized = true;
-#ifdef MH3_ENABLE_STATS
+#ifdef MH3_DEVELOPMENT
     if (const char* interval = std::getenv("MH3_PROFILE_FRAMES")) {
         const auto value = std::stoul(interval);
         if (!value || value > UINT32_MAX) throw std::runtime_error("MH3_PROFILE_FRAMES must be a positive 32-bit number");
@@ -130,8 +131,10 @@ void InitializeGraphics(int argc, char** argv) {
     aurora::gx::fifo::init();
     // Frameskip: a frame is dropped when the render thread is still busy with the
     // previous one. MH3_FRAMESKIP=0 renders every frame (debugging).
+    aurora_set_frameskip(true);
+#ifdef MH3_DEVELOPMENT
     const char* frameskip = std::getenv("MH3_FRAMESKIP");
-    aurora_set_frameskip(!(frameskip && frameskip[0] == '0'));
+    if (frameskip && frameskip[0] == '0') aurora_set_frameskip(false);
     if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
         if (const char* interval = std::getenv("MH3_CAPTURE_INTERVAL")) {
             const auto value = std::stoul(interval);
@@ -144,6 +147,7 @@ void InitializeGraphics(int argc, char** argv) {
             aurora_request_frame_capture(frame ? std::stoul(frame) : 30, path);
         }
     }
+#endif
 }
 }
 
@@ -189,7 +193,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
             if (consumed != packet.size())
                 throw std::runtime_error("Guest GX command does not fit after staging capacity submission");
         }
-#ifdef MH3_ENABLE_STATS
+#ifdef MH3_DEVELOPMENT
         ++guestCommands;
         if (packet[0] >= 0x80 && packet[0] <= 0xBF) ++guestDraws;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
@@ -237,30 +241,35 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 }
 
 // MH3_STATS: once per second, separate game speed from rendered FPS.
-// Game speed is guest VI retraces delivered versus the nominal VI rate, since
-// the guest times its logic by retraces; game FPS counts display copies; host
+// Game speed is retrace periods the frame pacer stepped (frames * budget)
+// versus the nominal VI rate, since the game logic is fixed-step per frame;
+// game FPS counts display copies; host
 // FPS counts frames the render thread actually swapped.
-void ReportHostSpeed([[maybe_unused]] uint64_t retraces, [[maybe_unused]] double nominalHz) {
-#ifdef MH3_ENABLE_STATS
+void ReportHostSpeed([[maybe_unused]] uint64_t ticks, [[maybe_unused]] double nominalHz) {
+#ifdef MH3_DEVELOPMENT
     static const bool enabled = std::getenv("MH3_STATS") != nullptr;
     if (!enabled || !initialized) return;
     using Clock = std::chrono::steady_clock;
     static auto last = Clock::now();
-    static uint64_t lastRetraces = retraces, lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
+    static uint64_t lastTicks = ticks, lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
                     lastSkipped = aurora_skipped_frame_count();
     const auto now = Clock::now();
     const double seconds = std::chrono::duration<double>(now - last).count();
     if (seconds < 1.0) return;
     const uint64_t presents = aurora_presented_frame_count(), skipped = aurora_skipped_frame_count();
-    const double viHz = (retraces - lastRetraces) / seconds;
+    const double tickHz = (ticks - lastTicks) / seconds;
     std::fprintf(stderr,
-        "MH3 stats: game speed %.1f%% (VI %.1f/%.1f Hz), game %.1f fps (display copies), host %.1f fps (presents), "
-        "%.1f fps skipped, %llu frames in flight\n",
-        100.0 * viHz / nominalHz, viHz, nominalHz, (guestCopies - lastCopies) / seconds,
+        "MH3 stats: game speed %.1f%% (%.1f/%.1f Hz paced), game %.1f fps (display copies), host %.1f fps (presents), "
+        "%.1f fps skipped, %lld frames in flight\n",
+        100.0 * tickHz / nominalHz, tickHz, nominalHz, (guestCopies - lastCopies) / seconds,
         (presents - lastPresents) / seconds, (skipped - lastSkipped) / seconds,
-        static_cast<unsigned long long>(guestCopies - presents - skipped));
+        static_cast<long long>(guestCopies - presents - skipped));
+    const auto high = aurora::gfx::staging_high_water();
+    std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %zu idx %zu uniform %zu storage %zu (KiB)\n",
+                 static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
+                 size_t(high[0] >> 10), size_t(high[2] >> 10), size_t(high[1] >> 10), size_t(high[3] >> 10));
     last = now;
-    lastRetraces = retraces;
+    lastTicks = ticks;
     lastCopies = guestCopies;
     lastPresents = presents;
     lastSkipped = skipped;
@@ -286,7 +295,7 @@ void CompleteHostGraphics() {
     // decision while the previous frame is certainly still rendering. An EFB
     // peek submits what it needs itself (ReadHostEfbColor).
     if (frameActive && displayCopyPending) SealDisplayFrame();
-#ifdef MH3_ENABLE_STATS
+#ifdef MH3_DEVELOPMENT
     const auto afterWorker = FrameProfile::Clock::now();
     const auto afterGpu = FrameProfile::Clock::now();
     if (profile.interval) {
@@ -370,7 +379,7 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         aurora::gl::call([&] {
             aurora::gl::read_pixels(source.texture->gl(), 0, 0, efbWidth, efbHeight, efbPixels.data());
         });
-#ifdef MH3_ENABLE_STATS
+#ifdef MH3_DEVELOPMENT
         ++guestEfbSnapshots;
         guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
         static unsigned snapshots = 0;

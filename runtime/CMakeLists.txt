@@ -3,7 +3,10 @@ project(MH3Recompiled LANGUAGES CXX ASM)
 option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrumentation" OFF)
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
 option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinations and log host accesses" OFF)
-option(MH3_ENABLE_STATS "Debug: MH3_STATS speed line, MH3_PROFILE_FRAMES profile and GX counters" OFF)
+# Development-only runtime features, compiled out of release builds: MH3_STATS
+# speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE_* frame
+# dumps, MH3_FRAMESKIP, and scripted input (MH3_INPUT_FILE / _RECORD / _PLAYBACK).
+option(MH3_DEVELOPMENT "Build development/debug features (stats, captures, scripted input)" OFF)
 option(MH3_ENABLE_GX_DIAGNOSTICS "Enable controlled renderer isolation and state logging" OFF)
 # Supported targets: arm32 (armhf) and arm64 (aarch64) Linux, rendering
 # through OpenGL ES 3.0. MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
@@ -31,7 +34,7 @@ add_executable(MH3
   src/main.cpp src/memory.cpp src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
   src/audio/ax_mix.cpp src/audio/ax_memory.cpp src/audio_services.cpp src/audio_tests.cpp src/audio_dma.cpp
-  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp
+  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/movie_draw.cpp src/reset_fade.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
@@ -67,9 +70,6 @@ if(TARGET aurora::core)
     set_property(SOURCE src/graphics_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_ENABLE_GX_DIAGNOSTICS=1)
     target_link_libraries(MH3 PRIVATE absl::flat_hash_map)
   endif()
-  if(MH3_ENABLE_STATS)
-    set_property(SOURCE src/graphics_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_ENABLE_STATS=1)
-  endif()
   if(MH3_ENABLE_EFB_COPY_TRACE)
     target_sources(MH3 PRIVATE src/efb_copy_trace.cpp)
     set_property(SOURCE src/graphics_host.cpp src/gx_stream.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_ENABLE_EFB_COPY_TRACE=1)
@@ -77,6 +77,14 @@ if(TARGET aurora::core)
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
+endif()
+
+# MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it
+# does not rebuild the generated shards.
+if(MH3_DEVELOPMENT)
+  get_target_property(MH3_ALL_SOURCES MH3 SOURCES)
+  list(FILTER MH3_ALL_SOURCES INCLUDE REGEX "^src/")
+  set_property(SOURCE ${MH3_ALL_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
 endif()
 
 if(TARGET aurora::core)

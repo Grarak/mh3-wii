@@ -4,17 +4,84 @@
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
+#include <cstdio>
 #include <string>
+#include <vector>
 #ifdef MH3_HAS_AURORA
 #include <SDL3/SDL.h>
 #endif
 namespace {
 std::optional<ClassicControllerSample> testSample;
+#ifdef MH3_DEVELOPMENT
+uint64_t inputFrame = 0;
+
+// Frame-indexed input logs for repeatable runs. Each line is
+// "frame buttons(hex) lx ly rx ry": the sample in effect from that paced
+// frame on. MH3_INPUT_RECORD writes one line per change of the host input;
+// MH3_INPUT_PLAYBACK replaces the host input with a log.
+bool SameInput(const ClassicControllerSample& a, const ClassicControllerSample& b) {
+    return a.buttons == b.buttons && a.leftX == b.leftX && a.leftY == b.leftY &&
+           a.rightX == b.rightX && a.rightY == b.rightY;
+}
+void RecordInput(const ClassicControllerSample& sample) {
+    static const char* path = std::getenv("MH3_INPUT_RECORD");
+    if (!path) return;
+    static std::ofstream log(path);
+    static std::optional<ClassicControllerSample> last;
+    if (last && SameInput(*last, sample)) return;
+    last = sample;
+    log << inputFrame << ' ' << std::hex << sample.buttons << std::dec << ' ' << sample.leftX << ' '
+        << sample.leftY << ' ' << sample.rightX << ' ' << sample.rightY << std::endl;
+}
+std::optional<ClassicControllerSample> PlaybackInput() {
+    static const char* path = std::getenv("MH3_INPUT_PLAYBACK");
+    if (!path) return std::nullopt;
+    struct Entry { uint64_t frame; ClassicControllerSample sample; };
+    static const std::vector<Entry> entries = [] {
+        std::vector<Entry> result;
+        std::ifstream input(path);
+        uint64_t frame; unsigned buttons; int lx, ly, rx, ry;
+        while (input >> frame >> std::hex >> buttons >> std::dec >> lx >> ly >> rx >> ry) {
+            if (!result.empty() && frame < result.back().frame)
+                throw std::runtime_error("MH3_INPUT_PLAYBACK frames must not decrease");
+            result.push_back({frame, {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)}});
+        }
+        if (!input.eof() || result.empty()) throw std::runtime_error("Invalid MH3_INPUT_PLAYBACK log");
+        return result;
+    }();
+    static size_t next = 0;
+    const uint64_t frame = inputFrame;
+    while (next < entries.size() && entries[next].frame <= frame) ++next;
+    if (next == entries.size()) {
+        static bool reported = false;
+        if (!reported) std::fprintf(stderr, "MH3 input playback: finished at frame %llu\n", (unsigned long long)frame);
+        reported = true;
+    }
+    if (next == 0) return ClassicControllerSample{true};
+    return entries[next - 1].sample;
+}
+#endif
 }
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample) { testSample = sample; }
+#ifdef MH3_DEVELOPMENT
+void SetInputFrame(uint64_t frame) { inputFrame = frame; }
 ClassicControllerSample ReadHostController() {
     if (testSample) return *testSample;
+    if (auto played = PlaybackInput()) return *played;
+    const ClassicControllerSample sample = ReadLiveController();
+    RecordInput(sample);
+    return sample;
+}
+#else
+void SetInputFrame(uint64_t) {}
+ClassicControllerSample ReadHostController() {
+    if (testSample) return *testSample;
+    return ReadLiveController();
+}
+#endif
+ClassicControllerSample ReadLiveController() {
     ClassicControllerSample sample;
+#ifdef MH3_DEVELOPMENT
     if (const char* path = std::getenv("MH3_INPUT_FILE")) {
         // Explicit diagnostic controller; the normal source is SDL. This lets
         // unattended runs exercise the same guest input path while macOS is locked.
@@ -27,6 +94,7 @@ ClassicControllerSample ReadHostController() {
         sample = {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)};
         return sample;
     }
+#endif
 #ifdef MH3_HAS_AURORA
     sample.connected = true; // Keyboard is a virtual Classic Controller on port 1.
     if (!SDL_WasInit(SDL_INIT_VIDEO)) return sample;
