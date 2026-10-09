@@ -145,13 +145,13 @@ public class ScalarPairedBoundaryCodeGenTests
             {
                 IrValue.Register("r3")
             }),
-            new IrSetCrField(0, IrValue.Register("f1"), IrValue.Register("f14"), false),
+            new IrSetCrField(2, IrValue.Register("f1"), IrValue.Register("f14"), false),
             new IrCall("f2", "PPC_PsNeg", new[] { IrValue.Register("f1") }));
         var call = code.IndexOf("InvokeIndirectCpu(ctr, ctx);", StringComparison.Ordinal);
 
         Assert.True(call >= 0, code);
         Assert.Contains(
-            "SetCRFloatResident(cr, 0, f1.d, f14.d);",
+            "SetCRFloatResident(cr, 2, f1.d, f14.d);",
             code[call..],
             StringComparison.Ordinal);
         Assert.Contains(
@@ -165,13 +165,13 @@ public class ScalarPairedBoundaryCodeGenTests
     {
         var code = Emit(
             new IrCall(string.Empty, "func_80002000", Array.Empty<IrValue>()),
-            new IrSetCrField(0, IrValue.Register("f1"), IrValue.Register("f14"), false),
+            new IrSetCrField(2, IrValue.Register("f1"), IrValue.Register("f14"), false),
             new IrCall("f2", "PPC_PsNeg", new[] { IrValue.Register("f1") }));
         var call = code.IndexOf("InvokeDirectCpu<0x80002000u>(ctx);", StringComparison.Ordinal);
 
         Assert.True(call >= 0, code);
         Assert.Contains(
-            "SetCRFloatResident(cr, 0, f1.d, f14.d);",
+            "SetCRFloatResident(cr, 2, f1.d, f14.d);",
             code[call..],
             StringComparison.Ordinal);
         Assert.Contains(

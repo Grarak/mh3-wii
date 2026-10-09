@@ -232,6 +232,11 @@ The model tests and the asset scripts (`vita-active-play.py`,
 
 - `MH3_NV_DEBUG=FUNCTION`: the translator prints which instruction rejects
   each register in its nonvolatile-GPR analysis of that function.
+- `MH3_CR_EXIT_AUDIT=1`: the translator lists every guest call after which
+  the caller reads a volatile flag (CR0, CR1, CR5-CR7, XER.CA) before writing
+  it, with the first reader (`[cr-exit-audit]` lines). The flag elision takes
+  the EABI's word that none does; so far the only hits are `mfcr` copies of
+  the whole CR.
 - `MH3_CATALOG_BENCH`: `tests/native/test_mh3_model_catalog.c` also times
   mesh preparation.
 - `MH3_FSQRT_TRACE`, `MH3_FSQRT_WARNINGS`, `MH3_FSQRT_END_FRAME`,

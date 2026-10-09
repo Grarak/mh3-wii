@@ -659,6 +659,12 @@ public static class GuestAbiContractAnalyzer
 
     private enum InlineThunkKind { SaveGpr, RestGpr, SaveFpr, RestFpr }
 
+    /// <summary>
+    /// Whether <paramref name="address"/> enters a compiler save/restore thunk, which touches only
+    /// its register window and not the EABI's volatile set.
+    /// </summary>
+    internal static bool IsSaveRestoreThunk(uint address) => TryGetInlineThunk(address, out _, out _);
+
     private static bool TryGetInlineThunk(uint address, out InlineThunkKind kind, out int startRegister)
     {
         var thunks = GuestSaveRestoreThunks.Current;

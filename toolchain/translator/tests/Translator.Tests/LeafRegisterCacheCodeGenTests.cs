@@ -37,8 +37,10 @@ public class LeafRegisterCacheCodeGenTests
             {
                 new IrBasicBlock("entry", new IrInstruction[]
                 {
-                    new IrSetCrField(0, IrValue.Register("r3"), IrValue.Register("r4"), false),
-                    new IrBranch("raw", "taken", "exit", "((true) && ((GetCRBit(ctx, 0, 0) == true)))")
+                    // CR2: published by the return, so the field stays live after
+                    // the branch and the compare is not fused into it.
+                    new IrSetCrField(2, IrValue.Register("r3"), IrValue.Register("r4"), false),
+                    new IrBranch("raw", "taken", "exit", "((true) && ((GetCRBit(ctx, 2, 0) == true)))")
                 }),
                 new IrBasicBlock("taken", new IrInstruction[]
                 {
@@ -57,8 +59,8 @@ public class LeafRegisterCacheCodeGenTests
         var code = Emit(function, types, 0x8000622Au);
 
         Assert.Contains("uint32_t cr = ctx->cr;", code, StringComparison.Ordinal);
-        Assert.Contains("SetCRResident(cr, xer, 0,", code, StringComparison.Ordinal);
-        Assert.Contains("GetCRBitResident(cr, 0, 0)", code, StringComparison.Ordinal);
+        Assert.Contains("SetCRResident(cr, xer, 2,", code, StringComparison.Ordinal);
+        Assert.Contains("GetCRBitResident(cr, 2, 0)", code, StringComparison.Ordinal);
         Assert.DoesNotContain("GetCRBit(ctx,", code, StringComparison.Ordinal);
         Assert.Contains("    ctx->cr = cr;", code, StringComparison.Ordinal);
     }

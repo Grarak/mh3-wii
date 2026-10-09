@@ -95,9 +95,141 @@ public sealed partial class CxxLinearCodeGenerator
     }
 
     /// <summary>
+    /// The flags a return hands its caller: CR2-CR4, the fields the PowerPC EABI keeps across a call.
+    /// CR0, CR1, CR5-CR7 and XER.CA are volatile, so no caller reads what a callee left in them, and a
+    /// compare whose field reaches a return unread is dead (most compares that branch to a return).
+    /// Calls are the same boundary from the caller's side (GuestFlagLivenessAnalyzer.CallClobbered).
+    /// MH3_CR_EXIT_AUDIT=1 lists any guest call site where a volatile flag is still read after the call.
+    /// </summary>
+    internal static readonly GuestFlagState ReturnLiveFlags = GuestFlagState.Cr(0x1C);
+
+    private static readonly bool AuditVolatileFlagsAfterCalls =
+        Environment.GetEnvironmentVariable("MH3_CR_EXIT_AUDIT") == "1";
+
+    /// <summary>
+    /// MH3_CR_EXIT_AUDIT: the guest call sites after which a volatile flag (CR0, CR1, CR5-CR7, XER.CA)
+    /// is read before it is rewritten by the function itself (a branch, mfcr, CR logic or carry use),
+    /// not as a later callee's conservative input, so only reads of what a callee left show.
+    /// </summary>
+    private static void AuditVolatileFlagReads(IrFunction function, IrCfg cfg, GuestFlagLivenessContext context)
+    {
+        // Calls, indirect jumps and undefined instructions read nothing here, so that only the
+        // function's own reads show.
+        GuestFlagState Reads(IrInstruction instruction) => instruction switch
+        {
+            IrCall or IrIndirectCall or IrIndirectJump or IrUndefined => GuestFlagState.None,
+            _ => GuestFlagLivenessAnalyzer.Reads(instruction, context)
+        };
+
+        GuestFlagState Transfer(IrInstruction instruction, GuestFlagState live) =>
+            live.Except(GuestFlagLivenessAnalyzer.Kills(instruction)).Union(Reads(instruction));
+
+        var blocks = function.Blocks.ToDictionary(block => block.Label, StringComparer.OrdinalIgnoreCase);
+
+        // The first instruction after the call that reads one of the flags, forward on any path.
+        string FirstReader(IrBasicBlock start, int from, GuestFlagState wanted)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var work = new Queue<(IrBasicBlock Block, int Index, GuestFlagState Wanted)>();
+            work.Enqueue((start, from, wanted));
+
+            while (work.Count > 0)
+            {
+                var (block, index, flags) = work.Dequeue();
+
+                for (; index < block.Instructions.Count && flags != GuestFlagState.None; ++index)
+                {
+                    var instruction = block.Instructions[index];
+                    var reads = Reads(instruction);
+
+                    if ((reads.CrFields & flags.CrFields) != 0 || (reads.Carry && flags.Carry))
+                    {
+                        var text = instruction.ToString();
+                        return $"{block.Label}:{index} {(text.Length > 200 ? text[..200] : text)}";
+                    }
+
+                    flags = flags.Except(GuestFlagLivenessAnalyzer.Kills(instruction));
+                }
+
+                if (flags == GuestFlagState.None)
+                    continue;
+
+                foreach (var successor in cfg.Successors(block.Label))
+                {
+                    if (seen.Add(successor) && blocks.TryGetValue(successor, out var next))
+                        work.Enqueue((next, 0, flags));
+                }
+            }
+
+            return "none found";
+        }
+
+        var liveIn = function.Blocks.ToDictionary(block => block.Label, _ => GuestFlagState.None, StringComparer.OrdinalIgnoreCase);
+
+        GuestFlagState LiveOutOf(string label)
+        {
+            var successors = cfg.Successors(label);
+
+            if (successors.Count == 0)
+                return ReturnLiveFlags;
+
+            var outgoing = GuestFlagState.None;
+
+            foreach (var successor in successors)
+                outgoing = outgoing.Union(liveIn.TryGetValue(successor, out var successorIn) ? successorIn : ReturnLiveFlags);
+
+            return outgoing;
+        }
+
+        bool changed;
+
+        do
+        {
+            changed = false;
+
+            for (var blockIndex = function.Blocks.Count - 1; blockIndex >= 0; --blockIndex)
+            {
+                var block = function.Blocks[blockIndex];
+                var live = LiveOutOf(block.Label);
+
+                for (var index = block.Instructions.Count - 1; index >= 0; --index)
+                    live = Transfer(block.Instructions[index], live);
+
+                if (live != liveIn[block.Label])
+                {
+                    liveIn[block.Label] = live;
+                    changed = true;
+                }
+            }
+        } while (changed);
+
+        foreach (var block in function.Blocks)
+        {
+            var live = LiveOutOf(block.Label);
+
+            for (var index = block.Instructions.Count - 1; index >= 0; --index)
+            {
+                var instruction = block.Instructions[index];
+                var clobbered = (byte)(live.CrFields & GuestFlagLivenessAnalyzer.CallClobbered.CrFields);
+
+                if (GuestFlagLivenessAnalyzer.IsGuestCall(instruction) && (clobbered != 0 || live.Carry))
+                {
+                    var target = instruction is IrCall direct ? direct.Target : "indirect";
+                    var reader = FirstReader(block, index + 1, new GuestFlagState(clobbered, live.Carry));
+                    Console.Error.WriteLine(
+                        $"[cr-exit-audit] {function.Name} {block.Label}:{index} call {target}: read after it: cr fields 0x{live.CrFields:X2} carry {live.Carry} by {reader}");
+                }
+
+                live = Transfer(instruction, live);
+            }
+        }
+    }
+
+    /// <summary>
     /// Condition-flag elision planner: one backward liveness pass drives compare+branch fusion, dead CR-field
-    /// writes, and dead XER.CA updates. Exit state is <see cref="GuestFlagState.All"/> since a return publishes
-    /// ctx-&gt;cr/ctx-&gt;xer with no caller info, so the last write on any path to a return is always kept.
+    /// writes, and dead XER.CA updates. Exit state is <see cref="ReturnLiveFlags"/>: a return publishes
+    /// ctx-&gt;cr/ctx-&gt;xer whole, but its caller only reads the nonvolatile fields. A guest call
+    /// likewise reads none of the volatile flags but CR1 and leaves none of them for after it.
     /// </summary>
     private static FlagElisionPlan PlanFlagElision(
         IrFunction function,
@@ -122,7 +254,10 @@ public sealed partial class CxxLinearCodeGenerator
 
         {
             var context = new GuestFlagLivenessContext(guestAbiContracts, modOverridableCallTargets);
-            var liveness = GuestFlagLivenessAnalyzer.Analyze(function, cfg, context, GuestFlagState.All);
+            var liveness = GuestFlagLivenessAnalyzer.Analyze(function, cfg, context, ReturnLiveFlags);
+
+            if (AuditVolatileFlagsAfterCalls)
+                AuditVolatileFlagReads(function, cfg, context);
             var fusedCompareSites = new HashSet<(string Block, int Index)>();
 
             {

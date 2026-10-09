@@ -72,7 +72,8 @@ public sealed class PairedFlowCodeGenTests
             {
                 new IrCall("f2", "PPC_PsMul", new[] { IrValue.Register("f3"), IrValue.Register("f4") }),
                 new IrCall("f5", "PPC_PsAdd", new[] { IrValue.Register("f6"), IrValue.Register("f7") }),
-                new IrSetCrField(0, IrValue.Register("f2"), IrValue.Register("f5"), false),
+                // CR2: a field the return publishes, so the compare stays.
+                new IrSetCrField(2, IrValue.Register("f2"), IrValue.Register("f5"), false),
                 new IrReturn(null)
             })
         });
@@ -84,7 +85,7 @@ public sealed class PairedFlowCodeGenTests
             0x80006004, new SsaTransformer().Convert(function), signature, types);
 
         Assert.Contains(
-            "SetCRFloatResident(cr, 0, PPC_PsToScalarInline(f2.d), PPC_PsToScalarInline(f5.d));",
+            "SetCRFloatResident(cr, 2, PPC_PsToScalarInline(f2.d), PPC_PsToScalarInline(f5.d));",
             code, StringComparison.Ordinal);
     }
 

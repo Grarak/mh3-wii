@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Translator.Core.Analysis;
 using Translator.Core.Analysis.Representation;
 using Translator.Core.Analysis.Ssa;
@@ -56,7 +57,7 @@ public class FlagElisionCodeGenTests
             DirectCallTargets: Array.Empty<uint>());
 
     /// <summary>A block that overwrites CR0 and returns, so reaching it on every outgoing edge
-    /// makes the CR0 producer dead (the function's return boundary always counts as a reader).</summary>
+    /// makes the CR0 producer dead (and its own CR0 write too: the return reads only CR2-CR4).</summary>
     private static IrBasicBlock Cr0KillingExit(string label, string register) =>
         new(label, new IrInstruction[]
         {
@@ -97,8 +98,9 @@ public class FlagElisionCodeGenTests
         var code = Emit(CompareThenBranch($"fuse_{condition}", condition, isUnsigned, IrValue.Imm(0)));
 
         Assert.Contains($"if ({expected})", code, StringComparison.Ordinal);
-        // The two exit blocks still write CR0, so exactly two compares survive.
-        Assert.Equal(2, CountOccurrences(code, "SetCRResident("));
+        // The exit blocks' own CR0 writes are dead too: a return publishes
+        // only CR2-CR4.
+        Assert.Equal(0, CountOccurrences(code, "SetCRResident("));
     }
 
     [Fact]
@@ -135,7 +137,7 @@ public class FlagElisionCodeGenTests
         Assert.Contains(
             "if ((static_cast<int32_t>(r3) == static_cast<int32_t>(7)))",
             code, StringComparison.Ordinal);
-        Assert.Equal(2, CountOccurrences(code, "SetCRResident("));
+        Assert.Equal(0, CountOccurrences(code, "SetCRResident("));
     }
 
     [Theory]
@@ -196,7 +198,8 @@ public class FlagElisionCodeGenTests
         var code = Emit(CompareThenBranch("so_consumer", "bso", isUnsigned: false, IrValue.Imm(0)));
 
         Assert.Contains("SetCRResident(cr, xer, 0, static_cast<int32_t>(r3)", code, StringComparison.Ordinal);
-        Assert.Equal(3, CountOccurrences(code, "SetCRResident("));
+        // The exits' CR0 writes are dead (a return publishes only CR2-CR4).
+        Assert.Equal(1, CountOccurrences(code, "SetCRResident("));
     }
 
     [Fact]
@@ -248,13 +251,14 @@ public class FlagElisionCodeGenTests
     [Fact]
     public void CompareIsNotFusedAcrossACall()
     {
+        // CR2 survives the call, but r3 may not.
         var function = new IrFunction("call_between", "entry", new[]
         {
             new IrBasicBlock("entry", new IrInstruction[]
             {
-                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrSetCrField(2, IrValue.Register("r3"), IrValue.Imm(0), false),
                 new IrCall(string.Empty, "0x80002000", Array.Empty<IrValue>()),
-                new IrBranch("beq", "taken", "fallthrough", "cr0")
+                new IrBranch("beq", "taken", "fallthrough", "cr2")
             }),
             Cr0KillingExit("taken", "r4"),
             Cr0KillingExit("fallthrough", "r5")
@@ -264,7 +268,7 @@ public class FlagElisionCodeGenTests
             function,
             guestAbiContracts: new Dictionary<uint, GuestAbiContract> { [0x80002000u] = Contract() });
 
-        Assert.Contains("SetCRResident(cr, xer, 0, static_cast<int32_t>(r3)", code, StringComparison.Ordinal);
+        Assert.Contains("SetCRResident(cr, xer, 2, static_cast<int32_t>(r3)", code, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -320,76 +324,128 @@ public class FlagElisionCodeGenTests
         Assert.Contains("ctx->lr = 2147487760;", code, StringComparison.Ordinal);
     }
 
+    private static IrFunction CallAfterBranch(int field) =>
+        new("call_after_branch", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrSetCrField(field, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrBranch("beq", "taken", "fallthrough", $"cr{field}")
+            }),
+            new IrBasicBlock("taken", new IrInstruction[]
+            {
+                new IrCall(string.Empty, "0x80002000", Array.Empty<IrValue>()),
+                new IrSetCrField(field, IrValue.Register("r4"), IrValue.Imm(0), false),
+                new IrReturn(null)
+            }),
+            new IrBasicBlock("fallthrough", new IrInstruction[]
+            {
+                new IrSetCrField(field, IrValue.Register("r5"), IrValue.Imm(0), false),
+                new IrReturn(null)
+            })
+        });
+
     [Fact]
     public void ACalleeThatDoesNotReadTheFieldDoesNotKeepItAlive()
     {
         // This is what makes the transform pay off in a real build: without an
         // ABI contract every call after the branch is a potential CR reader.
-        var function = new IrFunction("call_after_branch", "entry", new[]
-        {
-            new IrBasicBlock("entry", new IrInstruction[]
-            {
-                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
-                new IrBranch("beq", "taken", "fallthrough", "cr0")
-            }),
-            new IrBasicBlock("taken", new IrInstruction[]
-            {
-                new IrCall(string.Empty, "0x80002000", Array.Empty<IrValue>()),
-                new IrSetCrField(0, IrValue.Register("r4"), IrValue.Imm(0), false),
-                new IrReturn(null)
-            }),
-            Cr0KillingExit("fallthrough", "r5")
-        });
-
+        // CR2 is one a callee may read: it preserves it for the caller.
+        var function = CallAfterBranch(2);
         var contracts = new Dictionary<uint, GuestAbiContract> { [0x80002000u] = Contract() };
         Assert.Contains(
             "if ((static_cast<int32_t>(r3) == static_cast<int32_t>(0)))",
             Emit(function, guestAbiContracts: contracts), StringComparison.Ordinal);
 
-        // The same callee declared as a CR0 reader keeps the compare.
+        // The same callee declared as a CR2 reader keeps the compare.
+        var readerContracts = new Dictionary<uint, GuestAbiContract>
+        {
+            [0x80002000u] = Contract(crRead: 0x04)
+        };
+        Assert.Contains(
+            "SetCRResident(cr, xer, 2, static_cast<int32_t>(r3)",
+            Emit(function, guestAbiContracts: readerContracts), StringComparison.Ordinal);
+
+        // ...and so does an unknown callee.
+        Assert.Contains(
+            "SetCRResident(cr, xer, 2, static_cast<int32_t>(r3)",
+            Emit(function), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoCalleeReadsAVolatileField()
+    {
+        // CR0 is no call input under the EABI, whatever a contract claims, and
+        // an unknown callee follows the EABI too.
+        var function = CallAfterBranch(0);
         var readerContracts = new Dictionary<uint, GuestAbiContract>
         {
             [0x80002000u] = Contract(crRead: 0x01)
         };
         Assert.Contains(
-            "SetCRResident(cr, xer, 0, static_cast<int32_t>(r3)",
+            "if ((static_cast<int32_t>(r3) == static_cast<int32_t>(0)))",
             Emit(function, guestAbiContracts: readerContracts), StringComparison.Ordinal);
-
-        // ...and so does an unknown callee.
         Assert.Contains(
-            "SetCRResident(cr, xer, 0, static_cast<int32_t>(r3)",
+            "if ((static_cast<int32_t>(r3) == static_cast<int32_t>(0)))",
             Emit(function), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConditionHelpersReadOnlyTheirOwnFields()
+    {
+        // cror on CR0 bits and mtcrf's copy of the fields it keeps leave the
+        // CR6 compare unread; mcrf reads its source field only.
+        IrFunction Body(params IrInstruction[] between) =>
+            new("cr_helpers", "entry", new[]
+            {
+                new IrBasicBlock("entry", new IrInstruction[]
+                {
+                    new IrSetCrField(6, IrValue.Register("r3"), IrValue.Imm(0), false),
+                    new IrSetCrField(0, IrValue.Register("r4"), IrValue.Imm(0), false)
+                }.Concat(between).Append(new IrReturn(null)).ToArray())
+            });
+
+        var cror = new IrCall("cr", "PPC_CrLogical", new[]
+        {
+            IrValue.Imm(7), IrValue.Imm(2), IrValue.Imm(1), IrValue.Imm(2)
+        });
+        var keepCr0 = new IrBinary("r12_mtcrf_preserve", IrValue.Register("cr"), IrValue.Imm(unchecked((int)0xF0000000u)), "and");
+        var mcrfFromCr6 = new IrCall("cr", "PPC_Mcrf", new[] { IrValue.Imm(2), IrValue.Imm(6) });
+
+        Assert.Equal(0, CountOccurrences(Emit(Body(cror)), "static_cast<int32_t>(r3)"));
+        Assert.Equal(0, CountOccurrences(Emit(Body(keepCr0)), "static_cast<int32_t>(r3)"));
+        Assert.Equal(1, CountOccurrences(Emit(Body(mcrfFromCr6)), "SetCRResident(cr, xer, 6, static_cast<int32_t>(r3)"));
     }
 
     [Fact]
     public void RecordFormWriteOverwrittenBeforeAnyReadIsRemoved()
     {
-        // add. followed by cmpwi into the same field with no reader in between:
-        // only the compare can be observed.
+        // Two writes into the same field with no reader in between: only the
+        // second can be observed (CR2, which the return publishes).
         var function = new IrFunction("dead_record_form", "entry", new[]
         {
             new IrBasicBlock("entry", new IrInstruction[]
             {
                 new IrBinary("r3", IrValue.Register("r3"), IrValue.Register("r4"), "add"),
-                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrSetCrField(2, IrValue.Register("r3"), IrValue.Imm(0), false),
                 new IrBinary("r5", IrValue.Register("r5"), IrValue.Register("r6"), "add"),
-                new IrSetCrField(0, IrValue.Register("r5"), IrValue.Imm(0), false),
+                new IrSetCrField(2, IrValue.Register("r5"), IrValue.Imm(0), false),
                 new IrReturn(null)
             })
         });
 
         var code = Emit(function);
 
-        Assert.DoesNotContain("SetCRResident(cr, xer, 0, static_cast<int32_t>(r3)", code, StringComparison.Ordinal);
-        Assert.Contains("SetCRResident(cr, xer, 0, static_cast<int32_t>(r5)", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetCRResident(cr, xer, 2, static_cast<int32_t>(r3)", code, StringComparison.Ordinal);
+        Assert.Contains("SetCRResident(cr, xer, 2, static_cast<int32_t>(r5)", code, StringComparison.Ordinal);
         Assert.Equal(1, CountOccurrences(code, "SetCRResident("));
     }
 
     [Fact]
-    public void LastCrWriteBeforeReturnIsAlwaysKept()
+    public void LastNonvolatileCrWriteBeforeReturnIsKept()
     {
-        // The return boundary publishes ctx->cr and the emitter has no caller
-        // information there.
+        // CR2-CR4 survive a call (EABI), so the caller may read them after
+        // the return.
         var function = new IrFunction("cr_live_out", "entry", new[]
         {
             new IrBasicBlock("entry", new IrInstruction[]
@@ -404,6 +460,27 @@ public class FlagElisionCodeGenTests
         Assert.Contains("SetCRResident(cr, xer, 3,", code, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public void LastVolatileCrWriteBeforeReturnIsRemoved(int field)
+    {
+        // No caller reads a volatile field a callee left behind.
+        var function = new IrFunction("cr_dead_out", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrSetCrField(field, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrReturn(null)
+            })
+        });
+
+        Assert.Equal(0, CountOccurrences(Emit(function), "SetCRResident("));
+    }
+
     [Fact]
     public void RedundantCrWriteIsEliminated()
     {
@@ -411,8 +488,8 @@ public class FlagElisionCodeGenTests
         {
             new IrBasicBlock("entry", new IrInstruction[]
             {
-                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
-                new IrSetCrField(0, IrValue.Register("r5"), IrValue.Imm(0), false),
+                new IrSetCrField(2, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrSetCrField(2, IrValue.Register("r5"), IrValue.Imm(0), false),
                 new IrReturn(null)
             })
         });
@@ -427,7 +504,7 @@ public class FlagElisionCodeGenTests
         {
             new IrBasicBlock("entry", new IrInstruction[]
             {
-                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrSetCrField(2, IrValue.Register("r3"), IrValue.Imm(0), false),
                 new IrReturn(null)
             })
         });
@@ -435,7 +512,7 @@ public class FlagElisionCodeGenTests
         var code = Emit(function);
 
         Assert.Contains("uint32_t xer = ctx->xer;", code, StringComparison.Ordinal);
-        Assert.Contains("SetCRResident(cr, xer, 0,", code, StringComparison.Ordinal);
+        Assert.Contains("SetCRResident(cr, xer, 2,", code, StringComparison.Ordinal);
         Assert.DoesNotContain("SetCRResident(cr, ctx->xer", code, StringComparison.Ordinal);
     }
 
@@ -478,6 +555,7 @@ public class FlagElisionCodeGenTests
                 {
                     IrValue.Register("r5"), IrValue.Register("r6")
                 }),
+                new IrCall("r8", "PPC_GetCarry", Array.Empty<IrValue>()),
                 new IrReturn(null)
             })
         });
@@ -516,8 +594,9 @@ public class FlagElisionCodeGenTests
     }
 
     [Fact]
-    public void CarryUpdateIsKeptWhenTheOnlyReaderIsTheReturnBoundary()
+    public void CarryUpdateWhoseOnlyReaderIsTheReturnBoundaryIsRemoved()
     {
+        // XER is volatile across a call: no caller reads the carry a callee left.
         var function = new IrFunction("carry_live_out", "entry", new[]
         {
             new IrBasicBlock("entry", new IrInstruction[]
@@ -530,12 +609,14 @@ public class FlagElisionCodeGenTests
             })
         });
 
-        Assert.Equal(1, CountOccurrences(Emit(function), "const uint64_t ppcCarryWide"));
+        Assert.Equal(0, CountOccurrences(Emit(function), "const uint64_t ppcCarryWide"));
     }
 
     [Fact]
-    public void CarryUpdateIsKeptAcrossACalleeThatReadsXer()
+    public void CarryUpdateIsDeadAcrossACall()
     {
+        // XER.CA is volatile: no callee reads it, whatever its contract claims,
+        // and the update after the call reaches only the return.
         var function = new IrFunction("carry_across_call", "entry", new[]
         {
             new IrBasicBlock("entry", new IrInstruction[]
@@ -560,7 +641,31 @@ public class FlagElisionCodeGenTests
                 [0x80002000u] = Contract(readsXer: true)
             });
 
-        Assert.Equal(1, CountOccurrences(code, "const uint64_t ppcCarryWide"));
+        Assert.Equal(0, CountOccurrences(code, "const uint64_t ppcCarryWide"));
+    }
+
+    [Fact]
+    public void CallLeavesNoVolatileFieldForTheCaller()
+    {
+        // The branch after the call reads what the callee left in CR0, never
+        // the caller's compare before it.
+        var function = new IrFunction("call_between_cr0", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
+                new IrCall(string.Empty, "0x80002000", Array.Empty<IrValue>()),
+                new IrBranch("beq", "taken", "fallthrough", "cr0")
+            }),
+            Cr0KillingExit("taken", "r4"),
+            Cr0KillingExit("fallthrough", "r5")
+        });
+
+        var code = Emit(
+            function,
+            guestAbiContracts: new Dictionary<uint, GuestAbiContract> { [0x80002000u] = Contract() });
+
+        Assert.Equal(0, CountOccurrences(code, "SetCRResident("));
     }
 
     private static IrFunction CallWithLinkRegister(string name, uint target) =>

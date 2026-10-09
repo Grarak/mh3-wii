@@ -179,7 +179,8 @@ public class RegisterResidencyCodeGenTests
             new IrBasicBlock("entry", new IrInstruction[]
             {
                 new IrAssign("ctr", IrValue.Register("r3")),
-                new IrSetCrField(0, IrValue.Register("r3"), IrValue.Imm(0), false),
+                // CR2: a field the return publishes, so the compare stays.
+                new IrSetCrField(2, IrValue.Register("r3"), IrValue.Imm(0), false),
                 new IrBranch("bdnz", "entry", "exit", "ctr")
             }),
             new IrBasicBlock("exit", new IrInstruction[] { new IrReturn(null) })
@@ -190,7 +191,7 @@ public class RegisterResidencyCodeGenTests
         Assert.Contains("uint32_t cr = ctx->cr;", code, StringComparison.Ordinal);
         Assert.Contains("uint32_t ctr = ctx->ctr;", code, StringComparison.Ordinal);
         Assert.Contains("uint32_t xer = ctx->xer;", code, StringComparison.Ordinal);
-        Assert.Contains("SetCRResident(cr, xer, 0,", code, StringComparison.Ordinal);
+        Assert.Contains("SetCRResident(cr, xer, 2,", code, StringComparison.Ordinal);
         Assert.Contains("if ((ctr != 0))", code, StringComparison.Ordinal);
         Assert.Contains("    ctx->cr = cr;", code, StringComparison.Ordinal);
         Assert.Contains("    ctx->ctr = ctr;", code, StringComparison.Ordinal);

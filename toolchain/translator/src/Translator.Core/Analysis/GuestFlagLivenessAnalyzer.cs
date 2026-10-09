@@ -54,10 +54,23 @@ public sealed record GuestFlagLivenessResult(
 /// <summary>
 /// Backward per-CR-field and XER.CA liveness over the emitted IR. Reads are collected aggressively
 /// while kills are limited to provably total writes (<see cref="IrSetCrField"/>, a full <c>xer</c>
-/// def), so a call never kills and a callee that may rewrite a flag can't erase a caller-side update.
+/// def) and to the PowerPC EABI call boundary: a guest callee may clobber the volatile flags, so
+/// the caller never reads its own across a call.
 /// </summary>
 public static class GuestFlagLivenessAnalyzer
 {
+    /// <summary>
+    /// What a guest call clobbers under the EABI (see GuestAbiContractAnalyzer.IndirectCallContract):
+    /// CR0, CR1, CR5-CR7 and XER.CA. It preserves CR2-CR4.
+    /// </summary>
+    public static GuestFlagState CallClobbered => new(0xE3, true);
+
+    /// <summary>
+    /// The caller's flags a guest callee may read: CR1, whose bit 6 tells a varargs function
+    /// whether f1-f8 hold arguments, and CR2-CR4, which it preserves. Never XER.CA.
+    /// </summary>
+    private const byte CallReadableCrFields = 0x1E;
+
     /// <summary>
     /// Helpers whose only carry effect is overwriting XER.CA; the surrounding-bit read to
     /// preserve them doesn't count as a carry read.
@@ -139,6 +152,16 @@ public static class GuestFlagLivenessAnalyzer
             return GuestFlagState.CrField(setCr.FieldIndex & 7);
         }
 
+        if (instruction is IrCall helper && TryConditionHelperFlags(helper, out _, out var helperKills))
+        {
+            return helperKills;
+        }
+
+        if (IsGuestCall(instruction))
+        {
+            return CallClobbered;
+        }
+
         // A definition of the whole XER register replaces the carry bit. That
         // covers mtxer/mtspr as well as the carry read/modify/write helpers,
         // whose IR destination is xer.
@@ -165,13 +188,29 @@ public static class GuestFlagLivenessAnalyzer
             case IrBranch branch:
                 return GuestFlagState.Cr(BranchCrFields(branch));
 
+            case IrPhi:
+                // A phi only renames: the fields read after it are the ones its
+                // sources must carry, and liveness here is per field, not per
+                // SSA version, so it passes through unchanged.
+                return GuestFlagState.None;
+
             case IrIndirectCall:
+                // A call into unknown guest code, which still follows the EABI.
+                return GuestFlagState.Cr(CallReadableCrFields);
+
             case IrIndirectJump:
+                // A tail call, or a jump table the lifter couldn't resolve, into
+                // code of this function that may read anything.
             case IrUndefined:
                 return GuestFlagState.All;
 
             case IrCall call:
                 return CallReads(call, context);
+
+            case IrBinary { Op: "and", Left: { Kind: "register" } left, Right.Constant: long mask }
+                when RegisterFlags(left.RegisterName).CrFields == byte.MaxValue:
+                // mtcrf's copy of the fields it keeps: the others are masked off.
+                return GuestFlagState.Cr(FieldsOfMask(unchecked((uint)mask)));
 
             default:
                 {
@@ -189,15 +228,27 @@ public static class GuestFlagLivenessAnalyzer
     {
         if (GuestTargetParser.TryParseAddress(call.Target, out var target))
         {
+            if (GuestAbiContractAnalyzer.IsSaveRestoreThunk(target))
+            {
+                return GuestFlagState.None;
+            }
+
+            // A target without a usable contract (unknown, or one a mod may replace)
+            // still follows the EABI.
             if (context.OpaqueCallTargets.Contains(target) ||
                 !context.CalleeContracts.TryGetValue(target, out var contract))
             {
-                return GuestFlagState.All;
+                return GuestFlagState.Cr(CallReadableCrFields);
             }
 
             return contract.HasFullSynchronizationFence
                 ? GuestFlagState.All
-                : new GuestFlagState(contract.CrReadBeforeWriteMask, contract.ReadsXerBeforeWrite);
+                : GuestFlagState.Cr((byte)(contract.CrReadBeforeWriteMask & CallReadableCrFields));
+        }
+
+        if (TryConditionHelperFlags(call, out var helperReads, out _))
+        {
+            return helperReads;
         }
 
         // Non-address targets are either runtime helpers with a cataloged
@@ -216,6 +267,87 @@ public static class GuestFlagLivenessAnalyzer
 
         return result;
     }
+
+    /// <summary>
+    /// The flags a CR helper reads and the fields it overwrites whole. The catalog has them read
+    /// all eight, since each rewrites the packed CR and the register cache needs it complete; but
+    /// the others pass through unchanged, which is no read. False for anything else, or a field
+    /// that isn't a constant.
+    /// </summary>
+    private static bool TryConditionHelperFlags(IrCall call, out GuestFlagState reads, out GuestFlagState kills)
+    {
+        reads = GuestFlagState.None;
+        kills = GuestFlagState.None;
+
+        int Field(int argument) =>
+            call.Arguments.Count > argument && call.Arguments[argument].Constant is long value ? (int)(value & 31) : -1;
+
+        switch (call.Target)
+        {
+            case "PPC_Fcmp":
+            case "PPC_PsCmpo0":
+            case "PPC_PsCmpo1":
+            case "PPC_PsCmpu0":
+            case "PPC_PsCmpu1":
+            case "PPC_Mcrfs":
+                if (Field(0) < 0) return false;
+                kills = GuestFlagState.CrField(Field(0) & 7);
+                return true;
+
+            case "PPC_Mcrxr":
+                // Copies SO, OV and CA into the field and clears them.
+                if (Field(0) < 0) return false;
+                reads = GuestFlagState.CarryOnly;
+                kills = GuestFlagState.CrField(Field(0) & 7);
+                return true;
+
+            case "PPC_Mcrf":
+                if (Field(0) < 0 || Field(1) < 0) return false;
+                reads = GuestFlagState.CrField(Field(1) & 7);
+                kills = GuestFlagState.CrField(Field(0) & 7);
+                return true;
+
+            case "PPC_CrSetBit":
+                // One bit: the rest of its field is kept.
+                if (Field(0) < 0) return false;
+                reads = GuestFlagState.CrField(Field(0) / 4);
+                return true;
+
+            case "PPC_CrLogical":
+                // Target, left and right bits; the target's field keeps its other bits.
+                if (Field(1) < 0 || Field(2) < 0 || Field(3) < 0) return false;
+                reads = GuestFlagState.CrField(Field(1) / 4)
+                    .Union(GuestFlagState.CrField(Field(2) / 4))
+                    .Union(GuestFlagState.CrField(Field(3) / 4));
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>The CR fields with any bit set in a packed-CR mask (CR0 is the top nibble).</summary>
+    private static byte FieldsOfMask(uint mask)
+    {
+        byte fields = 0;
+
+        for (var field = 0; field < 8; ++field)
+        {
+            if (((mask >> (28 - 4 * field)) & 0xFu) != 0)
+                fields |= (byte)(1 << field);
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// A call into guest code: a direct call to a guest address other than a save/restore thunk,
+    /// or an indirect one.
+    /// </summary>
+    public static bool IsGuestCall(IrInstruction instruction) =>
+        instruction is IrIndirectCall ||
+        (instruction is IrCall call && GuestTargetParser.TryParseAddress(call.Target, out var target) &&
+         !GuestAbiContractAnalyzer.IsSaveRestoreThunk(target));
 
     /// <summary>
     /// CR fields a branch condition observes. The lifter emits general <c>bc</c>/<c>bcctr</c> forms
