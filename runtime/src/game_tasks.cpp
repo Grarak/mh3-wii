@@ -24,7 +24,11 @@ enum : uint32_t {
 constexpr uint32_t kTaskSlots = 0x8065B5D0, kTaskSize = 32;
 constexpr uint16_t kTaskNew = 8;
 enum : uint32_t { kSceneSlot = 4 };
+enum : uint32_t { kTaskFunction = 4, kBootPhase = 8, kBootTimer = 12 };
+enum : uint8_t { kBootStrapFadeIn = 2, kBootStrapFadeOut = 4 };
+constexpr int16_t kBootStrapFadeOutEnd = 20;
 enum : uint32_t {
+    BootTask = 0x80059648,
     FieldTask = 0x8028BF80,
     VillageTask = 0x8021F40C,
     VillageVariantTask = 0x803A1418,
@@ -77,3 +81,14 @@ static void RunExitHookPort(CpuContext* ctx) {
 
 extern "C" void MH3_RunExitHook(CpuContext* ctx) { PortCheck::Call(ctx, "RunExitHook", func_800408B8, RunExitHookPort); }
 REGISTER_NATIVE_FUNCTION_AS(0x800408B8, MH3_RunExitHook, "RunExitHook");
+
+// The boot task (0x80059648, slot 0) shows the Wii strap screen: phase 2
+// fades it in, 3 holds it until a button (after 30 steps) or for 600 steps, 4
+// fades it out over 20 steps and then (0x80059978) goes on with the boot. The
+// fade-in goes straight to the fade-out's last step.
+void GameTasks::SkipStrapScreen() {
+    if (Memory::Read32(kTaskSlots + kTaskFunction) != BootTask || Memory::Read8(kTaskSlots + kBootPhase) != kBootStrapFadeIn)
+        return;
+    Memory::Write8(kTaskSlots + kBootPhase, kBootStrapFadeOut);
+    Memory::Write16(kTaskSlots + kBootTimer, uint16_t(kBootStrapFadeOutEnd - 1));
+}

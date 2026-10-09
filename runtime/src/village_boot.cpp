@@ -11,8 +11,7 @@
 // Village (0x80982E40) sets game mode 2 and play mode 5 and starts the village
 // task in the title's slot (StartGameModeTask, 0x800419DC).
 //
-// The boot passes the Wii strap screen (the boot task's phase 3) as a button
-// would, waits for the title's intro (state 1), reads File 1 into the save
+// The boot waits for the title's intro (state 1), reads File 1 into the save
 // manager's buffer from the host (after the game's read request), loads its
 // first character and chooses Village as the mode menu does.
 #include "village_boot.h"
@@ -48,10 +47,6 @@ enum : uint32_t {
     kSystemSaveBuffer = 0x950,  // u32: the save manager's buffer
 };
 enum : uint8_t { kGameModeVillage = 2, kPlayModeVillage = 5 };
-constexpr uint32_t kTaskSlots = 0x8065B5D0; // slot 0: the boot task
-enum : uint32_t { kTaskFunction = 4, kBootPhase = 8, kBootTimer = 12 };
-constexpr uint32_t BootTask = 0x80059648;
-constexpr uint8_t kBootStrapScreen = 3;
 constexpr uint32_t kTitleWork = 0x809D3568; // u32: the title's work, while demo_data.rso is loaded
 constexpr uint8_t kTitleIntro = 1;          // its state (+0) while the intro plays
 enum : uint32_t {
@@ -101,13 +96,6 @@ void StartVillageBoot() {
 
 void StepVillageBoot(CpuContext* ctx) {
     if (state != State::Waiting || Memory::Read8(kSystem + kGameMode) != 0) return;
-    // The strap screen: the boot task's phase 3 until a button (after 30
-    // steps) or 600 steps. On to phase 4 as a button would.
-    if (Memory::Read32(kTaskSlots + kTaskFunction) == BootTask && Memory::Read8(kTaskSlots + kBootPhase) == kBootStrapScreen) {
-        Memory::Write8(kTaskSlots + kBootPhase, kBootStrapScreen + 1);
-        Memory::Write16(kTaskSlots + kBootTimer, 0);
-        std::cerr << "MH3 village boot: past the strap screen\n";
-    }
     const uint32_t title = Memory::Read32(kTitleWork);
     if (!InMainMemory(title) || Memory::Read8(title) != kTitleIntro) return;
     const uint32_t buffer = Memory::Read32(kSystem + kSystemSaveBuffer);

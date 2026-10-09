@@ -14,6 +14,7 @@
 #include "abi_bridge.h"
 #include "audio/ax_dsp.h"
 #include "game_step.h"
+#include "game_tasks.h"
 #include "memory.h"
 #include "village_boot.h"
 #include <initializer_list>
@@ -177,6 +178,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         if (tickDue) ++nextTickProbe;
         if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] { call(RunTasks); });
 #endif
+        GameTasks::SkipStrapScreen();
         StepVillageBoot(ctx);
         call(RunTasks);
         call(GrabScreen);
