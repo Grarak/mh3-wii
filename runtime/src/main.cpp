@@ -77,35 +77,39 @@ constexpr const char* kUsage =
 #ifdef MH3_DEVELOPMENT
     "  --list quests|online-quests|arena-quests\n"
     "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-    "  --quest <id>|free [--arena] [--area <n>]\n"
-    "                                 start a village quest (or an arena quest, or the\n"
-    "                                 Moga Woods free roam) from the village\n"
-    "  --online-quest <id> [--area <n>]\n"
-    "                                 start an online (Port Tanzia) quest from the village\n"
+    "  --quest <id>|free [--area <n>]\n"
+    "                                 start a quest (village, arena or online) or the\n"
+    "                                 Moga Woods free roam from the village\n"
 #endif
     ;
 
 #ifdef MH3_DEVELOPMENT
-// --quest <id>|free [--arena] [--area <n>] / --online-quest <id> [--area <n>]
+// --quest <id>|free [--area <n>]. The quest sets' ids don't overlap (village
+// 1000.., arena 9000.., online 10000..): the id picks the set.
 void StartQuestBoot(int argc, char** argv) {
     using QuestCatalog::Set;
-    Set set = std::string_view(argv[1]) == "--online-quest" ? Set::Online : Set::Village;
     const std::string_view id = argv[2];
     int area = -1;
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
-        if (option == "--arena" && set == Set::Village) set = Set::Arena;
-        else if (option == "--area" && i + 1 < argc) area = std::stoi(argv[++i]);
+        if (option == "--area" && i + 1 < argc) area = std::stoi(argv[++i]);
         else throw std::runtime_error(kUsage);
     }
+    Set set = Set::Village;
     uint32_t quest = 0;
-    if (id != "free" || set != Set::Village) {
+    if (id != "free") {
         quest = uint32_t(std::stoul(std::string(id)));
-        const auto quests = QuestCatalog::Load(set);
-        const auto it = std::find_if(quests.begin(), quests.end(), [&](const auto& q) { return q.id == quest; });
-        if (it == quests.end())
-            throw std::runtime_error("No quest " + std::string(id) + " in that set; see --list");
-        std::cerr << "MH3 quest: " << it->id << " " << it->name << " (" << QuestCatalog::MapName(it->map) << ")\n";
+        bool found = false;
+        for (const Set candidate : {Set::Village, Set::Arena, Set::Online}) {
+            const auto quests = QuestCatalog::Load(candidate);
+            const auto it = std::find_if(quests.begin(), quests.end(), [&](const auto& q) { return q.id == quest; });
+            if (it == quests.end()) continue;
+            set = candidate;
+            found = true;
+            std::cerr << "MH3 quest: " << it->id << " " << it->name << " (" << QuestCatalog::MapName(it->map) << ")\n";
+            break;
+        }
+        if (!found) throw std::runtime_error("No quest " + std::string(id) + "; see --list");
     }
     RequestQuestJump(quest, set, area);
     StartVillageBoot();
@@ -189,7 +193,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
 #ifdef MH3_DEVELOPMENT
-        else if (argc >= 3 && (std::string_view(argv[1]) == "--quest" || std::string_view(argv[1]) == "--online-quest"))
+        else if (argc >= 3 && std::string_view(argv[1]) == "--quest")
             StartQuestBoot(argc, argv);
 #endif
         else if (argc != 1) throw std::runtime_error(kUsage);
