@@ -71,6 +71,24 @@ uint32_t Canonical(uint32_t address) {
     return address ? (address & 0x3fffffffu) | 0x80000000u : 0;
 }
 
+// An owner's allocations: its scene, its MDL0 header and its view arrays (each
+// over all views).
+struct Allocation {
+    uint32_t start, bytes;
+};
+
+unsigned Allocations(const mh3_model_pose_owner& owner, Allocation (&out)[5]) {
+    unsigned n = 0;
+    out[n++] = {owner.scene_address, 0x104};
+    out[n++] = {owner.model_address, 0x70};
+
+    for (unsigned i = 0; i < 3; i++)
+        if (owner.base[i] && owner.views * owner.slice_bytes[i])
+            out[n++] = {owner.base[i], owner.views * owner.slice_bytes[i]};
+
+    return n;
+}
+
 void Reindex(const FastMap<uint32_t, mh3_model_pose_owner>& next) {
     std::map<uint32_t, Region> ranges;
     FastMap<uint32_t, std::vector<uint32_t>> arrays;
@@ -93,12 +111,11 @@ void Reindex(const FastMap<uint32_t, mh3_model_pose_owner>& next) {
 
     for (const auto& entry : next) {
         const auto& owner = entry.second;
-        add(owner.scene_address, 0x104, entry.first);
-        add(owner.model_address, 0x70, entry.first);
+        Allocation allocations[5];
 
-        for (unsigned i = 0; i < 3; i++)
-            if (owner.base[i])
-                add(owner.base[i], owner.views * owner.slice_bytes[i], entry.first);
+        for (unsigned k = 0, n = Allocations(owner, allocations); k < n; k++)
+            add(allocations[k].start, allocations[k].bytes, entry.first);
+
         for (unsigned v = 0; v < owner.views; v++)
             if (owner.base[0] && owner.count)
                 arrays[owner.base[0] + v * owner.slice_bytes[0]].push_back(entry.first);
@@ -108,23 +125,94 @@ void Reindex(const FastMap<uint32_t, mh3_model_pose_owner>& next) {
     positions = std::move(arrays);
 }
 
+// A new owner into the index: all of its allocations are checked against the
+// others (as Reindex checks the whole set) before anything changes.
+void Index(uint32_t scene, const mh3_model_pose_owner& owner) {
+    Allocation allocations[5];
+    const unsigned n = Allocations(owner, allocations);
+
+    for (unsigned k = 0; k < n; k++) {
+        const auto [start, bytes] = allocations[k];
+        const uint64_t end = uint64_t(start) + bytes;
+        const auto found = regions.lower_bound(start);
+        const bool exact = found != regions.end() && found->first == start && found->second.bytes == bytes;
+        bool overlaps = !exact && ((found != regions.end() && end > found->first) || (found != regions.begin() && uint64_t(std::prev(found)->first) + std::prev(found)->second.bytes > start));
+
+        for (unsigned j = 0; j < k && !overlaps; j++) {
+            const Allocation& other = allocations[j];
+            overlaps = !(other.start == start && other.bytes == bytes) && uint64_t(other.start) + other.bytes > start && end > other.start;
+        }
+
+        if (overlaps)
+            MH3_THROW(std::runtime_error("Native pose allocation has overlapping or inconsistent owners"));
+    }
+
+    for (unsigned k = 0; k < n; k++) {
+        const auto found = regions.find(allocations[k].start);
+
+        if (found != regions.end())
+            found->second.scenes.push_back(scene);
+        else
+            regions.emplace(allocations[k].start, Region{allocations[k].bytes, {scene}});
+    }
+
+    if (owner.base[0] && owner.count)
+        for (unsigned v = 0; v < owner.views; v++)
+            positions[owner.base[0] + v * owner.slice_bytes[0]].push_back(scene);
+}
+
+// An erased owner out of the index (its fields from before the retirement).
+void Unindex(uint32_t scene, const mh3_model_pose_owner& owner) {
+    const auto drop = [scene](std::vector<uint32_t>& scenes) {
+        if (const auto it = std::find(scenes.begin(), scenes.end(), scene); it != scenes.end())
+            scenes.erase(it);
+
+        return scenes.empty();
+    };
+
+    Allocation allocations[5];
+
+    for (unsigned k = 0, n = Allocations(owner, allocations); k < n; k++) {
+        const auto found = regions.find(allocations[k].start);
+
+        if (found != regions.end() && found->second.bytes == allocations[k].bytes && drop(found->second.scenes))
+            regions.erase(found);
+    }
+
+    if (owner.base[0] && owner.count)
+        for (unsigned v = 0; v < owner.views; v++) {
+            const auto found = positions.find(owner.base[0] + v * owner.slice_bytes[0]);
+
+            if (found != positions.end() && drop(found->second))
+                positions.erase(found);
+        }
+}
+
 mh3_model_pose_owner& Declare(uint32_t scene) {
-    mh3_model_pose_owner next{};
-    Checked(mh3_model_pose_owner_read(&MH3NativeResourceMemory(), scene, &next));
-    const auto found = owners.find(next.scene_address);
+    // Steady state (about 400 declarations a frame in Deserted Island area
+    // 10): the scene still names the admitted owner's model, view arrays and
+    // counts, which the full read checked then; only the current view moves.
+    if (const auto found = owners.find(Canonical(scene)); found != owners.end()) {
+        auto& known = found->second;
+        const uint32_t views = MemoryInline::FlatRead8(scene + 0x100), current = MemoryInline::FlatRead8(scene + 0x101);
 
-    if (found != owners.end()) {
-        const auto& before = found->second;
-
-        if (before.model_address == next.model_address && before.count == next.count && before.views == next.views &&
-            std::equal(std::begin(before.base), std::end(before.base), std::begin(next.base))) {
-            found->second.current_view = next.current_view;
-            return found->second;
+        if (views == known.views && current < views && MemoryInline::FlatRead16(scene + 0x102) == known.count &&
+            Canonical(MemoryInline::FlatRead32(scene + 0xe8)) == known.model_address && Canonical(MemoryInline::FlatRead32(scene + 0xf4)) == known.base[0] &&
+            Canonical(MemoryInline::FlatRead32(scene + 0xf8)) == known.base[1] && Canonical(MemoryInline::FlatRead32(scene + 0xfc)) == known.base[2]) {
+            known.current_view = uint8_t(current);
+            return known;
         }
     }
 
-    // Admission/owner replacement pays index construction once. Steady state
-    // getters, producer completion and draws do not scan every scene.
+    mh3_model_pose_owner next{};
+    Checked(mh3_model_pose_owner_read(&MH3NativeResourceMemory(), scene, &next));
+
+    if (!owners.contains(next.scene_address)) {
+        Index(next.scene_address, next);
+        return owners.insert_or_assign(next.scene_address, next).first->second;
+    }
+
+    // A replaced owner (rare) rebuilds the index.
     auto prospective = owners;
     prospective.insert_or_assign(next.scene_address, next);
     Reindex(prospective);
@@ -197,11 +285,11 @@ void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
     if (it != regions.begin())
         --it;
 
-    bool erased = false;
+    std::vector<std::pair<uint32_t, mh3_model_pose_owner>> erased;
 
     // Straight over the regions, without collecting their scenes first (the
     // view pass retires every model's output each frame): retiring changes
-    // only the owners, and the regions are rebuilt from them afterwards.
+    // only the owners, and the erased ones leave the index afterwards.
     for (; it != regions.end() && it->first < end; ++it) {
         if (uint64_t(it->first) + it->second.bytes <= address)
             continue;
@@ -212,17 +300,18 @@ void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
             if (found == owners.end())
                 continue;
 
+            const mh3_model_pose_owner before = found->second;
             mh3_model_pose_retire(&found->second, address, bytes);
 
             if (!found->second.scene_address) {
+                erased.emplace_back(scene, before);
                 owners.erase(found);
-                erased = true;
             }
         }
     }
 
-    if (erased)
-        Reindex(owners);
+    for (const auto& [scene, owner] : erased)
+        Unindex(scene, owner);
 }
 
 void ClearNativeModelPose() {
@@ -718,8 +807,8 @@ mh3_model_palette& EditNativeModelPalette(NativeOwner owner) {
     return p.palette;
 }
 
-uint32_t NativeModelViewArray(uint32_t scene, unsigned kind) {
-    const auto& owner = Declare(scene);
+namespace {
+uint32_t ViewArray(const mh3_model_pose_owner& owner, uint32_t scene, unsigned kind) {
     uint32_t result = 0;
     Checked(mh3_model_pose_array(&owner, kind, &result));
 
@@ -731,6 +820,18 @@ uint32_t NativeModelViewArray(uint32_t scene, unsigned kind) {
         result = base + (result - owner.base[kind]);
 
     return result;
+}
+} // namespace
+
+uint32_t NativeModelViewArray(uint32_t scene, unsigned kind) {
+    return ViewArray(Declare(scene), scene, kind);
+}
+
+void NativeModelViewArrays(uint32_t scene, uint32_t arrays[3]) {
+    const auto& owner = Declare(scene);
+
+    for (unsigned kind = 0; kind < 3; kind++)
+        arrays[kind] = ViewArray(owner, scene, kind);
 }
 
 extern "C" void MH3_ModelViewPosition(CpuContext* cpu) {

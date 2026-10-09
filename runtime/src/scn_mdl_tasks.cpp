@@ -476,14 +476,13 @@ void SimpleCalcView(CpuContext* ctx) {
     G3dNative::MtxConcat(options, mdl + 0x3C, mdl + 0x6C);
     SceneCallback<0x14, 4>(game, mdl, 2, arg, options);
 
-    // The arrays through the model pose's getters (0x80080C68, 0x80080C0C,
-    // 0x80080BC0), which also declare the scene to the native pose.
-    const uint32_t environment = NativeModelViewArray(mdl, 2);
+    // The arrays the model pose's getters (0x80080BC0, 0x80080C0C, 0x80080C68)
+    // give, declaring the scene to the native pose once.
+    uint32_t arrays[3];
+    NativeModelViewArrays(mdl, arrays);
     const uint32_t matrices = MemoryInline::FlatRead16(mdl + 0x102);
-    const uint32_t normals = NativeModelViewArray(mdl, 1);
-    const uint32_t positions = NativeModelViewArray(mdl, 0);
     Write32(frame[8], Read32(mdl + kResMdl));
-    game.Call<0x80070884>({positions, normals, Read32(mdl + 0xEC), Read32(mdl + 0xF0), matrices, options, frame[8], environment});
+    game.Call<0x80070884>({arrays[0], arrays[1], Read32(mdl + 0xEC), Read32(mdl + 0xF0), matrices, options, frame[8], arrays[2]});
     SceneCallback<0x14, 4>(game, mdl, 4, arg, options);
 }
 

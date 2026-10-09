@@ -73,6 +73,8 @@ NativePoseStatistics TakeNativePoseStatistics();
 /* 80080BC0/80080C0C/80080C68: the scene's current view array (0 position,
  * 1 normal, 2 environment), declaring its allocation owner. */
 uint32_t NativeModelViewArray(uint32_t scene, unsigned kind);
+/* All three at one declaration. */
+void NativeModelViewArrays(uint32_t scene, uint32_t arrays[3]);
 void PublishNativeModelDualTexture(bool enabled);
 /* Reapply independent live selector state after an immutable material overlay.
  * Unknown remains unknown; this is never an identity/dual fallback. */
