@@ -125,6 +125,20 @@ mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex
     return ReadNativeVertexResourceData(Memory::Read32(reference), kind);
 }
 
+namespace {
+// Takes the producer generation of the source's payload (at canonical address
+// `payload`), if it has one.
+void StampGeneration(mh3_native_vertex_source& source, uint32_t payload) {
+    auto& generations = Generations();
+    const auto generation = generations.find(payload);
+
+    if (generation != generations.end()) {
+        source.source_generation = generation->second.value;
+        generation->second.bytes = source.payload_bytes;
+    }
+}
+} // namespace
+
 mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind) {
     Observe();
     const uint32_t size = Memory::Read32(resource);
@@ -133,15 +147,31 @@ mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_ver
     if (mh3_vertex_source_read({GuestRange(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native vertex array resource");
 
-    auto& generations = Generations();
-    const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));
-
-    if (generation != generations.end()) {
-        source.source_generation = generation->second.value;
-        generation->second.bytes = source.payload_bytes;
-    }
-
+    StampGeneration(source, Canonical(source.payload_address, source.payload_bytes));
     return source;
+}
+
+Status TryReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind, mh3_native_vertex_source& result) {
+    Observe();
+    uint32_t size = 0;
+    const uint8_t* bytes = Memory::TryRead32(resource, size) ? GuestFlat::HostPointer(resource, size) : nullptr;
+
+    if (!bytes)
+        return Status::Error(Memory::UnmappedMessage(resource));
+
+    mh3_native_vertex_source source{};
+
+    if (mh3_vertex_source_read({bytes, size}, resource, kind, &source) != MH3_RES_OK)
+        return Status::Error("Invalid native vertex array resource");
+
+    uint32_t payload = 0;
+
+    if (mh3_source_canonical_address(source.payload_address, source.payload_bytes, &payload) != MH3_RES_OK)
+        return Status::Error("Invalid native vertex source range");
+
+    StampGeneration(source, payload);
+    result = source;
+    return {};
 }
 
 namespace {

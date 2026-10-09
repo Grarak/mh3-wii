@@ -104,11 +104,8 @@ void Build(Record& r, uint32_t model, std::shared_ptr<NativeModelDrawTable> tabl
         const uint32_t shape = view.guest_base + uint32_t(entry.offset);
         const mh3_prepared_mesh* prepared = nullptr;
 
-        try {
-            prepared = &ReadNativePreparedMesh(r.owner, shape);
-        } catch (const std::exception&) {
+        if (!ReadNativePreparedMesh(r.owner, shape, prepared).ok())
             return; // an unconverted shape
-        }
 
         const int32_t matrix_id = int32_t(Memory::Read32(shape + 8));
         const bool selectors = (prepared->immutable.layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) & 1;
@@ -216,10 +213,8 @@ bool CheckCulled(const Record& r, uint32_t object, uint32_t model, const mh3_cul
     const uint32_t addresses[3] = {NativeModelViewArray(object, 0), NativeModelViewArray(object, 1), NativeModelViewArray(object, 2)};
     mh3_matrix_sources sources{};
 
-    try {
-        sources = ReadNativeModelPose(addresses, model);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "MH3 scene cull check: model %08x pose: %s\n", model, e.what());
+    if (const Status pose = TryReadNativeModelPose(addresses, model, sources); !pose.ok()) {
+        std::fprintf(stderr, "MH3 scene cull check: model %08x pose: %s\n", model, pose.message().c_str());
         return false;
     }
 

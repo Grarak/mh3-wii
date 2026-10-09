@@ -219,38 +219,62 @@ void ClearNativeModelPose() {
     ++selectorRevision;
 }
 
-mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
+namespace {
+// The pose's failure, or null; `status` is set for a failed source read.
+const char* PoseSources(const uint32_t addresses[3], uint32_t model, mh3_matrix_sources& result, mh3_res_status& status) {
     if (!addresses)
-        throw std::runtime_error("Native model pose requires explicit source addresses");
+        return "Native model pose requires explicit source addresses";
 
-    mh3_matrix_sources result{};
     bool found = false;
     const auto matching = positions.find(Canonical(addresses[0]));
 
     if (matching == positions.end())
-        throw std::runtime_error("Native model matrices have no allocation owner");
+        return "Native model matrices have no allocation owner";
 
     for (const uint32_t scene : matching->second) {
         const auto& owner = owners.at(scene);
         mh3_matrix_sources candidate{};
-        const auto status = mh3_model_pose_sources(&MH3NativeResourceMemory(), &owner, addresses, model ? model : owner.model_address, &candidate);
+        status = mh3_model_pose_sources(&MH3NativeResourceMemory(), &owner, addresses, model ? model : owner.model_address, &candidate);
 
         if (status == MH3_RES_ABSENT)
             continue;
 
-        Checked(status);
+        if (status != MH3_RES_OK)
+            return "Native model pose input failed: ";
 
         if (found)
-            throw std::runtime_error("Native model pose has ambiguous live allocation owners");
+            return "Native model pose has ambiguous live allocation owners";
 
         result = candidate;
         found = true;
     }
 
-    if (!found)
-        throw std::runtime_error("Native model matrices have no completed typed pose producer");
+    status = MH3_RES_OK;
+    return found ? nullptr : "Native model matrices have no completed typed pose producer";
+}
+
+std::string PoseFailure(const char* failure, mh3_res_status status) {
+    return status == MH3_RES_OK ? std::string(failure) : failure + std::to_string(status);
+}
+} // namespace
+
+mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
+    mh3_matrix_sources result{};
+    mh3_res_status status = MH3_RES_OK;
+
+    if (const char* failure = PoseSources(addresses, model, result, status)) [[unlikely]]
+        throw std::runtime_error(PoseFailure(failure, status));
 
     return result;
+}
+
+Status TryReadNativeModelPose(const uint32_t addresses[3], uint32_t model, mh3_matrix_sources& result) {
+    mh3_res_status status = MH3_RES_OK;
+
+    if (const char* failure = PoseSources(addresses, model, result, status))
+        return Status::Error(PoseFailure(failure, status));
+
+    return {};
 }
 
 // ---- Pose versions (model_pose_bridge.h) ----

@@ -53,26 +53,12 @@ class Memory {
     static void WriteFloat32(uint32_t addr, double val);
     static void WriteFloat64(uint32_t addr, double val);
 
-    // Exception-safe scalar access for HLE code. These keep Read32/Write32's
-    // full mapping behavior and only convert an unmapped address into a failure
-    // result.
-    static bool TryRead32(uint32_t addr, uint32_t& value) noexcept {
-        try {
-            value = Read32(addr);
-            return true;
-        } catch (const AccessViolation&) {
-            return false;
-        }
-    }
+    // Read32 for a caller that recovers from an address no RAM or device
+    // handles: false where Read32 raises an access violation.
+    static bool TryRead32(uint32_t addr, uint32_t& value);
 
-    static bool TryWrite32(uint32_t addr, uint32_t value) noexcept {
-        try {
-            Write32(addr, value);
-            return true;
-        } catch (const AccessViolation&) {
-            return false;
-        }
-    }
+    // The message of the access violation an unmapped access at addr raises.
+    static std::string UnmappedMessage(uint32_t addr);
 
     static uint8_t* GetPointer(uint32_t addr);
     static uint8_t* GetPointer(uint32_t addr, size_t length);

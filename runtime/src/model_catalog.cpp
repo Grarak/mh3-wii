@@ -235,6 +235,14 @@ inline void Checked(mh3_res_status status) {
         CheckedFailed(status);
 }
 
+// Checked for a caller that recovers from the failure.
+Status CheckedStatus(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        return Status::Error("Native model provenance failed: " + std::to_string(status));
+
+    return {};
+}
+
 Catalog& Initialize() {
     auto& c = C();
 
@@ -258,6 +266,26 @@ uint32_t Canonical(uint32_t address, uint32_t bytes) {
     uint32_t canonical = 0;
     Checked(mh3_source_canonical_address(address, bytes, &canonical));
     return canonical;
+}
+
+Status CanonicalAddress(uint32_t address, uint32_t bytes, uint32_t& canonical) {
+    return CheckedStatus(mh3_source_canonical_address(address, bytes, &canonical));
+}
+
+// A guest word for a caller that recovers from an unmapped address.
+Status ReadGuest32(uint32_t address, uint32_t& value) {
+    if (!Memory::TryRead32(address, value))
+        return Status::Error(Memory::UnmappedMessage(address));
+
+    return {};
+}
+
+// What std::vector::at reports for an index past the end.
+Status RangeCheck(size_t index, size_t size) {
+    if (index >= size)
+        return Status::Error("vector::_M_range_check: __n (which is " + std::to_string(index) + ") >= this->size() (which is " + std::to_string(size) + ")");
+
+    return {};
 }
 
 void InvalidateSourceCache(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpochProducer producer,
@@ -690,7 +718,7 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
     InvalidateBlockCache();
 }
 
-void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t handle, uint64_t generation) {
+Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t handle, uint64_t generation) {
     const auto trace = [](const char* stage, uint32_t index) {
 #ifdef MH3_DEVELOPMENT
         if (std::getenv("MH3_NATIVE_ASSET_TRACE"))
@@ -704,11 +732,11 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
     trace("validate", 0);
 
     if (!handle || !generation || mh3_model_catalog_validate_pack(catalog, pack) != MH3_PACK_OK)
-        throw std::runtime_error("Invalid external native model pack registration");
+        return Status::Error("Invalid external native model pack registration");
 
     for (const auto& p : Packs()) {
         if (p.handle == handle)
-            throw std::runtime_error("Native model resident handle already registered");
+            return Status::Error("Native model resident handle already registered");
 
         for (uint32_t i = 0; i < catalog->model_count; i++) {
             mh3_catalog_model model{};
@@ -716,7 +744,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
             uint32_t found = 0;
 
             if (mh3_model_catalog_find(p.catalog, model.partition_offset, model.model_offset, &found) == MH3_PACK_OK)
-                throw std::runtime_error("Ambiguous external native model pack identity");
+                return Status::Error("Ambiguous external native model pack identity");
         }
     }
 
@@ -737,7 +765,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
                 continue;
 
             if (mh3_model_mesh_prepare(catalog, pack, i, resource.source_id, handle, generation, &admitted.meshes[resource.pack_index]) != MH3_PACK_OK)
-                throw std::runtime_error("Native model immutable admission failed");
+                return Status::Error("Native model immutable admission failed");
 
             auto& prepared = admitted.meshes[resource.pack_index];
 
@@ -745,14 +773,14 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
                 mh3_pack_palette_batches serialized{};
 
                 if (mh3_mesh_pack_palette_batches(pack, resource.pack_index, &serialized) != MH3_PACK_OK)
-                    throw std::runtime_error("Native indexed matrix admission failed");
+                    return Status::Error("Native indexed matrix admission failed");
 
                 auto& batches = admitted.palette_batches[resource.pack_index];
                 batches.resize(serialized.count);
 
                 for (uint32_t n = 0; n < serialized.count; n++)
                     if (mh3_mesh_pack_palette_batch(&serialized, n, &batches[n]) != MH3_PACK_OK)
-                        throw std::runtime_error("Native indexed matrix record admission failed");
+                        return Status::Error("Native indexed matrix record admission failed");
                 prepared.palette_batches = batches.data();
             }
         }
@@ -766,12 +794,13 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
     for (uint32_t i = 0; i < catalog->material_count; i++) {
         mh3_catalog_resource resource{};
         mh3_model_catalog_resource(catalog, 1, i, &resource);
-        admitted.material_catalog_indices.at(resource.pack_index) = i;
+        MH3_RETURN_IF_ERROR(RangeCheck(resource.pack_index, admitted.material_catalog_indices.size()));
+        admitted.material_catalog_indices[resource.pack_index] = i;
 
         if (catalog->version == 2)
             for (uint32_t kind = 0; kind < 5; kind++) {
                 if (mh3_model_catalog_block(catalog, i * 5 + kind, &admitted.material_blocks.at(resource.pack_index)[kind]) != MH3_PACK_OK)
-                    throw std::runtime_error("Native material block admission failed");
+                    return Status::Error("Native material block admission failed");
             }
     }
 
@@ -779,13 +808,13 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
         trace("material", i);
 
         if (mh3_model_material_prepare(pack, i, &admitted.materials[i]) != MH3_PACK_OK)
-            throw std::runtime_error("Native model requires complete supported typed material payload");
+            return Status::Error("Native model requires complete supported typed material payload");
 
         const auto& material = admitted.materials[i];
         const uint32_t required = (1u << material.state.texgen_count) - 1;
 
         if ((material.texcoord_map_known & required) != required)
-            throw std::runtime_error("Native model requires M3MT v3 exact texture-coordinate map provenance");
+            return Status::Error("Native model requires M3MT v3 exact texture-coordinate map provenance");
 
         if (catalog->version == 2) {
             mh3_catalog_resource resource{};
@@ -811,7 +840,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
                     if (alias->second.bytes != origin.bytes || mh3_model_material_group_select(&material, mh3_model_material_block(kind), count, &a) != MH3_PACK_OK ||
                         mh3_model_material_group_select(&other, mh3_model_material_block(kind), count, &b) != MH3_PACK_OK || std::memcmp(&a, &b, sizeof a) ||
                         (kind == MH3_MODEL_MATERIAL_PIPELINE && (material.texcoord_map_known != other.texcoord_map_known || std::memcmp(material.texcoord_map, other.texcoord_map, 8))))
-                        throw std::runtime_error("Shared material source extent has inconsistent typed ownership");
+                        return Status::Error("Shared material source extent has inconsistent typed ownership");
                 } else
                     admitted.origins.emplace(key, origin);
             }
@@ -820,6 +849,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
 
     InstallPack(std::make_shared<const Pack>(std::move(admitted)));
     trace("publish", 0);
+    return {};
 }
 
 void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
@@ -871,21 +901,23 @@ bool NativeModelPackHasLiveSources(uintptr_t handle) {
     return false;
 }
 
-NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
+Status TryResolveNativeModelOwner(uint32_t model_address, NativeModelOwner& owner) {
     Initialize();
-    model_address = Canonical(model_address, 16);
+    MH3_RETURN_IF_ERROR(CanonicalAddress(model_address, 16, model_address));
     const auto cached = C().owners.find(model_address);
 
-    if (cached != C().owners.end())
-        return cached->second.owner;
+    if (cached != C().owners.end()) {
+        owner = cached->second.owner;
+        return {};
+    }
 
     mh3_source_identity identity{};
     const auto source_status = mh3_source_resolve(&C().tracker, model_address, 16, &identity);
 
     if (source_status == MH3_RES_OK)
-        EnsureNativeModelAssets(identity.partition_offset, 16);
+        MH3_RETURN_IF_ERROR(TryEnsureNativeModelAssets(identity.partition_offset, 16));
     else if (source_status != MH3_RES_ABSENT)
-        Checked(source_status);
+        return CheckedStatus(source_status);
 
     for (const auto& p : Packs()) {
         mh3_source_owner certificate{};
@@ -894,7 +926,7 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
         if (status == MH3_RES_ABSENT)
             continue;
 
-        Checked(status);
+        MH3_RETURN_IF_ERROR(CheckedStatus(status));
         const uint32_t index = certificate.catalog_index, container = certificate.container_address;
         const uint64_t generation = certificate.load_generation;
 
@@ -909,56 +941,148 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
             if (sibling_status == MH3_RES_ABSENT)
                 continue;
 
-            Checked(sibling_status);
+            MH3_RETURN_IF_ERROR(CheckedStatus(sibling_status));
             mh3_catalog_model model{};
             mh3_model_catalog_model(p.catalog, j, &model);
             const uint32_t address = sibling.model_address;
 
             // Provenance selected the owner; header fields validate layout,
             // rather than identifying bytes by a magic/name/content match.
-            if (Memory::Read32(address) != 0x4d444c30 || Memory::Read32(address + 4) != model.model_bytes || Memory::Read32(address + 8) != model.revision ||
-                Canonical(address + Memory::Read32(address + 12), 1) != container)
-                throw std::runtime_error("Loaded native MDL0 header differs from registered source identity");
+            uint32_t word = 0;
+            MH3_RETURN_IF_ERROR(ReadGuest32(address, word));
+            bool differs = word != 0x4d444c30;
+
+            if (!differs) {
+                MH3_RETURN_IF_ERROR(ReadGuest32(address + 4, word));
+                differs = word != model.model_bytes;
+            }
+
+            if (!differs) {
+                MH3_RETURN_IF_ERROR(ReadGuest32(address + 8, word));
+                differs = word != model.revision;
+            }
+
+            if (!differs) {
+                uint32_t parent = 0;
+                MH3_RETURN_IF_ERROR(ReadGuest32(address + 12, word));
+                MH3_RETURN_IF_ERROR(CanonicalAddress(address + word, 1, parent));
+                differs = parent != container;
+            }
+
+            if (differs)
+                return Status::Error("Loaded native MDL0 header differs from registered source identity");
+
             NativeModelOwner related{p.pack, p.catalog, j, container, address, p.handle, p.generation, generation};
             siblings.push_back({related, sibling, nullptr});
         }
 
-        NativeModelOwner owner{p.pack, p.catalog, index, container, model_address, p.handle, p.generation, generation};
+        owner = {p.pack, p.catalog, index, container, model_address, p.handle, p.generation, generation};
         Certify(siblings);
-        return owner;
+        return {};
     }
 
-    throw std::runtime_error("Model has no complete native loader provenance or external converted pack");
+    return Status::Error("Model has no complete native loader provenance or external converted pack");
 }
 
-mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material) {
-    const NativeModelOwner current = ResolveNativeModelOwner(owner.model_address);
+NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
+    // A certified owner (most draws) resolves without a Status.
+    Initialize();
+    const auto cached = C().owners.find(Canonical(model_address, 16));
+
+    if (cached != C().owners.end())
+        return cached->second.owner;
+
+    NativeModelOwner owner{};
+    CheckStatus(TryResolveNativeModelOwner(model_address, owner));
+    return owner;
+}
+
+Status TryResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material, mh3_catalog_resource& result) {
+    NativeModelOwner current{};
+    MH3_RETURN_IF_ERROR(TryResolveNativeModelOwner(owner.model_address, current));
 
     if (current.pack != owner.pack || current.catalog != owner.catalog || current.resident_handle != owner.resident_handle || current.resident_generation != owner.resident_generation ||
         current.source_generation != owner.source_generation || current.catalog_model_index != owner.catalog_model_index)
-        throw std::runtime_error("Native model owner was invalidated");
-    resource = Canonical(resource, material ? 16 : 64);
+        return Status::Error("Native model owner was invalidated");
+    MH3_RETURN_IF_ERROR(CanonicalAddress(resource, material ? 16 : 64, resource));
     const uint64_t key = (uint64_t(resource) << 1) | uint32_t(material);
     const auto cached = C().resources.find(key);
 
     if (cached != C().resources.end() && cached->second.epoch == C().source_epoch && cached->second.generation == owner.source_generation) {
         if (cached->second.resource.model_index != owner.catalog_model_index)
-            throw std::runtime_error("Native model resource cache has a different owner");
+            return Status::Error("Native model resource cache has a different owner");
 
-        return cached->second.resource;
+        result = cached->second.resource;
+        return {};
     }
 
     if (resource < owner.container_address)
-        throw std::runtime_error("Native model resource precedes its container");
+        return Status::Error("Native model resource precedes its container");
 
-    const uint32_t id = Memory::Read32(resource + (material ? 12 : 60));
+    uint32_t id = 0, word = 0;
+    MH3_RETURN_IF_ERROR(ReadGuest32(resource + (material ? 12 : 60), id));
     mh3_catalog_resource r{};
+    bool differs = mh3_model_catalog_find_resource(owner.catalog, owner.catalog_model_index, material, id, &r) != MH3_PACK_OK || resource - owner.container_address != r.source_offset;
 
-    if (mh3_model_catalog_find_resource(owner.catalog, owner.catalog_model_index, material, id, &r) != MH3_PACK_OK || resource - owner.container_address != r.source_offset ||
-        Memory::Read32(resource) != r.source_bytes || Canonical(resource + Memory::Read32(resource + 4), 1) != owner.model_address)
-        throw std::runtime_error("Native model subresource identity differs from registered source");
+    if (!differs) {
+        MH3_RETURN_IF_ERROR(ReadGuest32(resource, word));
+        differs = word != r.source_bytes;
+    }
+
+    if (!differs) {
+        uint32_t parent = 0;
+        MH3_RETURN_IF_ERROR(ReadGuest32(resource + 4, word));
+        MH3_RETURN_IF_ERROR(CanonicalAddress(resource + word, 1, parent));
+        differs = parent != owner.model_address;
+    }
+
+    if (differs)
+        return Status::Error("Native model subresource identity differs from registered source");
+
     C().resources.insert_or_assign(key, CachedResource{C().source_epoch, owner.source_generation, r});
-    return r;
+    result = r;
+    return {};
+}
+
+namespace {
+// The cached resource of a still-current owner, as TryResolveNativeModelResource
+// finds it; false when that has to resolve (or report) it.
+bool CachedNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material, mh3_catalog_resource& result) {
+    Initialize();
+    uint32_t model = 0;
+
+    if (mh3_source_canonical_address(owner.model_address, 16, &model) != MH3_RES_OK || mh3_source_canonical_address(resource, material ? 16 : 64, &resource) != MH3_RES_OK)
+        return false;
+
+    const auto found = C().owners.find(model);
+
+    if (found == C().owners.end())
+        return false;
+
+    const auto& current = found->second.owner;
+
+    if (current.pack != owner.pack || current.catalog != owner.catalog || current.resident_handle != owner.resident_handle || current.resident_generation != owner.resident_generation ||
+        current.source_generation != owner.source_generation || current.catalog_model_index != owner.catalog_model_index)
+        return false;
+
+    const auto cached = C().resources.find((uint64_t(resource) << 1) | uint32_t(material));
+
+    if (cached == C().resources.end() || cached->second.epoch != C().source_epoch || cached->second.generation != owner.source_generation ||
+        cached->second.resource.model_index != owner.catalog_model_index)
+        return false;
+
+    result = cached->second.resource;
+    return true;
+}
+} // namespace
+
+mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material) {
+    mh3_catalog_resource result{};
+
+    if (!CachedNativeModelResource(owner, resource, material, result))
+        CheckStatus(TryResolveNativeModelResource(owner, resource, material, result));
+
+    return result;
 }
 
 std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_address) {
@@ -966,13 +1090,14 @@ std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_ad
     return cached != C().owners.end() ? cached->second.table : nullptr;
 }
 
-void AttachNativeModelDrawTable(const NativeModelOwner& owner, std::shared_ptr<NativeModelDrawTable> table) {
+Status AttachNativeModelDrawTable(const NativeModelOwner& owner, std::shared_ptr<NativeModelDrawTable> table) {
     const auto cached = C().owners.find(owner.model_address);
 
     if (cached == C().owners.end() || !SameOwner(cached->second.owner, owner))
-        throw std::runtime_error("Native model draw table has no certified owner");
+        return Status::Error("Native model draw table has no certified owner");
 
     cached->second.table = std::move(table);
+    return {};
 }
 
 size_t CertifyLoadedNativeModels() {
@@ -1006,36 +1131,44 @@ size_t CertifyLoadedNativeModels() {
     size_t certified = 0;
     std::vector<uint32_t> models;
 
+    // A file that fails is left uncertified; its models resolve (and report
+    // their failure) at their first draw.
+    const auto certify = [&](const Candidate& candidate) {
+        MH3_RETURN_IF_ERROR(TryEnsureNativeModelAssets(candidate.file, 16));
+        models.clear();
+
+        for (const auto& p : Packs())
+            for (uint32_t j = 0; j < p.catalog->model_count; j++) {
+                mh3_catalog_model model{};
+                mh3_model_catalog_model(p.catalog, j, &model);
+
+                if (model.partition_offset != candidate.file || uint64_t(candidate.container) + model.model_offset > UINT32_MAX)
+                    continue;
+
+                const uint32_t address = candidate.container + model.model_offset;
+                mh3_source_owner certificate{};
+
+                if (!C().owners.contains(address) && mh3_source_owner_certify(&c.tracker, p.catalog, address, &certificate) == MH3_RES_OK)
+                    models.push_back(address);
+            }
+        // Certification may admit packs: resolve outside the pack walk.
+        for (const uint32_t address : models)
+            if (!C().owners.contains(address)) {
+                NativeModelOwner owner{};
+                MH3_RETURN_IF_ERROR(TryResolveNativeModelOwner(address, owner));
+                ++certified;
+            }
+        return Status{};
+    };
+
     for (const auto& candidate : candidates) {
-        try {
-            EnsureNativeModelAssets(candidate.file, 16);
-            models.clear();
-
-            for (const auto& p : Packs())
-                for (uint32_t j = 0; j < p.catalog->model_count; j++) {
-                    mh3_catalog_model model{};
-                    mh3_model_catalog_model(p.catalog, j, &model);
-
-                    if (model.partition_offset != candidate.file || uint64_t(candidate.container) + model.model_offset > UINT32_MAX)
-                        continue;
-
-                    const uint32_t address = candidate.container + model.model_offset;
-                    mh3_source_owner certificate{};
-
-                    if (!C().owners.contains(address) && mh3_source_owner_certify(&c.tracker, p.catalog, address, &certificate) == MH3_RES_OK)
-                        models.push_back(address);
-                }
-            // Certification may admit packs: resolve outside the pack walk.
-            for (const uint32_t address : models)
-                if (!C().owners.contains(address)) {
-                    (void)ResolveNativeModelOwner(address);
-                    ++certified;
-                }
-        } catch (const std::exception& e) {
+        const Status status = certify(candidate);
 #ifdef MH3_DEVELOPMENT
-            std::fprintf(stderr, "MH3 native catalog: loaded model file %llx at %08x not certified: %s\n", static_cast<unsigned long long>(candidate.file), candidate.container, e.what());
+        if (!status.ok())
+            std::fprintf(stderr, "MH3 native catalog: loaded model file %llx at %08x not certified: %s\n", static_cast<unsigned long long>(candidate.file), candidate.container, status.message().c_str());
+#else
+        (void)status;
 #endif
-        }
     }
 
     return certified;
@@ -1053,16 +1186,20 @@ void ListNativeModelOwnersWithoutDrawTable(std::vector<NativeModelOwner>& out) {
             out.push_back(item.second.owner);
 }
 
-const mh3_prepared_mesh& ReadNativePreparedMesh(const NativeModelOwner& owner, uint32_t shape) {
-    const mh3_catalog_resource resource = ResolveNativeModelResource(owner, shape, false);
+Status ReadNativePreparedMesh(const NativeModelOwner& owner, uint32_t shape, const mh3_prepared_mesh*& mesh) {
+    mh3_catalog_resource resource{};
+    MH3_RETURN_IF_ERROR(TryResolveNativeModelResource(owner, shape, false, resource));
 
     if (resource.pack_index == UINT32_MAX)
-        throw std::runtime_error("Native model shape has no converted mesh");
+        return Status::Error("Native model shape has no converted mesh");
 
     for (const auto& pack : Packs())
-        if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
-            return pack.meshes.at(resource.pack_index);
-    throw std::runtime_error("Native model resident allocation was retired");
+        if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation) {
+            MH3_RETURN_IF_ERROR(RangeCheck(resource.pack_index, pack.meshes.size()));
+            mesh = &pack.meshes[resource.pack_index];
+            return {};
+        }
+    return Status::Error("Native model resident allocation was retired");
 }
 
 const mh3_prepared_mesh* ReadNativePreparedMeshAt(const NativeModelOwner& owner, uint32_t pack_index) {

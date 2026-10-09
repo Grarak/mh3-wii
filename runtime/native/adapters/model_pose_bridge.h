@@ -1,6 +1,7 @@
 #pragma once
 #include "runtime/native/mh3_model_pose.h"
 #include "runtime/include/native_owner.h"
+#include "runtime/include/status.h"
 #ifdef MH3_DEVELOPMENT
 #include <atomic>
 #endif
@@ -10,6 +11,7 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
 void RetireNativeModelPose(uint32_t address, uint32_t bytes);
 void ClearNativeModelPose();
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model_address = 0);
+Status TryReadNativeModelPose(const uint32_t addresses[3], uint32_t model_address, mh3_matrix_sources& sources);
 /* An immutable copy of one binding's view arrays (positions, normals,
  * environment) as their producer left them; the tables of `sources` point
  * into it. Model draws reference it instead of copying the arrays: a binding

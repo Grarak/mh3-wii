@@ -63,26 +63,33 @@ uint64_t Long(const uint8_t* p) {
     return Word(p) | uint64_t(Word(p + 4)) << 32;
 }
 
-[[noreturn]] void Error(const std::filesystem::path& path, const char* reason) {
-    throw std::runtime_error("Native model pack " + path.string() + ": " + reason);
+Status Failure(const std::filesystem::path& path, const char* reason) {
+    return Status::Error("Native model pack " + path.string() + ": " + reason);
 }
 
-size_t FileSize(std::ifstream& file, const std::filesystem::path& path, size_t limit) {
+[[noreturn]] void Error(const std::filesystem::path& path, const char* reason) {
+    throw std::runtime_error(Failure(path, reason).message());
+}
+
+Status FileSize(std::ifstream& file, const std::filesystem::path& path, size_t limit, size_t& size) {
     if (!file)
-        Error(path, "cannot open");
+        return Failure(path, "cannot open");
 
     const auto bytes = file.tellg();
 
     if (bytes < 0 || uint64_t(bytes) > limit)
-        Error(path, "file exceeds admission budget");
+        return Failure(path, "file exceeds admission budget");
 
     file.seekg(0);
-    return size_t(bytes);
+    size = size_t(bytes);
+    return {};
 }
 
-void Read(std::ifstream& file, const std::filesystem::path& path, void* destination, size_t bytes) {
+Status Read(std::ifstream& file, const std::filesystem::path& path, void* destination, size_t bytes) {
     if (bytes && !file.read(static_cast<char*>(destination), bytes))
-        Error(path, "truncated read");
+        return Failure(path, "truncated read");
+
+    return {};
 }
 
 void RetireCatalog(Assets& loaded) {
@@ -136,14 +143,16 @@ uint32_t SourceIndex(const Manager& m, uint64_t offset, uint32_t bytes) {
     return low - 1;
 }
 
-void OpenIndex(Manager& m, const std::filesystem::path& path) {
+Status OpenIndex(Manager& m, const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    m.index.resize(FileSize(file, path, MaxIndexBytes));
-    Read(file, path, m.index.data(), m.index.size());
+    size_t bytes = 0;
+    MH3_RETURN_IF_ERROR(FileSize(file, path, MaxIndexBytes, bytes));
+    m.index.resize(bytes);
+    MH3_RETURN_IF_ERROR(Read(file, path, m.index.data(), m.index.size()));
     const auto* h = m.index.data();
 
     if (m.index.size() < 64 || std::memcmp(h, "M3IX", 4) || Word(h + 4) != 1 || Word(h + 8) != m.index.size())
-        Error(path, "invalid M3IX header");
+        return Failure(path, "invalid M3IX header");
 
     m.packCount = Word(h + 12);
     m.packOffset = Word(h + 16);
@@ -153,10 +162,10 @@ void OpenIndex(Manager& m, const std::filesystem::path& path) {
 
     if (!m.packCount || m.packCount > 16384 || !m.sourceCount || m.sourceCount > 65536 || m.packOffset != 64 || m.sourceOffset != 64 + uint64_t(m.packCount) * 32 ||
         pathOffset != m.sourceOffset + uint64_t(m.sourceCount) * 24 || pathOffset + pathBytes != m.index.size())
-        Error(path, "invalid M3IX table extents");
+        return Failure(path, "invalid M3IX table extents");
     for (unsigned at = 36; at < 64; at += 4)
         if (Word(h + at))
-            Error(path, "M3IX reserved header fields");
+            return Failure(path, "M3IX reserved header fields");
     uint64_t cursor = pathOffset;
     std::set<std::string> paths;
     std::vector<uint32_t> references(m.packCount);
@@ -166,29 +175,29 @@ void OpenIndex(Manager& m, const std::filesystem::path& path) {
         const uint32_t at = Word(r), bytes = Word(r + 4);
 
         if (at != cursor || !bytes || bytes > 255 || cursor + bytes > m.index.size())
-            Error(path, "invalid M3IX relative path extent");
+            return Failure(path, "invalid M3IX relative path extent");
 
         std::string name(reinterpret_cast<const char*>(h + at), bytes);
 
         if (name.find_first_of("\\:\0", 0, 3) != std::string::npos || name.front() == '/' || name.back() == '/' || std::filesystem::path(name).extension() != ".bin")
-            Error(path, "unsafe M3IX relative pack path");
+            return Failure(path, "unsafe M3IX relative pack path");
 
         for (const auto& part : std::filesystem::path(name))
             if (part.empty() || part == "." || part == "..")
-                Error(path, "unsafe M3IX relative pack path");
+                return Failure(path, "unsafe M3IX relative pack path");
         if (name.find("//") != std::string::npos || !paths.insert(name).second)
-            Error(path, "duplicate or unsafe M3IX relative pack path");
+            return Failure(path, "duplicate or unsafe M3IX relative pack path");
 
         cursor += bytes;
         const uint64_t metadataBytes = Word(r + 8), identityBytes = Word(r + 12), gpuBytes = Word(r + 16), fileBytes = Word(r + 20);
 
         if (metadataBytes < 128 || metadataBytes > MaxMetadataBytes || identityBytes < 64 || identityBytes > MaxIdentityBytes || !gpuBytes || gpuBytes > MaxGPUBytes ||
             fileBytes < metadataBytes + gpuBytes || fileBytes > MaxMetadataBytes + MaxGPUBytes + 4096 || Word(r + 24) || Word(r + 28))
-            Error(path, "M3IX pack exceeds admission budget or has invalid fields");
+            return Failure(path, "M3IX pack exceeds admission budget or has invalid fields");
     }
 
     if (cursor != m.index.size())
-        Error(path, "unused M3IX path bytes");
+        return Failure(path, "unused M3IX path bytes");
 
     uint64_t end = 0;
 
@@ -198,7 +207,7 @@ void OpenIndex(Manager& m, const std::filesystem::path& path) {
         const uint32_t pack = Word(r + 12);
 
         if (!bytes || start > UINT64_MAX - bytes || (i && start < end) || pack >= m.packCount || Word(r + 16) || Word(r + 20))
-            Error(path, "overlapping or invalid M3IX source extents");
+            return Failure(path, "overlapping or invalid M3IX source extents");
 
         end = start + bytes;
         ++references[pack];
@@ -206,9 +215,10 @@ void OpenIndex(Manager& m, const std::filesystem::path& path) {
 
     for (uint32_t count : references)
         if (!count)
-            Error(path, "M3IX pack has no source extent");
+            return Failure(path, "M3IX pack has no source extent");
     m.indexPath = path;
     m.stats.index_bytes = m.index.size();
+    return {};
 }
 
 bool EvictOne(Manager& m, uintptr_t keep) {
@@ -247,10 +257,11 @@ bool EvictOne(Manager& m, uintptr_t keep) {
     return true;
 }
 
-void ReserveCPU(Manager& m, size_t metadataBytes, size_t identityBytes, const std::filesystem::path& path) {
+Status ReserveCPU(Manager& m, size_t metadataBytes, size_t identityBytes, const std::filesystem::path& path) {
     while (metadataBytes > MaxMetadataBytes - m.stats.metadata_bytes || identityBytes > MaxIdentityBytes - m.stats.identity_bytes)
         if (!EvictOne(m, 0))
-            Error(path, "aggregate CPU admission budget occupied by live source owners");
+            return Failure(path, "aggregate CPU admission budget occupied by live source owners");
+    return {};
 }
 
 bool EvictOneGPU(Manager& m, uintptr_t keep) {
@@ -285,50 +296,52 @@ Assets& Find(Manager& m, uintptr_t handle, uint64_t epoch) {
     return *found->second;
 }
 
-std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index) {
+Status OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, std::unique_ptr<Assets>& result) {
     auto next = std::make_unique<Assets>();
     next->path = path;
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    const auto bytes = FileSize(file, path, MaxMetadataBytes + MaxGPUBytes + 4096);
+    size_t bytes = 0;
+    MH3_RETURN_IF_ERROR(FileSize(file, path, MaxMetadataBytes + MaxGPUBytes + 4096, bytes));
     std::array<uint8_t, 128> header{};
-    Read(file, path, header.data(), header.size());
+    MH3_RETURN_IF_ERROR(Read(file, path, header.data(), header.size()));
 
     if (std::memcmp(header.data(), "M3MP", 4))
-        Error(path, "invalid M3MP magic");
+        return Failure(path, "invalid M3MP magic");
 
     const size_t metadataBytes = Word(header.data() + 8);
     const uint64_t gpuOffset = Word(header.data() + 12), gpuBytes = Word(header.data() + 16);
 
     if (metadataBytes < header.size() || metadataBytes > MaxMetadataBytes || !gpuBytes || gpuBytes > MaxGPUBytes)
-        Error(path, "metadata or GPU payload exceeds admission budget");
+        return Failure(path, "metadata or GPU payload exceeds admission budget");
 
     if (gpuOffset < metadataBytes || gpuOffset + gpuBytes != bytes)
-        Error(path, "invalid file extent");
+        return Failure(path, "invalid file extent");
 
     auto identityPath = path;
     identityPath.replace_extension(".identity.bin");
     std::ifstream identity(identityPath, std::ios::binary | std::ios::ate);
-    const size_t identityBytes = FileSize(identity, identityPath, MaxIdentityBytes);
+    size_t identityBytes = 0;
+    MH3_RETURN_IF_ERROR(FileSize(identity, identityPath, MaxIdentityBytes, identityBytes));
 
     if (index != LegacyPack && !m.converted) {
         const auto* expected = PackRecord(m, index);
 
         if (metadataBytes != Word(expected + 8) || identityBytes != Word(expected + 12) || gpuBytes != Word(expected + 16) || bytes != Word(expected + 20))
-            Error(path, "pack sizes differ from M3IX descriptor");
+            return Failure(path, "pack sizes differ from M3IX descriptor");
     }
 
-    ReserveCPU(m, metadataBytes, identityBytes, path);
+    MH3_RETURN_IF_ERROR(ReserveCPU(m, metadataBytes, identityBytes, path));
     next->metadata.resize(metadataBytes);
     next->identity.resize(identityBytes);
     std::memcpy(next->metadata.data(), header.data(), header.size());
-    Read(file, path, next->metadata.data() + header.size(), metadataBytes - header.size());
-    Read(identity, identityPath, next->identity.data(), identityBytes);
+    MH3_RETURN_IF_ERROR(Read(file, path, next->metadata.data() + header.size(), metadataBytes - header.size()));
+    MH3_RETURN_IF_ERROR(Read(identity, identityPath, next->identity.data(), identityBytes));
 
     if (mh3_mesh_pack_open_metadata({next->metadata.data(), next->metadata.size()}, &next->pack) != MH3_PACK_OK)
-        Error(path, "invalid compact metadata");
+        return Failure(path, "invalid compact metadata");
 
     if (mh3_model_catalog_open({next->identity.data(), next->identity.size()}, &next->catalog) != MH3_PACK_OK || mh3_model_catalog_validate_pack(&next->catalog, &next->pack) != MH3_PACK_OK)
-        Error(identityPath, "invalid or mismatched source identities");
+        return Failure(identityPath, "invalid or mismatched source identities");
 
     if (index != LegacyPack && !m.converted) {
         std::set<uint32_t> seen;
@@ -339,55 +352,60 @@ std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, 
             const uint32_t source = SourceIndex(m, model.partition_offset, model.file_bytes);
 
             if (source == UINT32_MAX || Long(SourceRecord(m, source)) != model.partition_offset || Word(SourceRecord(m, source) + 8) != model.file_bytes || Word(SourceRecord(m, source) + 12) != index)
-                Error(identityPath, "catalog source extent differs from M3IX identity");
+                return Failure(identityPath, "catalog source extent differs from M3IX identity");
 
             seen.insert(source);
         }
 
         for (uint32_t i = 0; i < m.sourceCount; ++i)
             if (Word(SourceRecord(m, i) + 12) == index && !seen.contains(i))
-                Error(identityPath, "indexed source has no catalog model");
+                return Failure(identityPath, "indexed source has no catalog model");
     }
 
     if (generation == UINT64_MAX)
-        Error(path, "load generation exhausted");
+        return Failure(path, "load generation exhausted");
 
     next->generation = ++generation;
-    return next;
+    result = std::move(next);
+    return {};
 }
 
-void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
+Status Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
     std::unique_lock lock(m.lock);
     const auto [entry, inserted] = m.loaded.emplace(index, std::move(next));
 
     if (!inserted)
-        throw std::runtime_error("Native model source pack already admitted");
+        return Status::Error("Native model source pack already admitted");
 
     auto& asset = *entry->second;
     m.handles.emplace(asset.handle(), &asset);
     lock.unlock();
 
-    try {
-        if (eagerGPU) {
-            const auto cost = NativeModelGPUAllocationBytes(asset.pack.gpu_bytes);
-
-            if (cost > MaxGPUBytes || NativeModelGPUResidentBytes() > MaxGPUBytes - cost)
-                Error(asset.path, "aggregate GPU admission budget occupied");
-
-            const auto name = asset.path.string();
-            RegisterNativeModelGPU(asset.pack, name.c_str(), asset.handle(), asset.generation);
-            asset.gpuRegistered = true;
-        }
-
-        RegisterNativeModelPack(&asset.pack, &asset.catalog, asset.handle(), asset.generation);
-        asset.catalogRegistered = true;
-    } catch (...) {
+    // A pack that fails admission is withdrawn again.
+    const auto withdraw = [&](Status failure) {
         Retire(asset);
         std::lock_guard relock(m.lock);
         m.handles.erase(asset.handle());
         m.loaded.erase(entry);
-        throw;
+        return failure;
+    };
+
+    if (eagerGPU) {
+        const auto cost = NativeModelGPUAllocationBytes(asset.pack.gpu_bytes);
+
+        if (cost > MaxGPUBytes || NativeModelGPUResidentBytes() > MaxGPUBytes - cost)
+            return withdraw(Failure(asset.path, "aggregate GPU admission budget occupied"));
+
+        // Only the startup pack registers eagerly: a failure here is fatal.
+        const auto name = asset.path.string();
+        RegisterNativeModelGPU(asset.pack, name.c_str(), asset.handle(), asset.generation);
+        asset.gpuRegistered = true;
     }
+
+    if (Status registered = RegisterNativeModelPack(&asset.pack, &asset.catalog, asset.handle(), asset.generation); !registered.ok())
+        return withdraw(std::move(registered));
+
+    asset.catalogRegistered = true;
 
     std::lock_guard relock(m.lock);
     asset.lastUse = ++m.clock;
@@ -397,6 +415,7 @@ void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerG
     ++m.stats.admissions;
     std::fprintf(stderr, "MH3 native model assets: %u models, %u meshes, %llu metadata + %llu identity bytes, %u GPU bytes (%s)\n", asset.catalog.model_count, asset.pack.counts[MH3_PACK_MESHES],
                  static_cast<unsigned long long>(asset.metadata.size()), static_cast<unsigned long long>(asset.identity.size()), asset.pack.gpu_bytes, eagerGPU ? "resident" : "CPU metadata admitted");
+    return {};
 }
 } // namespace
 
@@ -415,7 +434,7 @@ void LoadNativeModelAssets(const char* discRoot) {
     auto next = std::make_unique<Manager>();
 
     if (!overridePack && (overrideIndex || std::filesystem::exists(indexPath))) {
-        OpenIndex(*next, indexPath);
+        CheckStatus(OpenIndex(*next, indexPath));
         std::fprintf(stderr, "MH3 native model index: %u packs, %u partition extents, %llu CPU bytes; demand admission enabled\n", next->packCount, next->sourceCount,
                      static_cast<unsigned long long>(next->index.size()));
     } else {
@@ -431,28 +450,29 @@ void LoadNativeModelAssets(const char* discRoot) {
             return;
         }
 
-        auto asset = OpenPack(*next, path, LegacyPack);
-        Admit(*next, LegacyPack, std::move(asset), true);
+        std::unique_ptr<Assets> asset;
+        CheckStatus(OpenPack(*next, path, LegacyPack, asset));
+        CheckStatus(Admit(*next, LegacyPack, std::move(asset), true));
     }
 
     manager = std::move(next);
 }
 
-void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
+Status TryEnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
     if (!manager)
-        return;
+        return {};
 
     auto& m = *manager;
 
     if (m.converted) {
         uint32_t key = 0;
         std::filesystem::path path;
-        CheckStatus(GameAssetCache()->ModelPack(offset, key, path));
+        MH3_RETURN_IF_ERROR(GameAssetCache()->ModelPack(offset, key, path));
 
         if (path.empty()) {
             std::ostringstream reason;
             reason << "No converted native models at partition offset 0x" << std::hex << offset;
-            throw std::runtime_error(reason.str());
+            return Status::Error(reason.str());
         }
 
         {
@@ -461,23 +481,24 @@ void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
 
             if (found != m.loaded.end()) {
                 found->second->lastUse = ++m.clock;
-                return;
+                return {};
             }
         }
 
-        Admit(m, key, OpenPack(m, path, key), false);
-        return;
+        std::unique_ptr<Assets> asset;
+        MH3_RETURN_IF_ERROR(OpenPack(m, path, key, asset));
+        return Admit(m, key, std::move(asset), false);
     }
 
     if (m.index.empty())
-        return;
+        return {};
 
     const uint32_t source = SourceIndex(m, offset, bytes);
 
     if (source == UINT32_MAX) {
         std::ostringstream reason;
         reason << "Native model index has no source extent at partition offset 0x" << std::hex << offset;
-        throw std::runtime_error(reason.str());
+        return Status::Error(reason.str());
     }
 
     const uint32_t index = Word(SourceRecord(m, source) + 12);
@@ -487,15 +508,20 @@ void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
 
         if (found != m.loaded.end()) {
             found->second->lastUse = ++m.clock;
-            return;
+            return {};
         }
     }
 
     const auto* record = PackRecord(m, index);
     const std::string name(reinterpret_cast<const char*>(m.index.data() + Word(record)), Word(record + 4));
     const auto path = m.indexPath.parent_path() / name;
-    auto asset = OpenPack(m, path, index);
-    Admit(m, index, std::move(asset), false);
+    std::unique_ptr<Assets> asset;
+    MH3_RETURN_IF_ERROR(OpenPack(m, path, index, asset));
+    return Admit(m, index, std::move(asset), false);
+}
+
+void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
+    CheckStatus(TryEnsureNativeModelAssets(offset, bytes));
 }
 
 bool FindNativeModelSource(uint64_t offset, uint64_t* file_offset, uint32_t* file_bytes) {
