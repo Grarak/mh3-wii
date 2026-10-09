@@ -182,7 +182,9 @@ void PublishPrimitiveMaterial(bool textured) {
     Remember(uiMaterial, textured);
 }
 
-void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t palette, const float* overrideMatrix = nullptr) {
+// A textured primitive's texture is bound with the wrap modes given (clamp by
+// default).
+void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t palette, const float* overrideMatrix = nullptr, uint32_t wrapS = 0, uint32_t wrapT = 0) {
     uiFlags = flags;
 
     if (flags & 1) {
@@ -225,7 +227,8 @@ void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t 
         uiCoordinates = {1, 4, 60};
         auto binding = ResourceBinding(texture);
         binding.map_id = 0;
-        binding.sampler.wrap_s = binding.sampler.wrap_t = 0;
+        binding.sampler.wrap_s = wrapS;
+        binding.sampler.wrap_t = wrapT;
 
         if (binding.source.indexed) {
             auto colors = ReadNativeResPalette(palette);
@@ -573,16 +576,13 @@ extern "C" void MH3_UIShapeSetup(CpuContext* cpu) {
         overrideMatrix = matrix;
     }
 
-    SetupPrimitive(call, flags, 0x8066CE80, 0x8066CE84, overrideMatrix);
+    // The original binds the shape's texture clamped, then again with its
+    // wrap modes: one binding with the wrap modes leaves the same state.
+    const bool textured = (flags & 2) != 0;
+    SetupPrimitive(call, flags, 0x8066CE80, 0x8066CE84, overrideMatrix, textured ? Memory::Read32(0x8066CE74) : 0, textured ? Memory::Read32(0x8066CE78) : 0);
 
-    if (flags & 2) {
-        auto binding = ResourceBinding(0x8066CE80);
-        binding.sampler.wrap_s = Memory::Read32(0x8066CE74);
-        binding.sampler.wrap_t = Memory::Read32(0x8066CE78);
-        StoreNativeTextureObject(0x8066CE98, binding);
-        BindNativeTexture(binding);
+    if (textured)
         ConfigureDirectCoordinates(0, flags & 8 ? 0 : 1, 4, flags & 8 ? 54 : 60);
-    }
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800545E4, MH3_UIShapeSetup, "UIShapeSetup");
 extern "C" void MH3_DrawShape(CpuContext* cpu) {

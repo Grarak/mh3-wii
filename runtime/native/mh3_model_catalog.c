@@ -557,7 +557,12 @@ static mh3_res_status splice(mh3_source_tracker *t, uint32_t address, uint32_t b
     if (count > t->capacity)
         return MH3_RES_RANGE;
 
-    memmove(t->ranges + lo + total, t->ranges + hi, (t->count - hi) * sizeof *t->ranges);
+    /* A copy that replaces as many ranges as it overlapped (a buffer copied
+     * again each frame) leaves the tail in place: the EABI memmove copies a
+     * buffer onto itself in full, the whole tail on every such copy. */
+    if (lo + total != hi)
+        memmove(t->ranges + lo + total, t->ranges + hi, (t->count - hi) * sizeof *t->ranges);
+
     size_t at = lo;
 
     if (left)
