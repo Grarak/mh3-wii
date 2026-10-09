@@ -2,6 +2,7 @@
 #include "fatal.h"
 #include "gx_panic.h"
 #include "native_graphics.h"
+#include "upscaling.h"
 #include "model_cull.h"
 #include "scene_cull.h"
 #include "native_frame_packet.h"
@@ -98,6 +99,7 @@ bool efbBgra = false;
 bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 bool displayWidescreen = false;
+bool upscaling = true;
 
 // Every host renders for the Vita's display; other hosts scale it into their window.
 constexpr uint32_t DisplayWidth = 960, DisplayHeight = 544;
@@ -106,6 +108,20 @@ static_assert(DisplayWidth == aurora::gxm::Device::Width && DisplayHeight == aur
 #endif
 AuroraNativeTargetAspect DisplayAspect(bool widescreen) {
     return widescreen ? AURORA_NATIVE_TARGET_FILL : AURORA_NATIVE_TARGET_FIT;
+}
+
+// The target's scale (VISetFrameBufferScale): 0 sizes it for the display
+// surface, 1 gives it the Wii's 448 rows at the display aspect (FILL) or its
+// own 640x448 (FIT); presentation scales it to the display, filtered.
+float RenderScale() {
+#ifdef MH3_DEVELOPMENT
+    // MH3_RENDER_SCALE=n: n times the native resolution, whatever the window
+    // size and the upscaling setting (captures are at that size).
+    if (const char* v = std::getenv("MH3_RENDER_SCALE"))
+        if (const float n = std::strtof(v, nullptr); n > 0)
+            return n;
+#endif
+    return upscaling ? 0.f : 1.f;
 }
 
 // Event polling and all graphics submission belong to the game thread.
@@ -269,16 +285,6 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     if (loadNativeAssets)
         OpenNativeAssets();
 #ifdef MH3_DEVELOPMENT
-    // MH3_RENDER_SCALE=n: render the EFB at n times the native resolution,
-    // whatever the window size (captures are at that size).
-    if (const char* v = std::getenv("MH3_RENDER_SCALE")) {
-        const float n = std::strtof(v, nullptr);
-
-        if (n > 0)
-            VISetFrameBufferScale(n);
-    }
-#endif
-#ifdef MH3_DEVELOPMENT
     if (const uint64_t interval = ProfileOptions().Number("frames", 0)) {
         if (interval > UINT32_MAX)
             MH3_THROW(std::runtime_error("MH3_PROFILE frames= must be a 32-bit number"));
@@ -384,6 +390,14 @@ float NativeWidescreenAspect() {
     return float(DisplayWidth) / float(DisplayHeight);
 }
 
+bool UpscalingSetting() {
+    return upscaling;
+}
+
+void SetUpscalingSetting(bool enabled) {
+    upscaling = enabled;
+}
+
 void SetNativeDisplayWidescreen(bool widescreen) {
 #ifdef MH3_DEVELOPMENT
     std::fprintf(stderr, "MH3 display: game in %s mode, camera aspect %.4f\n", widescreen ? "16:9" : "4:3", widescreen ? NativeWidescreenAspect() : 4.f / 3.f);
@@ -410,6 +424,7 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
 
     aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
     aurora_set_native_target_aspect(DisplayAspect(displayWidescreen));
+    VISetFrameBufferScale(RenderScale());
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv, load_native_assets);

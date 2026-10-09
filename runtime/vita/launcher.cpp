@@ -11,6 +11,7 @@
 #include "disc_image.h"
 #include "fs_status.h"
 #include "widescreen.h"
+#include "upscaling.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
 #include <aurora/thread_role.hpp>
@@ -737,6 +738,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
     // The game reads it once, at RenderInit, after the hand-off.
     bool widescreen = WidescreenSetting().value_or(true);
+
+    // The game's graphics startup applies it, after the hand-off.
+    bool upscaling = UpscalingSetting();
     SaveSlot save{};
     std::vector<SaveSlot> saves;
     std::vector<QuestCatalog::Quest> quests;
@@ -809,14 +813,20 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         switch (page) {
         case Page::Main: {
             title = "Main menu";
-            rows = {"Start game", "Quests", "Create custom quest", "Cheats", std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)")};
+            rows = {"Start game",
+                    "Quests",
+                    "Create custom quest",
+                    "Cheats",
+                    std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
+                    std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)")};
             const std::string cheats = ActiveCheats();
             const std::string details[] = {"Continue through the game's title and character selection." + cheats,
                                            "Start a quest directly with an existing hunter." + cheats,
                                            "Make a hunt or capture quest from one of the game's quests.",
                                            "Gameplay toggles for this launch." + cheats,
-                                           widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display."};
-            detail = details[std::min<size_t>(selected, 4)];
+                                           widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display.",
+                                           upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work."};
+            detail = details[std::min<size_t>(selected, 5)];
             footer = "X Select   D-pad Move";
             break;
         }
@@ -1166,10 +1176,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     enter(Page::Templates);
                 } else if (selected == 3)
                     enter(Page::Cheats);
-                else {
+                else if (selected == 4) {
                     widescreen = !widescreen;
                     SetWidescreenSetting(widescreen);
                     Log("widescreen %s", widescreen ? "on" : "off");
+                } else {
+                    upscaling = !upscaling;
+                    SetUpscalingSetting(upscaling);
+                    Log("upscaling %s", upscaling ? "on" : "off");
                 }
 
                 break;

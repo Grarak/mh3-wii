@@ -179,7 +179,7 @@ or the devkit harness's CTRLP pad drives the menus too. With this call the
 handheld's L/R report as L1/R1.
 
 The main menu contains `Start game`, `Quests`, `Create custom quest`,
-`Cheats` and `Widescreen`. `Widescreen` toggles the game's 16:9 mode for this
+`Cheats`, `Widescreen` and `Upscaling`. `Widescreen` toggles the game's 16:9 mode for this
 launch (on by default; `MH3_WIDESCREEN=0` starts it off) through
 `SetWidescreenSetting`; the game reads it once, at `RenderInit`, after the
 hand-off. Off, the game runs in 4:3 on a pillarboxed 777×544 target
@@ -189,6 +189,18 @@ catalogue launched locally; this menu does not establish an online service.
 The row reads `Widescreen: ON (16:9)` or `Widescreen: OFF (4:3)` and changes
 at each press; on, off and on again starts the title in 16:9 (checked on the
 host with `widescreen-toggle-start.tsv`).
+
+`Upscaling` chooses the game's render resolution for this launch, on by
+default, through `SetUpscalingSetting` (`runtime/include/upscaling.h`). The
+row reads `Upscaling: ON (544 lines)` or `Upscaling: OFF (448 lines)`. On,
+the game renders at the display's resolution: 960×544, or 777×544 in 4:3.
+Off, it renders the Wii's 448 lines at the same aspect, 791×448 (640×448 in
+4:3), and the present scales the picture to the display with bilinear
+filtering: the whole display in 16:9, pillarboxed in 4:3. The launcher
+itself always draws at 960×544; the game's graphics startup
+(`InitializeNativeGraphics`, after the hand-off) applies the setting as the
+target's scale (`VISetFrameBufferScale`: 0 for the display's size, 1 for 448
+rows). The development `MH3_RENDER_SCALE` overrides it.
 
 `Start game` goes through the game's own intro movie and title. Only the
 Classic Controller's A (the Vita's Circle) skips the intro: Plus (Start) does
@@ -549,12 +561,13 @@ runs short. Results (VM, llvmpipe, October 2026):
 | Directory with only the RVZ | `disc/` written (under a second), then the menu. |
 | `tour-custom-quest.tsv` | Cheats toggled, the editor changed map (Flooded Forest to Sandy Plains) and monster (Barroth to Diablos), saved, edited and saved again (`0-1027-1.mh3quest`), launched: the quest loads into Sandy Plains with the HUD. |
 | `widescreen-toggle-start.tsv` | Row text OFF (4:3), then ON (16:9); the intro and the title in 16:9 on the whole display. Plus during the intro: no skip; A: skip. |
+| Upscaling off (and Widescreen off), then quest 10057 | `upscaling off` logged; `EFB render target 791x448` (640x448 with Widescreen off) after the hand-off, against 960x544 (777x544) with Upscaling on; frame dumps at those sizes; the window shows the 16:9 picture over its whole client area, filtered, and the 4:3 one between bars. |
 
 ## Devkit checklist
 
 Not run yet on hardware: the custom quest tour (editor, IME keyboard, save,
 saved quest launch, cheats), the missing-disc message, the launcher reading
-CTRLP, re-enabling Widescreen, and a release build of the launcher. Run each
+CTRLP, re-enabling Widescreen, Upscaling off, and a release build of the launcher. Run each
 through `scripts/dev/devkit-heartbeat.sh` (main session only), in a new
 directory `build/vita-devkit/RUN` staged like this:
 
