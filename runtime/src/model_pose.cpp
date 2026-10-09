@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI and owned producer registry. C11 owns resource/selector
 // semantics; no guest function, GX, FIFO or vertex expansion is performed.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
@@ -83,9 +84,12 @@ void TraceOwner(const char* event, const mh3_model_pose_owner& owner, mh3_res_st
 void TraceInput(const char*, uint32_t, const uint32_t[3], uint32_t) {}
 void TraceOwner(const char*, const mh3_model_pose_owner&, mh3_res_status = MH3_RES_OK) {}
 #endif
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native model pose input failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native model pose input failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 uint32_t Canonical(uint32_t address) {
     return address ? (address & 0x3fffffffu) | 0x80000000u : 0;
@@ -316,7 +320,7 @@ extern "C" void MH3_ModelViewEnvironment(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80080C68, MH3_ModelViewEnvironment, "ModelViewEnvironment");
 extern "C" void MH3_ModelViewCount(CpuContext* cpu) {
     uint32_t count = 0;
-    Checked(mh3_model_pose_count({Memory::GetPointer(cpu->gpr[3], 0x104), 0x104}, &count));
+    Checked(mh3_model_pose_count({GuestRange(cpu->gpr[3], 0x104), 0x104}, &count));
     cpu->gpr[3] = count;
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007FD0C, MH3_ModelViewCount, "ModelViewCount");

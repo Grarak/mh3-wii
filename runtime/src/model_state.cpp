@@ -1,6 +1,7 @@
 // Platform memory/ownership bridge to typed native C model inputs. No GX,
 // guest rendering helper or source command-list decoder is called here.
 #include "memory.h"
+#include "guest_span.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include <stdexcept>
@@ -26,9 +27,12 @@ std::unordered_map<uint32_t, uint64_t> initialized_generations;
 // Bound view arrays (game thread draw state).
 std::unordered_map<uint32_t, mh3_matrix_binding> matrix_sources;
 uint64_t resource_generation = 0;
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native model resource input failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native model resource input failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 uint32_t Resource(uint32_t reference) {
     if (!reference)
@@ -96,19 +100,19 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
 mh3_native_texture_source ReadNativeResTexture(uint32_t reference) {
     const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
     mh3_native_texture_source source{};
-    Checked(mh3_texture_source_read({Memory::GetPointer(resource, size), size}, resource, &source));
+    Checked(mh3_texture_source_read({GuestRange(resource, size), size}, resource, &source));
     source.generation = ReadNativeTextureGeneration(source.payload_address);
     return source;
 }
 mh3_native_palette_source ReadNativeResPalette(uint32_t reference) {
     const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
     mh3_native_palette_source source{};
-    Checked(mh3_palette_source_read({Memory::GetPointer(resource, size), size}, resource, &source));
+    Checked(mh3_palette_source_read({GuestRange(resource, size), size}, resource, &source));
     source.generation = ReadNativeTextureGeneration(source.payload_address);
     return source;
 }
 void StoreNativeTextureObject(uint32_t object, const mh3_native_texture_binding& binding) {
-    Checked(mh3_texture_compat_store({Memory::GetPointer(object, 32), 32}, &binding));
+    Checked(mh3_texture_compat_store({GuestRange(object, 32), 32}, &binding));
     auto copy = binding;
     mh3_texture_source_updated(&copy.source, ReadNativeTextureGeneration(copy.source.payload_address));
     PutTexture(object, copy);
@@ -121,7 +125,7 @@ mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
     return found->second;
 }
 void StoreNativePaletteObject(uint32_t object, const mh3_native_palette_source& palette) {
-    Checked(mh3_palette_compat_store({Memory::GetPointer(object, 12), 12}, &palette));
+    Checked(mh3_palette_compat_store({GuestRange(object, 12), 12}, &palette));
     auto copy = palette;
     const auto generation = ReadNativeTextureGeneration(copy.payload_address);
     if (generation > copy.generation)
@@ -155,7 +159,7 @@ void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palet
     std::array<mh3_native_texture_binding, 8> textures{};
     std::array<mh3_native_palette_source, 8> colors{};
     int present[8]{};
-    const auto span = mh3_res_span{Memory::GetPointer(source, size), size};
+    const auto span = mh3_res_span{GuestRange(source, size), size};
     for (uint32_t i = 0; i < 8; i++) {
         Checked(mh3_resource_objects_present(span, i, palette, &present[i]));
         if (present[i]) {
@@ -165,7 +169,7 @@ void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palet
                 textures[i] = ReadNativeTextureObject(source + 4 + i * 32);
         }
     }
-    Checked(mh3_resource_objects_copy({Memory::GetPointer(destination, size), size}, span, palette));
+    Checked(mh3_resource_objects_copy({GuestRange(destination, size), size}, span, palette));
     std::array<bool, 8> kept{};
     for (uint32_t i = 0; i < 8; i++)
         kept[i] = present[i] != 0;
@@ -176,7 +180,7 @@ void StoreNativeModelMatrixSources(uint32_t state, const uint32_t addresses[3]) 
     if (next.generation == UINT64_MAX)
         throw std::runtime_error("Native matrix source revision overflow");
     mh3_matrix_bind(&next, addresses);
-    Checked(mh3_matrix_store_sources({Memory::GetPointer(state, 12), 12}, addresses));
+    Checked(mh3_matrix_store_sources({GuestRange(state, 12), 12}, addresses));
     matrix_sources.insert_or_assign(state, next);
 }
 mh3_matrix_binding ReadNativeModelMatrixSources(uint32_t state) {

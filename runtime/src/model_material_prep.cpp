@@ -1,6 +1,7 @@
 // Thin resource/material ABI boundary. Plain CPU records are decoded in C;
 // certified list groups come from predecoded M3MP/live producers, never FIFO.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -15,9 +16,12 @@
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 constexpr uint32_t genmode = 0x80685300, sync_address = 0x80796db0;
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native material preparation failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native material preparation failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 uint32_t Resource(uint32_t reference, bool required = false) {
     uint32_t resource = 0;
@@ -25,10 +29,10 @@ uint32_t Resource(uint32_t reference, bool required = false) {
     return resource;
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 void Publish(const mh3_native_material_state& patch, uint32_t top = 0) {
     OverlayNativeMaterial(patch, top);
@@ -66,7 +70,7 @@ void ChannelControl(CpuContext* cpu, bool force_off) {
 }
 void ChannelColor(CpuContext* cpu, bool ambient) {
     mh3_native_material_state patch{};
-    Checked(mh3_model_channel_color(&patch, cpu->gpr[3], Memory::GetPointer(cpu->gpr[4], 4), ambient));
+    Checked(mh3_model_channel_color(&patch, cpu->gpr[3], GuestRange(cpu->gpr[4], 4), ambient));
     Publish(patch);
 }
 mh3_model_material_misc Misc(uint32_t reference) {
@@ -120,7 +124,7 @@ extern "C" void MH3_ModelCurrentLights(CpuContext* cpu) {
         if (cpu->gpr[4 + i])
             Memory::Write32(cpu->gpr[4 + i], masks[i]);
     if (cpu->gpr[8])
-        std::memcpy(Memory::GetPointer(cpu->gpr[8], 4), &slots.ambient, 4);
+        std::memcpy(GuestRange(cpu->gpr[8], 4), &slots.ambient, 4);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80088304, MH3_ModelCurrentLights, "ModelCurrentLights");
 extern "C" void MH3_ModelPixelLoad(CpuContext* cpu) {
@@ -147,7 +151,7 @@ extern "C" void MH3_ModelChannelsLoad(CpuContext* cpu) {
     Checked(mh3_model_genmode_read(Bytes(genmode, 12), &mode));
     const uint32_t masks[]{cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7]};
     mh3_pack_channel channels[2];
-    Checked(mh3_model_channels_prepare_channels(Bytes(address, 40), mode.channels, masks, Memory::GetPointer(cpu->gpr[8], 4), cpu->gpr[9] != 0, channels));
+    Checked(mh3_model_channels_prepare_channels(Bytes(address, 40), mode.channels, masks, GuestRange(cpu->gpr[8], 4), cpu->gpr[9] != 0, channels));
     OverlayNativeMaterialChannels(channels);
     PublishGenMode(genmode, true);
 }

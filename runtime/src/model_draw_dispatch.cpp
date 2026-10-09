@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI adapters. Typed C owns draw order, resource selection and
 // the authored sort; retained handlers and renderer callbacks stay at this seam.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "frame_split.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -66,15 +67,18 @@ struct Census {
 #endif
 constexpr uint32_t Scratch = 0x8066d300, Phase = 0x807936b8;
 std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native model draw dispatch failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native model draw dispatch failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 // Guest words the draw passes by reference, in a guest stack frame.
 struct References {

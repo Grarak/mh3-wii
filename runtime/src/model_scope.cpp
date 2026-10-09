@@ -2,6 +2,7 @@
 // order, coordinate scales and matrix math; these adapters own CPU records and
 // forward direct material/mesh publications. No guest/GX/FIFO calls.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
@@ -32,19 +33,25 @@ constinit uint8_t coordinate_map_known = 0;
 constinit uint32_t pipeline_address = 0, operator_address = 0;
 constinit uint64_t pipeline_revision = 0;
 constinit mh3_indirect_output current_operator{};
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native model scope failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native model scope failed: " + std::to_string(status));
 }
-void PackChecked(mh3_pack_status status) {
-    if (status != MH3_PACK_OK)
-        throw std::runtime_error("Native model resident mesh failed: " + std::to_string(status));
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
+}
+[[noreturn, gnu::cold, gnu::noinline]] void PackCheckedFailed(mh3_pack_status status) {
+    throw std::runtime_error("Native model resident mesh failed: " + std::to_string(status));
+}
+inline void PackChecked(mh3_pack_status status) {
+    if (status != MH3_PACK_OK) [[unlikely]]
+        PackCheckedFailed(status);
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 uint32_t Resource(uint32_t reference, bool required = false) {
     uint32_t data = 0;
@@ -728,7 +735,7 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
     if (d.flags & 4) {
         // The original republishes the whole material with front culling.
         OverlayNativeMaterialTop(MH3_MATERIAL_TOP_CULL, 0, 0, 0, 0, 1);
-        std::memset(Memory::GetPointer(0x80685504, 12), 0, 12);
+        std::memset(GuestRange(0x80685504, 12), 0, 12);
         Memory::Write8(sync_address, 1);
     }
     SubmitShape(shape, d.position, d.normal);

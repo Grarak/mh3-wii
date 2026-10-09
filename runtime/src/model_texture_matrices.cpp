@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI adapters for typed texture matrices and view-array ownership.
 // Pure resource/math logic is C11; no GX, FIFO or guest callback is invoked.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -10,15 +11,18 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native texture matrix input failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native texture matrix input failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 uint32_t Resource(uint32_t reference) {
     uint32_t resource = 0;

@@ -2,6 +2,7 @@
 // serialized updates live in portable C. Backend receives ordinary records;
 // no guest rendering functions, GX calls or source command lists are used.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -13,9 +14,12 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native scene input failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native scene input failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 uint32_t Resource(uint32_t reference) {
     uint32_t result = 0;
@@ -23,10 +27,10 @@ uint32_t Resource(uint32_t reference) {
     return result;
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {GuestRange(address, size), size};
 }
 mh3_native_camera Camera(uint32_t resource) {
     mh3_native_camera camera{};
@@ -200,7 +204,7 @@ extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
         if (cpu->gpr[5 + i])
             Memory::Write32(cpu->gpr[5 + i], masks[i]);
     if (cpu->gpr[9]) {
-        auto* destination = Memory::GetPointer(cpu->gpr[9], 4);
+        auto* destination = GuestRange(cpu->gpr[9], 4);
         destination[0] = slots.ambient.r;
         destination[1] = slots.ambient.g;
         destination[2] = slots.ambient.b;

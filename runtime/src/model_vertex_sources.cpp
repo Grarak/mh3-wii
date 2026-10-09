@@ -1,5 +1,6 @@
 // Pure array binding ABI: retain typed source provenance instead of GXSetArray.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <array>
@@ -81,7 +82,7 @@ mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_ver
     Observe();
     const uint32_t size = Memory::Read32(resource);
     mh3_native_vertex_source source{};
-    if (mh3_vertex_source_read({Memory::GetPointer(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
+    if (mh3_vertex_source_read({GuestRange(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native vertex array resource");
     auto& generations = Generations();
     const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));
@@ -135,7 +136,7 @@ extern "C" void MH3_ModelFurPositionArray(CpuContext* cpu) {
         return;
     const uint32_t size = Memory::Read32(resource);
     mh3_native_vertex_source source{};
-    if (mh3_vertex_fur_source_read({Memory::GetPointer(resource, size), size}, resource, uint16_t(cpu->gpr[4]), &source) != MH3_RES_OK)
+    if (mh3_vertex_fur_source_read({GuestRange(resource, size), size}, resource, uint16_t(cpu->gpr[4]), &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native fur position sample");
     auto& generations = Generations();
     const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));

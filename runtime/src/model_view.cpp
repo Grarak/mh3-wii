@@ -1,6 +1,7 @@
 // Thin ABI/callback boundary for 80071CAC. The portable C producer performs
 // typed CPU preparation; no GX, rendering fallback or anonymous pose marking.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -16,15 +17,18 @@ const mh3_res_memory& MH3NativeResourceMemory();
 void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
 #endif
 namespace {
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native DMA view producer failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native DMA view producer failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 mh3_res_span Bytes(uint32_t address, size_t bytes) {
-    return {Memory::GetPointer(address, bytes), bytes};
+    return {GuestRange(address, bytes), bytes};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t bytes) {
-    return {Memory::GetPointer(address, bytes), bytes};
+    return {GuestRange(address, bytes), bytes};
 }
 size_t Aligned(size_t size) {
     return (size + 31) & ~size_t(31);
@@ -48,7 +52,7 @@ mh3_res_status Billboard(void* opaque, uint32_t type, uint32_t id, int uniform, 
     if (type < 1 || type > 6 || position.size != 48)
         return MH3_RES_INVALID;
     const uint32_t destination = context.cache[(id / 40) & 1u] + (id % 40) * 48;
-    if (Memory::GetPointer(destination, 48) != position.data)
+    if (GuestRange(destination, 48) != position.data)
         return MH3_RES_INVALID;
     GuestCall game{context.cpu};
     game(Memory::Read32(0x8056fdf8 + type * 4), {destination, context.models, uint32_t(uniform), context.camera, context.reference, id});

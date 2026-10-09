@@ -1,6 +1,7 @@
 // Disc/guest address ownership boundary. Lookup algorithms and byte copies are
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -139,9 +140,12 @@ PackList Packs() {
     return {C().packs};
 }
 NativeModelVertexRetireHook vertex_retire = nullptr;
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        throw std::runtime_error("Native model provenance failed: " + std::to_string(status));
+[[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
+    throw std::runtime_error("Native model provenance failed: " + std::to_string(status));
+}
+inline void Checked(mh3_res_status status) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        CheckedFailed(status);
 }
 Catalog& Initialize() {
     auto& c = C();
@@ -264,8 +268,8 @@ void Certify(const std::vector<CachedOwner>& certified) {
 void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
     const uint32_t destination = cpu->gpr[3], source = cpu->gpr[4], bytes = cpu->gpr[5];
     if (bytes) {
-        void* dst = Memory::GetPointer(destination, bytes);
-        const void* src = Memory::GetPointer(source, bytes);
+        void* dst = GuestRange(destination, bytes);
+        const void* src = GuestRange(source, bytes);
         // Resolve provenance transaction first; capacity failure leaves guest
         // bytes untouched. Tracking does not inspect either byte payload.
         RecordNativeResourceCopy(destination, source, bytes, producer);
@@ -776,8 +780,8 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     auto block = ReadNativeLiveMaterialBlock(source, kind);
     destination = Canonical(destination, block.bytes);
     source = Canonical(source, block.bytes);
-    void* output = Memory::GetPointer(destination, block.bytes);
-    const void* input = Memory::GetPointer(source, block.bytes);
+    void* output = GuestRange(destination, block.bytes);
+    const void* input = GuestRange(source, block.bytes);
     if (destination == source)
         return;
     const uint64_t revision = NextNativeMaterialRevision();
