@@ -13,6 +13,7 @@
 #include <memory>
 #include <webgpu/webgpu_cpp.h>
 namespace aurora::webgpu { extern wgpu::Queue g_queue; extern wgpu::Instance g_instance; }
+namespace aurora::gfx { uint32_t current_frame() noexcept; }
 
 namespace aurora::gx::fifo {
 void init();
@@ -21,6 +22,8 @@ uint32_t process(const uint8_t*, uint32_t, bool);
 namespace {
 bool initialized = false;
 bool frameActive = false;
+uint32_t captureInterval = 0;
+std::filesystem::path capturePath;
 GuestGxStream guestStream;
 uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0, guestDraws = 0, guestTextureCopies = 0;
 void ShutdownGraphics() {
@@ -53,8 +56,16 @@ void InitializeGraphics(int argc, char** argv) {
     if (info.backend != BACKEND_METAL) throw std::runtime_error("Aurora did not select Metal");
     aurora::gx::fifo::init();
     if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
-        const char* frame = std::getenv("MH3_CAPTURE_FRAME");
-        aurora_request_frame_capture(frame ? std::stoul(frame) : 30, path);
+        if (const char* interval = std::getenv("MH3_CAPTURE_INTERVAL")) {
+            const auto value = std::stoul(interval);
+            if (!value || value >= UINT32_MAX)
+                throw std::runtime_error("MH3_CAPTURE_INTERVAL must be between 1 and 4294967294");
+            captureInterval = static_cast<uint32_t>(value);
+            capturePath = path;
+        } else {
+            const char* frame = std::getenv("MH3_CAPTURE_FRAME");
+            aurora_request_frame_capture(frame ? std::stoul(frame) : 30, path);
+        }
     }
 }
 }
@@ -108,7 +119,16 @@ void ServiceHostGraphicsEvents() {
 void CompleteHostGraphics() {
     if (!initialized) return;
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
-    if (frameActive) { aurora_end_frame(); frameActive = false; }
+    if (frameActive) {
+        // Aurora advances its frame index while sealing, before capture encoding.
+        const auto frame = aurora::gfx::current_frame() + 1;
+        if (captureInterval && frame % captureInterval == 0) {
+            const auto path = capturePath.parent_path() /
+                (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
+            aurora_request_frame_capture(frame, path.c_str());
+        }
+        aurora_end_frame(); frameActive = false;
+    }
     aurora_wait_for_frame_worker();
     // Wait for actual submitted GPU work, not just the renderer worker's CPU
     // submission. Shared state remains valid even if WaitAny times out.
