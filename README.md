@@ -68,6 +68,16 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 - A synthetic translator regression passes for full native replacements, wrappers
   that require original code, and ordinary callees.
 
+## Standalone checkout
+
+Aurora is included under `aurora-main/`, matching WiiCompiled’s layout. The
+translator is already under `toolchain/`, and the free DSP coefficient data is
+bundled under `runtime/assets/dsp/`. No sibling WiiCompiled checkout is needed.
+Common libraries remain managed by Aurora’s existing CMake dependency providers
+(system packages or downloads); they are not vendored into this repository.
+Build the graphical port with `./scripts/build-aurora.sh`. Compiler/SDK tools and
+your ROM-derived assets remain prerequisites. See [Aurora provenance](docs/aurora-dependency.md).
+
 ## Reproduce with the installed project-local tools
 
 The local SDK is .NET `8.0.425`; CMake, Ninja and Clang are already available.
