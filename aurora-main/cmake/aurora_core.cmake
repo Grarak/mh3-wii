@@ -3,6 +3,7 @@ add_library(aurora_core STATIC
         lib/input.cpp
         lib/window.cpp
         lib/logging.cpp
+        lib/legacy_gx.cpp
         lib/system_info.cpp
         lib/system_info.hpp
 )

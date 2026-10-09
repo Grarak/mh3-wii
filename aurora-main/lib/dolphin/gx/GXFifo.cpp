@@ -1,3 +1,4 @@
+#include <aurora/legacy_gx.h>
 #include "gx.hpp"
 
 extern "C" {
@@ -6,20 +7,22 @@ static GXFifoObj* GPFifo;
 static GXFifoObj* CPUFifo;
 
 void GXGetGPStatus(GXBool* overhi, GXBool* underlow, GXBool* readIdle, GXBool* cmdIdle, GXBool* brkpt) {
-  *overhi = *underlow = *readIdle = *cmdIdle = *brkpt = false;
-  *readIdle = true;
+  aurora_legacy_gx_panic("GXGetGPStatus");
 }
 
 // TODO GXGetFifoStatus
 
 void GXGetFifoPtrs(GXFifoObj* fifo, void** readPtr, void** writePtr) {
-  *readPtr = NULL;
-  *writePtr = NULL;
+  aurora_legacy_gx_panic("GXGetFifoPtrs");
 }
 
-GXFifoObj* GXGetCPUFifo() { return CPUFifo; }
+GXFifoObj* GXGetCPUFifo() {
+  aurora_legacy_gx_panic("GXGetCPUFifo");
+}
 
-GXFifoObj* GXGetGPFifo() { return GPFifo; }
+GXFifoObj* GXGetGPFifo() {
+  aurora_legacy_gx_panic("GXGetGPFifo");
+}
 
 // TODO GXGetFifoBase
 // TODO GXGetFifoSize
@@ -28,17 +31,27 @@ GXFifoObj* GXGetGPFifo() { return GPFifo; }
 // TODO GXEnableBreakPt
 // TODO GXDisableBreakPt
 
-void GXInitFifoBase(GXFifoObj* fifo, void* base, u32 size) {}
+void GXInitFifoBase(GXFifoObj* fifo, void* base, u32 size) {
+  aurora_legacy_gx_panic("GXInitFifoBase");
+}
 
-void GXInitFifoPtrs(GXFifoObj* fifo, void* readPtr, void* writePtr) {}
+void GXInitFifoPtrs(GXFifoObj* fifo, void* readPtr, void* writePtr) {
+  aurora_legacy_gx_panic("GXInitFifoPtrs");
+}
 
 // TODO GXInitFifoLimits
 
-void GXSetCPUFifo(GXFifoObj* fifo) { CPUFifo = fifo; }
+void GXSetCPUFifo(GXFifoObj* fifo) {
+  aurora_legacy_gx_panic("GXSetCPUFifo");
+}
 
-void GXSetGPFifo(GXFifoObj* fifo) { GPFifo = fifo; }
+void GXSetGPFifo(GXFifoObj* fifo) {
+  aurora_legacy_gx_panic("GXSetGPFifo");
+}
 
-void GXSaveCPUFifo(GXFifoObj* fifo) {}
+void GXSaveCPUFifo(GXFifoObj* fifo) {
+  aurora_legacy_gx_panic("GXSaveCPUFifo");
+}
 
 // TODO GXSaveGPFifo
 // TODO GXRedirectWriteGatherPipe

@@ -1,3 +1,4 @@
+#include <aurora/legacy_gx.h>
 #include "gx.hpp"
 #include "__gx.h"
 
@@ -304,218 +305,71 @@ GXRenderModeObj GXMpal480IntDf = {
 };
 
 void GXAdjustForOverscan(GXRenderModeObj* rmin, GXRenderModeObj* rmout, u16 hor, u16 ver) {
-  *rmout = *rmin;
-  const auto renderSize = aurora::gfx::get_render_target_size();
-  rmout->fbWidth = static_cast<u16>(std::min<uint32_t>(renderSize.x, UINT16_MAX));
-  rmout->efbHeight = static_cast<u16>(std::min<uint32_t>(renderSize.y, UINT16_MAX));
-  rmout->xfbHeight = static_cast<u16>(std::min<uint32_t>(renderSize.y, UINT16_MAX));
+  aurora_legacy_gx_panic("GXAdjustForOverscan");
 }
 
 void GXSetDispCopySrc(u16 left, u16 top, u16 wd, u16 ht) {
-  g_gxState.dispCopySrc = {left, top, wd, ht};
-  GX_WRITE_RAS_REG(0x49000000u | ((static_cast<u32>(top) & 0x3ffu) << 10) | (static_cast<u32>(left) & 0x3ffu));
-  GX_WRITE_RAS_REG(0x4a000000u | (((static_cast<u32>(ht) - 1u) * 0x400u) & 0x000ffc00u) |
-                   ((static_cast<u32>(wd) - 1u) & 0x3ffu));
+  aurora_legacy_gx_panic("GXSetDispCopySrc");
 }
 
 void GXSetTexCopySrc(u16 left, u16 top, u16 wd, u16 ht) {
-  g_gxState.texCopySrc = {left, top, wd, ht};
-  g_gxState.texCopySrcRenderSpace = false;
+  aurora_legacy_gx_panic("GXSetTexCopySrc");
 }
 
 void GXSetDispCopyDst(u16 wd, u16 ht) {
-  g_gxState.dispCopyDstWidth = wd;
-  g_gxState.dispCopyDstHeight = ht;
-  GX_WRITE_RAS_REG(0x4d000000u | ((((static_cast<u32>(wd) & 0x7fffu) << 1) >> 5) & 0x3ffu));
+  aurora_legacy_gx_panic("GXSetDispCopyDst");
 }
 
 void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap) {
-  g_gxState.texCopyFmt = fmt;
-  g_gxState.texCopyDstWidth = wd;
-  g_gxState.texCopyDstHeight = ht;
-  g_gxState.texCopyHalfScale = mipmap != GX_FALSE;
+  aurora_legacy_gx_panic("GXSetTexCopyDst");
 }
 
 void GXSetDispCopyFrame2Field(u32 mode) {
-  g_gxState.dispCopyFrame2Field = mode & 3;
+  aurora_legacy_gx_panic("GXSetDispCopyFrame2Field");
 }
 
 void GXSetCopyClamp(GXFBClamp clamp) {
-  g_gxState.copyClamp = static_cast<GXFBClamp>(static_cast<u32>(clamp) & 3);
+  aurora_legacy_gx_panic("GXSetCopyClamp");
 }
 
 u32 GXSetDispCopyYScale(f32 vscale) {
-  const u32 iScale = y_scale_to_integer(vscale);
-  g_gxState.dispCopyYScale = vscale;
-  GX_WRITE_RAS_REG(0x4e000000u | iScale);
-  __gx->bpSent = 0;
-  return get_num_xfb_lines_internal(static_cast<u16>(g_gxState.dispCopySrc.height), iScale);
+  aurora_legacy_gx_panic("GXSetDispCopyYScale");
 }
 
 void GXSetCopyClear(GXColor color, u32 depth) {
-  // BP 0x4F: clear color R + A
-  u32 reg0 = 0;
-  SET_REG_FIELD(0, reg0, 8, 0, color.r);
-  SET_REG_FIELD(0, reg0, 8, 8, color.a);
-  SET_REG_FIELD(0, reg0, 8, 24, 0x4F);
-  GX_WRITE_RAS_REG(reg0);
-
-  // BP 0x50: clear color B + G
-  u32 reg1 = 0;
-  SET_REG_FIELD(0, reg1, 8, 0, color.b);
-  SET_REG_FIELD(0, reg1, 8, 8, color.g);
-  SET_REG_FIELD(0, reg1, 8, 24, 0x50);
-  GX_WRITE_RAS_REG(reg1);
-
-  // BP 0x51: clear Z (24-bit)
-  u32 reg2 = 0;
-  SET_REG_FIELD(0, reg2, 24, 0, depth);
-  SET_REG_FIELD(0, reg2, 8, 24, 0x51);
-  GX_WRITE_RAS_REG(reg2);
-  __gx->bpSent = 1;
+  aurora_legacy_gx_panic("GXSetCopyClear");
 }
 
 void GXSetCopyFilter(GXBool aa, u8 sample_pattern[12][2], GXBool vf, u8 vfilter[7]) {
-  g_gxState.copyFilterAa = aa;
-  g_gxState.copyFilterVf = vf;
-  if (sample_pattern) {
-    for (size_t i = 0; i < g_gxState.copyFilterSamplePattern.size(); ++i) {
-      g_gxState.copyFilterSamplePattern[i][0] = sample_pattern[i][0];
-      g_gxState.copyFilterSamplePattern[i][1] = sample_pattern[i][1];
-    }
-  }
-  if (vfilter) {
-    for (size_t i = 0; i < g_gxState.copyFilterVFilter.size(); ++i) {
-      g_gxState.copyFilterVFilter[i] = vfilter[i];
-    }
-  }
-
-  if (!aa) {
-    for (auto& sample : g_gxState.copyFilterSamplePattern) {
-      sample = {6, 6};
-    }
-  }
-  if (!vf) {
-    g_gxState.copyFilterVFilter = {0, 0, 21, 22, 21, 0, 0};
-  }
-
-  GX_WRITE_RAS_REG(pack_copy_filter_samples(0x01, g_gxState.copyFilterSamplePattern, 0));
-  GX_WRITE_RAS_REG(pack_copy_filter_samples(0x02, g_gxState.copyFilterSamplePattern, 6));
-  GX_WRITE_RAS_REG(pack_copy_filter_samples(0x03, g_gxState.copyFilterSamplePattern, 12));
-  GX_WRITE_RAS_REG(pack_copy_filter_samples(0x04, g_gxState.copyFilterSamplePattern, 18));
-  GX_WRITE_RAS_REG(pack_copy_filter0(g_gxState.copyFilterVFilter));
-  GX_WRITE_RAS_REG(pack_copy_filter1(g_gxState.copyFilterVFilter));
-  __gx->bpSent = 0;
+  aurora_legacy_gx_panic("GXSetCopyFilter");
 }
 
 void GXSetDispCopyGamma(GXGamma gamma) {
-  g_gxState.dispCopyGamma = static_cast<GXGamma>(static_cast<u32>(gamma) & 3u);
-  g_gxState.bpRegCache[0x52] = (g_gxState.bpRegCache[0x52] & ~(3u << 7)) |
-                               ((static_cast<u32>(g_gxState.dispCopyGamma) & 3u) << 7);
+  aurora_legacy_gx_panic("GXSetDispCopyGamma");
 }
 
 void GXCopyDisp(void* dest, GXBool clear) {
-  (void)dest;
-  // Finish queued commands before this copy reads live EFB state.
-  if (aurora::gx::fifo::get_buffer_size() != 0) {
-    aurora::gx::fifo::drain();
-  }
-  const auto rect = aurora::gx::map_logical_scissor(g_gxState.dispCopySrc);
-  const auto logicalDstWidth =
-      std::max<u32>(g_gxState.dispCopyDstWidth != 0 ? g_gxState.dispCopyDstWidth : static_cast<u32>(g_gxState.dispCopySrc.width), 1);
-  const auto logicalDstHeight =
-      std::max<u32>(g_gxState.dispCopyDstHeight != 0 ? g_gxState.dispCopyDstHeight : static_cast<u32>(g_gxState.dispCopySrc.height), 1);
-  const auto [dstWidth, dstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
-
-  if (!g_gxState.displayCopyTexture || g_gxState.displayCopyWidth != dstWidth ||
-      g_gxState.displayCopyHeight != dstHeight) {
-    g_gxState.displayCopyTexture = aurora::gfx::new_render_texture(dstWidth, dstHeight, GX_TF_RGBA8, "Display Copy");
-    g_gxState.displayCopyWidth = dstWidth;
-    g_gxState.displayCopyHeight = dstHeight;
-  }
-
-  const auto clearState = get_copy_clear_state(clear);
-  auto copyFilter = combined_copy_filter_coefficients(g_gxState.copyFilterVFilter);
-  if (aurora::g_config.disableCopyFilter) {
-    copyFilter = {0, copyFilter[0] + copyFilter[1] + copyFilter[2], 0};
-  }
-  aurora::gfx::resolve_pass(g_gxState.displayCopyTexture, rect, clearState.clearColor, clearState.clearAlpha,
-                            clearState.clearDepth, clearState.clearColorValue, aurora::gx::clear_depth_value(),
-                            GX_TF_RGBA8, nullptr, false, &copyFilter, false,
-                            static_cast<float>(rect.height) / std::max<float>(g_gxState.dispCopySrc.height, 1.0f),
-                            (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
-                            (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0);
-  aurora::gx::set_display_copy_present_source();
+  aurora_legacy_gx_panic("GXCopyDisp");
 }
 
 void GXCopyTex(void* dest, GXBool clear) {
-  (void)dest;
-  // EFB texture copies are no longer part of the renderer. Keep the explicit
-  // clear side effect without creating a target, readback, resolve, or a
-  // must-render dependency. Presentation uses its own display-copy path.
-  if (!clear) return;
-  if (aurora::gx::fifo::get_buffer_size() != 0) aurora::gx::fifo::drain();
-  const auto state = get_copy_clear_state(true);
-  aurora::gfx::push_draw_command(aurora::gfx::clear::DrawData{
-      .color = state.clearColorValue,
-      .depth = aurora::gx::clear_depth_value(),
-      .clearColor = state.clearColor,
-      .clearAlpha = state.clearAlpha,
-      .clearDepth = state.clearDepth,
-      .useScissor = true,
-      .scissor = map_texture_copy_source(g_gxState.texCopySrc, g_gxState.texCopySrcRenderSpace).clearRect,
-  });
+  aurora_legacy_gx_panic("GXCopyTex");
 }
 
 void GXClearBoundingBox() {
-  g_gxState.boundingBox = {1023, 0, 1023, 0};
-  GX_WRITE_RAS_REG(0x550003FFu);
-  GX_WRITE_RAS_REG(0x560003FFu);
-  __gx->bpSent = 0;
+  aurora_legacy_gx_panic("GXClearBoundingBox");
 }
 
 void GXReadBoundingBox(u16* left, u16* right, u16* top, u16* bottom) {
-  if (left) {
-    *left = g_gxState.boundingBox[0];
-  }
-  if (right) {
-    *right = g_gxState.boundingBox[1];
-  }
-  if (top) {
-    *top = g_gxState.boundingBox[2];
-  }
-  if (bottom) {
-    *bottom = g_gxState.boundingBox[3];
-  }
+  aurora_legacy_gx_panic("GXReadBoundingBox");
 }
 
 u16 GXGetNumXfbLines(u16 efbHeight, f32 yScale) {
-  return get_num_xfb_lines_internal(efbHeight, y_scale_to_integer(yScale));
+  aurora_legacy_gx_panic("GXGetNumXfbLines");
 }
 
 f32 GXGetYScaleFactor(u16 efbHeight, u16 xfbHeight) {
-  CHECK(efbHeight != 0, "GXGetYScaleFactor requires non-zero EFB height");
-  CHECK(xfbHeight != 0 && xfbHeight <= 1024, "GXGetYScaleFactor requires 1..1024 XFB lines");
-
-  u32 targetHeight = xfbHeight;
-  f32 yScale = static_cast<f32>(targetHeight) / static_cast<f32>(efbHeight);
-  u16 realHeight = GXGetNumXfbLines(efbHeight, yScale);
-
-  while (realHeight > xfbHeight && targetHeight > 1) {
-    --targetHeight;
-    yScale = static_cast<f32>(targetHeight) / static_cast<f32>(efbHeight);
-    realHeight = GXGetNumXfbLines(efbHeight, yScale);
-  }
-
-  f32 resultScale = yScale;
-  while (realHeight < xfbHeight && targetHeight < 1024) {
-    resultScale = yScale;
-    ++targetHeight;
-    yScale = static_cast<f32>(targetHeight) / static_cast<f32>(efbHeight);
-    realHeight = GXGetNumXfbLines(efbHeight, yScale);
-  }
-
-  return resultScale;
+  aurora_legacy_gx_panic("GXGetYScaleFactor");
 }
 
 }

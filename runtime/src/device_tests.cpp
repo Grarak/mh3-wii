@@ -45,6 +45,7 @@ extern "C" void MH3_IOSIoctlvAsync(CpuContext*);
 extern "C" void MH3_IOSOpenAsync(CpuContext*);
 void RunSleepSelfTests(CpuContext*);
 void RunRsoOverlaySelfTests(CpuContext*);
+void RunGxPanicSelfTests(CpuContext*);
 extern "C" void PPC_WriteSpr(uint32_t, uint32_t);
 extern "C" uint32_t PPC_ReadSpr(uint32_t);
 
@@ -169,9 +170,8 @@ void RunDeviceSelfTests(CpuContext* cpu) {
                 throw std::runtime_error("EFB coordinate/alias decoding failed");
         for (auto bad : {0x48000000u, 0xC8400000u, 0xC8000001u, 0x80000000u})
             if (DecodeEfbColorAddress(bad, x, y)) throw std::runtime_error("Invalid EFB address accepted");
-        uint32_t value = 1;
-        if (!ReadEfbColor32(0xC8000A00, value) || value != 0)
-            throw std::runtime_error("EFB out-of-bounds read failed");
+        // CPU EFB reads (including out-of-bounds coordinates) now terminate;
+        // RunGxPanicSelfTests isolates and validates that fatal path below.
         if (ConvertEfbArgb(0xAB123456, 0, 2) != 0xFF123456 ||
             ConvertEfbArgb(0xAB123456, 1, 2) != 0xAA103455 ||
             ConvertEfbArgb(0xAB123456, 2, 2) != 0xFF103452 ||
@@ -316,20 +316,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     uint16_t unused;
     if (ReadVideoRegister16(0xCC003000, unused) || ReadVideoRegister16(0xCC002001, unused))
         throw std::runtime_error("VI intercepted an unrelated or unaligned register");
-    Memory::Write16(0xCC000020, 0xC600);
-    Memory::Write32(0xCC00300C, 0x00E2C600);
-    if (Memory::Read16(0x0C000020) != 0xC600 || Memory::Read32(0x8C00300C) != 0x00E2C600)
-        throw std::runtime_error("GX FIFO register aliases failed");
-    uint32_t gxValue;
-    if (ReadGxRegister(0xCC000000, 2, gxValue) || ReadGxRegister(0xCC000021, 2, gxValue) ||
-        ReadGxRegister(0xCC00300C, 2, gxValue) || ReadGxRegister(0x4C00300C, 4, gxValue))
-        throw std::runtime_error("GX register interface accepted an unsupported access");
-    Memory::Write16(0xCC000006, 0xFFFF);
-    Memory::Write16(0xCC000022, 0xFFFF);
-    Memory::Write16(0xCC000004, 3);
-    if (Memory::Read16(0xCC000006) != 7 || Memory::Read16(0xCC000022) != 0x1FFF || Memory::Read16(0xCC000004))
-        throw std::runtime_error("GX CP register masking/acknowledgement failed");
-    ResetGxRegisters();
+    // Replaces the old emulated-register mask/alias checks: every GX register
+    // alias, SDK call and FIFO writer must now terminate before graphics work.
+    RunGxPanicSelfTests(cpu);
     RunVillageBootSelfTests();
     GuestGxStream stream;
     std::vector<uint8_t> delivered;

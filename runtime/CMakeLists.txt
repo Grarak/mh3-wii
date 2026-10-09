@@ -22,7 +22,7 @@ if(NOT VITA AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROC
 endif()
 if(MH3_AURORA_ROOT)
   enable_language(C)
-  # Aurora owns the selected native renderer on a dedicated render thread.
+  # The game thread owns the native renderer; GPU submissions are asynchronous.
   add_subdirectory("${MH3_AURORA_ROOT}" "${CMAKE_BINARY_DIR}/aurora")
 endif()
 set(CMAKE_CXX_STANDARD 20)
@@ -48,15 +48,17 @@ add_executable(MH3
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})
-target_sources(MH3 PRIVATE src/model_resources.cpp src/model_submission_trace.cpp
+target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/model_submission_trace.cpp
   native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
+target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
 target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized MH3_TRACE_ERRORS stack traces.
 if(NOT VITA)
   set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
+  target_link_libraries(MH3 PRIVATE ${CMAKE_DL_LIBS})
 endif()
-target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-O2;-gline-tables-only;-ffp-contract=off>)
+target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-O2;-gline-tables-only;-ffp-contract=off>)
 if(MH3_ENABLE_GUEST_CALL_TRACE)
   target_sources(MH3 PRIVATE src/guest_call_trace.cpp)
   set(trace_manifest "${CMAKE_SOURCE_DIR}/../generated/build_shards/guest_trace_sources.cmake")

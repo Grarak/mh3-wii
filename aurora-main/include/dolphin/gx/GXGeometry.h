@@ -1,3 +1,4 @@
+#include <aurora/legacy_gx.h>
 #ifndef DOLPHIN_GXGEOMETRY_H
 #define DOLPHIN_GXGEOMETRY_H
 
@@ -23,7 +24,7 @@ void GXEnableTexOffsets(GXTexCoordID coord, GXBool line_enable, GXBool point_ena
 #ifdef TARGET_PC
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le);
 static inline void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride) {
-  GXSetArray(attr, data, size, stride, false);
+  aurora_legacy_gx_panic("GXSetArray");
 }
 #define GXSETARRAY(attr, data, size, stride, le) GXSetArray((attr), (data), (size), (stride), (le))
 #else
@@ -33,7 +34,7 @@ void GXSetArray(GXAttr attr, const void* data, u8 stride);
 void GXInvalidateVtxCache(void);
 
 static inline void GXSetTexCoordGen(GXTexCoordID dst_coord, GXTexGenType func, GXTexGenSrc src_param, u32 mtx) {
-  GXSetTexCoordGen2(dst_coord, func, src_param, mtx, GX_FALSE, GX_PTIDENTITY);
+  aurora_legacy_gx_panic("GXSetTexCoordGen");
 }
 
 #ifdef __cplusplus

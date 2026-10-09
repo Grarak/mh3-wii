@@ -941,11 +941,7 @@ void set_frameskip(bool enabled) noexcept { g_frameskip = enabled; }
 void require_frame_render() noexcept { g_mustRender = true; }
 bool frame_skipped() noexcept {
   if (g_skipDecision < 0) {
-    const bool pending = g_framesInFlight.load(std::memory_order_acquire) > 0
-#ifdef AURORA_GXM
-                         || gxm::gpu_frame_pending()
-#endif
-                         ;
+    const bool pending = g_framesInFlight.load(std::memory_order_acquire) > 0 || gl::gpu_frame_pending();
     g_skipDecision = g_frameskip && !g_mustRender && pending;
   }
   return g_skipDecision == 1;

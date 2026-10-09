@@ -489,6 +489,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
 static bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
 
 uint32_t process(const u8* data, u32 size, bool bigEndian) {
+  aurora_legacy_gx_panic("aurora::gx::fifo::process");
   ZoneScoped;
   // Everything decoded here mutates renderer state (GX state, the recorded command lists and the mapped staging buffers), so take the renderer GPU mutex once for the whole drain rather than once per draw command.
   std::lock_guard gpuLock(aurora::renderer_gpu_mutex());
@@ -2132,6 +2133,7 @@ static bool admit_draw(GXPrimitive prim, GXVtxFmt fmt, u16 count, uint32_t verte
 
 bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
                      uint32_t vertexBytes) {
+  aurora_legacy_gx_panic("aurora::gx::fifo::submit_raw_draw");
   ZoneScoped;
   if (vertices == nullptr || vtxCount == 0 || vertexBytes == 0) {
     return false;
@@ -2186,6 +2188,7 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
 }
 
 static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian) {
+  aurora_legacy_gx_panic("aurora::gx::fifo::handle_draw");
   ZoneScoped;
   GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
   GXPrimitive prim = primitive_from_draw_cmd(cmd);

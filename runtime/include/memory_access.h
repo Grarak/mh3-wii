@@ -19,18 +19,15 @@
 #include "guest_flat_memory.h"
 #include "memory.h"
 #include "recomp_mod_loader.h"
+#include "gx_panic.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
-// The GX FIFO (gather pipe) writes the translator lowers guest stores to.
-// The window is the free tail of the GX worker's filling chunk
-// (graphics_host.cpp): while it has room a write is a big-endian store into
-// it; otherwise (no worker, GX synchronized, chunk full; `end` null when
-// closed) it goes the full way, GX_HLE_FIFO_WriteFull. The translator's
-// coalesced bursts (GX_HLE_FIFO_WriteBurst, a constant size) take the window
-// too: a few stores instead of a call and a memcpy each.
+// Translator-lowered GX FIFO writes are fatal, including coalesced stores and
+// GX leaf functions that the translator inlined before native interception.
+// Retain the window's ABI until all previously generated shards are rebuilt.
 struct GxFifoWindow {
     uint8_t* next;
     uint8_t* end;
@@ -39,13 +36,9 @@ extern GxFifoWindow gGxFifoWindow;
 extern "C" {
 void GX_HLE_FIFO_WriteFull(const uint8_t* data, uint32_t sizeBytes);
 inline void GX_HLE_FIFO_WriteBytesInline(const uint8_t* bytes, uint32_t size) {
-    GxFifoWindow& w = gGxFifoWindow;
-    if (static_cast<size_t>(w.end - w.next) >= size) [[likely]] {
-        std::memcpy(w.next, bytes, size);
-        w.next += size;
-        return;
-    }
-    GX_HLE_FIFO_WriteFull(bytes, size);
+    (void)bytes;
+    (void)size;
+    PanicLegacyGx("GX FIFO write (translated scalar or burst)");
 }
 inline void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t sizeBytes) {
     GX_HLE_FIFO_WriteBytesInline(data, sizeBytes);

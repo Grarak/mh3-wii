@@ -1,4 +1,5 @@
 #include "gx_host.h"
+#include "gx_panic.h"
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
@@ -13,9 +14,7 @@
 #include "dolphin/vi/vi_internal.hpp"
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <exception>
-#include <mutex>
 #include <vector>
 #include <cstring>
 #include <aurora/aurora.h>
@@ -54,7 +53,7 @@ void init();
 uint32_t process(const uint8_t*, uint32_t, bool);
 }
 namespace {
-void BeginHostGxFrame();
+void BeginHostGraphicsFrame();
 bool initialized = false;
 bool frameActive = false;
 bool gpuSynchronized = true, displayCopyPending = false, hasBegunFrame = false;
@@ -67,139 +66,7 @@ uint32_t efbPitch = 0, efbWidth = 0, efbHeight = 0;
 bool efbBgra = false;
 bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
-// Aurora's event polling (game thread) and render-thread frame boundaries take turns.
-std::mutex auroraFrameMutex;
-
-// The game fills owned FIFO chunks and posts them to Aurora's render thread.
-// That thread frames/decodes GX, prepares batches and submits native draws.
-// GXDrawDone waits for CPU command consumption so guest arrays can be reused;
-// it does not explicitly finish the GPU. No separate decoding thread exists.
-// Between submissions, the filling chunk's tail is the translated FIFO window.
-class GxQueue {
-public:
-    explicit GxQueue(void (*process)(const uint8_t*, size_t)) : process(process), filling(kChunk) {}
-    void Submit(const uint8_t* data, size_t size) {
-        CloseWindow();
-        if (filling.size + size > filling.capacity) [[unlikely]] {
-            if (filling.size) HandOff();
-            if (size > filling.capacity) filling = Chunk(size);
-        }
-        std::memcpy(filling.bytes.get() + filling.size, data, size);
-        filling.size += size;
-        gGxFifoWindow = {filling.bytes.get() + filling.size, filling.bytes.get() + filling.capacity};
-    }
-    void SubmitTask(std::function<void()> task) {
-        CloseWindow();
-        if (filling.size) HandOff();
-        Chunk chunk(0);
-        chunk.task = std::move(task);
-        {
-            std::lock_guard lock(mutex);
-            RethrowFailure();
-            ++pending;
-        }
-        Post(std::move(chunk));
-    }
-    void Drain() {
-        CloseWindow();
-        if (filling.size) HandOff();
-        std::unique_lock lock(mutex);
-        idle.wait(lock, [&] { return pending == 0; });
-        RethrowFailure();
-    }
-    void CloseFifoWindow() { CloseWindow(); }
-    void Stop() {
-        CloseWindow();
-        std::unique_lock lock(mutex);
-        stopping = true;
-        // Already posted callbacks capture this object; keep it alive until
-        // the render queue consumes or cancels every owned chunk.
-        idle.wait(lock, [&] { return pending == 0; });
-    }
-
-private:
-    static constexpr size_t kChunk = 16 * 1024, kMaxQueued = 8 * 1024 * 1024;
-    struct Chunk {
-        explicit Chunk(size_t capacity) : bytes(capacity ? new uint8_t[capacity] : nullptr), capacity(capacity) {}
-        std::unique_ptr<uint8_t[]> bytes;
-        size_t size = 0, capacity;
-        std::function<void()> task;
-    };
-    void CloseWindow() {
-        if (!gGxFifoWindow.end) return;
-        filling.size = size_t(gGxFifoWindow.next - filling.bytes.get());
-        gGxFifoWindow = {};
-    }
-    void RethrowFailure() {
-        if (failure) std::rethrow_exception(std::exchange(failure, nullptr));
-    }
-    void HandOff() {
-        std::unique_lock lock(mutex);
-        RethrowFailure();
-        idle.wait(lock, [&] { return queued < kMaxQueued || failure; });
-        RethrowFailure();
-        queued += filling.size;
-        ++pending;
-        auto chunk = std::move(filling);
-        if (!spare.empty()) { filling = std::move(spare.back()); spare.pop_back(); }
-        else filling = Chunk(kChunk);
-        lock.unlock();
-        Post(std::move(chunk));
-    }
-    void Post(Chunk chunk) {
-        aurora::gl::post([this, chunk = std::move(chunk)]() mutable { Consume(std::move(chunk)); });
-    }
-    void Consume(Chunk chunk) {
-        bool skip;
-        {
-            std::lock_guard lock(mutex);
-            skip = stopping || failure != nullptr;
-        }
-        std::exception_ptr error;
-#ifdef __vita__
-        uint64_t cpuStarted = 0;
-#endif
-        if (!skip) {
-            try {
-                if (!aurora::gl::on_render_thread()) throw std::runtime_error("GX queue consumed outside the render thread");
-#ifdef __vita__
-                if (!reportedThread) {
-                    std::fprintf(stderr, "MH3 GX queue: decoded by GXM render thread 0x%08x on core 1\n", unsigned(sceKernelGetThreadId()));
-                    reportedThread = true;
-                }
-#endif
-#ifdef __vita__
-                cpuStarted = aurora::gxm::razor_begin_cpu_work();
-#endif
-                if (chunk.task) chunk.task(); else process(chunk.bytes.get(), chunk.size);
-            } catch (...) { error = std::current_exception(); }
-        }
-#ifdef __vita__
-        aurora::gxm::razor_end_cpu_work(cpuStarted);
-#endif
-        {
-            std::lock_guard lock(mutex);
-            if (error && !failure) failure = error;
-            queued -= chunk.size;
-            --pending;
-            chunk.size = 0;
-            if (chunk.capacity == kChunk) spare.push_back(std::move(chunk));
-        }
-        idle.notify_all();
-    }
-    void (*const process)(const uint8_t*, size_t);
-    Chunk filling; // game thread only
-    std::mutex mutex;
-    std::condition_variable idle;
-    std::vector<Chunk> spare;
-    size_t queued = 0, pending = 0;
-    bool stopping = false, reportedThread = false;
-    std::exception_ptr failure;
-};
-// Null until the first GX bytes, or when the GX runs on the game thread
-// (MH3_GX_WORKER=0, per-draw diagnostics).
-GxQueue* gxQueue = nullptr;
-void DrainGxQueue() { if (gxQueue) gxQueue->Drain(); }
+// Event polling and all graphics submission belong to the game thread.
 
 void FlushHostEfbPokes() {
     if (!efbDirty) return;
@@ -251,7 +118,6 @@ void ShutdownGraphics() {
         MH3_STAT(if (GuestGxStream::commandCount) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
             static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
             static_cast<unsigned long long>(GuestGxStream::drawCount), static_cast<unsigned long long>(guestTextureCopies)));
-        if (gxQueue) { gxQueue->Stop(); delete gxQueue; gxQueue = nullptr; }
         aurora::clear_generated_textures();
         aurora_shutdown(); initialized = false; frameActive = false;
     }
@@ -326,18 +192,7 @@ void InitializeGraphics(int argc, char** argv) {
 #endif
     std::atexit(ShutdownGraphics);
     if (info.backend != config.desiredBackend) throw std::runtime_error("Aurora did not select the required renderer");
-    aurora::gx::fifo::init();
-#if !defined(MH3_ENABLE_GX_DIAGNOSTICS) && !defined(MH3_ENABLE_EFB_COPY_TRACE)
-    const char* earlySkip = std::getenv("MH3_GX_EARLY_SKIP");
-    if (!earlySkip || earlySkip[0] != '0') guestStream.skipDraw = [] {
-        // Start a new frame if a display-copy boundary occurred within this
-        // FIFO chunk. Visible command runs retain their normal coalescing.
-        BeginHostGxFrame();
-        return aurora::gfx::frame_skipped();
-    };
-#endif
-    // Frameskip: a frame is dropped when the render thread is still busy with the
-    // previous one. MH3_FRAMESKIP=0 renders every frame (debugging).
+    // Frameskip polls GPU completion before native draw preparation.
     aurora_set_frameskip(true);
 #ifdef MH3_DEVELOPMENT
     const char* frameskip = std::getenv("MH3_FRAMESKIP");
@@ -392,7 +247,6 @@ void SealDisplayFrame() {
         aurora_request_frame_capture(frame, path.c_str());
     }
     {
-        std::lock_guard lock(auroraFrameMutex);
         aurora_end_frame();
     }
     frameActive = false; displayCopyPending = false;
@@ -402,15 +256,13 @@ bool quitRequested = false;
 
 // Reads the host events; a quit is kept for ServiceHostGraphicsEvents.
 void PollHostGraphicsEvents() {
-    std::lock_guard lock(auroraFrameMutex);
     for (const auto* event = aurora_update(); event && event->type != AURORA_NONE; ++event)
         if (event->type == AURORA_EXIT) quitRequested = true;
 }
 
 namespace {
-void BeginHostGxFrame() {
+void BeginHostGraphicsFrame() {
     if (frameActive) return;
-    std::lock_guard lock(auroraFrameMutex);
     if (hasBegunFrame) aurora::gfx::preserve_next_efb_frame();
     frameActive = aurora_begin_frame();
     hasBegunFrame = true;
@@ -419,170 +271,25 @@ void BeginHostGxFrame() {
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
         aurora::gfx::require_frame_render();
 }
-// Decode guest FIFO bytes on the render thread (game-thread diagnostics remain opt-in).
-void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
-#ifdef MH3_DEVELOPMENT
-    if (guestStream.traceDraw) {
-        std::array<uint32_t, 4> callers{};
-        if (const auto* cpu = TryGetCpuContext()) {
-            callers[0] = cpu->lr;
-            uint32_t stack = cpu->gpr[1];
-            for (unsigned i = 1; i < callers.size(); ++i) {
-                const uint32_t physical = stack & 0x3fffffff;
-                if ((stack & 3) || !((physical < Memory::kMem1Size - 8) ||
-                    (physical >= Memory::kMem2PhysicalBase && physical < Memory::kMem2PhysicalEnd - 8))) break;
-                const uint32_t next = Memory::Read32(stack);
-                callers[i] = Memory::Read32(stack + 4);
-                if (next <= stack) break;
-                stack = next;
-            }
-        }
-        aurora::gx::fifo::set_capture_callers(callers.data());
-    }
-#endif
-    BeginHostGxFrame();
-    guestStream.Write(std::span<const uint8_t>(data, size), [](auto packet) {
-        BeginHostGxFrame();
-#ifdef MH3_DEVELOPMENT
-        // MH3_GX_DRAW_LOG=file,from,to: per draw of frames from..to, the
-        // frame, the draw's index, its primitive and vertex count, a hash of
-        // its bytes and of the loaded position matrices, and the current
-        // position matrix's translation.
-        static FILE* drawLog = nullptr;
-        static uint64_t logFrom = 0, logTo = 0;
-        static const bool drawLogInit = [] {
-            const char* v = std::getenv("MH3_GX_DRAW_LOG");
-            if (!v) return true;
-            std::string spec = v;
-            const auto a = spec.find(','), b = spec.rfind(',');
-            if (a == std::string::npos || a == b) return true;
-            logFrom = std::stoull(spec.substr(a + 1, b - a - 1));
-            logTo = std::stoull(spec.substr(b + 1));
-            drawLog = std::fopen(spec.substr(0, a).c_str(), "w");
-            return true;
-        }();
-        (void)drawLogInit;
-        static uint64_t drawFrame = ~0ull;
-        static uint32_t drawIndex = 0;
-        if (drawLog && packet[0] >= 0x80 && packet[0] <= 0xBF) {
-            const uint64_t frame = aurora::gfx::current_frame();
-            if (frame != drawFrame) { drawFrame = frame; drawIndex = 0; }
-            if (frame >= logFrom && frame <= logTo) {
-                auto fnv = [](const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
-                    for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
-                    return h;
-                };
-                const auto& st = aurora::gx::g_gxState;
-                uint64_t mh = 1469598103934665603ull;
-                for (const auto& m : st.pnMtx) mh = fnv(&m.pos, sizeof(m.pos), mh);
-                const auto& cur = st.pnMtx[st.currentPnMtx / 3].pos;
-                std::fprintf(drawLog, "%llu %u %02x %u %016llx %016llx %u %.3f %.3f %.3f\n", (unsigned long long)frame,
-                             drawIndex, packet[0], unsigned(packet[1] << 8 | packet[2]),
-                             (unsigned long long)fnv(packet.data(), packet.size()), (unsigned long long)mh,
-                             st.currentPnMtx, cur.m0.w(), cur.m1.w(), cur.m2.w());
-            }
-            ++drawIndex;
-        }
-#endif
-#ifdef MH3_ENABLE_GX_DIAGNOSTICS
-        GxDiagnosticDraw diagnostic(packet[0] >= 0x80 && packet[0] <= 0xBF);
-        if (diagnostic.skip) return;
-#endif
-        // A packet holds one or more complete commands. Aurora yields before a
-        // draw when the current staging batch has no room for it. Split only
-        // after process releases its renderer lock; this keeps the EFB,
-        // viewport and pending presentation within the same frame.
-        size_t consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
-        while (consumed != packet.size()) {
-            aurora::gfx::split_staging_batch();
-            const size_t more = aurora::gx::fifo::process(packet.data() + consumed, packet.size() - consumed, true);
-            if (more == 0) throw std::runtime_error("Guest GX command does not fit after staging capacity submission");
-            consumed += more;
-        }
-#ifdef MH3_DEVELOPMENT
-        if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
-        if (packet[0] == 0x50 && packet[1] == 0 && packet[2] == 0x30) ++guestTextures;
-#endif
-    }, [](uint32_t address) -> GuestGxStream::ArrayView {
-        const uint32_t physical = address & 0x3FFFFFFF;
-        uint32_t size;
-        if (physical < 0x01800000) size = 0x01800000 - physical;
-        else if (physical >= 0x10000000 && physical < 0x14000000) size = 0x14000000 - physical;
-        else throw std::runtime_error("GX vertex array does not point into guest RAM");
-        return {reinterpret_cast<uintptr_t>(Memory::GetPointer(address, size)), size};
-    }, [](const GuestGxStream::DisplayCopy& copy) {
-        BeginHostGxFrame();
-        GXSetDispCopyDst(copy.width, copy.height);
-        GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
-        ++guestCopies;
-#ifdef MH3_ENABLE_EFB_COPY_TRACE
-        EfbCopyTrace::EndFrame();
-#endif
-#ifdef MH3_ENABLE_GX_DIAGNOSTICS
-        UpdateGxDiagnosticMode();
-#endif
-        displayCopyPending = true;
-        // End at the actual copy boundary, including inside nested display
-        // lists or chunks containing commands from more than one frame.
-        SealDisplayFrame();
-    }, [](const GuestGxStream::EfbClear& copy) {
-        BeginHostGxFrame();
-        // The stream retains only a texture-copy command's clear side effect.
-        GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
-        GXCopyTex(nullptr, GX_TRUE);
-    });
-}
 }
 
 #ifdef MH3_DEVELOPMENT
 static std::vector<uint8_t>* gxCapture = nullptr;
 void CaptureGuestGx(std::vector<uint8_t>* into) {
-    if (gxQueue) gxQueue->CloseFifoWindow();
     gxCapture = into;
 }
 #endif
 
-void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
-#ifdef MH3_DEVELOPMENT
-    if (gxCapture) [[unlikely]] {
-        gxCapture->insert(gxCapture->end(), data, data + size);
-        return;
-    }
-#endif
-    if (gpuSynchronized) {
-        // The first GX since GXDrawDone (the FIFO queue is drained): the CPU's EFB
-        // pixels go in ahead of it, and its draws end the EFB snapshot.
-        char name[] = "MH3";
-        char* argv[]{name, nullptr};
-        InitializeGraphics(1, argv);
-        FlushHostEfbPokes();
-        efbPixels.clear();
-        gpuSynchronized = false;
-        static const bool useRenderQueue = [] {
-#if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_ENABLE_EFB_COPY_TRACE)
-            return false;
-#else
-#ifdef MH3_DEVELOPMENT
-            // MH3_GX_WORKER=0: GX on the game thread; the draw log needs it there too.
-            const char* v = std::getenv("MH3_GX_WORKER");
-            if ((v && v[0] == '0') || std::getenv("MH3_GX_DRAW_LOG") ||
-                std::getenv("MH3_GX_SOURCE_CAPTURE")) return false;
-#endif
-            return true;
-#endif
-        }();
-        if (useRenderQueue && !gxQueue) gxQueue = new GxQueue(ProcessGuestGxBytes);
-    }
-    if (gxQueue) gxQueue->Submit(data, size);
-    else ProcessGuestGxBytes(data, size);
+void SubmitGuestGxBytes(const uint8_t*, size_t) {
+    PanicLegacyGx("GX FIFO write");
 }
 
 void SubmitHostGraphicsTask(std::function<void()> task) {
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
-    if (gxQueue) gxQueue->SubmitTask(std::move(task));
-    else task();
+    if (!aurora::gl::on_render_thread()) throw std::runtime_error("Native graphics task called outside the game thread");
+    task();
 }
 
 template <size_t N>
@@ -597,7 +304,7 @@ template void SubmitGuestGxFixed<4>(const uint8_t*);
 // Game speed is retrace periods the frame pacer stepped (frames * budget)
 // versus the nominal VI rate, since the game logic is fixed-step per frame;
 // game FPS counts display copies; host
-// FPS counts frames the render thread actually swapped.
+// FPS counts frames submitted to the presentation backend.
 void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nominalHz) {
 #ifdef __vita__
     ReportVitaMemory();
@@ -654,13 +361,11 @@ void ServiceHostGraphicsEvents() {
 void CompleteHostGraphics() {
     if (!initialized) return;
     MH3_STAT(const auto completionStart = FrameProfile::Clock::now();)
-    DrainGxQueue();
     MH3_STAT(const auto afterQueue = FrameProfile::Clock::now();)
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
-    // GXDrawDone consumes queued CPU commands before the guest reuses their
-    // source arrays. It does not explicitly wait for GPU completion; nothing
-    // reads rendered results back on the CPU, and frameskip handles a busy GPU.
+    // Native submissions execute inline on the game thread and return while
+    // the GPU is working. Completion notifications retain GPU input ownership.
     // Normal display copies seal at their FIFO boundary; this handles the
     // remaining manual/diagnostic path without submitting a partial frame.
     // An EFB peek submits what it needs itself (ReadHostEfbColor).
@@ -735,7 +440,7 @@ void CompleteHostGraphics() {
     }
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
-        std::fprintf(stderr, "MH3 GX draw completion %u: CPU GX queue drained\n", completions);
+        std::fprintf(stderr, "MH3 graphics boundary %u: game-thread submission complete\n", completions);
 #endif
     gpuSynchronized = true;
 }
@@ -890,19 +595,33 @@ int RunEfbCheck(int argc, char** argv) {
 int RunGraphicsCheck(int argc, char** argv) {
     InitializeGraphics(argc, argv);
     struct Shutdown { ~Shutdown() { ShutdownGraphics(); } } shutdown;
-    unsigned frames = 0;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (frames < 30 && std::chrono::steady_clock::now() < deadline) {
-        for (const auto* event = aurora_update(); event && event->type != AURORA_NONE; ++event)
-            if (event->type == AURORA_EXIT) throw std::runtime_error("Renderer check closed before completion");
-        if (aurora_begin_frame()) {
-            GXSetCopyClear(GXColor{20, 40, 80, 255}, GX_MAX_Z24);
-            aurora_end_frame();
-            ++frames;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    if (!aurora::gl::on_render_thread())
+        throw std::runtime_error("Native context is not owned by the game thread");
+    bool inlineTask = false;
+    aurora::gl::post([&] { inlineTask = aurora::gl::on_render_thread(); });
+    if (!inlineTask) throw std::runtime_error("Native task was queued to another CPU thread");
+    const auto& target = aurora::gpu::g_frameBuffer;
+    unsigned pending = 0;
+    const float color[4]{20.f / 255.f, 40.f / 255.f, 80.f / 255.f, 1.f};
+    for (unsigned frame = 0; frame < 30; ++frame) {
+        ServiceHostGraphicsEvents();
+        aurora::gl::bind_framebuffer(target.texture->gl(), 0);
+        aurora::gl::set_viewport(0, 0, target.width, target.height, 0.f, 1.f);
+        aurora::gl::set_scissor_enabled(false);
+        aurora::gl::set_color_mask(true, true, true, true);
+        aurora::gl::clear_color(color);
+        const auto [width, height] = aurora::gl::drawable_size();
+        aurora::gl::present(target.texture, 0, 0, width, height);
+        pending += aurora::gl::gpu_frame_pending(); // timeout 0; never a finish
     }
-    if (frames != 30) throw std::runtime_error("Renderer frame check timed out");
-    std::fprintf(stderr, "MH3 renderer check: %u frames submitted\n", frames);
+    // This diagnostic alone consumes a GPU result to validate pixel accuracy.
+    uint8_t pixel[4]{};
+    aurora::gl::read_pixels(target.texture->gl(), 0, 0, 1, 1, pixel);
+    if (std::abs(int(pixel[0]) - 20) > 1 || std::abs(int(pixel[1]) - 40) > 1 ||
+        std::abs(int(pixel[2]) - 80) > 1 || pixel[3] != 255)
+        throw std::runtime_error("Native renderer clear/present pixel validation failed");
+    std::fprintf(stderr, "MH3 renderer check: 30 native frames, game-thread owner, inline tasks, "
+                        "%u nonblocking busy observations, pixel %u,%u,%u,%u; no GX calls\n",
+                 pending, pixel[0], pixel[1], pixel[2], pixel[3]);
     return 0;
 }

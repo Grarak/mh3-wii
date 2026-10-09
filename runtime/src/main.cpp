@@ -4,6 +4,7 @@
 #include "audio_dma.h"
 #include "village_boot.h"
 #include "gx_host.h"
+#include "gx_panic.h"
 #include "field_jump.h"
 #include "quest_catalog.h"
 #include "player_health.h"
@@ -133,6 +134,7 @@ void StartQuestBoot(int argc, char** argv) {
 #endif
 
 int main(int argc, char** argv) {
+    InstallLegacyGxPanicHandler();
 #ifdef __vita__
     InitializeVitaPlatform(argc, argv);
 #endif
@@ -187,7 +189,9 @@ int main(int argc, char** argv) {
             if (MemoryInline::FlatLoad<uint32_t>(0xC0001004) != 0xABCDEF01)
                 throw std::runtime_error("Translated stack-store mapping failed");
             bool caught = false;
-            try { Memory::Read32(0xCC000000); } catch (const Memory::AccessViolation&) { caught = true; }
+            // GX MMIO now terminates with a backtrace; an unrelated unclaimed
+            // device address still reports an ordinary access violation.
+            try { Memory::Read32(0xCC009000); } catch (const Memory::AccessViolation&) { caught = true; }
             if (!caught) throw std::runtime_error("MMIO must not silently read as RAM");
             MH3_OSExceptionInit(&cpu);
             if (Memory::Read32(0x80797798) != 0x80003000 || Memory::Read32(0x80003038) != 0x804CB930)

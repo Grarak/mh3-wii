@@ -1,3 +1,4 @@
+#include <aurora/legacy_gx.h>
 #include "gx.hpp"
 #include "__gx.h"
 #include "dolphin/gd/GDGeometry.h"
@@ -168,288 +169,54 @@ static inline bool AuroraVtxAttrFmtDiffers(GXVtxFmt vtxfmt, GXAttr attr, GXCompC
 extern "C" {
 
 void GXSetVtxDesc(GXAttr attr, GXAttrType type) {
-  const u32 oldVcdLo = __gx->vcdLo;
-  const u32 oldVcdHi = __gx->vcdHi;
-  const u8 oldHasNrms = __gx->hasNrms;
-  const u8 oldHasBiNrms = __gx->hasBiNrms;
-  const u32 oldNrmType = __gx->nrmType;
-  const bool auroraStateChanged = AuroraVtxDescDiffers(attr, type);
-
-  SETVCDATTR(attr, type);
-  if (__gx->hasNrms || __gx->hasBiNrms) {
-    SET_REG_FIELD(0, __gx->vcdLo, 2, 11, __gx->nrmType);
-  } else {
-    SET_REG_FIELD(0, __gx->vcdLo, 2, 11, 0);
-  }
-  if (aurora::gx::fifo::in_display_list() || auroraStateChanged || __gx->vcdLo != oldVcdLo ||
-      __gx->vcdHi != oldVcdHi || __gx->hasNrms != oldHasNrms || __gx->hasBiNrms != oldHasBiNrms ||
-      __gx->nrmType != oldNrmType) {
-    __gx->dirtyState |= 8;
-  }
+  aurora_legacy_gx_panic("GXSetVtxDesc");
 }
 
 void GXSetSourceVtxDesc(GXAttr attr, GXAttrType type) {
-  if (attr >= GX_VA_PNMTXIDX && attr < GX_VA_MAX_ATTR) {
-    g_gxState.sourceVtxDesc[attr] = type;
-  }
+  aurora_legacy_gx_panic("GXSetSourceVtxDesc");
 }
 
 void GXSetVtxDescv(GXVtxDescList* list) {
-  const u32 oldVcdLo = __gx->vcdLo;
-  const u32 oldVcdHi = __gx->vcdHi;
-  const u8 oldHasNrms = __gx->hasNrms;
-  const u8 oldHasBiNrms = __gx->hasBiNrms;
-  const u32 oldNrmType = __gx->nrmType;
-  bool auroraStateChanged = false;
-
-  while (list->attr != GX_VA_NULL) {
-    auroraStateChanged = auroraStateChanged || AuroraVtxDescDiffers(list->attr, list->type);
-    SETVCDATTR(list->attr, list->type);
-    ++list;
-  }
-  if (__gx->hasNrms || __gx->hasBiNrms) {
-    SET_REG_FIELD(0, __gx->vcdLo, 2, 11, __gx->nrmType);
-  } else {
-    SET_REG_FIELD(0, __gx->vcdLo, 2, 11, 0);
-  }
-  if (aurora::gx::fifo::in_display_list() || auroraStateChanged || __gx->vcdLo != oldVcdLo ||
-      __gx->vcdHi != oldVcdHi || __gx->hasNrms != oldHasNrms || __gx->hasBiNrms != oldHasBiNrms ||
-      __gx->nrmType != oldNrmType) {
-    __gx->dirtyState |= 8;
-  }
+  aurora_legacy_gx_panic("GXSetVtxDescv");
 }
 
 void GXClearVtxDesc() {
-  __gx->vcdLo = 0;
-  SET_REG_FIELD(0, __gx->vcdLo, 2, 9, 1); // GX_VA_POS = GX_DIRECT
-  __gx->vcdHi = 0;
-  __gx->hasNrms = 0;
-  __gx->hasBiNrms = 0;
-  __gx->dirtyState |= 8;
+  aurora_legacy_gx_panic("GXClearVtxDesc");
 }
 
 void GXSetVtxAttrFmt(GXVtxFmt vtxfmt, GXAttr attr, GXCompCnt cnt, GXCompType type, u8 frac) {
-  CHECK(vtxfmt >= GX_VTXFMT0 && vtxfmt < GX_MAX_VTXFMT, "invalid vtxfmt {}", underlying(vtxfmt));
-  CHECK(attr >= GX_VA_POS && attr < GX_VA_MAX_ATTR, "invalid attr {}", underlying(attr));
-
-  u32* va = &__gx->vatA[vtxfmt];
-  u32* vb = &__gx->vatB[vtxfmt];
-  u32* vc = &__gx->vatC[vtxfmt];
-  const u32 oldVa = *va;
-  const u32 oldVb = *vb;
-  const u32 oldVc = *vc;
-  const bool auroraStateChanged = AuroraVtxAttrFmtDiffers(vtxfmt, attr, cnt, type, frac);
-  SETVAT(va, vb, vc, attr, cnt, type, frac);
-  if (aurora::gx::fifo::in_display_list() || auroraStateChanged || *va != oldVa || *vb != oldVb ||
-      *vc != oldVc) {
-    __gx->dirtyState |= 0x10;
-    __gx->dirtyVAT |= static_cast<u8>(1 << vtxfmt);
-  }
+  aurora_legacy_gx_panic("GXSetVtxAttrFmt");
 }
 
 void GXSetVtxAttrFmtv(GXVtxFmt vtxfmt, const GXVtxAttrFmtList* list) {
-  CHECK(vtxfmt >= GX_VTXFMT0 && vtxfmt < GX_MAX_VTXFMT, "invalid vtxfmt {}", underlying(vtxfmt));
-  CHECK(list != nullptr, "null vtx attr fmt list");
-
-  u32* va = &__gx->vatA[vtxfmt];
-  u32* vb = &__gx->vatB[vtxfmt];
-  u32* vc = &__gx->vatC[vtxfmt];
-  const u32 oldVa = *va;
-  const u32 oldVb = *vb;
-  const u32 oldVc = *vc;
-  bool auroraStateChanged = false;
-  while (list->attr != GX_VA_NULL) {
-    CHECK(list->attr >= GX_VA_POS && list->attr < GX_VA_MAX_ATTR, "invalid attr {}", underlying(list->attr));
-    auroraStateChanged =
-        auroraStateChanged || AuroraVtxAttrFmtDiffers(vtxfmt, list->attr, list->cnt, list->type, list->frac);
-    SETVAT(va, vb, vc, list->attr, list->cnt, list->type, list->frac);
-    ++list;
-  }
-
-  if (aurora::gx::fifo::in_display_list() || auroraStateChanged || *va != oldVa || *vb != oldVb ||
-      *vc != oldVc) {
-    __gx->dirtyState |= 0x10;
-    __gx->dirtyVAT |= static_cast<u8>(1 << vtxfmt);
-  }
+  aurora_legacy_gx_panic("GXSetVtxAttrFmtv");
 }
 
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le) {
-  GXAttr cpAttr = static_cast<GXAttr>(attr);
-  if (attr == GX_VA_NBT) {
-    cpAttr = GX_VA_NRM;
-  }
-  u32 cpIdx = cpAttr - GX_VA_POS;
-
-  assert((cpIdx & ~0xF) == 0);
-
-  // Write array base
-  GX_WRITE_AURORA(GX_LOAD_AURORA_ARRAYBASE | cpIdx);
-  GX_WRITE_U64(reinterpret_cast<u64>(data));
-  GX_WRITE_U32(size);
-  GX_WRITE_U8(le ? 1 : 0);
-
-  // Write array stride
-  GX_WRITE_CP_REG(CP_REG_ARRAYSTRIDE_ID | cpIdx, stride);
+  aurora_legacy_gx_panic("GXSetArray");
 }
 
 void GXSetTexCoordGen2(GXTexCoordID dst, GXTexGenType type, GXTexGenSrc src, u32 mtx, GXBool normalize, u32 postMtx) {
-  CHECK(dst >= GX_TEXCOORD0 && dst <= GX_TEXCOORD7, "invalid tex coord {}", underlying(dst));
-
-  u32 reg = 0;
-  u32 row = 5;
-  u32 form = 0;
-
-  switch (src) {
-  case GX_TG_POS:
-    row = 0;
-    form = 1;
-    break;
-  case GX_TG_NRM:
-    row = 1;
-    form = 1;
-    break;
-  case GX_TG_BINRM:
-    row = 3;
-    form = 1;
-    break;
-  case GX_TG_TANGENT:
-    row = 4;
-    form = 1;
-    break;
-  case GX_TG_COLOR0:
-    row = 2;
-    break;
-  case GX_TG_COLOR1:
-    row = 2;
-    break;
-  case GX_TG_TEX0:
-    row = 5;
-    break;
-  case GX_TG_TEX1:
-    row = 6;
-    break;
-  case GX_TG_TEX2:
-    row = 7;
-    break;
-  case GX_TG_TEX3:
-    row = 8;
-    break;
-  case GX_TG_TEX4:
-    row = 9;
-    break;
-  case GX_TG_TEX5:
-    row = 10;
-    break;
-  case GX_TG_TEX6:
-    row = 11;
-    break;
-  case GX_TG_TEX7:
-    row = 12;
-    break;
-  default:
-    break;
-  }
-
-  switch (type) {
-  case GX_TG_MTX2x4:
-    SET_REG_FIELD(0, reg, 1, 1, 0);
-    SET_REG_FIELD(0, reg, 1, 2, form);
-    SET_REG_FIELD(0, reg, 3, 4, 0);
-    SET_REG_FIELD(0, reg, 5, 7, row);
-    break;
-  case GX_TG_MTX3x4:
-    SET_REG_FIELD(0, reg, 1, 1, 1);
-    SET_REG_FIELD(0, reg, 1, 2, form);
-    SET_REG_FIELD(0, reg, 3, 4, 0);
-    SET_REG_FIELD(0, reg, 5, 7, row);
-    break;
-  case GX_TG_SRTG:
-    SET_REG_FIELD(0, reg, 1, 1, 0);
-    SET_REG_FIELD(0, reg, 1, 2, form);
-    if (src == GX_TG_COLOR0) {
-      SET_REG_FIELD(0, reg, 3, 4, 2);
-    } else {
-      SET_REG_FIELD(0, reg, 3, 4, 3);
-    }
-    SET_REG_FIELD(0, reg, 5, 7, 2);
-    break;
-  default:
-    // Bump mapping types
-    if (type >= 2 && type <= 9) {
-      SET_REG_FIELD(0, reg, 1, 1, 0);
-      SET_REG_FIELD(0, reg, 1, 2, form);
-      SET_REG_FIELD(0, reg, 3, 4, 1);
-      SET_REG_FIELD(0, reg, 5, 7, row);
-      SET_REG_FIELD(0, reg, 3, 12, src - 12);
-      SET_REG_FIELD(0, reg, 3, 15, type - 2);
-    }
-    break;
-  }
-
-  GX_WRITE_XF_REG(dst + 0x40, reg);
-
-  // Post-transform register
-  u32 postReg = 0;
-  SET_REG_FIELD(0, postReg, 6, 0, postMtx - 64);
-  SET_REG_FIELD(0, postReg, 1, 8, normalize);
-  GX_WRITE_XF_REG(dst + 0x50, postReg);
-
-  // Update matrix index shadows
-  switch (dst) {
-  case GX_TEXCOORD0:
-    SET_REG_FIELD(0, __gx->matIdxA, 6, 6, mtx);
-    break;
-  case GX_TEXCOORD1:
-    SET_REG_FIELD(0, __gx->matIdxA, 6, 12, mtx);
-    break;
-  case GX_TEXCOORD2:
-    SET_REG_FIELD(0, __gx->matIdxA, 6, 18, mtx);
-    break;
-  case GX_TEXCOORD3:
-    SET_REG_FIELD(0, __gx->matIdxA, 6, 24, mtx);
-    break;
-  case GX_TEXCOORD4:
-    SET_REG_FIELD(0, __gx->matIdxB, 6, 0, mtx);
-    break;
-  case GX_TEXCOORD5:
-    SET_REG_FIELD(0, __gx->matIdxB, 6, 6, mtx);
-    break;
-  case GX_TEXCOORD6:
-    SET_REG_FIELD(0, __gx->matIdxB, 6, 12, mtx);
-    break;
-  default:
-    SET_REG_FIELD(0, __gx->matIdxB, 6, 18, mtx);
-    break;
-  }
-  __GXSetMatrixIndex(static_cast<GXAttr>(dst + 1));
+  aurora_legacy_gx_panic("GXSetTexCoordGen2");
 }
 
 void GXSetNumTexGens(u8 num) {
-  SET_REG_FIELD(0, __gx->genMode, 4, 0, num);
-  GX_WRITE_XF_REG(0x3F, num);
-  __gx->dirtyState |= 4;
+  aurora_legacy_gx_panic("GXSetNumTexGens");
 }
 
-void GXInvalidateVtxCache() { GX_WRITE_U8(0x48); }
+void GXInvalidateVtxCache() {
+  aurora_legacy_gx_panic("GXInvalidateVtxCache");
+}
 
 void GXSetLineWidth(u8 width, GXTexOffset offs) {
-  SET_REG_FIELD(0, __gx->lpSize, 8, 0, width);
-  SET_REG_FIELD(0, __gx->lpSize, 3, 16, offs);
-  GX_WRITE_RAS_REG(__gx->lpSize);
-  __gx->bpSent = 1;
+  aurora_legacy_gx_panic("GXSetLineWidth");
 }
 
 void GXSetPointSize(u8 pointSize, GXTexOffset texOffsets) {
-  SET_REG_FIELD(0, __gx->lpSize, 8, 8, pointSize);
-  SET_REG_FIELD(0, __gx->lpSize, 3, 19, texOffsets);
-  GX_WRITE_RAS_REG(__gx->lpSize);
-  __gx->bpSent = 1;
+  aurora_legacy_gx_panic("GXSetPointSize");
 }
 
 void GXEnableTexOffsets(GXTexCoordID coord, GXBool line_enable, GXBool point_enable) {
-  SET_REG_FIELD(0, __gx->suTs0[coord], 1, 18, line_enable);
-  SET_REG_FIELD(0, __gx->suTs0[coord], 1, 19, point_enable);
-  GX_WRITE_RAS_REG(__gx->suTs0[coord]);
-  __gx->bpSent = 1;
+  aurora_legacy_gx_panic("GXEnableTexOffsets");
 }
 }

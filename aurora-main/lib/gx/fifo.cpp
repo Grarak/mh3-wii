@@ -24,6 +24,7 @@ uint32_t sDlWritePos = 0;
 } // namespace detail
 
 void init() {
+  aurora_legacy_gx_panic("aurora::gx::fifo::init");
   constexpr uint32_t initialCapacity = 64 * 1024;
   reset_cp_register_cache();
   free(detail::sBufferData);
@@ -37,6 +38,7 @@ void init() {
 }
 
 void write_data_grow(const void* data, uint32_t length) {
+  aurora_legacy_gx_panic("aurora::gx::fifo::write_data_grow");
   uint32_t needed = detail::sBufferSize + length;
   uint32_t newCap = std::max(detail::sBufferCapacity * 2, needed);
   detail::sBufferData = static_cast<uint8_t*>(realloc(detail::sBufferData, newCap));
@@ -46,6 +48,7 @@ void write_data_grow(const void* data, uint32_t length) {
 }
 
 void begin_display_list(uint8_t* buf, uint32_t size) {
+  aurora_legacy_gx_panic("aurora::gx::fifo::begin_display_list");
   detail::sInDisplayList = true;
   detail::sDlBuffer = buf;
   detail::sDlSize = size;
@@ -53,6 +56,7 @@ void begin_display_list(uint8_t* buf, uint32_t size) {
 }
 
 uint32_t end_display_list() {
+  aurora_legacy_gx_panic("aurora::gx::fifo::end_display_list");
   detail::sInDisplayList = false;
   uint32_t bytesWritten = detail::sDlWritePos;
   uint32_t padded = (bytesWritten + 31) & ~31u;
@@ -74,6 +78,7 @@ static void note_drain_wait(uint64_t nanos) noexcept {
 }
 
 void drain() {
+  aurora_legacy_gx_panic("aurora::gx::fifo::drain");
   // SEALED, not DONE.
   const auto waited = aurora::wait_for_frame_worker_sealed();
   if (waited.count() > 0) UNLIKELY {

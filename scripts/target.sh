@@ -1,5 +1,5 @@
 # Sourced by the build and run scripts. MH3 targets arm32 (armhf) and arm64
-# Linux with Vulkan. MH3_ARCH selects the target (default arm32). When the
+# Linux with OpenGL ES. MH3_ARCH selects the target (default arm32). When the
 # build machine's architecture differs, the scripts cross-compile with the
 # matching toolchain file; scripts/docker-build.sh provides an arm32 cross
 # environment.

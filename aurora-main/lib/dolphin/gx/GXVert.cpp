@@ -1,3 +1,4 @@
+#include <aurora/legacy_gx.h>
 #include "gx.hpp"
 #include "__gx.h"
 #include "../../gx/fifo.hpp"
@@ -521,213 +522,208 @@ static void write_index_attr(GXAttr attr, u16 index, bool index16) {
 extern "C" {
 
 void GXBegin(GXPrimitive primitive, GXVtxFmt vtxFmt, u16 nVerts) {
-  CHECK(!sInBegin, "GXBegin: called without matching GXEnd");
-
-  // Flush dirty state before starting a draw
-  if (__gx->dirtyState != 0) {
-    __GXSetDirtyState();
-  }
-
-  // Flush pending primitives if needed
-  if (*reinterpret_cast<u32*>(&__gx->vNum) != 0) {
-    __GXSendFlushPrim();
-  }
-
-  GX_WRITE_U8(vtxFmt | primitive);
-  GX_WRITE_U16(nVerts);
-
-  // Record state for vertex count validation in GXEnd
-  sBeginNVerts = nVerts;
-  sBeginFifoSize = aurora::gx::fifo::get_buffer_size();
-  sBeginPrimitive = primitive;
-  sBeginVtxFmt = vtxFmt;
-  sInBegin = true;
-  ensure_vtx_cache(vtxFmt);
-  reset_attr_writer();
+  aurora_legacy_gx_panic("GXBegin");
 }
 
 void GXEnd() {
-  if (sInBegin) {
-    u32 bytesWritten = aurora::gx::fifo::get_buffer_size() - sBeginFifoSize;
-    if (sBeginNVerts > 0 && bytesWritten > 0) {
-      u32 vtxSize = bytesWritten / sBeginNVerts;
-      u32 remainder = bytesWritten % sBeginNVerts;
-      if (remainder != 0) {
-        Log.warn("GXEnd: vertex data not evenly divisible: {} bytes for {} vertices prim={} fmt={} "
-                 "vcdLo=0x{:08x} vcdHi=0x{:08x} vatA=0x{:08x} vatB=0x{:08x} vatC=0x{:08x}",
-                 bytesWritten, sBeginNVerts, underlying(sBeginPrimitive), underlying(sBeginVtxFmt),
-                 __gx->vcdLo, __gx->vcdHi, __gx->vatA[sBeginVtxFmt], __gx->vatB[sBeginVtxFmt],
-                 __gx->vatC[sBeginVtxFmt]);
-      }
-      u32 actualVerts = (vtxSize > 0) ? bytesWritten / vtxSize : 0;
-      CHECK(actualVerts == sBeginNVerts,
-            "GXEnd: vertex count mismatch: GXBegin declared {} vertices ({}B each, {}B total) "
-            "but {} bytes were written ({} vertices)",
-            sBeginNVerts, vtxSize, sBeginNVerts * vtxSize, bytesWritten, actualVerts);
-    }
-    sInBegin = false;
-    sWriteAttr = GX_VA_NULL;
-    sWriteAttrComps = 0;
-  }
-  if (!aurora::gx::fifo::in_display_list()) {
-    aurora::gx::fifo::drain();
-  }
+  aurora_legacy_gx_panic("GXEnd");
 }
 
 void GXPosition3f32(f32 x, f32 y, f32 z) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_f32(x), scalar_f32(y), scalar_f32(z)});
+  aurora_legacy_gx_panic("GXPosition3f32");
 }
 
 void GXPosition3u16(u16 x, u16 y, u16 z) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_u32(x), scalar_u32(y), scalar_u32(z)});
+  aurora_legacy_gx_panic("GXPosition3u16");
 }
 
 void GXPosition3s16(s16 x, s16 y, s16 z) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_s32(x), scalar_s32(y), scalar_s32(z)});
+  aurora_legacy_gx_panic("GXPosition3s16");
 }
 
 void GXPosition3u8(u8 x, u8 y, u8 z) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_u32(x), scalar_u32(y), scalar_u32(z)});
+  aurora_legacy_gx_panic("GXPosition3u8");
 }
 
 void GXPosition3s8(s8 x, s8 y, s8 z) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_s32(x), scalar_s32(y), scalar_s32(z)});
+  aurora_legacy_gx_panic("GXPosition3s8");
 }
 
 void GXPosition2f32(f32 x, f32 y) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_f32(x), scalar_f32(y)});
+  aurora_legacy_gx_panic("GXPosition2f32");
 }
 
 void GXPosition2u16(u16 x, u16 y) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_u32(x), scalar_u32(y)});
+  aurora_legacy_gx_panic("GXPosition2u16");
 }
 
 void GXPosition2s16(s16 x, s16 y) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_s32(x), scalar_s32(y)});
+  aurora_legacy_gx_panic("GXPosition2s16");
 }
 
 void GXPosition2u8(u8 x, u8 y) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_u32(x), scalar_u32(y)});
+  aurora_legacy_gx_panic("GXPosition2u8");
 }
 
 void GXPosition2s8(s8 x, s8 y) {
-  write_numeric_attr(GX_VA_POS, std::array{scalar_s32(x), scalar_s32(y)});
+  aurora_legacy_gx_panic("GXPosition2s8");
 }
 
-void GXPosition1x16(u16 idx) { write_index_attr(GX_VA_POS, idx, true); }
+void GXPosition1x16(u16 idx) {
+  aurora_legacy_gx_panic("GXPosition1x16");
+}
 
-void GXPosition1x8(u8 idx) { write_index_attr(GX_VA_POS, idx, false); }
+void GXPosition1x8(u8 idx) {
+  aurora_legacy_gx_panic("GXPosition1x8");
+}
 
 void GXNormal3f32(f32 x, f32 y, f32 z) {
-  write_numeric_attr(GX_VA_NRM, std::array{scalar_f32(x), scalar_f32(y), scalar_f32(z)});
+  aurora_legacy_gx_panic("GXNormal3f32");
 }
 
 void GXNormal3u16(u16 x, u16 y, u16 z) {
-  write_numeric_attr(GX_VA_NRM, std::array{scalar_u32(x), scalar_u32(y), scalar_u32(z)});
+  aurora_legacy_gx_panic("GXNormal3u16");
 }
 
 void GXNormal3s16(s16 x, s16 y, s16 z) {
-  write_numeric_attr(GX_VA_NRM, std::array{scalar_s32(x), scalar_s32(y), scalar_s32(z)});
+  aurora_legacy_gx_panic("GXNormal3s16");
 }
 
 void GXNormal3u8(u8 x, u8 y, u8 z) {
-  write_numeric_attr(GX_VA_NRM, std::array{scalar_u32(x), scalar_u32(y), scalar_u32(z)});
+  aurora_legacy_gx_panic("GXNormal3u8");
 }
 
 void GXNormal3s8(s8 x, s8 y, s8 z) {
-  write_numeric_attr(GX_VA_NRM, std::array{scalar_s32(x), scalar_s32(y), scalar_s32(z)});
+  aurora_legacy_gx_panic("GXNormal3s8");
 }
 
-void GXNormal1x16(u16 index) { write_index_attr(GX_VA_NRM, index, true); }
+void GXNormal1x16(u16 index) {
+  aurora_legacy_gx_panic("GXNormal1x16");
+}
 
-void GXNormal1x8(u8 index) { write_index_attr(GX_VA_NRM, index, false); }
+void GXNormal1x8(u8 index) {
+  aurora_legacy_gx_panic("GXNormal1x8");
+}
 
 void GXColor4f32(f32 r, f32 g, f32 b, f32 a) {
-  write_color_attr(clamp_color_float(r), clamp_color_float(g), clamp_color_float(b), clamp_color_float(a));
+  aurora_legacy_gx_panic("GXColor4f32");
 }
 
 void GXColor4u8(u8 r, u8 g, u8 b, u8 a) {
-  write_color_attr(r, g, b, a);
+  aurora_legacy_gx_panic("GXColor4u8");
 }
 
 void GXColor3u8(u8 r, u8 g, u8 b) {
-  write_color_attr(r, g, b, 0xFF);
+  aurora_legacy_gx_panic("GXColor3u8");
 }
 
 void GXColor1u32(u32 clr) {
-  write_color_attr(static_cast<u8>((clr >> 24) & 0xFF), static_cast<u8>((clr >> 16) & 0xFF),
-                   static_cast<u8>((clr >> 8) & 0xFF), static_cast<u8>(clr & 0xFF));
+  aurora_legacy_gx_panic("GXColor1u32");
 }
 
 void GXColor1u16(u16 clr) {
-  const u8 r = static_cast<u8>(((clr >> 11) & 0x1F) * 255 / 31);
-  const u8 g = static_cast<u8>(((clr >> 5) & 0x3F) * 255 / 63);
-  const u8 b = static_cast<u8>((clr & 0x1F) * 255 / 31);
-  write_color_attr(r, g, b, 0xFF);
+  aurora_legacy_gx_panic("GXColor1u16");
 }
 
-void GXColor1x16(u16 index) { write_index_attr(GX_VA_CLR0, index, true); }
+void GXColor1x16(u16 index) {
+  aurora_legacy_gx_panic("GXColor1x16");
+}
 
-void GXColor1x8(u8 index) { write_index_attr(GX_VA_CLR0, index, false); }
+void GXColor1x8(u8 index) {
+  aurora_legacy_gx_panic("GXColor1x8");
+}
 
 void GXTexCoord2f32(f32 s, f32 t) {
-  write_tex_attr(std::array{scalar_f32(s), scalar_f32(t)});
+  aurora_legacy_gx_panic("GXTexCoord2f32");
 }
 
 void GXTexCoord2u16(u16 s, u16 t) {
-  write_tex_attr(std::array{scalar_u32(s), scalar_u32(t)});
+  aurora_legacy_gx_panic("GXTexCoord2u16");
 }
 
 void GXTexCoord2s16(s16 s, s16 t) {
-  write_tex_attr(std::array{scalar_s32(s), scalar_s32(t)});
+  aurora_legacy_gx_panic("GXTexCoord2s16");
 }
 
 void GXTexCoord2u8(u8 s, u8 t) {
-  write_tex_attr(std::array{scalar_u32(s), scalar_u32(t)});
+  aurora_legacy_gx_panic("GXTexCoord2u8");
 }
 
 void GXTexCoord2s8(s8 s, s8 t) {
-  write_tex_attr(std::array{scalar_s32(s), scalar_s32(t)});
+  aurora_legacy_gx_panic("GXTexCoord2s8");
 }
 
-void GXTexCoord1f32(f32 s) { write_tex_attr(std::array{scalar_f32(s)}); }
+void GXTexCoord1f32(f32 s) {
+  aurora_legacy_gx_panic("GXTexCoord1f32");
+}
 
-void GXTexCoord1u16(u16 s) { write_tex_attr(std::array{scalar_u32(s)}); }
+void GXTexCoord1u16(u16 s) {
+  aurora_legacy_gx_panic("GXTexCoord1u16");
+}
 
-void GXTexCoord1s16(s16 s) { write_tex_attr(std::array{scalar_s32(s)}); }
+void GXTexCoord1s16(s16 s) {
+  aurora_legacy_gx_panic("GXTexCoord1s16");
+}
 
-void GXTexCoord1u8(u8 s) { write_tex_attr(std::array{scalar_u32(s)}); }
+void GXTexCoord1u8(u8 s) {
+  aurora_legacy_gx_panic("GXTexCoord1u8");
+}
 
-void GXTexCoord1s8(s8 s) { write_tex_attr(std::array{scalar_s32(s)}); }
+void GXTexCoord1s8(s8 s) {
+  aurora_legacy_gx_panic("GXTexCoord1s8");
+}
 
-void GXTexCoord1x16(u16 index) { write_index_attr(GX_VA_TEX0, index, true); }
+void GXTexCoord1x16(u16 index) {
+  aurora_legacy_gx_panic("GXTexCoord1x16");
+}
 
-void GXTexCoord1x8(u8 index) { write_index_attr(GX_VA_TEX0, index, false); }
+void GXTexCoord1x8(u8 index) {
+  aurora_legacy_gx_panic("GXTexCoord1x8");
+}
 
-void GXMatrixIndex1u8(GXAttr attr, u8 index) { write_index_attr(attr, index, false); }
+void GXMatrixIndex1u8(GXAttr attr, u8 index) {
+  aurora_legacy_gx_panic("GXMatrixIndex1u8");
+}
 
-void GXCmd1u8(const u8 x) { aurora::gx::fifo::write_u8(x); }
-void GXCmd1u16(const u16 x) { aurora::gx::fifo::write_u16(x); }
-void GXCmd1u32(const u32 x) { aurora::gx::fifo::write_u32(x); }
-void GXCmd1u64(const u64 x) { aurora::gx::fifo::write_u64(x); }
+void GXCmd1u8(const u8 x) {
+  aurora_legacy_gx_panic("GXCmd1u8");
+}
+void GXCmd1u16(const u16 x) {
+  aurora_legacy_gx_panic("GXCmd1u16");
+}
+void GXCmd1u32(const u32 x) {
+  aurora_legacy_gx_panic("GXCmd1u32");
+}
+void GXCmd1u64(const u64 x) {
+  aurora_legacy_gx_panic("GXCmd1u64");
+}
 
-void GXParam1u8(const u8 x) { aurora::gx::fifo::write_u8(x); }
-void GXParam1u16(const u16 x) { aurora::gx::fifo::write_u16(x); }
-void GXParam1u32(const u32 x) { aurora::gx::fifo::write_u32(x); }
-void GXParam1s8(const s8 x) { aurora::gx::fifo::write_u8(static_cast<uint8_t>(x)); }
-void GXParam1s16(const s16 x) { aurora::gx::fifo::write_u16(static_cast<uint16_t>(x)); }
-void GXParam1s32(const s32 x) { aurora::gx::fifo::write_u32(static_cast<uint32_t>(x)); }
-void GXParam1f32(const f32 x) { aurora::gx::fifo::write_f32(x); }
+void GXParam1u8(const u8 x) {
+  aurora_legacy_gx_panic("GXParam1u8");
+}
+void GXParam1u16(const u16 x) {
+  aurora_legacy_gx_panic("GXParam1u16");
+}
+void GXParam1u32(const u32 x) {
+  aurora_legacy_gx_panic("GXParam1u32");
+}
+void GXParam1s8(const s8 x) {
+  aurora_legacy_gx_panic("GXParam1s8");
+}
+void GXParam1s16(const s16 x) {
+  aurora_legacy_gx_panic("GXParam1s16");
+}
+void GXParam1s32(const s32 x) {
+  aurora_legacy_gx_panic("GXParam1s32");
+}
+void GXParam1f32(const f32 x) {
+  aurora_legacy_gx_panic("GXParam1f32");
+}
 void GXParam3f32(const f32 x, const f32 y, const f32 z) {
-  aurora::gx::fifo::write_f32(x);
-  aurora::gx::fifo::write_f32(y);
-  aurora::gx::fifo::write_f32(z);
+  aurora_legacy_gx_panic("GXParam3f32");
 }
 void GXParam4f32(const f32 x, const f32 y, const f32 z, const f32 w) {
-  aurora::gx::fifo::write_f32(x);
-  aurora::gx::fifo::write_f32(y);
-  aurora::gx::fifo::write_f32(z);
-  aurora::gx::fifo::write_f32(w);
+  aurora_legacy_gx_panic("GXParam4f32");
 }
 
 } // extern "C"

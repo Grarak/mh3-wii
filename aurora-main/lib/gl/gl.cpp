@@ -8,10 +8,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
-#include <condition_variable>
 #include <cstring>
-#include <deque>
-#include <mutex>
 #include <thread>
 
 #include "tracy/Tracy.hpp"
@@ -27,44 +24,17 @@ namespace aurora::gl {
 namespace {
 Module Log("aurora::gl");
 
-struct RenderThread {
+struct RenderContext {
   SDL_Window* window = nullptr;
   SDL_GLContext context = nullptr;
-  std::thread thread;
   std::thread::id threadId;
-  std::mutex mutex;
-  std::condition_variable cv;
-  std::deque<Task> queue;
-  bool stopping = false;
 };
 
-RenderThread* g_thread = nullptr;
+RenderContext* g_context = nullptr;
 Caps g_caps;
+GLsync g_frameFence = nullptr;
 
-void run_render_thread(RenderThread* rt) {
-  if (!SDL_GL_MakeCurrent(rt->window, rt->context)) {
-    Log.fatal("Failed to make the GL context current on the render thread: {}", SDL_GetError());
-  }
-  std::deque<Task> batch;
-  for (;;) {
-    {
-      std::unique_lock lock(rt->mutex);
-      rt->cv.wait(lock, [&] { return rt->stopping || !rt->queue.empty(); });
-      if (rt->queue.empty() && rt->stopping) {
-        break;
-      }
-      batch.swap(rt->queue);
-    }
-    for (auto& task : batch) {
-      std::move(task)();
-    }
-    batch.clear();
-  }
-  glFinish();
-  SDL_GL_MakeCurrent(rt->window, nullptr);
-}
-
-// ---- Render thread state ----
+// ---- Context owner state ----
 
 struct State {
   RasterState raster;
@@ -165,11 +135,11 @@ GLuint compile_shader(GLenum stage, const std::string& source, const std::string
 }
 } // namespace
 
-// ---- Render thread ----
+// ---- Game-thread context ownership ----
 
 bool initialize(SDL_Window* window, bool vsync) noexcept {
-  if (g_thread != nullptr) {
-    return g_thread->window == window;
+  if (g_context != nullptr) {
+    return g_context->window == window;
   }
   SDL_GLContext context = SDL_GL_CreateContext(window);
   if (context == nullptr) {
@@ -179,16 +149,11 @@ bool initialize(SDL_Window* window, bool vsync) noexcept {
   if (!SDL_GL_SetSwapInterval(vsync ? 1 : 0)) {
     Log.warn("Failed to set the swap interval: {}", SDL_GetError());
   }
-  SDL_GL_MakeCurrent(window, nullptr);
-  auto* rt = new RenderThread;
+  auto* rt = new RenderContext;
   rt->window = window;
   rt->context = context;
-  rt->thread = std::thread([rt] {
-    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH);
-    run_render_thread(rt);
-  });
-  rt->threadId = rt->thread.get_id();
-  g_thread = rt;
+  rt->threadId = std::this_thread::get_id();
+  g_context = rt;
   bool ok = false;
   call([&] {
     const auto string = [](GLenum name) {
@@ -225,10 +190,11 @@ bool initialize(SDL_Window* window, bool vsync) noexcept {
 }
 
 void shutdown() noexcept {
-  RenderThread* rt = g_thread;
+  RenderContext* rt = g_context;
   if (rt == nullptr) {
     return;
   }
+  if (!on_render_thread()) Log.fatal("GL shutdown called outside the game thread");
   post([] {
     for (auto& [_, fbo] : g_framebuffers) {
       glDeleteFramebuffers(1, &fbo);
@@ -246,54 +212,39 @@ void shutdown() noexcept {
     }
     g_state = {};
   });
-  {
-    std::lock_guard lock(rt->mutex);
-    rt->stopping = true;
-  }
-  rt->cv.notify_all();
-  rt->thread.join();
-  g_thread = nullptr;
+  // Teardown is the only unconditional finish in this ownership path.
+  glFinish();
+  if (g_frameFence) { glDeleteSync(g_frameFence); g_frameFence = nullptr; }
+  SDL_GL_MakeCurrent(rt->window, nullptr);
+  g_context = nullptr;
   SDL_GL_DestroyContext(rt->context);
   delete rt;
 }
 
-bool initialized() noexcept { return g_thread != nullptr; }
+bool initialized() noexcept { return g_context != nullptr; }
 const Caps& caps() noexcept { return g_caps; }
 
-bool on_render_thread() noexcept { return g_thread != nullptr && std::this_thread::get_id() == g_thread->threadId; }
+bool on_render_thread() noexcept { return g_context != nullptr && std::this_thread::get_id() == g_context->threadId; }
 
 void post(Task task) noexcept {
-  RenderThread* rt = g_thread;
-  if (rt == nullptr) {
-    return;
-  }
-  if (on_render_thread()) { std::move(task)(); return; }
-  {
-    std::lock_guard lock(rt->mutex);
-    rt->queue.push_back(std::move(task));
-  }
-  rt->cv.notify_one();
+  if (!g_context) return;
+  if (!on_render_thread()) Log.fatal("GL task called outside the game thread");
+  std::move(task)();
 }
 
 void call(Task task) noexcept {
-  if (g_thread == nullptr) {
-    return;
-  }
-  if (on_render_thread()) {
-    std::move(task)();
-    return;
-  }
-  std::mutex doneMutex;
-  std::condition_variable doneCv;
-  bool done = false;
-  post([&, task = std::move(task)]() mutable {
-    std::move(task)();
-    std::lock_guard lock(doneMutex);
-    done = true;
-    doneCv.notify_one();
-  });
-  std::unique_lock lock(doneMutex);
-  doneCv.wait(lock, [&] { return done; });
+  post(std::move(task));
+}
+
+bool gpu_frame_pending() noexcept {
+  if (!g_context || !g_frameFence) return false;
+  if (!on_render_thread()) Log.fatal("GL GPU completion queried outside the game thread");
+  const GLenum result = glClientWaitSync(g_frameFence, 0, 0);
+  if (result == GL_TIMEOUT_EXPIRED) return true;
+  if (result == GL_WAIT_FAILED) Log.fatal("GL frame completion query failed");
+  glDeleteSync(g_frameFence);
+  g_frameFence = nullptr;
+  return false;
 }
 
 void finish() noexcept {
@@ -323,7 +274,7 @@ Texture::Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, 
       bound = UINT32_MAX;
     }
   };
-  // Render thread code uses a texture right after creating it.
+  // Context-owner code uses a texture right after creating it.
   if (on_render_thread()) {
     create();
   } else {
@@ -698,8 +649,8 @@ void draw_fullscreen(GLuint program) noexcept {
 std::pair<uint32_t, uint32_t> drawable_size() noexcept {
   int w = 0;
   int h = 0;
-  if (g_thread != nullptr) {
-    SDL_GetWindowSizeInPixels(g_thread->window, &w, &h);
+  if (g_context != nullptr) {
+    SDL_GetWindowSizeInPixels(g_context->window, &w, &h);
   }
   return {static_cast<uint32_t>(std::max(w, 0)), static_cast<uint32_t>(std::max(h, 0))};
 }
@@ -721,7 +672,13 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
                       x + width, top - height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   }
-  SDL_GL_SwapWindow(g_thread->window);
+  // Submit the scene without waiting for completion. The next game frame can
+  // run while the GPU consumes it; frameskip polls this fence with timeout 0.
+  if (g_frameFence) glDeleteSync(g_frameFence);
+  g_frameFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!g_frameFence) Log.fatal("GL frame fence allocation failed");
+  glFlush();
+  SDL_GL_SwapWindow(g_context->window);
 }
 
 void read_pixels(GLuint texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height, void* out) noexcept {

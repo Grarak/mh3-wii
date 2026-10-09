@@ -4,6 +4,7 @@
 // access that lands on an unmapped part of it.
 #include "guest_flat_memory.h"
 #include "recomp_mod_loader.h"
+#include "gx_panic.h"
 
 #include <dlfcn.h>
 #include <signal.h>
@@ -121,6 +122,16 @@ void Report(int signal, siginfo_t* info, void* context) {
         named ? symbol.dli_sname : "?", named ? (unsigned long)(pc - uintptr_t(symbol.dli_saddr)) : 0ul,
         reinterpret_cast<void*>(pc), RecompMod::g_currentTranslatedExecutionAddress);
     if (length > 0) (void)!write(STDERR_FILENO, text, size_t(length) < sizeof(text) ? size_t(length) : sizeof(text) - 1);
+    // An unrecognized, computed hardware pointer may bypass the translator's
+    // FIFO lowering. Preserve the faulting native PC above and report its GX
+    // guest/native call chain too, before ending the process.
+    const uint32_t physical = guest & 0x3FFFFFFF;
+    if ((guest >> 30) != 1 &&
+        ((physical >= 0x0C000000 && physical < 0x0C002000) ||
+         (physical >= 0x0C00300C && physical < 0x0C003018) ||
+         (physical & 0xFFFFFF00u) == 0x0C008000 ||
+         (physical & 0x3FC00000u) == 0x08000000))
+        PanicLegacyGx(FaultWasWrite(context) ? "GX direct memory write" : "GX direct memory read", guest);
     // Default action on the retry: the process dies with the fault.
     signal == SIGBUS ? sigaction(SIGBUS, &previousBus, nullptr) : sigaction(SIGSEGV, &previousSegv, nullptr);
 }

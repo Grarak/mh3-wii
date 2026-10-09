@@ -459,7 +459,6 @@ void end_frame() {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
   window::pump_events();
-  gx::fifo::drain();
   std::lock_guard gpuLock(g_rendererGpuMutex);
   // Probe-sized CPU-consumed copies read back after the frame renders. Their downscale blits push
   // uniforms, so prepare them while this frame's staging set is still being recorded.
@@ -511,7 +510,6 @@ void end_frame() {
 // resumes the same frame without clearing the EFB.
 bool flush_and_resume(void* dest, bool download) {
   gx::mark_frame_interpolation_replay_unsafe();
-  gx::fifo::drain();
   std::lock_guard gpuLock(g_rendererGpuMutex);
   if (download && !gfx::efb_ram::prepare_downloads(dest)) return false;
   gfx::flush_recording();

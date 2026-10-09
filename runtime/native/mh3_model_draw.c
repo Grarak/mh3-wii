@@ -72,7 +72,7 @@ mh3_res_status mh3_model_material_select(mh3_res_span replacement, uint32_t mate
     /* Serialized replacement field -> dispatch resource slot. These layouts
      * are from Ghidra's 80077ed4 C, not guessed from texture/material names. */
     static const uint16_t strides[11] = {0x104, 0x64, 0x248, 0x28, 8, 12,
-                                         0x20, 0x90, 0x40, 0xa0, 0x200};
+                                         0x20, 0x80, 0x40, 0xa0, 0x200};
     static const uint8_t slots[11] = {MH3_MAT_TEXTURE_OBJECTS, MH3_MAT_PALETTE_OBJECTS,
         MH3_MAT_TEXTURE_SRT, MH3_MAT_CHANNELS, MH3_MAT_GENERAL_MODE, MH3_MAT_MISC,
         MH3_MAT_PIXEL_STATE, MH3_MAT_TEV_COLORS, MH3_MAT_INDIRECT_MATRIX_SCALE,

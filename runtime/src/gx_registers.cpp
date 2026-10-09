@@ -1,4 +1,5 @@
 #include "gx_host.h"
+#include "gx_panic.h"
 #include <array>
 
 namespace {
@@ -14,9 +15,17 @@ bool CpOffset(uint32_t p) {
     return p == 0x0C000002 || p == 0x0C000004 || p == 0x0C000006 ||
         (p >= 0x0C000020 && p <= 0x0C00003A && !(p & 1));
 }
+void RejectGxHardware(uint32_t address, const char* operation) {
+    uint32_t physical;
+    if (!Physical(address, physical)) return;
+    if ((physical >= 0x0C000000 && physical < 0x0C002000) ||
+        (physical >= 0x0C00300C && physical < 0x0C003018))
+        PanicLegacyGx(operation, address);
+}
 }
 void ResetGxRegisters() { cp.fill(0); pe.fill(0); pi.fill(0); }
 bool ReadGxRegister(uint32_t address, unsigned width, uint32_t& value) {
+    RejectGxHardware(address, "GX CP/PE/FIFO register read");
     uint32_t p;
     if (!Physical(address, p)) return false;
     if (width == 2 && CpOffset(p)) { value = cp[(p - 0x0C000000) / 2]; return true; }
@@ -29,6 +38,7 @@ bool ReadGxRegister(uint32_t address, unsigned width, uint32_t& value) {
     return false;
 }
 bool WriteGxRegister(uint32_t address, unsigned width, uint32_t value) {
+    RejectGxHardware(address, "GX CP/PE/FIFO register write");
     uint32_t ignored, p;
     if (!ReadGxRegister(address, width, ignored) || !Physical(address, p)) return false;
     if (p < 0x0C001000) {

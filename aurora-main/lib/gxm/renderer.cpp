@@ -13,13 +13,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <map>
-#include <mutex>
 #include <stdexcept>
 #include <thread>
 
@@ -300,55 +297,20 @@ public:
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
   GLuint nextName = 1;
 };
-struct RenderThread {
+struct RenderContext {
   SDL_Window* window = nullptr;
-  std::thread thread;
   std::thread::id id;
-  std::mutex mutex;
-  std::condition_variable cv;
-  std::deque<Task> queue;
   std::unique_ptr<Renderer> renderer;
-  bool stopping = false, ready = false, success = false;
 };
-RenderThread* g_thread = nullptr;
+RenderContext* g_context = nullptr;
 // Published once after opening the pack. Only immutable metadata is read by
 // the GX producer; file reads and texture allocation remain on the render thread.
 std::atomic<const NativeAssets*> g_nativeAssets{nullptr};
 Caps g_caps;
 Renderer& renderer() {
-  if (!g_thread || !on_render_thread() || !g_thread->renderer)
-    throw std::runtime_error("Native operation called outside the render thread");
-  return *g_thread->renderer;
-}
-void run(RenderThread* rt, bool vsync) {
-  aurora::pin_current_thread(aurora::ThreadRole::Render);
-  rt->id = std::this_thread::get_id();
-  try {
-    rt->renderer = std::make_unique<Renderer>(vsync);
-    g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1};
-    rt->success = true;
-  } catch (const std::exception& error) {
-    std::printf("Aurora GXM initialization: %s\n", error.what());
-  }
-  {
-    std::lock_guard lock(rt->mutex);
-    rt->ready = true;
-    rt->cv.notify_all();
-  }
-  if (!rt->success) return;
-  std::deque<Task> batch;
-  for (;;) {
-    {
-      std::unique_lock lock(rt->mutex);
-      rt->cv.wait(lock, [&] { return rt->stopping || !rt->queue.empty(); });
-      if (rt->stopping && rt->queue.empty()) break;
-      batch.swap(rt->queue);
-    }
-    for (auto& task : batch) guarded([&] { std::move(task)(); });
-    batch.clear();
-  }
-  g_nativeAssets.store(nullptr, std::memory_order_release);
-  rt->renderer.reset(); // Every GXM destruction belongs to core 1 too.
+  if (!g_context || !on_render_thread() || !g_context->renderer)
+    throw std::runtime_error("Native operation called outside the game thread");
+  return *g_context->renderer;
 }
 constexpr std::array<FormatInfo, 9> FormatInfos{{
     {0, 0, 0, 4, false, false, true}, {0, 0, 0, 1, false, false, true},
@@ -359,69 +321,43 @@ constexpr std::array<FormatInfo, 9> FormatInfos{{
 }};
 }
 bool initialize(SDL_Window* window, bool vsync) noexcept {
-  if (g_thread) return g_thread->window == window;
+  if (g_context) return g_context->window == window;
   try {
-    auto thread = std::make_unique<RenderThread>();
+    auto thread = std::make_unique<RenderContext>();
     thread->window = window;
-    g_thread = thread.get();
-    thread->thread = std::thread([rt = thread.get(), vsync] { run(rt, vsync); });
-    {
-      std::unique_lock lock(thread->mutex);
-      thread->cv.wait(lock, [&] { return thread->ready; });
-    }
-    if (!thread->success) {
-      thread->thread.join(); g_thread = nullptr;
-      return false;
-    }
+    thread->id = std::this_thread::get_id();
+    g_context = thread.get();
+    thread->renderer = std::make_unique<Renderer>(vsync);
+    g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1};
     thread.release();
     return true;
   } catch (const std::exception& error) {
-    g_thread = nullptr;
-    std::printf("Aurora GXM render thread: %s\n", error.what());
+    g_context = nullptr;
+    std::printf("Aurora GXM game-thread initialization: %s\n", error.what());
     return false;
   }
 }
 void shutdown() noexcept {
-  if (!g_thread) return;
-  if (on_render_thread()) fail("Render thread cannot join itself");
-  auto* thread = g_thread;
-  {
-    std::lock_guard lock(thread->mutex);
-    thread->stopping = true; thread->cv.notify_all();
-  }
-  thread->thread.join();
-  g_thread = nullptr;
+  if (!g_context) return;
+  if (!on_render_thread()) fail("GXM shutdown called outside the game thread");
+  auto* thread = g_context;
+  g_nativeAssets.store(nullptr, std::memory_order_release);
+  thread->renderer.reset();
+  g_context = nullptr;
   delete thread;
 }
-bool initialized() noexcept { return g_thread != nullptr; }
-bool on_render_thread() noexcept { return g_thread && g_thread->id == std::this_thread::get_id(); }
+bool initialized() noexcept { return g_context != nullptr; }
+bool on_render_thread() noexcept { return g_context && g_context->id == std::this_thread::get_id(); }
 const Caps& caps() noexcept { return g_caps; }
 void post(Task task) noexcept {
-  if (!g_thread) return;
-  // Nested native work produced while decoding GX keeps command order and
-  // executes before the next FIFO chunk, without a second queue round trip.
-  if (on_render_thread()) { guarded([&] { std::move(task)(); }); return; }
-  guarded([&] {
-    std::lock_guard lock(g_thread->mutex);
-    if (g_thread->stopping) throw std::runtime_error("Native task posted after render shutdown");
-    g_thread->queue.push_back(std::move(task));
-    g_thread->cv.notify_one();
-  });
+  if (!g_context) return;
+  if (!on_render_thread()) fail("GXM task called outside the game thread");
+  guarded([&] { std::move(task)(); });
 }
 void call(Task task) noexcept {
-  if (!g_thread) return;
-  if (on_render_thread()) { guarded([&] { std::move(task)(); }); return; }
-  std::mutex mutex;
-  std::condition_variable cv;
-  bool done = false;
-  post([&, task = std::move(task)]() mutable {
-    std::move(task)();
-    std::lock_guard lock(mutex);
-    done = true; cv.notify_one();
-  });
-  std::unique_lock lock(mutex);
-  cv.wait(lock, [&] { return done; });
+  post(std::move(task));
 }
+bool gpu_frame_pending() noexcept { return gxm::gpu_frame_pending(); }
 void finish() noexcept { call([] { renderer().device.finish(); }); }
 const FormatInfo& format_info(Format format) noexcept { return FormatInfos[size_t(format)]; }
 Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view label)

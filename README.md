@@ -7,9 +7,11 @@ is no interpreter or JIT fallback. Graphics go through Aurora with a native
 
 - **Targets:** arm32 Linux (armhf, tuned for Cortex-A9; the deployment target,
   tested on a Raspberry Pi 5) and arm64 Linux (development and debugging).
-- **Status:** boot, menus, the village and the offline, online and arena
-  quests play. The simulation runs on a variable time step. On the Pi 5 the
-  Alatreon quest runs at full speed; the game thread uses about 5 ms per frame.
+- **Current migration:** game and rendering share one CPU thread, and remaining
+  GX calls stop with guest/native backtraces. Native gameplay rendering is
+  incomplete; boot currently stops at global 3D light initialization.
+  [Rendering investigation](docs/vita-render-investigation.md) records the
+  migration and earlier playable results.
 
 **[HANDOVER.md](HANDOVER.md)** is the working guide: setup, translation, arm64
 and arm32 builds, running on the VM and the Pi, debugging tools, conventions

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the OpenGL ES 3.0 executable for arm32 or arm64 Linux (MH3_ARCH,
 # default arm32): build/linux-$MH3_ARCH/MH3. Aurora renders natively through
-# OpenGL ES 3.0 on its own render thread.
+# OpenGL ES 3.0 on the game thread, with asynchronous GPU submissions.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/target.sh

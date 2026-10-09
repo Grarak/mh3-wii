@@ -1,3 +1,4 @@
+#include <aurora/legacy_gx.h>
 #include "gx.hpp"
 #include "__gx.h"
 
@@ -179,258 +180,85 @@ void emit_loaded_tlut_metadata(const GXTlutObj_& obj, u32 idx) {
 extern "C" {
 void GXInitTexObj(GXTexObj* obj_, const void* data, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrapS,
                   GXTexWrapMode wrapT, GXBool mipmap) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  init_texobj_common(*obj, data, width, height, format, wrapS, wrapT, mipmap);
+  aurora_legacy_gx_panic("GXInitTexObj");
 }
 
 void GXInitTexObjCI(GXTexObj* obj_, const void* data, u16 width, u16 height, GXCITexFmt format, GXTexWrapMode wrapS,
                     GXTexWrapMode wrapT, GXBool mipmap, u32 tlut) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  init_texobj_common(*obj, data, width, height, format, wrapS, wrapT, mipmap);
-  obj->tlut = static_cast<GXTlut>(tlut);
-  obj->flags &= ~2u;
+  aurora_legacy_gx_panic("GXInitTexObjCI");
 }
 
 void GXInitTexObjLOD(GXTexObj* obj_, GXTexFilter minFilt, GXTexFilter magFilt, float minLod, float maxLod,
                      float lodBias, GXBool biasClamp, GXBool doEdgeLod, GXAnisotropy maxAniso) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  const float clampedBias = std::clamp(lodBias, -4.0f, 3.99f);
-  const auto lbias = static_cast<u8>(32.0f * clampedBias);
-  SET_REG_FIELD(0, obj->mode0, 8, 9, lbias);
-  SET_REG_FIELD(0, obj->mode0, 1, 4, magFilt == GX_LINEAR ? 1 : 0);
-  SET_REG_FIELD(0, obj->mode0, 3, 5, GX2HWFiltConv[minFilt]);
-  SET_REG_FIELD(0, obj->mode0, 1, 8, doEdgeLod ? 0 : 1);
-  obj->mode0 &= 0xFFFDFFFF;
-  obj->mode0 &= 0xFFFBFFFF;
-  SET_REG_FIELD(0, obj->mode0, 2, 19, maxAniso);
-  SET_REG_FIELD(0, obj->mode0, 1, 21, biasClamp);
-
-  const auto clampedMin = std::clamp(minLod, 0.0f, 10.0f);
-  const auto clampedMax = std::clamp(maxLod, 0.0f, 10.0f);
-  SET_REG_FIELD(0, obj->mode1, 8, 0, static_cast<u8>(16.0f * clampedMin));
-  SET_REG_FIELD(0, obj->mode1, 8, 8, static_cast<u8>(16.0f * clampedMax));
+  aurora_legacy_gx_panic("GXInitTexObjLOD");
 }
 
 void GXInitTexObjData(GXTexObj* obj_, const void* data) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  obj->data = data;
-  ++obj->texDataVersion;
+  aurora_legacy_gx_panic("GXInitTexObjData");
 }
 
 void GXInitTexObjWrapMode(GXTexObj* obj_, GXTexWrapMode wrapS, GXTexWrapMode wrapT) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  SET_REG_FIELD(0, obj->mode0, 2, 0, wrapS);
-  SET_REG_FIELD(0, obj->mode0, 2, 2, wrapT);
+  aurora_legacy_gx_panic("GXInitTexObjWrapMode");
 }
 
 void GXInitTexObjTlut(GXTexObj* obj_, u32 tlut) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  obj->tlut = static_cast<GXTlut>(tlut);
+  aurora_legacy_gx_panic("GXInitTexObjTlut");
 }
 
 void GXInitTexObjFilter(GXTexObj* obj_, GXTexFilter minFilt, GXTexFilter magFilt) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  SET_REG_FIELD(0, obj->mode0, 3, 5, GX2HWFiltConv[minFilt]);
-  SET_REG_FIELD(0, obj->mode0, 1, 4, magFilt == GX_LINEAR ? 1 : 0);
+  aurora_legacy_gx_panic("GXInitTexObjFilter");
 }
 
 void GXInitTexObjMaxLOD(GXTexObj* obj_, float maxLod) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  const auto clampedMax = std::clamp(maxLod, 0.0f, 10.0f);
-  SET_REG_FIELD(0, obj->mode1, 8, 8, static_cast<u8>(16.0f * clampedMax));
+  aurora_legacy_gx_panic("GXInitTexObjMaxLOD");
 }
 
 void GXInitTexObjMinLOD(GXTexObj* obj_, float minLod) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  const auto clampedMin = std::clamp(minLod, 0.0f, 10.0f);
-  SET_REG_FIELD(0, obj->mode1, 8, 0, static_cast<u8>(16.0f * clampedMin));
+  aurora_legacy_gx_panic("GXInitTexObjMinLOD");
 }
 
 void GXInitTexObjLODBias(GXTexObj* obj_, float lodBias) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  const float clampedBias = std::clamp(lodBias, -4.0f, 3.99f);
-  const auto lbias = static_cast<u8>(32.0f * clampedBias);
-  SET_REG_FIELD(0, obj->mode0, 8, 9, lbias);
+  aurora_legacy_gx_panic("GXInitTexObjLODBias");
 }
 
 void GXInitTexObjBiasClamp(GXTexObj* obj_, GXBool biasClamp) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  SET_REG_FIELD(0, obj->mode0, 1, 21, biasClamp);
+  aurora_legacy_gx_panic("GXInitTexObjBiasClamp");
 }
 
 void GXInitTexObjEdgeLOD(GXTexObj* obj_, GXBool doEdgeLod) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  SET_REG_FIELD(0, obj->mode0, 1, 8, doEdgeLod ? 0 : 1);
+  aurora_legacy_gx_panic("GXInitTexObjEdgeLOD");
 }
 
 void GXInitTexObjMaxAniso(GXTexObj* obj_, GXAnisotropy maxAniso) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  SET_REG_FIELD(0, obj->mode0, 2, 19, maxAniso);
+  aurora_legacy_gx_panic("GXInitTexObjMaxAniso");
 }
 
 void GXInitTexObjUserData(GXTexObj* obj_, void* userData) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  obj->userData = userData;
+  aurora_legacy_gx_panic("GXInitTexObjUserData");
 }
 
 void* GXGetTexObjUserData(const GXTexObj* obj_) {
-  const auto* obj = reinterpret_cast<const GXTexObj_*>(obj_);
-  return const_cast<void*>(obj->userData);
+  aurora_legacy_gx_panic("GXGetTexObjUserData");
 }
 
 void GXLoadTexObj(GXTexObj* obj_, GXTexMapID id) {
-  auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
-  SET_REG_FIELD(0, obj->mode0, 8, 24, GXTexMode0Ids[id]);
-  SET_REG_FIELD(0, obj->mode1, 8, 24, GXTexMode1Ids[id]);
-  SET_REG_FIELD(0, obj->image0, 8, 24, GXTexImage0Ids[id]);
-
-  u32 image1 = 0;
-  u32 image2 = 0;
-  SET_REG_FIELD(0, image1, 8, 24, GXTexImage1Ids[id]);
-  SET_REG_FIELD(0, image2, 8, 24, GXTexImage2Ids[id]);
-  SET_REG_FIELD(0, obj->image3, 8, 24, GXTexImage3Ids[id]);
-
-  GX_WRITE_RAS_REG(obj->mode0);
-  GX_WRITE_RAS_REG(obj->mode1);
-  GX_WRITE_RAS_REG(obj->image0);
-  GX_WRITE_RAS_REG(image1);
-  GX_WRITE_RAS_REG(image2);
-  GX_WRITE_RAS_REG(obj->image3);
-
-  if ((obj->flags & 2) == 0) {
-    u32 tlut = 0;
-    SET_REG_FIELD(0, tlut, 10, 0, static_cast<u32>(obj->tlut));
-    SET_REG_FIELD(0, tlut, 8, 24, GXTexTlutIds[id]);
-    GX_WRITE_RAS_REG(tlut);
-  }
-
-  __gx->tImage0[id] = obj->image0;
-  __gx->tMode0[id] = obj->mode0;
-  __gx->dirtyState |= 1;
-  __gx->bpSent = 1;
-
-  emit_loaded_texobj_metadata(*obj, id);
+  aurora_legacy_gx_panic("GXLoadTexObj");
 }
 
 u32 GXGetTexBufferSize(u16 width, u16 height, u32 fmt, GXBool mips, u8 maxLod) {
-  if (fmt == GX_TF_R8_PC || fmt == GX_TF_RGBA8_PC) {
-    const u32 bytesPerPixel = fmt == GX_TF_R8_PC ? 1u : 4u;
-    const u32 mipCount = mips ? static_cast<u32>(maxLod) + 1u : 1u;
-    u64 byteCount = 0;
-    for (u32 mip = 0; mip < mipCount; ++mip) {
-      byteCount += static_cast<u64>(width) * height * bytesPerPixel;
-      if (width == 1 && height == 1) {
-        break;
-      }
-      width = std::max<u16>(width / 2, 1);
-      height = std::max<u16>(height / 2, 1);
-    }
-    CHECK(byteCount <= UINT32_MAX, "GXGetTexBufferSize: linear PC texture is too large ({} bytes)", byteCount);
-    return static_cast<u32>(byteCount);
-  }
-
-  s32 shiftX = 0;
-  s32 shiftY = 0;
-  switch (fmt) {
-  case GX_TF_I4:
-  case GX_TF_C4:
-  case GX_TF_CMPR:
-  case GX_CTF_R4:
-  case GX_CTF_Z4:
-    shiftX = 3;
-    shiftY = 3;
-    break;
-  case GX_TF_I8:
-  case GX_TF_IA4:
-  case GX_TF_C8:
-  case GX_TF_Z8:
-  case GX_CTF_RA4:
-  case GX_CTF_A8:
-  case GX_CTF_R8:
-  case GX_CTF_G8:
-  case GX_CTF_B8:
-  case GX_CTF_Z8M:
-  case GX_CTF_Z8L:
-    shiftX = 3;
-    shiftY = 2;
-    break;
-  case GX_TF_IA8:
-  case GX_TF_RGB565:
-  case GX_TF_RGB5A3:
-  case GX_TF_RGBA8:
-  case GX_TF_C14X2:
-  case GX_TF_Z16:
-  case GX_TF_Z24X8:
-  case GX_CTF_RA8:
-  case GX_CTF_RG8:
-  case GX_CTF_GB8:
-  case GX_CTF_Z16L:
-    shiftX = 2;
-    shiftY = 2;
-    break;
-  default:
-    break;
-  }
-  u32 bitSize = fmt == GX_TF_RGBA8 || fmt == GX_TF_Z24X8 ? 64 : 32;
-  u32 bufLen = 0;
-  if (mips) {
-    const u32 mipCount = static_cast<u32>(maxLod) + 1;
-    for (u32 mip = 0; mip < mipCount; ++mip) {
-      const u32 tileX = ((width + (1 << shiftX) - 1) >> shiftX);
-      const u32 tileY = ((height + (1 << shiftY) - 1) >> shiftY);
-      bufLen += bitSize * tileX * tileY;
-
-      if (width == 1 && height == 1) {
-        return bufLen;
-      }
-
-      width = (width < 2) ? 1 : width / 2;
-      height = (height < 2) ? 1 : height / 2;
-    }
-  } else {
-    const u32 tileX = ((width + (1 << shiftX) - 1) >> shiftX);
-    const u32 tileY = ((height + (1 << shiftY) - 1) >> shiftY);
-    bufLen = bitSize * tileX * tileY;
-  }
-
-  return bufLen;
+  aurora_legacy_gx_panic("GXGetTexBufferSize");
 }
 
 void GXInitTlutObj(GXTlutObj* obj_, const void* data, GXTlutFmt format, u16 entries) {
-  memset(obj_, 0, sizeof(GXTlutObj));
-  auto* obj = reinterpret_cast<GXTlutObj_*>(obj_);
-  obj->data = data;
-  obj->format = format;
-  obj->numEntries = entries;
-  const auto [tlutObjId, tlutDataVersion] = resolve_tlut_identity(data, format, entries);
-  obj->tlutObjId = tlutObjId;
-  obj->tlutDataVersion = tlutDataVersion;
-
-  SET_REG_FIELD(0, obj->tlut, 2, 10, format);
-  SET_REG_FIELD(0, obj->loadTlut0, 8, 24, 0x64);
-  aurora::gfx::texture_replacement::register_tlut(obj_, data, format, entries);
+  aurora_legacy_gx_panic("GXInitTlutObj");
 }
 
 void GXInitTlutObjData(GXTlutObj* obj_, const void* data) {
-  auto* obj = reinterpret_cast<GXTlutObj_*>(obj_);
-  obj->data = data;
-  obj->tlutDataVersion = next_repointed_tlut_data_version();
+  aurora_legacy_gx_panic("GXInitTlutObjData");
 }
 
 void GXLoadTlut(const GXTlutObj* obj_, u32 idx) {
-  auto* obj = reinterpret_cast<const GXTlutObj_*>(obj_);
-  __GXFlushTextureState();
-  GX_WRITE_RAS_REG(obj->loadTlut0);
-
-  u32 loadTlut1 = 0;
-  SET_REG_FIELD(0, loadTlut1, 10, 0, idx);
-  SET_REG_FIELD(0, loadTlut1, 10, 10, obj->numEntries - 1);
-  SET_REG_FIELD(0, loadTlut1, 8, 24, 0x65);
-  GX_WRITE_RAS_REG(loadTlut1);
-  __GXFlushTextureState();
-
-  aurora::gfx::texture_replacement::load_tlut(obj_, idx);
-  emit_loaded_tlut_metadata(*obj, idx);
+  aurora_legacy_gx_panic("GXLoadTlut");
 }
 
 // TODO GXInitTexCacheRegion
@@ -439,7 +267,7 @@ void GXLoadTlut(const GXTlutObj* obj_, u32 idx) {
 // TODO GXInvalidateTexRegion
 
 void GXInvalidateTexAll() {
-  GX_WRITE_AURORA(GX_LOAD_AURORA_INVALIDATE_TEX_ALL);
+  aurora_legacy_gx_panic("GXInvalidateTexAll");
 }
 
 // TODO GXPreLoadEntireTexture
@@ -447,38 +275,18 @@ void GXInvalidateTexAll() {
 // TODO GXSetTlutRegionCallback
 // TODO GXLoadTexObjPreLoaded
 void GXSetTexCoordScaleManually(GXTexCoordID coord, GXBool enable, u16 ss, u16 ts) {
-  __gx->tcsManEnab = (__gx->tcsManEnab & ~(1 << coord)) | (enable << coord);
-  if (enable) {
-    SET_REG_FIELD(0, __gx->suTs0[coord], 16, 0, static_cast<u16>(ss - 1));
-    SET_REG_FIELD(0, __gx->suTs1[coord], 16, 0, static_cast<u16>(ts - 1));
-    GX_WRITE_RAS_REG(__gx->suTs0[coord]);
-    GX_WRITE_RAS_REG(__gx->suTs1[coord]);
-    __gx->bpSent = 1;
-  }
+  aurora_legacy_gx_panic("GXSetTexCoordScaleManually");
 }
 
 void GXSetTexCoordCylWrap(GXTexCoordID coord, GXBool s_enable, GXBool t_enable) {
-  SET_REG_FIELD(0, __gx->suTs0[coord], 1, 17, s_enable);
-  SET_REG_FIELD(0, __gx->suTs1[coord], 1, 17, t_enable);
-  if (__gx->tcsManEnab & (1 << coord)) {
-    GX_WRITE_RAS_REG(__gx->suTs0[coord]);
-    GX_WRITE_RAS_REG(__gx->suTs1[coord]);
-    __gx->bpSent = 1;
-  }
+  aurora_legacy_gx_panic("GXSetTexCoordCylWrap");
 }
 
 void GXSetTexCoordBias(GXTexCoordID coord, GXBool s_enable, GXBool t_enable) {
-  SET_REG_FIELD(0, __gx->suTs0[coord], 1, 16, s_enable);
-  SET_REG_FIELD(0, __gx->suTs1[coord], 1, 16, t_enable);
-  if (__gx->tcsManEnab & (1 << coord)) {
-    GX_WRITE_RAS_REG(__gx->suTs0[coord]);
-    GX_WRITE_RAS_REG(__gx->suTs1[coord]);
-    __gx->bpSent = 1;
-  }
+  aurora_legacy_gx_panic("GXSetTexCoordBias");
 }
 
 void __GXFlushTextureState() {
-  GX_WRITE_RAS_REG(__gx->bpMask);
-  __gx->bpSent = 1;
+  aurora_legacy_gx_panic("__GXFlushTextureState");
 }
 }

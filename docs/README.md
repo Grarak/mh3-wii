@@ -5,6 +5,7 @@ build, run and debug.
 
 Current:
 
+- [pi5-cortex-a9-benchmark.md](pi5-cortex-a9-benchmark.md): native ARM32 Pi measurements, game thread CPU time, and the model draw regression boundary.
 - [vita-bringup.md](vita-bringup.md): native GXM port constraints and validated guest RAM layout.
 - [aurora-dependency.md](aurora-dependency.md): the Aurora copy and its GLES renderer.
 - [module-inventory.md](module-inventory.md): the disc's RSO modules and field layout.

@@ -5,6 +5,7 @@
 #include "video_interface.h"
 #include "audio_interface.h"
 #include "gx_host.h"
+#include "gx_panic.h"
 #include "efb_host.h"
 #include <cstring>
 #include <cstdlib>
@@ -119,7 +120,7 @@ bool Memory::Contains(uint32_t address, size_t length) { return GuestFlat::IsMap
 
 // FIFO scalar writes preserve the guest's big-endian command encoding.
 #ifndef MH3_HAS_AURORA
-void SubmitGuestGxBytes(const uint8_t*, size_t) { throw std::runtime_error("GX requires the Aurora-linked build"); }
+void SubmitGuestGxBytes(const uint8_t*, size_t) { PanicLegacyGx("GX FIFO write"); }
 template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data) { SubmitGuestGxBytes(data, N); }
 #ifdef MH3_DEVELOPMENT
@@ -127,4 +128,4 @@ void CaptureGuestGx(std::vector<uint8_t>*) {}
 #endif
 #endif
 GxFifoWindow gGxFifoWindow{};
-extern "C" void GX_HLE_FIFO_WriteFull(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }
+extern "C" void GX_HLE_FIFO_WriteFull(const uint8_t*, uint32_t) { PanicLegacyGx("GX FIFO full write"); }

@@ -1,4 +1,5 @@
 #include "efb_host.h"
+#include "gx_panic.h"
 #include "recomp_mod_loader.h"
 #include "isa/ppc_isa_context.h"
 #include <algorithm>
@@ -62,6 +63,7 @@ uint32_t ConvertEfbArgb(uint32_t color, unsigned pixelFormat, unsigned alphaMode
 bool ReadEfbColor32(uint32_t address, uint32_t& value) {
     uint16_t x, y;
     if (!DecodeEfbColorAddress(address, x, y)) return false;
+    PanicLegacyGx("GX CPU EFB color read", address);
     // The address encoding has ten bits per coordinate; the physical EFB is smaller.
     value = x < 640 && y < 528 ? ReadHostEfbColor(x, y) : 0;
     TraceEfbAccess(false, x, y, value);
@@ -70,6 +72,7 @@ bool ReadEfbColor32(uint32_t address, uint32_t& value) {
 bool WriteEfbColor32(uint32_t address, uint32_t value) {
     uint16_t x, y;
     if (!DecodeEfbColorAddress(address, x, y)) return false;
+    PanicLegacyGx("GX CPU EFB color write", address);
     TraceEfbAccess(true, x, y, value);
     if (x < 640 && y < 528) WriteHostEfbColor(x, y, value);
     return true;
