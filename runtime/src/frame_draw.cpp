@@ -136,14 +136,22 @@ void Layers(GuestCall& call, uint32_t first, uint32_t end) {
 void (*sceneHandoff)() = nullptr;
 
 struct DeferredScene {
-    bool pending = false, twoPlayers = false, preview = false;
+    bool pending = false, twoPlayers = false, preview = false, prepared = false;
 } deferredScene;
 
 void Scene(GuestCall& call, uint32_t r13, bool preview) {
     const bool twoPlayers = call(TwoPlayers) != 0;
 
     if (sceneHandoff) {
-        deferredScene = {true, twoPlayers, preview};
+        // A single view's scene-graph walk stays here (it reads what the
+        // next logic step changes, and sets the camera's state the scene
+        // starts from); the draw thread draws its buckets.
+        const bool prepared = !twoPlayers && !preview;
+
+        if (prepared)
+            SceneQueue::Prepare(call.cpu);
+
+        deferredScene = {true, twoPlayers, preview, prepared};
         sceneHandoff();
         return;
     }
@@ -214,6 +222,11 @@ void SetSceneHandoff(void (*handoff)()) {
 bool RunDeferredScene(CpuContext* cpu) {
     if (!std::exchange(deferredScene.pending, false))
         return false;
+
+    if (deferredScene.prepared) {
+        SceneQueue::DrawPrepared(cpu);
+        return true;
+    }
 
     GuestFrame frame(cpu, 0x10);
     GuestCall call{cpu};

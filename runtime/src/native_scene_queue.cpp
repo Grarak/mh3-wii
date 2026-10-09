@@ -11,6 +11,9 @@
 #include "../native/mh3_scene_queue.h"
 #include "../native/mh3_model_state.h"
 #include <stdexcept>
+#include <utility>
+#include <vector>
+#include <array>
 
 namespace {
 constexpr uint32_t Root = 0x80796e34, Heads = 0x805984e0, Counts = 0x805984f8;
@@ -233,7 +236,57 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
     }
 }
 
-void DrawAll(GuestCall& call) {
+// The prepared buckets (SceneQueue::Prepare): each category's nodes in their
+// order as the traverse queued them, with the fields read then. The buckets
+// are lists threaded through the scene nodes in guest RAM, which the next
+// logic step resets and reuses while the draw thread draws.
+std::array<std::vector<std::pair<uint32_t, mh3_scene_node>>, MH3_SCENE_CATEGORIES> prepared;
+
+void Flatten() {
+    for (unsigned category = 0; category < MH3_SCENE_CATEGORIES; ++category) {
+        auto& nodes = prepared[category];
+        nodes.clear();
+        uint32_t cursor = Head(category), identity;
+
+        while ((identity = mh3_scene_next(&links, &cursor))) {
+            mh3_scene_node node;
+            ReadNode(nullptr, identity, &node);
+            nodes.emplace_back(identity, node);
+        }
+    }
+}
+
+// DrawBucket over a prepared category: a node's callback cannot change the
+// fields the draw then uses (they were read at the handoff).
+void DrawPreparedBucket(GuestCall& call, unsigned category, uint8_t pass) {
+    for (const auto& [identity, node] : prepared[category]) {
+        if (!mh3_scene_phase_selected(node.phase, pass))
+            continue;
+
+        if (!(node.flags & 0x40) && node.callback) {
+            EffectStep::Join(call.cpu);
+            MH3_SPLIT_SCOPE(MH3_SPLIT_NODE_CALLBACK);
+            call(node.callback, {identity});
+        }
+
+        if (node.type < 2) {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL);
+
+            if (!SkipNativeSceneModel(node.object))
+                call(0x8004978C, {node.object, pass == 1 ? 4u : 0xffffffffu});
+        } else if (node.type == 2 && node.object) {
+            EffectStep::Join(call.cpu);
+            MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT);
+
+            if (const uint32_t target = Memory::Read32(Memory::Read32(node.object + 28) + 28)) {
+                call(target, {node.object, Memory::Read32(Memory::Read32(0x80796e30) + 0x29084)});
+                call(0x800885F4, {0x7ff});
+            }
+        }
+    }
+}
+
+void DrawAll(GuestCall& call, bool flattened = false) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_BUCKETS);
     constexpr uint8_t sequence[][2] = {{0, 2}, {5, 0}, {0, 3}, {2, 2}, {1, 2}, {4, 0}, {2, 3}, {1, 3}, {3, 0}};
 
@@ -247,7 +300,10 @@ void DrawAll(GuestCall& call) {
         if (entry[0] != 0 && entry[0] != 5)
             EffectStep::Join(call.cpu);
 
-        DrawBucket(call, entry[0], entry[1]);
+        if (flattened)
+            DrawPreparedBucket(call, entry[0], entry[1]);
+        else
+            DrawBucket(call, entry[0], entry[1]);
     }
 
     EffectStep::Join(call.cpu);
@@ -267,6 +323,44 @@ void ResetIndirect() {
     SetNativeMaterial(material);
 }
 
+// The single view's scene-graph part: the buckets' reset, the root's camera
+// setup, the traverse and the root's view matrices (0x80082D40). With the
+// draw thread it runs at the handoff on the game thread (SceneQueue::Prepare),
+// so the draw thread walks only the buckets.
+void PrepareSingle(CpuContext* cpu) {
+    GuestFrame frame(cpu, 0x30);
+    GuestCall call{cpu};
+    ResetAll();
+    const uint32_t root = Memory::Read32(Root);
+
+    if (!root)
+        return;
+
+    {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
+        Memory::Write32(frame[0x10], call(0x80082C30, {root}));
+    }
+
+    Traverse(cpu, frame[0x10], 0);
+    MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
+    call(0x80082D40, {root});
+}
+
+// The rest: the effect view, the buckets, the model caches' finish, the post effects.
+void Finish(GuestCall& call, bool split);
+
+void DrawPreparedSingle(CpuContext* cpu, bool flattened = false) {
+    GuestFrame frame(cpu, 0x30);
+    GuestCall call{cpu};
+    {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
+        call(0x800D4910);
+    }
+
+    DrawAll(call, flattened);
+    Finish(call, false);
+}
+
 void DrawScene(CpuContext* cpu, bool split) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
 
@@ -283,24 +377,12 @@ void DrawScene(CpuContext* cpu, bool split) {
     const uint32_t root = Memory::Read32(Root);
 
     if (!split) {
-        if (root) {
-            {
-                MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
-                Memory::Write32(frame[0x10], call(0x80082C30, {root}));
-            }
+        PrepareSingle(cpu);
+        DrawPreparedSingle(cpu);
+        return;
+    }
 
-            Traverse(cpu, frame[0x10], 0);
-            MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
-            call(0x80082D40, {root});
-        }
-
-        {
-            MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
-            call(0x800D4910);
-        }
-
-        DrawAll(call);
-    } else if (root) {
+    if (root) {
         const uint32_t old = call(0x80049784);
 
         for (unsigned player = 0; player < 2; ++player) {
@@ -325,6 +407,10 @@ void DrawScene(CpuContext* cpu, bool split) {
         call(0x80082D40, {root});
     }
 
+    Finish(call, true);
+}
+
+void Finish(GuestCall& call, bool split) {
     {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_FINISH);
         call(0x800885F4, {4});
@@ -340,6 +426,20 @@ void DrawScene(CpuContext* cpu, bool split) {
         call(0x80059270);
 }
 } // namespace
+
+namespace SceneQueue {
+void Prepare(CpuContext* cpu) {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
+    EffectStep::Launch(*cpu);
+    PrepareSingle(cpu);
+    Flatten();
+}
+
+void DrawPrepared(CpuContext* cpu) {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
+    DrawPreparedSingle(cpu, true);
+}
+} // namespace SceneQueue
 
 extern "C" void MH3_SceneQueueReset(CpuContext*) {
     ResetAll();

@@ -74,6 +74,9 @@ void MH3FrameSplitCall(unsigned kind);
 // The MH3 field split line (field_frame.cpp), which it then resets.
 void MH3PrintFieldSplit(unsigned frames);
 
+// The MH3 scene changes line (scene_changes.cpp), which it then resets.
+void MH3PrintSceneChanges(unsigned frames);
+
 // The MH3 world split line (scene_world.cpp), which it then resets.
 void MH3PrintWorldSplit(unsigned frames);
 
@@ -84,6 +87,15 @@ namespace FrameDraw {
 void SetSceneHandoff(void (*handoff)());
 bool RunDeferredScene(CpuContext* cpu);
 } // namespace FrameDraw
+
+// The single view's scene draw split at the bucket draw (native_scene_queue.cpp):
+// Prepare walks the scene graph (the effect launch, the buckets' reset, the
+// root's camera, the traverse, the root's view matrices), DrawPrepared draws
+// the buckets and finishes.
+namespace SceneQueue {
+void Prepare(CpuContext* cpu);
+void DrawPrepared(CpuContext* cpu);
+} // namespace SceneQueue
 
 // The MH3 layer split line (frame_draw.cpp), which it then resets.
 void MH3PrintLayerSplit(unsigned frames);

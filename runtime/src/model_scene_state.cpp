@@ -12,6 +12,7 @@
 #include "runtime/native/mh3_model_state.h"
 #include "model_render_prep.h"
 #include <stdexcept>
+#include <utility>
 #include <string>
 
 const mh3_res_memory& MH3NativeResourceMemory();
@@ -273,7 +274,28 @@ void InvalidateNativeModelCaches(uint32_t fields) {
     }
 }
 
+// The overlapped draw (docs/pipelined-draw.md): the model caches above are the
+// draw thread's while it draws the scene. A logic step's invalidation (the
+// scene update's, at the step's start) is kept for the next scene, which
+// applies it when it starts (ApplyDeferredModelInvalidate).
+bool deferModelInvalidate = false;
+uint32_t deferredModelInvalidate = 0;
+
+void SetModelInvalidateDeferral(bool enabled) {
+    deferModelInvalidate = enabled;
+}
+
+void ApplyDeferredModelInvalidate() {
+    if (const uint32_t fields = std::exchange(deferredModelInvalidate, 0))
+        InvalidateNativeModelCaches(fields);
+}
+
 extern "C" void MH3_ModelInvalidate(CpuContext* cpu) {
+    if (deferModelInvalidate && PpcThread::CurrentThread() == PpcThread::Game) {
+        deferredModelInvalidate |= cpu->gpr[3];
+        return;
+    }
+
     InvalidateNativeModelCaches(cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800885F4, MH3_ModelInvalidate, "ModelInvalidate");

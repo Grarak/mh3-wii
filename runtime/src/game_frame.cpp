@@ -36,6 +36,14 @@
 #include <vector>
 #endif
 
+// model_scene_state.cpp: the overlapped draw's model cache invalidation.
+void SetModelInvalidateDeferral(bool enabled);
+void ApplyDeferredModelInvalidate();
+
+// model_catalog.cpp: the pose and vertex cache retirements of a logic step
+// that ran beside the draw.
+void ApplyDeferredDrawCacheRetirements();
+
 namespace {
 
 constexpr uint32_t kSystem = 0x8065AA60; // game system flags
@@ -251,6 +259,11 @@ struct FrameSplit {
                     f(MH3_SPLIT_EFFECT_CALC), worker.jobNs / 1e6 / frames, f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC));
         std::printf("MH3 guest worker: %.2f jobs/frame, %.2f ms/frame of jobs, game waited %.2f ms/frame (%llu waits)\n", double(worker.jobs) / frames, worker.jobNs / 1e6 / frames,
                     worker.waitNs / 1e6 / frames, static_cast<unsigned long long>(worker.waits));
+
+        // The draw thread's scenes, and the game thread's waits for them at the handoff.
+        if (const auto draw = DrawThread::Thread().TakeStatistics(); draw.jobs)
+            std::printf("MH3 draw thread: %.2f scenes/frame, %.2f ms/frame of scenes, game waited %.2f ms/frame (%llu waits)\n", double(draw.jobs) / frames, draw.jobNs / 1e6 / frames,
+                        draw.waitNs / 1e6 / frames, static_cast<unsigned long long>(draw.waits));
         MH3PrintWorldSplit(frames);
 
         if (mh3SplitDetail) {
@@ -260,6 +273,7 @@ struct FrameSplit {
                         f(MH3_SPLIT_G3D_WORLD), n(MH3_SPLIT_G3D_WORLD), f(MH3_SPLIT_G3D_MATERIAL), n(MH3_SPLIT_G3D_MATERIAL), f(MH3_SPLIT_G3D_VERTEX), n(MH3_SPLIT_G3D_VERTEX),
                         f(MH3_SPLIT_G3D_VIEW), n(MH3_SPLIT_G3D_VIEW), f(MH3_SPLIT_G3D_UPDATE), n(MH3_SPLIT_G3D_UPDATE), f(MH3_SPLIT_G3D_OTHER), n(MH3_SPLIT_G3D_OTHER));
             MH3PrintFieldSplit(frames);
+            MH3PrintSceneChanges(frames);
             MH3PrintLayerSplit(frames);
             MH3PrintHudSplit(frames);
         }
@@ -341,6 +355,7 @@ void DrawSection(CpuContext* ctx, bool render) {
 // (frame_draw.cpp) and the effect calculation's join.
 void SceneSection(CpuContext* ctx, bool render) {
     NativeFramePacketProducerChanged();
+    ApplyDeferredModelInvalidate();
 
     if (render) {
         DrawPages::DrawBegins(ctx->gpr[1]);
@@ -449,6 +464,7 @@ bool DrawOverlap() {
         GuestWorker::Thread().SetCore(0);
         EffectStep::SetOverlap(true);
         SetNativeFrameOverlap(true);
+        SetModelInvalidateDeferral(true);
         return true;
     }();
     return enabled;
@@ -598,6 +614,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 
         if (DrawOverlap()) {
             DrawThread::Thread().Wait();
+            ApplyDeferredDrawCacheRetirements();
             BeginOverlappedNativeGraphicsFrame();
             GameSideSection(ctx, render);
             EffectStep::Launch(*ctx);

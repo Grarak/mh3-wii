@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -583,18 +584,68 @@ uint64_t ReadNativeLiveMaterialRevision() {
     return live_version;
 }
 
+namespace {
+// The overlapped draw (docs/pipelined-draw.md): the draw thread and the game
+// thread both record copies, disc writes and retirements, so each entry point
+// holds catalogLock. A game-thread change to tracked resource data (a load)
+// first waits for an in-flight draw, which may be drawing that data: loads run
+// serialized; the fight's untracked copies do not wait.
+std::recursive_mutex catalogLock;
+
+bool TrackedForDraw(uint32_t address, uint32_t bytes) {
+    std::lock_guard guard(catalogLock);
+    Initialize();
+    return mh3_source_intersects(&C().tracker, Canonical(address, bytes), bytes);
+}
+
+void QuiesceDraw(bool tracked) {
+    if (tracked && PpcThread::CurrentThread() == PpcThread::Game && DrawThread::Thread().Pending())
+        DrawThread::Thread().Wait();
+}
+
+// The pose versions and vertex caches the draw thread uses while the next
+// logic step copies and retires guest memory: the game thread's retirements
+// of them wait for the next handoff (ApplyDeferredDrawCacheRetirements), when
+// the draw is done. The draw drew the step before, which the old entries show.
+std::vector<std::pair<uint32_t, uint32_t>> deferredRetirements;
+
+void RetireDrawCaches(uint32_t address, uint32_t bytes) {
+    if (PpcThread::CurrentThread() == PpcThread::Game && DrawThread::Thread().Pending()) {
+        deferredRetirements.emplace_back(address, bytes);
+        return;
+    }
+
+    RetireNativeModelPose(address, bytes);
+
+    if (vertex_retire)
+        vertex_retire(address, bytes);
+}
+} // namespace
+
+void ApplyDeferredDrawCacheRetirements() {
+    std::lock_guard guard(catalogLock);
+
+    for (const auto& [address, bytes] : deferredRetirements) {
+        RetireNativeModelPose(address, bytes);
+
+        if (vertex_retire)
+            vertex_retire(address, bytes);
+    }
+
+    deferredRetirements.clear();
+}
+
 void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
     if (!bytes)
         return;
 
+    QuiesceDraw(true);
+    std::lock_guard guard(catalogLock);
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
     destination = Canonical(destination, bytes);
     Checked(mh3_source_record_disc(&C().tracker, destination, bytes, offset, NextGeneration()));
-    RetireNativeModelPose(destination, bytes);
-
-    if (vertex_retire)
-        vertex_retire(destination, bytes);
+    RetireDrawCaches(destination, bytes);
 
     const bool retired_owner = RetireCertificates(destination, bytes), retired_block = RetireLiveBlocks(destination, bytes);
     InvalidateSourceCache(c, NativeSourceEpochReason::DiscWrite, NativeSourceEpochProducer::Disc, destination, 0, bytes, offset,
@@ -607,6 +658,8 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("resource copy");
 #endif
+    QuiesceDraw(TrackedForDraw(destination, bytes) || TrackedForDraw(source, bytes));
+    std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
@@ -630,10 +683,8 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     if (tracked || !owner_copies.empty())
         Checked(mh3_source_record_copy(&C().tracker, destination, source, bytes, generation));
 
-    RetireNativeModelPose(destination, bytes);
+    RetireDrawCaches(destination, bytes);
 
-    if (vertex_retire)
-        vertex_retire(destination, bytes);
     // A typed mutation may already have retired the byte provenance. Unknown
     // writes must still retire the independent allocation certificate.
     const bool retired_owner = RetireCertificates(destination, bytes), retired_block = RetireLiveBlocks(destination, bytes);
@@ -665,6 +716,8 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("resource owner retirement");
 #endif
+    QuiesceDraw(TrackedForDraw(address, bytes));
+    std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
@@ -674,10 +727,7 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
     if (tracked)
         Checked(mh3_source_retire(&C().tracker, address, bytes));
 
-    RetireNativeModelPose(address, bytes);
-
-    if (vertex_retire)
-        vertex_retire(address, bytes);
+    RetireDrawCaches(address, bytes);
 
     const bool retired_owner = RetireCertificates(address, bytes), retired_block = RetireLiveBlocks(address, bytes);
 
@@ -697,6 +747,8 @@ void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_
     if (!bytes)
         return;
 
+    QuiesceDraw(TrackedForDraw(address, bytes));
+    std::lock_guard guard(catalogLock);
     Initialize();
     address = Canonical(address, bytes);
     CheckTypedMaterialWrite(address, bytes, kind);
@@ -714,6 +766,8 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
     if (!bytes || destination == source)
         return;
 
+    QuiesceDraw(TrackedForDraw(destination, bytes) || TrackedForDraw(source, bytes));
+    std::lock_guard guard(catalogLock);
     Initialize();
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
