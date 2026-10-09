@@ -9,7 +9,9 @@ namespace Translator.Core.Disassembly;
 internal static class JumpTableDetector
 {
     private const int MaxBacktrackInstructions = 192;
-    private const int MaxEntryCount = 512;
+    // MH3's item dispatch at 0x80229FDC has 635 entries. Keep a bounded
+    // scan (16 KiB), while accepting larger compiler-generated switches.
+    private const int MaxEntryCount = 4096;
 
     public static bool TryRecognize(
         IReadOnlyList<PpcInstruction> ordered,

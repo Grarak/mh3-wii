@@ -7,6 +7,28 @@ namespace Translator.Tests;
 public class JumpTableDetectorTests
 {
     [Theory]
+    [InlineData(635, false, true)]
+    [InlineData(4096, false, true)]
+    [InlineData(4097, false, false)]
+    [InlineData(635, true, false)]
+    public void LargeTablesRemainBoundedAndValidateEveryEntry(int entries, bool invalidLast, bool expected)
+    {
+        const uint start = 0x80000000, table = start + 0x1000;
+        var words = new uint[] {
+            0x28050000u | (uint)(entries - 1), // cmplwi r5, upper bound
+            0x3C608000, 0x38631000, // lis/addi r3, table
+            0x54A0103A, 0x7C63002E, 0x7C6903A6, 0x4E800420,
+        };
+        var ordered = words.Select((word, i) => PpcDecoder.Decode(start + (uint)i * 4, word)).ToArray();
+        var data = Enumerable.Range(0, entries).Select(i =>
+            (table + (uint)i * 4, invalidLast && i == entries - 1 ? 0x90000000u : start + 0x40 + (uint)(i % 3) * 4)).ToArray();
+        var image = TranslatorCppTestHarness.CreateImage(data);
+        Assert.Equal(expected, JumpTableDetector.TryRecognize(ordered, BuildIndex(ordered),
+            ordered[^1].Address, start, start + 0x1000, image, out var targets));
+        if (expected) Assert.Equal(new uint[] { start + 0x40, start + 0x44, start + 0x48 }, targets);
+    }
+
+    [Theory]
     [InlineData(false, 0x60000000u, true)] // preserved page register
     [InlineData(false, 0x92C10008u, true)] // stw r22,8(r1) is not a definition
     [InlineData(false, 0x4E800421u, true)] // bctrl preserves nonvolatile r22
@@ -337,7 +359,7 @@ public class JumpTableDetectorTests
 
         var oversizeBound = new List<PpcInstruction>
         {
-            PpcInstruction.Synthetic(baseAddr + 0x00, 0, "cmplwi", new PpcOperand[] { new PpcRegisterOperand("r3", 3), new PpcImmediateOperand(600) }),
+            PpcInstruction.Synthetic(baseAddr + 0x00, 0, "cmplwi", new PpcOperand[] { new PpcRegisterOperand("r3", 3), new PpcImmediateOperand(4096) }),
             PpcInstruction.Synthetic(baseAddr + 0x04, 0, "lis", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(unchecked((short)0x8000)) }),
             PpcInstruction.Synthetic(baseAddr + 0x08, 0, "addi", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(0x0100) }),
             PpcInstruction.Synthetic(baseAddr + 0x0C, 0, "lwzx", new PpcOperand[] { new PpcRegisterOperand("r0", 0), new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r3", 3) }),
