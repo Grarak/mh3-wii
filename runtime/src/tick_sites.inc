@@ -121,11 +121,20 @@
 {0x80346F18u, TickSite::Countup},            // object: steps (s16 +0x22), against 600
 {0x8034E5ECu, TickSite::Countup},           // actor action step counter (+0x28)
 {0x8034EC68u, TickSite::Countup},
-{0x80350EE8u, TickSite::Countup},            // stage gimmick (80350DD8): steps (+0x20)
-{0x80351380u, TickSite::Countup},            // stage gimmick: steps (+0x20), against 7
-{0x803520F8u, TickSite::Countup},            // stage gimmick (80351FAC): steps (+0x20)
-{0x80354004u, TickSite::Countup},            // stage gimmick (80353EBC): steps (+0x20)
-{0x8035437Cu, TickSite::Countup},            // stage gimmick (803542A4): steps (+0x20)
+{0x8034F5B4u, TickSite::Countdown},          // small monster (8034F588): s16 timer (+0x32E) in state 1
+{0x8034F5CCu, TickSite::Countdown},          // small monster: s16 timer (+0x330) in state 0
+{0x8034F5F8u, TickSite::Countdown},          // small monster: s16 timer (+0x332)
+{0x8034FACCu, TickSite::Countdown},          // small monster (8034FA1C): wait (+0x20), acts at 0
+{0x80350CBCu, TickSite::Countdown},          // small monster (80350B34): wait (+0x20), acts at 0
+{0x80350EE8u, TickSite::Countup},            // small monster (80350DD8): state steps (+0x20)
+{0x80351380u, TickSite::Countup},            // small monster: state steps (+0x20), against 7
+{0x803520F8u, TickSite::Countup},            // small monster (80351FAC): state steps (+0x20)
+{0x80354004u, TickSite::Countup},            // small monster (80353EBC): state steps (+0x20)
+{0x8035437Cu, TickSite::Countup},            // small monster (803542A4): state steps (+0x20)
+{0x803549D4u, TickSite::Countup},            // small monster (8035455C): state steps (+0x20)
+{0x80354B48u, TickSite::Countup},            // small monster (8035455C): state steps (+0x20)
+{0x80355278u, TickSite::Countup},            // small monster (80354FFC): state steps (+0x20)
+{0x80356120u, TickSite::Countup},            // small monster (80355A44): state steps (+0x20)
 {0x80358EB4u, TickSite::Countdown},          // creature (80358BA4): frame hold (s8 +0x18), next frame at 0
 {0x80358FA8u, TickSite::CountdownPastZero},  // creature: countdown (s16 +0x14)
 {0x8035B21Cu, TickSite::Countdown},         // 8035AF48: countdown (+8), blinks below 30

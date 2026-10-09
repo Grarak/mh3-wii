@@ -43,10 +43,41 @@ REGISTER_NATIVE_FUNCTION_AS(0x8012F8C4, MH3_EnemyBlendToward, "EnemyBlendToward"
 // player (s32 +0x428 + 4 * player) += amount, clamped to 0..20000. 0x8012B6B0
 // adds each player's rate every step (its call returns to 0x8012B898): that
 // amount becomes its share of this step. The other caller (0x8011F39C) adds on
-// an event and is left as is.
+// an event and is left as is. Three more gauges work the same way, each with
+// one per-step caller in 0x8012BE58 and one event caller near 0x8011F3xx:
+//   0x8012B9A8 (enemy, player, amount): +0x390 + 4 * player, from 0x8012BFB0
+//   0x8012B9EC (enemy, amount): +0x3A0, from 0x8012C028
+//   0x8012BA20 (enemy, player, amount): +0x3A4 + 4 * player, from 0x8012C0FC
+namespace {
+void ShareAt(CpuContext* ctx, uint32_t perStepReturn, int reg) {
+    if (ctx->lr == perStepReturn) ctx->gpr[reg] = uint32_t(GameStep::Share(int32_t(ctx->gpr[reg])));
+}
+} // namespace
+
 extern "C" void func_8012B66C(CpuContext* ctx);
 extern "C" void MH3_EnemyAwarenessAdd(CpuContext* ctx) {
-    if (ctx->lr == 0x8012B898u) ctx->gpr[5] = uint32_t(GameStep::Share(int32_t(ctx->gpr[5])));
+    ShareAt(ctx, 0x8012B898u, 5);
     func_8012B66C(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8012B66C, MH3_EnemyAwarenessAdd, "EnemyAwarenessAdd");
+
+extern "C" void func_8012B9A8(CpuContext* ctx);
+extern "C" void MH3_EnemyGaugeAdd390(CpuContext* ctx) {
+    ShareAt(ctx, 0x8012BFB4u, 5);
+    func_8012B9A8(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012B9A8, MH3_EnemyGaugeAdd390, "EnemyGaugeAdd390");
+
+extern "C" void func_8012B9EC(CpuContext* ctx);
+extern "C" void MH3_EnemyGaugeAdd3A0(CpuContext* ctx) {
+    ShareAt(ctx, 0x8012C02Cu, 4);
+    func_8012B9EC(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012B9EC, MH3_EnemyGaugeAdd3A0, "EnemyGaugeAdd3A0");
+
+extern "C" void func_8012BA20(CpuContext* ctx);
+extern "C" void MH3_EnemyGaugeAdd3A4(CpuContext* ctx) {
+    ShareAt(ctx, 0x8012C100u, 5);
+    func_8012BA20(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012BA20, MH3_EnemyGaugeAdd3A4, "EnemyGaugeAdd3A4");
