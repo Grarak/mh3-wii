@@ -138,6 +138,9 @@ void RedirectNativeRenderMaterial(mh3_native_material_state* draw);
 // only while redirected to it).
 void OwnNativeRenderMaterial(const mh3_native_material_state* draw = nullptr);
 
+// Render thread: whether the Render owner's material is `draw`.
+bool NativeRenderMaterialRedirected(const mh3_native_material_state* draw);
+
 // Republishes the owner's raster from its material's pixel fields and cull
 // mode (as a skipped pixel or genmode publication would have).
 void PublishNativeMaterialRaster(NativeOwner owner);

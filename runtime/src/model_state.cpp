@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <array>
+#include <atomic>
 #include <mutex>
 
 namespace {
@@ -37,6 +38,7 @@ Objects& O() {
 std::mutex generationLock;
 FastMap<uint32_t, uint64_t> generations;
 FastMap<uint32_t, uint64_t> initialized_generations;
+std::atomic<uint64_t> generationRevision{1}; // advanced with either map, under the lock
 
 // Bound view arrays (game thread draw state).
 FastMap<uint32_t, mh3_matrix_binding> matrix_sources;
@@ -126,6 +128,10 @@ uint64_t NativeTextureGeneration(uint32_t payload) {
     return found == generations.end() ? 0 : found->second;
 }
 
+uint64_t NativeTextureResourceRevision() {
+    return generationRevision.load(std::memory_order_acquire);
+}
+
 bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation) {
     std::lock_guard lock(generationLock);
     const auto found = initialized_generations.find(payload);
@@ -145,6 +151,7 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
             MH3_THROW(std::runtime_error("Native texture producer generation went backwards"));
 
         previous = generation;
+        generationRevision.fetch_add(1, std::memory_order_release);
     }
 
     std::lock_guard lock(objectsLock);
@@ -297,6 +304,7 @@ void InitializeNativeTextureSource(uint32_t reference, bool palette) {
     const uint64_t generation = ProduceNativeTextureSource(payload);
     std::lock_guard lock(generationLock);
     initialized_generations.insert_or_assign(payload, generation);
+    generationRevision.fetch_add(1, std::memory_order_release);
 }
 
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette) {

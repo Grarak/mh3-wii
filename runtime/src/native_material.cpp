@@ -2365,6 +2365,10 @@ void OwnNativeRenderMaterial(const mh3_native_material_state* draw) {
     render.redirect = nullptr;
 }
 
+bool NativeRenderMaterialRedirected(const mh3_native_material_state* draw) {
+    return render.redirect == draw;
+}
+
 void SetNativeMaterialOwnerState(const mh3_native_material_state& state, NativeOwner owner) {
     auto& m = M(owner);
     Mat(m) = state;

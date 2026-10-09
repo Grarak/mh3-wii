@@ -36,6 +36,9 @@ uint64_t NativeTextureGeneration(uint32_t payload);
  * subsequently produced images/palettes remain on the mutable producer path.
  * Unreported raw writes are not covered by this provenance query. */
 bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation);
+/* Advances with every produced or initialized texture revision: while it is
+ * unchanged, NativeTextureResourceIsOriginal answers as before (any thread). */
+uint64_t NativeTextureResourceRevision(void);
 /* Load/create hooks, never bind hooks. ResFile::Init calls ResTex::Init and
  * ResPltt::Init once per resource initialization; each event advances revision. */
 void InitializeNativeTextureSource(uint32_t reference, bool palette);

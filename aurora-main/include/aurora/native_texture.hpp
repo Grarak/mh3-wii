@@ -81,6 +81,11 @@ struct NativeTextureMemo {
 // bind_native_texture through `memo`, which a full bind refreshes.
 void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling, NativeTextureMemo& memo);
 
+// Binds `memo`'s texture again for a caller whose source and sampling are
+// still those it was filled with. False when the cache no longer holds the
+// texture or the image is a GPU producer's target: the caller binds in full.
+bool rebind_native_texture(uint32_t unit, NativeTextureMemo& memo);
+
 // Reapply logical bindings after presentation changed the backend's units.
 void restore_native_textures();
 void clear_native_textures();

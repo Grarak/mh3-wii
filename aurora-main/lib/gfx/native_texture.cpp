@@ -313,6 +313,10 @@ bool SameSampling(const NativeTextureSampler& a, const NativeTextureSampler& b) 
 void bind(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling, NativeTextureMemo* memo) {
   owner();
 
+  // Only a publication refills it (a skipped frame leaves it empty).
+  if (memo)
+    memo->entry = nullptr;
+
   if (unit >= bindings.size())
     AURORA_THROW(std::runtime_error("Invalid native texture unit"));
 
@@ -529,26 +533,28 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
 }
 
 void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling, NativeTextureMemo& memo) {
-  if (!memo.entry || memo.stamp != cacheStamp || unit >= bindings.size() || !SameSource(memo.source, source) || !SameSampling(memo.sampling, sampling)) {
+  if (!memo.entry || !SameSource(memo.source, source) || !SameSampling(memo.sampling, sampling) || !rebind_native_texture(unit, memo))
     bind(unit, source, sampling, &memo);
-    return;
-  }
+}
+
+bool rebind_native_texture(uint32_t unit, NativeTextureMemo& memo) {
+  if (!memo.entry || memo.stamp != cacheStamp || unit >= bindings.size())
+    return false;
 
   owner();
 
   // A GPU producer's target at the image's address binds its own backing.
+  const auto& source = memo.source;
   const auto identity = static_cast<const uint8_t*>(source.identity ? source.identity : source.bytes.data());
 
-  if (identity && (scene_feedback_texture_version(identity, source.width, source.height) || generated_texture_version(identity, source.width, source.height))) {
-    bind(unit, source, sampling, &memo);
-    return;
-  }
+  if (identity && (scene_feedback_texture_version(identity, source.width, source.height) || generated_texture_version(identity, source.width, source.height)))
+    return false;
 
-  logicalBindings[unit] = {source, sampling, true};
-  shaderLodBias[unit] = sampling.lod_bias;
+  logicalBindings[unit] = {source, memo.sampling, true};
+  shaderLodBias[unit] = memo.sampling.lod_bias;
 
   if (!aurora_native_frame_should_render())
-    return;
+    return true;
 
   auto& entry = *static_cast<Entry*>(const_cast<void*>(memo.entry));
   entry.used = ++serial;
@@ -558,6 +564,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   shaderLodBias[unit] = memo.shader_bias;
   bindings[unit] = entry.texture;
   gl::bind_texture(unit, entry.texture->gl(), memo.sampler);
+  return true;
 }
 
 void clear_native_textures() {

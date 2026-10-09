@@ -12,6 +12,7 @@
 #include "native_frame_packet.h"
 #include "native_material_gpu.h"
 #include "native_shade_snapshot.h"
+#include "native_texture_memo.h"
 #include "runtime/native/adapters/model_material_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -158,7 +159,7 @@ struct ModelPrepLive {
     mh3_indirect_output op;
 };
 
-static_assert(offsetof(ModelPrepLive, op) % 4 == 0);
+static_assert(offsetof(ModelPrepLive, op) % 4 == 0 && offsetof(ModelPrepLive, channels) % 4 == 0 && offsetof(ModelPrepLive, ambient) % 4 == 0);
 
 // A record's material steps compiled once (Prep::Compiled): run from nothing
 // known on the Shadow owner and merged as their publications merge (the
@@ -173,19 +174,37 @@ struct ModelPrepDispatch {
     mh3_native_material_state image;
 
     // The image with the live inputs `held` and the publications of the last
-    // dispatch's shape step; `built` once it holds them.
+    // dispatches' shape steps (theirs, or those of the material-ignored
+    // dispatches drawn from it after them); `built` once it holds them.
     mh3_native_material_state draw;
     ModelPrepLive inputs, held; // inputs: those the image holds
     bool built = false;
 
-    // The record's texture slots as the render thread last bound them.
-    aurora::NativeTextureMemo textures[8];
+    // The matrix selectors the draw material holds since it was built.
+    mh3_model_matrix_selectors selectors{};
+    bool selected = false;
+
+    // The record's texture bindings with their units, bound through their
+    // slots' memos.
+    mh3_native_texture_binding bindings[8];
+    NativeTextureBindMemo textures[8];
 };
+
+namespace {
+// Render thread: the dispatch whose draw material the Render owner's is,
+// while it is (Drawing).
+ModelPrepDispatch* drawing = nullptr;
+} // namespace
 
 ModelPrepMaterial::ModelPrepMaterial() = default;
 ModelPrepMaterial::~ModelPrepMaterial() {
-    if (dispatch)
-        OwnNativeRenderMaterial(&dispatch->draw);
+    if (!dispatch)
+        return;
+
+    if (drawing == dispatch.get())
+        drawing = nullptr;
+
+    OwnNativeRenderMaterial(&dispatch->draw);
 }
 
 namespace {
@@ -406,8 +425,25 @@ void LiveOf(const ModelPrepInputs& in, ModelPrepLive& live) {
         std::memcpy(&live.op, &in.op, sizeof live.op);
 }
 
-bool SameLive(const ModelPrepLive& a, const ModelPrepLive& b) {
-    return SameWords(&a, &b, offsetof(ModelPrepLive, op)) && (!a.indirect_operator || !std::memcmp(&a.op, &b.op, offsetof(mh3_indirect_output, light_mask) + 1));
+// The live inputs a draw material holds against a dispatch's own, in place
+// (whether a colour version exists is part of the key).
+bool SameLive(const ModelPrepLive& held, const ModelPrepInputs& in) {
+    if (in.colors && !(SameWords(held.color, in.colors->color, sizeof held.color) && SameWords(held.konst, in.colors->konst, sizeof held.konst)))
+        return false;
+
+    if (!SameWords(held.light_masks, in.light_masks, sizeof held.light_masks) || !SameWords(held.channels, in.channels, sizeof held.channels) ||
+        !SameWords(held.ambient, in.ambient, sizeof held.ambient))
+        return false;
+
+    if (held.lights_off != ((in.flags & 8) != 0) || held.front_cull != ((in.flags & 4) != 0) || held.indirect_operator != in.indirect_operator)
+        return false;
+
+    return !in.indirect_operator || !std::memcmp(&held.op, &in.op, offsetof(mh3_indirect_output, light_mask) + 1);
+}
+
+// The dispatch whose draw material the Render owner's is.
+ModelPrepDispatch* Drawing() {
+    return drawing && NativeRenderMaterialRedirected(&drawing->draw) ? drawing : nullptr;
 }
 
 struct Prep {
@@ -423,8 +459,10 @@ struct Prep {
     bool publish = true, raster = false;
     uint32_t top = 0;
 
-    // A compiled dispatch's texture memos (Render).
-    aurora::NativeTextureMemo* memos = nullptr;
+    // Render: the compiled dispatch whose bindings and texture memos the
+    // steps bind, and the one whose draw material they publish onto.
+    ModelPrepDispatch* compiled = nullptr;
+    ModelPrepDispatch* drawn = nullptr;
     uint8_t& sync() { return *m.At(Sync, 1).data; }
     mh3_model_genmode Mode() {
         mh3_model_genmode mode{};
@@ -566,9 +604,18 @@ struct Prep {
             if (!(present & (1u << i)))
                 continue;
 
-            auto binding = record.textures[i];
-            binding.map_id = i;
-            BindNativeTexture(binding, owner, memos ? &memos[i] : nullptr);
+            mh3_native_texture_binding copy;
+            const mh3_native_texture_binding* bound = &copy;
+
+            if (compiled)
+                bound = &compiled->bindings[i];
+            else {
+                copy = record.textures[i];
+                copy.map_id = i;
+            }
+
+            const auto& binding = *bound;
+            BindNativeTexture(binding, owner, compiled ? &compiled->textures[i] : nullptr);
 
             if (changed & (1u << i)) {
                 if (binding.source.width > UINT16_MAX || binding.source.height > UINT16_MAX)
@@ -656,8 +703,8 @@ struct Prep {
     }
 
     bool SameChannels(const ModelPrepLive& live) const {
-        return !std::memcmp(live.channels, in.channels, sizeof live.channels) && !std::memcmp(live.light_masks, in.light_masks, sizeof live.light_masks) &&
-               !std::memcmp(live.ambient, in.ambient, sizeof live.ambient) && live.lights_off == ((in.flags & 8) != 0);
+        return SameWords(live.channels, in.channels, sizeof live.channels) && SameWords(live.light_masks, in.light_masks, sizeof live.light_masks) &&
+               SameWords(live.ambient, in.ambient, sizeof live.ambient) && live.lights_off == ((in.flags & 8) != 0);
     }
 
     // The material steps of a compiled record: the steps without their
@@ -667,22 +714,22 @@ struct Prep {
     // republished, and the texture SRT.
     void Compiled(ModelPrepDispatch& d) {
         publish = false;
-        memos = d.textures;
+        compiled = &d;
         Material();
-        memos = nullptr;
+        compiled = nullptr;
         publish = true;
-        ModelPrepLive live;
-        LiveOf(in, live);
         RedirectNativeRenderMaterial(&d.draw);
+        drawing = drawn = &d;
 
-        if (!d.built || !SameLive(live, d.held)) {
+        if (!d.built || !SameLive(d.held, in)) {
 #ifdef MH3_DEVELOPMENT
             ++dispatchCounts.rebuilt;
 #endif
             SetNativeMaterialOwnerState(d.image, owner);
             Live(d);
-            d.held = live;
+            LiveOf(in, d.held);
             d.built = true;
+            d.selected = false;
         }
 
         if (raster || in.indirect_operator)
@@ -715,9 +762,24 @@ struct Prep {
             IndirectOperator();
     }
 
+    // The mirror's selectors onto the material; a draw material that holds
+    // them already is left as it is.
+    void Selectors() {
+        if (drawn) {
+            if (drawn->selected && SameWords(&drawn->selectors, &m.selectors, offsetof(mh3_model_matrix_selectors, known)) && drawn->selectors.known == m.selectors.known &&
+                drawn->selectors.dual_known == m.selectors.dual_known && drawn->selectors.dual_enabled == m.selectors.dual_enabled)
+                return;
+
+            drawn->selectors = m.selectors;
+            drawn->selected = true;
+        }
+
+        SetNativeModelMatrixSelectors(m.selectors, owner);
+    }
+
     void PublishRows(const uint32_t rows[8]) {
         mh3_model_matrix_select(&m.selectors, rows);
-        SetNativeModelMatrixSelectors(m.selectors, owner);
+        Selectors();
     }
 
     void Shape(const mh3_matrix34* direct_position, const mh3_matrix34* direct_normal, ModelPrepShapeResult& out) {
@@ -763,7 +825,7 @@ struct Prep {
 
         PublishGenmode(true);
         sync() = 0;
-        SetNativeModelMatrixSelectors(m.selectors, owner);
+        Selectors();
 
         if (out.input.matrix_id < 0)
             current_valid = 0;
@@ -802,10 +864,28 @@ void KeyOf(const ModelPrepInputs& in, ModelPrepDispatchKey& key) {
         std::memcpy(&key.pixel, &in.pixel->pixel, sizeof key.pixel);
 }
 
+// Whether `key` is a dispatch's, in place.
+bool SameKey(const ModelPrepDispatchKey& key, const ModelPrepInputs& in) {
+    if (!SameWords(key.genmode, in.genmode, sizeof key.genmode) || key.present != in.present || key.groups != uint8_t((in.pixel ? 1 : 0) | (in.colors ? 2 : 0)))
+        return false;
+
+    if (in.colors)
+        for (unsigned i = 0; i < 4; i++)
+            if (key.color_known[i] != in.colors->color[i].known || key.color_known[4 + i] != in.colors->konst[i].known)
+                return false;
+
+    return !in.pixel || SameWords(&key.pixel, &in.pixel->pixel, sizeof key.pixel);
+}
+
 // Compiles the record's image for `key` (see ModelPrepDispatch).
 void Compile(const ModelPrepInputs& in, const ModelPrepDispatchKey& key, ModelPrepDispatch& d) {
     d.key = key;
     d.built = false;
+
+    for (uint32_t i = 0; i < 8; i++) {
+        d.bindings[i] = in.record->textures[i];
+        d.bindings[i].map_id = i;
+    }
 
     // The steps from nothing known on the Shadow owner, without the texture
     // SRT and the indirect operator.
@@ -853,12 +933,13 @@ bool Compilable(NativeOwner owner, const ModelPrepInputs& in) {
 // The record's compiled dispatch, compiled first when the record has none
 // for the dispatch's key.
 ModelPrepDispatch& CompiledDispatch(const ModelPrepInputs& in) {
-    ModelPrepDispatchKey key;
-    KeyOf(in, key);
     auto& d = in.record->dispatch;
 
-    if (d && SameWords(&d->key, &key, sizeof key))
+    if (d && SameKey(d->key, in))
         return *d;
+
+    ModelPrepDispatchKey key;
+    KeyOf(in, key);
 #ifdef MH3_DEVELOPMENT
     if (d)
         ++dispatchCounts.replaced;
@@ -1280,6 +1361,13 @@ void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPre
         CountDispatch(dispatchCounts.applied);
 #endif
         prep.Compiled(*compiled);
+    } else if (ModelPrepDispatch* current = owner == NativeOwner::Render && !in.material && !in.indirect_operator ? Drawing() : nullptr) {
+        // Without material steps the draw material stays the Render owner's:
+        // the shape step's front culling is noted as one of its inputs.
+        prep.drawn = current;
+
+        if (in.flags & 4)
+            current->held.front_cull = 1;
     } else {
         // The steps publish onto the Render owner's own material.
         if (owner == NativeOwner::Render)

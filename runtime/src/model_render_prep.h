@@ -93,10 +93,11 @@ struct ModelPrepInputs {
     // The material's shared static inputs (null when the material steps don't run).
     const ModelPrepMaterial* record = nullptr;
 
-    // Small resource records, copied per dispatch.
+    // Small resource records, copied per dispatch (word aligned: compared
+    // as words, model_render_prep.cpp).
     uint8_t depth_before_texture = 0;
-    uint8_t genmode[8]{};
-    uint8_t channels[40]{};
+    alignas(4) uint8_t genmode[8]{};
+    alignas(4) uint8_t channels[40]{};
 
     // The current versions of the fields the pixel and colour typed blocks
     // publish (mh3_material_group_publish); null without the block.
@@ -108,7 +109,7 @@ struct ModelPrepInputs {
     // The record's indirect block, or the replaced one of an ignored material.
     const NativeFrozenMaterialBlock* indirect = nullptr;
     uint32_t light_masks[4]{};
-    uint8_t ambient[4]{};
+    alignas(4) uint8_t ambient[4]{};
     int32_t srt = -1; // index in the packet's ModelPrepSrtList, or -1
     uint8_t shape_cache[12]{};
 

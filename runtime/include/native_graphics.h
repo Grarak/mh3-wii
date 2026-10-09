@@ -41,14 +41,12 @@ void SetNativeRasterObserver(NativeRasterObserver observer);
 // Skipped frames perform no GPU work, allocation, scene switch or wait.
 void ClearNativeDepthTarget();
 
-namespace aurora {
-struct NativeTextureMemo;
-}
+struct NativeTextureBindMemo;
 
 // Game: records a binding; the render thread binds the backend on restore.
 // Render: binds the backend now, through `memo` when given (a material
-// record's slot: aurora::bind_native_texture reuses its last resolution).
-void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner = NativeOwner::Game, aurora::NativeTextureMemo* memo = nullptr);
+// record's slot, always with the same binding: native_texture_memo.h).
+void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner = NativeOwner::Game, NativeTextureBindMemo* memo = nullptr);
 const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit, NativeOwner owner = NativeOwner::Game);
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);
 void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette, NativeOwner owner = NativeOwner::Game);
@@ -137,7 +135,7 @@ bool NativeGraphicsFrameShouldRender();
 void CancelNativeGraphicsFrame();
 void EndNativeGraphicsFrame();
 
-// The overlapped draw (the default, docs/pipelined-draw.md):
+// The overlapped draw (the default, docs/optimizations/threading/pipelined-draw.md):
 // frame begin only latches admission; the game thread begins the packet at
 // the handoff (BeginOverlappedNativeGraphicsFrame) and gives it to the draw
 // thread (NativeFrameSubmittedToDraw), which ends the frame. At the frame end
