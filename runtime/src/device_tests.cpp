@@ -29,6 +29,7 @@ extern "C" void MH3_IOSRead(CpuContext*);
 extern "C" void MH3_IOSWrite(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext*);
 extern "C" void MH3_IOSIoctlv(CpuContext*);
+extern "C" void MH3_IOSIoctlvAsync(CpuContext*);
 extern "C" void MH3_IOSOpenAsync(CpuContext*);
 void RunSleepSelfTests(CpuContext*);
 
@@ -450,11 +451,43 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (static_cast<int32_t>(cpu->gpr[3]) != -102)
         throw std::runtime_error("IOS read-only mode was not enforced");
     cpu->gpr[3] = fd; MH3_IOSClose(cpu);
-    if (open("/../escape", 1) != -4 || open("/missing", 1) != -106)
+    if (open("/../escape", 1) != -4 || open("//etc/passwd", 1) != -4 || open("/missing", 1) != -106)
         throw std::runtime_error("IOS path/error handling failed");
     std::filesystem::create_directory_symlink(directory.path, nand / "link");
     if (open("/link/sram.bin", 1) >= 0)
         throw std::runtime_error("IOS NAND symlink isolation failed");
+    std::filesystem::create_directories(nand / "usage/sub");
+    { std::ofstream file(nand / "usage/sub/data"); file << std::string(0x4001, 'x'); }
+    { std::ofstream file(nand / "usage/empty"); }
+    fd = open("/dev/fs", 0);
+    auto usage = [&](const std::string& path, bool asynchronous = false) {
+        for (size_t i = 0; i <= path.size(); ++i) Memory::Write8(0x80001200 + i, i == path.size() ? 0 : path[i]);
+        Memory::Write32(0x80001500, 0x80001200); Memory::Write32(0x80001504, 64);
+        Memory::Write32(0x80001508, 0x80001400); Memory::Write32(0x8000150C, 4);
+        Memory::Write32(0x80001510, 0x80001404); Memory::Write32(0x80001514, 4);
+        cpu->gpr[3] = fd; cpu->gpr[4] = 12; cpu->gpr[5] = 1;
+        cpu->gpr[6] = 2; cpu->gpr[7] = 0x80001500;
+        cpu->gpr[8] = 0x81700000; cpu->gpr[9] = 0x12345678;
+        if (asynchronous) MH3_IOSIoctlvAsync(cpu);
+        else MH3_IOSIoctlv(cpu);
+        return static_cast<int32_t>(cpu->gpr[3]);
+    };
+    if (usage("/usage") || Memory::Read32(0x80001400) != 2 || Memory::Read32(0x80001404) != 4)
+        throw std::runtime_error("NAND directory cluster/inode accounting failed");
+    if (usage("/usage", true)) throw std::runtime_error("Asynchronous usage queue failed");
+    auto successfulUsage = TakeIosCompletion();
+    if (!successfulUsage || successfulUsage->result != 0)
+        throw std::runtime_error("Asynchronous usage lost its success result");
+    if (usage("/missing", true)) throw std::runtime_error("Asynchronous ioctlv queue failed");
+    auto usageCompletion = TakeIosCompletion();
+    if (!usageCompletion || usageCompletion->result != -106 || usageCompletion->callback != 0x81700000 ||
+        usageCompletion->argument != 0x12345678)
+        throw std::runtime_error("Asynchronous ioctlv completion lost result/arguments");
+    if (usage("/../usage") != -4 || usage("//etc") != -4 || usage("/link") >= 0)
+        throw std::runtime_error("NAND usage followed an unsafe path");
+    std::filesystem::create_directory_symlink(directory.path, nand / "usage/sub/link");
+    if (usage("/usage") != -102) throw std::runtime_error("NAND usage followed a nested symlink");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
     fd = open("/dev/stm/immediate", 0);
     cpu->gpr[3] = fd; cpu->gpr[4] = 0x5001;
     cpu->gpr[5] = 0x80001400; cpu->gpr[6] = 20;

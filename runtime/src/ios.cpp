@@ -8,11 +8,15 @@
 #include <filesystem>
 #include <fstream>
 #include <fcntl.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <memory>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 
 namespace {
@@ -50,8 +54,9 @@ std::string GuestPath(uint32_t address) {
 // IOS_Open does not create files. ISFS creation will be handled independently.
 // Resolve every component relative to the private NAND root without following
 // symlinks, and reject traversal before opening any host file.
-int OpenFile(const std::string& path, uint32_t mode) {
-    if (path.size() < 2 || path[0] != '/' || mode < 1 || mode > 3) return -4;
+int OpenNandPath(const std::string& path, int finalFlags, bool allowRoot = false) {
+    if (path.empty() || path[0] != '/' || path.find("//") != std::string::npos ||
+        (path.size() == 1 && !allowRoot)) return -4;
     std::filesystem::path relative = path.substr(1);
     for (const auto& part : relative)
         if (part == ".." || part == "." || part.empty()) return -4;
@@ -63,7 +68,7 @@ int OpenFile(const std::string& path, uint32_t mode) {
     for (auto it = relative.begin(); it != end; ++it) {
         auto next = it; ++next;
         const bool last = next == end;
-        int flags = last ? (mode == 1 ? O_RDONLY : mode == 2 ? O_WRONLY : O_RDWR) : O_RDONLY | O_DIRECTORY;
+        int flags = last ? finalFlags : O_RDONLY | O_DIRECTORY;
         int child = ::openat(dir, it->c_str(), flags | O_NOFOLLOW);
         int saved = errno;
         ::close(dir);
@@ -71,9 +76,41 @@ int OpenFile(const std::string& path, uint32_t mode) {
         if (child < 0) return Error();
         dir = child;
     }
+    return dir;
+}
+int OpenFile(const std::string& path, uint32_t mode) {
+    if (mode < 1 || mode > 3) return -4;
+    const int dir = OpenNandPath(path, mode == 1 ? O_RDONLY : mode == 2 ? O_WRONLY : O_RDWR);
+    if (dir < 0) return dir;
     const uint32_t handle = nextHandle++;
     files.emplace(handle, File{dir, mode});
     return handle;
+}
+int DirectoryUsage(int fd, uint64_t& clusters, uint64_t& inodes, unsigned depth = 0) {
+    // Own each descriptor even on error, and never follow a host symlink.
+    DIR* raw = ::fdopendir(fd);
+    if (!raw) { const int error = Error(); ::close(fd); return error; }
+    std::unique_ptr<DIR, decltype(&::closedir)> directory(raw, ::closedir);
+    if (depth > 64) return -4;
+    ++inodes;
+    while (true) {
+        errno = 0;
+        const auto* entry = ::readdir(raw);
+        if (!entry) return errno ? Error() : 0;
+        const std::string_view name(entry->d_name);
+        if (name == "." || name == "..") continue;
+        struct stat info{};
+        if (::fstatat(fd, entry->d_name, &info, AT_SYMLINK_NOFOLLOW) != 0) return Error();
+        if (S_ISREG(info.st_mode)) {
+            ++inodes;
+            clusters += (uint64_t(info.st_size) + 0x3FFF) / 0x4000;
+        } else if (S_ISDIR(info.st_mode)) {
+            const int child = ::openat(fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+            if (child < 0) return Error();
+            const auto result = DirectoryUsage(child, clusters, inodes, depth + 1);
+            if (result) return result;
+        } else return -102;
+    }
 }
 }
 
@@ -259,6 +296,27 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
     if (inputs > 16 || outputs > 16 || !Memory::Contains(vectors, (inputs + outputs) * 8)) {
         ctx->gpr[3] = -4; return;
     }
+    if (device->second == "/dev/fs" && command == 12) {
+        if (inputs != 1 || outputs != 2 || Memory::Read32(vectors + 4) != 64 ||
+            Memory::Read32(vectors + 12) != 4 || Memory::Read32(vectors + 20) != 4) {
+            ctx->gpr[3] = -4; return;
+        }
+        const uint32_t pathAddress = Memory::Read32(vectors);
+        const uint32_t clusterOut = Memory::Read32(vectors + 8), inodeOut = Memory::Read32(vectors + 16);
+        if (!Memory::Contains(pathAddress, 64) || !Memory::Contains(clusterOut, 4) || !Memory::Contains(inodeOut, 4)) {
+            ctx->gpr[3] = -4; return;
+        }
+        const auto path = GuestPath(pathAddress);
+        const int directory = OpenNandPath(path, O_RDONLY | O_DIRECTORY, true);
+        if (directory < 0) { ctx->gpr[3] = directory; return; }
+        uint64_t clusters = 0, inodes = 0;
+        const auto result = DirectoryUsage(directory, clusters, inodes);
+        if (result) { ctx->gpr[3] = result; return; }
+        if (clusters > UINT32_MAX || inodes > UINT32_MAX) { ctx->gpr[3] = -101; return; }
+        Memory::Write32(clusterOut, clusters);
+        Memory::Write32(inodeOut, inodes);
+        ctx->gpr[3] = 0; return;
+    }
     if (device->second == "/dev/es" && command == 0x16 && inputs == 1 && outputs == 2) {
         // New host NAND has no ticket-consumption records. The original SDK
         // still checks the ticket's own time-limit fields after this query.
@@ -338,6 +396,10 @@ extern "C" void MH3_IOSCloseAsync(CpuContext* ctx) {
     AsyncFile(ctx, MH3_IOSClose, ctx->gpr[4], ctx->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION(0x804BC750, MH3_IOSCloseAsync);
+extern "C" void MH3_IOSIoctlvAsync(CpuContext* ctx) {
+    AsyncFile(ctx, MH3_IOSIoctlv, ctx->gpr[8], ctx->gpr[9]);
+}
+REGISTER_NATIVE_FUNCTION(0x804BD220, MH3_IOSIoctlvAsync);
 
 // Boot's SCCheckStatus loop is a safe event-pump boundary before OS scheduling
 // starts. Preserve the polling caller's full CPU state around each callback.
