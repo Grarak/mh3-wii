@@ -1411,3 +1411,25 @@
 800b9ae4 DrawBillboardStrategyDraw
 800ba8b8 DrawBillboardKind1
 800bb020 DrawBillboardKind2
+# nw4r::ef::Resource, effect and texture lookups by name (ported in runtime/src/ef_resource.cpp).
+800b28dc EfResourceInstance
+800b2918 EfResourceInitialize
+800b2960 EfRelocateEffectProject
+800b2c1c EfEffectProjectNumEmitter
+800b2d3c EfTextureProjectNumTexture
+800b2e5c EfFindEmitterInProject
+800b32a4 EfRelocateTextureProject
+800b3440 EfFindTextureInProject
+800b36d4 EfAddEffectProject
+800b3924 EfFindEmitterHandle
+800b3a78 EfFindEmitter
+800b3c08 EfFindTexture
+800b3ee4 EfAddTextureProject
+800b4558 EfRelinkAll
+800b4724 EfRemoveEffectProject
+800b48a0 EfRemoveAllEffectProjects
+800b48fc EfRemoveTextureProject
+800b4a78 EfRemoveAllTextureProjects
+800f7cd8 EftRelinkResources
+800f9228 EftCreateByIndex
+800f9854 EftFindEmitterHandle
