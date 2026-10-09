@@ -50,11 +50,21 @@ private:
     uint32_t textureDirty = 0; // slots whose metadata is due before the next draw
     unsigned displayListDepth = 0;
     uint32_t displayListAddress = 0;
-    uint32_t bpMask = 0xFFFFFF, paletteRevision = 0;
+    uint32_t bpMask = 0xFFFFFF;
     struct PaletteMemory {
         std::array<uint8_t, 1024 * 1024> bytes{};
         std::array<bool, 32768> loadedLines{};
         uint32_t revision = 0;
+        // A bounded history lets A/B/A palette loads reuse the original GPU
+        // conversion. Hashes narrow the lookup; exact bytes prove equality.
+        struct Contents {
+            uint64_t digest = 0;
+            uint32_t format = 0, version = 0;
+            std::vector<uint8_t> bytes;
+        };
+        std::array<Contents, 64> contents{}; // At most 2 MiB for C14X2.
+        uint32_t nextContents = 0, contentsRevision = 0;
+        uint32_t ContentsVersion(uint32_t start, uint32_t entries, uint32_t format);
     };
     std::shared_ptr<PaletteMemory> palettes;
     struct PaletteBinding { uint32_t revision = 0, descriptor = 0, entries = 0; };

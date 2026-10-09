@@ -14,7 +14,7 @@
 #endif
 
 namespace {
-uint32_t TextureContentsVersion(const void* data, size_t size) {
+uint64_t ContentsDigest(const void* data, size_t size) {
 #ifdef MH3_HAS_AURORA
     const uint64_t digest = XXH3_64bits(data, size);
 #else
@@ -22,6 +22,10 @@ uint32_t TextureContentsVersion(const void* data, size_t size) {
     for (const uint8_t byte : std::span(static_cast<const uint8_t*>(data), size))
         digest = (digest ^ byte) * 1099511628211ull;
 #endif
+    return digest;
+}
+uint32_t TextureContentsVersion(const void* data, size_t size) {
+    const uint64_t digest = ContentsDigest(data, size);
     return uint32_t(digest) ^ uint32_t(digest >> 32);
 }
 
@@ -247,7 +251,6 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
 }
 
 void GuestGxStream::LoadPalette(const ArrayResolver& resolver) {
-    paletteBindings = {};
     const uint32_t size = ((bp[0x65] >> 10) & 0x7FF) * 32;
     if (!size) return;
     if (!resolver) throw std::runtime_error("Guest GX TLUT load requires RAM resolution");
@@ -255,10 +258,32 @@ void GuestGxStream::LoadPalette(const ArrayResolver& resolver) {
     if (!view.address || size > view.size) throw std::runtime_error("Guest GX TLUT load exceeds RAM");
     if (!palettes) palettes = std::make_shared<PaletteMemory>();
     const uint32_t destination = (bp[0x65] & 1023) * 512;
+    const auto first = palettes->loadedLines.begin() + destination / 32;
+    if (std::all_of(first, first + size / 32, [](bool loaded) { return loaded; }) &&
+        !std::memcmp(palettes->bytes.data() + destination, reinterpret_cast<const void*>(view.address), size))
+        return;
+    paletteBindings = {};
     // Preserve the DMA snapshot even if the guest rewrites or frees its source.
     std::memcpy(palettes->bytes.data() + destination, reinterpret_cast<const void*>(view.address), size);
     std::fill_n(palettes->loadedLines.begin() + destination / 32, size / 32, true);
     if (++palettes->revision == 0) throw std::runtime_error("Guest GX TLUT revision overflow");
+}
+
+uint32_t GuestGxStream::PaletteMemory::ContentsVersion(uint32_t start, uint32_t entries, uint32_t format) {
+    const auto* source = bytes.data() + start;
+    const size_t size = entries * sizeof(uint16_t);
+    const uint64_t digest = ContentsDigest(source, size);
+    for (const auto& cached : contents)
+        if (cached.version && cached.digest == digest && cached.format == format &&
+            cached.bytes.size() == size && !std::memcmp(cached.bytes.data(), source, size))
+            return cached.version;
+    if (++contentsRevision == 0) throw std::runtime_error("Guest GX palette content version overflow");
+    auto& cached = contents[nextContents++ % contents.size()];
+    cached.digest = digest;
+    cached.format = format;
+    cached.version = contentsRevision;
+    cached.bytes.assign(source, source + size);
+    return cached.version;
 }
 
 void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& resolver) {
@@ -291,10 +316,10 @@ void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& reso
         for (unsigned i = 0; i < 8; ++i) packet[4 + i] = uint64_t(address) >> (56 - 8 * i);
         packet[15] = paletteFormat;
         packet[16] = entries >> 8; packet[17] = entries;
-        // Stable identity per host slot; revision also changes for overlapping
-        // TMEM writes and descriptor/format changes at the same destination.
+        // Stable identity per host slot and exact contents/format. Repeated
+        // uploads of an unchanged palette retain the decoded texture in CDRAM.
         const uint32_t identity = 0x80000000u | slot;
-        const uint32_t revision = ++paletteRevision;
+        const uint32_t revision = palettes->ContentsVersion(start, entries, paletteFormat);
         for (unsigned i = 0; i < 4; ++i) {
             packet[18 + i] = identity >> (24 - 8 * i);
             packet[22 + i] = revision >> (24 - 8 * i);
@@ -410,7 +435,6 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 child.displayListAddress = address;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
                 child.textureBound = textureBound; child.textureDirty = textureDirty;
-                child.paletteRevision = paletteRevision;
                 child.boundArrays = boundArrays;
                 child.palettes = palettes; child.paletteBindings = paletteBindings;
                 child.displayListDepth = displayListDepth + 1;
@@ -418,7 +442,6 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
                 bp = child.bp; cp = child.cp; bpMask = child.bpMask;
                 textureBound = child.textureBound; textureDirty = child.textureDirty;
-                paletteRevision = child.paletteRevision;
                 boundArrays = child.boundArrays;
                 palettes = child.palettes; paletteBindings = child.paletteBindings;
             }

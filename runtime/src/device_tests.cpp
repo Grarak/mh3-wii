@@ -707,6 +707,20 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         drawPalette();
         if (reinterpret_cast<const uint8_t*>(pointer)[0] != 0xAB || palettePackets().size() != 5)
             throw std::runtime_error("GX TLUT display-list state did not reach its caller");
+        const auto count = palettePackets().size();
+        write(0x65, (16 << 10) | 0x200);
+        drawPalette();
+        if (palettePackets().size() != count)
+            throw std::runtime_error("Identical GX TLUT reload redundantly rebound the palette");
+        // Restore the original bytes and format after intervening uploads.
+        // Reuse its content version, while still publishing changed TMEM.
+        source[0] = 0xF8;
+        write(0x65, (16 << 10) | 0x200);
+        write(0xB8, (1 << 10) | 0x200);
+        drawPalette();
+        if (word(palettePackets().back(), 22) != word(p[0], 22) ||
+            reinterpret_cast<const uint8_t*>(pointer)[0] != 0xF8)
+            throw std::runtime_error("GX TLUT A/B/A reload lost the original content identity");
         auto mustReject = [&](auto operation) {
             bool rejected = false;
             try { operation(); } catch (const std::runtime_error&) { rejected = true; }
