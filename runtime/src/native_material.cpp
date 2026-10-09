@@ -23,6 +23,7 @@
 #include "../native/mh3_shade.h"
 #ifdef MH3_DEVELOPMENT
 #include "gfx/port_capture.hpp"
+#include <xxhash.h>
 #endif
 namespace aurora::gfx {
 uint32_t current_frame() noexcept;
@@ -245,6 +246,17 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     auto& program = shade.programs[key];
     if (!program) {
         auto sources = NativeShaderSource(variant);
+#ifdef MH3_DEVELOPMENT
+        // The GXM bank keys of this variant (docs/vita-shader-bank.md), for
+        // scripts/vita-shader-bank-audit.py. Hosts have no target-alpha
+        // certificate, so a1 names the Vita fragment with it flipped.
+        auto flipped = variant;
+        flipped.target_alpha_one = !variant.target_alpha_one;
+        const auto alternate = NativeShaderSource(flipped).cg_fragment;
+        std::fprintf(stderr, "MH3 shader bank key v=%016llx f=%016llx a1=%016llx %s+%s\n", (unsigned long long)XXH3_64bits(sources.cg_vertex.data(), sources.cg_vertex.size()),
+                     (unsigned long long)XXH3_64bits(sources.cg_fragment.data(), sources.cg_fragment.size()), (unsigned long long)XXH3_64bits(alternate.data(), alternate.size()),
+                     NativeShaderVertexName(variant).c_str(), NativeShaderFragmentName(variant).c_str());
+#endif
         aurora::gl::ProgramDesc desc;
         desc.label = "shade " + NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant);
         desc.origin = "runtime/src/native_shader_source.cpp";
