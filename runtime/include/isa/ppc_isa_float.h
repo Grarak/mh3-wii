@@ -117,6 +117,30 @@ inline float PpcPairLaneFromBitsInline(uint32_t bits)
 }
 #endif
 
+// Lane access that works for every PpcPairVec representation. Lane 0 is ps1, lane 1 is ps0.
+inline float PpcPairLaneInline(PpcPairVec value, unsigned lane)
+{
+#if defined(__arm__)
+    return lane == 0 ? value.lane0 : value.lane1;
+#else
+    float lanes[sizeof(PpcPairVec) / sizeof(float)];
+    std::memcpy(lanes, &value, sizeof(value));
+    return lanes[lane];
+#endif
+}
+
+inline void PpcSetPairLaneInline(PpcPairVec& value, unsigned lane, float lane_value)
+{
+#if defined(__arm__)
+    (lane == 0 ? value.lane0 : value.lane1) = lane_value;
+#else
+    float lanes[sizeof(PpcPairVec) / sizeof(float)];
+    std::memcpy(lanes, &value, sizeof(value));
+    lanes[lane] = lane_value;
+    std::memcpy(&value, lanes, sizeof(value));
+#endif
+}
+
 // Must stay inside the vector register domain. Bitcasting through a 64-bit GPR added a movq
 // domain crossing on every paired-single op (630 in the THP IDCT region alone); a double
 // local already lives in a vector register, so these casts compile to nothing.

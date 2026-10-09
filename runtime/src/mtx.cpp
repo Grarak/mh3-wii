@@ -41,11 +41,11 @@ void StoreFloat(uint32_t address, float f) {
 // PpcPairVec keeps ps0 in lane1.
 PpcPairVec LoadPair(uint32_t address) { return PpcPairVec{LoadFloat(address + 4), LoadFloat(address)}; }
 void StorePair(uint32_t address, PpcPairVec v) {
-    StoreFloat(address, v.lane1);
-    StoreFloat(address + 4, v.lane0);
+    StoreFloat(address, PpcPairLaneInline(v, 1));
+    StoreFloat(address + 4, PpcPairLaneInline(v, 0));
 }
-PpcPairVec Ps0(PpcPairVec v) { return PpcPairVec{v.lane1, v.lane1}; }
-PpcPairVec Ps1(PpcPairVec v) { return PpcPairVec{v.lane0, v.lane0}; }
+PpcPairVec Ps0(PpcPairVec v) { const float ps0 = PpcPairLaneInline(v, 1); return PpcPairVec{ps0, ps0}; }
+PpcPairVec Ps1(PpcPairVec v) { const float ps1 = PpcPairLaneInline(v, 0); return PpcPairVec{ps1, ps1}; }
 PpcPairVec Mul(PpcPairVec a, PpcPairVec c) { return PpcMulPairInline(a, c); }
 PpcPairVec Madd(PpcPairVec a, PpcPairVec c, PpcPairVec b) { return PpcFmaddPairInline(a, c, b); }
 
@@ -56,9 +56,11 @@ struct Matrix {
         for (unsigned i = 0; i < 6; ++i) p[i] = LoadPair(address + 8 * i);
     }
     // Element (row, column): ps0 of a pair is lane1.
-    float& At(unsigned row, unsigned column) {
-        PpcPairVec& pair = p[2 * row + column / 2];
-        return column % 2 == 0 ? pair.lane1 : pair.lane0;
+    float Get(unsigned row, unsigned column) const {
+        return PpcPairLaneInline(p[2 * row + column / 2], column % 2 == 0 ? 1 : 0);
+    }
+    void Set(unsigned row, unsigned column, float value) {
+        PpcSetPairLaneInline(p[2 * row + column / 2], column % 2 == 0 ? 1 : 0, value);
     }
     void Store(uint32_t address) const {
         for (unsigned i = 0; i < 6; ++i) StorePair(address + 8 * i, p[i]);
@@ -340,7 +342,7 @@ Matrix MultTrans(const Matrix& m, float vx, float vy, float vz) {
     Matrix out = m;
     for (unsigned r = 0; r < 3; ++r) {
         const PpcPairVec sum = Madd(m.p[2 * r + 1], z1, Mul(m.p[2 * r], xy));
-        out.At(r, 3) = sum.lane1 + sum.lane0;
+        out.Set(r, 3, PpcPairLaneInline(sum, 1) + PpcPairLaneInline(sum, 0));
     }
     return out;
 }
@@ -368,9 +370,9 @@ uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t
     } else {
         Matrix local(node + 0x1C);
         if (!unitScale) {
-            local.At(0, 3) = local.At(0, 3) * sx;
-            local.At(1, 3) = local.At(1, 3) * sy;
-            local.At(2, 3) = local.At(2, 3) * sz;
+            local.Set(0, 3, local.Get(0, 3) * sx);
+            local.Set(1, 3, local.Get(1, 3) * sy);
+            local.Set(2, 3, local.Get(2, 3) * sz);
         }
         ConcatMatrices(Matrix(parent), local).Store(world);
     }

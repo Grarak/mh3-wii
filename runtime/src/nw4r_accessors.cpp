@@ -99,9 +99,9 @@ void VecSubtract(uint32_t out, uint32_t a, uint32_t b) {
     const PpcPairVec xy = PpcSubPairInline(PpcPairVec{LoadFloat(a + 4), LoadFloat(a)},
                                            PpcPairVec{LoadFloat(b + 4), LoadFloat(b)});
     const PpcPairVec z = PpcSubPairInline(PpcPairVec{1.0f, LoadFloat(a + 8)}, PpcPairVec{1.0f, LoadFloat(b + 8)});
-    StoreFloat(out, xy.lane1);
-    StoreFloat(out + 4, xy.lane0);
-    StoreFloat(out + 8, z.lane1);
+    StoreFloat(out, PpcPairLaneInline(xy, 1));
+    StoreFloat(out + 4, PpcPairLaneInline(xy, 0));
+    StoreFloat(out + 8, PpcPairLaneInline(z, 1));
 }
 
 } // namespace
