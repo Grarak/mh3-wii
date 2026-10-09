@@ -4,12 +4,14 @@
 
 #include "abi_bridge.h"
 #include "ax_mix_kernels.h"
+#include "ax_worker_startup.h"
 #include "isa/big_endian.h"
 #include "memory.h"
 #include "ppc_runtime.h"
 #include "runtime_log.h"
 #ifdef __vita__
-#include <aurora/thread_role.hpp>
+#include <psp2/kernel/cpu.h>
+#include <psp2/kernel/threadmgr.h>
 #endif
 
 #include <algorithm>
@@ -1367,9 +1369,13 @@ private:
         }
         RT_LOGF(RT_TAG_AUDIO, "starting the AX/DSP mix worker thread\n");
         std::fflush(stderr);
-        m_mixStop = false;
-        m_mixPending = false;
-        m_mixBusy = false;
+        {
+            std::lock_guard<std::mutex> lock(m_mixMutex);
+            m_mixStop = false;
+            m_mixPending = false;
+            m_mixBusy = false;
+            m_mixStartup = {};
+        }
         try {
             m_mixThread = std::thread([this] { MixWorkerMain(); });
         } catch (const std::system_error&) {
@@ -1377,13 +1383,39 @@ private:
             std::fflush(stderr);
             return false;
         }
+        const auto startup = WaitForMixWorkerStartup(m_mixMutex, m_mixIdle, m_mixStartup);
+        if (!startup.Ready()) {
+            m_mixThread.join();
+            char message[192];
+            std::snprintf(message, sizeof(message),
+                "AX/DSP worker startup %s: thread 0x%08x set 0x%08x mask 0x%08x CPU %d",
+                MixWorkerStartupStatusName(startup.status), unsigned(startup.threadId),
+                unsigned(startup.setResult), unsigned(startup.affinityMask), startup.cpuId);
+            throw std::runtime_error(message);
+        }
+#ifdef __vita__
+        RT_LOGF(RT_TAG_AUDIO,
+            "AX/DSP worker admitted: thread 0x%08x set 0x%08x mask 0x%08x core %d\n",
+            unsigned(startup.threadId), unsigned(startup.setResult),
+            unsigned(startup.affinityMask), startup.cpuId);
+        std::fflush(stderr);
+#endif
         return true;
     }
 
     void MixWorkerMain() {
+        MixWorkerStartupProof startup;
 #ifdef __vita__
-        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+        static_assert(kMixWorkerCore0Mask == SCE_KERNEL_CPU_MASK_USER_0);
+        startup = CheckMixWorkerCore0({sceKernelGetThreadId,
+            sceKernelChangeThreadCpuAffinityMask, sceKernelGetThreadCpuAffinityMask,
+            sceKernelGetCpuId});
+#else
+        startup.core0Required = false;
+        startup.status = MixWorkerStartupStatus::Ready;
 #endif
+        PublishMixWorkerStartup(m_mixMutex, m_mixIdle, m_mixStartup, startup);
+        if (!startup.Ready()) return;
         t_onMixWorker = true;
         for (;;) {
             {
@@ -1451,6 +1483,7 @@ private:
     bool m_mixPending = false;
     bool m_mixBusy = false;
     bool m_mixWorkerEnabled = false;
+    MixWorkerStartupProof m_mixStartup{};
     AXCommandLayout m_mixLayout = AXCommandLayout::New;
     uint32_t m_mixCmdListSize = 0;
     std::atomic<bool> m_loggedMixWorkerFailure{false};
