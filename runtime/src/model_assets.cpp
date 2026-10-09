@@ -371,6 +371,28 @@ Status OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, s
     return {};
 }
 
+// A newly admitted pack's GPU data, made resident on the render thread with
+// the packet being recorded (during the area's load) instead of at its first
+// draw: a mid-fight model's packs, read from the card there, took ~270 ms of
+// one render packet. Only while the budget holds it without an eviction; a
+// pack retired meanwhile is skipped. The first draw still notes the demand.
+void PrefetchGPU(Manager& m, uintptr_t handle, uint64_t generation) {
+    std::lock_guard lock(m.lock);
+    const auto found = m.handles.find(handle);
+
+    if (found == m.handles.end() || found->second->generation != generation || found->second->gpuRegistered)
+        return;
+
+    auto& asset = *found->second;
+
+    if (NativeModelGPUResidentBytes() > MaxGPUBytes - NativeModelGPUAllocationBytes(asset.pack.gpu_bytes))
+        return;
+
+    const auto name = asset.path.string();
+    RegisterNativeModelGPU(asset.pack, name.c_str(), handle, generation);
+    asset.gpuRegistered = true;
+}
+
 Status Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
     std::unique_lock lock(m.lock);
     const auto [entry, inserted] = m.loaded.emplace(index, std::move(next));
@@ -416,6 +438,10 @@ Status Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eage
     ++m.stats.admissions;
     std::fprintf(stderr, "MH3 native model assets: %u models, %u meshes, %llu metadata + %llu identity bytes, %u GPU bytes (%s)\n", asset.catalog.model_count, asset.pack.counts[MH3_PACK_MESHES],
                  static_cast<unsigned long long>(asset.metadata.size()), static_cast<unsigned long long>(asset.identity.size()), asset.pack.gpu_bytes, eagerGPU ? "resident" : "CPU metadata admitted");
+
+    if (!eagerGPU)
+        QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [&m, handle = asset.handle(), generation = asset.generation] { PrefetchGPU(m, handle, generation); });
+
     return {};
 }
 } // namespace
