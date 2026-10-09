@@ -43,6 +43,7 @@ how to build, run (including the Vita devkit) and debug.
 - [native-scene-queue.md](native-scene-queue.md): scene queues and the game-side scene culling.
 - [native-ui-port.md](native-ui-port.md), [native-system-ui-port.md](native-system-ui-port.md): application UI, system UI and HUD.
 - [native-effects-port.md](native-effects-port.md), [native-particle-draw-state.md](native-particle-draw-state.md): particles, the THP movie draw and effect textures.
+- [guest-worker.md](guest-worker.md): guest code on a second thread (core 3): the effect calculation beside the opaque draws.
 - [native-scene-feedback.md](native-scene-feedback.md), [native-feedback-target-reuse.md](native-feedback-target-reuse.md): scene feedback and glare, and their target pool.
 - [native-resource-lifetime.md](native-resource-lifetime.md): heap, fill and copy producers and resource retirement.
 - [native-field-resource-loading.md](native-field-resource-loading.md): field resource scheduling and invalid areas.

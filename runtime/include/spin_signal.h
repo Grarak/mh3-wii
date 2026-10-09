@@ -1,63 +1,81 @@
 // A counter that one thread advances and one other thread waits on, for
-// threads that hand each other work in bursts (the render thread's packets,
-// the guest worker's jobs). Waiting spins for a millisecond, which catches the
-// next of a burst at once, then sleeps on a condition variable until the
-// counter moves. The Vita's pthread-embedded condition variable can lose a
-// wakeup, so there the sleep also re-checks every millisecond. A wait that is
-// known to be short spins only (SpinForChange). Spinning reads no clock: the
-// millisecond is a spin count measured once, at the first wait.
+// threads that hand each other work (the render thread's packets, the guest
+// worker's jobs). Waiting can spin first, which catches the next of a burst at
+// once, then the waiter parks until the counter moves: on the Vita on a kernel
+// semaphore, which counts its signals and so cannot lose a wakeup (the
+// pthread condition variable there can), elsewhere on the counter's futex. A
+// wait that is known to be short spins only (SpinForChange). Spinning reads no
+// clock: a millisecond is a spin count measured once, at the first wait.
 #pragma once
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
-#include <mutex>
 
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #endif
 
 class SpinSignal {
   public:
     uint32_t Load() const noexcept { return value_.load(std::memory_order_acquire); }
 
-    // Advances the counter and wakes the waiter if it sleeps.
-    void Advance() {
-        std::lock_guard guard(lock_);
-        value_.fetch_add(1, std::memory_order_release);
-
-        if (sleeping_)
-            changed_.notify_one();
+    // Advances the counter and wakes the waiter if it is parked.
+    void Advance() noexcept {
+        value_.fetch_add(1, std::memory_order_seq_cst);
+#ifdef __vita__
+        if (sleeping_.exchange(false, std::memory_order_seq_cst))
+            sceKernelSignalSema(sema_, 1);
+#else
+        value_.notify_one();
+#endif
     }
 
-    // Waits until the counter is no longer `seen`; returns its value.
-    uint32_t AwaitChange(uint32_t seen) {
-        for (uint32_t spins = SpinsPerMillisecond(); spins; --spins) {
+    // Waits until the counter is no longer `seen`, spinning for about spinUs
+    // microseconds before parking; returns its value. One waiter at a time.
+    uint32_t AwaitChange(uint32_t seen, uint32_t spinUs = 1000) {
+        for (uint64_t spins = uint64_t(SpinsPerMillisecond()) * spinUs / 1000; spins; --spins) {
             if (const uint32_t now = Load(); now != seen)
                 return now;
 
             Pause();
         }
-
-        std::unique_lock guard(lock_);
-        sleeping_ = true;
-
-        while (value_.load(std::memory_order_acquire) == seen) {
 #ifdef __vita__
-            changed_.wait_for(guard, std::chrono::milliseconds(1));
-#else
-            changed_.wait(guard);
-#endif
-        }
+        // Created by the waiter before it first announces a sleep, which
+        // orders the id before any notifier reads it.
+        if (sema_ < 0)
+            sema_ = sceKernelCreateSema("SpinSignal", 0, 0, 1 << 20, nullptr);
 
-        sleeping_ = false;
-        return value_.load(std::memory_order_acquire);
+        for (;;) {
+            // Announce, then re-check: a notifier either sees the announcement
+            // and signals, or advanced before the check. A signal that arrives
+            // after the check saw the change stays counted and wakes the next
+            // park at once, which re-checks and parks again.
+            sleeping_.store(true, std::memory_order_seq_cst);
+
+            if (const uint32_t now = value_.load(std::memory_order_seq_cst); now != seen) {
+                sleeping_.store(false, std::memory_order_relaxed);
+                return now;
+            }
+
+            // Bounded, as every wait on the Vita: the loop re-checks.
+            SceUInt timeout = 100000;
+            sceKernelWaitSema(sema_, 1, &timeout);
+        }
+#else
+        for (uint32_t now = Load();; now = Load()) {
+            if (now != seen)
+                return now;
+
+            value_.wait(seen, std::memory_order_acquire);
+        }
+#endif
     }
 
-    // Spins until the counter is no longer `seen`, without sleeping: for a
-    // wait known to be short, the other thread already being on it.
+    // Spins until the counter is no longer `seen`, without parking: for a wait
+    // known to be short, the other thread already being on it.
     uint32_t SpinForChange(uint32_t seen) const noexcept {
         for (;;) {
             if (const uint32_t now = Load(); now != seen)
@@ -69,15 +87,15 @@ class SpinSignal {
 
   private:
     // How many spins of AwaitChange's loop take a millisecond, timed over
-    // 64Ki spins of the same loop once per process.
+    // 64Ki spins of the same loop once per process. The probe is shared state,
+    // like the counter, so the compiler keeps its load in the loop.
     static uint32_t SpinsPerMillisecond() noexcept {
         static const uint32_t spins = [] {
             constexpr uint64_t Probe = 1u << 16;
-            const std::atomic<uint32_t> probe{0};
             const uint64_t start = NowUs();
 
             for (uint64_t i = 0; i < Probe; ++i) {
-                if (probe.load(std::memory_order_acquire) == UINT32_MAX)
+                if (calibration_.load(std::memory_order_acquire) == UINT32_MAX)
                     break;
 
                 Pause();
@@ -106,8 +124,10 @@ class SpinSignal {
 #endif
     }
 
+    static inline std::atomic<uint32_t> calibration_{0};
     std::atomic<uint32_t> value_{0};
-    std::mutex lock_;
-    std::condition_variable changed_;
-    bool sleeping_ = false;
+#ifdef __vita__
+    std::atomic<bool> sleeping_{false};
+    SceUID sema_ = -1;
+#endif
 };

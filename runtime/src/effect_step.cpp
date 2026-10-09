@@ -31,6 +31,7 @@
 // Effects, particles and their resources live in main RAM: accessed flat.
 #include "abi_bridge.h"
 #include "game_step.h"
+#include "guest_worker.h"
 #include "guest_call.h"
 #include "port_check.h"
 #include "memory.h"
@@ -44,6 +45,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 extern "C" void func_800A4C20(CpuContext*);  // nw4r::ef::Effect::Calc(bool onlyBillboard)
@@ -732,12 +734,126 @@ static void EffectCalcPort(CpuContext* ctx) {
 }
 
 extern "C" void func_800A4C20(CpuContext* ctx);
+
+static void CalcEffect(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EffectCalc", func_800A4C20, EffectCalcPort);
+}
+
+namespace {
+// The task pass's Effect::Calc calls, in order: the effect and onlyBillboard;
+// and whether the effect view update waits for the join (MH3_EffectSystemView).
+struct Deferral {
+    bool enabled = false, collecting = false, launched = false, viewPending = false;
+    std::vector<std::pair<uint32_t, uint32_t>> calls;
+};
+
+Deferral deferral;
+
+// func_800D4910's work: the current view into the effect system's view matrix.
+void PutEffectView(CpuContext* cpu) {
+    const uint32_t system = MemoryInline::FlatRead32(0x80796E30);
+
+    if (const uint32_t view = MemoryInline::FlatRead32(system + 0x29084); view && MemoryInline::FlatRead32(system + 0x29074))
+        GuestCall{cpu}.Call<0x802BDCA4>({view}); // get_current_view_mtx
+}
+
+// Runs the collected calls (on the worker, or on the game thread at Join).
+void RunDeferred(CpuContext* cpu, void*) {
+    for (const auto& [effect, onlyBillboard] : deferral.calls) {
+        cpu->gpr[3] = effect;
+        cpu->gpr[4] = onlyBillboard;
+        CalcEffect(cpu);
+    }
+}
+} // namespace
+
+namespace EffectStep {
+void Defer(bool enabled) {
+    // Port checks compare whole RAM around a call: they need the game thread's order.
+    deferral.enabled = enabled && GuestWorker::Available() && !PortCheck::Set();
+    deferral.collecting = deferral.enabled;
+}
+
+void Collected() {
+    deferral.collecting = false;
+}
+
+void Launch(const CpuContext& game) {
+    if (deferral.calls.empty() || deferral.launched)
+        return;
+
+    GuestWorker::Submit(game, RunDeferred, nullptr);
+    deferral.launched = true;
+}
+
+void Join(CpuContext* cpu) {
+    deferral.collecting = false;
+
+    if (deferral.calls.empty())
+        return;
+
+    if (deferral.launched) {
+        GuestWorker::Wait();
+    } else {
+        // Never launched (no scene drawn): run them here, from the caller's frame.
+        GuestFrame frame(cpu, 0x10);
+        RunDeferred(cpu, nullptr);
+    }
+
+    deferral.calls.clear();
+    deferral.launched = false;
+
+    if (std::exchange(deferral.viewPending, false))
+        PutEffectView(cpu);
+}
+} // namespace EffectStep
+
+// nw4r::ef::EffectSystem::RetireEffect(system, effect) destroys the effect and
+// frees it for reuse: its deferred calls go (the effect would show nothing
+// more), and while the worker runs the game thread waits for it first.
+extern "C" void func_800A5C6C(CpuContext* ctx);
+extern "C" void MH3_EffectSystemRetireEffect(CpuContext* ctx) {
+    const uint32_t effect = ctx->gpr[4];
+
+    if (deferral.launched) {
+        EffectStep::Join(ctx);
+    } else {
+        auto& calls = deferral.calls;
+        calls.erase(std::remove_if(calls.begin(), calls.end(), [effect](const auto& call) { return call.first == effect; }), calls.end());
+    }
+
+    func_800A5C6C(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800A5C6C, MH3_EffectSystemRetireEffect, "EffectSystemRetireEffect");
+
+// func_800D4910 (DrawScene, before the buckets): when the effect system draws
+// and has a view matrix, puts the current view (get_current_view_mtx) there.
+// The original builds it on the stack and copies it; the getter takes its
+// output, so it writes the system's matrix directly. Effect::Calc may read
+// that matrix, so while the worker calculates, the call waits for the join:
+// the calculation sees the previous frame's view, as in the task pass.
+extern "C" void MH3_EffectSystemView(CpuContext* ctx) {
+    if (deferral.launched) {
+        deferral.viewPending = true;
+        return;
+    }
+
+    PutEffectView(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800D4910, MH3_EffectSystemView, "EffectSystemView");
+
 extern "C" void MH3_EffectCalc(CpuContext* ctx) {
+    if (deferral.collecting) {
+        deferral.calls.emplace_back(ctx->gpr[3], ctx->gpr[4] & 0xFF);
+        return;
+    }
+
+    EffectStep::Join(ctx);
 #ifdef MH3_DEVELOPMENT
     MH3FrameSplitCall(2);
 #endif
     MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT_CALC);
-    PortCheck::Call(ctx, "EffectCalc", func_800A4C20, EffectCalcPort);
+    CalcEffect(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A4C20, MH3_EffectCalc, "EffectCalc");
 

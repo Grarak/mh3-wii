@@ -22,25 +22,26 @@ struct MemoryReservation {
 };
 
 // Diagnostic-only, read by fatal reporters (unmapped access, executable-write, CPU dumps).
-// Shares constant-initialized TLS storage with the current CPU pointer. Inline
-// scopes let a dispatch resolve the record once for both independent fields.
+// Each thread writes its own record (PpcThread::Of the dispatched context), so
+// the game thread and the guest worker never share the written cache line.
 
 class ScopedTranslatedExecutionAddress {
   public:
-    explicit ScopedTranslatedExecutionAddress(uint32_t address) noexcept : previous_(PpcThread::state.executionAddress) {
+    ScopedTranslatedExecutionAddress(uint32_t address, const CpuContext* cpu) noexcept : thread_(PpcThread::Of(cpu)), previous_(thread_.executionAddress) {
         // Address 0 means "nothing new to report" - the enclosing scope's value
         // stays visible, and the unconditional restore below keeps nesting exact.
         if (address != 0) {
-            PpcThread::state.executionAddress = address;
+            thread_.executionAddress = address;
         }
     }
 
-    ~ScopedTranslatedExecutionAddress() noexcept { PpcThread::state.executionAddress = previous_; }
+    ~ScopedTranslatedExecutionAddress() noexcept { thread_.executionAddress = previous_; }
 
     ScopedTranslatedExecutionAddress(const ScopedTranslatedExecutionAddress&) = delete;
     ScopedTranslatedExecutionAddress& operator=(const ScopedTranslatedExecutionAddress&) = delete;
 
   private:
+    PpcThread::State& thread_;
     uint32_t previous_ = 0;
 };
 

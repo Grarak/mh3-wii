@@ -8,6 +8,7 @@
 #include "field_jump.h"
 #include "quest_catalog.h"
 #include "player_health.h"
+#include "guest_worker.h"
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -411,6 +412,11 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80000038, arenaHi);
         Memory::Write32(0x8000003C, fstSize);
 
+        // The guest worker's stack sits below the FST; the game's arena ends
+        // under it.
+        const uint32_t gameArenaHi = arenaHi - GuestWorker::kGuestStackBytes;
+        GuestWorker::ReserveGuestStack(gameArenaHi);
+
         // Standard Wii boot information, with MH3's own arena boundary.
         Memory::Write32(0x80000000, 0x524D4850); // RMHP
         Memory::Write16(0x80000004, 0x3038);     // 08
@@ -418,7 +424,7 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80000028, 24 * 1024 * 1024);
         Memory::Write32(0x8000002C, 0x23);
         Memory::Write32(0x80000030, 0x807B1CC0); // __ArenaLo, from OSInit
-        Memory::Write32(0x80000034, arenaHi);
+        Memory::Write32(0x80000034, gameArenaHi);
 
         // TV mode EuRGB60 (PAL console set to 60 Hz). MH3's logic assumes 60 Hz
         // retraces in every region (RenderInit's frame rate is 60.0 / vcnt), and
@@ -436,7 +442,7 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80003104, 0x01800000);
         Memory::Write32(0x80003108, 0x81800000);
         Memory::Write32(0x8000310C, 0x807B1CC0);
-        Memory::Write32(0x80003110, arenaHi);
+        Memory::Write32(0x80003110, gameArenaHi);
         Memory::Write32(0x80003118, 0x04000000);
         Memory::Write32(0x8000311C, 0x04000000);
         Memory::Write32(0x80003120, 0x93600000);

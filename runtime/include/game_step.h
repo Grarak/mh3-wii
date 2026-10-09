@@ -48,7 +48,20 @@ void Restore(const State& state);
 
 } // namespace GameStep
 
+struct CpuContext;
+
 namespace EffectStep {
 std::any Save();
 void Restore(const std::any& state);
+
+// Effect::Calc on the guest worker (guest_worker.h). The task pass's calls are
+// collected (Defer before it, Collected after it) and run on the worker while
+// the game thread traverses the scene and draws the opaque buckets (Launch);
+// Join waits for them, or runs them here when they were never launched. Every
+// other use of the effect system joins first, so effects belong to one thread
+// at a time.
+void Defer(bool enabled);
+void Collected();
+void Launch(const CpuContext& game);
+void Join(CpuContext* cpu);
 } // namespace EffectStep

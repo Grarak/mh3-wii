@@ -15,6 +15,7 @@
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
+#include "guest_worker.h"
 #include "memory.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
@@ -236,6 +237,9 @@ struct FrameSplit {
         std::printf("MH3 scene split: scene %.2f buckets %.2f setup %.2f finish %.2f post %.2f ms/frame\n", f(MH3_SPLIT_SCENE), f(MH3_SPLIT_BUCKETS), f(MH3_SPLIT_SCENE_SETUP),
                     f(MH3_SPLIT_SCENE_FINISH), f(MH3_SPLIT_POST));
         std::printf("MH3 effect split: calc %.2f draw %.2f ms/frame (calc scopes/frame %u)\n", f(MH3_SPLIT_EFFECT_CALC), f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC));
+        const auto worker = GuestWorker::TakeStatistics();
+        std::printf("MH3 guest worker: %.2f jobs/frame, %.2f ms/frame of jobs, game waited %.2f ms/frame (%llu waits)\n", double(worker.jobs) / frames, worker.jobNs / 1e6 / frames,
+                    worker.waitNs / 1e6 / frames, static_cast<unsigned long long>(worker.waits));
 
         if (mh3SplitDetail)
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
@@ -369,7 +373,13 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 #endif
         GameTasks::SkipStrapScreen();
         StepVillageBoot(ctx);
+
+        // The task pass's Effect::Calc calls run on the guest worker during
+        // the scene's traverse and opaque draws (EffectStep::Launch in the
+        // scene queue's DrawScene).
+        EffectStep::Defer(render);
         call(RunTasks);
+        EffectStep::Collected();
         call(GrabScreen);
         call(ResetFade);
         call(TickSystemTimers);
@@ -387,6 +397,8 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
             call(DrawFadeOverlay);
         }
 
+        // Joined in DrawAll; this runs the calls of a frame that drew no scene.
+        EffectStep::Join(ctx);
         MH3_SPLIT(draw);
         call(TickFades);
 

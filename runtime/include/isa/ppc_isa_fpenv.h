@@ -29,7 +29,8 @@ inline constexpr uint32_t kMkwFpControlFlushToZeroBits = (1u << 24); // FZ
 #error "ppc_isa_fpenv.h has no host FP control register mapping for this architecture"
 #endif
 
-// Guest code runs only on the game thread, whose FP control register this mirrors.
+// Mirrors the FP control register of the threads running guest code. The guest worker
+// (guest_worker.h) runs with the game thread's FPSCR, so both write the same NI state.
 inline bool g_mkwHostNiActive = false;
 
 // Same state in the form PpcForceSingleValueInline consumes: the pre-round subnormal threshold

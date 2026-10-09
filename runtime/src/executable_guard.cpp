@@ -35,7 +35,7 @@ uint64_t Checksum(uint32_t start, uint32_t end) {
 } // namespace
 
 uint32_t CurrentTranslatedExecutionAddress() noexcept {
-    return PpcThread::state.executionAddress;
+    return PpcThread::Current().executionAddress;
 }
 
 void RegisterExecutableRange(uint32_t start, uint32_t end, std::string) {

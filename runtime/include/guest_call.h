@@ -81,10 +81,10 @@ struct GuestCall {
         for (double v : floats)
             cpu->fpr[f++].d = v;
 
-        static Memo memo;
+        static const RawDispatchRecord* memo = nullptr;
 
-        if (memo.fn == fn) [[likely]]
-            memo.entry(cpu);
+        if (const RawDispatchRecord* record = memo; record && record->address == fn) [[likely]]
+            record->entry(cpu);
         else
             Rebind(fn, cpu, memo);
 
@@ -94,19 +94,16 @@ struct GuestCall {
     float F1() const { return float(cpu->fpr[1].d); }
 
   private:
-    struct Memo {
-        uint32_t fn = 0;
-        void (*entry)(CpuContext*) = nullptr;
-    };
-
-    // Runs `fn` through the generic dispatch and remembers its entry point
-    // when later calls may enter it directly.
-    [[gnu::noinline]] static void Rebind(uint32_t fn, CpuContext* cpu, Memo& memo) {
-        if (TranslatedFunctionRegistry::IsLookupPublished() && fn < 0x80800000u && TryGetCpuContext() == cpu) {
+    // Runs `fn` through the generic dispatch and remembers its record when
+    // later calls may enter it directly. The memo is one pointer, checked
+    // against the record's address, so the game thread and the guest worker
+    // can share a call site without entering each other's function.
+    [[gnu::noinline]] static void Rebind(uint32_t fn, CpuContext* cpu, const RawDispatchRecord*& memo) {
+        if (TranslatedFunctionRegistry::IsLookupPublished() && fn < 0x80800000u && PpcThread::IsCurrent(cpu)) {
             const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(fn);
 
             if (record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
-                memo = {fn, record->entry};
+                memo = record;
         }
 
         InvokeIndirectCpu(fn, cpu);
@@ -128,7 +125,7 @@ struct GuestCall {
             entry = dispatch;
             const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(target);
 
-            if (target < 0x80800000u && TryGetCpuContext() == cpu && record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
+            if (target < 0x80800000u && PpcThread::IsCurrent(cpu) && record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
                 entry = record->entry;
         }
 

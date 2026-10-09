@@ -56,8 +56,8 @@ struct CpuContext {
 
 class CpuContextScope {
   public:
-    explicit CpuContextScope(CpuContext* ctx) : previous_(PpcThread::state.context) {
-        PpcThread::state.context = ctx;
+    explicit CpuContextScope(CpuContext* ctx) : thread_(PpcThread::Current()), previous_(thread_.context) {
+        thread_.context = ctx;
 
         savedMxcsr_ = MkwGetHostFpControl();
 
@@ -66,7 +66,7 @@ class CpuContextScope {
     }
 
     ~CpuContextScope() {
-        PpcThread::state.context = previous_;
+        thread_.context = previous_;
 
         if (previous_ != nullptr)
             MkwApplyHostNiMode(previous_->fpscr);
@@ -78,12 +78,13 @@ class CpuContextScope {
     CpuContextScope& operator=(const CpuContextScope&) = delete;
 
   private:
+    PpcThread::State& thread_;
     CpuContext* previous_ = nullptr;
     uint32_t savedMxcsr_ = 0;
 };
 
 inline CpuContext* TryGetCpuContext() noexcept {
-    return PpcThread::state.context;
+    return PpcThread::Current().context;
 }
 
 inline CpuContext* CurrentCpuContext() {

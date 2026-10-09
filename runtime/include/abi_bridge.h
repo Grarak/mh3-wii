@@ -365,9 +365,11 @@ constexpr bool KnownRegArgsCpuCall(void (*baseEntry)(CpuContext*)) {
     }
 }
 
-// Direct-mapped memo in front of the sorted registry lookup every bctrl performs (only the
-// game thread runs guest code, so one table serves it);
-// a miss just re-runs the sorted lookup. 2048 raw entries (16 KiB) cover the per-frame
+// Direct-mapped memo in front of the sorted registry lookup every bctrl performs; one table
+// serves the game thread and the guest worker (guest_worker.h). An entry is two words written
+// without a lock, so a hit is also checked against the record's own address: a half-written
+// entry from the other thread then misses (or yields no record, which the callers' slower
+// lookups resolve) instead of entering another function. A miss just re-runs the sorted lookup. 2048 raw entries (16 KiB) cover the per-frame
 // indirect working set while staying L1/L2 resident. Must stay a power of two, the index
 // masks with (size - 1).
 inline constexpr size_t kIndirectDispatchCacheEntries = 2048;
@@ -419,7 +421,7 @@ class TranslatedFunctionRegistry {
     static inline const TranslatedFunctionInfo* FindByAddressPtr(uint32_t address) {
         auto& cached = g_indirectResolvedDispatchMemo[IndirectDispatchMemoSlot(address)];
 
-        if (cached.valid && cached.address == address) {
+        if (cached.valid && cached.address == address && (!cached.info || cached.info->address == address)) {
             return cached.info;
         }
 
@@ -436,18 +438,18 @@ class TranslatedFunctionRegistry {
     // generated-table binary search alongside it pushed the whole function past
     // the inliner's budget and out-of-lined the probe itself, which is the part
     // every bctrl executes.
-    // A memo slot is only ever filled after the game thread saw the lookup
+    // A memo slot is only ever filled after its thread saw the lookup
     // published (the acquire in the miss path), so a hit needs no barrier - on
     // arm32 the acquire is a dmb on every bctrl.
     static MKW_PPC_FORCE_INLINE const RawDispatchRecord* FindRawByAddressPtr(uint32_t address) {
         auto& set = g_indirectRawDispatchMemo[IndirectRawDispatchMemoSetIndex(address)];
 
-        if (set.way[0].address == address) {
-            return set.way[0].record;
+        if (const auto* record = set.way[0].record; set.way[0].address == address && (!record || record->address == address)) {
+            return record;
         }
 
-        if (set.way[1].address == address) {
-            return set.way[1].record;
+        if (const auto* record = set.way[1].record; set.way[1].address == address && (!record || record->address == address)) {
+            return record;
         }
 
         return FindRawByAddressPtrMiss(address, set);
@@ -519,11 +521,11 @@ MKW_PPC_FORCE_INLINE bool TryDispatchResolvedCpuTarget(const TranslatedFunctionI
     if (info->address >= 0x80800000u && info->address < 0x81800000u)
         RecompMod::CheckRsoExecution(info->address);
 
-    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(info->address);
+    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(info->address, cpu);
     PpcNonvolatileFprGuard fprGuard(cpu, NonvolatileFprGuardMaskFor(info));
     PpcNonvolatileGprGuard gprGuard(cpu, ShouldPreserveNonvolatileGprsForRawCpuCall(info));
 
-    if (TryGetCpuContext() != cpu) {
+    if (!PpcThread::IsCurrent(cpu)) {
         CpuContextScope scope(cpu);
         info->rawCpuInvoker(cpu);
         return true;
@@ -537,11 +539,11 @@ MKW_PPC_NO_INLINE inline bool TryDispatchRawCpuTargetGuarded(const RawDispatchRe
     if (record->address >= 0x80800000u && record->address < 0x81800000u)
         RecompMod::CheckRsoExecution(record->address);
 
-    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
+    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address, cpu);
     PpcNonvolatileGprGuard gprGuard(cpu, record->preserveNonvolatileGprs);
     PpcNonvolatileFprGuard fprGuard(cpu, record->nonvolatileFprWriteMask);
 
-    if (TryGetCpuContext() != cpu) {
+    if (!PpcThread::IsCurrent(cpu)) {
         CpuContextScope scope(cpu);
         record->entry(cpu);
     } else {
@@ -561,14 +563,14 @@ MKW_PPC_FORCE_INLINE bool TryDispatchRawCpuTarget(const RawDispatchRecord* recor
         return false;
     }
 
-    if (record->preserveNonvolatileGprs || (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) != 0 || TryGetCpuContext() != cpu) {
+    if (record->preserveNonvolatileGprs || (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) != 0 || !PpcThread::IsCurrent(cpu)) {
         return TryDispatchRawCpuTargetGuarded(record, cpu);
     }
 
     if (record->address >= 0x80800000u && record->address < 0x81800000u)
         RecompMod::CheckRsoExecution(record->address);
 
-    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
+    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address, cpu);
     record->entry(cpu);
     return true;
 }
@@ -584,7 +586,7 @@ inline void DispatchKnownTranslatedCpuTargetStatic(CpuContext* cpu) {
     // A statically resolved, non-overridable translated call already running
     // in this CpuContext needs no registry, context, or diagnostic target
     // transition. This is the normal generated-to-generated hot path.
-    if (TryGetCpuContext() == cpu) {
+    if (PpcThread::IsCurrent(cpu)) {
         if constexpr (KnownTranslatedCpuCall<Target>::kNonvolatileFprWriteMask == 0) {
             invokeKnownTranslated();
             return;
@@ -596,7 +598,7 @@ inline void DispatchKnownTranslatedCpuTargetStatic(CpuContext* cpu) {
     }
 
     CpuContextScope contextScope(cpu);
-    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(Target);
+    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(Target, cpu);
 
     if constexpr (KnownTranslatedCpuCall<Target>::kNonvolatileFprWriteMask == 0) {
         invokeKnownTranslated();
@@ -684,7 +686,7 @@ inline void InvokeDirectCpu(CpuContext* ctx) {
         const auto invokeKnownNative = [&]() {
             PpcNonvolatileGprGuard gprGuard(cpu);
 
-            if (TryGetCpuContext() != cpu) {
+            if (!PpcThread::IsCurrent(cpu)) {
                 CpuContextScope scope(cpu);
                 KnownNativeCpuCall<Target>::Entry(cpu);
                 return;
@@ -706,7 +708,7 @@ inline void InvokeDirectCpu(CpuContext* ctx) {
     if constexpr (KnownTypedNativeCpuCall<Target>::kAvailable) {
         PpcNonvolatileGprGuard gprGuard(cpu);
 
-        if (TryGetCpuContext() != cpu) {
+        if (!PpcThread::IsCurrent(cpu)) {
             CpuContextScope scope(cpu);
             KnownTypedNativeCpuCall<Target>::Invoke(cpu);
         } else {
@@ -805,8 +807,8 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
     if (target < 0x80800000u || target >= 0x81800000u) {
         const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(target);
 
-        if (record && record->entry && !record->preserveNonvolatileGprs && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0 && TryGetCpuContext() == cpu) {
-            RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
+        if (record && record->entry && !record->preserveNonvolatileGprs && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0 && PpcThread::IsCurrent(cpu)) {
+            RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address, cpu);
             record->entry(cpu);
             return;
         }

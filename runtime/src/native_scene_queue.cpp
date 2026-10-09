@@ -1,6 +1,7 @@
 // Application scene buckets; SDK vertex-cache and completion commands are
 // replaced by explicit native buffer ownership and ordered GPU submission.
 #include "abi_bridge.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "frame_split.h"
@@ -108,7 +109,11 @@ int Query(void* user, unsigned kind) {
 }
 
 void Callback(void* user, uint32_t callback, uint32_t node) {
-    static_cast<WalkAdapter*>(user)->call(callback, {node});
+    auto& adapter = *static_cast<WalkAdapter*>(user);
+
+    // A callback may use the effects the worker is calculating.
+    EffectStep::Join(adapter.call.cpu);
+    adapter.call(callback, {node});
 }
 
 void Prepare(void* user, uint32_t object) {
@@ -202,6 +207,8 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
             continue;
 
         if (!(node.flags & 0x40) && node.callback) {
+            // A callback may use the effects the worker is calculating.
+            EffectStep::Join(call.cpu);
             MH3_SPLIT_SCOPE(MH3_SPLIT_NODE_CALLBACK);
             call(node.callback, {identity});
         }
@@ -216,6 +223,7 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
             if (!SkipNativeSceneModel(node.object))
                 call(0x8004978C, {node.object, pass == 1 ? 4u : 0xffffffffu});
         } else if (node.type == 2) {
+            EffectStep::Join(call.cpu);
             MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT);
             const auto target = Memory::Read32(Memory::Read32(node.object + 28) + 28);
             call(target, {node.object, Memory::Read32(Memory::Read32(0x80796e30) + 0x29084)});
@@ -228,8 +236,20 @@ void DrawAll(GuestCall& call) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_BUCKETS);
     constexpr uint8_t sequence[][2] = {{0, 2}, {5, 0}, {0, 3}, {2, 2}, {1, 2}, {4, 0}, {2, 3}, {1, 3}, {3, 0}};
 
-    for (const auto& entry : sequence)
+    // Launched at the start of DrawScene, the effect calculation runs on the
+    // guest worker through the traverse and the opaque buckets (categories 0
+    // and 5: models); effect nodes and node callbacks join it first, and the
+    // sorted buckets after them. A split scene launches it here.
+    EffectStep::Launch(*call.cpu);
+
+    for (const auto& entry : sequence) {
+        if (entry[0] != 0 && entry[0] != 5)
+            EffectStep::Join(call.cpu);
+
         DrawBucket(call, entry[0], entry[1]);
+    }
+
+    EffectStep::Join(call.cpu);
 }
 
 void ResetIndirect() {
@@ -248,6 +268,14 @@ void ResetIndirect() {
 
 void DrawScene(CpuContext* cpu, bool split) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
+
+    // The task pass's effect calculation overlaps the traverse and the opaque
+    // buckets: neither reads what Effect::Calc writes (the traverse reads the
+    // effects' root matrices, which their owners set), and the effect view
+    // matrix update before the buckets waits for the join (MH3_EffectSystemView).
+    if (!split)
+        EffectStep::Launch(*cpu);
+
     GuestFrame frame(cpu, 0x30);
     GuestCall call{cpu};
     ResetAll();
