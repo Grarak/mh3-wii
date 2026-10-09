@@ -68,13 +68,13 @@ void LoadNativeMetadata() {
         input.read(magic.data(), magic.size());
 
         if (magic != std::array<char, 6>{'M', 'H', '3', 'M', '1', '\0'})
-            throw std::runtime_error("Invalid Vita NAND metadata journal");
+            MH3_THROW(std::runtime_error("Invalid Vita NAND metadata journal"));
 
         unsigned entries = 0;
 
         for (int length; (length = input.get()) != EOF;) {
             if (length < 1 || length >= 64 || ++entries > 10000)
-                throw std::runtime_error("Invalid Vita NAND metadata record");
+                MH3_THROW(std::runtime_error("Invalid Vita NAND metadata record"));
 
             std::string guest(length, '\0');
             NandMetadata attributes{};
@@ -82,12 +82,12 @@ void LoadNativeMetadata() {
             input.read(reinterpret_cast<char*>(attributes.data()), attributes.size());
 
             if (!input || !NativeValidPath(guest, true))
-                throw std::runtime_error("Truncated Vita NAND metadata record");
+                MH3_THROW(std::runtime_error("Truncated Vita NAND metadata record"));
 
             nativeNandMetadata[guest] = attributes;
         }
 
-        if (!input.eof()) throw std::runtime_error("Vita NAND metadata read failed");
+        if (!input.eof()) MH3_THROW(std::runtime_error("Vita NAND metadata read failed"));
     }
 
     nativeMetadataRoot = root;

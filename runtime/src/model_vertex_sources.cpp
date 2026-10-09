@@ -1,5 +1,6 @@
 // Pure array binding ABI: retain typed source provenance instead of GXSetArray.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -57,7 +58,7 @@ uint32_t Canonical(uint32_t address, uint32_t bytes = 1) {
     uint32_t canonical = 0;
 
     if (mh3_source_canonical_address(address, bytes, &canonical) != MH3_RES_OK)
-        throw std::runtime_error("Invalid native vertex source range");
+        MH3_THROW(std::runtime_error("Invalid native vertex source range"));
 
     return canonical;
 }
@@ -100,7 +101,7 @@ void Bind(CpuContext* cpu, mh3_vertex_kind kind, uint32_t semantic) {
 
 void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
-        throw std::runtime_error("Invalid native vertex producer generation");
+        MH3_THROW(std::runtime_error("Invalid native vertex producer generation"));
 
     Observe();
     Materialize();
@@ -108,7 +109,7 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
     auto& generations = Generations();
 
     if (generations.contains(payload) && generation < generations.at(payload).value)
-        throw std::runtime_error("Invalid native vertex producer generation");
+        MH3_THROW(std::runtime_error("Invalid native vertex producer generation"));
 
     const uint32_t bytes = generations.contains(payload) ? generations.at(payload).bytes : 0;
     generations.insert_or_assign(payload, Revision{generation, bytes});
@@ -125,23 +126,53 @@ mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex
     return ReadNativeVertexResourceData(Memory::Read32(reference), kind);
 }
 
+namespace {
+// Takes the producer generation of the source's payload (at canonical address
+// `payload`), if it has one.
+void StampGeneration(mh3_native_vertex_source& source, uint32_t payload) {
+    auto& generations = Generations();
+    const auto generation = generations.find(payload);
+
+    if (generation != generations.end()) {
+        source.source_generation = generation->second.value;
+        generation->second.bytes = source.payload_bytes;
+    }
+}
+} // namespace
+
 mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind) {
     Observe();
     const uint32_t size = Memory::Read32(resource);
     mh3_native_vertex_source source{};
 
     if (mh3_vertex_source_read({GuestRange(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
-        throw std::runtime_error("Invalid native vertex array resource");
+        MH3_THROW(std::runtime_error("Invalid native vertex array resource"));
 
-    auto& generations = Generations();
-    const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));
-
-    if (generation != generations.end()) {
-        source.source_generation = generation->second.value;
-        generation->second.bytes = source.payload_bytes;
-    }
-
+    StampGeneration(source, Canonical(source.payload_address, source.payload_bytes));
     return source;
+}
+
+Status TryReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind, mh3_native_vertex_source& result) {
+    Observe();
+    uint32_t size = 0;
+    const uint8_t* bytes = Memory::TryRead32(resource, size) ? GuestFlat::HostPointer(resource, size) : nullptr;
+
+    if (!bytes)
+        return Status::Error(Memory::UnmappedMessage(resource));
+
+    mh3_native_vertex_source source{};
+
+    if (mh3_vertex_source_read({bytes, size}, resource, kind, &source) != MH3_RES_OK)
+        return Status::Error("Invalid native vertex array resource");
+
+    uint32_t payload = 0;
+
+    if (mh3_source_canonical_address(source.payload_address, source.payload_bytes, &payload) != MH3_RES_OK)
+        return Status::Error("Invalid native vertex source range");
+
+    StampGeneration(source, payload);
+    result = source;
+    return {};
 }
 
 namespace {
@@ -149,7 +180,7 @@ void StoreBinding(uint32_t semantic, const mh3_native_vertex_source& source) {
     auto& state = vertexBindings;
 
     if (semantic >= 12 || !source.payload_address || state.generation == UINT64_MAX)
-        throw std::runtime_error("Invalid native vertex source binding");
+        MH3_THROW(std::runtime_error("Invalid native vertex source binding"));
     // Rebinding the bound array (every draw of a shape does) changes nothing:
     // its source generation is kept current while bound (MarkNativeVertexProduced)
     // and a retirement unbinds it.
@@ -177,7 +208,7 @@ void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& 
 
 void BindNativeVertexSourcesInPlace(const mh3_native_vertex_source* sources, uint16_t known) {
     if (!sources || !known || known >> 12)
-        throw std::runtime_error("Invalid native vertex source binding");
+        MH3_THROW(std::runtime_error("Invalid native vertex source binding"));
     // Semantics the previous in-place set binds and this one does not keep
     // their binding: copy those over.
     if (const uint16_t kept = inPlace.known & ~known) {
@@ -255,7 +286,7 @@ extern "C" void MH3_ModelFurPositionArray(CpuContext* cpu) {
     mh3_native_vertex_source source{};
 
     if (mh3_vertex_fur_source_read({GuestRange(resource, size), size}, resource, uint16_t(cpu->gpr[4]), &source) != MH3_RES_OK)
-        throw std::runtime_error("Invalid native fur position sample");
+        MH3_THROW(std::runtime_error("Invalid native fur position sample"));
 
     auto& generations = Generations();
     const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));

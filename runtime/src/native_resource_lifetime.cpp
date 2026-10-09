@@ -2,6 +2,7 @@
 // is explicit; guest heap split/coalesce and mutex helpers remain ordinary CPU
 // dependencies. No resource is certified merely because its address is reused.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "recomp_mod_loader.h"
@@ -15,7 +16,7 @@
 namespace {
 void Checked(mh3_lifetime_status status) {
     if (status != MH3_LIFETIME_OK)
-        throw std::runtime_error("Native resource lifetime validation failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native resource lifetime validation failed: " + std::to_string(status)));
 }
 
 bool Canonical(uint32_t address, uint32_t bytes, uint32_t* out) {
@@ -26,7 +27,7 @@ uint32_t RamAddress(uint32_t address, uint32_t bytes) {
     uint32_t result;
 
     if (!Canonical(address, bytes, &result))
-        throw std::runtime_error("Native heap record is outside MEM1/MEM2");
+        MH3_THROW(std::runtime_error("Native heap record is outside MEM1/MEM2"));
 
     return result;
 }
@@ -47,7 +48,7 @@ mh3_lifetime_expheap ReadHeap(uint32_t address) {
     const uint32_t begin = Memory::Read32(address + 24), end = Memory::Read32(address + 28);
 
     if (end < begin || !end)
-        throw std::runtime_error("Native heap extent is invalid");
+        MH3_THROW(std::runtime_error("Native heap extent is invalid"));
     // Validate the entire original view, including an end at the RAM boundary.
     const uint32_t first = RamAddress(begin, end - begin);
     const uint32_t last = RamAddress(end - 1, 1) + 1;
@@ -108,7 +109,7 @@ void RetireWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer pro
     if (Canonical(address, bytes, &canonical))
         RetireNativeResourceOwner(canonical, bytes, producer);
     else if (address < 0xe0000000u || uint64_t(address) + bytes > 0xe0004000ull)
-        throw std::runtime_error("Native write is outside RAM/locked cache");
+        MH3_THROW(std::runtime_error("Native write is outside RAM/locked cache"));
 }
 
 void PrepareWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
@@ -269,7 +270,7 @@ extern "C" void MH3_Zero32Blocks(CpuContext* cpu) {
     Checked(mh3_lifetime_validate_zero32(destination, bytes));
 
     if (bytes && (cpu->gqr[0] & 7))
-        throw std::runtime_error("ZeroMemory32ByteBlocks requires GQR0 float store format");
+        MH3_THROW(std::runtime_error("ZeroMemory32ByteBlocks requires GQR0 float store format"));
 
     Fill(destination, 0, bytes);
 }

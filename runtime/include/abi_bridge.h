@@ -1,4 +1,5 @@
 #pragma once
+#include "fatal.h"
 #include "memory.h"
 #include "ppc_runtime.h"
 #include "system_bridge.h"
@@ -854,7 +855,7 @@ class AbiTrampoline<Ret(Args...)> {
 
         if constexpr (std::is_floating_point_v<CleanT>) {
             if (fprIndex >= 13) {
-                throw std::out_of_range("FPR argument overflow");
+                MH3_THROW(std::out_of_range("FPR argument overflow"));
             }
 
             return static_cast<CleanT>(cpu->fpr[1 + fprIndex++].d);
@@ -865,12 +866,13 @@ class AbiTrampoline<Ret(Args...)> {
                 uint32_t argAddr = sp + 8 + static_cast<uint32_t>(stackArgIndex * 4);
                 gprIndex++;
 
-                try {
-                    return static_cast<CleanT>(Memory::Read32(argAddr));
-                } catch (const Memory::AccessViolation&) {
-                    RT_LOG(RT_TAG_RUNTIME) << "Stack parameter read failed at 0x" << std::hex << argAddr << " (SP=0x" << sp << ", argIndex=" << std::dec << (gprIndex - 1) << ")" << std::endl;
-                    throw;
-                }
+                uint32_t value;
+
+                if (Memory::TryRead32(argAddr, value))
+                    return static_cast<CleanT>(value);
+
+                RT_LOG(RT_TAG_RUNTIME) << "Stack parameter read failed at 0x" << std::hex << argAddr << " (SP=0x" << sp << ", argIndex=" << std::dec << (gprIndex - 1) << ")" << std::endl;
+                return static_cast<CleanT>(Memory::Read32(argAddr)); // raises the access violation
             }
 
             return static_cast<CleanT>(cpu->gpr[3 + gprIndex++]);

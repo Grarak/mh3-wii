@@ -1,4 +1,5 @@
 #include "common.hpp"
+#include <aurora/fatal.hpp>
 #include "../gx/shader_info.hpp"
 
 #include "clear.hpp"
@@ -368,7 +369,7 @@ uint64_t staging_storage_bytes(uint64_t bytes) {
 void set_staging_capacity_limits_for_testing(const StagingSizes& limits) {
   for (unsigned i = 0; i < limits.size(); ++i) {
     if (limits[i] > PhysicalStagingCapacity[i])
-      throw StagingCapacityError("Test staging capacity exceeds physical buffer");
+      AURORA_THROW(StagingCapacityError("Test staging capacity exceeds physical buffer"));
   }
 
   g_stagingCapacity = limits;
@@ -382,7 +383,7 @@ bool staging_has_space(const StagingSizes& demand) {
   const StagingSizes retained = g_suspendedEfbPass ? g_suspendedEfbBytes : StagingSizes{};
 
   if (!staging_fits(retained, demand, tail, g_stagingCapacity))
-    throw StagingCapacityError("GPU operation exceeds staging capacity including retained EFB data");
+    AURORA_THROW(StagingCapacityError("GPU operation exceeds staging capacity including retained EFB data"));
 
   return staging_fits(staging_usage(), demand, tail, g_stagingCapacity);
 }
@@ -394,7 +395,7 @@ void ensure_staging_space(const StagingSizes& demand) {
   split_staging_batch();
 
   if (!staging_has_space(demand))
-    throw StagingCapacityError("GPU operation still exceeds staging capacity after submission");
+    AURORA_THROW(StagingCapacityError("GPU operation still exceeds staging capacity after submission"));
 }
 
 static void discard_suspended_efb_pass() noexcept {
@@ -1205,7 +1206,7 @@ void split_staging_batch() {
   std::lock_guard gpuLock(aurora::renderer_gpu_mutex());
 
   if (!has_current_render_pass())
-    throw StagingCapacityError("Cannot split staging outside an active render pass");
+    AURORA_THROW(StagingCapacityError("Cannot split staging outside an active render pass"));
 
   gx::mark_frame_interpolation_replay_unsafe();
   const bool offscreen = g_inOffscreen;
@@ -1246,7 +1247,7 @@ void split_staging_batch() {
   flush_recording();
 
   if (!begin_frame_impl(false, true))
-    throw StagingCapacityError("Staging remap failed after capacity submission");
+    AURORA_THROW(StagingCapacityError("Staging remap failed after capacity submission"));
 
   recycle_render_passes(g_renderPasses);
   push_render_pass(std::move(continuation));
@@ -1280,7 +1281,7 @@ void advance_native_frame() noexcept {
 
 NativeDrawMemory native_draw_memory(unsigned slot) {
   if (slot >= FrameSlotCount)
-    throw std::runtime_error("Native draw slot exceeds the triple buffer");
+    AURORA_THROW(std::runtime_error("Native draw slot exceeds the triple buffer"));
 
   auto& set = g_nativeDrawSlots[slot];
 
@@ -1290,7 +1291,7 @@ NativeDrawMemory native_draw_memory(unsigned slot) {
     std::lock_guard lock(g_stagingPoolMutex);
 
     if (g_stagingPool.empty())
-      throw std::runtime_error("Native and recorded draw slots cannot be mixed");
+      AURORA_THROW(std::runtime_error("Native and recorded draw slots cannot be mixed"));
 
     set = std::move(g_stagingPool.back());
     g_stagingPool.pop_back();

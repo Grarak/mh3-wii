@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include "status.h"
 // Graphics-owner lifetime. Metadata and identities remain owned until retirement;
 // the backend reads the immutable GPU range directly into its resident storage.
 // An explicit MH3_NATIVE_MODEL_PACK must exist. Without an override the optional
@@ -14,6 +15,7 @@ void UnloadNativeModelAssets();
 // invalid files fail explicitly. Metadata/catalog admission does not allocate
 // GPU storage and can therefore supply typed CPU producers on skipped frames.
 void EnsureNativeModelAssets(uint64_t partition_offset, uint32_t bytes);
+Status TryEnsureNativeModelAssets(uint64_t partition_offset, uint32_t bytes);
 
 // The source file extent at partition_offset whose models have a demand-loaded
 // pack (converted or not yet): false for other files and for the startup pack.

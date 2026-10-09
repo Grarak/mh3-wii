@@ -10,6 +10,7 @@
 //   {offset, size} pairs from +0x4B8 of 0x30-byte spawns (+0 u32 monster id).
 // Monster names are the game's list in 00/data00_eng.bin (after "NO_DATA").
 #include "quest_catalog.h"
+#include "fatal.h"
 #include "disc_image.h"
 
 #include <algorithm>
@@ -24,7 +25,7 @@ namespace {
 
 uint32_t U32(const std::vector<uint8_t>& d, size_t o) {
     if (o + 4 > d.size())
-        throw std::runtime_error("Quest file truncated");
+        MH3_THROW(std::runtime_error("Quest file truncated"));
 
     return uint32_t(d[o]) << 24 | uint32_t(d[o + 1]) << 16 | uint32_t(d[o + 2]) << 8 | d[o + 3];
 }
@@ -71,7 +72,7 @@ std::vector<Quest> Load(Set set) {
     const auto data = GameDiscImage().ReadFile(FileName(set));
 
     if (data.size() < 8 || std::string(data.begin(), data.begin() + 4) != "OMOM")
-        throw std::runtime_error(std::string("Not a quest file: ") + FileName(set));
+        MH3_THROW(std::runtime_error(std::string("Not a quest file: ") + FileName(set)));
 
     std::vector<Quest> quests;
     const uint32_t count = U32(data, 4);
@@ -80,7 +81,7 @@ std::vector<Quest> Load(Set set) {
         const uint32_t offset = U32(data, 8 + 8 * i), size = U32(data, 12 + 8 * i);
 
         if (uint64_t(offset) + size > data.size() || size < kSpawnTables)
-            throw std::runtime_error("Bad quest entry");
+            MH3_THROW(std::runtime_error("Bad quest entry"));
 
         const std::vector<uint8_t> e(data.begin() + offset, data.begin() + offset + size);
         Quest q;
@@ -144,7 +145,7 @@ std::vector<std::string> MonsterNames() {
     size_t at = text.find(std::string("NO_DATA\0", 8));
 
     if (at == std::string::npos)
-        throw std::runtime_error("Monster name list not found");
+        MH3_THROW(std::runtime_error("Monster name list not found"));
 
     std::vector<std::string> names{""};
     at += 8;

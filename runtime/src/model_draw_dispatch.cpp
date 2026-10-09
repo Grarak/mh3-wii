@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI adapters. Typed C owns draw order, resource selection and
 // the authored sort; retained handlers and renderer callbacks stay at this seam.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_span.h"
 #include "frame_split.h"
 #include "guest_call.h"
@@ -76,7 +77,7 @@ struct Census {
 constexpr uint32_t Scratch = 0x8066d300, Phase = 0x807936b8;
 std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native model draw dispatch failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model draw dispatch failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -109,7 +110,7 @@ struct Model {
 
     uint32_t Address(size_t offset) const {
         if (offset > UINT32_MAX - base)
-            throw std::runtime_error("Model resource address overflow");
+            MH3_THROW(std::runtime_error("Model resource address overflow"));
 
         return base + uint32_t(offset);
     }
@@ -119,7 +120,7 @@ struct Model {
         Checked(mh3_res_runtime_map(&MH3NativeResourceMemory(), address, 1, &view));
 
         if (view.span.data != value.container.data)
-            throw std::runtime_error("Draw stream belongs to another bank");
+            MH3_THROW(std::runtime_error("Draw stream belongs to another bank"));
 
         return view.offset;
     }
@@ -127,12 +128,12 @@ struct Model {
     mh3_matrix_table Positions(uint32_t address) const {
         constexpr uint32_t offset = 0x68; // RMHP08 GetResMdlInfo + GetNumViewMtx
         if (value.size < offset + 4)
-            throw std::runtime_error("Model matrix count is outside resource");
+            MH3_THROW(std::runtime_error("Model matrix count is outside resource"));
 
         const uint32_t count = Memory::Read32(resource + offset);
 
         if (uint64_t(count) * 48 > uint64_t(SIZE_MAX))
-            throw std::runtime_error("Model matrix allocation size overflow");
+            MH3_THROW(std::runtime_error("Model matrix allocation size overflow"));
 
         return {Bytes(address, size_t(count) * 48), count, 48, 1};
     }
@@ -284,7 +285,7 @@ struct Sort {
         }
 
         if (!s.cpu)
-            throw std::runtime_error("Model sort comparator has no native producer");
+            MH3_THROW(std::runtime_error("Model sort comparator has no native producer"));
 
         return GuestCall{s.cpu}(s.comparator, {s.Address(a), s.Address(b)}) != 0;
     }
@@ -309,7 +310,7 @@ struct Sort {
 
 size_t Count(uint32_t begin, uint32_t end) {
     if (end < begin || (end - begin) % 12 || (end - begin) / 12 > MH3_MODEL_SORT_CAPACITY)
-        throw std::runtime_error("Invalid model sort range");
+        MH3_THROW(std::runtime_error("Invalid model sort range"));
 
     if (end != begin)
         (void)Bytes(begin, end - begin);
@@ -424,7 +425,7 @@ struct Scene {
         else if (slot == 0x38)
             call.Virtual<0x38>(owner, {argument});
         else
-            throw std::runtime_error("Unexpected scene virtual slot");
+            MH3_THROW(std::runtime_error("Unexpected scene virtual slot"));
     }
 
     static void Callback(void* user, uint32_t callback, unsigned slot, unsigned mask, uint32_t owner, uint32_t argument, uint32_t options) {
@@ -449,7 +450,7 @@ struct Scene {
         case 2:
             return call.Call<0x80080C68>({owner});
         default:
-            throw std::runtime_error("Unexpected model source kind");
+            MH3_THROW(std::runtime_error("Unexpected model source kind"));
         }
     }
 

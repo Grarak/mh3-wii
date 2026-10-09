@@ -1,4 +1,5 @@
 #include "native_graphics.h"
+#include "fatal.h"
 #include "native_shade_snapshot.h"
 #include "bytes_equal.h"
 #include "memory.h"
@@ -50,7 +51,7 @@ void BindBackend(const mh3_native_texture_binding& binding) {
 
     if (input.indexed) {
         if (binding.tlut_id >= palettes.size())
-            throw std::runtime_error("Invalid native texture palette slot");
+            MH3_THROW(std::runtime_error("Invalid native texture palette slot"));
 
         const auto& palette = palettes[binding.tlut_id];
 
@@ -74,7 +75,7 @@ const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit, NativeO
     auto& textures = T(owner).textures;
 
     if (unit >= textures.size())
-        throw std::runtime_error("Invalid native texture unit");
+        MH3_THROW(std::runtime_error("Invalid native texture unit"));
 
     return textures[unit].valid ? &textures[unit].value : nullptr;
 }
@@ -83,7 +84,7 @@ const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot) {
     auto& palettes = T().palettes;
 
     if (slot >= palettes.size())
-        throw std::runtime_error("Invalid native palette slot");
+        MH3_THROW(std::runtime_error("Invalid native palette slot"));
 
     const auto& palette = palettes[slot];
     return palette.entries && palette.payload_address ? &palette : nullptr;
@@ -93,7 +94,7 @@ void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette, 
     auto& [palettes, textures] = T(owner);
 
     if (slot >= palettes.size() || !palette.payload_address || !palette.entries || palette.entries > 16384 || palette.format > 2)
-        throw std::runtime_error("Invalid native palette binding");
+        MH3_THROW(std::runtime_error("Invalid native palette binding"));
     // Materials rebind their palettes on every draw; an unchanged binding keeps
     // the revision, so the frame packet need not capture and compare a copy.
     if (!std::memcmp(&palettes[slot], &palette, sizeof palette))
@@ -116,10 +117,10 @@ void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner ow
     auto& [palettes, textures] = T(owner);
 
     if (binding.map_id >= textures.size())
-        throw std::runtime_error("Invalid native texture unit");
+        MH3_THROW(std::runtime_error("Invalid native texture unit"));
 
     if (binding.source.indexed && binding.tlut_id >= palettes.size())
-        throw std::runtime_error("Invalid native texture palette slot");
+        MH3_THROW(std::runtime_error("Invalid native texture palette slot"));
 
     auto& texture = textures[binding.map_id];
 

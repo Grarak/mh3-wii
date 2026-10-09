@@ -1,4 +1,5 @@
 #include <aurora/native_texture.hpp>
+#include <aurora/fatal.hpp>
 #include <aurora/aurora.h>
 #include <aurora/generated_texture.hpp>
 #include <aurora/native_scene_feedback.hpp>
@@ -56,13 +57,13 @@ size_t residentBytes = 0;
 uint64_t serial = 0;
 void owner() {
   if (!gl::on_render_thread())
-    throw std::runtime_error("Native texture changed outside graphics owner");
+    AURORA_THROW(std::runtime_error("Native texture changed outside graphics owner"));
 }
 
 gl::SamplerDesc sampler(const NativeTextureSampler& source) {
   if (source.wrap_s > 2 || source.wrap_t > 2 || source.min_filter > 5 || source.mag_filter > 1 || source.anisotropy > 2 || !std::isfinite(source.min_lod) || !std::isfinite(source.max_lod) ||
       !std::isfinite(source.lod_bias) || source.min_lod > source.max_lod)
-    throw std::runtime_error("Invalid native texture sampler");
+    AURORA_THROW(std::runtime_error("Invalid native texture sampler"));
   constexpr GLenum wrap[]{GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT};
   constexpr GLenum filter[]{GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST, GL_NEAREST_MIPMAP_LINEAR, GL_LINEAR_MIPMAP_LINEAR};
   return {wrap[source.wrap_s], wrap[source.wrap_t], filter[source.min_filter], filter[source.mag_filter], source.min_lod, source.max_lod, 1u << source.anisotropy};
@@ -70,7 +71,7 @@ gl::SamplerDesc sampler(const NativeTextureSampler& source) {
 
 void make_room(size_t bytes) {
   if (bytes > CacheBudget)
-    throw std::runtime_error("Native texture exceeds resident cache budget");
+    AURORA_THROW(std::runtime_error("Native texture exceeds resident cache budget"));
   while (residentBytes > CacheBudget - bytes) {
     auto victim = cache.end();
 
@@ -78,7 +79,7 @@ void make_room(size_t bytes) {
       if (it->second.texture.use_count() == 1 && (victim == cache.end() || it->second.used < victim->second.used))
         victim = it;
     if (victim == cache.end())
-      throw std::runtime_error("Bound native textures exceed resident cache budget");
+      AURORA_THROW(std::runtime_error("Bound native textures exceed resident cache budget"));
 
     residentBytes -= victim->second.bytes;
     cache.erase(victim);
@@ -234,12 +235,12 @@ void convert_yuv420(const uint8_t* planes, uint32_t width, uint32_t height, uint
 
 size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t height, uint32_t levels) {
   if (!width || !height || width > 4096 || height > 4096 || !levels || levels > std::bit_width(std::max(width, height)))
-    throw std::runtime_error("Invalid native texture dimensions");
+    AURORA_THROW(std::runtime_error("Invalid native texture dimensions"));
 
   if (format == NativeTextureFormatYuv420) {
     // Whole 8x4 I8 tiles in all three planes.
     if (width % 16 || height % 8 || levels != 1)
-      throw std::runtime_error("Invalid native YUV texture dimensions");
+      AURORA_THROW(std::runtime_error("Invalid native YUV texture dimensions"));
 
     return size_t(width) * height * 3 / 2;
   }
@@ -269,7 +270,7 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
     tileWidthShift = tileHeightShift = 3;
     break;
   default:
-    throw std::runtime_error("Unsupported native texture source format");
+    AURORA_THROW(std::runtime_error("Unsupported native texture source format"));
   }
 
   size_t bytes = 0;
@@ -287,7 +288,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   owner();
 
   if (unit >= bindings.size())
-    throw std::runtime_error("Invalid native texture unit");
+    AURORA_THROW(std::runtime_error("Invalid native texture unit"));
 
   const auto descriptor = sampler(sampling);
   const size_t sourceBytes = native_texture_source_size(source.format, source.width, source.height, source.levels);
@@ -300,7 +301,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   const uint32_t generatedRevision = identity && !feedbackRevision ? generated_texture_version(identity, source.width, source.height) : 0;
 
   if (source.mutable_source && !source.generation && !feedbackRevision && !generatedRevision)
-    throw std::runtime_error("Mutable native texture has no producer revision");
+    AURORA_THROW(std::runtime_error("Mutable native texture has no producer revision"));
 
   logicalBindings[unit] = {source, sampling, true};
   shaderLodBias[unit] = sampling.lod_bias;
@@ -344,7 +345,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
 
   if (feedbackRevision) {
     if (!bind_scene_feedback_texture(unit, identity, source.width, source.height, sampling))
-      throw std::runtime_error("Published scene feedback disappeared before binding");
+      AURORA_THROW(std::runtime_error("Published scene feedback disappeared before binding"));
     // GPU targets own their storage. Do not inspect or convert guest pixels.
     portableSampling[unit] = {source.asset,
                               source.width,
@@ -379,7 +380,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     offlineInfo = gl::native_texture_info(source.asset);
 
     if (offlineInfo.width != source.width || offlineInfo.height != source.height || offlineInfo.mips != source.levels || (offlineInfo.sourceProvenance && offlineInfo.sourceFormat != source.format))
-      throw std::runtime_error("Native asset metadata disagrees with published texture");
+      AURORA_THROW(std::runtime_error("Native asset metadata disagrees with published texture"));
 
     if (indexed) {
       const int64_t delta = int64_t(reinterpret_cast<uintptr_t>(source.palette.data())) - int64_t(reinterpret_cast<uintptr_t>(source.bytes.data()));
@@ -426,7 +427,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     texture = gl::native_texture_asset(source.asset);
   } else {
     if (source.bytes.size() < sourceBytes)
-      throw std::runtime_error("Native texture source is truncated");
+      AURORA_THROW(std::runtime_error("Native texture source is truncated"));
 
     make_room(allocated);
 
@@ -452,7 +453,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
 
     if (indexed) {
       if (source.palette_format > 2 || !source.palette_entries || source.palette_entries > 16384 || source.palette.size() < size_t(source.palette_entries) * 2)
-        throw std::runtime_error("Native indexed texture has no valid palette");
+        AURORA_THROW(std::runtime_error("Native indexed texture has no valid palette"));
 
       converted = gfx::convert_texture_palette(source.format, source.width, source.height, source.levels, {source.bytes.data(), sourceBytes}, static_cast<GXTlutFmt>(source.palette_format),
                                                source.palette_entries, {source.palette.data(), size_t(source.palette_entries) * 2});
@@ -460,7 +461,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
       converted = gfx::convert_texture(source.format, source.width, source.height, source.levels, {source.bytes.data(), sourceBytes});
 
     if (converted.data.empty() || converted.format != gl::Format::RGBA8)
-      throw std::runtime_error("Native texture conversion produced no RGBA image");
+      AURORA_THROW(std::runtime_error("Native texture conversion produced no RGBA image"));
 
     texture = gl::create_texture(source.width, source.height, source.levels, converted.format, "Native producer texture");
     size_t offset = 0;
@@ -491,7 +492,7 @@ void clear_native_textures() {
 // A read of the bound state for every draw: the binders check the owner.
 float native_texture_shader_lod_bias(uint32_t unit) {
   if (unit >= logicalBindings.size() || !logicalBindings[unit].valid || !aurora_native_frame_should_render())
-    throw std::runtime_error("Native texture shader bias requested without an admitted binding");
+    AURORA_THROW(std::runtime_error("Native texture shader bias requested without an admitted binding"));
 
   return shaderLodBias[unit];
 }

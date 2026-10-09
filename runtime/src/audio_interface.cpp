@@ -1,4 +1,5 @@
 #include "audio_interface.h"
+#include "fatal.h"
 #include <chrono>
 #include <stdexcept>
 
@@ -11,7 +12,7 @@ void AudioInterfaceState::Reset(uint64_t now) {
 
 void AudioInterfaceState::Advance(uint64_t now) {
     if (now < lastTime)
-        throw std::runtime_error("AI clock moved backwards");
+        MH3_THROW(std::runtime_error("AI clock moved backwards"));
 
     const auto elapsed = now - lastTime;
     lastTime = now;
@@ -47,7 +48,7 @@ uint32_t AudioInterfaceState::Read(uint32_t offset, uint64_t now) {
     case 12:
         return interruptTiming;
     default:
-        throw std::runtime_error("Unknown AI register");
+        MH3_THROW(std::runtime_error("Unknown AI register"));
     }
 }
 
@@ -77,7 +78,7 @@ void AudioInterfaceState::Write(uint32_t offset, uint32_t value, uint64_t now) {
         interruptTiming = value;
         break;
     default:
-        throw std::runtime_error("Unknown AI register");
+        MH3_THROW(std::runtime_error("Unknown AI register"));
     }
 }
 

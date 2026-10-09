@@ -1,5 +1,6 @@
 // Game -> render thread frame packets (native_frame_packet.h).
 #include "native_frame_packet.h"
+#include "fatal.h"
 #include "bytes_equal.h"
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
@@ -132,7 +133,9 @@ std::array<Packet, 3> packets;
 std::thread renderThread;
 std::thread::id gameThread;
 std::atomic<bool> running{false}, stopping{false}, failed{false};
-std::exception_ptr failure;
+#if defined(__cpp_exceptions)
+std::exception_ptr failure; // the render thread's, for the game thread to report
+#endif
 
 // published: packets handed over (render thread waits on it); completed: the
 // sequence of the last packet the render thread finished (game waits on it).
@@ -304,12 +307,16 @@ uint64_t feedbackRevision = 0;
 
 void RequireGame() {
     if (std::this_thread::get_id() != gameThread && running)
-        throw std::runtime_error("Frame packet recorded outside the game thread");
+        MH3_THROW(std::runtime_error("Frame packet recorded outside the game thread"));
 }
 
+// Without exceptions (release builds) a render-thread failure stops the game
+// where it happens, and nothing comes here.
 void RethrowFailure() {
+#if defined(__cpp_exceptions)
     if (failed.load(std::memory_order_acquire))
         std::rethrow_exception(failure);
+#endif
 }
 
 Packet& ProducerPacket() {
@@ -317,7 +324,7 @@ Packet& ProducerPacket() {
     size_t bytes = 0;
 
     if (mh3_frame_state_producer_buffer(&producer, &data, &bytes) != MH3_FRAME_STATE_OK)
-        throw std::runtime_error("Frame packet exchange has no producer buffer");
+        MH3_THROW(std::runtime_error("Frame packet exchange has no producer buffer"));
 
     return *static_cast<Packet*>(data);
 }
@@ -733,7 +740,7 @@ void Draw(const Packet& p) {
             const auto& op = p.feedback[record.payload];
 
             if (!aurora::clone_scene_feedback_texture(op.identity, op.source))
-                throw std::runtime_error("Scene feedback clone source was not captured");
+                MH3_THROW(std::runtime_error("Scene feedback clone source was not captured"));
 
             forget();
             continue;
@@ -830,106 +837,113 @@ void WaitForPacket(uint32_t ticket) {
     published.AwaitChange(ticket);
 }
 
-void RenderLoop() {
-    aurora::gl::acquire_context();
-
-    try {
+// Replays published packets until the thread stops, then runs the resource
+// work queued after the last one.
+void RenderPackets() {
 #ifdef __vita__
-        // The game thread runs on core 2; the AX mix worker and the display
-        // callback on core 0.
-        if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1) < 0)
-            throw std::runtime_error("Render thread core 1 affinity failed");
+    // The game thread runs on core 2; the AX mix worker and the display
+    // callback on core 0.
+    if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1) < 0)
+        MH3_THROW(std::runtime_error("Render thread core 1 affinity failed"));
 #endif
 #ifdef MH3_DEVELOPMENT
-        uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0, waitNs = 0, waits = 0, idleStart = 0, wakeNs = 0, wakes = 0, lateWakes = 0;
+    uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0, waitNs = 0, waits = 0, idleStart = 0, wakeNs = 0, wakes = 0, lateWakes = 0;
 #ifdef __vita__
-        renderCounters.thread.store(sceKernelGetThreadId(), std::memory_order_release);
+    renderCounters.thread.store(sceKernelGetThreadId(), std::memory_order_release);
 #elif defined(__linux__)
-        clockid_t cpuClock;
+    clockid_t cpuClock;
 
-        if (pthread_getcpuclockid(pthread_self(), &cpuClock) == 0)
-            renderCounters.cpuClock.store(cpuClock, std::memory_order_release);
+    if (pthread_getcpuclockid(pthread_self(), &cpuClock) == 0)
+        renderCounters.cpuClock.store(cpuClock, std::memory_order_release);
 
-        renderCounters.thread.store(int32_t(syscall(SYS_gettid)), std::memory_order_release);
+    renderCounters.thread.store(int32_t(syscall(SYS_gettid)), std::memory_order_release);
 #endif
 #endif
-        for (;;) {
-            const uint32_t ticket = published.Load();
-            const auto status = mh3_frame_state_acquire(&consumer);
+    for (;;) {
+        const uint32_t ticket = published.Load();
+        const auto status = mh3_frame_state_acquire(&consumer);
 
-            if (status == MH3_FRAME_STATE_EMPTY) {
-                if (stopping.load(std::memory_order_acquire))
-                    break;
+        if (status == MH3_FRAME_STATE_EMPTY) {
+            if (stopping.load(std::memory_order_acquire))
+                break;
 #ifdef MH3_DEVELOPMENT
-                if (!idleStart)
-                    idleStart = RenderMonotonicNs();
+            if (!idleStart)
+                idleStart = RenderMonotonicNs();
 #endif
-                WaitForPacket(ticket);
-                continue;
-            }
-
-            if (status != MH3_FRAME_STATE_OK)
-                throw std::runtime_error("Frame packet exchange acquire failed");
-
-            void* data = nullptr;
-            size_t bytes = 0;
-            uint64_t generation = 0;
-
-            if (mh3_frame_state_consumer_buffer(&consumer, &data, &bytes, &generation) != MH3_FRAME_STATE_OK)
-                throw std::runtime_error("Frame packet exchange has no consumer buffer");
-
-            const auto& p = *static_cast<const Packet*>(data);
-            taken.store(p.sequence, std::memory_order_release);
-#ifdef MH3_DEVELOPMENT
-            const auto replayStart = RenderMonotonicNs();
-
-            if (idleStart) {
-                waitNs += replayStart - idleStart;
-                ++waits;
-
-                if (p.publishedNs > idleStart) {
-                    const uint64_t wake = replayStart - p.publishedNs;
-                    wakeNs += wake;
-                    ++wakes;
-                    lateWakes += wake > 1000000;
-                }
-
-                idleStart = 0;
-            }
-#endif
-            Execute(p);
-#ifdef MH3_DEVELOPMENT
-            const auto elapsed = RenderMonotonicNs() - replayStart;
-            ++replayed;
-            wallNs += elapsed;
-
-            if (p.render && !p.canceled) {
-                ++drawPackets;
-                drawWallNs += elapsed;
-            }
-
-            // Atomic payloads keep the bounded sequence snapshot race-free.
-            // Only this render owner writes them, once per completed packet.
-            renderCounters.revision.fetch_add(1, std::memory_order_acq_rel);
-            renderCounters.packets.store(replayed, std::memory_order_relaxed);
-            renderCounters.drawPackets.store(drawPackets, std::memory_order_relaxed);
-            renderCounters.wallNs.store(wallNs, std::memory_order_relaxed);
-            renderCounters.drawWallNs.store(drawWallNs, std::memory_order_relaxed);
-            renderCounters.waitNs.store(waitNs, std::memory_order_relaxed);
-            renderCounters.waits.store(waits, std::memory_order_relaxed);
-            renderCounters.wakeNs.store(wakeNs, std::memory_order_relaxed);
-            renderCounters.wakes.store(wakes, std::memory_order_relaxed);
-            renderCounters.lateWakes.store(lateWakes, std::memory_order_relaxed);
-            renderCounters.revision.fetch_add(1, std::memory_order_release);
-#endif
-            completed.store(p.sequence, std::memory_order_release);
-            completed.notify_all();
+            WaitForPacket(ticket);
+            continue;
         }
 
-        // Resource work queued after the last packet.
-        MH3_RENDER_STAGE(RenderStage::StopTasks);
-        RunTasks(beforeTasks, UINT64_MAX);
-        RunTasks(afterTasks, UINT64_MAX);
+        if (status != MH3_FRAME_STATE_OK)
+            MH3_THROW(std::runtime_error("Frame packet exchange acquire failed"));
+
+        void* data = nullptr;
+        size_t bytes = 0;
+        uint64_t generation = 0;
+
+        if (mh3_frame_state_consumer_buffer(&consumer, &data, &bytes, &generation) != MH3_FRAME_STATE_OK)
+            MH3_THROW(std::runtime_error("Frame packet exchange has no consumer buffer"));
+
+        const auto& p = *static_cast<const Packet*>(data);
+        taken.store(p.sequence, std::memory_order_release);
+#ifdef MH3_DEVELOPMENT
+        const auto replayStart = RenderMonotonicNs();
+
+        if (idleStart) {
+            waitNs += replayStart - idleStart;
+            ++waits;
+
+            if (p.publishedNs > idleStart) {
+                const uint64_t wake = replayStart - p.publishedNs;
+                wakeNs += wake;
+                ++wakes;
+                lateWakes += wake > 1000000;
+            }
+
+            idleStart = 0;
+        }
+#endif
+        Execute(p);
+#ifdef MH3_DEVELOPMENT
+        const auto elapsed = RenderMonotonicNs() - replayStart;
+        ++replayed;
+        wallNs += elapsed;
+
+        if (p.render && !p.canceled) {
+            ++drawPackets;
+            drawWallNs += elapsed;
+        }
+
+        // Atomic payloads keep the bounded sequence snapshot race-free.
+        // Only this render owner writes them, once per completed packet.
+        renderCounters.revision.fetch_add(1, std::memory_order_acq_rel);
+        renderCounters.packets.store(replayed, std::memory_order_relaxed);
+        renderCounters.drawPackets.store(drawPackets, std::memory_order_relaxed);
+        renderCounters.wallNs.store(wallNs, std::memory_order_relaxed);
+        renderCounters.drawWallNs.store(drawWallNs, std::memory_order_relaxed);
+        renderCounters.waitNs.store(waitNs, std::memory_order_relaxed);
+        renderCounters.waits.store(waits, std::memory_order_relaxed);
+        renderCounters.wakeNs.store(wakeNs, std::memory_order_relaxed);
+        renderCounters.wakes.store(wakes, std::memory_order_relaxed);
+        renderCounters.lateWakes.store(lateWakes, std::memory_order_relaxed);
+        renderCounters.revision.fetch_add(1, std::memory_order_release);
+#endif
+        completed.store(p.sequence, std::memory_order_release);
+        completed.notify_all();
+    }
+
+    // Resource work queued after the last packet.
+    MH3_RENDER_STAGE(RenderStage::StopTasks);
+    RunTasks(beforeTasks, UINT64_MAX);
+    RunTasks(afterTasks, UINT64_MAX);
+}
+
+void RenderLoop() {
+    aurora::gl::acquire_context();
+#if defined(__cpp_exceptions)
+    // A failure goes to the game thread, which reports it.
+    try {
+        RenderPackets();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "MH3 render thread: %s\n", error.what());
         failure = std::current_exception();
@@ -938,6 +952,9 @@ void RenderLoop() {
         failure = std::current_exception();
         failed.store(true, std::memory_order_release);
     }
+#else
+    RenderPackets();
+#endif
 
     completed.store(UINT64_MAX, std::memory_order_release);
     completed.notify_all();
@@ -1031,7 +1048,7 @@ void RecordNativeSceneCapture(const void* identity, const aurora::SceneCapturePa
         return;
 
     if (!identity)
-        throw std::runtime_error("Scene feedback has no producer identity");
+        MH3_THROW(std::runtime_error("Scene feedback has no producer identity"));
 
     auto& op = PushFeedback(Kind::Capture);
     op.identity = identity;
@@ -1044,7 +1061,7 @@ void RecordNativeSceneGlare(const void* identity, const aurora::SceneGlareParame
         return;
 
     if (!identity)
-        throw std::runtime_error("Scene feedback has no producer identity");
+        MH3_THROW(std::runtime_error("Scene feedback has no producer identity"));
 
     auto& op = PushFeedback(Kind::Glare);
     op.identity = identity;
@@ -1086,7 +1103,7 @@ void QueueNativeGraphicsTask(NativeTaskOrder order, std::function<void()> task) 
 
 uint32_t NativeFramePacketSlot() {
     if (!recording)
-        throw std::runtime_error("No frame packet is being recorded");
+        MH3_THROW(std::runtime_error("No frame packet is being recorded"));
 
     return recording->slot;
 }
@@ -1103,13 +1120,13 @@ uint64_t NativeFramePacketsDone() {
 
 void StartNativeRenderThread() {
     if (running)
-        throw std::runtime_error("Render thread already started");
+        MH3_THROW(std::runtime_error("Render thread already started"));
 
     if (!aurora::gl::on_render_thread())
-        throw std::runtime_error("Render thread started outside the graphics owner");
+        MH3_THROW(std::runtime_error("Render thread started outside the graphics owner"));
 
     if (mh3_frame_state_init(&exchange, &producer, &consumer, &packets[0], &packets[1], &packets[2], sizeof(Packet)) != MH3_FRAME_STATE_OK)
-        throw std::runtime_error("Frame packet exchange initialization failed");
+        MH3_THROW(std::runtime_error("Frame packet exchange initialization failed"));
 
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
@@ -1331,7 +1348,7 @@ void PublishNativeFramePacket(std::string capture) {
     RequireGame();
 
     if (!recording)
-        throw std::runtime_error("Frame packet published without a begin");
+        MH3_THROW(std::runtime_error("Frame packet published without a begin"));
 
     auto& p = *recording;
     recording = nullptr;
@@ -1342,7 +1359,7 @@ void PublishNativeFramePacket(std::string capture) {
     p.publishedNs = RenderMonotonicNs();
 #endif
     if (mh3_frame_state_publish(&producer, p.sequence, &replaced) != MH3_FRAME_STATE_OK)
-        throw std::runtime_error("Frame packet exchange publish failed");
+        MH3_THROW(std::runtime_error("Frame packet exchange publish failed"));
 
     lastPublished = p.sequence;
     published.Advance();

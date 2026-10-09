@@ -22,6 +22,7 @@
 // double-then-single rounding as the translated code. Its registered body only
 // reads argument registers, so callers keep a precise call boundary.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -51,7 +52,7 @@ struct Args {
 [[noreturn]] void Panic(const char* what, uint32_t p) {
     char text[112];
     std::snprintf(text, sizeof text, "NW4R panic (ef animation curve): bad %s pointer %08x", what, p);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 void CheckPointer(uint32_t p, const char* what) {
@@ -230,7 +231,7 @@ uint32_t BlendU8(uint32_t t, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t r2)
     default: {
         char text[96];
         std::snprintf(text, sizeof text, "NW4R panic (ef animation curve): interpolation %u", mode);
-        throw std::runtime_error(text);
+        MH3_THROW(std::runtime_error(text));
     }
     }
 }
@@ -684,7 +685,7 @@ float BlendF32(float t, float a, float b, uint32_t mode, uint32_t r2) {
     default: {
         char text[96];
         std::snprintf(text, sizeof text, "NW4R panic (ef animation curve): interpolation %u", mode);
-        throw std::runtime_error(text);
+        MH3_THROW(std::runtime_error(text));
     }
     }
 }

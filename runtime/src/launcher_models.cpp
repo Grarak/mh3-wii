@@ -8,6 +8,7 @@
 // conversion fails (unsupported shapes, a texture bound outside its file) is
 // left out and reported; its models then fail at admission if drawn.
 #include "vita_launcher.h"
+#include "fatal.h"
 #include "disc_image.h"
 #include "launcher_texture_inventory.h"
 #include "launcher_convert.h"
@@ -122,7 +123,7 @@ void Save(const std::filesystem::path& path, const uint8_t* bytes, size_t count)
     out.close();
 
     if (!out)
-        throw std::runtime_error("Cannot write " + path.string() + " (not enough space?)");
+        MH3_THROW(std::runtime_error("Cannot write " + path.string() + " (not enough space?)"));
 }
 
 // Every model and texture of the disc, with canonical IDs.
@@ -135,16 +136,19 @@ void Inventory(const DiscImage& disc, std::vector<File>& files, std::vector<Text
         progress("Indexing game models", done++, names.size());
 
         if (disc.FileSize(path) > TextureInventory::MaxSourceBytes)
-            throw std::runtime_error("Oversized model source: " + path);
+            MH3_THROW(std::runtime_error("Oversized model source: " + path));
 
         const auto data = disc.ReadFile(path);
         const uint64_t offset = disc.FileOffset(path);
+        std::vector<TextureInventory::Texture> parsed;
+        CheckStatus(TextureInventory::Parse(data, offset, parsed, nextTexture));
 
-        for (const auto& t : TextureInventory::Parse(data, offset, nextTexture))
+        for (const auto& t : parsed)
             textures.push_back(TextureRow(offset, t));
 
         nextTexture = textures.empty() ? 1 : textures.back().id + 1;
-        File file{path, offset, ListModels(data)};
+        File file{path, offset, {}};
+        CheckStatus(ListModels(data, file.models));
 
         for (auto& model : file.models)
             model.id = nextModel++;
@@ -154,7 +158,7 @@ void Inventory(const DiscImage& disc, std::vector<File>& files, std::vector<Text
     }
 
     if (nextModel > 65536)
-        throw std::runtime_error("Model inventory exceeds the ID encoding");
+        MH3_THROW(std::runtime_error("Model inventory exceeds the ID encoding"));
 
     std::sort(textures.begin(), textures.end(), [](const TextureRow& a, const TextureRow& b) { return a.partition != b.partition ? a.partition < b.partition : a.name < b.name; });
 }
@@ -180,19 +184,23 @@ bool ModelsReady(const std::filesystem::path& root) {
     return list.eof(); // a disc without models has an empty list
 }
 
-std::vector<ModelSource> ListModels(std::span<const uint8_t> data) {
-    std::vector<ModelSource> models;
+Status ListModels(std::span<const uint8_t> data, std::vector<ModelSource>& models) {
+    models.clear();
+    std::vector<TextureInventory::Container> containers;
+    std::vector<TextureInventory::detail::Resource> resources;
+    MH3_RETURN_IF_ERROR(TextureInventory::Containers(data, containers));
 
-    for (const auto& container : TextureInventory::Containers(data)) {
+    for (const auto& container : containers) {
         const TextureInventory::detail::Reader r{data, container.offset, size_t(container.offset) + container.bytes};
+        MH3_RETURN_IF_ERROR(TextureInventory::detail::Resources(r, resources));
 
-        for (const auto& resource : TextureInventory::detail::Resources(r))
+        for (const auto& resource : resources)
             if (resource.magic == Mdl0)
                 models.push_back({container.offset, container.bytes, uint32_t(resource.offset - container.offset), 0, resource.name});
     }
 
     std::sort(models.begin(), models.end(), [](const ModelSource& a, const ModelSource& b) { return a.container != b.container ? a.container < b.container : a.name < b.name; });
-    return models;
+    return {};
 }
 
 TextureRow::TextureRow(uint64_t fileOffset, const TextureInventory::Texture& t)
@@ -316,7 +324,7 @@ void PrepareModels(const std::filesystem::path& root, const Progress& progress) 
         size_t indexBytes = 0;
 
         if (mh3_prepare_index(index.data(), index.size(), packs.data(), uint32_t(packs.size()), sources.data(), uint32_t(sources.size()), &indexBytes) != MH3_PREPARE_OK)
-            throw std::runtime_error("Native model index preparation failed");
+            MH3_THROW(std::runtime_error("Native model index preparation failed"));
 
         Save(staging / "models.index.bin", index.data(), indexBytes);
         published.emplace_back("models.index.bin", indexBytes);

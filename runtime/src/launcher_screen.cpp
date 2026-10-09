@@ -1,5 +1,6 @@
 // The launcher's screen on the native renderer (launcher_screen.h).
 #include "launcher_screen.h"
+#include "fatal.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
 #include <aurora/aurora.h>
@@ -121,7 +122,7 @@ int RunLauncherScreenCheck() {
     const auto pump = [] {
         for (const auto* e = aurora_update(); e && e->type != AURORA_NONE; ++e)
             if (e->type == AURORA_EXIT)
-                throw std::runtime_error("Window closed during the launcher screen check");
+                MH3_THROW(std::runtime_error("Window closed during the launcher screen check"));
     };
 
     const auto pixel = [](uint32_t x, uint32_t y) {
@@ -155,14 +156,14 @@ int RunLauncherScreenCheck() {
     StopNativeRenderThread();
 
     if (!owner || !aurora::gl::on_render_thread())
-        throw std::runtime_error("Launcher screen: the render thread did not own, then return, the context");
+        MH3_THROW(std::runtime_error("Launcher screen: the render thread did not own, then return, the context"));
 
     const auto& target = aurora::gpu::g_frameBuffer;
     const uint32_t corner = pixel(5, 5), middle = pixel(480, 300), bar = pixel(100, 80), mirrored = pixel(100, 544 - 80);
     std::fprintf(stderr, "MH3 launcher screen: target %ux%u, corner %08x, paper %08x, bar %08x, mirrored bar %08x\n", target.width, target.height, corner, middle, bar, mirrored);
 
     if (target.width != ScreenWidth || target.height != ScreenHeight || !near(corner, ink) || !near(middle, paper) || !near(bar, gold) || !near(mirrored, paper))
-        throw std::runtime_error("Launcher screen: rectangles were not drawn where expected");
+        MH3_THROW(std::runtime_error("Launcher screen: rectangles were not drawn where expected"));
     // The game's own native graphics startup at its render mode restarts the
     // render thread; its frames then draw at the new target size.
     InitializeNativeGraphics(640, 456);
@@ -180,7 +181,7 @@ int RunLauncherScreenCheck() {
     // Every host renders for the 960x544 display: the game's 640x456 render
     // mode fits it at its own aspect (764x544).
     if (target.height != ScreenHeight || std::abs(double(target.width) / target.height - 640.0 / 456) > 0.01 || !near(cleared, 0xff000000))
-        throw std::runtime_error("Launcher screen: the restarted renderer did not take the game's target");
+        MH3_THROW(std::runtime_error("Launcher screen: the restarted renderer did not take the game's target"));
 
     std::fprintf(stderr, "MH3 launcher screen check passed\n");
     return 0;

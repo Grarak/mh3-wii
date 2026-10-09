@@ -19,7 +19,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,8 +46,6 @@ uint64_t Be64(const uint8_t* p) { return uint64_t(Be32(p)) << 32 | Be32(p + 4); 
 void PutBe32(uint8_t* p, uint32_t v) {
     p[0] = uint8_t(v >> 24), p[1] = uint8_t(v >> 16), p[2] = uint8_t(v >> 8), p[3] = uint8_t(v);
 }
-
-[[noreturn]] void Fail(const std::string& message) { throw std::runtime_error(message); }
 
 // SHA-1 (FIPS 180-4), for the WIA/RVZ header checks.
 std::array<uint8_t, 20> Sha1(const uint8_t* data, size_t size) {
@@ -302,27 +299,33 @@ const ISzAlloc kLzmaAlloc{LzmaAlloc, LzmaFree};
 
 class Decompressor {
   public:
-    Decompressor(uint32_t method, const uint8_t* props, size_t propsSize) : method(method) {
-        if (method == kZstd) {
-            zstd = ZSTD_createDCtx();
+    // Null, with `error` set, when the method or its properties are not
+    // supported.
+    static std::unique_ptr<Decompressor> Open(uint32_t method, const uint8_t* props, size_t propsSize, std::string& error) {
+        std::unique_ptr<Decompressor> d(new Decompressor(method));
 
-            if (!zstd)
-                Fail("Out of memory");
+        if (method == kZstd) {
+            d->zstd = ZSTD_createDCtx();
+
+            if (!d->zstd)
+                return error = "Out of memory", nullptr;
         } else if (method == kLzma) {
             // 7-Zip SDK properties: lc/lp/pb byte, then the dictionary size.
-            LzmaDec_Construct(&lzma);
+            LzmaDec_Construct(&d->lzma);
 
-            if (propsSize != LZMA_PROPS_SIZE || LzmaDec_AllocateProbs(&lzma, props, LZMA_PROPS_SIZE, &kLzmaAlloc) != SZ_OK)
-                Fail("Invalid LZMA properties");
+            if (propsSize != LZMA_PROPS_SIZE || LzmaDec_AllocateProbs(&d->lzma, props, LZMA_PROPS_SIZE, &kLzmaAlloc) != SZ_OK)
+                return error = "Invalid LZMA properties", nullptr;
         } else if (method == kLzma2) {
-            Lzma2Dec_Construct(&lzma2);
+            Lzma2Dec_Construct(&d->lzma2);
 
-            if (propsSize != 1 || Lzma2Dec_AllocateProbs(&lzma2, props[0], &kLzmaAlloc) != SZ_OK)
-                Fail("Invalid LZMA2 properties");
+            if (propsSize != 1 || Lzma2Dec_AllocateProbs(&d->lzma2, props[0], &kLzmaAlloc) != SZ_OK)
+                return error = "Invalid LZMA2 properties", nullptr;
         } else if (method == kPurge)
-            Fail("Unsupported WIA/RVZ compression: Purge");
+            return error = "Unsupported WIA/RVZ compression: Purge", nullptr;
         else if (method != kNone && method != kBzip2)
-            Fail("Invalid WIA/RVZ compression type " + std::to_string(method));
+            return error = "Invalid WIA/RVZ compression type " + std::to_string(method), nullptr;
+
+        return d;
     }
 
     ~Decompressor() {
@@ -337,10 +340,11 @@ class Decompressor {
     Decompressor(const Decompressor&) = delete;
 
     // Decompresses one stream (zstd: its frames) into `out`, growing it, and
-    // stops at the stream's end or after `limit` bytes. Returns the bytes
-    // produced; out.size() is only the buffer's capacity.
-    size_t Run(const uint8_t* in, size_t size, std::vector<uint8_t>& out, size_t limit) {
-        size_t produced = 0;
+    // stops at the stream's end or after `limit` bytes. Sets `produced` to the
+    // bytes produced (out.size() is only the buffer's capacity), or `error`
+    // and returns false when the data is corrupt.
+    bool Run(const uint8_t* in, size_t size, std::vector<uint8_t>& out, size_t limit, size_t& produced, std::string& error) {
+        produced = 0;
         const auto room = [&] {
             if (produced < out.size())
                 return true;
@@ -368,13 +372,13 @@ class Decompressor {
                 const size_t result = ZSTD_decompressStream(zstd, &output, &input);
 
                 if (ZSTD_isError(result))
-                    Fail(std::string("Zstandard: ") + ZSTD_getErrorName(result));
+                    return error = std::string("Zstandard: ") + ZSTD_getErrorName(result), false;
 
                 produced = output.pos;
 
                 if (input.pos == input.size && (result == 0 || output.pos < output.size)) {
                     if (result)
-                        Fail("Zstandard data is truncated");
+                        return error = "Zstandard data is truncated", false;
 
                     break;
                 }
@@ -383,7 +387,7 @@ class Decompressor {
             bz_stream stream{};
 
             if (BZ2_bzDecompressInit(&stream, 0, 0) != BZ_OK)
-                Fail("Cannot start the bzip2 decoder");
+                return error = "Cannot start the bzip2 decoder", false;
 
             struct End {
                 bz_stream* stream;
@@ -405,10 +409,10 @@ class Decompressor {
                     break;
 
                 if (result != BZ_OK)
-                    Fail("bzip2 data is corrupt");
+                    return error = "bzip2 data is corrupt", false;
 
                 if (consumed == size && produced < out.size())
-                    Fail("bzip2 data is truncated");
+                    return error = "bzip2 data is truncated", false;
             }
         } else {
             // The output buffer is the dictionary: it holds the whole stream.
@@ -433,7 +437,7 @@ class Decompressor {
                 produced = dictionary.dicPos;
 
                 if (result != SZ_OK)
-                    Fail("LZMA data is corrupt");
+                    return error = "LZMA data is corrupt", false;
                 // Without an end mark the stream ends with its input.
                 if (status == LZMA_STATUS_FINISHED_WITH_MARK || status == LZMA_STATUS_NEEDS_MORE_INPUT ||
                     status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK)
@@ -441,10 +445,12 @@ class Decompressor {
             }
         }
 
-        return produced;
+        return true;
     }
 
   private:
+    explicit Decompressor(uint32_t method) : method(method) {}
+
     uint32_t method;
     ZSTD_DCtx* zstd = nullptr;
     CLzmaDec lzma{};
@@ -468,11 +474,16 @@ constexpr uint8_t kCommonKeys[2][3][16] = {
 
 class RomReader {
   public:
-    RomReader(void* context, uint64_t size, MH3RomReadAt readAt);
+    RomReader(void* context, uint64_t size, MH3RomReadAt readAt) : context(context), readAt(readAt), fileBytes(size) {}
+
+    // Every step returns false on a failure, which leaves its message here.
+    mutable std::string error;
+
+    bool Open();
     uint64_t DiscBytes() const { return discBytes; }
     uint64_t FlatBytes() const { return flatBytes; }
-    void ReadDisc(uint64_t at, uint8_t* out, size_t count);
-    void ReadFlat(uint64_t at, uint8_t* out, size_t count);
+    bool ReadDisc(uint64_t at, uint8_t* out, size_t count);
+    bool ReadFlat(uint64_t at, uint8_t* out, size_t count);
 
   private:
     struct WiaData {
@@ -526,38 +537,50 @@ class RomReader {
     std::vector<uint8_t> discSector, dataSector, batch;
     uint32_t discSectorIndex = UINT32_MAX, dataSectorIndex = UINT32_MAX;
 
-    void Source(uint64_t at, uint8_t* out, size_t count) const;
-    void IsoRaw(uint64_t at, uint8_t* out, size_t count) const;
-    void OpenWia(const uint8_t* header);
-    std::vector<uint8_t> Table(uint64_t at, uint32_t bytes, size_t needed);
-    void ReadPartitions();
-    size_t SkipExceptions(const uint8_t* data, size_t size, bool partition) const;
-    Span LoadGroup(uint32_t index, bool partition, uint64_t junkOffset);
-    Span WiaSectors(size_t index, uint32_t sector);
-    size_t IsoSectors(const Partition& p, uint32_t sector, uint8_t* out, size_t limit);
-    const uint8_t* DiscSector(uint32_t sector);
+    bool Fail(std::string message) const {
+        error = std::move(message);
+        return false;
+    }
+
+    bool Source(uint64_t at, uint8_t* out, size_t count) const;
+    bool IsoRaw(uint64_t at, uint8_t* out, size_t count) const;
+    bool OpenWia(const uint8_t* header);
+    bool Table(uint64_t at, uint32_t bytes, size_t needed, std::vector<uint8_t>& table);
+    bool ReadPartitions();
+    bool SkipExceptions(const uint8_t* data, size_t size, bool partition, size_t& at) const;
+    bool LoadGroup(uint32_t index, bool partition, uint64_t junkOffset, Span& span);
+    bool WiaSectors(size_t index, uint32_t sector, Span& span);
+    bool IsoSectors(const Partition& p, uint32_t sector, uint8_t* out, size_t limit, size_t& count);
+    bool DiscSector(uint32_t sector, const uint8_t*& out);
 };
 
-RomReader::RomReader(void* context, uint64_t size, MH3RomReadAt readAt) : context(context), readAt(readAt), fileBytes(size) {
+bool RomReader::Open() {
     uint8_t header[0x124];
-    Source(0, header, sizeof header);
 
-    if (!std::memcmp(header, "RVZ\1", 4) || !std::memcmp(header, "WIA\1", 4))
-        OpenWia(header);
-    else if (!std::memcmp(header, "CISO", 4) || !std::memcmp(header, "WBFS", 4) || Be32(header) == 0x01c00bb1 ||
-             Be32(header) == 0xae0f38a2 || !std::memcmp(header, "EGGS", 4))
-        Fail("Unsupported disc image format (CISO, GCZ, WBFS, TGC or NFS); convert it to RVZ or ISO");
+    if (!Source(0, header, sizeof header))
+        return false;
+
+    if (!std::memcmp(header, "RVZ\1", 4) || !std::memcmp(header, "WIA\1", 4)) {
+        if (!OpenWia(header))
+            return false;
+    } else if (!std::memcmp(header, "CISO", 4) || !std::memcmp(header, "WBFS", 4) || Be32(header) == 0x01c00bb1 ||
+               Be32(header) == 0xae0f38a2 || !std::memcmp(header, "EGGS", 4))
+        return Fail("Unsupported disc image format (CISO, GCZ, WBFS, TGC or NFS); convert it to RVZ or ISO");
     else if (Be32(header + 0x18) == kWiiMagic || Be32(header + 0x1c) == kGameCubeMagic)
         discBytes = fileBytes;
     else
-        Fail("Unknown disc image format");
+        return Fail("Unknown disc image format");
 
     uint8_t disc[0x80];
-    ReadDisc(0, disc, sizeof disc);
+
+    if (!ReadDisc(0, disc, sizeof disc))
+        return false;
 
     if (Be32(disc + 0x18) == kWiiMagic) {
         plain = !wia && disc[0x61] == 1; // no_partition_encryption
-        ReadPartitions();
+
+        if (!ReadPartitions())
+            return false;
     }
 
     size_t data = 0;
@@ -566,79 +589,93 @@ RomReader::RomReader(void* context, uint64_t size, MH3RomReadAt readAt) : contex
         if (partitions[i].kind == 0)
             ++data, game = i;
     if (data != 1)
-        Fail("Expected exactly one Wii data partition");
+        return Fail("Expected exactly one Wii data partition");
 
     flatBytes = uint64_t(partitions[game].dataEnd - partitions[game].dataStart) * kSectorData;
+    return true;
 }
 
-void RomReader::Source(uint64_t at, uint8_t* out, size_t count) const {
+bool RomReader::Source(uint64_t at, uint8_t* out, size_t count) const {
     if (at > fileBytes || count > fileBytes - at)
-        Fail("The disc image is truncated");
+        return Fail("The disc image is truncated");
     while (count) {
         const intptr_t n = readAt(context, at, out, count);
 
         if (n <= 0 || size_t(n) > count)
-            Fail("Disc image read failed");
+            return Fail("Disc image read failed");
 
         at += n, out += n, count -= size_t(n);
     }
+
+    return true;
 }
 
 // ISO bytes; the image reads as zeroes past its end.
-void RomReader::IsoRaw(uint64_t at, uint8_t* out, size_t count) const {
+bool RomReader::IsoRaw(uint64_t at, uint8_t* out, size_t count) const {
     const size_t present = at < fileBytes ? size_t(std::min<uint64_t>(count, fileBytes - at)) : 0;
-    Source(at, out, present);
+
+    if (!Source(at, out, present))
+        return false;
+
     std::memset(out + present, 0, count - present);
+    return true;
 }
 
-void RomReader::OpenWia(const uint8_t* header) {
+bool RomReader::OpenWia(const uint8_t* header) {
     // These limits bound every allocation below (Vita memory) and cover the
     // usual 128 KiB / 2 MiB chunks.
     if (Be32(header + 0x0c) > 0x1000 || Be32(header + 0x54) < 0x8000 || Be32(header + 0x54) > 0x200000 ||
         Be32(header + 0xd8) > 32 || Be32(header + 0xfc) > 16384 || Be32(header + 0x10c) > 131072 ||
         Be32(header + 0x108) > 0x100000 || Be32(header + 0x118) > 0x400000)
-        Fail("RVZ metadata/chunk size exceeds the Vita processing limit");
+        return Fail("RVZ metadata/chunk size exceeds the Vita processing limit");
     wia = true;
     const bool rvz = header[0] == 'R';
 
     if (!HashMatches(header, 0x34, header + 0x34))
-        Fail("WIA/RVZ file header hash mismatch");
+        return Fail("WIA/RVZ file header hash mismatch");
 
     if (Be32(header + 0x08) < 0x30000)
-        Fail("WIA/RVZ version is not supported");
+        return Fail("WIA/RVZ version is not supported");
 
     discBytes = Be64(header + 0x24);
     std::vector<uint8_t> disc(Be32(header + 0x0c));
-    Source(0x48, disc.data(), disc.size());
+
+    if (!Source(0x48, disc.data(), disc.size()))
+        return false;
 
     if (!HashMatches(disc.data(), disc.size(), header + 0x10))
-        Fail("WIA/RVZ disc header hash mismatch");
+        return Fail("WIA/RVZ disc header hash mismatch");
 
     disc.resize(std::max<size_t>(disc.size(), 0xdc));
     const uint8_t* d = disc.data();
 
     if (Be32(d) != 1 && Be32(d) != 2)
-        Fail("Invalid WIA/RVZ disc type");
+        return Fail("Invalid WIA/RVZ disc type");
 
     if (Be32(d + 0x94) != 0x30)
-        Fail("Unexpected WIA/RVZ partition entry size");
+        return Fail("Unexpected WIA/RVZ partition entry size");
 
     method = Be32(d + 0x04);
     chunkBytes = Be32(d + 0x0c);
 
     if (chunkBytes % kSector)
-        Fail("WIA/RVZ chunk size is not a multiple of 32 KiB");
+        return Fail("WIA/RVZ chunk size is not a multiple of 32 KiB");
 
     if (d[0xd4] > 7)
-        Fail("Invalid WIA/RVZ compressor data");
+        return Fail("Invalid WIA/RVZ compressor data");
 
-    decompressor = std::make_unique<Decompressor>(method, d + 0xd5, d[0xd4]);
+    decompressor = Decompressor::Open(method, d + 0xd5, d[0xd4], error);
+
+    if (!decompressor)
+        return false;
 
     std::vector<uint8_t> entries(size_t(Be32(d + 0x90)) * 0x30);
-    Source(Be64(d + 0x98), entries.data(), entries.size());
+
+    if (!Source(Be64(d + 0x98), entries.data(), entries.size()))
+        return false;
 
     if (!HashMatches(entries.data(), entries.size(), d + 0xa0))
-        Fail("WIA/RVZ partition table hash mismatch");
+        return Fail("WIA/RVZ partition table hash mismatch");
 
     for (size_t at = 0; at < entries.size(); at += 0x30) {
         auto& part = wiaPartitions.emplace_back();
@@ -650,20 +687,27 @@ void RomReader::OpenWia(const uint8_t* header) {
     }
 
     const uint32_t rawCount = Be32(d + 0xb4);
-    const auto raw = Table(Be64(d + 0xb8), Be32(d + 0xc0), size_t(rawCount) * 0x18);
+    std::vector<uint8_t> raw;
+
+    if (!Table(Be64(d + 0xb8), Be32(d + 0xc0), size_t(rawCount) * 0x18, raw))
+        return false;
 
     for (uint32_t i = 0; i < rawCount; ++i) {
         const uint8_t* e = raw.data() + i * 0x18;
         const WiaRaw entry{Be64(e), Be64(e + 8), Be32(e + 16), Be32(e + 20)};
 
         if ((entry.offset + entry.size) % kSector)
-            Fail("WIA/RVZ raw data is not aligned to sectors");
+            return Fail("WIA/RVZ raw data is not aligned to sectors");
 
         wiaRaw.push_back(entry);
     }
 
     const uint32_t groupCount = Be32(d + 0xc4), entryBytes = rvz ? 12 : 8;
-    const auto table = Table(Be64(d + 0xc8), Be32(d + 0xd0), size_t(groupCount) * entryBytes);
+    std::vector<uint8_t> table;
+
+    if (!Table(Be64(d + 0xc8), Be32(d + 0xd0), size_t(groupCount) * entryBytes, table))
+        return false;
+
     groups.resize(groupCount);
 
     for (uint32_t i = 0; i < groupCount; ++i) {
@@ -677,37 +721,47 @@ void RomReader::OpenWia(const uint8_t* header) {
 
     // Cache up to 1 MiB of groups (128 KiB chunks: four).
     slots.resize(std::clamp<size_t>(0x100000 / chunkBytes, 1, 4));
+    return true;
 }
 
 // A compressed WIA/RVZ header table.
-std::vector<uint8_t> RomReader::Table(uint64_t at, uint32_t bytes, size_t needed) {
-    std::vector<uint8_t> packed(bytes), table;
-    Source(at, packed.data(), packed.size());
+bool RomReader::Table(uint64_t at, uint32_t bytes, size_t needed, std::vector<uint8_t>& table) {
+    std::vector<uint8_t> packed(bytes);
+    size_t produced = 0;
 
-    if (decompressor->Run(packed.data(), packed.size(), table, needed) < needed)
-        Fail("WIA/RVZ header table is truncated");
+    if (!Source(at, packed.data(), packed.size()) || !decompressor->Run(packed.data(), packed.size(), table, needed, produced, error))
+        return false;
 
-    return table;
+    if (produced < needed)
+        return Fail("WIA/RVZ header table is truncated");
+
+    return true;
 }
 
-void RomReader::ReadPartitions() {
+bool RomReader::ReadPartitions() {
     std::vector<Partition> found;
     uint8_t table[32];
-    ReadDisc(0x40000, table, sizeof table);
+
+    if (!ReadDisc(0x40000, table, sizeof table))
+        return false;
 
     for (int g = 0; g < 4; ++g) {
         const uint32_t count = Be32(table + g * 8);
 
         if (count > 256)
-            Fail("Invalid Wii partition table");
+            return Fail("Invalid Wii partition table");
 
         std::vector<uint8_t> entries(count * 8);
-        ReadDisc(uint64_t(Be32(table + g * 8 + 4)) << 2, entries.data(), entries.size());
+
+        if (!ReadDisc(uint64_t(Be32(table + g * 8 + 4)) << 2, entries.data(), entries.size()))
+            return false;
 
         for (uint32_t i = 0; i < count; ++i) {
             const uint64_t offset = uint64_t(Be32(entries.data() + i * 8)) << 2;
             uint8_t h[0x2c0];
-            ReadDisc(offset, h, sizeof h);
+
+            if (!ReadDisc(offset, h, sizeof h))
+                return false;
 
             // Ticket: issuer at 0x140, encrypted title key at 0x1bf, title ID at 0x1dc, common key index at 0x1f1.
             const auto* issuerBytes = reinterpret_cast<const char*>(h + 0x140);
@@ -715,10 +769,10 @@ void RomReader::ReadPartitions() {
             const int pki = issuer == "Root-CA00000001-XS00000003" ? 0 : issuer == "Root-CA00000002-XS00000006" ? 1 : -1;
 
             if (pki < 0 || issuer.size() == 64)
-                Fail("Unknown Wii ticket issuer " + std::string(issuer));
+                return Fail("Unknown Wii ticket issuer " + std::string(issuer));
 
             if (h[0x1f1] >= 3)
-                Fail("Unknown Wii common key index " + std::to_string(h[0x1f1]));
+                return Fail("Unknown Wii common key index " + std::to_string(h[0x1f1]));
 
             Aes128 common;
             common.SetKey(kCommonKeys[pki][h[0x1f1]]);
@@ -729,7 +783,7 @@ void RomReader::ReadPartitions() {
             const uint64_t dataEnd = dataStart + (uint64_t(Be32(h + 0x2bc)) << 2);
 
             if (offset % kSector || dataStart % kSector || dataEnd % kSector || dataEnd / kSector >= UINT32_MAX)
-                Fail("Wii partition is not sector aligned");
+                return Fail("Wii partition is not sector aligned");
 
             Partition& p = found.emplace_back();
             p.kind = Be32(entries.data() + i * 8 + 4);
@@ -741,44 +795,49 @@ void RomReader::ReadPartitions() {
     // The table was read with no partitions known; sectors now decode differently.
     partitions = std::move(found);
     discSectorIndex = UINT32_MAX;
+    return true;
 }
 
-// Skips a group's exception lists (Wii partition data: one per 2 MiB);
-// hashes are not rebuilt, so the exceptions themselves are not needed.
-size_t RomReader::SkipExceptions(const uint8_t* data, size_t size, bool partition) const {
-    size_t at = 0;
+// Skips a group's exception lists (Wii partition data: one per 2 MiB) and
+// sets `at` past them; hashes are not rebuilt, so the exceptions themselves
+// are not needed.
+bool RomReader::SkipExceptions(const uint8_t* data, size_t size, bool partition, size_t& at) const {
+    at = 0;
 
     for (uint32_t list = 0; partition && list < (chunkBytes + 0x1fffff) / 0x200000; ++list) {
         if (size - at < 2)
-            Fail("WIA/RVZ exception list is truncated");
+            return Fail("WIA/RVZ exception list is truncated");
 
         const size_t count = Be16(data + at);
         at += 2;
 
         if ((size - at) / 22 < count)
-            Fail("WIA/RVZ exception list is truncated");
+            return Fail("WIA/RVZ exception list is truncated");
 
         at += count * 22;
     }
 
-    return at;
+    return true;
 }
 
-RomReader::Span RomReader::LoadGroup(uint32_t index, bool partition, uint64_t junkOffset) {
+bool RomReader::LoadGroup(uint32_t index, bool partition, uint64_t junkOffset, Span& span) {
     if (index >= groups.size())
-        Fail("Missing WIA/RVZ group " + std::to_string(index));
+        return Fail("Missing WIA/RVZ group " + std::to_string(index));
 
     const Group& g = groups[index];
 
-    if (!g.size)
-        return {nullptr, 0};
+    if (!g.size) {
+        span = {nullptr, 0};
+        return true;
+    }
 
     Slot* slot = &slots[0];
 
     for (auto& s : slots) {
         if (s.group == index) {
             s.used = ++clock;
-            return {s.bytes.data() + s.begin, s.size};
+            span = {s.bytes.data() + s.begin, s.size};
+            return true;
         }
 
         if (s.used < slot->used)
@@ -789,24 +848,38 @@ RomReader::Span RomReader::LoadGroup(uint32_t index, bool partition, uint64_t ju
     const size_t limit = size_t(chunkBytes) * 2 + 0x100000;
 
     if (g.size > limit)
-        Fail("WIA/RVZ group is too large");
+        return Fail("WIA/RVZ group is too large");
 
     if (input.size() < g.size)
         input.resize(g.size);
 
-    Source(g.offset, input.data(), g.size);
+    if (!Source(g.offset, input.data(), g.size))
+        return false;
 
     // Uncompressed data keeps its exception lists in front, padded to 4 bytes.
     const bool compressed = g.compressed && method != kNone;
     const bool outerExceptions = !compressed;
-    const size_t start = outerExceptions ? (SkipExceptions(input.data(), g.size, partition) + 3) & ~size_t(3) : 0;
+    size_t start = 0;
+
+    if (outerExceptions) {
+        if (!SkipExceptions(input.data(), g.size, partition, start))
+            return false;
+
+        start = (start + 3) & ~size_t(3);
+    }
 
     if (start > g.size)
-        Fail("WIA/RVZ group is truncated");
+        return Fail("WIA/RVZ group is truncated");
 
     std::vector<uint8_t>& owner = compressed ? stream : input;
-    const size_t size = compressed ? decompressor->Run(input.data() + start, g.size - start, stream, limit) : g.size;
-    size_t at = outerExceptions ? start : SkipExceptions(stream.data(), size, partition);
+    size_t size = g.size, at = start;
+
+    if (compressed && !decompressor->Run(input.data() + start, g.size - start, stream, limit, size, error))
+        return false;
+
+    if (!outerExceptions && !SkipExceptions(stream.data(), size, partition, at))
+        return false;
+
     const uint8_t* data = owner.data();
 
     if (!g.packed) {
@@ -827,11 +900,11 @@ RomReader::Span RomReader::LoadGroup(uint32_t index, bool partition, uint64_t ju
             n &= 0x7fffffff;
 
             if (n > chunkBytes - produced)
-                Fail("RVZ packed data exceeds its group");
+                return Fail("RVZ packed data exceeds its group");
 
             if (isJunk) {
                 if (size - at < 68)
-                    Fail("RVZ junk seed is truncated");
+                    return Fail("RVZ junk seed is truncated");
 
                 junk.Seed(data + at);
                 at += 68;
@@ -839,7 +912,7 @@ RomReader::Span RomReader::LoadGroup(uint32_t index, bool partition, uint64_t ju
                 junk.Fill(slot->bytes.data() + produced, n);
             } else {
                 if (size - at < n)
-                    Fail("RVZ packed data is truncated");
+                    return Fail("RVZ packed data is truncated");
 
                 std::memcpy(slot->bytes.data() + produced, data + at, n);
                 at += n;
@@ -853,53 +926,64 @@ RomReader::Span RomReader::LoadGroup(uint32_t index, bool partition, uint64_t ju
 
     slot->group = index;
     slot->used = ++clock;
-    return {slot->bytes.data() + slot->begin, slot->size};
+    span = {slot->bytes.data() + slot->begin, slot->size};
+    return true;
 }
 
 // The data of WIA partition sector `sector` (absolute) and of the sectors
 // that follow it in the same group: size is a multiple of 0x7c00.
-RomReader::Span RomReader::WiaSectors(size_t index, uint32_t sector) {
+bool RomReader::WiaSectors(size_t index, uint32_t sector, Span& span) {
     if (index >= wiaPartitions.size())
-        Fail("Missing WIA/RVZ partition " + std::to_string(index));
+        return Fail("Missing WIA/RVZ partition " + std::to_string(index));
 
     const auto& part = wiaPartitions[index];
     const Partition& p = partitions[index];
 
     if (p.dataStart != part[0].first || uint64_t(p.dataEnd) != uint64_t(part[1].first) + part[1].count)
-        Fail("WIA/RVZ partition sectors differ from the disc's partition table");
+        return Fail("WIA/RVZ partition sectors differ from the disc's partition table");
 
     const WiaData* pd = part[0].Contains(sector) ? &part[0] : part[1].Contains(sector) ? &part[1] : nullptr;
 
     if (!pd)
-        Fail("Missing WIA/RVZ partition data for sector " + std::to_string(sector));
+        return Fail("Missing WIA/RVZ partition data for sector " + std::to_string(sector));
 
     const uint32_t perChunk = chunkBytes / kSector, local = sector - pd->first;
     const uint32_t group = local / perChunk, within = local % perChunk;
 
     if (group >= pd->groups)
-        Fail("WIA/RVZ partition group is out of range");
+        return Fail("WIA/RVZ partition group is out of range");
     // Junk offsets count partition data bytes from the partition's first data sector.
     const uint64_t junkOffset = uint64_t(group * perChunk + pd->first - part[0].first) * kSectorData;
-    const Span span = LoadGroup(pd->group + group, true, junkOffset);
+    Span loaded{};
+
+    if (!LoadGroup(pd->group + group, true, junkOffset, loaded))
+        return false;
+
     size_t sectors = std::min(perChunk - within, pd->count - local);
 
-    if (!span.data)
-        return {nullptr, sectors * kSectorData};
+    if (!loaded.data) {
+        span = {nullptr, sectors * kSectorData};
+        return true;
+    }
 
     const size_t start = within * kSectorData;
 
-    if (span.size < start + kSectorData)
-        Fail("WIA/RVZ group data is truncated");
+    if (loaded.size < start + kSectorData)
+        return Fail("WIA/RVZ group data is truncated");
 
-    sectors = std::min<size_t>(sectors, (span.size - start) / kSectorData);
-    return {span.data + start, sectors * kSectorData};
+    sectors = std::min<size_t>(sectors, (loaded.size - start) / kSectorData);
+    span = {loaded.data + start, sectors * kSectorData};
+    return true;
 }
 
-// Decodes whole ISO partition data sectors, at most `limit`, into `out`.
-size_t RomReader::IsoSectors(const Partition& p, uint32_t sector, uint8_t* out, size_t limit) {
-    const size_t count = std::min<size_t>({limit, 32, p.dataEnd - sector});
+// Decodes whole ISO partition data sectors, at most `limit`, into `out`, and
+// sets `count` to their number.
+bool RomReader::IsoSectors(const Partition& p, uint32_t sector, uint8_t* out, size_t limit, size_t& count) {
+    count = std::min<size_t>({limit, 32, p.dataEnd - sector});
     batch.resize(count * kSector);
-    IsoRaw(uint64_t(sector) * kSector, batch.data(), batch.size());
+
+    if (!IsoRaw(uint64_t(sector) * kSector, batch.data(), batch.size()))
+        return false;
 
     for (size_t i = 0; i < count; ++i) {
         const uint8_t* raw = batch.data() + i * kSector;
@@ -913,12 +997,14 @@ size_t RomReader::IsoSectors(const Partition& p, uint32_t sector, uint8_t* out, 
             p.key.DecryptCbc(raw + 0x3d0, raw + kHashes, data, kSectorData);
     }
 
-    return count;
+    return true;
 }
 
-const uint8_t* RomReader::DiscSector(uint32_t sector) {
-    if (sector == discSectorIndex)
-        return discSector.data();
+bool RomReader::DiscSector(uint32_t sector, const uint8_t*& result) {
+    if (sector == discSectorIndex) {
+        result = discSector.data();
+        return true;
+    }
 
     discSectorIndex = UINT32_MAX;
     discSector.resize(kSector);
@@ -932,7 +1018,9 @@ const uint8_t* RomReader::DiscSector(uint32_t sector) {
 
     if (!wia) {
         const uint64_t at = uint64_t(sector) * kSector;
-        IsoRaw(at, out, kSector);
+
+        if (!IsoRaw(at, out, kSector))
+            return false;
 
         if (part && at < fileBytes && !plain) {
             // Partition sectors read decrypted, hash block included.
@@ -943,7 +1031,11 @@ const uint8_t* RomReader::DiscSector(uint32_t sector) {
             part->key.DecryptCbc(iv, out + kHashes, out + kHashes, kSectorData);
         }
     } else if (part) {
-        const Span span = WiaSectors(index, sector);
+        Span span{};
+
+        if (!WiaSectors(index, sector, span))
+            return false;
+
         std::memset(out, 0, kHashes);
 
         if (span.data)
@@ -956,43 +1048,54 @@ const uint8_t* RomReader::DiscSector(uint32_t sector) {
         });
 
         if (raw == wiaRaw.end())
-            Fail("Missing WIA/RVZ raw data for sector " + std::to_string(sector));
+            return Fail("Missing WIA/RVZ raw data for sector " + std::to_string(sector));
 
         const uint32_t perChunk = chunkBytes / kSector, local = sector - uint32_t(raw->offset / kSector);
 
         if (local / perChunk >= raw->groups)
-            Fail("WIA/RVZ raw data group is out of range");
+            return Fail("WIA/RVZ raw data group is out of range");
 
-        const Span span = LoadGroup(raw->group + local / perChunk, false, 0);
+        Span span{};
+
+        if (!LoadGroup(raw->group + local / perChunk, false, 0, span))
+            return false;
+
         const size_t start = local % perChunk * kSector;
 
         if (!span.data)
             std::memset(out, 0, kSector);
         else if (span.size < start + kSector)
-            Fail("WIA/RVZ group data is truncated");
+            return Fail("WIA/RVZ group data is truncated");
         else
             std::memcpy(out, span.data + start, kSector);
     }
 
     discSectorIndex = sector;
-    return out;
+    result = out;
+    return true;
 }
 
-void RomReader::ReadDisc(uint64_t at, uint8_t* out, size_t count) {
+bool RomReader::ReadDisc(uint64_t at, uint8_t* out, size_t count) {
     while (count) {
         if (at / kSector >= UINT32_MAX)
-            Fail("Read beyond the disc");
+            return Fail("Read beyond the disc");
 
-        const uint8_t* sector = DiscSector(uint32_t(at / kSector));
+        const uint8_t* sector = nullptr;
+
+        if (!DiscSector(uint32_t(at / kSector), sector))
+            return false;
+
         const size_t offset = at % kSector, n = std::min<size_t>(count, kSector - offset);
         std::memcpy(out, sector + offset, n);
         at += n, out += n, count -= n;
     }
+
+    return true;
 }
 
-void RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
+bool RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
     if (at > flatBytes || count > flatBytes - at)
-        Fail("Read beyond the game partition");
+        return Fail("Read beyond the game partition");
 
     const Partition& p = partitions[game];
 
@@ -1002,7 +1105,11 @@ void RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
         size_t n;
 
         if (wia) {
-            const Span span = WiaSectors(game, sector);
+            Span span{};
+
+            if (!WiaSectors(game, sector, span))
+                return false;
+
             n = std::min(count, span.size - offset);
 
             if (span.data)
@@ -1010,12 +1117,19 @@ void RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
             else
                 std::memset(out, 0, n);
         } else if (!offset && count >= kSectorData) {
-            n = IsoSectors(p, sector, out, count / kSectorData) * kSectorData;
+            if (!IsoSectors(p, sector, out, count / kSectorData, n))
+                return false;
+
+            n *= kSectorData;
         } else {
             if (sector != dataSectorIndex) {
                 dataSectorIndex = UINT32_MAX;
                 dataSector.resize(kSectorData);
-                IsoSectors(p, sector, dataSector.data(), 1);
+                size_t decoded = 0;
+
+                if (!IsoSectors(p, sector, dataSector.data(), 1, decoded))
+                    return false;
+
                 dataSectorIndex = sector;
             }
 
@@ -1025,6 +1139,8 @@ void RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
 
         at += n, out += n, count -= n;
     }
+
+    return true;
 }
 
 void CopyError(uint8_t* buffer, size_t capacity, const char* message) {
@@ -1038,12 +1154,14 @@ void CopyError(uint8_t* buffer, size_t capacity, const char* message) {
 } // namespace
 
 extern "C" void* mh3_rom_open(void* context, uint64_t size, MH3RomReadAt readAt, uint8_t* error, size_t capacity) {
-    try {
-        return new RomReader(context, size, readAt);
-    } catch (const std::exception& e) {
-        CopyError(error, capacity, e.what());
+    auto rom = std::make_unique<RomReader>(context, size, readAt);
+
+    if (!rom->Open()) {
+        CopyError(error, capacity, rom->error.c_str());
         return nullptr;
     }
+
+    return rom.release();
 }
 
 extern "C" uint64_t mh3_rom_size(void* reader, int flat) {
@@ -1052,19 +1170,13 @@ extern "C" uint64_t mh3_rom_size(void* reader, int flat) {
 }
 
 extern "C" int mh3_rom_read(void* reader, int flat, uint64_t offset, uint8_t* bytes, size_t count, uint8_t* error, size_t capacity) {
-    try {
-        auto* rom = static_cast<RomReader*>(reader);
+    auto* rom = static_cast<RomReader*>(reader);
 
-        if (flat)
-            rom->ReadFlat(offset, bytes, count);
-        else
-            rom->ReadDisc(offset, bytes, count);
-
+    if (flat ? rom->ReadFlat(offset, bytes, count) : rom->ReadDisc(offset, bytes, count))
         return 0;
-    } catch (const std::exception& e) {
-        CopyError(error, capacity, e.what());
-        return -1;
-    }
+
+    CopyError(error, capacity, rom->error.c_str());
+    return -1;
 }
 
 extern "C" void mh3_rom_close(void* reader) { delete static_cast<RomReader*>(reader); }

@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "audio_dma.h"
 #include <array>
 #include <iostream>
@@ -15,12 +16,12 @@ void RunAudioSelfTests(CpuContext*) {
     timing.length = 384;
 
     if (timing.Period(32000) != 3000000 || timing.Period(48000) != 2000000)
-        throw std::runtime_error("AI DMA block durations failed");
+        MH3_THROW(std::runtime_error("AI DMA block durations failed"));
 
     timing.elapsedNs = 2000000;
 
     if (timing.Ready(32000) || timing.BytesLeft(32000) != 128 || !timing.Ready(48000))
-        throw std::runtime_error("AI DMA partial block timing failed");
+        MH3_THROW(std::runtime_error("AI DMA partial block timing failed"));
 
     timing.elapsedNs = 6500000;
     unsigned blocks = 0;
@@ -31,10 +32,10 @@ void RunAudioSelfTests(CpuContext*) {
     }
 
     if (blocks != 2 || timing.BytesLeft(32000) != 320)
-        throw std::runtime_error("AI DMA carry between blocks failed");
+        MH3_THROW(std::runtime_error("AI DMA carry between blocks failed"));
 
     timing.enabled = false;
 
     if (timing.Ready(32000) || timing.BytesLeft(32000))
-        throw std::runtime_error("Stopped AI DMA remained active");
+        MH3_THROW(std::runtime_error("Stopped AI DMA remained active"));
 }

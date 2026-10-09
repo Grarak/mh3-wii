@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "controller_host.h"
 #include "village_boot.h"
 #include "ios_host.h"
@@ -90,7 +91,7 @@ uint32_t ReportSize(uint32_t format) {
     if (format >= 6 && format <= 8)
         return 0x36;
 
-    throw std::runtime_error("Host Classic Controller encountered unsupported WPAD format");
+    MH3_THROW(std::runtime_error("Host Classic Controller encountered unsupported WPAD format"));
 }
 
 void CopyReport(uint32_t address, const std::array<uint8_t, 0x36>& report, uint32_t size) {
@@ -224,12 +225,12 @@ void ServiceHostController(CpuContext* cpu, bool force) {
 
     if (buffer && count) {
         if (count > 0x10000 || !Memory::Contains(buffer, uint64_t(count) * size))
-            throw std::runtime_error("Invalid WPAD auto-sampling buffer");
+            MH3_THROW(std::runtime_error("Invalid WPAD auto-sampling buffer"));
 
         const auto previous = Memory::Read32(block + 0x8B0);
 
         if (previous != 0xFFFFFFFF && previous >= count)
-            throw std::runtime_error("Invalid WPAD sampling index");
+            MH3_THROW(std::runtime_error("Invalid WPAD sampling index"));
 
         const auto index = previous == 0xFFFFFFFF || previous + 1 == count ? 0 : previous + 1;
         CopyReport(buffer + index * size, report, size);

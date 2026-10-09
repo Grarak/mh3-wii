@@ -4,6 +4,7 @@
 // RGBA8. Publish direct GPU render targets on the game thread. No EFB copy,
 // GXDrawDone, content hash, CPU composition, or readback is involved.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "gx_host.h"
 #include "native_graphics.h"
@@ -25,7 +26,7 @@ aurora::MaterialSource Snapshot(uint32_t object) {
     source.format = (image >> 20) & 15;
 
     if (source.width != 128 || source.height != 128 || (source.format >= 8 && source.format <= 10))
-        throw std::runtime_error("Unexpected character material source: " + std::to_string(source.width) + "x" + std::to_string(source.height) + " format " + std::to_string(source.format));
+        MH3_THROW(std::runtime_error("Unexpected character material source: " + std::to_string(source.width) + "x" + std::to_string(source.height) + " format " + std::to_string(source.format)));
 #ifdef __vita__
     if (address >= 64 && Memory::Contains(address - 64, 64)) {
         const uint32_t header = address - 64, tag = Memory::Read32(header + 60);
@@ -55,7 +56,7 @@ aurora::MaterialSource Snapshot(uint32_t object) {
             bytes *= 4;
             break;
         default:
-            throw std::runtime_error("Unsupported character material source format");
+            MH3_THROW(std::runtime_error("Unsupported character material source format"));
         }
 
         const auto* data = Memory::GetPointer(address, bytes);
@@ -94,7 +95,7 @@ void PrepareSlot(uint32_t slot) {
             material.atlasY = (patch >> 2) * 16 + variant * 64;
 
             if (material.atlasY > 112)
-                throw std::runtime_error("Character material atlas region exceeds source");
+                MH3_THROW(std::runtime_error("Character material atlas region exceeds source"));
         }
 
         const uint32_t destination = Memory::Read32((output ? 0x8066BDF0 : 0x8066BDC8) + 4 * slot);

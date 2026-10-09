@@ -2,6 +2,7 @@
 // NativeAudio::Mixer with synthetic commands and sample data. No guest code,
 // no output device.
 #include "native_audio_mixer.h"
+#include "fatal.h"
 
 #include <cstdio>
 #include <memory>
@@ -14,7 +15,7 @@ namespace {
 
 void Expect(bool condition, const char* what) {
     if (!condition)
-        throw std::runtime_error(std::string("native mixer self-test: ") + what);
+        MH3_THROW(std::runtime_error(std::string("native mixer self-test: ") + what));
 }
 
 void Tick(CommandRing& ring, uint32_t tick) {

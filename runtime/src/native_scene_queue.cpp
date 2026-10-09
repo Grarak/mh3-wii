@@ -1,6 +1,7 @@
 // Application scene buckets; SDK vertex-cache and completion commands are
 // replaced by explicit native buffer ownership and ordered GPU submission.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -47,14 +48,14 @@ float ReadDepth(void*, uint32_t address) {
 const mh3_scene_links links{nullptr, ReadLink, WriteLink, ReadDepth};
 uint32_t Head(unsigned category) {
     if (category >= MH3_SCENE_CATEGORIES)
-        throw std::runtime_error("Native scene category is out of range");
+        MH3_THROW(std::runtime_error("Native scene category is out of range"));
 
     return Memory::Read32(Heads + category * 4);
 }
 
 void Reset(unsigned category) {
     if (!mh3_scene_reset(&links, Head(category), Memory::Read16(Counts + category * 2)))
-        throw std::runtime_error("Native scene bucket storage is invalid");
+        MH3_THROW(std::runtime_error("Native scene bucket storage is invalid"));
 }
 
 void ResetAll() {
@@ -67,7 +68,7 @@ void Enqueue(void*, uint32_t node, uint8_t category, double origin, double span)
 
     if (category >= MH3_SCENE_CATEGORIES || !mh3_scene_bucket(Memory::ReadFloat32(node + 4), origin, span, Memory::Read16(Counts + category * 2), &bin) ||
         !mh3_scene_insert(&links, Head(category) + bin * 4, node, category))
-        throw std::runtime_error("Native scene bucket input is invalid");
+        MH3_THROW(std::runtime_error("Native scene bucket input is invalid"));
 }
 
 struct WalkAdapter {
@@ -104,7 +105,7 @@ int Query(void* user, unsigned kind) {
     case MH3_SCENE_QUERY_SECOND_FILTER:
         return int32_t(call(0x802BE450));
     default:
-        throw std::runtime_error("Native scene query is invalid");
+        MH3_THROW(std::runtime_error("Native scene query is invalid"));
     }
 }
 
@@ -388,7 +389,7 @@ extern "C" void MH3_SceneBlendMode(CpuContext* cpu) {
     raster.src_factor = uint8_t(cpu->gpr[3]) <= 7 ? uint8_t(cpu->gpr[3]) : 4;
 
     if (uint8_t(cpu->gpr[4]) > 7)
-        throw std::runtime_error("Scene blend destination is outside its application domain");
+        MH3_THROW(std::runtime_error("Scene blend destination is outside its application domain"));
 
     raster.dst_factor = uint8_t(cpu->gpr[4]);
     raster.logic_op = 0;

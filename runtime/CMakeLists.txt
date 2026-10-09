@@ -47,6 +47,63 @@ if(NOT VITA AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROC
   message(WARNING "Configuring for unsupported host ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+# Release builds (MH3_DEVELOPMENT=OFF) compile and link with ThinLTO: the game,
+# the runtime, Aurora and its dependencies compile to LLVM bitcode, static
+# libraries are archived with llvm-ar, and lld optimizes across all of them at
+# link time. Development builds, and with them every profiling and benchmark
+# build, are left exactly as they were. Set before Aurora so that its targets
+# and the fetched dependencies get it too.
+if(NOT MH3_DEVELOPMENT)
+  include(CheckIPOSupported)
+
+  # Also for dependencies whose minimum CMake version predates CMP0069.
+  set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+
+  # ThinLTO needs lld (the Vita and arm32 toolchains already use it); the
+  # check below links with it as well.
+  if(NOT VITA)
+    add_link_options(-fuse-ld=lld)
+  endif()
+
+  block(PROPAGATE mh3_thinlto mh3_thinlto_error)
+    if(NOT VITA)
+      string(APPEND CMAKE_C_FLAGS " -fuse-ld=lld")
+      string(APPEND CMAKE_CXX_FLAGS " -fuse-ld=lld")
+    endif()
+
+    check_ipo_supported(RESULT mh3_thinlto OUTPUT mh3_thinlto_error LANGUAGES C CXX)
+  endblock()
+
+  if(NOT mh3_thinlto)
+    message(FATAL_ERROR "Release builds (MH3_DEVELOPMENT=OFF) need ThinLTO with clang and lld: ${mh3_thinlto_error}")
+  endif()
+
+  # CMake's IPO flags for clang are -flto=thin.
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+
+  # The link-time backends run at -O2, the level the game code is compiled at
+  # (the driver would pass the -O3 of the release flags), and cache their
+  # objects so that a relink only recompiles the modules that changed.
+  add_link_options("-Wl,--lto-O2" "-Wl,--thinlto-cache-dir=${CMAKE_BINARY_DIR}/thinlto-cache"
+    "-Wl,--thinlto-cache-policy=cache_size_bytes=4g")
+
+  # Nor do they have exceptions or unwind tables. Nothing recovers from an
+  # exception: an operation whose caller can go on returns a Status, and a
+  # failure that stops the game stops where it happens (MH3_THROW in
+  # runtime/include/fatal.h, AURORA_THROW in Aurora). Aurora's libraries and the
+  # fetched dependencies get these too; the host tools and tests keep
+  # exceptions (the end of this file). MH3_PROFILE_FRAME_POINTERS, when turned
+  # on, keeps its unwind tables.
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+
+  if(NOT MH3_PROFILE_FRAME_POINTERS)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fno-unwind-tables;-fno-asynchronous-unwind-tables>")
+
+    # Fatal reports leave out the host backtrace: there is nothing to walk.
+    add_compile_definitions(MH3_NO_UNWIND_TABLES=1)
+  endif()
+endif()
+
 if(MH3_AURORA_ROOT)
   enable_language(C)
 
@@ -279,7 +336,7 @@ if(TARGET aurora::core)
     # every stage, keys unique, every fixed GLSL program translatable.
     add_executable(mh3-gxm-shader-bank ../scripts/vita_shader_bank.cpp src/native_shader_source.cpp "${MH3_AURORA_ROOT}/lib/gfx/cg_shader.cpp"
       "${MH3_AURORA_ROOT}/lib/gfx/shader_source.cpp" "${MH3_AURORA_ROOT}/lib/gfx/fixed_shader_sources.cpp")
-    target_include_directories(mh3-gxm-shader-bank PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include")
+    target_include_directories(mh3-gxm-shader-bank PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include" include)
     target_compile_definitions(mh3-gxm-shader-bank PRIVATE TARGET_PC)
     target_compile_features(mh3-gxm-shader-bank PRIVATE cxx_std_20)
     target_link_libraries(mh3-gxm-shader-bank PRIVATE xxhash)
@@ -351,8 +408,7 @@ if(VITA)
       "-Wl,--wrap=pte_osTlsGetValue")
   endif()
 
-  # Drop unreferenced sections (also the nod bridge's Rust std helpers that
-  # Vita newlib cannot provide).
+  # Drop unreferenced sections.
   target_link_options(MH3 PRIVATE "-Wl,--gc-sections")
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
@@ -393,85 +449,38 @@ if(NOT VITA)
 endif()
 
 # Disc images (ISO, RVZ, WIA) decode with the native decoder
-# (src/rom_decoder.cpp, docs/rom-decoder.md). MH3_ROM_DECODER_NOD builds the
-# earlier nod Rust bridge (vita/rom_decoder, needs cargo) instead, for
-# comparison. Linux may leave decoding out (MH3_ROM_DECODER=OFF): then only a
-# decrypted ISO (nodtool convert --decrypt) can be read.
+# (src/rom_decoder.cpp, docs/rom-decoder.md). Linux may leave decoding out
+# (MH3_ROM_DECODER=OFF): then only a decrypted ISO (nodtool convert --decrypt)
+# can be read.
 option(MH3_ROM_DECODER "Decode ISO/RVZ/WIA disc images on Linux (the Vita always decodes)" ON)
-option(MH3_ROM_DECODER_NOD "Decode disc images with the nod Rust library instead (needs cargo)" OFF)
 
 if(VITA OR MH3_ROM_DECODER)
-  set(rom_decoder_dir "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder")
+  if(NOT TARGET libzstd_static)
+    message(FATAL_ERROR "The ROM decoder needs Aurora's zstd (AURORA_CACHE_USE_ZSTD=ON)")
+  endif()
 
-  if(NOT MH3_ROM_DECODER_NOD)
-    if(NOT TARGET libzstd_static)
-      message(FATAL_ERROR "The ROM decoder needs Aurora's zstd (AURORA_CACHE_USE_ZSTD=ON)")
+  # libbzip2 1.0.8 and the 7-Zip LZMA SDK decoders, unmodified (third_party/).
+  file(GLOB rom_decoder_bzip2 CONFIGURE_DEPENDS third_party/bzip2/*.c)
+  add_library(mh3_rom_decoder STATIC src/rom_decoder.cpp ${rom_decoder_bzip2}
+    third_party/lzma/LzmaDec.c third_party/lzma/Lzma2Dec.c)
+  target_include_directories(mh3_rom_decoder PRIVATE third_party/bzip2 third_party/lzma)
+  target_compile_definitions(mh3_rom_decoder PRIVATE BZ_NO_STDIO)
+  set_source_files_properties(${rom_decoder_bzip2} PROPERTIES COMPILE_OPTIONS -w)
+  target_link_libraries(mh3_rom_decoder PRIVATE libzstd_static)
+  target_link_libraries(MH3 PRIVATE mh3_rom_decoder)
+
+  if(VITA)
+    # The EABI memory helpers (__aeabi_memcpy and the others). As an object on
+    # the link line they win over newlib's slower archive members
+    # (docs/rom-decoder.md#vita-runtime-helpers).
+    target_sources(MH3 PRIVATE vita/aeabi_memory.c)
+    set_source_files_properties(vita/aeabi_memory.c PROPERTIES COMPILE_OPTIONS -fno-builtin)
+
+    # Native code even under ThinLTO: the code generator emits these calls
+    # after LTO has dropped the bitcode definitions nothing referenced yet.
+    if(NOT MH3_DEVELOPMENT)
+      set_property(SOURCE vita/aeabi_memory.c APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
     endif()
-
-    # libbzip2 1.0.8 and the 7-Zip LZMA SDK decoders, unmodified (third_party/).
-    file(GLOB rom_decoder_bzip2 CONFIGURE_DEPENDS third_party/bzip2/*.c)
-    add_library(mh3_rom_decoder STATIC src/rom_decoder.cpp ${rom_decoder_bzip2}
-      third_party/lzma/LzmaDec.c third_party/lzma/Lzma2Dec.c)
-    target_include_directories(mh3_rom_decoder PRIVATE third_party/bzip2 third_party/lzma)
-    target_compile_definitions(mh3_rom_decoder PRIVATE BZ_NO_STDIO)
-    set_source_files_properties(${rom_decoder_bzip2} PROPERTIES COMPILE_OPTIONS -w)
-    target_link_libraries(mh3_rom_decoder PRIVATE libzstd_static)
-    target_link_libraries(MH3 PRIVATE mh3_rom_decoder)
-
-    if(VITA)
-      # The EABI memory helpers the nod archive used to supply (vita/aeabi_memory.c).
-      target_sources(MH3 PRIVATE vita/aeabi_memory.c)
-      set_source_files_properties(vita/aeabi_memory.c PROPERTIES COMPILE_OPTIONS -fno-builtin)
-    endif()
-  elseif(VITA)
-    set(rom_decoder_script "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build-vita-rom-decoder.sh")
-    set(rom_decoder_archive "${CMAKE_BINARY_DIR}/rom-decoder/armv7-sony-vita-newlibeabihf/release/libmh3_rom_decoder.a")
-    add_custom_command(OUTPUT "${rom_decoder_archive}"
-      COMMAND "${CMAKE_COMMAND}" -E env "VITASDK=${VITASDK}"
-        "MH3_ROM_DECODER_UNWIND=${MH3_PROFILE_FRAME_POINTERS}"
-        bash "${rom_decoder_script}" "${CMAKE_BINARY_DIR}/rom-decoder"
-      DEPENDS "${rom_decoder_script}" "${rom_decoder_dir}/Cargo.toml"
-        "${rom_decoder_dir}/Cargo.lock" "${rom_decoder_dir}/src/lib.rs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder.h"
-      COMMENT "Building Vita ROM decoder with clang 21 codecs"
-      VERBATIM)
-    add_custom_target(MH3RomDecoderBuild DEPENDS "${rom_decoder_archive}")
-    add_library(MH3RomDecoder STATIC IMPORTED)
-    set_target_properties(MH3RomDecoder PROPERTIES IMPORTED_LOCATION "${rom_decoder_archive}")
-    add_dependencies(MH3RomDecoder MH3RomDecoderBuild)
-    target_link_libraries(MH3 PRIVATE MH3RomDecoder)
-  else()
-    find_program(MH3_CARGO cargo HINTS "$ENV{HOME}/.cargo/bin" REQUIRED)
-
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv7|arm)")
-      set(rom_decoder_triple armv7-unknown-linux-gnueabihf)
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
-      set(rom_decoder_triple aarch64-unknown-linux-gnu)
-    else()
-      set(rom_decoder_triple x86_64-unknown-linux-gnu)
-    endif()
-
-    string(TOUPPER "${rom_decoder_triple}" rom_decoder_env)
-    string(REPLACE "-" "_" rom_decoder_env "${rom_decoder_env}")
-    string(REPLACE "-" "_" rom_decoder_cc "${rom_decoder_triple}")
-    set(rom_decoder_archive "${CMAKE_BINARY_DIR}/rom-decoder/${rom_decoder_triple}/release/libmh3_rom_decoder.a")
-
-    # The codec crates compile C with this build's compiler and target.
-    add_custom_command(OUTPUT "${rom_decoder_archive}"
-      COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rom-decoder"
-        "CC_${rom_decoder_cc}=${CMAKE_C_COMPILER}" "CFLAGS_${rom_decoder_cc}=${CMAKE_C_FLAGS} -O2"
-        "CARGO_TARGET_${rom_decoder_env}_LINKER=${CMAKE_C_COMPILER}"
-        "${MH3_CARGO}" build --manifest-path "${rom_decoder_dir}/Cargo.toml" --locked --release
-        --target ${rom_decoder_triple}
-      DEPENDS "${rom_decoder_dir}/Cargo.toml" "${rom_decoder_dir}/Cargo.lock" "${rom_decoder_dir}/src/lib.rs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder.h"
-      COMMENT "Building the ROM decoder (${rom_decoder_triple})"
-      VERBATIM)
-    add_custom_target(MH3RomDecoderBuild DEPENDS "${rom_decoder_archive}")
-    add_library(MH3RomDecoder STATIC IMPORTED)
-    set_target_properties(MH3RomDecoder PROPERTIES IMPORTED_LOCATION "${rom_decoder_archive}")
-    add_dependencies(MH3RomDecoder MH3RomDecoderBuild)
-    target_link_libraries(MH3 PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
   endif()
 
   set_property(SOURCE src/rom_image.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
@@ -511,7 +520,7 @@ if(TARGET aurora::core)
       target_link_libraries(MH3VitaTexturePack PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
       add_executable(mh3_native_texture_pack_check EXCLUDE_FROM_ALL
         "${MH3_AURORA_ROOT}/tests/native_texture_pack_check.cpp")
-      target_include_directories(mh3_native_texture_pack_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+      target_include_directories(mh3_native_texture_pack_check PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include")
       target_compile_features(mh3_native_texture_pack_check PRIVATE cxx_std_20)
       add_executable(mh3_native_texture_format_check EXCLUDE_FROM_ALL
         "${MH3_AURORA_ROOT}/tests/native_texture_format_check.cpp")
@@ -528,8 +537,8 @@ if(TARGET aurora::core)
     target_include_directories(MH3LauncherTests PRIVATE include .. "${MH3_AURORA_ROOT}/lib")
     target_link_libraries(MH3LauncherTests PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
 
-    if(TARGET MH3RomDecoder)
-      target_link_libraries(MH3LauncherTests PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
+    if(TARGET mh3_rom_decoder)
+      target_link_libraries(MH3LauncherTests PRIVATE mh3_rom_decoder)
     endif()
   endif()
 
@@ -538,4 +547,19 @@ if(TARGET aurora::core)
   target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3ControllerHostTest PRIVATE ${AURORA_SDL3_TARGET})
   add_test(NAME mh3_sdl_controller_test COMMAND MH3ControllerHostTest)
+endif()
+
+# The host tools and tests catch failures to report them, so they keep
+# exceptions in release builds (the Aurora libraries they link have none: a
+# failure there stops the tool).
+if(NOT MH3_DEVELOPMENT)
+  get_property(mh3_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+
+  foreach(mh3_target IN LISTS mh3_targets)
+    get_target_property(mh3_target_type ${mh3_target} TYPE)
+
+    if(mh3_target_type STREQUAL "EXECUTABLE" AND NOT mh3_target STREQUAL "MH3")
+      target_compile_options(${mh3_target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-fexceptions>" "$<$<COMPILE_LANGUAGE:C,CXX>:-funwind-tables>")
+    endif()
+  endforeach()
 endif()

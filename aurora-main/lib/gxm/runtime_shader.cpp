@@ -1,4 +1,5 @@
 #include "runtime_shader.hpp"
+#include <aurora/fatal.hpp>
 #include "shader_cache_pack.hpp"
 #include "../gfx/cg_shader.hpp"
 #include <vitashark.h>
@@ -98,14 +99,14 @@ void write_file(const std::filesystem::path& path, const void* bytes, size_t siz
   FILE* file = std::fopen(temporary.c_str(), "wb");
 
   if (!file)
-    throw std::runtime_error("Cannot create shader cache file: " + temporary);
+    AURORA_THROW(std::runtime_error("Cannot create shader cache file: " + temporary));
 
   const bool written = std::fwrite(bytes, 1, size, file) == size;
   const int closed = std::fclose(file);
 
   if (!written || closed || std::rename(temporary.c_str(), path.c_str())) {
     std::remove(temporary.c_str());
-    throw std::runtime_error("Cannot publish shader cache file: " + path.string());
+    AURORA_THROW(std::runtime_error("Cannot publish shader cache file: " + path.string()));
   }
 }
 
@@ -166,7 +167,7 @@ void start_compiler(Store& s) {
   shark_set_allocators(std::malloc, std::free);
 
   if (shark_init(nullptr) < 0 && shark_init("ur0:data/external/libshacccg.suprx") < 0)
-    throw std::runtime_error("Missing runtime shader compiler: install libshacccg.suprx (DSVita setup)");
+    AURORA_THROW(std::runtime_error("Missing runtime shader compiler: install libshacccg.suprx (DSVita setup)"));
 
   s.compiler = true;
   shark_install_log_cb(compiler_log);
@@ -178,7 +179,7 @@ void remember(Store& s, Key key, std::string_view source, std::string_view origi
 
   if (found != s.entries.end()) {
     if (found->second.source != source)
-      throw std::runtime_error("Conflicting GLSL for runtime shader identity");
+      AURORA_THROW(std::runtime_error("Conflicting GLSL for runtime shader identity"));
 
     return;
   }
@@ -186,7 +187,7 @@ void remember(Store& s, Key key, std::string_view source, std::string_view origi
   const size_t extra = source.size() + origin.size();
 
   if (extra > MaxResidentBytes - s.residentBytes)
-    throw std::runtime_error("Runtime shader source/cache budget exhausted (16 MiB)");
+    AURORA_THROW(std::runtime_error("Runtime shader source/cache budget exhausted (16 MiB)"));
 
   Entry entry;
   entry.source = source;
@@ -226,7 +227,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
 
   if (found == s.entries.end()) {
     std::fprintf(stderr, "MH3 GXM SHADER BANK MISS %s (no registered source)\n", id(hash, stage).c_str());
-    throw std::runtime_error("Missing runtime GLSL origin for GXM shader " + id(hash, stage));
+    AURORA_THROW(std::runtime_error("Missing runtime GLSL origin for GXM shader " + id(hash, stage)));
   }
 
   auto& entry = found->second;
@@ -254,7 +255,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
     candidate.reset(memalign(64, bytes.size()));
 
     if (!candidate)
-      throw std::bad_alloc();
+      AURORA_THROW(std::bad_alloc());
 
     std::memcpy(candidate.get(), bytes.data(), bytes.size());
 
@@ -294,7 +295,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
     std::filesystem::create_directories(Directory, error);
 
     if (error)
-      throw std::runtime_error("Cannot create ux0:/data/mh3-wii/shaders/");
+      AURORA_THROW(std::runtime_error("Cannot create ux0:/data/mh3-wii/shaders/"));
     // Invalidate the old transaction before publishing changed source. A
     // failed compilation must never make an old GXP appear to match new Cg.
     write_text(base.string() + ".version", "incomplete");
@@ -304,7 +305,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
     std::fprintf(stderr, "MH3 compiling missing GXM shader %s (%s)\n", id(hash, stage).c_str(), entry.origin.c_str());
 
     if (cg.size() > MaxProgramBytes)
-      throw std::runtime_error("Runtime Cg source exceeds 1 MiB");
+      AURORA_THROW(std::runtime_error("Runtime Cg source exceeds 1 MiB"));
     // vitaShaRK takes source length through size, then replaces it with GXP
     // length. Its returned program borrows the compiler output; never free it.
     uint32_t compiledSize = static_cast<uint32_t>(cg.size());
@@ -316,17 +317,17 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
     std::fprintf(stderr, "MH3 shader compiler output %s pointer=%p alignment=%u bytes=%u\n", id(hash, stage).c_str(), static_cast<const void*>(compiled),
                  unsigned(reinterpret_cast<uintptr_t>(compiled) & 63), compiledSize);
     if (!compiled || compiledSize < 64 || compiledSize > MaxProgramBytes)
-      throw std::runtime_error("Runtime GXM compile failed; Cg/origin saved for " + id(hash, stage));
+      AURORA_THROW(std::runtime_error("Runtime GXM compile failed; Cg/origin saved for " + id(hash, stage)));
 
     size = compiledSize;
 
     if (size > MaxResidentBytes - s.residentBytes)
-      throw std::runtime_error("Runtime shader source/cache budget exhausted (16 MiB)");
+      AURORA_THROW(std::runtime_error("Runtime shader source/cache budget exhausted (16 MiB)"));
 
     candidate.reset(memalign(64, size));
 
     if (!candidate)
-      throw std::bad_alloc();
+      AURORA_THROW(std::bad_alloc());
 
     std::memcpy(candidate.get(), compiled, size);
     const auto* program = static_cast<const SceGxmProgram*>(candidate.get());
@@ -334,7 +335,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
                  static_cast<const uint8_t*>(candidate.get())[1], static_cast<const uint8_t*>(candidate.get())[2], static_cast<const uint8_t*>(candidate.get())[3], sceGxmProgramGetSize(program),
                  unsigned(sceGxmProgramCheck(program)), int(sceGxmProgramGetType(program)));
     if (!valid_program(candidate.get(), size, stage))
-      throw std::runtime_error("Runtime GXM compiler returned invalid GXP; Cg/origin saved for " + id(hash, stage));
+      AURORA_THROW(std::runtime_error("Runtime GXM compiler returned invalid GXP; Cg/origin saved for " + id(hash, stage)));
 
     write_file(binaryPath, candidate.get(), size);
     write_text(base.string() + ".version", cacheVersion);

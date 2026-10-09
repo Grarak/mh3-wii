@@ -1,8 +1,10 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "ios_host.h"
 #include "disc_image.h"
 #include "asset_cache.h"
 #include "guest_call.h"
+#include "scope_exit.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <aurora/thread_role.hpp>
 #include <cstring>
@@ -115,7 +117,7 @@ class DiscReader {
             pthread_attr_destroy(&attributes);
 
             if (failed)
-                throw std::runtime_error("Cannot start the disc reader");
+                MH3_THROW(std::runtime_error("Cannot start the disc reader"));
         }
 
         changed.notify_all();
@@ -134,8 +136,8 @@ class DiscReader {
                 continue; // answered by Break
             guard.unlock();
 
-            if (reply.failure)
-                std::rethrow_exception(reply.failure);
+            if (!reply.failure.empty())
+                MH3_THROW(std::runtime_error(reply.failure));
 
             if (reply.length) {
                 std::memcpy(Memory::GetPointer(reply.output, reply.length), reply.data.data(), reply.length);
@@ -201,7 +203,7 @@ class DiscReader {
         int32_t result;
         bool ready, taken = false, broken = false;
         std::vector<uint8_t> data;
-        std::exception_ptr failure;
+        std::string failure; // why the read failed
         DiscRequest request;
 #ifdef MH3_DEVELOPMENT
         Clock::time_point submitted;
@@ -238,7 +240,7 @@ class DiscReader {
 
     // Reader thread: a chunk, from the read-ahead of its request as far as
     // that has it; sets up the read-ahead of the rest of the request.
-    std::vector<uint8_t> Fetch(const Reply& reply, bool& hit) {
+    Status Fetch(const Reply& reply, bool& hit, std::vector<uint8_t>& data) {
         const uint64_t offset = reply.offset, stop = offset + reply.length;
         Ahead* ahead = nullptr;
 
@@ -249,7 +251,7 @@ class DiscReader {
                 else
                     a = {}; // the block's earlier request
             }
-        std::vector<uint8_t> data;
+        data.clear();
         hit = ahead && ahead->Size() >= reply.length;
 
         if (ahead) {
@@ -259,7 +261,8 @@ class DiscReader {
         }
 
         if (data.size() < reply.length) {
-            const auto rest = Disc().Read(offset + data.size(), uint32_t(reply.length - data.size()));
+            std::vector<uint8_t> rest;
+            MH3_RETURN_IF_ERROR(Disc().TryRead(offset + data.size(), uint32_t(reply.length - data.size()), rest));
             data.insert(data.end(), rest.begin(), rest.end());
 
             if (ahead)
@@ -270,7 +273,7 @@ class DiscReader {
             if (ahead)
                 *ahead = {};
 
-            return data;
+            return {};
         }
 
         if (!ahead) {
@@ -282,11 +285,12 @@ class DiscReader {
         }
 
         ahead->used = ++aheadUses;
-        return data;
+        return {};
     }
 
     // Reader thread, unlocked: reads the next piece of a request's rest; false
-    // when there is nothing to read ahead.
+    // when there is nothing to read ahead, or the read failed: the read-ahead
+    // is dropped then, and the chunk's own read reports the failure.
     bool ReadAhead() {
         for (auto& a : aheads) {
             const uint64_t at = a.start + a.Size();
@@ -294,7 +298,12 @@ class DiscReader {
             if (!a.block || at >= a.end || a.Size() >= kAheadWindow)
                 continue;
 
-            const auto piece = Disc().Read(at, uint32_t(std::min<uint64_t>(kAheadPiece, a.end - at)));
+            std::vector<uint8_t> piece;
+
+            if (!Disc().TryRead(at, uint32_t(std::min<uint64_t>(kAheadPiece, a.end - at)), piece).ok()) {
+                aheads = {};
+                return false;
+            }
 
             if (a.head && a.head >= a.data.size() / 2) {
                 a.data.erase(a.data.begin(), a.data.begin() + a.head);
@@ -331,14 +340,7 @@ class DiscReader {
             // Timed: VitaSDK's condition variable can lose a notification.
             while (!stopping && !pending()) {
                 guard.unlock();
-                bool read = false;
-
-                try {
-                    read = ReadAhead();
-                } catch (...) {
-                    aheads = {}; // the chunk's own read reports the failure
-                }
-
+                const bool read = ReadAhead();
                 guard.lock();
 
                 if (!read && !stopping && !pending())
@@ -354,20 +356,17 @@ class DiscReader {
             const uint32_t length = next->length;
             guard.unlock();
             std::vector<uint8_t> data;
-            std::exception_ptr failure;
             const auto start = Clock::now();
             auto read = start;
             bool hit = false;
+            const Status fetched = Fetch(*next, hit, data);
 
-            try {
-                data = Fetch(*next, hit);
+            if (fetched.ok()) {
                 read = Clock::now();
 
                 if (auto* cache = GameAssetCache())
                     while (!cache->Converted(offset, length, std::chrono::milliseconds(20)) && !stopping) {
                     }
-            } catch (...) {
-                failure = std::current_exception();
             }
 
             guard.lock();
@@ -378,7 +377,7 @@ class DiscReader {
             (void)hit;
 #endif
             next->data = std::move(data);
-            next->failure = failure;
+            next->failure = fetched.message();
             next->ready = true;
             changed.notify_all();
         }
@@ -974,7 +973,7 @@ void TriggerStmEvent(uint32_t event) {
 // Actual requests are delivered through the IOS HLE entry points below.
 extern "C" void MH3_IPCWriteReg(CpuContext* ctx) {
     if (ctx->gpr[3] != 1 || ctx->gpr[4] != 0x38)
-        throw std::runtime_error("Unimplemented direct IPC register operation");
+        MH3_THROW(std::runtime_error("Unimplemented direct IPC register operation"));
 }
 REGISTER_NATIVE_FUNCTION(0x804BB950, MH3_IPCWriteReg);
 
@@ -1013,7 +1012,7 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
     }
 
     if (path.starts_with("/dev/"))
-        throw std::runtime_error("IOS device needs a host implementation: " + path);
+        MH3_THROW(std::runtime_error("IOS device needs a host implementation: " + path));
 
     ctx->gpr[3] = OpenFile(path, ctx->gpr[4]);
 }
@@ -1228,14 +1227,14 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
         return;
     }
 
-    throw std::runtime_error("IOS async ioctl needs a host implementation: " + (it == devices.end() ? std::string("invalid descriptor") : it->second) + " command " + std::to_string(ctx->gpr[4]));
+    MH3_THROW(std::runtime_error("IOS async ioctl needs a host implementation: " + (it == devices.end() ? std::string("invalid descriptor") : it->second) + " command " + std::to_string(ctx->gpr[4])));
 }
 REGISTER_NATIVE_FUNCTION(0x804BCE70, MH3_IOSIoctlAsync);
 
 extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
     if (const auto file = files.find(ctx->gpr[3]); file != files.end()) {
         if (ctx->gpr[4] != 11)
-            throw std::runtime_error("IOS file ioctl not implemented: " + std::to_string(ctx->gpr[4]));
+            MH3_THROW(std::runtime_error("IOS file ioctl not implemented: " + std::to_string(ctx->gpr[4])));
 
         if (ctx->gpr[8] < 8 || !Memory::Contains(ctx->gpr[7], 8)) {
             ctx->gpr[3] = -101;
@@ -1298,7 +1297,7 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
             return; // No attached device matches any IOS ID.
         }
 
-        throw std::runtime_error("USB HID ioctl needs a host implementation: " + std::to_string(command));
+        MH3_THROW(std::runtime_error("USB HID ioctl needs a host implementation: " + std::to_string(command)));
     }
 
     if (device->second == "/dev/fs") {
@@ -1493,7 +1492,7 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
         }
     }
 
-    throw std::runtime_error("IOS ioctl needs a host implementation: " + device->second + " command " + std::to_string(command));
+    MH3_THROW(std::runtime_error("IOS ioctl needs a host implementation: " + device->second + " command " + std::to_string(command)));
 }
 REGISTER_NATIVE_FUNCTION(0x804BCFB0, MH3_IOSIoctl);
 
@@ -1588,7 +1587,7 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
             file.read(reinterpret_cast<char*>(ticket.data()), ticket.size());
 
             if (!file)
-                throw std::runtime_error("Unable to read disc ticket for ES view");
+                MH3_THROW(std::runtime_error("Unable to read disc ticket for ES view"));
         } else {
             if (inputSize != ticket.size() || !Memory::Contains(input, inputSize)) {
                 ctx->gpr[3] = -4;
@@ -1650,7 +1649,7 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
         return;
     }
 
-    throw std::runtime_error("IOS ioctlv needs a host implementation: " + device->second + " command " + std::to_string(command));
+    MH3_THROW(std::runtime_error("IOS ioctlv needs a host implementation: " + device->second + " command " + std::to_string(command)));
 }
 REGISTER_NATIVE_FUNCTION(0x804BD310, MH3_IOSIoctlv);
 
@@ -1715,17 +1714,10 @@ void PumpIosCompletions(CpuContext* ctx) {
             break;
 
         const CpuContext saved = *ctx;
-
-        try {
-            ctx->gpr[3] = completion->result;
-            ctx->gpr[4] = completion->argument;
-            InvokeIndirectCpu(completion->callback, ctx);
-        } catch (...) {
-            *ctx = saved;
-            throw;
-        }
-
-        *ctx = saved;
+        ScopeExit restore([&] { *ctx = saved; });
+        ctx->gpr[3] = completion->result;
+        ctx->gpr[4] = completion->argument;
+        InvokeIndirectCpu(completion->callback, ctx);
     }
 }
 

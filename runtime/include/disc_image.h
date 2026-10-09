@@ -1,4 +1,5 @@
 #pragma once
+#include "status.h"
 #include <cstdint>
 #include <array>
 #include <filesystem>
@@ -17,8 +18,13 @@ class RomImage;
 // rom.txt.
 class DiscImage {
   public:
+    // Empty until Load; the constructor that takes a root stops the game when
+    // the data does not load.
+    DiscImage();
     explicit DiscImage(const std::filesystem::path& root, bool applyNativeTextures = true);
     ~DiscImage();
+    Status Load(const std::filesystem::path& root, bool applyNativeTextures = true);
+    Status TryRead(uint64_t offset, uint32_t length, std::vector<uint8_t>& result) const;
     std::vector<uint8_t> Read(uint64_t offset, uint32_t length) const;
     std::vector<uint8_t> ReadFile(const std::string& name) const;
 
@@ -32,10 +38,10 @@ class DiscImage {
     // the load-time asset cache (asset_cache.h), which patches its own tags.
     bool HasNativeTextureMap() const { return hasTextureMap; }
     bool Packed() const { return packed; }
-    using Reader = std::function<void(uint64_t offset, uint8_t* output, size_t length)>;
+    using Reader = std::function<Status(uint64_t offset, uint8_t* output, size_t length)>;
     void SetReader(Reader reader) { this->reader = std::move(reader); }
     // Partition bytes without native texture tags or quest overrides.
-    void ReadRaw(uint64_t offset, uint8_t* output, size_t length) const;
+    Status ReadRaw(uint64_t offset, uint8_t* output, size_t length) const;
 
   private:
     struct Extent {
@@ -49,7 +55,7 @@ class DiscImage {
     std::unique_ptr<RomImage> rom;
     Reader reader;
     bool hasTextureMap = false;
-    void ReadPartition(uint64_t offset, uint8_t* output, size_t length) const;
+    Status ReadPartition(uint64_t offset, uint8_t* output, size_t length) const;
     uint64_t partitionSize = 0;
     bool packed = false;
     std::map<uint64_t, std::vector<uint8_t>> fileOverrides;
@@ -61,7 +67,7 @@ class DiscImage {
 
     std::vector<NativeTexturePatch> nativeTexturePatches;
     void ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const;
-    void Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify = true);
+    Status Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify = true);
 };
 
 // Shared by IOS disc requests and the development quest catalog.

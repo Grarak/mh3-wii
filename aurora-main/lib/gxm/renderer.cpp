@@ -1,4 +1,5 @@
 #include "../gl/gl.hpp"
+#include <aurora/fatal.hpp>
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
 #include "../gfx/native_mesh_layout.hpp"
@@ -53,8 +54,11 @@ using namespace gxm;
   std::abort();
 }
 
+// An entry point's failure stops the program. Without exceptions (release
+// builds) it stops at its AURORA_THROW instead.
 template <typename F>
 decltype(auto) guarded(F&& operation) noexcept {
+#if defined(__cpp_exceptions)
   try {
     return operation();
   } catch (const std::exception& error) {
@@ -62,6 +66,9 @@ decltype(auto) guarded(F&& operation) noexcept {
   } catch (...) {
     fail("Unknown native renderer failure");
   }
+#else
+  return operation();
+#endif
 }
 
 struct TextureEntry {
@@ -119,7 +126,7 @@ uint32_t address_mode(GLenum mode) {
   case GL_CLAMP_TO_EDGE:
     return 2;
   default:
-    throw std::runtime_error("Unsupported native texture address mode");
+    AURORA_THROW(std::runtime_error("Unsupported native texture address mode"));
   }
 }
 
@@ -133,7 +140,7 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   if (texture.format == Format::Depth32F) {
     // LINEAR_STRIDED shares min/mip/LOD bits with its explicit stride.
     if (minLinear || desc.magFilter != GL_NEAREST || mipmapped || desc.lodBias != 0.f)
-      throw std::runtime_error("Strided depth sampling requires nearest filtering");
+      AURORA_THROW(std::runtime_error("Strided depth sampling requires nearest filtering"));
 
     return result;
   }
@@ -141,7 +148,7 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   const int bias = sampler_bias_encoding(desc.lodBias);
 
   if (bias < 0)
-    throw std::runtime_error("Native GXM sampler bias is not exactly representable");
+    AURORA_THROW(std::runtime_error("Native GXM sampler bias is not exactly representable"));
 
   check(sceGxmTextureSetLodBias(&result, uint32_t(bias)), "set sampler LOD bias");
   check(sceGxmTextureSetMinFilter(&result, minLinear ? SCE_GXM_TEXTURE_FILTER_LINEAR : SCE_GXM_TEXTURE_FILTER_POINT), "set min filter");
@@ -152,7 +159,7 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   const float maxLod = mipmapped ? std::clamp(desc.maxLod, minLod, last) : 0.f;
 
   if (std::floor(minLod) != minLod || std::floor(maxLod) != maxLod)
-    throw std::runtime_error("Fractional sampler LOD bounds require an offline shader clamp");
+    AURORA_THROW(std::runtime_error("Fractional sampler LOD bounds require an offline shader clamp"));
 
   uint32_t words[4];
   std::memcpy(words, &result, sizeof(words));
@@ -189,7 +196,7 @@ public:
 
   GLuint name() {
     if (!nextName)
-      throw std::runtime_error("Native GPU name space exhausted");
+      AURORA_THROW(std::runtime_error("Native GPU name space exhausted"));
 
     return nextName++;
   }
@@ -198,7 +205,7 @@ public:
     const auto it = textures.find(id);
 
     if (it == textures.end())
-      throw std::runtime_error("Unknown native texture name");
+      AURORA_THROW(std::runtime_error("Unknown native texture name"));
 
     return it->second;
   }
@@ -214,7 +221,7 @@ public:
       ++value.pins;
     else {
       if (!value.pins)
-        throw std::runtime_error("Native texture pin accounting underflow");
+        AURORA_THROW(std::runtime_error("Native texture pin accounting underflow"));
 
       --value.pins;
     }
@@ -236,13 +243,13 @@ public:
     pin(depth, true);
 
     if (color && texture(color).format == Format::Depth32F)
-      throw std::runtime_error("Native color attachment has a depth format");
+      AURORA_THROW(std::runtime_error("Native color attachment has a depth format"));
 
     if (depth && texture(depth).format != Format::Depth32F)
-      throw std::runtime_error("Native depth attachment has a color format");
+      AURORA_THROW(std::runtime_error("Native depth attachment has a color format"));
 
     if (color && depth && (texture(color).width != texture(depth).width || texture(color).height != texture(depth).height))
-      throw std::runtime_error("Native framebuffer attachment dimensions differ");
+      AURORA_THROW(std::runtime_error("Native framebuffer attachment dimensions differ"));
 
     state.clipDirty = true;
   }
@@ -307,7 +314,7 @@ public:
 
   void texture_binding(uint32_t unit, GLuint id, GLuint samplerId) {
     if (unit >= state.textures.size())
-      throw std::runtime_error("Native texture unit out of range");
+      AURORA_THROW(std::runtime_error("Native texture unit out of range"));
 
     auto& bound = state.textures[unit];
 
@@ -334,7 +341,7 @@ public:
     auto found = programs.find(id);
 
     if (found == programs.end())
-      throw std::runtime_error("Unknown native program name");
+      AURORA_THROW(std::runtime_error("Unknown native program name"));
 
     auto& native = found->second;
     scene();
@@ -349,7 +356,7 @@ public:
 
     if (native.buffer0) {
       if (!state.uniformValid)
-        throw std::runtime_error("Native shader requires an unbound uniform range");
+        AURORA_THROW(std::runtime_error("Native shader requires an unbound uniform range"));
 
       draws.bind_uniform_range(state.uniformOffset, state.uniformBytes);
     }
@@ -363,7 +370,7 @@ public:
       const auto& bound = state.textures.at(unit);
 
       if (!bound.texture)
-        throw std::runtime_error("Native shader requires an unbound sampled texture");
+        AURORA_THROW(std::runtime_error("Native shader requires an unbound sampled texture"));
 
       auto& source = texture(bound.texture);
       source.note_gpu_use();
@@ -382,7 +389,7 @@ public:
 
   PatchedProgram& shaded_program(NativeProgram& native, std::span<const VertexInput> inputs) {
     if (!native.shaded)
-      throw std::runtime_error("Shaded draw uses a non-shaded program");
+      AURORA_THROW(std::runtime_error("Shaded draw uses a non-shaded program"));
 
     for (auto& [key, program] : native.bindings)
       if (same_inputs(key, inputs))
@@ -410,7 +417,7 @@ public:
           file.write(static_cast<const char*>(data), bytes);
 
           if (!file)
-            throw std::runtime_error("Cannot save shaded uniform diagnostic");
+            AURORA_THROW(std::runtime_error("Cannot save shaded uniform diagnostic"));
         };
 
         write("-draw.bin", blocks.draw, blocks.drawBytes);
@@ -428,7 +435,7 @@ public:
 
     if (native.preservesTargetAlphaOne) {
       if (!gfx::target_alpha_one_expand(shaded_alpha_one(), native.shaded, true, native.replacesDepth))
-        throw std::runtime_error("Fixed alpha-one shader lost its target certificate");
+        AURORA_THROW(std::runtime_error("Fixed alpha-one shader lost its target certificate"));
 
       blend.colorMask = SCE_GXM_COLOR_MASK_ALL;
     }
@@ -452,7 +459,7 @@ public:
       const auto& bound = state.textures.at(units.at(slot));
 
       if (!bound.texture)
-        throw std::runtime_error("Shaded draw samples an unbound texture unit");
+        AURORA_THROW(std::runtime_error("Shaded draw samples an unbound texture unit"));
 
       auto& source = texture(bound.texture);
       source.note_gpu_use();
@@ -781,7 +788,7 @@ gfx::NativeTextureSet g_nativeTextures;
 Caps g_caps;
 Renderer& renderer(unsigned line = __builtin_LINE()) {
   if (!g_context || !on_render_thread() || !g_context->renderer)
-    throw std::runtime_error("Native operation at renderer.cpp:" + std::to_string(line) + " called outside the GXM context owner");
+    AURORA_THROW(std::runtime_error("Native operation at renderer.cpp:" + std::to_string(line) + " called outside the GXM context owner"));
 
   return *g_context->renderer;
 }
@@ -798,7 +805,7 @@ NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t b
   auto& r = renderer();
 
   if (!bytes)
-    throw std::runtime_error("Empty native mesh payload");
+    AURORA_THROW(std::runtime_error("Empty native mesh payload"));
 
   MappedMemory memory(bytes, MappedMemory::Kind::Cdram, "Aurora model pack");
   gfx::read_mesh_payload(path, offset, memory.data(), bytes);
@@ -851,7 +858,11 @@ bool initialize(SDL_Window* window) noexcept {
   if (g_context)
     return g_context->window == window;
 
+  // A failure is reported and initialization fails, which stops the game;
+  // without exceptions (release builds) it stops at its AURORA_THROW.
+#if defined(__cpp_exceptions)
   try {
+#endif
     auto thread = std::make_unique<RenderContext>();
     thread->window = window;
     own_context(*thread);
@@ -860,11 +871,13 @@ bool initialize(SDL_Window* window) noexcept {
     g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1};
     thread.release();
     return true;
+#if defined(__cpp_exceptions)
   } catch (const std::exception& error) {
     g_context = nullptr;
     std::printf("Aurora GXM game-thread initialization: %s\n", error.what());
     return false;
   }
+#endif
 }
 
 void shutdown() noexcept {
@@ -1041,7 +1054,7 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
     if (storage.width != r.width || storage.height != r.height || storage.mips != r.mips || storage.format != gfx::native_texture_format(r.format) || storage.size() != r.bytes ||
         !storage.in_cdram() || storage.has_gpu_use() ||
         (entry.version == 2 && (storage.image_bytes() != r.image_bytes || storage.palette_offset() != r.palette_offset || storage.palette_bytes() != r.palette_bytes)))
-      throw std::runtime_error("Native texture payload does not match CDRAM layout");
+      AURORA_THROW(std::runtime_error("Native texture payload does not match CDRAM layout"));
     // New allocation: no preceding scene refers to these bytes. The queued
     // upload runs before any draw consumes them, with no finish or staging copy.
     gfx::NativeTextureSet::read(entry, storage.pixels());
@@ -1164,7 +1177,7 @@ GLuint Program::get() noexcept {
     native.preservesTargetAlphaOne = m_desc.preservesTargetAlphaOne;
 
     if (native.preservesTargetAlphaOne && (!native.shaded || native.replacesDepth))
-      throw std::runtime_error("Alpha-one output promise requires an ordinary fixed shaded program");
+      AURORA_THROW(std::runtime_error("Alpha-one output promise requires an ordinary fixed shaded program"));
 
     native.vertexHash = m_vertexHash;
     native.fragmentHash = m_fragmentHash;
@@ -1233,7 +1246,7 @@ GLuint Program::get() noexcept {
 
       if (parameter && sceGxmProgramParameterGetCategory(parameter) == SCE_GXM_PARAMETER_CATEGORY_SAMPLER) {
         if (unit < 0 || unit >= 16 || sceGxmProgramParameterGetResourceIndex(parameter) != unsigned(unit))
-          throw std::runtime_error("Offline native sampler unit differs from the frontend");
+          AURORA_THROW(std::runtime_error("Offline native sampler unit differs from the frontend"));
 
         native.samplers.emplace_back(name, unit);
       }
@@ -1243,7 +1256,7 @@ GLuint Program::get() noexcept {
       if (native.shaded)
         break; // Fixed BUFFER indices, bound by prepare_shaded.
       if (binding != 0)
-        throw std::runtime_error("Native shader uniform block uses an unsupported binding");
+        AURORA_THROW(std::runtime_error("Native shader uniform block uses an unsupported binding"));
 
       native.buffer0 = true;
     }
@@ -1308,7 +1321,7 @@ void bind_texture(uint32_t unit, GLuint texture, GLuint samplerId) noexcept {
 void bind_uniform_range(uint32_t binding, GLuint, uint32_t offset, uint32_t bytes) noexcept {
   guarded([&] {
     if (binding != 0)
-      throw std::runtime_error("Unsupported native uniform binding");
+      AURORA_THROW(std::runtime_error("Unsupported native uniform binding"));
 
     auto& s = renderer().state;
     s.uniformOffset = offset;
@@ -1420,7 +1433,7 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
 
     if (srcX < 0 || srcY < 0 || dstX < 0 || dstY < 0 || uint64_t(srcX) + width > src.width || uint64_t(srcY) + height > src.height || uint64_t(dstX) + width > dst.width ||
         uint64_t(dstY) + height > dst.height || src.format != dst.format)
-      throw std::runtime_error("Native texture copy has incompatible formats or exceeds bounds");
+      AURORA_THROW(std::runtime_error("Native texture copy has incompatible formats or exceeds bounds"));
     SceGxmTransferFormat format;
 
     switch (src.format) {
@@ -1543,7 +1556,7 @@ void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) n
       const auto& binding = r.state.textures[0];
 
       if (!binding.texture)
-        throw std::runtime_error("Native geometry has no texture binding");
+        AURORA_THROW(std::runtime_error("Native geometry has no texture binding"));
 
       auto& texture = r.texture(binding.texture);
       texture.note_gpu_use();
@@ -1567,7 +1580,7 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
     auto& r = renderer();
 
     if (!r.programs.at(program).nativeMaterialVertices)
-      throw std::runtime_error("Native material draw has a different vertex layout");
+      AURORA_THROW(std::runtime_error("Native material draw has a different vertex layout"));
 
     r.state.uniformOffset = uniforms.offset;
     r.state.uniformBytes = uniforms.size;
@@ -1588,15 +1601,15 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   auto& r = renderer();
 
   if (!(r.programs.at(program).nativeMeshLayout == layout))
-    throw std::runtime_error("Resident mesh differs from patched vertex layout");
+    AURORA_THROW(std::runtime_error("Resident mesh differs from patched vertex layout"));
 
   const auto found = r.meshes.find(buffer.get());
 
   if (found == r.meshes.end() || found->second.data() != buffer.data())
-    throw std::runtime_error("Resident mesh backing was retired");
+    AURORA_THROW(std::runtime_error("Resident mesh backing was retired"));
 
   if (!uniforms.data || !uniforms.size)
-    throw std::runtime_error("Native mesh has no uniforms");
+    AURORA_THROW(std::runtime_error("Native mesh has no uniforms"));
 
   r.state.uniformOffset = uniforms.offset;
   r.state.uniformBytes = uniforms.size;
@@ -1627,7 +1640,7 @@ SceGxmAttributeFormat attribute_format(MeshAttributeFormat format, unsigned& com
     return SCE_GXM_ATTRIBUTE_FORMAT_S16N;
   }
 
-  throw std::runtime_error("Unknown mesh attribute format");
+  AURORA_THROW(std::runtime_error("Unknown mesh attribute format"));
 }
 } // namespace
 
@@ -1639,13 +1652,13 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
 
   if (!blocks.draw || !blocks.paletteBytes || !blocks.scene)
-    throw std::runtime_error("Shaded mesh has no uniform blocks");
+    AURORA_THROW(std::runtime_error("Shaded mesh has no uniform blocks"));
 
   auto& r = renderer();
   const auto found = r.meshes.find(buffer.get());
 
   if (found == r.meshes.end() || found->second.data() != buffer.data())
-    throw std::runtime_error("Resident mesh backing was retired");
+    AURORA_THROW(std::runtime_error("Resident mesh backing was retired"));
   // Same order as the Cg mesh entry point; a selector lane reads one byte.
   static constexpr const char* Names[] = {"a_position", "a_normal", "a_color0", "a_uv0", "a_uv1", "a_uv2", "a_select", "a_select0", "a_select1", "a_select2"};
   static_assert(std::size(Names) == std::tuple_size_v<decltype(inputs.location)>);
@@ -1684,7 +1697,7 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
 
   guarded([&] {
     if (!blocks.draw || !blocks.scene)
-      throw std::runtime_error("Shaded geometry has no uniform blocks");
+      AURORA_THROW(std::runtime_error("Shaded geometry has no uniform blocks"));
 
     auto& r = renderer();
     constexpr uint16_t stride = sizeof(AuroraNativeMaterialVertex);
@@ -1799,7 +1812,7 @@ void read_pixels(GLuint id, uint32_t x, uint32_t y, uint32_t width, uint32_t hei
     auto& texture = r.texture(id);
 
     if (texture.format != Format::RGBA8 || uint64_t(x) + width > texture.width || uint64_t(y) + height > texture.height || !out)
-      throw std::runtime_error("Native RGBA readback exceeds bounds or uses another format");
+      AURORA_THROW(std::runtime_error("Native RGBA readback exceeds bounds or uses another format"));
 
     r.device.finish();
     const auto* input = static_cast<const char*>(texture.pixels()) + size_t(y) * texture.row_bytes() + x * 4;

@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI and owned producer registry. C11 owns resource/selector
 // semantics; no guest function, GX, FIFO or vertex expansion is performed.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -54,7 +55,7 @@ MatrixPalette& Palette(NativeOwner owner) {
 }
 
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native model pose input failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model pose input failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -81,7 +82,7 @@ void Reindex(const FastMap<uint32_t, mh3_model_pose_owner>& next) {
         }
 
         if ((found != ranges.end() && uint64_t(start) + bytes > found->first) || (found != ranges.begin() && uint64_t(std::prev(found)->first) + std::prev(found)->second.bytes > start))
-            throw std::runtime_error("Native pose allocation has overlapping or inconsistent owners");
+            MH3_THROW(std::runtime_error("Native pose allocation has overlapping or inconsistent owners"));
 
         ranges.emplace(start, Region{bytes, {scene}});
     };
@@ -146,7 +147,7 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &model));
 
     if (pose_revision == UINT64_MAX)
-        throw std::runtime_error("Native model pose revision overflow");
+        MH3_THROW(std::runtime_error("Native model pose revision overflow"));
 
     const uint64_t revision = pose_revision + 1;
     std::vector<mh3_model_pose_owner> updates;
@@ -219,38 +220,62 @@ void ClearNativeModelPose() {
     ++selectorRevision;
 }
 
-mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
+namespace {
+// The pose's failure, or null; `status` is set for a failed source read.
+const char* PoseSources(const uint32_t addresses[3], uint32_t model, mh3_matrix_sources& result, mh3_res_status& status) {
     if (!addresses)
-        throw std::runtime_error("Native model pose requires explicit source addresses");
+        return "Native model pose requires explicit source addresses";
 
-    mh3_matrix_sources result{};
     bool found = false;
     const auto matching = positions.find(Canonical(addresses[0]));
 
     if (matching == positions.end())
-        throw std::runtime_error("Native model matrices have no allocation owner");
+        return "Native model matrices have no allocation owner";
 
     for (const uint32_t scene : matching->second) {
         const auto& owner = owners.at(scene);
         mh3_matrix_sources candidate{};
-        const auto status = mh3_model_pose_sources(&MH3NativeResourceMemory(), &owner, addresses, model ? model : owner.model_address, &candidate);
+        status = mh3_model_pose_sources(&MH3NativeResourceMemory(), &owner, addresses, model ? model : owner.model_address, &candidate);
 
         if (status == MH3_RES_ABSENT)
             continue;
 
-        Checked(status);
+        if (status != MH3_RES_OK)
+            return "Native model pose input failed: ";
 
         if (found)
-            throw std::runtime_error("Native model pose has ambiguous live allocation owners");
+            return "Native model pose has ambiguous live allocation owners";
 
         result = candidate;
         found = true;
     }
 
-    if (!found)
-        throw std::runtime_error("Native model matrices have no completed typed pose producer");
+    status = MH3_RES_OK;
+    return found ? nullptr : "Native model matrices have no completed typed pose producer";
+}
+
+std::string PoseFailure(const char* failure, mh3_res_status status) {
+    return status == MH3_RES_OK ? std::string(failure) : failure + std::to_string(status);
+}
+} // namespace
+
+mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
+    mh3_matrix_sources result{};
+    mh3_res_status status = MH3_RES_OK;
+
+    if (const char* failure = PoseSources(addresses, model, result, status)) [[unlikely]]
+        MH3_THROW(std::runtime_error(PoseFailure(failure, status)));
 
     return result;
+}
+
+Status TryReadNativeModelPose(const uint32_t addresses[3], uint32_t model, mh3_matrix_sources& result) {
+    mh3_res_status status = MH3_RES_OK;
+
+    if (const char* failure = PoseSources(addresses, model, result, status))
+        return Status::Error(PoseFailure(failure, status));
+
+    return {};
 }
 
 // ---- Pose versions (model_pose_bridge.h) ----
@@ -315,7 +340,7 @@ NativePoseVersion* AcquirePose(size_t bytes) {
         ++size_class;
 
     if (size_class == PoseClasses)
-        throw std::runtime_error("Native pose arrays exceed the largest version size");
+        MH3_THROW(std::runtime_error("Native pose arrays exceed the largest version size"));
 
     if (auto& free = poseFree[size_class]; !free.empty()) {
         auto* version = free.back();

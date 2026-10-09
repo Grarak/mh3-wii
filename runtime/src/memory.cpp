@@ -2,6 +2,7 @@
 // device models for hardware. An MMIO access no device claims is fatal until
 // the corresponding host service is implemented. No CPU interpretation.
 #include "memory.h"
+#include "fatal.h"
 #include "video_interface.h"
 #include "audio_interface.h"
 #include "gx_host.h"
@@ -21,7 +22,7 @@ std::string accessMessage(uint32_t address, std::string_view reason) {
 }
 
 [[noreturn]] void Unmapped(uint32_t address, size_t length) {
-    throw Memory::AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO");
+    MH3_THROW(Memory::AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO"));
 }
 
 bool IsSensorBar(uint32_t address) {
@@ -29,36 +30,74 @@ bool IsSensorBar(uint32_t address) {
 }
 } // namespace
 
+namespace {
+// A device read; false when no device claims the address.
 template <typename T>
-T HardwareRead(uint32_t address) {
+bool TryHardwareRead(uint32_t address, T& value) {
     if constexpr (std::is_same_v<T, uint32_t>) {
         uint32_t efbValue;
 
-        if (ReadEfbColor32(address, efbValue))
-            return efbValue;
+        if (ReadEfbColor32(address, efbValue)) {
+            value = efbValue;
+            return true;
+        }
 
         uint32_t audioValue;
 
-        if (ReadAudioRegister32(address, audioValue))
-            return audioValue;
+        if (ReadAudioRegister32(address, audioValue)) {
+            value = audioValue;
+            return true;
+        }
 
-        if (IsSensorBar(address))
-            return sensorBarOutput;
+        if (IsSensorBar(address)) {
+            value = sensorBarOutput;
+            return true;
+        }
     }
 
     if constexpr (std::is_same_v<T, uint16_t>) {
-        uint16_t value;
+        uint16_t videoValue;
 
-        if (ReadVideoRegister16(address, value))
-            return value;
+        if (ReadVideoRegister16(address, videoValue)) {
+            value = videoValue;
+            return true;
+        }
     }
 
     uint32_t gxValue;
 
-    if (ReadGxRegister(address, sizeof(T), gxValue))
-        return static_cast<T>(gxValue);
+    if (ReadGxRegister(address, sizeof(T), gxValue)) {
+        value = static_cast<T>(gxValue);
+        return true;
+    }
+
+    return false;
+}
+} // namespace
+
+template <typename T>
+T HardwareRead(uint32_t address) {
+    T value;
+
+    if (TryHardwareRead(address, value))
+        return value;
 
     Unmapped(address, sizeof(T));
+}
+
+bool Memory::TryRead32(uint32_t address, uint32_t& value) {
+    if (const uint8_t* host = GuestFlat::HostPointer(address, sizeof(value))) {
+        uint32_t raw;
+        std::memcpy(&raw, host, sizeof(raw));
+        value = MemoryInline::MaybeByteSwap(raw);
+        return true;
+    }
+
+    return TryHardwareRead(address, value);
+}
+
+std::string Memory::UnmappedMessage(uint32_t address) {
+    return accessMessage(address, "Unmapped RAM or unimplemented MMIO");
 }
 
 template <typename T>
@@ -74,7 +113,7 @@ void HardwareWrite(uint32_t address, T value) {
             // GPIOB_OUT bit 8 controls the sensor bar. Other output devices
             // require their own implementation; do not silently acknowledge them.
             if (value & ~0x100u)
-                throw std::runtime_error("Unsupported GPIOB output device");
+                MH3_THROW(std::runtime_error("Unsupported GPIOB output device"));
 
             sensorBarOutput = value;
             return;
@@ -116,7 +155,7 @@ Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::stri
 
 void Memory::Init(size_t size) {
     if (size != kMem1Size)
-        throw std::runtime_error("MEM1 is 24 MiB");
+        MH3_THROW(std::runtime_error("MEM1 is 24 MiB"));
 
     ResetVideoInterface();
     ResetAudioInterface();

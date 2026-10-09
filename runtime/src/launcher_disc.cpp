@@ -1,5 +1,7 @@
 #include "vita_launcher.h"
+#include "fatal.h"
 #include "disc_image.h"
+#include "fs_status.h"
 #include "rom_image.h"
 #include <algorithm>
 #include <fstream>
@@ -10,29 +12,34 @@
 
 namespace VitaLauncher {
 namespace {
+// ProcessDisc reads words only within the bytes it has read.
 uint32_t Word(const std::vector<uint8_t>& b, size_t at) {
     if (at > b.size() || b.size() - at < 4)
-        throw std::runtime_error("ROM metadata is truncated");
+        MH3_THROW(std::runtime_error("ROM metadata is truncated"));
 
     return uint32_t(b[at]) << 24 | uint32_t(b[at + 1]) << 16 | uint32_t(b[at + 2]) << 8 | b[at + 3];
 }
 
-void Write(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
+Status Write(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     out.close();
 
     if (!out)
-        throw std::runtime_error("Cannot write prepared ROM metadata");
+        return Status::Error("Cannot write prepared ROM metadata");
+
+    return {};
 }
 
-void Write(const std::filesystem::path& path, const std::string& text) {
-    Write(path, std::vector<uint8_t>(text.begin(), text.end()));
+Status Write(const std::filesystem::path& path, const std::string& text) {
+    return Write(path, std::vector<uint8_t>(text.begin(), text.end()));
 }
 
-void Check(uint64_t count) {
+Status Check(uint64_t count) {
     if (count > 16 * 1024 * 1024)
-        throw std::runtime_error("ROM metadata exceeds the memory limit");
+        return Status::Error("ROM metadata exceeds the memory limit");
+
+    return {};
 }
 
 std::string RecordedRom(const std::filesystem::path& output) {
@@ -44,94 +51,119 @@ std::string RecordedRom(const std::filesystem::path& output) {
 } // namespace
 
 bool DiscReady(const std::filesystem::path& output) {
-    try {
-        // Opens partition.bin or the disc image named by rom.txt and checks
-        // the metadata against it.
-        DiscImage disc(output, false);
-        return std::filesystem::exists(output / "disc-layout.txt");
-    } catch (const std::exception&) {
-        return false;
-    }
+    // Opens partition.bin or the disc image named by rom.txt and checks
+    // the metadata against it.
+    DiscImage disc;
+    bool layout = false;
+    return disc.Load(output, false).ok() && FsStatus::Exists(output / "disc-layout.txt", layout).ok() && layout;
 }
 
-void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress) {
+Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress) {
 #ifdef __vita__
     // libstdc++'s POSIX absolute() treats the Vita mount prefix as relative.
     const auto image = iso;
 #else
-    const auto image = std::filesystem::absolute(iso);
+    std::filesystem::path image;
+    MH3_RETURN_IF_ERROR(FsStatus::Absolute(iso, image));
 #endif
-    if (DiscReady(output) && (!std::filesystem::exists(output / "rom.txt") || RecordedRom(output) == image.string()))
-        return;
+    if (DiscReady(output)) {
+        bool recorded = false;
+        MH3_RETURN_IF_ERROR(FsStatus::Exists(output / "rom.txt", recorded));
 
-    if (std::filesystem::exists(output) && !std::filesystem::exists(output / "disc-layout.txt"))
-        throw std::runtime_error("Processing output contains unrelated files: " + output.string());
+        if (!recorded || RecordedRom(output) == image.string())
+            return {};
+    }
+
+    bool published = false, layout = false;
+    MH3_RETURN_IF_ERROR(FsStatus::Exists(output, published));
+
+    if (published)
+        MH3_RETURN_IF_ERROR(FsStatus::Exists(output / "disc-layout.txt", layout));
+
+    if (published && !layout)
+        return Status::Error("Processing output contains unrelated files: " + output.string());
 
     progress("Reading the disc image", 0, 1);
-    RomImage source(image);
+    std::unique_ptr<RomImage> opened;
+    MH3_RETURN_IF_ERROR(RomImage::Open(image, opened));
+    const RomImage& source = *opened;
     const auto staging = std::filesystem::path(output.string() + ".processing");
+    bool stale = false;
 
     // Only this launcher's named staging directory is disposable; no input,
     // saves or existing published game directory is ever removed.
-    if (std::filesystem::exists(staging))
-        std::filesystem::remove_all(staging);
+    MH3_RETURN_IF_ERROR(FsStatus::Exists(staging, stale));
 
-    std::filesystem::create_directories(staging / "sys");
+    if (stale)
+        MH3_RETURN_IF_ERROR(FsStatus::RemoveAll(staging));
+
+    MH3_RETURN_IF_ERROR(FsStatus::CreateDirectories(staging / "sys"));
+    std::vector<uint8_t> bytes;
     const auto copy = [&](uint64_t at, uint64_t count, const std::filesystem::path& path) {
-        Check(count);
-        Write(path, source.ReadPartition(at, count));
+        MH3_RETURN_IF_ERROR(Check(count));
+        MH3_RETURN_IF_ERROR(source.ReadPartition(at, count, bytes));
+        return Write(path, bytes);
     };
 
-    const auto boot = source.ReadPartition(0, 0x440);
-    Write(staging / "sys/boot.bin", boot);
-    copy(0x440, 0x2000, staging / "sys/bi2.bin");
-    const auto app = source.ReadPartition(0x2440, 0x20);
-    copy(0x2440, 0x20 + uint64_t(Word(app, 0x14)) + Word(app, 0x18), staging / "sys/apploader.img");
+    std::vector<uint8_t> boot, app, dol;
+    MH3_RETURN_IF_ERROR(source.ReadPartition(0, 0x440, boot));
+    MH3_RETURN_IF_ERROR(Write(staging / "sys/boot.bin", boot));
+    MH3_RETURN_IF_ERROR(copy(0x440, 0x2000, staging / "sys/bi2.bin"));
+    MH3_RETURN_IF_ERROR(source.ReadPartition(0x2440, 0x20, app));
+    MH3_RETURN_IF_ERROR(copy(0x2440, 0x20 + uint64_t(Word(app, 0x14)) + Word(app, 0x18), staging / "sys/apploader.img"));
     const uint64_t dolAt = uint64_t(Word(boot, 0x420)) * 4;
-    const auto dol = source.ReadPartition(dolAt, 0x100);
+    MH3_RETURN_IF_ERROR(source.ReadPartition(dolAt, 0x100, dol));
     uint64_t dolSize = 0x100;
 
     for (unsigned i = 0; i < 18; ++i)
         dolSize = std::max(dolSize, uint64_t(Word(dol, i * 4)) + Word(dol, 0x90 + i * 4));
 
-    copy(dolAt, dolSize, staging / "sys/main.dol");
+    MH3_RETURN_IF_ERROR(copy(dolAt, dolSize, staging / "sys/main.dol"));
     const uint64_t fstAt = uint64_t(Word(boot, 0x424)) * 4, fstSize = uint64_t(Word(boot, 0x428)) * 4;
 
     if (fstSize < 12 || fstSize > 1024 * 1024)
-        throw std::runtime_error("Invalid FST size");
+        return Status::Error("Invalid FST size");
 
-    copy(fstAt, fstSize, staging / "sys/fst.bin");
+    MH3_RETURN_IF_ERROR(copy(fstAt, fstSize, staging / "sys/fst.bin"));
     const uint64_t partition = source.PartitionOffset();
     const auto& header = source.PartitionHeader();
     const auto raw = [&](uint64_t at, uint64_t count, const std::filesystem::path& path) {
-        Check(count);
-        Write(path, source.ReadDisc(at, count));
+        MH3_RETURN_IF_ERROR(Check(count));
+        MH3_RETURN_IF_ERROR(source.ReadDisc(at, count, bytes));
+        return Write(path, bytes);
     };
 
-    raw(partition, 0x2a4, staging / "ticket.bin");
-    raw(partition + uint64_t(Word(header, 0x2a8)) * 4, Word(header, 0x2a4), staging / "tmd.bin");
-    raw(partition + uint64_t(Word(header, 0x2b0)) * 4, Word(header, 0x2ac), staging / "cert.bin");
-    raw(partition + uint64_t(Word(header, 0x2b4)) * 4, 0x18000, staging / "h3.bin");
-    Write(staging / "disc-layout.txt", std::string("mh3-partition-v1\n"));
+    MH3_RETURN_IF_ERROR(raw(partition, 0x2a4, staging / "ticket.bin"));
+    MH3_RETURN_IF_ERROR(raw(partition + uint64_t(Word(header, 0x2a8)) * 4, Word(header, 0x2a4), staging / "tmd.bin"));
+    MH3_RETURN_IF_ERROR(raw(partition + uint64_t(Word(header, 0x2b0)) * 4, Word(header, 0x2ac), staging / "cert.bin"));
+    MH3_RETURN_IF_ERROR(raw(partition + uint64_t(Word(header, 0x2b4)) * 4, 0x18000, staging / "h3.bin"));
+    MH3_RETURN_IF_ERROR(Write(staging / "disc-layout.txt", std::string("mh3-partition-v1\n")));
 
     // The game partition stays in the disc image and is read in place.
-    Write(staging / "rom.txt", image.string() + "\n" + std::to_string(source.FileBytes()) + "\n");
+    MH3_RETURN_IF_ERROR(Write(staging / "rom.txt", image.string() + "\n" + std::to_string(source.FileBytes()) + "\n"));
 
     if (!DiscReady(staging))
-        throw std::runtime_error("Prepared disc validation failed");
+        return Status::Error("Prepared disc validation failed");
 
-    if (std::filesystem::exists(output)) {
+    MH3_RETURN_IF_ERROR(FsStatus::Exists(output, published));
+
+    if (published) {
+        bool cache = false;
+
         // Keep converted assets; they depend on the game's files, not the image's path.
-        if (std::filesystem::exists(output / "cache"))
-            std::filesystem::rename(output / "cache", staging / "cache");
+        MH3_RETURN_IF_ERROR(FsStatus::Exists(output / "cache", cache));
 
-        std::filesystem::remove_all(output);
+        if (cache)
+            MH3_RETURN_IF_ERROR(FsStatus::Rename(output / "cache", staging / "cache"));
+
+        MH3_RETURN_IF_ERROR(FsStatus::RemoveAll(output));
     }
 #ifdef __vita__
     if (sceIoSync("ux0:", 0) < 0)
-        throw std::runtime_error("Cannot sync prepared game data");
+        return Status::Error("Cannot sync prepared game data");
 #endif
-    std::filesystem::rename(staging, output);
+    MH3_RETURN_IF_ERROR(FsStatus::Rename(staging, output));
     progress("Game data ready", 1, 1);
+    return {};
 }
 } // namespace VitaLauncher

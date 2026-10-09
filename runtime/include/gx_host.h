@@ -20,9 +20,3 @@ void CaptureGuestGx(std::vector<uint8_t>* into);
 // SubmitGuestGxBytes for the 1-, 2- and 4-byte FIFO writes.
 template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data);
-
-// The window was closed (or SIGINT, which SDL turns into a quit): thrown from
-// ServiceHostGraphicsEvents, where the game can stop; main exits on it.
-struct HostQuit : std::runtime_error {
-    HostQuit() : std::runtime_error("MH3 window closed") {}
-};

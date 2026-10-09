@@ -64,51 +64,46 @@ void SaveTests(const std::filesystem::path& root) {
     Check(std::filesystem::file_size(dir / "data04") == 0x14000, "probe must not change the save");
 }
 
+// The edited quest file; a failure stops the tests.
+std::vector<uint8_t> Edit(std::span<const uint8_t> source, const VitaLauncher::CustomQuest& quest) {
+    std::vector<uint8_t> edited;
+    CheckStatus(VitaLauncher::EditQuestFile(source, quest, edited));
+    return edited;
+}
+
+// Whether the edit is rejected.
+bool Rejected(std::span<const uint8_t> source, const VitaLauncher::CustomQuest& quest) {
+    std::vector<uint8_t> edited;
+    return !VitaLauncher::EditQuestFile(source, quest, edited).ok();
+}
+
+std::vector<uint16_t> Options(std::span<const uint8_t> source, uint16_t base) {
+    std::vector<uint16_t> options;
+    CheckStatus(VitaLauncher::QuestCompositionOptions(source, base, options));
+    return options;
+}
+
 void QuestTests() {
     const auto original = Quest();
     VitaLauncher::CustomQuest custom{"Own quest", QuestCatalog::Set::Village, 1060, 1, true, 7};
-    const auto edited = VitaLauncher::EditQuestFile(original, custom);
+    const auto edited = Edit(original, custom);
     Check(edited.size() == original.size() && std::string(edited.begin() + 16, edited.begin() + 25) == "Own quest", "quest name/extent");
     Check(edited[16 + 0x333] == 0x81 && edited[16 + 0x337] == 1 && edited[16 + 0x8a] == 7, "actual objective changes");
     Check(edited[16 + 0x397] == 0x81 && edited[16 + 0x399] == 20 && edited[16 + 0x39b] == 1, "live expanded objective must match summary");
     Check(edited[16 + 0x8b] == original[16 + 0x8b] && edited[16 + 0x335] == 20, "template map/monster retained");
     custom.count = 3;
-    bool impossible = false;
-
-    try {
-        VitaLauncher::EditQuestFile(original, custom);
-    } catch (const std::exception&) {
-        impossible = true;
-    }
-
-    Check(impossible, "unsupported additional spawns rejected");
+    Check(Rejected(original, custom), "unsupported additional spawns rejected");
     auto bad = original;
     Word(bad, 8, 0xfffffff0);
-    bool caught = false;
-
-    try {
-        VitaLauncher::EditQuestFile(bad, custom);
-    } catch (const std::exception&) {
-        caught = true;
-    }
-
-    Check(caught, "bad quest extent rejected");
+    Check(Rejected(bad, custom), "bad quest extent rejected");
     auto multiple = original;
     Word(multiple, 16 + 0x334, (20u << 16) | 2);
     custom.count = 1;
     custom.minutes = 25;
-    const auto fewer = VitaLauncher::EditQuestFile(multiple, custom);
+    const auto fewer = Edit(multiple, custom);
     Check(fewer[16 + 0x337] == 1 && fewer[16 + 0x39b] == 1 && fewer[16 + 0x13b] == 25, "smaller authored objective and live time limit");
     custom.stars = 8;
-    caught = false;
-
-    try {
-        VitaLauncher::EditQuestFile(original, custom);
-    } catch (const std::exception&) {
-        caught = true;
-    }
-
-    Check(caught, "star bucket overflow rejected");
+    Check(Rejected(original, custom), "star bucket overflow rejected");
 
     // Two independently authored encounters on one ordinary map. Donor primary
     // rewards move with its monster; unsupported old subquests are removed.
@@ -145,24 +140,16 @@ void QuestTests() {
     composition[first + 0x4bc] = 0x5a;
     custom = {"Own encounter", QuestCatalog::Set::Village, 1060, 1, false, 3};
     custom.encounter = 2001;
-    Check(VitaLauncher::QuestCompositionOptions(composition, 1060).size() == 2, "same-map authored donors offered");
-    const auto composed = VitaLauncher::EditQuestFile(composition, custom);
+    Check(Options(composition, 1060).size() == 2, "same-map authored donors offered");
+    const auto composed = Edit(composition, custom);
     Check(composed[first + 0x314] == 3 && composed[first + 0x335] == 3 && composed[first + 0x399] == 3 && composed[first + 0x39c] == 0x7a, "monster slot/live objective/rewards transferred together");
     Check(composed[first + 0x33b] == 0 && composed[first + 0x3f7] == 0 && composed[first + 0x4bc] == 0x5a && composed.size() == composition.size(),
           "old subquests removed; base small spawns and disc extent preserved");
     Check(composed[first + 0x8c] == 0 && composed[first + 0xb5] == 0 && composed[first + 0xde] == 'C', "subquest text cleared; completion text preserved");
     composition[second + 0x8b] = 3;
-    caught = false;
-
-    try {
-        VitaLauncher::EditQuestFile(composition, custom);
-    } catch (const std::exception&) {
-        caught = true;
-    }
-
-    Check(caught, "monster from incompatible map rejected");
+    Check(Rejected(composition, custom), "monster from incompatible map rejected");
     Word(composition, first + 0x310, 0x30105);
-    Check(VitaLauncher::QuestCompositionOptions(composition, 1060).empty(), "scripted quest composition excluded");
+    Check(Options(composition, 1060).empty(), "scripted quest composition excluded");
 }
 
 void DiscTests(const std::filesystem::path& root) {
@@ -206,7 +193,7 @@ void DiscTests(const std::filesystem::path& root) {
     }
 
     DiscImage image(disc);
-    const auto edited = VitaLauncher::EditQuestFile(quest, {"Own quest", QuestCatalog::Set::Village, 1060, 1, false, 3});
+    const auto edited = Edit(quest, {"Own quest", QuestCatalog::Set::Village, 1060, 1, false, 3});
     image.SetFileOverride("05/quest00_eng.bin", edited);
     Check(image.Read(0x4000 + 16, 9) == std::vector<uint8_t>(edited.begin() + 16, edited.begin() + 25), "partial raw DVD read must see custom quest");
     Check(image.ReadFile("05/quest00_eng.bin") == edited, "full quest read override");
@@ -235,7 +222,7 @@ void DiscTests(const std::filesystem::path& root) {
     std::copy(partition.begin(), partition.end(), iso.begin() + dataAt + 0x400);
     Save(root / "game.iso", iso);
     unsigned updates = 0;
-    VitaLauncher::ProcessDisc(root / "game.iso", root / "processed", [&](const auto&, uint64_t, uint64_t) { ++updates; });
+    CheckStatus(VitaLauncher::ProcessDisc(root / "game.iso", root / "processed", [&](const auto&, uint64_t, uint64_t) { ++updates; }));
     Check(updates > 1 && VitaLauncher::DiscReady(root / "processed"), "processing publishes validated game data");
     Check(std::filesystem::file_size(root / "game.iso") == iso.size(), "ROM remains untouched");
     Check(!std::filesystem::exists(root / "processed/partition.bin") && std::filesystem::exists(root / "processed/rom.txt"), "the partition stays in the disc image");
@@ -273,7 +260,7 @@ int main(int argc, char** argv) {
                 for (unsigned i = 0; i < ReadWord(file, 4); ++i) {
                     const size_t at = ReadWord(file, 8 + i * 8);
                     const uint16_t id = ReadWord(file, at + 0x2c) >> 16;
-                    const auto options = VitaLauncher::QuestCompositionOptions(file, id);
+                    const auto options = Options(file, id);
 
                     for (uint16_t donor : options) {
                         size_t source = 0;
@@ -288,10 +275,15 @@ int main(int argc, char** argv) {
                         for (unsigned capture = 0; capture < 2; ++capture) {
                             q.capture = capture;
 
-                            if (capture && !VitaLauncher::SupportsCapture(q))
-                                continue;
+                            if (capture) {
+                                bool supported = false;
+                                CheckStatus(VitaLauncher::SupportsCapture(q, supported));
 
-                            const auto edited = VitaLauncher::EditQuestFile(file, q);
+                                if (!supported)
+                                    continue;
+                            }
+
+                            const auto edited = Edit(file, q);
                             Check(edited.size() == file.size(), "authored composition preserves complete disc extent");
                             Check(ReadWord(edited, at + 0x330) == ReadWord(edited, at + 0x394) && ReadWord(edited, at + 0x334) == ReadWord(edited, at + 0x398),
                                   "authored composition summary/live objective match");
@@ -313,12 +305,12 @@ int main(int argc, char** argv) {
 
         if (argc == 4 && std::string_view(argv[1]) == "--process") {
             std::string last;
-            VitaLauncher::ProcessDisc(argv[2], argv[3], [&](const std::string& phase, uint64_t done, uint64_t total) {
+            CheckStatus(VitaLauncher::ProcessDisc(argv[2], argv[3], [&](const std::string& phase, uint64_t done, uint64_t total) {
                 if (phase != last) {
                     std::cout << phase << " (" << total << ")\n";
                     last = phase;
                 }
-            });
+            }));
             Check(VitaLauncher::DiscReady(argv[3]), "processed external disc readiness");
             return 0;
         }

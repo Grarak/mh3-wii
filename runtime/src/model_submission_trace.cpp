@@ -1,6 +1,7 @@
 // The model draw walk (G3dDrawOpaXlu, 80078b00): a thin ABI adapter to the
 // native C walk. It replaces 80078b00, not the downstream dispatch.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -45,10 +46,10 @@ ModelView View(CpuContext* cpu) {
         const auto status = mh3_res_model_open(bank, view.resource - start, &view.model);
 
         if (status != MH3_RES_OK)
-            throw std::runtime_error("Native model open failed: " + std::to_string(status));
+            MH3_THROW(std::runtime_error("Native model open failed: " + std::to_string(status)));
 
         if (cpu->gpr[4] < start)
-            throw std::runtime_error("Native model bytecode is outside RAM bank");
+            MH3_THROW(std::runtime_error("Native model bytecode is outside RAM bank"));
 
         view.bytecode = cpu->gpr[4] - start;
         found = true;
@@ -56,7 +57,7 @@ ModelView View(CpuContext* cpu) {
     }
 
     if (!found)
-        throw std::runtime_error("Native model resource is outside RAM");
+        MH3_THROW(std::runtime_error("Native model resource is outside RAM"));
 
     const uint32_t visibility = Memory::Read32(view.replacement + 4);
 
@@ -66,7 +67,7 @@ ModelView View(CpuContext* cpu) {
         const auto status = mh3_res_model_dictionary(&view.model, MH3_RES_NODES, &dictionary, &count);
 
         if (status != MH3_RES_OK)
-            throw std::runtime_error("Native model node dictionary failed");
+            MH3_THROW(std::runtime_error("Native model node dictionary failed"));
 
         view.visibility = {Memory::GetPointer(visibility, count), count};
     }
@@ -117,7 +118,7 @@ void NativeDraw(CpuContext* cpu) {
     const auto status = mh3_model_draw_walk(&view.model, view.bytecode, view.visibility, options, Submit, &submit, nullptr);
 
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native model draw failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native model draw failed: " + std::to_string(status)));
 }
 
 void RunDraw(CpuContext* cpu) {

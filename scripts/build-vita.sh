@@ -9,11 +9,13 @@ task_args=()
 # Vita's own stack walker needs (vprof's flat-profile stacks, crash
 # backtraces). Without it the SDK's stock converter builds the eboot without
 # them, and the unwind check is skipped. The override stays local to this
-# build instead of replacing tools in the system SDK.
+# build instead of replacing tools in the system SDK. A release build
+# (MH3_DEVELOPMENT=OFF) has no unwind tables of its own (only the SDK
+# libraries' remain), so it is not checked either.
 task_elf_create=${MH3_VITA_ELF_CREATE:-/path/to/vita-toolchain/build-unwind/src/vita-elf-create}
 task_unwind=0
 if [[ -x "$task_elf_create" ]]; then
-  task_unwind=1
+  [[ ${MH3_DEVELOPMENT:-ON} == OFF ]] || task_unwind=1
 else
   echo "No patched vita-elf-create ($task_elf_create): the stock one, without registered unwind tables" >&2
   task_elf_create="$task_sdk/bin/vita-elf-create"
@@ -42,6 +44,8 @@ if [[ $task_unwind == 1 ]]; then
     --elf "$task_build_dir/MH3" --velf "$task_build_dir/MH3.velf" \
     --build-dir "$task_build_dir" --report "$task_build_dir/unwind-packaging.json"
   echo "Built $task_build_dir/mh3-vita.vpk (clang-21, native GXM, validated unwind tables)"
+elif [[ ${MH3_DEVELOPMENT:-ON} == OFF ]]; then
+  echo "Built $task_build_dir/mh3-vita.vpk (clang-21, native GXM, release: no exceptions or unwind tables)"
 else
   echo "Built $task_build_dir/mh3-vita.vpk (clang-21, native GXM, no registered unwind tables)"
 fi

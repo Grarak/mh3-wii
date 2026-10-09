@@ -1,4 +1,5 @@
 #include "aurora/generated_texture.hpp"
+#include <aurora/fatal.hpp>
 #include "texture.hpp"
 #include "generated_texture_shaders.hpp"
 #include <memory>
@@ -22,7 +23,7 @@ gfx::TextureHandle source_texture(const MaterialSource& source) {
     const auto info = gl::native_texture_info(source.nativeAsset);
 
     if (info.width != 128 || info.height != 128)
-      throw std::runtime_error("Native material source dimensions differ");
+      AURORA_THROW(std::runtime_error("Native material source dimensions differ"));
 
     return std::make_shared<gfx::TextureRef>(gl::native_texture_asset(source.nativeAsset), gfx::Extent{128, 128, 1}, info.format, info.mips, GX_TF_RGBA8_PC);
   }
@@ -74,7 +75,7 @@ void publish_generated_material(uint32_t owner, const void* guestData, MaterialC
   }
 
   if (++generatedVersion == 0)
-    throw std::runtime_error("Generated texture revision overflow");
+    AURORA_THROW(std::runtime_error("Generated texture revision overflow"));
 
   generatedTextures.insert_or_assign(guestData, GeneratedTexture{owner, generatedVersion, std::move(output), std::move(inputs)});
 }
@@ -97,7 +98,7 @@ TextureHandle find_generated_texture(const void* guestData, uint32_t version) {
   const auto it = generatedTextures.find(guestData);
 
   if (it == generatedTextures.end() || it->second.version != version)
-    throw std::runtime_error("Generated texture was not published in GX command order");
+    AURORA_THROW(std::runtime_error("Generated texture was not published in GX command order"));
 
   return it->second.handle;
 }

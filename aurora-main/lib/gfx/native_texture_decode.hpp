@@ -1,6 +1,7 @@
 #pragma once
 // Host diagnostics only. Vita reads the prepared image/palette allocation
 // directly; it never links this CPU expansion or a compression encoder.
+#include <aurora/fatal.hpp>
 #include "native_texture_pack.hpp"
 #include <cstring>
 
@@ -50,7 +51,7 @@ inline std::vector<uint8_t> native_texture_rgba_level(const NativeTextureRecord&
   const auto layout = native_texture_layout(record.width, record.height, record.mips, f);
 
   if (payload.size() != layout.total_bytes || mip >= layout.levels.size())
-    throw std::runtime_error("Invalid diagnostic native texture payload/mip");
+    AURORA_THROW(std::runtime_error("Invalid diagnostic native texture payload/mip"));
 
   const auto& level = layout.levels[mip];
   const auto* image = payload.data() + level.offset;
@@ -119,7 +120,7 @@ inline std::vector<uint8_t> native_texture_rgba_level(const NativeTextureRecord&
           color = native_color565(uint16_t(p[0]) | uint16_t(p[1]) << 8);
           break;
         default:
-          throw std::runtime_error("Unsupported host diagnostic texture format");
+          AURORA_THROW(std::runtime_error("Unsupported host diagnostic texture format"));
         }
       }
 

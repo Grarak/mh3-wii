@@ -1,4 +1,5 @@
 #include "controller_host.h"
+#include "fatal.h"
 #include "../native/mh3_classic_map.h"
 #include <algorithm>
 #include <cmath>
@@ -61,13 +62,13 @@ std::optional<ClassicControllerSample> PlaybackInput() {
 
         while (input >> frame >> std::hex >> buttons >> std::dec >> lx >> ly >> rx >> ry) {
             if (!result.empty() && frame < result.back().frame)
-                throw std::runtime_error("MH3_INPUT_PLAYBACK frames must not decrease");
+                MH3_THROW(std::runtime_error("MH3_INPUT_PLAYBACK frames must not decrease"));
 
             result.push_back({frame, {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)}});
         }
 
         if (!input.eof() || result.empty())
-            throw std::runtime_error("Invalid MH3_INPUT_PLAYBACK log");
+            MH3_THROW(std::runtime_error("Invalid MH3_INPUT_PLAYBACK log"));
 
         return result;
     }();
@@ -155,7 +156,7 @@ ClassicControllerSample ReadLiveController() {
         int lx, ly, rx, ry;
 
         if (!(input >> std::hex >> buttons >> std::dec >> lx >> ly >> rx >> ry) || buttons > 0xFFFF || lx < -512 || lx > 511 || ly < -512 || ly > 511 || rx < -512 || rx > 511 || ry < -512 || ry > 511)
-            throw std::runtime_error("Invalid MH3_INPUT_FILE: expected hex buttons and four signed axes (-512..511)");
+            MH3_THROW(std::runtime_error("Invalid MH3_INPUT_FILE: expected hex buttons and four signed axes (-512..511)"));
 
         sample = {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)};
         return sample;
@@ -173,7 +174,7 @@ ClassicControllerSample ReadLiveController() {
         return sample;
 
     if (!SDL_WasInit(SDL_INIT_GAMEPAD) && !SDL_InitSubSystem(SDL_INIT_GAMEPAD))
-        throw std::runtime_error(std::string("SDL controller initialization: ") + SDL_GetError());
+        MH3_THROW(std::runtime_error(std::string("SDL controller initialization: ") + SDL_GetError()));
 
     const bool* keys = SDL_GetKeyboardState(nullptr);
 

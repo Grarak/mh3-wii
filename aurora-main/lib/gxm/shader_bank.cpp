@@ -1,4 +1,5 @@
 #include "shader_bank.hpp"
+#include <aurora/fatal.hpp>
 // ZSTD_createDDict_byReference; zstd is linked statically.
 #define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
@@ -53,7 +54,7 @@ Loaded& loaded() {
     value.dictionary = ZSTD_createDDict_byReference(Blob, DictionaryBytes);
 
     if (!value.context || !value.dictionary)
-      throw std::runtime_error("GXM shader bank: cannot create the zstd decoder");
+      AURORA_THROW(std::runtime_error("GXM shader bank: cannot create the zstd decoder"));
   }
 
   return value;
@@ -73,7 +74,7 @@ void unpack(const Program& entry, ShaderStage stage, void* bytes) {
   const auto type = stage == ShaderStage::Vertex ? SCE_GXM_VERTEX_PROGRAM : SCE_GXM_FRAGMENT_PROGRAM;
 
   if (ZSTD_isError(written) || written != entry.size || sceGxmProgramCheck(program) < 0 || sceGxmProgramGetSize(program) > entry.size || sceGxmProgramGetType(program) != type)
-    throw std::runtime_error("GXM shader bank: corrupt program " + describe(entry.key, stage));
+    AURORA_THROW(std::runtime_error("GXM shader bank: corrupt program " + describe(entry.key, stage)));
 }
 } // namespace
 
@@ -101,41 +102,11 @@ const SceGxmProgram* find(uint64_t key, ShaderStage stage) {
   void* bytes = memalign(64, entry->size);
 
   if (!bytes)
-    throw std::bad_alloc();
+    AURORA_THROW(std::bad_alloc());
 
-  try {
-    unpack(*entry, stage, bytes);
-  } catch (...) {
-    std::free(bytes);
-    throw;
-  }
+  unpack(*entry, stage, bytes);
 
   slot = static_cast<const SceGxmProgram*>(bytes);
   return slot;
-}
-
-size_t check_all() {
-  size_t checked = 0, largest = 0;
-
-  for (const auto stage : {ShaderStage::Vertex, ShaderStage::Fragment, ShaderStage::ScalarFragment}) {
-    const auto [programs, count] = table(stage);
-
-    for (size_t i = 0; i < count; ++i)
-      largest = std::max<size_t>(largest, programs[i].size);
-  }
-
-  std::unique_ptr<void, decltype(&std::free)> scratch(memalign(64, largest), std::free);
-
-  if (!scratch)
-    throw std::bad_alloc();
-
-  for (const auto stage : {ShaderStage::Vertex, ShaderStage::Fragment, ShaderStage::ScalarFragment}) {
-    const auto [programs, count] = table(stage);
-
-    for (size_t i = 0; i < count; ++i, ++checked)
-      unpack(programs[i], stage, scratch.get());
-  }
-
-  return checked;
 }
 } // namespace aurora::gxm::shader_bank

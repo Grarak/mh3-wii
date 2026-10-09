@@ -63,9 +63,8 @@ extern "C" void MH3_AnimCurveExecuteU8(CpuContext*);
 extern "C" void MH3_AnimCurveExecuteF32(CpuContext*);
 extern "C" void MH3_AnimCurveExecuteRotate(CpuContext*);
 
-#ifdef MH3_DEVELOPMENT
-#include "frame_split.h"
-#endif
+#include "frame_split.h" // MH3_SPLIT_SCOPE is empty in release builds
+
 namespace {
 
 // ut::List: head, tail, u16 count, u16 offset of the link {prev, next} in each object.

@@ -1,10 +1,13 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "audio_dma.h"
 #include "audio/native_audio.h"
 #include "os_alarm.h"
 #include "ios_host.h"
 #include "timebase_contract.h"
 #include "video_interface.h"
+#include "scope_exit.h"
+#include "self_test.h"
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -25,34 +28,28 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
     const auto duration = TimeBaseContract::TicksToDuration(ticks);
 
     if (ticks && duration == std::chrono::nanoseconds::zero())
-        throw std::runtime_error("OSSleepTicks duration exceeds host clock range");
+        MH3_THROW(std::runtime_error("OSSleepTicks duration exceeds host clock range"));
 
     const auto start = Clock::now();
 
     if (duration > Clock::time_point::max() - start)
-        throw std::runtime_error("OSSleepTicks deadline exceeds host clock range");
+        MH3_THROW(std::runtime_error("OSSleepTicks deadline exceeds host clock range"));
 
     const auto deadline = start + duration;
+    ScopeExit restore([&] { *cpu = saved; });
 
-    try {
-        do {
-            if (Memory::Read32(saved.gpr[13] - 14984))
-                throw std::runtime_error("OSSleepTicks requires runnable guest thread switching");
+    do {
+        if (Memory::Read32(saved.gpr[13] - 14984))
+            MH3_THROW(std::runtime_error("OSSleepTicks requires runnable guest thread switching"));
 
-            pump();
-            *cpu = saved;
-
-            if (Clock::now() >= deadline)
-                break;
-
-            std::this_thread::sleep_until(std::min(deadline, Clock::now() + std::chrono::milliseconds(1)));
-        } while (true);
-    } catch (...) {
+        pump();
         *cpu = saved;
-        throw;
-    }
 
-    *cpu = saved;
+        if (Clock::now() >= deadline)
+            break;
+
+        std::this_thread::sleep_until(std::min(deadline, Clock::now() + std::chrono::milliseconds(1)));
+    } while (true);
 }
 } // namespace
 
@@ -92,33 +89,22 @@ void RunSleepSelfTests(CpuContext* cpu) {
     });
 
     if (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(5) || calls < 2 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678)
-        throw std::runtime_error("Sleep timing/pumping/CPU preservation failed");
+        MH3_THROW(std::runtime_error("Sleep timing/pumping/CPU preservation failed"));
 
-    bool rejected = false;
-
-    try {
+    const auto failing = [&] {
         SleepTicks(cpu, [&] {
             cpu->lr = 0;
-            throw std::runtime_error("test callback failure");
+            MH3_THROW(std::runtime_error("test callback failure"));
         });
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
+    };
 
-    if (!rejected || cpu->lr != 0x5678)
-        throw std::runtime_error("Sleep exception restoration failed");
+    if (CheckRejections && (!Rejects(failing) || cpu->lr != 0x5678))
+        MH3_THROW(std::runtime_error("Sleep exception restoration failed"));
 
     Memory::Write32(pending, 1);
-    rejected = false;
 
-    try {
-        SleepTicks(cpu, [&] { ++calls; });
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-
-    if (!rejected)
-        throw std::runtime_error("Sleep skipped a runnable thread");
+    if (CheckRejections && !Rejects([&] { SleepTicks(cpu, [&] { ++calls; }); }))
+        MH3_THROW(std::runtime_error("Sleep skipped a runnable thread"));
 
     Memory::Write32(pending, oldPending);
     *cpu = original;

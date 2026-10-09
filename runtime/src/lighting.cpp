@@ -1,6 +1,7 @@
 // RMHP08 light ABI boundary. All light calculations/default construction are
 // native C. CPU compatibility records do not submit GX or GPU commands.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "memory.h"
 #include "../native/mh3_lighting.h"
 #include <cstring>
@@ -10,7 +11,7 @@
 namespace {
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native light input failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native light input failed: " + std::to_string(status)));
 }
 
 mh3_res_mut_span Record(uint32_t address) {
@@ -130,7 +131,7 @@ extern "C" void MH3_LightSettingDefaults(CpuContext* cpu) {
     const auto sets = uint16_t(cpu->gpr[8]);
 
     if (!count || count > MH3_LIGHT_MAX || !sets || sets > MH3_LIGHT_SET_MAX)
-        throw std::runtime_error("Native light setting count exceeds the scene allocation");
+        MH3_THROW(std::runtime_error("Native light setting count exceeds the scene allocation"));
 
     Checked(mh3_light_setting_store_defaults(
         {Memory::GetPointer(cpu->gpr[3], 16), 16}, {Memory::GetPointer(cpu->gpr[4], size_t(count) * MH3_LIGHT_RECORD_BYTES), size_t(count) * MH3_LIGHT_RECORD_BYTES},

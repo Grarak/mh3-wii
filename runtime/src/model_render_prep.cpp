@@ -2,6 +2,7 @@
 // original 80076220 step order and the 800879DC/80087B34 shape setup exactly,
 // against a host mirror of the G3DState caches and the given owner's state.
 #include "model_render_prep.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "memory.h"
 #include "native_graphics.h"
@@ -23,7 +24,7 @@ constexpr uint32_t Genmode = 0x80685300, Coordinates = 0x8068530c, TextureCache 
 constexpr uint32_t Sync = 0x80796db0, CurrentValid = 0x80796db4, PostIdentity = 0x80796db8, Pipeline = 0x80796dbc, DepthCompare = 0x80796dc8;
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Deferred model preparation failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Deferred model preparation failed: " + std::to_string(status)));
 }
 
 uint32_t Word(const uint8_t* p) {
@@ -234,12 +235,12 @@ struct Prep {
 
             if (changed & (1u << i)) {
                 if (binding.source.width > UINT16_MAX || binding.source.height > UINT16_MAX)
-                    throw std::runtime_error("Native G3D texture dimensions exceed coordinate cache");
+                    MH3_THROW(std::runtime_error("Native G3D texture dimensions exceed coordinate cache"));
 
                 Checked(mh3_texture_scale_size(m.At(Coordinates, 36), i, uint16_t(binding.source.width), uint16_t(binding.source.height)));
 
                 if (!binding.source.width || !binding.source.height)
-                    throw std::runtime_error("Native G3D map size is invalid");
+                    MH3_THROW(std::runtime_error("Native G3D map size is invalid"));
 
                 m.map_sizes.width[i] = uint16_t(binding.source.width);
                 m.map_sizes.height[i] = uint16_t(binding.source.height);
@@ -257,7 +258,7 @@ struct Prep {
 
     void Srt() {
         if (!srt)
-            throw std::runtime_error("Deferred model preparation has no texture SRT inputs");
+            MH3_THROW(std::runtime_error("Deferred model preparation has no texture SRT inputs"));
 
         mh3_texture_matrices matrices{};
         uint32_t next = 0;
@@ -426,7 +427,7 @@ mh3_res_mut_span ModelPrepMirror::At(uint32_t address, size_t size) {
     if (address >= BaseB && address - BaseB + size <= SizeB)
         return {b + (address - BaseB), size};
 
-    throw std::runtime_error("Deferred model preparation has no mirror for " + std::to_string(address));
+    MH3_THROW(std::runtime_error("Deferred model preparation has no mirror for " + std::to_string(address)));
 }
 
 void ModelPrepMirror::Invalidate(uint32_t fields) {
@@ -478,7 +479,7 @@ const uint8_t* Bytes(uint32_t address, size_t size) {
 // The typed block addresses of a material's slots, by mh3_model_material_block.
 void BlockAddresses(const uint32_t* slots, uint32_t out[MH3_MODEL_MATERIAL_BLOCK_COUNT]) {
     if (slots[MH3_MAT_TEV] > UINT32_MAX - 32)
-        throw std::runtime_error("Model pipeline offset overflows");
+        MH3_THROW(std::runtime_error("Model pipeline offset overflows"));
 
     out[MH3_MODEL_MATERIAL_PIPELINE] = slots[MH3_MAT_TEV] ? slots[MH3_MAT_TEV] + 32 : 0;
     out[MH3_MODEL_MATERIAL_PIXEL] = slots[MH3_MAT_PIXEL_STATE];
@@ -668,7 +669,7 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
             const uint32_t builtin = mode < 5 ? mode : 0;
 
             if (Memory::Read32(entry) != functions[builtin] || Memory::Read32(entry + 4) != kinds[builtin])
-                throw std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode));
+                MH3_THROW(std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode)));
 
             if (builtin) {
                 mh3_texture_mapping_input input{};

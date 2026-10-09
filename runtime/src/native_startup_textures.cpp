@@ -1,6 +1,7 @@
 // Compatibility addresses stay at this ABI boundary. The ordinary C core
 // owns readiness, group traversal, sampler policy and selection publication.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -85,7 +86,7 @@ extern "C" void MH3_StartupTextures(CpuContext *cpu) {
     const auto status = mh3_startup_textures_prepare(&state, frame.Arg(3), {Memory::GetPointer(Selectors, 10), 10}, &callbacks);
 
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native startup TPL preparation failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native startup TPL preparation failed: " + std::to_string(status)));
 
     for (unsigned byte = 0; byte < 4; ++byte)
         Memory::Write8(Selection + byte, state.selection[byte]);

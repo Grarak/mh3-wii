@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "ios_host.h"
 #include "video_interface.h"
 #include "audio_interface.h"
@@ -8,6 +9,7 @@
 #include "os_alarm.h"
 #include "controller_host.h"
 #include "village_boot.h"
+#include "self_test.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -56,19 +58,19 @@ unsigned alarmCallbacks = 0;
 bool failAlarm = false;
 void TestAlarmCallback(CpuContext* cpu) {
     if (cpu->gpr[3] != 0x80003000 || cpu->gpr[4] != 0x80004000 || (cpu->msr & 0x8000) || Memory::Read32(cpu->gpr[13] - 14992) != 1 || Memory::Read32(0x800000D4) == 0x80004000)
-        throw std::runtime_error("Alarm callback context incorrect");
+        MH3_THROW(std::runtime_error("Alarm callback context incorrect"));
 
     ++alarmCallbacks;
     ServiceOsAlarms(cpu); // no recursive delivery
     cpu->gpr[14] = 0;
 
     if (failAlarm)
-        throw std::runtime_error("test alarm exception");
+        MH3_THROW(std::runtime_error("test alarm exception"));
 }
 
 void TestIosCallback(CpuContext* cpu) {
     if (static_cast<int32_t>(cpu->gpr[3]) != -106 || cpu->gpr[4] != 0x12345678)
-        throw std::runtime_error("IOS callback arguments were not delivered");
+        MH3_THROW(std::runtime_error("IOS callback arguments were not delivered"));
 
     callbackObserved = true;
     ++callbackCount;
@@ -103,10 +105,10 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         MkwRestoreHostMxcsr(saved);
 
         if (!ni)
-            throw std::runtime_error("Single rounding under FPSCR[NI] did not flush pre-round subnormals");
+            MH3_THROW(std::runtime_error("Single rounding under FPSCR[NI] did not flush pre-round subnormals"));
 
         if (!ieee)
-            throw std::runtime_error("Single rounding without FPSCR[NI] flushed");
+            MH3_THROW(std::runtime_error("Single rounding without FPSCR[NI] flushed"));
     }
 
     {
@@ -118,25 +120,17 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
             for (uint32_t alias : {0x80000000u, 0xC0000000u}) {
                 if (MemoryInline::FlatLoad<uint64_t>(address | alias) != 0x0123456789ABCDEFull || Memory::Read64(address | alias) != 0x0123456789ABCDEFull)
-                    throw std::runtime_error("Flat RAM alias/page straddle failed");
+                    MH3_THROW(std::runtime_error("Flat RAM alias/page straddle failed"));
             }
         }
 
         for (uint32_t address : {0x817FFFFCu, 0x93FFFFFCu, 0x48000000u, 0xC8000000u, 0xCC008000u}) {
             if (Memory::Contains(address, 8))
-                throw std::runtime_error("Terminal RAM or MMIO reported as mapped");
+                MH3_THROW(std::runtime_error("Terminal RAM or MMIO reported as mapped"));
         }
 
-        bool rejected = false;
-
-        try {
-            Memory::Read64(0x817FFFFC);
-        } catch (const Memory::AccessViolation&) {
-            rejected = true;
-        }
-
-        if (!rejected)
-            throw std::runtime_error("Cross-allocation RAM read accepted");
+        if (CheckRejections && !Rejects<Memory::AccessViolation>([] { Memory::Read64(0x817FFFFC); }))
+            MH3_THROW(std::runtime_error("Cross-allocation RAM read accepted"));
     }
 
     RunVideoTimingSelfTests();
@@ -151,62 +145,42 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         RecompMod::RegisterExecutableRange(start, end, "duplicate registration");
         RecompMod::RegisterExecutableRange(end, end + 4, "shared-page neighbor");
         const auto rejectsWrite = [](uint32_t address) {
-            try {
-                RecompMod::CheckExecutableWrite(address, 4, 0x5A5A5A5A);
-            } catch (const std::runtime_error&) {
-                return true;
-            }
-
-            return false;
+            return Rejects([&] { RecompMod::CheckExecutableWrite(address, 4, 0x5A5A5A5A); });
         };
 
         for (auto alias : {0u, 0x80000000u, 0xC0000000u}) {
-            if (!rejectsWrite(((end - 4) & 0x3FFFFFFF) | alias))
-                throw std::runtime_error("Executable final-word/alias protection failed");
+            if (CheckRejections && !rejectsWrite(((end - 4) & 0x3FFFFFFF) | alias))
+                MH3_THROW(std::runtime_error("Executable final-word/alias protection failed"));
         }
 
         RecompMod::CheckExecutableWrite(start, 4, 0); // Identical loader writes remain valid.
         RecompMod::VerifyExecutableRanges();
         Memory::Write32(start + 4, 1);
-        bool detected = false;
 
-        try {
-            RecompMod::VerifyExecutableRanges();
-        } catch (const std::runtime_error&) {
-            detected = true;
-        }
-
-        if (!detected)
-            throw std::runtime_error("Code checksum missed a store to translated code");
+        if (CheckRejections && !Rejects([] { RecompMod::VerifyExecutableRanges(); }))
+            MH3_THROW(std::runtime_error("Code checksum missed a store to translated code"));
 
         RecompMod::UnregisterExecutableRange(start, end);
         Memory::Write32(start, 1);
         Memory::Write32(end - 4, 1);
 
-        if (!rejectsWrite(end))
-            throw std::runtime_error("Unlink removed neighboring code protection");
+        if (CheckRejections && !rejectsWrite(end))
+            MH3_THROW(std::runtime_error("Unlink removed neighboring code protection"));
 
         RecompMod::RegisterExecutableRange(start, end, "relinked image");
 
-        if (!rejectsWrite(start + 4))
-            throw std::runtime_error("Reload did not restore code protection");
+        if (CheckRejections && !rejectsWrite(start + 4))
+            MH3_THROW(std::runtime_error("Reload did not restore code protection"));
 
         RecompMod::VerifyExecutableRanges(); // A relinked image takes a fresh checksum.
         RecompMod::UnregisterExecutableRange(start, end);
         RecompMod::UnregisterExecutableRange(end, end + 4);
-        bool invoked = false;
-        RawDispatchRecord stale{0x80868F30, [](CpuContext*) { throw std::logic_error("Stale RSO entry executed"); }, 0, false};
 
-        try {
-            TryDispatchRawCpuTarget(&stale, cpu);
-            invoked = true;
-        } catch (const std::logic_error&) {
-            throw;
-        } catch (const std::runtime_error&) {
-        }
+        // Rejected with a runtime error; the entry's logic error fails the test.
+        RawDispatchRecord stale{0x80868F30, [](CpuContext*) { MH3_THROW(std::logic_error("Stale RSO entry executed")); }, 0, false};
 
-        if (invoked)
-            throw std::runtime_error("Unlinked RSO dispatch was accepted");
+        if (CheckRejections && !Rejects([&] { TryDispatchRawCpuTarget(&stale, cpu); }))
+            MH3_THROW(std::runtime_error("Unlinked RSO dispatch was accepted"));
 
         RecompMod::CheckRsoExecution(0x8086907C); // Verification prolog remains reachable.
     }
@@ -216,26 +190,18 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
         for (auto base : {0x08000000u, 0x88000000u, 0xC8000000u})
             if (!DecodeEfbColorAddress(base + 527 * 4096 + 639 * 4, x, y) || x != 639 || y != 527)
-                throw std::runtime_error("EFB coordinate/alias decoding failed");
+                MH3_THROW(std::runtime_error("EFB coordinate/alias decoding failed"));
         for (auto bad : {0x48000000u, 0xC8400000u, 0xC8000001u, 0x80000000u})
             if (DecodeEfbColorAddress(bad, x, y))
-                throw std::runtime_error("Invalid EFB address accepted");
+                MH3_THROW(std::runtime_error("Invalid EFB address accepted"));
         // CPU EFB reads (including out-of-bounds coordinates) now terminate;
         // RunGxPanicSelfTests isolates and validates that fatal path below.
         if (ConvertEfbArgb(0xAB123456, 0, 2) != 0xFF123456 || ConvertEfbArgb(0xAB123456, 1, 2) != 0xAA103455 || ConvertEfbArgb(0xAB123456, 2, 2) != 0xFF103452 ||
             ConvertEfbArgb(0xAB123456, 1, 0) != 0x00103455 || ConvertEfbArgb(0xAB123456, 1, 1) != 0xFF103455)
-            throw std::runtime_error("EFB pixel format/alpha conversion failed");
+            MH3_THROW(std::runtime_error("EFB pixel format/alpha conversion failed"));
         for (auto modes : {std::pair{3u, 0u}, std::pair{0u, 3u}}) {
-            bool rejected = false;
-
-            try {
-                ConvertEfbArgb(0, modes.first, modes.second);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
-                throw std::runtime_error("Unsupported EFB mode accepted");
+            if (CheckRejections && !Rejects([&] { ConvertEfbArgb(0, modes.first, modes.second); }))
+                MH3_THROW(std::runtime_error("Unsupported EFB mode accepted"));
         }
     }
 
@@ -244,7 +210,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         ai.Reset(0);
 
         if (ai.Read(0, 1000000) != 0x42 || ai.Read(8, 1000000))
-            throw std::runtime_error("AI reset/stopped state failed");
+            MH3_THROW(std::runtime_error("AI reset/stopped state failed"));
 
         ai.Write(12, 48, 1000000);
         ai.Write(0, 0x43, 1000000);
@@ -254,38 +220,38 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             ai.Read(8, t);
 
         if (ai.Read(8, 2000000) != 48 || !(ai.Read(0, 2000000) & 8))
-            throw std::runtime_error("AI 48 kHz clock/interrupt failed");
+            MH3_THROW(std::runtime_error("AI 48 kHz clock/interrupt failed"));
 
         ai.Write(0, 0x49, 2000000); // clear interrupt and switch stream to 32 kHz
         if (ai.Read(8, 3000000) != 80 || (ai.Read(0, 3000000) & 8))
-            throw std::runtime_error("AI rate switch/interrupt acknowledge failed");
+            MH3_THROW(std::runtime_error("AI rate switch/interrupt acknowledge failed"));
 
         ai.Write(0, 0x40, 3000000);
 
         if (ai.Read(8, 9000000) != 80)
-            throw std::runtime_error("AI stop failed");
+            MH3_THROW(std::runtime_error("AI stop failed"));
 
         ai.Write(0, 0x62, 9000000);
 
         if (ai.Read(8, 9000000) || ai.Read(0, 9000000) != 0x42)
-            throw std::runtime_error("AI counter reset failed");
+            MH3_THROW(std::runtime_error("AI counter reset failed"));
 
         ai.Write(8, 0xFFFFFFF0, 9000000);
         ai.Write(12, 0x10, 9000000);
         ai.Write(0, 0x43, 9000000);
 
         if (ai.Read(8, 10000000) != 0x20 || !(ai.Read(0, 10000000) & 8))
-            throw std::runtime_error("AI counter wrap failed");
+            MH3_THROW(std::runtime_error("AI counter wrap failed"));
 
         Memory::Write32(0xCD006C04, 0x1234);
 
         if (Memory::Read32(0xCC006C04) != 0x1234 || Memory::Read32(0x0D006C04) != 0x1234)
-            throw std::runtime_error("AI register aliases failed");
+            MH3_THROW(std::runtime_error("AI register aliases failed"));
 
         uint32_t value;
 
         if (ReadAudioRegister32(0x4D006C00, value) || ReadAudioRegister32(0xCD006C01, value) || ReadAudioRegister32(0xCD006C10, value))
-            throw std::runtime_error("AI accepted an invalid register");
+            MH3_THROW(std::runtime_error("AI accepted an invalid register"));
     }
 
     {
@@ -295,30 +261,23 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         MH3_WUDInit(cpu);
 
         if (cpu->gpr[3] != 1 || Memory::Read8(0x80761668) != 3)
-            throw std::runtime_error("WUD host startup state failed");
+            MH3_THROW(std::runtime_error("WUD host startup state failed"));
 
         MH3_WUDInit(cpu);
 
         if (cpu->gpr[3] != 0)
-            throw std::runtime_error("WUD startup is not idempotent");
+            MH3_THROW(std::runtime_error("WUD startup is not idempotent"));
 
         *cpu = saved;
         Memory::Write32(0xCD0000C0, 0x100);
 
         if (Memory::Read32(0x0D0000C0) != 0x100)
-            throw std::runtime_error("Sensor-bar GPIO alias failed");
+            MH3_THROW(std::runtime_error("Sensor-bar GPIO alias failed"));
 
         Memory::Write32(0xCD0000C0, 0);
-        bool rejected = false;
 
-        try {
-            Memory::Write32(0xCD0000C0, 2);
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-
-        if (!rejected)
-            throw std::runtime_error("Unknown GPIO output was accepted");
+        if (CheckRejections && !Rejects([] { Memory::Write32(0xCD0000C0, 2); }))
+            MH3_THROW(std::runtime_error("Unknown GPIO output was accepted"));
     }
 
     for (uint32_t channel = 0; channel < 4; ++channel) {
@@ -327,7 +286,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         MH3_SIGetType(cpu);
 
         if (cpu->gpr[3] != 8 || Memory::Read32(0x8062A8B8 + channel * 4) != 8)
-            throw std::runtime_error("SI absent-device result/state failed");
+            MH3_THROW(std::runtime_error("SI absent-device result/state failed"));
     }
 
     // The locked cache is independent storage, including at its last byte.
@@ -336,7 +295,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
     if (Memory::Read32(0xE0000000) != 0x12345678 || Memory::Read32(0xE0003FFC) != 0xABCDEF01 || Memory::Contains(0xE0003FFC, 8) || Memory::Contains(0xE0004000, 1) || Memory::Contains(0x20000000, 4) ||
         Memory::Contains(0xA0000000, 4))
-        throw std::runtime_error("Locked-cache mapping/bounds failed");
+        MH3_THROW(std::runtime_error("Locked-cache mapping/bounds failed"));
     {
         const auto saved = *cpu;
         std::array<uint8_t, 4096> pattern;
@@ -349,31 +308,24 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         Memory::Write8(0xE0001000, 0xFF);
         PPC_WriteSpr(923, 0xE0001000); // programming without a trigger does not copy
         if (Memory::Read8(0xE0001000) != 0xFF)
-            throw std::runtime_error("DMA setup changed cache");
+            MH3_THROW(std::runtime_error("DMA setup changed cache"));
 
         PPC_WriteSpr(923, 0xE0001012); // trigger RAM -> locked cache
         if (!std::equal(pattern.begin(), pattern.end(), Memory::GetPointer(0xE0001000, 4096)) || PPC_ReadSpr(923) != 0xE0001010 || PPC_ReadSpr(922) != 0x00020000)
-            throw std::runtime_error("Locked-cache DMA load/completion failed");
+            MH3_THROW(std::runtime_error("Locked-cache DMA load/completion failed"));
         // Both length fields matter: 7 lines, to MEM2, with bytes beyond the
         // destination kept intact. DMA preserves guest byte order.
         Memory::Write8(0x90020100, 0xEE);
         PPC_WriteSpr(922, 0x10020021); // aligned address 0x10020020, length upper=1
         PPC_WriteSpr(923, 0xE000100E); // 7 lines, cache -> RAM
         if (!std::equal(pattern.begin(), pattern.begin() + 224, Memory::GetPointer(0x90020020, 224)) || Memory::Read8(0x90020100) != 0xEE || (PPC_ReadSpr(923) & 2))
-            throw std::runtime_error("Locked-cache DMA store/length failed");
+            MH3_THROW(std::runtime_error("Locked-cache DMA store/length failed"));
         // Reject the whole request before writing any destination bytes.
         const auto expectRejected = [&](uint32_t upper, uint32_t lower) {
             PPC_WriteSpr(922, upper);
-            bool rejected = false;
 
-            try {
-                PPC_WriteSpr(923, lower);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
-                throw std::runtime_error("Invalid locked-cache DMA accepted");
+            if (CheckRejections && !Rejects([&] { PPC_WriteSpr(923, lower); }))
+                MH3_THROW(std::runtime_error("Invalid locked-cache DMA accepted"));
         };
 
         expectRejected(0x00020000, 0xE0003FF2); // 4096 bytes past cache end
@@ -383,7 +335,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         PPC_WriteSpr(920, 0x0F000000);
 
         if (PPC_ReadSpr(920) & 0x0F000000)
-            throw std::runtime_error("DMA queue count is writable");
+            MH3_THROW(std::runtime_error("DMA queue count is writable"));
 
         PPC_WriteSpr(922, 0);
         PPC_WriteSpr(923, 0);
@@ -391,30 +343,30 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     }
 
     if (Memory::Read16(0xCC002002) != 0x0101)
-        throw std::runtime_error("VI initial PAL mode failed");
+        MH3_THROW(std::runtime_error("VI initial PAL mode failed"));
 
     Memory::Write16(0xCC002048, 0x2828);
 
     if (Memory::Read16(0x0C002048) != 0x2828)
-        throw std::runtime_error("VI register alias/storage failed");
+        MH3_THROW(std::runtime_error("VI register alias/storage failed"));
 
     const uint16_t line = Memory::Read16(0xCC00202C);
     const uint16_t sample = Memory::Read16(0xCC00202E);
 
     if (line < 1 || line > 625 || sample < 1 || sample > 864)
-        throw std::runtime_error("VI beam position out of PAL bounds");
+        MH3_THROW(std::runtime_error("VI beam position out of PAL bounds"));
 
     BeginVideoRetrace();
 
     if (Memory::Read16(0xCC00202C) != 1 || !(Memory::Read16(0xCC002030) & 0x8000) || VideoRetracePeriodNs() != 20000000)
-        throw std::runtime_error("VI first PAL retrace latch failed");
+        MH3_THROW(std::runtime_error("VI first PAL retrace latch failed"));
 
     Memory::Write16(0xCC002030, Memory::Read16(0xCC002030) & 0x7FFF);
     EndVideoRetrace();
     BeginVideoRetrace();
 
     if (Memory::Read16(0xCC00202C) != 313 || !(Memory::Read16(0xCC002034) & 0x8000) || (Memory::Read16(0xCC002030) & 0x8000))
-        throw std::runtime_error("VI second-field/acknowledgement failed");
+        MH3_THROW(std::runtime_error("VI second-field/acknowledgement failed"));
 
     EndVideoRetrace();
     Memory::Write16(0xCC002002, 5); // enabled, non-interlaced NTSC
@@ -423,14 +375,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     BeginVideoRetrace();
 
     if (Memory::Read16(0xCC00202C) != 1 || VideoRetracePeriodNs() != 16683333)
-        throw std::runtime_error("VI non-interlaced retrace failed");
+        MH3_THROW(std::runtime_error("VI non-interlaced retrace failed"));
 
     EndVideoRetrace();
     ResetVideoInterface();
     uint16_t unused;
 
     if (ReadVideoRegister16(0xCC003000, unused) || ReadVideoRegister16(0xCC002001, unused))
-        throw std::runtime_error("VI intercepted an unrelated or unaligned register");
+        MH3_THROW(std::runtime_error("VI intercepted an unrelated or unaligned register"));
     // Replaces the old emulated-register mask/alias checks: every GX register
     // alias, SDK call and FIFO writer must now terminate before graphics work.
     RunGxPanicSelfTests(cpu);
@@ -447,29 +399,22 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     stream.Write(std::span(commands).first(5), sink);
 
     if (packets || stream.PendingBytes() != 5)
-        throw std::runtime_error("GX decoded a partial command");
+        MH3_THROW(std::runtime_error("GX decoded a partial command"));
 
     stream.Write(std::span(commands).subspan(5, 5), sink);
 
     if (packets != 1 || stream.PendingBytes() != 4)
-        throw std::runtime_error("GX command framing failed");
+        MH3_THROW(std::runtime_error("GX command framing failed"));
 
     stream.Write(std::span(commands).subspan(10), sink);
 
     if (packets != 2 || stream.PendingBytes() || !std::equal(delivered.begin(), delivered.end(), commands.begin(), commands.end()))
-        throw std::runtime_error("GX stream changed command bytes");
+        MH3_THROW(std::runtime_error("GX stream changed command bytes"));
 
-    bool rejected = false;
+    const uint8_t guestPointer[]{0x08, 0xA0, 0x80, 0, 0, 0};
 
-    try {
-        const uint8_t command[]{0x08, 0xA0, 0x80, 0, 0, 0};
-        stream.Write(command, sink);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-
-    if (!rejected || packets != 2)
-        throw std::runtime_error("GX forwarded an unconverted guest pointer");
+    if (CheckRejections && (!Rejects([&] { stream.Write(guestPointer, sink); }) || packets != 2))
+        MH3_THROW(std::runtime_error("GX forwarded an unconverted guest pointer"));
 
     GuestGxStream translatedStream;
     delivered.clear();
@@ -479,7 +424,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     constexpr uintptr_t kHostArrayProbe = sizeof(uintptr_t) == 8 ? static_cast<uintptr_t>(0x0123456789ABCDEFULL) : static_cast<uintptr_t>(0x89ABCDEFu);
     translatedStream.Write(arrayCommand, sink, [](uint32_t guest) -> GuestGxStream::ArrayView {
         if (guest != 0x10001234)
-            throw std::runtime_error("GX array address byte order failed");
+            MH3_THROW(std::runtime_error("GX array address byte order failed"));
 
         return {kHostArrayProbe, 0x1234};
     });
@@ -491,7 +436,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     expected.insert(expected.end(), {0, 0, 0x12, 0x34, 0});
 
     if (delivered != expected)
-        throw std::runtime_error("GX host array command encoding failed");
+        MH3_THROW(std::runtime_error("GX host array command encoding failed"));
 
     {
         std::array<uint8_t, 32> inner{}, outer{};
@@ -506,7 +451,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             if (address == 0x2000)
                 return {reinterpret_cast<uintptr_t>(inner.data()), inner.size()};
 
-            throw std::runtime_error("Unexpected display-list address");
+            MH3_THROW(std::runtime_error("Unexpected display-list address"));
         };
 
         const std::array<uint8_t, 9> callOuter{0x40, 0, 0, 0x10, 0, 0, 0, 0, 32};
@@ -519,7 +464,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         lists.Write(std::span(callOuter).first(4), receive, resolve);
 
         if (!packets.empty())
-            throw std::runtime_error("Partial display-list call executed");
+            MH3_THROW(std::runtime_error("Partial display-list call executed"));
 
         lists.Write(std::span(callOuter).subspan(4), receive, resolve);
         const uint8_t draw[]{0x90, 0, 1, 0xAB, 0xCD};
@@ -534,22 +479,15 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
         if (lists.PixelFormat() != 1 || lists.PendingBytes() || !std::equal(std::begin(setup), std::end(setup), delivered.begin()) ||
             packets.back() != std::vector<uint8_t>(std::begin(draw), std::end(draw)))
-            throw std::runtime_error("Nested display-list state/order failed");
+            MH3_THROW(std::runtime_error("Nested display-list state/order failed"));
         for (auto& packet : packets)
             if (packet[0] == 0x40)
-                throw std::runtime_error("Guest display-list pointer reached Aurora");
+                MH3_THROW(std::runtime_error("Guest display-list pointer reached Aurora"));
         auto rejectList = [&](auto resolver) {
             GuestGxStream invalid;
-            bool rejected = false;
 
-            try {
-                invalid.Write(callOuter, [](auto) {}, resolver);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
-                throw std::runtime_error("Invalid display list accepted");
+            if (CheckRejections && !Rejects([&] { invalid.Write(callOuter, [](auto) {}, resolver); }))
+                MH3_THROW(std::runtime_error("Invalid display list accepted"));
         };
 
         rejectList([&](uint32_t) -> GuestGxStream::ArrayView { return {reinterpret_cast<uintptr_t>(outer.data()), 8}; });
@@ -575,7 +513,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             unsigned accessible = matrices.size();
             auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
                 if (address != 0x1000)
-                    throw std::runtime_error("Indexed XF base address mismatch");
+                    MH3_THROW(std::runtime_error("Indexed XF base address mismatch"));
 
                 return {reinterpret_cast<uintptr_t>(matrices.data()), accessible};
             };
@@ -593,38 +531,25 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             indexed.Write(std::span(command).first(3), receive, resolve);
 
             if (last != std::vector<uint8_t>(std::begin(stride), std::end(stride)))
-                throw std::runtime_error("Partial indexed XF command executed");
+                MH3_THROW(std::runtime_error("Partial indexed XF command executed"));
 
             indexed.Write(std::span(command).subspan(3), receive, resolve);
 
             if (last.size() != 5 + lengths[slot] * 4 || last[0] != 0x10 || last[2] != lengths[slot] - 1 || last[3] != destinations[slot] >> 8 || last[4] != (destinations[slot] & 255) ||
                 !std::equal(last.begin() + 5, last.end(), matrices.begin() + 128))
-                throw std::runtime_error("Indexed XF expansion/endian/stride failed");
+                MH3_THROW(std::runtime_error("Indexed XF expansion/endian/stride failed"));
             accessible = 128 + lengths[slot] * 4 - 1;
-            bool rejected = false;
 
-            try {
-                indexed.Write(command, receive, resolve);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
-                throw std::runtime_error("Indexed XF exceeded source bounds");
+            if (CheckRejections && !Rejects([&] { indexed.Write(command, receive, resolve); }))
+                MH3_THROW(std::runtime_error("Indexed XF exceeded source bounds"));
         }
 
         GuestGxStream invalid;
         const uint8_t partial[]{0x20, 0, 0, 0xB0, 1};
-        bool rejected = false;
+        const auto matrixRam = [&](uint32_t) -> GuestGxStream::ArrayView { return {reinterpret_cast<uintptr_t>(matrices.data()), matrices.size()}; };
 
-        try {
-            invalid.Write(partial, [](auto) {}, [&](uint32_t) -> GuestGxStream::ArrayView { return {reinterpret_cast<uintptr_t>(matrices.data()), matrices.size()}; });
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-
-        if (!rejected)
-            throw std::runtime_error("Unsupported partial XF matrix accepted");
+        if (CheckRejections && !Rejects([&] { invalid.Write(partial, [](auto) {}, matrixRam); }))
+            MH3_THROW(std::runtime_error("Unsupported partial XF matrix accepted"));
     }
 
     auto vertexCase = [&](uint32_t lo, uint32_t hi, uint32_t a, uint32_t b, uint32_t c, size_t stride, uint16_t count, uint8_t opcode) {
@@ -638,7 +563,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             // Commands arrive in runs: a NOP can follow the draw in its packet.
             if (command[0] >= 0x80) {
                 if (command.size() < packet.size() || !std::equal(packet.begin(), packet.end(), command.begin()))
-                    throw std::runtime_error("GX vertex packet size/data changed");
+                    MH3_THROW(std::runtime_error("GX vertex packet size/data changed"));
 
                 ++draws;
                 nops += unsigned(std::count(command.begin() + packet.size(), command.end(), 0));
@@ -667,13 +592,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         vertices.Write(std::span(packet).subspan(2, packet.size() - 3), receive, resolveFramingArray);
 
         if (draws || vertices.PendingBytes() != packet.size() - 1)
-            throw std::runtime_error("GX emitted an incomplete vertex packet");
+            MH3_THROW(std::runtime_error("GX emitted an incomplete vertex packet"));
 
         const uint8_t tail[]{packet.back(), 0};
         vertices.Write(tail, receive, resolveFramingArray);
 
         if (draws != 1 || nops != 1 || vertices.PendingBytes())
-            throw std::runtime_error("GX vertex packet framing lost the next command");
+            MH3_THROW(std::runtime_error("GX vertex packet framing lost the next command"));
     };
 
     for (unsigned opcode = 0x80; opcode <= 0xBF; ++opcode)
@@ -696,7 +621,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         unsigned arrayPackets = 0;
         auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
             if (address < 0x1000 || address >= 0x1C00 || (address & 255))
-                throw std::runtime_error("Draw array base mismatch");
+                MH3_THROW(std::runtime_error("Draw array base mismatch"));
 
             return {uintptr_t(0x10000000) + address, available};
         };
@@ -707,7 +632,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
                 const unsigned slot = packet[2] - 0x10;
 
                 if (slot >= 12)
-                    throw std::runtime_error("Unexpected draw array slot");
+                    MH3_THROW(std::runtime_error("Unexpected draw array slot"));
 
                 sizes[slot] = (uint32_t(packet[11]) << 24) | (uint32_t(packet[12]) << 16) | (uint32_t(packet[13]) << 8) | packet[14];
             } else if (packet[0] >= 0x80)
@@ -734,17 +659,17 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         arrays.Write(vertices, receive, resolve);
 
         if (draws != 1 || sizes[0] != 1212 || sizes[1] != 120 || sizes[2] != 12 || sizes[4] != 48)
-            throw std::runtime_error("Per-draw indexed array extents/NBT3 failed");
+            MH3_THROW(std::runtime_error("Per-draw indexed array extents/NBT3 failed"));
 
         const unsigned firstArrayPackets = arrayPackets;
         arrays.Write(vertices, receive, resolve);
 
         if (draws != 2 || arrayPackets != firstArrayPackets)
-            throw std::runtime_error("Unchanged draw redundantly rebound vertex arrays");
+            MH3_THROW(std::runtime_error("Unchanged draw redundantly rebound vertex arrays"));
 
         for (unsigned slot : {3, 5, 6, 7, 8, 9, 10, 11})
             if (sizes[slot])
-                throw std::runtime_error("Unused draw array was uploaded");
+                MH3_THROW(std::runtime_error("Unused draw array was uploaded"));
         // A later draw that reads less of the same array reuses the bound prefix
         // (every rebind is another upload)...
         auto smaller = std::vector<uint8_t>(std::begin(vertices), std::end(vertices));
@@ -752,7 +677,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         arrays.Write(smaller, receive, resolve);
 
         if (draws != 3 || arrayPackets != firstArrayPackets)
-            throw std::runtime_error("Smaller draw extent redundantly rebound vertex arrays");
+            MH3_THROW(std::runtime_error("Smaller draw extent redundantly rebound vertex arrays"));
         // ...but a base-register write never keeps its RAM-region size: the next
         // draw binds only what it reads.
         cp(0xA0, 0x1000);
@@ -760,7 +685,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         arrays.Write(smaller, receive, resolve);
 
         if (sizes[0] != 36 || draws != 4)
-            throw std::runtime_error("Draw array extent did not shrink");
+            MH3_THROW(std::runtime_error("Draw array extent did not shrink"));
 
         cp(0x50, 2 << 11);
         cp(0x60, 0);
@@ -771,20 +696,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         arrays.Write(nbt, receive, resolve);
 
         if (sizes[1] != 98)
-            throw std::runtime_error("Single-index NBT extent failed");
+            MH3_THROW(std::runtime_error("Single-index NBT extent failed"));
 
         available = 97;
         cp(0xA1, 0x1100); // resolved again at the base write
-        bool rejected = false;
 
-        try {
-            arrays.Write(nbt, receive, resolve);
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-
-        if (!rejected || draws != 5)
-            throw std::runtime_error("Out-of-RAM draw was emitted");
+        if (CheckRejections && (!Rejects([&] { arrays.Write(nbt, receive, resolve); }) || draws != 5))
+            MH3_THROW(std::runtime_error("Out-of-RAM draw was emitted"));
     }
 
     {
@@ -823,7 +741,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             if (address == 0x3000)
                 return {reinterpret_cast<uintptr_t>(textureBytes.data()), textureBytes.size()};
 
-            throw std::runtime_error("Skipped draw resolved unexpected RAM");
+            MH3_THROW(std::runtime_error("Skipped draw resolved unexpected RAM"));
         };
 
         auto cp = [&](uint8_t reg, uint32_t value) {
@@ -853,16 +771,19 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         skipped.Write(std::span(draw).subspan(2), receive, resolve);
 
         if (draws || texturePackets || traces || arrayPackets != 1 || skipped.PendingBytes() || skipped.PixelFormat() != 3 || GuestGxStream::skippedDrawCount - before != 2)
-            throw std::runtime_error("Skipped nested/fragmented GX draws lost state or prepared resources");
+            MH3_THROW(std::runtime_error("Skipped nested/fragmented GX draws lost state or prepared resources"));
 
         drop = false;
         skipped.Write(draw, receive, resolve);
 
         if (draws != 1 || traces != 1 || texturePackets != 1 || arrayPackets != 2 || lastArraySize != 60)
-            throw std::runtime_error("Visible GX draw did not use deferred texture and display-list array state");
+            MH3_THROW(std::runtime_error("Visible GX draw did not use deferred texture and display-list array state"));
     }
 
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass, uint32_t guestAddress = 0) {
+        if (!CheckRejections && !shouldPass)
+            return; // its rejection would stop the process
+
         GuestGxStream textureStream;
         GuestGxStream::InvalidateTextureHashes(); // the hashes are process-wide
         std::vector<uint8_t> metadata;
@@ -876,7 +797,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
         auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
             if (address != 0x100000)
-                throw std::runtime_error("GX texture address scaling failed");
+                MH3_THROW(std::runtime_error("GX texture address scaling failed"));
 
             return {reinterpret_cast<uintptr_t>(textureBytes.data()), bytes};
         };
@@ -892,9 +813,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             textureStream.Write(command, textureSink, resolve);
         };
 
-        bool passed = true;
-
-        try {
+        const bool passed = !Rejects([&] {
             bpWrite(0x80, mips ? 0xC0 : 0x80);
             bpWrite(0x88, (format << 20) | ((height - 1) << 10) | (width - 1));
 
@@ -904,15 +823,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             bpWrite(0x88, 0xF00000 | (width - 1));
             bpWrite(0x94, 0x100000 >> 5);
             draw();
-        } catch (const std::runtime_error&) {
-            passed = false;
-        }
+        });
 
         if (passed != shouldPass)
-            throw std::runtime_error("GX texture footprint validation failed");
+            MH3_THROW(std::runtime_error("GX texture footprint validation failed"));
 
         if (passed && (metadata.size() != 37 || metadata[2] != 0x30 || metadata[15] != width || metadata[19] != height || metadata[23] != format || metadata[28] != mips))
-            throw std::runtime_error("GX texture metadata encoding failed");
+            MH3_THROW(std::runtime_error("GX texture metadata encoding failed"));
 
         if (passed) {
             const auto version = std::vector<uint8_t>(metadata.begin() + 33, metadata.end());
@@ -921,14 +838,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             draw();
 
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
-                throw std::runtime_error("Unchanged GX texture lost its cache identity");
+                MH3_THROW(std::runtime_error("Unchanged GX texture lost its cache identity"));
 
             bpWrite(0x66, 0xFFFF00);
             textureStream.Write(repeat, textureSink, resolve);
             draw();
 
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
-                throw std::runtime_error("Unchanged GX texture lost its identity at TMEM invalidation");
+                MH3_THROW(std::runtime_error("Unchanged GX texture lost its identity at TMEM invalidation"));
 
             textureBytes[0] ^= 0xFF;
 
@@ -937,14 +854,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             draw();
 
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
-                throw std::runtime_error("GX texture was hashed again before an invalidation");
+                MH3_THROW(std::runtime_error("GX texture was hashed again before an invalidation"));
 
             bpWrite(0x66, 0xFFFF00); // GXInvalidateTexAll
             textureStream.Write(repeat, textureSink, resolve);
             draw();
 
             if (std::equal(version.begin(), version.end(), metadata.begin() + 33))
-                throw std::runtime_error("Rewritten GX texture kept a stale cache identity");
+                MH3_THROW(std::runtime_error("Rewritten GX texture kept a stale cache identity"));
             // A copy into other bytes keeps the hash; one over the texture drops it.
             const auto rewritten = std::vector<uint8_t>(metadata.begin() + 33, metadata.end());
             const auto base = reinterpret_cast<uintptr_t>(textureBytes.data());
@@ -954,14 +871,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             draw();
 
             if (!std::equal(rewritten.begin(), rewritten.end(), metadata.begin() + 33))
-                throw std::runtime_error("A copy elsewhere dropped a GX texture hash");
+                MH3_THROW(std::runtime_error("A copy elsewhere dropped a GX texture hash"));
 
             GuestGxStream::InvalidateTextureHashes(base + bytes - 1, 1);
             textureStream.Write(repeat, textureSink, resolve);
             draw();
 
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
-                throw std::runtime_error("A copy over a GX texture kept its hash");
+                MH3_THROW(std::runtime_error("A copy over a GX texture kept its hash"));
         }
     };
 
@@ -998,7 +915,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             if (address == 0x300000)
                 return {reinterpret_cast<uintptr_t>(paletteList), sizeof(paletteList)};
 
-            throw std::runtime_error("Unexpected TLUT source address");
+            MH3_THROW(std::runtime_error("Unexpected TLUT source address"));
         };
 
         auto write = [&](uint8_t reg, uint32_t value) {
@@ -1038,7 +955,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         auto p = palettePackets();
 
         if (p.size() != 1 || p[0].size() != 26 || p[0][3] != 4 || word(p[0], 12) != 1 || p[0][16] != 1 || p[0][17] != 0)
-            throw std::runtime_error("GX TLUT slot/format/entry encoding failed");
+            MH3_THROW(std::runtime_error("GX TLUT slot/format/entry encoding failed"));
 
         uintptr_t pointer = 0;
 
@@ -1046,26 +963,26 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             pointer = (pointer << 8) | p[0][i];
 
         if (reinterpret_cast<const uint8_t*>(pointer)[0] != 0xF8)
-            throw std::runtime_error("GX TLUT did not snapshot guest RAM");
+            MH3_THROW(std::runtime_error("GX TLUT did not snapshot guest RAM"));
 
         drawPalette();
 
         if (palettePackets().size() != 1)
-            throw std::runtime_error("GX TLUT cache did not retain unchanged binding");
+            MH3_THROW(std::runtime_error("GX TLUT cache did not retain unchanged binding"));
 
         write(0x65, (1 << 10) | 0x200); // Partial overlapping update keeps the tail.
         drawPalette();
         p = palettePackets();
 
         if (p.size() != 2 || word(p[0], 22) == word(p[1], 22) || reinterpret_cast<const uint8_t*>(pointer)[0] != 0)
-            throw std::runtime_error("GX TLUT overlapping reload was not rebound");
+            MH3_THROW(std::runtime_error("GX TLUT overlapping reload was not rebound"));
 
         for (unsigned format : {0u, 2u}) {
             write(0xB8, (format << 10) | 0x200);
             drawPalette();
 
             if (word(palettePackets().back(), 12) != format)
-                throw std::runtime_error("GX TLUT format rebind failed");
+                MH3_THROW(std::runtime_error("GX TLUT format rebind failed"));
         }
 
         source[0] = 0xAB;
@@ -1074,14 +991,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         drawPalette();
 
         if (reinterpret_cast<const uint8_t*>(pointer)[0] != 0xAB || palettePackets().size() != 5)
-            throw std::runtime_error("GX TLUT display-list state did not reach its caller");
+            MH3_THROW(std::runtime_error("GX TLUT display-list state did not reach its caller"));
 
         const auto count = palettePackets().size();
         write(0x65, (16 << 10) | 0x200);
         drawPalette();
 
         if (palettePackets().size() != count)
-            throw std::runtime_error("Identical GX TLUT reload redundantly rebound the palette");
+            MH3_THROW(std::runtime_error("Identical GX TLUT reload redundantly rebound the palette"));
         // Restore the original bytes and format after intervening uploads.
         // Reuse its content version, while still publishing changed TMEM.
         source[0] = 0xF8;
@@ -1090,7 +1007,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         drawPalette();
 
         if (word(palettePackets().back(), 22) != word(p[0], 22) || reinterpret_cast<const uint8_t*>(pointer)[0] != 0xF8)
-            throw std::runtime_error("GX TLUT A/B/A reload lost the original content identity");
+            MH3_THROW(std::runtime_error("GX TLUT A/B/A reload lost the original content identity"));
 
         bool skipPaletteDraw = true;
         paletteStream.skipDraw = [&] {
@@ -1103,26 +1020,18 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         drawPalette();
 
         if (palettePackets().size() != beforeSkip)
-            throw std::runtime_error("Skipped GX draw prepared a palette conversion");
+            MH3_THROW(std::runtime_error("Skipped GX draw prepared a palette conversion"));
 
         source[0] = 0x99; // The skipped frame's DMA snapshot must survive RAM reuse.
         skipPaletteDraw = false;
         drawPalette();
 
         if (palettePackets().size() != beforeSkip + 1 || reinterpret_cast<const uint8_t*>(pointer)[0] != 0x55)
-            throw std::runtime_error("Skipped GX frame lost the next visible draw's palette snapshot");
+            MH3_THROW(std::runtime_error("Skipped GX frame lost the next visible draw's palette snapshot"));
 
         auto mustReject = [&](auto operation) {
-            bool rejected = false;
-
-            try {
-                operation();
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
-                throw std::runtime_error("Invalid GX TLUT operation accepted");
+            if (CheckRejections && !Rejects(operation))
+                MH3_THROW(std::runtime_error("Invalid GX TLUT operation accepted"));
         };
 
         write(0xB8, 0x300); // A different, never-loaded TMEM range.
@@ -1137,18 +1046,21 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     }
 
     auto copyCase = [&](uint32_t room, uint32_t scale, uint32_t trigger, bool shouldPass, uint32_t expectedHeight = 528) {
+        if (!CheckRejections && !shouldPass)
+            return; // its rejection would stop the process
+
         GuestGxStream copyStream;
         unsigned copies = 0;
         auto resolveCopy = [&](uint32_t address) -> GuestGxStream::ArrayView {
             if (address != 0x200000)
-                throw std::runtime_error("GX copy address scaling failed");
+                MH3_THROW(std::runtime_error("GX copy address scaling failed"));
 
             return {0x12345678, room};
         };
 
         auto copied = [&](const GuestGxStream::DisplayCopy& copy) {
             if (copy.destination != 0x12345678 || copy.width != 640 || copy.height != expectedHeight || !copy.clear)
-                throw std::runtime_error("GX copy metadata incorrect");
+                MH3_THROW(std::runtime_error("GX copy metadata incorrect"));
 
             ++copies;
         };
@@ -1158,20 +1070,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             copyStream.Write(command, [](auto) {}, resolveCopy, copied);
         };
 
-        bool passed = true;
-
-        try {
+        const bool passed = !Rejects([&] {
             writeBp(0x4A, (527 << 10) | 639);
             writeBp(0x4B, 0x200000 >> 5);
             writeBp(0x4D, 40);
             writeBp(0x4E, scale);
             writeBp(0x52, trigger);
-        } catch (const std::runtime_error&) {
-            passed = false;
-        }
+        });
 
         if (passed != shouldPass || copies != unsigned(shouldPass))
-            throw std::runtime_error("GX display-copy bounds/dispatch failed");
+            MH3_THROW(std::runtime_error("GX display-copy bounds/dispatch failed"));
     };
 
     copyCase(640 * 528 * 2, 256, 0x4800, true);
@@ -1194,10 +1102,10 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         auto bpWrite = [&](uint8_t reg, uint32_t value) {
             const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
             stream.Write(
-                command, [](auto) {}, [](uint32_t) -> GuestGxStream::ArrayView { throw std::runtime_error("Removed EFB texture copy touched guest RAM"); }, {},
+                command, [](auto) {}, [](uint32_t) -> GuestGxStream::ArrayView { MH3_THROW(std::runtime_error("Removed EFB texture copy touched guest RAM")); }, {},
                 [&](const GuestGxStream::EfbClear& clear) {
                     if (clear.x != 4 || clear.y != 8 || clear.sourceWidth != 10 || clear.sourceHeight != 9)
-                        throw std::runtime_error("EFB clear rectangle changed");
+                        MH3_THROW(std::runtime_error("EFB clear rectangle changed"));
 
                     ++clears;
                 });
@@ -1211,20 +1119,20 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         bpWrite(0x52, withClear ? 0x800 : 0);
 
         if (clears != unsigned(withClear))
-            throw std::runtime_error("EFB clear-only dispatch failed");
+            MH3_THROW(std::runtime_error("EFB clear-only dispatch failed"));
     }
 
     MH3_OSGetResetCode(cpu);
 
     if (cpu->gpr[3] != 0)
-        throw std::runtime_error("Cold boot reset code failed");
+        MH3_THROW(std::runtime_error("Cold boot reset code failed"));
 
     Memory::Write32(0x8074F740, 1);
     Memory::Write32(0x8074F744, 0x1234);
     MH3_OSGetResetCode(cpu);
 
     if (cpu->gpr[3] != 0x80001234)
-        throw std::runtime_error("Saved reset code failed");
+        MH3_THROW(std::runtime_error("Saved reset code failed"));
 
     Memory::Write32(0x8074F740, 0);
     MH3_EXIInit(cpu);
@@ -1233,7 +1141,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_EXIGetID(cpu);
 
     if (cpu->gpr[3] != 0 || Memory::Read32(cpu->gpr[5]) != 0 || Memory::Read32(0x80003040 + 9 * 4) != 0x804B1310)
-        throw std::runtime_error("EXI absence/interrupt-state test failed");
+        MH3_THROW(std::runtime_error("EXI absence/interrupt-state test failed"));
 
     MH3_SIInit(cpu);
     Memory::Write32(0x8062A8A4, 0xFC123411);
@@ -1242,12 +1150,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_SISetXY(cpu);
 
     if (cpu->gpr[3] != 0xFC700311 || Memory::Read32(0x8062A8A4) != 0xFC700311)
-        throw std::runtime_error("SI polling-rate guest state failed");
+        MH3_THROW(std::runtime_error("SI polling-rate guest state failed"));
 
     Memory::Write32(0x8062A8A4, 0);
 
     if (Memory::Read32(0x80797934) != 1 || Memory::Read32(0x80759B28) != 0xFFFFFFFF)
-        throw std::runtime_error("SI initialization test failed");
+        MH3_THROW(std::runtime_error("SI initialization test failed"));
 
     // Never read or modify the user's actual saved settings during tests.
     struct TestDirectory {
@@ -1266,13 +1174,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             std::string pattern = (testRoot / ("mh3-sram-test-" + std::to_string(sceKernelGetProcessId()))).string();
 
             if (!std::filesystem::create_directory(pattern))
-                throw std::runtime_error("SRAM test directory already exists");
+                MH3_THROW(std::runtime_error("SRAM test directory already exists"));
 #else
             const auto testRoot = std::filesystem::temp_directory_path();
             std::string pattern = (testRoot / "mh3-sram-test-XXXXXX").string();
 
             if (!mkdtemp(pattern.data()))
-                throw std::runtime_error("Unable to create SRAM test directory");
+                MH3_THROW(std::runtime_error("Unable to create SRAM test directory"));
 #endif
             path = pattern;
             setenv("MH3_USER_DIR", pattern.c_str(), 1);
@@ -1291,7 +1199,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_OSInitSram(cpu);
 
     if (Memory::Read8(0x8074FB13) != 0x0C || Memory::Read32(0x8074FB4C) != 1)
-        throw std::runtime_error("Default SRAM test failed");
+        MH3_THROW(std::runtime_error("Default SRAM test failed"));
 
     Memory::Write8(0x8074FB12, 2);
     Memory::Write32(0x8074FB44, 1);
@@ -1300,13 +1208,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_UnlockSram(cpu);
 
     if (!(cpu->msr & 0x8000) || Memory::Read32(0x8074FB48) != 0)
-        throw std::runtime_error("SRAM unlock/interrupt-restore test failed");
+        MH3_THROW(std::runtime_error("SRAM unlock/interrupt-restore test failed"));
 
     Memory::Write8(0x8074FB12, 0);
     MH3_OSInitSram(cpu);
 
     if (Memory::Read8(0x8074FB12) != 2 || Memory::Read16(0x8074FB00) != 0x020C || Memory::Read16(0x8074FB02) != 0xFDF0)
-        throw std::runtime_error("SRAM persistence/checksum test failed");
+        MH3_THROW(std::runtime_error("SRAM persistence/checksum test failed"));
 
     const auto nand = directory.path / "nand";
     std::filesystem::create_directories(nand / "shared2");
@@ -1328,7 +1236,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     int32_t fd = open("/shared2/settings", 3);
 
     if (fd < 0)
-        throw std::runtime_error("IOS file open failed");
+        MH3_THROW(std::runtime_error("IOS file open failed"));
 
     cpu->gpr[3] = fd;
     cpu->gpr[4] = 0x80001300;
@@ -1336,7 +1244,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSRead(cpu);
 
     if (cpu->gpr[3] != 2 || Memory::Read16(0x80001300) != 0x4142)
-        throw std::runtime_error("IOS file read failed");
+        MH3_THROW(std::runtime_error("IOS file read failed"));
 
     Memory::Write16(0x80001300, 0x5859);
     cpu->gpr[3] = fd;
@@ -1345,7 +1253,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSWrite(cpu);
 
     if (cpu->gpr[3] != 2)
-        throw std::runtime_error("IOS file write failed");
+        MH3_THROW(std::runtime_error("IOS file write failed"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
@@ -1355,13 +1263,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         file >> text;
 
         if (text != "ABXY")
-            throw std::runtime_error("IOS file persistence failed");
+            MH3_THROW(std::runtime_error("IOS file persistence failed"));
     }
 
     fd = open("/shared2/settings", 1);
 
     if (fd < 0)
-        throw std::runtime_error("IOS read-only open failed");
+        MH3_THROW(std::runtime_error("IOS read-only open failed"));
 
     cpu->gpr[3] = fd;
     cpu->gpr[4] = 0x80001300;
@@ -1369,18 +1277,18 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSWrite(cpu);
 
     if (static_cast<int32_t>(cpu->gpr[3]) != -102)
-        throw std::runtime_error("IOS read-only mode was not enforced");
+        MH3_THROW(std::runtime_error("IOS read-only mode was not enforced"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
 
     if (open("/../escape", 1) != -4 || open("//etc/passwd", 1) != -4 || open("/missing", 1) != -106)
-        throw std::runtime_error("IOS path/error handling failed");
+        MH3_THROW(std::runtime_error("IOS path/error handling failed"));
 #ifndef __vita__ // Vita's exFAT mount cannot contain symlinks.
     std::filesystem::create_directory_symlink(directory.path, nand / "link");
 #endif
     if (open("/link/sram.bin", 1) >= 0)
-        throw std::runtime_error("IOS NAND symlink isolation failed");
+        MH3_THROW(std::runtime_error("IOS NAND symlink isolation failed"));
 
     std::filesystem::create_directories(nand / "usage/sub");
     {
@@ -1417,31 +1325,31 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     };
 
     if (usage("/usage") || Memory::Read32(0x80001400) != 2 || Memory::Read32(0x80001404) != 4)
-        throw std::runtime_error("NAND directory cluster/inode accounting failed");
+        MH3_THROW(std::runtime_error("NAND directory cluster/inode accounting failed"));
 
     if (usage("/usage", true))
-        throw std::runtime_error("Asynchronous usage queue failed");
+        MH3_THROW(std::runtime_error("Asynchronous usage queue failed"));
 
     auto successfulUsage = TakeIosCompletion();
 
     if (!successfulUsage || successfulUsage->result != 0)
-        throw std::runtime_error("Asynchronous usage lost its success result");
+        MH3_THROW(std::runtime_error("Asynchronous usage lost its success result"));
 
     if (usage("/missing", true))
-        throw std::runtime_error("Asynchronous ioctlv queue failed");
+        MH3_THROW(std::runtime_error("Asynchronous ioctlv queue failed"));
 
     auto usageCompletion = TakeIosCompletion();
 
     if (!usageCompletion || usageCompletion->result != -106 || usageCompletion->callback != 0x81700000 || usageCompletion->argument != 0x12345678)
-        throw std::runtime_error("Asynchronous ioctlv completion lost result/arguments");
+        MH3_THROW(std::runtime_error("Asynchronous ioctlv completion lost result/arguments"));
 
     if (usage("/../usage") != -4 || usage("//etc") != -4 || usage("/link") >= 0)
-        throw std::runtime_error("NAND usage followed an unsafe path");
+        MH3_THROW(std::runtime_error("NAND usage followed an unsafe path"));
 #ifndef __vita__
     std::filesystem::create_directory_symlink(directory.path, nand / "usage/sub/link");
 
     if (usage("/usage") != -102)
-        throw std::runtime_error("NAND usage followed a nested symlink");
+        MH3_THROW(std::runtime_error("NAND usage followed a nested symlink"));
 #endif
     auto createEntry = [&](const std::string& path, bool directoryEntry, bool async = false) {
         for (uint32_t i = 0; i < 0x4C; ++i)
@@ -1470,18 +1378,18 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     };
 
     if (createEntry("/tmp/mh3-test", true, true))
-        throw std::runtime_error("NAND mkdir enqueue failed");
+        MH3_THROW(std::runtime_error("NAND mkdir enqueue failed"));
 
     auto created = TakeIosCompletion();
 
     if (!created || created->result || created->callback != 0x81700000 || created->argument != 0x5678 || !std::filesystem::is_directory(nand / "tmp/mh3-test"))
-        throw std::runtime_error("NAND mkdir callback/storage failed");
+        MH3_THROW(std::runtime_error("NAND mkdir callback/storage failed"));
 
     if (createEntry("/tmp/mh3-test", true) != -105 || createEntry("/absent/sub", true) != -106 || createEntry("/../outside", true) != -101 || createEntry("/link/outside", true) >= 0)
-        throw std::runtime_error("NAND mkdir error/isolation failed");
+        MH3_THROW(std::runtime_error("NAND mkdir error/isolation failed"));
 
     if (createEntry("/tmp/mh3-test/save", false))
-        throw std::runtime_error("NAND file creation failed");
+        MH3_THROW(std::runtime_error("NAND file creation failed"));
 
     {
         std::ofstream file(nand / "tmp/mh3-test/save");
@@ -1489,7 +1397,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     }
 
     if (createEntry("/tmp/mh3-test/save", false) != -105 || std::filesystem::file_size(nand / "tmp/mh3-test/save") != 5)
-        throw std::runtime_error("NAND creation overwrote existing data");
+        MH3_THROW(std::runtime_error("NAND creation overwrote existing data"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
@@ -1503,12 +1411,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctl(cpu);
 
     if (cpu->gpr[3] || Memory::Read32(0x80001900) != 0x1000 || Memory::Read16(0x80001904) != 0x3038 || Memory::Read32(0x80001946) != 0x03010020)
-        throw std::runtime_error("NAND metadata did not persist across descriptor reopening");
+        MH3_THROW(std::runtime_error("NAND metadata did not persist across descriptor reopening"));
 
     const int32_t saveFd = open("/tmp/mh3-test/save", 3);
 
     if (saveFd < 0)
-        throw std::runtime_error("Created save could not be opened");
+        MH3_THROW(std::runtime_error("Created save could not be opened"));
 
     Memory::Write32(0x80001300, 0x54535421);
     cpu->gpr[3] = saveFd;
@@ -1520,7 +1428,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     auto writeResult = TakeIosCompletion();
 
     if (cpu->gpr[3] || !writeResult || writeResult->result != 4 || writeResult->argument != 0x1234)
-        throw std::runtime_error("Asynchronous save write failed");
+        MH3_THROW(std::runtime_error("Asynchronous save write failed"));
 
     auto seek = [&](uint32_t offset, uint32_t mode) {
         cpu->gpr[3] = saveFd;
@@ -1532,13 +1440,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         auto completion = TakeIosCompletion();
 
         if (cpu->gpr[3] || !completion)
-            throw std::runtime_error("Asynchronous save seek was not queued");
+            MH3_THROW(std::runtime_error("Asynchronous save seek was not queued"));
 
         return completion->result;
     };
 
     if (seek(uint32_t(-2), 2) != 3)
-        throw std::runtime_error("Save seek from end failed");
+        MH3_THROW(std::runtime_error("Save seek from end failed"));
 
     cpu->gpr[3] = saveFd;
     cpu->gpr[4] = 0x80001300;
@@ -1546,7 +1454,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSRead(cpu);
 
     if (cpu->gpr[3] != 2 || Memory::Read16(0x80001300) != 0x2164 || seek(6, 0) != -101)
-        throw std::runtime_error("Save seek/read or EOF bounds failed");
+        MH3_THROW(std::runtime_error("Save seek/read or EOF bounds failed"));
 
     cpu->gpr[3] = saveFd;
     cpu->gpr[4] = 11;
@@ -1555,7 +1463,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctl(cpu);
 
     if (cpu->gpr[3] || Memory::Read32(0x80001900) != 5 || Memory::Read32(0x80001904) != 5)
-        throw std::runtime_error("Save file size/offset query failed");
+        MH3_THROW(std::runtime_error("Save file size/offset query failed"));
 
     cpu->gpr[3] = saveFd;
     MH3_IOSClose(cpu);
@@ -1578,7 +1486,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     };
 
     if (rename("/tmp/mh3-test/save", "/../outside") != -101 || rename("/tmp/mh3-test/save", "/link/outside") >= 0 || rename("/tmp/mh3-test/save", "/tmp/mh3-test/moved"))
-        throw std::runtime_error("NAND rename or destination isolation failed");
+        MH3_THROW(std::runtime_error("NAND rename or destination isolation failed"));
 
     cpu->gpr[3] = fd;
     cpu->gpr[4] = 6;
@@ -1589,7 +1497,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctl(cpu);
 
     if (cpu->gpr[3] || Memory::Read32(0x80001946) != 0x03010020 || std::filesystem::exists(nand / "tmp/mh3-test/save") || std::filesystem::file_size(nand / "tmp/mh3-test/moved") != 5)
-        throw std::runtime_error("NAND rename lost data or metadata");
+        MH3_THROW(std::runtime_error("NAND rename lost data or metadata"));
     // ISFS rename replaces an existing file (saves move their temporary over it).
     {
         std::ofstream(nand / "tmp/mh3-test/old") << "old";
@@ -1598,7 +1506,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
     if (rename("/tmp/mh3-test/new", "/tmp/mh3-test/old") || std::filesystem::exists(nand / "tmp/mh3-test/new") || std::filesystem::file_size(nand / "tmp/mh3-test/old") != 5 ||
         std::filesystem::exists(nand / "tmp/mh3-test/old.replaced"))
-        throw std::runtime_error("NAND rename did not replace an existing file");
+        MH3_THROW(std::runtime_error("NAND rename did not replace an existing file"));
     for (unsigned i = 0; i < 74; ++i)
         Memory::Write8(0x80001800 + i, Memory::Read8(0x80001900 + i));
 
@@ -1610,7 +1518,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctl(cpu);
 
     if (cpu->gpr[3] || open("/tmp/mh3-test/moved", 2) != -102 || open("/tmp/mh3-test", 1) != -101)
-        throw std::runtime_error("NAND metadata permissions/directory open were not enforced");
+        MH3_THROW(std::runtime_error("NAND metadata permissions/directory open were not enforced"));
 
     auto erase = [&](const std::string& path) {
         for (unsigned i = 0; i < 64; ++i)
@@ -1627,7 +1535,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     const int32_t heldFd = open("/tmp/mh3-test/moved", 1);
 
     if (heldFd < 0 || erase("/tmp/mh3-test") != -111 || !std::filesystem::exists(nand / "tmp/mh3-test/moved"))
-        throw std::runtime_error("NAND deleted an in-use subtree");
+        MH3_THROW(std::runtime_error("NAND deleted an in-use subtree"));
 
     cpu->gpr[3] = heldFd;
     MH3_IOSClose(cpu);
@@ -1635,12 +1543,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     std::filesystem::create_directory_symlink(directory.path, nand / "tmp/mh3-test/link");
 
     if (erase("/tmp/mh3-test") != -102 || !std::filesystem::exists(nand / "tmp/mh3-test/moved"))
-        throw std::runtime_error("NAND delete did not reject a symlink before changing data");
+        MH3_THROW(std::runtime_error("NAND delete did not reject a symlink before changing data"));
 
     std::filesystem::remove(nand / "tmp/mh3-test/link");
 #endif
     if (erase("/") != -101 || erase("/../escape") != -101 || erase("/tmp/mh3-test") || std::filesystem::exists(nand / "tmp/mh3-test") || erase("/tmp/mh3-test") != -106)
-        throw std::runtime_error("NAND recursive delete/error handling failed");
+        MH3_THROW(std::runtime_error("NAND recursive delete/error handling failed"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
@@ -1661,47 +1569,47 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     auto hidCompletion = TakeIosCompletion();
 
     if (cpu->gpr[3] || !hidCompletion || hidCompletion->result != 0x40001 || hidCompletion->argument != 0xA55A)
-        throw std::runtime_error("USB HID version completion failed");
+        MH3_THROW(std::runtime_error("USB HID version completion failed"));
 
     Memory::Write32(0x80002004, 0x12345678);
     hidRequest(0, 4);
 
     if (int32_t(cpu->gpr[3]) != -4 || TakeIosCompletion())
-        throw std::runtime_error("USB HID accepted bad enumeration buffer");
+        MH3_THROW(std::runtime_error("USB HID accepted bad enumeration buffer"));
 
     hidRequest(0);
     hidCompletion = TakeIosCompletion();
 
     if (cpu->gpr[3] || !hidCompletion || hidCompletion->result || Memory::Read32(0x80002000) != 0xFFFFFFFF || Memory::Read32(0x80002004) != 0x12345678)
-        throw std::runtime_error("USB HID empty enumeration failed");
+        MH3_THROW(std::runtime_error("USB HID empty enumeration failed"));
 
     hidRequest(0);
 
     if (cpu->gpr[3] || TakeIosCompletion())
-        throw std::runtime_error("USB HID subscription must remain pending");
+        MH3_THROW(std::runtime_error("USB HID subscription must remain pending"));
 
     hidRequest(0);
 
     if (int32_t(cpu->gpr[3]) != -8 || TakeIosCompletion())
-        throw std::runtime_error("USB HID replaced an outstanding subscription");
+        MH3_THROW(std::runtime_error("USB HID replaced an outstanding subscription"));
 
     hidRequest(7, 0);
     const auto hidCancelled = TakeIosCompletion();
     const auto hidShutdown = TakeIosCompletion();
 
     if (cpu->gpr[3] || !hidCancelled || hidCancelled->result != -1 || !hidShutdown || hidShutdown->result)
-        throw std::runtime_error("USB HID shutdown did not cancel the subscription");
+        MH3_THROW(std::runtime_error("USB HID shutdown did not cancel the subscription"));
 
     hidRequest(0);
     hidCompletion = TakeIosCompletion();
 
     if (!hidCompletion || hidCompletion->result)
-        throw std::runtime_error("USB HID did not enumerate after shutdown");
+        MH3_THROW(std::runtime_error("USB HID did not enumerate after shutdown"));
 
     hidRequest(0);
 
     if (TakeIosCompletion())
-        throw std::runtime_error("USB HID subscription completed without a change");
+        MH3_THROW(std::runtime_error("USB HID subscription completed without a change"));
 
     cpu->gpr[3] = fd;
     cpu->gpr[4] = 2;
@@ -1710,14 +1618,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctl(cpu);
 
     if (int32_t(cpu->gpr[3]) != -6)
-        throw std::runtime_error("USB HID accepted a transfer to an absent device");
+        MH3_THROW(std::runtime_error("USB HID accepted a transfer to an absent device"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
     hidCompletion = TakeIosCompletion();
 
     if (cpu->gpr[3] || !hidCompletion || hidCompletion->result != -1 || TakeIosCompletion())
-        throw std::runtime_error("USB HID close did not release the pending request");
+        MH3_THROW(std::runtime_error("USB HID close did not release the pending request"));
 
     fd = open("/dev/stm/immediate", 0);
     cpu->gpr[3] = fd;
@@ -1732,14 +1640,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     auto dimming = TakeIosCompletion();
 
     if (cpu->gpr[3] || !dimming || dimming->result || dimming->callback != 0x804D6320 || dimming->argument != 0xA5)
-        throw std::runtime_error("STM async dimming completion failed");
+        MH3_THROW(std::runtime_error("STM async dimming completion failed"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
     fd = open("/dev/stm/eventhook", 0);
 
     if (fd < 0)
-        throw std::runtime_error("STM event device open failed");
+        MH3_THROW(std::runtime_error("STM event device open failed"));
 
     Memory::Write32(0x80001400, 0xDEADBEEF);
     cpu->gpr[3] = fd;
@@ -1751,20 +1659,20 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctlAsync(cpu);
 
     if (cpu->gpr[3] || Memory::Read32(0x80001400) != 0xDEADBEEF)
-        throw std::runtime_error("STM event subscription must remain pending");
+        MH3_THROW(std::runtime_error("STM event subscription must remain pending"));
 
     cpu->gpr[3] = fd;
     MH3_IOSIoctlAsync(cpu);
     auto completion = TakeIosCompletion();
 
     if (cpu->gpr[3] || !completion || completion->result != -8)
-        throw std::runtime_error("STM duplicate subscription completion failed");
+        MH3_THROW(std::runtime_error("STM duplicate subscription completion failed"));
 
     TriggerStmEvent(0x20000);
     completion = TakeIosCompletion();
 
     if (!completion || completion->callback != 0x804D6320 || completion->result || Memory::Read32(0x80001400) != 0x20000 || TakeIosCompletion())
-        throw std::runtime_error("STM event delivery failed");
+        MH3_THROW(std::runtime_error("STM event delivery failed"));
 
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
@@ -1779,7 +1687,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctlv(cpu);
 
     if (cpu->gpr[3] || Memory::Read64(0x80001600) != 0x00010000524D4850ull)
-        throw std::runtime_error("ES title identity failed");
+        MH3_THROW(std::runtime_error("ES title identity failed"));
 
     Memory::Write32(0x80001508, 0x80001700);
     Memory::Write32(0x8000150C, 30);
@@ -1791,7 +1699,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctlv(cpu);
 
     if (cpu->gpr[3] || std::string(reinterpret_cast<char*>(Memory::GetPointer(0x80001700, 30))) != "/title/00010000/524d4850/data")
-        throw std::runtime_error("ES data directory failed");
+        MH3_THROW(std::runtime_error("ES data directory failed"));
 
     for (uint32_t i = 0; i < 0x2A4; ++i)
         Memory::Write8(0x80001800 + i, 0);
@@ -1813,11 +1721,11 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctlv(cpu);
 
     if (cpu->gpr[3] || Memory::Read32(0x80001B00))
-        throw std::runtime_error("ES ticket view header failed");
+        MH3_THROW(std::runtime_error("ES ticket view header failed"));
 
     for (uint32_t i = 0; i < 0xD4; ++i)
         if (Memory::Read8(0x80001B04 + i) != i)
-            throw std::runtime_error("ES ticket view contents failed");
+            MH3_THROW(std::runtime_error("ES ticket view contents failed"));
     cpu->gpr[3] = fd;
     MH3_IOSClose(cpu);
 
@@ -1831,7 +1739,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     auto fileCompletion = TakeIosCompletion();
 
     if (cpu->gpr[3] || !fileCompletion || fileCompletion->result != -106 || fileCompletion->callback != 0x804DB9B0 || fileCompletion->argument != 0x12345678)
-        throw std::runtime_error("IOS asynchronous error completion failed");
+        MH3_THROW(std::runtime_error("IOS asynchronous error completion failed"));
     // Test-only registration; never included in the production guest map.
     AbiTrampoline<decltype(TestIosCallback)> testCallback(0x81700000, "IOS callback test", TestIosCallback, FunctionKind::Native, false, 0, 0, 0, TestIosCallback);
     AbiTrampoline<decltype(TestAlarmCallback)> testAlarm(0x81700010, "OS alarm test", TestAlarmCallback, FunctionKind::Native, false, 0, 0, 0, TestAlarmCallback);
@@ -1850,7 +1758,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     PumpIosCompletions(cpu);
 
     if (!callbackObserved || callbackCount != 2 || maxCallbackDepth != 1 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678 || TakeIosCompletion())
-        throw std::runtime_error("IOS callback CPU-state preservation failed");
+        MH3_THROW(std::runtime_error("IOS callback CPU-state preservation failed"));
 
     RunSleepSelfTests(cpu);
     const auto alarmSaved = *cpu;
@@ -1886,43 +1794,39 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
     if (alarmCallbacks != 1 || Memory::Read32(queue) || Memory::Read32(queue + 4) || Memory::Read32(0x80003000) || cpu->gpr[14] != 0x1234 || !(cpu->msr & 0x8000) ||
         Memory::Read32(0x800000D4) != 0x80004000 || Memory::Read32(0x800000C0) != 0x4000 || Memory::Read32(cpu->gpr[13] - 14992))
-        throw std::runtime_error("One-shot alarm dequeue/context restoration failed");
+        MH3_THROW(std::runtime_error("One-shot alarm dequeue/context restoration failed"));
     queueAlarm(60'750'000); // one second; InsertAlarm must skip expired periods
     ServiceOsAlarms(cpu);
 
     if (alarmCallbacks != 2 || Memory::Read32(queue) != 0x80003000 || Memory::Read32(0x80003000) != 0x81700010 || !Memory::Read64(0x80003008))
-        throw std::runtime_error("Periodic alarm was not reinserted: callbacks=" + std::to_string(alarmCallbacks) + " queue=" + std::to_string(Memory::Read32(queue)) +
-                                 " callback=" + std::to_string(Memory::Read32(0x80003000)) + " deadline=" + std::to_string(Memory::Read64(0x80003008)));
+        MH3_THROW(std::runtime_error("Periodic alarm was not reinserted: callbacks=" + std::to_string(alarmCallbacks) + " queue=" + std::to_string(Memory::Read32(queue)) +
+                                 " callback=" + std::to_string(Memory::Read32(0x80003000)) + " deadline=" + std::to_string(Memory::Read64(0x80003008))));
     ServiceOsAlarms(cpu);
 
     if (alarmCallbacks != 2)
-        throw std::runtime_error("Periodic alarm fired before its next deadline");
+        MH3_THROW(std::runtime_error("Periodic alarm fired before its next deadline"));
 
     cpu->gpr[3] = 0x80003000;
     InvokeIndirectCpu(0x804CBE80, cpu); // original OSCancelAlarm remains interoperable
     if (Memory::Read32(queue) || Memory::Read32(queue + 4) || Memory::Read32(0x80003000))
-        throw std::runtime_error("Original alarm cancellation failed");
+        MH3_THROW(std::runtime_error("Original alarm cancellation failed"));
 
-    queueAlarm(0);
-    failAlarm = true;
-    bool alarmRejected = false;
+    // A failing callback (it still counts) leaves the service unlocked.
+    if (CheckRejections) {
+        queueAlarm(0);
+        failAlarm = true;
+        const bool alarmRejected = Rejects([&] { ServiceOsAlarms(cpu); });
+        failAlarm = false;
 
-    try {
-        ServiceOsAlarms(cpu);
-    } catch (const std::runtime_error&) {
-        alarmRejected = true;
+        if (!alarmRejected || Memory::Read32(0x800000D4) != 0x80004000 || Memory::Read32(cpu->gpr[13] - 14992))
+            MH3_THROW(std::runtime_error("Alarm exception context restoration failed"));
     }
-
-    failAlarm = false;
-
-    if (!alarmRejected || Memory::Read32(0x800000D4) != 0x80004000 || Memory::Read32(cpu->gpr[13] - 14992))
-        throw std::runtime_error("Alarm exception context restoration failed");
 
     queueAlarm(0);
     ServiceOsAlarms(cpu);
 
-    if (alarmCallbacks != 4)
-        throw std::runtime_error("Alarm service remained locked after exception");
+    if (alarmCallbacks != (CheckRejections ? 4 : 3))
+        MH3_THROW(std::runtime_error("Alarm service remained locked after exception"));
 
     *cpu = alarmSaved;
 }

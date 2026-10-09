@@ -1,4 +1,5 @@
 #include "command_processor.hpp"
+#include <aurora/fatal.hpp>
 
 #include "../gfx/common.hpp"
 #include "../dolphin/gx/__gx.h"
@@ -522,7 +523,21 @@ static void apply_xf_projection() {
 static void handle_bp(u32 value, bool bigEndian);
 static void handle_cp(u8 addr, u32 value, bool bigEndian);
 static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian);
-static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian);
+
+// What process() does after a draw command.
+enum class DrawStep : u8 {
+  // Decode the next command.
+  Next,
+
+  // Stop decoding: the rest of the buffer is unusable.
+  Stop,
+
+  // The staging batch has no room for the draw, which used nothing yet: return
+  // the command's offset so that the caller submits the batch and resumes there.
+  BatchFull,
+};
+
+static DrawStep handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian);
 static bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
 
 uint32_t process(const u8* data, u32 size, bool bigEndian) {
@@ -637,11 +652,13 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
     default:
       // Draw commands occupy the full 0x80-0xBF range.
       if (is_draw_cmd(cmd)) {
-        try {
-          if (!handle_draw(cmd, data, pos, size, bigEndian)) return size;
-        } catch (const gfx::StagingBatchFull&) {
+        const DrawStep step = handle_draw(cmd, data, pos, size, bigEndian);
+
+        if (step == DrawStep::BatchFull) UNLIKELY {
           return commandStart;
         }
+
+        if (step == DrawStep::Stop) return size;
       } else {
         static u32 unknownLogCount = 0;
 
@@ -2383,7 +2400,7 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
     gpuLock.lock();
 
     if (!admit_draw(prim, fmt, vtxCount, vertexBytes))
-      throw gfx::StagingCapacityError("Raw draw does not fit after capacity submission");
+      AURORA_THROW(gfx::StagingCapacityError("Raw draw does not fit after capacity submission"));
   }
 
   const gfx::Range vertRange = gfx::push_verts(vertices, vertexBytes);
@@ -2398,13 +2415,13 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
   return true;
 }
 
-static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian) {
+static DrawStep handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian) {
   aurora_legacy_gx_panic("aurora::gx::fifo::handle_draw");
   GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
   GXPrimitive prim = primitive_from_draw_cmd(cmd);
 
   if (pos + 2 > size) {
-    return false;
+    return DrawStep::Stop;
   }
 
   u16 vtxCount = read_u16(data + pos, bigEndian);
@@ -2422,13 +2439,13 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
 
   if (pos + totalVtxBytes > size) UNLIKELY {
     handle_draw_overrun(cmd, vtxCount, vtxSize, totalVtxBytes, data, pos, size);
-    return false;
+    return DrawStep::Stop;
   }
 
 
   if (!has_complete_primitive(prim, vtxCount)) {
     pos += totalVtxBytes;
-    return true;
+    return DrawStep::Next;
   }
 
   DrawData* mergeTarget = nullptr;
@@ -2450,7 +2467,10 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
     }
   }
 
-  if (!admit_draw(prim, fmt, vtxCount, totalVtxBytes, mergeTarget != nullptr)) throw gfx::StagingBatchFull{};
+  if (!admit_draw(prim, fmt, vtxCount, totalVtxBytes, mergeTarget != nullptr)) UNLIKELY {
+    return DrawStep::BatchFull;
+  }
+
   const uint8_t* vertices = data + pos;
   gfx::Range vertRange = gfx::push_verts(vertices, totalVtxBytes);
   pos += totalVtxBytes;
@@ -2478,7 +2498,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
         extend_interpolation_draw(pn_mtx_mask(vertices, vtxCount, vtxSize));
       }
 
-      return true;
+      return DrawStep::Next;
   }
 
   const bool interpolationIdentityActive = frame_interpolation_identity_needed();
@@ -2489,7 +2509,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
                        matrixUsage.mask, matrixUsage.topologySignature,
                        interpolationIdentityActive ? draw_geometry_signature(fmt, vertices, vtxCount, vtxSize) : 0,
                        interpolationIdentityActive);
-  return true;
+  return DrawStep::Next;
 }
 
 // Uploads a guest vertex array into this staging batch, reusing an earlier upload of the

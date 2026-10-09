@@ -137,8 +137,8 @@ Source and license texts: <https://github.com/rust-lang/compiler-builtins> (`LIC
 ### nod - MIT OR Apache-2.0 (reference)
 
 Copyright (c) Luke Street. The disc image decoder reproduces the reads of nod 1.4.4's
-`Disc`/partition streams for this project's bridge; no nod code is included in it. nod itself is
-built only with `MH3_ROM_DECODER_NOD=ON` (`runtime/vita/rom_decoder`).
+`Disc`/partition streams for this project's bridge; no nod code is included in it, and the nod
+bridge it replaced is no longer built.
 Source: <https://github.com/encounter/nod>. The RVZ junk generator follows Dolphin's
 `docs/WiaAndRvz.md` (CC0-1.0).
 

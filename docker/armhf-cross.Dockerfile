@@ -21,12 +21,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && ln -sf /usr/bin/clang-21 /usr/local/bin/clang \
     && ln -sf /usr/bin/clang++-21 /usr/local/bin/clang++ \
     && ln -sf /usr/bin/ld.lld-21 /usr/local/bin/ld.lld \
+    && ln -sf /usr/bin/clang-21 /usr/local/bin/cc \
     && rm -rf /var/lib/apt/lists/*
-# Rust for the ROM decoder (nod): the toolchain is shared and read-only;
-# crates download into the build user's CARGO_HOME ($HOME/.cargo). Build
-# scripts run on the build machine and link with cc (clang).
-ENV RUSTUP_HOME=/opt/rustup PATH=/opt/cargo/bin:$PATH
-RUN curl -fsSL https://sh.rustup.rs | CARGO_HOME=/opt/cargo sh -s -- -y --no-modify-path --profile minimal \
-      --default-toolchain stable --target armv7-unknown-linux-gnueabihf \
-    && chmod -R a+rX /opt/rustup /opt/cargo \
-    && ln -sf /usr/bin/clang-21 /usr/local/bin/cc

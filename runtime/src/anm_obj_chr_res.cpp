@@ -18,6 +18,7 @@
 // AnmObjChrResResultAt (anm_obj_chr_res.h) evaluates one node at any frame
 // without touching the object.
 #include "anm_obj_chr_res.h"
+#include "fatal.h"
 #include "port_check.h"
 
 #include <cmath>
@@ -64,7 +65,7 @@ bool ValidPointer(uint32_t p) {
 [[noreturn]] void Panic(const char* what, uint32_t line, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic (g3d_anmchr.cpp:%u): %s (%08x)", line, what, value);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 void CheckPointer(uint32_t p, uint32_t line) {

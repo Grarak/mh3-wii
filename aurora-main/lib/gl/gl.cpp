@@ -1,4 +1,5 @@
 #include "gl.hpp"
+#include <aurora/fatal.hpp>
 
 #include "../internal.hpp"
 #include "../gfx/port_capture.hpp"
@@ -39,7 +40,7 @@ std::vector<std::pair<GLsync, size_t>> nativeMeshRetired;
 
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
   if (!on_render_thread() || !bytes)
-    throw std::runtime_error("Native mesh load outside context owner or empty payload");
+    AURORA_THROW(std::runtime_error("Native mesh load outside context owner or empty payload"));
   // The shared compact pack reader requires a 16-byte base. ARM32's
   // ordinary byte-array allocation can be only eight-byte aligned.
   const auto release = [](uint8_t* pointer) { ::operator delete[](pointer, std::align_val_t(16)); };
@@ -58,7 +59,7 @@ NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t b
       glDeleteBuffers(1, &m_buffer);
 
     m_buffer = 0;
-    throw std::runtime_error("Native mesh GPU allocation failed");
+    AURORA_THROW(std::runtime_error("Native mesh GPU allocation failed"));
   }
 
   m_data = data.release();
@@ -81,14 +82,14 @@ NativeMeshBuffer::~NativeMeshBuffer() {
 
 size_t native_mesh_allocation_bytes(uint32_t bytes) {
   if (!on_render_thread())
-    throw std::runtime_error("Model allocation query outside context owner");
+    AURORA_THROW(std::runtime_error("Model allocation query outside context owner"));
 
   return bytes;
 }
 
 size_t native_mesh_resident_bytes() {
   if (!on_render_thread())
-    throw std::runtime_error("Model backing query outside context owner");
+    AURORA_THROW(std::runtime_error("Model backing query outside context owner"));
 
   size_t bytes = nativeMeshLiveBytes;
 
@@ -96,7 +97,7 @@ size_t native_mesh_resident_bytes() {
     const auto status = it->first ? glClientWaitSync(it->first, 0, 0) : GL_WAIT_FAILED;
 
     if (status == GL_WAIT_FAILED)
-      throw std::runtime_error("GL model retirement notification failed");
+      AURORA_THROW(std::runtime_error("GL model retirement notification failed"));
 
     if (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED) {
       glDeleteSync(it->first);
@@ -695,21 +696,30 @@ bool render_target_allocation_available(size_t bytes) noexcept {
   return bytes != 0;
 }
 
+// Without exceptions (release builds) a failure stops at its AURORA_THROW.
 void open_native_texture_pack(const char* path) noexcept {
+#if defined(__cpp_exceptions)
   try {
     g_nativeTextures.add(path);
   } catch (const std::exception& e) {
     Log.fatal("{}", e.what());
   }
+#else
+  g_nativeTextures.add(path);
+#endif
 }
 
 void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept { g_nativeTextures.set_resolver(resolver); }
 static gfx::NativeTextureSet::Entry native_texture_entry(uint32_t asset) noexcept {
+#if defined(__cpp_exceptions)
   try {
     return g_nativeTextures.find(asset);
   } catch (const std::exception& e) {
     Log.fatal("{}", e.what());
   }
+#else
+  return g_nativeTextures.find(asset);
+#endif
 }
 
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
@@ -740,11 +750,15 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
   const auto& r = *entry.record;
   std::vector<uint8_t> payload(r.bytes);
 
+#if defined(__cpp_exceptions)
   try {
     gfx::NativeTextureSet::read(entry, payload.data());
   } catch (const std::exception& e) {
     Log.fatal("{}", e.what());
   }
+#else
+  gfx::NativeTextureSet::read(entry, payload.data());
+#endif
 
   const auto layout = gfx::native_texture_layout(info.width, info.height, info.mips, info.format);
   const bool expand = gfx::native_swizzled(info.format);
@@ -1510,7 +1524,7 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
 
   if (!uniforms.data || !uniforms.size)
-    throw std::runtime_error("Native mesh has no uniforms");
+    AURORA_THROW(std::runtime_error("Native mesh has no uniforms"));
 
   use_program(program);
 
@@ -1657,10 +1671,10 @@ void bind_block(uint32_t binding, const UniformBlock& block, StreamedBlock& stre
 
 void bind_shaded_blocks(const ShadedBlocks& blocks) {
   if (blocks.shadeOffset % uint32_t(std::max(g_caps.uniformOffsetAlignment, 1)) != 0)
-    throw std::runtime_error("Shade block offset violates the uniform buffer alignment");
+    AURORA_THROW(std::runtime_error("Shade block offset violates the uniform buffer alignment"));
 
   if (blocks.paletteBytes && blocks.paletteOffset % uint32_t(std::max(g_caps.uniformOffsetAlignment, 1)) != 0)
-    throw std::runtime_error("Palette block offset violates the uniform buffer alignment");
+    AURORA_THROW(std::runtime_error("Palette block offset violates the uniform buffer alignment"));
 
   glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeDrawBuffer));
   glBufferData(GL_UNIFORM_BUFFER, blocks.drawBytes, blocks.draw, GL_STREAM_DRAW);
@@ -1714,7 +1728,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
 
   if (!blocks.draw || !blocks.paletteBytes || !blocks.scene)
-    throw std::runtime_error("Shaded mesh has no uniform blocks");
+    AURORA_THROW(std::runtime_error("Shaded mesh has no uniform blocks"));
 
   use_program(program);
   bind_shaded_samplers(program, textureUnits);

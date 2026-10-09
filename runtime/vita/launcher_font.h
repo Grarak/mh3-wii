@@ -1,5 +1,6 @@
 #pragma once
 #include "launcher_screen.h"
+#include "status.h"
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -12,7 +13,8 @@ namespace VitaLauncher {
 // development host), drawn as solid rectangles.
 class Font {
   public:
-    Font();
+    // The font, or why the system has none.
+    static Status Open(std::unique_ptr<Font>& font);
     ~Font();
     void Text(std::vector<Rectangle>& rects, float x, float y, std::string_view text, uint32_t color, float maxWidth = 880);
     float Width(std::string_view text);
@@ -27,6 +29,7 @@ class Font {
     };
 
     struct Source;
+    explicit Font(std::unique_ptr<Source> source);
     Glyph& Get(unsigned character);
     std::unique_ptr<Source> source;
     std::map<unsigned, Glyph> glyphs;

@@ -1,6 +1,8 @@
 #include "cg_shader.hpp"
+#include <aurora/fatal.hpp>
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <functional>
 #include <map>
 #include <regex>
@@ -12,8 +14,11 @@
 
 namespace aurora::gfx::cg {
 namespace {
-[[noreturn]] void fail(const std::string& message) {
-  throw std::runtime_error("Aurora GLSL to Cg: " + message);
+// A step's failure: records why in `error` and returns false. The step returns
+// at once, and so does each caller up to try_convert or try_scalar_fragment.
+bool fail(std::string& error, const std::string& message) {
+  error = "Aurora GLSL to Cg: " + message;
+  return false;
 }
 
 struct Token {
@@ -34,8 +39,8 @@ std::string trim(std::string_view value) {
   return std::string(value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1));
 }
 
-std::vector<Token> lex(std::string_view source) {
-  std::vector<Token> tokens;
+bool lex(std::string_view source, std::vector<Token>& tokens, std::string& error) {
+  tokens.clear();
 
   for (size_t at = 0; at < source.size();) {
     if (std::isspace(static_cast<unsigned char>(source[at]))) {
@@ -59,7 +64,7 @@ std::vector<Token> lex(std::string_view source) {
       const auto end = source.find("*/", at + 2);
 
       if (end == source.npos)
-        fail("unterminated comment");
+        return fail(error, "unterminated comment");
 
       at = end + 2;
       continue;
@@ -76,15 +81,16 @@ std::vector<Token> lex(std::string_view source) {
     tokens.push_back({begin, at, std::string(source.substr(begin, at - begin))});
   }
 
-  return tokens;
+  return true;
 }
 
-size_t close(const std::vector<Token>& t, size_t first) {
-  const auto opening = t.at(first).text;
+// The token that closes the bracket at t[first], in `last`.
+bool close(const std::vector<Token>& t, size_t first, size_t& last, std::string& error) {
+  const auto opening = first < t.size() ? t[first].text : std::string();
   const auto ending = opening == "(" ? ")" : opening == "[" ? "]" : opening == "{" ? "}" : "";
 
   if (!*ending)
-    fail("expected opening delimiter");
+    return fail(error, "expected opening delimiter");
 
   std::vector<std::string> stack;
 
@@ -95,39 +101,59 @@ size_t close(const std::vector<Token>& t, size_t first) {
       stack.push_back(word);
     else if (word == ")" || word == "]" || word == "}") {
       if (stack.empty() || (word == ")" ? stack.back() != "(" : word == "]" ? stack.back() != "[" : stack.back() != "{"))
-        fail("unbalanced delimiters");
+        return fail(error, "unbalanced delimiters");
 
       stack.pop_back();
 
-      if (stack.empty())
-        return i;
+      if (stack.empty()) {
+        last = i;
+        return true;
+      }
     }
   }
 
-  fail("unterminated delimiter");
+  return fail(error, "unterminated delimiter");
 }
 
-using Transform = std::function<std::string(const std::vector<std::string>&)>;
-void calls(std::string& source, std::string_view name, const Transform& transform) {
+// A literal unsigned decimal token's value; false when it has no value or
+// exceeds 64 bits.
+bool decimal(const std::string& text, uint64_t& value) {
+  const auto [end, status] = std::from_chars(text.data(), text.data() + text.size(), value);
+  return status == std::errc() && end == text.data() + text.size();
+}
+
+// A call's replacement for its arguments; false (with `error` set) rejects it.
+using Transform = std::function<bool(const std::vector<std::string>&, std::string&)>;
+bool calls(std::string& source, std::string_view name, const Transform& transform, std::string& error) {
   // Rewrite innermost calls first. Token boundaries exclude comments and names
   // such as textureSize from a texture replacement; brackets protect commas.
   for (;;) {
-    const auto t = lex(source);
+    std::vector<Token> t;
+
+    if (!lex(source, t, error))
+      return false;
+
     size_t first = t.size();
 
     for (size_t i = 0; i + 1 < t.size(); ++i)
       if (t[i].text == name && t[i + 1].text == "(")
         first = i;
     if (first == t.size())
-      return;
+      return true;
 
-    const auto last = close(t, first + 1);
+    size_t last;
+
+    if (!close(t, first + 1, last, error))
+      return false;
+
     size_t begin = t[first + 1].end;
     std::vector<std::string> args;
 
     for (size_t i = first + 2; i < last; ++i) {
       if (t[i].text == "(" || t[i].text == "[" || t[i].text == "{") {
-        i = close(t, i);
+        if (!close(t, i, i, error))
+          return false;
+
         continue;
       }
 
@@ -140,14 +166,20 @@ void calls(std::string& source, std::string_view name, const Transform& transfor
     if (begin < t[last].begin)
       args.push_back(trim(std::string_view(source).substr(begin, t[last].begin - begin)));
 
-    const auto replacement = transform(args);
+    std::string replacement;
+
+    if (!transform(args, replacement))
+      return false;
+
     source.replace(t[first].begin, t[last].end - t[first].begin, replacement);
   }
 }
 
-void arity(const std::vector<std::string>& args, size_t count, const char* name) {
+bool arity(const std::vector<std::string>& args, size_t count, const char* name, std::string& error) {
   if (args.size() != count)
-    fail(std::string(name) + " has unsupported argument count");
+    return fail(error, std::string(name) + " has unsupported argument count");
+
+  return true;
 }
 
 void replace_all(std::string& s, std::string_view from, std::string_view to) {
@@ -179,44 +211,48 @@ struct Layout {
   std::string body;
 };
 
-std::vector<Field> fields(std::string_view source) {
-  const auto t = lex(source);
-  std::vector<Field> result;
+bool fields(std::string_view source, std::vector<Field>& result, std::string& error) {
+  std::vector<Token> t;
+
+  if (!lex(source, t, error))
+    return false;
+
+  result.clear();
 
   for (size_t i = 0; i < t.size();) {
     if (i + 2 >= t.size())
-      fail("truncated uniform field");
+      return fail(error, "truncated uniform field");
 
     Field f{t[i].text, t[i + 1].text};
     i += 2;
 
     if (t[i].text == "[") {
       if (i + 3 >= t.size() || t[i + 2].text != "]" || !std::all_of(t[i + 1].text.begin(), t[i + 1].text.end(), [](char ch) { return ch >= '0' && ch <= '9'; }))
-        fail("uniform array must have a literal positive extent");
+        return fail(error, "uniform array must have a literal positive extent");
 
-      const auto count = std::stoull(t[i + 1].text);
+      uint64_t count;
 
-      if (!count || count > 65536)
-        fail("uniform array extent outside supported range");
+      if (!decimal(t[i + 1].text, count) || !count || count > 65536)
+        return fail(error, "uniform array extent outside supported range");
 
       f.count = size_t(count);
       i += 3;
     }
 
     if (i >= t.size() || t[i++].text != ";")
-      fail("unsupported uniform field declaration");
+      return fail(error, "unsupported uniform field declaration");
 
     result.push_back(std::move(f));
   }
 
-  return result;
+  return true;
 }
 
 size_t align(size_t at, size_t by) {
   return (at + by - 1) & ~(by - 1);
 }
 
-Layout layout(const std::vector<Field>& members, const std::map<std::string, Layout>& structs) {
+bool layout(const std::vector<Field>& members, const std::map<std::string, Layout>& structs, Layout& result, std::string& error) {
   size_t at = 0, alignment = 16, pads = 0;
   std::string body;
   auto pad = [&](size_t bytes) {
@@ -239,16 +275,16 @@ Layout layout(const std::vector<Field>& members, const std::map<std::string, Lay
     else if (const auto it = structs.find(f.type); it != structs.end())
       l = it->second;
     else
-      fail("unsupported std140 type " + f.type);
+      return fail(error, "unsupported std140 type " + f.type);
 
     if (f.name.starts_with("aur_padding_"))
-      fail("reserved uniform padding name");
+      return fail(error, "reserved uniform padding name");
 
     if (f.count) {
       // Packed Cg arrays have no independent GLSL array-stride qualifier.
       // Full vec4/matrix/explicitly padded struct elements preserve the ABI.
       if (l.size != align(l.size, 16))
-        fail("unsupported std140 array stride for " + f.type);
+        return fail(error, "unsupported std140 array stride for " + f.type);
 
       l.alignment = std::max(l.alignment, size_t(16));
       l.size *= f.count;
@@ -264,11 +300,16 @@ Layout layout(const std::vector<Field>& members, const std::map<std::string, Lay
 
   const auto size = align(at, alignment);
   pad(size - at);
-  return {alignment, size, body};
+  result = {alignment, size, body};
+  return true;
 }
 
-void uniforms(std::string& source, std::set<std::string>& matrices) {
-  const auto t = lex(source);
+bool uniforms(std::string& source, std::set<std::string>& matrices, std::string& error) {
+  std::vector<Token> t;
+
+  if (!lex(source, t, error))
+    return false;
+
   std::map<std::string, Layout> layouts;
   std::vector<std::tuple<size_t, size_t, std::string>> edits;
 
@@ -276,17 +317,23 @@ void uniforms(std::string& source, std::set<std::string>& matrices) {
     if (t[i].text != "struct" || t[i + 2].text != "{")
       continue;
 
-    const auto end = close(t, i + 2);
+    size_t end;
+
+    if (!close(t, i + 2, end, error))
+      return false;
 
     if (end + 1 >= t.size() || t[end + 1].text != ";")
-      fail("unsupported struct declaration");
+      return fail(error, "unsupported struct declaration");
 
     const auto body = std::string_view(source).substr(t[i + 2].end, t[end].begin - t[i + 2].end);
-    const auto fs = fields(body);
-    const auto l = layout(fs, layouts);
+    std::vector<Field> fs;
+    Layout l;
+
+    if (!fields(body, fs, error) || !layout(fs, layouts, l, error))
+      return false;
 
     if (!layouts.emplace(t[i + 1].text, l).second)
-      fail("duplicate struct");
+      return fail(error, "duplicate struct");
 
     edits.emplace_back(t[i].begin, t[end + 1].end, "struct " + t[i + 1].text + " {\n" + l.body + "};");
     i = end + 1;
@@ -299,18 +346,25 @@ void uniforms(std::string& source, std::set<std::string>& matrices) {
       continue;
 
     if (++blocks > 1)
-      fail("multiple uniform blocks need explicit buffer bindings");
+      return fail(error, "multiple uniform blocks need explicit buffer bindings");
 
     if (t[i + 3].text != ")" || t[i + 4].text != "uniform" || t[i + 6].text != "{")
-      fail("unsupported std140 block qualifiers");
+      return fail(error, "unsupported std140 block qualifiers");
 
-    const auto end = close(t, i + 6);
+    size_t end;
+
+    if (!close(t, i + 6, end, error))
+      return false;
 
     if (end + 2 >= t.size() || t[end + 2].text != ";")
-      fail("uniform block requires a named instance");
+      return fail(error, "uniform block requires a named instance");
 
-    const auto fs = fields(std::string_view(source).substr(t[i + 6].end, t[end].begin - t[i + 6].end));
-    const auto l = layout(fs, layouts);
+    std::vector<Field> fs;
+    Layout l;
+
+    if (!fields(std::string_view(source).substr(t[i + 6].end, t[end].begin - t[i + 6].end), fs, error) || !layout(fs, layouts, l, error))
+      return false;
+
     const auto& name = t[i + 5].text;
     const auto& instance = t[end + 1].text;
 
@@ -325,6 +379,8 @@ void uniforms(std::string& source, std::set<std::string>& matrices) {
 
   for (const auto& [first, last, text] : edits)
     source.replace(first, last - first, text);
+
+  return true;
 }
 
 struct Interface {
@@ -337,9 +393,12 @@ struct Interfaces {
   std::string output;
 };
 
-Interfaces interfaces(std::string& source, Stage stage) {
-  const auto t = lex(source);
-  Interfaces result;
+bool interfaces(std::string& source, Stage stage, Interfaces& result, std::string& error) {
+  std::vector<Token> t;
+
+  if (!lex(source, t, error))
+    return false;
+
   int braces = 0, parentheses = 0;
   std::vector<std::tuple<size_t, size_t, std::string>> edits;
   std::set<unsigned> locations;
@@ -367,11 +426,11 @@ Interfaces interfaces(std::string& source, Stage stage) {
     if (t[i].text == "layout") {
       if (i + 6 >= t.size() || t[i + 1].text != "(" || t[i + 2].text != "location" || t[i + 3].text != "=" || t[i + 5].text != ")" ||
           !std::all_of(t[i + 4].text.begin(), t[i + 4].text.end(), [](char ch) { return ch >= '0' && ch <= '9'; }))
-        fail("unsupported interface layout");
-      const auto value = std::stoull(t[i + 4].text);
+        return fail(error, "unsupported interface layout");
+      uint64_t value;
 
-      if (value > 15)
-        fail("interface location exceeds native range");
+      if (!decimal(t[i + 4].text, value) || value > 15)
+        return fail(error, "interface location exceeds native range");
 
       location = unsigned(value);
       i += 6;
@@ -381,35 +440,35 @@ Interfaces interfaces(std::string& source, Stage stage) {
 
     if (direction != "in" && direction != "out") {
       if (i != declaration || direction == "flat" || direction == "centroid" || direction == "noperspective")
-        fail("unsupported interface qualifier");
+        return fail(error, "unsupported interface qualifier");
 
       continue;
     }
 
     if (i + 3 >= t.size() || t[i + 3].text != ";")
-      fail("unsupported interface declaration");
+      return fail(error, "unsupported interface declaration");
 
     const Interface item{t[i + 1].text, t[i + 2].text, location};
 
     if (item.type != "float" && !std::regex_match(item.type, std::regex("vec[234]")))
-      fail("unsupported interpolant/attribute type");
+      return fail(error, "unsupported interpolant/attribute type");
 
     if (!names.insert(item.name).second)
-      fail("duplicate interface name");
+      return fail(error, "duplicate interface name");
 
     if (stage == Stage::Vertex && direction == "in") {
       if (location == UINT32_MAX || !locations.insert(location).second)
-        fail("vertex attributes require unique explicit locations");
+        return fail(error, "vertex attributes require unique explicit locations");
 
       result.attributes.push_back(item);
     } else if (stage == Stage::Fragment && direction == "out") {
       if (!result.output.empty() || (location != UINT32_MAX && location != 0) || item.type != "vec4")
-        fail("fragment requires one vec4 output at location zero");
+        return fail(error, "fragment requires one vec4 output at location zero");
 
       result.output = item.name;
     } else {
       if (location != UINT32_MAX)
-        fail("explicit varying locations are not supported");
+        return fail(error, "explicit varying locations are not supported");
 
       result.varyings.push_back(item);
     }
@@ -419,23 +478,23 @@ Interfaces interfaces(std::string& source, Stage stage) {
   }
 
   if (braces || parentheses)
-    fail("unbalanced shader source");
+    return fail(error, "unbalanced shader source");
 
   if (stage == Stage::Fragment && result.output.empty())
-    fail("missing fragment color output");
+    return fail(error, "missing fragment color output");
 
   if (result.varyings.size() > 10)
-    fail("too many varying semantics");
+    return fail(error, "too many varying semantics");
 
   std::sort(edits.rbegin(), edits.rend());
 
   for (const auto& [first, last, text] : edits)
     source.replace(first, last - first, text);
 
-  return result;
+  return true;
 }
 
-std::string attribute_semantic(const Interface& a, const std::string& family) {
+bool attribute_semantic(const Interface& a, const std::string& family, std::string& semantic, std::string& error) {
   static const std::vector<std::string> dynamicNames{"native_position", "native_view_position", "native_normal", "native_color0", "native_color1"};
   static const std::vector<std::string> dynamicSemantics{"POSITION", "TEXCOORD0", "NORMAL", "COLOR0", "COLOR1"};
   static const std::vector<std::string> meshNames{"mesh_position", "mesh_normal", "mesh_color0", "mesh_color1"};
@@ -446,9 +505,10 @@ std::string attribute_semantic(const Interface& a, const std::string& family) {
     static const std::vector<std::string> expected{"vec4", "vec2", "vec4"};
 
     if (a.location >= names.size() || a.name != names[a.location] || a.type != expected[a.location])
-      fail("unsupported direct native attribute " + a.name);
+      return fail(error, "unsupported direct native attribute " + a.name);
 
-    return semantics[a.location];
+    semantic = semantics[a.location];
+    return true;
   }
 
   const bool mesh = family == "mesh";
@@ -458,23 +518,26 @@ std::string attribute_semantic(const Interface& a, const std::string& family) {
 
   if (mesh && a.location >= 12 && a.location < 15) {
     if (a.name != "mesh_matrix" + std::to_string(a.location - 12) || a.type != "vec4")
-      fail("native matrix selector attribute does not match layout: " + a.name);
+      return fail(error, "native matrix selector attribute does not match layout: " + a.name);
 
-    return "BLENDINDICES" + std::to_string(a.location - 12);
+    semantic = "BLENDINDICES" + std::to_string(a.location - 12);
+    return true;
   }
 
   const auto expected = a.location < firstTex ? names[a.location] : (mesh ? "mesh_tex" : "native_tex") + std::to_string(a.location - firstTex);
 
   if (a.location >= firstTex + 8 || a.name != expected)
-    fail("unsupported/mixed native attribute " + a.name);
+    return fail(error, "unsupported/mixed native attribute " + a.name);
 
   if ((!mesh && a.type != ((a.location == 1 || a.location == 2 || a.location >= 5) ? "vec3" : "vec4")) || (mesh && a.type != "vec4"))
-    fail("native attribute type does not match layout: " + a.name);
+    return fail(error, "native attribute type does not match layout: " + a.name);
 
-  return a.location < firstTex ? semantics[a.location] : "TEXCOORD" + std::to_string(a.location - firstTex + (mesh ? 0 : 1));
+  semantic = a.location < firstTex ? semantics[a.location] : "TEXCOORD" + std::to_string(a.location - firstTex + (mesh ? 0 : 1));
+  return true;
 }
 
-size_t opening(const std::vector<Token>& t, size_t end) {
+// The token that opens the bracket closed at t[end], in `begin`.
+bool opening(const std::vector<Token>& t, size_t end, size_t& begin, std::string& error) {
   int depth = 0;
   const auto& last = t[end].text;
   const auto* first = last == ")" ? "(" : "[";
@@ -483,38 +546,49 @@ size_t opening(const std::vector<Token>& t, size_t end) {
     if (t[i].text == last)
       ++depth;
 
-    if (t[i].text == first && !--depth)
-      return i;
+    if (t[i].text == first && !--depth) {
+      begin = i;
+      return true;
+    }
   }
 
-  fail("unbalanced matrix operand");
+  return fail(error, "unbalanced matrix operand");
 }
 
-size_t operand(const std::vector<Token>& t, size_t end) {
+// The first token of the operand that ends at t[end], in `result`.
+bool operand(const std::vector<Token>& t, size_t end, size_t& result, std::string& error) {
   size_t begin = end;
 
   if (t[end].text == ")" || t[end].text == "]") {
-    begin = opening(t, end);
+    if (!opening(t, end, begin, error))
+      return false;
 
     if (begin && (t[end].text == "]" || (identifier(t[begin - 1].text[0]) && t[begin - 1].text != "return")))
-      begin = operand(t, begin - 1);
+      if (!operand(t, begin - 1, begin, error))
+        return false;
   } else if (!identifier(t[end].text[0]))
-    fail("unsupported matrix operand");
+    return fail(error, "unsupported matrix operand");
 
   if (begin >= 2 && t[begin - 1].text == ".")
-    begin = operand(t, begin - 2);
+    if (!operand(t, begin - 2, begin, error))
+      return false;
   // Include unary signs only; a binary subtraction is a lower-precedence term.
   if (begin && (t[begin - 1].text == "-" || t[begin - 1].text == "+" || t[begin - 1].text == "!")) {
     if (begin == 1 || std::string("=(:,;{+-*/").find(t[begin - 2].text) != std::string::npos)
       --begin;
   }
 
-  return begin;
+  result = begin;
+  return true;
 }
 
-void matrix_products(std::string& source, const std::set<std::string>& matrices) {
+bool matrix_products(std::string& source, const std::set<std::string>& matrices, std::string& error) {
   for (;;) {
-    const auto t = lex(source);
+    std::vector<Token> t;
+
+    if (!lex(source, t, error))
+      return false;
+
     bool changed = false;
 
     for (size_t i = 1; i + 3 < t.size(); ++i) {
@@ -524,12 +598,17 @@ void matrix_products(std::string& source, const std::set<std::string>& matrices)
       size_t last = i + 3;
 
       if (last + 1 < t.size() && t[last + 1].text == "[")
-        last = close(t, last + 1);
+        if (!close(t, last + 1, last, error))
+          return false;
 
-      size_t first = operand(t, i - 1);
+      size_t first;
+
+      if (!operand(t, i - 1, first, error))
+        return false;
 
       while (first >= 2 && (t[first - 1].text == "*" || t[first - 1].text == "/" || t[first - 1].text == "%"))
-        first = operand(t, first - 2);
+        if (!operand(t, first - 2, first, error))
+          return false;
 
       const auto lhs = trim(std::string_view(source).substr(t[first].begin, t[i].begin - t[first].begin));
       const auto rhs = std::string_view(source).substr(t[i + 1].begin, t[last].end - t[i + 1].begin);
@@ -539,7 +618,7 @@ void matrix_products(std::string& source, const std::set<std::string>& matrices)
     }
 
     if (!changed)
-      return;
+      return true;
   }
 }
 
@@ -587,9 +666,9 @@ std::string prefix(bool wordBuffers) {
 }
 } // namespace
 
-std::string convert(std::string_view input, Stage stage) {
+bool try_convert(std::string_view input, Stage stage, std::string& cg, std::string& error) {
   if (input.size() > (1u << 20))
-    fail("shader exceeds supported source size");
+    return fail(error, "shader exceeds supported source size");
 
   std::string source(input);
   source = std::regex_replace(source, std::regex("^precision[^;]*;[ \\t]*$", std::regex::multiline), "");
@@ -598,16 +677,24 @@ std::string convert(std::string_view input, Stage stage) {
 
   // Remove the generated texture word-buffer helper; native Cg uses BUFFERs.
   {
-    const auto t = lex(source);
+    std::vector<Token> t;
+
+    if (!lex(source, t, error))
+      return false;
 
     for (size_t i = 1; i + 1 < t.size(); ++i)
       if (t[i].text == "aur_word" && t[i - 1].text == "uint" && t[i + 1].text == "(") {
-        const auto argsEnd = close(t, i + 1);
+        size_t argsEnd, end;
+
+        if (!close(t, i + 1, argsEnd, error))
+          return false;
 
         if (argsEnd + 1 >= t.size() || t[argsEnd + 1].text != "{")
-          fail("unsupported word-buffer helper");
+          return fail(error, "unsupported word-buffer helper");
 
-        const auto end = close(t, argsEnd + 1);
+        if (!close(t, argsEnd + 1, end, error))
+          return false;
+
         source.erase(t[i - 1].begin, t[end].end - t[i - 1].begin);
         break;
       }
@@ -616,15 +703,21 @@ std::string convert(std::string_view input, Stage stage) {
   replace_all(source, "p.x, -p.y, 2.0 * p.z - p.w, p.w", "p.x, p.y, 2.0 * p.z - p.w, p.w");
   source = std::regex_replace(source, std::regex("vec4\\(position_in\\.x,\\s*-position_in\\.y,\\s*position_in\\.zw\\)"), "vec4(position_in.x, position_in.y, position_in.zw)");
   std::set<std::string> matrices;
-  uniforms(source, matrices);
-  const auto interface = interfaces(source, stage);
+  Interfaces interface;
+
+  if (!uniforms(source, matrices, error) || !interfaces(source, stage, interface, error))
+    return false;
 
   if (!interface.attributes.empty()) {
     // The native emitter retains a dead vidx initializer from its fetch route.
     // Native attribute streams supply no vertex/instance ID semantic. Remove
     // only a proven unused local; reject a real dependency rather than reading
     // an unassigned static builtin in the generated Cg wrapper.
-    const auto t = lex(source);
+    std::vector<Token> t;
+
+    if (!lex(source, t, error))
+      return false;
+
     std::vector<std::pair<size_t, size_t>> dead;
 
     for (size_t i = 0; i + 7 < t.size(); ++i) {
@@ -640,9 +733,12 @@ std::string convert(std::string_view input, Stage stage) {
     for (const auto& [first, last] : dead)
       source.erase(first, last - first);
 
-    for (const auto& token : lex(source))
+    if (!lex(source, t, error))
+      return false;
+
+    for (const auto& token : t)
       if (token.text == "gl_VertexID" || token.text == "gl_InstanceID")
-        fail("native attribute layout cannot consume builtin vertex/instance IDs");
+        return fail(error, "native attribute layout cannot consume builtin vertex/instance IDs");
   }
 
   std::set<std::string> integerSamplers, samplers;
@@ -666,10 +762,10 @@ std::string convert(std::string_view input, Stage stage) {
       else if (std::regex_match(name, std::regex("tex[0-7]")))
         unit = unsigned(name.back() - '0');
       else if (name != "src" && name != "native_texture")
-        fail("unsupported sampler binding " + name);
+        return fail(error, "unsupported sampler binding " + name);
 
       if (!units.insert(unit).second)
-        fail("duplicate sampler unit");
+        return fail(error, "duplicate sampler unit");
 
       samplers.insert(name);
 
@@ -680,7 +776,7 @@ std::string convert(std::string_view input, Stage stage) {
     } else if (ty == "vec4")
       declaration = "float4 " + name + ";";
     else
-      fail("unsupported standalone uniform " + ty);
+      return fail(error, "unsupported standalone uniform " + ty);
 
     converted.append(source, begin, size_t(m.position()) - begin);
     converted += declaration;
@@ -689,23 +785,41 @@ std::string convert(std::string_view input, Stage stage) {
 
   converted.append(source, begin, source.size() - begin);
   source = std::move(converted);
-  calls(source, "textureSize", [&](const auto& a) {
-    arity(a, 2, "textureSize");
+  const bool sized = calls(
+      source, "textureSize",
+      [&](const auto& a, std::string& replacement) {
+        if (!arity(a, 2, "textureSize", error))
+          return false;
 
-    if (!samplers.contains(a[0]) || a[1] != "0")
-      fail("textureSize requires a known sampler and level zero");
+        if (!samplers.contains(a[0]) || a[1] != "0")
+          return fail(error, "textureSize requires a known sampler and level zero");
 
-    return "int2(aur_size_" + a[0] + ")";
-  });
-  calls(source, "texelFetch", [&](const auto& a) {
-    arity(a, 3, "texelFetch");
+        replacement = "int2(aur_size_" + a[0] + ")";
+        return true;
+      },
+      error);
 
-    if (!samplers.contains(a[0]) || a[2] != "0")
-      fail("texelFetch requires a known sampler and level zero");
+  if (!sized)
+    return false;
 
-    auto value = "tex2Dlod<float4>(" + a[0] + ", float4((float2(" + a[1] + ") + 0.5) / aur_size_" + a[0] + ", 0.0, " + a[2] + "))";
-    return integerSamplers.contains(a[0]) ? "int4(" + value + ")" : value;
-  });
+  const bool fetched = calls(
+      source, "texelFetch",
+      [&](const auto& a, std::string& replacement) {
+        if (!arity(a, 3, "texelFetch", error))
+          return false;
+
+        if (!samplers.contains(a[0]) || a[2] != "0")
+          return fail(error, "texelFetch requires a known sampler and level zero");
+
+        auto value = "tex2Dlod<float4>(" + a[0] + ", float4((float2(" + a[1] + ") + 0.5) / aur_size_" + a[0] + ", 0.0, " + a[2] + "))";
+        replacement = integerSamplers.contains(a[0]) ? "int4(" + value + ")" : value;
+        return true;
+      },
+      error);
+
+  if (!fetched)
+    return false;
+
   source = std::regex_replace(source, std::regex("(^|\\n)const (\\w+ \\w+\\[\\d+\\]\\s*=\\s*)\\w+\\[\\d+\\]\\(([^;]*)\\);"), "$1static const $2{$3};");
   replace_all(source, "uintBitsToFloat(", "bit_cast<float>(");
   replace_all(source, "floatBitsToUint(", "bit_cast<uint>(");
@@ -714,26 +828,42 @@ std::string convert(std::string_view input, Stage stage) {
   const std::regex mainPattern("\\bvoid\\s+main\\s*\\(\\s*\\)");
 
   if (std::distance(std::sregex_iterator(source.begin(), source.end(), mainPattern), std::sregex_iterator()) != 1)
-    fail("expected one void main() entry point");
+    return fail(error, "expected one void main() entry point");
 
   source = std::regex_replace(source, mainPattern, "void aur_main()");
   source = std::regex_replace(source, std::regex("(raw_fetch_u8_1\\([^;\\n]*?\\))\\s*/\\s*3u"), "uint(float($1) / 3.0)");
   source = std::regex_replace(source, std::regex("(in_texmtxidx\\d+)\\s*/\\s*3u"), "uint(float($1) / 3.0)");
   source = std::regex_replace(source, std::regex("\\blerp\\b(?!\\s*\\()"), "aur_lerp_value");
-  calls(source, "textureProj", [&](const auto& a) {
-    arity(a, 2, "textureProj");
+  const bool projected = calls(
+      source, "textureProj",
+      [&](const auto& a, std::string& replacement) {
+        if (!arity(a, 2, "textureProj", error))
+          return false;
 
-    if (!samplers.contains(a[0]))
-      fail("unknown projected sampler");
+        if (!samplers.contains(a[0]))
+          return fail(error, "unknown projected sampler");
 
-    return "tex2Dproj(" + a[0] + ", " + a[1] + ")";
-  });
-  calls(source, "texture", [&](const auto& a) {
-    if ((a.size() != 2 && a.size() != 3) || !samplers.contains(a[0]))
-      fail("unsupported texture call");
+        replacement = "tex2Dproj(" + a[0] + ", " + a[1] + ")";
+        return true;
+      },
+      error);
 
-    return a.size() == 3 ? "tex2Dbias(" + a[0] + ", float4(" + a[1] + ", 0.0, " + a[2] + "))" : "tex2D(" + a[0] + ", " + a[1] + ")";
-  });
+  if (!projected)
+    return false;
+
+  const bool sampled = calls(
+      source, "texture",
+      [&](const auto& a, std::string& replacement) {
+        if ((a.size() != 2 && a.size() != 3) || !samplers.contains(a[0]))
+          return fail(error, "unsupported texture call");
+
+        replacement = a.size() == 3 ? "tex2Dbias(" + a[0] + ", float4(" + a[1] + ", 0.0, " + a[2] + "))" : "tex2D(" + a[0] + ", " + a[1] + ")";
+        return true;
+      },
+      error);
+
+  if (!sampled)
+    return false;
 
   for (const auto& [from, to] : std::map<std::string, std::string>{{"mix", "lerp"},
                                                                    {"fract", "frac"},
@@ -746,11 +876,18 @@ std::string convert(std::string_view input, Stage stage) {
                                                                    {"greaterThan", "aur_greater"}})
     source = std::regex_replace(source, std::regex("\\b" + from + "\\s*\\("), to + "(");
   identifiers(source, types);
-  matrix_products(source, matrices);
 
-  for (const auto& token : lex(source))
+  if (!matrix_products(source, matrices, error))
+    return false;
+
+  std::vector<Token> sourceTokens;
+
+  if (!lex(source, sourceTokens, error))
+    return false;
+
+  for (const auto& token : sourceTokens)
     if (token.text == "layout" || token.text == "uniform" || token.text.starts_with("gl_"))
-      fail("unsupported GLSL construct " + token.text);
+      return fail(error, "unsupported GLSL construct " + token.text);
   std::vector<std::string> params, body;
 
   if (stage == Stage::Vertex) {
@@ -762,7 +899,12 @@ std::string convert(std::string_view input, Stage stage) {
       const auto family = first.starts_with("mesh_") ? "mesh" : first.starts_with("native_") ? "dynamic" : "direct";
 
       for (const auto& a : interface.attributes) {
-        params.push_back(type(a.type) + " a_" + a.name + " : " + attribute_semantic(a, family));
+        std::string semantic;
+
+        if (!attribute_semantic(a, family, semantic, error))
+          return false;
+
+        params.push_back(type(a.type) + " a_" + a.name + " : " + semantic);
         body.push_back(a.name + " = a_" + a.name + ";");
       }
     }
@@ -795,7 +937,6 @@ std::string convert(std::string_view input, Stage stage) {
     body.push_back("return " + interface.output + ";");
   }
 
-  const auto sourceTokens = lex(source);
   const bool wordBuffers = std::any_of(sourceTokens.begin(), sourceTokens.end(), [](const Token& token) { return token.text == "aur_word"; });
   auto result = prefix(wordBuffers) + source + "\n" + (stage == Stage::Vertex ? "void" : "float4") + " main(";
 
@@ -807,34 +948,56 @@ std::string convert(std::string_view input, Stage stage) {
   for (const auto& statement : body)
     result += "    " + statement + "\n";
 
-  return result + "}\n";
+  cg = result + "}\n";
+  return true;
 }
 
-std::string scalar_fragment(std::string_view input) {
+std::string convert(std::string_view input, Stage stage) {
+  std::string cg, error;
+
+  if (!try_convert(input, stage, cg, error))
+    AURORA_THROW(std::runtime_error(error));
+
+  return cg;
+}
+
+bool try_scalar_fragment(std::string_view input, std::string& cg, std::string& error) {
   std::string source(input);
-  const auto t = lex(source);
+  std::vector<Token> t;
+
+  if (!lex(source, t, error))
+    return false;
+
   size_t main = t.size();
 
   for (size_t i = 1; i + 1 < t.size(); ++i)
     if (t[i].text == "main" && t[i + 1].text == "(") {
       if (main != t.size() || t[i - 1].text != "float4")
-        fail("expected one float4 fragment entry point");
+        return fail(error, "expected one float4 fragment entry point");
 
       main = i;
     }
   if (main == t.size())
-    fail("missing float4 fragment entry point");
+    return fail(error, "missing float4 fragment entry point");
 
-  const auto argsEnd = close(t, main + 1);
+  size_t argsEnd;
+
+  if (!close(t, main + 1, argsEnd, error))
+    return false;
+
   size_t body = argsEnd + 1;
 
   while (body < t.size() && t[body].text != "{")
     ++body;
 
   if (body == t.size())
-    fail("missing fragment entry body");
+    return fail(error, "missing fragment entry body");
 
-  const auto end = close(t, body);
+  size_t end;
+
+  if (!close(t, body, end, error))
+    return false;
+
   std::vector<std::tuple<size_t, size_t, std::string>> edits;
   edits.emplace_back(t[main - 1].begin, t[main - 1].end, "__regformat float");
   unsigned returns = 0;
@@ -845,26 +1008,37 @@ std::string scalar_fragment(std::string_view input) {
 
       while (i < end && t[i].text != ";") {
         if (t[i].text == "(" || t[i].text == "[" || t[i].text == "{")
-          i = close(t, i);
+          if (!close(t, i, i, error))
+            return false;
 
         ++i;
       }
 
       if (i == end || first == i)
-        fail("unsupported scalar fragment return");
+        return fail(error, "unsupported scalar fragment return");
 
       const auto expression = trim(std::string_view(source).substr(t[first].begin, t[i].begin - t[first].begin));
       edits.emplace_back(t[first].begin, t[i].begin, "(" + expression + ").r");
       ++returns;
     }
   if (!returns)
-    fail("fragment entry has no return");
+    return fail(error, "fragment entry has no return");
 
   std::sort(edits.rbegin(), edits.rend());
 
   for (const auto& [first, last, text] : edits)
     source.replace(first, last - first, text);
 
-  return source;
+  cg = std::move(source);
+  return true;
+}
+
+std::string scalar_fragment(std::string_view input) {
+  std::string cg, error;
+
+  if (!try_scalar_fragment(input, cg, error))
+    AURORA_THROW(std::runtime_error(error));
+
+  return cg;
 }
 } // namespace aurora::gfx::cg

@@ -1,4 +1,5 @@
 #include "draw_memory.hpp"
+#include <aurora/fatal.hpp>
 #include "device.hpp"
 #include <limits>
 #include <stdexcept>
@@ -9,13 +10,13 @@ DrawMemory* g_draw = nullptr;
 constexpr size_t UniformAlignment = 16, IndexAlignment = sizeof(uint16_t);
 void require_alignment(const void* pointer, size_t bytes, size_t alignment) {
   if (bytes && (!pointer || (reinterpret_cast<uintptr_t>(pointer) & (alignment - 1))))
-    throw std::runtime_error("Unaligned native GXM draw buffer");
+    AURORA_THROW(std::runtime_error("Unaligned native GXM draw buffer"));
 }
 } // namespace
 
 DrawMemory::DrawMemory(Device& device) : m_device(device), m_ids(65536 * sizeof(float), MappedMemory::Kind::Draw, "Aurora vertex and instance IDs") {
   if (g_draw)
-    throw std::runtime_error("Native draw memory already initialized");
+    AURORA_THROW(std::runtime_error("Native draw memory already initialized"));
 
   auto* ids = static_cast<float*>(m_ids.data());
 
@@ -50,7 +51,7 @@ void DrawMemory::bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shad
 
   if (!inside(draw, drawBytes) || (shadeBytes && (shadeOffset >= drawBytes || uint64_t(shadeOffset) + shadeBytes > drawBytes)) || (shadeOffset & 15) || !inside(scene, sceneBytes) ||
       (paletteBytes && ((paletteOffset & 15) || uint64_t(paletteOffset) + paletteBytes > drawBytes)))
-    throw std::runtime_error("Shaded uniform blocks exceed the active draw slot");
+    AURORA_THROW(std::runtime_error("Shaded uniform blocks exceed the active draw slot"));
   m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
   check(sceGxmSetVertexUniformBuffer(context, 0, draw), "bind shaded draw block");
@@ -67,7 +68,7 @@ void DrawMemory::bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shad
 
 void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {
   if (!m_uniforms || (offset & (UniformAlignment - 1)) || uint64_t(offset) + bytes > m_uniformBytes)
-    throw std::runtime_error("Native uniform range exceeds active draw slot");
+    AURORA_THROW(std::runtime_error("Native uniform range exceeds active draw slot"));
 
   m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
@@ -85,7 +86,7 @@ void DrawMemory::draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instan
 
   if (!m_indices || (indexOffset & (IndexAlignment - 1)) || uint64_t(indexOffset) + uint64_t(indexCount) * sizeof(uint16_t) > m_indexBytes || instances > 65536 ||
       uint64_t(indexCount) * instances > std::numeric_limits<uint32_t>::max())
-    throw std::runtime_error("Native indexed draw exceeds active draw slot");
+    AURORA_THROW(std::runtime_error("Native indexed draw exceeds active draw slot"));
   m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
   check(sceGxmSetVertexStream(context, 0, m_ids.data()), "bind vertex IDs");
@@ -107,14 +108,14 @@ SceGxmNotification DrawMemory::completion_fence() {
 
 SceGxmNotification draw_memory_fence() {
   if (!g_draw)
-    throw std::runtime_error("Native draw memory not initialized");
+    AURORA_THROW(std::runtime_error("Native draw memory not initialized"));
 
   return g_draw->completion_fence();
 }
 
 void bind_draw_memory(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes) {
   if (!g_draw)
-    throw std::runtime_error("Native draw memory not initialized");
+    AURORA_THROW(std::runtime_error("Native draw memory not initialized"));
 
   g_draw->bind(uniforms, uniformBytes, indices, indexBytes, vertices, vertexBytes, attributes, attributeBytes);
 }

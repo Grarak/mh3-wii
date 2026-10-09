@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "fatal.h"
 #include "disc_image.h"
 #include <aurora/thread_role.hpp>
 #include <psp2/kernel/sysmem.h>
@@ -153,7 +154,7 @@ void ReportVitaMemory() {
             std::fprintf(stderr, "MH3 Vita budget: main %.2f MiB, sampled peak %.2f MiB; CDRAM %.2f MiB, sampled peak %.2f MiB; phycont %.2f MiB, sampled peak %.2f MiB\n", main / 1048576.0,
                          peakMain / 1048576.0, cdram / 1048576.0, peakCdram / 1048576.0, phycont / 1048576.0, peakPhycont / 1048576.0);
             if (main >= 365000000)
-                throw std::runtime_error("Vita main RAM exceeds the 365 MB port limit");
+                MH3_THROW(std::runtime_error("Vita main RAM exceeds the 365 MB port limit"));
 
             return;
         }

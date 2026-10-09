@@ -1,5 +1,6 @@
 // ABI adapters for the typed NW4R effects C producers. No GX calls/FIFO writes.
 #include "native_effect_draw.h"
+#include "fatal.h"
 #include "effect_particle.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
@@ -39,7 +40,7 @@ mh3_res_span Span(uint32_t p, size_t n) {
 
 void Require(mh3_res_status s, const char *what) {
     if (s != MH3_RES_OK)
-        throw std::runtime_error(what);
+        MH3_THROW(std::runtime_error(what));
 }
 
 void ReadVector(uint32_t p, float *out, uint32_t count) {
@@ -367,7 +368,7 @@ void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2]
             for (float &v : input.normal)
                 v /= n;
     } else if (material.channel[0].color.lighting || material.channel[0].alpha.lighting) {
-        throw std::runtime_error("Lit effect has unresolved inherited normal matrix0");
+        MH3_THROW(std::runtime_error("Lit effect has unresolved inherited normal matrix0"));
     }
 
     for (uint32_t c = 0; c < 2; c++)
@@ -491,7 +492,7 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu) {
             continue;
 
         if (map >= 8)
-            throw std::runtime_error("Effect texture map exceeds native material layout");
+            MH3_THROW(std::runtime_error("Effect texture map exceeds native material layout"));
 
         uint32_t texture = FlatRead32(particle + 0x88 + 4 * slot);
 
@@ -510,7 +511,7 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu) {
                 std::snprintf(message, sizeof(message), "Invalid effect texture source: resource=%08x slot=%u map=%d status=%d size=%ux%u format=%u mip_count=%u image=%08x wrap=%u,%u", texture, slot,
                               map, int(status), uint32_t(FlatRead16(texture + 4)), uint32_t(FlatRead16(texture + 6)), uint32_t(FlatRead8(texture + 0xc)), uint32_t(FlatRead8(texture + 0x14)),
                               FlatRead32(texture + 0x1c), ws, wt);
-                throw std::runtime_error(message);
+                MH3_THROW(std::runtime_error(message));
             }
 
             if (binding.source.indexed)
@@ -765,7 +766,7 @@ extern "C" void MH3_NativeMovieSetup(CpuContext *c) {
     float width = float(FlatRead16(mode + 4)), height = float(FlatRead16(mode + 6)), projection[16], identity[12];
 
     if (!mh3_draw_ortho(projection, 0, height, 0, width, 0, -1))
-        throw std::runtime_error("Invalid movie viewport");
+        MH3_THROW(std::runtime_error("Invalid movie viewport"));
 
     mh3_draw_identity_position(identity);
     SetNativeProjection(projection, false);
@@ -811,7 +812,7 @@ extern "C" void MH3_NativeMoviePlanes(CpuContext *c) {
     const uint32_t width = uint16_t(c->gpr[8]), height = uint16_t(c->gpr[9]);
 
     if (u != y + width * height || v != u + width * height / 4)
-        throw std::runtime_error("Movie planes are not contiguous");
+        MH3_THROW(std::runtime_error("Movie planes are not contiguous"));
 
     mh3_native_texture_binding binding{};
     binding.source.payload_address = binding.source.resource_address = y;
@@ -891,7 +892,7 @@ extern "C" void MH3_EffectTexCoordGenerator(CpuContext *c) {
     uint32_t index = c->gpr[3];
 
     if (index >= 8)
-        throw std::runtime_error("Effect texgen index exceeds material layout");
+        MH3_THROW(std::runtime_error("Effect texgen index exceeds material layout"));
 
     auto material = GetNativeMaterialState();
     auto &gen = material.texgen[index];
@@ -1340,7 +1341,7 @@ extern "C" void MH3_EffectTubeSegment(CpuContext *cpu) {
     uint32_t flags = cpu->gpr[6], segments = cpu->gpr[7], angles = cpu->gpr[8];
 
     if (!segments || segments > 32766)
-        throw std::runtime_error("Invalid effect tube tessellation");
+        MH3_THROW(std::runtime_error("Invalid effect tube tessellation"));
 
     for (uint32_t i = 0; i < segments; i++) {
         float samples[2][2];
@@ -1526,7 +1527,7 @@ void SmoothRibbon(CpuContext *cpu, uint8_t closure) {
         uint32_t youngest = game.Call<0x800B5AC8>({r.manager});
 
         if (!youngest)
-            throw std::runtime_error("Smooth stripe origin has no live particle");
+            MH3_THROW(std::runtime_error("Smooth stripe origin has no live particle"));
 
         for (uint32_t axis = 0; axis < 3; axis++)
             source.origin_delta[axis] = FlatReadFloat32(r.context + 0xa4 + 4 * axis) - FlatReadFloat32(youngest + 0xac + 4 * axis);
@@ -1567,7 +1568,7 @@ extern "C" void MH3_EffectSmoothTubeSegment(CpuContext *cpu) {
     uint32_t subdivisions = cpu->gpr[4], segments = cpu->gpr[5], flags = cpu->gpr[9], angles = cpu->gpr[10];
 
     if (!subdivisions || !segments || segments > 32766)
-        throw std::runtime_error("Invalid smooth effect tube tessellation");
+        MH3_THROW(std::runtime_error("Invalid smooth effect tube tessellation"));
 
     mh3_effect_tube_frame control[3], previous, current, frames[2];
 
@@ -1625,7 +1626,7 @@ extern "C" void MH3_NativeMovieCleanup(CpuContext *cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x804360B0, MH3_NativeMovieCleanup, "NativeMovieCleanup");
 extern "C" void MH3_EffectLineLeaf(CpuContext *cpu) {
     if (!effect.line_size)
-        throw std::runtime_error("Effect line leaf has unresolved width");
+        MH3_THROW(std::runtime_error("Effect line leaf has unresolved width"));
 
     mh3_effect_quad q;
 
@@ -1638,7 +1639,7 @@ extern "C" void MH3_EffectLineLeaf(CpuContext *cpu) {
 
 extern "C" void MH3_EffectPointLeaf(CpuContext *cpu) {
     if (!effect.point_size)
-        throw std::runtime_error("Effect point leaf has unresolved width");
+        MH3_THROW(std::runtime_error("Effect point leaf has unresolved width"));
 
     mh3_effect_quad q;
 

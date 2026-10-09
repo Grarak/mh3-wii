@@ -4,6 +4,7 @@
 // the pack file per load: a set may hold one pack per disc file, more than the
 // open-file limit. The resolver publishes the pack of an unknown ID (and may
 // wait for its conversion); it runs without the set's lock held.
+#include <aurora/fatal.hpp>
 #include "native_texture_pack.hpp"
 #include <algorithm>
 #include <iterator>
@@ -47,7 +48,7 @@ public:
 
     if (pack_u32(header.data()) != 0x5456334d || (version != 1 && version != 2) || !count || count > 32768 || base > 32768 - count || stride != (version == 1 ? 40u : 64u) ||
         pack_u32(header.data() + 20) || pack_u32(header.data() + 24) || pack_u32(header.data() + 28) || 32 + uint64_t(count) * stride > file.size)
-      throw std::runtime_error("Invalid native texture pack header: " + path);
+      AURORA_THROW(std::runtime_error("Invalid native texture pack header: " + path));
     auto pack = std::make_unique<Pack>();
     pack->path = path;
     pack->version = version;
@@ -68,7 +69,7 @@ public:
 
     if (existing != m_packs.end()) {
       if (existing->second->path != path || existing->second->records.size() != count)
-        throw std::runtime_error("Native texture packs overlap: " + path);
+        AURORA_THROW(std::runtime_error("Native texture packs overlap: " + path));
 
       return;
     }
@@ -77,7 +78,7 @@ public:
 
     if ((next != m_packs.end() && next->first <= base + count) ||
         (next != m_packs.begin() && std::prev(next)->first + std::prev(next)->second->records.size() > base + 1))
-      throw std::runtime_error("Native texture packs overlap: " + path);
+      AURORA_THROW(std::runtime_error("Native texture packs overlap: " + path));
     m_packs.emplace(base + 1, std::move(pack));
   }
 
@@ -102,7 +103,7 @@ public:
     if (auto entry = lookup(id); entry.record)
       return entry;
 
-    throw std::runtime_error("Unknown native texture asset " + std::to_string(id));
+    AURORA_THROW(std::runtime_error("Unknown native texture asset " + std::to_string(id)));
   }
 
   // Reads the record's payload into `out` (r.bytes long).
@@ -188,7 +189,7 @@ private:
     }
 
   private:
-    [[noreturn]] void fail(const char* what) const { throw std::runtime_error(std::string("Cannot ") + what + " native texture pack " + m_path); }
+    [[noreturn]] void fail(const char* what) const { AURORA_THROW(std::runtime_error(std::string("Cannot ") + what + " native texture pack " + m_path)); }
     std::string m_path;
     int m_fd = -1;
   };

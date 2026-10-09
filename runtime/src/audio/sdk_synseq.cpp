@@ -6,6 +6,7 @@
 // note-on. So both frames have nothing to do; reaching a sequence, synth or
 // synth voice is reported as unsupported instead of running the MIDI path.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "memory_access.h"
 
 #include <stdexcept>
@@ -42,7 +43,7 @@ void MH3_SEQQuit(CpuContext*) {
 // SEQRunAudioFrame (0x804DDAE0).
 void MH3_SEQRunAudioFrame(CpuContext*) {
     if (FlatRead32(kSeqInitialized) && FlatRead32(kSeqList))
-        throw std::runtime_error("SEQ sequence playback is not ported (MH3 adds none)");
+        MH3_THROW(std::runtime_error("SEQ sequence playback is not ported (MH3 adds none)"));
 }
 
 // SYNInit (0x804DF720).
@@ -73,7 +74,7 @@ void MH3_SYNQuit(CpuContext*) {
 // not scanned every frame.
 void MH3_SYNRunAudioFrame(CpuContext*) {
     if (FlatRead32(kSynInitialized) && FlatRead32(kSynList))
-        throw std::runtime_error("SYN synths are not ported (MH3 creates none)");
+        MH3_THROW(std::runtime_error("SYN synths are not ported (MH3 creates none)"));
 }
 
 } // extern "C"

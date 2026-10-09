@@ -19,6 +19,7 @@
 // dependent lookup), normally `return FastHash(key.a, key.b, ...);`, or the
 // map takes a hasher type as its third parameter. Keys compare with ==.
 // FastSet is the set form.
+#include <aurora/fatal.hpp>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -220,7 +221,7 @@ class FastMap {
         const uint32_t i = Find(key);
 
         if (i == slots_.size())
-            throw std::out_of_range("FastMap::at");
+            AURORA_THROW(std::out_of_range("FastMap::at"));
 
         return slots_[i]->second;
     }
@@ -229,7 +230,7 @@ class FastMap {
         const uint32_t i = Find(key);
 
         if (i == slots_.size())
-            throw std::out_of_range("FastMap::at");
+            AURORA_THROW(std::out_of_range("FastMap::at"));
 
         return slots_[i]->second;
     }

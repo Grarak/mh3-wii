@@ -1,4 +1,5 @@
 #include "ppc_runtime.h"
+#include "fatal.h"
 // ppc_runtime.h re-exports the rest of the ISA package; the CR tier is pulled in
 // by abi_bridge.h for generated code, so this TU asks for it directly.
 #include "isa/ppc_isa_cr.h"
@@ -24,7 +25,7 @@ extern "C" void PPC_TrapWord(uint32_t trapOptions, uint32_t lhs, uint32_t rhs) {
                       ((trapOptions & 0x08u) != 0u && static_cast<int32_t>(lhs) > static_cast<int32_t>(rhs)) || ((trapOptions & 0x04u) != 0u && lhs == rhs) ||
                       ((trapOptions & 0x02u) != 0u && lhs < rhs) || ((trapOptions & 0x01u) != 0u && lhs > rhs);
     if (trap) {
-        throw std::runtime_error("PowerPC trap condition fired");
+        MH3_THROW(std::runtime_error("PowerPC trap condition fired"));
     }
 }
 
@@ -75,7 +76,7 @@ void TransferLockedCache(uint32_t lower) {
     // DMA uses physical RAM addresses. MMIO/EFB transfers and cache ranges
     // outside our allocated 16 KiB require their own implementation.
     if (memoryAddress >= 0x20000000u)
-        throw std::runtime_error("Locked-cache DMA requires a physical RAM address");
+        MH3_THROW(std::runtime_error("Locked-cache DMA requires a physical RAM address"));
 
     auto* memory = Memory::GetPointer(memoryAddress, size);
     auto* cache = Memory::GetPointer(cacheAddress, size);
@@ -447,7 +448,7 @@ extern "C" uint32_t PPC_Mcrfs(uint32_t dstField, uint32_t srcField) {
 
 extern "C" uint32_t PPC_Eciwx(uint32_t addr) {
     (void)addr;
-    throw std::runtime_error("eciwx attempted external control/MMIO read");
+    MH3_THROW(std::runtime_error("eciwx attempted external control/MMIO read"));
 }
 
 extern "C" uint32_t PPC_Mftb() {
@@ -465,7 +466,7 @@ extern "C" uint32_t OSSystemCall() {
 extern "C" void PPC_Ecowx(uint32_t addr, uint32_t value) {
     (void)addr;
     (void)value;
-    throw std::runtime_error("ecowx attempted external control/MMIO write");
+    MH3_THROW(std::runtime_error("ecowx attempted external control/MMIO write"));
 }
 
 extern "C" uint32_t PPC_Mcrxr(uint32_t crField) {

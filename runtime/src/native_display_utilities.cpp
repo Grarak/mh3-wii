@@ -1,6 +1,7 @@
 // Thin application display ABI boundaries. State uses the native renderer;
 // the original SDK entry points remain fatal guards.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "gl/gl.hpp"
@@ -8,7 +9,7 @@
 
 void ClearNativeDepthTarget() {
     if (!OnNativeGraphicsThread())
-        throw std::runtime_error("Native depth clear called outside graphics owner");
+        MH3_THROW(std::runtime_error("Native depth clear called outside graphics owner"));
 
     if (!NativeGraphicsFrameShouldRender())
         return;

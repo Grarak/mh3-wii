@@ -1,5 +1,6 @@
 // Thin RMHP08 ABI boundary for native display-mode selection. No GX calls.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -23,7 +24,7 @@ constexpr uint32_t WideAspect = 0x80797F68;
 std::optional<bool> launcherSetting;
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native render mode input failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native render mode input failed: " + std::to_string(status)));
 }
 
 mh3_render_mode Read(uint32_t address) {

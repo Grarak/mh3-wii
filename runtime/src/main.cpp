@@ -1,4 +1,6 @@
 #include "abi_bridge.h"
+#include "fatal.h"
+#include <aurora/fatal.hpp>
 #include "generated/RuntimeConfig.h"
 #include "disc_image.h"
 #include "audio_dma.h"
@@ -56,7 +58,7 @@ void SystemBridge::DumpCpuState(const CpuContext* cpu) {
 }
 
 void DumpHostStackTraceForRuntimeHelper() {
-#ifndef __vita__
+#if !defined(__vita__) && !defined(MH3_NO_UNWIND_TABLES)
     void* frames[40];
     int count = backtrace(frames, 40);
     backtrace_symbols_fd(frames, count, 2);
@@ -120,11 +122,11 @@ void PrepareGameData(const char* rom) {
 
     if (rom || !VitaLauncher::DiscReady(data)) {
         if (!rom)
-            throw std::runtime_error("Game data in " + data.string() + " is missing, or its disc image moved: pass --rom <path to the European Monster Hunter Tri RVZ/WIA/ISO>");
+            MH3_THROW(std::runtime_error("Game data in " + data.string() + " is missing, or its disc image moved: pass --rom <path to the European Monster Hunter Tri RVZ/WIA/ISO>"));
 
         std::string phase;
         unsigned shown = 101;
-        VitaLauncher::ProcessDisc(rom, data, [&](const std::string& stage, uint64_t done, uint64_t total) {
+        CheckStatus(VitaLauncher::ProcessDisc(rom, data, [&](const std::string& stage, uint64_t done, uint64_t total) {
             const unsigned percent = total ? unsigned(done * 100 / total) : 100;
 
             if (stage == phase && percent == shown)
@@ -133,7 +135,7 @@ void PrepareGameData(const char* rom) {
             phase = stage;
             shown = percent;
             std::cerr << "MH3 prepare: " << stage << " " << percent << "%\n";
-        });
+        }));
     }
 
     setenv("MH3_DISC_DIR", data.c_str(), 1);
@@ -156,7 +158,7 @@ void StartQuestBoot(int argc, char** argv) {
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
             RequestQuestSpawn(x, y, z);
         else
-            throw std::runtime_error(kUsage);
+            MH3_THROW(std::runtime_error(kUsage));
     }
 
     Set set = Set::Village;
@@ -180,7 +182,7 @@ void StartQuestBoot(int argc, char** argv) {
         }
 
         if (!found)
-            throw std::runtime_error("No quest " + std::string(id) + "; see --list");
+            MH3_THROW(std::runtime_error("No quest " + std::string(id) + "; see --list"));
     }
 
     RequestQuestJump(quest, set, area);
@@ -204,18 +206,21 @@ void PrepareVitaGameData() {
     for (const auto& entry : std::filesystem::directory_iterator(data.parent_path()))
         if (entry.is_regular_file() && (entry.path().extension() == ".iso" || entry.path().extension() == ".rvz" || entry.path().extension() == ".wia")) {
             if (!image.empty())
-                throw std::runtime_error("More than one disc image in " + data.parent_path().string());
+                MH3_THROW(std::runtime_error("More than one disc image in " + data.parent_path().string()));
 
             image = entry.path();
         }
     if (image.empty())
-        throw std::runtime_error("No game data in " + data.string() + " and no disc image beside it");
+        MH3_THROW(std::runtime_error("No game data in " + data.string() + " and no disc image beside it"));
 
-    VitaLauncher::ProcessDisc(image, data, [](const std::string& stage, uint64_t, uint64_t) { std::fprintf(stderr, "MH3 prepare: %s\n", stage.c_str()); });
+    CheckStatus(VitaLauncher::ProcessDisc(image, data, [](const std::string& stage, uint64_t, uint64_t) { std::fprintf(stderr, "MH3 prepare: %s\n", stage.c_str()); }));
 }
 #endif
 
 int main(int argc, char** argv) {
+    // A failure that stops the game reports the guest CPU state.
+    fatalReportHook = [] { SystemBridge::DumpCpuState(&GetPersistentCpuContext()); };
+    aurora::fatal_handler = [](const char* what) { MH3Fatal(what); };
     InstallLegacyGxPanicHandler();
 #ifdef __vita__
     InitializeVitaPlatform(argc, argv);
@@ -228,7 +233,14 @@ int main(int argc, char** argv) {
     // into a quit event the game only sees at its next event check.
     setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
 
+    // With exceptions (development builds) a failure on the game thread comes
+    // to the report below; without them (release builds) MH3Fatal makes the
+    // same report where it happens.
+#if defined(__cpp_exceptions)
     try {
+#else
+    {
+#endif
 #ifdef __vita__
         if (argc == 1 && !VitaLauncher::Run())
             return 0;
@@ -295,14 +307,14 @@ int main(int argc, char** argv) {
             const auto size = std::stoull(argv[4], nullptr, 0);
 
             if (size > 64 * 1024 * 1024)
-                throw std::runtime_error("Disc read too large");
+                MH3_THROW(std::runtime_error("Disc read too large"));
 
             auto bytes = disc.Read(std::stoull(argv[3], nullptr, 0), static_cast<uint32_t>(size));
             std::ofstream output(argv[5], std::ios::binary);
             output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 
             if (!output)
-                throw std::runtime_error("Disc read output failed");
+                MH3_THROW(std::runtime_error("Disc read output failed"));
 
             return 0;
         }
@@ -330,7 +342,7 @@ int main(int argc, char** argv) {
             else if (what == "arena-quests")
                 QuestCatalog::Print(QuestCatalog::Set::Arena);
             else
-                throw std::runtime_error(kUsage);
+                MH3_THROW(std::runtime_error(kUsage));
 
             return 0;
         }
@@ -344,36 +356,30 @@ int main(int argc, char** argv) {
             Memory::Write32(0x80001000, 0x12345678);
 
             if (Memory::Read32(0x1000) != 0x12345678 || Memory::Read16(0xC0001000) != 0x1234)
-                throw std::runtime_error("RAM alias or big-endian access failed");
+                MH3_THROW(std::runtime_error("RAM alias or big-endian access failed"));
 
             MemoryInline::FlatWriteRam32(0x80001004, 0xABCDEF01);
 
             if (MemoryInline::FlatLoad<uint32_t>(0xC0001004) != 0xABCDEF01)
-                throw std::runtime_error("Translated stack-store mapping failed");
-
-            bool caught = false;
+                MH3_THROW(std::runtime_error("Translated stack-store mapping failed"));
 
             // GX MMIO now terminates with a backtrace; an unrelated unclaimed
             // device address still reports an ordinary access violation.
-            try {
-                Memory::Read32(0xCC009000);
-            } catch (const Memory::AccessViolation&) {
-                caught = true;
-            }
+            uint32_t unclaimed;
 
-            if (!caught)
-                throw std::runtime_error("MMIO must not silently read as RAM");
+            if (Memory::TryRead32(0xCC009000, unclaimed))
+                MH3_THROW(std::runtime_error("MMIO must not silently read as RAM"));
 
             MH3_OSExceptionInit(&cpu);
 
             if (Memory::Read32(0x80797798) != 0x80003000 || Memory::Read32(0x80003038) != 0x804CB930)
-                throw std::runtime_error("MH3 exception table initialization failed");
+                MH3_THROW(std::runtime_error("MH3 exception table initialization failed"));
 
             Memory::Write32(0x800030BC, 0xFFFFFFFF);
             MH3_OSInterruptInit(&cpu);
 
             if (Memory::Read32(0x80797828) != 0x80003040 || Memory::Read32(0x800030BC) != 0 || Memory::Read32(0x800000C4) != 0xFFFFFFF0 || Memory::Read32(0x80003010) != 0x804D1A70)
-                throw std::runtime_error("MH3 interrupt initialization failed");
+                MH3_THROW(std::runtime_error("MH3 interrupt initialization failed"));
 
             RunDeviceSelfTests(&cpu);
             std::cout << "MH3 runtime self-test passed\n";
@@ -408,7 +414,7 @@ int main(int argc, char** argv) {
         else if (argc >= 3 && std::string_view(argv[1]) == "--quest")
             StartQuestBoot(argc, argv);
         else if (argc != 1)
-            throw std::runtime_error(kUsage);
+            MH3_THROW(std::runtime_error(kUsage));
 
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
@@ -422,7 +428,7 @@ int main(int argc, char** argv) {
         const auto fstLength = fst ? fst.tellg() : std::streampos(-1);
 
         if (fstLength < 12 || fstLength > 1024 * 1024)
-            throw std::runtime_error("Invalid or missing boot FST");
+            MH3_THROW(std::runtime_error("Invalid or missing boot FST"));
 
         const uint32_t fstSize = static_cast<uint32_t>(fstLength);
         const uint32_t arenaHi = (0x81800000u - fstSize) & ~31u;
@@ -430,7 +436,7 @@ int main(int argc, char** argv) {
         fst.read(reinterpret_cast<char*>(Memory::GetPointer(arenaHi, fstSize)), fstSize);
 
         if (!fst || Memory::Read8(arenaHi) != 1 || Memory::Read32(arenaHi + 8) < 1 || uint64_t(Memory::Read32(arenaHi + 8)) * 12 > fstSize)
-            throw std::runtime_error("Invalid boot FST root");
+            MH3_THROW(std::runtime_error("Invalid boot FST root"));
 
         Memory::Write32(0x80000038, arenaHi);
         Memory::Write32(0x8000003C, fstSize);
@@ -493,15 +499,12 @@ int main(int argc, char** argv) {
         InvokeIndirectCpu(0x80006310, &cpu);
         std::cout << "MH3 entry returned\n";
         return 0;
-    } catch (const HostQuit&) {
-        // Out at once: the audio and render threads are still running, so no
-        // static destructors.
-        std::cerr << "MH3: window closed\n";
-        std::fflush(nullptr);
-        std::_Exit(0);
-    } catch (const std::exception& error) {
+    }
+#if defined(__cpp_exceptions)
+    catch (const std::exception& error) {
         std::cerr << "MH3 runtime stopped: " << error.what() << '\n';
         SystemBridge::DumpCpuState(&GetPersistentCpuContext());
         return 1;
     }
+#endif
 }

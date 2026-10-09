@@ -1,4 +1,6 @@
 #include "asset_cache.h"
+#include "fatal.h"
+#include "fs_status.h"
 #include "disc_image.h"
 #include "launcher_convert.h"
 #include <aurora/thread_role.hpp>
@@ -87,7 +89,7 @@ std::vector<uint8_t> Load(const std::filesystem::path& path) {
 }
 
 // Write to a temporary name, then publish: a file under its final name is complete.
-void Publish(const std::filesystem::path& path, std::span<const uint8_t> bytes) {
+Status Publish(const std::filesystem::path& path, std::span<const uint8_t> bytes) {
     const auto temporary = std::filesystem::path(path.string() + ".tmp");
     {
         std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
@@ -95,12 +97,12 @@ void Publish(const std::filesystem::path& path, std::span<const uint8_t> bytes) 
         out.close();
 
         if (!out)
-            throw std::runtime_error("Cannot write " + path.string() + " (not enough space?)");
+            return Status::Error("Cannot write " + path.string() + " (not enough space?)");
     }
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
-    std::filesystem::rename(temporary, path);
+    return FsStatus::Rename(temporary, path);
 }
 
 bool Exists(const std::filesystem::path& path) {
@@ -220,7 +222,7 @@ struct AssetCache::Impl {
             std::filesystem::remove_all(cache);
             std::filesystem::create_directories(cache / "textures");
             std::filesystem::create_directories(cache / "models");
-            Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)});
+            CheckStatus(Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)}));
         }
 
         LoadIndex();
@@ -258,7 +260,7 @@ struct AssetCache::Impl {
             pthread_attr_destroy(&attributes);
 
             if (result)
-                throw std::runtime_error("Cannot start asset conversion workers");
+                MH3_THROW(std::runtime_error("Cannot start asset conversion workers"));
         }
 #ifdef MH3_DEVELOPMENT
         pthread_create(&watchdog, nullptr, [](void* self) -> void* { static_cast<Impl*>(self)->Watch(); return nullptr; }, this);
@@ -327,22 +329,23 @@ struct AssetCache::Impl {
         return at - it->file.offset < it->file.bytes ? &*it : nullptr;
     }
 
-    // Lock held. Serves [at, stop) of an extracted file; false when not extracted
-    // (and queues its extraction).
-    bool ReadExtracted(Extract& e, uint64_t at, uint64_t stop, uint8_t* out) {
+    // Lock held. Serves [at, stop) of an extracted file; `served` is false when
+    // it is not extracted (and its extraction is queued).
+    Status ReadExtracted(Extract& e, uint64_t at, uint64_t stop, uint8_t* out, bool& served) {
         e.used = ++reads;
         NoteStream(e);
         QueueExtract(e);
+        served = e.state == Extract::State::Ready;
 
-        if (e.state != Extract::State::Ready)
-            return false;
+        if (!served)
+            return {};
 
         const size_t count = size_t(stop - at);
 
         if (std::fseek(e.copy, long(at - e.file.offset), SEEK_SET) || std::fread(out, 1, count, e.copy) != count)
-            throw std::runtime_error("Cannot read the extracted " + e.file.path);
+            return Status::Error("Cannot read the extracted " + e.file.path);
 
-        return true;
+        return {};
     }
 
     // Worker: copies the file out of the image, making room by evicting the
@@ -380,8 +383,8 @@ struct AssetCache::Impl {
         const auto path = ExtractPath(e), temporary = std::filesystem::path(path.string() + ".tmp");
         std::FILE* copy = nullptr;
         bool written = false;
-
-        try {
+        Status failure;
+        {
             std::vector<uint8_t> chunk(ExtractChunk);
 
             if (std::FILE* out = std::fopen(temporary.string().c_str(), "wb")) {
@@ -389,8 +392,8 @@ struct AssetCache::Impl {
 
                 for (uint64_t done = 0; done < e.file.bytes && written;) {
                     const size_t count = size_t(std::min<uint64_t>(ExtractChunk, e.file.bytes - done));
-                    read(e.file.offset + done, chunk.data(), count);
-                    written = std::fwrite(chunk.data(), 1, count, out) == count;
+                    failure = read(e.file.offset + done, chunk.data(), count);
+                    written = failure.ok() && std::fwrite(chunk.data(), 1, count, out) == count;
                     done += count;
                 }
 
@@ -400,11 +403,15 @@ struct AssetCache::Impl {
             if (written) {
                 std::error_code ignored;
                 std::filesystem::remove(path, ignored);
-                std::filesystem::rename(temporary, path);
-                copy = std::fopen(path.string().c_str(), "rb");
+                failure = FsStatus::Rename(temporary, path);
+
+                if (failure.ok())
+                    copy = std::fopen(path.string().c_str(), "rb");
             }
-        } catch (const std::exception& error) {
-            std::fprintf(stderr, "MH3 asset cache: extracting %s failed: %s\n", e.file.path.c_str(), error.what());
+        }
+
+        if (!failure.ok()) {
+            std::fprintf(stderr, "MH3 asset cache: extracting %s failed: %s\n", e.file.path.c_str(), failure.message().c_str());
             written = false;
         }
 
@@ -476,11 +483,11 @@ struct AssetCache::Impl {
 
         if (at != log.size()) {
             std::fprintf(stderr, "MH3 asset cache: dropping %zu torn index bytes\n", log.size() - at);
-            Publish(cache / "index.log", {log.data(), at});
+            CheckStatus(Publish(cache / "index.log", {log.data(), at}));
         }
     }
 
-    void Append(const Source& s) {
+    Status Append(const Source& s) {
         std::vector<uint8_t> record;
         Put32(record, RecordMagic);
         Put32(record, 40 + s.textureCount * 8);
@@ -500,18 +507,21 @@ struct AssetCache::Impl {
         out.close();
 
         if (!out)
-            throw std::runtime_error("Cannot append the asset cache index (not enough space?)");
+            return Status::Error("Cannot append the asset cache index (not enough space?)");
+
+        return {};
     }
 
-    std::shared_ptr<const std::vector<uint8_t>> ReadFile(const Source& s) {
+    Status ReadFile(const Source& s, std::shared_ptr<const std::vector<uint8_t>>& file) {
         auto data = std::make_shared<std::vector<uint8_t>>(s.file.bytes);
-        read(s.file.offset, data->data(), data->size());
-        return data;
+        MH3_RETURN_IF_ERROR(read(s.file.offset, data->data(), data->size()));
+        file = std::move(data);
+        return {};
     }
 
     void Queue(Source& s, Kind kind) {
         if (!s.data)
-            throw std::logic_error("Asset conversion without source data");
+            MH3_THROW(std::logic_error("Asset conversion without source data"));
 
         jobs.push_back({&s, kind});
         changed.notify_all();
@@ -527,15 +537,15 @@ struct AssetCache::Impl {
 
     // Lock held. Makes sure the source is indexed and its conversion either
     // published or queued. Released while reading and parsing the file.
-    void Ensure(Source& s, std::unique_lock<std::mutex>& guard) {
+    Status Ensure(Source& s, std::unique_lock<std::mutex>& guard) {
         Wait(guard, [&] { return !s.indexing; });
 
         if (s.checked)
-            return;
+            return {};
 
         if (s.indexed && Converted(s)) {
             s.checked = true;
-            return;
+            return {};
         }
 
         s.indexing = true;
@@ -543,28 +553,23 @@ struct AssetCache::Impl {
         std::shared_ptr<const std::vector<uint8_t>> data;
         std::vector<TextureInventory::Texture> textures;
         std::vector<ModelSource> models;
+        Status indexed = ReadFile(s, data);
 
-        try {
-            data = ReadFile(s);
+        if (indexed.ok() && !s.indexed) {
+            indexed = TextureInventory::Parse(*data, s.file.offset, textures);
 
-            if (!s.indexed) {
-                textures = TextureInventory::Parse(*data, s.file.offset);
-                models = ListModels(*data);
-            }
-        } catch (...) {
-            guard.lock();
-            s.indexing = false;
-            changed.notify_all();
-            throw;
+            if (indexed.ok())
+                indexed = ListModels(*data, models);
         }
 
         guard.lock();
         s.indexing = false;
         changed.notify_all();
+        MH3_RETURN_IF_ERROR(indexed);
 
         if (!s.indexed) {
             if (nextTexture + textures.size() > TextureInventory::MaxAssets + 1 || nextModel + models.size() > 65536)
-                throw std::runtime_error("Asset cache ID space exhausted; delete " + cache.string());
+                return Status::Error("Asset cache ID space exhausted; delete " + cache.string());
 
             s.firstTexture = nextTexture;
             s.textureCount = uint32_t(textures.size());
@@ -574,7 +579,7 @@ struct AssetCache::Impl {
             for (const auto& t : textures)
                 s.patches.push_back(t.patch);
 
-            Append(s);
+            MH3_RETURN_IF_ERROR(Append(s));
             nextTexture += s.textureCount;
             nextModel += s.modelCount;
             s.indexed = true;
@@ -586,7 +591,7 @@ struct AssetCache::Impl {
         s.checked = true;
 
         if (Converted(s))
-            return;
+            return {};
 
         s.data = std::move(data);
         pendingBytes += s.data->size();
@@ -609,6 +614,7 @@ struct AssetCache::Impl {
         }
 #endif
         Wait(guard, [&] { return pendingBytes <= MaxPendingBytes || stopping; });
+        return {};
     }
 
     void Work() {
@@ -660,18 +666,19 @@ struct AssetCache::Impl {
             const char* kind = job.kind == Kind::Textures ? "textures" : "models";
             step.Set(job.kind == Kind::Textures ? "converting textures" : "converting models", s.file.path.c_str());
 #endif
-            try {
-                if (job.kind == Kind::Textures)
-                    ConvertTextures(s, *data);
-                else {
-                    if (!converter)
-                        converter = std::make_unique<ModelConverter>();
+            Status converted;
 
-                    usable = ConvertModels(s, *data, *converter);
-                }
-            } catch (const std::exception& e) {
-                failure = s.file.path + ": " + e.what();
+            if (job.kind == Kind::Textures)
+                converted = ConvertTextures(s, *data);
+            else {
+                if (!converter)
+                    converter = std::make_unique<ModelConverter>();
+
+                converted = ConvertModels(s, *data, *converter, usable);
             }
+
+            if (!converted.ok())
+                failure = s.file.path + ": " + converted.message();
 #ifdef MH3_DEVELOPMENT
             if (Seconds() - since > 0.5 || !failure.empty())
                 std::fprintf(stderr, "MH3 asset cache: converted %s of %s (%lu bytes) in %.2f s%s%s\n", kind, s.file.path.c_str(), static_cast<unsigned long>(data ? data->size() : 0), Seconds() - since,
@@ -702,61 +709,71 @@ struct AssetCache::Impl {
         }
     }
 
-    void ConvertTextures(const Source& s, const std::vector<uint8_t>& data) {
+    Status ConvertTextures(const Source& s, const std::vector<uint8_t>& data) {
         // IDs follow the parse order recorded in the index.
-        const auto textures = TextureInventory::Parse(data, s.file.offset, s.firstTexture);
+        std::vector<TextureInventory::Texture> textures;
+        MH3_RETURN_IF_ERROR(TextureInventory::Parse(data, s.file.offset, textures, s.firstTexture));
 
         if (textures.size() != s.textureCount)
-            throw std::runtime_error("texture inventory differs from the cache index");
+            return Status::Error("texture inventory differs from the cache index");
 
         const auto path = TexturePath(s), temporary = std::filesystem::path(path.string() + ".tmp");
         {
-            TexturePackWriter writer(temporary, s.textureCount, s.firstTexture);
+            TexturePackWriter writer;
+            MH3_RETURN_IF_ERROR(writer.Open(temporary, s.textureCount, s.firstTexture));
 
-            for (const auto& t : textures)
-                writer.Add(ConvertTexture(t, data, s.file.offset, s.file.path));
+            for (const auto& t : textures) {
+                TextureConversion converted;
+                MH3_RETURN_IF_ERROR(ConvertTexture(t, data, s.file.offset, s.file.path, converted));
+                MH3_RETURN_IF_ERROR(writer.Add(std::move(converted)));
+            }
 
-            writer.Finish();
+            MH3_RETURN_IF_ERROR(writer.Finish());
         }
 
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
-        std::filesystem::rename(temporary, path);
+        return FsStatus::Rename(temporary, path);
     }
 
-    bool ConvertModels(const Source& s, const std::vector<uint8_t>& data, ModelConverter& converter) {
-        auto models = ListModels(data);
+    // `usable`: the source has a model pack (left false when it has none).
+    Status ConvertModels(const Source& s, const std::vector<uint8_t>& data, ModelConverter& converter, bool& usable) {
+        std::vector<ModelSource> models;
+        MH3_RETURN_IF_ERROR(ListModels(data, models));
 
         if (models.size() != s.modelCount)
-            throw std::runtime_error("model inventory differs from the cache index");
+            return Status::Error("model inventory differs from the cache index");
 
         for (uint32_t i = 0; i < models.size(); ++i)
             models[i].id = s.firstModel + i;
 
         std::vector<TextureRow> rows;
+        std::vector<TextureInventory::Texture> textures;
+        MH3_RETURN_IF_ERROR(TextureInventory::Parse(data, s.file.offset, textures, s.firstTexture ? s.firstTexture : 1));
 
-        for (const auto& t : TextureInventory::Parse(data, s.file.offset, s.firstTexture ? s.firstTexture : 1))
+        for (const auto& t : textures)
             rows.emplace_back(s.file.offset, t);
 
         ModelConversion result;
 
-        if (!converter.Convert(s.file.path, s.file.offset, data, models, std::move(rows), result)) {
-            Publish(SkipPath(s), {});
-            return false;
-        }
+        if (!converter.Convert(s.file.path, s.file.offset, data, models, std::move(rows), result))
+            return Publish(SkipPath(s), {});
 
         auto identity = ModelPath(s);
         identity.replace_extension(".identity.bin");
 
         // The pack is published last: its presence marks a complete pair.
-        Publish(identity, result.identity);
-        Publish(ModelPath(s), result.pack);
-        return true;
+        MH3_RETURN_IF_ERROR(Publish(identity, result.identity));
+        MH3_RETURN_IF_ERROR(Publish(ModelPath(s), result.pack));
+        usable = true;
+        return {};
     }
 
-    void Fail(const Source& s) {
+    Status Failure(const Source& s) const {
         if (!s.failure.empty())
-            throw std::runtime_error("Asset conversion failed: " + s.failure);
+            return Status::Error("Asset conversion failed: " + s.failure);
+
+        return {};
     }
 };
 
@@ -828,7 +845,7 @@ AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile
     : impl(std::make_unique<Impl>(root, std::move(sources), std::move(streams), std::move(read))) {}
 AssetCache::~AssetCache() = default;
 
-void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
+Status AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
     auto& m = *impl;
     const uint64_t end = offset + bytes;
     std::unique_lock guard(m.lock);
@@ -840,9 +857,12 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
             if (auto* e = m.FindExtract(at)) {
                 const uint64_t stop = std::min(end, e->file.offset + e->file.bytes);
 
-                if (!m.ReadExtracted(*e, at, stop, out + (at - offset))) {
+                bool served = false;
+                MH3_RETURN_IF_ERROR(m.ReadExtracted(*e, at, stop, out + (at - offset), served));
+
+                if (!served) {
                     guard.unlock();
-                    m.read(at, out + (at - offset), stop - at);
+                    MH3_RETURN_IF_ERROR(m.read(at, out + (at - offset), stop - at));
                     guard.lock();
                 }
 
@@ -859,20 +879,20 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
                 stop = std::min(stop, stream->file.offset);
 
             guard.unlock();
-            m.read(at, out + (at - offset), stop - at);
+            MH3_RETURN_IF_ERROR(m.read(at, out + (at - offset), stop - at));
             guard.lock();
             at = stop;
             continue;
         }
 
-        m.Ensure(*s, guard);
+        MH3_RETURN_IF_ERROR(m.Ensure(*s, guard));
         const uint64_t stop = std::min(end, s->file.offset + s->file.bytes);
 
         if (auto data = s->data) {
             std::memcpy(out + (at - offset), data->data() + (at - s->file.offset), stop - at);
         } else {
             guard.unlock();
-            m.read(at, out + (at - offset), stop - at);
+            MH3_RETURN_IF_ERROR(m.read(at, out + (at - offset), stop - at));
             guard.lock();
         }
 
@@ -892,6 +912,8 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
 
         at = stop;
     }
+
+    return {};
 }
 
 bool AssetCache::Converted(uint64_t offset, size_t bytes, std::chrono::milliseconds limit) {
@@ -950,16 +972,16 @@ void AssetCache::PrefetchStreams(const std::string& map) {
         }
 }
 
-std::string AssetCache::TexturePack(uint32_t id) {
+Status AssetCache::TexturePack(uint32_t id, std::string& pack) {
     auto& m = *impl;
     std::unique_lock guard(m.lock);
     auto it = m.byTexture.upper_bound(id);
 
     if (it == m.byTexture.begin() || id - std::prev(it)->first >= std::prev(it)->second->textureCount)
-        throw std::runtime_error("Native texture asset " + std::to_string(id) + " belongs to no indexed source");
+        return Status::Error("Native texture asset " + std::to_string(id) + " belongs to no indexed source");
 
     auto& s = *std::prev(it)->second;
-    m.Ensure(s, guard);
+    MH3_RETURN_IF_ERROR(m.Ensure(s, guard));
 #ifdef MH3_DEVELOPMENT
     if (!s.texturesDone) {
         const double since = Seconds();
@@ -973,20 +995,22 @@ std::string AssetCache::TexturePack(uint32_t id) {
     }
 #endif
     m.Wait(guard, [&] { return s.texturesDone; });
-    m.Fail(s);
-    return m.TexturePath(s).string();
+    MH3_RETURN_IF_ERROR(m.Failure(s));
+    pack = m.TexturePath(s).string();
+    return {};
 }
 
-std::filesystem::path AssetCache::ModelPack(uint64_t at, uint32_t& key) {
+Status AssetCache::ModelPack(uint64_t at, uint32_t& key, std::filesystem::path& pack) {
     auto& m = *impl;
     std::unique_lock guard(m.lock);
     auto* s = m.Find(at);
+    pack.clear();
 
     if (!s)
         return {};
 
     key = uint32_t(s - m.sources.data());
-    m.Ensure(*s, guard);
+    MH3_RETURN_IF_ERROR(m.Ensure(*s, guard));
 #ifdef MH3_DEVELOPMENT
     if (!s->modelsDone) {
         const double since = Seconds();
@@ -1000,8 +1024,12 @@ std::filesystem::path AssetCache::ModelPack(uint64_t at, uint32_t& key) {
     }
 #endif
     m.Wait(guard, [&] { return s->modelsDone; });
-    m.Fail(*s);
-    return s->modelsUsable ? m.ModelPath(*s) : std::filesystem::path{};
+    MH3_RETURN_IF_ERROR(m.Failure(*s));
+
+    if (s->modelsUsable)
+        pack = m.ModelPath(*s);
+
+    return {};
 }
 
 bool AssetCache::ModelFile(uint64_t at, uint64_t& offset, uint32_t& bytes) {
@@ -1031,7 +1059,7 @@ struct Game {
             const uint32_t bytes = image.FileSize(name);
 
             if (bytes > TextureInventory::MaxSourceBytes)
-                throw std::runtime_error("Oversized texture source: " + name);
+                MH3_THROW(std::runtime_error("Oversized texture source: " + name));
 
             sources.push_back({name, image.FileOffset(name), bytes});
         }
@@ -1042,8 +1070,8 @@ struct Game {
         for (const auto& name : image.FileNames())
             if (name.rfind("16/srt/", 0) == 0)
                 streams.push_back({name, image.FileOffset(name), image.FileSize(name)});
-        cache = std::make_unique<AssetCache>(root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { image.ReadRaw(offset, output, length); });
-        image.SetReader([this](uint64_t offset, uint8_t* output, size_t length) { cache->Read(offset, output, length); });
+        cache = std::make_unique<AssetCache>(root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { return image.ReadRaw(offset, output, length); });
+        image.SetReader([this](uint64_t offset, uint8_t* output, size_t length) { return cache->Read(offset, output, length); });
     }
 
     ~Game() { image.SetReader({}); }

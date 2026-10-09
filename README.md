@@ -65,15 +65,15 @@ patched `vita-elf-create`; [Vita platform](docs/vita-platform.md)).
 The container mounts the checkout at the same absolute path because the
 translated data blobs use absolute `.incbin` paths; configure and build arm32
 only inside it. `MH3_DEVELOPMENT` adds statistics, captures, scripted input
-and port checks; leave it OFF for a plain build (without `MH3_BUILD_DIR` the
+and port checks; leave it OFF for a plain (release) build, which is compiled
+and linked with ThinLTO and needs lld (without `MH3_BUILD_DIR` the
 build goes to `build/linux-<arch>`). Assertions follow Release/NDEBUG
 independently. Configure and build logs go to `logs/aurora-*.log`.
 
 Build options: disc images decode with the native decoder
 ([docs/rom-decoder.md](docs/rom-decoder.md)); `-DMH3_ROM_DECODER=OFF` leaves
 it out (only a decrypted ISO from `nodtool convert --decrypt` can then be
-read), and `-DMH3_ROM_DECODER_NOD=ON` uses the earlier nod Rust library
-instead (needs `cargo`).
+read).
 `MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
 packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
 `../Vita3K/external/stb` or `STB_INCLUDE_DIR`).

@@ -1,6 +1,7 @@
 // RMHP08 field resource ABI. The C core owns selection and ordered scheduling;
 // this boundary borrows checked CPU metadata and calls existing resource jobs.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "runtime/native/mh3_field_resources.h"
 
@@ -129,7 +130,7 @@ extern "C" void MH3_ScheduleFieldResources(CpuContext *cpu) {
     const auto status = mh3_field_resources_schedule(mode, map, area, Memory::GetPointer(state.idsAddress, IdBytes), IdBytes, &callbacks);
 
     if (status != MH3_FIELD_RES_OK)
-        throw std::runtime_error("Native field resource scheduling failed: map " + std::to_string(map) + ", area " + std::to_string(area) + ", descriptor areas " + std::to_string(state.areaCount) +
-                                 ", status " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native field resource scheduling failed: map " + std::to_string(map) + ", area " + std::to_string(area) + ", descriptor areas " + std::to_string(state.areaCount) +
+                                 ", status " + std::to_string(status)));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x802AE624, MH3_ScheduleFieldResources, "ScheduleFieldResources");

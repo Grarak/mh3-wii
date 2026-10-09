@@ -1,6 +1,7 @@
 // Thin ABI for the UI root's depth clear/draw/cursor utility. Ordinary C owns
 // draw ordering, eligibility, raster publications and coordinate arithmetic.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -60,6 +61,6 @@ extern "C" void MH3_UICursorDraw(CpuContext *cpu) {
     const auto status = mh3_ui_cursor_draw(&callbacks);
 
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native UI cursor input failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native UI cursor input failed: " + std::to_string(status)));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80449800, MH3_UICursorDraw, "UIDrawAndCursor");

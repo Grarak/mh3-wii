@@ -1,4 +1,5 @@
 #include <aurora/native_scene_feedback.hpp>
+#include <aurora/fatal.hpp>
 #include <aurora/aurora.h>
 #include "../gl/device.hpp"
 #include "../gl/gl.hpp"
@@ -37,12 +38,12 @@ SceneFeedbackStats stats;
 uint64_t acquisition = 0;
 void owner() {
   if (!gl::on_render_thread())
-    throw std::runtime_error("Scene feedback changed outside graphics owner");
+    AURORA_THROW(std::runtime_error("Scene feedback changed outside graphics owner"));
 }
 
 void dimensions(uint32_t w, uint32_t h) {
   if (!w || !h || w > uint32_t(gl::caps().maxTextureSize) || h > uint32_t(gl::caps().maxTextureSize))
-    throw std::runtime_error("Scene feedback target exceeds renderer dimensions");
+    AURORA_THROW(std::runtime_error("Scene feedback target exceeds renderer dimensions"));
 }
 
 uint64_t target_bytes(uint32_t w, uint32_t h) {
@@ -161,10 +162,10 @@ struct Restore {
 
 void publish(const void* id, gl::TexturePtr texture) {
   if (!id)
-    throw std::runtime_error("Scene feedback has no producer identity");
+    AURORA_THROW(std::runtime_error("Scene feedback has no producer identity"));
 
   if (++revision == 0)
-    throw std::runtime_error("Scene feedback revision overflow");
+    AURORA_THROW(std::runtime_error("Scene feedback revision overflow"));
 
   images.insert_or_assign(id, Image{std::move(texture), revision});
 }
@@ -192,29 +193,29 @@ bool publish_scene_capture(const void* id, const SceneCaptureParameters& p) {
     return false;
 
   if (!id)
-    throw std::runtime_error("Scene feedback has no producer identity");
+    AURORA_THROW(std::runtime_error("Scene feedback has no producer identity"));
 
   dimensions(p.width, p.height);
 
   if (p.format != 4 && p.format != 6)
-    throw std::runtime_error("Unsupported scene feedback color format");
+    AURORA_THROW(std::runtime_error("Unsupported scene feedback color format"));
 
   const auto source = gpu::g_frameBuffer.texture;
 
   if (!source)
-    throw std::runtime_error("Scene feedback has no current color target");
+    AURORA_THROW(std::runtime_error("Scene feedback has no current color target"));
 
   for (float value : p.source)
     if (!std::isfinite(value))
-      throw std::runtime_error("Nonfinite scene capture rectangle");
+      AURORA_THROW(std::runtime_error("Nonfinite scene capture rectangle"));
   if (p.source[0] < 0 || p.source[1] < 0 || p.source[2] <= 0 || p.source[3] <= 0)
-    throw std::runtime_error("Invalid scene capture rectangle");
+    AURORA_THROW(std::runtime_error("Invalid scene capture rectangle"));
 
   const auto config = vi::configured_fb_size();
   const float logicalW = float(config.x), logicalH = float(config.y);
 
   if (logicalW <= 0 || logicalH <= 0 || p.source[0] + p.source[2] > logicalW || p.source[1] + p.source[3] > logicalH)
-    throw std::runtime_error("Scene capture rectangle exceeds logical color target");
+    AURORA_THROW(std::runtime_error("Scene capture rectangle exceeds logical color target"));
 
   ++stats.capture_calls;
   call_targets(1, target_bytes(p.width, p.height));
@@ -240,15 +241,15 @@ bool publish_scene_glare(const void* id, const SceneGlareParameters& p) {
   dimensions(p.width, p.height);
 
   if (!id)
-    throw std::runtime_error("Scene feedback has no producer identity");
+    AURORA_THROW(std::runtime_error("Scene feedback has no producer identity"));
 
   if (!std::isfinite(p.low_threshold) || !std::isfinite(p.high_threshold) || !std::isfinite(p.darken) || !std::isfinite(p.brighten) || !std::isfinite(p.shift_scale))
-    throw std::runtime_error("Nonfinite glare parameters");
+    AURORA_THROW(std::runtime_error("Nonfinite glare parameters"));
 
   auto source = gpu::g_frameBuffer.texture;
 
   if (!source)
-    throw std::runtime_error("Glare has no current scene");
+    AURORA_THROW(std::runtime_error("Glare has no current scene"));
 
   const auto config = vi::configured_fb_size();
   float sourceLogicalW = float(config.x), sourceLogicalH = float(config.y);
@@ -257,7 +258,7 @@ bool publish_scene_glare(const void* id, const SceneGlareParameters& p) {
 
   for (const auto& level : p.levels) {
     if (!level.source_width || !level.source_height || level.source_width > sourceLogicalW || level.source_height > sourceLogicalH)
-      throw std::runtime_error("Glare downsample exceeds preceding source");
+      AURORA_THROW(std::runtime_error("Glare downsample exceeds preceding source"));
 
     dimensions(level.width, level.height);
     bytes += target_bytes(level.width, level.height);
@@ -352,10 +353,10 @@ bool bind_scene_feedback_texture(uint32_t unit, const void* id, uint32_t w, uint
     return false;
 
   if (s.wrap_s || s.wrap_t || s.min_filter > 1 || s.mag_filter > 1 || s.lod_bias != 0)
-    throw std::runtime_error("Unsupported scene feedback sampler");
+    AURORA_THROW(std::runtime_error("Unsupported scene feedback sampler"));
 
   if (unit >= sampledImages.size())
-    throw std::runtime_error("Scene feedback texture unit out of range");
+    AURORA_THROW(std::runtime_error("Scene feedback texture unit out of range"));
 
   gl::SamplerDesc sampler = s.min_filter || s.mag_filter ? gl::LinearClamp : gl::NearestClamp;
   sampler.minFilter = s.min_filter ? GL_LINEAR : GL_NEAREST;
