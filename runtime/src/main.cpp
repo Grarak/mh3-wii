@@ -141,6 +141,8 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 into the area's exit to area n\n"
                                "  --quest-monster <name|id>      (development, with --quest) replace the quest's large monster\n"
                                "                                 (any monster in the arena pit: --quest 9004 --spawn 0,300,0)\n"
+                               "  --quest-small <name|id>        (development, with --quest) replace the quest's small monsters\n"
+                               "                                 (four in the arena pit: --quest 9000)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
                                "                                 the launcher's list by its name (\"InfHP\"; with its\n"
@@ -191,7 +193,7 @@ void StartQuestBoot(int argc, char** argv) {
     using QuestCatalog::Set;
     const std::string_view id = argv[2];
     int area = -1;
-    std::string monster;
+    std::string monster, small;
 
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
@@ -201,6 +203,8 @@ void StartQuestBoot(int argc, char** argv) {
             area = std::stoi(argv[++i]);
         else if (option == "--quest-monster" && i + 1 < argc)
             monster = argv[++i];
+        else if (option == "--quest-small" && i + 1 < argc)
+            small = argv[++i];
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
             RequestQuestExit(std::stoi(argv[++i] + 5));
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
@@ -233,23 +237,31 @@ void StartQuestBoot(int argc, char** argv) {
             MH3_THROW(std::runtime_error("No quest " + std::string(id) + "; see --list"));
 #ifdef MH3_DEVELOPMENT
         // --quest-monster NAME|ID: the quest's large monster replaced (any
-        // monster in the arena pit: --quest 9004 --spawn 0,300,0).
-        if (!monster.empty()) {
+        // monster in the arena pit: --quest 9004 --spawn 0,300,0);
+        // --quest-small NAME|ID: its small monsters (--quest 9000's four
+        // Jaggi; docs/monster-control.md).
+        const auto monsterId = [](const std::string& name) {
             const auto names = QuestCatalog::MonsterNames();
             uint32_t chosen = 0;
 
             for (uint32_t m = 1; m < names.size() && !chosen; ++m)
-                if (strcasecmp(names[m].c_str(), monster.c_str()) == 0)
+                if (strcasecmp(names[m].c_str(), name.c_str()) == 0)
                     chosen = m;
 
-            if (!chosen && std::isdigit(static_cast<unsigned char>(monster[0])))
-                chosen = uint32_t(std::stoul(monster));
+            if (!chosen && std::isdigit(static_cast<unsigned char>(name[0])))
+                chosen = uint32_t(std::stoul(name));
 
             if (!chosen || chosen > 255)
-                MH3_THROW(std::runtime_error("No monster " + monster));
+                MH3_THROW(std::runtime_error("No monster " + name));
 
-            CheckStatus(VitaLauncher::ReplaceQuestMonster(set, uint16_t(quest), uint8_t(chosen)));
-        }
+            return uint8_t(chosen);
+        };
+
+        if (!monster.empty())
+            CheckStatus(VitaLauncher::ReplaceQuestMonster(set, uint16_t(quest), monsterId(monster)));
+
+        if (!small.empty())
+            CheckStatus(VitaLauncher::ReplaceQuestSmallMonsters(set, uint16_t(quest), monsterId(small)));
 #endif
     }
 

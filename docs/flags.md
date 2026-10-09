@@ -167,7 +167,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_MONSTER_CONTROL`: drive a monster
 
-`MH3_MONSTER_CONTROL=PATH`: commands read from PATH while the game runs (`act MODE SUB`, `every TICKS MODE SUB`, `ai off`, `freeze on`, `face DEGREES`, `goto X Y Z`, `target N`, `list`), one a line, each run once as it appears. With `--quest 9004 --quest-monster NAME` a chosen monster in the arena pit ([monster control](monster-control.md)).
+`MH3_MONSTER_CONTROL=PATH`: commands read from PATH while the game runs (`act MODE SUB`, `every TICKS MODE SUB`, `ai off`, `freeze on`, `face DEGREES`, `goto X Y Z`, `target N`, `wait TICKS`, `list`), one a line, each run once in order as it appears. With `--quest 9004 --quest-monster NAME` a chosen monster in the arena pit, `--quest 9000 --quest-small NAME` four small ones ([monster control](monster-control.md)).
 
 ## Build-option tools
 

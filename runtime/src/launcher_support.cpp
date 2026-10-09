@@ -401,6 +401,58 @@ Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster) 
     return {};
 }
 
+// Development (--quest-small): quest `id`'s small monster spawns (the area
+// spawn tables at +0x4B8: u32 count, u32 header size, u32, then {offset from
+// +0x4B8, size} pairs of 0x30-byte spawns, +0 u32 monster id) made `monster`.
+// Only named monsters other than the quest's large ones change; the arena's
+// own kind 40 stays. The arena quest 9000 spawns four Jaggi.
+Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t monster) {
+    constexpr size_t kTables = 0x4B8, kSpawnSize = 0x30;
+    constexpr uint32_t kNamed = 38; // Bnahabra, the list's last
+    auto& disc = GameDiscImage();
+    std::vector<uint8_t> edited = disc.ReadFile(QuestPath(set));
+    size_t at = 0;
+    MH3_RETURN_IF_ERROR(Entry(edited, id, at));
+    const uint32_t tables = at + kTables + 12 <= edited.size() ? Word(edited, at + kTables) : 0;
+    unsigned replaced = 0;
+
+    for (uint32_t t = 0; t < tables && t < 64; ++t) {
+        const size_t pair = at + kTables + 12 + 8 * t;
+
+        if (pair + 8 > edited.size())
+            break;
+
+        const uint32_t spawns = Word(edited, pair), bytes = Word(edited, pair + 4);
+
+        for (uint32_t b = 0; b + kSpawnSize <= bytes; b += kSpawnSize) {
+            const size_t spawn = at + kTables + spawns + b;
+
+            if (spawn + 4 > edited.size())
+                break;
+
+            const uint32_t old = Word(edited, spawn);
+            bool large = false;
+
+            for (size_t k = 0; k < 3; ++k)
+                large |= edited[at + 0x314 + 8 * k] == old;
+
+            if (old == 0 || old > kNamed || large)
+                continue;
+
+            edited[spawn] = edited[spawn + 1] = edited[spawn + 2] = 0;
+            edited[spawn + 3] = monster;
+            ++replaced;
+        }
+    }
+
+    if (!replaced)
+        return Status::Error("The quest has no small monster to replace");
+
+    std::fprintf(stderr, "MH3 quest %u: %u small monster spawns made %u\n", unsigned(id), replaced, unsigned(monster));
+    disc.SetFileOverride(QuestPath(set), std::move(edited));
+    return {};
+}
+
 Status ActivateCustomQuest(const CustomQuest& q) {
     MH3_RETURN_IF_ERROR(CheckCapture(q));
     auto& disc = GameDiscImage();

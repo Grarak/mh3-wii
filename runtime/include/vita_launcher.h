@@ -36,6 +36,7 @@ Status EditQuestFile(std::span<const uint8_t> source, const CustomQuest& quest, 
 // Development: quest `id`'s first large monster (and its objectives) replaced
 // by `monster`, a monster list id (--quest-monster).
 Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster);
+Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t monster);
 Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& quest);
 
 // The valid custom quests of user, by name; invalid records are skipped.

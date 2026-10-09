@@ -20,6 +20,36 @@ MH3_SAVE_DIR=saves MH3_ARGS="--quest 9004 --quest-monster Deviljho --no-damage" 
   scripts/dev/run-heartbeat.sh jho 300
 ```
 
+The arena quests (`--list arena-quests`) use two maps: the land arena (map
+9: 9000-9002, 9004, 9006, 9007, 9009) and the **water arena** (map 10: 9003
+Royal Ludroth, 9005 Lagiacrus, 9008 Gobul and Lagiacrus), a pool for the
+underwater monsters and for water rendering and animation
+(`--quest 9005 --quest-monster Gobul`).
+
+Small monsters: `--quest-small NAME|ID` makes every small monster spawn of
+the quest that monster (the area spawn tables at +0x4B8; only named
+monsters other than the quest's large ones change). The arenas' own spawns
+are reinforcements a large monster calls in, so use a field quest:
+`--quest 1028 --area 1 --quest-small Jaggi` fills Moga Woods area 1 with
+Jaggi (51 spawns). Small monsters are monster works like the large ones and
+start their actions the same way (`kind 10`, `list`).
+
+## The sweep
+
+`scripts/dev/monster_sweep.py NAME --quest Q [--area N] [--monster M]
+[--small S] --kind K` checks one monster's actions for per-step tickers:
+it lets the monster fight with its AI on (learning every action it starts
+itself), then forces each action from the same place and yaw with `ai off`,
+once at the fixed 1/30 s step and once at the variable step side by side,
+and compares each action's game time, yaw turned and distance moved
+(`logs/runs/NAME-sweep.txt`). A flagged action is then watched
+(`scripts/dev/gdbwatch.sh` with the field that differs) to name its writer.
+
+```
+scripts/dev/monster_sweep.py sw-jho --quest 9004 --monster Deviljho --kind 7
+scripts/dev/monster_sweep.py sw-jaggi --quest 1028 --area 1 --small Jaggi --kind 10
+```
+
 ## Actions
 
 A monster's action is a pair of bytes in its work: the **mode** (+0x1E5) and
@@ -54,13 +84,14 @@ is +5..+7 and starts at 0. Written `mode.sub` below.
 `MH3_TRACE=actions` prints every action start:
 
 ```
-MH3 monster action: work 9014b940 kind 7 0.1 -> 7.1 (asked 7.1, how 0, lr 8013c5c8) tick 682 time 682.41 scale 0.763 yaw 34567
+MH3 monster action: work 9014b940 kind 7 0.1 -> 7.1 (asked 7.1, how 0, lr 8013c5c8) tick 682 time 682.41 scale 0.763 yaw 34567 at 120.5 0.0 -880.2
 ```
 
 That is the action before and after, the pair asked for (the remap handler
 can change it), how, the caller, the step counter, the game time in ticks,
-the step's length and the yaw the last action left (65536 a turn): the yaw
-and time an action took are the differences to its next line. `control` marks starts the control file
+the step's length and the yaw (65536 a turn) and position the last
+action left: the yaw, distance and time an action took are the differences
+to its next line. `control` marks starts the control file
 made. Once per kind it also prints the species' handler table
 (`MH3 monster handlers`).
 
@@ -75,12 +106,15 @@ command run is echoed (`MH3 monster control: act 2 5`).
 | Command | Effect |
 | --- | --- |
 | `target N` | the monster work index the commands act on (default 0, the first large monster) |
+| `kind K` | target the first monster of kind K (work +3, the monster list's id: 10 Jaggi) |
 | `act MODE SUB` | start that action now, as the AI would |
 | `every TICKS MODE SUB` | start it now and every TICKS ticks of game time (30 a second); `every off` stops |
 | `ai off`, `ai on` | off: the monster picks no action of its own (the starts of its AI's pick, 0x8013C4BC, are dropped); it waits until a command starts one, and an action's own follow-ups and its end still run |
 | `freeze on`, `freeze off` | hold the monster's step: it stands still and picks nothing |
 | `face DEGREES` | set its yaw |
 | `goto X Y Z` | place it |
+| `hunter save`, `hunter back`, `hunter X Y Z` | remember the local hunter's place, put it back there, or place it (attacks aim at the hunter, so a sweep puts it back before each) |
+| `wait TICKS` | run the next commands TICKS ticks of game time later (a whole sequence can be written before the start) |
 | `list` | print each monster's index, work, kind, action, state, position and yaw |
 | `# ...` | a comment |
 
