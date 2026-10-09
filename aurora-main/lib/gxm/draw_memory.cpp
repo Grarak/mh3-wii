@@ -44,6 +44,22 @@ void DrawMemory::bind(const void* uniforms, size_t uniformBytes, const void* ind
 }
 
 void DrawMemory::bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shadeOffset, uint32_t shadeBytes, uint32_t paletteOffset, uint32_t paletteBytes, const void* scene, uint32_t sceneBytes) {
+  const auto buffers = shaded_buffers(draw, drawBytes, shadeOffset, shadeBytes, paletteOffset, paletteBytes, scene, sceneBytes);
+  auto* context = m_device.context();
+  check(sceGxmSetVertexUniformBuffer(context, 0, buffers.draw), "bind shaded draw block");
+  check(sceGxmSetVertexUniformBuffer(context, 1, buffers.scene), "bind shaded vertex scene block");
+
+  if (buffers.palette)
+    check(sceGxmSetVertexUniformBuffer(context, 2, buffers.palette), "bind shaded palette block");
+
+  if (buffers.shade)
+    check(sceGxmSetFragmentUniformBuffer(context, 0, buffers.shade), "bind shaded fragment block");
+
+  check(sceGxmSetFragmentUniformBuffer(context, 1, buffers.scene), "bind shaded fragment scene block");
+}
+
+DrawMemory::ShadedBuffers DrawMemory::shaded_buffers(const void* draw, uint32_t drawBytes, uint32_t shadeOffset, uint32_t shadeBytes, uint32_t paletteOffset, uint32_t paletteBytes,
+                                                     const void* scene, uint32_t sceneBytes) {
   const auto inside = [&](const void* pointer, uint32_t bytes) {
     const auto at = reinterpret_cast<uintptr_t>(pointer), base = reinterpret_cast<uintptr_t>(m_uniforms);
     return m_uniforms && at >= base && !((at - base) & (UniformAlignment - 1)) && at - base <= m_uniformBytes && bytes <= m_uniformBytes - (at - base);
@@ -53,17 +69,8 @@ void DrawMemory::bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shad
       (paletteBytes && ((paletteOffset & 15) || uint64_t(paletteOffset) + paletteBytes > drawBytes)))
     AURORA_THROW(std::runtime_error("Shaded uniform blocks exceed the active draw slot"));
   m_lastUse = m_device.current_fence();
-  auto* context = m_device.context();
-  check(sceGxmSetVertexUniformBuffer(context, 0, draw), "bind shaded draw block");
-  check(sceGxmSetVertexUniformBuffer(context, 1, scene), "bind shaded vertex scene block");
-
-  if (paletteBytes)
-    check(sceGxmSetVertexUniformBuffer(context, 2, static_cast<const char*>(draw) + paletteOffset), "bind shaded palette block");
-
-  if (shadeBytes)
-    check(sceGxmSetFragmentUniformBuffer(context, 0, static_cast<const char*>(draw) + shadeOffset), "bind shaded fragment block");
-
-  check(sceGxmSetFragmentUniformBuffer(context, 1, scene), "bind shaded fragment scene block");
+  const auto* bytes = static_cast<const char*>(draw);
+  return {draw, scene, paletteBytes ? bytes + paletteOffset : nullptr, shadeBytes ? bytes + shadeOffset : nullptr};
 }
 
 void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {

@@ -130,7 +130,8 @@ void MappedMemory::release() noexcept {
   m_size = 0;
 }
 
-MappedArena::MappedArena(size_t bytes, MappedMemory::Kind kind) : m_memory(bytes, kind, kind == MappedMemory::Kind::Cdram ? "Aurora CDRAM arena" : "Aurora spill arena") {
+MappedArena::MappedArena(size_t bytes, MappedMemory::Kind kind, const char* name)
+: m_memory(bytes, kind, name ? name : kind == MappedMemory::Kind::Cdram ? "Aurora CDRAM arena" : "Aurora spill arena") {
   m_free.emplace(0, m_memory.size());
 }
 

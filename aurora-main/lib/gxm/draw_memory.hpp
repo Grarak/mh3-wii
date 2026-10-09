@@ -24,6 +24,15 @@ public:
   // (paletteBytes 0 = none); fragment BUFFER[0] draw + shadeOffset (shadeBytes
   // 0 = none: material-GPU programs), [1] scene.
   void bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shadeOffset, uint32_t shadeBytes, uint32_t paletteOffset, uint32_t paletteBytes, const void* scene, uint32_t sceneBytes);
+
+  // The same blocks, checked and fenced like bind_shaded but not bound: for
+  // precomputed states. Absent blocks (palette, shade) are null.
+  struct ShadedBuffers {
+    const void *draw, *scene, *palette, *shade;
+  };
+
+  ShadedBuffers shaded_buffers(const void* draw, uint32_t drawBytes, uint32_t shadeOffset, uint32_t shadeBytes, uint32_t paletteOffset, uint32_t paletteBytes, const void* scene,
+                               uint32_t sceneBytes);
   void draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instances);
 
 private:

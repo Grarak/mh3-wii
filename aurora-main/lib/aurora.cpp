@@ -520,6 +520,7 @@ bool begin_native_frame() noexcept {
   const auto memory = gfx::native_draw_memory(gl::native_frame_slot());
   gxm::bind_draw_memory(memory.uniforms.data(), memory.uniforms.size(), memory.indices.data(), memory.indices.size(),
                         memory.vertices.data(), memory.vertices.size(), memory.attributes.data(), memory.attributes.size());
+  gl::native_frame_admitted();
 #endif
   // A skipped frame must not recreate surfaces, rotate staging or touch the
   // previous frame's CDRAM. Resize only once its notification has arrived.

@@ -206,6 +206,51 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   return memo.view;
 }
 
+// Resident shaded meshes draw through GXM precomputed objects (libgxm
+// Overview "Precomputation", SDK sample tutorial_precomputation): a record
+// per mesh draw and its occurrence in the frame keeps a draw, a vertex state
+// and a fragment state for each GPU frame slot. A frame admitted to a slot
+// has retired the slot's previous frame, so it patches that slot's copies in
+// place, and only where their inputs changed (streams, indices, uniform
+// buffer addresses, textures); sceGxmDrawPrecomputed then replaces the
+// context's per-draw buffer, texture and stream setup.
+struct PrecomputedCopy {
+  void* memory = nullptr;
+  size_t bytes = 0;
+  const SceGxmVertexProgram* vertexProgram = nullptr;
+  const SceGxmFragmentProgram* fragmentProgram = nullptr;
+  SceGxmPrecomputedDraw draw{};
+  SceGxmPrecomputedVertexState vertex{};
+  SceGxmPrecomputedFragmentState fragment{};
+  const void* vertices = nullptr;
+  const void* indices = nullptr;
+  uint32_t count = 0;
+  std::array<const void*, 4> vertexBuffers{}, fragmentBuffers{};
+  std::array<SceGxmTexture, 3> textures{};
+};
+
+struct PrecomputedRecord {
+  // Keeps the programs alive that the copies' states were initialized for.
+  std::shared_ptr<PatchedProgram> program;
+  std::array<PrecomputedCopy, GpuFrameRing::BufferCount> copies;
+  uint32_t frame = 0;
+};
+
+struct PrecomputedKey {
+  const PatchedProgram* program;
+  const void* vertices;
+  const void* indices;
+  uint32_t count;
+  bool operator==(const PrecomputedKey&) const = default;
+  friend uint32_t FastHashValue(const PrecomputedKey& key) { return FastHash(key.program, key.vertices, key.indices, key.count); }
+};
+
+// One key's records, by occurrence in frame `frame` (`used` taken so far).
+struct PrecomputedChain {
+  uint32_t frame = 0, used = 0;
+  std::vector<std::unique_ptr<PrecomputedRecord>> records;
+};
+
 class Renderer {
 public:
   Renderer()
@@ -318,6 +363,7 @@ public:
     }
 
     if (state.clipDirty) {
+      plain();
       clip.apply(width, height, state.scissorEnabled, state.scissor[0], state.scissor[1], state.scissor[2], state.scissor[3]);
       state.clipDirty = false;
     }
@@ -418,37 +464,24 @@ public:
     }
   }
 
-  PatchedProgram& shaded_program(NativeProgram& native, std::span<const VertexInput> inputs) {
+  PatchedProgram& shaded_program(NativeProgram& native, std::span<const VertexInput> inputs) { return *shaded_binding(native, inputs); }
+
+  const std::shared_ptr<PatchedProgram>& shaded_binding(NativeProgram& native, std::span<const VertexInput> inputs) {
     if (!native.shaded)
       AURORA_THROW(std::runtime_error("Shaded draw uses a non-shaded program"));
 
     for (auto& [key, program] : native.bindings)
       if (same_inputs(key, inputs))
-        return *program;
+        return program;
     auto program = std::make_shared<PatchedProgram>(device, native.vertexHash, native.fragmentHash, SCE_GXM_INDEX_FORMAT_U16, inputs);
-    native.bindings.emplace_back(std::vector<VertexInput>(inputs.begin(), inputs.end()), program);
-    return *program;
+    native.bindings.emplace_back(std::vector<VertexInput>(inputs.begin(), inputs.end()), std::move(program));
+    return native.bindings.back().second;
   }
 
   // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette; fragment BUFFER[0] Shade,
   // [1] Scene. Sampler slot r reads the texture bound at unit units[r].
   void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units) {
-    scene();
-    viewport();
-    apply_raster(state.raster, device.context());
-    auto blend = blend_info(state.raster, state.blendColor);
-
-    if (!state.display && !state.color)
-      blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
-
-    if (native.preservesTargetAlphaOne) {
-      if (!gfx::target_alpha_one_expand(shaded_alpha_one(), native.shaded, true, native.replacesDepth))
-        AURORA_THROW(std::runtime_error("Fixed alpha-one shader lost its target certificate"));
-
-      blend.colorMask = SCE_GXM_COLOR_MASK_ALL;
-    }
-
-    bind_program(program, blend);
+    bind_program(program, shaded_blend(native));
     draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
 
     // Material uniforms in GPU memory: persistent CDRAM blocks or the frame
@@ -464,20 +497,241 @@ public:
     }
 
     for (const auto& [samplerName, slot] : native.samplers) {
-      const auto& bound = state.textures.at(units.at(slot));
-
-      if (!bound.texture)
-        AURORA_THROW(std::runtime_error("Shaded draw samples an unbound texture unit"));
-
-      auto& source = texture(bound.texture);
-      source.note_gpu_use();
-      const SamplerDesc desc = bound.sampler ? samplers.at(bound.sampler) : NearestClamp;
-      const auto sampled = sampling_view(source, desc);
+      const auto sampled = shaded_texture(units.at(slot));
       check(sceGxmSetFragmentTexture(device.context(), slot, &sampled), "bind shaded texture");
     }
   }
 
+  // Scene, viewport and raster state of a shaded draw; its blend.
+  SceGxmBlendInfo shaded_blend(const NativeProgram& native) {
+    scene();
+    viewport();
+    apply_raster(state.raster, device.context());
+    auto blend = blend_info(state.raster, state.blendColor);
+
+    if (!state.display && !state.color)
+      blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
+
+    if (native.preservesTargetAlphaOne) {
+      if (!gfx::target_alpha_one_expand(shaded_alpha_one(), native.shaded, true, native.replacesDepth))
+        AURORA_THROW(std::runtime_error("Fixed alpha-one shader lost its target certificate"));
+
+      blend.colorMask = SCE_GXM_COLOR_MASK_ALL;
+    }
+
+    return blend;
+  }
+
+  SceGxmTexture shaded_texture(unsigned unit) {
+    const auto& bound = state.textures.at(unit);
+
+    if (!bound.texture)
+      AURORA_THROW(std::runtime_error("Shaded draw samples an unbound texture unit"));
+
+    auto& source = texture(bound.texture);
+    source.note_gpu_use();
+    return sampling_view(source, bound.sampler ? samplers.at(bound.sampler) : NearestClamp);
+  }
+
+  // A precomputed state overrides the context's uniform buffers and textures
+  // until it is unset: every other draw path unsets it first.
+  void plain() {
+    if (!precomputedBound)
+      return;
+
+    sceGxmSetPrecomputedVertexState(device.context(), nullptr);
+    sceGxmSetPrecomputedFragmentState(device.context(), nullptr);
+    precomputedBound = false;
+  }
+
+  bool precomputed_failed(const char* what, int error) {
+    std::fprintf(stderr, "Aurora GXM: precomputed draws off, %s failed: 0x%08x\n", what, unsigned(error));
+    precomputedOff = true;
+    return false;
+  }
+
+  // (Re)initializes `copy` for the programs bind() set last, in arena memory
+  // laid out as the SDK sample does: draw, vertex state and its default
+  // uniforms, fragment state and its default uniforms.
+  bool init_precomputed(PrecomputedCopy& copy, const PatchedProgram& program) {
+    precomputedArena.free(copy.memory, copy.bytes);
+    copy = {};
+    const auto* vertexProgram = program.vertex_program();
+    const auto* fragmentProgram = program.fragment_program();
+
+    // SCE_GXM_PRECOMPUTED_ALIGNMENT's value is in no header here; the
+    // arena's 64-byte alignment covers it (Init reports a smaller one).
+    const auto align = [](size_t bytes) { return (bytes + 63) & ~size_t(63); };
+    const size_t drawBytes = align(sceGxmGetPrecomputedDrawSize(vertexProgram));
+    const size_t vertexBytes = sceGxmGetPrecomputedVertexStateSize(vertexProgram), vertexDefaults = sceGxmProgramGetDefaultUniformBufferSize(program.vertex_gxp());
+    const size_t fragmentBytes = sceGxmGetPrecomputedFragmentStateSize(fragmentProgram), fragmentDefaults = sceGxmProgramGetDefaultUniformBufferSize(program.fragment_gxp());
+    const size_t bytes = drawBytes + align(vertexBytes + vertexDefaults) + align(fragmentBytes + fragmentDefaults);
+    auto* memory = static_cast<char*>(precomputedArena.allocate(bytes));
+
+    // Full: this draw and later new ones draw the plain way; nothing grows.
+    if (!memory) {
+      if (!precomputedFull)
+        std::fprintf(stderr, "Aurora GXM: precomputed draw arena full (%.2f MiB); new draws use the context\n", precomputedArena.capacity() / 1048576.0);
+
+      precomputedFull = true;
+      return false;
+    }
+
+    std::memset(memory, 0, bytes);
+    copy.memory = memory;
+    copy.bytes = bytes;
+    char* vertexMemory = memory + drawBytes;
+    char* fragmentMemory = vertexMemory + align(vertexBytes + vertexDefaults);
+
+    if (const int error = sceGxmPrecomputedDrawInit(&copy.draw, vertexProgram, memory); error < 0)
+      return precomputed_failed("draw init", error);
+
+    if (const int error = sceGxmPrecomputedVertexStateInit(&copy.vertex, vertexProgram, vertexMemory); error < 0)
+      return precomputed_failed("vertex state init", error);
+
+    if (vertexDefaults)
+      sceGxmPrecomputedVertexStateSetDefaultUniformBuffer(&copy.vertex, vertexMemory + vertexBytes);
+
+    if (const int error = sceGxmPrecomputedFragmentStateInit(&copy.fragment, fragmentProgram, fragmentMemory); error < 0)
+      return precomputed_failed("fragment state init", error);
+
+    if (fragmentDefaults)
+      sceGxmPrecomputedFragmentStateSetDefaultUniformBuffer(&copy.fragment, fragmentMemory + fragmentBytes);
+
+    if (program.default_stream() >= 0)
+      if (const int error = sceGxmPrecomputedDrawSetVertexStream(&copy.draw, program.default_stream(), static_cast<char*>(utility.data()) + DefaultAttributesOffset); error < 0)
+        return precomputed_failed("default stream", error);
+
+    copy.vertexProgram = vertexProgram;
+    copy.fragmentProgram = fragmentProgram;
+    return true;
+  }
+
+  // Drops records no frame has drawn for a while: their slots' last GPU use
+  // completed long ago. A key's later occurrences go stale first.
+  void sweep_precomputed(uint32_t frame) {
+    for (auto it = precomputed.begin(); it != precomputed.end();) {
+      auto& records = it->second.records;
+
+      while (!records.empty() && frame - records.back()->frame > 120) {
+        for (auto& copy : records.back()->copies)
+          precomputedArena.free(copy.memory, copy.bytes);
+
+        records.pop_back();
+      }
+
+      if (records.empty())
+        it = precomputed.erase(it);
+      else
+        ++it;
+    }
+
+    precomputedFull = false;
+  }
+
+  // draw_shaded_mesh's draw through the record of this draw's occurrence in
+  // the frame; false when it must be drawn the plain way.
+  bool draw_precomputed(NativeProgram& native, const std::shared_ptr<PatchedProgram>& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units, const void* vertices,
+                        const void* indices, uint32_t count) {
+    if (precomputedOff)
+      return false;
+
+    // Admitted native frames: a record serves one draw per frame, and its
+    // copy for this slot is free once the frame was admitted.
+    const uint32_t frame = precomputedFrame;
+
+    if (frame - precomputedSweep >= 128) {
+      sweep_precomputed(frame);
+      precomputedSweep = frame;
+    }
+
+    program->bind(shaded_blend(native), output_format());
+    auto& chain = precomputed[{program.get(), vertices, indices, count}];
+
+    if (chain.frame != frame) {
+      chain.frame = frame;
+      chain.used = 0;
+    }
+
+    if (chain.used == chain.records.size()) {
+      chain.records.push_back(std::make_unique<PrecomputedRecord>());
+      chain.records.back()->program = program;
+    }
+
+    auto& record = *chain.records[chain.used++];
+    record.frame = frame;
+    auto& copy = record.copies[device.frame_slot()];
+
+    if ((copy.vertexProgram != program->vertex_program() || copy.fragmentProgram != program->fragment_program()) && !init_precomputed(copy, *program))
+      return false;
+
+    if (copy.vertices != vertices || copy.indices != indices || copy.count != count) {
+      if (const int error = sceGxmPrecomputedDrawSetVertexStream(&copy.draw, 0, vertices); error < 0)
+        return precomputed_failed("vertex stream", error);
+
+      sceGxmPrecomputedDrawSetParams(&copy.draw, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, count);
+      copy.vertices = vertices;
+      copy.indices = indices;
+      copy.count = count;
+    }
+
+    // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette, [3] animated; fragment
+    // [0] Shade, [1] Scene, [2] material, [3] animated, as prepare_shaded
+    // binds them. Absent blocks and the rest read the utility block.
+    const auto shaded = draws.shaded_buffers(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    const void* unused = utility.data();
+    const std::array<const void*, 4> vertexBuffers{shaded.draw, shaded.scene, shaded.palette ? shaded.palette : unused, blocks.animated.data ? blocks.animated.data : unused};
+    const std::array<const void*, 4> fragmentBuffers{shaded.shade ? shaded.shade : unused, shaded.scene, blocks.material.data ? blocks.material.data : unused,
+                                                     blocks.animated.data ? blocks.animated.data : unused};
+    std::array<const void*, SCE_GXM_MAX_UNIFORM_BUFFERS> all;
+
+    if (copy.vertexBuffers != vertexBuffers) {
+      all.fill(unused);
+      std::copy(vertexBuffers.begin(), vertexBuffers.end(), all.begin());
+
+      if (const int error = sceGxmPrecomputedVertexStateSetAllUniformBuffers(&copy.vertex, all.data()); error < 0)
+        return precomputed_failed("vertex uniform buffers", error);
+
+      copy.vertexBuffers = vertexBuffers;
+    }
+
+    if (copy.fragmentBuffers != fragmentBuffers) {
+      all.fill(unused);
+      std::copy(fragmentBuffers.begin(), fragmentBuffers.end(), all.begin());
+
+      if (const int error = sceGxmPrecomputedFragmentStateSetAllUniformBuffers(&copy.fragment, all.data()); error < 0)
+        return precomputed_failed("fragment uniform buffers", error);
+
+      copy.fragmentBuffers = fragmentBuffers;
+    }
+
+    for (const auto& [samplerName, slot] : native.samplers) {
+      const auto sampled = shaded_texture(units.at(slot));
+      auto& stored = copy.textures.at(slot);
+
+      if (std::memcmp(&stored, &sampled, sizeof(sampled))) {
+        if (const int error = sceGxmPrecomputedFragmentStateSetTexture(&copy.fragment, slot, &sampled); error < 0)
+          return precomputed_failed("texture", error);
+
+        stored = sampled;
+      }
+    }
+
+    auto* context = device.context();
+    sceGxmSetPrecomputedVertexState(context, &copy.vertex);
+    sceGxmSetPrecomputedFragmentState(context, &copy.fragment);
+    precomputedBound = true;
+
+    if (const int error = sceGxmDrawPrecomputed(context, &copy.draw); error < 0) {
+      plain();
+      return precomputed_failed("draw", error);
+    }
+
+    return true;
+  }
+
   void bind_program(PatchedProgram& program, const SceGxmBlendInfo& blend) {
+    plain();
     program.bind(blend, output_format());
 
     if (program.default_stream() >= 0)
@@ -485,6 +739,7 @@ public:
   }
 
   void utility_draw(uint32_t count) {
+    plain();
     check(sceGxmSetVertexStream(device.context(), 0, utility.data()), "bind utility vertex IDs");
     check(sceGxmSetVertexStream(device.context(), 1, utility.data()), "bind utility instance IDs");
     check(sceGxmDraw(device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, static_cast<char*>(utility.data()) + 64, count), "draw native utility geometry");
@@ -514,6 +769,7 @@ public:
     raster.depthWrite = depthOnly;
     raster.depthFunc = GL_ALWAYS;
     apply_raster(raster, device.context());
+    plain();
     clearProgram.bind(blend_info(raster, {}), depthOnly ? SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4 : output_format());
     const float region[4]{-1.f, 1.f, 2.f, -2.f};
     const float clipDepth = 2.f * std::clamp(depth, 0.f, 1.f) - 1.f;
@@ -714,6 +970,12 @@ public:
   FastMap<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
   GLuint nextName = 1;
+
+  // draw_precomputed's records and their GPU-mapped memory.
+  MappedArena precomputedArena{1u << 20, MappedMemory::Kind::Main, "Aurora precomputed draws"};
+  FastMap<PrecomputedKey, PrecomputedChain> precomputed;
+  uint32_t precomputedFrame = 0, precomputedSweep = 0;
+  bool precomputedBound = false, precomputedOff = false, precomputedFull = false;
 
   // set_depth_liveness: whether later draws read `livenessDepth`, and whether
   // one reads it after the current target scene. unstoredDepth: the depth whose
@@ -983,6 +1245,10 @@ bool gpu_frame_pending() noexcept {
 
 uint32_t native_frame_slot() noexcept {
   return guarded([] { return renderer().device.frame_slot(); });
+}
+
+void native_frame_admitted() noexcept {
+  guarded([] { ++renderer().precomputedFrame; });
 }
 
 void discard_native_frame() noexcept {
@@ -1779,9 +2045,14 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   }
 
   auto& native = r.programs.at(program);
-  r.prepare_shaded(native, r.shaded_program(native, {bound, count}), blocks, textureUnits);
-  check(sceGxmSetVertexStream(r.device.context(), 0, buffer.data() + vertexOffset), "bind shaded mesh attributes");
-  check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw shaded mesh");
+  const auto& patched = r.shaded_binding(native, {bound, count});
+
+  if (!r.draw_precomputed(native, patched, blocks, textureUnits, buffer.data() + vertexOffset, buffer.data() + indexOffset, indexCount)) {
+    r.prepare_shaded(native, *patched, blocks, textureUnits);
+    check(sceGxmSetVertexStream(r.device.context(), 0, buffer.data() + vertexOffset), "bind shaded mesh attributes");
+    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw shaded mesh");
+  }
+
   r.capture_draw("shaded-mesh", program, vertexCount, indexCount, 1, nullptr, 0, native.preservesTargetAlphaOne);
 }
 
@@ -1914,6 +2185,7 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
       r.scene();
       apply_viewport(r.device.context(), x, y, width, height, 0.f, 1.f);
       apply_raster({}, r.device.context());
+      r.plain();
       r.presentProgram.bind(blend_info({}, {}));
       const float region[4]{-1.f, 1.f, 2.f, -2.f}, depth = 0.f;
       r.presentProgram.set_vertex_uniform("region", region, 4);

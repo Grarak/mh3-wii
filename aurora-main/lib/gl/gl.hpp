@@ -127,6 +127,7 @@ void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept;
 struct NativeTextureReadStats {
   uint64_t count, bytes, ns, longestNs;
 };
+
 NativeTextureReadStats take_native_texture_read_stats() noexcept;
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
 
@@ -479,6 +480,11 @@ void discard_native_frame() noexcept;
 
 // Slot 0..2 selected for the next rendered frame. Skipping does not rotate it.
 uint32_t native_frame_slot() noexcept;
+#ifdef AURORA_GXM
+// Render thread: a native frame was admitted to native_frame_slot(). The
+// precomputed draw records count their frames by it.
+void native_frame_admitted() noexcept;
+#endif
 
 // Render thread only: window framebuffer size in pixels.
 std::pair<uint32_t, uint32_t> drawable_size() noexcept;

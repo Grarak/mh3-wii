@@ -142,6 +142,13 @@ public:
   // one 16-byte F32 (0, 0, 0, 1) element. Negative when every attribute is bound.
   int default_stream() const noexcept { return m_defaultStream; }
 
+  // The patched programs and binaries bind() last set: precomputed states are
+  // initialized for them.
+  const SceGxmVertexProgram* vertex_program() const noexcept { return m_vertex; }
+  const SceGxmFragmentProgram* fragment_program() const noexcept { return m_lastFragment; }
+  const SceGxmProgram* vertex_gxp() const noexcept { return m_vertexBinary; }
+  const SceGxmProgram* fragment_gxp() const noexcept { return m_boundFragmentBinary; }
+
 private:
   Device& m_device;
   const SceGxmProgram* m_vertexBinary;
