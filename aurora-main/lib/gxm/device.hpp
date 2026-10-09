@@ -52,13 +52,16 @@ private:
 // Fragment variants include native blend equations and channel write masks.
 class PatchedProgram {
 public:
-  PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash);
+  PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,
+                 SceGxmIndexFormat indices = SCE_GXM_INDEX_FORMAT_U16);
   ~PatchedProgram();
   PatchedProgram(const PatchedProgram&) = delete;
   PatchedProgram& operator=(const PatchedProgram&) = delete;
   void bind(const SceGxmBlendInfo& blend);
   void set_vertex_uniform(const char* name, const float* values, unsigned count);
   void set_fragment_uniform(const char* name, const float* values, unsigned count);
+  bool uses_discard() const noexcept { return sceGxmProgramIsDiscardUsed(m_fragmentBinary); }
+  bool replaces_depth() const noexcept { return sceGxmProgramIsDepthReplaceUsed(m_fragmentBinary); }
 
 private:
   Device& m_device;

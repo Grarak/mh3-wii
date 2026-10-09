@@ -224,10 +224,19 @@ private:
 } // namespace aurora
 
 namespace aurora::gfx {
+#ifdef AURORA_GXM
+// Each of three mapped slots is 7.5 MiB. The multi-map captures peak below
+// these limits; the existing batch splitter handles larger recorded frames.
+inline constexpr uint64_t UniformBufferSize = 2u << 20;
+inline constexpr uint64_t VertexBufferSize = 1u << 20;
+inline constexpr uint64_t IndexBufferSize = 512u << 10;
+inline constexpr uint64_t StorageBufferSize = 4u << 20;
+#else
 inline constexpr uint64_t UniformBufferSize = 25165824;  // 24mb
 inline constexpr uint64_t VertexBufferSize = 3145728;    // 3mb
 inline constexpr uint64_t IndexBufferSize = 2097152;     // 2mb
 inline constexpr uint64_t StorageBufferSize = 8388608;   // 8mb
+#endif
 
 extern AuroraStats g_stats;
 extern uint32_t g_drawCallCount;

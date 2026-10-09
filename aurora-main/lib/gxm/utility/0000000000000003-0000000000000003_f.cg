@@ -1,0 +1,5 @@
+float4 colors[3] : BUFFER[0];
+float4 main(float4 color : TEXCOORD0) : COLOR
+{
+    return color * colors[2];
+}

@@ -13,6 +13,10 @@
 #include "texture.hpp"
 #include "port_capture.hpp"
 #include "../window.hpp"
+#ifdef AURORA_GXM
+#include "../gxm/memory.hpp"
+#include "../gxm/draw_memory.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -101,6 +105,10 @@ static std::vector<std::shared_ptr<const TextureBindGroup>> g_retiredBindGroups;
 // Recording buffers of one staging batch. A small pool bounds how far the producer can run ahead
 // of the render thread, which returns each set once it has uploaded it.
 struct StagingSet {
+#ifdef AURORA_GXM
+  // These owners precede the borrowed ByteBuffer views so they are freed last.
+  std::array<gxm::MappedMemory, 4> memory;
+#endif
   ByteBuffer verts;
   ByteBuffer uniforms;
   ByteBuffer indices;
@@ -130,6 +138,9 @@ struct GpuBuffers {
   std::array<gl::TexturePtr, FrameSlotCount> verts;
   std::array<gl::TexturePtr, FrameSlotCount> storage;
   size_t slot = 0;
+#ifdef AURORA_GXM
+  std::unique_ptr<StagingSet> active;
+#endif
 };
 static GpuBuffers g_gpu;
 
@@ -761,10 +772,19 @@ PipelineRef pipeline_ref(const gx::PipelineConfig& config) {
 
 static std::unique_ptr<StagingSet> new_staging_set() {
   auto set = std::make_unique<StagingSet>();
+#ifdef AURORA_GXM
+  size_t allocation = 0;
+  const auto reserve = [&](ByteBuffer& buffer, uint64_t size) {
+    auto& memory = set->memory[allocation++];
+    memory = gxm::MappedMemory(size, gxm::MappedMemory::Kind::Draw, "Aurora direct draw slot");
+    buffer = ByteBuffer{static_cast<uint8_t*>(memory.data()), static_cast<size_t>(size)};
+  };
+#else
   const auto reserve = [](ByteBuffer& buffer, uint64_t size) {
     buffer = ByteBuffer{static_cast<size_t>(size)};
     buffer.clear();
   };
+#endif
   reserve(set->verts, VertexBufferSize + WordBufferRowBytes);
   // The trailing uniform window pads the batch; see end_batch_impl.
   reserve(set->uniforms, UniformBufferSize + gx::MaxUniformSize);
@@ -801,6 +821,11 @@ static void acquire_staging_set() {
 // Render thread: copy a finished batch into the GPU buffers the following draws read.
 static void upload_batch(StagingSet& set) {
   ZoneScopedN("Upload staging batch");
+#ifdef AURORA_GXM
+  // No upload or word textures: native Cg reads explicit uniform buffers.
+  gxm::bind_draw_memory(set.uniforms.data(), set.uniforms.size(), set.indices.data(), set.indices.size(),
+                        set.verts.data(), set.verts.size(), set.storage.data(), set.storage.size());
+#else
   auto& gpu = g_gpu;
   gpu.slot = (gpu.slot + 1) % FrameSlotCount;
   if (!set.uniforms.empty()) {
@@ -826,6 +851,7 @@ static void upload_batch(StagingSet& set) {
   };
   uploadWords(gpu.verts[gpu.slot], set.verts);
   uploadWords(gpu.storage[gpu.slot], set.storage);
+#endif
 }
 
 void initialize() {
@@ -845,12 +871,14 @@ void initialize() {
   }
   g_staging.reset();
   currentStagingBuffer = 0;
+#ifndef AURORA_GXM
   for (size_t i = 0; i < FrameSlotCount; ++i) {
     g_gpu.verts[i] = gl::create_texture(WordBufferRowWords, word_buffer_rows(VertexBufferSize) + 1, 1,
                                         gl::Format::R32UI, "Vertex word buffer");
     g_gpu.storage[i] = gl::create_texture(WordBufferRowWords, word_buffer_rows(StorageBufferSize) + 1, 1,
                                           gl::Format::R32UI, "Storage word buffer");
   }
+#endif
   gl::post([] {
     g_gpu.uniform = gl::create_buffer();
     g_gpu.index = gl::create_buffer();
@@ -872,6 +900,9 @@ void shutdown() {
   gx::shutdown();
 
   gl::finish();
+#ifdef AURORA_GXM
+  gl::call([] { g_gpu.active.reset(); });
+#endif
   g_cachedBindGroups.clear();
   g_retiredBindGroups.clear();
   g_staging.reset();
@@ -1013,8 +1044,17 @@ static void end_batch_impl(bool advanceFrame) {
                         static_cast<uint32_t>(g_renderPasses.size()), g_verts().size(), g_uniforms().size(),
                         g_indices().size(), g_storage().size());
     gl::post([set = std::move(g_staging)]() mutable {
+#ifdef AURORA_GXM
+      // A queued scene still reads the previous slot. Synchronize before
+      // recycling, then retain this slot across all interpolation replays.
+      gl::finish();
+      if (g_gpu.active) release_staging_set(std::move(g_gpu.active));
+      upload_batch(*set);
+      g_gpu.active = std::move(set);
+#else
       upload_batch(*set);
       release_staging_set(std::move(set));
+#endif
     });
   }
   currentStagingBuffer = (currentStagingBuffer + 1) % FrameSlotCount;
@@ -1290,9 +1330,11 @@ void render(SealedFrame& frame, int32_t interpolatedFrame, bool finalize) {
 void after_submit() noexcept { depth_peek::after_submit(); }
 
 static void bind_word_buffers() {
+#ifndef AURORA_GXM
   const GLuint sampler = gl::sampler(gl::NearestClamp);
   gl::bind_texture(VertexBufferUnit, g_gpu.verts[g_gpu.slot]->gl(), sampler);
   gl::bind_texture(StorageBufferUnit, g_gpu.storage[g_gpu.slot]->gl(), sampler);
+#endif
 }
 
 GLuint uniform_buffer() noexcept { return g_gpu.uniform; }

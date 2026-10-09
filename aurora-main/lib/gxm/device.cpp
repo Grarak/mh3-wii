@@ -176,7 +176,8 @@ void Device::flip() {
   m_back = (m_back + 1) % 3;
 }
 
-PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash)
+PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,
+                               SceGxmIndexFormat indices)
     : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)) {
   try {
     check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
@@ -184,7 +185,9 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
     check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
     check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
     SceGxmVertexAttribute attributes[2]{};
-    SceGxmVertexStream streams[2]{{4, SCE_GXM_INDEX_SOURCE_INDEX_32BIT}, {4, SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT}};
+    SceGxmVertexStream streams[2]{
+        {4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT)},
+        {4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)}};
     unsigned count = 0;
     for (unsigned stream = 0; stream < 2; ++stream) {
       const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, stream ? "instance_id" : "vertex_id");
