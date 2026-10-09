@@ -1058,9 +1058,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 "1 to 50 minutes.",
                 "The quest's stars; at a rank they also pick the monsters' strength.",
                 edit.storageKey.empty() ? "Saves a new custom quest." : "Saves the changes to this custom quest."};
-            const size_t row = std::min<size_t>(selected, 11);
+            const size_t row = std::min<size_t>(selected, 10);
             detail = details[row];
-            footer = row == 0 ? "X Keyboard   O Back   D-pad Move" : row == 11 ? "X Save   O Back   D-pad Move" : "Left / Right Change   O Back   D-pad Move";
+            footer = row == 0 ? "X Keyboard   O Back   D-pad Move" : row == 10 ? "X Save   O Back   D-pad Move" : "Left / Right Change   O Back   D-pad Move";
             break;
         }
         case Page::Cheats: {
@@ -1266,7 +1266,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 if (automatic)
                     edit.name = automaticName(edit);
 
-                if (selected == 11 && accept) {
+                if (selected == 10 && accept) {
                     MH3_RETURN_IF_ERROR(SaveCustomQuest(user, edit));
                     Log("custom quest saved: %s (map %u, monsters %u %u %u, rank %u, size %u, %u stars)", edit.name.c_str(), unsigned(edit.map), unsigned(edit.monsters[0]),
                         unsigned(edit.monsters[1]), unsigned(edit.monsters[2]), unsigned(edit.rank), unsigned(edit.size), unsigned(edit.stars));

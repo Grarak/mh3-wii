@@ -618,6 +618,19 @@ Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& q) 
     if (!output)
         return Status::Error("Cannot save custom quest");
 
+    // An edited quest replaces its file. The Vita's rename refuses an existing
+    // target, so remove the old record first.
+    bool exists = false;
+    MH3_RETURN_IF_ERROR(FsStatus::Exists(path, exists));
+
+    if (exists) {
+        std::error_code error;
+        std::filesystem::remove(path, error);
+
+        if (error)
+            return FsStatus::Failure("cannot remove", error, path);
+    }
+
     return FsStatus::Rename(temporary, path);
 }
 
