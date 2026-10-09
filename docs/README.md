@@ -52,6 +52,7 @@ were deleted on 2026-10-03; they remain in git history.
 
 ## Runtime and simulation
 
+- [vita-controls.md](vita-controls.md): the Classic Controller the game sees and how the Vita, SDL gamepads and the keyboard map onto it; stick dead zones and curve.
 - [module-inventory.md](module-inventory.md): the disc's RSO modules and field layout.
 - [slow-path-access.md](slow-path-access.md): the memory-access survey behind the flat guest memory.
 - [variable-step.md](variable-step.md): systems scaled by the step length and remaining whole-tick behaviour.

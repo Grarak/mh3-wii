@@ -97,7 +97,7 @@ else()
 endif()
 add_executable(MH3
   src/main.cpp src/memory.cpp ${MH3_GUEST_MEMORY_SOURCE} src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
-  src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
+  src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp native/mh3_classic_map.c src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
   src/audio_tests.cpp src/audio_dma.cpp
   src/audio/native_audio_api.cpp src/audio/native_audio_frame.cpp src/audio/native_audio_mixer.cpp src/audio/native_audio_tests.cpp src/audio/sdk_mix.cpp src/audio/sdk_synseq.cpp src/audio/sound_engine.cpp src/audio/sound_stream.cpp
   src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/save_data.cpp src/game_tasks.cpp src/player_health.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/quest_clock.cpp src/ambient_hover.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/effect_texture.cpp src/effect_billboard.cpp src/msl_math.cpp src/texture_scroll.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp
@@ -156,6 +156,11 @@ target_include_directories(MH3 PRIVATE include ..)
 if(NOT VITA)
   set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
   target_link_libraries(MH3 PRIVATE ${CMAKE_DL_LIBS})
+  # Vita pad / host stick mapping to the Classic Controller report.
+  add_executable(mh3_classic_map_check ../tests/native/test_mh3_classic_map.c native/mh3_classic_map.c)
+  target_include_directories(mh3_classic_map_check PRIVATE ..)
+  target_link_libraries(mh3_classic_map_check PRIVATE m)
+  add_test(NAME mh3_classic_map_check COMMAND mh3_classic_map_check)
 endif()
 target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-O2;-gline-tables-only;-ffp-contract=off>)
 if(MH3_ENABLE_GUEST_CALL_TRACE)
@@ -264,7 +269,7 @@ if(VITA)
   endif()
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
-    src/launcher_disc.cpp src/launcher_textures.cpp)
+    vita/vita_controller.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
   option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)
   if(MH3_VITA_FAST_TLS)
     target_sources(MH3 PRIVATE vita/fast_tls.c)
@@ -299,7 +304,7 @@ if(VITA)
     set_property(SOURCE vita/platform.cpp vita/launcher.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
   endif()
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
-    ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub)
+    ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub SceCtrl_stub SceTouch_stub SceCommonDialog_stub)
   set_target_properties(MH3 PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/ldscript.ld")
   set(VITA_MAKE_FSELF_FLAGS "-a 0x2800000000000001")
   set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
@@ -405,7 +410,7 @@ if(TARGET aurora::core)
       target_link_libraries(MH3LauncherTests PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
     endif()
   endif()
-  add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp)
+  add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp native/mh3_classic_map.c)
   target_include_directories(MH3ControllerHostTest PRIVATE include)
   target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3ControllerHostTest PRIVATE ${AURORA_SDL3_TARGET})

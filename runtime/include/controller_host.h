@@ -14,8 +14,13 @@ ClassicControllerSample ReadHostController();
 void SetInputFrame(uint64_t frame);
 // Holds MH3_INPUT_PLAYBACK before its next entry (while the village shortcut drives input).
 void HoldInputPlayback(bool hold);
-// SDL keyboard/gamepad, or MH3_INPUT_FILE.
+// The live controls: SDL keyboard/gamepad on Linux, the Vita's pad and touch
+// panels on the Vita; MH3_INPUT_FILE in development builds.
 ClassicControllerSample ReadLiveController();
+#ifdef __vita__
+// sceCtrl and sceTouch through mh3_vita_pad_to_classic (runtime/vita/vita_controller.cpp).
+ClassicControllerSample ReadVitaController();
+#endif
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample);
 void ServiceHostController(CpuContext* cpu, bool force = false);
 void RunControllerSelfTests(CpuContext* cpu);
