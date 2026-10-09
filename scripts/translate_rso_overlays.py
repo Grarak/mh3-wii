@@ -159,10 +159,10 @@ def main():
         sources.append(isolate_profile_source(source, profile))
         mask = entry['build']['nonvolatileFprWriteMask']
         if address in ports:
-            # A native port: the dispatch guards the nonvolatile registers.
-            records.append(f'    {{0x{address:08X}u, &{ports[address]}, 0xFFFFC000u, true}},')
+            # A native port keeps r14-r31 and f14-f31 (REGISTER_NATIVE_FUNCTION): no guard.
+            records.append(f'    {{0x{address:08X}u, &{ports[address]}, 0x00000000u}},')
         elif text <= address < text + size:
-            records.append(f'    {{0x{address:08X}u, &mh3_{profile}_{address:08X}, 0x{mask:08X}u, false}},')
+            records.append(f'    {{0x{address:08X}u, &mh3_{profile}_{address:08X}, 0x{mask:08X}u}},')
     checksum = 0xCBF29CE484222325
     for byte in image[offset:offset + size]:
         checksum = ((checksum ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF

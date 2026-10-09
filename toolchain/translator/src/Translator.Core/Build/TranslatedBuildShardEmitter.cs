@@ -984,7 +984,7 @@ public static partial class TranslatedBuildShardEmitter
                 ? 0u
                 : trait.NonvolatileFprWriteMask & 0xFFFFC000u;
             source.AppendLine(
-                $"    {{0x{address:X8}u, &{trait.WinnerSymbol}, 0x{mask:X8}u, false}},");
+                $"    {{0x{address:X8}u, &{trait.WinnerSymbol}, 0x{mask:X8}u}},");
         }
         source.AppendLine("};");
 

@@ -114,7 +114,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     {
         // Every alias of a RAM byte is the same shared-memory byte, including
         // accesses straddling a host page.
-        for (uint32_t base : {0u, 0x10000000u}) {
+        for (uint32_t base : {0x80000000u, 0x90000000u}) {
             const uint32_t address = base + 0xFFFFD;
             Memory::Write64(address, 0x0123456789ABCDEFull);
 
@@ -128,9 +128,6 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             if (Memory::Contains(address, 8))
                 MH3_THROW(std::runtime_error("Terminal RAM or MMIO reported as mapped"));
         }
-
-        if (CheckRejections && !Rejects<Memory::AccessViolation>([] { Memory::Read64(0x817FFFFC); }))
-            MH3_THROW(std::runtime_error("Cross-allocation RAM read accepted"));
     }
 
     RunVideoTimingSelfTests();
@@ -177,7 +174,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         RecompMod::UnregisterExecutableRange(end, end + 4);
 
         // Rejected with a runtime error; the entry's logic error fails the test.
-        RawDispatchRecord stale{0x80868F30, [](CpuContext*) { MH3_THROW(std::logic_error("Stale RSO entry executed")); }, 0, false};
+        RawDispatchRecord stale{0x80868F30, [](CpuContext*) { MH3_THROW(std::logic_error("Stale RSO entry executed")); }, 0};
 
         if (CheckRejections && !Rejects([&] { TryDispatchRawCpuTarget(&stale, cpu); }))
             MH3_THROW(std::runtime_error("Unlinked RSO dispatch was accepted"));

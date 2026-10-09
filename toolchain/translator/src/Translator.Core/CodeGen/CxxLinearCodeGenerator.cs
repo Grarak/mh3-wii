@@ -173,6 +173,9 @@ public sealed partial class CxxLinearCodeGenerator
             _guestAbiProvider);
         var leafPreservedFprMask = LeafStackPreservedFprMask(architecturalFunc);
         var nonvolatileFprWriteMask = FunctionNonvolatileFprWriteMask(architecturalFunc) & ~leafPreservedFprMask;
+        // f14-f31 every exit reloads from where the body saved them (raw) need no guard either.
+        if (nonvolatileFprWriteMask != 0)
+            nonvolatileFprWriteMask &= ~NonvolatileFprPreservationAnalyzer.PreservedMask(architecturalFunc);
         var preservesNonvolatileFprs = nonvolatileFprWriteMask == 0;
         var stackFacts = StackAddressFacts.Build(func);
         // Register residency supersedes the leaf register cache (localizes state via the

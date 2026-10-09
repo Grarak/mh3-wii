@@ -63,11 +63,6 @@ struct RawDispatchRecord {
     uint32_t address = 0;
     void (*entry)(CpuContext*) = nullptr;
     uint32_t nonvolatileFprWriteMask = kPpcAllNonvolatileFprMask;
-
-    // Always false, read by nothing: no target's r14-r31 are guarded (natives
-    // keep them, see REGISTER_NATIVE_FUNCTION). The generated dispatch and
-    // overlay tables still write it.
-    bool preserveNonvolatileGprs = false;
 };
 
 // Translator-owned indirect dispatch is split by the high address byte and

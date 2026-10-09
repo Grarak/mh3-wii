@@ -182,13 +182,13 @@ public sealed class TranslatedBuildShardEmitterTests
             var baseDispatch = Directory.GetFiles(Path.Combine(output, "base_dispatch"), "*.cpp").Single();
             var baseDispatchText = File.ReadAllText(baseDispatch);
             Assert.Contains("const StaticIndirectDispatchSegment kSegments[256]", baseDispatchText);
-            Assert.Contains("{0x80001000u, &func_80001000, 0x00000000u, false}", baseDispatchText);
-            Assert.Contains("{0x80002000u, &func_80002000, 0x00000000u, false}", baseDispatchText);
-            Assert.Contains("{0x80003000u, &RuntimeOverride_80003000, 0xFFFFC000u, false}", baseDispatchText);
+            Assert.Contains("{0x80001000u, &func_80001000, 0x00000000u}", baseDispatchText);
+            Assert.Contains("{0x80002000u, &func_80002000, 0x00000000u}", baseDispatchText);
+            Assert.Contains("{0x80003000u, &RuntimeOverride_80003000, 0xFFFFC000u}", baseDispatchText);
             Assert.DoesNotContain("0x80004000u", baseDispatchText);
             var retroDispatch = Directory.GetFiles(Path.Combine(output, "retro_rewind_dispatch"), "*.cpp").Single();
             var retroDispatchText = File.ReadAllText(retroDispatch);
-            Assert.Contains("{0x80002000u, &rr_80002000, 0x00004000u, false}", retroDispatchText);
+            Assert.Contains("{0x80002000u, &rr_80002000, 0x00004000u}", retroDispatchText);
             Assert.DoesNotContain("{0x80002000u, &func_80002000", retroDispatchText);
 
             // A function claimed by a native registration is excluded from the

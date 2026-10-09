@@ -33,7 +33,7 @@ public static class NonvolatileGprPreservationAnalyzer
 {
     public const uint NonvolatileGprMask = 0xFFFFC000u;
 
-    private readonly record struct Slot(string Root, long Offset);
+    internal readonly record struct Slot(string Root, long Offset);
 
     public static NonvolatileGprPreservation Analyze(
         IrFunction function,
@@ -468,7 +468,7 @@ public static class NonvolatileGprPreservationAnalyzer
     /// equal addresses and reloads of a stored address (the back chain). Every SSA name without a
     /// definition is the incoming architectural value, so all of one register's share a root.
     /// </summary>
-    private sealed class StackSymbols
+    internal sealed class StackSymbols
     {
         private readonly Dictionary<string, Slot> _values;
         private readonly HashSet<string> _defined;
