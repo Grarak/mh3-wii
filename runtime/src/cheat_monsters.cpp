@@ -5,6 +5,7 @@
 #include "cheats.h"
 
 #include "abi_bridge.h"
+#include "monster_control.h"
 #include "guest_call.h"
 #include "ppc_runtime.h"
 
@@ -283,12 +284,13 @@ REGISTER_NATIVE_FUNCTION_AS(0x8013369C, MH3_MonsterOnMap, "MonsterOnMap");
 // (0x801382A0) the spawn state +0x17 picks what follows, 0 (in play) marking
 // it active (+0x1DE). Freeze/unfreeze monsters (US 0x801379D8, EU
 // 0x80137A3C: the state compared with 1), switched by its buttons, leaves
-// monsters in play inactive: their state reads 0xFF meanwhile.
+// monsters in play inactive: their state reads 0xFF meanwhile. The monster
+// control's `freeze` holds one monster the same way (monster_control.cpp).
 extern "C" void func_80137980(CpuContext* ctx);
 
 extern "C" void MH3_CheatMonsterStep(CpuContext* ctx) {
     const uint32_t monster = ctx->gpr[3];
-    const bool freeze = Toggled(Id::FreezeUnfreezeMonsters) && Memory::Read8(monster + kInit) == 1 && Memory::Read8(monster + kSpawn) == 0;
+    const bool freeze = (Toggled(Id::FreezeUnfreezeMonsters) || MonsterControl::Frozen(monster)) && Memory::Read8(monster + kInit) == 1 && Memory::Read8(monster + kSpawn) == 0;
 
     if (freeze)
         Memory::Write8(monster + kSpawn, 0xFF);

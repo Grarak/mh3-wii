@@ -13,6 +13,7 @@
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
 #include "cheats.h"
+#include "monster_control.h"
 #include "draw_pages.h"
 #include "fatal.h"
 #include "frame_split.h"
@@ -671,6 +672,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         GameTasks::SkipStrapScreen();
         StepVillageBoot(ctx);
         Cheats::Step(ctx);
+        MonsterControl::Step(ctx);
 
         // The task pass's Effect::Calc calls run on the guest worker during
         // the scene's traverse and opaque draws (EffectStep::Launch in the

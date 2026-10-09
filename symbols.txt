@@ -997,6 +997,16 @@
 8012b9a8 EnemyGaugeAdd390
 8012b9ec EnemyGaugeAdd3A0
 8012ba20 EnemyGaugeAdd3A4
+80133fb0 EnemyTurnOverMotion
+801d8f00 Em007TailSpin
+# Enemy actions (monster_control.cpp, docs/monster-control.md)
+80128624 EnemySetAction
+801283a4 EnemyStartAction
+80126520 EnemyHandler
+80127fac EnemyActionDone
+8013c4bc EnemyAiPick
+80138bc4 EnemyActiveStep
+801dbe70 Em007MotionCues
 80368dcc GroupShuttle
 803692f0 GroupTravel
 80299f5c HitTimerStep

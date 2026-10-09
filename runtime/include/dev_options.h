@@ -266,20 +266,22 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_TRACE=[input][,draw-pages[=N]][,monsters][,monster-steps=N][,draw-writes][,particles][,loading]:
+// MH3_TRACE=[input][,draw-pages[=N]][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles][,loading]:
 // the input as the game read it once per tick of game time (frame_pacer.cpp),
 // the guest RAM pages each frame's draw touches against those the next frame's
 // logic writes (draw_pages.cpp: what a draw running beside the next logic step
 // would conflict with), each monster's work and position once a second, monster
-// N's position, MHchar and models' world translation every logic step
-// (field_camera.cpp), and the heap frees and memory fills of a logic step
+// N's position, MHchar and models' world translation every logic step, the
+// monsters turning fast (field_camera.cpp), the monsters' hit parts
+// (enemy_hit_shapes.cpp) and the actions they start (monster_control.cpp),
+// and the heap frees and memory fills of a logic step
 // beside the overlapped draw, reported when the draw meets a dead model
 // (native_resource_lifetime.cpp, model_draw_dispatch.cpp), and every third
 // tick of game time the live particles of each emitter resource
 // (effect_step.cpp), and each loading-screen frame's progress counters
 // (load_progress.cpp).
 inline const DevOptions& TraceOptions() {
-    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "draw-writes", "particles", "loading"});
+    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "draw-writes", "particles", "loading"});
     return options;
 }
 
