@@ -5,6 +5,17 @@
 #include "generated/rso_overlays/quest_field.h"
 #include "generated/rso_overlays/enemy_field.h"
 #include "generated/rso_overlays/map01_field.h"
+#include "generated/rso_overlays/map00_field.h"
+#include "generated/rso_overlays/map02_field.h"
+#include "generated/rso_overlays/map03_field.h"
+#include "generated/rso_overlays/map04_field.h"
+#include "generated/rso_overlays/map05_field.h"
+#include "generated/rso_overlays/map06_field.h"
+#include "generated/rso_overlays/map07_field.h"
+#include "generated/rso_overlays/map08_field.h"
+#include "generated/rso_overlays/map09_field.h"
+#include "generated/rso_overlays/map10_field.h"
+#include "generated/rso_overlays/map11_field.h"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -33,6 +44,28 @@ Module modules[]{
      EnemyFieldBinding::Prolog, EnemyFieldBinding::Checksum, false, EnemyFieldBinding::Records, EnemyFieldBinding::Count},
     {"map01.rso", Map01FieldBinding::Base, Map01FieldBinding::Text, Map01FieldBinding::Size,
      Map01FieldBinding::Prolog, Map01FieldBinding::Checksum, false, Map01FieldBinding::Records, Map01FieldBinding::Count},
+    {"map00.rso", Map00FieldBinding::Base, Map00FieldBinding::Text, Map00FieldBinding::Size,
+     Map00FieldBinding::Prolog, Map00FieldBinding::Checksum, false, Map00FieldBinding::Records, Map00FieldBinding::Count},
+    {"map02.rso", Map02FieldBinding::Base, Map02FieldBinding::Text, Map02FieldBinding::Size,
+     Map02FieldBinding::Prolog, Map02FieldBinding::Checksum, false, Map02FieldBinding::Records, Map02FieldBinding::Count},
+    {"map03.rso", Map03FieldBinding::Base, Map03FieldBinding::Text, Map03FieldBinding::Size,
+     Map03FieldBinding::Prolog, Map03FieldBinding::Checksum, false, Map03FieldBinding::Records, Map03FieldBinding::Count},
+    {"map04.rso", Map04FieldBinding::Base, Map04FieldBinding::Text, Map04FieldBinding::Size,
+     Map04FieldBinding::Prolog, Map04FieldBinding::Checksum, false, Map04FieldBinding::Records, Map04FieldBinding::Count},
+    {"map05.rso", Map05FieldBinding::Base, Map05FieldBinding::Text, Map05FieldBinding::Size,
+     Map05FieldBinding::Prolog, Map05FieldBinding::Checksum, false, Map05FieldBinding::Records, Map05FieldBinding::Count},
+    {"map06.rso", Map06FieldBinding::Base, Map06FieldBinding::Text, Map06FieldBinding::Size,
+     Map06FieldBinding::Prolog, Map06FieldBinding::Checksum, false, Map06FieldBinding::Records, Map06FieldBinding::Count},
+    {"map07.rso", Map07FieldBinding::Base, Map07FieldBinding::Text, Map07FieldBinding::Size,
+     Map07FieldBinding::Prolog, Map07FieldBinding::Checksum, false, Map07FieldBinding::Records, Map07FieldBinding::Count},
+    {"map08.rso", Map08FieldBinding::Base, Map08FieldBinding::Text, Map08FieldBinding::Size,
+     Map08FieldBinding::Prolog, Map08FieldBinding::Checksum, false, Map08FieldBinding::Records, Map08FieldBinding::Count},
+    {"map09.rso", Map09FieldBinding::Base, Map09FieldBinding::Text, Map09FieldBinding::Size,
+     Map09FieldBinding::Prolog, Map09FieldBinding::Checksum, false, Map09FieldBinding::Records, Map09FieldBinding::Count},
+    {"map10.rso", Map10FieldBinding::Base, Map10FieldBinding::Text, Map10FieldBinding::Size,
+     Map10FieldBinding::Prolog, Map10FieldBinding::Checksum, false, Map10FieldBinding::Records, Map10FieldBinding::Count},
+    {"map11.rso", Map11FieldBinding::Base, Map11FieldBinding::Text, Map11FieldBinding::Size,
+     Map11FieldBinding::Prolog, Map11FieldBinding::Checksum, false, Map11FieldBinding::Records, Map11FieldBinding::Count},
 };
 uint64_t TextChecksum(uint32_t text, uint32_t size) {
     const auto* bytes = Memory::GetPointer(text, size);
@@ -85,11 +118,20 @@ bool RecompMod::TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu) {
         }
     if (owner && !owner->records) return false;
     if (!owner) {
+        // The field maps (mapNN.rso) all load at one base with the prolog at
+        // the same place: the linked text tells them apart.
+        Module* candidate = nullptr;
         for (auto& module : modules) {
             if (!module.records || address != module.prolog || cpu->gpr[3] != module.base) continue;
-            VerifyModule(cpu, module.name, module.base, module.text, module.size, module.checksum);
-            owner = &module;
-            break;
+            if (!candidate) candidate = &module;
+            if (TextChecksum(module.text, module.size) == module.checksum) {
+                candidate = &module;
+                break;
+            }
+        }
+        if (candidate) {
+            VerifyModule(cpu, candidate->name, candidate->base, candidate->text, candidate->size, candidate->checksum);
+            owner = candidate;
         }
     }
     if (!owner) return false;

@@ -1,0 +1,154 @@
+// Field jump, RMHP08 (development). MH3_QUEST=id leaves the village for a
+// quest's field as soon as the village is up, the way its exits do.
+//
+// Every trip out of the village is a quest: the Moga Woods exit starts the
+// free-roam quest of the current season (1..4, 0x802FB8A4), the quest counter
+// the accepted quest. The quest's data sets the map, area and monsters. The
+// village task (0x8021F40C, a tcb: +8 phase, +9 state, +10 sub-state) leaves
+// in state 5: its main state (0x8021F840) first records the quest id in the
+// departure block 0x8065B534 (u16 id, +9 a village setting 0x8021F29C, +11 1
+// for the offline field) and 0x8065B238, and from sub-state 2 of state 5 the
+// village is torn down, play mode 3 and game mode 1 set and the field task
+// 0x8028DE30 started.
+//
+// Quests come from a quest file the field loads (0x803AD264): offline the
+// village's (05/quest00, ids 1000..), in play mode 4 (online) Port Tanzia's
+// (05/quest01, ids 10000..). An online quest id loads the online file.
+//
+// The quest's map setup (0x803AF518) puts its start area in the field's move
+// work (+0xEA, copied to +0xEE and the current area 0x806BB806); the stage
+// then loads that area. MH3_AREA=n replaces it.
+//
+// MH3_QUEST=free: the Moga Woods exit (the season's free-roam quest); any
+// number: that quest id. MH3_FIELD_WAIT=steps (default 30) runs the village
+// that many steps in its main state before leaving.
+#include "abi_bridge.h"
+#include "guest_call.h"
+#include "memory.h"
+#include "port_check.h"
+
+#include <cstdio>
+#include <cstdlib>
+
+extern "C" void func_8021F40C(CpuContext* ctx);
+
+namespace {
+
+constexpr uint32_t kQuestId = 0x8065B238;   // u32: the departing quest
+constexpr uint32_t kDeparture = 0x8065B534; // u16 quest id, +9 u8, +11 u8 offline field
+enum : uint32_t {
+    VillageSetting = 0x8021F29C, // () -> u8, recorded at departure +9
+    FreeRoamQuest = 0x802FB8A4,  // () -> the season's free-roam quest id, 0 if none
+    PrimInitAll = 0x800E3DA4,
+    FilterReset = 0x80058514,
+};
+constexpr uint32_t kFirstCounterQuest = 1000; // free-roam quests are 1..4
+constexpr uint32_t kFirstOnlineQuest = 10000;
+constexpr uint32_t kPlayMode = 0x8065AA85; // u8
+constexpr uint8_t kPlayModeOnline = 4;
+constexpr uint32_t MoveWork = 0x800CFAF4;  // get_move_work_adrs(u8 kind) -> move work
+constexpr uint32_t kCurrentArea = 0x806BB806; // u8, get_now_areano
+enum : uint32_t { kWorkArea = 0xEA, kWorkStartArea = 0xEE };
+enum : uint32_t { kPhase = 8, kState = 9, kSubState = 10 };
+enum : uint8_t { kStateLeave = 5, kSubStateTearDown = 2 };
+
+struct Jump {
+    bool enabled = false;
+    uint32_t quest = 0; // 0: the free-roam quest
+    uint32_t wait = 30;
+    int area = -1; // -1: the quest's
+    uint32_t steps = 0;
+    bool done = false;
+    int lastState = -1;
+};
+
+Jump& State() {
+    static Jump jump = [] {
+        Jump j;
+#ifdef MH3_DEVELOPMENT
+        if (const char* v = std::getenv("MH3_QUEST")) {
+            j.enabled = true;
+            j.quest = uint32_t(std::strtoul(v, nullptr, 0)) & 0xFFFF; // "free" parses as 0
+        }
+        if (const char* v = std::getenv("MH3_AREA")) j.area = int(std::strtol(v, nullptr, 0));
+        if (const char* v = std::getenv("MH3_FIELD_WAIT")) j.wait = uint32_t(std::strtoul(v, nullptr, 0));
+#endif
+        return j;
+    }();
+    return jump;
+}
+
+} // namespace
+
+static void VillageTaskPort(CpuContext* ctx) {
+    Jump& jump = State();
+    const uint32_t tcb = ctx->gpr[3];
+    if (jump.enabled && !jump.done && Memory::Read8(tcb + kPhase) == 1) {
+        const int state = Memory::Read8(tcb + kState);
+        if (state != jump.lastState) {
+            std::fprintf(stderr, "MH3 field jump: village task state %d\n", state);
+            jump.lastState = state;
+            jump.steps = 0;
+        }
+        if (state == 2 && ++jump.steps >= jump.wait) {
+            // As the village's departure (0x8021FC10), then state 5.
+            const CpuContext saved = *ctx;
+            GuestCall game{ctx};
+            const uint32_t quest = jump.quest ? jump.quest : game(FreeRoamQuest) & 0xFFFF;
+            std::fprintf(stderr, "MH3 field jump: leaving the village for quest %u\n", quest);
+            // A free-roam quest leaves for the offline field; a quest from the
+            // counter through the quest departure (0x8021F40C, play mode 6).
+            Memory::Write8(kDeparture + 11, quest < kFirstCounterQuest ? 1 : 0);
+            Memory::Write8(kDeparture + 9, uint8_t(game(VillageSetting)));
+            Memory::Write16(kDeparture, uint16_t(quest));
+            Memory::Write32(kQuestId, quest);
+            game(PrimInitAll);
+            game(FilterReset);
+            *ctx = saved;
+            Memory::Write8(tcb + kState, kStateLeave);
+            Memory::Write8(tcb + kSubState, kSubStateTearDown);
+            jump.done = true;
+        }
+    }
+    func_8021F40C(ctx);
+}
+
+extern "C" void MH3_VillageTask(CpuContext* ctx) { PortCheck::Call(ctx, "VillageTask", func_8021F40C, VillageTaskPort); }
+REGISTER_NATIVE_FUNCTION_AS(0x8021F40C, MH3_VillageTask, "VillageTask");
+
+// Loads the field's quest file: the online one for an online quest id.
+extern "C" void func_803AD264(CpuContext* ctx);
+static void LoadQuestFilePort(CpuContext* ctx) {
+    const Jump& jump = State();
+    if (!jump.done || jump.quest < kFirstOnlineQuest) {
+        func_803AD264(ctx);
+        return;
+    }
+    const uint8_t playMode = Memory::Read8(kPlayMode);
+    Memory::Write8(kPlayMode, kPlayModeOnline);
+    func_803AD264(ctx);
+    Memory::Write8(kPlayMode, playMode);
+}
+
+extern "C" void MH3_LoadQuestFile(CpuContext* ctx) { PortCheck::Call(ctx, "LoadQuestFile", func_803AD264, LoadQuestFilePort); }
+REGISTER_NATIVE_FUNCTION_AS(0x803AD264, MH3_LoadQuestFile, "LoadQuestFile");
+
+// The quest's map setup; then the chosen start area.
+extern "C" void func_803AF518(CpuContext* ctx);
+static void QuestMapSetupPort(CpuContext* ctx) {
+    func_803AF518(ctx);
+    const Jump& jump = State();
+    if (!jump.done || jump.area < 0) return;
+    const CpuContext saved = *ctx;
+    GuestCall game{ctx};
+    const uint32_t work = game(MoveWork, {0});
+    *ctx = saved;
+    if (!work) return;
+    std::fprintf(stderr, "MH3 field jump: starting in area %d instead of %u\n", jump.area, Memory::Read8(work + kWorkArea));
+    Memory::Write8(work + kWorkArea, uint8_t(jump.area));
+    Memory::Write8(work + kWorkStartArea, uint8_t(jump.area));
+    Memory::Write8(kCurrentArea, uint8_t(jump.area));
+}
+
+extern "C" void MH3_QuestMapSetup(CpuContext* ctx) { PortCheck::Call(ctx, "QuestMapSetup", func_803AF518, QuestMapSetupPort); }
+REGISTER_NATIVE_FUNCTION_AS(0x803AF518, MH3_QuestMapSetup, "QuestMapSetup");

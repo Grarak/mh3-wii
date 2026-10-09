@@ -277,3 +277,17 @@
 80260304 PlTurn
 8020a258 VillagePlTurn
 802602ac PlAddTurnBlend
+8021f40c VillageTask
+8021f840 VillageMainState
+8021f29c VillageDepartureSetting
+802fb8a4 FreeRoamQuestId
+803ad264 LoadQuestFile
+803ad744 LoadArenaQuestFile
+803af518 QuestMapSetup
+8028b588 FieldSetup
+8028bf80 FieldTaskOnline
+8028de30 FieldTaskOffline
+8028e58c FieldTaskVs
+8028dfbc FieldTaskOfflineLoad
+802aef5c StageSet
+80446d38 GalleryDemoLoad

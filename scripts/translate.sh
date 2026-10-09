@@ -24,3 +24,25 @@ python3 scripts/translate_rso_overlays.py --profile quest_field 2>&1 | tee logs/
 python3 scripts/translate_rso_overlays.py --profile enemy_field 2>&1 | tee logs/enemy-field-translate.log
 
 python3 scripts/translate_rso_overlays.py --profile map01_field 2>&1 | tee logs/map01-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map00_field 2>&1 | tee logs/map00-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map02_field 2>&1 | tee logs/map02-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map03_field 2>&1 | tee logs/map03-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map04_field 2>&1 | tee logs/map04-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map05_field 2>&1 | tee logs/map05-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map06_field 2>&1 | tee logs/map06-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map07_field 2>&1 | tee logs/map07-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map08_field 2>&1 | tee logs/map08-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map09_field 2>&1 | tee logs/map09-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map10_field 2>&1 | tee logs/map10-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map11_field 2>&1 | tee logs/map11-field-translate.log
