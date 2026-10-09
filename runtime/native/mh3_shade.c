@@ -1059,7 +1059,7 @@ void mh3_shade_gpu_srt_rows(const mh3_shade_gpu_srt *srt, float row0[3], float r
     row1[2] = (-d - c * tu) + d * tv + 1.f;
 }
 
-static void gpu_coefficient(const mh3_shade_gpu_material *m, const mh3_shade_gpu_animated *a, unsigned k, float out[4]) {
+void mh3_shade_gpu_coefficient(const mh3_shade_gpu_material *m, const mh3_shade_gpu_animated *a, unsigned k, float out[4]) {
     const mh3_shade_gpu_pick *p = &m->pick[k];
     const float *c = a->palette[(unsigned)p->index[0]], *alpha = a->palette[(unsigned)p->index[1]];
     float replicated = 0.f, picked = 0.f;
@@ -1082,19 +1082,19 @@ void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_g
 
     if (material->model == MH3_SHADE_MODULATE) {
         mh3_shade_modulate *q = &out->shading.modulate;
-        gpu_coefficient(m, a, MH3_SHADE_GPU_W0, q->w0);
-        gpu_coefficient(m, a, MH3_SHADE_GPU_W1, q->w1);
-        gpu_coefficient(m, a, MH3_SHADE_GPU_OFFSET, q->offset);
-        gpu_coefficient(m, a, MH3_SHADE_GPU_KV, q->kv);
-        gpu_coefficient(m, a, MH3_SHADE_GPU_KC, q->kc);
-        gpu_coefficient(m, a, MH3_SHADE_GPU_D, q->d);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_W0, q->w0);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_W1, q->w1);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_OFFSET, q->offset);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_KV, q->kv);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_KC, q->kc);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_D, q->d);
 
         for (unsigned i = 0; i < 4; ++i) {
             q->d[i] += m->add[i];
             q->s[i] = m->scale[i];
         }
 
-        gpu_coefficient(m, a, MH3_SHADE_GPU_MODULATE_OVERLAY, out->overlay);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_MODULATE_OVERLAY, out->overlay);
         return;
     }
 
@@ -1102,8 +1102,8 @@ void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_g
 
     for (unsigned i = 0; i < 4; ++i) {
         float offset[4], scale[4];
-        gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET + i, offset);
-        gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_SCALE + i, scale);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET + i, offset);
+        mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_SCALE + i, scale);
         memcpy(q->color_input[i].offset, offset, sizeof offset);
         memcpy(q->color_input[i].scale, scale, sizeof scale);
         memcpy(q->alpha_input[i].offset, offset, sizeof offset);
@@ -1115,7 +1115,7 @@ void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_g
 
     memcpy(q->color_equation, m->equation[0], sizeof q->color_equation);
     memcpy(q->alpha_equation, m->equation[1], sizeof q->alpha_equation);
-    gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OVERLAY, out->overlay);
+    mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OVERLAY, out->overlay);
 }
 
 void mh3_shade_fog(uint32_t type, const mh3_shader_fog *fog, mh3_shade_scene *scene) {

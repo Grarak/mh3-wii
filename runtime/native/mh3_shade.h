@@ -274,6 +274,9 @@ void mh3_shade_gpu_srt_from_slot(const mh3_pack_texture_srt *slot, mh3_shade_gpu
 /* Rows (3 floats each: s, t, constant) of the post matrix the vertex
  * program builds; reference for checks. */
 void mh3_shade_gpu_srt_rows(const mh3_shade_gpu_srt *srt, float row0[3], float row1[3]);
+/* Coefficient k of the fragment program: its static factor times its pick
+ * of the animated palette. */
+void mh3_shade_gpu_coefficient(const mh3_shade_gpu_material *baked, const mh3_shade_gpu_animated *animated, unsigned k, float out[4]);
 /* Reference evaluation of the fragment program's uniform-only part: the
  * coefficients mh3_shade_fill would write, from the baked and animated
  * blocks. Writes overlay, alpha_range, texture_bias and the shading union. */

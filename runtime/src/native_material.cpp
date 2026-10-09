@@ -567,7 +567,7 @@ struct AnimatedState {
     uint8_t srtRoles = 0xff;
 } animated;
 
-// Per-draw resolved Material copy (BASIC with animated picks).
+// Per-draw resolved Material copy (ResolvesOnCpu).
 struct ResolvedState {
     mh3_shade_gpu_material values{};
     aurora::gl::UniformBlock block{};
@@ -607,10 +607,13 @@ const aurora::gl::UniformBlock* RecordBlock(const ShadeEntry& entry) {
     return state == 1 ? &block : nullptr;
 }
 
-// BASIC programs do not evaluate picks (secondary attribute budget): their
-// animated coefficients are resolved into a per-draw copy of the block.
+// Only one-texture MODULATE programs evaluate picks. In BASIC and two- or
+// three-texture MODULATE programs they overflow the secondary program into
+// the per-fragment one (psp2shaderperf: t2 fog 21 -> 66 cycles, t3 overlay
+// fog 23 -> 62), so their animated coefficients are resolved into a per-draw
+// copy of the block.
 bool ResolvesOnCpu(const ShadeEntry& entry) {
-    return entry.dynamic && entry.shading.model != MH3_SHADE_MODULATE;
+    return entry.dynamic && (entry.shading.model != MH3_SHADE_MODULATE || entry.shading.textures > 1);
 }
 
 // Post SRT of each role: bit r of the result when role r's post matrix is a
@@ -709,16 +712,9 @@ std::optional<aurora::gl::UniformBlock> ShadeMaterialBlock(const ShadeEntry& ent
 
     // Static coefficients times their picks; the copy picks nothing (one).
     r.values = entry.material;
-    mh3_shade_fragment fragment;
-    mh3_shade_gpu_resolve(&entry.shading, &entry.material, &values, &fragment);
-    const auto& basic = fragment.shading.basic;
 
-    for (unsigned i = 0; i < 4; ++i) {
-        std::memcpy(r.values.coefficient[MH3_SHADE_GPU_BASIC_OFFSET + i], basic.color_input[i].offset, 16);
-        std::memcpy(r.values.coefficient[MH3_SHADE_GPU_BASIC_SCALE + i], basic.color_input[i].scale, 16);
-    }
-
-    std::memcpy(r.values.coefficient[MH3_SHADE_GPU_BASIC_OVERLAY], fragment.overlay, 16);
+    for (unsigned k = 0; k < MH3_SHADE_GPU_COEFFICIENTS; ++k)
+        mh3_shade_gpu_coefficient(&entry.material, &values, k, r.values.coefficient[k]);
 
     for (auto& pick : r.values.pick) {
         const mh3_shade_gpu_pick one = {{float(MH3_SHADE_GPU_ONE), float(MH3_SHADE_GPU_ONE), 0.f, 0.f}, {0.f, 0.f, 0.f, 1.f}, {0.f, 0.f, 0.f, 1.f}};

@@ -60,7 +60,7 @@ struct NativeMaterialGpuInfo {
     bool valid = false;
     bool supported = false;   // false: no GPU form (two animated factors), draw without references
     bool dynamic = false;     // a coefficient picks an animated palette entry
-    bool cpu_resolve = false; // BASIC with picks: the render thread reads the palette back
+    bool cpu_resolve = false; // picks the program does not evaluate: the render thread reads the palette back
     uint8_t model = 0, textures = 0, alpha_test = 0;
 
     // Texture role -> texture coordinate generator (0xff unused). The role's

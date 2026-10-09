@@ -913,12 +913,13 @@ bool PureModulate(const NativeShaderVariant& variant) {
     return variant.pure_modulate && variant.model == NativeShaderModel::Modulate && variant.textures == 1 && !variant.overlay;
 }
 
-// Animated picks are evaluated by MODULATE programs only: their uniform-only
-// coefficient code fits GXM's secondary program (psp2shaderperf: +0..1 cycle).
-// BASIC already needs ~100 secondary attributes; its picks would move into the
-// per-fragment program (77 -> 184 cycles), so a BASIC material with animated
-// picks gets a per-draw resolved copy of its Material block instead. The pure
-// product reads no coefficient.
+// Animated picks are evaluated by one-texture MODULATE programs only: their
+// uniform-only coefficient code fits GXM's secondary program (psp2shaderperf:
+// +0..1 cycle). BASIC already needs ~100 secondary attributes; its picks would
+// move into the per-fragment program (77 -> 184 cycles), as do those of two-
+// and three-texture MODULATE (21 -> 66, 23 -> 62), so such a material with
+// animated picks gets a per-draw resolved copy of its Material block instead
+// (ResolvesOnCpu, native_material.cpp). The pure product reads no coefficient.
 bool Dynamic(const NativeShaderVariant& variant) {
     return variant.material_gpu && variant.dynamic && variant.model == NativeShaderModel::Modulate && !PureModulate(variant);
 }
