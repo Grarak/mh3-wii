@@ -22,9 +22,11 @@
 //     0xC4 momentum, 0xC8 ParticleManager*, 0xD8 evaluated, 0xDC tick, 0xDE
 //     seed, 0xE0 life, 0xE2 pending child count.
 #include "abi_bridge.h"
+#include "effect_particle.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "ppc_runtime.h"
+#include "ps_vec_math.h"
 
 #include <array>
 #include <cstdint>
@@ -61,8 +63,6 @@ enum : uint32_t {
     kVecScale = 0x80051454,         // (VEC3* in/out, f1)
     kVecSubtract = 0x80050D58,      // (out, a, b): out = a - b
     kMtxIdentity = 0x80050538,      // (MTX34*)
-    kMtxRotate = 0x8009CC84,        // (out, VEC3* angles, in)
-    kMtxScale = 0x8009CA94,         // (MTX34* out, f1, f2, f3)
     kMtxTranslate = 0x8005AB6C,     // (out, in, VEC3*)
     kFmod = 0x80464590,             // (f1, f2) -> f1
     kResEmitterData = 0x800A89A8,   // (ResEmitter*) -> emit data
@@ -107,7 +107,7 @@ enum : uint32_t {
     kMagVec = 0xD4,
     kFieldParams = 0xE0, // 0x1C bytes: u8 space, u8 target, .., f32 at +4
     kWrapInverse = 0x100,
-    kWrapScale = 0x130,
+    kWrapRotation = 0x130,
     kWrapMtx = 0x160,
     kEmitterMtx = 0x190,
     kPostParams = 0x1C0, // 0x24 bytes
@@ -163,6 +163,155 @@ void AddPosition(uint32_t particle, uint32_t v) {
 // slw: shift counts 32..63 give 0.
 uint32_t Slw(uint32_t v, uint32_t n) {
     return (n & 32) ? 0 : v << (n & 31);
+}
+
+// The curve keys' random step (0x8009EF40).
+uint32_t Lcg(uint32_t s) {
+    return s * 0x343FDu + 0x269EC3u;
+}
+
+// The seed's high half as a random number: signed over 0x80798584, or
+// unsigned over 0x80798588.
+float RandomSigned(uint32_t r) {
+    return float(int32_t(int16_t(r >> 16))) / FlatReadFloat32(0x80798584);
+}
+
+float RandomUnsigned(uint32_t r) {
+    return float(r >> 16) / FlatReadFloat32(0x80798588);
+}
+
+void LoadFloats(uint32_t address, float* v, uint32_t count) {
+    for (uint32_t k = 0; k < count; ++k)
+        v[k] = FlatReadFloat32(address + 4 * k);
+}
+
+// PSMTXMultVec on host floats: per row the x and y lanes, z and the
+// translation fused onto them, the lanes summed.
+void MultVecHost(const float m[12], const float v[3], float out[3]) {
+    const double xy = PpcPackPairedInline(v[0], v[1]), z1 = PpcPackPairedInline(v[2], 1.0f);
+    float r[3];
+
+    for (uint32_t i = 0; i < 3; ++i) {
+        const double sum = PPC_PsMaddInline(PpcPackPairedInline(m[4 * i + 2], m[4 * i + 3]), z1, PPC_PsMulInline(PpcPackPairedInline(m[4 * i], m[4 * i + 1]), xy));
+        r[i] = float(double(PpcGetPs0Inline(sum)) + PpcGetPs1Inline(sum));
+    }
+
+    for (uint32_t k = 0; k < 3; ++k)
+        out[k] = r[k];
+}
+
+// 0x800AD584, the field kind 7: a push in a random direction once every
+// interval (+0xC, u16) + 1 ticks (with the track's flag 0x10 (+4) from the
+// particle's first tick (+0xDC) on, else not on tick 0), from the key's
+// seed (PickSeed of the particle's seed, the track's salt (+6) and the
+// tick; then the LCG). Flags (+3): 2, random axes in -1..1 (with 1 made a
+// unit vector) times the strength (+4); else a direction in the cone of
+// half-angle (+8, a random fraction of it) around the particle's velocity
+// (or, after its first tick, its movement) in world space (the inverse
+// world rotation), spun by a random angle, times the strength (with flag
+// 1 whole, else a random fraction); a zero cone pushes along the axis. Flag
+// 1 also sets the strength to the length of the velocity (mode +1: 0, or
+// 1 before the first tick) or of the movement over the momentum (+0xC4).
+// The axes without flags 4, 8 and 0x10 stay zero. Whether it pushed.
+bool FieldRandom(uint32_t out, uint32_t params, uint32_t track, uint32_t trackFlags, uint32_t particle, uint32_t tick, uint32_t seed, uint32_t velocity, uint32_t movement,
+                 uint32_t worldRotInv) {
+    uint32_t r = EfPickSeed(seed & 0xFFFF, FlatRead16(track + 6), tick & 0xFFFF, 0);
+    const uint32_t interval = FlatRead16(params + 0xC) + 1u;
+
+    if (FlatRead8(trackFlags + 4) & 0x10) {
+        if (FlatRead16(particle + 0xDC) && tick % interval)
+            return false;
+    } else if (!tick || tick % interval) {
+        return false;
+    }
+
+    const uint32_t flags = FlatRead8(params + 3);
+    const float zero = FlatReadFloat32(0x8079856C), unit = FlatReadFloat32(0x80798568);
+    float rotation[12], v[3], result[3];
+    LoadFloats(worldRotInv, rotation, 12);
+
+    if (flags & 1) {
+        // Other modes leave the original's stack as it was.
+        float base[3] = {zero, zero, zero};
+        const uint32_t mode = FlatRead8(params + 1);
+
+        if (mode == 0 || (mode == 1 && !FlatRead16(particle + 0xDC))) {
+            LoadFloats(velocity, base, 3);
+        } else if (mode == 1) {
+            const float scale = unit / FlatReadFloat32(particle + 0xC4); // 0x800ADA24
+            LoadFloats(movement, base, 3);
+
+            for (uint32_t k = 0; k < 3; ++k)
+                base[k] = base[k] * scale;
+        }
+
+        MultVecHost(rotation, base, base);
+        FlatWriteFloat32(params + 4, PsVec::Mag(base[0], base[1], base[2]));
+    }
+
+    if (flags & 2) {
+        result[0] = RandomSigned(r);
+        r = Lcg(r);
+        result[1] = RandomSigned(r);
+        r = Lcg(r);
+        result[2] = RandomSigned(r);
+
+        if ((flags & 1) && !EfNormalize(result))
+            result[1] = unit;
+
+        const float strength = FlatReadFloat32(params + 4);
+
+        for (uint32_t k = 0; k < 3; ++k)
+            result[k] = result[k] * strength;
+    } else {
+        LoadFloats(FlatRead16(particle + 0xDC) ? movement : velocity, v, 3);
+        MultVecHost(rotation, v, v);
+
+        if (!EfNormalize(v))
+            v[1] = unit;
+
+        float frame[12];
+        EfMtxFromDirection(v, frame);
+        const float cone = FlatReadFloat32(params + 8);
+
+        if (zero == cone) {
+            result[0] = zero;
+            result[1] = flags & 1 ? FlatReadFloat32(params + 4) : RandomSigned(r) * FlatReadFloat32(params + 4);
+            result[2] = zero;
+        } else {
+            const float angle = RandomUnsigned(r) * cone;
+            r = Lcg(r);
+            const float turn = FlatReadFloat32(0x8079858C) * RandomUnsigned(r);
+            const float spin = FlatReadFloat32(0x80798578) * turn;
+            r = Lcg(r);
+            float s, c, spinSin, spinCos;
+            EfSinCosByPeriod(angle, s, c); // 0x8009C754
+            SinCosRadHost(spin, spinSin, spinCos);
+            result[0] = s * spinSin;
+            result[1] = c;
+            result[2] = s * spinCos;
+            const float scale = flags & 1 ? FlatReadFloat32(params + 4) : RandomUnsigned(r) * FlatReadFloat32(params + 4);
+
+            for (uint32_t k = 0; k < 3; ++k)
+                result[k] = result[k] * scale;
+        }
+
+        MultVecHost(frame, result, result);
+    }
+
+    if (!(flags & 4))
+        result[0] = zero;
+
+    if (!(flags & 8))
+        result[1] = zero;
+
+    if (!(flags & 0x10))
+        result[2] = zero;
+
+    for (uint32_t k = 0; k < 3; ++k)
+        FlatWriteFloat32(out + 4 * k, result[k]);
+
+    return true;
 }
 
 } // namespace
@@ -400,9 +549,14 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                     game(kFieldKind[target], {force, fieldParams, origin});
                     break;
                 case 7:
-                    FlatWrite32(sp + kArgA, sp + kMovement);
-                    FlatWrite32(sp + kArgB, sp + kWorldRotInv);
-                    game.Call<kFieldKind[7]>({force, fieldParams, track, track, p, tick, seed, sp + kVelocity});
+                    if (PortCheck::Enabled("FieldRandom")) [[unlikely]] {
+                        FlatWrite32(sp + kArgA, sp + kMovement);
+                        FlatWrite32(sp + kArgB, sp + kWorldRotInv);
+                        game.Call<kFieldKind[7]>({force, fieldParams, track, track, p, tick, seed, sp + kVelocity});
+                    } else {
+                        FieldRandom(force, fieldParams, track, track, p, tick, seed, sp + kVelocity, sp + kMovement, sp + kWorldRotInv);
+                    }
+
                     break;
                 case 8: { // toward the emitter's movement
                     const uint32_t emitter = ownerEmitter;
@@ -507,9 +661,9 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                 // axis of its frame.
                 const uint32_t m = sp + kWrapMtx;
                 game.Call<kMtxIdentity>({m});
-                game.Call<kMtxRotate>({m, header + 0x4C, m});
-                game.Call<kMtxScale>({sp + kWrapScale}, {FlatReadFloat32(header + 0x58), FlatReadFloat32(header + 0x5C), FlatReadFloat32(header + 0x60)});
-                game.Call<kMtxConcat>({m, sp + kWrapScale, m});
+                EfMtxScaleRows(m, header + 0x4C, m);
+                EfRotationMtx(sp + kWrapRotation, FlatReadFloat32(header + 0x58), FlatReadFloat32(header + 0x5C), FlatReadFloat32(header + 0x60));
+                game.Call<kMtxConcat>({m, sp + kWrapRotation, m});
                 game.Call<kMtxTranslate>({m, header + 0x64, m});
 
                 if (FlatRead8(header + 0x48) & 2) {
@@ -551,3 +705,21 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
     if (const uint32_t after = FlatRead32(ownerEffect + 0x50))
         game(after, {manager, list, FlatRead32(sp + kFirst)});
 }
+
+// The field kind 7's guest entry: r3 out, r4 params, r5 and r6 the track,
+// r7 the particle, r8 tick, r9 seed, r10 velocity; the movement and the
+// inverse world rotation at sp + 8 and + 0xC. Checked on every call.
+static void FieldRandomPort(CpuContext* ctx) {
+    const uint32_t sp = ctx->gpr[1];
+    ctx->gpr[3] = FieldRandom(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7], ctx->gpr[8], ctx->gpr[9], ctx->gpr[10], FlatRead32(sp + 8), FlatRead32(sp + 0xC)) ? 1 : 0;
+}
+
+extern "C" void func_800AD584(CpuContext* ctx);
+extern "C" void MH3_FieldRandom(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("FieldRandom")) [[unlikely]]
+        return PortCheck::RunOutput(ctx, "FieldRandom", PortCheck::Returns::Gpr3, func_800AD584, FieldRandomPort, {{ctx->gpr[3], 12}, {ctx->gpr[4] + 4, 4}});
+#endif
+    FieldRandomPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800AD584, MH3_FieldRandom, "FieldRandom");

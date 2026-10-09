@@ -846,6 +846,11 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
 
 } // namespace
 
+// For the field kinds (particle_manager_calc.cpp): the key pick's seed.
+uint32_t EfPickSeed(uint32_t particleSeed, uint32_t salt, uint32_t set, uint32_t loop) {
+    return PickSeed(particleSeed, salt, set, loop);
+}
+
 extern "C" void func_8009CE20(CpuContext* ctx);
 extern "C" void func_800A2818(CpuContext* ctx);
 extern "C" void func_8009F290(CpuContext* ctx);

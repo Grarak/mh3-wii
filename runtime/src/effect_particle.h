@@ -9,6 +9,25 @@
 // nw4r::math SinCosRad (0x8009C7C4, msl_math.cpp) on host values.
 void SinCosRadHost(double radians, float& sine, float& cosine);
 
+// ef_util.cpp (msl_math.cpp) on guest buffers: the rotation matrix of XYZ
+// radians (0x8009CA94), VEC3 normalize (0x8009C4E8, whether not zero) and a
+// matrix's columns (0x8009CC04) or rows (0x8009CC84) scaled by a vector with
+// zeros replaced.
+void EfRotationMtx(uint32_t out, float x, float y, float z);
+bool EfVecNormalize(uint32_t dst, uint32_t src);
+void EfMtxScaleColumns(uint32_t out, uint32_t m, uint32_t scale);
+void EfMtxScaleRows(uint32_t out, uint32_t scale, uint32_t m);
+
+// The same on host floats: VEC3 normalize in place (0x8009C4E8; a zero
+// vector is left), the sine lookup by 0x80798468's period (0x8009C754) and
+// the rotation taking Y to a unit vector (0x8009B4AC).
+bool EfNormalize(float v[3]);
+void EfSinCosByPeriod(double radians, float& sine, float& cosine);
+void EfMtxFromDirection(const float v[3], float m[12]);
+
+// The random seed of a curve key's pick (0x8009EF58, ef_anim_curve.cpp).
+uint32_t EfPickSeed(uint32_t particleSeed, uint32_t salt, uint32_t set, uint32_t loop);
+
 namespace EffectParticle {
 // Particle list of a ParticleManager (ut::List at +0x38, link offset at +0x42).
 uint32_t First(uint32_t manager);

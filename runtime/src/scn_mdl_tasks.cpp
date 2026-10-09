@@ -489,6 +489,27 @@ void SimpleCalcView(CpuContext* ctx) {
 
 } // namespace
 
+// For other files' CopiedMatAccess (0x8007BF10) uses: whether the access to
+// material i is valid (its first word), and its copy of the part with the
+// dirty bit `bit` (0 when the model has no copies of it).
+bool CopiedMatAccessValid(uint32_t mdl, uint32_t i) {
+    return mdl && Material(Read32(mdl + kResMdl), i) != 0;
+}
+
+uint32_t CopiedMatAccessPart(uint32_t mdl, uint32_t i, uint32_t bit) {
+    if (!CopiedMatAccessValid(mdl, i))
+        return 0;
+
+    for (const CopiedPart& part : kParts) {
+        if (part.bit == bit) {
+            const uint32_t array = Read32(mdl + part.array);
+            return array ? array + i * part.size : 0;
+        }
+    }
+
+    return 0;
+}
+
 extern "C" void func_8007F480(CpuContext* ctx);
 extern "C" void MH3_ScnMdlSimpleCalcWorld(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT

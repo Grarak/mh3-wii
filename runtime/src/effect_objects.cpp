@@ -37,6 +37,23 @@
 //   0x800D6308 EffMemoryCollectManagers    managers,
 //   0x800D6244 EffMemoryCollectEmitters    emitters
 //   0x800D6168 EffMemoryCollectEffects     and effects
+//   0x800FF938 EffectSpawnerUpdate         a spawner's state 1: its effects
+//                                          spawned (0x800FFD10) on a random
+//                                          wait, retired without managers,
+//                                          calculated and drawn
+//   0x8033065C EffectObjectUpdate          an object's state 1: its effects
+//                                          follow the owner's joints
+//                                          (0x800E0AF8), coloured and scaled
+//                                          by its state
+//   0x800F943C EffectDrawRequest           the effects' or models' primitive
+//                                          requests (0x800E3BF0) and scene
+//                                          root PushBack (0x8007F130)
+//   0x802BDD44 GetCameraPos                the view camera's position, with
+//                                          0x800473FC, 0x80082C30, 0x80082BD4
+//                                          and 0x80074A2C
+//   0x802FB9E0 StarQuestFirstStages        the star quest groups' progress,
+//                                          with 0x802FB558, 0x802FB520,
+//                                          0x802FB414 and 0x802FB498
 //
 // Virtual functions (vtable at +0x1C): +8 SendClosing, +0xC DestroyFunc;
 // Effect (0x80592D48) +0x18 Calc (0x800A4C20); Emitter (0x80593368).
@@ -53,14 +70,21 @@
 // particle; a pool: free list 0x04, used list 0x10.
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "g3d_native.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
+#include "ppc_runtime.h"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+
+// CopiedMatAccess (0x8007BF10) in scn_mdl_tasks.cpp: whether material i's
+// access is valid, and its copy of the part with a dirty bit.
+bool CopiedMatAccessValid(uint32_t mdl, uint32_t i);
+uint32_t CopiedMatAccessPart(uint32_t mdl, uint32_t i, uint32_t bit);
 
 namespace {
 using MemoryInline::FlatRead16;
@@ -74,6 +98,10 @@ using MemoryInline::FlatWriteFloat32;
 
 constexpr uint32_t kEffectSystem = 0x806A4574;    // nw4r::ef::EffectSystem*
 constexpr uint32_t kLiveEffectObjects = 0x806A4584; // s32
+constexpr uint32_t kMapNo = 0x806BB805, kAreaNo = 0x806BB806; // u8: get_now_mapno, get_now_areano
+constexpr uint32_t kVillageDeparture = 0x806ACF40;            // VillageDepartureSetting
+constexpr uint32_t kRoot = 0x80796E34;                        // nw4r::g3d::ScnRoot* pRoot
+constexpr uint32_t kQuestFlags = 0x80796D40;                  // the save's quest flags
 
 // The vtables of the classes whose virtual functions the ports call natively.
 constexpr uint32_t kEffectVtable = 0x80592D48, kEmitterVtable = 0x80593368, kManagerVtable = 0x80593CA0,
@@ -1053,11 +1081,1011 @@ void GarbageCollection(GuestCall& game, uint32_t memory) {
     if (const uint32_t pool = FlatRead32(memory + 8))
         CollectEffects(game, pool);
 }
+
+// ran_suu (0x800CEF20, inlined by the translator): random stream `i` (u16s
+// at 0x8065AA78), x * 176 mod 65363 with 0 taken as 1.
+uint32_t RanSuu(uint32_t i) {
+    const uint32_t seed = 0x8065AA78 + 2 * i;
+    const uint32_t x = FlatRead16(seed) ? FlatRead16(seed) : 1;
+    const uint32_t next = x * 176 % 65363;
+    FlatWrite16(seed, uint16_t(next));
+    return next;
+}
+
+// Whether every star quest of the list (u16s ending 0xFFFF) is unlocked
+// (StarQuestUnlocked 0x8004D2E0, which the star quest cheat hooks).
+bool StarQuestListDone(GuestCall& game, uint32_t list) {
+    if (!list)
+        return false;
+
+    for (uint32_t quest; (quest = FlatRead16(list)) != 0xFFFF; list += 2)
+        if (!game.Call<0x8004D2E0>({quest}))
+            return false;
+
+    return true;
+}
+
+// 0x802FB414: a star quest group below 0x1C done (its list at 0x805D9360).
+bool StarQuestGroupDoneLow(GuestCall& game, uint32_t group) {
+    if (Routed<0x802FB414>())
+        return game.Call<0x802FB414>({group}) != 0;
+
+    group &= 0xFFFF;
+    return group < 0x1C && StarQuestListDone(game, FlatRead32(0x805D9360 + 4 * group));
+}
+
+// 0x802FB498: a group from 0x1C on (lists at 0x805D93D0).
+bool StarQuestGroupDoneHigh(GuestCall& game, uint32_t group) {
+    if (Routed<0x802FB498>())
+        return game.Call<0x802FB498>({group}) != 0;
+
+    group &= 0xFFFF;
+    return group >= 0x1C && StarQuestListDone(game, FlatRead32(0x805D93D0 + 4 * (group - 0x1C)));
+}
+
+// 0x802FB520: whether the group is done; 0xFFFF never, group 0 always.
+bool StarQuestGroupDone(GuestCall& game, uint32_t group) {
+    if (Routed<0x802FB520>())
+        return game.Call<0x802FB520>({group}) != 0;
+
+    group &= 0xFFFF;
+
+    if (group == 0xFFFF)
+        return false;
+
+    if (group == 0)
+        return true;
+
+    return group > 0x1B ? StarQuestGroupDoneHigh(game, group) : StarQuestGroupDoneLow(game, group);
+}
+
+// 0x802FB558: the group is the current one: done, the next not.
+bool StarQuestGroupCurrent(GuestCall& game, uint32_t group) {
+    if (Routed<0x802FB558>())
+        return game.Call<0x802FB558>({group}) != 0;
+
+    return StarQuestGroupDone(game, group) && !StarQuestGroupDone(game, group + 1);
+}
+
+// 0x802FB9E0: group 0 current, or group 0x14 with the quest flags' +0x3E01
+// at 4.
+bool StarQuestFirstStages(GuestCall& game) {
+    if (Routed<0x802FB9E0>())
+        return game.Call<0x802FB9E0>() != 0;
+
+    if (StarQuestGroupCurrent(game, 0))
+        return true;
+
+    return StarQuestGroupCurrent(game, 0x14) && FlatRead8(FlatRead32(kQuestFlags) + 0x3E01) == 4;
+}
+
+// 0x80082C30: the ScnRoot's current camera (+0xF4) as a handle of its
+// CameraData (0x10C bytes each from +0xF8).
+uint32_t ScnRootCurrentCamera(GuestCall& game, uint32_t root) {
+    if (Routed<0x80082C30>())
+        return game.Call<0x80082C30>({root});
+
+    return root + FlatRead8(root + 0xF4) * 0x10C + 0xF8;
+}
+
+// ScnRoot::GetCamera (0x80082BD4): camera `index`'s, 0 outside 0-31.
+uint32_t ScnRootGetCamera(GuestCall& game, uint32_t root, uint32_t index) {
+    if (Routed<0x80082BD4>())
+        return game.Call<0x80082BD4>({root, index});
+
+    return int32_t(index) < 0 || int32_t(index) > 31 ? 0 : root + index * 0x10C + 0xF8;
+}
+
+// 0x800473FC: the camera this machine views through: with split screen
+// (0x8065B4D6) its player's (MyPlayerIndex 0x8065AA87, signed, into the
+// camera bytes at 0x8065B50C), else the root's current one.
+uint32_t ViewCamera(GuestCall& game) {
+    if (Routed<0x800473FC>())
+        return game.Call<0x800473FC>();
+
+    const uint32_t root = FlatRead32(kRoot);
+
+    if (!FlatRead8(0x8065B4D6))
+        return ScnRootCurrentCamera(game, root);
+
+    const int32_t player = int8_t(FlatRead8(0x8065AA87));
+    return ScnRootGetCamera(game, root, FlatRead8(0x8065B50C + uint32_t(player)));
+}
+
+// Camera::GetPosition (0x80074A2C): the position (+0x74) of the CameraData
+// the handle at `camera` holds.
+void CameraGetPosition(GuestCall& game, uint32_t camera, uint32_t out) {
+    if (Routed<0x80074A2C>())
+        return void(game.Call<0x80074A2C>({camera, out}));
+
+    const uint32_t data = FlatRead32(camera);
+
+    if (!data)
+        Panic("g3d_camera.cpp", 0xC3, "IsValid()");
+
+    if (out)
+        for (uint32_t k = 0; k < 12; k += 4)
+            FlatWrite32(out + k, FlatRead32(data + 0x74 + k));
+}
+
+// get_camera_pos (0x802BDD44): the view camera's position; the handle in
+// the 4 guest bytes at `scratch`.
+void GetCameraPos(GuestCall& game, uint32_t out, uint32_t scratch) {
+    if (Routed<0x802BDD44>())
+        return void(game.Call<0x802BDD44>({out}));
+
+    FlatWrite32(scratch, ViewCamera(game));
+    CameraGetPosition(game, scratch, out);
+}
+
+// MHchar::get_joint_wpos (0x800E0AF8): the joint's world position, the
+// translation of its world matrix (the ScnMdl's (+0x118) array at +0xEC by
+// the ResNode's id, ResNode::GetID 0x8006FE30); without a model the default
+// word (0x807988F8) thrice.
+void GetJointWpos(GuestCall& game, uint32_t chara, uint32_t joint, uint32_t out) {
+    if (Routed<0x800E0AF8>())
+        return void(game.Call<0x800E0AF8>({chara, joint, out}));
+
+    const uint32_t model = FlatRead32(chara + 0x118);
+
+    if (!model) {
+        const uint32_t word = FlatRead32(0x807988F8);
+
+        for (uint32_t k = 0; k < 12; k += 4)
+            FlatWrite32(out + k, word);
+
+        return;
+    }
+
+    const uint32_t node = G3dNative::ResDicAtOffset14(chara + 0x114, joint);
+
+    if (!node)
+        Panic("g3d_resnode_ac.h", 0x53, "IsValid()");
+
+    const uint32_t m = FlatRead32(model + 0xEC) + FlatRead32(node + 0x10) * 0x30;
+
+    for (uint32_t k = 0; k < 3; ++k)
+        FlatWrite32(out + 4 * k, FlatRead32(m + 0xC + 0x10 * k));
+}
+
+// 0x800A9778: the emitter's particle manager `index`.
+uint32_t EmitterGetManager(GuestCall& game, uint32_t emitter, uint32_t index) {
+    if (Routed<0x800A9778>())
+        return game.Call<0x800A9778>({emitter, index});
+
+    index &= 0xFFFF;
+
+    if (index >= FlatRead16(emitter + 0xC0 + 8))
+        Panic("ef_emitter.cpp", 0x505, "idx < GetNumParticleManager()");
+
+    uint32_t manager = ListNext(emitter + 0xC0, 0);
+
+    for (uint32_t i = 0; manager && i < index; ++i)
+        manager = ListNext(emitter + 0xC0, manager);
+
+    return manager;
+}
+
+// get_stg_eft_col (0x802B035C): the stage's effect colour (RGBA) of `area`
+// in the map's StageData (0x802AE5C8; its areas at +4): +0x2C for `which`
+// 0, +0x30 for 1, else (and for area 0xFF or none) white.
+uint32_t StageEffectColor(GuestCall& game, uint32_t area, uint32_t which) {
+    if (Routed<0x802B035C>())
+        return game.Call<0x802B035C>({area, which});
+
+    area &= 0xFF;
+
+    if (area == 0xFF)
+        return 0xFFFFFFFF;
+
+    const uint32_t stage = game.Call<0x802AE5C8>({FlatRead8(kMapNo)});
+    const uint32_t entry = FlatRead32(FlatRead32(stage + 4) + area * 4);
+
+    if (!entry)
+        return 0xFFFFFFFF;
+
+    switch (which & 0xFF) {
+    case 0:
+        return FlatRead32(entry + 0x2C);
+    case 1:
+        return FlatRead32(entry + 0x30);
+    default:
+        return 0xFFFFFFFF;
+    }
+}
+
+void ReadVec3(uint32_t address, float v[3]) {
+    for (uint32_t k = 0; k < 3; ++k)
+        v[k] = FlatReadFloat32(address + 4 * k);
+}
+
+// VECSquareMag (0x80050F40) and VECDotProduct (0x80052278) as their paired
+// singles compute them: the x lane fused onto the y product, then z (the
+// square: z fused onto x, then y) added.
+float SquareMag3(const float v[3]) {
+    const float xx = v[0] * v[0];
+    const float yy = v[1] * v[1];
+    const float zx = PpcFmaFloatInline(v[2], v[2], xx);
+    return zx + yy;
+}
+
+float Dot3(const float a[3], const float b[3]) {
+    const float yy = a[1] * b[1];
+    const float zz = a[2] * b[2];
+    const float xy = PpcFmaFloatInline(a[0], b[0], yy);
+    return xy + zz;
+}
+
+// hit_point_sphr (0x8028F680): whether `point` is in the sphere of `radius`
+// at `center`, the squares summed as the original (x + y, then z).
+bool HitPointSphere(uint32_t point, uint32_t center, float radius) {
+    const float dx = FlatReadFloat32(center) - FlatReadFloat32(point);
+    const float dy = FlatReadFloat32(center + 4) - FlatReadFloat32(point + 4);
+    const float dz = FlatReadFloat32(center + 8) - FlatReadFloat32(point + 8);
+    const float zz = dz * dz;
+    const float xx = dx * dx;
+    const float yy = dy * dy;
+    const float xy = xx + yy;
+    const float sum = zz + xy;
+    const float limit = radius * radius;
+    return sum <= limit;
+}
+
+// 0x8028F8D0: the squared distance from `point` to the segment from
+// `start` along `dir`: its parameter `t` the projection clamped to
+// 0x8079C7D8..0x8079C7DC, or 0x8079C7D8 (the start) when the segment's
+// squared length is below 0x8079C7D4.
+float SegmentPointDistanceSq(const float start[3], const float dir[3], const float point[3], float& t) {
+    float v[3];
+
+    for (uint32_t k = 0; k < 3; ++k)
+        v[k] = point[k] - start[k];
+
+    const float length2 = SquareMag3(dir);
+    t = FlatReadFloat32(0x8079C7D8);
+
+    if (length2 >= FlatReadFloat32(0x8079C7D4)) {
+        const float s = Dot3(v, dir) / length2, low = t, high = FlatReadFloat32(0x8079C7DC);
+        t = s < low ? low : s > high ? high : s;
+
+        for (uint32_t k = 0; k < 3; ++k) {
+            const float w = dir[k] * t;
+            v[k] = v[k] - w;
+        }
+    }
+
+    return SquareMag3(v);
+}
+
+// 0x80290820: whether `point` is in the capsule (CapsuleSetup's 0x8028F5BC
+// output: start +0, radius +0x18, the segment +0x1C).
+bool CapsuleHit(uint32_t point, uint32_t capsule) {
+    float start[3], dir[3], p[3], t;
+    ReadVec3(capsule, start);
+    ReadVec3(capsule + 0x1C, dir);
+    ReadVec3(point, p);
+    const float distance2 = SegmentPointDistanceSq(start, dir, p, t);
+    const float radius = FlatReadFloat32(capsule + 0x18);
+    const float limit = radius * radius;
+    return distance2 < limit;
+}
+
+// 0x800FA26C: whether `point` is in the zone (s8 type +0: 1 a sphere at +4,
+// radius +0x10; 2 a capsule from +0x14 to +0x20, radius +0x2C; 3 below the
+// height 0x80798AB4).
+bool ZoneContains(GuestCall& game, uint32_t point, uint32_t zone) {
+    if (Routed<0x800FA26C>())
+        return game.Call<0x800FA26C>({point, zone}) == 1;
+
+    switch (int8_t(FlatRead8(zone))) {
+    case 1:
+        return HitPointSphere(point, zone + 4, FlatReadFloat32(zone + 0x10));
+    case 2: {
+        // The capsule CapsuleSetup (0x8028F5BC) would make of it.
+        float start[3], end[3], dir[3], p[3], t;
+        ReadVec3(zone + 0x14, start);
+        ReadVec3(zone + 0x20, end);
+        ReadVec3(point, p);
+
+        for (uint32_t k = 0; k < 3; ++k)
+            dir[k] = end[k] - start[k];
+
+        const float distance2 = SegmentPointDistanceSq(start, dir, p, t);
+        const float radius = FlatReadFloat32(zone + 0x2C);
+        const float limit = radius * radius;
+        return distance2 < limit;
+    }
+    case 3:
+        return FlatReadFloat32(point + 4) < FlatReadFloat32(0x80798AB4);
+    default:
+        return false;
+    }
+}
+
+// The ResMatChan or TEV colour copy (dirty bits 8 and 0x100) of the model's
+// material: CopiedMatAccess (0x8007BF10) and its 0x8007BC90 / 0x8007BE90,
+// 0 without one. `dirty` marks the copy in the ScnMdl's flags (+0x140).
+uint32_t CopiedMatPart(uint32_t mdl, uint32_t mat, uint32_t bit, bool dirty) {
+    const uint32_t part = CopiedMatAccessPart(mdl, mat, bit);
+
+    if (part && dirty)
+        FlatWrite32(FlatRead32(mdl + 0x140) + mat * 4, FlatRead32(FlatRead32(mdl + 0x140) + mat * 4) | bit);
+
+    return part;
+}
+
+// ResMatChan::SetColor (0x80096DE0) on the channel data `data`: channel
+// `chan`'s (bit 0 the second's, +0x14) rgb, except for the alpha channels
+// (bit 1); alpha for those and for GX_COLOR0A0 / GX_COLOR1A1 (4, 5).
+void MatChanSetColor(uint32_t data, uint32_t chan, uint32_t color) {
+    if (!data)
+        Panic("g3d_resmat_ac.h", 0x1D1, "ResMatChan: Object not valid");
+
+    const uint32_t at = data + (chan & 1) * 0x14;
+
+    if (!(chan & 2)) {
+        for (uint32_t c = 0; c < 3; ++c)
+            FlatWrite8(at + 4 + c, FlatRead8(color + c));
+
+        if (chan - 4 < 2)
+            FlatWrite8(at + 7, FlatRead8(color + 3));
+    } else {
+        FlatWrite8(at + 7, FlatRead8(color + 3));
+    }
+}
+
+// ResMatChan::GetColor (0x80096EF0): the channel's colour into `out`.
+uint32_t MatChanGetColor(uint32_t data, uint32_t chan, uint32_t out) {
+    if (!out)
+        Panic("g3d_resmat.cpp", 0x903, "Pointer must not be NULL (color)");
+
+    if (!data)
+        Panic("g3d_resmat_ac.h", 0x1D1, "ResMatChan: Object not valid");
+
+    FlatWrite32(out, FlatRead32(data + (chan & 1) * 0x14 + 4));
+    return 1;
+}
+
+// ResMatTevColor::GXGetTevKColor (0x80096424): konst colour `id` (0-3) from
+// its two BP commands (10 bytes each from +0x40: the command byte, then the
+// big-endian register word: red | alpha << 12, then blue | green << 12)
+// into `out`; whether it is set.
+uint32_t TevKColorGet(uint32_t data, uint32_t id, uint32_t out) {
+    if (!out)
+        Panic("g3d_resmat.cpp", 0x654, "Pointer must not be NULL (color)");
+
+    if (id > 3)
+        Panic("g3d_resmat.cpp", 0x655, "id is out of bounds");
+
+    if (!data)
+        Panic("g3d_resmat_ac.h", 0x17A, "ResMatTevColor: Object not valid");
+
+    const uint32_t base = data + id * 10;
+
+    if (!FlatRead8(base + 0x40))
+        return 0;
+
+    const uint32_t ra = FlatRead32(base + 0x41), bg = FlatRead32(base + 0x46);
+    FlatWrite8(out, uint8_t(ra));
+    FlatWrite8(out + 1, uint8_t(bg >> 12));
+    FlatWrite8(out + 2, uint8_t(bg));
+    FlatWrite8(out + 3, uint8_t(ra >> 12));
+    return 1;
+}
+
+// MHchar::setMatColor (0x800E2950): channel `chan`'s colour of the model's
+// (+0x118) material `mat`, its copy marked dirty with `dirty`.
+void SetMatColor(GuestCall& game, uint32_t chara, uint32_t mat, uint32_t chan, uint32_t color, uint32_t dirty) {
+    if (Routed<0x800E2950>())
+        return void(game.Call<0x800E2950>({chara, mat, chan, color, dirty}));
+
+    const uint32_t mdl = FlatRead32(chara + 0x118);
+
+    if (mdl && CopiedMatAccessValid(mdl, mat))
+        MatChanSetColor(CopiedMatPart(mdl, mat, 8, dirty != 0), chan, color);
+}
+
+// MHchar::getMatColor (0x800E2B58): the channel's colour into `out`;
+// whether the model has the material.
+uint32_t GetMatColor(GuestCall& game, uint32_t chara, uint32_t mat, uint32_t chan, uint32_t out) {
+    if (Routed<0x800E2B58>())
+        return game.Call<0x800E2B58>({chara, mat, chan, out});
+
+    const uint32_t mdl = FlatRead32(chara + 0x118);
+
+    if (!mdl || !CopiedMatAccessValid(mdl, mat))
+        return 0;
+
+    return MatChanGetColor(CopiedMatPart(mdl, mat, 8, false), chan, out);
+}
+
+// MHchar::getTevKColor (0x800E2D38).
+void GetTevKColor(GuestCall& game, uint32_t chara, uint32_t mat, uint32_t id, uint32_t out) {
+    if (Routed<0x800E2D38>())
+        return void(game.Call<0x800E2D38>({chara, mat, id, out}));
+
+    const uint32_t mdl = FlatRead32(chara + 0x118);
+
+    if (mdl && CopiedMatAccessValid(mdl, mat))
+        TevKColorGet(CopiedMatPart(mdl, mat, 0x100, false), id, out);
+}
+
+// MHchar::setTevKColor (0x800E2DC4): the native MatKonstColor (0x80096548)
+// on the copy, its handle in the 4 guest bytes at `scratch`. The cache
+// store of the copy after it (0x8006F140) has nothing to emulate.
+void SetTevKColor(GuestCall& game, uint32_t chara, uint32_t mat, uint32_t id, uint32_t color, uint32_t scratch) {
+    if (Routed<0x800E2DC4>())
+        return void(game.Call<0x800E2DC4>({chara, mat, id, color}));
+
+    const uint32_t mdl = FlatRead32(chara + 0x118);
+
+    if (!mdl || !CopiedMatAccessValid(mdl, mat))
+        return;
+
+    FlatWrite32(scratch, CopiedMatPart(mdl, mat, 0x100, false));
+    game.Call<0x80096548>({scratch, id, color});
+}
+
+// A zone colour channel: __cvt_fp2unsigned (0x80457360), at most 255.
+uint8_t ZoneChannel(float value) {
+    const uint32_t u = uint32_t(value);
+    return uint8_t(u > 0xFF ? 0xFF : u);
+}
+
+// 0x800F9E68: the stage's zone colour (get_stg_eft_col of the area, set
+// `which`) times the zone's (+0x30, by 0x80798AB8 as bytes) on an effect
+// (kind 0: rgba, a light on its managers at its root) or a model (kind 1:
+// rgb also by the object's brightness (+0x15); its materials +0x16 up to
+// +0x17 keep their alpha: TEV konst colour 3 with object flag 1 (+0x14),
+// else channel GX_COLOR0A0 with flag 2). `scratch`: 0x20 guest bytes.
+void ZoneApplyColor(GuestCall& game, uint32_t object, uint32_t target, uint32_t kind, uint32_t zone, uint32_t which, uint32_t scratch) {
+    if (Routed<0x800F9E68>())
+        return void(game.Call<0x800F9E68>({object, target, kind, zone, which}));
+
+    const uint32_t stage = StageEffectColor(game, FlatRead8(kAreaNo), which & 0xFF);
+    const uint32_t color = scratch, read = scratch + 4, position = scratch + 8, copy = scratch + 0x14;
+    const float k = FlatReadFloat32(0x80798AB8);
+
+    // The products in the original's order.
+    if ((kind & 0xFF) == 1) {
+        const float brightness = float(FlatRead8(object + 0x15));
+
+        for (uint32_t c = 0; c < 3; ++c) {
+            const float kz = k * float(FlatRead8(zone + 0x30 + c));
+            const float scaled = float(stage >> (24 - 8 * c) & 0xFF) * kz;
+            const float bright = brightness * scaled;
+            FlatWrite8(color + c, ZoneChannel(k * bright));
+        }
+
+        FlatWrite8(color + 3, 0xFF);
+        const uint32_t flags = FlatRead8(object + 0x14);
+
+        if (!(flags & 3))
+            return;
+
+        for (uint32_t m = FlatRead8(object + 0x16); m < FlatRead8(object + 0x17); ++m) {
+            if (flags & 1) {
+                GetTevKColor(game, target, m, 3, read);
+                FlatWrite8(color + 3, FlatRead8(read + 3));
+                SetTevKColor(game, target, m, 3, color, copy);
+            } else {
+                GetMatColor(game, target, m, 4, read);
+                FlatWrite8(color + 3, FlatRead8(read + 3));
+                FlatWrite32(copy, FlatRead32(color));
+                SetMatColor(game, target, m, 4, copy, 0);
+            }
+        }
+    } else if ((kind & 0xFF) == 0) {
+        for (uint32_t j = 0; j < 3; ++j)
+            FlatWrite32(position + 4 * j, FlatRead32(target + 0x58 + 0xC + 0x10 * j));
+
+        for (uint32_t c = 0; c < 4; ++c) {
+            const float kz = k * float(FlatRead8(zone + 0x30 + c));
+            FlatWrite8(color + c, ZoneChannel(float(stage >> (24 - 8 * c) & 0xFF) * kz));
+        }
+
+        EffectChangeColor(game, target, position, color);
+    }
+}
+
+// The zones (0x806BDB00, four of 0x34 bytes) holding `point` colour the
+// target.
+void ApplyZones(GuestCall& game, uint32_t object, uint32_t target, uint32_t kind, uint32_t which, uint32_t point, uint32_t scratch) {
+    for (uint32_t zone = 0x806BDB00; zone < 0x806BDB00 + 4 * 0x34; zone += 0x34)
+        if (ZoneContains(game, point, zone))
+            ZoneApplyColor(game, object, target, kind, zone, which, scratch);
+}
+
+// 0x800FA4B4: an effect's zone colour. Its first emitter with particle
+// managers decides by its first manager's ResEmitter emit flags (data +8
+// +0x8C, byte +3: 0x80 the stage colour set 0, 0x40 set 1, else none); the
+// zones holding the effect's root position colour it. `scratch`: 0x30 guest
+// bytes.
+void EffectZoneColor(GuestCall& game, uint32_t effect, uint32_t scratch) {
+    if (Routed<0x800FA4B4>())
+        return void(game.Call<0x800FA4B4>({effect}));
+
+    const uint32_t count = FlatRead16(effect + 0x24 + 8);
+    uint32_t emitter = 0;
+
+    for (uint32_t i = 0; i < count && !emitter; ++i)
+        if (const uint32_t e = EffectGetEmitter(game, effect, i); e && FlatRead16(e + 0xC0 + 8))
+            emitter = e;
+
+    if (!emitter)
+        return;
+
+    const uint32_t res = FlatRead32(EmitterGetManager(game, emitter, 0) + 0x24);
+    CheckPointer(res, "res_emitter_ac.h", 0x5F);
+    const uint32_t flags = FlatRead8(res + 8 + 0x8C + 3);
+
+    if (!(flags & 0xC0))
+        return;
+
+    for (uint32_t k = 0; k < 3; ++k)
+        FlatWrite32(scratch + 4 * k, FlatRead32(effect + 0x58 + 0xC + 0x10 * k));
+
+    ApplyZones(game, 0, effect, 0, flags & 0x80 ? 0 : 1, scratch, scratch + 0x10);
+}
+
+// 0x800FA638: a model's zone colour, when each of its materials has the
+// copy the object's flags (+0x14) colour (bit 0 TEV colours, bit 1 the
+// channels): the zones holding its joint 0 colour it, flag 0x80 picking
+// the stage colour set 1. `scratch`: 0x30 guest bytes.
+void ModelZoneColor(GuestCall& game, uint32_t object, uint32_t chara, uint32_t scratch) {
+    if (Routed<0x800FA638>())
+        return void(game.Call<0x800FA638>({object, chara}));
+
+    const int32_t count = int32_t(game.Call<0x800988CC>({chara + 0x114})); // MdlMaterialCount
+    const uint32_t flags = FlatRead8(object + 0x14), mdl = FlatRead32(chara + 0x118);
+
+    if (!(flags & 3))
+        return;
+
+    for (int32_t i = 0; i < count; ++i)
+        if (!CopiedMatAccessPart(mdl, uint32_t(i), flags & 1 ? 0x100 : 8))
+            return;
+
+    GetJointWpos(game, chara, 0, scratch);
+    ApplyZones(game, object, chara, 1, flags & 0x80 ? 1 : 0, scratch, scratch + 0x10);
+}
+
+// 0x800E3BF0: a primitive request in `group` (PrimAlloc 0x800E3C80): kind
+// (+0x1D), object (+0x18), type (+0x1C), pass flags (+0x1E, bit 0 with a
+// position at +0xC), +0x20 `extra`. The entry, 0 with the group full.
+uint32_t PrimRequest(GuestCall& game, uint32_t group, uint32_t kind, uint32_t object, uint32_t type, uint32_t pass, uint32_t position, uint32_t extra) {
+    if (Routed<0x800E3BF0>())
+        return game.Call<0x800E3BF0>({group, kind, object, type, pass, position, extra});
+
+    const uint32_t entry = game.Call<0x800E3C80>({group & 0xFF});
+
+    if (!entry)
+        return 0;
+
+    FlatWrite8(entry + 0x1D, uint8_t(kind));
+    FlatWrite32(entry + 0x18, object);
+    FlatWrite8(entry + 0x1C, uint8_t(type));
+    FlatWrite16(entry + 0x1E, uint16_t(pass));
+
+    if (position) {
+        for (uint32_t k = 0; k < 12; k += 4)
+            FlatWrite32(entry + 0xC + k, FlatRead32(position + k));
+
+        FlatWrite16(entry + 0x1E, FlatRead16(entry + 0x1E) | 1);
+    }
+
+    FlatWrite32(entry + 0x20, extra);
+    return entry;
+}
+
+// 0x8007F130 (ScnGroup::PushBack): the root's virtual Insert (+0x34) at its
+// size (+0xE4).
+uint32_t ScnRootPushBack(GuestCall& game, uint32_t root, uint32_t object) {
+    if (Routed<0x8007F130>())
+        return game.Call<0x8007F130>({root, object});
+
+    return game(FlatRead32(FlatRead32(root) + 0x34), {root, FlatRead32(root + 0xE4), object});
+}
+
+// 0x800F943C: the draw requests of `count` effects (flags bit 0) or models
+// (bit 1) from `list` while the object is shown (+1) in the current area
+// (+0x44): an effect's zone colour (0x800FA4B4) and a type 2 request; a
+// model whose ScnMdl (+0x118) is its resource's current one (+0x10C's +4),
+// its zone colour (0x800FA638), a type 0 request and the scene root's
+// PushBack. Flags 4, 8 and 0x10 pick the passes 8, 0x400 and 0x800. Out of
+// the area the models only join the scene.
+void EffectDrawRequest(GuestCall& game, uint32_t object, uint32_t list, uint32_t flags, int32_t count, uint32_t position) {
+    if (Routed<0x800F943C>())
+        return void(game.Call<0x800F943C>({object, list, flags, uint32_t(count), position}));
+
+    const auto drawable = [](uint32_t model) { return model && FlatRead32(model + 0x118) == FlatRead32(FlatRead32(model + 0x10C) + 4); };
+
+    if (FlatRead8(object + 0x44) != FlatRead8(kAreaNo) || !FlatRead8(object + 1)) {
+        if (flags & 2)
+            for (int32_t i = 0; i < count; ++i)
+                if (const uint32_t model = FlatRead32(list + 4 * i); drawable(model))
+                    ScnRootPushBack(game, FlatRead32(kRoot), FlatRead32(model + 0x118));
+
+        return;
+    }
+
+    uint32_t pass = flags & 4 ? 8 : 0;
+
+    if (flags & 8)
+        pass |= 0x400;
+
+    if (flags & 0x10)
+        pass |= 0x800;
+
+    if (flags & 1) {
+        for (int32_t i = 0; i < count; ++i) {
+            if (const uint32_t effect = FlatRead32(list + 4 * i)) {
+                game.Call<0x800FA4B4>({effect});
+                PrimRequest(game, 1, 1, FlatRead32(list + 4 * i), 2, pass, position, 0);
+            }
+        }
+    }
+
+    if (flags & 2) {
+        for (int32_t i = 0; i < count; ++i) {
+            if (const uint32_t model = FlatRead32(list + 4 * i); drawable(model)) {
+                game.Call<0x800FA638>({object, model});
+                const uint32_t current = FlatRead32(list + 4 * i);
+                PrimRequest(game, 1, FlatRead8(current + 0x35), FlatRead32(current + 0x118), 0, pass, position, 0);
+                ScnRootPushBack(game, FlatRead32(kRoot), FlatRead32(FlatRead32(list + 4 * i) + 0x118));
+            }
+        }
+    }
+}
+
+// The spawner's per-map tables of effect ids by area (0x800FFD10's switch).
+uint32_t SpawnTables(uint32_t map) {
+    switch (map) {
+    case 0x01: return 0x8059C750;
+    case 0x02: return 0x8059C784;
+    case 0x04: return 0x8059C800;
+    case 0x06: return 0x8059C834;
+    case 0x08: return 0x8059C840;
+    case 0x09: return 0x8059C84C;
+    case 0x0C: return 0x8059C864;
+    case 0x0D: return 0x8059C898;
+    case 0x0F: return 0x8059C910;
+    case 0x11: return 0x8059C944;
+    case 0x13: return 0x8059C950;
+    default: return 0;
+    }
+}
+
+// 0x800FFD10: the spawner's effect `index` created (res_eft_create
+// 0x800F9218, group +0xD4) at its matrix (+0x330, 0x30 each): its id from
+// the map's table for the spawner's area (+0x44) by the index's byte
+// (+0x8D5), else index + base (+0xD0). In area 12 of map 1 the stage flags
+// (0x806BD45C + 0xC) bit 5 hold back effects 0xD-0xF and bit 4 0x10-0x11.
+void EffectSpawnerSpawn(CpuContext* cpu, GuestCall& game, uint32_t spawner, uint32_t index) {
+    if (Routed<0x800FFD10>())
+        return void(game.Call<0x800FFD10>({spawner, index}));
+
+    const uint32_t data = FlatRead32(spawner + 0x38), map = FlatRead8(kMapNo), tables = SpawnTables(map);
+    const uint32_t table = tables ? FlatRead32(tables + 4 * FlatRead8(spawner + 0x44)) : 0;
+
+    if (map == 1 && FlatRead8(kAreaNo) == 0xC) {
+        const uint32_t stage = FlatRead8(0x806BD45C + 0xC);
+
+        if ((index - 0xD <= 2 && (stage & 0x20)) || (index - 0x10 <= 1 && (stage & 0x10)))
+            return;
+    }
+
+    const uint32_t slot = data + 4 + 4 * index;
+    const uint32_t id = table ? FlatRead16(table + 2 * FlatRead8(data + index + 0x8D5)) : (index + FlatRead32(data + 0xD0)) & 0xFFFF;
+    FlatWrite32(slot, game.Call<0x800F9218>({id, FlatRead32(data + 0xD4) & 0xFFFF, 1}));
+
+    if (const uint32_t effect = FlatRead32(slot))
+        EffectSetRootMtx(cpu, effect, data + index * 0x30 + 0x330);
+}
+
+// The spawner's `count` effects from `effects`: each one's Calc and draw
+// request, at its position (0x800FFFFC, into `position`) when it has one.
+void SpawnerDrawEffects(GuestCall& game, uint32_t spawner, uint32_t effects, int32_t count, uint32_t position) {
+    for (int32_t i = 0; i < count; ++i) {
+        const uint32_t slot = effects + 4 * i;
+
+        if (!FlatRead32(slot))
+            continue;
+
+        EffectCalcVirtual(game, FlatRead32(slot), 0);
+        const bool placed = EffectGetPosition(game, FlatRead32(slot), position);
+        EffectDrawRequest(game, spawner, slot, 1, 1, placed ? position : 0);
+    }
+}
+
+// 0x800FF938 EffectSpawnerUpdate, the effect spawner's state 1 (data +0x38:
+// effects from +4, count +0; the second set's count +0x7C, effects from
+// +0x80; spawn slots of 0x14 bytes from +0xD8, count +0x8D0). Out of its
+// area (+0x44) it moves on to state 2. Kind 1 (+7) only draws, its second
+// set with VillageDepartureSetting, three effects fewer on map 0x16 in the
+// first star stages. Otherwise each slot (u8 index, 0xFF none; +4 its wait,
+// +8 its random modulus, +0xC the random extra, +0x10 the frames waited)
+// spawns its effect once the wait and extra have passed and retires it
+// when it has no particle managers left; then the effects draw, with the
+// camera flag (+0x8D4) only while the camera is at or above 0x80798B68.
+// `frame` gives the guest scratch.
+void EffectSpawnerUpdate(CpuContext* cpu, GuestCall& game, uint32_t spawner, const GuestFrame& frame) {
+    const uint32_t data = FlatRead32(spawner + 0x38), position = frame[0x10];
+
+    if (!FlatRead32(kEffectSystem))
+        return;
+
+    if (FlatRead8(spawner + 0x44) != FlatRead8(kAreaNo)) {
+        FlatWrite8(spawner + 5, FlatRead8(spawner + 5) + 1);
+        return;
+    }
+
+    if (FlatRead8(spawner + 7) == 1) {
+        int32_t first = int32_t(FlatRead32(data)), second = int32_t(FlatRead32(data + 0x7C));
+
+        if (FlatRead8(kMapNo) == 0x16 && StarQuestFirstStages(game)) {
+            first -= 3;
+            second -= 3;
+        }
+
+        if (!FlatRead32(kVillageDeparture))
+            SpawnerDrawEffects(game, spawner, data + 4, first, position);
+        else
+            SpawnerDrawEffects(game, spawner, data + 0x80, second, position);
+
+        return;
+    }
+
+    for (int32_t i = 0; i < int32_t(FlatRead32(data + 0x8D0)); ++i) {
+        const uint32_t slot = data + 0xD8 + 0x14 * i, index = FlatRead8(slot);
+
+        if (index == 0xFF)
+            continue;
+
+        if (const uint32_t effect = FlatRead32(data + 4 + 4 * index)) {
+            if (!EffectHasManagers(game, effect))
+                EffectSpawnerRetireEffect(game, spawner, index);
+
+            continue;
+        }
+
+        const uint32_t waited = FlatRead32(slot + 0x10) + 1;
+        FlatWrite32(slot + 0x10, waited);
+
+        if (int32_t(FlatRead32(slot + 4) + FlatRead32(slot + 0xC)) < int32_t(waited)) {
+            EffectSpawnerSpawn(cpu, game, spawner, index);
+            FlatWrite32(slot + 0x10, 0);
+            const int32_t r = int32_t(RanSuu(0) & 0xFFFF), modulus = int32_t(FlatRead32(slot + 8));
+            FlatWrite32(slot + 0xC, uint32_t(modulus ? r % modulus : r)); // divw by 0 gives 0
+        }
+    }
+
+    if (FlatRead8(data + 0x8D4) == 1) {
+        GetCameraPos(game, frame[0x20], frame[0x2C]);
+
+        if (!(FlatReadFloat32(0x80798B68) <= FlatReadFloat32(frame[0x24])))
+            return;
+    }
+
+    SpawnerDrawEffects(game, spawner, data + 4, int32_t(FlatRead32(data)), position);
+}
+
+void CopyVec3(uint32_t to, uint32_t from) {
+    for (uint32_t k = 0; k < 12; k += 4)
+        FlatWrite32(to + k, FlatRead32(from + k));
+}
+
+// The y the object's effects sit at: `foot` the joint whose position they
+// follow (its y in `position`); the owner's pose (3 flat, 2 its foot's y,
+// else by its height from `upper` and `lower`) picks between the object's
+// own y (+0x1C) less 0x8079D6DC (or `poseLow`) and the foot's y less
+// `drop`.
+float EffectObjectHeight(GuestCall& game, uint32_t object, uint32_t part, uint32_t pose, uint32_t foot, uint32_t upper, uint32_t lower, uint32_t position, uint32_t a, uint32_t b,
+                         float drop) {
+    switch (pose) {
+    case 3:
+        return FlatReadFloat32(object + 0x1C) - drop;
+    case 2:
+        GetJointWpos(game, part, foot, a);
+        return FlatReadFloat32(a + 4) - drop;
+    default:
+        break;
+    }
+
+    GetJointWpos(game, part, upper, a);
+    GetJointWpos(game, part, lower, b);
+
+    // Single steps as the original's fadds, fmuls and fadds (no fused
+    // multiply-add).
+    const float sum = FlatReadFloat32(a + 4) + FlatReadFloat32(b + 4);
+    const float scaled = FlatReadFloat32(0x8079D6D4) * sum;
+    const float limit = FlatReadFloat32(0x8079D6D8) + scaled;
+
+    if (FlatReadFloat32(position + 4) <= limit)
+        return FlatReadFloat32(object + 0x1C) - FlatReadFloat32(0x8079D6DC);
+
+    GetJointWpos(game, part, foot, a);
+    return FlatReadFloat32(a + 4) - drop;
+}
+
+// The colour mode (+6) from the owner's state bits: 0x10 1, 0x40 2, both 3.
+uint32_t EffectColorMode(uint32_t state) {
+    switch (state & 0x50) {
+    case 0x10: return 1;
+    case 0x40: return 2;
+    case 0x50: return 3;
+    default: return 0;
+    }
+}
+
+// 0x8033065C EffectObjectUpdate, an effect object's state 1: the effects
+// (data +0x38: count u8 +0, entries of 0x34 bytes from +4: +0 a model, +4
+// the effect, +8 its position, +0x14 the colour key time, +0x18 the alpha
+// key time, +0x1C/+0x20 the model's rotation, +0x28 the model's GXColor,
+// +0x2C scale, +0x30 fading) follow the owner (+0x30; kind +7: 0 a player,
+// its part at +0x13C's +4, 2 a monster at +8), coloured by the owner's
+// state (+6). A gone owner moves the object on (+5); online mode 2 skips it.
+void EffectObjectUpdate(CpuContext* cpu, GuestCall& game, uint32_t object, const GuestFrame& frame) {
+    const uint32_t data = FlatRead32(object + 0x38);
+
+    // The owner's positions, the second the draw requests' (for other kinds
+    // they are left as the stack had them, as in the original).
+    const uint32_t position = frame[0x10], low = frame[0x20], a = frame[0x30], b = frame[0x40], color = frame[0x50], alpha = frame[0x54];
+
+    if (!EffectObjectAlive(game, object, FlatRead8(object + 7))) {
+        FlatWrite8(object + 1, 0);
+        FlatWrite8(object + 5, FlatRead8(object + 5) + 1);
+        return;
+    }
+
+    if (FlatRead8(0x8065AA84) == 2) // GetOnlineMode
+        return;
+
+    uint32_t flags = 1;
+    const uint32_t kind = FlatRead8(object + 7);
+
+    if (kind == 0) {
+        const uint32_t player = FlatRead32(object + 0x30);
+        FlatWrite8(object + 1, FlatRead8(player + 1));
+        FlatWrite8(object + 0x44, FlatRead8(player + 0x16));
+
+        if (FlatRead8(object + 8) == 0xFF || FlatRead8(object + 0x44) != FlatRead8(kAreaNo) || game.Call<0x803C4878>() == 1) // IsEventDemoState4
+            return;
+
+        if (PlMasterCheck(game, player))
+            flags = EffectDrawFlags(game, player) | 1;
+
+        const uint32_t part = FlatRead32(player + 0x13C) + 4;
+        GetJointWpos(game, part, 0, position);
+        CopyVec3(object + 0x18, position);
+        GetJointWpos(game, part, 0xE, position);
+        CopyVec3(low, position);
+        const float y = EffectObjectHeight(game, object, part, FlatRead8(player + 9), 0xE, 0x14, 0x11, position, a, b, FlatReadFloat32(0x8079D6D0));
+        FlatWriteFloat32(position + 4, y);
+        FlatWrite8(object + 6, uint8_t(EffectColorMode(FlatRead32(player + 0x3D8))));
+
+        if (FlatRead32(player + 0x3DC) & 0xF8000)
+            FlatWrite8(object + 6, FlatRead8(object + 6) | 0x10);
+    } else if (kind == 2) {
+        const uint32_t monster = FlatRead32(object + 0x30);
+        FlatWrite8(object + 1, FlatRead8(monster + 1));
+        FlatWrite8(object + 0x44, FlatRead8(monster + 0x1A4));
+
+        if (FlatRead8(object + 8) == 0xFF || FlatRead8(object + 0x44) != FlatRead8(kAreaNo) || game.Call<0x803C4878>() == 1)
+            return;
+
+        if (FlatRead8(monster + 0x171) == 1 && (FlatRead16(monster + 0x172) == 0x53 || FlatRead16(monster + 0x172) == 0x55))
+            return;
+
+        const uint32_t part = monster + 8;
+        GetJointWpos(game, part, 0, position);
+        CopyVec3(object + 0x18, position);
+        GetJointWpos(game, part, 3, position);
+        CopyVec3(low, position);
+        const float y = EffectObjectHeight(game, object, part, FlatRead8(monster + 0x170), 3, 0x14, 0x12, position, a, b, FlatReadFloat32(0x8079D6E0));
+        FlatWriteFloat32(position + 4, y);
+        FlatWrite8(object + 6, uint8_t(EffectColorMode(FlatRead32(monster + 0x20C))));
+    }
+
+    for (int32_t i = 0; i < int32_t(FlatRead8(data)); ++i) {
+        const uint32_t entry = data + 4 + 0x34 * i, mode = FlatRead8(object + 6);
+        const bool fading = FlatRead8(entry + 0x30) == 1;
+
+        if ((mode >= 0x11 && mode <= 0x13) || mode == 3) {
+            FlatWrite32(entry + 0x14, FlatRead32(entry + 0x14) + 4);
+            FlatWrite32(entry + 0x18, FlatRead32(entry + 0x18) + (fading ? 6 : 3));
+        } else if (mode == 1 || mode == 2 || mode == 0x10) {
+            FlatWrite32(entry + 0x14, FlatRead32(entry + 0x14) + 2);
+            FlatWrite32(entry + 0x18, FlatRead32(entry + 0x18) + (fading ? 4 : 2));
+        }
+
+        if (int32_t(FlatRead32(entry + 0x14)) > 0xF0)
+            FlatWrite32(entry + 0x14, 0);
+
+        CopyVec3(entry + 8, position);
+
+        if (int32_t(FlatRead32(entry + 0x18)) > 0x3B) {
+            const int32_t shown = int32_t(FlatRead32(object + 0x10)) + 1;
+            FlatWrite32(object + 0x10, uint32_t(shown));
+
+            if (shown < 2) {
+                FlatWrite8(entry + 0x30, 0);
+            } else {
+                FlatWrite32(object + 0x10, 0);
+                FlatWrite8(entry + 0x30, 1);
+            }
+
+            FlatWrite32(entry + 0x20, RanSuu(0) & 0xFFFF);
+            FlatWrite32(entry + 0x18, 0);
+        }
+
+        EffectSetRootTrans(cpu, FlatRead32(entry + 4), entry + 8);
+        uint8_t rgb[3];
+        const auto fixed = [&](uint32_t address) {
+            for (uint32_t c = 0; c < 3; ++c)
+                rgb[c] = FlatRead8(address + c);
+        };
+
+        switch (FlatRead8(object + 6)) {
+        case 0:
+            continue;
+        case 1:
+            fixed(0x807951E8);
+            break;
+        case 2:
+            fixed(0x807951EC);
+            break;
+        case 3:
+            EftKeyRGB(0x805E0CD0, int32_t(FlatRead32(entry + 0x14)), rgb);
+            break;
+        case 0x10:
+            fixed(0x807951F0);
+            break;
+        case 0x11:
+            EftKeyRGB(0x805E0D00, int32_t(FlatRead32(entry + 0x14)), rgb);
+            break;
+        case 0x12:
+            EftKeyRGB(0x805E0D30, int32_t(FlatRead32(entry + 0x14)), rgb);
+            break;
+        default: // 0x13
+            EftKeyRGB(0x805E0D60, int32_t(FlatRead32(entry + 0x14)), rgb);
+            break;
+        }
+
+        EffectChangeScale(cpu, FlatRead32(entry + 4), FlatReadFloat32(entry + 0x2C));
+        EffectMove(game, FlatRead32(entry + 4));
+        FlatWrite32(color, uint32_t(rgb[0]) << 24 | uint32_t(rgb[1]) << 16 | uint32_t(rgb[2]) << 8 | 0xFF);
+        EffectChangeColor(game, FlatRead32(entry + 4), entry + 8, color);
+        EffectDrawRequest(game, object, entry + 4, flags, 1, low);
+
+        if (FlatRead8(entry + 0x30) != 1)
+            continue;
+
+        // The fading model: its alpha by key (0x805E0D98), setMatColor
+        // (0x800E2950), its scale (y by the alpha time over 0x8079D6E0),
+        // position and rotation, MHchar::move, drawn as a model from here on.
+        FlatWrite8(entry + 0x2B, uint8_t(EftKeyAlpha(game, 0x805E0D98, int32_t(FlatRead32(entry + 0x18)))));
+        FlatWrite32(alpha, FlatRead32(entry + 0x28));
+        SetMatColor(game, FlatRead32(entry), 0, 4, alpha, 0);
+        FlatWrite32(FlatRead32(entry) + 0x1C, FlatRead32(entry + 0x2C));
+        const float scaled = FlatReadFloat32(entry + 0x2C) * float(int32_t(FlatRead32(entry + 0x18)));
+        FlatWriteFloat32(FlatRead32(entry) + 0x20, scaled / FlatReadFloat32(0x8079D6E0));
+        const uint32_t model = FlatRead32(entry);
+        FlatWrite32(model + 0x24, FlatRead32(entry + 0x2C));
+        CopyVec3(model + 4, entry + 8);
+        FlatWrite32(model + 0x28, FlatRead32(entry + 0x1C));
+        FlatWrite32(model + 0x2C, FlatRead32(entry + 0x20));
+        FlatWrite32(model + 0x30, 0);
+        game.Call<0x800E078C>({model, 0}); // MHchar::move
+        flags = (flags & ~1u) | 2;
+        EffectDrawRequest(game, object, entry, flags, 1, 0);
+    }
+}
 } // namespace
 
-// The ports run their bodies in a guest frame (restoring the caller's GPRs)
-// and return what the body returns in r3; while port checks run, the body's
-// address is g_portBody.
+// The ports run their bodies in a guest frame of 0x80 bytes (restoring the
+// caller's GPRs; scratch from +0x10) and return what the body returns in r3;
+// while port checks run, the body's address is g_portBody.
 template <uint32_t Address, uint32_t (*Body)(CpuContext*, GuestCall&, const GuestFrame&)>
 void FramedPort(CpuContext* cpu) {
     const uint32_t outer = g_portBody;
@@ -1068,7 +2096,7 @@ void FramedPort(CpuContext* cpu) {
 
     uint32_t result;
     {
-        GuestFrame frame(cpu, 0x40);
+        GuestFrame frame(cpu, 0x80);
         GuestCall game{cpu};
         result = Body(cpu, game, frame);
     }
@@ -1091,10 +2119,12 @@ void FramedPort(CpuContext* cpu) {
     }
 
 extern "C" void MH3_EffectObjectRelease(CpuContext* ctx);
+extern "C" void MH3_EffectObjectUpdate(CpuContext* ctx);
+extern "C" void MH3_EffectSpawnerUpdate(CpuContext* ctx);
 
 // The step functions branch to their state's function with the registers as
 // they came; state 2 only moves to 3 (r4 the old state, r0 the new).
-template <uint32_t Start, uint32_t Update>
+template <uint32_t Start, void (*Update)(CpuContext*)>
 void ObjectStep(CpuContext* cpu) {
     const uint32_t object = cpu->gpr[3];
 
@@ -1103,7 +2133,7 @@ void ObjectStep(CpuContext* cpu) {
         InvokeDirectCpu<Start>(cpu);
         break;
     case 1:
-        InvokeDirectCpu<Update>(cpu);
+        Update(cpu);
         break;
     case 2:
         FlatWrite8(object + 5, 3);
@@ -1119,7 +2149,7 @@ void ObjectStep(CpuContext* cpu) {
 }
 
 static void EffectObjectStepPort(CpuContext* cpu) {
-    ObjectStep<0x80330480, 0x8033065C>(cpu);
+    ObjectStep<0x80330480, MH3_EffectObjectUpdate>(cpu);
 }
 
 extern "C" void func_80330444(CpuContext* ctx);
@@ -1129,7 +2159,7 @@ extern "C" void MH3_EffectObjectStep(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80330444, MH3_EffectObjectStep, "EffectObjectStep");
 
 static void EffectSpawnerStepPort(CpuContext* cpu) {
-    ObjectStep<0x800FE9DC, 0x800FF938>(cpu);
+    ObjectStep<0x800FE9DC, MH3_EffectSpawnerUpdate>(cpu);
 }
 
 extern "C" void func_800FE9A0(CpuContext* ctx);
@@ -1452,3 +2482,188 @@ REGISTER_NATIVE_FUNCTION_AS(0x800FA804, MH3_EftKeyRGB, "EftKeyRGB");
 
 MH3_EFFECT_PORT(800FA95C, EftKeyAlpha, { return EftKeyAlpha(game, frame.Arg(3), int32_t(frame.Arg(4))); });
 REGISTER_NATIVE_FUNCTION_AS(0x800FA95C, MH3_EftKeyAlpha, "EftKeyAlpha");
+
+MH3_EFFECT_PORT(800FF938, EffectSpawnerUpdate, {
+    EffectSpawnerUpdate(cpu, game, frame.Arg(3), frame);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800FF938, MH3_EffectSpawnerUpdate, "EffectSpawnerUpdate");
+
+MH3_EFFECT_PORT(8033065C, EffectObjectUpdate, {
+    EffectObjectUpdate(cpu, game, frame.Arg(3), frame);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x8033065C, MH3_EffectObjectUpdate, "EffectObjectUpdate");
+
+MH3_EFFECT_PORT(800FFD10, EffectSpawnerSpawn, {
+    EffectSpawnerSpawn(cpu, game, frame.Arg(3), frame.Arg(4));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800FFD10, MH3_EffectSpawnerSpawn, "EffectSpawnerSpawn");
+
+MH3_EFFECT_PORT(800F943C, EffectDrawRequest, {
+    EffectDrawRequest(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), int32_t(frame.Arg(6)), frame.Arg(7));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800F943C, MH3_EffectDrawRequest, "EffectDrawRequest");
+
+MH3_EFFECT_PORT(800E3BF0, PrimRequest, { return PrimRequest(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7), frame.Arg(8), frame.Arg(9)); });
+REGISTER_NATIVE_FUNCTION_AS(0x800E3BF0, MH3_PrimRequest, "PrimRequest");
+MH3_EFFECT_PORT(8007F130, ScnRootPushBack, { return ScnRootPushBack(game, frame.Arg(3), frame.Arg(4)); });
+REGISTER_NATIVE_FUNCTION_AS(0x8007F130, MH3_ScnRootPushBack, "ScnRootPushBack");
+
+MH3_EFFECT_PORT(800E0AF8, GetJointWpos, {
+    GetJointWpos(game, frame.Arg(3), frame.Arg(4), frame.Arg(5));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800E0AF8, MH3_GetJointWpos, "GetJointWpos");
+
+// ResNode::GetID (0x8006FE30): the id (+0x10) of the ResNode the handle at
+// r3 holds.
+MH3_EFFECT_PORT(8006FE30, ResNodeGetId, {
+    const uint32_t node = FlatRead32(frame.Arg(3));
+
+    if (!node)
+        Panic("g3d_resnode_ac.h", 0x53, "IsValid()");
+
+    return FlatRead32(node + 0x10);
+});
+REGISTER_NATIVE_FUNCTION_AS(0x8006FE30, MH3_ResNodeGetId, "ResNodeGetId");
+
+MH3_EFFECT_PORT(802BDD44, GetCameraPos, {
+    GetCameraPos(game, frame.Arg(3), frame[0x10]);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x802BDD44, MH3_GetCameraPos, "GetCameraPos");
+
+MH3_EFFECT_PORT(800473FC, ViewCamera, { return ViewCamera(game); });
+REGISTER_NATIVE_FUNCTION_AS(0x800473FC, MH3_ViewCamera, "ViewCamera");
+MH3_EFFECT_PORT(80082C30, ScnRootCurrentCamera, { return ScnRootCurrentCamera(game, frame.Arg(3)); });
+REGISTER_NATIVE_FUNCTION_AS(0x80082C30, MH3_ScnRootCurrentCamera, "ScnRootCurrentCamera");
+MH3_EFFECT_PORT(80082BD4, ScnRootGetCamera, { return ScnRootGetCamera(game, frame.Arg(3), frame.Arg(4)); });
+REGISTER_NATIVE_FUNCTION_AS(0x80082BD4, MH3_ScnRootGetCamera, "ScnRootGetCamera");
+
+MH3_EFFECT_PORT(80074A2C, CameraGetPosition, {
+    CameraGetPosition(game, frame.Arg(3), frame.Arg(4));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x80074A2C, MH3_CameraGetPosition, "CameraGetPosition");
+
+MH3_EFFECT_PORT(802FB9E0, StarQuestFirstStages, { return StarQuestFirstStages(game); });
+REGISTER_NATIVE_FUNCTION_AS(0x802FB9E0, MH3_StarQuestFirstStages, "StarQuestFirstStages");
+MH3_EFFECT_PORT(802FB558, StarQuestGroupCurrent, { return StarQuestGroupCurrent(game, frame.Arg(3)); });
+REGISTER_NATIVE_FUNCTION_AS(0x802FB558, MH3_StarQuestGroupCurrent, "StarQuestGroupCurrent");
+MH3_EFFECT_PORT(802FB520, StarQuestGroupDone, { return StarQuestGroupDone(game, frame.Arg(3)); });
+REGISTER_NATIVE_FUNCTION_AS(0x802FB520, MH3_StarQuestGroupDone, "StarQuestGroupDone");
+MH3_EFFECT_PORT(802FB414, StarQuestGroupDoneLow, { return StarQuestGroupDoneLow(game, frame.Arg(3)); });
+REGISTER_NATIVE_FUNCTION_AS(0x802FB414, MH3_StarQuestGroupDoneLow, "StarQuestGroupDoneLow");
+MH3_EFFECT_PORT(802FB498, StarQuestGroupDoneHigh, { return StarQuestGroupDoneHigh(game, frame.Arg(3)); });
+REGISTER_NATIVE_FUNCTION_AS(0x802FB498, MH3_StarQuestGroupDoneHigh, "StarQuestGroupDoneHigh");
+
+MH3_EFFECT_PORT(800A9778, EmitterGetManager, { return EmitterGetManager(game, frame.Arg(3), frame.Arg(4)); });
+REGISTER_NATIVE_FUNCTION_AS(0x800A9778, MH3_EmitterGetManager, "EmitterGetManager");
+MH3_EFFECT_PORT(802B035C, StageEffectColor, { return StageEffectColor(game, frame.Arg(3), frame.Arg(4)); });
+REGISTER_NATIVE_FUNCTION_AS(0x802B035C, MH3_StageEffectColor, "StageEffectColor");
+MH3_EFFECT_PORT(800FA26C, ZoneContains, { return ZoneContains(game, frame.Arg(3), frame.Arg(4)) ? 1 : 0; });
+REGISTER_NATIVE_FUNCTION_AS(0x800FA26C, MH3_ZoneContains, "ZoneContains");
+
+MH3_EFFECT_PORT(800F9E68, ZoneApplyColor, {
+    ZoneApplyColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7), frame[0x10]);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800F9E68, MH3_ZoneApplyColor, "ZoneApplyColor");
+
+MH3_EFFECT_PORT(800FA4B4, EffectZoneColor, {
+    EffectZoneColor(game, frame.Arg(3), frame[0x10]);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800FA4B4, MH3_EffectZoneColor, "EffectZoneColor");
+
+MH3_EFFECT_PORT(800FA638, ModelZoneColor, {
+    ModelZoneColor(game, frame.Arg(3), frame.Arg(4), frame[0x10]);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800FA638, MH3_ModelZoneColor, "ModelZoneColor");
+
+MH3_EFFECT_PORT(800E2950, SetMatColor, {
+    SetMatColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800E2950, MH3_SetMatColor, "SetMatColor");
+
+MH3_EFFECT_PORT(800E2B58, GetMatColor, { return GetMatColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6)); });
+REGISTER_NATIVE_FUNCTION_AS(0x800E2B58, MH3_GetMatColor, "GetMatColor");
+
+MH3_EFFECT_PORT(800E2D38, GetTevKColor, {
+    GetTevKColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800E2D38, MH3_GetTevKColor, "GetTevKColor");
+
+MH3_EFFECT_PORT(800E2DC4, SetTevKColor, {
+    SetTevKColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame[0x10]);
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800E2DC4, MH3_SetTevKColor, "SetTevKColor");
+
+// The ResMatChan and ResMatTevColor accessors take the handle's address.
+MH3_EFFECT_PORT(80096DE0, ResMatChanSetColor, {
+    MatChanSetColor(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x80096DE0, MH3_ResMatChanSetColor, "ResMatChanSetColor");
+
+MH3_EFFECT_PORT(80096EF0, ResMatChanGetColor, { return MatChanGetColor(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5)); });
+REGISTER_NATIVE_FUNCTION_AS(0x80096EF0, MH3_ResMatChanGetColor, "ResMatChanGetColor");
+MH3_EFFECT_PORT(80096424, ResTevColorGetKColor, { return TevKColorGet(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5)); });
+REGISTER_NATIVE_FUNCTION_AS(0x80096424, MH3_ResTevColorGetKColor, "ResTevColorGetKColor");
+
+// The geometry tests write no guest memory but their result (and the
+// segment's parameter): checked on every call.
+static void HitPointSpherePort(CpuContext* cpu) {
+    cpu->gpr[3] = HitPointSphere(cpu->gpr[3], cpu->gpr[4], float(cpu->fpr[1].d)) ? 1 : 0;
+}
+
+extern "C" void func_8028F680(CpuContext* ctx);
+extern "C" void MH3_HitPointSphere(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("HitPointSphere")) [[unlikely]]
+        return PortCheck::RunPure(ctx, "HitPointSphere", PortCheck::Returns::Gpr3, func_8028F680, HitPointSpherePort);
+#endif
+    HitPointSpherePort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8028F680, MH3_HitPointSphere, "HitPointSphere");
+
+// (segment r3: start +0, direction +0x18; point r4; t out r5) -> f1.
+static void SegmentPointDistanceSqPort(CpuContext* cpu) {
+    float start[3], dir[3], point[3], t;
+    ReadVec3(cpu->gpr[3], start);
+    ReadVec3(cpu->gpr[3] + 0x18, dir);
+    ReadVec3(cpu->gpr[4], point);
+    cpu->fpr[1].d = SegmentPointDistanceSq(start, dir, point, t);
+    FlatWriteFloat32(cpu->gpr[5], t);
+}
+
+extern "C" void func_8028F8D0(CpuContext* ctx);
+extern "C" void MH3_SegmentPointDistanceSq(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("SegmentPointDistanceSq")) [[unlikely]]
+        return PortCheck::RunOutput(ctx, "SegmentPointDistanceSq", PortCheck::Returns::Fpr1, func_8028F8D0, SegmentPointDistanceSqPort, {{ctx->gpr[5], 4}});
+#endif
+    SegmentPointDistanceSqPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8028F8D0, MH3_SegmentPointDistanceSq, "SegmentPointDistanceSq");
+
+static void CapsuleHitPort(CpuContext* cpu) {
+    cpu->gpr[3] = CapsuleHit(cpu->gpr[3], cpu->gpr[4]) ? 1 : 0;
+}
+
+extern "C" void func_80290820(CpuContext* ctx);
+extern "C" void MH3_CapsuleHit(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("CapsuleHit")) [[unlikely]]
+        return PortCheck::RunPure(ctx, "CapsuleHit", PortCheck::Returns::Gpr3, func_80290820, CapsuleHitPort);
+#endif
+    CapsuleHitPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80290820, MH3_CapsuleHit, "CapsuleHit");

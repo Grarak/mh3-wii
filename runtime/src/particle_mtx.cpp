@@ -20,6 +20,7 @@
 // The originals assert their pointers; the ports drop those debug checks.
 // Clean matrices (the common case) are a copy without a guest frame.
 #include "abi_bridge.h"
+#include "effect_particle.h"
 #include "g3d_native.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -56,10 +57,9 @@ void EmitterRecalc(CpuContext* ctx, uint32_t emitter) {
     }
 
     game.Call<0x80501A10>({global, global, emitter + 0x90}); // MTX34MultTrans
-    game.Call<0x8009CA94>({rotation},
-                          {MemoryInline::FlatReadFloat32(emitter + 0xA8), MemoryInline::FlatReadFloat32(emitter + 0xAC), MemoryInline::FlatReadFloat32(emitter + 0xB0)});
+    EfRotationMtx(rotation, MemoryInline::FlatReadFloat32(emitter + 0xA8), MemoryInline::FlatReadFloat32(emitter + 0xAC), MemoryInline::FlatReadFloat32(emitter + 0xB0));
     G3dNative::MtxConcat(global, rotation, global);
-    game.Call<0x8009CC04>({global, global, emitter + 0x9C});
+    EfMtxScaleColumns(global, global, emitter + 0x9C);
     MemoryInline::FlatWrite8(emitter + kGlobalDirty, 0);
 }
 
