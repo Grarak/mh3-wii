@@ -1344,3 +1344,10 @@
 80052298 VecLerp
 802b8244 CameraCollide
 802b72bc CameraLimit
+# Player aiming (player_aim.cpp), from the gunner's aiming actions.
+8027a5e0 PlAimInput
+8027a064 PlAimPitch64F
+8027a0a8 PlAimPitch5E8
+8027a0f0 PlAimPitch583
+802b97a4 AimStickScale
+80279f20 PlAimMotion
