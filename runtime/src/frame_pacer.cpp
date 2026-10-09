@@ -114,18 +114,19 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         os(OSSleepTicks, {uint32_t(ticks >> 32), uint32_t(ticks)});
     };
     const auto period = std::chrono::nanoseconds(VideoRetracePeriodNs());
-    bool variableStep = false;
+    // Each step advances the game by the host time the previous one took, with
+    // no fixed rate.
+    bool variableStep = true;
 #ifdef MH3_DEVELOPMENT
-    // MH3_VCNT=n: force the game's retrace budget (fixed steps of n retraces).
-    // MH3_VARIABLE_STEP=1: each step advances the game by the host time the
-    // previous one took, with no fixed rate.
+    // MH3_VARIABLE_STEP=0: the game's own fixed steps (its retrace budget);
+    // MH3_VCNT=n forces that budget to n retraces.
     static const int32_t forcedVcnt = [] {
         const char* v = std::getenv("MH3_VCNT");
         return v ? std::atoi(v) : 0;
     }();
     static const bool variable = [] {
         const char* v = std::getenv("MH3_VARIABLE_STEP");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');
     }();
     variableStep = variable;
     if (forcedVcnt > 0) Memory::Write32(at(kRetracesPerFrame), uint32_t(forcedVcnt));
