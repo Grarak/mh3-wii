@@ -204,15 +204,18 @@ void PinDependentModels(const uint32_t* children, uint32_t count, bool* pinned) 
 // to the side with less so far), each side keeping the original order.
 void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t matrix) {
     const uint32_t count = Memory::Read32(group + kChildCount), list = Memory::Read32(group + kChildren);
-    std::array<uint32_t, kMaxChildren> children{};
+    std::array<uint32_t, kMaxChildren> children{}, cost{};
     std::array<uint8_t, kMaxChildren> order{}, side{};
 
+    // Each child's cost looked up once (the sort compared about 35 children
+    // a pass, each comparison searching the list twice).
     for (uint32_t i = 0; i < count; ++i) {
         children[i] = Memory::Read32(list + i * 4);
+        cost[i] = LastCost(children[i]);
         order[i] = uint8_t(i);
     }
 
-    std::stable_sort(order.begin(), order.begin() + count, [&](uint8_t a, uint8_t b) { return LastCost(children[a]) > LastCost(children[b]); });
+    std::stable_sort(order.begin(), order.begin() + count, [&](uint8_t a, uint8_t b) { return cost[a] > cost[b]; });
     uint64_t load[2] = {0, 0};
 
     std::array<bool, kMaxChildren> pinned{};
@@ -220,7 +223,7 @@ void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t 
 
     for (uint32_t i = 0; i < count; ++i) {
         if (pinned[i])
-            load[0] += LastCost(children[i]);
+            load[0] += cost[i];
     }
 
     for (uint32_t i = 0; i < count; ++i) {
@@ -229,7 +232,7 @@ void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t 
 
         const unsigned to = load[1] < load[0] ? 1 : 0;
         side[order[i]] = uint8_t(to);
-        load[to] += LastCost(children[order[i]]);
+        load[to] += cost[order[i]];
     }
 
     workerShare.count = gameShare.count = 0;
