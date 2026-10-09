@@ -446,3 +446,85 @@ extern "C" void MH3_MHcharRootMotion(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharRootMotion", func_800E19D4, MHcharRootMotionPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E19D4, MH3_MHcharRootMotion, "MHcharRootMotion");
+
+namespace {
+
+// MHchar frame check (0x800E1740; enemies call it through em_frame_check
+// 0x8012F980, the hunter through Pl_frame_check 0x8026A378): whether channel
+// 0's motion meets `frame` (f1) over an advance from `from` to `to`, by mode
+// (r4): 0 the advance crosses it, 1 and 6 `to` has reached it, 2 not yet, 3
+// and 7 `to` lies in [frame, f2], 4 in (frame, f2], 5 in [frame, f2). With r5
+// = 0 the advance is the one ahead, from the frame by the rate (clamped at the
+// end frame, or onto the loop frame, which counts as wrapped); otherwise the
+// one just made, from the previous frame. While the motion cross-fades
+// (+0x44 > 0) and flag bit 0 is clear (0x800E19BC, inlined), modes 2, 6 and 7
+// see no advance and the others fail.
+//
+// The advance ahead is the step's: rate * smBaseUpdateRate frames, as the
+// channel's UpdateFrame moves it. The original took the whole per-tick rate,
+// so at a step shorter than a tick a mode-0 event (an effect, a sound) met its
+// frame on several steps in a row: four times at 120 fps. At the stock 1/30 s
+// step this is the original.
+uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, double end) {
+    const float zero = F32(kZero);
+    const bool blending = F32(self + kBlendLeft) > zero;
+    const bool flagged = (Memory::Read32(self + kFlags) & 1) != 0;
+    double from = 0, to = 0;
+    bool wrapped = false;
+
+    if (blending && !flagged && (mode - 6 <= 1 || mode == 2)) {
+        from = to = F32(self + kFrame);
+    } else if (blending && !flagged) {
+        return 0;
+    } else if (ahead) {
+        from = F32(self + kFrame);
+        float next = float(from + double(F32(self + kRate)) * GameStep::Scale());
+        const float last = F32(self + kEndFrame);
+
+        if (next > last) {
+            const float loop = F32(self + kLoopFrame);
+            wrapped = !(loop < zero);
+            next = wrapped ? loop : last;
+        }
+
+        to = next;
+    } else {
+        from = F32(self + kPrevFrame);
+        to = F32(self + kFrame);
+        wrapped = to < from;
+    }
+
+    switch (mode) {
+    case 0:
+        if (wrapped)
+            return (frame <= to && frame >= F32(self + kLoopFrame)) || frame > from;
+
+        return frame > from && frame <= to;
+    case 1:
+    case 6:
+        return to >= frame;
+    case 2:
+        return to < frame;
+    case 3:
+    case 7:
+        return to >= frame && to <= end;
+    case 4:
+        return to > frame && to <= end;
+    case 5:
+        return to >= frame && to < end;
+    default:
+        return 0;
+    }
+}
+
+void MHcharFrameCheckPort(CpuContext* ctx) {
+    ctx->gpr[3] = FrameCheck(ctx->gpr[3], ctx->gpr[4] & 0xFFFF, (ctx->gpr[5] & 0xFFFF) == 0, ctx->fpr[1].d, ctx->fpr[2].d);
+}
+
+} // namespace
+
+extern "C" void func_800E1740(CpuContext* ctx);
+extern "C" void MH3_MHcharFrameCheck(CpuContext* ctx) {
+    PortCheck::Call(ctx, "MHcharFrameCheck", func_800E1740, MHcharFrameCheckPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800E1740, MH3_MHcharFrameCheck, "MHcharFrameCheck");
