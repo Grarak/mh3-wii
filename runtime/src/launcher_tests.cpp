@@ -235,7 +235,7 @@ void DiscTests(const std::filesystem::path& root) {
     std::copy(partition.begin(), partition.end(), iso.begin() + dataAt + 0x400);
     Save(root / "game.iso", iso);
     unsigned updates = 0;
-    VitaLauncher::ProcessDisc(root / "game.iso", root / "processed", [&](const auto&, uint64_t, uint64_t) { ++updates; });
+    CheckStatus(VitaLauncher::ProcessDisc(root / "game.iso", root / "processed", [&](const auto&, uint64_t, uint64_t) { ++updates; }));
     Check(updates > 1 && VitaLauncher::DiscReady(root / "processed"), "processing publishes validated game data");
     Check(std::filesystem::file_size(root / "game.iso") == iso.size(), "ROM remains untouched");
     Check(!std::filesystem::exists(root / "processed/partition.bin") && std::filesystem::exists(root / "processed/rom.txt"), "the partition stays in the disc image");
@@ -313,12 +313,12 @@ int main(int argc, char** argv) {
 
         if (argc == 4 && std::string_view(argv[1]) == "--process") {
             std::string last;
-            VitaLauncher::ProcessDisc(argv[2], argv[3], [&](const std::string& phase, uint64_t done, uint64_t total) {
+            CheckStatus(VitaLauncher::ProcessDisc(argv[2], argv[3], [&](const std::string& phase, uint64_t done, uint64_t total) {
                 if (phase != last) {
                     std::cout << phase << " (" << total << ")\n";
                     last = phase;
                 }
-            });
+            }));
             Check(VitaLauncher::DiscReady(argv[3]), "processed external disc readiness");
             return 0;
         }

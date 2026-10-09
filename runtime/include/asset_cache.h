@@ -1,4 +1,5 @@
 #pragma once
+#include "status.h"
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -25,7 +26,7 @@ class AssetCache {
     };
 
     // Reads decrypted partition bytes without native texture tags.
-    using RawRead = std::function<void(uint64_t offset, uint8_t* out, size_t bytes)>;
+    using RawRead = std::function<Status(uint64_t offset, uint8_t* out, size_t bytes)>;
 
     // Streams are copied out to cache/files at their first read and then read
     // from there (least recently used copies make room).

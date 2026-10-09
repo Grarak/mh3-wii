@@ -385,7 +385,7 @@ struct AssetCache::Impl {
 
                 for (uint64_t done = 0; done < e.file.bytes && written;) {
                     const size_t count = size_t(std::min<uint64_t>(ExtractChunk, e.file.bytes - done));
-                    read(e.file.offset + done, chunk.data(), count);
+                    CheckStatus(read(e.file.offset + done, chunk.data(), count));
                     written = std::fwrite(chunk.data(), 1, count, out) == count;
                     done += count;
                 }
@@ -501,7 +501,7 @@ struct AssetCache::Impl {
 
     std::shared_ptr<const std::vector<uint8_t>> ReadFile(const Source& s) {
         auto data = std::make_shared<std::vector<uint8_t>>(s.file.bytes);
-        read(s.file.offset, data->data(), data->size());
+        CheckStatus(read(s.file.offset, data->data(), data->size()));
         return data;
     }
 
@@ -836,7 +836,7 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
 
                 if (!m.ReadExtracted(*e, at, stop, out + (at - offset))) {
                     guard.unlock();
-                    m.read(at, out + (at - offset), stop - at);
+                    CheckStatus(m.read(at, out + (at - offset), stop - at));
                     guard.lock();
                 }
 
@@ -853,7 +853,7 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
                 stop = std::min(stop, stream->file.offset);
 
             guard.unlock();
-            m.read(at, out + (at - offset), stop - at);
+            CheckStatus(m.read(at, out + (at - offset), stop - at));
             guard.lock();
             at = stop;
             continue;
@@ -866,7 +866,7 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
             std::memcpy(out + (at - offset), data->data() + (at - s->file.offset), stop - at);
         } else {
             guard.unlock();
-            m.read(at, out + (at - offset), stop - at);
+            CheckStatus(m.read(at, out + (at - offset), stop - at));
             guard.lock();
         }
 
@@ -1022,8 +1022,11 @@ struct Game {
         for (const auto& name : image.FileNames())
             if (name.rfind("16/srt/", 0) == 0)
                 streams.push_back({name, image.FileOffset(name), image.FileSize(name)});
-        cache = std::make_unique<AssetCache>(root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { image.ReadRaw(offset, output, length); });
-        image.SetReader([this](uint64_t offset, uint8_t* output, size_t length) { cache->Read(offset, output, length); });
+        cache = std::make_unique<AssetCache>(root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { return image.ReadRaw(offset, output, length); });
+        image.SetReader([this](uint64_t offset, uint8_t* output, size_t length) {
+            cache->Read(offset, output, length);
+            return Status{};
+        });
     }
 
     ~Game() { image.SetReader({}); }

@@ -119,7 +119,7 @@ void PrepareGameData(const char* rom) {
 
         std::string phase;
         unsigned shown = 101;
-        VitaLauncher::ProcessDisc(rom, data, [&](const std::string& stage, uint64_t done, uint64_t total) {
+        CheckStatus(VitaLauncher::ProcessDisc(rom, data, [&](const std::string& stage, uint64_t done, uint64_t total) {
             const unsigned percent = total ? unsigned(done * 100 / total) : 100;
 
             if (stage == phase && percent == shown)
@@ -128,7 +128,7 @@ void PrepareGameData(const char* rom) {
             phase = stage;
             shown = percent;
             std::cerr << "MH3 prepare: " << stage << " " << percent << "%\n";
-        });
+        }));
     }
 
     setenv("MH3_DISC_DIR", data.c_str(), 1);
@@ -206,7 +206,7 @@ void PrepareVitaGameData() {
     if (image.empty())
         throw std::runtime_error("No game data in " + data.string() + " and no disc image beside it");
 
-    VitaLauncher::ProcessDisc(image, data, [](const std::string& stage, uint64_t, uint64_t) { std::fprintf(stderr, "MH3 prepare: %s\n", stage.c_str()); });
+    CheckStatus(VitaLauncher::ProcessDisc(image, data, [](const std::string& stage, uint64_t, uint64_t) { std::fprintf(stderr, "MH3 prepare: %s\n", stage.c_str()); }));
 }
 #endif
 

@@ -540,11 +540,11 @@ bool EnsureDisc(Font& font, const std::filesystem::path& base) {
                 total = std::max<uint64_t>(t, 1);
             };
 
-            try {
-                ProcessDisc(iso, output, progress);
-            } catch (const std::exception& e) {
+            const Status processed = ProcessDisc(iso, output, progress);
+
+            if (!processed.ok()) {
                 std::lock_guard guard(mutex);
-                error = e.what();
+                error = processed.message();
             }
 
             finished.store(true, std::memory_order_release);

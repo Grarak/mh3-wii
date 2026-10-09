@@ -1,5 +1,6 @@
 #pragma once
 #include "quest_catalog.h"
+#include "status.h"
 #include <filesystem>
 #include <functional>
 #include <span>
@@ -38,8 +39,9 @@ using Progress = std::function<void(const std::string&, uint64_t, uint64_t)>;
 // Extracts the disc metadata (sys/, ticket, TMD, certificates) of an ISO/RVZ
 // and records the image in rom.txt; the game partition is read from the image
 // in place, and textures and models are converted when the game loads them.
-// The input is always read-only. Publication happens only after validation.
-void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress);
+// The input is always read-only. Publication happens only after validation;
+// a failure says why.
+Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress);
 
 // The metadata is present and matches partition.bin or the recorded image.
 bool DiscReady(const std::filesystem::path& output);
