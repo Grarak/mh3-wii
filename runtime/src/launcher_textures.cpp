@@ -229,6 +229,17 @@ Status ConvertTexture(const TextureInventory::Texture& s, std::span<const uint8_
     return {};
 }
 
+Status TexturePayloadBytes(const TextureInventory::Texture& s, std::span<const uint8_t> data, uint64_t fileOffset, uint64_t& bytes) {
+    MH3_RETURN_IF_ERROR(TextureInventory::ValidateSource(data, fileOffset, s));
+    uint32_t format = 1;
+
+    if (s.format == GX_TF_CMPR && std::has_single_bit(s.width) && std::has_single_bit(s.height))
+        format = has_transparency(s, data.data() + s.offset) ? 3 : 2;
+
+    bytes = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, aurora::gfx::native_texture_format(format)).total_bytes;
+    return {};
+}
+
 Status TexturePackWriter::Open(const std::filesystem::path& path, uint32_t count, uint32_t firstId) {
     output.open(path, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
     records.assign(count, {});
@@ -262,6 +273,37 @@ Status TexturePackWriter::Add(TextureConversion&& texture) {
         return Status::Error("Cannot write native texture payload");
 
     records[added++] = r;
+    return {};
+}
+
+void TexturePackWriter::Plan(const std::vector<uint64_t>& bytes) {
+    sizes = bytes;
+    offsets.resize(bytes.size());
+    uint64_t end = 32 + uint64_t(records.size()) * sizeof(Record);
+
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        offsets[i] = (end + 63) & ~uint64_t(63);
+        end = offsets[i] + bytes[i];
+    }
+}
+
+Status TexturePackWriter::Put(uint32_t index, TextureConversion&& texture) {
+    if (index >= offsets.size() || offsets.size() != records.size() || texture.payload.size() != sizes[index])
+        return Status::Error("Native texture payload differs from its planned place");
+
+    auto& r = texture.record;
+    r.offset = offsets[index];
+    const uint64_t previousEnd = index ? offsets[index - 1] + sizes[index - 1] : 32 + uint64_t(records.size()) * sizeof(Record);
+    aurora::gfx::validate_native_texture_record(r, 2, base + index + 1, previousEnd, r.offset + r.bytes);
+    std::lock_guard guard(lock);
+    output.seekp(r.offset);
+    output.write(reinterpret_cast<const char*>(texture.payload.data()), texture.payload.size());
+
+    if (!output)
+        return Status::Error("Cannot write native texture payload");
+
+    records[index] = r;
+    ++added;
     return {};
 }
 

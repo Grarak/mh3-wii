@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -19,16 +20,29 @@ struct TextureConversion {
 // One parsed texture of the source file at fileOffset (data is the whole file).
 Status ConvertTexture(const TextureInventory::Texture& texture, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path, TextureConversion& out);
 
-// A version 2 native texture pack holding IDs firstId..firstId+count-1, added in order.
+// The payload bytes ConvertTexture will make of the texture (its native
+// format chosen the same way), known before converting it.
+Status TexturePayloadBytes(const TextureInventory::Texture& texture, std::span<const uint8_t> data, uint64_t fileOffset, uint64_t& bytes);
+
+// A version 2 native texture pack holding IDs firstId..firstId+count-1, added
+// in order (Add), or placed beforehand and put in any order from any thread
+// (Plan, Put): either way the same file.
 class TexturePackWriter {
   public:
     Status Open(const std::filesystem::path& path, uint32_t count, uint32_t firstId);
     Status Add(TextureConversion&& texture);
+
+    // Each texture's payload offset as Add would assign them, from every
+    // payload's bytes (TexturePayloadBytes).
+    void Plan(const std::vector<uint64_t>& bytes);
+    Status Put(uint32_t index, TextureConversion&& texture);
     Status Finish();
 
   private:
     std::fstream output;
     std::vector<aurora::gfx::NativeTextureRecord> records;
+    std::vector<uint64_t> offsets, sizes; // Plan
+    std::mutex lock;                      // Put
     uint32_t base = 0, added = 0;
 };
 

@@ -97,7 +97,13 @@ assigns their IDs: the next free texture and model IDs, recorded for good in
 `disc/cache/index.log` with each texture's tag offset. The read gets the bytes
 with the native texture tags patched in; the file's textures and models are
 queued for three conversion workers whose affinity covers all user cores (on
-the Vita only one of them converts models at a time). While a file awaits
+the Vita only one of them converts models at a time). Idle workers help with
+a file's textures: the worker converting them places every texture's payload
+in the pack first (its native size is known before converting it), queues a
+helper job per other worker at the front of the queue, and the workers claim
+the textures in order, one at a time, writing each at its place; the pack is
+byte for byte the serial one ([loading progress](loading-progress.md#texture-conversion-on-idle-workers)).
+While a file awaits
 conversion its bytes stay in memory and further reads of it are served from
 there; past 16 MiB (Vita) or 48 MiB (other hosts) of pending files a read
 waits for the workers. The disc's audio streams are copied to plain files in

@@ -144,7 +144,7 @@ struct AssetCache::Impl {
         std::shared_ptr<const std::vector<uint8_t>> data;
     };
 
-    enum class Kind { Textures, Models, Extract };
+    enum class Kind { Textures, Models, Extract, TextureHelp };
 
     // A disc file served from a plain copy once extracted.
     struct Extract {
@@ -155,10 +155,60 @@ struct AssetCache::Impl {
         bool failed = false;       // no retry this launch
     };
 
+    // One file's textures converted by several workers (ConvertTextures):
+    // the owner job places every payload in the pack beforehand, then it and
+    // the helper jobs it queues claim the textures in order, one at a time,
+    // and put each at its place. The pack is the serial one, byte for byte;
+    // a worker holds one texture's buffers at a time.
+    struct TextureWork {
+        const Source* source = nullptr;
+        std::shared_ptr<const std::vector<uint8_t>> data;
+        std::vector<TextureInventory::Texture> textures;
+        TexturePackWriter writer;
+        std::atomic<uint32_t> next{0};
+        std::mutex lock;
+        std::condition_variable idle;
+        unsigned active = 0; // workers converting
+        Status failure;
+        std::atomic<uint32_t> helped{0}; // textures the helpers converted
+
+        // Converts textures until none is left to claim. A helper that comes
+        // after the last claim converts nothing.
+        void Run(bool helper) {
+            {
+                std::lock_guard guard(lock);
+                ++active;
+            }
+
+            for (uint32_t i; (i = next++) < textures.size();) {
+                helped += helper;
+                TextureConversion converted;
+                Status status = ConvertTexture(textures[i], *data, source->file.offset, source->file.path, converted);
+
+                if (status.ok())
+                    status = writer.Put(i, std::move(converted));
+
+                if (!status.ok()) {
+                    std::lock_guard guard(lock);
+
+                    if (failure.ok())
+                        failure = std::move(status);
+
+                    next = uint32_t(textures.size());
+                }
+            }
+
+            std::lock_guard guard(lock);
+            --active;
+            idle.notify_all();
+        }
+    };
+
     struct Job {
         Source* source;
         Kind kind;
         Extract* extract = nullptr;
+        std::shared_ptr<TextureWork> textures; // Kind::TextureHelp
     };
 
     std::filesystem::path root, cache;
@@ -733,6 +783,22 @@ struct AssetCache::Impl {
                 continue;
             }
 
+            if (job.kind == Kind::TextureHelp) {
+                guard.unlock();
+#ifdef MH3_DEVELOPMENT
+                step.Set("helping to convert textures", job.textures->source->file.path.c_str());
+#endif
+                job.textures->Run(true);
+#ifdef MH3_DEVELOPMENT
+                step.Set("relocking after helping", job.textures->source->file.path.c_str());
+#endif
+                guard.lock();
+#ifdef MH3_DEVELOPMENT
+                step.Set("idle", nullptr);
+#endif
+                continue;
+            }
+
             if (job.kind == Kind::Models)
                 ++modelJobs;
 
@@ -749,7 +815,7 @@ struct AssetCache::Impl {
             Status converted;
 
             if (job.kind == Kind::Textures)
-                converted = ConvertTextures(s, *data);
+                converted = ConvertTextures(s, data);
             else {
                 if (!converter)
                     converter = std::make_unique<ModelConverter>();
@@ -793,28 +859,53 @@ struct AssetCache::Impl {
         }
     }
 
-    Status ConvertTextures(const Source& s, const std::vector<uint8_t>& data) {
-        // IDs follow the parse order recorded in the index.
-        std::vector<TextureInventory::Texture> textures;
-        MH3_RETURN_IF_ERROR(TextureInventory::Parse(data, s.file.offset, textures, s.firstTexture));
+    // Unlocked: converts the file's textures with whichever workers are idle
+    // (TextureWork, TextureHelp jobs at the front of the queue).
+    Status ConvertTextures(const Source& s, const std::shared_ptr<const std::vector<uint8_t>>& data) {
+        auto work = std::make_shared<TextureWork>();
+        work->source = &s;
+        work->data = data;
 
-        if (textures.size() != s.textureCount)
+        // IDs follow the parse order recorded in the index.
+        MH3_RETURN_IF_ERROR(TextureInventory::Parse(*data, s.file.offset, work->textures, s.firstTexture));
+
+        if (work->textures.size() != s.textureCount)
             return Status::Error("texture inventory differs from the cache index");
 
         const auto path = TexturePath(s), temporary = std::filesystem::path(path.string() + ".tmp");
-        {
-            TexturePackWriter writer;
-            MH3_RETURN_IF_ERROR(writer.Open(temporary, s.textureCount, s.firstTexture));
+        MH3_RETURN_IF_ERROR(work->writer.Open(temporary, s.textureCount, s.firstTexture));
+        std::vector<uint64_t> bytes(work->textures.size());
 
-            for (const auto& t : textures) {
-                TextureConversion converted;
-                MH3_RETURN_IF_ERROR(ConvertTexture(t, data, s.file.offset, s.file.path, converted));
-                MH3_RETURN_IF_ERROR(writer.Add(std::move(converted)));
-            }
+        for (size_t i = 0; i < bytes.size(); ++i)
+            MH3_RETURN_IF_ERROR(TexturePayloadBytes(work->textures[i], *data, s.file.offset, bytes[i]));
 
-            MH3_RETURN_IF_ERROR(writer.Finish());
+        work->writer.Plan(bytes);
+
+        if (work->textures.size() > 1) {
+            std::lock_guard guard(lock);
+
+            for (size_t i = 1; i < std::min<size_t>(Workers, work->textures.size()); ++i)
+                jobs.push_front({nullptr, Kind::TextureHelp, nullptr, work});
+
+            changed.notify_all();
         }
 
+        work->Run(false);
+        {
+            // Timed: VitaSDK's condition variable can lose a notification.
+            std::unique_lock guard(work->lock);
+
+            while (work->active)
+                work->idle.wait_for(guard, std::chrono::milliseconds(20));
+
+            MH3_RETURN_IF_ERROR(work->failure);
+        }
+
+        MH3_RETURN_IF_ERROR(work->writer.Finish());
+#ifdef MH3_DEVELOPMENT
+        if (work->helped)
+            std::fprintf(stderr, "MH3 asset cache: helping workers converted %u of the %zu textures of %s\n", work->helped.load(), work->textures.size(), s.file.path.c_str());
+#endif
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
         return FsStatus::Rename(temporary, path);
