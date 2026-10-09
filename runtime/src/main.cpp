@@ -12,6 +12,7 @@
 #include <thread>
 #include <fstream>
 #include <filesystem>
+#include <cstdio>
 #include <cstdlib>
 #include <execinfo.h>
 #include <iostream>
@@ -79,9 +80,10 @@ constexpr const char* kUsage =
     "  --village                      start File 1 / character 1 in the village\n"
     "  --list quests|online-quests|arena-quests\n"
     "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-    "  --quest <id>|free [--area <n>]\n"
+    "  --quest <id>|free [--area <n>] [--spawn <x,y,z>]\n"
     "                                 start a quest (village, arena or online) or the\n"
-    "                                 Moga Woods free roam from the village\n"
+    "                                 Moga Woods free roam from the village; --spawn\n"
+    "                                 moves the hunter there (arena pit: 0,300,0)\n"
     "  --no-damage                    (with any of the above) the hunter takes no damage\n"
 #else
     "Unknown option (--village, --quest and --list are in development builds)"
@@ -89,7 +91,7 @@ constexpr const char* kUsage =
     ;
 
 #ifdef MH3_DEVELOPMENT
-// --quest <id>|free [--area <n>]. The quest sets' ids don't overlap (village
+// --quest <id>|free [--area <n>] [--spawn <x,y,z>]. The quest sets' ids don't overlap (village
 // 1000.., arena 9000.., online 10000..): the id picks the set.
 void StartQuestBoot(int argc, char** argv) {
     using QuestCatalog::Set;
@@ -97,7 +99,10 @@ void StartQuestBoot(int argc, char** argv) {
     int area = -1;
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
+        float x, y, z;
         if (option == "--area" && i + 1 < argc) area = std::stoi(argv[++i]);
+        else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
+            RequestQuestSpawn(x, y, z);
         else throw std::runtime_error(kUsage);
     }
     Set set = Set::Village;

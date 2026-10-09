@@ -17,6 +17,7 @@
 // game catches up (capped, so a long stall doesn't cause a burst of frames).
 #include "abi_bridge.h"
 #include "controller_host.h"
+#include "field_jump.h"
 #include "game_step.h"
 #include "memory.h"
 #include "timebase_contract.h"
@@ -191,6 +192,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // so a recording replays in real time at any logic rate.
     SetInputFrame(uint64_t(pacedTicks / 2));
 #ifdef MH3_DEVELOPMENT
+    FieldJumpFrame(uint64_t(pacedTicks / 2));
     // MH3_RAM_DUMP=first,count: write MEM1 then MEM2 to mh3-ram-<frame>.bin after each of
     // `count` frames starting at paced frame `first` (offline state diffing).
     static const auto ramDump = [] {

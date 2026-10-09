@@ -20,6 +20,12 @@
 // work (+0xEA, copied to +0xEE and the current area 0x806BB806); the stage
 // then loads that area. --area n replaces it.
 //
+// --spawn x,y,z moves the hunter there once the quest has placed them (the
+// player's move work, kind 2 in the table 0x8065AB04, position at +0x3C) and
+// that placement has held for kSpawnSettle frames: the field places the hunter
+// more than once while it starts. The arena's start area is its waiting room;
+// --spawn 0,300,0 drops the hunter into the pit.
+//
 // MH3_FIELD_WAIT=steps (default 30) runs the village that many steps in its
 // main state before leaving.
 #include "field_jump.h"
@@ -49,6 +55,10 @@ constexpr uint32_t kPlayMode = 0x8065AA85; // u8
 constexpr uint8_t kPlayModeOnline = 4;
 constexpr uint32_t MoveWork = 0x800CFAF4;  // get_move_work_adrs(u8 kind) -> move work
 constexpr uint32_t kCurrentArea = 0x806BB806; // u8, get_now_areano
+constexpr uint32_t kMoveWorkTable = 0x8065AB04; // +16: move works by kind
+constexpr uint32_t kPlayerMoveWork = 2;
+enum : uint32_t { kPosition = 0x3C };
+constexpr uint64_t kSpawnSettle = 60; // game frames (30 Hz)
 enum : uint32_t { kWorkArea = 0xEA, kWorkStartArea = 0xEE };
 enum : uint32_t { kPhase = 8, kState = 9, kSubState = 10 };
 enum : uint8_t { kStateLeave = 5, kSubStateTearDown = 2 };
@@ -62,6 +72,9 @@ struct Jump {
     uint32_t steps = 0;
     bool done = false;
     int lastState = -1;
+    bool spawn = false;
+    float spawnPos[3] = {};
+    uint64_t placedAt = 0; // game frame the hunter was first seen placed, 0: not yet
 };
 
 Jump& State() {
@@ -120,6 +133,30 @@ void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area) {
     jump.quest = quest;
     jump.set = set;
     jump.area = area;
+}
+
+void RequestQuestSpawn(float x, float y, float z) {
+    Jump& jump = State();
+    jump.spawn = true;
+    jump.spawnPos[0] = x;
+    jump.spawnPos[1] = y;
+    jump.spawnPos[2] = z;
+}
+
+void FieldJumpFrame(uint64_t gameFrame) {
+    Jump& jump = State();
+    if (!jump.spawn || !jump.done) return;
+    const uint32_t table = Memory::Read32(kMoveWorkTable);
+    const uint32_t plw = table ? Memory::Read32(table + 16 + kPlayerMoveWork * 4) : 0;
+    if (!plw || !Memory::Read8(plw) || Memory::ReadFloat32(plw + kPosition) == 0.0f) {
+        jump.placedAt = 0;
+        return;
+    }
+    if (!jump.placedAt) jump.placedAt = gameFrame;
+    if (gameFrame - jump.placedAt < kSpawnSettle) return;
+    for (int i = 0; i < 3; ++i) Memory::WriteFloat32(plw + kPosition + 4 * i, jump.spawnPos[i]);
+    std::fprintf(stderr, "MH3 field jump: moved the hunter to %.1f %.1f %.1f\n", jump.spawnPos[0], jump.spawnPos[1], jump.spawnPos[2]);
+    jump.spawn = false;
 }
 #endif
 
