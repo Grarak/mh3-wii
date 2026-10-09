@@ -609,33 +609,6 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         // run one tick behind the age, here at age - 1.
         if (age <= 1.0)
             continue;
-#ifdef MH3_DEVELOPMENT
-        // MH3_EFFECT_CURVE_CHECK=1 (debugging): compare the cached curves
-        // with three fresh evaluations and report how many differ.
-        static const bool checkCurves = std::getenv("MH3_EFFECT_CURVE_CHECK") != nullptr;
-        if (checkCurves) {
-            static uint64_t checked = 0, differing = 0;
-            const Curves start = ReadCurves(p);
-            CurvesAt(game, manager, p, age - 1.0, uint32_t(w.age));
-            const Curves cached = ReadCurves(p);
-            WriteCurves(p, start);
-            CurvesAtFull(game, manager, p, age - 1.0);
-            const Curves full = ReadCurves(p);
-            ++checked;
-            if (cached != full) {
-                if (++differing <= 8) {
-                    std::fprintf(stderr, "MH3 effect curves: particle %08x age %.3f kept tick %u differs:", p, age, uint32_t(w.age));
-                    for (size_t i = 0; i < kCurveWords; ++i)
-                        if (cached[i] != full[i])
-                            std::fprintf(stderr, " +%02llx %08x/%08x", static_cast<unsigned long long>(0x20 + 4 * i), cached[i], full[i]);
-                    std::fprintf(stderr, "\n");
-                }
-            }
-            if ((checked & (checked - 1)) == 0 && checked >= 1024)
-                std::fprintf(stderr, "MH3 effect curves: %llu of %llu cached differ\n", static_cast<unsigned long long>(differing), static_cast<unsigned long long>(checked));
-            continue;
-        }
-#endif
         CurvesAt(game, manager, p, age - 1.0, uint32_t(w.age));
     }
 }

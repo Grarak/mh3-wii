@@ -156,6 +156,14 @@ inline void ReportRetiredVariables() {
         {"MH3_GX_DEBUG_CONTROL", nullptr},
         {"MH3_TRACE_EFB", nullptr},
         {"MH3_MISSING_TARGET_MEM1_DUMP", nullptr},
+        {"MH3_MOTION_LOG", nullptr},
+        {"MH3_ROOT_CACHE_CHECK", nullptr},
+        {"MH3_ANM_KEYS_CHECK", nullptr},
+        {"MH3_ANM_BAKED_CHECK", nullptr},
+        {"MH3_EFFECT_CURVE_CHECK", nullptr},
+        {"MH3_TICK_SURVEY", nullptr},
+        {"MH3_STEP_LOG", nullptr},
+        {"MH3_STEP_LOG_WORDS", nullptr},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))

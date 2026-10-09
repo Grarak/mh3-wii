@@ -399,21 +399,6 @@ double EvaluateFast(const CpuContext& cpu, uint32_t r1, uint32_t r2, uint32_t an
         return Evaluate<Track>(r1, r2, anm, frame);
     }
     const double lean = EvaluateLean<Track>(r2, anm, float(frame), cpu);
-#ifdef MH3_DEVELOPMENT
-    static const bool check = std::getenv("MH3_ANM_KEYS_CHECK") != nullptr;
-    if (check) [[unlikely]] {
-        static uint64_t checked = 0, differing = 0, far = 0;
-        const double exact = Evaluate<Track>(r1, r2, anm, frame);
-        ++checked;
-        if (lean != exact) {
-            ++differing;
-            if (std::fabs(lean - exact) > 1e-4 * std::max(1.0, std::fabs(exact)) && ++far <= 16)
-                std::fprintf(stderr, "MH3 anm keys: track %08x frame %.6f lean %.9g exact %.9g\n", anm, frame, lean, exact);
-        }
-        if (checked % 200000 == 0)
-            std::fprintf(stderr, "MH3 anm keys: %llu checked, %llu differ in the last bits, %llu beyond 1e-4\n", (unsigned long long)checked, (unsigned long long)differing, (unsigned long long)far);
-    }
-#endif
     return lean;
 }
 
@@ -594,24 +579,6 @@ struct ResultPort {
         } else if (format <= 6 && (ctx->gqr[3] & 7) == 5) {
             for (int i = 0; i < 3; ++i)
                 r[i] = Baked(format, data + 4 * i, flags & 0x10000u << i);
-#ifdef MH3_DEVELOPMENT
-            // MH3_ANM_BAKED_CHECK=1 (debugging): compare with the originals.
-            static const bool check = std::getenv("MH3_ANM_BAKED_CHECK") != nullptr;
-            if (check) [[unlikely]] {
-                static uint64_t calls = 0, checked = 0, differing = 0;
-                ++calls;
-                for (int i = 0; i < 3; ++i) {
-                    const float original = BakedOriginal(format, data + 4 * i, flags & 0x10000u << i);
-                    ++checked;
-                    if (std::fabs(original - r[i]) > 1e-4f * std::max(1.0f, std::fabs(original))) {
-                        if (++differing <= 8)
-                            std::fprintf(stderr, "MH3 anm baked: format %u frame %g port %g original %g\n", format, frame, r[i], original);
-                    }
-                }
-                if ((calls & (calls - 1)) == 0)
-                    std::fprintf(stderr, "MH3 anm baked check: %llu values, %llu differ\n", (unsigned long long)checked, (unsigned long long)differing);
-            }
-#endif
             data += 12;
         } else if (format <= 6) { // GQR3 not u16: the originals
             for (int i = 0; i < 3; ++i, data += 4)

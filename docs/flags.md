@@ -140,3 +140,7 @@ Removed on 2026-10-03 with the code behind them (git history keeps them):
   `MH3_GX_DRAW_LOG`, `MH3_GX_SOURCE_CAPTURE`, `MH3_GX_DEBUG_CONTROL` (with the
   `MH3_ENABLE_GX_DIAGNOSTICS` build option), `MH3_TRACE_EFB`,
   `MH3_MISSING_TARGET_MEM1_DUMP`.
+- Simulation traces and checks: `MH3_MOTION_LOG`, `MH3_ROOT_CACHE_CHECK`,
+  `MH3_ANM_KEYS_CHECK`, `MH3_ANM_BAKED_CHECK`, `MH3_EFFECT_CURVE_CHECK`,
+  `MH3_TICK_SURVEY` (with the `Survey` tick-site kind), `MH3_STEP_LOG`,
+  `MH3_STEP_LOG_WORDS`.

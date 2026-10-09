@@ -341,25 +341,6 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         RootSample& root = state.roots[i];
         const float end = F32(channel(i, kEndFrame));
         const bool joined = root.anim == anim && root.end == end && std::fabs(root.frame - from) <= 1e-5f * std::max(1.0f, std::fabs(from));
-#ifdef MH3_DEVELOPMENT
-        // MH3_ROOT_CACHE_CHECK=1 (debugging): evaluates the joined window's
-        // start afresh too and reports the largest difference seen.
-        static const bool checkRoots = std::getenv("MH3_ROOT_CACHE_CHECK") != nullptr;
-        if (checkRoots && joined) {
-            static uint64_t checked = 0;
-            static float worst = 0;
-            game.Call<InitAnmResult>({rootResult});
-            game.Virtual<kGetFrame>(anim);
-            const float kept = game.F1();
-            const std::array<float, 3> fresh = RootAt(game, self, anim, from, rootResult, rootOut);
-            game.Virtual<kSetFrame>(anim, {}, {kept});
-            for (uint32_t k = 0; k < 3; ++k)
-                worst = std::max(worst, std::fabs(fresh[k] - root.at[k]));
-            ++checked;
-            if ((checked & (checked - 1)) == 0 && checked >= 256)
-                std::fprintf(stderr, "MH3 root cache: %llu joined windows, largest start difference %g\n", static_cast<unsigned long long>(checked), double(worst));
-        }
-#endif
         std::array<float, 3> atTo;
         const std::array<float, 3> d = RootDelta(game, self, anim, from, to, rootResult, rootOut, joined ? &root.at : nullptr, &atTo);
         root = {anim, to, end, atTo};
@@ -370,17 +351,6 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         game.Call<VecAdd>({sum, scaled});
     }
     Memory::WriteFloat32(kAnimationBaseRate, stepRate);
-#ifdef MH3_DEVELOPMENT
-    // MH3_MOTION_LOG=file: per call, the game time, the character, its
-    // position and its first two channels' frame and rate.
-    static FILE* log = [] {
-        const char* path = std::getenv("MH3_MOTION_LOG");
-        return path ? std::fopen(path, "w") : nullptr;
-    }();
-    if (log)
-        std::fprintf(log, "%.4f %08x %.2f %.2f %.2f %.3f %.3f %.3f %.3f\n", GameStep::Elapsed(), self, F32(self + kPosition), F32(self + kPosition + 4), F32(self + kPosition + 8),
-                     F32(channel(0, kFrame)), F32(channel(0, kRate)), F32(channel(1, kFrame)), F32(channel(1, kRate)));
-#endif
     const bool holding = Memory::Read8(self + kHoldSteps) != 0;
     const double moved = holding ? Spend(self + kHoldSteps, state.hold, animated) : animated;
     if (moved > 0 && (Memory::Read32(self + kFlags) & 2) == 0) { // 0x800E19BC, inlined

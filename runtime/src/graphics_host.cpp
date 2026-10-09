@@ -288,31 +288,6 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
 void SealDisplayFrame() {
     // Aurora advances its frame index while sealing, before capture encoding.
     const auto frame = aurora::gfx::current_frame() + 1;
-#ifdef MH3_DEVELOPMENT
-    // MH3_STEP_LOG=file: "frame ticks scale" for the step each display frame shows.
-    static FILE* stepLog = [] {
-        const char* path = std::getenv("MH3_STEP_LOG");
-        return path ? std::fopen(path, "w") : nullptr;
-    }();
-    // MH3_STEP_LOG_WORDS=addr[,addr...] (hex) adds those words (hex).
-    static const std::vector<uint32_t> logWords = [] {
-        std::vector<uint32_t> words;
-        for (const char* v = std::getenv("MH3_STEP_LOG_WORDS"); v && *v;) {
-            char* end = nullptr;
-            words.push_back(uint32_t(std::strtoul(v, &end, 16)));
-            if (end == v)
-                break;
-            v = *end == ',' ? end + 1 : end;
-        }
-        return words;
-    }();
-    if (stepLog) {
-        std::fprintf(stepLog, "%llu %u %.4f", (unsigned long long)frame, GameStep::Ticks(), GameStep::Scale());
-        for (uint32_t word : logWords)
-            std::fprintf(stepLog, " %08x", Memory::Read32(word));
-        std::fprintf(stepLog, "\n");
-    }
-#endif
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
         const auto path = capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
         aurora_request_frame_capture(frame, path.c_str());
