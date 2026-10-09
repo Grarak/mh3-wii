@@ -30,6 +30,7 @@
 #include "cheats.h"
 #include "controller_host.h"
 #include "dev_options.h"
+#include "native_frame_packet.h"
 #include <chrono>
 #include <cstdio>
 #endif
@@ -176,12 +177,50 @@ void EaseHeight(uint32_t value, uint32_t wanted, float d) {
 }
 
 #ifdef MH3_DEVELOPMENT
-constexpr uint32_t kMovePosition = 0x188; // VEC3, a monster work's position (enemy_glide.cpp)
+constexpr uint32_t kMovePosition = 0x188;                // VEC3, a monster work's position (enemy_glide.cpp)
+constexpr uint32_t kMoveChar = 0x24;                     // a monster work's MHchar (embedded; its model +0x118 is the work's +0x13C)
+constexpr uint32_t kSceneRoot = 0x80796e34;              // the scene root (native_scene_queue.cpp)
+constexpr uint32_t kChildren = 0xDC, kChildCount = 0xE4; // a scene group's children (scene_world.cpp)
+constexpr uint32_t kCalcWorldCallback = 0x11C;           // ScnMdlSimple: its CalcWorld callback object
+constexpr uint32_t WorldMatrix = 0x8007B5A8;             // (object, 1): the object's world matrix
 
 // MH3_TRACE=monsters: each monster's move work and position once a second.
-void ReportMonsters() {
+// monster-steps=N: every logic step, monster N's position, the step, its
+// MHchar's position, model offset and first channels, and the world
+// translation of the scene root's models near it.
+void ReportMonsters(GuestCall& game) {
     static const bool enabled = TraceOptions().Has("monsters");
+    static const uint64_t stepped = TraceOptions().Number("monster-steps", UINT64_MAX);
     static auto last = std::chrono::steady_clock::now();
+
+    if (stepped != UINT64_MAX) {
+        if (const uint32_t m = Cheats::MoveWork(Cheats::Kind::Monster, uint32_t(stepped)); m && Memory::Read16(m)) {
+            const uint32_t c = m + kMoveChar;
+            std::fprintf(stderr, "MH3 monster step: packet %llu scale %.3f ticks %u position %.1f %.1f %.1f", static_cast<unsigned long long>(NativeFramePacketSequence()), GameStep::Scale(),
+                         GameStep::Ticks(), F(m + kMovePosition), F(m + kMovePosition + 4), F(m + kMovePosition + 8));
+            std::fprintf(stderr, " char %08x pos %.1f %.1f %.1f offset %.1f %.1f %.1f flags %x", c, F(c + 4), F(c + 8), F(c + 12), F(c + 0x10), F(c + 0x14), F(c + 0x18), R32(c + 0x4C));
+
+            for (uint32_t i = 0; i < 3; ++i)
+                std::fprintf(stderr, " ch%u %.2f>%.2f r%.2f e%.1f w%.2f", i, F(c + 0x8C + 4 * i), F(c + 0x74 + 4 * i), F(c + 0x5C + 4 * i), F(c + 0xA4 + 4 * i), F(c + 0xD4 + 4 * i));
+
+            // The scene root's children within 4000 units of it (x, z): their
+            // world matrices' translation as this step draws them, and their
+            // CalcWorld callback's class.
+            const uint32_t root = R32(kSceneRoot);
+            const uint32_t count = root ? R32(root + kChildCount) : 0, list = root ? R32(root + kChildren) : 0;
+
+            for (uint32_t i = 0; i < count && i < 64; ++i) {
+                const uint32_t child = R32(list + 4 * i), callback = R32(child + kCalcWorldCallback);
+                const uint32_t world = game.Call<WorldMatrix>({child, 1});
+                const float dx = F(world + 12) - F(m + kMovePosition), dz = F(world + 44) - F(m + kMovePosition + 8);
+
+                if (dx * dx + dz * dz < 4000.0f * 4000.0f)
+                    std::fprintf(stderr, " model %08x/%08x world %08x at %.1f %.1f %.1f", child, callback ? R32(callback) : 0, world, F(world + 12), F(world + 28), F(world + 44));
+            }
+
+            std::fprintf(stderr, "\n");
+        }
+    }
 
     if (!enabled || std::chrono::steady_clock::now() - last < std::chrono::seconds(1))
         return;
@@ -527,7 +566,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     game.Call<VecCopy>({cam + kOldEye, cam + kEye});
     game.Call<VecCopy>({cam + kOldTarget, cam + kTarget});
 #ifdef MH3_DEVELOPMENT
-    ReportMonsters();
+    ReportMonsters(game);
 
     // MH3_INPUT=camera=N[:D]: the camera looks at monster N instead, from the
     // game's eye or from D units away on the line to it (raised by D/3); the

@@ -253,14 +253,15 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_TRACE=[input][,draw-pages[=N]][,monsters]: the input as the game read it
-// once per tick of game time (frame_pacer.cpp), the guest RAM pages each
-// frame's draw touches against those the next frame's logic writes
+// MH3_TRACE=[input][,draw-pages[=N]][,monsters][,monster-steps=N]: the input as
+// the game read it once per tick of game time (frame_pacer.cpp), the guest RAM
+// pages each frame's draw touches against those the next frame's logic writes
 // (draw_pages.cpp: what a draw running beside the next logic step would
-// conflict with), and each monster's work and position once a second
+// conflict with), each monster's work and position once a second, and monster
+// N's position, MHchar and models' world translation every logic step
 // (field_camera.cpp).
 inline const DevOptions& TraceOptions() {
-    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters"});
+    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps"});
     return options;
 }
 

@@ -62,9 +62,11 @@
 {0x80134ED0u, TickSite::PerStep},           // flying enemy (80134E8C): vertical speed (+0x314) += 0.85 a step, below 100
 {0x80134FA8u, TickSite::PerStep},           // flying enemy (80134F7C): the same toward -10
 {0x80135538u, TickSite::PerStep},           // enemy (80135518): vertical speed (+0x314) += acceleration (+0x320) a step
-{0x8013896Cu, TickSite::PerStep},           // enemy update (801382A0): fast turn speed (+0x1AC) slows by 10 a step
-{0x801389ACu, TickSite::Decay},             // enemy update: slow turn speed (+0x1AC) *= 0.9 a step
-{0x801389C0u, TickSite::PerStep},           // enemy update: yaw (+0x1A4) += turn speed a step
+{0x8013896Cu, TickSite::PerStep},           // enemy update (801382A0): a small height offset (+0x1AC) eases to 0 by 10 a step
+{0x801389ACu, TickSite::Decay},             // enemy update: a large height offset (+0x1AC) *= 0.9 a step
+// Not 0x801389C0: the model offset (+0x1A0, cleared each step) takes the
+// height offset whole (+0x1A4 = +0x1AC * scale), which Jhen Mohran holds at
+// about 630 while it swims in the sand.
 {0x80138D14u, TickSite::Countdown},         // enemy (80138BC4): countdown (s16 +0x764)
 {0x80138D40u, TickSite::Countdown},
 {0x8014823Cu, TickSite::Countup},            // enemy (8014823C): steps (s16 +0x354), wrapping at 50
