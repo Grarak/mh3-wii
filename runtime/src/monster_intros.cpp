@@ -1685,6 +1685,155 @@ void Em005IntroPort(CpuContext* ctx) {
     }
 }
 
+// kind 12 0x80173314: Great Jaggi's first-encounter intro (Moga Woods).
+// Placed at -600, 0, 1370 facing -30.4 degrees, it waits (motion 1) to demo
+// step 0x14C, then follows the keys 0x805A91C0 (DemoPose from 0x14C, its
+// height from the ground, 200 / 120 behind its keyed place) through motions
+// 10 and 0xB, then 9: from step 0x1F1 it eases channel 9 in over its count
+// (blend 1 - count * 0.5 / (40 / rate), frame count * rate), and at 0x21B,
+// 0x2B3 and 0x3E7 it is placed for the next shots. The original counted the
+// ease in calls; here in ticks.
+void Em012IntroPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x50);
+    Intro in(ctx, frame);
+    const uint32_t work = in.work;
+    constexpr uint32_t kKeys = 0x805A91C0;
+    const float shot = float(in.Demo() * 2);
+
+    const auto rate = [&] {
+        in.game.Call<0x8012F948>({work});
+        return in.game.F1();
+    };
+
+    // The keyed pose, the height above the ground and the place `back` behind it.
+    const auto follow = [&](float back) {
+        in.game.Call<0x801321B8>({work});
+        in.Pose(int16_t(in.Demo() - 0x14C), kKeys, 0);
+        in.game.Call<0x80130450>({work}, {double(Memory::ReadFloat32(work + 0x18C) - Memory::ReadFloat32(work + 0x20C))});
+        in.game.Call<Em::Vec3Set>({in.at}, {0.0, 0.0, double(back)});
+        in.game.Call<0x800510C8>({in.at, Memory::Read32(work + kAngleY)}); // rotVecY
+        const float x = Memory::ReadFloat32(work + 0x188) + Memory::ReadFloat32(in.at);
+        const float y = Memory::ReadFloat32(work + 0x18C) + Memory::ReadFloat32(in.at + 4);
+        const float z = Memory::ReadFloat32(work + 0x190) + Memory::ReadFloat32(in.at + 8);
+        in.Place(x, y, z);
+    };
+
+    switch (in.State()) {
+    case 0:
+        in.NextState();
+        in.em.Count(0);
+        in.SetUp(0);
+        in.Motion(1, 0, 0);
+        Memory::Write32(work + 0x1BC, 0);
+        Memory::Write32(work + kAngleY, 0xFFFFE2AB);
+        Memory::Write32(work + 0x1C4, 0);
+        in.Place(-600.0f, 0.0f, 1370.0f);
+        in.StartDemo();
+        in.game.Call<0x80136D78>({work});
+        break;
+    case 1:
+        in.game.Call<0x80136D78>({work});
+
+        if (in.Reached(0x298)) {
+            in.NextState();
+            in.game.Call<0x80146200>({work});
+            in.Motion(10, 0, 0x1A);
+            in.MotionSpeed(0.8f);
+            Memory::Write32(work + kAngleY, 0xFFFFE2AB);
+            follow(-200.0f);
+        }
+
+        break;
+    case 2:
+        in.game.Call<0x80136D78>({work});
+        follow(shot == 666.0f ? -200.0f : -120.0f);
+
+        if (in.Reached(0x2DC)) {
+            in.NextState();
+            in.Motion(10, 2, 0x1A);
+            in.MotionSpeed(1.0f);
+        }
+
+        break;
+    case 3:
+        if (shot < 772.0f)
+            in.game.Call<0x80136D78>({work});
+
+        follow(-120.0f);
+
+        if (in.Reached(0x386)) {
+            in.NextState();
+            in.MotionEx(0xB, 2, 0, 0);
+            in.MotionSpeed(0.8f);
+        }
+
+        break;
+    case 4:
+        in.game.Call<0x80136D78>({work});
+        follow(-120.0f);
+
+        if (in.Reached(0x3C0)) {
+            in.NextState();
+            in.MotionEx(9, 0x18, 0x6A, 1);
+            in.MotionSpeed(0.5f);
+            in.game.Call<0x80130450>({work}, {0.0});
+        }
+
+        break;
+    case 5:
+        in.game.Call<0x80136D78>({work});
+
+        if (in.Reached(0x3E2)) {
+            in.NextState();
+            in.game.Call<0x8012F7BC>({work, 9, 0}, {1.0});
+            in.MotionSpeed(0.5f);
+            in.em.Count(0);
+        }
+
+        break;
+    case 6: {
+        in.game.Call<0x80136D78>({work});
+        in.em.CountTicks();
+        const float perTick = 0.5f / (40.0f / rate());
+        const float blend = 1.0f - float(in.em.Count()) * perTick;
+        const int32_t channelFrame = int32_t(float(in.em.Count()) * rate());
+        in.game.Call<0x8012F7BC>({work, 9, uint32_t(channelFrame)}, {double(blend)});
+
+        if (in.Reached(0x436)) {
+            in.NextState();
+            in.MotionEx(9, 0, 0, 0);
+            in.MotionSpeed(0.6f);
+            Memory::Write32(work + kAngleY, 0xFFFFE111);
+            in.Place(544.8445f, 17.4916f, -2514.2f);
+        }
+
+        break;
+    }
+    case 7:
+        if (in.Reached(0x566)) {
+            in.NextState();
+            in.MotionEx(0xC9, 0, 0x12, 0);
+            in.MotionSpeed(0.8f);
+            Memory::Write32(work + kAngleY, 0x800);
+            in.Place(-314.772f, 17.4916f, -54.9744f);
+        }
+
+        break;
+    case 8:
+        if (in.Reached(0x7CE)) {
+            in.NextState();
+            in.MotionEx(9, 0, 8, 0);
+            in.MotionSpeed(0.65f);
+            Memory::Write32(work + kAngleY, 0xFFFFD3BC);
+            in.Place(-314.772f, 17.4916f, -54.9744f);
+        }
+
+        break;
+    default:
+        break;
+    }
+}
+
 } // namespace
 
 extern "C" void func_8017E56C(CpuContext* ctx);
@@ -1692,6 +1841,12 @@ extern "C" void MH3_Em015Intro(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em015Intro", func_8017E56C, Em015IntroPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8017E56C, MH3_Em015Intro, "Em015Intro");
+
+extern "C" void func_80173314(CpuContext* ctx);
+extern "C" void MH3_Em012Intro(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em012Intro", func_80173314, Em012IntroPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80173314, MH3_Em012Intro, "Em012Intro");
 
 extern "C" void func_801D42F0(CpuContext* ctx);
 extern "C" void MH3_Em007Intro(CpuContext* ctx) {

@@ -98,6 +98,44 @@ void TurnWhilePort(CpuContext* ctx) {
     const int32_t turn = int32_t(advance * (float(angle) / (last - first)));
     Memory::Write32(enemy + 0x1C0, uint32_t(int32_t(Memory::Read32(enemy + 0x1C0)) + turn));
 }
+
+// 0x80137E34 (enemy), decompiled with Ghidra: the pitch (+0x1BC) and the roll
+// (+0x1C4, u16 angles) brought back toward level by 0x100 a call (an angle
+// within that set to 0) while +0x1E2 is 1-4: the pitch unless 0x80133CAC
+// (enemy) says it is held, the roll unless +0x784 is set or +0x1E2 and +0x1E3
+// are both 1; at other +0x1E2 values both are set to 0. The enemies' movement
+// step (0x801382A0) calls it once a step, so at 60 or 120 steps a second a
+// swimming or flying monster (Gobul after a lunge, ...) levelled two or four
+// times as fast. Here by the step's share of 0x100; at the stock step this is
+// the original (MH3_PORT_CHECK=EnemyLevel).
+uint32_t Level(uint32_t angle, uint32_t amount) {
+    const uint32_t low = angle & 0xFFFF;
+
+    if (low < 0x8000)
+        return low < amount ? 0 : angle - amount;
+
+    return low + amount <= 0x10000 ? angle + amount : 0;
+}
+
+void LevelPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const uint32_t enemy = ctx->gpr[3];
+    const uint32_t mode = Memory::Read8(enemy + 0x1E2);
+
+    if (mode - 1 > 3) {
+        Memory::Write32(enemy + 0x1BC, 0);
+        Memory::Write32(enemy + 0x1C4, 0);
+        return;
+    }
+
+    const uint32_t amount = uint32_t(GameStep::Share(0x100));
+
+    if (game.Call<0x80133CAC>({enemy}) == 0)
+        Memory::Write32(enemy + 0x1BC, Level(Memory::Read32(enemy + 0x1BC), amount));
+
+    if (Memory::Read8(enemy + 0x784) == 0 && (mode != 1 || Memory::Read8(enemy + 0x1E3) != 1))
+        Memory::Write32(enemy + 0x1C4, Level(Memory::Read32(enemy + 0x1C4), amount));
+}
 } // namespace
 
 extern "C" void func_80133EA0(CpuContext* ctx);
@@ -111,6 +149,12 @@ extern "C" void MH3_EnemyTurnOverMotion(CpuContext* ctx) {
     PortCheck::Call(ctx, "EnemyTurnOverMotion", func_80133FB0, TurnOverMotionPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80133FB0, MH3_EnemyTurnOverMotion, "EnemyTurnOverMotion");
+
+extern "C" void func_80137E34(CpuContext* ctx);
+extern "C" void MH3_EnemyLevel(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EnemyLevel", func_80137E34, LevelPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80137E34, MH3_EnemyLevel, "EnemyLevel");
 
 // Awareness (0x8012B66C: enemy, player, amount): the enemy's value for a
 // player (s32 +0x428 + 4 * player) += amount, clamped to 0..20000. 0x8012B6B0

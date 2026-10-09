@@ -1062,6 +1062,615 @@ void Em009RollPort(CpuContext* ctx) {
     }
 }
 
+// kind 15 0x8017AD0C (r4 0 / 1): Lagiacrus' storm (motion 0xD0, +0x8A0 less
+// 10). Its count rises each tick; a discharge (0x8010A838) at frame 20 and
+// in frames 220-400 each step, a spark (0x80306AFC 1) every 5 ticks there;
+// glows (0x8010A930) at 40, 80 and 540, bursts (0x80105690 10 at 0, 210, -30
+// in joint 3) at 80, 90 and 100, the shell 0x50 (work, 1 or 0, 30) at 220, a
+// voice from 230 to 400; ActionDone94 at its end. The original counted
+// calls, so at 60 or 120 steps a second its sparks came two or four times as
+// often; here every 5 ticks of game time.
+void Em015StormPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x60);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x08], joint = frame[0x18];
+    const uint8_t how = uint8_t(frame.Arg(4));
+    const uint32_t ticks = GameStep::Ticks();
+
+    const auto glow = [&](uint32_t kind, double scale) { game.Call<0x8010A930>({work, kind}, {scale}); };
+
+    const auto burst = [&](double scale) {
+        game.Call<Em::Vec3Set>({at}, {0.0, 210.0, -30.0});
+        game.Call<0x80135994>({work, 3, joint}); // get_joint_wmat_em
+        game.Call<0x800514A4>({at, joint});      // mulVecMat
+
+        for (uint32_t i = 0; i < 3; ++i)
+            Memory::WriteFloat32(at + 4 * i, Memory::ReadFloat32(at + 4 * i) + Memory::ReadFloat32(joint + 0x10 * i + 0xC));
+
+        game.Call<0x80105690>({work, 10, 3, at}, {scale});
+    };
+
+    const auto shell = [&](uint32_t side) { game(Memory::Read32(Memory::Read32(kShellTable) + 0x50), {work, side, 0x1E}); };
+
+    game.Call<0x80050570>({joint});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 2});
+        game.Call<Adjust8A0>({work, uint32_t(-10)});
+        game.Call<0x8012F568>({work, 0xD0, 0x14, 0, 1});
+        Memory::Write8(work + Em::kSubState, 0);
+        em.Count(0);
+        break;
+    case 1:
+        em.CountTicks();
+
+        if (em.At(20.0f))
+            game.Call<Discharge>({work, 0});
+
+        if (em.At(220.0f, 3, 400.0f)) {
+            if (Em::AnyOf(em.Count() - int32_t(ticks) + 1, ticks, 5, 0))
+                game.Call<Spark>({work, 1});
+
+            game.Call<Discharge>({work, 5});
+        }
+
+        if (how == 0) {
+            if (em.At(40.0f))
+                glow(3, 1.0);
+
+            if (em.At(80.0f))
+                glow(6, 1.0);
+
+            if (em.At(80.0f) || em.At(90.0f) || em.At(100.0f))
+                burst(2.0);
+
+            if (em.At(220.0f))
+                shell(1);
+
+            if (em.At(540.0f))
+                glow(6, 1.0);
+        } else if (how == 1) {
+            if (em.At(80.0f) || em.At(90.0f) || em.At(100.0f))
+                burst(em.At(90.0f, 1) ? 1.5 : 2.0);
+
+            if (em.At(220.0f))
+                shell(0);
+
+            if (em.At(540.0f))
+                glow(6, double(0.6f));
+        }
+
+        if (Memory::Read8(work + Em::kSubState) == 0) {
+            if (em.At(230.0f)) {
+                Memory::Write8(work + Em::kSubState, 1);
+                game.Call<RoarVoice>({work, 0, 10, 3});
+            }
+        } else if (Memory::Read8(work + Em::kSubState) == 1 && em.At(400.0f)) {
+            Memory::Write8(work + Em::kSubState, 2);
+            game.Call<0x80129788>({work, 0});
+        }
+
+        if (em.Ended())
+            game.Call<ActionDone94>({work});
+
+        break;
+    default:
+        break;
+    }
+}
+
+// em024 0x80350DD8 (r4 0: with its effects; r5 1: turning toward -2300, 2-5:
+// spinning 0x100 / 0x180 a call left / right): Alatreon's charge-up and
+// turn. Motion 0x11 (a voice; +0x378 at most 2500 for the spins) with sparks
+// at frames 4-46 and from frame 60 a glow every 8 steps and a spark
+// (0x80306AFC 10) every 6 ticks; from frame 40 it spins, from 90 it turns
+// until done (0x14, then its end; ActionDone) or 0x8034F2AC breaks off
+// (1.4); after 0x11 ends, 0x12 does the same with a glow every 10 steps and a
+// spark every 8 ticks. The original counted its sparks and spun once a
+// call; here by the step's ticks and share.
+void Em024ChargeUpPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x70);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x10], joint = frame[0x08], mtx = frame[0x20];
+    const bool effects = uint8_t(frame.Arg(4)) == 0;
+    const uint32_t how = frame.Arg(5);
+
+    const auto inArea = [&] { return (game.Call<0x802AFCE8>() & 0xFF) == Memory::Read8(work + kArea); };
+
+    const auto spawn = [&](float scale, uint32_t kind, uint32_t bone, bool offset, float y = 0.0f, float z = 0.0f) {
+        if (offset)
+            game.Call<Em::Vec3Set>({at}, {0.0, double(y), double(z)});
+
+        game.Call<Em::Spawn>({work, kind, bone, offset ? at : 0u}, {double(scale)});
+    };
+
+    const auto sound = [&](uint32_t bone, uint32_t id) {
+        game.Call<JointPosition>({work, bone, joint});
+        game.Call<0x800D9F0C>({Memory::Read32(work + 0xB14), id, 2, joint}); // se_req_pos_ps
+    };
+
+    // The sound at the offset (`at`) in joint 0x15's frame.
+    const auto soundInJoint = [&] {
+        game.Call<0x80135994>({work, 0x15, mtx}); // get_joint_wmat_em
+        game.Call<0x800514A4>({at, mtx});         // mulVecMat
+        game.Call<0x8010148C>({mtx, at});
+        game.Call<0x80101470>({mtx, joint});
+        game.Call<0x800D9F0C>({Memory::Read32(work + 0xB14), 0x94, 2, joint});
+    };
+
+    // The glow and the spark of the charge: every `glowEvery` steps, every
+    // `sparkAfter` + 1 ticks.
+    const auto charge = [&](uint32_t glowEvery, int32_t sparkAfter) {
+        if (StepCounter::Every(glowEvery))
+            spawn(3.0f, 0x67, 3, true);
+
+        if (em.Count() > sparkAfter) {
+            em.Count(0);
+            game.Call<Spark>({work, 10});
+        }
+
+        if (inArea()) {
+            game.Call<JointPosition>({work, 3, joint});
+            game.Call<0x800DE360>({Memory::Read32(work + 0xB14), joint, 0x1C, Memory::Read16(work + 0x1A)}); // shell_se_req
+        }
+    };
+
+    // r5 2-5: the yaw spun by the step's share of 0x100 / 0x180; true if it spun.
+    const auto spin = [&] {
+        if (how < 2 || how > 5)
+            return false;
+
+        const int32_t turn = GameStep::Share(how < 4 ? 0x100 : 0x180);
+        Memory::Write32(work + kAngles + 4, (Memory::Read32(work + kAngles + 4) + uint32_t(how % 2 == 0 ? turn : -turn)) & 0xFFFF);
+        return true;
+    };
+
+    // Broken off (1.4), or turned: 0x14 to its end. True when either.
+    const auto turnOrBreak = [&](uint32_t max) {
+        if (game.Call<0x8034F2AC>({work}) == 1) {
+            game.Call<0x80129788>({work, 0});
+            game.Call<0x80128A78>({work, 1, 4});
+            return true;
+        }
+
+        if (game.Call<TurnStep>({work, 0, max}) == 1) {
+            game.Call<0x80129788>({work, 0});
+            em.State(3);
+            em.SetMotion(0x14, 2, 0);
+            game.Call<RoarVoice>({work, 1, 0x17, 0x10});
+            game.Call<RoarVoice0>({work, 0, 0x14});
+            return true;
+        }
+
+        return false;
+    };
+
+    game.Call<0x80050570>({mtx});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0x11, 4, 0);
+        game.Call<RoarVoice>({work, 0, uint8_t(frame.Arg(4)) == 1 ? 0x1Bu : 1u, 0xB});
+        game.Call<TurnSetUp>({work, 0}, {how == 1 ? -2300.0 : 500.0});
+
+        if (how - 2 < 4 && 2500.0f < Memory::ReadFloat32(work + 0x378))
+            Memory::WriteFloat32(work + 0x378, 2500.0f);
+
+        game.Call<0x80358854>({work, uint32_t(-20)});
+        em.Count(0);
+        break;
+    case 1: {
+        em.CountTicks();
+
+        if (effects) {
+            if (em.At(4.0f)) {
+                spawn(0.6f, 0x65, 0x15, true);
+
+                if (inArea())
+                    sound(0x15, 0x8D);
+            }
+
+            if (em.At(12.0f))
+                spawn(0.5f, 0x65, 0x1B, true);
+
+            if (em.At(20.0f))
+                spawn(0.7f, 0x65, 0xB, true);
+
+            if (em.At(40.0f))
+                spawn(1.0f, 0x65, 3, true);
+
+            if (em.At(42.0f))
+                spawn(1.0f, 0x65, 0x13, true);
+
+            if (em.At(44.0f))
+                spawn(1.0f, 0x65, 0x1D, true);
+
+            if (em.At(46.0f))
+                spawn(1.0f, 0x65, 0x21, true);
+
+            if (em.At(60.0f, 1))
+                charge(8, 5);
+        }
+
+        uint32_t max = 0x80;
+
+        if (em.At(40.0f, 1) && spin())
+            max = 0;
+
+        if (em.At(90.0f, 1) && turnOrBreak(max))
+            return;
+
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0x12, 0, 0);
+        }
+
+        break;
+    }
+    case 2:
+        if (effects) {
+            em.CountTicks();
+            charge(10, 7);
+        }
+
+        turnOrBreak(spin() ? 0 : 0x80);
+        break;
+    case 3:
+        if (effects) {
+            if (em.At(2.0f)) {
+                spawn(1.0f, 0xB6, 0x11, false);
+
+                if (inArea())
+                    sound(0x11, 0x8F);
+            }
+
+            if (em.At(4.0f))
+                spawn(0.8f, 0xB6, 0x20, false);
+
+            if (em.At(8.0f)) {
+                spawn(0.7f, 0xB6, 0x1D, false);
+                spawn(0.8f, 0xB6, 0x2E, false);
+            }
+
+            if (em.At(52.0f)) {
+                spawn(1.0f, 0xB0, 0x15, false);
+                spawn(1.0f, 0xB1, 0x15, false);
+
+                if (inArea())
+                    sound(0x15, 0x94);
+            }
+
+            if (em.At(70.0f))
+                spawn(0.8f, 0x65, 0x15, true, 100.0f, -50.0f);
+
+            if (em.At(126.0f)) {
+                spawn(0.8f, 0x65, 0x15, true, 0.0f, 50.0f);
+
+                if (inArea())
+                    soundInJoint();
+            }
+
+            if (em.At(132.0f))
+                spawn(0.8f, 0x65, 0xB, false);
+
+            if (em.At(144.0f))
+                spawn(0.7f, 0x65, 0x24, false);
+
+            if (em.At(180.0f)) {
+                spawn(0.5f, 0x65, 0x15, true, 0.0f, 100.0f);
+
+                if (inArea())
+                    soundInJoint();
+            }
+
+            if (em.At(186.0f))
+                spawn(0.4f, 0x65, 0x21, false);
+
+            if (em.At(192.0f))
+                spawn(0.4f, 0x65, 0x1B, true);
+
+            if (em.At(212.0f))
+                spawn(0.4f, 0x65, 0x2E, false);
+        }
+
+        if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    default:
+        break;
+    }
+}
+
+// kind 40 0x801BA438 (r4 0 / 1: a long or a short throw): Uragaan's
+// bouncing rock (owner +0x330, kind 9). Its offset (+0x34C) from its start
+// (+0x334) flies to the first bounce (+0x340) in 24 / 10 ticks and on to the
+// end (+0x334 - +0x340 back) in 21 / 33 ticks, its velocity (+0x310) set to
+// reach each in time under its gravity (+0x31C: +0x320 -0.3 / -0.15, then -2 /
+// -0.9 a tick), tumbling 0x1555 and 0xAAB a tick; then 1.0, or 11.56 with
+// +0x329. The original added its velocity and gravity once a call; here by
+// the step's length (the end snaps to the target, as the original's).
+void Em040RockPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x60);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, way = frame[0x08], sum = frame[0x18], heard = frame[0x28];
+    const bool longThrow = uint8_t(frame.Arg(4)) == 0;
+    const uint32_t owner = Memory::Read32(work + 0x330);
+    const float s = float(GameStep::Scale());
+    constexpr uint32_t kVelocity = 0x310, kOffset = 0x34C, kStart = 0x334, kBounce = 0x340, kGravity = 0x31C, kPitch = 0x1BC;
+
+    const auto f = [&](uint32_t at) { return Memory::ReadFloat32(work + at); };
+
+    // +0x1A0: the offset plus the way from the position to the start.
+    const auto place = [&] {
+        game.Call<0x80050D04>({way, work + kStart, work + 0x188}); // VectorSubtractWrapper
+        game.Call<0x800513DC>({sum, work + kOffset, way});
+        game.Call<0x80041EA4>({work + 0x1A0, sum}); // Vec3Copy
+    };
+
+    // The velocity that covers `to` - `from` in `ticks` ticks under the gravity.
+    const auto aim = [&](uint32_t to, uint32_t from, bool fromOffset, int32_t ticks, uint32_t gravity) {
+        em.Count(ticks);
+        Memory::Write32(work + 0x320, gravity);
+        const float n = float(ticks);
+
+        for (uint32_t i = 0; i < 3; ++i) {
+            const float origin = fromOffset ? f(from + 4 * i) + f(kOffset + 4 * i) : f(from + 4 * i);
+            float v = (f(to + 4 * i) - origin) / n;
+
+            if (i == 1) {
+                const float half = 0.5f * f(0x320); // fmuls, then fsubs: no fused multiply-add
+                const float fall = half * n;
+                v = v - fall;
+            }
+
+            Memory::WriteFloat32(work + kVelocity + 4 * i, v);
+        }
+    };
+
+    const auto ownerHears = [&] { return (game.Call<0x802AFCE8>() & 0xFF) == Memory::Read8(work + kArea) && owner && Memory::Read8(owner) && Memory::Read8(owner + 3) == 9; };
+
+    const auto sound = [&](uint32_t id, bool shell) {
+        game.Call<0x800513DC>({sum, work + 0x188, work + 0x1A0});
+        game.Call<0x80041EA4>({heard, sum});
+
+        if (shell)
+            game.Call<0x800DE360>({Memory::Read32(owner + 0xB14), heard, id, Memory::Read16(work + 0x1A)}); // shell_se_req
+        else
+            game.Call<0x800D9F0C>({Memory::Read32(owner + 0xB14), id, 2, heard}); // se_req_pos_ps
+    };
+
+    const auto rolling = [&] { return Memory::Read8(work + 0x32F) == 0 ? 0x22u : 0x23u; };
+
+    // A tick's flight by the step's length: the offset by the velocity, the velocity by the gravity.
+    const auto fly = [&](int32_t tumble) {
+        Memory::Write32(work + kPitch, Memory::Read32(work + kPitch) + uint32_t(GameStep::Share(tumble)));
+
+        for (uint32_t i = 0; i < 3; ++i)
+            Memory::WriteFloat32(work + kOffset + 4 * i, f(kOffset + 4 * i) + f(kVelocity + 4 * i) * s);
+
+        place();
+
+        for (uint32_t i = 0; i < 3; ++i)
+            Memory::WriteFloat32(work + kVelocity + 4 * i, f(kVelocity + 4 * i) + f(kGravity + 4 * i) * s);
+
+        em.Count(em.Count() - int32_t(GameStep::Ticks()));
+        return em.Count() < 0;
+    };
+
+    game.Call<0x80133CA0>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<0x801302AC>({work});
+        game.Call<0x80130628>({work});
+        place();
+        game.Call<0x8013545C>({work});
+        aim(kBounce, kStart, true, longThrow ? 0x18 : 10, longThrow ? 0xBE99999A : 0xBE19999A);
+        game.Call<RoarVoice>({work, 0, 2, 0x202});
+        game.Call<0x8012CF84>({work});
+        game.Call<0x80131E18>({work});
+
+        if (ownerHears())
+            sound(rolling(), true);
+
+        break;
+    case 1:
+        if (fly(0x1555)) {
+            em.NextState();
+            game.Call<0x80050D04>({sum, work + kBounce, work + kStart});
+            game.Call<0x80041EA4>({work + kOffset, sum});
+            place();
+            game.Call<0x8013545C>({work});
+            aim(kStart, kBounce, false, longThrow ? 0x15 : 0x21, longThrow ? 0xC0000000 : 0xBF666666);
+            const float n = float(em.Count());
+            const float turns = 65536.0f * 15.0f * n;
+            const uint32_t spin = uint32_t(int32_t(0.5f + turns / 360.0f));
+            Memory::Write32(work + kPitch, -(spin & 0xFFFF) & 0xFFFF);
+
+            if (ownerHears())
+                sound(0x28, false);
+        } else if (ownerHears())
+            sound(rolling(), true);
+
+        game.Call<0x8012CF84>({work});
+        game.Call<0x80131E18>({work});
+        break;
+    case 2:
+        if (fly(0xAAB)) {
+            game.Call<0x80041EA4>({work + 0x188, work + kStart});
+            game.Call<Em::Vec3Set>({work + kOffset}, {0.0, 0.0, 0.0});
+            place();
+            game.Call<0x801297A8>({work});
+
+            if (ownerHears())
+                sound(0x28, false);
+
+            game.Call<0x80128A78>({work, Memory::Read8(work + 0x329) == 1 ? 0xBu : 1u, Memory::Read8(work + 0x329) == 1 ? 0x38u : 0u});
+        } else {
+            game.Call<0x8012CF84>({work});
+            game.Call<0x80131E18>({work});
+        }
+
+        break;
+    default:
+        break;
+    }
+}
+
+// kind 18 0x801981B4 (r4 1: the second voice, r5 1: spinning the other way),
+// actions 7.23 and 7.25-7.27: Gobul's spin. State 0 sets it up (motion 0xD4
+// at the ground, 0x801923BC 8, +0x8A0 less 12); at the motion's end state 1
+// starts it (0xD5 on channel 0 and 0xD7 on 1, a voice, a burst at 0, -80, 0);
+// state 2 spins. Its count runs up to 180, the yaw wobbling by 224 *
+// cos(4 degrees * count) and turning by 0x60 a call, the two motions blended
+// by (1 + cos) / 2, its capsule (+0xA08) sounding on a hit from frame 50. A
+// hunter it caught (substate 1, for 10 calls) or 170 calls (substate 2) end
+// it 30 calls later (+7) with 7.24. The original counted and turned once a
+// call, so at 60 or 120 steps a second Gobul spun two or four times as fast
+// and as briefly; here the counts take the step's ticks and the turns its
+// share.
+void Em018SpinPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0xB0);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, burstAt = frame[0x18], hit = frame[0x08], capsule = frame[0x30];
+    const bool secondVoice = uint8_t(frame.Arg(4)) == 1, back = uint8_t(frame.Arg(5)) == 1;
+    const int32_t ticks = int32_t(GameStep::Ticks());
+    constexpr uint32_t kYaw = kAngles + 4, kSub = 6, kHold = 7, kSpinSound = 0x310;
+
+    const auto turn = [&](int32_t delta) { Memory::Write32(work + kYaw, (Memory::Read32(work + kYaw) + uint32_t(delta)) & 0xFFFF); };
+
+    // A substate's hold (+7) counted toward `last`; false once past it.
+    const auto hold = [&](uint32_t last) {
+        const uint32_t held = Memory::Read8(work + kHold) + uint32_t(ticks);
+
+        if (held > last)
+            return false;
+
+        Memory::Write8(work + kHold, uint8_t(held));
+        return true;
+    };
+
+    game.Call<0x800FA484>({hit});
+    game.Call<0x800FA41C>({capsule});
+    game.Call<0x80136D78>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0xD4, 0, 0);
+        game.Call<0x80130450>({work}, {0.0});
+        game.Call<0x801923BC>({work, 8});
+        game.Call<Adjust8A0>({work, uint32_t(-12)});
+        break;
+    case 1:
+        if (!em.Ended())
+            break;
+
+        em.NextState();
+        Memory::Write8(work + kSub, 0);
+        Memory::Write8(work + kHold, 0);
+        game.Call<0x8012F874>({work});
+        em.SetMotion(0xD5, 0, 0);
+        game.Call<SetChannelMotion>({work, 1, 0xD7, 0, 0});
+        game.Call<RoarVoice>({work, 0, secondVoice ? 0x19u : 0xEu, 2});
+        em.Count(0);
+        game.Call<Em::Vec3Set>({burstAt}, {0.0, -80.0, 0.0});
+        game.Call<ChestBurst>({work, 3, burstAt, 0xF}, {1.0});
+        game.Call<0x8013545C>({work});
+        Memory::WriteFloat32(work + kSpinSound, 0.0f);
+        break;
+    case 2: {
+        if (em.Count() < 180)
+            em.Count(std::min(em.Count() + ticks, 180));
+
+        float weight = 1.0f;
+
+        if (em.Count() < 180) {
+            int32_t degrees = int16_t(em.Count() << 2);
+
+            if (degrees >= 360)
+                degrees = int16_t(degrees % 360);
+
+            game.Call<0x804644D0>({}, {(6.2831855f * float(degrees)) / 360.0f}); // cosf
+            const float c = game.F1();
+            weight = 0.5f * (1.0f + c);
+            turn(GameStep::Share(int32_t(224.0f * c)));
+        }
+
+        weight = std::clamp(weight, 0.0f, 1.0f);
+        game.Call<0x800E2718>({work + 0x24, 0}, {weight});
+        game.Call<0x800E2718>({work + 0x24, 1}, {1.0f - weight});
+
+        if (Memory::Read8(work + kSub) <= 1) {
+            if (Memory::ReadFloat32(work + kSpinSound) == 0.0f && em.At(50.0f))
+                Memory::WriteFloat32(work + kSpinSound, 1.0f);
+
+            if (Memory::ReadFloat32(work + kSpinSound) > 0.0f && game.Call<0x8029E35C>({work + 0xA08, capsule, hit, 0}) == 1 &&
+                (game.Call<0x802AFCE8>() & 0xFF) == Memory::Read8(work + kArea)) // get_now_areano
+                game.Call<0x800DE078>({Memory::Read32(work + 0xB14), capsule, 7, Memory::Read16(work + 0x1A)}); // shell_se_req2
+        }
+
+        switch (Memory::Read8(work + kSub)) {
+        case 0: {
+            turn(back ? -GameStep::Share(0x60) : GameStep::Share(0x60));
+
+            if (em.Count() >= 170) {
+                Memory::Write8(work + kSub, 2);
+                break;
+            }
+
+            const uint32_t hunters = game.Call<0x800CFB34>({2}) & 0xFFFF; // get_move_work_max
+            uint32_t hunter = game.Call<0x800CFAF4>({2});                 // get_move_work_adrs
+
+            for (uint32_t i = 0; i < hunters; ++i, hunter += 0xB20) {
+                if (Memory::Read8(hunter) && game.Call<0x8012D20C>({Memory::Read8(hunter + 8)}) == 0 &&
+                    game.Call<0x8012D118>({work, hunter}) != 0 &&     // EnemySensesPlayer
+                    game.Call<0x8026FECC>({hunter, 6, 0x29}) != 0 && // Pl_act_ck
+                    Memory::Read8(hunter + 0x3B6) == Memory::Read16(work + 0x1A)) {
+                    Memory::Write8(work + kSub, 1);
+                    Memory::Write8(work + kHold, 0);
+                }
+            }
+
+            break;
+        }
+        case 1:
+            if (em.Count() >= 170 || !hold(10))
+                Memory::Write8(work + kSub, 2);
+
+            break;
+        default:
+            if (Memory::Read8(work + kSub) == 2) {
+                Memory::Write8(work + kSub, 3);
+                Memory::Write8(work + kHold, 0);
+                game.Call<0x80129788>({work, 0});
+                game.Call<0x801923AC>({work, 8});
+            }
+
+            if (!hold(30))
+                game.Call<0x80128A78>({work, 7, 0x18});
+
+            break;
+        }
+
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 } // namespace
 
 extern "C" void func_8014BBA4(CpuContext* ctx);
@@ -1111,3 +1720,27 @@ extern "C" void MH3_Em009Roll(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em009Roll", func_8038A81C, Em009RollPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8038A81C, MH3_Em009Roll, "Em009Roll");
+
+extern "C" void func_801981B4(CpuContext* ctx);
+extern "C" void MH3_Em018Spin(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em018Spin", func_801981B4, Em018SpinPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801981B4, MH3_Em018Spin, "Em018Spin");
+
+extern "C" void func_8017AD0C(CpuContext* ctx);
+extern "C" void MH3_Em015Storm(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em015Storm", func_8017AD0C, Em015StormPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8017AD0C, MH3_Em015Storm, "Em015Storm");
+
+extern "C" void func_80350DD8(CpuContext* ctx);
+extern "C" void MH3_Em024ChargeUp(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em024ChargeUp", func_80350DD8, Em024ChargeUpPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80350DD8, MH3_Em024ChargeUp, "Em024ChargeUp");
+
+extern "C" void func_801BA438(CpuContext* ctx);
+extern "C" void MH3_Em040Rock(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em040Rock", func_801BA438, Em040RockPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801BA438, MH3_Em040Rock, "Em040Rock");

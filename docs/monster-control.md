@@ -32,7 +32,19 @@ monsters other than the quest's large ones change). The arenas' own spawns
 are reinforcements a large monster calls in, so use a field quest:
 `--quest 1028 --area 1 --quest-small Jaggi` fills Moga Woods area 1 with
 Jaggi (51 spawns). Small monsters are monster works like the large ones and
-start their actions the same way (`kind 10`, `list`).
+start their actions the same way (`kind 10`, `list`). The quest load prints
+which spawn tables (one per area) it changed and their old kinds (`MH3
+quest 1010: ... (table:kinds 1:27,27 3:33,33,34 ...)`).
+
+Where the kinds that need their own map live: Giggi `--quest 1045 --area 1
+--quest-small Giggi` (Tundra), Jhen Mohran `--quest 14002` (the sandship),
+Ceadeus `--quest 2006` (its lair; `--quest-monster 20` in an arena does not
+spawn it), Alatreon `--quest 19001 --area 1`. Altaroth did not appear in any
+run (swapped in on the Sandy Plains or Moga Woods, or natively in quest 1010
+"Bug Hunt"); its actions were fuzz-checked on an Aptonoth's work instead
+(`MH3_PORT_CHECK=...,A:0xADDR:27`: original and port run the same calls on
+the same state, so the compare holds for any kind's work). Kind 40 (the
+arena helper, and Uragaan's bouncing rock) is in every arena.
 
 ## The sweep
 

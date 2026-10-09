@@ -415,8 +415,10 @@ Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t mon
     MH3_RETURN_IF_ERROR(Entry(edited, id, at));
     const uint32_t tables = at + kTables + 12 <= edited.size() ? Word(edited, at + kTables) : 0;
     unsigned replaced = 0;
+    std::string where, kinds; // "table:kind,kind,..." of the tables (one per area) that had small spawns
 
     for (uint32_t t = 0; t < tables && t < 64; ++t) {
+        const unsigned before = replaced;
         const size_t pair = at + kTables + 12 + 8 * t;
 
         if (pair + 8 > edited.size())
@@ -442,13 +444,19 @@ Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t mon
             edited[spawn] = edited[spawn + 1] = edited[spawn + 2] = 0;
             edited[spawn + 3] = monster;
             ++replaced;
+            kinds += (kinds.empty() ? "" : ",") + std::to_string(old);
         }
+
+        if (replaced > before)
+            where += " " + std::to_string(t) + ":" + kinds;
+
+        kinds.clear();
     }
 
     if (!replaced)
         return Status::Error("The quest has no small monster to replace");
 
-    std::fprintf(stderr, "MH3 quest %u: %u small monster spawns made %u\n", unsigned(id), replaced, unsigned(monster));
+    std::fprintf(stderr, "MH3 quest %u: %u small monster spawns made %u (table:kinds%s)\n", unsigned(id), replaced, unsigned(monster), where.c_str());
     disc.SetFileOverride(QuestPath(set), std::move(edited));
     return {};
 }
