@@ -162,9 +162,13 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
         verify(0, boot);
         verify(uint64_t(Word(boot, 0x424)) * 4, fst);
     } else if (packed) throw std::runtime_error("Packed disc requires partition.bin");
-    const auto mapPath = root / "native-texture-map.bin";
+    // A development deployment can select a complete versioned native asset
+    // set without replacing the preserved disc or another processed generation.
+    const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
+    const auto assetRoot = nativeRoot ? std::filesystem::path(nativeRoot) : root;
+    const auto mapPath = assetRoot / "native-texture-map.bin";
     if (applyNativeTextures && Exists(mapPath)) {
-        if (!Exists(root / "native-textures.bin")) throw std::runtime_error("Native texture map requires its payload pack");
+        if (!Exists(assetRoot / "native-textures.bin")) throw std::runtime_error("Native texture map requires its payload pack");
         const auto map = Load(mapPath);
         const auto little32 = [&](size_t at) {
             return uint32_t(map[at]) | uint32_t(map[at + 1]) << 8 | uint32_t(map[at + 2]) << 16 | uint32_t(map[at + 3]) << 24;

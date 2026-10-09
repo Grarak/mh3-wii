@@ -177,7 +177,8 @@ void InitializeGraphics(int argc, char** argv,bool loadNativeAssets=true) {
     initialized = true;
     std::atexit(ShutdownGraphics);
     const char* discRoot = std::getenv("MH3_DISC_DIR");
-    const auto nativePack = std::filesystem::path(discRoot ? discRoot :
+    const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
+    const auto nativePack = std::filesystem::path(nativeRoot ? nativeRoot : discRoot ? discRoot :
 #ifdef __vita__
         "ux0:/data/mh3-wii"
 #else
@@ -185,7 +186,7 @@ void InitializeGraphics(int argc, char** argv,bool loadNativeAssets=true) {
 #endif
     ) / "native-textures.bin";
     if (loadNativeAssets && std::filesystem::exists(nativePack)) aurora::gl::open_native_texture_pack(nativePack.string().c_str());
-    if (loadNativeAssets) LoadNativeModelAssets(discRoot);
+    if (loadNativeAssets) LoadNativeModelAssets(nativeRoot ? nativeRoot : discRoot);
 #ifdef MH3_DEVELOPMENT
     // MH3_RENDER_SCALE=n: render the EFB at n times the native resolution,
     // whatever the window size (captures are at that size).
