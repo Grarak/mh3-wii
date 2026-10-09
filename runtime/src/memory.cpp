@@ -9,6 +9,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <sstream>
+#ifdef MH3_DEVELOPMENT
+#include "slow_path_trace.h"
+#endif
 
 extern "C" void DumpHostStackTraceForRuntimeHelper();
 
@@ -156,28 +159,37 @@ bool ResolveDeferredReads(uint32_t, size_t) { return false; }
 #else
 #define WATCH(a, size, bits)
 #endif
+#ifdef MH3_DEVELOPMENT
+// MH3_SLOW_PATH_TRACE=file: every slow-path access is recorded against the
+// translated function it returns to.
+#define HWTRACE(a, size, isWrite) \
+    if (g_slowPathTrace) [[unlikely]] RecordSlowPathAccess(a, size, isWrite, __builtin_return_address(0));
+#else
+#define HWTRACE(a, size, isWrite)
+#endif
 #define SCALAR(bits, type) \
-type Read##bits##Slow(uint32_t a) { return read<type>(a); } \
-void Write##bits##Slow(uint32_t a, type v) { WATCH(a, sizeof(type), v) write(a, v); }
+type Read##bits##Slow(uint32_t a) { HWTRACE(a, sizeof(type), false) return read<type>(a); } \
+void Write##bits##Slow(uint32_t a, type v) { WATCH(a, sizeof(type), v) HWTRACE(a, sizeof(type), true) write(a, v); }
 SCALAR(8, uint8_t)
 SCALAR(16, uint16_t)
 SCALAR(32, uint32_t)
 SCALAR(64, uint64_t)
 #undef SCALAR
-float ReadFloat32Slow(uint32_t a) { auto bits = read<uint32_t>(a); float v; std::memcpy(&v, &bits, 4); return v; }
-double ReadFloat64Slow(uint32_t a) { auto bits = read<uint64_t>(a); double v; std::memcpy(&v, &bits, 8); return v; }
+float ReadFloat32Slow(uint32_t a) { HWTRACE(a, 4, false) auto bits = read<uint32_t>(a); float v; std::memcpy(&v, &bits, 4); return v; }
+double ReadFloat64Slow(uint32_t a) { HWTRACE(a, 8, false) auto bits = read<uint64_t>(a); double v; std::memcpy(&v, &bits, 8); return v; }
 void WriteFloat32Slow(uint32_t a, double v) {
     WATCH(a, 4, ConvertPpcDoubleToSingleBits(v))
+    HWTRACE(a, 4, true)
     write(a, ConvertPpcDoubleToSingleBits(v));
 }
 void WriteFloat64Slow(uint32_t a, double v) {
     uint64_t bits; std::memcpy(&bits, &v, 8);
     WATCH(a, 8, bits)
+    HWTRACE(a, 8, true)
     write(a, bits);
 }
-#undef WATCH
-template<class T> T ReadResolvedFallback(uint32_t a) { return read<T>(a); }
-template<class T> void WriteResolvedFallback(uint32_t a, T v) { write(a, v); }
+template<class T> T ReadResolvedFallback(uint32_t a) { HWTRACE(a, sizeof(T), false) return read<T>(a); }
+template<class T> void WriteResolvedFallback(uint32_t a, T v) { HWTRACE(a, sizeof(T), true) write(a, v); }
 #define INSTANTIATE(type) \
 template type ReadResolvedFallback<type>(uint32_t); \
 template void WriteResolvedFallback<type>(uint32_t, type);
@@ -186,10 +198,24 @@ INSTANTIATE(uint16_t)
 INSTANTIATE(uint32_t)
 INSTANTIATE(uint64_t)
 #undef INSTANTIATE
-float ReadResolvedFallbackFloat32(uint32_t a) { return Memory::ReadFloat32(a); }
-double ReadResolvedFallbackFloat64(uint32_t a) { return Memory::ReadFloat64(a); }
-void WriteResolvedFallbackFloat32(uint32_t a, double v) { Memory::WriteFloat32(a, v); }
-void WriteResolvedFallbackFloat64(uint32_t a, double v) { Memory::WriteFloat64(a, v); }
+// Same results as Memory::ReadFloat32 and friends, spelled out so the trace
+// sees the translated caller rather than this fallback.
+float ReadResolvedFallbackFloat32(uint32_t a) { HWTRACE(a, 4, false) auto bits = read<uint32_t>(a); float v; std::memcpy(&v, &bits, 4); return v; }
+double ReadResolvedFallbackFloat64(uint32_t a) { HWTRACE(a, 8, false) auto bits = read<uint64_t>(a); double v; std::memcpy(&v, &bits, 8); return v; }
+void WriteResolvedFallbackFloat32(uint32_t a, double v) {
+    const uint32_t bits = ConvertPpcDoubleToSingleBits(v);
+    WATCH(a, 4, bits)
+    HWTRACE(a, 4, true)
+    write(a, bits);
+}
+void WriteResolvedFallbackFloat64(uint32_t a, double v) {
+    uint64_t bits; std::memcpy(&bits, &v, 8);
+    WATCH(a, 8, bits)
+    HWTRACE(a, 8, true)
+    write(a, bits);
+}
+#undef WATCH
+#undef HWTRACE
 }
 
 // FIFO scalar writes preserve the guest's big-endian command encoding.

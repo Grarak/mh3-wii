@@ -87,6 +87,7 @@ endif()
 
 if(MH3_DEVELOPMENT)
   target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest
+  target_sources(MH3 PRIVATE src/slow_path_trace.cpp) # MH3_SLOW_PATH_TRACE
 endif()
 
 # MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it
