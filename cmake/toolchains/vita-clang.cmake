@@ -75,10 +75,9 @@ set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES
 # -Wl,-q keeps the relocations, without which vita-elf-create cannot convert the result.
 #
 # thread_local uses emulated TLS (__emutls_get_address from libgcc), as the SDK's prebuilt
-# libraries do. The runtime has no thread_local of its own; the only one linked is a debug-only
-# counter in Abseil's hash tables (Aurora's containers), which release builds never touch. Native
-# module TLS would need the patched vita-elf-create's TLS template; the stock one rejects
-# R_ARM_TLS_LE32.
+# libraries do. Neither the runtime nor Aurora declares a thread_local, so the executable links
+# no TLS variable and no __emutls_get_address. Native module TLS would need the patched
+# vita-elf-create's TLS template; the stock one rejects R_ARM_TLS_LE32.
 #
 # The architecture options are repeated in the top-level CMakeLists through
 # add_compile_options, which is a directory property and therefore survives a subproject that

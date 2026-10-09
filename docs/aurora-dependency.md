@@ -25,7 +25,8 @@ quirks of some toolchains. Common libraries (SDL3, fmt, PNG, zlib, zstd, ImGui,
 SQLite and xxHash) come from Aurora's CMake providers: installed packages or
 pinned downloads into `build/aurora-<arch>/_deps`. A first build may need
 network access. For arm32 they build inside the `mh3-armhf-cross` Docker image
-against Debian's armhf packages.
+against Debian's armhf packages. Aurora's hash containers are the runtime's
+`FastMap`/`FastSet` (`aurora-main/include/aurora/fast_map.h`).
 
 The translator and its notices are under `toolchain/`.
 `runtime/assets/dsp/dsp_coef.bin` is the free Dolphin DSP coefficient table,
