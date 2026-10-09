@@ -1,0 +1,5 @@
+// Explicit LOD/coordinate utility for validating native sampling semantics.
+float4 main(uniform sampler2D source : TEXUNIT0, uniform float4 lookup) : COLOR0
+{
+    return tex2Dlod<float4>(source, lookup);
+}

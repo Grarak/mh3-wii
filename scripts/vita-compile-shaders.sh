@@ -10,13 +10,14 @@ task_embed_dir=$(realpath -m "$2")
 task_repo_dir=$(cd "$(dirname "$0")/.." && pwd)
 task_sony_tools=${VITA_SONY_HOST_TOOLS:-/path/to/psp2-sdk/host_tools}
 cp "$task_repo_dir"/aurora-main/lib/gxm/utility/*.cg "$task_cg_dir/"
+python3 "$task_repo_dir/scripts/vita-shaders.py" "$task_cg_dir" "$task_cg_dir" --scalar
 docker run --rm -v "$task_sony_tools:/sdk:ro" -v "$task_cg_dir:/shaders" \
   -e WINEDEBUG=-all psp2cgc-wine bash -c '
     status=0
     for source in /shaders/*.cg; do
       binary=${source%.cg}.gxp
       if [ -f "$binary" ] && [ "$binary" -nt "$source" ]; then continue; fi
-      case "$source" in *_v.cg) profile=sce_vp_psp2;; *_f.cg) profile=sce_fp_psp2;; *) exit 2;; esac
+      case "$source" in *_v.cg) profile=sce_vp_psp2;; *_f.cg|*_r.cg) profile=sce_fp_psp2;; *) exit 2;; esac
       if ! wine /sdk/bin/psp2cgc.exe -profile "$profile" "$source" -o "$binary"; then
         echo "FAILED: $source" >&2
         status=1

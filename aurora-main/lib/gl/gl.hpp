@@ -20,6 +20,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "../gfx/format.hpp"
 
 struct SDL_Window;
 
@@ -49,16 +50,6 @@ void call(Task task) noexcept;
 // Wait until every task posted so far has run and the GPU has finished it.
 void finish() noexcept;
 bool on_render_thread() noexcept;
-
-enum class Format : uint8_t {
-  RGBA8,
-  R8,
-  RG8,
-  R16I,
-  R32F,
-  R32UI,
-  Depth32F,
-};
 
 struct FormatInfo {
   GLenum internalFormat;

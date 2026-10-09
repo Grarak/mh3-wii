@@ -10,6 +10,8 @@ struct ShaderBinary {
 };
 extern const ShaderBinary VertexShaders[];
 extern const ShaderBinary FragmentShaders[];
+extern const ShaderBinary FragmentScalarShaders[];
 extern const size_t VertexShaderCount;
 extern const size_t FragmentShaderCount;
+extern const size_t FragmentScalarShaderCount;
 }

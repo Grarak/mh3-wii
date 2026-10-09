@@ -12,6 +12,7 @@ namespace aurora::gxm {
 void check(int result, const char* operation);
 const SceGxmProgram* vertex_binary(uint64_t hash);
 const SceGxmProgram* fragment_binary(uint64_t hash);
+const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
 // to the render thread. The display callback is pinned to worker core 0.
@@ -57,19 +58,24 @@ public:
   ~PatchedProgram();
   PatchedProgram(const PatchedProgram&) = delete;
   PatchedProgram& operator=(const PatchedProgram&) = delete;
-  void bind(const SceGxmBlendInfo& blend);
+  void bind(const SceGxmBlendInfo& blend,
+            SceGxmOutputRegisterFormat output = SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4);
   void set_vertex_uniform(const char* name, const float* values, unsigned count);
   void set_fragment_uniform(const char* name, const float* values, unsigned count);
-  bool uses_discard() const noexcept { return sceGxmProgramIsDiscardUsed(m_fragmentBinary); }
-  bool replaces_depth() const noexcept { return sceGxmProgramIsDepthReplaceUsed(m_fragmentBinary); }
+  bool uses_discard() const noexcept { return sceGxmProgramIsDiscardUsed(m_boundFragmentBinary ? m_boundFragmentBinary : m_fragmentBinary); }
+  bool replaces_depth() const noexcept { return sceGxmProgramIsDepthReplaceUsed(m_boundFragmentBinary ? m_boundFragmentBinary : m_fragmentBinary); }
 
 private:
   Device& m_device;
   const SceGxmProgram* m_vertexBinary;
   const SceGxmProgram* m_fragmentBinary;
+  const SceGxmProgram* m_boundFragmentBinary = nullptr;
+  const SceGxmProgram* m_scalarFragmentBinary = nullptr;
+  uint64_t m_fragmentHash;
   SceGxmShaderPatcherId m_vertexId = nullptr, m_fragmentId = nullptr;
+  SceGxmShaderPatcherId m_scalarFragmentId = nullptr;
   SceGxmVertexProgram* m_vertex = nullptr;
-  std::map<uint32_t, SceGxmFragmentProgram*> m_fragments;
+  std::map<uint64_t, SceGxmFragmentProgram*> m_fragments;
   void* m_vertexDefault = nullptr;
   void* m_fragmentDefault = nullptr;
   void release() noexcept;

@@ -54,6 +54,9 @@ const SceGxmProgram* vertex_binary(uint64_t hash) {
 const SceGxmProgram* fragment_binary(uint64_t hash) {
   return find_binary(FragmentShaders, FragmentShaderCount, hash, "fragment");
 }
+const SceGxmProgram* fragment_scalar_binary(uint64_t hash) {
+  return find_binary(FragmentScalarShaders, FragmentScalarShaderCount, hash, "scalar fragment");
+}
 
 Device::Device(bool vsync) : m_vsync(vsync) {
   try {
@@ -178,7 +181,8 @@ void Device::flip() {
 
 PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,
                                SceGxmIndexFormat indices)
-    : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)) {
+    : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)),
+      m_fragmentHash(fragmentHash) {
   try {
     check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
     check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
@@ -208,15 +212,29 @@ void PatchedProgram::release() noexcept {
   for (auto [key, program] : m_fragments) sceGxmShaderPatcherReleaseFragmentProgram(m_device.patcher(), program);
   if (m_vertex) sceGxmShaderPatcherReleaseVertexProgram(m_device.patcher(), m_vertex);
   if (m_fragmentId) sceGxmShaderPatcherUnregisterProgram(m_device.patcher(), m_fragmentId);
+  if (m_scalarFragmentId) sceGxmShaderPatcherUnregisterProgram(m_device.patcher(), m_scalarFragmentId);
   if (m_vertexId) sceGxmShaderPatcherUnregisterProgram(m_device.patcher(), m_vertexId);
 }
-void PatchedProgram::bind(const SceGxmBlendInfo& blend) {
-  uint32_t key; std::memcpy(&key, &blend, sizeof(key));
+void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterFormat output) {
+  const bool scalar = output == SCE_GXM_OUTPUT_REGISTER_FORMAT_FLOAT;
+  if (scalar && (blend.colorFunc != SCE_GXM_BLEND_FUNC_NONE || !(blend.colorMask & SCE_GXM_COLOR_MASK_R)))
+    throw std::runtime_error("Scalar F32 target requires an unblended red-channel write");
+  if (scalar && !m_scalarFragmentId) {
+    m_scalarFragmentBinary = fragment_scalar_binary(m_fragmentHash);
+    check(sceGxmProgramCheck(m_scalarFragmentBinary), "check scalar fragment binary");
+    check(sceGxmShaderPatcherRegisterProgram(m_device.patcher(), m_scalarFragmentBinary, &m_scalarFragmentId), "register scalar fragment binary");
+  }
+  m_boundFragmentBinary = scalar ? m_scalarFragmentBinary : m_fragmentBinary;
+  uint32_t blendKey; std::memcpy(&blendKey, &blend, sizeof(blendKey));
+  const uint64_t key = uint64_t(blendKey) | (uint64_t(output) << 32);
   auto found = m_fragments.find(key);
   if (found == m_fragments.end()) {
     SceGxmFragmentProgram* fragment = nullptr;
-    check(sceGxmShaderPatcherCreateFragmentProgram(m_device.patcher(), m_fragmentId,
-        SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, &blend, m_vertexBinary, &fragment), "patch fragment program");
+    // Explicit scalar output cannot use the runtime half4 conversion/blend
+    // patch. F32 surfaces have only R, so an unblended R write needs no mask.
+    check(sceGxmShaderPatcherCreateFragmentProgram(m_device.patcher(), scalar ? m_scalarFragmentId : m_fragmentId,
+        scalar ? SCE_GXM_OUTPUT_REGISTER_FORMAT_DECLARED : output,
+        SCE_GXM_MULTISAMPLE_NONE, scalar ? nullptr : &blend, m_vertexBinary, &fragment), "patch fragment program");
     found = m_fragments.emplace(key, fragment).first;
   }
   sceGxmSetVertexProgram(m_device.context(), m_vertex);
@@ -231,7 +249,7 @@ void PatchedProgram::set_vertex_uniform(const char* name, const float* values, u
   check(sceGxmSetUniformDataF(m_vertexDefault, parameter, 0, count, values), "set vertex default");
 }
 void PatchedProgram::set_fragment_uniform(const char* name, const float* values, unsigned count) {
-  const auto* parameter = sceGxmProgramFindParameterByName(m_fragmentBinary, name);
+  const auto* parameter = sceGxmProgramFindParameterByName(m_boundFragmentBinary, name);
   if (!parameter) return;
   if (!m_fragmentDefault) check(sceGxmReserveFragmentDefaultUniformBuffer(m_device.context(), &m_fragmentDefault), "reserve fragment defaults");
   check(sceGxmSetUniformDataF(m_fragmentDefault, parameter, 0, count, values), "set fragment default");

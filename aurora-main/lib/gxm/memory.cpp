@@ -15,10 +15,11 @@ size_t aligned(size_t bytes, size_t alignment) {
 }
 
 MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(kind) {
-  m_size = aligned(bytes, kind == Kind::Cdram ? 0x40000 : 0x1000);
+  m_size = aligned(bytes, kind == Kind::Cdram ? 0x40000 : kind == Kind::Phycont ? 0x100000 : 0x1000);
   if (m_size == 0) throw std::bad_alloc();
   auto type = kind == Kind::Cdram ? SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW
-                               : SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE;
+            : kind == Kind::Phycont ? SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW
+                                   : SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE;
   m_block = sceKernelAllocMemBlock(name, type, m_size, nullptr);
   if (m_block < 0) {
     char message[180];
@@ -66,10 +67,11 @@ void MappedMemory::release() noexcept {
   m_size = 0;
 }
 
-CdramArena::CdramArena(size_t bytes) : m_memory(bytes, MappedMemory::Kind::Cdram, "Aurora texture arena") {
+MappedArena::MappedArena(size_t bytes, MappedMemory::Kind kind)
+    : m_memory(bytes, kind, kind == MappedMemory::Kind::Cdram ? "Aurora CDRAM arena" : "Aurora spill arena") {
   m_free.emplace(0, m_memory.size());
 }
-void* CdramArena::allocate(size_t bytes) {
+void* MappedArena::allocate(size_t bytes) {
   if (bytes == 0) return nullptr;
   bytes = aligned(bytes, 64);
   std::lock_guard lock(m_mutex);
@@ -85,7 +87,7 @@ void* CdramArena::allocate(size_t bytes) {
   m_highWater = std::max(m_highWater, m_used);
   return static_cast<char*>(m_memory.data()) + offset;
 }
-void CdramArena::free(void* pointer, size_t bytes) noexcept {
+void MappedArena::free(void* pointer, size_t bytes) noexcept {
   if (!pointer || bytes == 0) return;
   bytes = (bytes + 63) & ~size_t(63);
   size_t offset = static_cast<char*>(pointer) - static_cast<char*>(m_memory.data());
@@ -106,6 +108,6 @@ void CdramArena::free(void* pointer, size_t bytes) noexcept {
   }
   m_free.emplace(offset, bytes);
 }
-size_t CdramArena::used() const noexcept { std::lock_guard lock(m_mutex); return m_used; }
-size_t CdramArena::high_water() const noexcept { std::lock_guard lock(m_mutex); return m_highWater; }
+size_t MappedArena::used() const noexcept { std::lock_guard lock(m_mutex); return m_used; }
+size_t MappedArena::high_water() const noexcept { std::lock_guard lock(m_mutex); return m_highWater; }
 }

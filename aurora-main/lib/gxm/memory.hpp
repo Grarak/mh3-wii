@@ -11,7 +11,7 @@ namespace aurora::gxm {
 // memory alive until its last scene has completed; recycling is a renderer action.
 class MappedMemory {
 public:
-  enum class Kind { Draw, Cdram, VertexUsse, FragmentUsse };
+  enum class Kind { Draw, Cdram, Phycont, VertexUsse, FragmentUsse };
   MappedMemory() = default;
   MappedMemory(size_t bytes, Kind kind, const char* name);
   ~MappedMemory();
@@ -35,9 +35,9 @@ private:
 // One large CDRAM memblock avoids the 256 KiB per-block allocation rounding
 // for thousands of small textures. Suballocations satisfy GXM's 64-byte base
 // alignment; callers account for row and mip layout before allocating.
-class CdramArena {
+class MappedArena {
 public:
-  explicit CdramArena(size_t bytes);
+  explicit MappedArena(size_t bytes, MappedMemory::Kind kind = MappedMemory::Kind::Cdram);
   void* allocate(size_t bytes);
   void free(void* pointer, size_t bytes) noexcept;
   size_t used() const noexcept;
@@ -51,4 +51,5 @@ private:
   size_t m_used = 0;
   size_t m_highWater = 0;
 };
+using CdramArena = MappedArena;
 }

@@ -1,0 +1,6 @@
+// Preserve integer palette indices and full F32 depth through texture reads.
+float4 main(float2 uv : TEXCOORD0, uniform sampler2D source : TEXUNIT0) : COLOR
+{
+    float value = tex2Dlod<float>(source, float4(uv, 0.0, 0.0));
+    return float4(value, 0.0, 0.0, 1.0);
+}
