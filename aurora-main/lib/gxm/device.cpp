@@ -17,6 +17,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <set>
 
 // These firmware exports are in the SDK stub library but absent from its header.
 extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSurface*, SceBool);
@@ -29,6 +30,22 @@ std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
 std::atomic<uint64_t> g_displayWaitMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 bool g_commonDialogActive = false;
+// Compare the actual on-device compiler ABI with the offline compiler while
+// diagnosing shaded programs. Reflection is cold, once per binary, and opt-in.
+void trace_shader_abi(const SceGxmProgram* program, uint64_t hash, char stage) {
+  if (!std::getenv("MH3_GXM_SHADER_ABI_TRACE"))
+    return;
+  static std::set<const SceGxmProgram*> traced;
+  if (!traced.insert(program).second)
+    return;
+  for (unsigned i = 0, total = sceGxmProgramGetParameterCount(program); i < total; ++i) {
+    const auto* p = sceGxmProgramGetParameter(program, i);
+    std::fprintf(stderr, "MH3 GXM ABI %016llx_%c: %s category=%u type=%u components=%u array=%u buffer=%u resource=%u\n",
+                 static_cast<unsigned long long>(hash), stage, sceGxmProgramParameterGetName(p), unsigned(sceGxmProgramParameterGetCategory(p)),
+                 unsigned(sceGxmProgramParameterGetType(p)), sceGxmProgramParameterGetComponentCount(p), sceGxmProgramParameterGetArraySize(p),
+                 sceGxmProgramParameterGetContainerIndex(p), sceGxmProgramParameterGetResourceIndex(p));
+  }
+}
 struct DisplayData {
   void* address;
 };
@@ -324,6 +341,8 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
   try {
     check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
     check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
+    trace_shader_abi(m_vertexBinary, vertexHash, 'v');
+    trace_shader_abi(m_fragmentBinary, fragmentHash, 'f');
     check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
     check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
     SceGxmVertexAttribute attributes[16]{};

@@ -233,6 +233,16 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
     write_text(base.string() + ".version", cacheVersion);
   } else
     std::fprintf(stderr, "MH3 loaded cached GXM shader %s\n", id(hash, stage).c_str());
+  // Retain the actual runtime compiler output for offline ABI/USSE diagnosis.
+  // The normal cache stays on ux0; this opt-in mirror can use host0.
+  if (const char* dump = std::getenv("MH3_GXM_SHADER_DUMP"); dump && *dump) {
+    const std::filesystem::path directory(dump);
+    std::filesystem::create_directories(directory);
+    const auto captured = directory / id(hash, stage);
+    write_file(captured.string() + ".gxp", candidate.get(), size);
+    write_text(captured.string() + ".cg", cg);
+    write_text(captured.string() + ".origin.json", metadata);
+  }
   entry.binary = std::move(candidate);
   entry.bytes = size;
   s.residentBytes += size;
