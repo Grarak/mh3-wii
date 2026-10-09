@@ -16,6 +16,7 @@ extern "C" void MH3_EXIInit(CpuContext*);
 extern "C" void MH3_EXIGetID(CpuContext*);
 extern "C" void MH3_SIInit(CpuContext*);
 extern "C" void MH3_SISetXY(CpuContext*);
+extern "C" void MH3_SIGetType(CpuContext*);
 extern "C" void MH3_OSInitSram(CpuContext*);
 extern "C" void MH3_UnlockSram(CpuContext*);
 extern "C" void MH3_OSGetResetCode(CpuContext*);
@@ -45,6 +46,21 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    for (uint32_t channel = 0; channel < 4; ++channel) {
+        cpu->gpr[3] = channel;
+        Memory::Write32(0x8062A8B8 + channel * 4, 0x80);
+        MH3_SIGetType(cpu);
+        if (cpu->gpr[3] != 8 || Memory::Read32(0x8062A8B8 + channel * 4) != 8)
+            throw std::runtime_error("SI absent-device result/state failed");
+    }
+    // The locked cache is independent storage, including at its last byte.
+    Memory::Write32(0xE0000000, 0x12345678);
+    MemoryInline::FlatWriteRam32(0xE0003FFC, 0xABCDEF01);
+    if (Memory::Read32(0xE0000000) != 0x12345678 ||
+        Memory::Read32(0xE0003FFC) != 0xABCDEF01 ||
+        Memory::Contains(0xE0003FFC, 8) || Memory::Contains(0xE0004000, 1) ||
+        Memory::Contains(0x20000000, 4) || Memory::Contains(0xA0000000, 4))
+        throw std::runtime_error("Locked-cache mapping/bounds failed");
     if (Memory::Read16(0xCC002002) != 0x0101)
         throw std::runtime_error("VI initial PAL mode failed");
     Memory::Write16(0xCC002048, 0x2828);

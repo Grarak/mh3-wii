@@ -77,6 +77,17 @@ extern "C" void MH3_SIInit(CpuContext*) {
 }
 REGISTER_NATIVE_FUNCTION(0x804DE900, MH3_SIInit);
 
+// No physical GameCube SI devices are attached to this host. Keep the SDK's
+// cached type consistent so its original SIGetTypeAsync delivers callbacks
+// through its completed-query path (rather than waiting for an SI interrupt).
+extern "C" void MH3_SIGetType(CpuContext* cpu) {
+    const auto channel = cpu->gpr[3];
+    if (channel >= 4) throw std::runtime_error("SIGetType channel outside 0..3");
+    Memory::Write32(0x8062A8B8 + channel * 4, 8); // SI_ERROR_NO_RESPONSE
+    cpu->gpr[3] = 8;
+}
+REGISTER_NATIVE_FUNCTION(0x804DF360, MH3_SIGetType);
+
 // __OSInitSram. SRAM settings are a 64-byte big-endian image. Layout and
 // checksum are verified against MH3's unlock routine at 0x804D3550; see also
 // Dolphin's Source/Core/Core/HW/Sram.h for field descriptions.

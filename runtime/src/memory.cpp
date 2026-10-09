@@ -12,6 +12,9 @@ extern "C" void DumpHostStackTraceForRuntimeHelper();
 
 namespace {
 std::vector<uint8_t> mem1, mem2;
+// MH3's LCEnable allocates all 512 32-byte locked L1 lines here.
+// Keep this separate from MEM1/MEM2: masking this address as a RAM alias is wrong.
+std::array<uint8_t, 0x4000> lockedCache{};
 std::string accessMessage(uint32_t address, std::string_view reason) {
     std::ostringstream message;
     message << reason << " at guest 0x" << std::hex << address
@@ -19,6 +22,10 @@ std::string accessMessage(uint32_t address, std::string_view reason) {
     return message.str();
 }
 uint8_t* resolve(uint32_t address, size_t length) {
+    if (address >= 0xE0000000 && address < 0xE0004000) {
+        const auto offset = address - 0xE0000000;
+        return length <= lockedCache.size() - offset ? lockedCache.data() + offset : nullptr;
+    }
     uint32_t physical = address & 0x3FFFFFFF;
     // Only the hardware's physical, cached and uncached RAM aliases.
     if ((address >> 30) == 1) return nullptr;
@@ -70,6 +77,7 @@ void Memory::Init(size_t size) {
     ResetGxRegisters();
     mem1.assign(size, 0);
     mem2.assign(64 * 1024 * 1024, 0);
+    lockedCache.fill(0);
     for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
         auto* pointer = resolve(i << MemoryInline::kPageShift, MemoryInline::kPageSize);
         MemoryInline::g_pageTable[i] = {pointer, pointer ? MemoryInline::kPageSize : 0};
