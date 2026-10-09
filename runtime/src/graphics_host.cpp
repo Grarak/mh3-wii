@@ -87,6 +87,7 @@ struct FrameProfile {
     uint64_t minCopyNs = UINT64_MAX, maxCopyNs = 0, measuredCopies = 0;
     uint64_t lastCopies = 0, lastCommands = 0, lastArrays = 0, lastTextures = 0, lastDraws = 0;
     uint64_t lastTextureCopies = 0, lastEfbSnapshots = 0, lastEfbPeeks = 0;
+    uint64_t lastTextureHashes = 0, lastTextureInvalidates = 0;
     uint64_t lastTextureCopyNs = 0, lastEfbSnapshotNs = 0;
     Clock::time_point started = Clock::now();
     Clock::time_point previousCopy{};
@@ -422,7 +423,7 @@ void CompleteHostGraphics() {
                 "%.2f..%.2f ms copy interval, "
                 "%llu GX commands/copy, %llu draws/copy, %llu arrays/copy, %llu textures/copy, "
                 "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy; "
-                "last frame %u host draws + %u merged into them\n",
+                "last frame %u host draws + %u merged into them; %.1f texture hashes/copy, %.1f TMEM invalidations/copy\n",
                 static_cast<unsigned long long>(frames), wallMs, cpuMs, profile.completionNs / 1e6 / frames,
                 profile.workerNs / 1e6 / frames, profile.gpuNs / 1e6 / frames,
                 profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
@@ -435,7 +436,11 @@ void CompleteHostGraphics() {
                 static_cast<unsigned long long>((guestEfbSnapshots - profile.lastEfbSnapshots) / frames),
                 (guestEfbSnapshotNs - profile.lastEfbSnapshotNs) / 1e6 / frames,
                 static_cast<unsigned long long>((guestEfbPeeks - profile.lastEfbPeeks) / frames),
-                aurora_get_stats()->drawCallCount, aurora_get_stats()->mergedDrawCallCount);
+                aurora_get_stats()->drawCallCount, aurora_get_stats()->mergedDrawCallCount,
+                double(GuestGxStream::textureHashCount - profile.lastTextureHashes) / frames,
+                double(GuestGxStream::textureInvalidateCount - profile.lastTextureInvalidates) / frames);
+            profile.lastTextureHashes = GuestGxStream::textureHashCount;
+            profile.lastTextureInvalidates = GuestGxStream::textureInvalidateCount;
             profile.lastCopies = guestCopies;
             profile.lastCommands = GuestGxStream::commandCount;
             profile.lastArrays = guestArrays;

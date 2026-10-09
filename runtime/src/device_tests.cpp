@@ -536,6 +536,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     }
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
         GuestGxStream textureStream;
+        GuestGxStream::InvalidateTextureHashes(); // the hashes are process-wide
         std::vector<uint8_t> metadata;
         std::vector<uint8_t> textureBytes(bytes);
         auto textureSink = [&](std::span<const uint8_t> packet) {
@@ -578,6 +579,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
                 throw std::runtime_error("Unchanged GX texture lost its cache identity");
             textureBytes[0] ^= 0xFF;
+            // Unchanged until the texture cache is invalidated (TMEM keeps it).
+            textureStream.Write(repeat, textureSink, resolve);
+            draw();
+            if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
+                throw std::runtime_error("GX texture was hashed again before an invalidation");
+            bpWrite(0x66, 0xFFFF00); // GXInvalidateTexAll
             textureStream.Write(repeat, textureSink, resolve);
             draw();
             if (std::equal(version.begin(), version.end(), metadata.begin() + 33))

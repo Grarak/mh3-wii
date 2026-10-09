@@ -30,6 +30,9 @@ public:
     bool coalesce = true;
     // Commands and draws framed, display lists included.
     inline static uint64_t commandCount = 0, drawCount = 0;
+    // Textures hashed, and clears of the hashes kept until an invalidation.
+    inline static uint64_t textureHashCount = 0, textureInvalidateCount = 0;
+    static void InvalidateTextureHashes();
     size_t PendingBytes() const { return pending.size(); }
 private:
     std::vector<uint8_t> pending;

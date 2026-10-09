@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <unordered_map>
 #ifdef MH3_HAS_AURORA
 #include <xxhash.h>
 #endif
@@ -23,6 +24,30 @@ uint32_t TextureContentsVersion(const void* data, size_t size) {
 #endif
     return uint32_t(digest) ^ uint32_t(digest >> 32);
 }
+
+// Hashes of the textures loaded since the last invalidation, by host address.
+// GX reads texture memory through TMEM, which keeps what it loaded until the
+// game invalidates it (GXInvalidateTexAll/Region, BP 0x66): a texture drawn
+// again before that needs no new hash. EFB texture copies and each frame's
+// display copy also clear it, so a CPU change shows at the latest one frame on.
+std::unordered_map<uintptr_t, std::pair<uint32_t, uint32_t>>& TextureHashes() {
+    static std::unordered_map<uintptr_t, std::pair<uint32_t, uint32_t>> hashes;
+    return hashes;
+}
+uint32_t CachedTextureVersion(uintptr_t address, uint32_t size) {
+    auto& entry = TextureHashes()[address];
+    if (entry.first != size) {
+        entry = {size, TextureContentsVersion(reinterpret_cast<const void*>(address), size)};
+        ++GuestGxStream::textureHashCount;
+    }
+    return entry.second;
+}
+}
+
+void GuestGxStream::InvalidateTextureHashes() {
+    if (TextureHashes().empty()) return;
+    TextureHashes().clear();
+    ++textureInvalidateCount;
 }
 
 std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned format) const {
@@ -172,7 +197,7 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
     EfbCopyTrace::BeginHostRead(view.address, needed);
 #endif
-    put(29, guest); put(33, TextureContentsVersion(reinterpret_cast<const void*>(view.address), needed));
+    put(29, guest); put(33, CachedTextureVersion(view.address, needed));
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
     EfbCopyTrace::EndHostRead();
 #endif
@@ -382,6 +407,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 bpMask = 0xFFFFFF;
             }
             if (reg == 0x65) LoadPalette(resolver);
+            if (reg == 0x66) InvalidateTextureHashes();
             const unsigned bank = reg >= 0xA0 ? 0xA0 : 0x80;
             const unsigned group = (reg - bank) & ~3u;
             if (reg >= bank && reg < bank + 28 && (group == 0 || group == 4 || group == 8 || group == 20 || group == 24)) {
@@ -418,6 +444,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                         throw std::runtime_error("GX texture copy exceeds guest RAM");
                     run.at = offset + length; // the copy follows the commands before it
                     run.Flush();
+                    InvalidateTextureHashes();
                     textureCopy({view.address, bp[0x4B] << 5,
                                  rowBytes * ((height + tileHeight - 1) / tileHeight), bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
                                  sourceWidth, sourceHeight, width, height, format, halfScale, (trigger & 0x800) != 0});
@@ -441,6 +468,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                     throw std::runtime_error("GX display copy exceeds guest framebuffer RAM");
                 run.at = offset + length;
                 run.Flush();
+                InvalidateTextureHashes();
                 copy({view.address, width, destinationHeight, (trigger & 0x800) != 0});
                 offset += length;
                 continue;
