@@ -1,7 +1,10 @@
 #include "runtime_shader.hpp"
 #include "shaders.hpp"
+#include "shader_cache_pack.hpp"
 #include "../gfx/cg_shader.hpp"
 #include <vitashark.h>
+#define XXH_INLINE_ALL
+#include <xxhash.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +35,8 @@ struct Store {
   std::map<Key, Entry> entries;
   size_t residentBytes = 0;
   bool compiler = false;
+  bool packLoaded = false;
+  shader_pack::Entries pack;
 };
 Store& store() {
   static Store value;
@@ -105,6 +110,25 @@ bool valid_program(const void* bytes, size_t size, RuntimeShaderStage stage) {
     return false;
   return sceGxmProgramGetType(program) == (stage == RuntimeShaderStage::Vertex ? SCE_GXM_VERTEX_PROGRAM : SCE_GXM_FRAGMENT_PROGRAM);
 }
+std::string pack_path() {
+  return std::string(Directory) + "/cache.pack";
+}
+void load_pack(Store& s) {
+  if (s.packLoaded)
+    return;
+  s.packLoaded = true;
+  const std::string bytes = read_text(pack_path(), 64u << 20);
+  s.pack = shader_pack::parse(bytes, uint32_t(RuntimeShaderStage::ScalarFragment), MaxProgramBytes);
+  std::fprintf(stderr, "MH3 GXM shader cache pack: %zu programs (%zu bytes)\n", s.pack.size(), bytes.size());
+}
+void append_pack(Key key, uint64_t source, const void* program, size_t size) {
+  const std::string record = shader_pack::encode(key.first, uint32_t(key.second), source, program, size);
+  FILE* file = std::fopen(pack_path().c_str(), "ab");
+  if (!file)
+    return;
+  std::fwrite(record.data(), 1, record.size(), file);
+  std::fclose(file);
+}
 void compiler_log(const char* message, shark_log_level level, int line) {
   std::fprintf(stderr, "MH3 shader compiler [%d:%d] %s\n", int(level), line, message);
 }
@@ -168,38 +192,53 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
   std::string cg = entry.cg ? entry.source : gfx::cg::convert(entry.source, stage == RuntimeShaderStage::Vertex ? gfx::cg::Stage::Vertex : gfx::cg::Stage::Fragment);
   if (stage == RuntimeShaderStage::ScalarFragment)
     cg = gfx::cg::scalar_fragment(cg);
-  std::error_code error;
-  std::filesystem::create_directories(Directory, error);
-  if (error)
-    throw std::runtime_error("Cannot create ux0:/data/mh3-wii/shaders/");
   const auto base = std::filesystem::path(Directory) / id(hash, stage);
   const auto cgPath = base.string() + ".cg", binaryPath = base.string() + ".gxp";
   const std::string cacheVersion = std::string(CacheVersion) + "-translator" + std::to_string(gfx::cg::Version);
   const std::string metadata = "{\"cache_version\":" + json_string(cacheVersion) + ",\"stage\":" + json_string(std::string(1, suffix(stage))) + ",\"origin\":" + entry.origin + "}\n";
-  // Only a matching translator output/options cache can bypass compilation.
-  const bool matching = read_text(base.string() + ".version", 256) == cacheVersion && read_text(cgPath, MaxProgramBytes) == cg;
-  std::string cached = matching ? read_text(binaryPath, MaxProgramBytes) : std::string{};
-  if (cached.size() > MaxResidentBytes - s.residentBytes)
-    throw std::runtime_error("Runtime shader source/cache budget exhausted (16 MiB)");
+  const uint64_t sourceHash = XXH64(cg.data(), cg.size(), XXH64(cacheVersion.data(), cacheVersion.size(), 0));
   std::unique_ptr<void, decltype(&std::free)> candidate(nullptr, std::free);
-  if (!cached.empty()) {
-    candidate.reset(memalign(64, cached.size()));
+  const auto adopt = [&](const std::string& bytes) {
+    if (bytes.empty() || bytes.size() > MaxResidentBytes - s.residentBytes)
+      return false;
+    candidate.reset(memalign(64, bytes.size()));
     if (!candidate)
       throw std::bad_alloc();
-    std::memcpy(candidate.get(), cached.data(), cached.size());
-    if (!valid_program(candidate.get(), cached.size(), stage)) {
+    std::memcpy(candidate.get(), bytes.data(), bytes.size());
+    if (!valid_program(candidate.get(), bytes.size(), stage)) {
       candidate.reset();
-      cached.clear();
+      return false;
+    }
+    return true;
+  };
+  // The pack holds every program compiled or loaded since it was created.
+  load_pack(s);
+  size_t size = 0;
+  if (const auto packed = s.pack.find({key.first, uint32_t(key.second)}); packed != s.pack.end()) {
+    if (packed->second.first == sourceHash && adopt(packed->second.second))
+      size = packed->second.second.size();
+    s.pack.erase(packed);
+  }
+  if (!candidate) {
+    // Per-program files of earlier builds; a match joins the pack. Only a
+    // matching translator output/options cache can bypass compilation.
+    const bool matching = read_text(base.string() + ".version", 256) == cacheVersion && read_text(cgPath, MaxProgramBytes) == cg;
+    const std::string cached = matching ? read_text(binaryPath, MaxProgramBytes) : std::string{};
+    if (adopt(cached)) {
+      size = cached.size();
+      append_pack(key, sourceHash, candidate.get(), size);
     }
   }
-  // Invalidate the old transaction before publishing changed source. A failed
-  // compilation must never make an old GXP appear to match newly written Cg.
-  if (!candidate)
-    write_text(base.string() + ".version", "incomplete");
-  write_text(cgPath, cg);
-  write_text(base.string() + ".origin.json", metadata);
-  size_t size = cached.size();
   if (!candidate) {
+    std::error_code error;
+    std::filesystem::create_directories(Directory, error);
+    if (error)
+      throw std::runtime_error("Cannot create ux0:/data/mh3-wii/shaders/");
+    // Invalidate the old transaction before publishing changed source. A
+    // failed compilation must never make an old GXP appear to match new Cg.
+    write_text(base.string() + ".version", "incomplete");
+    write_text(cgPath, cg);
+    write_text(base.string() + ".origin.json", metadata);
     start_compiler(s);
     std::fprintf(stderr, "MH3 compiling missing GXM shader %s (%s)\n", id(hash, stage).c_str(), entry.origin.c_str());
     if (cg.size() > MaxProgramBytes)
@@ -231,6 +270,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
       throw std::runtime_error("Runtime GXM compiler returned invalid GXP; Cg/origin saved for " + id(hash, stage));
     write_file(binaryPath, candidate.get(), size);
     write_text(base.string() + ".version", cacheVersion);
+    append_pack(key, sourceHash, candidate.get(), size);
   } else
     std::fprintf(stderr, "MH3 loaded cached GXM shader %s\n", id(hash, stage).c_str());
   // Retain the actual runtime compiler output for offline ABI/USSE diagnosis.
