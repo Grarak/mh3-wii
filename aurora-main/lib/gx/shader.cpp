@@ -4,6 +4,7 @@
 #include "gx.hpp"
 #include "gx_fmt.hpp"
 #include "shader_info.hpp"
+#include "../gfx/native_mesh_layout.hpp"
 
 #include <dolphin/gx/GXEnum.h>
 
@@ -972,13 +973,27 @@ static std::string native_float_op(const TevOp& op,std::string_view a,std::strin
 }
 
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices,
-                                        u8 nativeZeroLodBiasMask,bool approximateNative) noexcept {
+                                        u8 nativeZeroLodBiasMask,bool approximateNative,const gl::MeshLayout* nativeMeshLayout,u8 nativeNonzeroProjectiveMask) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
   // All native materials use float combiners. The explicit switch exists only
   // for reference probes; material properties never trigger an exact fallback.
   const bool nativeFloat=nativeVertices && approximateNative;
+  const bool compact = nativeMeshLayout != nullptr;
+  if (compact) {
+    CHECK(nativeVertices && config.lineMode==0,"Compact models require native triangle equations");
+    gfx::validate_mesh_layout(*nativeMeshLayout);
+    CHECK(config.attrs[GX_VA_PNMTXIDX].attrType==GX_NONE,"Compact rigid mesh has a per-vertex matrix index");
+    for(unsigned i=0;i<8;++i) {
+      CHECK(config.attrs[GX_VA_TEX0MTXIDX+i].attrType==GX_NONE,"Compact rigid mesh has a texture matrix index");
+      if(!info.sampledTexCoords.test(i)) continue;
+      CHECK(config.tcgs[i].type==GX_TG_MTX2x4 || config.tcgs[i].type==GX_TG_MTX3x4 || config.tcgs[i].type==GX_TG_SRTG,
+            "Compact mesh requires a certified emboss texgen producer");
+      CHECK(config.tcgs[i].src!=GX_TG_BINRM && config.tcgs[i].src!=GX_TG_TANGENT,
+            "Compact mesh requires a certified tangent attribute producer");
+    }
+  }
 
   std::string uniformPre;
   std::string uniBufAttrs;
@@ -1048,6 +1063,19 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     }
   }
 
+  if (compact) {
+    vtxInAttrs.clear();
+    vtxXfrAttrsPre="\n    uint in_pnmtxidx = ubuf.current_pnmtx;";
+    for (const auto& attribute : nativeMeshLayout->attributes) {
+      const GXAttr attr=attribute.location==0?GX_VA_POS:attribute.location==1?GX_VA_NRM:
+                        attribute.location<4?GXAttr(GX_VA_CLR0+attribute.location-2):
+                                             GXAttr(GX_VA_TEX0+attribute.location-4);
+      CHECK(config.attrs[attr].attrType==GX_DIRECT,"Compact attribute differs from material configuration");
+      const auto name=std::string_view(gfx::MeshAttributeNames[attribute.location]).substr(2);
+      const auto swizzle=attribute.location<2?"xyz":attribute.location<4?"xyzw":"xy";
+      vtxXfrAttrsPre+=fmt::format("\n    {} {} = {}.{};",vtx_attr_type(attr),vtx_attr(config,attr),name,swizzle);
+    }
+  }
   if (config.lineMode == 0) {
     vtxXfrAttrsPre += fmt::format(
         "\n    vec3 mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
@@ -1097,7 +1125,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       "\n    vec3 nrm_tmp = vec4f({}, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];"
       "\n    vec3 mv_nrm = select(nrm_tmp, normalize(nrm_tmp), dot(nrm_tmp, nrm_tmp) > 1e-10);",
       vtx_attr(config, GX_VA_NRM));
-  if(nativeVertices) {
+  if(nativeVertices && !compact) {
     CHECK(config.lineMode==0,"Native geometry already expands lines and points");
     vtxInAttrs.clear();
     vtxXfrAttrsPre =
@@ -1266,17 +1294,20 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       continue;
     }
     const auto& tcg = config.tcgs[i];
+    const bool hardwareProjection=nativeVertices && (nativeNonzeroProjectiveMask & (1u<<i));
     if (tcg.type == GX_TG_MTX3x4) {
-      vtxOutAttrs += varying("vec3", fmt::format("tex{}_uvw", i));
+      vtxOutAttrs += varying(hardwareProjection?"vec4":"vec3", fmt::format("tex{}_uvw", i));
     } else {
       vtxOutAttrs += varying("vec2", fmt::format("tex{}_uv", i));
     }
-    if(nativeVertices) {
+    if(nativeVertices && !compact) {
       if(tcg.type==GX_TG_MTX3x4) {
-        vtxXfrAttrs+=fmt::format("\n    out.tex{0}_uvw = native_tex{0};",i);
+        vtxXfrAttrs+=hardwareProjection?
+          fmt::format("\n    out.tex{0}_uvw = vec4(native_tex{0}.xy, 0.0, native_tex{0}.z);",i):
+          fmt::format("\n    out.tex{0}_uvw = native_tex{0};",i);
         fragmentFnPre+=fmt::format(
           "\n    vec2 tex{0}_uv = in.tex{0}_uvw.xy;"
-          "\n    if(in.tex{0}_uvw.z != 0.0) tex{0}_uv /= in.tex{0}_uvw.z;",i);
+          "\n    if(in.tex{0}_uvw.{1} != 0.0) tex{0}_uv /= in.tex{0}_uvw.{1};",i,hardwareProjection?"w":"z");
       } else {
         vtxXfrAttrs+=fmt::format("\n    out.tex{0}_uv = native_tex{0}.xy;",i);
         fragmentFnPre+=fmt::format("\n    vec2 tex{0}_uv = in.tex{0}_uv;",i);
@@ -1363,13 +1394,15 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           i);
     }
     if (tcg.type == GX_TG_MTX3x4) {
-      vtxXfrAttrs += fmt::format("\n    out.tex{0}_uvw = tc{0}_proj.xyz;", i);
+      vtxXfrAttrs += hardwareProjection?
+          fmt::format("\n    out.tex{0}_uvw = vec4(tc{0}_proj.xy, 0.0, tc{0}_proj.z);",i):
+          fmt::format("\n    out.tex{0}_uvw = tc{0}_proj.xyz;", i);
       fragmentFnPre += fmt::format(
           "\n    vec2 tex{0}_uv = in.tex{0}_uvw.xy;"
-          "\n    if (in.tex{0}_uvw.z != 0.0) {{"
-          "\n      tex{0}_uv = in.tex{0}_uvw.xy / in.tex{0}_uvw.z;"
+          "\n    if (in.tex{0}_uvw.{1} != 0.0) {{"
+          "\n      tex{0}_uv = in.tex{0}_uvw.xy / in.tex{0}_uvw.{1};"
           "\n    }}",
-          i);
+          i,hardwareProjection?"w":"z");
     } else {
       vtxXfrAttrs += fmt::format("\n    out.tex{0}_uv = tc{0}_proj.xy;", i);
       fragmentFnPre += fmt::format("\n    vec2 tex{0}_uv = in.tex{0}_uv.xy;", i);
@@ -1571,6 +1604,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     if (!willSampleTexture) {
       continue;
     }
+    const bool directCoordinate=uvIn.empty();
     if (uvIn.empty()) {
       // No indirect texturing
       if(nativeVertices) {
@@ -1582,8 +1616,13 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       }
     }
     if (nativeVertices && (nativeZeroLodBiasMask & (1u << textureDependency.texMapId))) {
-      fragmentFnPre += fmt::format("\n    vec4 sampled{0} = texture(tex{1}, {2});", i,
-                                  textureDependency.texMapId, uvIn);
+      if(directCoordinate && textureDependency.texCoordId>=0 &&
+         config.tcgs[textureDependency.texCoordId].type==GX_TG_MTX3x4 &&
+         (nativeNonzeroProjectiveMask & (1u<<textureDependency.texCoordId))) {
+        fragmentFnPre+=fmt::format("\n    vec4 sampled{0} = textureProj(tex{1}, in.tex{2}_uvw.xyw);",
+                                  i,textureDependency.texMapId,textureDependency.texCoordId);
+      } else fragmentFnPre += fmt::format("\n    vec4 sampled{0} = texture(tex{1}, {2});", i,
+                                         textureDependency.texMapId, uvIn);
     } else {
       fragmentFnPre +=
           fmt::format("\n    vec4 sampled{0} = texture(tex{1}, {2}, ubuf.tex{1}_size_bias.z);", i,
@@ -2080,6 +2119,15 @@ void main() {{{3}
       "layout(location=4) in vec4 native_color1;\n";
     for(unsigned i=0;i<8;++i)
       attributes+=fmt::format("layout(location={}) in vec3 native_tex{};\n",i+5,i);
+    if(compact) {
+      attributes.clear();
+      for(const auto& attribute : nativeMeshLayout->attributes) {
+        // Declare vec4 inputs so GLES/GXM supply standard missing components;
+        // the prepared layout still controls the physical fetch width.
+        attributes+=fmt::format("layout(location={}) in vec4 {};\n",attribute.location,
+                                std::string_view(gfx::MeshAttributeNames[attribute.location]).substr(2));
+      }
+    }
     vertexSource=fmt::format("{}{}{}\nvoid main() {{{}\n}}\n",uniformBlock,attributes,vertexVaryings,vertexMain);
   }
   const auto fragmentSource = fmt::format(R"""({0}{1}{2}
@@ -2097,7 +2145,8 @@ void main() {{{4}
       .vertex = gl::vertex_source(vertexSource),
       .fragment = gl::fragment_source(fragmentSource),
       .blocks = {{"Ubuf", 0}},
-      .nativeMaterialVertices = nativeVertices,
+      .nativeMaterialVertices = nativeVertices && !compact,
+      .nativeMeshLayout = compact?*nativeMeshLayout:gl::MeshLayout{},
   };
   for (u32 i = 0; i < MaxTextures; ++i) {
     desc.samplers.emplace_back(fmt::format("tex{}", i), static_cast<int>(i));

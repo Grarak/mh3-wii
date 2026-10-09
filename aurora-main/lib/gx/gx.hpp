@@ -771,8 +771,15 @@ gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept;
 // Each set bit certifies that texture unit's sampler LOD bias is exactly zero.
 // Keep dynamic bias for all units by default; callers must include this mask
 // in their program-cache identity when specializing native materials.
+// Each nonzero-projective bit certifies Q cannot reach zero anywhere in this
+// draw, allowing hardware projection instead of the zero-Q fallback. Include
+// this mask in the caller's program-cache identity.
+// A compact layout selects GPU model transforms/texgen with direct attributes.
+// It uses the regular compact matrix uniform layout, not final CPU STQ/positions.
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices=false,
-                                        u8 nativeZeroLodBiasMask=0,bool approximateNative=true) noexcept;
+                                        u8 nativeZeroLodBiasMask=0,bool approximateNative=true,
+                                        const gl::MeshLayout* nativeMeshLayout=nullptr,
+                                        u8 nativeNonzeroProjectiveMask=0) noexcept;
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept;
 void notify_copy_texture_created() noexcept;
 
