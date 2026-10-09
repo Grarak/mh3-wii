@@ -7,6 +7,7 @@
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "draw_replica.h"
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <stdexcept>
@@ -199,6 +200,7 @@ void InstallPack(const std::shared_ptr<const Pack>& pack) {
     c.packs.push_back(pack);
     c.resources.clear();
     c.blocks.clear();
+    InvalidateSourceCache();
 }
 // Certificates carry state the tracker alone cannot rebuild once typed writes
 // retire content provenance, so both replicas hold every game certificate.
@@ -220,6 +222,10 @@ void Copy(CpuContext* cpu) {
     cpu->gpr[3] = destination;
 }
 } // namespace
+
+uint64_t ReadNativeModelStructureRevision() {
+    return C().source_epoch;
+}
 
 void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes) {
     if (!bytes)
@@ -440,6 +446,7 @@ void UnregisterNativeModelPack(uintptr_t handle) {
                 else
                     ++block;
             }
+            InvalidateSourceCache();
             return;
         }
     throw std::runtime_error("Unknown native model resident handle");
@@ -679,7 +686,14 @@ extern "C" void MH3_ModelMemmove(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x8045BC18, MH3_ModelMemmove, "NativeResourceMemmove");
 void SeedNativeCatalogReplica() {
     auto& render = replicas[DrawReplica::Render];
+    const uint64_t previous = render.source_epoch;
+    const uint64_t next = std::max(previous, replicas[DrawReplica::Game].source_epoch);
+    if (next == UINT64_MAX)
+        throw std::runtime_error("Native model source cache epoch overflow");
     render = replicas[DrawReplica::Game];
+    // A reseed retires render-side structural recipes even if the game token
+    // equals an earlier render token. Tokens are local to each replica.
+    render.source_epoch = next + 1;
     render.tracker.ranges = render.ranges.data();
     render.tracker.work = render.work.data();
     render.tracker.transfer = render.transfer.data();

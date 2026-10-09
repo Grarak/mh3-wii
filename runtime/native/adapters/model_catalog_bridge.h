@@ -7,6 +7,9 @@
 void RecordNativeDiscWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes);
 void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes);
 void RetireNativeResourceOwner(uint32_t address, uint32_t bytes);
+/* This replica's structural producer token. Changes on source/pack lifetime
+ * events, never a draw or a typed material-field update. */
+uint64_t ReadNativeModelStructureRevision();
 /* A vertex producer installs this before retaining any sources/revisions.
  * Generic overwrites notify it even when no disc interval is tracked. */
 using NativeModelVertexRetireHook = void (*)(uint32_t address, uint32_t bytes);

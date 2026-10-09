@@ -13,6 +13,7 @@
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_material_prep.h"
+#include "runtime/native/mh3_model_prepare_cache.h"
 #include "frame_split.h"
 #include "native_frame_packet.h"
 #include "native_shade_snapshot.h"
@@ -85,8 +86,29 @@ void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
     if (xf)
         Genmode(true);
 }
+template <class T> struct RecipeCache {
+    uint64_t revision = UINT64_MAX;
+    std::unordered_map<uint32_t, T> entries;
+};
+template <class T> RecipeCache<T>& Recipes() {
+    static std::array<RecipeCache<T>, DrawReplica::Count> replicas;
+    auto& cache = replicas[DrawReplica::current];
+    const uint64_t revision = ReadNativeModelStructureRevision();
+    if (cache.revision != revision) {
+        cache.entries.clear();
+        cache.revision = revision;
+    }
+    return cache;
+}
 mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     const uint32_t material = Resource(reference);
+    mh3_model_material_bindings replacements{};
+    if (swaps)
+        Checked(mh3_model_material_bindings_read(Bytes(swaps, 56), &replacements));
+    auto& recipes = Recipes<mh3_model_scope_recipe>();
+    const auto cached = recipes.entries.find(material);
+    if (cached != recipes.entries.end() && mh3_model_scope_recipe_matches(&cached->second, recipes.revision, material, &replacements))
+        return cached->second.scope;
     uint32_t version = 0;
     if (material) {
         uint32_t parent = 0;
@@ -97,11 +119,13 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
         PackChecked(mh3_model_catalog_model(owner.catalog, owner.catalog_model_index, &model));
         version = model.revision;
     }
-    mh3_model_material_bindings replacements{};
-    if (swaps)
-        Checked(mh3_model_material_bindings_read(Bytes(swaps, 56), &replacements));
     mh3_model_material_scope scope{};
     Checked(mh3_model_material_scope_read(&MH3NativeResourceMemory(), material, version, &replacements, &scope));
+    // Admission may demand-load a pack and advance the structural token.
+    auto& admitted = Recipes<mh3_model_scope_recipe>();
+    if (admitted.entries.size() >= 8192)
+        admitted.entries.clear();
+    admitted.entries.insert_or_assign(material, mh3_model_scope_recipe{admitted.revision, replacements, scope});
     return scope;
 }
 struct PrepareContext {
@@ -201,10 +225,14 @@ struct ShapeSources {
     uintptr_t resident_handle;
     std::array<mh3_native_vertex_source, 12> source;
     uint16_t known;
+    NativeModelOwner owner;
+    const mh3_prepared_mesh* prepared;
+    int32_t matrix_id;
+    bool has_normal;
 };
-thread_local std::unordered_map<uint32_t, ShapeSources> shape_sources;
 const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, uint32_t shape) {
-    const uint32_t key = Canonical(shape);
+    const uint32_t key = shape;
+    auto& shape_sources = Recipes<ShapeSources>().entries;
     const auto cached = shape_sources.find(key);
     if (cached != shape_sources.end() && cached->second.source_generation == owner.source_generation && cached->second.resident_handle == owner.resident_handle &&
         cached->second.resident_generation == owner.resident_generation)
@@ -213,6 +241,10 @@ const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, u
     result.source_generation = owner.source_generation;
     result.resident_handle = owner.resident_handle;
     result.resident_generation = owner.resident_generation;
+    result.owner = owner;
+    result.prepared = &ReadNativePreparedMesh(owner, shape);
+    result.matrix_id = int32_t(DrawMemory::Read32(shape + 8));
+    result.has_normal = (DrawMemory::Read32(shape + 0x30) & (1u << 10)) != 0;
     for (uint32_t i = 0; i < 12; i++) {
         uint32_t resource = 0;
         Checked(mh3_res_runtime_shape_array(&MH3NativeResourceMemory(), reference, i, &resource));
@@ -245,6 +277,14 @@ struct ShapeContext {
 };
 ShapeContext ResolveShape(uint32_t reference) {
     ShapeContext context{reference, 0, {}, nullptr};
+    context.shape = Resource(reference, true);
+    const auto& entries = Recipes<ShapeSources>().entries;
+    const auto cached = entries.find(context.shape);
+    if (cached != entries.end()) {
+        context.owner = cached->second.owner;
+        context.sources = &cached->second;
+        return context;
+    }
     context.owner = ShapeOwner(reference, &context.shape);
     context.sources = &Sources(context.owner, reference, context.shape);
     return context;
@@ -457,9 +497,8 @@ mh3_matrix_sources PoseSources(const ModelPose& pose) {
     return sources;
 }
 void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
-    const uint32_t reference = context.reference, shape = context.shape;
     item.owner = context.owner;
-    const auto& prepared = ReadNativePreparedMesh(item.owner, shape);
+    const auto& prepared = *context.sources->prepared;
     item.prepared = &prepared;
     const auto& originals = *context.sources;
     for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
@@ -479,22 +518,27 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         sources = ReadNativeModelPose(binding.address, item.owner.model_address);
     else if (!direct_position)
         throw std::runtime_error("Indexed model matrix has no completed pose producer");
-    mh3_matrix_sources ignored{};
-    Checked(mh3_matrix_runtime_shape(&MH3NativeResourceMemory(), &locations, reference, direct_position, direct_normal, &item.storage, &item.input, &ignored));
+    item.storage = {};
+    if (direct_position) {
+        Checked(mh3_matrix_read34({Bytes(direct_position, 48), 1, 48, 1}, 0, &item.storage.direct_position));
+        if (direct_normal)
+            Checked(mh3_matrix_read34({Bytes(direct_normal, 48), 1, 48, 1}, 0, &item.storage.direct_normal));
+    }
+    mh3_model_shape_input_unchecked(originals.matrix_id, originals.has_normal, Bytes(locations.texture_sources, 32).data,
+        DrawMemory::Read8(locations.current_valid) != 0, binding.address[0] != 0,
+        direct_position ? &item.storage.direct_position : nullptr, direct_position && direct_normal ? &item.storage.direct_normal : nullptr, &item.input);
     if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
+    if (item.input.matrix_id >= 0)
+        Checked(mh3_model_shape_pose_extents(&item.input, &sources));
     item.pose = CapturePose(capture, binding.address, sources);
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     if (item.input.matrix_id >= 0) {
         // Row selectors depend on the shape's matrix sources, not pose values.
-        mh3_model_palette produced{};
-        Checked(mh3_model_palette_rigid(&item.input, &sources, &produced));
-        bool identity = true;
-        for (uint32_t row : produced.texture_ids)
-            if (row != 60)
-                identity = false;
+        uint32_t rows[8];
+        const bool identity = mh3_model_shape_rows_unchecked(item.input.texture_source, rows);
         if (!identity || !DrawMemory::Read8(locations.current_valid))
-            PublishNativeModelMatrixRows(produced.texture_ids);
+            PublishNativeModelMatrixRows(rows);
         DrawMemory::Write8(locations.current_valid, identity ? 1 : 0);
     } else if (!DrawMemory::Read8(locations.current_valid)) {
         // Envelope setup selects identity CURRENT tex-matrix rows; it does not
