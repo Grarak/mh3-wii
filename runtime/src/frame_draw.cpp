@@ -8,7 +8,10 @@
 // the camera reset, the scene's view matrices again (0x80082D40), layers 7 to
 // 11. Then the UI sprites in front and 0x80048828. MH3_PROFILE=split times
 // the 2D layers and the UI parts (the layers and ui figures of the MH3 draw
-// split line); MH3_PORT_CHECK=DrawFrame checks the port.
+// split line); MH3_PORT_CHECK=DrawFrame checks the port. In the split draw
+// (FrameDraw::SetSceneHandoff, docs/pipelined-draw.md) the scene is left to
+// the draw thread: at its place the handoff runs and the scene is noted, and
+// FrameDraw::RunDeferredScene draws it there.
 //
 // The 2D layers (0x8004925C, DrawLayers(first, end)): each layer is a list
 // of draw entries (the table at 0x8066C3B8; an entry's function at +0, an
@@ -22,6 +25,8 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
+
+#include <utility>
 #ifdef MH3_DEVELOPMENT
 #include <algorithm>
 #include <array>
@@ -126,6 +131,34 @@ void Layers(GuestCall& call, uint32_t first, uint32_t end) {
     call(DrawLayers, {first, end});
 }
 
+// The split draw (docs/pipelined-draw.md): the scene, with the preview
+// camera's setup and reset around it, is left to the draw thread.
+void (*sceneHandoff)() = nullptr;
+
+struct DeferredScene {
+    bool pending = false, twoPlayers = false, preview = false;
+} deferredScene;
+
+void Scene(GuestCall& call, uint32_t r13, bool preview) {
+    const bool twoPlayers = call(TwoPlayers) != 0;
+
+    if (sceneHandoff) {
+        deferredScene = {true, twoPlayers, preview};
+        sceneHandoff();
+        return;
+    }
+
+    if (preview)
+        call(PreviewCameraSetup);
+
+    call(twoPlayers ? DrawSplitScene : DrawSceneOnly);
+
+    if (preview) {
+        call(PreviewCameraReset);
+        call(CalcRootView, {Memory::Read32(r13 + kRoot)});
+    }
+}
+
 void DrawFrame(CpuContext* cpu) {
     const uint32_t r13 = cpu->gpr[13];
 
@@ -155,19 +188,14 @@ void DrawFrame(CpuContext* cpu) {
         }
     }
 
-    const auto scene = [&] { call(call(TwoPlayers) != 0 ? DrawSplitScene : DrawSceneOnly); };
-
     if (uint8_t(call(PreviewCamera)) == 0) {
         const uint32_t split = uint8_t(call(GetOnlineMode)) == 3 ? 4 : 1;
         Layers(call, 0, split);
-        scene();
+        Scene(call, r13, false);
         Layers(call, split, 0xB);
     } else {
         Layers(call, 0, 7);
-        call(PreviewCameraSetup);
-        scene();
-        call(PreviewCameraReset);
-        call(CalcRootView, {Memory::Read32(r13 + kRoot)});
+        Scene(call, r13, true);
         Layers(call, 7, 0xB);
     }
 
@@ -177,6 +205,32 @@ void DrawFrame(CpuContext* cpu) {
 }
 
 } // namespace
+
+namespace FrameDraw {
+void SetSceneHandoff(void (*handoff)()) {
+    sceneHandoff = handoff;
+}
+
+bool RunDeferredScene(CpuContext* cpu) {
+    if (!std::exchange(deferredScene.pending, false))
+        return false;
+
+    GuestFrame frame(cpu, 0x10);
+    GuestCall call{cpu};
+
+    if (deferredScene.preview)
+        call(PreviewCameraSetup);
+
+    call(deferredScene.twoPlayers ? DrawSplitScene : DrawSceneOnly);
+
+    if (deferredScene.preview) {
+        call(PreviewCameraReset);
+        call(CalcRootView, {Memory::Read32(frame.Arg(13) + kRoot)});
+    }
+
+    return true;
+}
+} // namespace FrameDraw
 
 extern "C" void func_80049308(CpuContext* cpu);
 extern "C" void MH3_DrawFrame(CpuContext* cpu) {

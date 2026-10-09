@@ -337,23 +337,46 @@ void DrawSection(CpuContext* ctx, bool render) {
 #undef MH3_SPLIT
 }
 
-// The draw thread's part: the scene and the effect calculation's join.
+// The draw thread's part: the 3D scene the frame draw left to it
+// (frame_draw.cpp) and the effect calculation's join.
 void SceneSection(CpuContext* ctx, bool render) {
+    NativeFramePacketProducerChanged();
+
     if (render) {
         DrawPages::DrawBegins(ctx->gpr[1]);
-        InvokeIndirectCpu(DrawScene, ctx);
+        FrameDraw::RunDeferredScene(ctx);
         DrawPages::DrawEnds();
     }
 
     EffectStep::Join(ctx);
 }
 
-// The game thread's part, which reads gameplay state directly (the HUD): the
-// rest of the draw section in its order.
+// The frame draw's handoff at the scene's place: the scene starts from the
+// game's state there, and what the game side draws after it replays after it.
+bool sceneHandedOff = false;
+
+void SceneHandoff() {
+    CopyNativeGameStateForDraw();
+    BeginNativeFramePacketTail();
+    sceneHandedOff = true;
+}
+
+// The game thread's part, which reads gameplay state directly (the HUD layers,
+// the font stack): the whole draw section but the 3D scene, in its order.
 void GameSideSection(CpuContext* ctx, bool render) {
     GuestFrame frame(ctx, 0x10);
     auto call = [ctx](uint32_t fn) { InvokeIndirectCpu(fn, ctx); };
-    BeginNativeFramePacketTail();
+    sceneHandedOff = false;
+
+    if (render) {
+        FrameDraw::SetSceneHandoff(SceneHandoff);
+        call(DrawScene);
+        FrameDraw::SetSceneHandoff(nullptr);
+    }
+
+    // No scene (none admitted, or the frame draw stopped early).
+    if (!sceneHandedOff)
+        SceneHandoff();
 
     if (render) {
         {
@@ -398,12 +421,52 @@ bool DrawOnThread() {
 }
 
 struct DrawJob {
-    bool render;
+    bool render, publish;
 };
 
 void RunDrawJob(CpuContext* cpu, void* data) {
-    SceneSection(cpu, static_cast<DrawJob*>(data)->render);
+    const auto& job = *static_cast<DrawJob*>(data);
+    SceneSection(cpu, job.render);
+
+    // Overlapped, the draw thread ends the frame it drew.
+    if (job.publish)
+        EndNativeGraphicsFrame();
 }
+
+// MH3_PROFILE=draw-overlap (development, experimental; docs/pipelined-draw.md
+// stage 3): as draw-thread, but the game thread does not wait for the scene.
+// At the handoff it waits for the previous scene (which published its packet),
+// begins this frame's packet, records the game side, launches the effect
+// calculation and hands the scene over; the next logic step runs beside it.
+// The draw thread runs on core 3, the guest worker on core 0.
+bool DrawOverlap() {
+#ifdef MH3_DEVELOPMENT
+    static const bool enabled = [] {
+        if (!ProfileOptions().Has("draw-overlap") || !DrawThread::Thread().Available())
+            return false;
+
+        DrawThread::Thread().SetCore(3);
+        GuestWorker::Thread().SetCore(0);
+        EffectStep::SetOverlap(true);
+        SetNativeFrameOverlap(true);
+        return true;
+    }();
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+DrawJob overlapJob{};
+} // namespace
+
+// Decided before the first frame begins (native_frame.cpp), so every frame's
+// packet begins the same way.
+bool MH3DrawOverlapMode() {
+    return DrawOverlap();
+}
+
+namespace {
 
 } // namespace
 
@@ -533,14 +596,19 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         Memory::Write8(kSystem + kFramePhase, 3);
         MH3_SPLIT(logic);
 
-        if (DrawOnThread()) {
+        if (DrawOverlap()) {
+            DrawThread::Thread().Wait();
+            BeginOverlappedNativeGraphicsFrame();
+            GameSideSection(ctx, render);
+            EffectStep::Launch(*ctx);
+            overlapJob = {render, true};
+            NativeFrameSubmittedToDraw();
+            DrawThread::Thread().Submit(*ctx, RunDrawJob, &overlapJob);
+        } else if (DrawOnThread()) {
             // Stage 1 of docs/pipelined-draw.md: the same section on the draw
             // thread, the game thread waiting.
             GameSideSection(ctx, render);
-
-            // The scene starts from the game's state after the game side.
-            CopyNativeGameStateForDraw();
-            DrawJob job{render};
+            DrawJob job{render, false};
             DrawThread::Thread().Submit(*ctx, RunDrawJob, &job);
             DrawThread::Thread().Wait(true);
         } else {

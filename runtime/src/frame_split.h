@@ -77,6 +77,14 @@ void MH3PrintFieldSplit(unsigned frames);
 // The MH3 world split line (scene_world.cpp), which it then resets.
 void MH3PrintWorldSplit(unsigned frames);
 
+// The split draw (frame_draw.cpp): with a handoff set, the frame draw calls it
+// at the scene's place and leaves the scene to RunDeferredScene (false when
+// none was left).
+namespace FrameDraw {
+void SetSceneHandoff(void (*handoff)());
+bool RunDeferredScene(CpuContext* cpu);
+} // namespace FrameDraw
+
 // The MH3 layer split line (frame_draw.cpp), which it then resets.
 void MH3PrintLayerSplit(unsigned frames);
 

@@ -1416,6 +1416,14 @@ uint32_t TakeNativeRecordsBeforeDraw() {
     return std::exchange(recordsBeforeDraw, 0);
 }
 
+void NativeFramePacketProducerChanged() {
+    if (!recording)
+        return;
+
+    auto& p = *recording;
+    p.draws.valid = p.materials.valid = p.lighting.valid = p.posts.valid = p.textures.valid = p.colors.valid = false;
+}
+
 void BeginNativeFramePacketTail() {
     if (!recording)
         return;

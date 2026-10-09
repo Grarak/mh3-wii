@@ -76,6 +76,10 @@ void PublishNativeFramePacket(std::string capture);
 void BeginNativeFramePacketTail();
 void EndNativeFramePacketTail();
 
+// Another thread takes over the packet's recording with its own native state
+// owner: the next capture of each state component stores a snapshot.
+void NativeFramePacketProducerChanged();
+
 #ifdef MH3_DEVELOPMENT
 #include "native_frame_statistics.h"
 // Cumulative completed replay work, including ordered resource tasks and
