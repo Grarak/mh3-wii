@@ -765,3 +765,27 @@
 80073fcc VecAddInPlace
 80051430 VecAdd3
 80051488 VecScale3
+# nw4r::ef::DrawBillboardStrategy::Draw (0x800B9E5C) and its helpers (effect_billboard.cpp)
+800b9e5c DrawBillboard
+800ba244 DrawBillboardQuad
+800ba798 DrawBillboardQuadRotated
+800ba774 GXPosition3f32Vec
+800ba760 BoolNonzero
+800ba750 GXTexCoord1x8
+800bb7ac DrawBillboardSetupGx
+800b7e14 DrawInfoViewMtx
+800ab3ec ResEmitterBody
+800ab410 ParticleScaledWidth
+800ab340 ParticleScaledHeight
+800b5518 ParticleRotation
+800b5aac BillboardMinSize
+800b5ac8 ParticleListLastAlive
+800b5b30 ParticleListPrevAlive
+800b5b98 ParticleListPrev
+800b5ba4 ParticleListLast
+800a52ac ParticleLifeStatus
+8009cdc8 MtxColumnLength
+800c694c DrawStrategySetupParticle
+800c745c DrawStrategySetupTevColors
+800c60c8 DrawStrategySetupGx
+804b6ef0 GXBegin

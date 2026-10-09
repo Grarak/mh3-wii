@@ -2,6 +2,7 @@
 
 #include "audio/ax_dsp.h"
 #include "game_step.h"
+#include "gx_host.h"
 #include "memory.h"
 
 #include <chrono>
@@ -88,13 +89,19 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     const GameStep::State clock = GameStep::Save();
     Snapshot before, expected;
     before.Save();
+    // The GX FIFO bytes each writes are compared too; only the port's go on.
+    std::vector<uint8_t> expectedGx, actualGx;
+    CaptureGuestGx(&expectedGx);
     original(ctx);
     const CpuContext originalCtx = *ctx;
     expected.Save();
     before.Restore();
     GameStep::Restore(clock);
     *ctx = entry;
+    CaptureGuestGx(&actualGx);
     port(ctx);
+    CaptureGuestGx(nullptr);
+    if (!actualGx.empty()) SubmitGuestGxBytes(actualGx.data(), actualGx.size());
 
     Snapshot actual;
     actual.Save();
@@ -120,6 +127,35 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     }
     if (ctx->gpr[1] != originalCtx.gpr[1] || ctx->gpr[2] != originalCtx.gpr[2] || ctx->gpr[13] != originalCtx.gpr[13])
         lines += "  stack/sda registers differ after return\n";
+    if (expectedGx != actualGx) {
+        size_t at = 0;
+        while (at < expectedGx.size() && at < actualGx.size() && expectedGx[at] == actualGx[at]) ++at;
+        size_t bytes = 0;
+        for (size_t i = 0; i < expectedGx.size() && i < actualGx.size(); ++i) bytes += expectedGx[i] != actualGx[i];
+        char line[256];
+        int n = std::snprintf(line, sizeof line, "  GX FIFO: %zu bytes original, %zu port, %zu differ from byte %zu:",
+                              expectedGx.size(), actualGx.size(), bytes, at);
+        for (size_t i = at & ~size_t(3); i < (at & ~size_t(3)) + 8 && n < 200; ++i)
+            n += std::snprintf(line + n, sizeof line - n, " %02x/%02x", i < expectedGx.size() ? expectedGx[i] : 0,
+                               i < actualGx.size() ? actualGx[i] : 0);
+        lines += line;
+        lines += "\n";
+        // MH3_PORT_CHECK_DUMP=dir: the first few differing streams, as NAME-N-{original,port}.gx.
+        static const char* dump = std::getenv("MH3_PORT_CHECK_DUMP");
+        static uint32_t dumped = 0;
+        if (dump && dumped < 8) {
+            ++dumped;
+            for (int which = 0; which < 2; ++which) {
+                const std::string path = std::string(dump) + "/" + name + "-" + std::to_string(dumped) +
+                                         (which ? "-port.gx" : "-original.gx");
+                if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                    const std::vector<uint8_t>& b = which ? actualGx : expectedGx;
+                    std::fwrite(b.data(), 1, b.size(), f);
+                    std::fclose(f);
+                }
+            }
+        }
+    }
     ++checks;
     if (differences || !lines.empty()) {
         const std::string key = name + std::string(":") + lines.substr(0, lines.find('\n'));

@@ -122,6 +122,9 @@ bool Memory::Contains(uint32_t address, size_t length) { return GuestFlat::IsMap
 void SubmitGuestGxBytes(const uint8_t*, size_t) { throw std::runtime_error("GX requires the Aurora-linked build"); }
 template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data) { SubmitGuestGxBytes(data, N); }
+#ifdef MH3_DEVELOPMENT
+void CaptureGuestGx(std::vector<uint8_t>*) {}
+#endif
 #endif
 GxFifoWindow gGxFifoWindow{};
 extern "C" void GX_HLE_FIFO_WriteFull(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }

@@ -97,6 +97,7 @@ public:
         idle.wait(lock, [&] { return queue.empty() && !busy; });
         RethrowFailure();
     }
+    void CloseFifoWindow() { CloseWindow(); }
     void Stop() {
         CloseWindow();
         {
@@ -466,7 +467,21 @@ void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
 }
 }
 
+#ifdef MH3_DEVELOPMENT
+static std::vector<uint8_t>* gxCapture = nullptr;
+void CaptureGuestGx(std::vector<uint8_t>* into) {
+    if (gxWorker) gxWorker->CloseFifoWindow();
+    gxCapture = into;
+}
+#endif
+
 void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
+#ifdef MH3_DEVELOPMENT
+    if (gxCapture) [[unlikely]] {
+        gxCapture->insert(gxCapture->end(), data, data + size);
+        return;
+    }
+#endif
     if (gpuSynchronized) {
         // The first GX since GXDrawDone (the worker is idle): the CPU's EFB
         // pixels go in ahead of it, and its draws end the EFB snapshot.
