@@ -93,6 +93,9 @@ const std::vector<MemoryReservation>& MemoryReservations();
 uint32_t CurrentTranslatedExecutionAddress() noexcept;
 
 void RegisterExecutableRange(uint32_t start, uint32_t end, std::string name);
+void UnregisterExecutableRange(uint32_t start, uint32_t end);
+// Fixed-address RSO code is callable only while its verified image is linked.
+void CheckRsoExecution(uint32_t address);
 bool HandleExecutableWrite(uint32_t address, size_t length, uint64_t value);
 void CheckExecutableWrite(uint32_t address, size_t length, uint64_t value);
 

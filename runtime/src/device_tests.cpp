@@ -72,6 +72,42 @@ void TestIosCallback(CpuContext* cpu) {
 void RunDeviceSelfTests(CpuContext* cpu) {
     RunControllerSelfTests(cpu);
     {
+        constexpr uint32_t start = 0x81700004, end = 0x81701008;
+        Memory::Write32(start, 0);
+        Memory::Write32(end - 4, 0);
+        Memory::Write32(end, 0);
+        RecompMod::RegisterExecutableRange(start, end, "lifetime test");
+        RecompMod::RegisterExecutableRange(start, end, "duplicate registration");
+        RecompMod::RegisterExecutableRange(end, end + 4, "shared-page neighbor");
+        const auto rejectsWrite = [](uint32_t address) {
+            try { Memory::Write32(address, 1); } catch (const std::runtime_error&) { return true; }
+            return false;
+        };
+        for (auto alias : {0u, 0x80000000u, 0xC0000000u}) {
+            const auto address = ((end - 4) & 0x3FFFFFFF) | alias;
+            if (!RecompMod::ExecutableWriteGuardMayHit(address, 4) || !rejectsWrite(address))
+                throw std::runtime_error("Executable final-page/alias protection failed");
+        }
+        Memory::Write32(start, 0); // Identical loader writes remain valid.
+        RecompMod::UnregisterExecutableRange(start, end);
+        Memory::Write32(start, 1);
+        Memory::Write32(end - 4, 1);
+        if (!rejectsWrite(end)) throw std::runtime_error("Unlink removed neighboring code protection");
+        RecompMod::RegisterExecutableRange(start, end, "relinked image");
+        if (!rejectsWrite(start + 4)) throw std::runtime_error("Reload did not restore code protection");
+        RecompMod::UnregisterExecutableRange(start, end);
+        RecompMod::UnregisterExecutableRange(end, end + 4);
+        bool invoked = false;
+        RawDispatchRecord stale{0x80868F30, [](CpuContext*) {
+            throw std::logic_error("Stale RSO entry executed");
+        }, 0, false};
+        try { TryDispatchRawCpuTarget(&stale, cpu); invoked = true; }
+        catch (const std::logic_error&) { throw; }
+        catch (const std::runtime_error&) {}
+        if (invoked) throw std::runtime_error("Unlinked RSO dispatch was accepted");
+        RecompMod::CheckRsoExecution(0x8086907C); // Verification prolog remains reachable.
+    }
+    {
         uint16_t x = 0, y = 0;
         for (auto base : {0x08000000u, 0x88000000u, 0xC8000000u})
             if (!DecodeEfbColorAddress(base + 527 * 4096 + 639 * 4, x, y) || x != 639 || y != 527)
