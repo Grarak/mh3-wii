@@ -9,7 +9,7 @@
 // 11. Then the UI sprites in front and 0x80048828. MH3_PROFILE=split times
 // the 2D layers and the UI parts (the layers and ui figures of the MH3 draw
 // split line); MH3_PORT_CHECK=DrawFrame checks the port. In the split draw
-// (FrameDraw::SetSceneHandoff, docs/pipelined-draw.md) the scene is left to
+// (FrameDraw::SetSceneHandoff, docs/optimizations/threading/pipelined-draw.md) the scene is left to
 // the draw thread: at its place the handoff runs and the scene is noted, and
 // FrameDraw::RunDeferredScene draws it there.
 //
@@ -131,7 +131,7 @@ void Layers(GuestCall& call, uint32_t first, uint32_t end) {
     call(DrawLayers, {first, end});
 }
 
-// The split draw (docs/pipelined-draw.md): the scene, with the preview
+// The split draw (docs/optimizations/threading/pipelined-draw.md): the scene, with the preview
 // camera's setup and reset around it, is left to the draw thread.
 void (*sceneHandoff)() = nullptr;
 void (*scenePrepareLaunch)(CpuContext* cpu) = nullptr;
@@ -230,6 +230,10 @@ void SetSceneHandoff(void (*handoff)()) {
 
 void SetScenePrepareLaunch(void (*launch)(CpuContext* cpu)) {
     scenePrepareLaunch = launch;
+}
+
+bool DeferredSceneWalksGraph() {
+    return deferredScene.pending && !deferredScene.prepared;
 }
 
 bool RunDeferredScene(CpuContext* cpu) {

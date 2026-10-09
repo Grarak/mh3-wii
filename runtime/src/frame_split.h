@@ -134,7 +134,7 @@ struct MH3FrameSplitDetailScope {
 #define MH3_SPLIT_DETAIL_SCOPE(family)
 #endif
 
-// The pipelined draw's entry points (docs/pipelined-draw.md), in every build.
+// The pipelined draw's entry points (docs/optimizations/threading/pipelined-draw.md), in every build.
 struct CpuContext;
 
 // The split draw (frame_draw.cpp): with a handoff set, the frame draw calls it
@@ -144,10 +144,15 @@ namespace FrameDraw {
 void SetSceneHandoff(void (*handoff)());
 bool RunDeferredScene(CpuContext* cpu);
 
-// The overlapped draw (docs/pipelined-draw.md): when set, a single
+// The overlapped draw (docs/optimizations/threading/pipelined-draw.md): when set, a single
 // view's scene hands off first and `launch` starts its graph walk
 // (SceneQueue::PrepareGraph) on the draw thread, beside the layers after it.
 void SetScenePrepareLaunch(void (*launch)(CpuContext* cpu));
+
+// Whether the scene left to RunDeferredScene walks the scene graph itself (a
+// preview camera's or the two players' views, which are not prepared): the
+// next logic step changes that graph, so it waits for the draw.
+bool DeferredSceneWalksGraph();
 } // namespace FrameDraw
 
 // The single view's scene draw split at the bucket draw (native_scene_queue.cpp):

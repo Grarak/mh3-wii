@@ -14,7 +14,6 @@
 #include "abi_bridge.h"
 #include "cheats.h"
 #include "monster_control.h"
-#include "draw_pages.h"
 #include "fatal.h"
 #include "frame_split.h"
 #include "game_step.h"
@@ -205,8 +204,7 @@ uint64_t handoffTotalUs = 0;
 uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 uint32_t mh3SplitFrame;
 
-// Set at the first frame: the Vita applies runtime.env after static
-// initialization.
+// Set at the first frame, after static initialization.
 bool mh3SplitDetail = false;
 void MH3FrameSplitCall(unsigned kind) {
     // The guest worker's calls are not the frame's (the draw thread's are).
@@ -365,7 +363,7 @@ struct FrameSplit {
 
 // The draw section of the frame body is the scene, fonts and fade overlay,
 // the fade timers (and the grabbed screen's restore), the HUD and the movie.
-// With the draw thread (docs/pipelined-draw.md) it splits: GameSideSection on
+// With the draw thread (docs/optimizations/threading/pipelined-draw.md) it splits: GameSideSection on
 // the game thread first, its records moved behind the scene's
 // (BeginNativeFramePacketTail), then SceneSection on the draw thread.
 
@@ -375,11 +373,8 @@ void SceneSection(CpuContext* ctx, bool render) {
     NativeFramePacketProducerChanged();
     ApplyDeferredModelInvalidate();
 
-    if (render) {
-        DrawPages::DrawBegins(ctx->gpr[1]);
+    if (render)
         FrameDraw::RunDeferredScene(ctx);
-        DrawPages::DrawEnds();
-    }
 
     EffectStep::Join(ctx);
 }
@@ -394,7 +389,7 @@ void SceneHandoff() {
     sceneHandedOff = true;
 }
 
-// With the overlapped draw (docs/pipelined-draw.md), the single view's scene
+// With the overlapped draw (docs/optimizations/threading/pipelined-draw.md), the single view's scene
 // graph walk runs on the draw thread, from the handoff's state, while the
 // game thread draws the layers after the scene; the game thread joins it
 // before the scene's job.
@@ -547,7 +542,7 @@ void RunDrawJob(CpuContext* cpu, void* data) {
 bool overlapRender = false;
 } // namespace
 
-// The overlapped draw (docs/pipelined-draw.md stage 3), in every build: at the
+// The overlapped draw (docs/optimizations/threading/pipelined-draw.md stage 3), in every build: at the
 // handoff the game thread waits for the previous scene (which published its
 // packet), begins this frame's packet, records the game side, launches the
 // effect calculation and hands the scene over to the draw thread; the next
@@ -596,7 +591,6 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 #else
 #define MH3_SPLIT(bucket)
 #endif
-    DrawPages::LogicPhase(DrawPages::Phase::Input);
     call(WPADDisconnect, {2});
     call(WPADDisconnect, {3});
     call(PollControllers);
@@ -608,7 +602,6 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     const bool render = NativeGraphicsFrameShouldRender();
 
     if (uint8_t(boot - 1) <= 1) {
-        DrawPages::LogicPhase(DrawPages::Phase::Scene);
         call(flfntStackReset);
         call(UpdateScene);
 
@@ -696,7 +689,6 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         // the scene's traverse and opaque draws (EffectStep::Launch in the
         // scene queue's DrawScene).
         EffectStep::Defer(render);
-        DrawPages::LogicPhase(DrawPages::Phase::Tasks);
         call(RunTasks);
         EffectStep::Collected();
 
@@ -708,7 +700,6 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         if (!DrawThread::Thread().Pending() && !GuestWorker::Pending() && !PortCheck::Set())
             EffectStep::Launch(*ctx);
 
-        DrawPages::LogicPhase(DrawPages::Phase::Timers);
         call(GrabScreen);
         call(ResetFade);
         call(TickSystemTimers);
@@ -734,12 +725,17 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         GameSideSection(ctx, render);
         EffectStep::Launch(*ctx);
         overlapRender = render;
+
+        // A scene that walks the graph on the draw thread (the armor
+        // preview's, the two players'): the next logic step adds and removes
+        // the models it walks (a preview's equipment change left a node
+        // without its model, and the draw read through it), so it waits for
+        // the draw. So it does under port checks (see the walk above).
+        const bool serial = render && FrameDraw::DeferredSceneWalksGraph();
         NativeFrameSubmittedToDraw();
         DrawThread::Thread().Submit(*ctx, RunDrawJob, &overlapRender);
 
-        // Under port checks the next logic step waits for the draw (see the
-        // walk above).
-        if (PortCheck::Set())
+        if (serial || PortCheck::Set())
             DrawThread::Thread().Wait();
 
         MH3_SPLIT(draw);
