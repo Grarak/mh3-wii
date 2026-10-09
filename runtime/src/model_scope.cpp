@@ -59,12 +59,12 @@ mh3_model_genmode Mode() {
     return mode;
 }
 void Genmode(bool xf) {
-    mh3_native_material_state patch{};
+    mh3_model_genmode value{};
     uint32_t top = 0;
     int apply = 0;
-    Checked(mh3_model_genmode_publish(Mutable(genmode, 12), xf, &patch, &top, &apply));
+    Checked(mh3_model_genmode_publish_counts(Mutable(genmode, 12), xf, &value, &top, &apply));
     if (apply)
-        Publish(patch, top);
+        OverlayNativeMaterialTop(top, value.texgens, value.channels, value.tevs, value.indirect, value.cull);
 }
 void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
     if (!address)
@@ -116,13 +116,13 @@ void Indirect(uint32_t resource, uint32_t op) {
     if (op != operator_address || !current_operator.active)
         throw std::runtime_error("Indirect matrix operator has no completed native producer");
     OperatorKnown(op);
-    mh3_native_material_state base{}, patch{};
+    mh3_pack_indirect_matrix base[3]{}, matrices[3];
     if (resource) {
         const auto& source = ReadNativeLiveMaterialBlockView(resource, MH3_MODEL_MATERIAL_INDIRECT);
-        std::memcpy(base.indirect_matrix, source.fields.indirect_matrix, sizeof base.indirect_matrix);
+        std::memcpy(base, source.fields.indirect_matrix, sizeof base);
     }
-    Checked(mh3_model_indirect_scope(&base, &current_operator, &patch));
-    Publish(patch);
+    Checked(mh3_model_indirect_matrices(base, &current_operator, matrices));
+    OverlayNativeMaterialIndirectMatrices(matrices);
 }
 mh3_res_status PrepareStep(void* opaque, const mh3_model_material_step* step) {
     auto& context = *static_cast<PrepareContext*>(opaque);
@@ -176,9 +176,9 @@ mh3_res_status PrepareStep(void* opaque, const mh3_model_material_step* step) {
     }
     case MH3_MATERIAL_PREP_CHANNELS: {
         const uint32_t masks[]{context.lights.diffuse_color, context.lights.diffuse_alpha, context.lights.specular_color, context.lights.specular_alpha};
-        mh3_native_material_state patch{};
-        Checked(mh3_model_channels_prepare(Bytes(resource, 40), Mode().channels, masks, reinterpret_cast<const uint8_t*>(&context.lights.ambient), step->force_light_off, &patch));
-        Publish(patch);
+        mh3_pack_channel channels[2];
+        Checked(mh3_model_channels_prepare_channels(Bytes(resource, 40), Mode().channels, masks, reinterpret_cast<const uint8_t*>(&context.lights.ambient), step->force_light_off, channels));
+        OverlayNativeMaterialChannels(channels);
         Genmode(true);
         break;
     }
@@ -232,12 +232,21 @@ NativeModelOwner ShapeOwner(uint32_t reference, uint32_t* shape) {
     (void)ResolveNativeModelResource(owner, *shape, false);
     return owner;
 }
-void PrePrimitive(uint32_t reference) {
-    if (!Resource(reference))
-        return;
-    uint32_t shape = 0;
-    const auto owner = ShapeOwner(reference, &shape);
-    const auto& sources = Sources(owner, reference, shape);
+// A shape's owner and authored vertex sources, resolved once per dispatch.
+struct ShapeContext {
+    uint32_t reference, shape;
+    NativeModelOwner owner;
+    const ShapeSources* sources;
+};
+ShapeContext ResolveShape(uint32_t reference) {
+    ShapeContext context{reference, 0, {}, nullptr};
+    context.owner = ShapeOwner(reference, &context.shape);
+    context.sources = &Sources(context.owner, reference, context.shape);
+    return context;
+}
+void PrePrimitive(const ShapeContext& context) {
+    const uint32_t shape = context.shape;
+    const auto& sources = *context.sources;
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     Genmode(true);
     Checked(mh3_model_shape_cache(Mutable(0x80685504, 12), Bytes(shape + 12, 12)));
@@ -246,10 +255,13 @@ void PrePrimitive(uint32_t reference) {
         if (sources.known & (1u << i))
             StoreNativeVertexSource(i, sources.source[i]);
 }
-void Replacements(uint32_t reference, const mh3_model_material_scope& scope) {
-    uint32_t shape = 0;
-    const auto owner = ShapeOwner(reference, &shape);
-    const auto& originals = Sources(owner, reference, shape);
+void PrePrimitive(uint32_t reference) {
+    if (Resource(reference))
+        PrePrimitive(ResolveShape(reference));
+}
+void Replacements(const ShapeContext& context, const mh3_model_material_scope& scope) {
+    const uint32_t shape = context.shape;
+    const auto& originals = *context.sources;
     for (unsigned i = 0; i < 4; i++) {
         const uint32_t table = scope.selected.vertex_tables[i < 2 ? i : 2];
         if (!table)
@@ -390,14 +402,12 @@ mh3_matrix_sources PoseSources(const ModelPose& pose) {
             tables[i]->bytes.data = pose.bytes.data() + pose.offset[i];
     return sources;
 }
-bool PrepareModelItem(ModelStore& capture, ModelItem& item, uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
-    if (!Resource(reference))
-        return false;
-    uint32_t shape = 0;
-    item.owner = ShapeOwner(reference, &shape);
+void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
+    const uint32_t reference = context.reference, shape = context.shape;
+    item.owner = context.owner;
     const auto& prepared = ReadNativePreparedMesh(item.owner, shape);
     item.prepared = &prepared;
-    const auto& originals = Sources(item.owner, reference, shape);
+    const auto& originals = *context.sources;
     for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
         mh3_native_vertex_source selected{};
@@ -449,7 +459,6 @@ bool PrepareModelItem(ModelStore& capture, ModelItem& item, uint32_t reference, 
     ApplyNativeModelSelectors();
     if (item.input.matrix_id < 0)
         Memory::Write8(locations.current_valid, 0);
-    return true;
 }
 void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
     const auto& prepared = *item.prepared;
@@ -516,21 +525,26 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
 }
 } // namespace
 
-void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
+namespace {
+void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
     auto& capture = Store();
     if (capture.itemCount == capture.items.size())
         capture.items.emplace_back();
     auto& item = capture.items[capture.itemCount];
     {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        if (!PrepareModelItem(capture, item, reference, direct_position, direct_normal))
-            return;
+        PrepareModelItem(capture, item, context, direct_position, direct_normal);
     }
     item.coordinate_sizes = coordinate_sizes;
     if (&capture == &scratch)
         return;
     MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
     RecordNativeModelDraw(uint32_t(capture.itemCount++));
+}
+} // namespace
+void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
+    if (Resource(reference))
+        SubmitShape(ResolveShape(reference), direct_position, direct_normal);
 }
 void BeginNativeModelDraw() {
     auto& capture = Store();
@@ -602,18 +616,29 @@ extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
         return;
     if (scope.fur_address)
         throw std::runtime_error("Fur model needs native sampled-shell material preparation");
+    // A dispatch resolves its shape's owner and sources once for the
+    // primitive setup, replacements and submission. Without a shape only the
+    // replacements (which require one) have an effect: they fail.
+    if (!Resource(cpu->gpr[4])) {
+        if (!(cpu->gpr[7] & 2))
+            Replacements(ResolveShape(cpu->gpr[4]), scope);
+        return;
+    }
+    const auto shape = [&] {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
+        return ResolveShape(cpu->gpr[4]);
+    }();
     if (!(cpu->gpr[7] & 2)) {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        PrePrimitive(cpu->gpr[4]);
-        Replacements(cpu->gpr[4], scope);
+        PrePrimitive(shape);
+        Replacements(shape, scope);
     }
     if (cpu->gpr[7] & 4) {
-        auto material = GetNativeMaterialState();
-        material.cull_mode = 1;
-        SetNativeMaterial(material);
+        // The original republishes the whole material with front culling.
+        OverlayNativeMaterialTop(MH3_MATERIAL_TOP_CULL, 0, 0, 0, 0, 1);
         std::memset(Memory::GetPointer(0x80685504, 12), 0, 12);
         Memory::Write8(sync_address, 1);
     }
-    SubmitNativeModelShape(cpu->gpr[4], cpu->gpr[5], cpu->gpr[6]);
+    SubmitShape(shape, cpu->gpr[5], cpu->gpr[6]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch");

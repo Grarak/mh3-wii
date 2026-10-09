@@ -34,12 +34,12 @@ void Publish(const mh3_native_material_state& patch, uint32_t top = 0) {
     OverlayNativeMaterial(patch, top);
 }
 void PublishGenMode(uint32_t address, bool xf) {
-    mh3_native_material_state patch{};
+    mh3_model_genmode value{};
     uint32_t top = 0;
     int apply = 0;
-    Checked(mh3_model_genmode_publish(Mutable(address, 12), xf, &patch, &top, &apply));
+    Checked(mh3_model_genmode_publish_counts(Mutable(address, 12), xf, &value, &top, &apply));
     if (apply)
-        Publish(patch, top);
+        OverlayNativeMaterialTop(top, value.texgens, value.channels, value.tevs, value.indirect, value.cull);
 }
 void Group(CpuContext* cpu, mh3_model_material_block kind, bool xf) {
     const uint32_t address = Resource(cpu->gpr[3]);
@@ -146,9 +146,9 @@ extern "C" void MH3_ModelChannelsLoad(CpuContext* cpu) {
     mh3_model_genmode mode{};
     Checked(mh3_model_genmode_read(Bytes(genmode, 12), &mode));
     const uint32_t masks[]{cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7]};
-    mh3_native_material_state patch{};
-    Checked(mh3_model_channels_prepare(Bytes(address, 40), mode.channels, masks, Memory::GetPointer(cpu->gpr[8], 4), cpu->gpr[9] != 0, &patch));
-    Publish(patch);
+    mh3_pack_channel channels[2];
+    Checked(mh3_model_channels_prepare_channels(Bytes(address, 40), mode.channels, masks, Memory::GetPointer(cpu->gpr[8], 4), cpu->gpr[9] != 0, channels));
+    OverlayNativeMaterialChannels(channels);
     PublishGenMode(genmode, true);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80086B90, MH3_ModelChannelsLoad, "ModelChannelsLoad");

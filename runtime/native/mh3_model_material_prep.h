@@ -22,6 +22,8 @@ mh3_res_status mh3_model_genmode_select(mh3_res_mut_span cache, mh3_res_span res
  * shader's texgen/channel counts. *top_known names the fields actually sent;
  * no change writes only *apply=0. Unknown cache bits survive. */
 mh3_res_status mh3_model_genmode_publish(mh3_res_mut_span cache, int xf, mh3_native_material_state *out, uint32_t *top_known, int *apply); /* 80086810/80086FF8 */
+/* The same publication as typed counts/cull instead of a whole-state patch. */
+mh3_res_status mh3_model_genmode_publish_counts(mh3_res_mut_span cache, int xf, mh3_model_genmode *out, uint32_t *top_known, int *apply);
 
 typedef struct mh3_model_material_misc {
     uint8_t depth_before_texture, indirect_method[3];
@@ -40,6 +42,9 @@ mh3_res_status mh3_model_channel_control(mh3_native_material_state *patch, uint3
  * explicitly disable channel1 controls while preserving its colors. */
 mh3_res_status mh3_model_channels_prepare(mh3_res_span resource, uint32_t channel_count, const uint32_t light_masks[4], const uint8_t ambient[4], int force_off,
                                           mh3_native_material_state *out); /* 80086B90 */
+/* The same channel patch without the surrounding whole-state record. */
+mh3_res_status mh3_model_channels_prepare_channels(mh3_res_span resource, uint32_t channel_count, const uint32_t light_masks[4], const uint8_t ambient[4], int force_off,
+                                                   mh3_pack_channel out[2]);
 
 #ifdef __cplusplus
 }

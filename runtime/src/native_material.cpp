@@ -470,6 +470,51 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
     mh3_material_state_overlay_unchecked(&material, &source, top_known);
     Changed(NATIVE_STATE_MATERIAL);
 }
+namespace {
+// A patch without a pixel record keeps the material's pixel-derived raster
+// and republishes it with the (possibly declared) cull mode.
+void PublishPixelRaster(uint32_t cull) {
+    auto raster = GetNativeDrawState().raster;
+    Check(mh3_material_pixel_raster_unchecked(&material.pixel, &raster), "Native material pixel raster");
+    raster.cull_mode = cull;
+    struct Export {
+        Export() { publishingMaterialRaster = true; }
+        ~Export() { publishingMaterialRaster = false; }
+    };
+    Export scoped;
+    SetNativeRaster(raster);
+}
+} // namespace
+void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t channels, uint32_t tevs, uint32_t indirect, uint32_t cull) {
+    Owner();
+    ObserveRasterPublications();
+    PublishPixelRaster((top_known & MH3_MATERIAL_TOP_CULL) ? cull : material.cull_mode);
+    if (top_known & MH3_MATERIAL_TOP_TEXGEN_COUNT)
+        material.texgen_count = texgens;
+    if (top_known & MH3_MATERIAL_TOP_CHANNEL_COUNT)
+        material.channel_count = channels;
+    if (top_known & MH3_MATERIAL_TOP_TEV_COUNT)
+        material.tev_count = tevs;
+    if (top_known & MH3_MATERIAL_TOP_INDIRECT_COUNT)
+        material.indirect_count = indirect;
+    if (top_known & MH3_MATERIAL_TOP_CULL)
+        material.cull_mode = cull;
+    Changed(NATIVE_STATE_MATERIAL);
+}
+void OverlayNativeMaterialChannels(const mh3_pack_channel channels[2]) {
+    Owner();
+    ObserveRasterPublications();
+    PublishPixelRaster(material.cull_mode);
+    mh3_material_overlay_channels_unchecked(&material, channels);
+    Changed(NATIVE_STATE_MATERIAL);
+}
+void OverlayNativeMaterialIndirectMatrices(const mh3_pack_indirect_matrix matrices[3]) {
+    Owner();
+    ObserveRasterPublications();
+    PublishPixelRaster(material.cull_mode);
+    mh3_material_overlay_indirect_matrices_unchecked(&material, matrices);
+    Changed(NATIVE_STATE_MATERIAL);
+}
 void SetNativeFog(const mh3_native_fog& source) {
     Owner();
     auto next = preparedFog;

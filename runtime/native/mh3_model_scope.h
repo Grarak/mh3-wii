@@ -66,6 +66,8 @@ mh3_res_status mh3_model_coordinate_prepare(mh3_res_mut_span cache, uint32_t cou
  * its two coefficient rows with the original auto exponent/truncation rules;
  * no source command bytes are serialized or replayed. Transactional. */
 mh3_res_status mh3_model_indirect_scope(const mh3_native_material_state *base, const mh3_indirect_output *operator_output, mh3_native_material_state *out);
+/* The same on the three indirect matrices alone. */
+mh3_res_status mh3_model_indirect_matrices(const mh3_pack_indirect_matrix base[3], const mh3_indirect_output *operator_output, mh3_pack_indirect_matrix out[3]);
 
 #ifdef __cplusplus
 }

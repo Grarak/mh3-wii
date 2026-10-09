@@ -309,6 +309,45 @@ static void merge_bytes(void *destination, const void *source, uint64_t known, s
         known &= known - 1;
     }
 }
+static void overlay_channels(mh3_pack_channel next[2], const mh3_pack_channel source[2]) {
+    for (unsigned index = 0; index < 2; ++index) {
+        const mh3_pack_channel *from = &source[index];
+        mh3_pack_channel *to = &next[index];
+        if (from->flags & MH3_CHANNEL_MATERIAL_COLOR)
+            memcpy(to->material_color, from->material_color, 3);
+        if (from->flags & MH3_CHANNEL_MATERIAL_ALPHA)
+            to->material_color[3] = from->material_color[3];
+        if (from->flags & MH3_CHANNEL_AMBIENT_COLOR)
+            memcpy(to->ambient_color, from->ambient_color, 3);
+        if (from->flags & MH3_CHANNEL_AMBIENT_ALPHA)
+            to->ambient_color[3] = from->ambient_color[3];
+        if (from->flags & MH3_CHANNEL_CONTROL_COLOR) {
+            to->color = from->color;
+            to->raw_color_control = from->raw_color_control;
+        }
+        if (from->flags & MH3_CHANNEL_CONTROL_ALPHA) {
+            to->alpha = from->alpha;
+            to->raw_alpha_control = from->raw_alpha_control;
+        }
+        to->flags |= from->flags;
+    }
+}
+static void overlay_indirect_matrices(mh3_pack_indirect_matrix next[3], const mh3_pack_indirect_matrix source[3]) {
+    for (unsigned index = 0; index < 3; ++index) {
+        merge_bytes(next[index].coefficients, source[index].coefficients, source[index].known & 63u, 6, 2);
+        if (source[index].known & 64)
+            next[index].scale_exponent = source[index].scale_exponent;
+        next[index].known |= source[index].known;
+    }
+}
+void mh3_material_overlay_channels_unchecked(mh3_native_material_state *destination, const mh3_pack_channel source[2]) {
+    assert(destination && source);
+    overlay_channels(destination->channel, source);
+}
+void mh3_material_overlay_indirect_matrices_unchecked(mh3_native_material_state *destination, const mh3_pack_indirect_matrix source[3]) {
+    assert(destination && source);
+    overlay_indirect_matrices(destination->indirect_matrix, source);
+}
 /* Preserve the authored sparse field writes and inheritance. Admission and
  * DEBUG contracts belong to the caller; the merge itself has no validation. */
 static void overlay_fields_unchecked(mh3_native_material_state *next, const mh3_native_material_state *source, uint32_t top_known) {
@@ -333,27 +372,7 @@ static void overlay_fields_unchecked(mh3_native_material_state *next, const mh3_
         merge_bytes(next->texgen[index].values, source->texgen[index].values, source->texgen[index].known, 10, 1);
         next->texgen[index].known |= source->texgen[index].known;
     }
-    for (unsigned index = 0; index < 2; ++index) {
-        const mh3_pack_channel *from = &source->channel[index];
-        mh3_pack_channel *to = &next->channel[index];
-        if (from->flags & MH3_CHANNEL_MATERIAL_COLOR)
-            memcpy(to->material_color, from->material_color, 3);
-        if (from->flags & MH3_CHANNEL_MATERIAL_ALPHA)
-            to->material_color[3] = from->material_color[3];
-        if (from->flags & MH3_CHANNEL_AMBIENT_COLOR)
-            memcpy(to->ambient_color, from->ambient_color, 3);
-        if (from->flags & MH3_CHANNEL_AMBIENT_ALPHA)
-            to->ambient_color[3] = from->ambient_color[3];
-        if (from->flags & MH3_CHANNEL_CONTROL_COLOR) {
-            to->color = from->color;
-            to->raw_color_control = from->raw_color_control;
-        }
-        if (from->flags & MH3_CHANNEL_CONTROL_ALPHA) {
-            to->alpha = from->alpha;
-            to->raw_alpha_control = from->raw_alpha_control;
-        }
-        to->flags |= from->flags;
-    }
+    overlay_channels(next->channel, source->channel);
     for (unsigned index = 0; index < 4; ++index) {
         merge_bytes(next->color[index].rgba, source->color[index].rgba, source->color[index].known, 4, 2);
         next->color[index].known |= source->color[index].known;
@@ -364,12 +383,7 @@ static void overlay_fields_unchecked(mh3_native_material_state *next, const mh3_
         merge_bytes(&next->indirect[index].coordinate, &source->indirect[index].coordinate, source->indirect[index].known, 4, 1);
         next->indirect[index].known |= source->indirect[index].known;
     }
-    for (unsigned index = 0; index < 3; ++index) {
-        merge_bytes(next->indirect_matrix[index].coefficients, source->indirect_matrix[index].coefficients, source->indirect_matrix[index].known & 63u, 6, 2);
-        if (source->indirect_matrix[index].known & 64)
-            next->indirect_matrix[index].scale_exponent = source->indirect_matrix[index].scale_exponent;
-        next->indirect_matrix[index].known |= source->indirect_matrix[index].known;
-    }
+    overlay_indirect_matrices(next->indirect_matrix, source->indirect_matrix);
     merge_bytes(next->pixel.values, source->pixel.values, source->pixel.known, 22, 4);
     next->pixel.known |= source->pixel.known;
     if (source->clip_mode_known) {

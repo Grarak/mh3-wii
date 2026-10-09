@@ -77,6 +77,10 @@ mh3_res_status mh3_material_state_overlay_candidate(mh3_native_material_state *c
  * uses the checked overlay path. NDEBUG removes all domain checks and debug
  * candidate storage. Mutation never depends on assertion evaluation. */
 void mh3_material_state_overlay_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, uint32_t top_known);
+/* The same merges for a patch that declares only its two channels or three
+ * indirect matrices (no top fields, no pixel record). */
+void mh3_material_overlay_channels_unchecked(mh3_native_material_state *destination, const mh3_pack_channel source[2]);
+void mh3_material_overlay_indirect_matrices_unchecked(mh3_native_material_state *destination, const mh3_pack_indirect_matrix source[3]);
 /* Null requirements checks known value domains only. ABSENT identifies missing
  * consumed fields; UNSUPPORTED identifies an unpromised backend capability. */
 mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state, const mh3_material_requirements *requirements, mh3_material_diagnostic *diagnostic);

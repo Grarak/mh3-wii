@@ -231,9 +231,22 @@ mh3_res_status mh3_model_coordinate_prepare(mh3_res_mut_span cache, uint32_t cou
     return MH3_RES_OK;
 }
 mh3_res_status mh3_model_indirect_scope(const mh3_native_material_state *base, const mh3_indirect_output *op, mh3_native_material_state *out) {
+    if (!base || !out)
+        return MH3_RES_INVALID;
+    mh3_pack_indirect_matrix matrices[3];
+    const mh3_res_status status = mh3_model_indirect_matrices(base->indirect_matrix, op, matrices);
+    if (status)
+        return status;
+    if (out != base)
+        memcpy(out, base, sizeof *out);
+    memcpy(out->indirect_matrix, matrices, sizeof matrices);
+    return MH3_RES_OK;
+}
+mh3_res_status mh3_model_indirect_matrices(const mh3_pack_indirect_matrix base[3], const mh3_indirect_output *op, mh3_pack_indirect_matrix out[3]) {
     if (!base || !op || !out || op->valid_mask > 7 || (op->active != 0 && op->active != 1))
         return MH3_RES_INVALID;
-    mh3_native_material_state result = *base;
+    mh3_pack_indirect_matrix result[3];
+    memcpy(result, base, sizeof result);
     for (unsigned slot = 0; slot < 3; slot++)
         if (op->active && (op->valid_mask & (1u << slot))) {
             float values[6], maximum = 0;
@@ -273,8 +286,8 @@ mh3_res_status mh3_model_indirect_scope(const mh3_native_material_state *base, c
                 const uint32_t bits = (uint32_t)(int32_t)scaled & 2047u;
                 matrix.coefficients[i] = (int16_t)(bits >= 1024 ? (int32_t)bits - 2048 : (int32_t)bits);
             }
-            result.indirect_matrix[slot] = matrix;
+            result[slot] = matrix;
         }
-    *out = result;
+    memcpy(out, result, sizeof result);
     return MH3_RES_OK;
 }
