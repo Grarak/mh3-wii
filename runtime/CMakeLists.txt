@@ -281,6 +281,9 @@ if(VITA)
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
     vita/vita_controller.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
+  # pthread-embedded fixes: leaking mutex semaphores, polling waits.
+  target_sources(MH3 PRIVATE vita/pthread_embedded.c)
+  target_link_options(MH3 PRIVATE "-Wl,--wrap=pte_osSemaphorePost" "-Wl,--wrap=pte_cancellable_wait")
   option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)
   if(MH3_VITA_FAST_TLS)
     target_sources(MH3 PRIVATE vita/fast_tls.c)
