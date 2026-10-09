@@ -372,6 +372,11 @@ float alpha_input(int i, vec4 t0, vec4 t1, vec4 t2) {
 #define COLOR_EQUATION material.equation[0]
 #define ALPHA_EQUATION material.equation[1]
 #define OVERLAY_SCALE coefficient(8)
+#define LERP_COLOR_OFFSET(i) coefficient(i)
+#define LERP_ALPHA_OFFSET(i) coefficient(i).a
+#define LERP_COLOR_SCALE coefficient(6)
+#define LERP_ALPHA_SCALE coefficient(6).a
+#define LERP_SWIZZLE material.swizzle.z
 #else
 vec3 color_input(int i, float swizzle, vec4 t0, vec4 t1, vec4 t2) {
     Input s = shade.color_input[i];
@@ -389,6 +394,11 @@ float alpha_input(int i, vec4 t0, vec4 t1, vec4 t2) {
 #define COLOR_EQUATION shade.color_equation
 #define ALPHA_EQUATION shade.alpha_equation
 #define OVERLAY_SCALE shade.overlay
+#define LERP_COLOR_OFFSET(i) shade.color_input[i].offset
+#define LERP_ALPHA_OFFSET(i) shade.alpha_input[i].offset.a
+#define LERP_COLOR_SCALE shade.color_input[2].scale
+#define LERP_ALPHA_SCALE shade.alpha_input[2].scale.a
+#define LERP_SWIZZLE shade.color_input[2].swizzle.x
 #endif
 #endif
 void main() {
@@ -421,6 +431,14 @@ void main() {
     base.rgb += overlay.rgb * t1.rgb * t2.rgb;
 #endif
     vec4 result = clamp((base * (v_color0 * kv + kc) + d) * s, 0.0, 1.0);
+#elif BASIC_LERP
+    // Constant inputs are their offsets; only c (texture role 0) varies.
+    vec3 c = LERP_COLOR_SCALE.rgb * mix(t0.rgb, t0.aaa, LERP_SWIZZLE) + LERP_COLOR_OFFSET(2).rgb;
+    vec3 color = mix(LERP_COLOR_OFFSET(0).rgb, LERP_COLOR_OFFSET(1).rgb, c);
+    color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
+    float alpha = mix(LERP_ALPHA_OFFSET(0), LERP_ALPHA_OFFSET(1), LERP_ALPHA_SCALE * t0.a + LERP_ALPHA_OFFSET(2));
+    alpha = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
+    vec4 result = clamp(vec4(color, alpha), 0.0, 1.0);
 #else
     vec3 b = color_input(1, SWIZZLE1, t0, t1, t2);
 #if OVERLAY
@@ -741,6 +759,11 @@ float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
 #define COLOR_EQUATION material.equation[0]
 #define ALPHA_EQUATION material.equation[1]
 #define OVERLAY_SCALE coefficient(8)
+#define LERP_COLOR_OFFSET(i) coefficient(i)
+#define LERP_ALPHA_OFFSET(i) coefficient(i).a
+#define LERP_COLOR_SCALE coefficient(6)
+#define LERP_ALPHA_SCALE coefficient(6).a
+#define LERP_SWIZZLE material.swizzle.z
 #else
 float3 color_input(int i, float swizzle, float4 t0, float4 t1, float4 t2, float4 v) {
     Input s = shade.color_input[i];
@@ -758,6 +781,11 @@ float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
 #define COLOR_EQUATION shade.color_equation
 #define ALPHA_EQUATION shade.alpha_equation
 #define OVERLAY_SCALE shade.overlay
+#define LERP_COLOR_OFFSET(i) shade.color_input[i].offset
+#define LERP_ALPHA_OFFSET(i) shade.alpha_input[i].offset.a
+#define LERP_COLOR_SCALE shade.color_input[2].scale
+#define LERP_ALPHA_SCALE shade.alpha_input[2].scale.a
+#define LERP_SWIZZLE shade.color_input[2].swizzle.x
 #endif
 #endif
 float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, float v_fog : TEXCOORD3,
@@ -800,6 +828,14 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
     float4 result;
     result.rg = saturate((base_rg * (v.rg * kv.rg + kc.rg) + d.rg) * s.rg);
     result.ba = saturate((base_ba * (v.ba * kv.ba + kc.ba) + d.ba) * s.ba);
+#elif BASIC_LERP
+    // Constant inputs are their offsets; only c (texture role 0) varies.
+    float3 c = LERP_COLOR_SCALE.rgb * lerp(t0.rgb, t0.aaa, LERP_SWIZZLE) + LERP_COLOR_OFFSET(2).rgb;
+    float3 color = lerp(LERP_COLOR_OFFSET(0).rgb, LERP_COLOR_OFFSET(1).rgb, c);
+    color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
+    float alpha = lerp(LERP_ALPHA_OFFSET(0), LERP_ALPHA_OFFSET(1), LERP_ALPHA_SCALE * t0.a + LERP_ALPHA_OFFSET(2));
+    alpha = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
+    float4 result = saturate(float4(color, alpha));
 #else
     float3 b = color_input(1, SWIZZLE1, t0, t1, t2, v);
 #if OVERLAY
@@ -881,7 +917,7 @@ bool Dynamic(const NativeShaderVariant& variant) {
 std::string FragmentDefines(const NativeShaderFragmentKey& key) {
     return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
            Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
-           Define("DYNAMIC", key.dynamic);
+           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp);
 }
 std::string GlslVertex(const NativeShaderVertexKey& key) {
     const bool mesh = key.vertex == NativeShaderVertex::Mesh;
@@ -929,6 +965,7 @@ NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& var
     key.target_alpha_one = variant.target_alpha_one;
     key.material_gpu = variant.material_gpu;
     key.dynamic = Dynamic(variant);
+    key.basic_lerp = variant.basic_lerp && variant.model == NativeShaderModel::Basic && variant.textures > 0 && !variant.overlay;
     return key;
 }
 
@@ -968,7 +1005,7 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
     NativeShaderVariant v;
     for (unsigned model = 0; model < NativeShaderModelCount; ++model)
         for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
-            for (unsigned flags = 0; flags < 256; ++flags) {
+            for (unsigned flags = 0; flags < 512; ++flags) {
                 v.model = NativeShaderModel(model);
                 v.textures = uint8_t(textures);
                 v.overlay = flags & 1;
@@ -979,6 +1016,7 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
                 v.target_alpha_one = flags & 32;
                 v.material_gpu = flags & 64;
                 v.dynamic = flags & 128;
+                v.basic_lerp = flags & 256;
                 const auto key = NativeShaderFragmentKeyOf(v);
                 if (seen.insert(key).second)
                     keys.push_back(key);
@@ -1053,7 +1091,7 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
 std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
     return std::string(key.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
-           (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
+           (key.basic_lerp ? "_lerp" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }
 
 std::string NativeShaderVertexName(NativeShaderVariant variant) {

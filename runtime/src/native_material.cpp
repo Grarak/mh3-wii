@@ -246,7 +246,7 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 1 | uint64_t(variant.lights) << 3 | uint64_t(variant.model) << 7 | uint64_t(variant.textures) << 8 |
                          uint64_t(variant.overlay) << 10 | uint64_t(variant.alpha_test) << 11 | uint64_t(variant.fog) << 12 | uint64_t(variant.texgen[0]) << 13 | uint64_t(variant.texgen[1]) << 16 |
                          uint64_t(variant.texgen[2]) << 19 | uint64_t(variant.linear_fog) << 22 | uint64_t(variant.pure_modulate) << 23 | uint64_t(variant.target_alpha_one) << 24 |
-                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26;
+                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26 | uint64_t(variant.basic_lerp) << 27;
     auto& program = shade.programs[key];
     if (!program) {
         auto sources = NativeShaderSource(variant);
@@ -386,6 +386,20 @@ std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& 
     blocks.sceneBytes = sizeof(mh3_shade_scene);
     return blocks;
 }
+// BASIC with constant a, b and d inputs and c from texture role 0, in colour
+// and alpha: the fixed program's per-fragment work is that one input.
+bool BasicLerp(const mh3_shade_material& shading) {
+    if (shading.model != MH3_SHADE_BASIC || shading.overlay)
+        return false;
+    for (const auto* equation : {&shading.color, &shading.alpha}) {
+        for (const unsigned i : {0u, 1u, 3u})
+            if (equation->input[i].source != MH3_SHADE_SOURCE_NONE)
+                return false;
+        if (equation->input[2].source != MH3_SHADE_SOURCE_TEXTURE || equation->input[2].texture != 0)
+            return false;
+    }
+    return true;
+}
 NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShaderVertex vertex, ShadeLighting lighting) {
     NativeShaderVariant variant;
     variant.vertex = vertex;
@@ -393,6 +407,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.lights = lighting.lights;
     variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : NativeShaderModel::Basic;
     variant.pure_modulate = shading.pure_modulate != 0;
+    variant.basic_lerp = BasicLerp(shading);
     variant.target_alpha_one = aurora::gl::shaded_target_alpha_one();
     variant.textures = shading.textures;
     variant.overlay = shading.overlay != 0;

@@ -65,10 +65,14 @@ struct NativeShaderVariant {
     // block. dynamic: a coefficient picks an animated palette entry.
     bool material_gpu = false;
     bool dynamic = false;
+    // BASIC whose colour and alpha inputs a, b and d are constants and c is
+    // texture role 0 (effect particles' colour ramps): a program with only
+    // that input's arithmetic per fragment.
+    bool basic_lerp = false;
     bool operator==(const NativeShaderVariant&) const = default;
 };
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 16, "update NativeShader*Key, NativeShader*Keys() and docs/vita-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 17, "update NativeShader*Key, NativeShader*Keys() and docs/vita-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
 // the GXM shader bank holds one program per key (docs/vita-shader-bank.md).
@@ -92,6 +96,7 @@ struct NativeShaderFragmentKey {
     bool target_alpha_one = false;
     bool material_gpu = false;
     bool dynamic = false;          // only material_gpu Modulate, not pure
+    bool basic_lerp = false;       // only Basic with textures, no overlay
     auto operator<=>(const NativeShaderFragmentKey&) const = default;
 };
 // Throw std::invalid_argument outside the domain: Spot with more than
