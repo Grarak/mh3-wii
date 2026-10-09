@@ -88,19 +88,19 @@ uint32_t Setup(CpuContext* ctx) {
             const uint32_t format = Read8(tex + 0xC);
             const uint32_t mipmap = Read8(tex + 0x14) > 1 ? 1 : 0;
             if (format <= 6 || format == 14) {
-                game(GXInitTexObj, {texObj, Read32(tex + 0x1C), Read16(tex + 4), Read16(tex + 6), format, wrapS,
+                game.Call<GXInitTexObj>({texObj, Read32(tex + 0x1C), Read16(tex + 4), Read16(tex + 6), format, wrapS,
                                     wrapT, mipmap});
             } else if (format - 8 <= 2) {
-                game(GXInitTlutObj, {tlut, Read32(tex + 0x20), Read8(tex + 0xD), Read16(tex + 0xE)});
-                game(GXLoadTlut, {tlut, uint32_t(id)});
+                game.Call<GXInitTlutObj>({tlut, Read32(tex + 0x20), Read8(tex + 0xD), Read16(tex + 0xE)});
+                game.Call<GXLoadTlut>({tlut, uint32_t(id)});
                 MemoryInline::FlatWrite32(frame[8], uint32_t(id));
-                game(GXInitTexObjCI, {texObj, Read32(tex + 0x1C), Read16(tex + 4), Read16(tex + 6), format, wrapS,
+                game.Call<GXInitTexObjCI>({texObj, Read32(tex + 0x1C), Read16(tex + 4), Read16(tex + 6), format, wrapS,
                                       wrapT, mipmap});
             }
             const double maxLod = Fadds(minusOne, Single(double(Read8(tex + 0x14))));
-            game(GXInitTexObjLOD, {texObj, Read8(tex + 0x15), Read8(tex + 0x16), 0, 0, 0},
+            game.Call<GXInitTexObjLOD>({texObj, Read8(tex + 0x15), Read8(tex + 0x16), 0, 0, 0},
                  {zero, maxLod, Load(tex + 0x18)});
-            game(GXLoadTexObj, {texObj, uint32_t(id)});
+            game.Call<GXLoadTexObj>({texObj, uint32_t(id)});
         }
 
         const uint32_t mirror = (Read8(emitter + 0x96) >> (2 * slot)) & 3;
@@ -137,7 +137,7 @@ uint32_t Setup(CpuContext* ctx) {
         Store(mtx + M13, offsetT);
         if (rotation != zero) {
             const double centeredS = Fsubs(offsetS, half), centeredT = Fsubs(offsetT, half);
-            game(SinCosIdx, {frame[0x18], frame[0x14]}, {rotation});
+            game.Call<SinCosIdx>({frame[0x18], frame[0x14]}, {rotation});
             const double c = Load(frame[0x14]), s = Load(frame[0x18]);
             Store(mtx + M11, c);
             Store(mtx + M00, c);
@@ -190,13 +190,13 @@ uint32_t Setup(CpuContext* ctx) {
 
         if (((int32_t(Read16(mtxFlags)) >> (slot + 7)) & 1) == 0) {
             const uint32_t mtxId = 3 * uint32_t(id) + 0x1E;
-            game(GXLoadTexMtxImm, {mtx, mtxId, 1});
-            if (force != 0) game(GXSetTexCoordGen2, {uint32_t(id), 1, 4, mtxId, 0, 0x7D});
+            game.Call<GXLoadTexMtxImm>({mtx, mtxId, 1});
+            if (force != 0) game.Call<GXSetTexCoordGen2>({uint32_t(id), 1, 4, mtxId, 0, 0x7D});
         } else {
             G3dNative::MtxConcat(view + 0x30, mtx, mtx);
             const uint32_t mtxId = 3 * uint32_t(id) + 0x40;
-            game(GXLoadTexMtxImm, {mtx, mtxId, 0});
-            if (force != 0) game(GXSetTexCoordGen2, {uint32_t(id), 0, 0, 0, 0, mtxId});
+            game.Call<GXLoadTexMtxImm>({mtx, mtxId, 0});
+            if (force != 0) game.Call<GXSetTexCoordGen2>({uint32_t(id), 0, 0, 0, 0, mtxId});
         }
     }
     return changed;

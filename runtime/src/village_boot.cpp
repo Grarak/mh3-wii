@@ -106,25 +106,25 @@ void StepVillageBoot(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
     // File 1's read, as the title's (state 12): the request, then the file.
-    if (!game(SaveReadRequest, {0, uint32_t(-1)})) throw std::runtime_error("--village: the save read request failed");
+    if (!game.Call<SaveReadRequest>({0, uint32_t(-1)})) throw std::runtime_error("--village: the save read request failed");
     std::copy(file.begin(), file.end(), Memory::GetPointer(buffer, SaveData::kFileSize));
-    if (!game(LoadCharacter, {0})) throw std::runtime_error("--village: File 1's first character did not load");
+    if (!game.Call<LoadCharacter>({0})) throw std::runtime_error("--village: File 1's first character did not load");
     Memory::Write8(kSystem + kSelectedFile, 0);
     Memory::Write8(kSystem + kSelectedCharacter, 0);
     // The mode menu's Village (0x80982E30).
     Memory::Write8(kSystem + kOnlineMenu, Memory::Read8(kSystem + kOnlineCapable) == 1);
-    game(RunExitHook);
+    game.Call<RunExitHook>();
     Memory::Write8(kSystem + kMode, 0);
     Memory::Write8(kSystem + kModeFlag0, 0);
     Memory::Write8(kSystem + kModeFlag1, 0);
-    game(SceneReset);
+    game.Call<SceneReset>();
     Memory::Write8(kSystem + kSceneFlag, 0);
-    game(SceneExit0);
-    game(SceneExit1);
+    game.Call<SceneExit0>();
+    game.Call<SceneExit1>();
     Memory::Write8(kSystem + kGameMode, kGameModeVillage);
     Memory::Write8(kSystem + kPlayMode, kPlayModeVillage);
     Memory::Write8(kSystem + kVillageVariant, 0);
-    game(StartGameModeTask);
+    game.Call<StartGameModeTask>();
     *ctx = saved;
     state = State::Complete;
     std::cerr << "MH3 village boot: loaded File 1 / character 1, starting the village\n";

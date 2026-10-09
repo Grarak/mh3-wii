@@ -104,16 +104,16 @@ static void VillageTaskPort(CpuContext* ctx) {
             // As the village's departure (0x8021FC10), then state 5.
             const CpuContext saved = *ctx;
             GuestCall game{ctx};
-            const uint32_t quest = jump.quest ? jump.quest : game(FreeRoamQuest) & 0xFFFF;
+            const uint32_t quest = jump.quest ? jump.quest : game.Call<FreeRoamQuest>() & 0xFFFF;
             std::fprintf(stderr, "MH3 field jump: leaving the village for quest %u\n", quest);
             // A free-roam quest leaves for the offline field; a quest from the
             // counter through the quest departure (0x8021F40C, play mode 6).
             Memory::Write8(kDeparture + 11, quest < kFirstCounterQuest ? 1 : 0);
-            Memory::Write8(kDeparture + 9, uint8_t(game(VillageSetting)));
+            Memory::Write8(kDeparture + 9, uint8_t(game.Call<VillageSetting>()));
             Memory::Write16(kDeparture, uint16_t(quest));
             Memory::Write32(kQuestId, quest);
-            game(PrimInitAll);
-            game(FilterReset);
+            game.Call<PrimInitAll>();
+            game.Call<FilterReset>();
             *ctx = saved;
             Memory::Write8(tcb + kState, kStateLeave);
             Memory::Write8(tcb + kSubState, kSubStateTearDown);
@@ -190,7 +190,7 @@ static void QuestMapSetupPort(CpuContext* ctx) {
     if (!jump.done || jump.area < 0) return;
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
-    const uint32_t work = game(MoveWork, {0});
+    const uint32_t work = game.Call<MoveWork>({0});
     *ctx = saved;
     if (!work) return;
     std::fprintf(stderr, "MH3 field jump: starting in area %d instead of %u\n", jump.area, Memory::Read8(work + kWorkArea));

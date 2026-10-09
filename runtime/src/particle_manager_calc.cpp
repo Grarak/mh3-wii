@@ -158,7 +158,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
         fn(ctx);
         return ctx->gpr[3];
     };
-    auto panic = [&](uint32_t line, uint32_t message) { game(kPanic, {kFile, line, message}); };
+    auto panic = [&](uint32_t line, uint32_t message) { game.Call<kPanic>({kFile, line, message}); };
 
     const uint32_t list = manager + 0x38;
     const uint32_t lastCalced = FlatRead32(manager + 0x54);
@@ -174,26 +174,26 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
     // The manager's frames: local (its emitter's space, as the manager
     // computes it), the emitter's global matrix, and those derived from them.
     const float zero = FlatReadFloat32(r2 - 0x79F4);
-    game(kManagerLocalMtx, {manager, sp + kLocal});
-    game(kMtxInverse, {sp + kWorldToLocal, sp + kLocal});
-    game(kEmitterGlobalMtx, {FlatRead32(manager + 0x20), sp + kGlobal});
+    game.Call<kManagerLocalMtx>({manager, sp + kLocal});
+    game.Call<kMtxInverse>({sp + kWorldToLocal, sp + kLocal});
+    game.Call<kEmitterGlobalMtx>({FlatRead32(manager + 0x20), sp + kGlobal});
     for (uint32_t row = 0; row < 3; ++row) {
         const uint32_t m = sp + kGlobal + row * 16;
         FlatWriteFloat32(sp + kMagVec + row * 4,
                          Add(FlatReadFloat32(m + 8), Add(FlatReadFloat32(m), FlatReadFloat32(m + 4))));
     }
-    game(kVecMag, {sp + kMagVec});
+    game.Call<kVecMag>({sp + kMagVec});
     const float scaleMag =
         static_cast<float>(PpcFmulsInline(FlatReadFloat32(r2 - 0x79F0), ctx->fpr[1].d)); // * 1/sqrt(3)
-    game(kMtxConcat, {sp + kWorldToEmitter, sp + kWorldToLocal, sp + kGlobal});
-    game(kMtxInverse, {sp + kWorldToEmitterInv, sp + kWorldToEmitter});
+    game.Call<kMtxConcat>({sp + kWorldToEmitter, sp + kWorldToLocal, sp + kGlobal});
+    game.Call<kMtxInverse>({sp + kWorldToEmitterInv, sp + kWorldToEmitter});
     // Rotation-only copies (translation zeroed).
     auto rotationOf = [&](uint32_t to, uint32_t from) {
         for (uint32_t k = 0; k < 48; k += 4) FlatWrite32(to + k, FlatRead32(from + k));
         for (uint32_t row = 0; row < 3; ++row) FlatWriteFloat32(to + row * 16 + 12, zero);
     };
     rotationOf(sp + kWorldToLocalRot, sp + kWorldToLocal);
-    game(kMtxInverse, {sp + kLocalToWorldRot, sp + kWorldToLocalRot});
+    game.Call<kMtxInverse>({sp + kLocalToWorldRot, sp + kWorldToLocalRot});
     rotationOf(sp + kWorldRotInv, sp + kWorldToEmitterInv);
     rotationOf(sp + kLocalRotInv, sp + kWorldToEmitter);
     const float unset = FlatReadFloat32(r2 - 0x79EC), one = FlatReadFloat32(r2 - 0x79F8),
@@ -212,7 +212,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
         for (uint32_t i = 0; i < count; ++i) tracks.push_back(native(MH3_ResEmitterGetPtclTrack, {res, i}));
         initTracks = native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
         FlatWrite32(sp + kResSlot, res);
-        data = game(kResEmitterData, {sp + kResSlot});
+        data = game.Call<kResEmitterData>({sp + kResSlot});
     };
 
     uint32_t header = frame.Arg(31); // the post-field header: kept across particles, as r31 was
@@ -235,7 +235,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
         Copy3(p + 0xB8, p + 0xAC);
         if (!resolved) resolve();
         if ((FlatRead8(data + 3) & 1) == 0 && FlatRead16(p + 0xE0) <= FlatRead16(p + 0xDC)) {
-            game(kRetireParticle, {manager, p});
+            game.Call<kRetireParticle>({manager, p});
             p = FlatRead32(sp + kNext);
             continue;
         }
@@ -276,22 +276,22 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                 break;
             case 4: { // texture
                 if (magic != 0xAC) panic(0x181, kAssertTexture);
-                game(kExecuteTexture, {track, p, tick, seed, life, sp + kTexOutB, sp + kTexOutA, sp + kTexResult});
+                game.Call<kExecuteTexture>({track, p, tick, seed, life, sp + kTexOutB, sp + kTexOutA, sp + kTexResult});
                 if (FlatRead8(data + 2) & 1) {
-                    game(kTextureFlags, {p, sp + kTexResult});
+                    game.Call<kTextureFlags>({p, sp + kTexResult});
                 } else {
                     const uint32_t shift = FlatRead32(sp + kTexResult + 4) << 1;
                     FlatWrite8(p + 0x96, FlatRead8(p + 0x96) & (~Slw(3, shift) & 0xFF));
                     FlatWrite8(p + 0x96, FlatRead8(p + 0x96) | (Slw(FlatRead8(sp + kTexResult + 8) & 3, shift) & 0xFF));
                 }
                 if (FlatRead8(data + 3) & 2)
-                    game(kTextureRotate, {p, sp + kTexResult, data, manager, FlatRead32(sp + kTexOutB),
+                    game.Call<kTextureRotate>({p, sp + kTexResult, data, manager, FlatRead32(sp + kTexOutB),
                                           FlatRead32(sp + kTexOutA)});
                 break;
             }
             case 5: // child emission
                 if (magic != 0xAC) panic(0x198, kAssertTexture);
-                game(kExecuteChild, {track, p, tick, seed, life});
+                game.Call<kExecuteChild>({track, p, tick, seed, life});
                 break;
             case 7: { // field
                 const uint32_t params = track + FlatRead32(track + 0xC) + FlatRead32(track + 0x10) +
@@ -300,7 +300,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                 if (FlatRead32(track + 0xC) != 0)
                     native(MH3_AnimCurveExecuteF32, {track, sp + kFieldParams + 4, tick, seed, life});
                 if (target == 6 || uint8_t(target - 2) <= 2) {
-                    game(kFieldOrigin, {sp + kFieldOriginOut, FlatRead8(sp + kFieldParams) == 1 ? 1u : 0u,
+                    game.Call<kFieldOrigin>({sp + kFieldOriginOut, FlatRead8(sp + kFieldParams) == 1 ? 1u : 0u,
                                         sp + kWorldToEmitterInv, sp + kLocal, sp + kGlobal, sp + kPosition});
                     Copy3(sp + kFieldOriginCopy, sp + kFieldOriginOut);
                 }
@@ -308,34 +308,34 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                                origin = sp + kFieldOriginCopy;
                 Zero3(force, zero);
                 switch (target) {
-                case 0: game(kFieldKind[0], {force, fieldParams}); break;
-                case 1: game(kFieldKind[1], {force, fieldParams, sp + kVelocity}); break;
+                case 0: game.Call<kFieldKind[0]>({force, fieldParams}); break;
+                case 1: game.Call<kFieldKind[1]>({force, fieldParams, sp + kVelocity}); break;
                 case 2: case 3: case 4: case 6: game(kFieldKind[target], {force, fieldParams, origin}); break;
                 case 7:
                     FlatWrite32(sp + kArgA, sp + kMovement);
                     FlatWrite32(sp + kArgB, sp + kWorldRotInv);
-                    game(kFieldKind[7], {force, fieldParams, track, track, p, tick, seed, sp + kVelocity});
+                    game.Call<kFieldKind[7]>({force, fieldParams, track, track, p, tick, seed, sp + kVelocity});
                     break;
                 case 8: { // toward the emitter's movement
                     const uint32_t emitter = FlatRead32(manager + 0x20);
                     if (!(unset == FlatReadFloat32(emitter + 0x114))) {
-                        game(kEmitterGlobalMtx, {emitter, sp + kEmitterMtx});
+                        game.Call<kEmitterGlobalMtx>({emitter, sp + kEmitterMtx});
                         FlatWrite32(sp + kEmitterPosition, FlatRead32(sp + kEmitterMtx + 0x0C));
                         FlatWrite32(sp + kEmitterPosition + 4, FlatRead32(sp + kEmitterMtx + 0x1C));
                         FlatWrite32(sp + kEmitterPosition + 8, FlatRead32(sp + kEmitterMtx + 0x2C));
-                        game(kVecSubtract, {force, sp + kEmitterPosition, FlatRead32(manager + 0x20) + 0x114});
-                        game(kVecScale, {force}, {FlatReadFloat32(sp + kFieldParams + 4)});
+                        game.Call<kVecSubtract>({force, sp + kEmitterPosition, FlatRead32(manager + 0x20) + 0x114});
+                        game.Call<kVecScale>({force}, {FlatReadFloat32(sp + kFieldParams + 4)});
                     }
                     break;
                 }
                 default: break;
                 }
                 switch (FlatRead8(sp + kFieldParams)) { // the force's space
-                case 1: game(kMtxMultVec, {force, sp + kLocalRotInv, force}); break;
-                case 0: game(kMtxMultVec, {force, sp + kWorldToLocalRot, force}); break;
+                case 1: game.Call<kMtxMultVec>({force, sp + kLocalRotInv, force}); break;
+                case 0: game.Call<kMtxMultVec>({force, sp + kWorldToLocalRot, force}); break;
                 case 3:
-                    game(kVecScale, {force}, {scaleMag});
-                    game(kMtxMultVec, {force, sp + kWorldToLocalRot, force});
+                    game.Call<kVecScale>({force}, {scaleMag});
+                    game.Call<kMtxMultVec>({force, sp + kWorldToLocalRot, force});
                     break;
                 default: break;
                 }
@@ -377,10 +377,10 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
             Copy3(sp + kPostPush, sp + kPush);
             FlatWrite32(sp + kArgA, sp + kPostVelocity);
             FlatWrite32(sp + kArgB, sp + kRetire);
-            const uint32_t moved = game(kPostField, {p, sp + kPostParams, header, collision, sp + kGlobal,
+            const uint32_t moved = game.Call<kPostField>({p, sp + kPostParams, header, collision, sp + kGlobal,
                                                      sp + kWorldToLocal, sp + kPosition, sp + kPostPush});
             if (FlatRead8(sp + kRetire) != 0) {
-                game(kRetireParticle, {manager, p});
+                game.Call<kRetireParticle>({manager, p});
                 p = FlatRead32(sp + kNext);
                 continue;
             }
@@ -393,35 +393,35 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                 // Wrap the position into the collision box, [-1, 1] on each
                 // axis of its frame.
                 const uint32_t m = sp + kWrapMtx;
-                game(kMtxIdentity, {m});
-                game(kMtxRotate, {m, header + 0x4C, m});
-                game(kMtxScale, {sp + kWrapScale},
+                game.Call<kMtxIdentity>({m});
+                game.Call<kMtxRotate>({m, header + 0x4C, m});
+                game.Call<kMtxScale>({sp + kWrapScale},
                      {FlatReadFloat32(header + 0x58), FlatReadFloat32(header + 0x5C), FlatReadFloat32(header + 0x60)});
-                game(kMtxConcat, {m, sp + kWrapScale, m});
-                game(kMtxTranslate, {m, header + 0x64, m});
+                game.Call<kMtxConcat>({m, sp + kWrapScale, m});
+                game.Call<kMtxTranslate>({m, header + 0x64, m});
                 if (FlatRead8(header + 0x48) & 2) {
                     FlatWrite32(sp + kEmitterTranslate, FlatRead32(sp + kGlobal + 0x0C));
                     FlatWrite32(sp + kEmitterTranslate + 4, FlatRead32(sp + kGlobal + 0x1C));
                     FlatWrite32(sp + kEmitterTranslate + 8, FlatRead32(sp + kGlobal + 0x2C));
-                    game(kMtxTranslate, {m, sp + kEmitterTranslate, m});
+                    game.Call<kMtxTranslate>({m, sp + kEmitterTranslate, m});
                 }
-                game(kMtxConcat, {m, sp + kWorldToLocal, m});
-                game(kMtxInverse, {sp + kWrapInverse, m});
-                game(kMtxMultVec, {sp + kWrapLocal, sp + kWrapInverse, p + 0xAC});
+                game.Call<kMtxConcat>({m, sp + kWorldToLocal, m});
+                game.Call<kMtxInverse>({sp + kWrapInverse, m});
+                game.Call<kMtxMultVec>({sp + kWrapLocal, sp + kWrapInverse, p + 0xAC});
                 bool wrapped = false;
                 for (uint32_t k = 0; k < 12; k += 4) {
                     const float v = FlatReadFloat32(sp + kWrapLocal + k);
                     if (v > one) {
-                        game(kFmod, {}, {Add(one, v), period});
+                        game.Call<kFmod>({}, {Add(one, v), period});
                         FlatWriteFloat32(sp + kWrapLocal + k, Sub(ctx->fpr[1].d, one));
                         wrapped = true;
                     } else if (v < minusOne) {
-                        game(kFmod, {}, {Sub(v, one), period});
+                        game.Call<kFmod>({}, {Sub(v, one), period});
                         FlatWriteFloat32(sp + kWrapLocal + k, Add(one, ctx->fpr[1].d));
                         wrapped = true;
                     }
                 }
-                if (wrapped) game(kMtxMultVec, {p + 0xAC, m, sp + kWrapLocal});
+                if (wrapped) game.Call<kMtxMultVec>({p + 0xAC, m, sp + kWrapLocal});
             }
         }
         FlatWrite16(p + 0xDC, uint16_t(FlatRead16(p + 0xDC) + 1));

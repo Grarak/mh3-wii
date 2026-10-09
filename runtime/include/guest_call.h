@@ -32,7 +32,82 @@ struct GuestCall {
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
+    // operator() for a constant target: the first call after the registry is
+    // published binds the target's entry point once, so later calls skip the
+    // dispatch lookup, the translated-address bookkeeping and the r14-r31
+    // guard of a native target (the port's GuestFrame restores the GPRs).
+    // Targets that may change the nonvolatile FPRs keep the guarded dispatch.
+    template <uint32_t Target>
+    [[gnu::always_inline]] uint32_t Call(std::initializer_list<uint32_t> ints = {},
+                                         std::initializer_list<double> floats = {}) {
+        uint32_t r = 3, f = 1;
+        for (uint32_t v : ints) cpu->gpr[r++] = v;
+        for (double v : floats) cpu->fpr[f++].d = v;
+        static void (*bound)(CpuContext*) = nullptr;
+        if (bound) [[likely]]
+            bound(cpu);
+        else
+            bound = Bind(Target, cpu, &Dispatch<Target>);
+        return cpu->gpr[3];
+    }
+
+    // Virtual() for a constant slot: remembers the last function the slot
+    // resolved to, so a loop over objects of one class binds it once.
+    template <uint32_t Slot>
+    [[gnu::always_inline]] uint32_t Virtual(uint32_t object, std::initializer_list<uint32_t> ints = {},
+                                            std::initializer_list<double> floats = {}) {
+        const uint32_t fn = Memory::Read32(Memory::Read32(object) + Slot);
+        uint32_t r = 3, f = 1;
+        cpu->gpr[r++] = object;
+        for (uint32_t v : ints) cpu->gpr[r++] = v;
+        for (double v : floats) cpu->fpr[f++].d = v;
+        static Memo memo;
+        if (memo.fn == fn) [[likely]]
+            memo.entry(cpu);
+        else
+            Rebind(fn, cpu, memo);
+        return cpu->gpr[3];
+    }
+
     float F1() const { return float(cpu->fpr[1].d); }
+
+private:
+    struct Memo {
+        uint32_t fn = 0;
+        void (*entry)(CpuContext*) = nullptr;
+    };
+
+    // Runs `fn` through the generic dispatch and remembers its entry point
+    // when later calls may enter it directly.
+    [[gnu::noinline]] static void Rebind(uint32_t fn, CpuContext* cpu, Memo& memo) {
+        if (TranslatedFunctionRegistry::IsLookupPublished() && fn < 0x80800000u && TryGetCpuContext() == cpu) {
+            const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(fn);
+            if (record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
+                memo = {fn, record->entry};
+        }
+        InvokeIndirectCpu(fn, cpu);
+    }
+
+    template <uint32_t Target>
+    static void Dispatch(CpuContext* cpu) { InvokeIndirectCpu(Target, cpu); }
+
+    // Runs `target` through the generic dispatch and returns what later calls
+    // enter: its entry point when that is safe, else `dispatch` (the generic
+    // path); null before the registry is published. Overlay code can unload,
+    // so overlay targets always dispatch.
+    [[gnu::noinline]] static void (*Bind(uint32_t target, CpuContext* cpu,
+                                         void (*dispatch)(CpuContext*)))(CpuContext*) {
+        void (*entry)(CpuContext*) = nullptr;
+        if (TranslatedFunctionRegistry::IsLookupPublished()) {
+            entry = dispatch;
+            const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(target);
+            if (target < 0x80800000u && TryGetCpuContext() == cpu && record && record->entry &&
+                (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
+                entry = record->entry;
+        }
+        InvokeIndirectCpu(target, cpu);
+        return entry;
+    }
 };
 
 // A native port's guest stack frame, as the original's: `size` bytes below the

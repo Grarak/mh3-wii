@@ -38,8 +38,8 @@ static void PlAddHealthPort(CpuContext* ctx) {
     {
         GuestFrame frame{ctx, 16};
         GuestCall game{ctx};
-        if (!game(Pl_master_ck, {player})) return;
-        if (game(PlInEventDemo, {0}) == 1 && amount < 0) return;
+        if (!game.Call<Pl_master_ck>({player})) return;
+        if (game.Call<PlInEventDemo>({0}) == 1 && amount < 0) return;
     }
     if (Memory::Read8(player + kActionGroup) == kActionDown) return;
     if (noDamage && amount < 0) return;

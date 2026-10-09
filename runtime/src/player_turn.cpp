@@ -98,7 +98,7 @@ static void PlayerTurnPort(CpuContext* ctx) {
     GuestCall game{ctx};
     const Plw p{frame.Arg(3)};
     const uint32_t savedR30 = frame.Arg(30);
-    auto act = [&](uint32_t kind, uint32_t action) { return game(ActionCheck, {p.base, kind, action}) == 1; };
+    auto act = [&](uint32_t kind, uint32_t action) { return game.Call<ActionCheck>({p.base, kind, action}) == 1; };
 
     int32_t yawRate = 4004, pitchRate = 1820;
     if (p.U8(kWeaponOut) == 1 && p.U8(kState) == 1 && p.U16(kSubState) <= 1) {
@@ -108,7 +108,7 @@ static void PlayerTurnPort(CpuContext* ctx) {
     } else if (act(1, 2) || act(1, 14)) {
         yawRate = 1456;
     } else if (p.U8(kAction) == 3) {
-        if (game(ActionFlagCheck, {p.base, 192}) != 0) {
+        if (game.Call<ActionFlagCheck>({p.base, 192}) != 0) {
             yawRate = p.U8(kWeaponOut) == 1 ? 1820 : 1092;
             pitchRate = 364;
         } else {
@@ -117,11 +117,11 @@ static void PlayerTurnPort(CpuContext* ctx) {
     } else if (act(1, 4)) {
         yawRate = 0;
     }
-    if (game(MasterCheck, {p.base}) == 1 && act(0, 22) && game(TurnLocked, {p.base}) == 1) pitchRate = 0;
+    if (game.Call<MasterCheck>({p.base}) == 1 && act(0, 22) && game.Call<TurnLocked>({p.base}) == 1) pitchRate = 0;
 
-    const uint32_t motion = game(MotionNo, {p.base}) & 0xFFFF;
+    const uint32_t motion = game.Call<MotionNo>({p.base}) & 0xFFFF;
     const int32_t lean = motion == 3 ? 128 : motion == 4 ? 160 : 0;
-    auto blend = [&](uint32_t mode, int32_t amount) { game(AddTurnBlend, {p.base, mode, Share(amount)}); };
+    auto blend = [&](uint32_t mode, int32_t amount) { game.Call<AddTurnBlend>({p.base, mode, Share(amount)}); };
     uint32_t diff = 0;
     if (TurnToward(p, kYaw, kWantedYaw, Share(yawRate), &diff)) {
         LeanBack(p, Share(768));
@@ -146,8 +146,8 @@ static void PlayerTurnPort(CpuContext* ctx) {
     if (!(motion - 119 < 2 || motion == 101 || motion == 115)) return;
     const int16_t turn = int16_t(p.U16(kTurnBlend));
     if (turn == 0) {
-        game(SetChannelWeight, {p.base, 0}, {Memory::ReadFloat32(kOne)});
-        game(SetChannelWeight, {p.base, 1}, {Memory::ReadFloat32(kZero)});
+        game.Call<SetChannelWeight>({p.base, 0}, {Memory::ReadFloat32(kOne)});
+        game.Call<SetChannelWeight>({p.base, 1}, {Memory::ReadFloat32(kZero)});
         return;
     }
     const float amount = float(turn);
@@ -169,18 +169,18 @@ static void PlayerTurnPort(CpuContext* ctx) {
         }
         weight *= Memory::ReadFloat32(kMinusOne);
     }
-    game(BlendFrame, {p.base}, {amount});
+    game.Call<BlendFrame>({p.base}, {amount});
     const int16_t blendFrame = int16_t(int32_t(game.F1()));
-    game(SetChannelMotion, {p.base, 1, turnMotion, 0, uint32_t(int32_t(blendFrame))});
-    game(SetChannelWeight, {p.base, 0}, {Memory::ReadFloat32(kOne) - weight});
-    game(SetChannelWeight, {p.base, 1}, {weight});
+    game.Call<SetChannelMotion>({p.base, 1, turnMotion, 0, uint32_t(int32_t(blendFrame))});
+    game.Call<SetChannelWeight>({p.base, 0}, {Memory::ReadFloat32(kOne) - weight});
+    game.Call<SetChannelWeight>({p.base, 1}, {weight});
 }
 
 static void VillagePlayerTurnPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     const Plw p{frame.Arg(3)};
-    if (game(MasterCheck, {p.base}) == 0) {
+    if (game.Call<MasterCheck>({p.base}) == 0) {
         p.W16(kLean, 0);
         return;
     }
@@ -188,7 +188,7 @@ static void VillagePlayerTurnPort(CpuContext* ctx) {
     const uint16_t sub = p.U16(kSubState);
     if (p.U8(kState) == 1) rate = sub == 1 || sub == 4 ? 1820 : sub == 2 ? 1456 : 4004;
     else if (p.U8(kState) == 12) rate = sub == 2 || sub == 5 ? 1820 : sub == 3 ? 1456 : 4004;
-    const uint32_t motion = game(MotionNo, {p.base}) & 0xFFFF;
+    const uint32_t motion = game.Call<MotionNo>({p.base}) & 0xFFFF;
     const int32_t lean = motion == 3 || motion == 53 ? 128 : motion == 4 ? 160 : 0;
     uint32_t diff = 0;
     if (TurnToward(p, kYaw, kWantedYaw, Share(rate), &diff)) LeanBack(p, Share(768));

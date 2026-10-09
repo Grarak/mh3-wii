@@ -154,7 +154,7 @@ void EmitQuad(GuestCall& game, uint32_t r2, const Quad& q, bool texCoord) {
     uint8_t* out = bytes;
     const uint32_t gx = FlatRead32(r2 - 2480);
     if (FlatRead32(gx + 0x5FC) != 0 || FlatRead32(gx) == 0) [[unlikely]] {
-        game(kGXBegin, {0x80, 0, 4}); // dirty state, or the pad draw first
+        game.Call<kGXBegin>({0x80, 0, 4}); // dirty state, or the pad draw first
     } else {
         *out++ = 0x80;
         *out++ = 0;
@@ -175,29 +175,29 @@ void DrawBillboard(CpuContext* ctx) {
     const uint32_t strategy = frame.Arg(3), drawInfo = frame.Arg(4), manager = frame.Arg(5), r2 = frame.Arg(2);
     GuestCall game{ctx};
 
-    if (!ValidPointer(manager)) game(kPanic, {kFile, 0x210, kBadPointer, manager});
-    game(kViewMtx, {drawInfo, sp + kView});
+    if (!ValidPointer(manager)) game.Call<kPanic>({kFile, 0x210, kBadPointer, manager});
+    game.Call<kViewMtx>({drawInfo, sp + kView});
     const uint32_t data = FlatRead32(manager + 0x24) + 0x9C;
-    game(kSetupGx, {strategy, drawInfo, manager});
+    game.Call<kSetupGx>({strategy, drawInfo, manager});
     const bool texCoord = FlatRead8(strategy + 0xD0) != 0;
     const float hundred = FlatReadFloat32(r2 - 31056);
     const float pivotX = float(int8_t(FlatRead8(data + 0xA9))) / hundred;
     const float pivotY = float(int8_t(FlatRead8(data + 0xAA))) / hundred;
     FlatWriteFloat32(sp + kPivot, pivotX);
     FlatWriteFloat32(sp + kPivot + 4, pivotY);
-    game(kManagerLocalMtx, {manager, sp + kMtx});
-    game(kMtxConcat, {sp + kMtx, sp + kView, sp + kMtx});
-    game(kColumnLength, {sp + kMtx, 0});
+    game.Call<kManagerLocalMtx>({manager, sp + kMtx});
+    game.Call<kMtxConcat>({sp + kMtx, sp + kView, sp + kMtx});
+    game.Call<kColumnLength>({sp + kMtx, 0});
     const float f1 = float(ctx->fpr[1].d);
-    game(kColumnLength, {sp + kMtx, 1});
+    game.Call<kColumnLength>({sp + kMtx, 1});
     const float f2 = float(ctx->fpr[1].d);
     const float zero = FlatReadFloat32(r2 - 31052);
     // The facing: the view's y axis in its xy plane, normalized.
     const float m01 = FlatReadFloat32(sp + kView + 4), m11 = FlatReadFloat32(sp + kView + 0x14);
-    game(kSqrt, {}, {Mul(m01, m01) + Mul(m11, m11)});
+    game.Call<kSqrt>({}, {Mul(m01, m01) + Mul(m11, m11)});
     float f4 = FlatReadFloat32(r2 - 31048), f5 = zero;
     if (FlatRead8(data + 0xAD) != 3 && !(zero == float(ctx->fpr[1].d))) {
-        game(kReciprocal, {}, {ctx->fpr[1].d});
+        game.Call<kReciprocal>({}, {ctx->fpr[1].d});
         const float inv = float(PPC_PsToScalarInline(ctx->fpr[1].d)); // a paired result
         f5 = Mul(-m01, inv);
         f4 = Mul(m11, inv);
@@ -205,8 +205,8 @@ void DrawBillboard(CpuContext* ctx) {
     const QuadMath math(f1, f2, f4, f5);
 
     const uint32_t order = FlatRead16(data) & 0x800;
-    const uint32_t first = game.Virtual(strategy, 0x10, {order});
-    const uint32_t next = game.Virtual(strategy, 0x14, {order});
+    const uint32_t first = game.Virtual<0x10>(strategy, {order});
+    const uint32_t next = game.Virtual<0x14>(strategy, {order});
     // The list walk: the stock (last to first) iterators natively.
     const bool stock = first == kFirstAlive && next == kNextAlive;
     const uint32_t link = FlatRead16(manager + 0x42);
@@ -230,19 +230,19 @@ void DrawBillboard(CpuContext* ctx) {
         }
         h = Mul(h, FlatReadFloat32(owner + 0x5C));
         if (h < minSize) continue;
-        game(kDrawState, {strategy, p, data, drawInfo, firstDraw, 0});
+        game.Call<kDrawState>({strategy, p, data, drawInfo, firstDraw, 0});
         firstDraw = 0;
 
         // 0x800BA244.
-        if (!ValidPointer(p)) game(kPanic, {kParticleFile, 0x88, kBadParticle, p});
-        game(kRotation, {p, sp + kRotationOut});
+        if (!ValidPointer(p)) game.Call<kPanic>({kParticleFile, 0x88, kBadParticle, p});
+        game.Call<kRotation>({p, sp + kRotationOut});
         Quad q;
         const float angle = FlatReadFloat32(sp + kRotationOut + 8);
         if (zero == angle) {
             math.Upright(sp + kMtx, p + 0xAC, pivotX, pivotY, w, h, q);
         } else {
-            game(kMtxMultVec, {sp + kWorld, sp + kMtx, p + 0xAC});
-            game(kSinCos, {sp + kSin, sp + kCos}, {-angle});
+            game.Call<kMtxMultVec>({sp + kWorld, sp + kMtx, p + 0xAC});
+            game.Call<kSinCos>({sp + kSin, sp + kCos}, {-angle});
             math.Rotated(sp + kWorld, FlatReadFloat32(sp + kSin), FlatReadFloat32(sp + kCos), pivotX, pivotY, w, h, q);
         }
         EmitQuad(game, r2, q, texCoord);

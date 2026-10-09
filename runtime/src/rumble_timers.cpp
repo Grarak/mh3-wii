@@ -28,7 +28,7 @@ static void TickSystemTimersPort(CpuContext* ctx) {
         const int8_t steps = int8_t(Memory::Read8(kSystem + kRumbleSteps + i));
         if (steps > 0) Memory::Write8(kSystem + kRumbleSteps + i, uint8_t(steps - int8_t(std::min<uint32_t>(ticks, steps))));
         if (Memory::Read8(kSystem + kRumbleOn + i) == 1 && int8_t(Memory::Read8(kSystem + kRumbleSteps + i)) < 1)
-            game(RumbleStop, {i});
+            game.Call<RumbleStop>({i});
     }
     *ctx = saved;
 }

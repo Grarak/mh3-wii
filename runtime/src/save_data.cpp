@@ -63,13 +63,13 @@ static void SaveReadRequestPort(CpuContext* ctx) {
     {
         GuestFrame frame{ctx, 16};
         GuestCall game{ctx};
-        game(Strcpy, {kSave + kSaveName, Memory::Read32(kSaveNames + 4 * uint32_t(int32_t(file)))});
+        game.Call<Strcpy>({kSave + kSaveName, Memory::Read32(kSaveNames + 4 * uint32_t(int32_t(file)))});
         const uint32_t buffer = Memory::Read32(kSystem + kSystemSaveBuffer);
         Memory::Write32(kSave + kSaveBuffer, buffer);
         if (buffer) {
             Memory::Write32(kSave + kSaveSize, SaveData::kFileSize);
             Memory::Write32(kSave + kSaveRequest, kRequestRead);
-            game(Memset, {buffer, 0, SaveData::kFileSize});
+            game.Call<Memset>({buffer, 0, SaveData::kFileSize});
             Memory::Write32(kSave + kSaveProgress, 0);
             Memory::Write32(kSave + kSaveResult, 0);
             result = 1;

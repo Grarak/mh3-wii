@@ -125,7 +125,7 @@ uint32_t BlendResult(CpuContext* ctx) {
         const uint32_t anm = Read32(anms + 4 * i);
         const double weight = Load(weights + 4 * i);
         if (anm == 0 || weight == zero || !Animates(anm, node)) continue;
-        const uint32_t res = game.Virtual(anm, 0x38, {own, node});
+        const uint32_t res = game.Virtual<0x38>(anm, {own, node});
         const double w = Fmuls(weight, inverseSum);
         const uint32_t flags = Read32(res);
 

@@ -49,7 +49,7 @@ enum : uint32_t {
 };
 
 float Sin(GuestCall& game, float x) {
-    game(SinF, {}, {x});
+    game.Call<SinF>({}, {x});
     return game.F1();
 }
 
@@ -95,9 +95,9 @@ static void SwingEffectUpdatePort(CpuContext* ctx) {
             Memory::Write16(phaseAt, uint16_t(phase));
         }
         const int16_t flip = int16_t(Memory::Read16(frameAt));
-        const uint32_t joints = game(JointCount, {model});
+        const uint32_t joints = game.Call<JointCount>({model});
         for (uint32_t joint = 0; joint < joints; ++joint)
-            game(SetVisibility, {model, joint, joint == uint32_t(int32_t(flip)) ? 1u : 0u});
+            game.Call<SetVisibility>({model, joint, joint == uint32_t(int32_t(flip)) ? 1u : 0u});
         // While held at an end the stored phase is one short of the end shown.
         const int16_t phase = int16_t(Memory::Read16(phaseAt));
         const bool held = int16_t(Memory::Read16(holdAt)) > 0;
@@ -106,8 +106,8 @@ static void SwingEffectUpdatePort(CpuContext* ctx) {
         const float s = SwingSin(game, at, shift);
         const float yaw = 0.5f + float(65536.0f * float(s * Memory::ReadFloat32(params + kAmplitude))) / 360.0f;
         Memory::Write32(model + kYaw, (uint32_t(int32_t(yaw)) & 0xFFFF) + Memory::Read16(params + kBaseYaw));
-        game(MoveMHchar, {model, 0});
-        game(SubmitModel, {work, list + kModels + 4 * i, 2, 1, 0});
+        game.Call<MoveMHchar>({model, 0});
+        game.Call<SubmitModel>({work, list + kModels + 4 * i, 2, 1, 0});
     }
 }
 

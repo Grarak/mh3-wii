@@ -214,7 +214,7 @@ void CalcWorld(CpuContext* ctx) {
         if (anmObj) {
             const uint32_t nodeId = node ? Read32(node + 0xC) : 0;
             GuestCall game{ctx};
-            chr = game.Virtual(anmObj, 0x38, {result, nodeId});
+            chr = game.Virtual<0x38>(anmObj, {result, nodeId});
         }
         if (!anmObj || Read32(chr) == 0) {
             call(func_80098FD0, {frame[kNode], result});

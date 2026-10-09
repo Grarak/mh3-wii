@@ -38,14 +38,14 @@ void QuestClockTick(CpuContext* ctx) {
     const int32_t running = int32_t(ctx->gpr[3]);
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
-    const uint32_t work = game(QuestWork);
+    const uint32_t work = game.Call<QuestWork>();
     if (!work) return;
     // 99 minutes or more: no time limit.
     const float left = float(int32_t(Memory::Read32(work + kTimeLeft)));
     if (left >= kNoLimitMinutes * (60.0f * Memory::ReadFloat32(kFrameRate))) return;
 
     Memory::WriteFloat64(work + kPrevious, ReadF64(work + kNow));
-    game(OSGetTime);
+    game.Call<OSGetTime>();
     const auto now = int64_t(uint64_t(ctx->gpr[3]) << 32 | ctx->gpr[4]);
     Memory::WriteFloat64(work + kNow, double(now));
     const double previous = ReadF64(work + kPrevious);

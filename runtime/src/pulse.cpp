@@ -30,7 +30,7 @@ static void PulseUpdatePort(CpuContext* ctx) {
     const uint32_t phase = (Memory::Read8(kPhase) + GameStep::Ticks()) % kPeriod;
     Memory::Write8(kPhase, uint8_t(phase));
     const float at = float(double(phase) + GameStep::Fraction());
-    game(SinRad, {}, {Memory::ReadFloat32(kRadPerStep) * at});
+    game.Call<SinRad>({}, {Memory::ReadFloat32(kRadPerStep) * at});
     float value = Memory::ReadFloat32(kHalf) * (Memory::ReadFloat32(kOne) + game.F1());
     value = std::min(std::max(value, Memory::ReadFloat32(kZero)), Memory::ReadFloat32(kOne));
     Memory::WriteFloat32(kValue, value);

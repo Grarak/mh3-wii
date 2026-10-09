@@ -89,7 +89,7 @@ void Tick(GuestCall& game, const Plw p) {
     p.Down16(0x660);
     p.Down16(0x442);
 
-    if (game(MasterCheck, {pl}) == 0) {
+    if (game.Call<MasterCheck>({pl}) == 0) {
         // Another player: only its leave countdown.
         if (p.U8(0x584) == 0) return;
         p.W16(0x256, p.U16(0x256) - 1);
@@ -111,11 +111,11 @@ void Tick(GuestCall& game, const Plw p) {
     p.Down16(0x66A);
     p.Down16(0x470);
     p.Down16(0x460);
-    if (game(AreaCondition, {pl}) == 1) {
+    if (game.Call<AreaCondition>({pl}) == 1) {
         p.W16(0x36E, p.U16(0x36E) - 1);
         if (p.S16(0x36E) < 1) {
             p.W16(0x36E, 150);
-            game(AreaConditionTick, {pl, 5});
+            game.Call<AreaConditionTick>({pl, 5});
         }
     }
 
@@ -129,54 +129,54 @@ void Tick(GuestCall& game, const Plw p) {
             check = action - 49 > 3 && action - 97 > 2 && (action < 44 || action > 45);
         }
         if (check) {
-            const uint16_t status = uint16_t(game(PendingStatus, {pl}));
+            const uint16_t status = uint16_t(game.Call<PendingStatus>({pl}));
             if (status != 0xFFFF) {
-                if (game(MasterCheck, {pl}) == 1 && game(InEventDemo, {1}) == 0)
-                    game(ShowStatusMessage, {pl, 2, 18, status});
-                game(ApplyStatus, {pl, status});
+                if (game.Call<MasterCheck>({pl}) == 1 && game.Call<InEventDemo>({1}) == 0)
+                    game.Call<ShowStatusMessage>({pl, 2, 18, status});
+                game.Call<ApplyStatus>({pl, status});
             }
         }
     }
 
-    if (game(ConditionActive, {pl, 1}) == 1 || game(ConditionActiveB, {pl}) == 1) {
-        if (game(DamageCondition, {pl, 12}) == 1) {
-            if (game(ConditionActiveB, {pl}) == 1) {
+    if (game.Call<ConditionActive>({pl, 1}) == 1 || game.Call<ConditionActiveB>({pl}) == 1) {
+        if (game.Call<DamageCondition>({pl, 12}) == 1) {
+            if (game.Call<ConditionActiveB>({pl}) == 1) {
                 if (p.S16(0x412) > 1) p.W16(0x412, p.U16(0x412) - 1);
-                game(SetConditionState, {pl, 4});
+                game.Call<SetConditionState>({pl, 4});
             } else {
-                game(SetConditionState, {pl, 1});
+                game.Call<SetConditionState>({pl, 1});
             }
         } else {
-            game(SetConditionState, {pl, 4});
+            game.Call<SetConditionState>({pl, 4});
         }
     }
     if (p.S16(0x412) > 0) {
         p.W16(0x412, p.U16(0x412) - 1);
-        if (p.S16(0x412) == 0 && game(InEventDemo, {1}) == 0) game(ShowStatusMessage, {pl, 1, 24, 0});
+        if (p.S16(0x412) == 0 && game.Call<InEventDemo>({1}) == 0) game.Call<ShowStatusMessage>({pl, 1, 24, 0});
     }
 
     if (p.U8(9) == 3) {
         if (p.U8(10) != 8) { // swimming
-            if (game(OnWaterSurface, {pl}) == 0) {
+            if (game.Call<OnWaterSurface>({pl}) == 0) {
                 if (p.S16(0x382) < 90) {
                     p.W16(0x382, p.U16(0x382) + 1);
                 } else {
                     int32_t every = 128;
-                    if (game(SkillCheck, {pl, 193}) == 1) every = 256;
-                    else if (game(SkillCheck, {pl, 194}) == 1) every = 103;
+                    if (game.Call<SkillCheck>({pl, 193}) == 1) every = 256;
+                    else if (game.Call<SkillCheck>({pl, 194}) == 1) every = 103;
                     if (p.S32(0x20) % every == 0) {
-                        game(ClimateDamage, {pl, 0xFFFFFFFFu});
-                        if (p.S16(0x37E) == 25) game(SetEffect013, {pl, 3});
+                        game.Call<ClimateDamage>({pl, 0xFFFFFFFFu});
+                        if (p.S16(0x37E) == 25) game.Call<SetEffect013>({pl, 3});
                     }
                 }
             }
-            if (game(ClimateActive, {pl, 0}) == 1) {
+            if (game.Call<ClimateActive>({pl, 0}) == 1) {
                 p.W32(0x3DC, uint32_t(p.S32(0x3DC)) | 0x100000);
-                if ((p.S32(0x20) & 0xF) == 0) game(ClimateTick, {pl, 0xFFFFFFFFu, 0});
+                if ((p.S32(0x20) & 0xF) == 0) game.Call<ClimateTick>({pl, 0xFFFFFFFFu, 0});
             }
         }
     } else if (p.U8(10) != 8) {
-        game(ClimateDamage, {pl, 150});
+        game.Call<ClimateDamage>({pl, 150});
     }
 
     if (p.S16(0x44A) > 0) {
@@ -202,49 +202,49 @@ void Tick(GuestCall& game, const Plw p) {
 
     if (p.U8(2) == 7) {
         if (p.S16(0x468) == 0 && p.S16(0x384) > 0 && p.S32(0x20) % 10 == 0) p.W16(0x384, p.U16(0x384) - 1);
-        if (uint8_t(game(ArmorLevel, {pl})) > 2 && p.Expired16(0x46A)) p.W16(0x386, 0);
+        if (uint8_t(game.Call<ArmorLevel>({pl})) > 2 && p.Expired16(0x46A)) p.W16(0x386, 0);
     }
     if (p.S16(0x45E) > 0) {
         p.W16(0x45E, p.U16(0x45E) - 1);
-        if (p.S16(0x45E) == 0 && game(MasterCheck, {pl}) == 1 && game(InEventDemo, {1}) == 0)
-            game(ShowStatusMessage, {pl, 1, 31, 0});
+        if (p.S16(0x45E) == 0 && game.Call<MasterCheck>({pl}) == 1 && game.Call<InEventDemo>({1}) == 0)
+            game.Call<ShowStatusMessage>({pl, 1, 31, 0});
     }
     // Hot and cold drink timers: twice as fast on odd steps in their climate.
     for (const auto [timer, climate, message] : {std::tuple{0x464u, 3u, 35u}, {0x466u, 4u, 36u}}) {
         if (p.U16(timer) == 0) continue;
-        if (uint8_t(game(MapClimate, {p.U8(0x16)})) == climate) {
+        if (uint8_t(game.Call<MapClimate>({p.U8(0x16)})) == climate) {
             p.W16(timer, p.U16(timer) - ((p.S32(0x20) & 1) == 0 ? 1 : 2));
             if (p.S16(timer) < 0) p.W16(timer, 0);
         } else {
             p.W16(timer, p.U16(timer) - 1);
         }
-        if (p.S16(timer) == 0 && game(MasterCheck, {pl}) == 1 && game(InEventDemo, {1}) == 0)
-            game(ShowStatusMessage, {pl, 1, message, 0});
+        if (p.S16(timer) == 0 && game.Call<MasterCheck>({pl}) == 1 && game.Call<InEventDemo>({1}) == 0)
+            game.Call<ShowStatusMessage>({pl, 1, message, 0});
     }
     if (p.U16(0x410) != 0) p.W16(0x410, p.U16(0x410) - 1);
     for (const uint32_t timer : {0x42Eu, 0x438u, 0x430u, 0x43Au, 0x432u, 0x43Cu, 0x434u, 0x43Eu, 0x436u, 0x440u, 0x422u})
         p.Down16(timer);
-    game(StatusUpdate, {pl});
+    game.Call<StatusUpdate>({pl});
     if (uint8_t(p.U8(10) - 6) < 3) return;
 
     // Health recovery every N steps (skills change N), not in the wrong climate
     // without the matching skill.
     bool recover = true;
     if (p.S16(0x464) == 0) {
-        const uint8_t climate = uint8_t(game(MapClimate, {p.U8(0x16)}));
-        if (climate == 1) recover = game(SkillCheck, {pl, 124}) != 0 || game(SkillCheck, {pl, 125}) != 0;
-        else if (climate == 3) recover = game(SkillCheck, {pl, 125}) != 0;
+        const uint8_t climate = uint8_t(game.Call<MapClimate>({p.U8(0x16)}));
+        if (climate == 1) recover = game.Call<SkillCheck>({pl, 124}) != 0 || game.Call<SkillCheck>({pl, 125}) != 0;
+        else if (climate == 3) recover = game.Call<SkillCheck>({pl, 125}) != 0;
     }
-    if (recover && game(CanRecoverHealth, {pl}) == 1) {
+    if (recover && game.Call<CanRecoverHealth>({pl}) == 1) {
         int32_t every = 60;
-        if (game(SkillCheck, {pl, 17}) == 1) every = 30;
-        if (game(SkillCheck, {pl, 18}) == 1) every = 15;
-        if (game(SkillCheck, {pl, 19}) == 1) every = 120;
-        if (game(SkillCheck, {pl, 20}) == 1) every = 240;
+        if (game.Call<SkillCheck>({pl, 17}) == 1) every = 30;
+        if (game.Call<SkillCheck>({pl, 18}) == 1) every = 15;
+        if (game.Call<SkillCheck>({pl, 19}) == 1) every = 120;
+        if (game.Call<SkillCheck>({pl, 20}) == 1) every = 240;
         const int32_t amount = p.S16(0x45E) != 0 ? 2 : 1;
         if (p.S32(0x20) % every == 0 && p.S16(0x370) < p.S16(0x376)) {
             const int32_t missing = int16_t(p.S16(0x376) - p.S16(0x370));
-            game(RecoverHealth, {pl, uint32_t(missing < amount ? missing : amount)});
+            game.Call<RecoverHealth>({pl, uint32_t(missing < amount ? missing : amount)});
         }
     }
     p.Down16(0x400);
