@@ -5,7 +5,8 @@
 // partition sectors decrypted (WIA/RVZ: zeroed hash block, hashes are not
 // rebuilt); flat reads give the game partition's data, 0x7c00 bytes per
 // sector. The image is read through the caller's 64-bit positioned reads; the
-// decoder opens no files and starts no threads.
+// decoder opens no files, and starts one thread only when asked to read ahead
+// (mh3_rom_read_ahead).
 //
 // Formats: WiiBrew's "Wii disc" (partition table, ticket, AES-128-CBC
 // sectors) and Dolphin's docs/WiaAndRvz.md (WIA/RVZ headers, groups,
@@ -14,13 +15,17 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <climits>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <bzlib.h>
@@ -457,6 +462,28 @@ class Decompressor {
     CLzma2Dec lzma2{};
 };
 
+// One thread's group decoding: its codec, buffers and junk generator, and the
+// message of its last failure.
+struct GroupDecoder {
+    std::unique_ptr<Decompressor> decompressor;
+    std::vector<uint8_t> input, stream;
+    JunkGenerator junk;
+    std::string error;
+};
+
+// A decoded group (UINT32_MAX: none): its data is bytes[begin, begin + size).
+struct Slot {
+    uint32_t group = UINT32_MAX;
+    uint64_t used = 0;
+    std::vector<uint8_t> bytes;
+    size_t begin = 0, size = 0;
+};
+
+struct Span {
+    const uint8_t* data; // null: zeroes
+    size_t size;
+};
+
 struct Partition {
     uint32_t kind = 0;
     uint32_t dataStart = 0, dataEnd = 0; // sectors
@@ -475,6 +502,8 @@ constexpr uint8_t kCommonKeys[2][3][16] = {
 class RomReader {
   public:
     RomReader(void* context, uint64_t size, MH3RomReadAt readAt) : context(context), readAt(readAt), fileBytes(size) {}
+    ~RomReader();
+    RomReader(const RomReader&) = delete;
 
     // Every step returns false on a failure, which leaves its message here.
     mutable std::string error;
@@ -484,6 +513,7 @@ class RomReader {
     uint64_t FlatBytes() const { return flatBytes; }
     bool ReadDisc(uint64_t at, uint8_t* out, size_t count);
     bool ReadFlat(uint64_t at, uint8_t* out, size_t count);
+    bool StartReadAhead(void (*start)());
 
   private:
     struct WiaData {
@@ -502,18 +532,6 @@ class RomReader {
         bool compressed = false;
     };
 
-    struct Slot {
-        uint32_t group = UINT32_MAX;
-        uint64_t used = 0;
-        std::vector<uint8_t> bytes;
-        size_t begin = 0, size = 0;
-    };
-
-    struct Span {
-        const uint8_t* data; // null: zeroes
-        size_t size;
-    };
-
     void* context;
     MH3RomReadAt readAt;
     uint64_t fileBytes;
@@ -524,14 +542,33 @@ class RomReader {
 
     // WIA/RVZ
     uint32_t method = kNone, chunkBytes = 0;
-    std::unique_ptr<Decompressor> decompressor;
+    std::vector<uint8_t> props; // the codec's properties
+    GroupDecoder main;
     std::vector<std::array<WiaData, 2>> wiaPartitions;
     std::vector<WiaRaw> wiaRaw;
     std::vector<Group> groups;
     std::vector<Slot> slots;
     uint64_t clock = 0;
-    std::vector<uint8_t> input, stream;
-    JunkGenerator junk;
+
+    // Read-ahead (mh3_rom_read_ahead): a worker decodes the group a read needs
+    // next, with its own codec and buffers, while this thread decodes the
+    // current one. Its fields are under `lock`; `ready` is the group it
+    // decoded last until a read takes it.
+    struct Ahead {
+        std::thread thread;
+        std::mutex lock;
+        std::condition_variable changed;
+        GroupDecoder decoder;
+        Slot ready;
+        std::string failure; // ready's error, when it failed
+        uint32_t queued = UINT32_MAX, working = UINT32_MAX;
+        bool partition = false, stop = false;
+        uint64_t junkOffset = 0;
+    };
+
+    enum class Taken { Missing, Yes, Failed };
+    std::unique_ptr<Ahead> ahead;
+    uint64_t flatEnd = UINT64_MAX; // where the last flat read ended
 
     // One decoded sector of each kind: a disc sector, an ISO partition data sector.
     std::vector<uint8_t> discSector, dataSector, batch;
@@ -542,14 +579,21 @@ class RomReader {
         return false;
     }
 
-    bool Source(uint64_t at, uint8_t* out, size_t count) const;
+    bool ReadSource(uint64_t at, uint8_t* out, size_t count, std::string& message) const;
+    bool Source(uint64_t at, uint8_t* out, size_t count) const { return ReadSource(at, out, count, error); }
     bool IsoRaw(uint64_t at, uint8_t* out, size_t count) const;
     bool OpenWia(const uint8_t* header);
     bool Table(uint64_t at, uint32_t bytes, size_t needed, std::vector<uint8_t>& table);
     bool ReadPartitions();
-    bool SkipExceptions(const uint8_t* data, size_t size, bool partition, size_t& at) const;
+    bool SkipExceptions(const uint8_t* data, size_t size, bool partition, size_t& at, std::string& message) const;
+    bool DecodeGroup(GroupDecoder& d, uint32_t index, bool partition, uint64_t junkOffset, Slot& slot) const;
     bool LoadGroup(uint32_t index, bool partition, uint64_t junkOffset, Span& span);
-    bool WiaSectors(size_t index, uint32_t sector, Span& span);
+    bool WiaSectors(size_t index, uint32_t sector, Span& span, uint32_t lastSector, bool stream);
+    void RunAhead();
+    bool HasAhead(uint32_t index);
+    bool Cached(uint32_t index) const;
+    void QueueAhead(uint32_t index, bool partition, uint64_t junkOffset);
+    Taken TakeAhead(uint32_t index, Slot& slot);
     bool IsoSectors(const Partition& p, uint32_t sector, uint8_t* out, size_t limit, size_t& count);
     bool DiscSector(uint32_t sector, const uint8_t*& out);
 };
@@ -595,14 +639,15 @@ bool RomReader::Open() {
     return true;
 }
 
-bool RomReader::Source(uint64_t at, uint8_t* out, size_t count) const {
+// The read-ahead worker reads too: the caller's reads are positioned.
+bool RomReader::ReadSource(uint64_t at, uint8_t* out, size_t count, std::string& message) const {
     if (at > fileBytes || count > fileBytes - at)
-        return Fail("The disc image is truncated");
+        return message = "The disc image is truncated", false;
     while (count) {
         const intptr_t n = readAt(context, at, out, count);
 
         if (n <= 0 || size_t(n) > count)
-            return Fail("Disc image read failed");
+            return message = "Disc image read failed", false;
 
         at += n, out += n, count -= size_t(n);
     }
@@ -664,9 +709,10 @@ bool RomReader::OpenWia(const uint8_t* header) {
     if (d[0xd4] > 7)
         return Fail("Invalid WIA/RVZ compressor data");
 
-    decompressor = Decompressor::Open(method, d + 0xd5, d[0xd4], error);
+    props.assign(d + 0xd5, d + 0xd5 + d[0xd4]);
+    main.decompressor = Decompressor::Open(method, props.data(), props.size(), error);
 
-    if (!decompressor)
+    if (!main.decompressor)
         return false;
 
     std::vector<uint8_t> entries(size_t(Be32(d + 0x90)) * 0x30);
@@ -729,7 +775,7 @@ bool RomReader::Table(uint64_t at, uint32_t bytes, size_t needed, std::vector<ui
     std::vector<uint8_t> packed(bytes);
     size_t produced = 0;
 
-    if (!Source(at, packed.data(), packed.size()) || !decompressor->Run(packed.data(), packed.size(), table, needed, produced, error))
+    if (!Source(at, packed.data(), packed.size()) || !main.decompressor->Run(packed.data(), packed.size(), table, needed, produced, error))
         return false;
 
     if (produced < needed)
@@ -801,18 +847,18 @@ bool RomReader::ReadPartitions() {
 // Skips a group's exception lists (Wii partition data: one per 2 MiB) and
 // sets `at` past them; hashes are not rebuilt, so the exceptions themselves
 // are not needed.
-bool RomReader::SkipExceptions(const uint8_t* data, size_t size, bool partition, size_t& at) const {
+bool RomReader::SkipExceptions(const uint8_t* data, size_t size, bool partition, size_t& at, std::string& message) const {
     at = 0;
 
     for (uint32_t list = 0; partition && list < (chunkBytes + 0x1fffff) / 0x200000; ++list) {
         if (size - at < 2)
-            return Fail("WIA/RVZ exception list is truncated");
+            return message = "WIA/RVZ exception list is truncated", false;
 
         const size_t count = Be16(data + at);
         at += 2;
 
         if ((size - at) / 22 < count)
-            return Fail("WIA/RVZ exception list is truncated");
+            return message = "WIA/RVZ exception list is truncated", false;
 
         at += count * 22;
     }
@@ -824,9 +870,7 @@ bool RomReader::LoadGroup(uint32_t index, bool partition, uint64_t junkOffset, S
     if (index >= groups.size())
         return Fail("Missing WIA/RVZ group " + std::to_string(index));
 
-    const Group& g = groups[index];
-
-    if (!g.size) {
+    if (!groups[index].size) {
         span = {nullptr, 0};
         return true;
     }
@@ -845,15 +889,34 @@ bool RomReader::LoadGroup(uint32_t index, bool partition, uint64_t junkOffset, S
     }
 
     slot->group = UINT32_MAX;
+    const Taken taken = TakeAhead(index, *slot);
+
+    if (taken == Taken::Failed)
+        return false;
+
+    if (taken == Taken::Missing && !DecodeGroup(main, index, partition, junkOffset, *slot))
+        return Fail(main.error);
+
+    slot->group = index;
+    slot->used = ++clock;
+    span = {slot->bytes.data() + slot->begin, slot->size};
+    return true;
+}
+
+// Decodes group `index` into `slot` (bytes, begin, size) with `d`'s codec and
+// buffers; false with d.error set on a failure. It reads only the image and
+// the reader's tables, so the read-ahead worker runs it too.
+bool RomReader::DecodeGroup(GroupDecoder& d, uint32_t index, bool partition, uint64_t junkOffset, Slot& slot) const {
+    const Group& g = groups[index];
     const size_t limit = size_t(chunkBytes) * 2 + 0x100000;
 
     if (g.size > limit)
-        return Fail("WIA/RVZ group is too large");
+        return d.error = "WIA/RVZ group is too large", false;
 
-    if (input.size() < g.size)
-        input.resize(g.size);
+    if (d.input.size() < g.size)
+        d.input.resize(g.size);
 
-    if (!Source(g.offset, input.data(), g.size))
+    if (!ReadSource(g.offset, d.input.data(), g.size, d.error))
         return false;
 
     // Uncompressed data keeps its exception lists in front, padded to 4 bytes.
@@ -862,77 +925,224 @@ bool RomReader::LoadGroup(uint32_t index, bool partition, uint64_t junkOffset, S
     size_t start = 0;
 
     if (outerExceptions) {
-        if (!SkipExceptions(input.data(), g.size, partition, start))
+        if (!SkipExceptions(d.input.data(), g.size, partition, start, d.error))
             return false;
 
         start = (start + 3) & ~size_t(3);
     }
 
     if (start > g.size)
-        return Fail("WIA/RVZ group is truncated");
+        return d.error = "WIA/RVZ group is truncated", false;
 
-    std::vector<uint8_t>& owner = compressed ? stream : input;
+    std::vector<uint8_t>& owner = compressed ? d.stream : d.input;
     size_t size = g.size, at = start;
 
-    if (compressed && !decompressor->Run(input.data() + start, g.size - start, stream, limit, size, error))
+    if (compressed && !d.decompressor->Run(d.input.data() + start, g.size - start, d.stream, limit, size, d.error))
         return false;
 
-    if (!outerExceptions && !SkipExceptions(stream.data(), size, partition, at))
+    if (!outerExceptions && !SkipExceptions(d.stream.data(), size, partition, at, d.error))
         return false;
 
     const uint8_t* data = owner.data();
 
     if (!g.packed) {
-        std::swap(slot->bytes, owner);
-        slot->begin = at, slot->size = size - at;
-    } else {
-        // RVZ packing: big-endian sizes, each followed by data, or (top bit)
-        // by a junk generator seed.
-        if (slot->bytes.size() < chunkBytes)
-            slot->bytes.resize(chunkBytes);
-
-        size_t produced = 0;
-
-        while (size - at >= 4) {
-            uint32_t n = Be32(data + at);
-            at += 4;
-            const bool isJunk = n >> 31;
-            n &= 0x7fffffff;
-
-            if (n > chunkBytes - produced)
-                return Fail("RVZ packed data exceeds its group");
-
-            if (isJunk) {
-                if (size - at < 68)
-                    return Fail("RVZ junk seed is truncated");
-
-                junk.Seed(data + at);
-                at += 68;
-                junk.Skip((junkOffset + produced) % kSector);
-                junk.Fill(slot->bytes.data() + produced, n);
-            } else {
-                if (size - at < n)
-                    return Fail("RVZ packed data is truncated");
-
-                std::memcpy(slot->bytes.data() + produced, data + at, n);
-                at += n;
-            }
-
-            produced += n;
-        }
-
-        slot->begin = 0, slot->size = produced;
+        std::swap(slot.bytes, owner);
+        slot.begin = at, slot.size = size - at;
+        return true;
     }
 
-    slot->group = index;
-    slot->used = ++clock;
-    span = {slot->bytes.data() + slot->begin, slot->size};
+    // RVZ packing: big-endian sizes, each followed by data, or (top bit) by a
+    // junk generator seed.
+    if (slot.bytes.size() < chunkBytes)
+        slot.bytes.resize(chunkBytes);
+
+    size_t produced = 0;
+
+    while (size - at >= 4) {
+        uint32_t n = Be32(data + at);
+        at += 4;
+        const bool isJunk = n >> 31;
+        n &= 0x7fffffff;
+
+        if (n > chunkBytes - produced)
+            return d.error = "RVZ packed data exceeds its group", false;
+
+        if (isJunk) {
+            if (size - at < 68)
+                return d.error = "RVZ junk seed is truncated", false;
+
+            d.junk.Seed(data + at);
+            at += 68;
+            d.junk.Skip((junkOffset + produced) % kSector);
+            d.junk.Fill(slot.bytes.data() + produced, n);
+        } else {
+            if (size - at < n)
+                return d.error = "RVZ packed data is truncated", false;
+
+            std::memcpy(slot.bytes.data() + produced, data + at, n);
+            at += n;
+        }
+
+        produced += n;
+    }
+
+    slot.begin = 0, slot.size = produced;
     return true;
 }
 
+// Starts the read-ahead worker: `start` runs first on its thread (the
+// caller's core pinning). False when the image has no groups to read ahead or
+// the thread cannot start.
+bool RomReader::StartReadAhead(void (*start)()) {
+    if (!wia || ahead)
+        return false;
+
+    auto worker = std::make_unique<Ahead>();
+    std::string message;
+    worker->decoder.decompressor = Decompressor::Open(method, props.data(), props.size(), message);
+
+    if (!worker->decoder.decompressor)
+        return false;
+
+    ahead = std::move(worker);
+
+    try {
+        ahead->thread = std::thread([this, start] {
+            if (start)
+                start();
+
+            RunAhead();
+        });
+    } catch (...) {
+        ahead.reset();
+        return false;
+    }
+
+    return true;
+}
+
+RomReader::~RomReader() {
+    if (!ahead)
+        return;
+
+    {
+        std::lock_guard guard(ahead->lock);
+        ahead->stop = true;
+    }
+
+    ahead->changed.notify_all();
+    ahead->thread.join();
+}
+
+void RomReader::RunAhead() {
+    Ahead& a = *ahead;
+    Slot slot;
+
+    for (;;) {
+        uint32_t index;
+        bool partition;
+        uint64_t junkOffset;
+        {
+            std::unique_lock guard(a.lock);
+
+            // Timed: VitaSDK's condition variable can lose a notification.
+            while (!a.stop && a.queued == UINT32_MAX)
+                a.changed.wait_for(guard, std::chrono::milliseconds(5));
+
+            if (a.stop)
+                return;
+
+            index = a.queued, partition = a.partition, junkOffset = a.junkOffset;
+            a.queued = UINT32_MAX;
+            a.working = index;
+        }
+
+        const bool ok = DecodeGroup(a.decoder, index, partition, junkOffset, slot);
+        {
+            std::lock_guard guard(a.lock);
+
+            // The group it replaces was never taken; its buffer decodes the next.
+            std::swap(a.ready, slot);
+            a.ready.group = index;
+            a.failure = ok ? std::string() : a.decoder.error;
+            a.working = UINT32_MAX;
+        }
+
+        a.changed.notify_all();
+    }
+}
+
+// Whether a slot holds group `index`.
+bool RomReader::Cached(uint32_t index) const {
+    return std::any_of(slots.begin(), slots.end(), [&](const Slot& s) { return s.group == index; });
+}
+
+// Whether the worker has group `index` queued, in decoding or decoded.
+bool RomReader::HasAhead(uint32_t index) {
+    std::lock_guard guard(ahead->lock);
+    return ahead->queued == index || ahead->working == index || ahead->ready.group == index;
+}
+
+// Hands group `index` to the worker unless a slot or the worker has it; a
+// group queued earlier and not begun gives way.
+void RomReader::QueueAhead(uint32_t index, bool partition, uint64_t junkOffset) {
+    if (index >= groups.size() || !groups[index].size || Cached(index))
+        return;
+
+    {
+        std::lock_guard guard(ahead->lock);
+
+        if (ahead->working == index || ahead->ready.group == index)
+            return;
+
+        ahead->queued = index, ahead->partition = partition, ahead->junkOffset = junkOffset;
+    }
+
+    ahead->changed.notify_all();
+}
+
+// The worker's decode of group `index`, moved into `slot` (waiting while it
+// decodes); Missing when the worker neither has it nor has begun it (a
+// queued one is withdrawn: this thread decodes it), Failed with `error` set.
+RomReader::Taken RomReader::TakeAhead(uint32_t index, Slot& slot) {
+    if (!ahead)
+        return Taken::Missing;
+
+    Ahead& a = *ahead;
+    std::unique_lock guard(a.lock);
+
+    if (a.queued == index) {
+        a.queued = UINT32_MAX;
+        return Taken::Missing;
+    }
+
+    while (a.working == index)
+        a.changed.wait_for(guard, std::chrono::milliseconds(5));
+
+    if (a.ready.group != index)
+        return Taken::Missing;
+
+    a.ready.group = UINT32_MAX;
+
+    if (!a.failure.empty()) {
+        error = a.failure;
+        return Taken::Failed;
+    }
+
+    std::swap(slot.bytes, a.ready.bytes);
+    slot.begin = a.ready.begin, slot.size = a.ready.size;
+    return Taken::Yes;
+}
+
 // The data of WIA partition sector `sector` (absolute) and of the sectors
-// that follow it in the same group: size is a multiple of 0x7c00.
-bool RomReader::WiaSectors(size_t index, uint32_t sector, Span& span) {
+// that follow it in the same group: size is a multiple of 0x7c00. When this
+// thread is about to decode this group itself (no slot or worker has it), the
+// worker decodes the next one beside it if the read needs it (its last
+// sector, `lastSector`, lies there) or the read continues the previous one
+// (`stream`: a sequential stream, such as the DVD layer's pieces). The two
+// alternate: the next group the reader needs after taking the worker's is
+// one it decodes itself.
+bool RomReader::WiaSectors(size_t index, uint32_t sector, Span& span, uint32_t lastSector, bool stream) {
     if (index >= wiaPartitions.size())
         return Fail("Missing WIA/RVZ partition " + std::to_string(index));
 
@@ -954,6 +1164,15 @@ bool RomReader::WiaSectors(size_t index, uint32_t sector, Span& span) {
         return Fail("WIA/RVZ partition group is out of range");
     // Junk offsets count partition data bytes from the partition's first data sector.
     const uint64_t junkOffset = uint64_t(group * perChunk + pd->first - part[0].first) * kSectorData;
+
+    if (ahead && group + 1 < pd->groups) {
+        const bool next = uint64_t(lastSector) >= uint64_t(pd->first) + uint64_t(group + 1) * perChunk;
+        const uint32_t current = pd->group + group;
+
+        if ((next || stream) && !Cached(current) && !HasAhead(current))
+            QueueAhead(current + 1, true, junkOffset + uint64_t(perChunk) * kSectorData);
+    }
+
     Span loaded{};
 
     if (!LoadGroup(pd->group + group, true, junkOffset, loaded))
@@ -1033,7 +1252,7 @@ bool RomReader::DiscSector(uint32_t sector, const uint8_t*& result) {
     } else if (part) {
         Span span{};
 
-        if (!WiaSectors(index, sector, span))
+        if (!WiaSectors(index, sector, span, sector, false))
             return false;
 
         std::memset(out, 0, kHashes);
@@ -1098,6 +1317,9 @@ bool RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
         return Fail("Read beyond the game partition");
 
     const Partition& p = partitions[game];
+    const uint32_t lastSector = count ? p.dataStart + uint32_t((at + count - 1) / kSectorData) : 0;
+    const bool stream = at == flatEnd;
+    flatEnd = at + count;
 
     while (count) {
         const uint32_t sector = p.dataStart + uint32_t(at / kSectorData);
@@ -1107,7 +1329,7 @@ bool RomReader::ReadFlat(uint64_t at, uint8_t* out, size_t count) {
         if (wia) {
             Span span{};
 
-            if (!WiaSectors(game, sector, span))
+            if (!WiaSectors(game, sector, span, lastSector, stream))
                 return false;
 
             n = std::min(count, span.size - offset);
@@ -1178,5 +1400,7 @@ extern "C" int mh3_rom_read(void* reader, int flat, uint64_t offset, uint8_t* by
     CopyError(error, capacity, rom->error.c_str());
     return -1;
 }
+
+extern "C" int mh3_rom_read_ahead(void* reader, void (*thread_start)(void)) { return static_cast<RomReader*>(reader)->StartReadAhead(thread_start) ? 1 : 0; }
 
 extern "C" void mh3_rom_close(void* reader) { delete static_cast<RomReader*>(reader); }

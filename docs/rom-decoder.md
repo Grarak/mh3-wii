@@ -22,6 +22,41 @@ rejected before anything is allocated. Up to four decoded groups are kept (1
 MiB; one group for 2 MiB chunks), so interleaved readers don't decode the
 same group again. Each group is one positioned read of the image.
 
+## Read-ahead
+
+`RomImage` starts one worker thread (`mh3_rom_read_ahead`) with its own codec
+and buffers. When the reading thread is about to decode a group itself (no
+cached slot and not at the worker), it first hands the next group to the
+worker if the read needs it or the read continues where the previous one
+ended (a sequential stream, such as the DVD layer's 128 KiB pieces). The
+reader takes the worker's group when it gets there, waiting while it is
+decoded, and decodes the one after itself: the two alternate, so two groups
+decode at once and one's image read overlaps the other's decompression. A
+group queued and not begun gives way to the next one queued, or is decoded by
+the reader itself. Disc (raw) reads never use the worker.
+
+On the Vita the worker runs on core 3, beside the draw thread and below the
+default priority, so a draw never waits for it (core 0 when core 3 is not
+available). The DVD reader thread that calls the decoder is on core 0: a
+worker there gave no parallel decoding, and one boot read took 422 ms
+instead of ~70.
+
+Checked with a standalone comparison of two decoders, with and without the
+worker: the whole 4 GiB game partition in 512 KiB reads and 20,000 random
+reads, byte for byte equal. Pi 5, warm page cache, sequential flat reads in
+MiB/s:
+
+| Read size | Without | With the worker |
+| --- | ---: | ---: |
+| 512 KiB | 482 | 803 |
+| 128 KiB stream | 482 | 816 |
+| 32 KiB stream | 633 | 1,047 |
+
+Devkit (`MH3_PROFILE=disc`, Alatreon quest): decoded 512 KiB reads 15.9 ->
+20.5 MiB/s, the image's share of the time 34% -> 68% (the card's 10-11.5
+MiB/s is now the limit); the village motion archive's 512 KiB read 210 -> 101
+ms. The quest's load time stayed 11.6 s: it is not bound by decoding.
+
 Codecs: Aurora's zstd 1.5.7, libbzip2 1.0.8 (`runtime/third_party/bzip2`) and
 the LZMA SDK 25.01 decoders (`runtime/third_party/lzma`), all unmodified. An
 LZMA stream decodes straight into its group buffer, which serves as the

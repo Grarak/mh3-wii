@@ -1,5 +1,6 @@
 #include "rom_image.h"
 #include "fatal.h"
+#include <aurora/thread_role.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -16,6 +17,7 @@
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/kernel/sysmem.h>
+#include <psp2/kernel/threadmgr.h>
 #else
 #include <cerrno>
 #include <fcntl.h>
@@ -101,6 +103,22 @@ class File {
     }
 };
 
+// The decoder's read-ahead worker. Vita: on core 3 beside the draw thread
+// (core 0 holds the DVD reader, which decodes beside it and waits on it),
+// below the default priority so a draw never waits for it; on core 0 without
+// core 3.
+void PinDecodeWorker() {
+#ifdef __vita__
+    if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0 << 3) < 0)
+        sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
+
+    constexpr int DefaultPriority = 0x10000100; // SCE_KERNEL_DEFAULT_PRIORITY_USER
+    sceKernelChangeThreadPriority(sceKernelGetThreadId(), DefaultPriority + 16);
+#else
+    aurora::pin_current_thread(aurora::ThreadRole::Worker);
+#endif
+}
+
 uint32_t Word(const std::vector<uint8_t>& b, size_t at) {
     if (at > b.size() || b.size() - at < 4)
         MH3_THROW(std::runtime_error("ROM metadata is truncated"));
@@ -138,6 +156,8 @@ class RomImage::Source {
         if (!decoder)
             return Status::Error(reinterpret_cast<const char*>(error.data()));
 
+        // A worker decodes the next RVZ group of a long read beside the reader.
+        mh3_rom_read_ahead(decoder, PinDecodeWorker);
         size = mh3_rom_size(decoder, 0);
         return {};
     }
