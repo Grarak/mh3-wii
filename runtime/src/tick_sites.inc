@@ -48,9 +48,44 @@
 {0x800FB944u, TickSite::Countup, 9},         // enemy part: steps (+0xC), up to 10
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
 {0x8010425Cu, TickSite::CountdownPastZero},  // enemy (80104220): countdown (+0xC), fires below 0
+{0x80106608u, TickSite::CountdownPastZero}, // enemy effect (80106594, ending): steps left (+0x10) before the release
+{0x80108448u, TickSite::Countdown},         // hunter effect (80107EC0, kind 0xC): start delay (+0x10)
+{0x80108DE8u, TickSite::CountdownPastZero}, // hunter effect (80108AD8, kinds 8/0x15): wait (+0xC)
+{0x8010920Cu, TickSite::Countup},           // hunter effect (kind 0xE): colour key frame (+0x10)
+{0x80109254u, TickSite::Countup},           // hunter effect (kind 0x10): colour key frame (+0x10)
+{0x8010930Cu, TickSite::Countup},           // hunter effect (kind 0x16): colour key frame (+0x10)
+{0x80109484u, TickSite::CountdownPastZero}, // hunter effect (80109458): life (+0xC), ends below 0
+{0x80109968u, TickSite::Countup},           // hunter effect (80109458): colour table step (+0x10), 3 steps
+{0x80109C70u, TickSite::CountdownPastZero}, // hunter effect (80109AE8): steps to the next spark (+0xC), every 20
+{0x8010A16Cu, TickSite::CountdownPastZero}, // hunter effect (80109D64, state 5): wait (+0x10)
+{0x8010A310u, TickSite::CountdownPastZero}, // hunter effect (8010A238, ending): steps left (+0x10) before the release
 {0x8010A52Cu, TickSite::CountdownPastZero},  // object (8010A500): countdown (+0x24)
 {0x8010A538u, TickSite::CountdownPastZero},  // object: countdown (+0x1C), fires below 0
 {0x8010A5E8u, TickSite::CountdownPastZero},  // object: countdown (+0x20), fires below 0
+{0x8010CC48u, TickSite::PerStep},           // joint effect (8010C95C): spin (+0x28) 2048 per step
+{0x8010CD28u, TickSite::Countup},           // joint effect: 32-step cycle (+0xC)
+{0x8010CD50u, TickSite::Countdown},         // joint effect: steps to the next sound (s16 +0x4C), every 45
+{0x8010EDF0u, TickSite::Countup},           // hunter weapon effect (8010E30C): steps since the start (+0xC), its colour for the first 4
+{0x8010F760u, TickSite::CountdownPastZero}, // hunter weapon effect: steps to the next spark (s8 +0x67), every 13
+{0x8010FC74u, TickSite::CountdownPastZero}, // hunter weapon effect: steps to the next spark (s8 +0x67), every 13
+{0x8010FD30u, TickSite::Countup},           // hunter weapon effect: steps since the start (+0xC)
+{0x8011074Cu, TickSite::CountdownPastZero}, // hunter weapon effect: steps to the next burst (+0x10)
+{0x80110924u, TickSite::CountdownPastZero}, // hunter weapon effect: steps to the next burst (+0x10) in the motion window
+{0x80110AC0u, TickSite::Countup},           // hunter effect (80110A7C): steps (+0xC), next stage after 60 or 20
+{0x80110ACCu, TickSite::Countup},           // hunter effect (80110A7C): steps (+0x10)
+{0x80110B40u, TickSite::PerStep},           // hunter effect (80110A7C, falling): fall acceleration (x the steps) per step
+{0x80110B98u, TickSite::PerStep},           // hunter effect falling: fall speed (+0x6C) moved per step
+{0x80110E60u, TickSite::PerStep},           // hunter effect (80110A7C, landing): fall acceleration per step
+{0x80110EB8u, TickSite::PerStep},           // hunter effect landing: fall speed (+0x6C) moved per step
+{0x80119E74u, TickSite::CountdownPastZero}, // proximity glow (80119E50): start delay (+0xC)
+{0x8011A69Cu, TickSite::Countup},           // proximity glow (8011A3E8): fade-in key frame (+0x10), up to 10
+{0x8011A6E4u, TickSite::Countdown},         // proximity glow: fade-out key frame (+0x10), down to 0
+{0x8011A9F0u, TickSite::Advance, 13},       // proximity glow (8011A900): alpha (u8 +0xB), +13 per step
+{0x8011A9FCu, TickSite::Countdown},         // proximity glow: fade-in steps left (+0xC)
+{0x8011AA30u, TickSite::Advance, -5},       // proximity glow: alpha (u8 +0xB), -5 per step
+{0x8011AA3Cu, TickSite::Countdown},         // proximity glow: dimming steps left (+0xC)
+{0x8011AA8Cu, TickSite::Advance, -3},       // proximity glow: alpha (u8 +0xB), -3 per step
+{0x8011AA98u, TickSite::Countdown},         // proximity glow: fade-out steps left (+0xC)
 {0x8011D02Cu, TickSite::CountdownPastZero},  // volcano object (8011CF28): countdown (+0xC), fires below 0
 {0x8011D31Cu, TickSite::Countdown},          // volcano object: countdown (+0xC), fires at 0
 {0x80124A3Cu, TickSite::Countup},            // enemy (801249F0): steps (s16 +0x914) in state 11
@@ -84,6 +119,11 @@
 {0x801AFF6Cu, TickSite::Countdown},          // small monster (801AFE24): wait (s16 +0x22) before a new roll
 {0x801BA674u, TickSite::Advance, 5461},      // enemy (801BA438): spin angle (+0x1BC), +5461 per step
 {0x801BA938u, TickSite::Advance, 2731},      // enemy (801BA438): spin angle (+0x1BC), +2731 per step
+{0x801E330Cu, TickSite::CountdownPastZero}, // effect (801E32B0): life (+0xC), ends below 0
+{0x801E36BCu, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
+{0x801E37A8u, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
+{0x801E3824u, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
+{0x801E3EDCu, TickSite::CountdownPastZero}, // effect (801E3E68, ending): steps left (+0x10) before the release
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
@@ -117,18 +157,42 @@
 {0x802E4DB4u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xD)
 {0x802E4E24u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xE), 30..50
 {0x802EF2ACu, TickSite::Countdown},         // player-side timer (802EF294): +0x5C, set from seconds * fps by 802EF3A4
+{0x802FA510u, TickSite::Countup},           // glowing parts (802FA3A0): colour pulse phase (s16 +0x30A per part), 120-step cycle
+{0x802FA5B8u, TickSite::Countdown},         // glowing parts: near fade (+0xC) down to 0
+{0x802FA5D0u, TickSite::Countup, 14},       // glowing parts: near fade (+0xC) up to 15
 {0x80308050u, TickSite::Countup},            // effect (80307F30): age (+0x10)
 {0x8030805Cu, TickSite::CountdownPastZero},  // effect: life (+0xC), ends below 0
+{0x803089C0u, TickSite::CountdownPastZero}, // debris (80308960): life (+0xC), ends below 0
 {0x80308A00u, TickSite::PerStep},            // debris (80308960): gravity (+0x18) off the fall speed each step
 {0x80308A18u, TickSite::Advance, -2185},     // debris (80308960): spin (+0x24), -2185 per step
 {0x8031E51Cu, TickSite::CountdownPastZero},  // creature (8031DF1C): countdown (s16 +0x30)
+{0x8031E958u, TickSite::Countup},           // enemy-attached model (8031E858): key frame (+0xC) of its scale curve
 {0x8031F728u, TickSite::Advance, 512},      // marker effect (8031F574): bob phase (u16), +512 per step
 {0x8031F734u, TickSite::Advance, 255},      // marker effect: spin angle (+0x28), +255 per step
 {0x803327A4u, TickSite::CountdownPastZero}, // actor action countdown (+0x28), fires at <= 0
 {0x80334330u, TickSite::CountdownPastZero},
+{0x803407D0u, TickSite::PerStep},           // fish (8034062C, appearing): scale x grown per step (target / 10)
+{0x803407E8u, TickSite::PerStep},           // fish appearing: scale y grown per step
+{0x803407FCu, TickSite::PerStep},           // fish appearing: scale z grown per step
+{0x80340810u, TickSite::Countdown},         // fish appearing: steps left (+0xC), then the full scale
 {0x80340924u, TickSite::Countdown},         // fish (803408B4): turn steps left (+0xC)
 {0x80340A00u, TickSite::PerStep},           // fish: swim speed (+0x20) moved per step
 {0x80340B00u, TickSite::PerStep},           // fish: swim speed change per step
+{0x80341064u, TickSite::PerStep},           // fish (80340D14, at a bait): speed (+0x20) to the bait moved per step
+{0x803410ACu, TickSite::Countdown},         // fish at a bait: steps to the bait left (+0xC)
+{0x803416CCu, TickSite::PerStep},           // fish at a bait: lunge speed (+0x20) moved per step
+{0x80341704u, TickSite::PerStep},           // fish at a bait: lunge speed change (+0x2C) per step
+{0x803417D4u, TickSite::Countdown},         // fish at a bait: wait steps left (+0xC)
+{0x80341880u, TickSite::Countdown},         // fish hooked: steps before it turns away (s8 +0x5E)
+{0x80341890u, TickSite::CountdownPastZero}, // fish hooked: turn steps left (+0x10), then it faces the bait
+{0x80341950u, TickSite::PerStep},           // fish leaving a bait: speed (+0x20) moved per step
+{0x80341988u, TickSite::PerStep},           // fish leaving a bait: speed change (+0x2C) per step
+{0x80341AD4u, TickSite::Countdown},         // fish (803419F4, on the line): steps to the next tug (+0xC)
+{0x80341CE0u, TickSite::Countdown},         // fish (80341BD0, hidden): wait steps left (+0xC)
+{0x80341EC4u, TickSite::CountdownPastZero}, // fish (80341DAC, fleeing): steps left (+0xC)
+{0x80341F28u, TickSite::PerStep},           // fish fleeing: speed (+0x20) moved per step
+{0x80341F78u, TickSite::PerStep},           // fish fleeing: scale shrunk per step (last 10)
+{0x80341FB4u, TickSite::CountdownPastZero}, // fish fled: steps left (+0xC) before it hides
 {0x80346E68u, TickSite::Countdown},          // object (80346AF0): countdown (s16 +0x20), fires at 0
 {0x80346F08u, TickSite::Countup},            // object: steps (s16 +0x22)
 {0x80346F18u, TickSite::Countup},            // object: steps (s16 +0x22), against 600

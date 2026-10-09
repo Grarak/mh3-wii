@@ -2039,3 +2039,15 @@
 8006f8fc BillboardFaceScaled
 8006f938 BillboardFace
 8006f96c MtxColumnLength
+
+# Fish (effect objects of 0x8033FF88): their states and helpers
+# (fish_effects.cpp, tick sites).
+8033ff88 FishStep
+8034062c FishAppear
+803408b4 FishSwim
+80340d14 FishAtBait
+803419f4 FishOnLine
+80341bd0 FishHidden
+80341dac FishFlee
+8034027c FishTurnToward
+8034048c FishFindBait
