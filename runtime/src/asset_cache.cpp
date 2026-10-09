@@ -20,6 +20,7 @@
 #include <pthread.h>
 #include <stdexcept>
 #ifdef __vita__
+#include <psp2/io/devctl.h>
 #include <psp2/io/fcntl.h>
 #endif
 
@@ -46,11 +47,11 @@ constexpr size_t MaxPendingBytes = 48u << 20;
 #endif
 // Extracted stream files (cache/files): the disc's audio streams, copied out
 // as plain files at their first read so that later reads skip the image's
-// decompression and decryption. Least recently used files go beyond this.
+// decompression and decryption. Least recently used files go beyond
+// AssetCache::StreamCacheBytes; on the Vita also beyond what the storage
+// holds at startup, less a reserve for saves (the launcher warns then).
 #ifdef __vita__
-constexpr uint64_t MaxExtractedBytes = 64ull << 20;
-#else
-constexpr uint64_t MaxExtractedBytes = 512ull << 20;
+constexpr uint64_t StorageReserve = 32ull << 20;
 #endif
 // Small enough that game reads waiting on the image's lock are not delayed long.
 constexpr size_t ExtractChunk = 256u << 10;
@@ -218,6 +219,7 @@ struct AssetCache::Impl {
     std::vector<Source> sources;        // by partition offset
     std::vector<Extract> extracts;      // by partition offset
     uint64_t extractedBytes = 0, reads = 0;
+    uint64_t extractBudget = AssetCache::StreamCacheBytes;
     size_t openCopies = 0;
 
     // Learned prefetch: the streams each map read (cache/files/streams.log,
@@ -314,6 +316,15 @@ struct AssetCache::Impl {
             }
         }
 
+#ifdef __vita__
+        const std::string device = root.string().substr(0, root.string().find(':') + 1);
+        SceIoDevInfo storage{};
+
+        if (!device.empty() && sceIoDevctl(device.c_str(), 0x3001, nullptr, 0, &storage, sizeof storage) >= 0) {
+            const uint64_t room = extractedBytes + uint64_t(storage.free_size);
+            extractBudget = std::min(extractBudget, room > StorageReserve ? room - StorageReserve : 0);
+        }
+#endif
         LoadStreamLog();
         threads.resize(Workers);
 
@@ -462,7 +473,7 @@ struct AssetCache::Impl {
     // Worker: copies the file out of the image, making room by evicting the
     // least recently used copies, and publishes it.
     void RunExtract(Extract& e, std::unique_lock<std::mutex>& guard) {
-        while (extractedBytes + e.file.bytes > MaxExtractedBytes) {
+        while (extractedBytes + e.file.bytes > extractBudget) {
             Extract* oldest = nullptr;
 
             for (auto& other : extracts)
@@ -478,7 +489,7 @@ struct AssetCache::Impl {
             std::filesystem::remove(ExtractPath(*oldest), ignored);
         }
 
-        if (extractedBytes + e.file.bytes > MaxExtractedBytes) {
+        if (extractedBytes + e.file.bytes > extractBudget) {
             // Larger than the whole budget: keep reading it from the image.
             e.state = Extract::State::None;
             e.failed = true;
@@ -1015,6 +1026,18 @@ void AssetCache::Impl::Watch() {
     }
 }
 #endif
+
+uint64_t AssetCache::StreamCacheUse(const std::filesystem::path& root) {
+    uint64_t bytes = 0;
+    std::error_code error;
+    std::filesystem::directory_iterator entries(root / "cache" / "files", error);
+
+    for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
+        if (entries->path().extension() == ".bin")
+            bytes += entries->file_size(error);
+
+    return bytes;
+}
 
 AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read)
     : impl(std::make_unique<Impl>(root, std::move(sources), std::move(streams), std::move(read))) {}
