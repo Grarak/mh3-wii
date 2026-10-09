@@ -7,6 +7,10 @@
 // moves on by a constant (limit) each step: it is moved on by limit * s.
 // Rate sites load such an amount kept in memory: it becomes k * s. Decay sites
 // (lfs) load the f of `x *= f` each step: it becomes f^s.
+{0x800581F4u, TickSite::Rate},              // screen fades (TickFades 800581A4): fade-in alpha step (+0x60), per step
+{0x80058210u, TickSite::CountdownPastZero}, // screen fades: fade-in steps left (+0x30), done below 0
+{0x8005825Cu, TickSite::Rate},              // screen fades: fade-out alpha step (+0x60)
+{0x80058278u, TickSite::CountdownPastZero}, // screen fades: fade-out steps left (+0x30)
 {0x800E1F08u, TickSite::PerStep},           // MHchar channel blend (800E1EB4): cross-fade -= rate per step
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
 {0x801298C8u, TickSite::Countup, 26999},    // enemy: steps (s16 +0x452), capped at 27000
@@ -153,6 +157,7 @@
 {0x803C37E0u, TickSite::Advance, 512},      // online marker effect: bob phase (u16)
 {0x803C3A28u, TickSite::Advance, 255},
 {0x803C3A34u, TickSite::Advance, 512},
+{0x803C477Cu, TickSite::Countup},           // event demo (803C46C4): demo steps (0x806D4FA4), the demo script's clock
 {0x8097DDE0u, TickSite::Advance, 1024},     // title character view (8097DCFC): turn (+0x1142) while the button is held
 {0x8097DDF8u, TickSite::Advance, -1024},
 {0x8097EC5Cu, TickSite::Countdown},         // title (demo_title_move 8097EBE4): wait (+4) before the state runs

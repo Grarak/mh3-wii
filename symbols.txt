@@ -137,6 +137,10 @@
 800cee20 IsSaveIdle
 800cf26c GetOnlineMode
 803c4878 IsEventDemoState4
+# Event demo (in-engine cutscene) state at 0x806D4FA0: u8 state, u32 steps at +4 (the script clock).
+803c46c4 EventDemoUpdate
+803c48a4 EventDemoGetSteps
+803c4bd8 EventDemoStart
 804360a0 IsNetworkBusy
 # Timers that convert seconds to frames with the fps float at 0x8065B4D0.
 8012e9cc TimedCheckByKind
