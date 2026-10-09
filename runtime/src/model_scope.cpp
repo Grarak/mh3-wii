@@ -1171,7 +1171,7 @@ std::shared_ptr<const NativeModelNodeViews> FindNativeModelNodeViews(uint32_t mo
     // The game thread's passes while no draw runs beside them (the overlapped
     // draw's traverse follows its wait, game_frame.cpp), which may attach
     // tables, and the draw thread's while it walks the scene graph beside the
-    // game thread's layers (MH3_PROFILE=parallel-prepare); the guest worker's
+    // game thread's layers (game_frame.cpp PrepareOnDrawThread); the guest worker's
     // run beside the game thread's catalog changes.
     const unsigned thread = PpcThread::CurrentThread();
     const bool game = thread == PpcThread::Game;

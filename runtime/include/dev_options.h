@@ -235,7 +235,7 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,parallel-prepare][,census]:
+// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,serial-prepare][,census]:
 // the frame profile and GX counters every N frames (graphics_host.cpp), the
 // per-draw split timers (game_frame.cpp), the render thread's sampled split,
 // serial frames, dropped draw kinds, unpaced packets and the packets the game
@@ -245,11 +245,12 @@ inline const DevOptions& CaptureOptions() {
 // model preparation counters (model_catalog.cpp), the frame's draw on the draw
 // thread while the game thread waits (draw-thread), or on the game thread
 // (draw-inline) instead of beside the next logic step, the scene graph walk
-// on the draw thread beside the layers (parallel-prepare; game_frame.cpp,
-// docs/pipelined-draw.md), and the census of the model draws
+// on the game thread instead of the draw thread's beside the layers
+// (serial-prepare; game_frame.cpp, docs/pipelined-draw.md), and the census of
+// the model draws
 // (native_material.cpp).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "queue", "disc", "split-world", "prepare", "prepare-frames", "draw-thread", "draw-inline", "parallel-prepare", "census"});
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "queue", "disc", "split-world", "prepare", "prepare-frames", "draw-thread", "draw-inline", "serial-prepare", "census"});
     return options;
 }
 

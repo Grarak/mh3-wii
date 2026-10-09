@@ -83,7 +83,7 @@ void PublishNativeFramePacket(std::string capture);
 void BeginNativeFramePacketTail();
 void EndNativeFramePacketTail();
 
-// The draw thread's scene graph walk (MH3_PROFILE=parallel-prepare) runs
+// The draw thread's scene graph walk (game_frame.cpp PrepareOnDrawThread) runs
 // beside the game thread's recording of the layers: it records nothing
 // (development builds check), and model lookups admit it
 // (FindNativeModelNodeViews).

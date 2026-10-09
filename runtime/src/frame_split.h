@@ -144,7 +144,7 @@ namespace FrameDraw {
 void SetSceneHandoff(void (*handoff)());
 bool RunDeferredScene(CpuContext* cpu);
 
-// MH3_PROFILE=parallel-prepare (docs/pipelined-draw.md): when set, a single
+// The overlapped draw (docs/pipelined-draw.md): when set, a single
 // view's scene hands off first and `launch` starts its graph walk
 // (SceneQueue::PrepareGraph) on the draw thread, beside the layers after it.
 void SetScenePrepareLaunch(void (*launch)(CpuContext* cpu));

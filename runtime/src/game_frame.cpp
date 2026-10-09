@@ -378,16 +378,17 @@ void SceneHandoff() {
     sceneHandedOff = true;
 }
 
-// MH3_PROFILE=parallel-prepare (development, with the overlapped draw;
-// docs/pipelined-draw.md): the single view's scene graph walk runs on the
-// draw thread, from the handoff's state, while the game thread draws the
-// layers after the scene; the game thread joins it before the scene's job.
+// With the overlapped draw (docs/pipelined-draw.md), the single view's scene
+// graph walk runs on the draw thread, from the handoff's state, while the
+// game thread draws the layers after the scene; the game thread joins it
+// before the scene's job. MH3_PROFILE=serial-prepare (development) walks it on
+// the game thread instead.
 bool PrepareOnDrawThread() {
 #ifdef MH3_DEVELOPMENT
-    static const bool enabled = ProfileOptions().Has("parallel-prepare");
-    return enabled;
+    static const bool serial = ProfileOptions().Has("serial-prepare");
+    return !serial;
 #else
-    return false;
+    return true;
 #endif
 }
 
