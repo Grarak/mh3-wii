@@ -1,38 +1,27 @@
-# Local Aurora dependency
+# Aurora
 
-`aurora-main/` is a source snapshot copied from the sibling WiiCompiled checkout
-on 2026-09-27 (parent commit `85f250155f8f397c1c463dc51dd4dc2707371d06`).
-It preserves Aurora's MIT license at `aurora-main/LICENSE` and the same layout
-used by WiiCompiled. The sibling checkout was not modified.
+`aurora-main/` started as a source snapshot of Aurora copied from the sibling
+WiiCompiled checkout on 2026-09-27 (parent commit
+`85f250155f8f397c1c463dc51dd4dc2707371d06`). Aurora's MIT license is kept at
+`aurora-main/LICENSE`.
 
-`scripts/build-aurora.sh` defaults to this source tree. `AURORA_ROOT` can still
-select an explicit alternative. MH3-specific renderer patches remain in
-`scripts/aurora-efb.cmake` and the Python overlay scripts, applied to build-local
-copies. Aurora's original source is kept intact.
+It is now MH3's own copy and is edited in place. Commit 3cb845e replaced
+Aurora's WebGPU/Dawn renderer with a native **OpenGL ES 3.0** renderer
+(`aurora-main/lib/gl`, used by the GX code in `aurora-main/lib/gx` and
+`lib/gfx`). The renderer runs on a dedicated render thread that owns the GL
+context. Dawn, WebGPU and Vulkan are no longer built.
+`runtime/src/graphics_host.cpp` requests `BACKEND_OPENGLES` and fails if Aurora
+picks anything else. The old build-time overlay scripts (`aurora-efb.cmake`,
+`patch_aurora_*.py`) are gone.
 
-Common libraries (Dawn, SDL, Abseil, fmt, PNG, FreeType, zlib, ImGui, SQLite,
-xxHash, zstd and Tracy) are **not committed here**. Aurora's existing CMake
-providers find installed packages or fetch pinned versions into the build tree,
-as in WiiCompiled. A first build may require network access. The target is
-arm64 Linux: Dawn comes from the pinned prebuilt `linux-aarch64` package
-(`v20260603.191052`), which includes the Vulkan backend MH3 requires. See
-[arm64 Linux and Vulkan](linux-arm64.md).
+`scripts/build-aurora.sh` configures the runtime against this tree (override
+with `AURORA_ROOT`). `scripts/aurora-compat.cmake` only fixes header-order
+quirks of some toolchains. Common libraries (SDL3, fmt, PNG, zlib, zstd, ImGui,
+SQLite and xxHash) come from Aurora's CMake providers: installed packages or
+pinned downloads into `build/aurora-<arch>/_deps`. A first build may need
+network access. For arm32 they build inside the `mh3-armhf-cross` Docker image
+against Debian's armhf packages.
 
-The translator and its notices are already included under `toolchain/`.
+The translator and its notices are under `toolchain/`.
 `runtime/assets/dsp/dsp_coef.bin` is the free Dolphin DSP coefficient table,
-with provenance in `toolchain/THIRD-PARTY-NOTICES.md`. The preparation script
-verifies its SHA-256 before copying it to the ignored runtime asset directory;
-it no longer needs files from the sibling WiiCompiled checkout.
-
-From the repository root, with compiler/SDK, CMake, Ninja, Python and prepared
-ROM-derived assets available:
-
-```sh
-./scripts/build-aurora.sh
-ctest --test-dir build/linux-arm64 --output-on-failure
-./scripts/run.sh --village
-```
-
-See the root README for translator and game-asset preparation. ROMs, extracted
-game assets, generated translation, save data and development tools remain
-outside version control.
+with provenance in `toolchain/THIRD-PARTY-NOTICES.md`.

@@ -91,13 +91,24 @@ struct Ram {
     }
 };
 
+// MH3_STEP_PROBE_SETTLE=1: both runs then take one more 1/30 s step, so
+// words that keep the value from before the step (previous positions, frames,
+// joint matrices) agree again; only amounts still applied per step differ.
 template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
+    static const bool settle = [] {
+        const char* v = std::getenv("MH3_STEP_PROBE_SETTLE");
+        return v && *v == '1';
+    }();
     const GameStep::State clock = GameStep::Save();
     AxDspHle::JoinMixWorker(); // its writes to guest RAM must not race the restores
     Ram before, whole, halves;
     before.Save();
     GameStep::Begin(1.0);
     runTasks();
+    if (settle) {
+        GameStep::Begin(1.0);
+        runTasks();
+    }
     whole.Save();
     before.Restore();
     GameStep::Restore(clock);
@@ -105,6 +116,10 @@ template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks ru
     runTasks();
     GameStep::Begin(0.5);
     runTasks();
+    if (settle) {
+        GameStep::Begin(1.0);
+        runTasks();
+    }
     halves.Save();
     before.Restore();
     GameStep::Restore(clock);
@@ -112,7 +127,8 @@ template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks ru
     const std::string name = "mh3-step-probe-" + std::to_string(step) + ".txt";
     FILE* out = std::fopen(name.c_str(), "w");
     if (!out) return;
-    std::fprintf(out, "# address before whole(1/30) halves(2x1/60) as u32 and f32\n");
+    std::fprintf(out, settle ? "# address before whole(2x1/30) halves(2x1/60+1/30) as u32 and f32\n"
+                             : "# address before whole(1/30) halves(2x1/60) as u32 and f32\n");
     size_t changed = 0;
     for (size_t i = 0; i + 4 <= before.bytes.size(); i += 4) {
         const uint32_t a = before.Word(i), b = whole.Word(i), c = halves.Word(i);
