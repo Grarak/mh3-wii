@@ -15,6 +15,7 @@
 // FastReciprocal's (0x80061110: fres refined by one Newton step).
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "game_step.h"
 #include "memory.h"
 #include "nw4r_math.h"
 #include "port_check.h"
@@ -79,6 +80,17 @@ float Evaluate(float frame, uint32_t track) {
 
     if (!(f0 <= frame && frame <= f1))
         MH3_THROW(std::runtime_error("NW4R panic (g3d_resanm.cpp:176): frame is out of bounds"));
+
+    // At a variable step, keys a frame or less apart (flipbooks: a texture
+    // row or a colour per frame) hold the earlier key's value between them.
+    // The game advances its animations by whole frames each 1/30 s tick (rate
+    // 2 for the maps' texture animations), so it only ever sampled such keys
+    // on a key; at a variable step the frames fall between them, where the
+    // hermite blend slid the texture through in-between offsets (Flooded
+    // Forest's underwater surface flickered through its rows several times
+    // too fast). At the fixed step this is the original.
+    if (f1 - f0 <= 1.0f && GameStep::Variable())
+        return ReadFloat(key + 4);
 
     return Hermite(ReadFloat(key + 4), ReadFloat(key + 8), ReadFloat(key + 16), ReadFloat(key + 20), frame - f0, f1 - f0);
 }

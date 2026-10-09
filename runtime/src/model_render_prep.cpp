@@ -21,6 +21,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <mutex>
+#include <unordered_map>
+#include <cstdio>
 
 namespace {
 constexpr uint32_t Genmode = 0x80685300, Coordinates = 0x8068530c, TextureCache = 0x80685380, PaletteCache = 0x806854a0, ShapeCache = 0x80685504, TextureSources = 0x80685510;
@@ -104,6 +107,41 @@ void CopyObjects(uint8_t* out, const uint8_t* objects, uint32_t stride) {
 // One dispatch's execution context.
 // Group publication sources of the Render and Shadow owners.
 mh3_native_material_state groupStates[2];
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=srt: a texture SRT resource (guest address) whose slots'
+// translations or effect-matrix translations moved, the first time and every
+// 60th move, with the step counter (system_w+0xC, in ticks): how fast each
+// material's texture scrolls. The model prep may run off the game thread.
+void TraceTextureSrt(uint32_t resource, uint32_t material, const mh3_native_texture_srt& srt) {
+    struct Seen {
+        float t[8][4];
+        uint32_t moves;
+    };
+
+    static std::mutex lock;
+    static std::unordered_map<uint32_t, Seen> seen;
+    const std::lock_guard guard(lock);
+    auto [it, fresh] = seen.try_emplace(resource);
+    Seen& s = it->second;
+    bool moved = false;
+
+    for (uint32_t i = 0; i < 8; i++) {
+        const auto& slot = srt.slot[i];
+        const float now[4]{slot.translation[0], slot.translation[1], slot.effect_matrix[3], slot.effect_matrix[7]};
+        moved |= !fresh && std::memcmp(now, s.t[i], sizeof now) != 0;
+        std::memcpy(s.t[i], now, sizeof now);
+    }
+
+    if (!moved || s.moves++ % 60)
+        return;
+
+    for (uint32_t i = 0; i < 8; i++)
+        if (srt.slot[i].flags & 1)
+            std::fprintf(stderr, "MH3 srt: resource %08x material %08x slot %u move %u translation %.5f %.5f effect %.5f %.5f tick %u\n", resource, material, i, s.moves - 1,
+                         s.t[i][0], s.t[i][1], s.t[i][2], s.t[i][3], Memory::Read32(0x8065AA6C));
+}
+#endif
+
 struct Prep {
     NativeOwner owner;
     ModelPrepMirror& m;
@@ -645,6 +683,12 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
     if (const uint32_t resource = slots[MH3_MAT_TEXTURE_SRT]) {
         auto& out = srts.Next(&in.srt);
         Checked(mh3_texture_srt_read_for_prepare({Bytes(resource, 0x248), 0x248}, &out.srt));
+#ifdef MH3_DEVELOPMENT
+        static const bool tracedSrt = TraceOptions().Has("srt");
+
+        if (tracedSrt) [[unlikely]]
+            TraceTextureSrt(resource, entry.material, out.srt);
+#endif
 
         // The constructor defines these exact built-in mapping functions. Custom
         // slots may change their callback and type at runtime; reject those until

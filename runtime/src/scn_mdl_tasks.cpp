@@ -43,6 +43,9 @@
 // alignment assert; the ports compute the addresses and drop the debug
 // asserts, calling the guest only for the copies, the animations' results
 // and the callbacks.
+#include "dev_options.h"
+#include <cstdio>
+#include <unordered_map>
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "g3d_native.h"
@@ -287,6 +290,17 @@ void CalcMat(CpuContext* ctx) {
         // Texture SRT: 0x8006E39C(&srt, &indirect, result).
         if (const uint32_t anm = Read32(mdl + kAnmTexSrt); anm && MaterialAnimated(anm, i)) {
             const uint32_t result = game.VirtualAt(texSrtMemo, anm, 0x38, {frame[kTexSrtResult], i});
+#ifdef MH3_DEVELOPMENT
+            static const bool tracedSrt = TraceOptions().Has("srt");
+
+            if (tracedSrt) [[unlikely]] {
+                static std::unordered_map<uint32_t, uint32_t> calls;
+
+                if (calls[anm]++ % 240 == 0)
+                    std::fprintf(stderr, "MH3 srt calcmat: model %08x material %u srt part %08x anm %08x vtable %08x result %08x tick %u\n", mdl, i, PartFor(mdl, mat, i, 0x4), anm,
+                                 Read32(anm), result, Read32(0x8065AA6C));
+            }
+#endif
             Write32(frame[kSlotA], PartFor(mdl, mat, i, 0x4));
             Write32(frame[kSlotB], PartFor(mdl, mat, i, 0x200));
             game.Call<0x8006E39C>({frame[kSlotA], frame[kSlotB], result});

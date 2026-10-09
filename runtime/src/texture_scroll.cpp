@@ -379,3 +379,44 @@ extern "C" void MH3_ObjectListScrollUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "ObjectListScrollUpdate", func_8031ED54, ObjectListPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8031ED54, MH3_ObjectListScrollUpdate, "ObjectListScrollUpdate");
+
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=srt: the texture-SRT animation objects' (AnmObjTexSrtRes,
+// vtable 0x8058DC9x) virtual SetFrame (0x8006D0E8, f1 the frame) and
+// UpdateFrame (0x8006D668): per object and caller the first call and every
+// 120th, with its FrameCtrl (+0x18: frame, rate), NW4R's base rate and the
+// step counter. A frame set once a step from a count of the
+// game's own runs as fast as the step rate.
+namespace {
+void TraceTexSrtFrame(const char* what, CpuContext* ctx) {
+    static std::unordered_map<uint64_t, uint32_t> calls;
+    const uint32_t object = ctx->gpr[3], lr = ctx->lr;
+
+    if (const uint32_t n = calls[uint64_t(object) << 32 | lr]++; n % 120 == 0)
+        std::fprintf(stderr, "MH3 srt anm: %s object %08x caller %08x call %u f1 %.3f frame %.3f rate %.4f base %.4f tick %u\n", what, object, lr, n, ctx->fpr[1].d,
+                     Memory::ReadFloat32(object + 0x18), Memory::ReadFloat32(object + 0x1C), Memory::ReadFloat32(0x80793628), Memory::Read32(0x8065AA6C));
+}
+} // namespace
+
+extern "C" void func_8006D0E8(CpuContext* ctx);
+extern "C" void MH3_AnmTexSrtSetFrame(CpuContext* ctx) {
+    static const bool traced = TraceOptions().Has("srt");
+
+    if (traced) [[unlikely]]
+        TraceTexSrtFrame("set", ctx);
+
+    func_8006D0E8(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006D0E8, MH3_AnmTexSrtSetFrame, "AnmTexSrtSetFrame");
+
+extern "C" void func_8006D668(CpuContext* ctx);
+extern "C" void MH3_AnmTexSrtUpdateFrame(CpuContext* ctx) {
+    static const bool traced = TraceOptions().Has("srt");
+
+    if (traced) [[unlikely]]
+        TraceTexSrtFrame("update", ctx);
+
+    func_8006D668(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006D668, MH3_AnmTexSrtUpdateFrame, "AnmTexSrtUpdateFrame");
+#endif
