@@ -10,24 +10,17 @@
 //   {offset, size} pairs from +0x4B8 of 0x30-byte spawns (+0 u32 monster id).
 // Monster names are the game's list in 00/data00_eng.bin (after "NO_DATA").
 #include "quest_catalog.h"
+#include "disc_image.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <fstream>
-#include <iterator>
 #include <set>
 #include <stdexcept>
 
 namespace QuestCatalog {
 namespace {
-
-std::vector<uint8_t> ReadAll(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) throw std::runtime_error("Cannot read " + path.string());
-    return {std::istreambuf_iterator<char>(file), {}};
-}
 
 uint32_t U32(const std::vector<uint8_t>& d, size_t o) {
     if (o + 4 > d.size()) throw std::runtime_error("Quest file truncated");
@@ -57,13 +50,8 @@ const char* FileName(Set set) {
 
 } // namespace
 
-std::filesystem::path DiscFiles() {
-    const char* root = std::getenv("MH3_DISC_DIR");
-    return std::filesystem::path(root ? root : "Assets/DATA") / "files";
-}
-
 std::vector<Quest> Load(Set set) {
-    const auto data = ReadAll(DiscFiles() / FileName(set));
+    const auto data = GameDiscImage().ReadFile(FileName(set));
     if (data.size() < 8 || std::string(data.begin(), data.begin() + 4) != "OMOM")
         throw std::runtime_error(std::string("Not a quest file: ") + FileName(set));
     std::vector<Quest> quests;
@@ -108,7 +96,7 @@ std::vector<Quest> Load(Set set) {
 }
 
 std::vector<std::string> MonsterNames() {
-    const auto data = ReadAll(DiscFiles() / "00/data00_eng.bin");
+    const auto data = GameDiscImage().ReadFile("00/data00_eng.bin");
     const std::string text(data.begin(), data.end());
     size_t at = text.find(std::string("NO_DATA\0", 8));
     if (at == std::string::npos) throw std::runtime_error("Monster name list not found");

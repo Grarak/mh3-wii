@@ -3,7 +3,6 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -28,7 +27,6 @@ struct Quest {
     std::vector<uint8_t> smallMonsters; // monster ids spawned in the areas
 };
 
-std::filesystem::path DiscFiles(); // MH3_DISC_DIR (or Assets/DATA) /files
 std::vector<Quest> Load(Set set);
 std::vector<std::string> MonsterNames(); // by monster id (0: none)
 std::string MapName(uint8_t map);

@@ -1,18 +1,29 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
-// Read-only decrypted partition view backed by nodtool's extracted files.
-// Optional exact partition bytes supply padding omitted by extraction.
+class DiscFile;
+// Read-only decrypted partition view. Extracted mode preserves the original
+// file checks; disc-layout.txt selects a single exact partition with sys metadata.
 class DiscImage {
 public:
     explicit DiscImage(const std::filesystem::path& root);
+    ~DiscImage();
     std::vector<uint8_t> Read(uint64_t offset, uint32_t length) const;
+    std::vector<uint8_t> ReadFile(const std::string& name) const;
 private:
     struct Extent { uint64_t offset, size; std::filesystem::path path; };
     std::vector<Extent> extents;
-    std::filesystem::path partitionPath;
+    std::map<std::string, std::pair<uint64_t, uint32_t>> fileEntries;
+    std::unique_ptr<DiscFile> partition;
     uint64_t partitionSize = 0;
-    void Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected);
+    bool packed = false;
+    void Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify = true);
 };
+
+// Shared by IOS disc requests and the development quest catalog.
+DiscImage& GameDiscImage();

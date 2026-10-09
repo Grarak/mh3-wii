@@ -1,12 +1,19 @@
 #include "platform.h"
+#include "disc_image.h"
 #include <aurora/thread_role.hpp>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/io/dirent.h>
+#include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/power.h>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <stdexcept>
 #include <vector>
 
 // All allocations in this heap are committed by newlib at startup. Guest RAM
@@ -54,5 +61,15 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     (void)argc;
     (void)argv;
 #endif
+    // Match Azahar's documented native clock setup using official ScePower
+    // rates. Query the resulting clocks in diagnostics rather than assuming
+    // the DevKit's shell left them at the intended performance setting.
+    const int armClock = scePowerSetArmClockFrequency(444);
+    const int busClock = scePowerSetBusClockFrequency(222);
+    const int gpuClock = scePowerSetGpuClockFrequency(222);
+    const int xbarClock = scePowerSetGpuXbarClockFrequency(166);
+    std::fprintf(stderr, "MH3 Vita clocks: CPU %d, bus %d, GPU %d, crossbar %d MHz (set %d/%d/%d/%d)\n",
+        scePowerGetArmClockFrequency(), scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency(),
+        scePowerGetGpuXbarClockFrequency(), armClock, busClock, gpuClock, xbarClock);
 }
 

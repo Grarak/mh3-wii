@@ -39,9 +39,7 @@ std::array<uint8_t, 20> ledSettings{}, dimmingSettings{};
 uint32_t nextHandle = 100;
 uint32_t lastDiscPosition = 0;
 DiscImage& Disc() {
-    const char* path = std::getenv("MH3_DISC_DIR");
-    static DiscImage image(path ? path : "Assets/DATA");
-    return image;
+    return GameDiscImage();
 }
 int32_t Error() {
     switch (errno) {
