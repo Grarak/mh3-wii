@@ -157,9 +157,16 @@ aurora::gl::RasterState BackendRaster(const mh3_raster_state& raster) {
 void SetRaster(const mh3_raster_state& raster, bool publish) {
     RequireOwner();
     CheckRaster(raster);
-    drawState.raster = raster;
-    rasterKnown = true;
-    Changed();
+    const auto& previous = drawState.raster;
+    if (!rasterKnown || previous.blend_mode != raster.blend_mode || previous.src_factor != raster.src_factor || previous.dst_factor != raster.dst_factor ||
+        previous.logic_op != raster.logic_op || previous.depth_test != raster.depth_test || previous.depth_compare != raster.depth_compare ||
+        previous.depth_write != raster.depth_write || previous.cull_mode != raster.cull_mode || previous.color_write != raster.color_write || previous.alpha_write != raster.alpha_write) {
+        drawState.raster = raster;
+        rasterKnown = true;
+        Changed();
+    }
+    // Material restoration can leave its imported pixel fields stale even
+    // when the draw raster is unchanged. Always retain that publication.
     if (publish && rasterObserver)
         rasterObserver(raster);
 }

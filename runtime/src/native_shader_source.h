@@ -41,6 +41,8 @@ struct NativeShaderVariant {
     bool fog = false;
     // Nonzero GX fog types with (type & 7) < 4 have no exponential term.
     bool linear_fog = false;
+    // Exact cached single-texture RGBA product; literal zero/one coefficients.
+    bool pure_modulate = false;
     bool operator==(const NativeShaderVariant&) const = default;
 };
 

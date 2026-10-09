@@ -306,7 +306,11 @@ void main() {
 #if TEXTURES > 2
     t2 = texture(u_texture2, v_uv2, shade.texture_bias.z);
 #endif
-#if MODULATE
+#if MODULATE && PURE_MODULATE
+    vec4 result;
+    result.rg = clamp(t0.rg * v_color0.rg, 0.0, 1.0);
+    result.ba = clamp(t0.ba * v_color0.ba, 0.0, 1.0);
+#elif MODULATE
     vec4 base = t0 * shade.w0 + shade.offset;
 #if TEXTURES == 2
     base += t1 * shade.w1;
@@ -580,7 +584,11 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
     t2 = tex2D(u_texture2, v_uv2);
 #endif
     float4 v = v_color0;
-#if MODULATE
+#if MODULATE && PURE_MODULATE
+    float4 result;
+    result.rg = saturate(t0.rg * v.rg);
+    result.ba = saturate(t0.ba * v.ba);
+#elif MODULATE
     // Keep each arithmetic chain two components wide. The float4 chain's
     // masked upper-lane uniform MAD loses B/A on the devkit; identical RG/BA
     // equations pass the isolated native Shade-buffer readback test.
@@ -657,9 +665,12 @@ std::string TexgenOutputs(NativeShaderVariant variant, bool cg) {
 std::string VertexDefines(NativeShaderVariant variant) {
     return Define("LIT", int(variant.lighting)) + Define("LIGHTS", variant.lights);
 }
+bool PureModulate(NativeShaderVariant variant) {
+    return variant.pure_modulate && variant.model == NativeShaderModel::Modulate && variant.textures == 1 && !variant.overlay;
+}
 std::string FragmentDefines(NativeShaderVariant variant) {
     return Define("MODULATE", variant.model == NativeShaderModel::Modulate) + Define("TEXTURES", variant.textures) + Define("OVERLAY", variant.overlay) + Define("ALPHA_TEST", variant.alpha_test) +
-           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog);
+           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog) + Define("PURE_MODULATE", PureModulate(variant));
 }
 } // namespace
 
@@ -713,6 +724,6 @@ std::string NativeShaderVertexName(NativeShaderVariant variant) {
 }
 
 std::string NativeShaderFragmentName(NativeShaderVariant variant) {
-    return std::string(variant.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(variant.textures) + (variant.overlay ? "_overlay" : "") +
+    return std::string(variant.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(variant.textures) + (variant.overlay ? "_overlay" : "") + (PureModulate(variant) ? "_pure" : "") +
            (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "");
 }

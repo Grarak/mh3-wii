@@ -20,10 +20,10 @@
 #include "../native/mh3_shade.h"
 #ifdef MH3_DEVELOPMENT
 #include "gfx/port_capture.hpp"
+#endif
 namespace aurora::gfx {
 uint32_t current_frame() noexcept;
 }
-#endif
 #include <array>
 #include <cassert>
 #include <bit>
@@ -73,12 +73,15 @@ void ImportRaster(const mh3_raster_state& raster) {
                                   {MH3_PIXEL_BLEND_ENABLE, raster.blend_mode == 1}, {MH3_PIXEL_LOGIC_ENABLE, raster.blend_mode == 2}, {MH3_PIXEL_BLEND_SUBTRACT, raster.blend_mode == 3},
                                   {MH3_PIXEL_BLEND_SOURCE, raster.src_factor},      {MH3_PIXEL_BLEND_DESTINATION, raster.dst_factor}, {MH3_PIXEL_LOGIC_OPERATION, raster.logic_op},
                                   {MH3_PIXEL_COLOR_WRITE, raster.color_write},      {MH3_PIXEL_ALPHA_WRITE, raster.alpha_write}};
+    bool changed = material.cull_mode != raster.cull_mode;
     for (const auto& field : fields) {
+        changed |= !(material.pixel.known & Bit(field[0])) || material.pixel.values[field[0]] != field[1];
         material.pixel.known |= Bit(field[0]);
         material.pixel.values[field[0]] = field[1];
     }
     material.cull_mode = raster.cull_mode;
-    Changed(NATIVE_STATE_MATERIAL);
+    if (changed)
+        Changed(NATIVE_STATE_MATERIAL);
 }
 void ObserveRaster(const mh3_raster_state& raster) {
     if (!publishingMaterialRaster)
@@ -154,7 +157,7 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     const uint32_t key = uint32_t(variant.vertex) | uint32_t(variant.lighting) << 1 | uint32_t(variant.lights) << 3 | uint32_t(variant.model) << 7 | uint32_t(variant.textures) << 8 |
                          uint32_t(variant.overlay) << 10 | uint32_t(variant.alpha_test) << 11 | uint32_t(variant.fog) << 12 | uint32_t(variant.texgen[0]) << 13 | uint32_t(variant.texgen[1]) << 15 |
-                         uint32_t(variant.texgen[2]) << 17 | uint32_t(variant.linear_fog) << 19;
+                         uint32_t(variant.texgen[2]) << 17 | uint32_t(variant.linear_fog) << 19 | uint32_t(variant.pure_modulate) << 20;
     auto& program = shade.programs[key];
     if (!program) {
         auto sources = NativeShaderSource(variant);
@@ -277,6 +280,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.lighting = lighting.kind;
     variant.lights = lighting.lights;
     variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : NativeShaderModel::Basic;
+    variant.pure_modulate = shading.pure_modulate != 0;
     variant.textures = shading.textures;
     variant.overlay = shading.overlay != 0;
     variant.alpha_test = shading.alpha_test != 0;
@@ -437,8 +441,8 @@ void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh
 void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors) {
     Owner();
     ObserveRasterPublications();
-    (void)mh3_model_matrix_overlay_unchecked(&selectors, &material);
-    Changed(NATIVE_STATE_MATERIAL);
+    if (mh3_model_matrix_overlay_unchecked(&selectors, &material))
+        Changed(NATIVE_STATE_MATERIAL);
 }
 void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top_known) {
     Owner();
@@ -633,8 +637,10 @@ void RestoreNativePostSnapshot(const NativePostSnapshot& snapshot) {
 }
 void SetNativeDepthCompareBeforeTexture(bool before) {
     Owner();
-    depthBeforeTexture = before;
-    Changed(NATIVE_STATE_MATERIAL);
+    if (depthBeforeTexture != before) {
+        depthBeforeTexture = before;
+        Changed(NATIVE_STATE_MATERIAL);
+    }
 }
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     Owner();

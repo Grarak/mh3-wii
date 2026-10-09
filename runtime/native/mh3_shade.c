@@ -410,6 +410,22 @@ static int modulate_channel(const mh3_shade_material *m, const mh3_shade_equatio
     return (texture_side(m, &e->input[1], alpha) && vertex_side(&e->input[2], alpha)) || (vertex_side(&e->input[1], alpha) && texture_side(m, &e->input[2], alpha));
 }
 
+static int literal_constant(const mh3_shade_constant *c, uint8_t kind) {
+    return c->kind[0] == kind && c->kind[1] == MH3_SHADE_CONSTANT_ONE;
+}
+static int literal_zero_term(const mh3_shade_term *t) {
+    return is_constant(t) && literal_constant(&t->offset, MH3_SHADE_CONSTANT_ZERO);
+}
+static int unscaled_source(const mh3_shade_term *t, uint8_t source) {
+    return t->source == source && t->texture == 0 && !t->replicate_alpha &&
+           literal_constant(&t->offset, MH3_SHADE_CONSTANT_ZERO) && literal_constant(&t->scale, MH3_SHADE_CONSTANT_ONE);
+}
+static int pure_modulate_channel(const mh3_shade_equation *e) {
+    return !e->subtract && !e->bias && !e->scale && literal_zero_term(&e->input[0]) && literal_zero_term(&e->input[3]) &&
+           ((unscaled_source(&e->input[1], MH3_SHADE_SOURCE_TEXTURE) && unscaled_source(&e->input[2], MH3_SHADE_SOURCE_VERTEX)) ||
+            (unscaled_source(&e->input[2], MH3_SHADE_SOURCE_TEXTURE) && unscaled_source(&e->input[1], MH3_SHADE_SOURCE_VERTEX)));
+}
+
 static int alpha_always(const mh3_pack_pixel_inputs *pixel) {
     const uint32_t c0 = pixel->values[MH3_PIXEL_ALPHA_COMPARE0], c1 = pixel->values[MH3_PIXEL_ALPHA_COMPARE1], op = pixel->values[MH3_PIXEL_ALPHA_OPERATION];
     if (op == 0)
@@ -463,6 +479,8 @@ uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_mat
         c.quality |= MH3_SHADE_EXACT;
     out->quality = c.quality;
     out->model = modulate_channel(out, &out->color, 0) && modulate_channel(out, &out->alpha, 1) ? MH3_SHADE_MODULATE : MH3_SHADE_BASIC;
+    out->pure_modulate = (c.quality & MH3_SHADE_EXACT) && out->model == MH3_SHADE_MODULATE && out->textures == 1 && !out->overlay &&
+                         pure_modulate_channel(&out->color) && pure_modulate_channel(&out->alpha);
     return c.quality;
 }
 

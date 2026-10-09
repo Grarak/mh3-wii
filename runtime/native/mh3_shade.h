@@ -144,6 +144,9 @@ typedef struct mh3_shade_material {
     uint8_t texture_map[3], texture_coordinate[3];
     mh3_shade_equation color, alpha;
     mh3_shade_constant overlay_scale;
+    /* Cached exact form: saturate(texture0 * vertex), RGBA independently.
+     * Only literal zero/one references qualify; draw-time register values do not. */
+    uint8_t pure_modulate;
 } mh3_shade_material;
 /* Pure function of the material's structural fields; returns quality flags. */
 uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_material *out);
