@@ -169,6 +169,11 @@ typedef enum {
   AURORA_NATIVE_TARGET_ASPECT_16_9 = 2,
 } AuroraNativeTargetAspect;
 void aurora_set_native_target_aspect(AuroraNativeTargetAspect aspect);
+// Size the native target for a display surface of width x height (the aspect
+// rules above apply to it) whatever the window size; presentation scales the
+// target into the window, keeping its aspect. 0 x 0 follows the window again.
+// Same thread rules as aurora_set_native_target_aspect.
+void aurora_set_native_surface_size(uint32_t width, uint32_t height);
 // Direct native rendering: call begin before preparing any draws or writing
 // their mapped GPU payload. False skips all drawing/clears/present for this
 // game frame without waiting. Logic still advances; always call end, including

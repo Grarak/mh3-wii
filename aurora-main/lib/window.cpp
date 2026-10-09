@@ -48,6 +48,9 @@ float g_frameBufferScale = 0.f;
 bool g_frameBufferAspectFit = true;
 std::atomic_bool g_forceAspect169{false};
 bool g_presentSurfaceFill = false;
+// A fixed display surface the native target is sized for (0: the window's).
+int g_surfaceWidth = 0;
+int g_surfaceHeight = 0;
 int g_presentAspectWidth = 0;
 int g_presentAspectHeight = 0;
 AuroraWindowSize g_windowSize;
@@ -521,10 +524,14 @@ AuroraWindowSize get_window_size() {
   ASSERT(SDL_GetWindowSizeInPixels(g_window, &native_fb_w, &native_fb_h), "Failed to get window size in pixels: {}",
          SDL_GetError());
 
-  int fb_w = native_fb_w;
-  int fb_h = native_fb_h;
+  // The surface the target is sized for: the window, or a fixed one that
+  // presentation then scales into the window.
+  const int surface_w = g_surfaceWidth > 0 ? g_surfaceWidth : native_fb_w;
+  const int surface_h = g_surfaceHeight > 0 ? g_surfaceHeight : native_fb_h;
+  int fb_w = surface_w;
+  int fb_h = surface_h;
   const auto [baseW, baseH] = vi::configured_fb_size();
-  if (g_forceAspect169.load(std::memory_order_acquire) && native_fb_w > 0 && native_fb_h > 0) {
+  if (g_forceAspect169.load(std::memory_order_acquire) && surface_w > 0 && surface_h > 0) {
     if (g_frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
       const auto [scaledW, scaledH] =
           scale_frame_buffer_to_aspect(static_cast<int>(baseW), static_cast<int>(baseH),
@@ -532,16 +539,16 @@ AuroraWindowSize get_window_size() {
       fb_w = scaledW;
       fb_h = scaledH;
     } else {
-      fb_w = std::min(native_fb_w,
-                      std::max(1, static_cast<int>(std::lround(native_fb_h * (16.f / 9.f)))));
-      fb_h = std::min(native_fb_h,
-                      std::max(1, static_cast<int>(std::lround(native_fb_w * (9.f / 16.f)))));
+      fb_w = std::min(surface_w,
+                      std::max(1, static_cast<int>(std::lround(surface_h * (16.f / 9.f)))));
+      fb_h = std::min(surface_h,
+                      std::max(1, static_cast<int>(std::lround(surface_w * (9.f / 16.f)))));
     }
   } else if (g_frameBufferAspectFit && baseW > 0 && baseH > 0) {
     float renderScale = g_frameBufferScale > 0.f ? g_frameBufferScale : 1.f;
     if (g_frameBufferScale <= 0.f) {
-      renderScale = std::min(static_cast<float>(native_fb_w) / static_cast<float>(baseW),
-                             static_cast<float>(native_fb_h) / static_cast<float>(baseH));
+      renderScale = std::min(static_cast<float>(surface_w) / static_cast<float>(baseW),
+                             static_cast<float>(surface_h) / static_cast<float>(baseH));
       if (renderScale < 1.f) {
         renderScale = 1.f;
       }
@@ -786,6 +793,15 @@ void set_present_surface_fill(bool fill) {
   g_presentSurfaceFill = fill;
 }
 
+void set_native_surface_size(uint32_t width, uint32_t height) {
+  if (g_surfaceWidth == static_cast<int>(width) && g_surfaceHeight == static_cast<int>(height)) {
+    return;
+  }
+  g_surfaceWidth = static_cast<int>(width);
+  g_surfaceHeight = static_cast<int>(height);
+  request_frame_buffer_resize();
+}
+
 void lock_present_aspect_ratio(int width, int height) {
   if (width <= 0 || height <= 0) {
     unlock_present_aspect_ratio();
@@ -806,6 +822,10 @@ void unlock_present_aspect_ratio() {
 bool get_present_aspect_ratio(float& aspect) noexcept {
   if (g_forceAspect169.load(std::memory_order_acquire)) {
     aspect = 16.f / 9.f;
+    return true;
+  }
+  if (g_presentSurfaceFill && g_surfaceWidth > 0 && g_surfaceHeight > 0) {
+    aspect = static_cast<float>(g_surfaceWidth) / static_cast<float>(g_surfaceHeight);
     return true;
   }
   if (g_presentSurfaceFill && g_window != nullptr) {

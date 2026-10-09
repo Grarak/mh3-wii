@@ -38,11 +38,7 @@ std::optional<bool> WidescreenSetting() {
     static const auto environment = []() -> std::optional<bool> {
         if (const char* value = std::getenv("MH3_WIDESCREEN"); value && *value)
             return value[0] != '0';
-#ifdef __vita__
         return true;
-#else
-        return std::nullopt;
-#endif
     }();
     return environment;
 }
