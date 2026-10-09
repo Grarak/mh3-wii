@@ -26,6 +26,10 @@ public:
     void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {},
                const CopySink& copy = {}, const TextureCopySink& textureCopy = {});
     unsigned PixelFormat() const { return bp[0x43] & 7; }
+    // Sink one command per call instead of runs of them (per-draw diagnostics).
+    bool coalesce = true;
+    // Commands and draws framed, display lists included.
+    inline static uint64_t commandCount = 0, drawCount = 0;
     size_t PendingBytes() const { return pending.size(); }
 private:
     std::vector<uint8_t> pending;
@@ -51,5 +55,21 @@ private:
     std::array<Attribute, 12> Attributes(unsigned format) const;
     static std::array<uint8_t, 16> ArrayPacket(unsigned slot, ArrayView view);
     void BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver);
-    size_t VertexSize(unsigned format) const;
+    // A vertex format's layout under the current CP state: its size and where
+    // its array indices are. Rebuilt when one of the registers it reads changes.
+    struct IndexField { uint16_t offset; uint8_t width, slot; };
+    struct VertexLayout {
+        std::array<uint32_t, 5> key{};
+        bool valid = false;
+        uint32_t size = 0, indexedSlots = 0, fieldCount = 0;
+        std::array<IndexField, 36> fields{};
+        std::array<uint32_t, 12> bytes{}; // bytes read at an index
+    };
+    std::array<VertexLayout, 8> layouts{};
+    const VertexLayout& Layout(unsigned format);
+    // Each array base's resolution, from its register write (the guest memory
+    // map is fixed).
+    struct ResolvedArray { uint32_t guest = 0; ArrayView view{}; bool valid = false; };
+    std::array<ResolvedArray, 12> resolvedArrays{};
+    size_t VertexSize(unsigned format);
 };

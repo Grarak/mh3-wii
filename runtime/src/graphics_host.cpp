@@ -13,6 +13,7 @@
 #include <aurora/aurora.h>
 #include <cstdlib>
 #include <aurora/event.h>
+#include <aurora/gfx.h>
 #include <dolphin/gx.h>
 #include <dolphin/vi.h>
 #include <chrono>
@@ -76,7 +77,7 @@ uint64_t guestCopies = 0;
 // only with MH3_DEVELOPMENT; MH3_STAT(...) compiles its argument away otherwise.
 #ifdef MH3_DEVELOPMENT
 #define MH3_STAT(...) __VA_ARGS__
-uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestDraws = 0, guestTextureCopies = 0;
+uint64_t guestArrays = 0, guestTextures = 0, guestTextureCopies = 0;
 uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
 uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
 struct FrameProfile {
@@ -97,9 +98,9 @@ FrameProfile profile;
 #endif
 void ShutdownGraphics() {
     if (initialized) {
-        MH3_STAT(if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
-            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
-            static_cast<unsigned long long>(guestDraws), static_cast<unsigned long long>(guestTextureCopies)));
+        MH3_STAT(if (GuestGxStream::commandCount) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
+            static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
+            static_cast<unsigned long long>(GuestGxStream::drawCount), static_cast<unsigned long long>(guestTextureCopies)));
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
@@ -137,6 +138,11 @@ void InitializeGraphics(int argc, char** argv) {
         const float n = std::strtof(v, nullptr);
         if (n > 0) VISetFrameBufferScale(n);
     }
+    // The draw log looks at one command per packet.
+    if (std::getenv("MH3_GX_DRAW_LOG")) guestStream.coalesce = false;
+#endif
+#ifdef MH3_ENABLE_GX_DIAGNOSTICS
+    guestStream.coalesce = false;
 #endif
 #ifdef MH3_DEVELOPMENT
     if (const char* interval = std::getenv("MH3_PROFILE_FRAMES")) {
@@ -277,21 +283,18 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         GxDiagnosticDraw diagnostic(packet[0] >= 0x80 && packet[0] <= 0xBF);
         if (diagnostic.skip) return;
 #endif
-        auto consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
-        if (consumed != packet.size()) {
-            // Each stream packet contains one complete command. Aurora yields
-            // before a draw when the current staging batch has no room for it.
-            // Split only after process releases its renderer lock; this keeps
-            // the EFB, viewport and pending presentation within the same frame.
-            if (consumed != 0) throw std::runtime_error("Aurora partially consumed a GX command");
+        // A packet holds one or more complete commands. Aurora yields before a
+        // draw when the current staging batch has no room for it. Split only
+        // after process releases its renderer lock; this keeps the EFB,
+        // viewport and pending presentation within the same frame.
+        size_t consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
+        while (consumed != packet.size()) {
             aurora::gfx::split_staging_batch();
-            consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
-            if (consumed != packet.size())
-                throw std::runtime_error("Guest GX command does not fit after staging capacity submission");
+            const size_t more = aurora::gx::fifo::process(packet.data() + consumed, packet.size() - consumed, true);
+            if (more == 0) throw std::runtime_error("Guest GX command does not fit after staging capacity submission");
+            consumed += more;
         }
 #ifdef MH3_DEVELOPMENT
-        ++guestCommands;
-        if (packet[0] >= 0x80 && packet[0] <= 0xBF) ++guestDraws;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] == 0x30) ++guestTextures;
 #endif
@@ -418,24 +421,26 @@ void CompleteHostGraphics() {
                 "%.2f ms GX completion/copy (%.2f ms worker, %.2f ms GPU queue), "
                 "%.2f..%.2f ms copy interval, "
                 "%llu GX commands/copy, %llu draws/copy, %llu arrays/copy, %llu textures/copy, "
-                "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy\n",
+                "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy; "
+                "last frame %u host draws + %u merged into them\n",
                 static_cast<unsigned long long>(frames), wallMs, cpuMs, profile.completionNs / 1e6 / frames,
                 profile.workerNs / 1e6 / frames, profile.gpuNs / 1e6 / frames,
                 profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
-                static_cast<unsigned long long>((guestCommands - profile.lastCommands) / frames),
-                static_cast<unsigned long long>((guestDraws - profile.lastDraws) / frames),
+                static_cast<unsigned long long>((GuestGxStream::commandCount - profile.lastCommands) / frames),
+                static_cast<unsigned long long>((GuestGxStream::drawCount - profile.lastDraws) / frames),
                 static_cast<unsigned long long>((guestArrays - profile.lastArrays) / frames),
                 static_cast<unsigned long long>((guestTextures - profile.lastTextures) / frames),
                 static_cast<unsigned long long>((guestTextureCopies - profile.lastTextureCopies) / frames),
                 (guestTextureCopyNs - profile.lastTextureCopyNs) / 1e6 / frames,
                 static_cast<unsigned long long>((guestEfbSnapshots - profile.lastEfbSnapshots) / frames),
                 (guestEfbSnapshotNs - profile.lastEfbSnapshotNs) / 1e6 / frames,
-                static_cast<unsigned long long>((guestEfbPeeks - profile.lastEfbPeeks) / frames));
+                static_cast<unsigned long long>((guestEfbPeeks - profile.lastEfbPeeks) / frames),
+                aurora_get_stats()->drawCallCount, aurora_get_stats()->mergedDrawCallCount);
             profile.lastCopies = guestCopies;
-            profile.lastCommands = guestCommands;
+            profile.lastCommands = GuestGxStream::commandCount;
             profile.lastArrays = guestArrays;
             profile.lastTextures = guestTextures;
-            profile.lastDraws = guestDraws;
+            profile.lastDraws = GuestGxStream::drawCount;
             profile.lastTextureCopies = guestTextureCopies;
             profile.lastEfbSnapshots = guestEfbSnapshots;
             profile.lastEfbPeeks = guestEfbPeeks;

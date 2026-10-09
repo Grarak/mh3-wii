@@ -355,8 +355,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         lists.Write(std::span(callOuter).subspan(4), receive, resolve);
         const uint8_t draw[]{0x90, 0, 1, 0xAB, 0xCD};
         lists.Write(draw, receive, resolve);
+        // Commands arrive in runs: the delivered bytes are the inner list's
+        // setup (and its padding) followed by the draw.
+        std::vector<uint8_t> delivered;
+        for (const auto& packet : packets) delivered.insert(delivered.end(), packet.begin(), packet.end());
         if (lists.PixelFormat() != 1 || lists.PendingBytes() ||
-            packets.front() != std::vector<uint8_t>(setup, setup + 6) ||
+            !std::equal(std::begin(setup), std::end(setup), delivered.begin()) ||
             packets.back() != std::vector<uint8_t>(std::begin(draw), std::end(draw)))
             throw std::runtime_error("Nested display-list state/order failed");
         for (auto& packet : packets)
@@ -424,11 +428,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         std::vector<uint8_t> packet(3 + count * stride, 0x61);
         packet[0] = opcode; packet[1] = count >> 8; packet[2] = count;
         auto receive = [&](std::span<const uint8_t> command) {
+            // Commands arrive in runs: a NOP can follow the draw in its packet.
             if (command[0] >= 0x80) {
-                if (!std::equal(command.begin(), command.end(), packet.begin(), packet.end()))
+                if (command.size() < packet.size() || !std::equal(packet.begin(), packet.end(), command.begin()))
                     throw std::runtime_error("GX vertex packet size/data changed");
                 ++draws;
-            } else if (!command[0]) ++nops;
+                nops += unsigned(std::count(command.begin() + packet.size(), command.end(), 0));
+            } else if (!command[0]) nops += unsigned(command.size());
         };
         auto setCp = [&](uint8_t reg, uint32_t value) {
             const uint8_t command[]{8, reg, uint8_t(value >> 24), uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
@@ -522,6 +528,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         arrays.Write(nbt, receive, resolve);
         if (sizes[1] != 98) throw std::runtime_error("Single-index NBT extent failed");
         available = 97;
+        cp(0xA1, 0x1100); // resolved again at the base write
         bool rejected = false;
         try { arrays.Write(nbt, receive, resolve); }
         catch (const std::runtime_error&) { rejected = true; }

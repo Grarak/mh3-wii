@@ -52,12 +52,29 @@ std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned form
         result[4 + i] = numeric((hi >> (2 * i)) & 3, (texFields[i] >> 1) & 7, 1 + (texFields[i] & 1));
     return result;
 }
-size_t GuestGxStream::VertexSize(unsigned format) const {
-    size_t size = std::popcount(cp[0x50] & 0x1FF);
-    for (const auto& attribute : Attributes(format))
-        size += attribute.descriptor >= 2 ? (attribute.descriptor - 1) * attribute.indices : attribute.bytes;
-    return size;
+const GuestGxStream::VertexLayout& GuestGxStream::Layout(unsigned format) {
+    auto& layout = layouts[format];
+    const std::array<uint32_t, 5> key{cp[0x50], cp[0x60], cp[0x70 + format], cp[0x80 + format], cp[0x90 + format]};
+    if (layout.valid && layout.key == key) return layout;
+    layout = {};
+    const auto attributes = Attributes(format);
+    uint32_t offset = std::popcount(cp[0x50] & 0x1FF);
+    for (unsigned slot = 0; slot < attributes.size(); ++slot) {
+        const auto& a = attributes[slot];
+        if (a.descriptor < 2) { offset += a.bytes; continue; }
+        layout.indexedSlots |= 1u << slot;
+        layout.bytes[slot] = a.bytes / a.indices;
+        for (unsigned i = 0; i < a.indices; ++i) {
+            layout.fields[layout.fieldCount++] = {uint16_t(offset), uint8_t(a.descriptor - 1), uint8_t(slot)};
+            offset += a.descriptor - 1;
+        }
+    }
+    layout.size = offset;
+    layout.key = key;
+    layout.valid = true;
+    return layout;
 }
+size_t GuestGxStream::VertexSize(unsigned format) { return Layout(format).size; }
 std::array<uint8_t, 16> GuestGxStream::ArrayPacket(unsigned slot, ArrayView view) {
     std::array<uint8_t, 16> packet{};
     packet[0] = 0x50; packet[2] = 0x10 + slot;
@@ -68,33 +85,32 @@ std::array<uint8_t, 16> GuestGxStream::ArrayPacket(unsigned slot, ArrayView view
 void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver) {
     const unsigned count = (unsigned(draw[1]) << 8) | draw[2];
     if (!count) return;
-    const auto attributes = Attributes(draw[0] & 7);
-    if (std::none_of(attributes.begin(), attributes.end(), [](auto a) { return a.descriptor >= 2; })) return;
+    const auto& layout = Layout(draw[0] & 7);
+    if (!layout.indexedSlots) return;
     if (!resolver) throw std::runtime_error("Indexed draw requires guest vertex-array resolution");
+    if (3 + size_t(count) * layout.size != draw.size())
+        throw std::runtime_error("GX array scan disagrees with vertex framing");
+    // The largest index each array is read at: a tight pass over the index
+    // fields of the cached layout (13,000 draws a frame in the field).
     std::array<uint32_t, 12> maximum{};
-    size_t offset = 3;
-    const unsigned matrixBytes = std::popcount(cp[0x50] & 0x1FF);
-    for (unsigned vertex = 0; vertex < count; ++vertex) {
-        offset += matrixBytes;
-        for (unsigned slot = 0; slot < attributes.size(); ++slot) {
-            const auto& a = attributes[slot];
-            if (a.descriptor < 2) { offset += a.bytes; continue; }
-            for (unsigned i = 0; i < a.indices; ++i) {
-                if (offset + a.descriptor - 1 > draw.size()) throw std::runtime_error("GX index exceeds vertex packet");
-                const unsigned index = a.descriptor == 2 ? draw[offset] : (unsigned(draw[offset]) << 8) | draw[offset + 1];
-                maximum[slot] = std::max(maximum[slot], index);
-                offset += a.descriptor - 1;
-            }
+    const uint8_t* vertex = draw.data() + 3;
+    const auto fields = std::span(layout.fields.data(), layout.fieldCount);
+    for (unsigned v = 0; v < count; ++v, vertex += layout.size) {
+        for (const auto& field : fields) {
+            const uint8_t* p = vertex + field.offset;
+            const uint32_t index = field.width == 1 ? p[0] : (uint32_t(p[0]) << 8) | p[1];
+            maximum[field.slot] = std::max(maximum[field.slot], index);
         }
     }
-    if (offset != draw.size()) throw std::runtime_error("GX array scan disagrees with vertex framing");
-    for (unsigned slot = 0; slot < attributes.size(); ++slot) {
-        const auto& a = attributes[slot];
-        if (a.descriptor < 2) continue;
-        auto view = resolver(cp[0xA0 + slot]);
+    for (unsigned slot = 0; slot < 12; ++slot) {
+        if (!(layout.indexedSlots & (1u << slot))) continue;
+        auto& resolved = resolvedArrays[slot];
+        if (!resolved.valid || resolved.guest != cp[0xA0 + slot])
+            resolved = {cp[0xA0 + slot], resolver(cp[0xA0 + slot]), true};
+        auto view = resolved.view;
         // NBT3 carries three independent indices into three-component vectors;
         // ordinary NBT carries one index into a nine-component array element.
-        const uint64_t needed = uint64_t(maximum[slot]) * (cp[0xB0 + slot] & 255) + a.bytes / a.indices;
+        const uint64_t needed = uint64_t(maximum[slot]) * (cp[0xB0 + slot] & 255) + layout.bytes[slot];
         if (!view.address || needed > view.size)
             throw std::runtime_error("GX draw index exceeds guest vertex-array RAM");
         // Rebind only for a new array or one that now needs more bytes. A draw with a
@@ -230,11 +246,28 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
     constexpr size_t limit = 16 * 1024 * 1024;
     if (bytes.size() > limit || pending.size() + bytes.size() > limit)
         throw std::runtime_error("Guest GX command buffer exceeds 16 MiB");
-    pending.insert(pending.end(), bytes.begin(), bytes.end());
+    // The caller's bytes are parsed in place when nothing is pending (display
+    // lists); only a command still incomplete at the end waits in `pending`.
+    const bool inPlace = pending.empty();
+    if (!inPlace) pending.insert(pending.end(), bytes.begin(), bytes.end());
+    const std::span<const uint8_t> data = inPlace ? bytes : std::span<const uint8_t>(pending);
+    // Commands Aurora takes as they are go to the sink in runs, many commands
+    // per call: one call per command cost more than decoding them. A command
+    // the stream replaces, or precedes with packets of its own, ends a run.
+    struct Run {
+        const Sink& sink;
+        std::span<const uint8_t> data;
+        size_t start = 0, at = 0; // [start, at): commands not yet sunk
+        void Flush() {
+            if (at > start) sink(data.subspan(start, at - start));
+            start = at;
+        }
+    } run{sink, data};
+    const Sink emit = [&run](std::span<const uint8_t> packet) { run.Flush(); run.sink(packet); };
     size_t offset = 0;
-    while (offset < pending.size()) {
-        const auto* p = pending.data() + offset;
-        const size_t available = pending.size() - offset;
+    while (offset < data.size()) {
+        const auto* p = data.data() + offset;
+        const size_t available = data.size() - offset;
         size_t length;
         switch (p[0]) {
         case 0x00: case 0x48: length = 1; break;
@@ -256,6 +289,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             throw std::runtime_error("Guest GX opcode requires a bridge: " + std::to_string(p[0]));
         }
         if (available < length) break;
+        run.at = offset;
+        ++commandCount;
         if (p[0] == 0x20 || p[0] == 0x28 || p[0] == 0x30 || p[0] == 0x38) {
             if (!resolver) throw std::runtime_error("Indexed XF load requires guest RAM resolution");
             const unsigned array = 12 + (p[0] - 0x20) / 8;
@@ -281,8 +316,9 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             direct[3] = destination >> 8; direct[4] = destination;
             const auto* source = reinterpret_cast<const uint8_t*>(view.address) + sourceOffset;
             std::copy_n(source, words * 4, direct.begin() + 5);
-            sink(std::span<const uint8_t>(direct.data(), 5 + words * 4));
+            emit(std::span<const uint8_t>(direct.data(), 5 + words * 4));
             offset += length;
+            run.start = offset;
             continue;
         }
         if (p[0] == 0x40) {
@@ -300,7 +336,9 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 // A separate framer avoids invalidating the parent's partial FIFO
                 // packet while processing nested lists. GPU state flows through
                 // the call exactly as if its commands appeared inline.
+                run.Flush();
                 GuestGxStream child;
+                child.coalesce = coalesce;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
                 child.textureBound = textureBound; child.textureDirty = textureDirty;
                 child.paletteRevision = paletteRevision;
@@ -316,6 +354,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 palettes = child.palettes; paletteBindings = child.paletteBindings;
             }
             offset += length;
+            run.start = offset;
             continue;
         }
         if (p[0] == 0x08)
@@ -326,10 +365,12 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             const auto view = resolver(guest);
             // Aurora's 0x50/0x0010..1F extension carries a host pointer,
             // accessible byte count, and an explicit guest-big-endian flag.
-            sink(ArrayPacket(p[1] - 0xA0, view));
+            emit(ArrayPacket(p[1] - 0xA0, view));
             // Unsized: the next indexed draw binds the range it actually reads.
             boundArrays[p[1] - 0xA0] = {view.address, 0};
+            if (p[1] - 0xA0u < resolvedArrays.size()) resolvedArrays[p[1] - 0xA0] = {guest, view, true};
             offset += length;
+            run.start = offset;
             continue;
         }
         if (p[0] == 0x61) {
@@ -375,7 +416,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                     const auto view = resolver(bp[0x4B] << 5);
                     if (uint64_t(rowBytes) * ((height + tileHeight - 1) / tileHeight) > view.size)
                         throw std::runtime_error("GX texture copy exceeds guest RAM");
-                    sink(std::span<const uint8_t>(p, length));
+                    run.at = offset + length; // the copy follows the commands before it
+                    run.Flush();
                     textureCopy({view.address, bp[0x4B] << 5,
                                  rowBytes * ((height + tileHeight - 1) / tileHeight), bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
                                  sourceWidth, sourceHeight, width, height, format, halfScale, (trigger & 0x800) != 0});
@@ -397,7 +439,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 const auto view = resolver(bp[0x4B] << 5);
                 if (uint64_t(width) * destinationHeight * 2 > view.size)
                     throw std::runtime_error("GX display copy exceeds guest framebuffer RAM");
-                sink(std::span<const uint8_t>(p, length));
+                run.at = offset + length;
+                run.Flush();
                 copy({view.address, width, destinationHeight, (trigger & 0x800) != 0});
                 offset += length;
                 continue;
@@ -406,15 +449,22 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
         }
         if (p[0] >= 0x80 && p[0] <= 0xBF) {
-            BindDrawArrays(std::span<const uint8_t>(p, length), sink, resolver);
+            ++drawCount;
+            BindDrawArrays(std::span<const uint8_t>(p, length), emit, resolver);
             for (unsigned slot = 0; slot < 8; ++slot)
-                if (textureDirty & (1u << slot)) sink(TexturePacket(slot, resolver));
+                if (textureDirty & (1u << slot)) emit(TexturePacket(slot, resolver));
             textureDirty = 0;
-            BindDrawPalettes(sink, resolver);
+            BindDrawPalettes(emit, resolver);
         }
-        sink(std::span<const uint8_t>(p, length));
         offset += length;
+        if (!coalesce) {
+            run.at = offset;
+            run.Flush();
+        }
     }
 incomplete:
-    pending.erase(pending.begin(), pending.begin() + offset);
+    run.at = offset;
+    run.Flush();
+    if (inPlace) pending.assign(data.begin() + offset, data.end());
+    else pending.erase(pending.begin(), pending.begin() + offset);
 }
