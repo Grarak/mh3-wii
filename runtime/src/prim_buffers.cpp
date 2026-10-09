@@ -3,7 +3,8 @@
 // all at once by prim_init_all; the field and village tasks call it every
 // frame. The translated reset paid a folded guest address and a byte swap per
 // store, 1,152 entries (128 + 1,024 in Alatreon) a frame; the port writes the
-// big-endian values straight through one host pointer per group.
+// big-endian values straight through one host pointer per group, and only to
+// the entries handed out since the group's last reset.
 //
 //   0x80796E60 + 4g  entry array of group g (r13 - 17536)
 //   0x80796E68 + 4g  entries handed out this frame (r13 - 17528)
@@ -78,18 +79,53 @@ uint32_t Alloc(uint32_t group) {
     return entry;
 }
 
+// Whether the entry at `p` holds what Reset writes.
+bool InResetState(const uint8_t* p, const uint8_t (&floats)[8]) {
+    static constexpr uint8_t zero[4] = {};
+    return !std::memcmp(p + 0x18, zero, 4) && !std::memcmp(p + 0x20, zero, 4) && !std::memcmp(p + 0x1E, zero, 2) && !p[8] && !p[9] && !std::memcmp(p + 0x24, floats, 8);
+}
+
+// The array and capacity each group's last reset covered. Only the entries
+// handed out since then (below the group's count) can have changed: Alloc
+// resets an entry as it hands it out, nothing writes past the count, and the
+// scene walk reads below it only. So a reset of the same array clears those
+// (Alatreon: about 40 of 1,152 a frame) and leaves the rest in the reset state
+// the original writes. A new array, or one the game allocated anew at the same
+// address (its first untouched or last entry not in the reset state), is
+// reset whole.
+struct Covered {
+    uint32_t entries = 0, capacity = 0;
+};
+
+Covered covered[2];
+
 void ResetGroup(uint32_t group) {
     const uint32_t g = group & 0xFF;
     const uint32_t entries = FlatRead32(kEntries + 4 * g);
+    const uint32_t used = FlatRead32(kUsed + 4 * g);
     FlatWrite32(kUsed + 4 * g, 0);
-    const uint32_t count = FlatRead16(kCapacity + 2 * g);
+    const uint32_t capacity = FlatRead16(kCapacity + 2 * g);
+    uint32_t count = capacity;
 
-    if (!count)
+    if (!capacity)
         return;
 
     uint8_t floats[8];
     ResetFloats(floats);
     uint8_t* p = GuestFlat::Host(entries);
+
+    if (g < 2) {
+        const uint32_t touched = used < capacity ? used : capacity;
+
+        if (covered[g].entries == entries && covered[g].capacity == capacity && InResetState(p + (capacity - 1) * kEntryBytes, floats) &&
+            (touched == capacity || InResetState(p + touched * kEntryBytes, floats)))
+            count = touched;
+
+        covered[g] = {entries, capacity};
+    }
+
+    if (!count)
+        return;
 
     for (uint32_t i = 0; i < count; ++i, p += kEntryBytes)
         Reset(p, floats);
