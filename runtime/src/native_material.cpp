@@ -557,10 +557,13 @@ void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matr
     auto& m = M(owner);
     TextureMatrix* destination = selector >= 64 ? &m.postTextureMatrices[(selector - 64) / 3] : &m.textureMatrices[(selector - 30) / 3];
     PublishNativeModelTextureMatrix(selector, matrix, matrix3x4, owner);
+    // Materials republish their post matrices per draw; only a change advances
+    // the revision the frame packet captures on.
+    const bool same = destination->known && destination->matrix3x4 == matrix3x4 && !std::memcmp(destination->values.data(), matrix, 48);
     std::memcpy(destination->values.data(), matrix, 48);
     destination->known = true;
     destination->matrix3x4 = matrix3x4;
-    if (selector >= 64)
+    if (selector >= 64 && !same)
         Changed(NATIVE_STATE_POST, owner);
 }
 bool GetNativeTextureMatrix(uint32_t selector, float matrix[12], bool* matrix3x4, NativeOwner owner) {

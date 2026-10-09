@@ -72,4 +72,8 @@ struct NativeRenderThreadStatistics {
 // Samples the actual render TID, scheduled CPU clock, current CPU and affinity;
 // bounded atomic reads add no lock, queue task, packet wait or GPU wait.
 NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept;
+// Game thread: per state component (draw, material, lighting, post, textures)
+// the records, captures (revision advanced) and stored copies since the last
+// call; resets them.
+void TakeNativePacketSnapshotCounts(uint32_t out[3][5]);
 #endif

@@ -17,6 +17,7 @@
 #include "game_step.h"
 #include "game_tasks.h"
 #include "memory.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "village_boot.h"
 #include <initializer_list>
@@ -212,6 +213,11 @@ struct FrameSplit {
         if (mh3SplitDetail)
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
                         f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));
+        uint32_t snapshots[3][5];
+        TakeNativePacketSnapshotCounts(snapshots);
+        const auto s = [&](unsigned row, unsigned component) { return snapshots[row][component] / frames; };
+        std::printf("MH3 packet snapshots: %u records/frame; captured/stored per frame: draw %u/%u material %u/%u lighting %u/%u post %u/%u textures %u/%u\n", s(0, 0), s(1, 0),
+                    s(2, 0), s(1, 1), s(2, 1), s(1, 2), s(2, 2), s(1, 3), s(2, 3), s(1, 4), s(2, 4));
         std::memset(splitCalls, 0, sizeof splitCalls);
         std::memset(splitFamilies, 0, sizeof splitFamilies);
         std::memset(splitScopes, 0, sizeof splitScopes);

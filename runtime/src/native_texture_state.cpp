@@ -77,6 +77,10 @@ void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette) 
     auto& palettes = T().palettes;
     if (slot >= palettes.size() || !palette.payload_address || !palette.entries || palette.entries > 16384 || palette.format > 2)
         throw std::runtime_error("Invalid native palette binding");
+    // Materials rebind their palettes on every draw; an unchanged binding keeps
+    // the revision, so the frame packet need not capture and compare a copy.
+    if (!std::memcmp(&palettes[slot], &palette, sizeof palette))
+        return;
     palettes[slot] = palette;
     Changed();
 }
@@ -86,7 +90,10 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
         throw std::runtime_error("Invalid native texture unit");
     if (binding.source.indexed && binding.tlut_id >= palettes.size())
         throw std::runtime_error("Invalid native texture palette slot");
-    textures[binding.map_id] = {binding, true};
+    auto& texture = textures[binding.map_id];
+    if (texture.valid && !std::memcmp(&texture.value, &binding, sizeof binding))
+        return;
+    texture = {binding, true};
     Changed();
 }
 void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out) {

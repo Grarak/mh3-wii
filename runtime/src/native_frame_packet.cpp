@@ -216,11 +216,21 @@ Packet& ProducerPacket() {
     return *static_cast<Packet*>(data);
 }
 
+#ifdef MH3_DEVELOPMENT
+// Per component: draw records, captures (revision advanced) and stored copies.
+uint32_t snapshotCounts[3][NATIVE_STATE_COMPONENTS];
+#endif
 template <class T, void (*Capture)(T&)>
 uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
+#ifdef MH3_DEVELOPMENT
+    ++snapshotCounts[0][component];
+#endif
     const uint32_t revision = nativeStateRevision[unsigned(NativeOwner::Game)][component];
     if (pool.valid && pool.revision == revision)
         return pool.current;
+#ifdef MH3_DEVELOPMENT
+    ++snapshotCounts[1][component];
+#endif
     if (pool.count == pool.items.size())
         pool.items.emplace_back();
     auto& next = pool.items[pool.count];
@@ -229,6 +239,9 @@ uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
     // Producers republish unchanged state; keep one copy of equal contents.
     if (pool.valid && !std::memcmp(&next, &pool.items[pool.current], sizeof next))
         return pool.current;
+#ifdef MH3_DEVELOPMENT
+    ++snapshotCounts[2][component];
+#endif
     pool.valid = true;
     pool.current = pool.count++;
     return pool.current;
@@ -653,6 +666,11 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept {
         }
     }
     return result;
+}
+void TakeNativePacketSnapshotCounts(uint32_t out[3][5]) {
+    static_assert(sizeof snapshotCounts == sizeof(uint32_t[3][5]));
+    std::memcpy(out, snapshotCounts, sizeof snapshotCounts);
+    std::memset(snapshotCounts, 0, sizeof snapshotCounts);
 }
 #endif
 void BeginNativeFramePacket(bool render) {
