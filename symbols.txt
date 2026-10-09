@@ -64,7 +64,6 @@
 80229f30 ActorStateUpdateDispatcher
 # Two actor state-machine handlers dispatch on byte +5; the broader update at
 # 0x80266F94 calls the sweep/contact-list wrapper only when byte +0x582 is set.
-80256a58 ActorStateByte5HandlerA
 80256f04 ActorStateByte5HandlerB
 80266f94 ActorContactUpdateGate
 # Computes a planar direction from two positions, calls the float angle helper
@@ -917,3 +916,17 @@
 802886ac FieldActionWeapon1001
 8025aa9c FieldActionMotion241
 8024ff6c FieldActionMotion7Or8
+802821dc FieldActionCharge1150
+8025b15c FieldActionMotion210
+8028563c FieldActionSpin1103
+802869d4 FieldActionSpin1162
+802598c4 FieldActionFall
+8025cecc FieldActionFall2
+802501b8 FieldActionAwaitPlace
+80253038 FieldActionRun119
+80254a28 FieldActionJump15
+80254f18 FieldActionClimbOver
+802813d0 FieldActionCharge1101
+80256a58 FieldActionKnockedFlying
+80258ac8 FieldActionGrabbed
+8026a57c VelocityStep

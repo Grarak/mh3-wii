@@ -66,6 +66,22 @@
 //               commands 7 and 1 end it
 //   0x8025DC40, 0x8025DA9C  (plw, alt) another console's player standing or
 //               resting; freed after 300 steps
+//   0x802821DC  (plw, kind) a charge in motion 1150 from frame 48, then action
+//               48
+//   0x8025B15C  (plw, kind) motion 210 (209), now and then 223; the local
+//               player's leaves after 300 steps
+//   0x8028563C, 0x802869D4  a spin after a charge (1103 / 1162): the charge
+//               level + 2 motion loops, steered, then 1104 / 1163
+//   0x802598C4, 0x8025CECC  falls (motion 56), landing by the steps fallen
+//   0x802501B8  waiting in motion 1, then placed beside the spot 0x803BAA14
+//               finds (action 84)
+//   0x80253038  a run (motion 119) draining stamina; after 40 steps action 8
+//   0x80254A28  a jump (motion 15): a ledge catches it, or it lands
+//   0x80254F18  (plw, kind) climbing over or dropping off (motion 11, 12, 13)
+//   0x802813D0  (plw, kind) a charge in motion 1101, then action 31 (32, 33)
+//   0x80256A58  (plw, kind) knocked flying (205 / 208), landing, getting up
+//   0x80258AC8  (plw, kind) grabbed by a monster (271 / 219)
+//   0x8026A57C  VelocityStep: the jumps' velocity and position, per step
 //
 // The originals count by 1 per step and move by a fixed amount per step (and
 // test the player's step counter, which runs a tick at a time, for `% n == 0`). Here
@@ -163,6 +179,24 @@ enum : uint32_t {
     ClimateActive = 0x80276864, // PlClimateActive (plw, 0) -> 1 in heat or cold without protection
     InWater = 0x80278878,     // Pl_suimen_ck (plw) -> 1 at the water's surface
     AnyInput = 0x8026F8EC,    // (plw) -> 1 when the local player moves the stick or presses a button
+    Vec3Ctor = 0x80043F0C,    // (VEC3*): nothing
+    CatSkillCheck = 0x80272B14, // Pl_cat_skill_ck (plw, skill) -> 1
+    PlayModeCheck = 0x800CF27C, // PlayMode_ck () -> u8
+    MotionFrame = 0x8026A3B0, // (plw) -> f1: the motion's frame
+    SetMotionAttr = 0x8026A138, // Pl_chr_set_attr (plw, u16 motion, s32 blend, s32 frame, u32)
+    RotVecXYZ = 0x80051224,   // rotVecXYZ (VEC3*, u32 angles[3])
+    GroundHit2 = 0x802916C8,  // GetGroundHit2 (VEC3*, s32, u8 kind, u8* hit) -> f1 height
+    ClearVelocity = 0x8026A5D4, // (plw): +0x78..+0x8C = 0
+    ClearAcceleration = 0x8026A5F4, // (plw): +0x84..+0x8C = 0
+    PlVelocityStep = 0x8026A57C, // (plw): VelocityStep below
+    JointPos = 0x8026A3EC,    // pl_get_joint_wpos (plw, joint, VEC3* out)
+    EnemyJointPos = 0x8013599C, // get_joint_wpos_em (em, joint, VEC3* out)
+    VecSub = 0x80050D04,      // (out, a, b): a - b
+    VecAngles = 0x80050D7C,   // calcVecAngXY (VEC3*, u32* x, u32* y)
+    VecAngle2 = 0x80050AF4,   // calcVecAng2 (VEC3* from, VEC3* to) -> u32 y angle
+    GetMoveWorkAdrs = 0x800CFAF4, // get_move_work_adrs (type) -> the works (2840 bytes each for 3)
+    GetMoveWorkMax = 0x800CFB34, // get_move_work_max (type) -> u16
+    GetNowAreaNo = 0x802AFCE8, // get_now_areano () -> u8
     SetAction = 0x80275754,   // (plw, u8, u16 action, u16)
     EndActionReset = 0x8027629C, // (plw, u8 flag9, s32 blend, s32 flags): +0x442 = 0, +0x30A = 255, then as EndAction
 };
@@ -1479,6 +1513,980 @@ void Motion7Or8(CpuContext* ctx) {
     }
 }
 
+// 0x802821DC (plw, kind): a charge (motion 1150, from 1164, 1162 or 1167
+// first). From frame 48 the local player's motion runs at half speed
+// charging (ChargeTime of 90 steps) until command 5 clears (the button let
+// go) or 13, then goes on to the attack (action 48).
+void Charge1150(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    game.Call<0x80277CB4>({plw, 2});
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(3, 1, 0);
+        Memory::Write8(plw + kFlag24, 1);
+        Memory::Write8(plw + kChargeLevel, 0);
+        Memory::Write16(plw + kChargeSteps, 0);
+        p.Timer(int16_t(game.Call<ChargeTime>({plw, 90})));
+        if (kind == 0) {
+            p.NextState();
+            p.Set(1150, 4, 0);
+        } else if (kind == 1) {
+            p.Set(1164, 4, 0);
+        } else if (kind == 2) {
+            p.Set(1162, 4, 0);
+        } else if (kind == 3) {
+            game.Call<0x8027E21C>({plw, 1});
+            p.Set(1167, 4, 0);
+        }
+        break;
+    case 1:
+        if (p.Ended()) {
+            p.NextState();
+            p.Set(1150, 2, 48);
+        }
+        break;
+    case 2:
+        if (!game.Call<MasterCheck>({plw})) break;
+        if (game.Call<FrameCheck>({plw, 1}, {48.0, 0.0}) != 1) break;
+        if (Memory::Read8(plw + kFlag7) == 0) {
+            Memory::Write8(plw + kFlag7, 1);
+            game.Call<0x8011ADBC>({plw, 0});
+        }
+        if (!Bit(plw + kCommands, 5) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
+        if (Memory::Read8(plw + kFlag6) == 0) {
+            Memory::WriteFloat32(plw + kMotionRate, 0.5f);
+            ChargeStep(p);
+            if (p.CountDown()) Memory::Write8(plw + kFlag6, 1);
+        }
+        if (Memory::Read8(plw + kFlag6) == 1) {
+            Memory::WriteFloat32(plw + kMotionRate, 1.0f);
+            Memory::Write8(plw + kChargeLevel, uint8_t(game.Call<ChargeLevel>({plw})));
+            p.Next(4, 48, 388);
+        }
+        break;
+    }
+}
+
+// 0x8025B15C (plw, kind): motion 210 (from frame 170 for kind 1; 209 from
+// 120 for kind 2, MHchar +0xF6 = 2), 1 in 64 steps past frame 164 turning
+// into 223 and back to 210 at 164. The local player's leaves (state 2,
+// 0x803AB11C) after 300 steps.
+void Motion210(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    game.Call<SetState918>({plw, 2});
+    game.Call<SetState1408>({plw, 10});
+    game.Call<0x8027A1E0>({plw});
+    game.Call<0x80245E04>({plw, 0});
+    Memory::Write8(plw + kFlag1468, 0);
+    Memory::Write8(plw + kFlag1470, 0);
+    Memory::Write8(plw + kFlag1469, 0);
+    Memory::Write8(plw + kFlag1640, 0);
+    game.Call<ClearActFlags>({plw, 2048});
+    if (kind == 2) Memory::Write8(p.Char() + kCharFlag246, 2);
+    const uint32_t state = p.State();
+    if (state == 0) {
+        p.NextState();
+        game.Call<0x8027AC70>({plw});
+        p.Timer(0);
+        if (kind == 0) p.Set(210, 0, 0);
+        else if (kind == 1) p.Set(210, 0, 170);
+        else if (kind == 2) p.Set(209, 0, 120);
+        game.Call<0x80275524>({plw, 3});
+        game.Call<MotionAfterSet>({plw});
+        game.Call<0x8025B138>({plw});
+        p.Flags(0, 0, 1);
+        game.Call<ClearActFlags>({plw, 4});
+        game.Call<ClearActFlags>({plw, 16});
+        Memory::Write8(plw + kFlag24, 0);
+        if (p.Master()) {
+            game.Call<0x802BC6C0>();
+            game.Call<0x803AB160>({Memory::Read8(plw + 8)});
+        }
+        return;
+    }
+    if (state > 2) return;
+    const uint32_t motion = p.Motion();
+    if (motion == 210) {
+        if (game.Call<FrameCheck>({plw, 0}, {164.0, 0.0}) == 1 && (game.Call<Rand>({1}) & 63) == 0) p.Set(223, 0, 0);
+    } else if (motion == 223) {
+        if (p.Ended()) p.Set(210, 0, 164);
+    }
+    if (p.Master() && p.State() == 1) {
+        p.CountUp();
+        if (p.Timer() >= 300) {
+            p.NextState();
+            game.Call<0x803AB11C>({plw});
+        }
+    }
+}
+
+// 0x8028563C and 0x802869D4: a spin after a charge (motion 1103 / 1162):
+// the charge level + 2 loops (up to 5), cues at frames 26 and 52 of each,
+// the local player steering it (0x8026FB84 2048 / 1024: 192 a step either
+// way). The last loop's frame 44 goes on to the finish (motion 1104 / 1163),
+// which ends the action; each loop from the second takes 0x8027714C's list.
+// The loops (+0x28, +6) count motion loops, not steps.
+struct SpinParams {
+    uint32_t motion, finish, mode, flag9;
+    uint32_t cue0, cue26, cue52, cueFinish; // 0x80284268's
+    uint32_t list0, list;                   // 0x8027714C's
+    double rate;                            // 0x80284654's while finishing
+};
+template <const SpinParams& k>
+void Spin(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Set(k.motion, 6, 0);
+        Memory::Write8(plw + kFlag6, uint8_t(std::min<uint32_t>((Memory::Read8(plw + kChargeLevel) + 2) & 0xFF, 5)));
+        Memory::Write8(plw + kFlag7, 0);
+        p.Timer(0);
+        Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2) & 0xFFFF);
+        game.Call<0x80284268>({plw, k.cue0, 0});
+        p.Flags(k.mode, 1, 0);
+        game.Call<0x80277CB4>({plw, 60});
+        game.Call<0x8027714C>({plw, k.list0, 0});
+        break;
+    case 1:
+        game.Call<0x80277CB4>({plw, 2});
+        if (p.Master()) {
+            // The original: 192 a step. Here its share of this step.
+            if (game.Call<0x8026FB84>({plw, 2048}) == 1)
+                Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) + uint32_t(GameStep::Share(192)));
+            else if (game.Call<0x8026FB84>({plw, 1024}) == 1)
+                Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) - uint32_t(GameStep::Share(192)));
+        }
+        if (game.Call<FrameCheck>({plw, 0}, {26.0, 0.0}) == 1) game.Call<0x80284268>({plw, k.cue26, 0});
+        if (game.Call<FrameCheck>({plw, 0}, {52.0, 0.0}) == 1) game.Call<0x80284268>({plw, k.cue52, 0});
+        if (game.Call<FrameCheck>({plw, 0}, {44.0, 0.0}) != 1) break;
+        p.Timer(p.Timer() + 1);
+        Memory::Write8(plw + kFlag6, uint8_t(Memory::Read8(plw + kFlag6) - 1));
+        if (Memory::Read8(plw + kFlag6) == 0) {
+            p.NextState();
+            p.Set(k.finish, 0, 0);
+            Memory::Write16(plw + 182, uint16_t(Memory::Read16(plw + 182) + 3));
+            game.Call<0x80284268>({plw, k.cueFinish, 0});
+            game.Call<0x8027714C>({plw, 0, 0});
+        } else if (p.Timer() >= 2) {
+            game.Call<0x8027714C>({plw, k.list, 0});
+        }
+        break;
+    case 2:
+        game.Call<0x80277CB4>({plw, 2});
+        if (p.Ended()) p.End(k.flag9, 6);
+        else game.Call<0x80284654>({plw}, {k.rate});
+        break;
+    }
+}
+constexpr SpinParams kSpin1103{1103, 1104, 0, 0, 10, 11, 12, 13, 0x805CA2DC, 0x805CA308, 38.0};
+constexpr SpinParams kSpin1162{1162, 1163, 3, 3, 34, 31, 32, 33, 0x805CA414, 0x805CA440, -1.0};
+
+// The falls (motion 56) of 0x802598C4 and 0x8025CECC. The velocity (+0x78,
+// y +0x7C, forward +0x80) takes the acceleration (+0x84..+0x8C) and moves the
+// player turned by the facing (+0x58); kind 1 starts at 8 forward and -10 up
+// (falling at -8/11), others at 20 forward and 18 up, the forward slowing to
+// 0 over 80 steps. The originals take the acceleration and the move once per
+// step: here times the step length.
+constexpr uint32_t kVelocity = 0x78, kAcceleration = 0x84;
+
+void FallStart(const Player& p, uint32_t kind) {
+    const uint32_t plw = p.plw;
+    if (kind == 1) {
+        p.Set(56, 8, 32);
+        Memory::Write8(plw + 0x585, 0);
+        Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+        Memory::WriteFloat32(plw + kVelocity + 8, 8.0f);
+        Memory::WriteFloat32(plw + kVelocity + 4, -10.0f);
+        Memory::WriteFloat32(plw + kAcceleration + 0, 0.0f);
+        Memory::WriteFloat32(plw + kAcceleration + 8, 0.0f);
+        Memory::WriteFloat32(plw + kAcceleration + 4, Memory::ReadFloat32(0x8079FF60 - 15228)); // -8/11
+    } else {
+        p.Set(56, 0, 0);
+        Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+        Memory::WriteFloat32(plw + kVelocity + 8, 20.0f);
+        Memory::WriteFloat32(plw + kVelocity + 4, 18.0f);
+        Memory::WriteFloat32(plw + kAcceleration + 0, 0.0f);
+        Memory::WriteFloat32(plw + kAcceleration + 8, -(20.0f / 80.0f));
+        p.game.Call<0x8026A608>({plw, 19});
+    }
+}
+
+// The velocity takes the acceleration (forward and sideways not below 0) and
+// moves the player turned by the facing, times the step length. True when
+// the player is airborne (0x80245ED0) and falling.
+bool FallMove(const Player& p, uint32_t move) {
+    const uint32_t plw = p.plw;
+    const float s = float(GameStep::Scale());
+    for (uint32_t k = 0; k < 12; k += 4)
+        Memory::WriteFloat32(plw + kVelocity + k, Memory::ReadFloat32(plw + kVelocity + k) +
+                                                      Memory::ReadFloat32(plw + kAcceleration + k) * s);
+    if (Memory::ReadFloat32(plw + kVelocity + 0) < 0.0f) Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+    if (Memory::ReadFloat32(plw + kVelocity + 8) < 0.0f) Memory::WriteFloat32(plw + kVelocity + 8, 0.0f);
+    for (uint32_t k = 0; k < 12; k += 4) Memory::WriteFloat32(move + k, Memory::ReadFloat32(plw + kVelocity + k) * s);
+    p.game.Call<RotVecY>({move, Memory::Read32(plw + kAngle2)});
+    for (uint32_t k = 0; k < 12; k += 4)
+        Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(move + k));
+    return p.game.Call<0x80245ED0>({plw}) != 1 && Memory::ReadFloat32(plw + kVelocity + 4) < 0.0f;
+}
+
+// One step of a fall; true when it lands at the ground height (+0x60). The
+// step count (+0x28) takes 1 more a step while falling.
+bool FallStep(const Player& p, uint32_t move) {
+    const uint32_t plw = p.plw;
+    if (!FallMove(p, move)) return false;
+    p.CountUp();
+    if (!(Memory::ReadFloat32(plw + kPosition + 4) < Memory::ReadFloat32(plw + kLastY))) return false;
+    Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(plw + kLastY));
+    Memory::Write8(plw + 27, 1);
+    Memory::Write8(plw + kFlag9, 0);
+    Memory::Write8(plw + 0x585, 0);
+    return true;
+}
+
+// 0x802598C4 (plw, kind, alt): a fall; landing after 50 steps is action 2
+// (2), after 30 action 50 (70 when alt), else 51 (71).
+void Fall(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4), alt = frame.Arg(5);
+    game.Call<Vec3Ctor>({frame[8]});
+    p.CountUp();
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(2, 0, 1);
+        game.Call<0x8027D554>({plw});
+        game.Call<0x8027AC70>({plw});
+        FallStart(p, kind);
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(0);
+        Memory::Write8(plw + kFlag7, 0);
+        break;
+    case 1:
+        if (!FallStep(p, frame[8])) break;
+        if (p.Timer() >= 50) {
+            game.Call<0x80245E04>({plw, 0});
+            p.Next(2, 2, 0);
+        } else {
+            p.Next(6, p.Timer() >= 30 ? (alt == 0 ? 50 : 70) : (alt == 0 ? 51 : 71), 0);
+        }
+        break;
+    }
+}
+
+// 0x8025CECC (plw, kind): a fall (0x8025C834 each step); landing after 50
+// steps (60 on 0x8027BE38) without skill 36 is action 2 (2), after 30 (40)
+// action 7 (12), else 8.
+void Fall2(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    game.Call<Vec3Ctor>({frame[8]});
+    game.Call<0x8025C834>({plw});
+    p.CountUp();
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(2, 0, 0);
+        FallStart(p, kind);
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(0);
+        Memory::Write8(plw + kFlag7, 0);
+        game.Call<0x8027AC70>({plw});
+        break;
+    case 1: {
+        if (!FallStep(p, frame[8])) break;
+        int32_t hard = 50, soft = 30;
+        if (game.Call<CatSkillCheck>({plw, 36}) != 1 && game.Call<0x8027BE38>({plw}) == 1) hard = 60, soft = 40;
+        if (p.Timer() >= hard && game.Call<CatSkillCheck>({plw, 36}) == 0) {
+            Memory::Write8(plw + 0x5C4, Memory::Read8(plw + 0x5C4) & 0xF0);
+            game.Call<0x8010D6EC>({plw});
+            p.Next(2, 2, 0);
+        } else {
+            p.Next(12, p.Timer() >= soft ? 7 : 8, 2);
+        }
+        break;
+    }
+    }
+}
+
+// 0x802501B8: waiting in motion 1 (then 66 into 67, or 63 into 65 with +20)
+// for 30 steps (none in play mode 2). Then the local player's, unless an
+// event demo or +0x5BD (255 to start, cleared outside play mode 2) ends it:
+// with +0x5BF 0, 0x803BAA14 finds the spot at the player's position; of
+// kind 8 the player faces its way, gets the point beside it (120 times the
+// player's entry of 0x805C5280, turned) as +0x90 and goes on to action 84;
+// none ends it. +0x5BF 1: 0x8028F3CC, then the end.
+void AwaitPlace(CpuContext* ctx) {
+    GuestFrame frame(ctx, 64);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, spot = frame[40], side = frame[28];
+    game.Call<Vec3Ctor>({spot});
+    game.Call<Vec3Ctor>({side});
+    p.Timer(std::max(p.Timer() - int32_t(GameStep::Ticks()), 0));
+    Memory::Write8(p.Char() + kCharFlag246, 2);
+    game.Call<SetState1408>({plw, 2});
+    game.Call<SetState918>({plw, 2});
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0, 0, 0);
+        p.Set(1, 4, 0);
+        if ((game.Call<PlayModeCheck>() & 0xFF) == 2) {
+            Memory::Write8(plw + kFlag1469, 0);
+            p.Timer(0);
+        } else {
+            Memory::Write8(plw + kFlag1469, 255);
+            p.Timer(30);
+        }
+        Memory::Write8(plw + 0x5BF, 0);
+        Memory::Write16(plw + 0x5C2, 30);
+        Memory::Write8(plw + 0x5C0, 0);
+        break;
+    case 1: {
+        switch (p.Motion()) {
+        case 1:
+            if (p.Timer() <= 0) p.Set(Memory::Read8(plw + kFlag20) == 0 ? 66 : 63, 6, 0);
+            break;
+        case 63: if (p.Ended()) p.Set(65, 2, 0); break;
+        case 66: if (p.Ended()) p.Set(67, 2, 0); break;
+        }
+        if (!p.Master() || p.Timer() > 0) break;
+        if (game.Call<InEventDemo>({1}) == 1 ||
+            ((game.Call<PlayModeCheck>() & 0xFF) != 2 && Memory::Read8(plw + kFlag1469) == 0)) {
+            p.End(0, 4);
+            break;
+        }
+        if ((game.Call<PlayModeCheck>() & 0xFF) != 2 && Memory::Read8(plw + kFlag1469) != 1) break;
+        const uint32_t mode = Memory::Read8(plw + 0x5BF);
+        if (mode == 0) {
+            const uint32_t kind = frame[8], angle = frame[20];
+            const uint32_t found = game.Call<0x803BAA14>(
+                {Memory::Read8(plw + 8), Memory::Read8(plw + kGroundKind), plw + kPosition, kind, spot, frame[16], frame[12]});
+            if ((found & 0xFFFF) == 0xFFFF) {
+                p.End(0, 4);
+                Memory::Write8(plw + kFlag1469, 0);
+            } else if (int16_t(Memory::Read16(kind)) == 8) {
+                Memory::Write32(plw + kAngle, Memory::Read32(angle));
+                Memory::WriteFloat32(side + 0, 120.0f * Memory::ReadFloat32(0x805C5280 + 4 * Memory::Read8(plw + 8)));
+                Memory::WriteFloat32(side + 4, 0.0f);
+                Memory::WriteFloat32(side + 8, 0.0f);
+                game.Call<RotVecY>({side, Memory::Read32(angle)});
+                for (uint32_t k = 0; k < 12; k += 4)
+                    Memory::WriteFloat32(plw + 0x90 + k, Memory::ReadFloat32(spot + k) + Memory::ReadFloat32(side + k));
+                game.Call<0x8027AE8C>({plw, 20});
+                p.Next(0, 84, 0);
+                Memory::Write8(plw + kFlag1469, 0);
+            }
+        } else if (mode == 1) {
+            game.Call<0x8028F3CC>();
+            p.End(0, 4);
+            Memory::Write8(plw + kFlag1469, 0);
+        }
+        break;
+    }
+    }
+}
+
+// 0x80253038: a run: motion 119 (from half the frame of 115; skills 197 and
+// 198 1.1 / 0.9 times as fast) draining stamina (1 a step, stamina.cpp), or
+// 1053 on +24. The local player's runs out of stamina into action 36, or 27
+// on 0x80131AFC; with something near and command 37 0x80252B50 may take over
+// once 15 steps (+7) are out; after 40 steps action 8 (7 with 2 or more near).
+// 2 a step forward along the angles at +0x54: here times the step length.
+void Run119(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, move = frame[8];
+    game.Call<Vec3Ctor>({move});
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(3, 0, 0);
+        game.Call<SetActFlags>({plw, 192});
+        if (Memory::Read8(plw + kFlag24) == 1) {
+            p.SetX(1053, 4, 0);
+            Memory::Write8(plw + kFlag6, 0);
+        } else {
+            if (p.Motion() == 115) {
+                game.Call<MotionFrame>({plw});
+                const int32_t from = int32_t(float(game.F1()) * 0.5f);
+                game.Call<SetMotionAttr>({plw, 119, 4, uint32_t(from), 1});
+            } else {
+                p.SetX(119, 4, 0);
+            }
+            game.Call<0x802785C8>({plw, 1});
+            Memory::Write8(plw + kFlag6, 1);
+            if (game.Call<SkillCheck>({plw, 197}) == 1)
+                Memory::WriteFloat32(plw + kMotionRate, Memory::ReadFloat32(plw + kMotionRate) * 1.1f);
+            else if (game.Call<SkillCheck>({plw, 198}) == 1)
+                Memory::WriteFloat32(plw + kMotionRate, Memory::ReadFloat32(plw + kMotionRate) * 0.9f);
+        }
+        Memory::Write8(plw + kFlag614, 10);
+        if (Memory::Read8(plw + kFlag24) == 0) game.Call<0x8027714C>({plw, 0x805BF5D4, 0});
+        else game.Call<0x80277204>({plw, 0});
+        p.Timer(40);
+        Memory::Write8(plw + kFlag7, 15);
+        Memory::Write16(plw + kWord1606, 0);
+        Memory::Write16(plw + kWord1608, 0);
+        return;
+    case 1: {
+        if (Memory::Read8(plw + kFlag6) != 0) game.Call<StaminaChange>({plw, uint32_t(-1)});
+        const uint32_t wait = Memory::Read8(plw + kFlag7);
+        Memory::Write8(plw + kFlag7, uint8_t(wait - std::min(wait, GameStep::Ticks())));
+        p.CountDownToZero();
+        if (p.Master()) {
+            if (Memory::Read8(plw + kFlag6) != 0) {
+                if (game.Call<0x802762B8>({plw, 150}) == 0) {
+                    p.Next(1, 36, 1);
+                    return;
+                }
+                if (game.Call<0x80131AFC>({Memory::Read8(plw + 8)}) == 1) {
+                    p.Next(1, 27, 1);
+                    return;
+                }
+            }
+            if ((game.Call<Nearby>({plw, 0}) & 0xFF) >= 1 && game.Call<0x8026A6A8>({plw, 37}) == 1) {
+                if (Memory::Read8(plw + kFlag7) == 0) {
+                    game.Call<0x8026A450>({plw});
+                    game.Call<0x80252B50>({plw, 0xC16D, 16020, 43, 44});
+                }
+            } else if (p.Timer() <= 0) {
+                p.Next(1, (game.Call<Nearby>({plw, 0}) & 0xFF) < 2 ? 8 : 7, 0);
+                return;
+            } else if (Memory::Read8(plw + kFlag7) == 0 && (game.Call<Nearby>({plw, 0}) & 0xFF) >= 1) {
+                game.Call<0x8026A450>({plw});
+            }
+        }
+        Memory::WriteFloat32(move + 0, 0.0f);
+        Memory::WriteFloat32(move + 4, 0.0f);
+        Memory::WriteFloat32(move + 8, float(2.0 * GameStep::Scale()));
+        game.Call<RotVecXYZ>({move, plw + 0x54});
+        for (uint32_t k = 0; k < 12; k += 4)
+            Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(move + k));
+        break;
+    }
+    }
+}
+
+// 0x80254A28 (plw, kind): a jump (motion 15): kind 0 20 forward and 18 up,
+// kind 1 8 forward and -20 up (falling at -8/11), as the falls. Falling, a
+// ledge 0x80277CF8 finds within 180/30 catches the local player's (action 6,
+// on 0x802762D4 with +0x5C7 20 or less); on the ground (GetGroundHit2) it
+// lands: out of health 0x80278C48; after 30 steps without skill 36 action 2
+// (2); the local player's with command 0 and something near rolls on
+// (motion 16, then action 14), else action 2 (3).
+void Jump15(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4), move = frame[16], height = frame[12], hit = frame[8];
+    game.Call<Vec3Ctor>({move});
+    p.CountUp();
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(2, 0, 0);
+        game.Call<0x8027A1E0>({plw});
+        if (kind == 0) {
+            p.Set(15, 0, 0);
+            Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+            Memory::WriteFloat32(plw + kVelocity + 4, 18.0f);
+            Memory::WriteFloat32(plw + kVelocity + 8, 20.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 0, 0.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 8, 0.0f);
+            game.Call<0x8026A608>({plw, 19});
+        } else if (kind == 1) {
+            Memory::Write8(plw + 0x585, 0);
+            p.Set(15, 8, 32);
+            Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+            Memory::WriteFloat32(plw + kVelocity + 4, -20.0f);
+            Memory::WriteFloat32(plw + kVelocity + 8, 8.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 0, 0.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 4, Memory::ReadFloat32(0x8079FF60 - 15228)); // -8/11
+            Memory::WriteFloat32(plw + kAcceleration + 8, 0.0f);
+        }
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(0);
+        Memory::Write8(plw + kFlag7, 0);
+        break;
+    case 1: {
+        if (!FallMove(p, move)) break;
+        if (game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1 &&
+            Memory::Read8(plw + kClimbs) <= 20) {
+            Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(height));
+            Memory::WriteFloat32(plw + kLastY, Memory::ReadFloat32(height));
+            Memory::Write8(plw + 27, 1);
+            Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+            p.Next(0, 6, 0);
+            break;
+        }
+        game.Call<GroundHit2>({plw + kPosition, uint32_t(-6), Memory::Read8(plw + kGroundKind), hit});
+        const float ground = float(game.F1());
+        Memory::WriteFloat32(height, ground);
+        if (!(ground >= Memory::ReadFloat32(plw + kPosition + 4)) || Memory::Read8(hit) == 0) break;
+        game.Call<0x80275B60>({plw, 0});
+        Memory::WriteFloat32(plw + kPosition + 4, ground);
+        Memory::Write8(plw + 0x585, 0);
+        if (int16_t(Memory::Read16(plw + 0x370)) <= 0 && p.Master()) {
+            game.Call<0x80278C48>({plw});
+            break;
+        }
+        if (p.Timer() >= 30 && game.Call<CatSkillCheck>({plw, 36}) == 0) {
+            p.Next(2, 2, 0);
+            break;
+        }
+        if (p.Master() && game.Call<0x8027AC7C>({plw}) == 0 && Memory::Read8(plw + kFlag24) == 0 &&
+            game.Call<0x8026A6A8>({plw, 0}) == 1 && (game.Call<Nearby>({plw, 0}) & 0xFF) >= 1) {
+            p.NextState();
+            p.Set(16, 0, 0);
+        } else {
+            p.Next(2, 3, 0);
+        }
+        break;
+    }
+    case 2:
+        if (p.Ended()) p.Next(1, 14, 0);
+        break;
+    }
+}
+
+// 0x8026A57C (plw): the velocity (+0x78) takes the acceleration (+0x84) and
+// moves the position (+0x3C), once per step in the original: here times the
+// step length (the jumps 0x8024F674, 0x80254F18, 0x80256A58, 0x80256F04,
+// 0x80258AC8).
+void VelocityStep(CpuContext* ctx) {
+    const uint32_t plw = ctx->gpr[3];
+    const float s = float(GameStep::Scale());
+    for (uint32_t k = 0; k < 12; k += 4) {
+        const float v = Memory::ReadFloat32(plw + kVelocity + k) + Memory::ReadFloat32(plw + kAcceleration + k) * s;
+        Memory::WriteFloat32(plw + kVelocity + k, v);
+        Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + v * s);
+    }
+}
+
+// 0x80254F18 (plw, kind): climbing over (motion 11, kind 0) into a jump off
+// (motion 12, 30 up, 24 with +24), or dropping off at once (kind 1; kind 2
+// from 195 down and 30 back, -18 up): falling (VelocityStep), a ledge
+// 0x80277CF8 finds catches the player (action 6, not kind 2); on the ground
+// (GetGroundHit2) out of health 0x80278C48, after 30 steps without skill 36
+// action 2 (2), else motion 13 to the end.
+void ClimbOver(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4), move = frame[16], height = frame[12], hit = frame[8];
+    game.Call<Vec3Ctor>({move});
+    p.CountUp();
+    switch (p.State()) {
+    case 0:
+        game.Call<ClearVelocity>({plw});
+        if (kind != 1 && kind != 2) {
+            p.NextState();
+            p.Set(11, 2, 0);
+            p.Flags(0, 0, 0);
+        } else {
+            if (kind == 2) {
+                Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(plw + kPosition + 4) - 195.0f);
+                Memory::WriteFloat32(move + 0, 0.0f);
+                Memory::WriteFloat32(move + 4, 0.0f);
+                Memory::WriteFloat32(move + 8, -30.0f);
+                game.Call<RotVecY>({move, Memory::Read32(plw + kAngle2)});
+                Memory::WriteFloat32(plw + kPosition + 0, Memory::ReadFloat32(plw + kPosition + 0) + Memory::ReadFloat32(move + 0));
+                Memory::WriteFloat32(plw + kPosition + 8, Memory::ReadFloat32(plw + kPosition + 8) + Memory::ReadFloat32(move + 8));
+            }
+            Memory::Write8(plw + 0x585, 0);
+            Memory::Write8(plw + kState, 2);
+            p.Flags(2, 0, 0);
+            game.Call<ClearAcceleration>({plw});
+            Memory::WriteFloat32(plw + kVelocity + 4, -18.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 4, Memory::ReadFloat32(0x8079FF60 - 15228)); // -8/11
+            p.Set(12, kind == 1 ? 4 : 0, 22);
+        }
+        game.Call<0x8027A1E0>({plw});
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(0);
+        break;
+    case 1: {
+        if (!p.Ended()) break;
+        p.NextState();
+        game.Call<ClearAcceleration>({plw});
+        const float speed = 15.0f * (Memory::Read8(plw + kFlag24) == 1 ? 0.8f : 1.0f);
+        Memory::WriteFloat32(plw + kVelocity + 4, 2.0f * speed);
+        game.Call<0x8026A608>({plw, 20});
+        p.Set(12, 2, 0);
+        game.Call<0x80275B60>({plw, 2});
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(0);
+        break;
+    }
+    case 2: {
+        game.Call<PlVelocityStep>({plw});
+        if (game.Call<0x80245ED0>({plw}) == 1 || !(Memory::ReadFloat32(plw + kVelocity + 4) < 0.0f)) break;
+        if (kind != 2 && game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1) {
+            Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+            Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(height));
+            Memory::WriteFloat32(plw + kLastY, Memory::ReadFloat32(height));
+            Memory::Write8(plw + 27, 1);
+            p.Next(0, 6, 0);
+            break;
+        }
+        game.Call<GroundHit2>({plw + kPosition, uint32_t(-6), Memory::Read8(plw + kGroundKind), hit});
+        const float ground = float(game.F1());
+        Memory::WriteFloat32(height, ground);
+        if (!(ground >= Memory::ReadFloat32(plw + kPosition + 4)) || Memory::Read8(hit) == 0) break;
+        Memory::WriteFloat32(plw + kPosition + 4, ground);
+        game.Call<0x80275B60>({plw, 0});
+        if (int16_t(Memory::Read16(plw + 0x370)) <= 0 && p.Master()) {
+            game.Call<0x80278C48>({plw});
+        } else if (p.Timer() >= 30 && game.Call<CatSkillCheck>({plw, 36}) == 0) {
+            p.Next(2, 2, 0);
+        } else {
+            p.NextState();
+            p.Set(13, 0, 0);
+        }
+        break;
+    }
+    case 3:
+        if (p.Ended()) p.End(0, 4);
+        break;
+    }
+}
+
+// 0x802813D0 (plw, kind): a charge in motion 1101, entered by kind: 0 at
+// once, 1 from 1131, 2 from 1120, 3 (1118) and 4 at once, 5 (1124) and 6
+// (1126 into 1101) turned an eighth either way. From frame 34 (0 for kind
+// 3, 2 for kind 5) the motion runs at half speed charging (ChargeTime of 90
+// steps) until command 5 clears (the button let go) or 13; from frame 58
+// (24, 26) the local player's goes on to the attack: action 31 (32, 33).
+void Charge1101(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    game.Call<0x80277CB4>({plw, 2});
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0, 1, 0);
+        Memory::Write8(plw + kFlag24, 1);
+        game.Call<0x8027AC70>({plw});
+        Memory::Write8(plw + kChargeLevel, 0);
+        Memory::Write16(plw + kChargeSteps, 0);
+        p.Timer(int16_t(game.Call<ChargeTime>({plw, 90})));
+        switch (kind) {
+        case 0:
+            p.NextState();
+            p.Set(1101, 4, 0);
+            game.Call<MotionAfterSet>({plw});
+            break;
+        case 1:
+            p.Set(1131, 2, 0);
+            game.Call<0x8027E21C>({plw, 1});
+            break;
+        case 2: p.Set(1120, 4, 0); break;
+        case 3:
+            p.NextState();
+            p.Set(1118, 4, 0);
+            break;
+        case 4:
+            p.NextState();
+            p.Set(1101, 4, 0);
+            game.Call<MotionAfterSet>({plw});
+            game.Call<0x8027E21C>({plw, 1});
+            break;
+        case 5:
+        case 6: {
+            if (kind == 5) p.NextState();
+            const uint32_t angle = Memory::Read32(plw + kAngle2) + (kind == 5 ? 8192 : uint32_t(-8192));
+            Memory::Write32(plw + kAngle2, angle);
+            Memory::Write32(plw + kAngle, angle & 0xFFFF);
+            p.Set(kind == 5 ? 1124 : 1126, 0, 0);
+            break;
+        }
+        }
+        break;
+    case 1: {
+        // Into the charge's motion from the entry's.
+        const int32_t from = kind == 1 ? 56 : kind == 2 ? 50 : kind == 6 ? 52 : -1;
+        if (from < 0) {
+            p.NextState();
+        } else if (p.Ended()) {
+            p.NextState();
+            p.Set(1101, kind == 2 ? 2 : 0, from);
+        }
+        break;
+    }
+    case 2: {
+        if (!game.Call<MasterCheck>({plw})) break;
+        const double start = kind == 3 ? 0.0 : kind == 5 ? 2.0 : 34.0;
+        const double end = kind == 3 ? 24.0 : kind == 5 ? 26.0 : 58.0;
+        if (game.Call<FrameCheck>({plw, 1}, {start, 0.0}) == 1) {
+            if (Memory::Read8(plw + kFlag7) == 0) {
+                Memory::Write8(plw + kFlag7, 1);
+                game.Call<0x8011ADBC>({plw, 0});
+            }
+            if (!Bit(plw + kCommands, 5) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
+            if (Memory::Read8(plw + kFlag6) == 0) {
+                Memory::WriteFloat32(plw + kMotionRate, 0.5f);
+                ChargeStep(p);
+                if (p.CountDown()) Memory::Write8(plw + kFlag6, 1);
+            } else {
+                Memory::WriteFloat32(plw + kMotionRate, 1.0f);
+            }
+        }
+        if (game.Call<FrameCheck>({plw, 1}, {end, 0.0}) == 1 && Memory::Read8(plw + kFlag6) == 1) {
+            Memory::Write8(plw + kChargeLevel, uint8_t(game.Call<ChargeLevel>({plw})));
+            Memory::WriteFloat32(plw + kMotionRate, 1.0f);
+            if (kind == 3) p.Next(4, 32, 4);
+            else if (kind == 5) p.Next(4, 33, 4);
+            else p.Next(4, 31, 260);
+        }
+        break;
+    }
+    }
+}
+
+// 0x80256A58 (plw, kind): knocked flying (motion and frame from 0x805C56B8
+// by kind: 205 or 208, into 214 / 220). Thrown from joint 14's height back
+// 22.34 (kind 0, falling at -1/3), 19.04 (2, -0.36) or forward 23 (1 and
+// 3, -0.25), turned by the facing (VelocityStep). For 16 steps it is kept
+// 63 above the ground (0x80246B18); then it lands: on ground kind 1 63 above
+// it into the kind's motion at 0x80794508, getting up (0x805C56C8, then
+// 0x8025687C; out of health 0x80278BBC) at its end (frame 58 for kind 2);
+// on kind 2 at the ground into action 151 (or 0x80278C48 out of health).
+void KnockedFlying(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4), v = frame[12], ground = frame[8];
+    game.Call<Vec3Ctor>({v});
+    game.Call<SetState918>({plw, 2});
+    switch (p.State()) {
+    case 0: {
+        p.NextState();
+        p.Flags(2, 0, 1);
+        game.Call<0x8027D554>({plw});
+        Memory::Write8(plw + 0x585, 0);
+        game.Call<JointPos>({plw, 14, v});
+        if (Memory::ReadFloat32(plw + kPosition + 4) < Memory::ReadFloat32(v + 4))
+            Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(v + 4));
+        game.Call<ClearAcceleration>({plw});
+        Memory::WriteFloat32(v + 0, 0.0f);
+        Memory::WriteFloat32(v + 4, 0.0f);
+        p.Set(Memory::Read16(0x805C56B8 + 4 * kind), 0, Memory::Read16(0x805C56B8 + 4 * kind + 2));
+        float speed = 0, fall = 0;
+        if (kind == 0) speed = Memory::ReadFloat32(0x8079FF60 - 15176), fall = Memory::ReadFloat32(0x8079FF60 - 15172);
+        else if (kind == 2) speed = Memory::ReadFloat32(0x8079FF60 - 15168), fall = Memory::ReadFloat32(0x8079FF60 - 15164);
+        else if (kind == 1 || kind == 3) speed = 23.0f, fall = -0.25f;
+        if (kind <= 3) {
+            Memory::WriteFloat32(v + 8, speed);
+            Memory::WriteFloat32(plw + kAcceleration + 4, fall);
+        }
+        game.Call<RotVecY>({v, Memory::Read32(plw + kAngle2)});
+        Memory::WriteFloat32(plw + kVelocity + 0, Memory::ReadFloat32(v + 0));
+        Memory::WriteFloat32(plw + kVelocity + 4, 0.0f);
+        Memory::WriteFloat32(plw + kVelocity + 8, Memory::ReadFloat32(v + 8));
+        p.Timer(16);
+        break;
+    }
+    case 1: {
+        if (p.Ended()) {
+            if (p.Motion() == 205) p.Set(214, 0, 0);
+            if (p.Motion() == 208) p.Set(220, 0, 0);
+        }
+        game.Call<PlVelocityStep>({plw});
+        if (game.Call<0x80245ED0>({plw}) == 1) break;
+        game.Call<0x8025FF70>({plw, 0});
+        const uint32_t on = game.Call<0x80246B18>({plw, ground});
+        const float y = Memory::ReadFloat32(plw + kPosition + 4), floor = Memory::ReadFloat32(ground);
+        if (p.Timer() > 0) {
+            p.CountDownToZero();
+            if (y <= floor + 63.0f && on != 0) Memory::WriteFloat32(plw + kPosition + 4, floor + 63.0f);
+            break;
+        }
+        if (!(Memory::ReadFloat32(plw + kVelocity + 4) <= 0.0f)) break;
+        if (on == 1 && y <= floor + 63.0f) {
+            p.NextState();
+            Memory::WriteFloat32(plw + kPosition + 4, floor);
+            Memory::Write8(plw + 27, 1);
+            p.Set(Memory::Read16(0x80794508 + 2 * kind), 0, 0);
+            game.Call<0x80275B60>({plw, 4});
+        } else if (on == 2 && y <= floor) {
+            Memory::WriteFloat32(plw + kPosition + 4, floor);
+            Memory::Write8(plw + 27, 1);
+            Memory::Write8(plw + kFlag9, 3);
+            if (p.Master() && int16_t(Memory::Read16(plw + 0x370)) <= 0) game.Call<0x80278C48>({plw});
+            else p.Next(0, 151, 12);
+        }
+        break;
+    }
+    case 2: {
+        const bool done = kind == 2 ? game.Call<FrameCheck>({plw, 1}, {58.0, 0.0}) == 1 : p.Ended();
+        if (!done) break;
+        if (int16_t(Memory::Read16(plw + 0x370)) > 0) {
+            p.NextState();
+            p.Set(Memory::Read16(0x805C56C8 + 4 * kind), Memory::Read16(0x805C56C8 + 4 * kind + 2), 0);
+            game.Call<0x8025687C>({plw, 0});
+        } else if (p.Master()) {
+            game.Call<0x80278BBC>({plw, kind == 0 ? 2u : 3u, 0});
+        } else {
+            Memory::Write8(plw + kState, 4);
+            Memory::Write8(p.Char() + kCharFlag246, 2);
+        }
+        break;
+    }
+    case 3:
+        if (p.Ended()) {
+            game.Call<EndActionReset>({plw, 0, 6, 0});
+            game.Call<0x80277BB0>({plw, 6});
+        }
+        break;
+    case 4:
+        Memory::Write8(p.Char() + kCharFlag246, 2);
+        break;
+    }
+}
+
+// 0x80258AC8 (plw, kind): grabbed by a monster: kind 0 (motion 271, the
+// monster of kind 18 whose +26 is +0x3B6, to its joint 15 over 60 steps,
+// 65 steps, then 273 to the end), kind 1 (motion 219 into 220, the monster
+// of kind 4, to its +392 over 50 steps, at least 15 up; landing 63 above
+// the ground: 215, turned round 216 to the end, or 0x8025A844 and action
+// 7). With no such monster in the area thrown 14 back and 20 up (falling
+// at -8/11). The flight is VelocityStep's.
+void Grabbed(CpuContext* ctx) {
+    GuestFrame frame(ctx, 80);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4), target = frame[32], v = frame[20], d = frame[8];
+    game.Call<Vec3Ctor>({target});
+    game.Call<Vec3Ctor>({v});
+    switch (p.State()) {
+    case 0: {
+        p.NextState();
+        game.Call<SetState918>({plw, 10});
+        if (kind == 0) {
+            p.Set(271, 0, 0);
+            p.Flags(3, 0, 1);
+            p.Timer(65);
+        } else {
+            p.Set(219, 0, 0);
+            p.Flags(2, 0, 1);
+            p.Timer(90);
+        }
+        game.Call<0x8027D554>({plw});
+        game.Call<JointPos>({plw, 14, v});
+        if (Memory::ReadFloat32(plw + kPosition + 4) < Memory::ReadFloat32(v + 4))
+            Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(v + 4));
+        Memory::Write8(plw + 0x585, 0);
+        game.Call<ClearVelocity>({plw});
+        game.Call<0x8027AC70>({plw});
+        bool found = false;
+        uint32_t em = game.Call<GetMoveWorkAdrs>({3});
+        const uint32_t count = game.Call<GetMoveWorkMax>({3}) & 0xFFFF;
+        for (uint32_t i = 0; i < count && !found; ++i, em += 2840) {
+            if (Memory::Read8(em + 0) == 0 || Memory::Read8(em + 1) == 0) continue;
+            if (Memory::Read8(em + 481) != (game.Call<GetNowAreaNo>() & 0xFF)) continue;
+            if ((Memory::Read16(em + 26) & 0xFF) != Memory::Read8(plw + 0x3B6)) continue;
+            const uint32_t emKind = Memory::Read8(em + 3);
+            if (kind == 0 && emKind == 18) {
+                found = true;
+                game.Call<EnemyJointPos>({em, 15, target});
+                game.Call<VecSub>({d, target, plw + kPosition});
+                game.Call<CopyVec>({v, d});
+                game.Call<VecAngles>({v, plw + 0x54, plw + kAngle2});
+                Memory::Write32(plw + 0xAC, Memory::Read32(plw + 0x54));
+                Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+            } else if (kind == 1 && emKind == 4) {
+                found = true;
+                game.Call<CopyVec>({target, em + 392});
+                const uint32_t angle = game.Call<VecAngle2>({plw + kPosition, target});
+                Memory::Write32(plw + kAngle2, angle);
+                Memory::Write32(plw + kAngle, angle);
+            }
+        }
+        if (!found) {
+            Memory::WriteFloat32(v + 0, 0.0f);
+            Memory::WriteFloat32(v + 4, 0.0f);
+            Memory::WriteFloat32(v + 8, -7.0f);
+            game.Call<RotVecY>({v, Memory::Read32(plw + kAngle2)});
+            Memory::WriteFloat32(plw + kVelocity + 0, 2.0f * Memory::ReadFloat32(v + 0));
+            Memory::WriteFloat32(plw + kVelocity + 8, 2.0f * Memory::ReadFloat32(v + 8));
+            Memory::WriteFloat32(plw + kVelocity + 4, 20.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 4, Memory::ReadFloat32(0x8079FF60 - 15228)); // -8/11
+            break;
+        }
+        // To the target over 60 (50) steps.
+        const float steps = kind == 0 ? 60.0f : 50.0f;
+        for (uint32_t k = 0; k < 12; k += 4)
+            Memory::WriteFloat32(v + k, (Memory::ReadFloat32(target + k) - Memory::ReadFloat32(plw + kPosition + k)) / steps);
+        Memory::WriteFloat32(plw + kVelocity + 0, Memory::ReadFloat32(v + 0));
+        Memory::WriteFloat32(plw + kVelocity + 8, Memory::ReadFloat32(v + 8));
+        if (kind == 0) {
+            Memory::WriteFloat32(plw + kVelocity + 4, Memory::ReadFloat32(v + 4));
+        } else {
+            if (Memory::ReadFloat32(v + 4) <= 15.0f) Memory::WriteFloat32(v + 4, 15.0f);
+            Memory::WriteFloat32(plw + kVelocity + 4, Memory::ReadFloat32(v + 4));
+            game.Call<0x8026A608>({plw, 50});
+        }
+        break;
+    }
+    case 1:
+        if (p.Ended() && p.Motion() == 219) p.Set(220, 0, 0);
+        game.Call<PlVelocityStep>({plw});
+        if (game.Call<0x80245ED0>({plw}) == 1) break;
+        if (kind == 0) {
+            if (!p.CountDown()) break;
+            Memory::Write8(plw + kState, 3);
+            p.Set(273, 4, 0);
+            break;
+        }
+        if (!(Memory::ReadFloat32(plw + kVelocity + 4) <= 0.0f) ||
+            !(Memory::ReadFloat32(plw + kPosition + 4) <= Memory::ReadFloat32(plw + kLastY) + 63.0f))
+            break;
+        p.NextState();
+        game.Call<SetState918>({plw, 10});
+        p.Set(215, 0, 0);
+        Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(plw + kLastY));
+        Memory::Write8(plw + 27, 1);
+        Memory::Write8(plw + kFlag9, 4);
+        if (kind == 1) {
+            game.Call<0x8025A844>({plw, 0});
+            p.Next(7, 1, 2);
+        }
+        break;
+    case 2:
+        game.Call<SetState918>({plw, 10});
+        if (!p.Ended()) break;
+        p.NextState();
+        Memory::Write32(plw + kAngle2, (Memory::Read32(plw + kAngle2) + 0x8000) & 0xFFFF);
+        Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+        p.Set(216, 0, 0);
+        break;
+    case 3:
+        if (!p.Ended()) break;
+        game.Call<EndActionReset>({plw, kind == 0 ? 3u : 0u, 8, 0});
+        game.Call<SetState918>({plw, 10});
+        break;
+    }
+}
+
 } // namespace
 
 extern "C" void func_802535B8(CpuContext* ctx);
@@ -1628,3 +2636,59 @@ REGISTER_NATIVE_FUNCTION_AS(0x8025AA9C, MH3_FieldActionMotion241, "FieldActionMo
 extern "C" void func_8024FF6C(CpuContext* ctx);
 extern "C" void MH3_FieldActionMotion7Or8(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion7Or8", func_8024FF6C, Motion7Or8); }
 REGISTER_NATIVE_FUNCTION_AS(0x8024FF6C, MH3_FieldActionMotion7Or8, "FieldActionMotion7Or8");
+
+extern "C" void func_802821DC(CpuContext* ctx);
+extern "C" void MH3_FieldActionCharge1150(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionCharge1150", func_802821DC, Charge1150); }
+REGISTER_NATIVE_FUNCTION_AS(0x802821DC, MH3_FieldActionCharge1150, "FieldActionCharge1150");
+
+extern "C" void func_8025B15C(CpuContext* ctx);
+extern "C" void MH3_FieldActionMotion210(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion210", func_8025B15C, Motion210); }
+REGISTER_NATIVE_FUNCTION_AS(0x8025B15C, MH3_FieldActionMotion210, "FieldActionMotion210");
+
+extern "C" void func_8028563C(CpuContext* ctx);
+extern "C" void MH3_FieldActionSpin1103(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSpin1103", func_8028563C, Spin<kSpin1103>); }
+REGISTER_NATIVE_FUNCTION_AS(0x8028563C, MH3_FieldActionSpin1103, "FieldActionSpin1103");
+
+extern "C" void func_802869D4(CpuContext* ctx);
+extern "C" void MH3_FieldActionSpin1162(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSpin1162", func_802869D4, Spin<kSpin1162>); }
+REGISTER_NATIVE_FUNCTION_AS(0x802869D4, MH3_FieldActionSpin1162, "FieldActionSpin1162");
+
+extern "C" void func_802598C4(CpuContext* ctx);
+extern "C" void MH3_FieldActionFall(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionFall", func_802598C4, Fall); }
+REGISTER_NATIVE_FUNCTION_AS(0x802598C4, MH3_FieldActionFall, "FieldActionFall");
+
+extern "C" void func_8025CECC(CpuContext* ctx);
+extern "C" void MH3_FieldActionFall2(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionFall2", func_8025CECC, Fall2); }
+REGISTER_NATIVE_FUNCTION_AS(0x8025CECC, MH3_FieldActionFall2, "FieldActionFall2");
+
+extern "C" void func_802501B8(CpuContext* ctx);
+extern "C" void MH3_FieldActionAwaitPlace(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionAwaitPlace", func_802501B8, AwaitPlace); }
+REGISTER_NATIVE_FUNCTION_AS(0x802501B8, MH3_FieldActionAwaitPlace, "FieldActionAwaitPlace");
+
+extern "C" void func_80253038(CpuContext* ctx);
+extern "C" void MH3_FieldActionRun119(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionRun119", func_80253038, Run119); }
+REGISTER_NATIVE_FUNCTION_AS(0x80253038, MH3_FieldActionRun119, "FieldActionRun119");
+
+extern "C" void func_80254A28(CpuContext* ctx);
+extern "C" void MH3_FieldActionJump15(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionJump15", func_80254A28, Jump15); }
+REGISTER_NATIVE_FUNCTION_AS(0x80254A28, MH3_FieldActionJump15, "FieldActionJump15");
+
+extern "C" void func_80254F18(CpuContext* ctx);
+extern "C" void MH3_FieldActionClimbOver(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionClimbOver", func_80254F18, ClimbOver); }
+REGISTER_NATIVE_FUNCTION_AS(0x80254F18, MH3_FieldActionClimbOver, "FieldActionClimbOver");
+
+extern "C" void func_802813D0(CpuContext* ctx);
+extern "C" void MH3_FieldActionCharge1101(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionCharge1101", func_802813D0, Charge1101); }
+REGISTER_NATIVE_FUNCTION_AS(0x802813D0, MH3_FieldActionCharge1101, "FieldActionCharge1101");
+
+extern "C" void func_80256A58(CpuContext* ctx);
+extern "C" void MH3_FieldActionKnockedFlying(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionKnockedFlying", func_80256A58, KnockedFlying); }
+REGISTER_NATIVE_FUNCTION_AS(0x80256A58, MH3_FieldActionKnockedFlying, "FieldActionKnockedFlying");
+
+extern "C" void func_80258AC8(CpuContext* ctx);
+extern "C" void MH3_FieldActionGrabbed(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionGrabbed", func_80258AC8, Grabbed); }
+REGISTER_NATIVE_FUNCTION_AS(0x80258AC8, MH3_FieldActionGrabbed, "FieldActionGrabbed");
+
+extern "C" void func_8026A57C(CpuContext* ctx);
+extern "C" void MH3_VelocityStep(CpuContext* ctx) { PortCheck::Call(ctx, "VelocityStep", func_8026A57C, VelocityStep); }
+REGISTER_NATIVE_FUNCTION_AS(0x8026A57C, MH3_VelocityStep, "VelocityStep");
