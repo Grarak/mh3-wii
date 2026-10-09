@@ -64,24 +64,18 @@ struct Catalog {
     FastMap<uint32_t, CachedOwner> owners;
     FastMap<uint64_t, CachedResource> resources;
     FastMap<uint64_t, CachedBlock> blocks;
+    // live_blocks keeps the address order RetireLiveBlocks walks; live_index
+    // finds a block's node by key without the tree walk (nodes stay put until
+    // erased). Change both through PutLiveBlock and EraseLiveBlock.
     std::map<uint64_t, NativeLiveMaterialBlock> live_blocks;
+    FastMap<uint64_t, NativeLiveMaterialBlock*> live_index;
     uint64_t material_revision = 0;
     NativeModelPreparationDiagnostics* diagnostics = nullptr;
     bool diagnostics_initialized = false;
 };
 Catalog catalog;
-// Recent ReadNativeLiveMaterialBlockView results (game thread), direct-mapped
-// by key. Map nodes stay put until erased, so a remembered node is valid
-// while live_version is unchanged; every live block erase advances it.
-struct LiveLookup {
-    uint64_t key = UINT64_MAX, version = 0;
-    const NativeLiveMaterialBlock* block = nullptr;
-};
-std::array<LiveLookup, 64> live_lookups{};
+// Advanced by every live block erase or (re)publication.
 uint64_t live_version = 1;
-LiveLookup& LiveSlot(uint64_t key) {
-    return live_lookups[(key ^ (key >> 9)) & (live_lookups.size() - 1)];
-}
 NativeModelPreparationDiagnostics diagnostics;
 struct DiagnosticConfig {
     bool enabled = false;
@@ -132,6 +126,15 @@ void EpochDiagnostic(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpo
 }
 Catalog& C() {
     return catalog;
+}
+NativeLiveMaterialBlock& PutLiveBlock(uint64_t key, NativeLiveMaterialBlock block) {
+    auto& node = C().live_blocks.insert_or_assign(key, std::move(block)).first->second;
+    C().live_index.insert_or_assign(key, &node);
+    return node;
+}
+std::map<uint64_t, NativeLiveMaterialBlock>::iterator EraseLiveBlock(std::map<uint64_t, NativeLiveMaterialBlock>::iterator it) {
+    C().live_index.erase(it->first);
+    return C().live_blocks.erase(it);
 }
 // The admitted packs, by reference.
 struct PackIterator {
@@ -223,7 +226,7 @@ bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
     while (it != C().live_blocks.end() && it->second.address < end) {
         const auto& block = it->second;
         if ((uint64_t)block.address + block.bytes > address) {
-            it = C().live_blocks.erase(it);
+            it = EraseLiveBlock(it);
             ++live_version;
             retired = true;
         } else
@@ -404,7 +407,7 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     for (const auto& copy : owner_copies)
         C().owners.insert_or_assign(copy.owner.model_address, copy);
     for (const auto& copy : copies)
-        C().live_blocks.insert_or_assign(LiveKey(copy.address, copy.kind), copy);
+        PutLiveBlock(LiveKey(copy.address, copy.kind), copy);
     if (!copies.empty())
         ++live_version;
     if (retired_owner || retired_block || tracked || !copies.empty() || !owner_copies.empty())
@@ -581,7 +584,7 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
             }
             for (auto block = C().live_blocks.begin(); block != C().live_blocks.end();) {
                 if (block->second.resident_handle == handle) {
-                    block = C().live_blocks.erase(block);
+                    block = EraseLiveBlock(block);
                     ++live_version;
                 } else
                     ++block;
@@ -727,14 +730,9 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
     Initialize();
     address = Canonical(address, 1);
     const auto key = LiveKey(address, kind);
-    auto& recent = LiveSlot(key);
-    if (recent.key == key && recent.version == live_version)
-        return *recent.block;
-    const auto cached = C().live_blocks.find(key);
-    if (cached != C().live_blocks.end()) {
-        recent = {key, live_version, &cached->second};
-        return cached->second;
-    }
+    const auto cached = C().live_index.find(key);
+    if (cached != C().live_index.end())
+        return *cached->second;
     mh3_source_identity identity{};
     Checked(mh3_source_resolve(&C().tracker, address, 1, &identity));
     EnsureNativeModelAssets(identity.partition_offset, 1);
@@ -764,9 +762,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
         }
         NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state, address, source.bytes, kind, pack.handle, pack.generation, identity.partition_offset, generation, {}};
         block.fields.generation = NextNativeMaterialRevision();
-        const auto& admitted = C().live_blocks.emplace(key, std::move(block)).first->second;
-        recent = {key, live_version, &admitted};
-        return admitted;
+        return PutLiveBlock(key, std::move(block));
     }
     std::ostringstream detail;
     detail << "Material block has no admitted typed source extent: address=0x" << std::hex << address << " kind=" << std::dec << uint32_t(kind) << " partition_offset=0x" << std::hex
@@ -784,7 +780,7 @@ void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
             const auto origin = pack.origins.find(std::make_pair(block.origin_offset, uint32_t(block.kind)));
             if (origin == pack.origins.end() || origin->second.bytes != block.bytes)
                 throw std::runtime_error("Native material publication changed source layout identity");
-            C().live_blocks.insert_or_assign(LiveKey(block.address, block.kind), block);
+            PutLiveBlock(LiveKey(block.address, block.kind), block);
             ++live_version;
             return;
         }

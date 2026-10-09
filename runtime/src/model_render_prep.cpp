@@ -328,6 +328,23 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
     if (in.pipeline_address > UINT32_MAX - 32)
         throw std::runtime_error("Model pipeline offset overflows");
     auto& set = frozenSets[((scope.material_address >> 4) * 2654435761u) >> 23];
+    if (set.material == scope.material_address && set.live != ReadNativeLiveMaterialRevision() && !std::memcmp(set.slots, slots, sizeof set.slots)) {
+        // Some live block changed (animated materials publish every frame):
+        // refreeze only this material's blocks whose generation moved.
+        const auto refresh = [](std::shared_ptr<const NativeFrozenMaterialBlock>& frozen, uint32_t address, mh3_model_material_block kind) {
+            if (!address)
+                return;
+            const auto& live = ReadNativeLiveMaterialBlockView(address, kind);
+            if (!frozen || frozen->fields.generation != live.fields.generation)
+                frozen = FreezeNativeLiveMaterialBlock(live);
+        };
+        refresh(set.pipeline, in.pipeline_address ? in.pipeline_address + 32 : 0, MH3_MODEL_MATERIAL_PIPELINE);
+        refresh(set.pixel, slots[MH3_MAT_PIXEL_STATE], MH3_MODEL_MATERIAL_PIXEL);
+        refresh(set.colors, slots[MH3_MAT_TEV_COLORS], MH3_MODEL_MATERIAL_COLORS);
+        refresh(set.indirect, slots[MH3_MAT_INDIRECT_MATRIX_SCALE], MH3_MODEL_MATERIAL_INDIRECT);
+        refresh(set.texgen, slots[MH3_MAT_TEXCOORD_GENERATION], MH3_MODEL_MATERIAL_TEXGEN);
+        set.live = ReadNativeLiveMaterialRevision();
+    }
     if (set.material != scope.material_address || set.live != ReadNativeLiveMaterialRevision() || std::memcmp(set.slots, slots, sizeof set.slots)) {
         const auto freeze = [](uint32_t address, mh3_model_material_block kind) -> std::shared_ptr<const NativeFrozenMaterialBlock> {
             if (!address)
