@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of twenty-three enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of twenty-four enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -15,6 +15,7 @@
 //     0x8015898C  kind 3 (Qurupeco)  a backward hop, 22 or 30 ticks
 //     0x80171B7C  kind 12 (Great Jaggi) a retreat, 15 ticks before it may end
 //     0x8037A8AC  kind 19 (Agnaktor) under the ground: 15, 60 or 90 ticks, a mark every 8
+//     0x801AC674  kind 27 (Aptonoth) a walk, 256-511 ticks
 //     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
 //     0x801BD89C  kind 6 (Diablos)   a move under the sand, at least 20 ticks
 //     0x801B795C, 0x801B867C  hops (the dispatcher 0x801B94B4, after kind
@@ -515,6 +516,32 @@ void Em012RetreatPort(CpuContext* ctx) {
         }
 
         break;
+    }
+}
+
+// kind 27 0x801AC674: Aptonoth walking (motion 3 looped, steering at
+// 0x80) for 256 plus the low byte of its random word ticks.
+void Em027WalkPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        game.Call<SetMotionLoop>({work, 3, 4, 0});
+        em.Count(int32_t((Memory::Read16(work + kRandom) & 0xFF) + 0x100));
+        break;
+    case 1: {
+        em.Count(em.Count() - int32_t(GameStep::Ticks()));
+        game.Call<Steer>({work, 0x80});
+
+        if (em.Count() < 1)
+            game.Call<ActionDone>({work});
+
+        break;
+    }
     }
 }
 
@@ -1491,6 +1518,12 @@ extern "C" void MH3_Em012Retreat(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em012Retreat", func_80171B7C, Em012RetreatPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80171B7C, MH3_Em012Retreat, "Em012Retreat");
+
+extern "C" void func_801AC674(CpuContext* ctx);
+extern "C" void MH3_Em027Walk(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em027Walk", func_801AC674, Em027WalkPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801AC674, MH3_Em027Walk, "Em027Walk");
 
 extern "C" void func_8037A8AC(CpuContext* ctx);
 extern "C" void MH3_Em019Buried(CpuContext* ctx) {

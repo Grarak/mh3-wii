@@ -1009,6 +1009,7 @@
 801bd724 Em006Buried
 80171b7c Em012Retreat
 8037a8ac Em019Buried
+801ac674 Em027Walk
 8037f588 Em019Actions
 80174158 Em012Actions
 801bd89c Em006Burrow
