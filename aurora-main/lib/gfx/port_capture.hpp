@@ -33,6 +33,17 @@ enum DrawFlags : uint32_t {
 void draw(const DrawState& state, uint64_t vertexHash, uint64_t fragmentHash,
           uint32_t vertices, uint32_t indices, uint32_t instances,
           bool discard, bool depthReplace, const std::array<const void*, 8>& textures) noexcept;
+// Native backend calls record execution separately from eager shader creation.
+// Names are local backend object IDs, not guest pointers or texture hashes.
+struct NativeDraw {
+  uint32_t frame=0, program=0, vertices=0, indices=0, instances=1;
+  uint32_t flags=0, depthFunction=0, target=0, depthTarget=0;
+  bool rasterKnown=true, display=false;
+  std::array<uint32_t,8> textures{};
+};
+void native_program(uint32_t id,uint64_t vertexHash,uint64_t fragmentHash,
+                    bool discard,bool depthReplace,std::string_view label) noexcept;
+void native_draw(std::string_view kind,const NativeDraw& draw) noexcept;
 // Actual GLSL/draw hashes are retained; Cg uses Vita-normalized alpha hashes.
 // Optional origin identifies the producer/program when supplied by a caller.
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment,

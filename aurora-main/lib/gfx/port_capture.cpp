@@ -31,6 +31,7 @@ struct Capture {
     if (const char* interval = std::getenv("AURORA_PORT_CAPTURE_DRAW_INTERVAL"))
       drawInterval = std::clamp(std::strtoul(interval, nullptr, 10), 1ul,
                                 static_cast<unsigned long>(UINT32_MAX));
+    std::fprintf(events, "capture_config\tdraw_interval\t%u\n", drawInterval);
   }
   ~Capture() { if (events) std::fclose(events); }
 };
@@ -102,6 +103,24 @@ void draw(const DrawState& s, uint64_t vh, uint64_t fh, uint32_t vertices,
                (unsigned long long)vh, (unsigned long long)fh);
   for (const auto texture : textures) std::fprintf(c.events, "\t%p", texture);
   std::fputc('\n', c.events);
+}
+void native_program(uint32_t id,uint64_t vh,uint64_t fh,bool discard,bool depthReplace,
+                    std::string_view label) noexcept {
+  auto& c=capture();if (!c.events) return;
+  const auto safeLabel=field(label);
+  std::lock_guard lock(c.mutex);
+  std::fprintf(c.events,"native_program\t%u\t%016llx-%016llx\t%u\t%u\t%s\n",id,
+      (unsigned long long)vh,(unsigned long long)fh,discard,depthReplace,safeLabel.c_str());
+}
+void native_draw(std::string_view kind,const NativeDraw& s) noexcept {
+  auto& c=capture();if (!c.events || s.frame%c.drawInterval) return;
+  std::lock_guard lock(c.mutex);
+  std::fprintf(c.events,"native_draw\t%u\t%.*s\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u",
+      s.frame,int(kind.size()),kind.data(),s.program,s.vertices,s.indices,s.instances,
+      s.flags,s.depthFunction,s.target,s.depthTarget,s.rasterKnown,s.display);
+  for (const auto texture:s.textures) std::fprintf(c.events,"\t%u",texture);
+  std::fputc('\n',c.events);
+  std::fflush(c.events);
 }
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment,
             std::string_view origin) noexcept {

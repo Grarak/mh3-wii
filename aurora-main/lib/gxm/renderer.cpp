@@ -23,7 +23,10 @@
 #include <cstring>
 #include <map>
 #include <stdexcept>
+
 #include <thread>
+
+namespace aurora::gfx { uint32_t current_frame() noexcept; }
 
 namespace aurora::gl {
 namespace {
@@ -262,6 +265,7 @@ public:
     clearProgram.set_vertex_uniform("depth", &clipDepth, 1);
     clearProgram.set_fragment_uniform("color", color, 4);
     utility_draw(6);
+    capture_draw(depthOnly ? "clear-depth" : "clear-color", 0, 6, 6, 1, &raster);
   }
   void collect() {
     pool.collect();
@@ -294,6 +298,20 @@ public:
       else ++it;
     }
     textures.erase(id);
+  }
+  void capture_draw(std::string_view kind,GLuint program,uint32_t vertices,uint32_t indices,
+                    uint32_t instances=1,const RasterState* actualRaster=nullptr,GLuint texture0=0) {
+    using namespace gfx::port_capture;
+    if (!enabled()) return;
+    NativeDraw s;s.frame=gfx::current_frame();s.program=program;
+    s.vertices=vertices;s.indices=indices;s.instances=instances;
+    const auto& r=actualRaster ? *actualRaster : state.raster;
+    s.flags=(r.depthTest?DepthCompare:0u)|(r.depthWrite?DepthWrite:0u)|(r.blend?Blend:0u)|
+        ((r.colorMask[0]||r.colorMask[1]||r.colorMask[2])?ColorWrite:0u)|(r.colorMask[3]?AlphaWrite:0u);
+    s.depthFunction=r.depthFunc;s.target=state.color;s.depthTarget=state.depth;s.display=state.display;
+    if (actualRaster) s.textures[0]=texture0;
+    else for (unsigned i=0;i<s.textures.size();i++) s.textures[i]=state.textures[i].texture;
+    native_draw(kind,s);
   }
   Device device;
   TexturePool pool;
@@ -600,6 +618,7 @@ GLuint Program::get() noexcept {
     r.programs.emplace(id, std::move(native));
     m_desc.vertex.clear(); m_desc.fragment.clear();
     m_program = id;
+    gfx::port_capture::native_program(id,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label);
     return id;
   });
 }
@@ -632,7 +651,8 @@ void invalidate_state() noexcept {
 void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMemory. */ }
 void draw_fullscreen(GLuint id) noexcept {
   if (!aurora::native_frame_drawing_allowed()) return;
-  guarded([&] { auto& r = renderer(); r.state.program = id; r.prepare(id); r.utility_draw(3); });
+  guarded([&] { auto& r = renderer(); r.state.program = id; r.prepare(id); r.utility_draw(3);
+    r.capture_draw("fullscreen",id,3,3); });
 }
 OffscreenState save_offscreen_state() noexcept {
   return guarded([]{const auto &s=renderer().state;OffscreenState out;out.raster=s.raster;out.rasterValid=true;out.viewport=s.viewport;out.depthRange=s.depthRange;out.scissor=s.scissor;out.scissorEnabled=s.scissorEnabled;out.blendColor=s.blendColor;out.color=s.color;out.depth=s.depth;out.program=s.program;
@@ -690,7 +710,8 @@ void clear_depth_full_target(float depth) noexcept {
 }
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
   if (!aurora::native_frame_drawing_allowed()) return;
-  guarded([&] { if (!indexCount || !instances) return; auto& r = renderer(); r.prepare(r.state.program); r.draws.draw(indexCount, indexOffset, instances); });
+  guarded([&] { if (!indexCount || !instances) return; auto& r = renderer(); r.prepare(r.state.program); r.draws.draw(indexCount, indexOffset, instances);
+    r.capture_draw("indexed",r.state.program,0,indexCount,instances); });
 }
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
@@ -723,6 +744,8 @@ void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) n
     check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind native vertex attributes");
     check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
                     geometry.indices, geometry.index_count), "draw native triangles");
+    // Fixed embedded geometry programs bypass the Program object namespace.
+    r.capture_draw(textured?"geometry-textured":"geometry-colored",0,geometry.vertex_count,geometry.index_count);
   });
 }
 void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
@@ -737,6 +760,7 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
     check(sceGxmSetVertexStream(r.device.context(),0,geometry.vertices),"bind native material attributes");
     check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
                     geometry.indices,geometry.index_count),"draw native material triangles");
+    r.capture_draw("material",program,geometry.vertex_count,geometry.index_count);
   });
 }
 void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
@@ -757,6 +781,7 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
   check(sceGxmSetVertexStream(r.device.context(),0,buffer.data()+vertexOffset),"bind resident mesh attributes");
   check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
                   buffer.data()+indexOffset,indexCount),"draw resident mesh triangles");
+  r.capture_draw("mesh",program,vertexCount,indexCount);
 }
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });
@@ -782,6 +807,8 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
       const auto sampled = sampling_view(r.texture(source->gl()), LinearClamp);
       check(sceGxmSetFragmentTexture(r.device.context(), 0, &sampled), "bind presentation source");
       r.utility_draw(6);
+      const RasterState presentRaster{};
+      r.capture_draw("present",0,6,6,1,&presentRaster,source->gl());
       r.pin(source->gl(), false);
     }
     r.device.flip();

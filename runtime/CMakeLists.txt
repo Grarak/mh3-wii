@@ -60,6 +60,7 @@ set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model
   native/mh3_model_material_prep.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_lifetime.c)
+target_sources(MH3 PRIVATE src/field_resources.cpp native/mh3_field_resources.c)
 target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
 target_sources(MH3 PRIVATE src/native_startup_textures.cpp native/mh3_startup_textures.c)
 target_sources(MH3 PRIVATE src/native_system_fatal.cpp native/mh3_system_fatal.c)
@@ -206,7 +207,7 @@ if(VITA)
   # rather than retaining the complete static library's filesystem surface.
   target_link_options(MH3 PRIVATE "-Wl,--gc-sections")
   set_property(SOURCE src/launcher_disc.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
-  set_source_files_properties(src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
+  set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   if(MH3_DEVELOPMENT)
     set_property(SOURCE vita/platform.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)

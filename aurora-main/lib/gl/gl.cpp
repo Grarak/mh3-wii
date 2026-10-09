@@ -19,6 +19,8 @@
 
 #include "tracy/Tracy.hpp"
 
+namespace aurora::gfx { uint32_t current_frame() noexcept; }
+
 #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 #define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
 #endif
@@ -118,6 +120,18 @@ struct State {
   GLuint emptyVao = 0;
 };
 State g_state;
+void capture_native_draw(std::string_view kind,uint32_t vertices,uint32_t indices,uint32_t instances=1) {
+  using namespace gfx::port_capture;
+  if (!enabled()) return;
+  NativeDraw s;s.frame=gfx::current_frame();s.program=g_state.program;
+  s.vertices=vertices;s.indices=indices;s.instances=instances;
+  const auto& r=g_state.raster;
+  s.flags=(r.depthTest?DepthCompare:0u)|(r.depthWrite?DepthWrite:0u)|(r.blend?Blend:0u)|
+      ((r.colorMask[0]||r.colorMask[1]||r.colorMask[2])?ColorWrite:0u)|(r.colorMask[3]?AlphaWrite:0u);
+  s.depthFunction=r.depthFunc;s.target=g_state.drawFramebuffer;s.display=s.target==0;
+  s.rasterKnown=g_state.rasterValid;
+  std::copy_n(g_state.textures.begin(),s.textures.size(),s.textures.begin());native_draw(kind,s);
+}
 ProgramPtr g_nativePrograms[2];
 GLuint g_nativeVao = 0, g_nativeVertexBuffer = 0, g_nativeIndexBuffer = 0;
 GLuint g_meshVao=0,g_meshUniformBuffer=0;
@@ -604,6 +618,7 @@ GLuint Program::get() noexcept {
   m_desc.vertex = {};
   m_desc.fragment = {};
   m_program = program;
+  gfx::port_capture::native_program(program,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label);
   return program;
 }
 
@@ -786,6 +801,7 @@ void draw_fullscreen(GLuint program) noexcept {
   use_program(program);
   glBindVertexArray(g_state.emptyVao);
   glDrawArrays(GL_TRIANGLES, 0, 3);
+  capture_native_draw("fullscreen",3,0);
 }
 
 OffscreenState save_offscreen_state() noexcept {
@@ -915,6 +931,7 @@ void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances)
   glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT,
                          reinterpret_cast<const void*>(static_cast<uintptr_t>(indexOffset)),
                          static_cast<GLsizei>(instances));
+  if (indexCount && instances) capture_native_draw("indexed",0,indexCount,instances);
 }
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
@@ -968,6 +985,7 @@ void main() { native_output = native_color; }
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * sizeof(uint16_t),
                geometry.indices, GL_STREAM_DRAW);
   glDrawElements(GL_TRIANGLES, geometry.index_count, GL_UNSIGNED_SHORT, nullptr);
+  capture_native_draw(textured?"geometry-textured":"geometry-colored",geometry.vertex_count,geometry.index_count);
   // The recorded/native generic draw VAO has its own element-buffer binding.
   glBindVertexArray(g_state.emptyVao);
 }
@@ -998,6 +1016,7 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
   glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
   bind_uniform_range(0,g_materialUniformBuffer,0,uniforms.size);
   glDrawElements(GL_TRIANGLES,geometry.index_count,GL_UNSIGNED_SHORT,nullptr);
+  capture_native_draw("material",geometry.vertex_count,geometry.index_count);
   glBindVertexArray(g_state.emptyVao);
 }
 void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
@@ -1033,6 +1052,7 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
   glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
   bind_uniform_range(0,g_meshUniformBuffer,0,uniforms.size);
   glDrawElements(GL_TRIANGLES,indexCount,GL_UNSIGNED_SHORT,reinterpret_cast<const void*>(uintptr_t(indexOffset)));
+  capture_native_draw("mesh",vertexCount,indexCount);
   glBindVertexArray(g_state.emptyVao);
 }
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {
