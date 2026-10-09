@@ -10,6 +10,7 @@
 #include "scene_cull.h"
 #include "../native/mh3_scene_queue.h"
 #include "../native/mh3_model_state.h"
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -242,7 +243,15 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
 // logic step resets and reuses while the draw thread draws.
 std::array<std::vector<std::pair<uint32_t, mh3_scene_node>>, MH3_SCENE_CATEGORIES> prepared;
 
+// The guest objects the prepared buckets call into, sorted: each node's
+// object and, for a model, its draw callback object (+0xD4, scene_callback in
+// mh3_model_draw_dispatch.c). Written at the handoff, read by the logic step
+// beside the draw.
+std::vector<uint32_t> preparedObjects;
+
 void Flatten() {
+    preparedObjects.clear();
+
     for (unsigned category = 0; category < MH3_SCENE_CATEGORIES; ++category) {
         auto& nodes = prepared[category];
         nodes.clear();
@@ -252,8 +261,19 @@ void Flatten() {
             mh3_scene_node node;
             ReadNode(nullptr, identity, &node);
             nodes.emplace_back(identity, node);
+
+            if (!node.object)
+                continue;
+
+            preparedObjects.push_back(node.object);
+
+            if (node.type < 2)
+                if (const uint32_t callback = Memory::Read32(node.object + 0xd4))
+                    preparedObjects.push_back(callback);
         }
     }
+
+    std::sort(preparedObjects.begin(), preparedObjects.end());
 }
 
 // DrawBucket over a prepared category: a node's callback cannot change the
@@ -442,6 +462,11 @@ void PrepareGraph(CpuContext* cpu) {
 void DrawPrepared(CpuContext* cpu) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
     DrawPreparedSingle(cpu, true);
+}
+
+bool HoldsPrepared(uint32_t begin, uint32_t end) {
+    const auto first = std::lower_bound(preparedObjects.begin(), preparedObjects.end(), begin);
+    return first != preparedObjects.end() && *first < end;
 }
 } // namespace SceneQueue
 

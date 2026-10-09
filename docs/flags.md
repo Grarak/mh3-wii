@@ -133,7 +133,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,draw-writes]`
 
 | Item | Effect |
 | --- | --- |
@@ -141,6 +141,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `draw-pages[=N]` | Linux hosts: from frame body N (default 1500), for 30 frames, the guest RAM pages each draw touches (MEM1/MEM2 protected, first access per page recorded) against those the next frame's logic writes; prints the conflicts per pair, by logic phase, and their writers and draw readers (`MH3 draw pages` lines). What a draw running beside the next logic step would have to snapshot or wait for. Slow while recording |
 | `monsters` | once a second, each monster's move work, its in-use word and its position (`MH3 monsters` lines; field_camera.cpp) |
 | `monster-steps=N` | every logic step, monster N's position, the step's length and ticks, its MHchar's position, model offset and first three channels (previous and new frame, rate, end, weight), and the world translation of the scene root's models within 4000 units (`MH3 monster step` lines, tagged with the frame packet, which is the `MH3_CAPTURE` frame number) |
+| `draw-writes` | the game thread's heap frees and memory fills while the overlapped draw runs beside it; when the draw meets a model whose draw virtual is gone, the `MH3 draw of a dead model` line and the recorded writes over it (`MH3 draw-side` lines) |
 
 ## Build-option tools
 

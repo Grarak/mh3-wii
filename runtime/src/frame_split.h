@@ -4,10 +4,10 @@
 // have their own line. Release builds compile both away; the split draw's
 // declarations at the end are in every build.
 #pragma once
+#include <cstdint>
 #ifdef MH3_DEVELOPMENT
 #include "isa/ppc_isa_thread_state.h"
 #include <chrono>
-#include <cstdint>
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
 #endif
@@ -160,4 +160,10 @@ void DrawPrepared(CpuContext* cpu);
 
 // Prepare without the effect launch: the graph walk and the flattened buckets.
 void PrepareGraph(CpuContext* cpu);
+
+// Whether [begin, end) holds a guest object the prepared buckets draw through
+// (a model, its draw callback object or an effect). A logic step beside the
+// overlapped draw that frees one waits for the draw first
+// (native_resource_lifetime.cpp).
+bool HoldsPrepared(uint32_t begin, uint32_t end);
 } // namespace SceneQueue

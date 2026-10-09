@@ -3,15 +3,24 @@
 // dependencies. No resource is certified merely because its address is reused.
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "frame_split.h"
 #include "guest_call.h"
+#include "guest_worker.h"
+#include "native_frame_packet.h"
 #include "memory.h"
 #include "recomp_mod_loader.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/mh3_resource_lifetime.h"
+#include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#include <mutex>
+#endif
 
 namespace {
 void Checked(mh3_lifetime_status status) {
@@ -201,15 +210,81 @@ uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t ali
     return result;
 }
 
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=draw-writes: the game thread's heap frees and memory fills while
+// the overlapped draw runs beside it, kept for ReportDrawSideWrites.
+struct DrawSideWrite {
+    char kind = 0; // 'f' free, 's' fill
+    uint32_t begin = 0, bytes = 0, lr = 0, caller = 0;
+    uint64_t packet = 0;
+};
+
+std::mutex drawSideMutex;
+std::array<DrawSideWrite, 4096> drawSideWrites;
+size_t drawSideCount = 0;
+
+void RecordDrawSideWrite(CpuContext* cpu, char kind, uint32_t begin, uint32_t bytes) {
+    static const bool enabled = TraceOptions().Has("draw-writes");
+
+    if (!enabled || PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending())
+        return;
+
+    const uint32_t sp = Memory::Read32(cpu->gpr[1]);
+    const uint32_t caller = sp >= 0x80000000u && sp < 0x94000000u ? Memory::Read32(sp + 4) : 0;
+    std::lock_guard lock(drawSideMutex);
+    drawSideWrites[drawSideCount++ % drawSideWrites.size()] = {kind, begin, bytes, cpu->lr, caller, NativeFramePacketSequence()};
+}
+#else
+void RecordDrawSideWrite(CpuContext*, char, uint32_t, uint32_t) {}
+#endif
+
+// A logic step that runs beside the overlapped draw (game_frame.cpp) must not
+// free what the draw still calls into: a model the next step destroys is
+// still in the prepared buckets. Such a free first waits for the draw, before
+// the heap lock, which the draw thread may need.
+void WaitForDrawBeforeFree(CpuContext* cpu, uint32_t payload, uint32_t bytes) {
+    if (PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending() || !SceneQueue::HoldsPrepared(payload, payload + bytes))
+        return;
+
+#ifdef MH3_DEVELOPMENT
+    // The first few waits with the guest call chain of the free.
+    static unsigned reported = 0;
+
+    if (reported < 8) {
+        ++reported;
+        std::fprintf(stderr, "MH3 draw wait: free of %08x (%u bytes) from %08x", payload, bytes, cpu->lr);
+        uint32_t sp = cpu->gpr[1];
+
+        for (unsigned depth = 0; depth < 6 && sp >= 0x80000000u && sp < 0x94000000u; ++depth) {
+            sp = Memory::Read32(sp);
+
+            if (sp < 0x80000000u || sp >= 0x94000000u)
+                break;
+
+            std::fprintf(stderr, " <- %08x", Memory::Read32(sp + 4));
+        }
+
+        std::fprintf(stderr, "\n");
+    }
+#endif
+    DrawThread::Thread().Wait();
+}
+
 void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     if (!payload)
         return;
 
+    const uint32_t canonical_payload = RamAddress(payload, 1);
+
+    // The caller's block: its size is its own; the links are read under the
+    // lock below.
+    const uint32_t bytes = ReadBlock(canonical_payload - 16).size;
+    RecordDrawSideWrite(cpu, 'f', payload, bytes);
+    WaitForDrawBeforeFree(cpu, payload, bytes);
     GuestFrame frame(cpu, 0x60);
     HeapLock lock(cpu, address);
     GuestCall call{cpu};
     const auto heap = ReadHeap(address);
-    const uint32_t canonical_payload = RamAddress(payload, 1);
     const auto block = ReadBlock(canonical_payload - 16);
     mh3_lifetime_free_plan plan;
     Checked(mh3_lifetime_expheap_free_plan(&heap, canonical_payload, &block, &plan));
@@ -261,6 +336,25 @@ void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes) 
     Fill(destination, value, bytes);
 }
 
+#ifdef MH3_DEVELOPMENT
+// The recorded draw-side frees and fills that cover [begin, end), and the
+// last few of all (MH3_TRACE=draw-writes).
+void ReportDrawSideWrites(uint32_t begin, uint32_t end) {
+    std::lock_guard lock(drawSideMutex);
+    const size_t kept = std::min(drawSideCount, drawSideWrites.size());
+    std::fprintf(stderr, "MH3 draw-side writes: %zu recorded, packet now %llu\n", drawSideCount, static_cast<unsigned long long>(NativeFramePacketSequence()));
+
+    for (size_t i = drawSideCount - kept; i < drawSideCount; ++i) {
+        const auto& w = drawSideWrites[i % drawSideWrites.size()];
+        const bool covers = w.begin < end && begin < w.begin + w.bytes;
+
+        if (covers || i + 8 >= drawSideCount)
+            std::fprintf(stderr, "MH3 draw-side %s: %c %08x+%x from %08x <- %08x packet %llu\n", covers ? "HIT" : "last", w.kind, w.begin, w.bytes, w.lr, w.caller,
+                         static_cast<unsigned long long>(w.packet));
+    }
+}
+#endif
+
 extern "C" void MH3_Copy32Blocks(CpuContext* cpu) {
     CopyBlocks(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
@@ -272,15 +366,18 @@ extern "C" void MH3_Zero32Blocks(CpuContext* cpu) {
     if (bytes && (cpu->gqr[0] & 7))
         MH3_THROW(std::runtime_error("ZeroMemory32ByteBlocks requires GQR0 float store format"));
 
+    RecordDrawSideWrite(cpu, 's', destination, bytes);
     Fill(destination, 0, bytes);
 }
 
 extern "C" void MH3_FillMemory(CpuContext* cpu) {
+    RecordDrawSideWrite(cpu, 's', cpu->gpr[3], cpu->gpr[5]);
     Fill(cpu->gpr[3], uint8_t(cpu->gpr[4]), cpu->gpr[5]);
 }
 
 extern "C" void MH3_Memset(CpuContext* cpu) {
     const uint32_t destination = cpu->gpr[3];
+    RecordDrawSideWrite(cpu, 's', destination, cpu->gpr[5]);
     Fill(destination, uint8_t(cpu->gpr[4]), cpu->gpr[5]);
     cpu->gpr[3] = destination;
 }
