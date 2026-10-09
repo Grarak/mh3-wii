@@ -283,6 +283,15 @@ inline double PpcFlushPairedForNiInline(double value)
 
 inline double PpcForce25BitInline(double value)
 {
+    // A widened single (an lfs load, a rounded single result) has its low 29 fraction bits
+    // clear, so the rounding below leaves it unchanged, NaNs included. Where the compiler can
+    // see the value came from a float, float(value) folds back to that float and this test
+    // becomes a constant: the rounding and its round trip through integer registers go away.
+    // Anywhere else the test is not constant and costs nothing. (The expression has to be
+    // written out inside __builtin_constant_p; through a helper call it never folds.)
+    if (__builtin_constant_p(value != value || static_cast<double>(static_cast<float>(value)) == value) &&
+        (value != value || static_cast<double>(static_cast<float>(value)) == value))
+        return value;
     constexpr uint64_t kDoubleExpMask = 0x7FF0000000000000ULL;
     constexpr uint64_t kDoubleFracMask = 0x000FFFFFFFFFFFFFULL;
     constexpr int kDoubleFracWidth = 52;
