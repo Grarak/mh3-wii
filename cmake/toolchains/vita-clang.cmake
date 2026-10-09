@@ -74,14 +74,11 @@ set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES
 
 # -Wl,-q keeps the relocations, without which vita-elf-create cannot convert the result.
 #
-# thread_local is native module TLS. The kernel gives every thread a user TLS area: 2 KiB of
-# reserved slots below TPIDRURO (sceKernelGetTLSAddr(key) is TPIDRURO - 0x800 + key * 4) and,
-# from TPIDRURO up, a copy of the main module's TLS template, which module_info's tls_start/
-# tls_filesz/tls_memsz describe (Sony's libc sets module 0's block to TPIDRURO itself). The
-# patched vita-elf-create appends that template to the text segment with ARM's 8-byte TCB gap
-# in front, so local-exec code (TPIDRURO + 8 + offset) lands on it. An access is an mrc and a
-# load, instead of __emutls_get_address's ~55 instructions and a barrier. The SDK's prebuilt
-# gcc libraries keep emulated TLS for their own variables; those still link to libgcc.
+# thread_local uses emulated TLS (__emutls_get_address from libgcc), as the SDK's prebuilt
+# libraries do. The runtime has no thread_local of its own; the only one linked is a debug-only
+# counter in Abseil's hash tables (Aurora's containers), which release builds never touch. Native
+# module TLS would need the patched vita-elf-create's TLS template; the stock one rejects
+# R_ARM_TLS_LE32.
 #
 # The architecture options are repeated in the top-level CMakeLists through
 # add_compile_options, which is a directory property and therefore survives a subproject that
@@ -93,7 +90,7 @@ set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES
 # it outright - "Invalid relocation type 96" - because a SELF has no GOT to resolve against. The
 # vitasdk's gcc defaults to non-PIC, which is why this never came up with it.
 set(VITA_CLANG_FLAGS
-    "-Wl,-q -D__vita__=1 -D__VITA__=1 -mcpu=cortex-a9 -mfpu=neon -mthumb -fno-emulated-tls -mtp=cp15 -ftls-model=local-exec -fno-pic -fno-pie")
+    "-Wl,-q -D__vita__=1 -D__VITA__=1 -mcpu=cortex-a9 -mfpu=neon -mthumb -femulated-tls -fno-pic -fno-pie")
 
 # FORCE: objects built with emulated and native TLS must not mix, so an existing build tree
 # picks up a change here instead of keeping its cached flags.
