@@ -18,13 +18,26 @@
 // moved on so that the store advances it by GameStep::Share(k), k * s.
 // Rate sites load that amount itself (a speed kept in memory): it is replaced
 // by its share of this step, GameStep::Share(amount).
+//
+// CountupEvery / CountdownEvery sites are counters the guest moves by 1 and
+// then tests with `% N == 0` (limit N: a sound every 32 steps). The count
+// moves by the ticks of this step, but lands on the multiple of N it passed,
+// so the test passes once per N ticks; a step without a tick that would store
+// the same multiple again moves the count 1 on instead (the test must fail).
 #include "game_step.h"
 #include "ppc_runtime.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iterator>
+#ifdef MH3_DEVELOPMENT
+#include <chrono>
+#include <unordered_map>
+#include <vector>
+#endif
 
 namespace {
 
@@ -37,6 +50,9 @@ enum class TickSite : uint32_t {
     Decay,              // f32 factor f of x *= f (MH3_Decay)
     Advance,            // x + limit: moved on by limit * s
     Rate,               // the amount k of x + k: k * s
+    CountupEvery,       // x + 1, then tested % limit == 0
+    CountdownEvery,     // x - 1, then tested % limit == 0
+    Survey,             // development: record the site, return the value (limit: the guest's +-1)
 };
 
 struct Site {
@@ -45,6 +61,7 @@ struct Site {
     // Countup: the largest value the guest still adds 1 to (0: none).
     // Countdown: the value the guest counts down to (x - 1 while x > limit).
     // Advance: the amount the guest adds each step.
+    // CountupEvery / CountdownEvery: the N of the % N == 0 test.
     int32_t limit = 0;
 };
 constexpr Site kSites[] = {
@@ -57,6 +74,56 @@ const Site* Find(uint32_t pc) {
     return it != std::end(kSites) && it->pc == pc ? it : nullptr;
 }
 
+#ifdef MH3_DEVELOPMENT
+// Survey sites (a build that lists candidate `x +- 1` loads as Survey, for
+// finding step counters): MH3_TICK_SURVEY=file gets "pc execs steps continued
+// maxPerStep" per site every 10 s. `continued` counts loads of a value this
+// site stored in the previous step: a per-step counter continues about once
+// per step, a loop index or an event count does not.
+struct SurveyEntry {
+    uint64_t execs = 0, steps = 0, continued = 0, maxPerStep = 0, perStep = 0, lastStep = 0;
+    std::vector<uint32_t> prev, cur;
+};
+std::unordered_map<uint32_t, SurveyEntry> survey;
+
+void SurveyDump() {
+    const char* path = std::getenv("MH3_TICK_SURVEY");
+    if (!path) return;
+    FILE* f = std::fopen(path, "w");
+    if (!f) return;
+    for (const auto& [pc, e] : survey)
+        std::fprintf(f, "%08x %llu %llu %llu %llu\n", pc, (unsigned long long)e.execs, (unsigned long long)e.steps,
+                     (unsigned long long)e.continued, (unsigned long long)e.maxPerStep);
+    std::fclose(f);
+}
+
+void SurveyRecord(uint32_t pc, uint32_t value, int32_t imm) {
+    static double key = -1;
+    static uint64_t step = 0;
+    static auto last = std::chrono::steady_clock::now();
+    if (GameStep::Elapsed() != key) {
+        key = GameStep::Elapsed();
+        ++step;
+        if (std::chrono::steady_clock::now() - last > std::chrono::seconds(10)) {
+            last = std::chrono::steady_clock::now();
+            SurveyDump();
+        }
+    }
+    SurveyEntry& e = survey[pc];
+    if (e.lastStep != step) {
+        if (e.lastStep + 1 == step) e.prev.swap(e.cur); else e.prev.clear();
+        e.cur.clear();
+        e.lastStep = step;
+        ++e.steps;
+        e.perStep = 0;
+    }
+    ++e.execs;
+    e.maxPerStep = std::max(e.maxPerStep, ++e.perStep);
+    if (std::find(e.prev.begin(), e.prev.end(), value) != e.prev.end()) ++e.continued;
+    if (e.cur.size() < 64) e.cur.push_back(value + uint32_t(imm));
+}
+#endif
+
 } // namespace
 
 extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
@@ -66,8 +133,29 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
         return value + uint32_t(GameStep::Share(site->limit) - site->limit);
     }
     if (site && site->kind == TickSite::Rate) return uint32_t(GameStep::Share(int32_t(value)));
+    if (site && site->kind == TickSite::Survey) {
+#ifdef MH3_DEVELOPMENT
+        SurveyRecord(pc, value, site->limit);
+#endif
+        return value;
+    }
     if (!site || ticks == 1) return value;
     const int32_t v = int32_t(value);
+    if (site->kind == TickSite::CountupEvery || site->kind == TickSite::CountdownEvery) {
+        const int64_t n = site->limit;
+        const auto mod = [n](int64_t x) { return (x % n + n) % n; };
+        const int64_t step = site->kind == TickSite::CountupEvery ? 1 : -1;
+        int64_t target;
+        if (ticks == 0) {
+            target = mod(v) == 0 ? v + step : v;
+        } else {
+            target = v + step * ticks;
+            // The multiple of N passed first (nearest v), if one was passed.
+            const int64_t first = step > 0 ? v + 1 + mod(-(v + 1)) : v - 1 - mod(v - 1);
+            if (mod(target) != 0 && (step > 0 ? first < target : first > target)) target = first;
+        }
+        return uint32_t(int32_t(target - step));
+    }
     switch (site->kind) {
     case TickSite::Countdown:
         return v > site->limit ? uint32_t(std::max(v - ticks, site->limit) + 1) : value;
@@ -78,6 +166,9 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     case TickSite::Decay:
     case TickSite::Advance:
     case TickSite::Rate:
+    case TickSite::CountupEvery:
+    case TickSite::CountdownEvery:
+    case TickSite::Survey:
         return value;
     case TickSite::Countup:
         if (site->limit != 0 && v > site->limit) return value;

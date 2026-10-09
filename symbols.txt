@@ -930,3 +930,12 @@
 80256a58 FieldActionKnockedFlying
 80258ac8 FieldActionGrabbed
 8026a57c VelocityStep
+# Shell motion and the player status tint (shell_motion.cpp)
+802ab3a8 shell_rate_add__FP8_SHELL_W
+802ab3b8 shell_rate_add_g__FP8_SHELL_W
+802e77ec PlayerTintPulse
+# Enemy turning (enemy_turn.cpp)
+80133e14 EnemyTurnToward
+80134884 EnemyTurnStep
+8012b66c EnemyAwarenessAdd
+8012f8c4 EnemyBlendToward
