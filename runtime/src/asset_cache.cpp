@@ -136,7 +136,8 @@ struct AssetCache::Impl {
         uint32_t firstTexture = 0, textureCount = 0, firstModel = 0, modelCount = 0;
         std::vector<uint64_t> patches; // texture i's tag offset; its ID is firstTexture + i
         bool texturesDone = false, modelsDone = false, modelsUsable = false;
-        bool announced = false; // its texture pack went to packReady
+        bool announced = false;       // its texture pack went to packReady
+        bool modelsAnnounced = false; // its model pack went to modelReady
         std::string failure;
 
         // The whole file while its conversion is pending; game reads are served from it.
@@ -163,6 +164,7 @@ struct AssetCache::Impl {
     std::filesystem::path root, cache;
     RawRead read;
     PackReady packReady;
+    ModelPackReady modelReady;
     std::vector<Source> sources;        // by partition offset
     std::vector<Extract> extracts;      // by partition offset
     uint64_t extractedBytes = 0, reads = 0;
@@ -593,13 +595,21 @@ struct AssetCache::Impl {
         return s.texturesDone && s.modelsDone;
     }
 
-    // Lock held. Hands a source's written texture pack to packReady once.
+    // Lock held. Hands a source's written texture and model packs to
+    // packReady and modelReady, each once.
     void Announce(Source& s) {
-        if (s.announced || !s.texturesDone || !s.textureCount || !s.failure.empty() || !packReady)
+        if (!s.failure.empty())
             return;
 
-        s.announced = true;
-        packReady(TexturePath(s).string());
+        if (!s.announced && s.texturesDone && s.textureCount && packReady) {
+            s.announced = true;
+            packReady(TexturePath(s).string());
+        }
+
+        if (!s.modelsAnnounced && s.modelsDone && s.modelsUsable && modelReady) {
+            s.modelsAnnounced = true;
+            modelReady(uint32_t(&s - sources.data()), ModelPath(s).string());
+        }
     }
 
     // Lock held. Makes sure the source is indexed and its conversion either
@@ -771,6 +781,7 @@ struct AssetCache::Impl {
                 s.modelsDone = true;
                 s.modelsUsable = usable;
                 --modelJobs;
+                Announce(s);
             }
 
             if (s.texturesDone && s.modelsDone && s.data) {
@@ -1048,6 +1059,11 @@ void AssetCache::PrefetchStreams(const std::string& map) {
 void AssetCache::SetTexturePackReady(PackReady ready) {
     std::lock_guard guard(impl->lock);
     impl->packReady = std::move(ready);
+}
+
+void AssetCache::SetModelPackReady(ModelPackReady ready) {
+    std::lock_guard guard(impl->lock);
+    impl->modelReady = std::move(ready);
 }
 
 Status AssetCache::TexturePack(uint32_t id, std::string& pack) {

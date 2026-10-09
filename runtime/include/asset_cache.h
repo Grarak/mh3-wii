@@ -55,6 +55,11 @@ class AssetCache {
     using PackReady = std::function<void(const std::string& pack)>;
     void SetTexturePackReady(PackReady ready);
 
+    // Likewise with a source file's model pack and its ModelPack key, once
+    // the pack is written and the game has read the file.
+    using ModelPackReady = std::function<void(uint32_t key, const std::string& pack)>;
+    void SetModelPackReady(ModelPackReady ready);
+
     // The converted pack holding texture asset `id`, once it is written; an
     // error when the asset is unknown or its source failed to convert.
     Status TexturePack(uint32_t id, std::string& pack);

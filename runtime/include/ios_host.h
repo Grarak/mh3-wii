@@ -17,3 +17,7 @@ void PumpIosCompletions(CpuContext* cpu);
 
 // Development: the "MH3 disc" lines (reads per caller over `seconds`).
 void ReportDiscStatistics(double seconds);
+
+// Any thread: whether a game disc read waits for the reader thread. Host
+// reads of the same storage made beside it slow it down.
+bool DiscReadWaiting();

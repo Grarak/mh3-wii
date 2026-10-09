@@ -1239,8 +1239,9 @@ struct LoadingScreen {
     bool open = false;
     std::chrono::steady_clock::time_point first, last;
     uint32_t frames = 0, quiet = 0;
-    uint64_t certified = 0, tables = 0, cached = 0;
+    uint64_t certified = 0, tables = 0, cached = 0, admissions = 0;
     double prepare_ms = 0, longest_ms = 0; // longest frame: span between two calls
+    double certify_ms = 0, open_ms = 0;    // of prepare_ms: certification, and the packs it opened
 } loading;
 
 void ReportLoadingScreen() {
@@ -1249,9 +1250,12 @@ void ReportLoadingScreen() {
         return;
 
     loading.open = false;
-    std::fprintf(stderr, "MH3 loading screen: %.3f s, %u frames, longest %.0f ms; draw table preparation %.2f ms (%llu models certified, %llu tables, %llu from the cache)\n",
+    std::fprintf(stderr,
+                 "MH3 loading screen: %.3f s, %u frames, longest %.0f ms; draw table preparation %.2f ms (%llu models certified in %.2f ms, %llu packs opened in %.2f ms, %llu tables, %llu "
+                 "from the cache)\n",
                  std::chrono::duration<double>(loading.last - loading.first).count(), loading.frames, loading.longest_ms, loading.prepare_ms, static_cast<unsigned long long>(loading.certified),
-                 static_cast<unsigned long long>(loading.tables), static_cast<unsigned long long>(loading.cached));
+                 loading.certify_ms, static_cast<unsigned long long>(loading.admissions), loading.open_ms, static_cast<unsigned long long>(loading.tables),
+                 static_cast<unsigned long long>(loading.cached));
 #endif
 }
 } // namespace
@@ -1285,7 +1289,18 @@ void PrepareNativeModelDrawTables() {
         loading.longest_ms = std::max(loading.longest_ms, std::chrono::duration<double, std::milli>(start - loading.last).count());
 
     const uint64_t cachedBefore = tableStats.cached;
+#ifdef MH3_DEVELOPMENT
+    uint64_t admissionsBefore, admissionsAfter;
+    double openBefore, openAfter;
+    ReadNativeModelPackOpenings(admissionsBefore, openBefore);
+#endif
     const size_t certified = CertifyLoadedNativeModels();
+#ifdef MH3_DEVELOPMENT
+    ReadNativeModelPackOpenings(admissionsAfter, openAfter);
+    loading.certify_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    loading.admissions += admissionsAfter - admissionsBefore;
+    loading.open_ms += openAfter - openBefore;
+#endif
     std::vector<NativeModelOwner> owners;
     ListNativeModelOwnersWithoutDrawTable(owners);
     size_t built = 0;

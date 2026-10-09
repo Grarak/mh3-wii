@@ -3,11 +3,17 @@
 #include "asset_cache.h"
 #include "../native/adapters/model_catalog_bridge.h"
 #include "../native/adapters/model_gpu_bridge.h"
+#include "ios_host.h"
 #include "native_frame_packet.h"
+#include <aurora/thread_role.hpp>
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -17,6 +23,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -297,7 +304,11 @@ Assets& Find(Manager& m, uintptr_t handle, uint64_t epoch) {
     return *found->second;
 }
 
-Status OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, std::unique_ptr<Assets>& result) {
+// Reads a pack and its identities and validates them: file reads and checks of
+// host bytes only (no budget, generation or catalog), so the preparation
+// workers run it too (PackPreparer). Without an index (`m` null: load-time
+// conversion) it reads nothing else.
+Status ReadPack(const Manager* m, const std::filesystem::path& path, uint32_t index, std::unique_ptr<Assets>& result) {
     auto next = std::make_unique<Assets>();
     next->path = path;
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -324,14 +335,13 @@ Status OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, s
     size_t identityBytes = 0;
     MH3_RETURN_IF_ERROR(FileSize(identity, identityPath, MaxIdentityBytes, identityBytes));
 
-    if (index != LegacyPack && !m.converted) {
-        const auto* expected = PackRecord(m, index);
+    if (index != LegacyPack && m) {
+        const auto* expected = PackRecord(*m, index);
 
         if (metadataBytes != Word(expected + 8) || identityBytes != Word(expected + 12) || gpuBytes != Word(expected + 16) || bytes != Word(expected + 20))
             return Failure(path, "pack sizes differ from M3IX descriptor");
     }
 
-    MH3_RETURN_IF_ERROR(ReserveCPU(m, metadataBytes, identityBytes, path));
     next->metadata.resize(metadataBytes);
     next->identity.resize(identityBytes);
     std::memcpy(next->metadata.data(), header.data(), header.size());
@@ -344,29 +354,26 @@ Status OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, s
     if (mh3_model_catalog_open({next->identity.data(), next->identity.size()}, &next->catalog) != MH3_PACK_OK || mh3_model_catalog_validate_pack(&next->catalog, &next->pack) != MH3_PACK_OK)
         return Failure(identityPath, "invalid or mismatched source identities");
 
-    if (index != LegacyPack && !m.converted) {
+    if (index != LegacyPack && m) {
         std::set<uint32_t> seen;
 
         for (uint32_t i = 0; i < next->catalog.model_count; ++i) {
             mh3_catalog_model model{};
             mh3_model_catalog_model(&next->catalog, i, &model);
-            const uint32_t source = SourceIndex(m, model.partition_offset, model.file_bytes);
+            const uint32_t source = SourceIndex(*m, model.partition_offset, model.file_bytes);
 
-            if (source == UINT32_MAX || Long(SourceRecord(m, source)) != model.partition_offset || Word(SourceRecord(m, source) + 8) != model.file_bytes || Word(SourceRecord(m, source) + 12) != index)
+            if (source == UINT32_MAX || Long(SourceRecord(*m, source)) != model.partition_offset || Word(SourceRecord(*m, source) + 8) != model.file_bytes ||
+                Word(SourceRecord(*m, source) + 12) != index)
                 return Failure(identityPath, "catalog source extent differs from M3IX identity");
 
             seen.insert(source);
         }
 
-        for (uint32_t i = 0; i < m.sourceCount; ++i)
-            if (Word(SourceRecord(m, i) + 12) == index && !seen.contains(i))
+        for (uint32_t i = 0; i < m->sourceCount; ++i)
+            if (Word(SourceRecord(*m, i) + 12) == index && !seen.contains(i))
                 return Failure(identityPath, "indexed source has no catalog model");
     }
 
-    if (generation == UINT64_MAX)
-        return Failure(path, "load generation exhausted");
-
-    next->generation = ++generation;
     result = std::move(next);
     return {};
 }
@@ -391,6 +398,177 @@ void PrefetchGPU(Manager& m, uintptr_t handle, uint64_t generation) {
     const auto name = asset.path.string();
     RegisterNativeModelGPU(asset.pack, name.c_str(), handle, generation);
     asset.gpuRegistered = true;
+}
+
+// Admission's part on the game thread, in the order the packs are admitted:
+// the CPU budget (evicting the least recently used packs) and the generation.
+Status ClaimPack(Manager& m, Assets& next) {
+    MH3_RETURN_IF_ERROR(ReserveCPU(m, next.metadata.size(), next.identity.size(), next.path));
+
+    if (generation == UINT64_MAX)
+        return Failure(next.path, "load generation exhausted");
+
+    next.generation = ++generation;
+    return {};
+}
+
+Status OpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, std::unique_ptr<Assets>& result) {
+    MH3_RETURN_IF_ERROR(ReadPack(m.converted ? nullptr : &m, path, index, result));
+    return ClaimPack(m, *result);
+}
+
+// OpenPack on the admitting thread, its time counted (open_ms).
+Status TimedOpenPack(Manager& m, const std::filesystem::path& path, uint32_t index, std::unique_ptr<Assets>& result) {
+    const auto start = std::chrono::steady_clock::now();
+    const Status opened = OpenPack(m, path, index, result);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    std::lock_guard lock(m.lock);
+    m.stats.open_ms += ms;
+    return opened;
+}
+
+// Converted model packs read ahead (docs/loading-progress.md): the asset cache
+// hands on the pack of each source file the game starts to read, and a worker
+// reads and validates it (ReadPack: the pack's meshes, typed materials and
+// draws, and its source identities) while the file loads; one, beside the
+// disc reader it would otherwise compete with for the card. Certification
+// on the game thread then claims the read pack (ClaimPack, Admit) instead of
+// reading it. The pack bytes and checks are the same on either thread; the
+// budget, generation and admission order stay the game thread's.
+class PackPreparer {
+  public:
+    static PackPreparer& Get() {
+        static PackPreparer* preparer = new PackPreparer; // lives until exit
+        return *preparer;
+    }
+
+    // From the asset cache with its lock held: queues only.
+    void Queue(uint32_t key, const std::string& path) {
+        std::lock_guard guard(lock);
+
+        if (std::any_of(entries.begin(), entries.end(), [&](const Entry& e) { return e.key == key; }))
+            return;
+
+        // Packs nobody claimed make room, oldest first.
+        while (entries.size() >= MaxEntries) {
+            const auto idle = std::find_if(entries.begin(), entries.end(), [](const Entry& e) { return e.state != Entry::Reading; });
+
+            if (idle == entries.end())
+                break;
+
+            entries.erase(idle);
+        }
+
+        entries.push_back({key, path});
+
+        while (threads < Threads) {
+            ++threads;
+            std::thread([this] { Run(); }).detach();
+        }
+
+        changed.notify_all();
+    }
+
+    // Game thread: the pack read ahead for `key` (waiting while a worker
+    // reads it), and how its read went; false when none was read or begun,
+    // and a queued one is withdrawn: the caller reads it.
+    bool Take(uint32_t key, std::unique_ptr<Assets>& pack, Status& status) {
+        std::unique_lock guard(lock);
+
+        for (;;) {
+            const auto found = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.key == key; });
+
+            if (found == entries.end())
+                return false;
+
+            if (found->state == Entry::Queued) {
+                entries.erase(found);
+                return false;
+            }
+
+            if (found->state == Entry::Ready) {
+                pack = std::move(found->pack);
+                status = std::move(found->status);
+                entries.erase(found);
+                return true;
+            }
+
+            // Timed: VitaSDK's condition variable can lose a notification.
+            changed.wait_for(guard, std::chrono::milliseconds(5));
+        }
+    }
+
+  private:
+    static constexpr size_t MaxEntries = 16;
+    static constexpr unsigned Threads = 1, MaxDiscWaitMs = 100;
+
+    struct Entry {
+        uint32_t key;
+        std::string path;
+        enum State { Queued, Reading, Ready } state = Queued;
+        std::unique_ptr<Assets> pack;
+        Status status;
+    };
+
+    void Run() {
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+
+        for (;;) {
+            std::string path;
+            uint32_t key;
+            {
+                std::unique_lock guard(lock);
+                auto next = entries.end();
+
+                // Timed: VitaSDK's condition variable can lose a notification.
+                while ((next = std::find_if(entries.begin(), entries.end(), [](const Entry& e) { return e.state == Entry::Queued; })) == entries.end())
+                    changed.wait_for(guard, std::chrono::milliseconds(100));
+
+                next->state = Entry::Reading;
+                key = next->key;
+                path = next->path;
+            }
+
+            // The game's disc reads first: a pack read beside one slows it
+            // down (one card serves both), and a loading screen lasts as long
+            // as its reads. Pi 5 with a cold page cache: the loader's reads
+            // took 5.7-9.6 ms instead of 3.3-5.1 ms on average.
+            for (unsigned waited = 0; waited < MaxDiscWaitMs && DiscReadWaiting(); ++waited)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            std::unique_ptr<Assets> pack;
+            Status status = ReadPack(nullptr, path, key, pack);
+            std::lock_guard guard(lock);
+
+            // Found again: Queue and Take remove other entries meanwhile,
+            // never one being read.
+            const auto found = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.key == key && e.state == Entry::Reading; });
+
+            if (found != entries.end()) {
+                found->pack = std::move(pack);
+                found->status = std::move(status);
+                found->state = Entry::Ready;
+            }
+
+            changed.notify_all();
+        }
+    }
+
+    std::mutex lock;
+    std::condition_variable changed;
+    std::deque<Entry> entries;
+    unsigned threads = 0;
+};
+
+// The converted pack of `key`: claimed from the read-ahead, or read here.
+Status OpenConvertedPack(Manager& m, const std::filesystem::path& path, uint32_t key, std::unique_ptr<Assets>& result) {
+    Status read;
+
+    if (!PackPreparer::Get().Take(key, result, read))
+        return TimedOpenPack(m, path, key, result);
+
+    MH3_RETURN_IF_ERROR(read);
+    return ClaimPack(m, *result);
 }
 
 Status Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
@@ -472,6 +650,7 @@ void LoadNativeModelAssets(const char* discRoot) {
                 next->converted = true;
                 std::fprintf(stderr, "MH3 native models: converted at load time\n");
                 manager = std::move(next);
+                GameAssetCache()->SetModelPackReady([](uint32_t key, const std::string& pack) { PackPreparer::Get().Queue(key, pack); });
             }
 
             return;
@@ -513,7 +692,7 @@ Status TryEnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
         }
 
         std::unique_ptr<Assets> asset;
-        MH3_RETURN_IF_ERROR(OpenPack(m, path, key, asset));
+        MH3_RETURN_IF_ERROR(OpenConvertedPack(m, path, key, asset));
         return Admit(m, key, std::move(asset), false);
     }
 
@@ -543,7 +722,7 @@ Status TryEnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
     const std::string name(reinterpret_cast<const char*>(m.index.data() + Word(record)), Word(record + 4));
     const auto path = m.indexPath.parent_path() / name;
     std::unique_ptr<Assets> asset;
-    MH3_RETURN_IF_ERROR(OpenPack(m, path, index, asset));
+    MH3_RETURN_IF_ERROR(TimedOpenPack(m, path, index, asset));
     return Admit(m, index, std::move(asset), false);
 }
 
@@ -689,6 +868,18 @@ NativeModelAssetStats ReadNativeModelAssetStats() {
     auto result = manager->stats;
     result.gpu_bytes = NativeModelGPUResidentBytes();
     return result;
+}
+
+void ReadNativeModelPackOpenings(uint64_t& admissions, double& open_ms) {
+    admissions = 0;
+    open_ms = 0;
+
+    if (!manager)
+        return;
+
+    std::lock_guard lock(manager->lock);
+    admissions = manager->stats.admissions;
+    open_ms = manager->stats.open_ms;
 }
 
 void UnloadNativeModelAssets() {

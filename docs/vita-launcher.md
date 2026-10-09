@@ -110,7 +110,11 @@ reads while the game runs, and their replies reach the library's callback at
 a later pump. A read is answered only once the files it touches are
 converted (`AssetCache::Converted`), so nothing that looks their packs up
 later waits: not the loading screen's draw-table preparation, not model or
-texture binding. The game's file loader (`load_file_req` 0x800CEB14, served
+texture binding. A file's model pack is also read and validated ahead, by a
+preparation worker, while the game reads the file; the loading screen's
+certification then admits it without reading the card
+([model pack read-ahead](loading-progress.md#model-pack-read-ahead)).
+The game's file loader (`load_file_req` 0x800CEB14, served
 once a frame by 0x800CE704) issues a read and polls for its reply each
 frame, so its loading screens keep animating through the conversions. Its
 synchronous loads (`load_file` 0x800CECC8) spin in `WaitDvd` (0x80435EA8,

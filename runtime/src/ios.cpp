@@ -173,6 +173,12 @@ class DiscReader {
 #endif
     }
 
+    // Any thread: whether a read is not answered yet.
+    bool Waiting() {
+        std::lock_guard guard(lock);
+        return std::any_of(replies.begin(), replies.end(), [](const Reply& reply) { return reply.length && !reply.ready; });
+    }
+
     // Game thread: waits up to `limit` for the next reply to be ready; false
     // when there is none in flight.
     bool Await(std::chrono::milliseconds limit) {
@@ -958,6 +964,10 @@ void ReportDiscStatistics(double seconds) {
     Reader().Report(seconds);
 }
 #endif
+
+bool DiscReadWaiting() {
+    return Reader().Waiting();
+}
 
 std::optional<IosCompletion> TakeIosCompletion() {
     if (completions.empty())

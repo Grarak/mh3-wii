@@ -34,10 +34,14 @@ struct NativeModelAssetStats {
     size_t index_bytes = 0, metadata_bytes = 0, identity_bytes = 0, gpu_bytes = 0, demanded_gpu_bytes = 0;
     uint32_t admitted_packs = 0;
     uint64_t admissions = 0, evictions = 0, gpu_evictions = 0, gpu_busy = 0;
+    double open_ms = 0; // reading and validating admitted packs, on the admitting thread
 };
 
 // GPU bytes include retired backing pending completion, with Vita rounding.
 NativeModelAssetStats ReadNativeModelAssetStats();
+
+// Any thread: the packs admitted so far and the time spent opening them.
+void ReadNativeModelPackOpenings(uint64_t& admissions, double& open_ms);
 
 // An admitted pack's file and its content key (metadata and identity sizes,
 // FNV-1a of the identity bytes), for caches derived from the pack.

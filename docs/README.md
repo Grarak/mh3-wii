@@ -28,7 +28,7 @@ how to build, run (including the Vita devkit) and debug.
 - [native-resident-model-rendering.md](native-resident-model-rendering.md): resident mesh storage and the mesh draw path.
 - [native-gpu-palette-preparation.md](native-gpu-palette-preparation.md), [native-texture-srt-preparation.md](native-texture-srt-preparation.md): palettes written straight into GPU memory; reading only the consumed texture SRT fields.
 - [native-model-assets.md](native-model-assets.md): the three model sources (load-time, index, single pack), budgets, eviction and M3IX.
-- [loading-progress.md](loading-progress.md): the loading screen's progress bar (what it measures, learned screens).
+- [loading-progress.md](loading-progress.md): the loading screen's progress bar (what it measures, learned screens) and the model pack read-ahead.
 - [vita-model-conversion.md](vita-model-conversion.md), [vita-indexed-model-packs.md](vita-indexed-model-packs.md): the M3MP/M3MT format, the offline converter and indexed palette batches.
 - [native-preparation-model-assembler.md](native-preparation-model-assembler.md), [native-preparation-corners.md](native-preparation-corners.md), [native-preparation-writer.md](native-preparation-writer.md): the C model assembler that load-time conversion runs.
 - [native-model-resource-archives.md](native-model-resource-archives.md): the effect resource archives and the texture inventory walker.
