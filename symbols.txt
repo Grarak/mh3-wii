@@ -1164,3 +1164,6 @@
 804c4720 MIXSetFader
 804c5df0 __MIXRmtUpdateSettings
 804c6230 __MIXRmtResetChannel
+804ddab0 SEQInit
+804ddad0 SEQQuit
+804df7b0 SYNQuit
