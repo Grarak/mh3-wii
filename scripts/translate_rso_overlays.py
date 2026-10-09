@@ -49,6 +49,9 @@ PROFILES = {
     # Loc Lac (the online city's gate and cities), right after net_data.
     'map_town_online': ('map_town', 0x809A6EE0,
                         '9261198878e97da7a8d476117455cde58ad7001136680ae428f6f1e6ca0d4c15', 'MapTownOnlineBinding'),
+    # Loc Lac again after a quest: the city loads before net_data, at its base.
+    'map_town_quest': ('map_town', 0x8097D080,
+                       '9261198878e97da7a8d476117455cde58ad7001136680ae428f6f1e6ca0d4c15', 'MapTownQuestBinding'),
 }
 DOL_DIGEST = 'db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162'
 

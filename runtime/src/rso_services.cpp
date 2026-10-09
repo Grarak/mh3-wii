@@ -21,7 +21,9 @@
 #include "generated/rso_overlays/map11_field.h"
 #include "generated/rso_overlays/net_data.h"
 #include "generated/rso_overlays/map_town_online.h"
+#include "generated/rso_overlays/map_town_quest.h"
 #include <algorithm>
+#include <cstdio>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -75,6 +77,9 @@ Module modules[]{
     {"net_data.rso", NetDataBinding::Base, NetDataBinding::Text, NetDataBinding::Size, NetDataBinding::Prolog, NetDataBinding::Checksum, false, NetDataBinding::Records, NetDataBinding::Count},
     {"map_town.rso", MapTownOnlineBinding::Base, MapTownOnlineBinding::Text, MapTownOnlineBinding::Size, MapTownOnlineBinding::Prolog, MapTownOnlineBinding::Checksum, false,
      MapTownOnlineBinding::Records, MapTownOnlineBinding::Count},
+    // Loc Lac after a quest, at net_data's base.
+    {"map_town.rso", MapTownQuestBinding::Base, MapTownQuestBinding::Text, MapTownQuestBinding::Size, MapTownQuestBinding::Prolog, MapTownQuestBinding::Checksum, false,
+     MapTownQuestBinding::Records, MapTownQuestBinding::Count},
 };
 
 uint64_t TextChecksum(uint32_t text, uint32_t size) {
@@ -108,8 +113,11 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint3
     if (cpu->gpr[3] != base)
         MH3_THROW(std::runtime_error(std::string(name) + " loaded at an uncompiled address"));
 
-    if (TextChecksum(text, size) != expected)
-        MH3_THROW(std::runtime_error(std::string(name) + " linked text differs from static translation"));
+    if (const uint64_t checksum = TextChecksum(text, size); checksum != expected) {
+        char where[96];
+        std::snprintf(where, sizeof(where), " (base %08X, text checksum %016llX)", base, static_cast<unsigned long long>(checksum));
+        MH3_THROW(std::runtime_error(std::string(name) + " linked text differs from static translation" + where));
+    }
 
     Module* profile = nullptr;
 
