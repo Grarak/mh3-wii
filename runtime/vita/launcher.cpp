@@ -14,6 +14,7 @@
 #include "widescreen.h"
 #include "upscaling.h"
 #include "frame_limit.h"
+#include "language.h"
 #include "../src/net/online.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
@@ -38,12 +39,12 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
 #ifdef MH3_DEVELOPMENT
-#include <fstream>
 #include <sstream>
 #endif
 
@@ -698,6 +699,78 @@ std::string ActiveCheats() {
     return " Active: " + names + ".";
 }
 
+// The menu's settings, kept as "key=value" lines in settings.txt beside the
+// disc data (ux0:data/mh3-wii): read before the menu shows, written each time
+// one changes. Unknown keys and values that do not parse are left out.
+const char* const SettingsFile = "settings.txt";
+
+void LoadSettings(const std::filesystem::path& base) {
+    std::ifstream file(base / SettingsFile);
+
+    for (std::string line; std::getline(file, line);) {
+        const size_t equals = line.find('=');
+
+        if (equals == std::string::npos)
+            continue;
+
+        const std::string key = line.substr(0, equals), value = line.substr(equals + 1);
+
+        if (key == "online_server") {
+            if (CheckOnlineServer(value).empty())
+                SetOnlineServerSetting(value);
+
+            continue;
+        }
+
+        if (key == "language") {
+            for (const auto& language : GameLanguages())
+                if (value == language.code)
+                    SetLanguageSetting(language.system);
+
+            continue;
+        }
+
+        if (value != "on" && value != "off")
+            continue;
+
+        const bool on = value == "on";
+
+        if (key == "widescreen")
+            SetWidescreenSetting(on);
+        else if (key == "upscaling")
+            SetUpscalingSetting(on);
+        else if (key == "framelimit")
+            SetFrameLimitSetting(on);
+        else if (key == "online_skip_tls")
+            SetSkipTlsSetting(on);
+    }
+}
+
+// Through a temporary file: a write cut short keeps the previous settings.
+Status SaveSettings(const std::filesystem::path& base) {
+    const auto path = base / SettingsFile, temporary = base / (std::string(SettingsFile) + ".tmp");
+    const char* language = "en";
+
+    for (const auto& known : GameLanguages())
+        if (LanguageSetting() == known.system)
+            language = known.code;
+
+    {
+        std::ofstream file(temporary, std::ios::trunc);
+        const auto onOff = [](bool on) { return on ? "on" : "off"; };
+        file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << onOff(FrameLimitSetting())
+             << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
+        file.close();
+
+        if (!file)
+            return Status::Error("Cannot write the settings to " + temporary.string());
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    return FsStatus::Rename(temporary, path);
+}
+
 // The menus, until the game starts (started) or the user exits. A failure
 // ends them; an action's failure only shows its message. After the hand-off
 // the launcher no longer draws: nothing fails from there on.
@@ -746,6 +819,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     if (const std::string warning = AssetCache::StorageWarning(base); !warning.empty())
         Message(warning);
 
+    LoadSettings(base);
     const char* userDirectory = std::getenv("MH3_USER_DIR");
     const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
     Page page = Page::Main;
@@ -765,6 +839,16 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     bool frameLimit = FrameLimitSetting();
     std::string onlineServer = OnlineServerSetting();
     bool skipTls = SkipTlsSetting();
+
+    // The game reads it at startup; English unless the settings name another.
+    const auto languages = GameLanguages();
+    size_t language = 0;
+
+    for (size_t i = 0; i < languages.size(); ++i)
+        if (LanguageSetting() == languages[i].system)
+            language = i;
+
+    SetLanguageSetting(languages[language].system);
     SaveSlot save{};
     std::vector<SaveSlot> saves;
     std::vector<QuestCatalog::Quest> quests;
@@ -853,6 +937,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
                     std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
                     std::string("Framelimit: ") + (frameLimit ? "ON" : "OFF"),
+                    std::string("Language: ") + languages[language].name,
                     "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
             const std::string cheats = ActiveCheats();
             const std::string details[] = {"Continue through the game's title and character selection." + cheats,
@@ -865,8 +950,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
                                            frameLimit ? "The game waits for each frame to be drawn before the next: every frame is shown."
                                                       : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
+                                           "The game's text, menus and keyboard: English, French, German, Italian or Spanish.",
                                            "The server the game's City mode connects to."};
-            detail = details[std::min<size_t>(selected, 9)];
+            detail = details[std::min<size_t>(selected, 10)];
             footer = "X Select   D-pad Move";
             break;
         }
@@ -1070,7 +1156,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 break;
             case Page::Online:
                 enter(Page::Main);
-                selected = 9;
+                selected = 10;
                 break;
             case Page::Main:
                 break;
@@ -1207,6 +1293,13 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
             }
 
+            if (page == Page::Main && selected == 9 && (accept || direction)) {
+                language = (language + languages.size() + (direction ? direction : 1)) % languages.size();
+                SetLanguageSetting(languages[language].system);
+                Log("language %s", languages[language].code);
+                return SaveSettings(base);
+            }
+
             if (page == Page::Online && selected == 0 && (accept || (buttons & Button::Triangle))) {
                 std::string server = accept ? onlineServer : kDefaultOnlineServer;
 
@@ -1219,7 +1312,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 onlineServer = server;
                 SetOnlineServerSetting(server);
                 Log("online server %s", server.c_str());
-                return {};
+                return SaveSettings(base);
             }
 
             if (!accept)
@@ -1272,6 +1365,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     Log("framelimit %s", frameLimit ? "on" : "off");
                 } else
                     enter(Page::Online);
+
+                if (selected >= 6 && selected <= 8)
+                    return SaveSettings(base);
 
                 break;
             case Page::Saves:
@@ -1354,6 +1450,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     skipTls = !skipTls;
                     SetSkipTlsSetting(skipTls);
                     Log("skip TLS handshake %s", skipTls ? "on" : "off");
+                    return SaveSettings(base);
                 }
 
                 break;

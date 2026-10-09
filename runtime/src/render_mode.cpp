@@ -5,11 +5,13 @@
 #include "memory.h"
 #include "native_graphics.h"
 #include "widescreen.h"
+#include "language.h"
 #include "../native/mh3_render_mode.h"
 #include <array>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 constexpr uint32_t ModeAddress = 0x8065A980;
@@ -22,6 +24,13 @@ constexpr int32_t ModePointer = -0x46B8;
 // aspect (80040300, 8043a974, 8043d908).
 constexpr uint32_t WideAspect = 0x80797F68;
 std::optional<bool> launcherSetting;
+std::optional<uint8_t> launcherLanguage;
+
+// Wii SC language numbers (SC_LANG_*), in the launcher's order.
+constexpr GameLanguage Languages[]{
+    {"English", "en", 1}, {"French", "fr", 3}, {"German", "de", 2}, {"Italian", "it", 5}, {"Spanish", "es", 4},
+};
+
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
         MH3_THROW(std::runtime_error("Native render mode input failed: " + std::to_string(status)));
@@ -37,7 +46,7 @@ mh3_render_mode Read(uint32_t address) {
 std::optional<bool> WidescreenSetting() {
     if (launcherSetting)
         return launcherSetting;
-    // Read at first use: the Vita applies runtime.env after static initialization.
+    // Read at first use.
     static const auto environment = []() -> std::optional<bool> {
         if (const char* value = std::getenv("MH3_WIDESCREEN"); value && *value)
             return value[0] != '0';
@@ -67,6 +76,44 @@ extern "C" void MH3_SCGetAspectRatio(CpuContext* cpu) {
     cpu->gpr[3] = ratio;
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804DD060, MH3_SCGetAspectRatio, "SCGetAspectRatio");
+
+std::span<const GameLanguage> GameLanguages() {
+    return Languages;
+}
+
+std::optional<uint8_t> LanguageSetting() {
+    if (launcherLanguage)
+        return launcherLanguage;
+
+    // Read at first use.
+    static const auto environment = []() -> std::optional<uint8_t> {
+        if (const char* value = std::getenv("MH3_LANGUAGE"); value && *value)
+            for (const auto& language : Languages)
+                if (std::string_view(value) == language.code)
+                    return language.system;
+
+        return std::nullopt;
+    }();
+    return environment;
+}
+
+void SetLanguageSetting(uint8_t system) {
+    launcherLanguage = system;
+}
+
+// SCGetLanguage: the console's IPL.LNG item, unless the host sets it. The
+// game takes its language from it at startup (system_w+1, then +9), and the
+// software keyboard its layout.
+extern "C" void func_804DD150(CpuContext* cpu);
+extern "C" void MH3_SCGetLanguage(CpuContext* cpu) {
+    if (const auto setting = LanguageSetting()) {
+        cpu->gpr[3] = *setting;
+        return;
+    }
+
+    func_804DD150(cpu);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804DD150, MH3_SCGetLanguage, "SCGetLanguage");
 
 extern "C" void MH3_RenderInit(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x10);
