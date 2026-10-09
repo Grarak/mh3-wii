@@ -377,88 +377,8 @@ mh3_res_status mh3_source_tracker_init(mh3_source_tracker *out, mh3_source_range
     *out = t;
     return MH3_RES_OK;
 }
-static mh3_res_status append(mh3_source_tracker *t, size_t *count, mh3_source_range r) {
-    if (*count >= t->capacity)
-        return MH3_RES_RANGE;
-    t->work[(*count)++] = r;
-    return MH3_RES_OK;
-}
-static mh3_res_status remove_range(mh3_source_tracker *t, uint32_t address, uint32_t bytes, size_t *count) {
-    uint64_t end = (uint64_t)address + bytes;
-    *count = 0;
-    for (size_t i = 0; i < t->count; i++) {
-        mh3_source_range r = t->ranges[i];
-        uint64_t re = (uint64_t)r.address + r.bytes;
-        if (re <= address || r.address >= end) {
-            if (append(t, count, r) != MH3_RES_OK)
-                return MH3_RES_RANGE;
-            continue;
-        }
-        if (r.address < address) {
-            mh3_source_range left = r;
-            left.bytes = address - r.address;
-            if (append(t, count, left) != MH3_RES_OK)
-                return MH3_RES_RANGE;
-        }
-        if (re > end) {
-            mh3_source_range right = r;
-            right.address = (uint32_t)end;
-            right.bytes = (uint32_t)(re - end);
-            right.partition_offset += end - r.address;
-            if (append(t, count, right) != MH3_RES_OK)
-                return MH3_RES_RANGE;
-        }
-    }
-    return MH3_RES_OK;
-}
-static void commit(mh3_source_tracker *t, size_t count) {
-    /* Ordered nonoverlapping ranges enable load-time binary address lookup. */
-    for (size_t i = 1; i < count; i++) {
-        mh3_source_range r = t->work[i];
-        size_t j = i;
-        while (j && t->work[j - 1].address > r.address) {
-            t->work[j] = t->work[j - 1];
-            j--;
-        }
-        t->work[j] = r;
-    }
-    size_t n = 0;
-    for (size_t i = 0; i < count; i++) {
-        mh3_source_range r = t->work[i];
-        if (n && (uint64_t)t->ranges[n - 1].address + t->ranges[n - 1].bytes == r.address && t->ranges[n - 1].partition_offset + t->ranges[n - 1].bytes == r.partition_offset &&
-            t->ranges[n - 1].generation == r.generation && (uint64_t)t->ranges[n - 1].bytes + r.bytes <= UINT32_MAX)
-            t->ranges[n - 1].bytes += r.bytes;
-        else
-            t->ranges[n++] = r;
-    }
-    t->count = n;
-}
-mh3_res_status mh3_source_record_disc(mh3_source_tracker *t, uint32_t address, uint32_t bytes, uint64_t offset, uint64_t generation) {
-    if (!t || !memory_range(address, bytes) || generation <= t->generation || offset > UINT64_MAX - bytes)
-        return MH3_RES_INVALID;
-    size_t count;
-    if (remove_range(t, address, bytes, &count) != MH3_RES_OK)
-        return MH3_RES_RANGE;
-    mh3_source_range r = {address, bytes, offset, generation};
-    if (append(t, &count, r) != MH3_RES_OK)
-        return MH3_RES_RANGE;
-    commit(t, count);
-    t->generation = generation;
-    return MH3_RES_OK;
-}
-mh3_res_status mh3_source_retire(mh3_source_tracker *t, uint32_t address, uint32_t bytes) {
-    if (!t || !memory_range(address, bytes))
-        return MH3_RES_INVALID;
-    size_t count;
-    if (remove_range(t, address, bytes, &count) != MH3_RES_OK)
-        return MH3_RES_RANGE;
-    commit(t, count);
-    return MH3_RES_OK;
-}
-int mh3_source_intersects(const mh3_source_tracker *t, uint32_t address, uint32_t bytes) {
-    if (!t || !memory_range(address, bytes))
-        return 0;
-    const uint64_t end = (uint64_t)address + bytes;
+/* First range ending after address (ranges are ordered and nonoverlapping). */
+static size_t first_after(const mh3_source_tracker *t, uint32_t address) {
     size_t lo = 0, hi = t->count;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
@@ -467,34 +387,97 @@ int mh3_source_intersects(const mh3_source_tracker *t, uint32_t address, uint32_
         else
             hi = mid;
     }
-    return lo < t->count && t->ranges[lo].address < end;
+    return lo;
+}
+/* Replace [address, address + bytes) by insert (ordered, merged, inside that
+ * span), keeping the clipped edges of overlapped ranges. Only the affected
+ * slice moves. Inserted ranges carry a new generation, so they never merge
+ * with a neighbour and the set stays ordered and merged. Capacity failure
+ * leaves the tracker unchanged. */
+static mh3_res_status splice(mh3_source_tracker *t, uint32_t address, uint32_t bytes, const mh3_source_range *insert, size_t n) {
+    const uint64_t end = (uint64_t)address + bytes;
+    const size_t lo = first_after(t, address);
+    size_t hi = lo;
+    while (hi < t->count && t->ranges[hi].address < end)
+        hi++;
+    mh3_source_range edge[2];
+    int left = 0, right = 0;
+    if (lo < hi && t->ranges[lo].address < address) {
+        edge[0] = t->ranges[lo];
+        edge[0].bytes = address - edge[0].address;
+        left = 1;
+    }
+    if (lo < hi) {
+        const mh3_source_range last = t->ranges[hi - 1];
+        const uint64_t re = (uint64_t)last.address + last.bytes;
+        if (re > end) {
+            edge[1] = last;
+            edge[1].address = (uint32_t)end;
+            edge[1].bytes = (uint32_t)(re - end);
+            edge[1].partition_offset += end - last.address;
+            right = 1;
+        }
+    }
+    const size_t total = (size_t)left + n + (size_t)right, count = t->count - (hi - lo) + total;
+    if (count > t->capacity)
+        return MH3_RES_RANGE;
+    memmove(t->ranges + lo + total, t->ranges + hi, (t->count - hi) * sizeof *t->ranges);
+    size_t at = lo;
+    if (left)
+        t->ranges[at++] = edge[0];
+    if (n)
+        memcpy(t->ranges + at, insert, n * sizeof *insert);
+    at += n;
+    if (right)
+        t->ranges[at] = edge[1];
+    t->count = count;
+    return MH3_RES_OK;
+}
+mh3_res_status mh3_source_record_disc(mh3_source_tracker *t, uint32_t address, uint32_t bytes, uint64_t offset, uint64_t generation) {
+    if (!t || !memory_range(address, bytes) || generation <= t->generation || offset > UINT64_MAX - bytes)
+        return MH3_RES_INVALID;
+    const mh3_source_range r = {address, bytes, offset, generation};
+    if (splice(t, address, bytes, &r, 1) != MH3_RES_OK)
+        return MH3_RES_RANGE;
+    t->generation = generation;
+    return MH3_RES_OK;
+}
+mh3_res_status mh3_source_retire(mh3_source_tracker *t, uint32_t address, uint32_t bytes) {
+    if (!t || !memory_range(address, bytes))
+        return MH3_RES_INVALID;
+    return splice(t, address, bytes, NULL, 0);
+}
+int mh3_source_intersects(const mh3_source_tracker *t, uint32_t address, uint32_t bytes) {
+    if (!t || !memory_range(address, bytes))
+        return 0;
+    const size_t i = first_after(t, address);
+    return i < t->count && t->ranges[i].address < (uint64_t)address + bytes;
 }
 mh3_res_status mh3_source_record_copy(mh3_source_tracker *t, uint32_t dst, uint32_t src, uint32_t bytes, uint64_t generation) {
     if (!t || !memory_range(dst, bytes) || !memory_range(src, bytes) || generation <= t->generation)
         return MH3_RES_INVALID;
     const uint64_t end = (uint64_t)src + bytes;
     size_t n = 0;
-    for (size_t i = 0; i < t->count; i++) {
+    for (size_t i = first_after(t, src); i < t->count && t->ranges[i].address < end; i++) {
         const mh3_source_range r = t->ranges[i];
         uint64_t begin = r.address, re = (uint64_t)r.address + r.bytes;
         if (begin < src)
             begin = src;
         if (re > end)
             re = end;
-        if (begin >= re)
-            continue;
-        if (n >= t->capacity)
+        const mh3_source_range copy = {(uint32_t)(dst + begin - src), (uint32_t)(re - begin), r.partition_offset + begin - r.address, generation};
+        /* Copied pieces share the new generation: merge contiguous ones. */
+        mh3_source_range *previous = n ? &t->transfer[n - 1] : NULL;
+        if (previous && (uint64_t)previous->address + previous->bytes == copy.address && previous->partition_offset + previous->bytes == copy.partition_offset &&
+            (uint64_t)previous->bytes + copy.bytes <= UINT32_MAX)
+            previous->bytes += copy.bytes;
+        else if (n >= t->capacity)
             return MH3_RES_RANGE;
-        mh3_source_range copy = {(uint32_t)(dst + begin - src), (uint32_t)(re - begin), r.partition_offset + begin - r.address, generation};
-        t->transfer[n++] = copy;
+        else
+            t->transfer[n++] = copy;
     }
-    size_t count;
-    if (remove_range(t, dst, bytes, &count) != MH3_RES_OK)
+    if (splice(t, dst, bytes, t->transfer, n) != MH3_RES_OK)
         return MH3_RES_RANGE;
-    for (size_t i = 0; i < n; i++)
-        if (append(t, &count, t->transfer[i]) != MH3_RES_OK)
-            return MH3_RES_RANGE;
-    commit(t, count);
     t->generation = generation;
     return MH3_RES_OK;
 }
@@ -502,7 +485,7 @@ mh3_res_status mh3_source_resolve(const mh3_source_tracker *t, uint32_t address,
     if (!t || !out || !memory_range(address, bytes))
         return MH3_RES_INVALID;
     uint64_t cursor = address, end = (uint64_t)address + bytes, expected = 0, generation = 0, start = 0;
-    for (size_t i = 0; i < t->count && cursor < end; i++) {
+    for (size_t i = first_after(t, address); i < t->count && cursor < end; i++) {
         const mh3_source_range r = t->ranges[i];
         const uint64_t re = (uint64_t)r.address + r.bytes;
         if (re <= cursor)
