@@ -389,20 +389,45 @@ Status ReadPack(const Manager* m, const std::filesystem::path& path, uint32_t in
 // one render packet. Only while the budget holds it without an eviction; a
 // pack retired meanwhile is skipped. The first draw still notes the demand.
 void PrefetchGPU(Manager& m, uintptr_t handle, uint64_t generation) {
+    // The admitted pack, still unregistered and within the budget.
+    const auto pending = [&]() -> Assets* {
+        const auto found = m.handles.find(handle);
+
+        if (found == m.handles.end() || found->second->generation != generation || found->second->gpuRegistered)
+            return nullptr;
+
+        Assets& asset = *found->second;
+        return NativeModelGPUResidentBytes() > MaxGPUBytes - NativeModelGPUAllocationBytes(asset.pack.gpu_bytes) ? nullptr : &asset;
+    };
+
+    std::string path;
+    uint64_t offset = 0;
+    uint32_t bytes = 0;
+    {
+        std::lock_guard lock(m.lock);
+        const Assets* asset = pending();
+
+        if (!asset)
+            return;
+
+        path = asset->path.string();
+        offset = asset->pack.gpu_file_offset;
+        bytes = asset->pack.gpu_bytes;
+    }
+
+    // The payload is read from the card without the lock: certification on
+    // the game thread takes it for each pack it admits and would wait behind
+    // the read.
+    auto buffer = ReadNativeModelGPU(path.c_str(), offset, bytes);
     std::lock_guard lock(m.lock);
-    const auto found = m.handles.find(handle);
+    Assets* asset = pending();
 
-    if (found == m.handles.end() || found->second->generation != generation || found->second->gpuRegistered)
+    // Released or registered meanwhile: the buffer read retires unused.
+    if (!asset)
         return;
 
-    auto& asset = *found->second;
-
-    if (NativeModelGPUResidentBytes() > MaxGPUBytes - NativeModelGPUAllocationBytes(asset.pack.gpu_bytes))
-        return;
-
-    const auto name = asset.path.string();
-    RegisterNativeModelGPU(asset.pack, name.c_str(), handle, generation);
-    asset.gpuRegistered = true;
+    RegisterNativeModelGPU(asset->pack, path.c_str(), handle, generation, std::move(buffer));
+    asset->gpuRegistered = true;
 }
 
 // Admission's part on the game thread, in the order the packs are admitted:
@@ -568,8 +593,14 @@ class PackPreparer {
 // The converted pack of `key`: claimed from the read-ahead, or read here.
 Status OpenConvertedPack(Manager& m, const std::filesystem::path& path, uint32_t key, std::unique_ptr<Assets>& result) {
     Status read;
+    const auto start = std::chrono::steady_clock::now();
+    const bool taken = PackPreparer::Get().Take(key, result, read);
+    {
+        std::lock_guard lock(m.lock);
+        m.stats.take_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    }
 
-    if (!PackPreparer::Get().Take(key, result, read))
+    if (!taken)
         return TimedOpenPack(m, path, key, result);
 
     MH3_RETURN_IF_ERROR(read);
@@ -676,9 +707,28 @@ Status TryEnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
     auto& m = *manager;
 
     if (m.converted) {
+        // Its whole time for converted packs (ensure_ms), apart from the
+        // asset cache's answer (cache_ms) and the read-ahead (take_ms).
+        struct Timed {
+            Manager& m;
+            const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+
+            ~Timed() {
+                std::lock_guard lock(m.lock);
+                m.stats.ensure_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            }
+        } timed{m};
+
         uint32_t key = 0;
         std::filesystem::path path;
-        MH3_RETURN_IF_ERROR(GameAssetCache()->ModelPack(offset, key, path));
+        const auto start = std::chrono::steady_clock::now();
+        const Status answered = GameAssetCache()->ModelPack(offset, key, path);
+        {
+            std::lock_guard lock(m.lock);
+            m.stats.cache_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+
+        MH3_RETURN_IF_ERROR(answered);
 
         if (path.empty()) {
             std::ostringstream reason;
@@ -875,16 +925,13 @@ NativeModelAssetStats ReadNativeModelAssetStats() {
     return result;
 }
 
-void ReadNativeModelPackOpenings(uint64_t& admissions, double& open_ms) {
-    admissions = 0;
-    open_ms = 0;
-
+NativeModelPackOpenings ReadNativeModelPackOpenings() {
     if (!manager)
-        return;
+        return {};
 
     std::lock_guard lock(manager->lock);
-    admissions = manager->stats.admissions;
-    open_ms = manager->stats.open_ms;
+    const auto& stats = manager->stats;
+    return {stats.admissions, stats.open_ms, stats.cache_ms, stats.take_ms, stats.ensure_ms};
 }
 
 void UnloadNativeModelAssets() {

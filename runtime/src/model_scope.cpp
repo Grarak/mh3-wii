@@ -1242,6 +1242,8 @@ struct LoadingScreen {
     uint64_t certified = 0, tables = 0, cached = 0, admissions = 0;
     double prepare_ms = 0, longest_ms = 0; // longest frame: span between two calls
     double certify_ms = 0, open_ms = 0;    // of prepare_ms: certification, and the packs it opened
+    double cache_ms = 0, take_ms = 0;      // of certify_ms: waiting for the asset cache and the read-ahead
+    double ensure_ms = 0;                  // of certify_ms: the packs' admission in all (cache_ms and take_ms are of it)
 } loading;
 
 void ReportLoadingScreen() {
@@ -1252,10 +1254,10 @@ void ReportLoadingScreen() {
     loading.open = false;
     std::fprintf(stderr,
                  "MH3 loading screen: %.3f s, %u frames, longest %.0f ms; draw table preparation %.2f ms (%llu models certified in %.2f ms, %llu packs opened in %.2f ms, %llu tables, %llu "
-                 "from the cache)\n",
+                 "from the cache); certification's admissions took %.2f ms, of it %.2f ms waiting for the asset cache and %.2f ms for read-ahead packs\n",
                  std::chrono::duration<double>(loading.last - loading.first).count(), loading.frames, loading.longest_ms, loading.prepare_ms, static_cast<unsigned long long>(loading.certified),
                  loading.certify_ms, static_cast<unsigned long long>(loading.admissions), loading.open_ms, static_cast<unsigned long long>(loading.tables),
-                 static_cast<unsigned long long>(loading.cached));
+                 static_cast<unsigned long long>(loading.cached), loading.ensure_ms, loading.cache_ms, loading.take_ms);
 #endif
 }
 } // namespace
@@ -1290,16 +1292,17 @@ void PrepareNativeModelDrawTables() {
 
     const uint64_t cachedBefore = tableStats.cached;
 #ifdef MH3_DEVELOPMENT
-    uint64_t admissionsBefore, admissionsAfter;
-    double openBefore, openAfter;
-    ReadNativeModelPackOpenings(admissionsBefore, openBefore);
+    const NativeModelPackOpenings before = ReadNativeModelPackOpenings();
 #endif
     const size_t certified = CertifyLoadedNativeModels();
 #ifdef MH3_DEVELOPMENT
-    ReadNativeModelPackOpenings(admissionsAfter, openAfter);
+    const NativeModelPackOpenings after = ReadNativeModelPackOpenings();
     loading.certify_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    loading.admissions += admissionsAfter - admissionsBefore;
-    loading.open_ms += openAfter - openBefore;
+    loading.admissions += after.admissions - before.admissions;
+    loading.open_ms += after.open_ms - before.open_ms;
+    loading.cache_ms += after.cache_ms - before.cache_ms;
+    loading.take_ms += after.take_ms - before.take_ms;
+    loading.ensure_ms += after.ensure_ms - before.ensure_ms;
 #endif
     std::vector<NativeModelOwner> owners;
     ListNativeModelOwnersWithoutDrawTable(owners);

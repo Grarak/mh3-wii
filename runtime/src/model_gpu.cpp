@@ -82,13 +82,31 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
 }
 } // namespace
 
+void NativeModelGPUPayloadRelease::operator()(aurora::gl::NativeMeshBuffer* buffer) const {
+    delete buffer;
+}
+
+NativeModelGPUPayload ReadNativeModelGPU(const char* path, uint64_t offset, uint32_t bytes) {
+    Owner();
+    return NativeModelGPUPayload(new aurora::gl::NativeMeshBuffer(path, offset, bytes));
+}
+
 void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t handle, uint64_t generation) {
     Owner();
 
     if (!handle || !generation || !path || residents.contains(handle))
         MH3_THROW(std::runtime_error("Invalid or duplicate model GPU registration"));
 
-    Resident next{&pack, generation, std::make_unique<aurora::gl::NativeMeshBuffer>(path, pack.gpu_file_offset, pack.gpu_bytes), {}, {}};
+    RegisterNativeModelGPU(pack, path, handle, generation, ReadNativeModelGPU(path, pack.gpu_file_offset, pack.gpu_bytes));
+}
+
+void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t handle, uint64_t generation, NativeModelGPUPayload buffer) {
+    Owner();
+
+    if (!handle || !generation || !path || !buffer || residents.contains(handle))
+        MH3_THROW(std::runtime_error("Invalid or duplicate model GPU registration"));
+
+    Resident next{&pack, generation, std::unique_ptr<aurora::gl::NativeMeshBuffer>(buffer.release()), {}, {}};
     auto bound = pack;
     const auto bindStatus = mh3_mesh_pack_bind_gpu(&bound, {next.buffer->data(), next.buffer->size()});
 
