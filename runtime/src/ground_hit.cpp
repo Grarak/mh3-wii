@@ -39,9 +39,14 @@
 #include "memory.h"
 #include "port_check.h"
 
+#include <algorithm>
+#include <atomic>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <vector>
 #if defined(__ARM_NEON) && !defined(MH3_WRITE_WATCH)
 #include <arm_neon.h>
 #define MH3_GROUND_NEON 1
@@ -279,6 +284,262 @@ bool Contains(uint32_t triangle, Point p) {
 }
 #endif
 
+#if MH3_GROUND_NEON
+// The candidate lists as their triangles' XZ boxes in native memory, four to
+// a group: a query compares the point with four boxes at once and reads only
+// the triangles whose box holds it (in the Tundra 2-3 of about 21 candidates
+// a query; each triangle spans two or three cache lines, which on the A9
+// mostly miss). A box is widened so that outside it Contains is false:
+//
+//   the area tests' rounding (the differences, the products, the one unit
+//   apart taken as equal) stays under 2^-20 of the products, which are at
+//   most an edge times the point's distance to a corner; outside the
+//   triangle by `dist`, some edge has the point outside it by at least
+//   dist * sin(smallest angle / 2) (the triangle grown by d along its edges
+//   reaches d / sin(angle / 2) past its corners). So a margin of the longest
+//   edge * 2^-16 / sin(smallest angle) puts that edge's area well past the
+//   rounding, with the right sign (and the triangle's own area too).
+//
+// Triangles thinner than a sine of 1/1000, with corners beyond 1e20 or not
+// finite, and with flags 0 (Flags stores 0x20 for those when tested) get an
+// unbounded box, and points beyond 1e30 or NaN skip the boxes: those take
+// every candidate as before. Lists are cached per area; an area's ground
+// header (0x88 bytes) changing (another map, the ground reloaded) drops all.
+class Boxes {
+  public:
+    struct alignas(16) Group {
+        float minX[4], maxX[4], minZ[4], maxZ[4];
+        uint32_t triangles[4];
+    };
+
+    // Takes the cache for one query on the area's ground; false when another
+    // thread has it or the area has no snapshot slot.
+    bool Claim(uint8_t area, uint32_t ground) {
+        if (area >= kAreas || busy_.test_and_set(std::memory_order_acquire))
+            return false;
+
+        const uint8_t* header = GuestFlat::Host(ground);
+
+        if (!known_[area] || std::memcmp(headers_[area], header, kGroundBytes) != 0) {
+            Clear();
+            std::memcpy(headers_[area], header, kGroundBytes);
+            known_[area] = true;
+        }
+
+        area_ = area;
+        return true;
+    }
+
+    void Release() {
+        busy_.clear(std::memory_order_release);
+    }
+
+    // The list's groups (`count` of them), built on first use; null for a
+    // list too long to cache.
+    const Group* Find(uint32_t list, uint32_t& count) {
+        uint32_t i = Hash(list);
+
+        for (;; i = (i + 1) & (kSlots - 1)) {
+            const Slot& slot = slots_[i];
+
+            if (slot.list == list && slot.area == area_) {
+                count = slot.count;
+                return groups_.data() + slot.first;
+            }
+
+            if (slot.list == 0)
+                break;
+        }
+
+        uint32_t n = 0;
+
+        while (n < kMaxListed && MemoryInline::FlatRead32(list + 4 * n) != 0xFFFFFFFF)
+            ++n;
+
+        if (n == kMaxListed)
+            return nullptr;
+
+        count = (n + 3) / 4;
+
+        if (used_ == kMaxSlots || groups_.size() + count > kMaxGroups) {
+            Clear();
+            i = Hash(list);
+        }
+
+        if (groups_.capacity() == 0)
+            groups_.reserve(kMaxGroups);
+
+        const uint32_t first = uint32_t(groups_.size());
+        groups_.resize(first + count);
+
+        for (uint32_t k = 0; k < 4 * count; ++k)
+            SetBox(groups_[first + k / 4], k % 4, k < n ? MemoryInline::FlatRead32(list + 4 * k) : 0);
+
+        while (slots_[i].list != 0)
+            i = (i + 1) & (kSlots - 1);
+
+        slots_[i] = {list, uint16_t(first), uint8_t(count), area_};
+        ++used_;
+        return groups_.data() + first;
+    }
+
+  private:
+    static constexpr uint32_t kAreas = 15; // 0x802970F0 clears 15 grounds
+    static constexpr uint32_t kSlots = 2048;
+    static constexpr uint32_t kMaxSlots = kSlots * 3 / 4;
+    static constexpr uint32_t kMaxGroups = 4096;
+    static constexpr uint32_t kMaxListed = 4 * 255;
+
+    struct Slot {
+        uint32_t list;
+        uint16_t first;
+        uint8_t count, area;
+    };
+
+    static uint32_t Hash(uint32_t list) {
+        return ((list >> 2) * 0x9E3779B1u) >> 21;
+    }
+
+    void Clear() {
+        std::memset(slots_, 0, sizeof(slots_));
+        used_ = 0;
+        groups_.clear();
+    }
+
+    // Lane `lane` of the group: the triangle's widened box, unbounded for
+    // the triangles above, empty for no triangle (0, the last group's rest).
+    static void SetBox(Group& group, int lane, uint32_t triangle) {
+        constexpr float kInf = std::numeric_limits<float>::infinity();
+        group.triangles[lane] = triangle;
+
+        if (triangle == 0) {
+            group.minX[lane] = group.minZ[lane] = kInf;
+            group.maxX[lane] = group.maxZ[lane] = -kInf;
+            return;
+        }
+
+        group.minX[lane] = group.minZ[lane] = -kInf;
+        group.maxX[lane] = group.maxZ[lane] = kInf;
+
+        if (MemoryInline::FlatRead16(triangle + kFlags) == 0)
+            return;
+
+        double x[3], z[3];
+
+        for (int i = 0; i < 3; ++i) {
+            x[i] = Memory::ReadFloat32(triangle + kVertices + 12 * i);
+            z[i] = Memory::ReadFloat32(triangle + kVertices + 12 * i + 8);
+
+            if (!(std::fabs(x[i]) < 1e20 && std::fabs(z[i]) < 1e20))
+                return;
+        }
+
+        double edges[3];
+
+        for (int i = 0; i < 3; ++i)
+            edges[i] = std::hypot(x[(i + 1) % 3] - x[i], z[(i + 1) % 3] - z[i]);
+
+        std::sort(edges, edges + 3);
+        const double area = std::fabs((x[1] - x[0]) * (z[2] - z[0]) - (x[2] - x[0]) * (z[1] - z[0]));
+
+        // The smallest angle's sine: twice the area over the two longest edges.
+        const double sine = edges[0] > 0.0 ? area / (edges[1] * edges[2]) : 0.0;
+
+        if (!(sine >= 1e-3))
+            return;
+
+        const double margin = edges[2] * 0x1p-16 / sine + 0x1p-10;
+        const auto below = [](double v) { return std::nextafter(float(v), -kInf); };
+        const auto above = [](double v) { return std::nextafter(float(v), kInf); };
+        group.minX[lane] = below(std::min({x[0], x[1], x[2]}) - margin);
+        group.maxX[lane] = above(std::max({x[0], x[1], x[2]}) + margin);
+        group.minZ[lane] = below(std::min({z[0], z[1], z[2]}) - margin);
+        group.maxZ[lane] = above(std::max({z[0], z[1], z[2]}) + margin);
+    }
+
+    std::atomic_flag busy_ = ATOMIC_FLAG_INIT;
+    uint8_t area_ = 0;
+    bool known_[kAreas]{};
+    uint8_t headers_[kAreas][kGroundBytes]{};
+    Slot slots_[kSlots]{};
+    uint32_t used_ = 0;
+    std::vector<Group> groups_;
+};
+
+Boxes boxCache;
+
+// Starts loading a triangle's three cache lines.
+void Prefetch(uint32_t triangle) {
+    const uint8_t* host = GuestFlat::Host(triangle);
+    __builtin_prefetch(host);
+    __builtin_prefetch(host + 32);
+    __builtin_prefetch(host + 0x3B);
+}
+#endif
+
+// One query's walk over its cell's lists: through the box cache when it can
+// have it, else every candidate.
+class Candidates {
+  public:
+    Candidates(uint8_t area, uint32_t ground, Point point) {
+#if MH3_GROUND_NEON
+        if (std::fabs(point.x) < 1e30f && std::fabs(point.z) < 1e30f && boxCache.Claim(area, ground)) {
+            boxes_ = &boxCache;
+            x_ = vdupq_n_f32(point.x);
+            z_ = vdupq_n_f32(point.z);
+        }
+#endif
+    }
+
+    ~Candidates() {
+#if MH3_GROUND_NEON
+        if (boxes_)
+            boxes_->Release();
+#endif
+    }
+
+    Candidates(const Candidates&) = delete;
+    Candidates& operator=(const Candidates&) = delete;
+
+    // Runs `take` on the list's candidates in order until it returns true.
+    template <typename Take>
+    void Scan(uint32_t list, Take&& take) const {
+#if MH3_GROUND_NEON
+        uint32_t count;
+
+        if (const Boxes::Group* group = boxes_ ? boxes_->Find(list, count) : nullptr) {
+            for (const Boxes::Group* end = group + count; group != end; ++group) {
+                const uint32x4_t inX = vandq_u32(vcgeq_f32(x_, vld1q_f32(group->minX)), vcleq_f32(x_, vld1q_f32(group->maxX)));
+                const uint32x4_t inZ = vandq_u32(vcgeq_f32(z_, vld1q_f32(group->minZ)), vcleq_f32(z_, vld1q_f32(group->maxZ)));
+                uint64_t lanes = vget_lane_u64(vreinterpret_u64_u16(vmovn_u32(vandq_u32(inX, inZ))), 0) & 0x0001000100010001ull;
+
+                for (uint64_t ahead = lanes; ahead; ahead &= ahead - 1)
+                    Prefetch(group->triangles[std::countr_zero(ahead) / 16]);
+
+                for (; lanes; lanes &= lanes - 1)
+                    if (take(group->triangles[std::countr_zero(lanes) / 16]))
+                        return;
+            }
+
+            return;
+        }
+#endif
+
+        for (;; list += 4) {
+            const uint32_t triangle = MemoryInline::FlatRead32(list);
+
+            if (triangle == 0xFFFFFFFF || (PrefetchNext(list), take(triangle)))
+                return;
+        }
+    }
+
+  private:
+#if MH3_GROUND_NEON
+    Boxes* boxes_ = nullptr;
+    float32x4_t x_, z_;
+#endif
+};
+
 // The triangle's plane height at the point, in the original's order.
 float Height(uint32_t triangle, uint32_t pos) {
     const float ax = Memory::ReadFloat32(triangle + kNormal) * Memory::ReadFloat32(pos);
@@ -312,31 +573,24 @@ void GetGroundHit2(CpuContext* cpu) {
         heights[0] = Memory::ReadFloat32(pos + 4);
         call(GridCandidates, {pos, ground, frame[8], frame[12]});
         const uint32_t cellX = Memory::Read32(frame[8]), cellZ = Memory::Read32(frame[12]);
-        const Probe p = ProbeOf({Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)});
+        const Point point{Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)};
+        const Probe p = ProbeOf(point);
         const uint8_t areaMask = Memory::Read8(kAreaMasks + area);
+        const Candidates candidates(area, ground, point);
         int count = 0;
 
         for (uint32_t layer = 0; layer < Memory::Read32(ground + kLayers) && count < kMaxTaken; ++layer) {
-            for (uint32_t list = CandidateList(ground, cellX, layer, cellZ);; list += 4) {
-                const uint32_t triangle = MemoryInline::FlatRead32(list);
-
-                if (triangle == 0xFFFFFFFF)
-                    break;
-
-                PrefetchNext(list);
-
+            candidates.Scan(CandidateList(ground, cellX, layer, cellZ), [&](uint32_t triangle) {
                 if (areaMask & MemoryInline::FlatRead8(triangle + kAreaBits))
-                    continue;
+                    return false;
 
                 if (!(mask & Flags(triangle)) || !FacesUp(triangle) || Taken(triangle, count) || !Contains(triangle, p))
-                    continue;
+                    return false;
 
                 Memory::Write32(kTaken + 4 * count, triangle);
                 heights[count++] = Height(triangle, pos);
-
-                if (count == kMaxTaken)
-                    break;
-            }
+                return count == kMaxTaken;
+            });
         }
 
         result = heights[0];
@@ -405,24 +659,20 @@ void HitGroundComon(CpuContext* cpu) {
             const uint32_t heights = frame[16], records = frame[36];
             call(GridCandidates, {pos, ground, frame[8], frame[12]});
             const uint32_t cellX = Memory::Read32(frame[8]), cellZ = Memory::Read32(frame[12]);
-            const Probe p = ProbeOf({Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)});
+            const Point point{Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)};
+            const Probe p = ProbeOf(point);
             const uint8_t areaMask = Memory::Read8(kAreaMasks + area);
+            const Candidates candidates(area, ground, point);
             int count = 0;
 
             for (uint32_t layer = 0; layer < Memory::Read32(ground + kLayers) && count < kMaxTaken; ++layer) {
-                for (uint32_t list = CandidateList(ground, cellX, layer, cellZ);; list += 4) {
-                    const uint32_t triangle = MemoryInline::FlatRead32(list);
-
-                    if (triangle == 0xFFFFFFFF)
-                        break;
-
-                    PrefetchNext(list);
+                candidates.Scan(CandidateList(ground, cellX, layer, cellZ), [&](uint32_t triangle) {
                     const uint16_t flags = Flags(triangle);
 
                     if (!(mask & flags) || (areaMask & MemoryInline::FlatRead8(triangle + kAreaBits)) ||
                         (skipMask & MemoryInline::FlatRead16(triangle + kSkipBits)) ||
                         Taken(triangle, count) || !Contains(triangle, p))
-                        continue;
+                        return false;
 
                     const float height = Height(triangle, pos);
 
@@ -448,11 +698,11 @@ void HitGroundComon(CpuContext* cpu) {
                             Memory::Write32(record + kRecordNormal + i, Memory::Read32(triangle + kNormal + i));
 
                         Memory::Write32(kTaken + 4 * count, triangle);
-
-                        if (++count == kMaxTaken)
-                            break;
+                        return ++count == kMaxTaken;
                     }
-                }
+
+                    return false;
+                });
             }
 
             if (count == 0) {
