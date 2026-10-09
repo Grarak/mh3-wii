@@ -1,13 +1,26 @@
-# Monster Hunter Tri static recompilation for macOS
+# Monster Hunter Tri static recompilation for arm64 Linux
 
-**The native ARM64 executable runs the village, NPC dialogue, and player movement.**
-It uses static PowerPC-to-C++ recompilation and Aurora's native Metal backend;
-MoltenVK is not required. This is an experimental port, with full-game coverage
-and quest progression still unverified.
+**Target platform: arm64 (aarch64) Linux, rendering through Vulkan.**
+Monster Hunter Tri's PowerPC code is statically recompiled to C++ and linked
+into a native executable. There is no CPU interpreter or JIT fallback. Graphics
+go through Aurora, which renders with Dawn's Vulkan backend; no other graphics
+backend is built. This is an experimental port. Full-game coverage and quest
+progression are unverified.
 
-Run the built game with `./scripts/run.sh`. Keyboard controls include Space for
-A, Left Shift for B, WASD for movement, arrow keys for the D-pad, and Enter for
-Plus. See [controls](docs/controller-bringup.md) for the complete mapping.
+> **Platform status.** The port was brought up on macOS ARM64 with Metal. That
+> build ran boot, the title and save menus, character creation, the village
+> (NPC dialogue and movement) and the Moga Woods field. The build system now
+> targets arm64 Linux with Vulkan only. All runtime and Aurora sources
+> cross-compile for `aarch64-linux-gnu` against the Vulkan Dawn package, but the
+> game has **not yet been run** on arm64 Linux. Gameplay results and measurements
+> below were recorded on the earlier macOS/Metal build and still need
+> re-verification on Linux/Vulkan. See [arm64 Linux and Vulkan](docs/linux-arm64.md).
+
+Build with `./scripts/build-aurora.sh` and run with `./scripts/run.sh`. On an
+arm64 Linux machine the scripts build natively; on any other machine they
+cross-compile with `cmake/toolchains/linux-arm64.cmake`. Keyboard controls include
+Space for A, Left Shift for B, WASD for movement, arrow keys for the D-pad, and
+Enter for Plus. See [controls](docs/controller-bringup.md) for the complete mapping.
 
 To enter Village without navigating menus, run `./scripts/run.sh --village`.
 This automatically selects File 1's first character through normal boot and
@@ -18,8 +31,11 @@ shortcut. See [Village startup](docs/village-startup.md).
 For repeatable gameplay debugging, `./scripts/replay_village.py --name my-run`
 boots an isolated copy of the post-Chief save and leaves the game running for
 controller-file input. See [gameplay debugging](docs/gameplay-debugging.md) for
-the checkpoint, Dolphin Classic Controller profile, frame captures, and current
-performance and collision findings.
+the checkpoint, Dolphin Classic Controller profile, frame captures, and the
+performance and collision findings from the macOS/Metal build.
+
+
+## Bring-up history (macOS/Metal build)
 
 Verified boot behavior includes OS/IOS55 and DVD initialization, five statically
 translated RSO modules, the Nintendo wrist-strap screen, the Capcom logo, and THP
@@ -52,7 +68,7 @@ support. There is no CPU interpreter or JIT fallback. The original sibling
 WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 `LICENSE`, `toolchain/ORIGIN.md`, and `toolchain/THIRD-PARTY-NOTICES.md`.
 
-## Current verified results
+## Verified results
 
 - European disc ID `RMHP08`, extracted from the supplied RVZ.
 - DOL SHA-256 `db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162`.
@@ -61,7 +77,8 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
   instructions and zero invalid SSA functions. This is not proof of full-game coverage.
 - Function discovery uses 758 executable SEL exports, 72 verified compiler
   save/restore thunks, and speculative stack-frame/indirect-function discovery.
-- `build/native/MH3` is a linked macOS ARM64 executable.
+- `build/native/MH3` was a linked macOS ARM64 executable (CPU-only runtime). The arm64 Linux
+  equivalent is `build/linux-arm64-cpu/MH3`.
 - Runtime self-test passes RAM aliasing, big-endian access, translated stack stores,
   unmapped MMIO rejection, MH3 exception/interrupt-table initialization, device
   state, and SRAM persistence/checksums.
@@ -70,49 +87,74 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 
 ## Standalone checkout
 
-Aurora is included under `aurora-main/`, matching WiiCompiled’s layout. The
+Aurora is included under `aurora-main/`, matching WiiCompiled's layout. The
 translator is already under `toolchain/`, and the free DSP coefficient data is
 bundled under `runtime/assets/dsp/`. No sibling WiiCompiled checkout is needed.
-Common libraries remain managed by Aurora’s existing CMake dependency providers
-(system packages or downloads); they are not vendored into this repository.
-Build the graphical port with `./scripts/build-aurora.sh`. Compiler/SDK tools and
-your ROM-derived assets remain prerequisites. See [Aurora provenance](docs/aurora-dependency.md).
+Common libraries are managed by Aurora's CMake dependency providers (system
+packages or pinned downloads). They are not vendored into this repository. Dawn
+comes from Aurora's pinned prebuilt `linux-aarch64` package, which includes the
+Vulkan backend. See [Aurora provenance](docs/aurora-dependency.md).
 
-## Reproduce with the installed project-local tools
+## Build on arm64 Linux
 
-The local SDK is .NET `8.0.425`; CMake, Ninja and Clang are already available.
-The SDK and extracted content are deliberately ignored by Git.
+Prerequisites: Clang, CMake 3.25+, Ninja, Python 3, the .NET 8 SDK for the
+translator, and the development headers SDL needs for X11/Wayland/KMSDRM, ALSA
+and PulseAudio. A Vulkan 1.1+ driver with its loader is required at run time.
+The full package list is in [arm64 Linux and Vulkan](docs/linux-arm64.md).
+Extracted game content, SDKs and build output are ignored by Git.
 
 Build the MH3-local translator:
 
 ```sh
-DOTNET_CLI_HOME="$PWD/tools/dotnet-home" NUGET_PACKAGES="$PWD/tools/nuget" \
-  tools/dotnet/dotnet build \
-  toolchain/translator/src/Translator.Cli/Translator.Cli.csproj \
+dotnet build toolchain/translator/src/Translator.Cli/Translator.Cli.csproj \
   -c Release -p:NuGetAudit=false
 ```
 
-Translate, generate the build graph, compile, and test:
+Translate on Linux. The generated data-section assembly uses the translator
+host's object format (ELF on Linux) and absolute `.incbin` paths, so output
+translated on macOS cannot be reused:
 
 ```sh
-./scripts/translate.sh
+DOTNET_BIN=dotnet ./scripts/translate.sh
+```
+
+Build and test the Vulkan executable (`build/linux-arm64/MH3`), then run it:
+
+```sh
+./scripts/build-aurora.sh
+ctest --test-dir build/linux-arm64 --output-on-failure
+./scripts/run.sh --village
+```
+
+The CPU-only runtime (no Aurora or Vulkan) builds with `./scripts/build.sh` into
+`build/linux-arm64-cpu`. It runs `--self-test` when built natively:
+
+```sh
 ./scripts/build.sh
 python3 scripts/test_native_discovery.py
 python3 scripts/test_disc_reader.py
-ctest --test-dir build/native --output-on-failure
+ctest --test-dir build/linux-arm64-cpu --output-on-failure
 ```
 
-Run the current boot implementation (expected to stop at an unimplemented service):
+On a machine that is not arm64 Linux, both build scripts cross-compile with
+`cmake/toolchains/linux-arm64.cmake`. Set `MH3_SYSROOT` to an arm64 root
+filesystem, or install the arm64 multiarch development packages. The runtime's
+CMake refuses other targets unless `MH3_ALLOW_UNSUPPORTED_HOST=ON` is set, which
+is for development only.
 
-```sh
-MH3_TRACE_ERRORS=1 build/native/MH3 > logs/run.log 2>&1
-```
+With `MH3_TRACE_ERRORS=1`, runtime failures print symbolized native backtraces.
+The executable exports its symbols so glibc's `backtrace_symbols` can name them.
 
-The translation script propagates errors; unsupported instructions are not silently
-stubbed. `WIICOMPILED_ROOT` defaults to `toolchain`, `DOTNET_BIN` to the local SDK,
-and `BUILD_JOBS` to 6. Game outputs and logs remain local.
+The translation script propagates errors; unsupported instructions are not
+silently stubbed. `WIICOMPILED_ROOT` defaults to `toolchain` and `DOTNET_BIN` to
+`tools/dotnet/dotnet`. `BUILD_JOBS` defaults to the CPU count. Game outputs and logs
+remain local.
 
-Extraction was performed with nodtool `v2.0.0-alpha.10`, macOS ARM64:
+## Game assets
+
+Extract the European disc with nodtool `v2.0.0-alpha.10`
+([release](https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10); use
+the `linux-aarch64` build):
 
 ```sh
 tools/nodtool extract -q 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' Assets/DATA
@@ -123,12 +165,16 @@ python3 scripts/prepare_partition.py build/disc-decrypted.iso
 The preserved `Assets/DATA/partition.bin` retains exact padding bytes for aligned
 reads beyond file ends. Preparation strips sector hash blocks from the decrypted
 ISO and verifies the boot header and FST against extraction. It uses about 4 GiB;
-the intermediate ISO can be removed after preparation. Both remain ignored.
+the intermediate ISO can be removed after preparation. Both remain ignored. The
+original extraction used nodtool's macOS ARM64 executable (SHA-256
+`e23ca466999b720c55e6d29c9683fce8cc74451ba64ead2e543d50129f24528a`); the
+extracted files do not depend on the host.
 
-The nodtool executable SHA-256 is `e23ca466999b720c55e6d29c9683fce8cc74451ba64ead2e543d50129f24528a`.
-Release: https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10
 
 ## Runtime progress and remaining work
+
+This section is the runtime bring-up log. Unless stated otherwise, runs and
+measurements were made on the earlier macOS ARM64/Metal build.
 
 The original translation failure was a branch to low-memory debugger code at
 `0x60`, reached through exception-vector setup. `runtime/src/os_boot.cpp` now
@@ -216,22 +262,17 @@ Remaining requirements for a playable port include:
 The checked runtime deliberately raises errors for unimplemented MMIO/GX access
 and executable modifications. It does not claim those operations succeeded.
 
-Aurora already supports native Metal in the supplied WiiCompiled checkout
-(`aurora-main/lib/dawn/MetalBinding.mm`), so MoltenVK is unnecessary. The current
-headless executable remains available at `build/native/MH3`.
-`./scripts/build-aurora.sh` builds an Aurora-linked executable at `build/metal/MH3`,
-using the sibling source (override with `AURORA_ROOT`). Dependency sources are
-cached under `build/aurora/_deps`. The local CMake hook fixes SDK header ordering
-and standard-header visibility without changing the sibling checkout.
+Aurora renders through Dawn's Vulkan backend. The graphical executable is
+`build/linux-arm64/MH3`, built by `./scripts/build-aurora.sh`. It uses the
+bundled `aurora-main` source (override with `AURORA_ROOT`), and dependency
+sources are cached under `build/aurora-arm64/_deps`. The CPU-only runtime remains
+available at `build/linux-arm64-cpu/MH3`.
 
-`build/metal/MH3 --graphics-check` initializes native Metal, opens a 640×480
-window, submits 30 frames, and exits. This checks the host renderer path only;
-the guest GX bridge remains partial. Renderer caches
-are kept under `saves/graphics`. On this Apple M2 Max, the check selected Metal,
-created a BGRA8Unorm presentation surface, submitted all 30 frames, and exited
-successfully. The Aurora-linked executable also passes the runtime self-test.
-A sandbox that denies macOS display access must allow the graphics run to access
-the desktop; a denied display is not a Metal backend failure.
+`build/linux-arm64/MH3 --graphics-check` requests Vulkan, opens a 640×480
+window, submits 30 frames, and exits. It fails if Aurora falls back to any other
+backend. It checks the host renderer path only. Renderer caches are kept under
+`saves/graphics`. On the earlier macOS build the equivalent Metal check
+submitted all 30 frames; the Vulkan check has not yet been run on arm64 Linux.
 
 ## Tools and evidence
 
@@ -242,7 +283,8 @@ the desktop; a denied display is not a Metal backend failure.
 - `tools/python/bin/python scripts/disassemble.py ADDRESS [BYTE_COUNT]`: PPC
   disassembly using project-local Capstone 5.0.9.
 - `logs/translator-build.log`, `logs/translate.log`, `logs/shards.log`,
-  `logs/native-build.log`, `logs/run.log`: current build/run evidence.
+  `logs/native-build.log`, `logs/aurora-configure.log`, `logs/aurora-build.log`,
+  `logs/run.log`: current build/run evidence.
 
 ROMs, extracted assets, generated game code/data, build products, SDKs, and logs
 are ignored by `.gitignore` and must remain out of source commits.

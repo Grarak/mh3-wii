@@ -14,18 +14,19 @@ def replace(old, new, count=1):
 if kind == 'gpu':
     replace("""    const wgpu::RequestAdapterOptions options{
         .powerPreference""", """    // Dawn gates this native mapping feature as experimental. Opt in at
-    // adapter creation, then still require the advertised Metal capability.
+    // adapter creation, then still require the advertised backend capability.
     const char* mh3_nativeFeatures[] = {"allow_unsafe_apis"};
     const wgpu::DawnTogglesDescriptor mh3_adapterToggles({
-      .enabledToggleCount = backend == wgpu::BackendType::Metal ? 1u : 0u,
+      .enabledToggleCount = backend == wgpu::BackendType::Vulkan ? 1u : 0u,
       .enabledToggles = mh3_nativeFeatures,
     });
     const wgpu::RequestAdapterOptions options{
         .nextInChain = &mh3_adapterToggles,
         .powerPreference""")
     replace('''      const auto feature = supportedFeatures.features[i];''', '''      const auto feature = supportedFeatures.features[i];
-      // Metal UMA permits CPU-mappable buffers to be used directly by draws.
-      if (g_backendType == wgpu::BackendType::Metal &&
+      // Dawn's Vulkan backend advertises this only when a memory type is both
+      // device-local and host-visible/coherent, as on ARM SoC UMA GPUs.
+      if (g_backendType == wgpu::BackendType::Vulkan &&
           feature == wgpu::FeatureName::BufferMapExtendedUsages) {
         requiredFeatures.push_back(feature);
       }''')
@@ -41,11 +42,16 @@ uint64_t mh3_uniform_buffer_offset() { return mh3_sharedRenderBuffers ? VertexBu
 uint64_t mh3_index_buffer_offset() { return mh3_sharedRenderBuffers ? VertexBufferSize + UniformBufferSize : 0; }
 static void mh3_bind_shared_slot();
 void initialize() {
+  // Opt-in with MH3_SHARED_RENDER_BUFFERS=1 until ring ownership is
+  // validated on Vulkan; the copy path stays the default.
   const char* shared = std::getenv("MH3_SHARED_RENDER_BUFFERS");
-  mh3_sharedRenderBuffers = webgpu::g_backendType == wgpu::BackendType::Metal &&
-      g_device.HasFeature(wgpu::FeatureName::BufferMapExtendedUsages) &&
-      (!shared || std::strcmp(shared, "0") != 0);
-  Log.info("MH3 direct shared render buffers: {}", mh3_sharedRenderBuffers ? "enabled" : "disabled");
+  const bool mh3_supported = g_device.HasFeature(wgpu::FeatureName::BufferMapExtendedUsages);
+  const bool mh3_requested = webgpu::g_backendType == wgpu::BackendType::Vulkan &&
+      shared && std::strcmp(shared, "1") == 0;
+  mh3_sharedRenderBuffers = mh3_supported && mh3_requested;
+  Log.info("MH3 direct shared render buffers: {} (BufferMapExtendedUsages {}, {})",
+      mh3_sharedRenderBuffers ? "enabled" : "disabled", mh3_supported ? "supported" : "unsupported",
+      mh3_requested ? "requested" : "not requested");
   g_frameIndex = 0;''')
     replace('''  createBuffer(g_uniformBuffer, wgpu::BufferUsage::Uniform''', '''  if (!mh3_sharedRenderBuffers) {
   createBuffer(g_uniformBuffer, wgpu::BufferUsage::Uniform''')
