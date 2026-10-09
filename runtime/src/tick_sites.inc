@@ -92,6 +92,8 @@
 {0x80264378u, TickSite::Countdown},          // player condition (80264334): countdown (s16 +0x3EE), fires at 0
 {0x80264500u, TickSite::CountdownEvery, 90}, // player condition: countdown (s16 +0x404), tested % 90 == 0
 {0x80264760u, TickSite::Countdown},          // player condition: countdown (s16 +0x462), fires at 0
+{0x8026B018u, TickSite::Countdown},          // player input (8026AF6C): input lock (s16 +0x352), also counted down by PlayerStepTimers
+{0x8026C0C4u, TickSite::Countdown},          // Classic commands (8026BFFC): chord window (u8 +0x137, from 2) for a second attack button
 {0x802B4BA8u, TickSite::Countdown},          // stage (802B4B20): countdown (s16 +0x2FDC), fires at 0
 {0x802B638Cu, TickSite::EaseDivisor},       // field camera (802B5CBC): height eases, target (f31) and eye (f30)
 {0x802B644Cu, TickSite::EaseDivisor},

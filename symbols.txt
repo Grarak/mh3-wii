@@ -1314,3 +1314,19 @@
 802bbcb4 PreviewCameraSetup
 80047140 SplitCameraSetup
 80085cd4 G3dStateSetCamera
+# Controller reading (pad_input.cpp): PollControllers' per-channel pad update.
+80042088 PadReadWii
+800429a4 PadReadGc
+80044368 PadGameKeys
+80042890 PadCleared
+80042920 PadDisconnected
+800427f0 PadClearClassic
+80042fdc PadClassicSticks
+800432c0 PadNunchukStick
+80042c0c PadGcSticks
+802aa6f0 PadSetKeyLocks
+# Player input: PLW+0xB8 from the pad (8026AF6C), the Classic chord window (8026BFFC).
+8026af6c PlReadInput
+8026bffc PlClassicCommands
+8026a758 PlCommandTest
+8026a73c PlCommandSet
