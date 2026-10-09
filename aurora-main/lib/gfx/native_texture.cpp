@@ -83,6 +83,22 @@ void make_room(size_t bytes) {
     residentBytes -= victim->second.bytes;
     cache.erase(victim);
   }
+
+  // The budget exceeds GXM's CDRAM texture arena, which has no spill: also
+  // drop the least recently used unbound textures until the backing fits
+  // (the opening movie after character creation filled it, 2026-10-04).
+  // Their storage frees at once unless the GPU still reads it.
+  while (!gl::render_target_allocation_available(bytes)) {
+    auto victim = cache.end();
+
+    for (auto it = cache.begin(); it != cache.end(); ++it)
+      if (it->second.texture.use_count() == 1 && (victim == cache.end() || it->second.used < victim->second.used))
+        victim = it;
+    if (victim == cache.end())
+      break; // the allocation reports what is resident
+    residentBytes -= victim->second.bytes;
+    cache.erase(victim);
+  }
 }
 
 size_t rgba_allocation(const NativeTextureSource& source) {
