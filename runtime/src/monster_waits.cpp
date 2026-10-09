@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of twenty-four enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of twenty-six enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -16,6 +16,8 @@
 //     0x80171B7C  kind 12 (Great Jaggi) a retreat, 15 ticks before it may end
 //     0x8037A8AC  kind 19 (Agnaktor) under the ground: 15, 60 or 90 ticks, a mark every 8
 //     0x801AC674  kind 27 (Aptonoth) a walk, 256-511 ticks
+//     0x801B1228  kind 30 (Felyne)   a rest, 150 or 250 ticks and up to 63 more
+//     0x801B1708  kind 30 (Felyne)   a run, at most 60 or 150 ticks (15 when near)
 //     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
 //     0x801BD89C  kind 6 (Diablos)   a move under the sand, at least 20 ticks
 //     0x801B795C, 0x801B867C  hops (the dispatcher 0x801B94B4, after kind
@@ -514,6 +516,78 @@ void Em012RetreatPort(CpuContext* ctx) {
             if (game.F1() < near)
                 game.Call<ActionDone>({work});
         }
+
+        break;
+    }
+}
+
+// kind 30 0x801B1228 (r4: 1 the short one): a Felyne resting, motion 0x1D
+// for 250 (150) ticks plus the random word's low 6 bits, then motion 0x1E
+// and 0x1F (only 0x1F for the long one) to their ends.
+void Em030RestPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const bool shortRest = uint8_t(ctx->gpr[4]) == 1;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0x1D, 4, 0);
+        em.Count(int32_t((Memory::Read16(work + kRandom) & 0x3F) + (shortRest ? 0x96 : 0xFA)));
+        break;
+    case 1:
+        if (CountDown(em)) {
+            em.State(shortRest ? 2 : 3);
+            em.SetMotion(shortRest ? 0x1E : 0x1F, 4, 0);
+        }
+
+        break;
+    case 2:
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0x1F, 4, 0);
+        }
+
+        break;
+    case 3:
+        if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    }
+}
+
+// kind 30 0x801B1708 (r4 the run 0-3, r5: 1 the short one): a Felyne running
+// toward its target (motion 2 or 3, 0x80134068 -100 or -300, at 0.7 times
+// the speed for run 3), ending once there (0x80134178 at 0x800) or after
+// 150 (60) ticks, only 15 more once 0x801B01CC holds.
+void Em030RunPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const uint8_t run = uint8_t(ctx->gpr[4]);
+    const bool shortRun = uint8_t(ctx->gpr[5]) == 1;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(run == 0 ? 2 : 3, 4, 0);
+
+        if (run == 3)
+            game.Call<SetMotionSpeed>({work}, {0.7f});
+
+        game.Call<TurnSetUp>({work, 0}, {run >= 2 ? -300.0 : -100.0});
+        em.Count(shortRun ? 0x3C : 0x96);
+        break;
+    case 1:
+        if (game.Call<TurnStep>({work, 0, 0x800}) == 1 || CountDown(em))
+            game.Call<ActionDone>({work});
+
+        if (em.Count() > 15 && game.Call<0x801B01CC>({work}) == 1)
+            em.Count(15);
 
         break;
     }
@@ -1518,6 +1592,18 @@ extern "C" void MH3_Em012Retreat(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em012Retreat", func_80171B7C, Em012RetreatPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80171B7C, MH3_Em012Retreat, "Em012Retreat");
+
+extern "C" void func_801B1228(CpuContext* ctx);
+extern "C" void MH3_Em030Rest(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em030Rest", func_801B1228, Em030RestPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801B1228, MH3_Em030Rest, "Em030Rest");
+
+extern "C" void func_801B1708(CpuContext* ctx);
+extern "C" void MH3_Em030Run(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em030Run", func_801B1708, Em030RunPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801B1708, MH3_Em030Run, "Em030Run");
 
 extern "C" void func_801AC674(CpuContext* ctx);
 extern "C" void MH3_Em027Walk(CpuContext* ctx) {
