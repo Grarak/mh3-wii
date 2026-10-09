@@ -1,0 +1,10 @@
+*.rvz
+*.iso
+Assets/
+tools/
+generated/
+build/
+logs/
+**/bin/
+**/obj/
+__pycache__/

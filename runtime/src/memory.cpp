@@ -1,0 +1,105 @@
+// Checked guest RAM for the initial MH3 runtime. MMIO is intentionally fatal
+// until the corresponding host service is implemented. No CPU interpretation.
+#include "memory.h"
+#include <array>
+#include <cstring>
+#include <sstream>
+
+namespace {
+std::vector<uint8_t> mem1, mem2;
+std::string accessMessage(uint32_t address, std::string_view reason) {
+    std::ostringstream message;
+    message << reason << " at guest 0x" << std::hex << address
+            << ", translated function 0x" << RecompMod::CurrentTranslatedExecutionAddress();
+    return message.str();
+}
+uint8_t* resolve(uint32_t address, size_t length) {
+    uint32_t physical = address & 0x3FFFFFFF;
+    // Only the hardware's physical, cached and uncached RAM aliases.
+    if ((address >> 30) == 1) return nullptr;
+    auto* region = &mem1;
+    if (physical >= 0x10000000) {
+        physical -= 0x10000000;
+        region = &mem2;
+    }
+    if (physical > region->size() || length > region->size() - physical) return nullptr;
+    return region->data() + physical;
+}
+template<class T> T read(uint32_t address) {
+    T value;
+    std::memcpy(&value, Memory::GetPointer(address, sizeof(T)), sizeof(T));
+    return MemoryInline::MaybeByteSwap(value);
+}
+template<class T> void write(uint32_t address, T value) {
+    RecompMod::CheckExecutableWrite(address, sizeof(T), value);
+    auto encoded = MemoryInline::MaybeByteSwap(value);
+    std::memcpy(Memory::GetPointer(address, sizeof(T)), &encoded, sizeof(T));
+}
+}
+
+namespace GuestFlat {
+bool g_requiresCheckedAccess = true;
+bool IsActive() { return false; }
+}
+
+Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::string_view reason)
+    : std::runtime_error(accessMessage(addr, reason)), address_(addr), length_(length), reason_(reason) {}
+
+void Memory::Init(size_t size) {
+    mem1.assign(size, 0);
+    mem2.assign(64 * 1024 * 1024, 0);
+    for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
+        auto* pointer = resolve(i << MemoryInline::kPageShift, MemoryInline::kPageSize);
+        MemoryInline::g_pageTable[i] = {pointer, pointer ? MemoryInline::kPageSize : 0};
+    }
+}
+uint8_t* Memory::GetPointer(uint32_t address) { return GetPointer(address, 1); }
+uint8_t* Memory::GetPointer(uint32_t address, size_t length) {
+    auto* pointer = resolve(address, length);
+    if (!pointer) throw AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO");
+    return pointer;
+}
+bool Memory::Contains(uint32_t address, size_t length) { return resolve(address, length) != nullptr; }
+
+namespace MemoryInline {
+PageEntry g_pageTable[kPageCount]{};
+uintptr_t g_fullPageBias[kPageCount]{};
+uintptr_t g_fullReadablePageBias[kPageCount]{};
+uintptr_t g_fullWritablePageBias[kPageCount]{};
+const SparseWritablePageTable* g_sparseWritablePageTables[kPageCount]{};
+uint8_t g_deferredReadCoveredPages[kPageCount]{};
+bool ResolveDeferredReads(uint32_t, size_t) { return false; }
+#define SCALAR(bits, type) \
+type Read##bits##Slow(uint32_t a) { return read<type>(a); } \
+void Write##bits##Slow(uint32_t a, type v) { write(a, v); }
+SCALAR(8, uint8_t)
+SCALAR(16, uint16_t)
+SCALAR(32, uint32_t)
+SCALAR(64, uint64_t)
+#undef SCALAR
+float ReadFloat32Slow(uint32_t a) { auto bits = read<uint32_t>(a); float v; std::memcpy(&v, &bits, 4); return v; }
+double ReadFloat64Slow(uint32_t a) { auto bits = read<uint64_t>(a); double v; std::memcpy(&v, &bits, 8); return v; }
+void WriteFloat32Slow(uint32_t a, double v) { write(a, ConvertPpcDoubleToSingleBits(v)); }
+void WriteFloat64Slow(uint32_t a, double v) { uint64_t bits; std::memcpy(&bits, &v, 8); write(a, bits); }
+template<class T> T ReadResolvedFallback(uint32_t a) { return read<T>(a); }
+template<class T> void WriteResolvedFallback(uint32_t a, T v) { write(a, v); }
+#define INSTANTIATE(type) \
+template type ReadResolvedFallback<type>(uint32_t); \
+template void WriteResolvedFallback<type>(uint32_t, type);
+INSTANTIATE(uint8_t)
+INSTANTIATE(uint16_t)
+INSTANTIATE(uint32_t)
+INSTANTIATE(uint64_t)
+#undef INSTANTIATE
+float ReadResolvedFallbackFloat32(uint32_t a) { return Memory::ReadFloat32(a); }
+double ReadResolvedFallbackFloat64(uint32_t a) { return Memory::ReadFloat64(a); }
+void WriteResolvedFallbackFloat32(uint32_t a, double v) { Memory::WriteFloat32(a, v); }
+void WriteResolvedFallbackFloat64(uint32_t a, double v) { Memory::WriteFloat64(a, v); }
+}
+
+// FIFO writes must become Aurora GX calls before the game can render.
+extern "C" void GX_HLE_FIFO_WriteFloat(float) { throw std::runtime_error("GX FIFO float write not implemented"); }
+extern "C" void GX_HLE_FIFO_Write32(uint32_t) { throw std::runtime_error("GX FIFO word write not implemented"); }
+extern "C" void GX_HLE_FIFO_Write16(uint16_t) { throw std::runtime_error("GX FIFO halfword write not implemented"); }
+extern "C" void GX_HLE_FIFO_Write8(uint8_t) { throw std::runtime_error("GX FIFO byte write not implemented"); }
+extern "C" void GX_HLE_FIFO_WriteBurst(const uint8_t*, uint32_t) { throw std::runtime_error("GX FIFO burst write not implemented"); }
