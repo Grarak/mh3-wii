@@ -21,6 +21,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
 #endif
@@ -413,6 +417,20 @@ bool SamePoseLayout(const mh3_matrix_sources& version, const mh3_matrix_sources&
 bool SamePoseBytes(const uint8_t* have, const uint8_t* now, size_t bytes, bool swap) {
     const auto word = [swap](uint32_t value) { return swap ? __builtin_bswap32(value) : value; };
     size_t i = 0;
+#if defined(__ARM_NEON)
+    for (; i + 16 <= bytes; i += 16) {
+        uint8x16_t y = vld1q_u8(now + i);
+
+        if (swap)
+            y = vrev32q_u8(y);
+
+        const uint32x4_t differ = vreinterpretq_u32_u8(veorq_u8(vld1q_u8(have + i), y));
+        const uint32x2_t folded = vorr_u32(vget_low_u32(differ), vget_high_u32(differ));
+
+        if (vget_lane_u32(vpmax_u32(folded, folded), 0))
+            return false;
+    }
+#endif
 
     for (; i + 16 <= bytes; i += 16) {
         uint32_t x[4], y[4];
@@ -451,7 +469,16 @@ bool SamePoseContents(const NativePoseVersion& version, const mh3_matrix_sources
 // copies a version's matrices without swapping each one for every batch that
 // loads it (mh3_model_palette_apply_batch).
 void CopyHostOrder(uint8_t* to, const uint8_t* from, size_t bytes) {
-    for (size_t i = 0; i + 4 <= bytes; i += 4) {
+    size_t i = 0;
+#if defined(__ARM_NEON)
+    // The game thread wrote the arrays on another core: fetch ahead of the
+    // swap, which otherwise waits on every line.
+    for (; i + 16 <= bytes; i += 16) {
+        __builtin_prefetch(from + i + 192);
+        vst1q_u8(to + i, vrev32q_u8(vld1q_u8(from + i)));
+    }
+#endif
+    for (; i + 4 <= bytes; i += 4) {
         uint32_t word;
         std::memcpy(&word, from + i, 4);
         word = __builtin_bswap32(word);
