@@ -1,4 +1,4 @@
-// Loading-screen progress (docs/loading-progress.md). A loading screen lasts
+// Loading-screen progress (docs/optimizations/assets/load-time-asset-conversion.md). A loading screen lasts
 // as long as the game's loads: the file loader task's queue (load_file_req
 // 0x800CEB14 appends, 0x800CE8E8 pops, the task 0x800CE704 reads the front
 // entry), the synchronous loads (load_file 0x800CECC8), and with load-time
@@ -315,6 +315,10 @@ float Frame() {
 void Idle() {
     if (screen.open)
         Close();
+}
+
+bool Showing() {
+    return screen.open;
 }
 
 } // namespace LoadProgress

@@ -1,8 +1,6 @@
 #include "controller_host.h"
 #include "fatal.h"
-#ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
-#endif
 #include "../native/mh3_classic_map.h"
 #include <algorithm>
 #include <cmath>
@@ -18,7 +16,6 @@
 #endif
 namespace {
 std::optional<ClassicControllerSample> testSample;
-#ifdef MH3_DEVELOPMENT
 uint64_t inputFrame = 0;
 bool playbackHeld = false;
 
@@ -27,8 +24,9 @@ bool playbackHeld = false;
 // controller. record and playback: frame-indexed input logs for repeatable
 // runs; each line is "frame buttons(hex) lx ly rx ry", the sample in effect
 // from that paced frame on. record writes one line per change of the host
-// input; playback replaces the host input with a log. camera=N[:D]: the
-// field camera looks at monster N, from D units away (field_camera.cpp).
+// input; playback replaces the host input with a log. camera=N[:D]
+// (development builds): the field camera looks at monster N, from D units
+// away (field_camera.cpp).
 const DevOptions& InputOptions() {
     static const DevOptions options("MH3_INPUT", {"file", "record", "playback", "camera"});
     return options;
@@ -119,7 +117,6 @@ std::optional<ClassicControllerSample> PlaybackInput() {
 
     return entries[next - 1].sample;
 }
-#endif
 } // namespace
 #ifdef MH3_DEVELOPMENT
 int DebugCameraMonster(float* distance) {
@@ -146,7 +143,7 @@ int DebugCameraMonster(float* distance) {
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample) {
     testSample = sample;
 }
-#ifdef MH3_DEVELOPMENT
+
 void SetInputFrame(uint64_t frame) {
     inputFrame = frame;
 }
@@ -168,19 +165,10 @@ ClassicControllerSample ReadHostController() {
     RecordInput(sample);
     return sample;
 }
-#else
-void SetInputFrame(uint64_t) {}
-void HoldInputPlayback(bool) {}
-ClassicControllerSample ReadHostController() {
-    if (testSample)
-        return *testSample;
 
-    return ReadLiveController();
-}
-#endif
 ClassicControllerSample ReadLiveController() {
     ClassicControllerSample sample;
-#ifdef MH3_DEVELOPMENT
+
     if (const char* path = InputOptions().Value("file")) {
         // Explicit diagnostic controller; the normal source is SDL. This lets
         // unattended runs exercise the same guest input path while macOS is locked.
@@ -194,13 +182,12 @@ ClassicControllerSample ReadLiveController() {
         sample = {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)};
         return sample;
     }
-#endif
 #if defined(__vita__)
     (void)sample;
     return ReadVitaController();
 #elif defined(MH3_HAS_AURORA)
     // The keyboard and the first SDL gamepad, as the Classic Controller on
-    // channel 0 (docs/wpad-bridge.md, docs/vita-controls.md).
+    // channel 0 (docs/optimizations/system/controller-input.md, docs/vita-controls.md).
     sample.connected = true;
 
     if (!SDL_WasInit(SDL_INIT_VIDEO))

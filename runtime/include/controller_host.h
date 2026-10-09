@@ -24,7 +24,7 @@ int DebugCameraMonster(float* distance = nullptr);
 #endif
 
 // The live controls: SDL keyboard/gamepad on Linux, the Vita's pad on the
-// Vita; MH3_INPUT=file= in development builds.
+// Vita; MH3_INPUT=file= replaces them.
 ClassicControllerSample ReadLiveController();
 #ifdef __vita__
 // sceCtrl through mh3_vita_pad_to_classic (runtime/vita/vita_controller.cpp).

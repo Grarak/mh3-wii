@@ -130,14 +130,14 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_INPUT`: scripted controller input
 
-`MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH][,camera=N[:D]]` ([WPAD bridge](wpad-bridge.md#scripted-input-development-builds))
+`MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH][,camera=N[:D]]` ([WPAD bridge](wpad-bridge.md#scripted-input))
 
 | Item | Effect |
 | --- | --- |
 | `file=PATH` | a one-sample control file (hex buttons and four axes), read every frame, replaces the host controller |
 | `record=PATH` | logs the host input, one line per change: `frame buttons lx ly rx ry` in 30 Hz frames of game time |
 | `playback=PATH` | replays such a log instead of the host input |
-| `camera=N[:D]` | the field camera looks at monster N (its move work, `MH3_TRACE=monsters`): from the game's eye, or from D units away on the line to it, raised by D/3. The camera work keeps its own eye and target |
+| `camera=N[:D]` | (development builds) the field camera looks at monster N (its move work, `MH3_TRACE=monsters`): from the game's eye, or from D units away on the line to it, raised by D/3. The camera work keeps its own eye and target |
 
 ### `MH3_TRACE`: game state over game time
 

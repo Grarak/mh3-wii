@@ -60,12 +60,14 @@
 
 #include "abi_bridge.h"
 #include "guest_call.h"
+#include "load_progress.h"
 #include "memory.h"
 #include "port_check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 extern "C" void func_8021F40C(CpuContext* ctx);
 
@@ -140,13 +142,16 @@ struct Jump {
     int lastState = -1;
     bool spawn = false;
     float spawnPos[3] = {};
-    int exitArea = -1;       // --spawn exit:n, -1: a position
+    std::vector<int> exitPath; // --spawn exit:n[,m...], the areas still to walk to
+    int exitArea = -1;         // the next of them, -1: none
     uint32_t exitChecks = 0; // exit checks in the field (in the area, touring) so far
     bool tour = false;       // --spawn exit:tour
     int tourArea = -1;       // the area the tour last saw
     uint32_t tourChanges = 0;
     uint8_t tourRotor[64] = {}; // per area: its next exit
     uint64_t placedAt = 0; // game frame the hunter was first seen placed, 0: not yet
+    bool loading = false;  // the quest's loading screen seen
+    bool entered = false;  // the field entry reported
 };
 
 Jump& State() {
@@ -215,8 +220,10 @@ void RequestQuestSpawn(float x, float y, float z) {
     jump.spawnPos[2] = z;
 }
 
-void RequestQuestExit(int area) {
-    State().exitArea = area;
+void RequestQuestExit(std::vector<int> areas) {
+    Jump& jump = State();
+    jump.exitPath = std::move(areas);
+    jump.exitArea = jump.exitPath.empty() ? -1 : jump.exitPath.front();
 }
 
 void RequestQuestTour() {
@@ -249,9 +256,10 @@ void FieldJumpFrame(uint64_t gameFrame) {
     if (jump.done && jump.set == QuestCatalog::Set::Arena)
         KeepArenaPit();
 
-    if (!jump.spawn || !jump.done)
+    if (!jump.done || (!jump.spawn && jump.entered))
         return;
 
+    jump.loading |= LoadProgress::Showing();
     const uint32_t table = Memory::Read32(kMoveWorkTable);
     const uint32_t plw = table ? Memory::Read32(table + 16 + kPlayerMoveWork * 4) : 0;
 
@@ -259,6 +267,16 @@ void FieldJumpFrame(uint64_t gameFrame) {
         jump.placedAt = 0;
         return;
     }
+
+    // Once, after the quest's loading screen: for scripts that time a run
+    // from the field (scripts/pgo/collect-pi.sh).
+    if (!jump.entered && jump.loading && !LoadProgress::Showing()) {
+        jump.entered = true;
+        std::fprintf(stderr, "MH3 field jump: the hunter is in the field\n");
+    }
+
+    if (!jump.spawn)
+        return;
 
     if (!jump.placedAt)
         jump.placedAt = gameFrame;
@@ -341,6 +359,23 @@ extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
 
     if (jump.tour && jump.done)
         TourStep(ctx, jump);
+
+    // Arrived in the walk's next area: on to the one after it, or the walk
+    // is done (the line scripts time a run from, scripts/pgo/collect-pi.sh).
+    if (jump.exitArea >= 0 && jump.done && jump.exitChecks >= kExitSettle) {
+        const CpuContext saved = *ctx;
+        const int8_t area = int8_t(GuestCall{ctx}.Call<GetNowAreaNumber>());
+        *ctx = saved;
+
+        if (area == jump.exitArea) {
+            jump.exitPath.erase(jump.exitPath.begin());
+            jump.exitArea = jump.exitPath.empty() ? -1 : jump.exitPath.front();
+            jump.exitChecks = 0;
+
+            if (jump.exitArea < 0)
+                std::fprintf(stderr, "MH3 field jump: the hunter walked to %s\n", AreaText(area).c_str());
+        }
+    }
 
     if (jump.exitArea >= 0 && jump.done && ++jump.exitChecks == kExitSettle) {
         const CpuContext saved = *ctx;

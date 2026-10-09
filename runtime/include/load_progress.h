@@ -1,4 +1,4 @@
-// Loading-screen progress (docs/loading-progress.md): what the loads behind
+// Loading-screen progress (docs/optimizations/assets/load-time-asset-conversion.md): what the loads behind
 // a "Now Loading" screen have finished against what they will load, for the
 // screen's progress bar (native_system_ui.cpp, HUDDraw).
 #pragma once
@@ -26,5 +26,8 @@ float Frame();
 
 // Game thread, each frame without a loading screen: closes the last one.
 void Idle();
+
+// A loading screen is up (Frame() since the last Idle()).
+bool Showing();
 
 } // namespace LoadProgress
