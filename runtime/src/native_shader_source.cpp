@@ -231,9 +231,15 @@ vec4 light_channel(vec3 position, vec3 normal, vec4 vertex) {
 #endif
     return result;
 }
-// clip uses the GX convention: z in [0, w], reversed depth.
+// clip uses the GX convention: z in [0, w], reversed depth. The depth is
+// clamped to [0, 1] as the Wii's depth buffer holds it: the range's pole lies
+// just past the far plane (depth fog.y / fog.w), so a large triangle's corner
+// beyond it flipped from full fog to none as the camera moved, and the whole
+// triangle popped (the underwater blue flashes). A corner behind the camera
+// (w <= 0) is taken as near: no fog.
 float fog_distance(vec4 clip) {
-    float depth = 1.0 - clip.z / clip.w;
+    float front = clip.w > 0.0 ? 1.0 : 0.0;
+    float depth = front * clamp(1.0 - clip.z / max(clip.w, 1e-20), 0.0, 1.0);
     float ze = scene.fog_shape.z != 0.0 ? scene.fog.x * depth : scene.fog.x / (scene.fog.y - depth * scene.fog.w);
     return ze - scene.fog.z;
 }
@@ -788,8 +794,10 @@ float4 light_channel(float3 position, float3 normal, float4 vertex) {
 #endif
     return result;
 }
+// The depth clamped as the Wii's depth buffer holds it (see the GLSL).
 float fog_distance(float4 clip) {
-    float depth = 1.0f - clip.z / clip.w;
+    float front = clip.w > 0.0f ? 1.0f : 0.0f;
+    float depth = front * saturate(1.0f - clip.z / max(clip.w, 1e-20f));
     float ze = scene.fog_shape.z != 0.0f ? scene.fog.x * depth : scene.fog.x / (scene.fog.y - depth * scene.fog.w);
     return ze - scene.fog.z;
 }
