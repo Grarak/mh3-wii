@@ -16,9 +16,10 @@
 // buffer set, also scaled by the send gain into it. All delay-line positions
 // then move on by one sample.
 //
-// The math keeps the PPC single-precision rounding of the translated code
-// (the same helpers), so the output matches it bit for bit; the port saves the
-// per-access guest memory checks and the register spills.
+// The math keeps the PPC single-precision rounding of the translated code, so
+// the output matches it bit for bit; the port saves the per-access guest
+// memory checks and the register spills, and keeps the delay-line positions,
+// gains and lowpass state in registers for the frame.
 #include "abi_bridge.h"
 #include "memory.h"
 #include "port_check.h"
@@ -78,10 +79,12 @@ double LoadF(const uint8_t* p) {
 }
 void StoreF(uint8_t* p, double v) { StoreU32(p, MemoryInline::ConvertPpcDoubleToSingleBits(v)); }
 
-// PPC single-precision arithmetic, as the translated code does it.
+// PPC single-precision arithmetic, as the translated code does it. Every
+// operand here is a single (loaded as one, or a rounded result), which fmuls's
+// 25-bit rounding of the second operand leaves unchanged, so Muls skips it.
 double Adds(double a, double b) { return PpcForceSingleValueInline(a + b); }
 double Subs(double a, double b) { return PpcForceSingleValueInline(a - b); }
-double Muls(double a, double c) { return PpcFmulsInline(a, c); }
+double Muls(double a, double c) { return PpcForceSingleValueInline(a * c); }
 uint32_t ToInt(double v) { return PPC_FprLowWordInline(PPC_Fctiwz(v)); }
 
 // A delay line: its samples and the guest RAM behind them.
@@ -124,6 +127,25 @@ static void AudioReverb(CpuContext* ctx) {
     const double wetScale = Muls(0.6000000238418579, f32(kLevel));
     const double cross = Muls(0.5, f32(kCrosstalk));
     const double apGain = f32(kAllpassGain);
+    const double outGain = f32(kOutputGain), sendGain = f32(kSendGain);
+    double earlyGain[3], combGain[3], lowpassState[3];
+    uint32_t taps[3], combPos[3], combLength[3], apPos[2], apLength[2], lastPos[3], lastLength[3];
+    for (unsigned k = 0; k < 3; ++k) {
+        earlyGain[k] = f32(kEarlyGains + 4 * k);
+        combGain[k] = f32(kCombGains + 4 * k);
+        lowpassState[k] = f32(kLowpassState + 4 * k);
+        taps[k] = u32(kEarlyTaps + 4 * k);
+        combPos[k] = u32(kCombPos + 4 * k);
+        combLength[k] = u32(kCombLength + 4 * k);
+        lastPos[k] = u32(kLastPos + 4 * k);
+        lastLength[k] = u32(kLastLength + 4 * k);
+    }
+    for (unsigned k = 0; k < 2; ++k) {
+        apPos[k] = u32(kAllpassPos + 4 * k);
+        apLength[k] = u32(kAllpassLength + 4 * k);
+    }
+    uint32_t preDelayPos = u32(kPreDelayPos);
+    auto advance = [](uint32_t& pos, uint32_t length) { pos = pos + 1 < length ? pos + 1 : 0; };
 
     for (unsigned s = 0; s < kSamples; ++s) {
         double wet[3];
@@ -133,47 +155,45 @@ static void AudioReverb(CpuContext* ctx) {
             const double x = PpcForceSingleValueInline(double(int32_t(sample)));
 
             uint8_t* e = early[c];
-            const uint32_t t0 = u32(kEarlyTaps), t1 = u32(kEarlyTaps + 4), t2 = u32(kEarlyTaps + 8);
-            const double e0 = Muls(f32(kEarlyGains), LoadF(e + 4 * t0));
-            const double e1 = Muls(f32(kEarlyGains + 4), LoadF(e + 4 * t1));
-            const double tap2 = LoadF(e + 4 * t2);
-            StoreF(e + 4 * t2, x);
-            const double e2 = Muls(f32(kEarlyGains + 8), tap2);
+            const double e0 = Muls(earlyGain[0], LoadF(e + 4 * taps[0]));
+            const double e1 = Muls(earlyGain[1], LoadF(e + 4 * taps[1]));
+            const double tap2 = LoadF(e + 4 * taps[2]);
+            StoreF(e + 4 * taps[2], x);
+            const double e2 = Muls(earlyGain[2], tap2);
             double sum = Adds(e2, Adds(e0, e1));
 
             double delayed = x;
             if (preDelayLength) {
-                uint8_t* p = preDelay[c] + 4 * u32(kPreDelayPos);
+                uint8_t* p = preDelay[c] + 4 * preDelayPos;
                 delayed = LoadF(p);
                 StoreF(p, x);
             }
             double combs = 0.0;
             for (unsigned k = 0; k < 3; ++k) {
-                uint8_t* p = comb[c][k] + 4 * u32(kCombPos + 4 * k);
+                uint8_t* p = comb[c][k] + 4 * combPos[k];
                 const double y = LoadF(p);
-                const double fed = Muls(y, f32(kCombGains + 4 * k));
+                const double fed = Muls(y, combGain[k]);
                 combs = Adds(combs, y);
                 StoreF(p, Adds(delayed, fed));
             }
-            uint8_t* p = allpass[c][0] + 4 * u32(kAllpassPos);
+            uint8_t* p = allpass[c][0] + 4 * apPos[0];
             double y = LoadF(p);
             double v = Adds(combs, Muls(y, apGain));
             StoreF(p, v);
             const double ap1 = Subs(y, Muls(v, apGain));
-            p = allpass[c][1] + 4 * u32(kAllpassPos + 4);
+            p = allpass[c][1] + 4 * apPos[1];
             y = LoadF(p);
             v = Adds(ap1, Muls(y, apGain));
             StoreF(p, v);
             const double ap2 = Subs(y, Muls(v, apGain));
-            const double lowpass = Adds(Muls(coefRest, ap2), Muls(coef, f32(kLowpassState + 4 * c)));
-            StoreF(state + kLowpassState + 4 * c, lowpass);
+            const double lowpass = Adds(Muls(coefRest, ap2), Muls(coef, lowpassState[c]));
+            lowpassState[c] = lowpass;
 
-            const uint32_t pos = u32(kLastPos + 4 * c);
-            p = last[c] + 4 * pos;
+            p = last[c] + 4 * lastPos[c];
             y = LoadF(p);
             v = Adds(lowpass, Muls(y, apGain));
             StoreF(p, v);
-            StoreU32(state + kLastPos + 4 * c, pos + 1 < u32(kLastLength + 4 * c) ? pos + 1 : 0);
+            advance(lastPos[c], lastLength[c]);
             const double out = Subs(y, Muls(v, apGain));
             wet[c] = Adds(Muls(out, wetScale), sum);
         }
@@ -181,24 +201,30 @@ static void AudioReverb(CpuContext* ctx) {
         const double out0 = Adds(wet[0], Muls(Adds(wet[1], wet[2]), cross));
         const double out1 = Adds(wet[1], Muls(Adds(wet[0], wet[2]), cross));
         const double out2 = Adds(wet[2], Muls(Adds(wet[0], wet[1]), cross));
-        StoreU32(in[0] + 4 * s, ToInt(Muls(out0, f32(kOutputGain))));
-        StoreU32(in[1] + 4 * s, ToInt(Muls(out1, f32(kOutputGain))));
-        StoreU32(in[2] + 4 * s, ToInt(Muls(out2, f32(kOutputGain))));
+        StoreU32(in[0] + 4 * s, ToInt(Muls(out0, outGain)));
+        StoreU32(in[1] + 4 * s, ToInt(Muls(out1, outGain)));
+        StoreU32(in[2] + 4 * s, ToInt(Muls(out2, outGain)));
         if (send[0]) {
-            StoreU32(send[0] + 4 * s, ToInt(Muls(out0, f32(kSendGain))));
-            StoreU32(send[1] + 4 * s, ToInt(Muls(out1, f32(kSendGain))));
-            StoreU32(send[2] + 4 * s, ToInt(Muls(out2, f32(kSendGain))));
+            StoreU32(send[0] + 4 * s, ToInt(Muls(out0, sendGain)));
+            StoreU32(send[1] + 4 * s, ToInt(Muls(out1, sendGain)));
+            StoreU32(send[2] + 4 * s, ToInt(Muls(out2, sendGain)));
         }
 
-        auto advance = [&](uint32_t pos, uint32_t length) {
-            const uint32_t next = u32(pos) + 1;
-            StoreU32(state + pos, next < u32(length) ? next : 0);
-        };
-        for (unsigned k = 0; k < 3; ++k) advance(kEarlyTaps + 4 * k, kEarlyLength);
-        if (u32(kPreDelayLength)) advance(kPreDelayPos, kPreDelayLength);
-        for (unsigned k = 0; k < 3; ++k) advance(kCombPos + 4 * k, kCombLength + 4 * k);
-        for (unsigned k = 0; k < 2; ++k) advance(kAllpassPos + 4 * k, kAllpassLength + 4 * k);
+        for (unsigned k = 0; k < 3; ++k) advance(taps[k], earlyLength);
+        if (preDelayLength) advance(preDelayPos, preDelayLength);
+        for (unsigned k = 0; k < 3; ++k) advance(combPos[k], combLength[k]);
+        for (unsigned k = 0; k < 2; ++k) advance(apPos[k], apLength[k]);
     }
+
+    // The state the loop kept in registers.
+    for (unsigned k = 0; k < 3; ++k) {
+        StoreF(state + kLowpassState + 4 * k, lowpassState[k]);
+        StoreU32(state + kEarlyTaps + 4 * k, taps[k]);
+        StoreU32(state + kCombPos + 4 * k, combPos[k]);
+        StoreU32(state + kLastPos + 4 * k, lastPos[k]);
+    }
+    for (unsigned k = 0; k < 2; ++k) StoreU32(state + kAllpassPos + 4 * k, apPos[k]);
+    if (preDelayLength) StoreU32(state + kPreDelayPos, preDelayPos);
 }
 extern "C" void func_80475880(CpuContext* ctx);
 
