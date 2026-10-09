@@ -1402,3 +1402,12 @@
 800c8e48 DrawStrategyPrevAlive
 # nw4r ef util: a ut::List into an array (effect_calc.cpp).
 8009b3d8 EffUtilListToArray
+# nw4r ef drawing above the draw strategies (effect_draw_order.cpp).
+800a51b8 EffectDraw
+800a3a08 DrawOrderDraw
+800ae68c ParticleManagerDrawMtx
+800adf3c ParticleManagerDraw
+800ae308 DrawInfoCopy
+800b9ae4 DrawBillboardStrategyDraw
+800ba8b8 DrawBillboardKind1
+800bb020 DrawBillboardKind2
