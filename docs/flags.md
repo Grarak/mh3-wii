@@ -207,7 +207,8 @@ The model tests and the asset scripts (`vita-active-play.py`,
 | --- | --- | --- |
 | `AURORA_PORT_CAPTURE` | `DIR`: a per-draw state log (`DIR/events.tsv`) and the shader sources (`DIR/shaders/`) | all |
 | `AURORA_PORT_CAPTURE_DRAW_INTERVAL` | `N`: log every Nth draw (default 30) | all |
-| `AURORA_GROUP_CUTOUTS` | `1`: within each run of depth-tested, depth-writing, unblended draws, draw the opaque ones before the discard (cutout) ones, to cut discard-to-opaque transitions (experimental; coplanar order not validated) | all |
+| `AURORA_PORT_CAPTURE_DRAW_TIMING` | set: each captured draw's GPU finish time (glFinish after it), on the captured frames only | all |
+| `AURORA_SKIP_DRAWS` | Vita GPU measurement ([Razor](vita-razor.md)): `quads,geometry,blended-meshes,opaque-meshes` leave those draws out, `program:TEXT` the draws whose program label contains TEXT | development |
 
 ## Read by tools, not the runtime
 

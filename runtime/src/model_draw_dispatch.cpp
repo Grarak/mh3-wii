@@ -307,6 +307,22 @@ void PipelineRun(CpuContext* cpu, uint32_t reference, const uint32_t sources[3],
 struct Scene {
     GuestCall call;
     uint32_t options_word;
+#ifdef MH3_DEVELOPMENT
+    // A slow model draw's parts (MH3_ModelSceneDraw): task virtual, handler,
+    // virtual, callback, source, draw pass; the slowest handler task.
+    double ms[6]{};
+    unsigned slowTask = 0;
+    double slowTaskMs = 0;
+    struct Part {
+        Scene& s;
+        unsigned index;
+        MH3SplitClock::time_point start = MH3SplitClock::now();
+        ~Part() { s.ms[index] += std::chrono::duration<double, std::milli>(MH3SplitClock::now() - start).count(); }
+    };
+#define MH3_SCENE_PART(scene, index) Scene::Part mh3ScenePart{scene, index}
+#else
+#define MH3_SCENE_PART(scene, index)
+#endif
     mh3_model_scene_draw_ops Ops() { return {this, Task, Handler, Virtual, Callback, Options, Source, DrawPass}; }
     static void Task(void* user, uint32_t owner, unsigned task, uint32_t* options) {
         auto& s = *static_cast<Scene*>(user);
@@ -323,6 +339,7 @@ struct Scene {
             ReportDrawSideWrites(owner, owner + 0x148);
         }
 #endif
+        MH3_SCENE_PART(s, 0);
         Memory::Write32(s.options_word, *options);
         s.call.Virtual<0x0c>(owner, {task, 0, s.options_word});
         *options = Memory::Read32(s.options_word);
@@ -330,6 +347,25 @@ struct Scene {
 
     static void Handler(void* user, uint32_t owner, uint32_t task, uint32_t argument, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
+#ifdef MH3_DEVELOPMENT
+        const auto start = MH3SplitClock::now();
+        struct Slowest {
+            Scene& s;
+            uint32_t task;
+            MH3SplitClock::time_point start;
+            ~Slowest() {
+                const double elapsed = std::chrono::duration<double, std::milli>(MH3SplitClock::now() - start).count();
+
+                if (task != 6 && task != 7)
+                    s.ms[1] += elapsed;
+
+                if (elapsed > s.slowTaskMs) {
+                    s.slowTaskMs = elapsed;
+                    s.slowTask = task;
+                }
+            }
+        } slowest{s, task, start};
+#endif
 
         switch (task) {
         case 1:
@@ -364,6 +400,7 @@ struct Scene {
 
     static void Virtual(void* user, uint32_t owner, unsigned slot, uint32_t argument) {
         auto& call = static_cast<Scene*>(user)->call;
+        MH3_SCENE_PART(*static_cast<Scene*>(user), 2);
 
         if (slot == 0x24)
             call.Virtual<0x24>(owner);
@@ -375,6 +412,7 @@ struct Scene {
 
     static void Callback(void* user, uint32_t callback, unsigned slot, unsigned mask, uint32_t owner, uint32_t argument, uint32_t options) {
         auto& call = static_cast<Scene*>(user)->call;
+        MH3_SCENE_PART(*static_cast<Scene*>(user), 3);
 
         if (slot == 0x18)
             call.Virtual<0x18>(callback, {mask, owner, argument, options});
@@ -385,6 +423,7 @@ struct Scene {
     static uint32_t Options(void*, uint32_t pointer) { return Memory::Read32(pointer); }
     static uint32_t Source(void* user, uint32_t owner, unsigned kind) {
         auto& call = static_cast<Scene*>(user)->call;
+        MH3_SCENE_PART(*static_cast<Scene*>(user), 4);
 
         switch (kind) {
         case 0:
@@ -400,6 +439,7 @@ struct Scene {
 
     static mh3_res_status DrawPass(void* user, uint32_t resource, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
+        MH3_SCENE_PART(s, 5);
         GuestFrame frame(s.call.cpu, 0x20);
         Memory::Write32(frame[0x10], resource);
         PipelineRun(s.call.cpu, frame[0x10], sources, opaque, xlu, replacement, options);
@@ -412,7 +452,16 @@ extern "C" void MH3_ModelSceneDraw(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x20);
     Scene s{{cpu}, frame[0x10]};
     auto ops = s.Ops();
+#ifdef MH3_DEVELOPMENT
+    const auto start = MH3SplitClock::now();
+#endif
     Checked(mh3_model_scene_draw(&ops, Bytes(frame.Arg(3), 0x148), frame.Arg(3), frame.Arg(4)));
+#ifdef MH3_DEVELOPMENT
+    // One model's draw over 20 ms (a stall the split hides): where it went.
+    if (const double total = std::chrono::duration<double, std::milli>(MH3SplitClock::now() - start).count(); total >= 20)
+        std::printf("MH3 slow model draw %08x: %.1f ms: task virtual %.1f, handlers %.1f (slowest task %u %.1f), virtual %.1f, callback %.1f, source %.1f, draw pass %.1f\n",
+                    frame.Arg(3), total, s.ms[0], s.ms[1], s.slowTask, s.slowTaskMs, s.ms[2], s.ms[3], s.ms[4], s.ms[5]);
+#endif
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8004978C, MH3_ModelSceneDraw, "ModelSceneDraw");
 extern "C" void MH3_ModelSceneOptions(CpuContext* cpu) {
