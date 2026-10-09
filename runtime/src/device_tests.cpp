@@ -10,6 +10,9 @@
 #include "village_boot.h"
 #include <array>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <limits>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -72,6 +75,27 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    {
+        // Single rounding under FPSCR[NI]: a result below 2^-126 before rounding
+        // flushes to a signed zero, even one that rounds up to the smallest
+        // normal; without NI it rounds normally.
+        const uint32_t saved = MkwGetHostFpControl();
+        volatile double below = 0x1p-126 * (1 - 0x1p-30), tiny = 0x1p-130, smallest = 0x1p-126, one = 1.5;
+        auto bits = [](float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; };
+        MkwApplyHostNiMode(4);
+        const bool ni = bits(PpcForceSingleValueInline(below)) == 0 &&
+            bits(PpcForceSingleValueInline(-below)) == 0x80000000u &&
+            bits(PpcForceSingleValueInline(tiny)) == 0 &&
+            bits(PpcForceSingleValueInline(smallest)) == 0x00800000u &&
+            PpcForceSingleValueInline(one) == 1.5f &&
+            std::isnan(PpcForceSingleValueInline(std::numeric_limits<double>::quiet_NaN()));
+        MkwApplyHostNiMode(0);
+        const bool ieee = bits(PpcForceSingleValueInline(below)) == 0x00800000u &&
+            bits(PpcForceSingleValueInline(tiny)) == 0x00080000u;
+        MkwRestoreHostMxcsr(saved);
+        if (!ni) throw std::runtime_error("Single rounding under FPSCR[NI] did not flush pre-round subnormals");
+        if (!ieee) throw std::runtime_error("Single rounding without FPSCR[NI] flushed");
+    }
     {
         // Exercise the published scalar-read biases across pages and aliases,
         // and ensure they cannot bypass the end of an allocation or MMIO.

@@ -3,6 +3,7 @@
 #include "game_step.h"
 #include "gx_stream.h"
 #include "efb_host.h"
+#include "isa/ppc_isa_fpenv.h"
 #include "gl/device.hpp"
 #include "gl/gl.hpp"
 #include "dolphin/vi/vi_internal.hpp"
@@ -501,10 +502,10 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     const double tickHz = (ticks - lastTicks) / seconds;
     std::fprintf(stderr,
         "MH3 stats: game speed %.1f%% (%.1f/%.1f Hz paced), game %.1f fps (display copies), host %.1f fps (presents), "
-        "%.1f fps skipped, %lld frames in flight\n",
+        "%.1f fps skipped, %lld frames in flight, NI %s\n",
         100.0 * tickHz / nominalHz, tickHz, nominalHz, (guestCopies - lastCopies) / seconds,
         (presents - lastPresents) / seconds, (skipped - lastSkipped) / seconds,
-        static_cast<long long>(guestCopies - presents - skipped));
+        static_cast<long long>(guestCopies - presents - skipped), g_mkwHostNiActive ? "set" : "clear");
     const auto high = aurora::gfx::staging_high_water();
     std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %zu idx %zu uniform %zu storage %zu (KiB)\n",
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),

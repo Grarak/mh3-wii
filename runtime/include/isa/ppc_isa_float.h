@@ -245,10 +245,10 @@ inline bool MkwHostNiActiveInline() noexcept
 inline float PpcForceSingleValueInline(double value)
 {
     // FPSCR[NI] flushes an exact pre-round single-subnormal even when rounding would promote it
-    // to the smallest normal. g_mkwNiFlushThreshold (2^-126 active, 0.0 inactive) turns the
-    // flush into a branchless mask: a set compare lane keeps just the sign bit, a clear lane
-    // passes the value to the double->float conversion. DAZ/FZ (set exactly when NI is) makes
-    // the compare itself treat a subnormal as zero, matching the mask's answer.
+    // to the smallest normal. On x86-64, g_mkwNiFlushThreshold (2^-126 active, 0.0 inactive)
+    // turns the flush into a branchless mask: a set compare lane keeps just the sign bit, a clear
+    // lane passes the value to the double->float conversion. DAZ/FZ (set exactly when NI is)
+    // makes the compare itself treat a subnormal as zero, matching the mask's answer.
 #if defined(__x86_64__)
     const __m128d v = _mm_set_sd(value);
     const __m128d signMask = _mm_set_sd(-0.0);
@@ -256,27 +256,12 @@ inline float PpcForceSingleValueInline(double value)
     const __m128d flush = _mm_cmplt_sd(magnitude, _mm_set_sd(g_mkwNiFlushThreshold));
     const __m128d kept = _mm_andnot_pd(_mm_andnot_pd(signMask, flush), v);
     return static_cast<float>(_mm_cvtsd_f64(kept));
-#elif defined(__aarch64__)
-    const float64x1_t v = vdup_n_f64(value);
-    const uint64x1_t signMask = vdup_n_u64(0x8000000000000000ULL);
-    const float64x1_t magnitude = vreinterpret_f64_u64(vbic_u64(vreinterpret_u64_f64(v), signMask));
-    const uint64x1_t flush = vclt_f64(magnitude, vdup_n_f64(g_mkwNiFlushThreshold));
-    const uint64x1_t signOnly = vand_u64(vreinterpret_u64_f64(v), signMask);
-    const uint64x1_t kept = vbsl_u64(flush, signOnly, vreinterpret_u64_f64(v));
-    return static_cast<float>(vget_lane_f64(vreinterpret_f64_u64(kept), 0));
-#elif defined(__arm__)
-    // VFP's compare honors FPSCR.FZ like the AArch64 vector compare above.
-    constexpr uint64_t kSignMask = 0x8000000000000000ULL;
-    uint64_t bits = 0;
-    std::memcpy(&bits, &value, sizeof(bits));
-    const uint64_t magnitudeBits = bits & ~kSignMask;
-    double magnitude = 0.0;
-    std::memcpy(&magnitude, &magnitudeBits, sizeof(magnitude));
-    if (magnitude < g_mkwNiFlushThreshold)
-        bits &= kSignMask;
-    double kept = 0.0;
-    std::memcpy(&kept, &bits, sizeof(kept));
-    return static_cast<float>(kept);
+#else
+    // ARM needs no mask: host FZ is set exactly when NI is (MkwApplyHostNiMode), and FZ
+    // flushes on the exponent of the unrounded result (FPRound in the Arm ARM, AArch64 and
+    // AArch32 alike), which is NI's rule. The mask sat on the critical path of every
+    // single-precision result, on AArch32 as a VFP compare whose flags move to the core.
+    return static_cast<float>(value);
 #endif
 }
 
