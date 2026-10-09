@@ -196,6 +196,16 @@
 800a0d68 AnimCurveExecuteTexture
 800a1d0c AnimCurveExecuteChild
 8009ce20 AnimCurveTickToFrame
+800a2818 AnimCurveFrameIndex
+8009f290 AnimCurveTables
+8009eab0 AnimCurveKeyLoops
+800a2568 AnimCurveExecuteBakedU8
+800a2d54 AnimCurveExecuteBakedF32
+800a0228 AnimCurveBlendF32
+8009ef58 AnimCurvePickSeed
+8009ef40 AnimCurveRandomNext
+8009f898 AnimCurveChannelCount
+8009f8ac AnimCurveChannelBound
 800ad294 ResEmitterNumPtclTrack
 800aded8 ResEmitterNumPtclInitTrack
 800ade30 ResEmitterGetPtclTrack

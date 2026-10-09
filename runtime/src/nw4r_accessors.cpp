@@ -5,6 +5,7 @@
 //
 //   0x800A8C5C EmitterResBody        r3 + 8 + *(r3 + 4), then that + 4 + *(that)
 //   0x800AD294 ResEmitterNumPtclTrack   u16 at EmitterResBody(r3)
+//   0x800ADED8 ResEmitterNumPtclInitTrack u16 at EmitterResBody(r3) + 2
 //   0x800ADEB4 ResEmitterPtclTrackTable EmitterResBody(r3) + 4
 //   0x800ADE30 ResEmitterGetPtclTrack   the table's u32 entry u16(r4), panics
 //                                       when u16(r4) >= the track count
@@ -48,6 +49,7 @@ uint32_t EmitterResBody(uint32_t r) {
     return a + Read32(a) + 4;
 }
 uint32_t NumPtclTrack(uint32_t r) { return MemoryInline::FlatRead16(EmitterResBody(r)); }
+uint32_t NumPtclInitTrack(uint32_t r) { return MemoryInline::FlatRead16(EmitterResBody(r) + 2); }
 uint32_t PtclTrackTable(uint32_t r) { return EmitterResBody(r) + 4; }
 uint32_t GetPtclTrack(uint32_t r, uint32_t index) {
     const uint32_t body = EmitterResBody(r);
@@ -138,6 +140,7 @@ void VecSubtract(uint32_t out, uint32_t a, uint32_t b) {
 
 MH3_ACCESSOR1(800A8C5C, EmitterResBody, EmitterResBody)
 MH3_ACCESSOR1(800AD294, ResEmitterNumPtclTrack, NumPtclTrack)
+MH3_ACCESSOR1(800ADED8, ResEmitterNumPtclInitTrack, NumPtclInitTrack)
 MH3_ACCESSOR1(800ADEB4, ResEmitterPtclTrackTable, PtclTrackTable)
 MH3_ACCESSOR2(800ADE30, ResEmitterGetPtclTrack, GetPtclTrack)
 MH3_ACCESSOR1(80070124, ResRefChecked, RefChecked)
@@ -148,6 +151,8 @@ extern "C" void MH3_EmitterResBody(CpuContext* ctx) { ctx->gpr[3] = EmitterResBo
 REGISTER_NATIVE_FUNCTION_AS(0x800A8C5C, MH3_EmitterResBody, "EmitterResBody");
 extern "C" void MH3_ResEmitterNumPtclTrack(CpuContext* ctx) { ctx->gpr[3] = ResEmitterNumPtclTrackChecked(ctx->gpr[1], ctx->gpr[3]); }
 REGISTER_NATIVE_FUNCTION_AS(0x800AD294, MH3_ResEmitterNumPtclTrack, "ResEmitterNumPtclTrack");
+extern "C" void MH3_ResEmitterNumPtclInitTrack(CpuContext* ctx) { ctx->gpr[3] = ResEmitterNumPtclInitTrackChecked(ctx->gpr[1], ctx->gpr[3]); }
+REGISTER_NATIVE_FUNCTION_AS(0x800ADED8, MH3_ResEmitterNumPtclInitTrack, "ResEmitterNumPtclInitTrack");
 extern "C" void MH3_ResEmitterPtclTrackTable(CpuContext* ctx) { ctx->gpr[3] = ResEmitterPtclTrackTableChecked(ctx->gpr[1], ctx->gpr[3]); }
 REGISTER_NATIVE_FUNCTION_AS(0x800ADEB4, MH3_ResEmitterPtclTrackTable, "ResEmitterPtclTrackTable");
 extern "C" void MH3_ResEmitterGetPtclTrack(CpuContext* ctx) { ctx->gpr[3] = ResEmitterGetPtclTrackChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]); }

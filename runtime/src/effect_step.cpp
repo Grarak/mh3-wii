@@ -47,6 +47,13 @@ extern "C" void func_800A4C20(CpuContext*); // nw4r::ef::Effect::Calc(bool onlyB
 extern "C" void func_800A8AC0(CpuContext*); // nw4r::ef::Emitter::CalcEmitter()
 extern "C" void func_800A8E5C(CpuContext*); // nw4r::ef::Emitter::CalcEmission()
 extern "C" void func_800AC35C(CpuContext*); // nw4r::ef::ParticleManager::Calc()
+// Native ports (ef_anim_curve.cpp, nw4r_accessors.cpp), called directly.
+extern "C" void MH3_ResEmitterNumPtclTrack(CpuContext*);
+extern "C" void MH3_ResEmitterGetPtclTrack(CpuContext*);
+extern "C" void MH3_ResEmitterNumPtclInitTrack(CpuContext*);
+extern "C" void MH3_AnimCurveExecuteU8(CpuContext*);
+extern "C" void MH3_AnimCurveExecuteF32(CpuContext*);
+extern "C" void MH3_AnimCurveExecuteRotate(CpuContext*);
 
 namespace {
 
@@ -62,15 +69,6 @@ struct List {
 
 enum : uint32_t { kLifeActive = 1 };
 enum : uint32_t { kEvalWait = 0 };
-
-enum : uint32_t {
-    TrackCount = 0x800AD294,     // (ResEmitter) -> u16 particle tracks
-    InitTrackCount = 0x800ADED8, // (ResEmitter) -> u16 of them run only at tick 0
-    Track = 0x800ADE30,          // (ResEmitter, u16 index) -> track
-    CurveU8 = 0x8009DF14,        // AnimCurveExecuteU8(track, target, tick, seed, life)
-    CurveF32 = 0x8009F8C0,       // AnimCurveExecuteF32(...)
-    CurveRotate = 0x800A035C,    // AnimCurveExecuteRotate(...)
-};
 
 // Effect / Emitter / ParticleManager / Particle fields.
 enum : uint32_t {
@@ -138,19 +136,30 @@ std::unordered_set<uint32_t> betweenTicks;
 // Runs the particle's curve tracks at `tick`, as ParticleManager::Calc does
 // (without the child and texture tracks, the events, and the emitter-age ones).
 void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t tick) {
+    // The track accessors and curve executors are native ports reading only
+    // their argument registers: call them without the indirect dispatch.
+    auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
+        uint32_t r = 3;
+        for (uint32_t v : ints) game.cpu->gpr[r++] = v;
+        fn(game.cpu);
+        return game.cpu->gpr[3];
+    };
     const uint32_t res = Memory::Read32(manager + kManagerResource);
-    const uint32_t count = game(TrackCount, {res}) & 0xFFFF;
-    const uint32_t first = tick == 0 ? 0 : game(InitTrackCount, {res}) & 0xFFFF;
+    const uint32_t count = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
+    const uint32_t first = tick == 0 ? 0 : native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
     const uint32_t seed = Memory::Read16(particle + kParticleSeed);
     const uint32_t life = Memory::Read16(particle + kParticleLife);
     for (uint32_t i = first; i < count; ++i) {
-        const uint32_t track = game(Track, {res, i});
+        const uint32_t track = native(MH3_ResEmitterGetPtclTrack, {res, i});
         const uint8_t magic = Memory::Read8(track), target = Memory::Read8(track + 1);
         const uint8_t kind = Memory::Read8(track + 2), flags = Memory::Read8(track + 4);
         if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2) continue;
-        if (kind == kTrackU8) game(CurveU8, {track, particle + kParticleCurves + target, tick, seed, life});
-        else if (kind == kTrackF32) game(CurveF32, {track, particle + kParticleCurves + target, tick, seed, life});
-        else if (kind == kTrackRotate) game(CurveRotate, {track, particle + kParticleRotate, tick, seed, life});
+        if (kind == kTrackU8)
+            native(MH3_AnimCurveExecuteU8, {track, particle + kParticleCurves + target, tick, seed, life});
+        else if (kind == kTrackF32)
+            native(MH3_AnimCurveExecuteF32, {track, particle + kParticleCurves + target, tick, seed, life});
+        else if (kind == kTrackRotate)
+            native(MH3_AnimCurveExecuteRotate, {track, particle + kParticleRotate, tick, seed, life});
     }
 }
 
