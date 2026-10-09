@@ -62,7 +62,11 @@ audio and input hardware.
 - **Files**: the disc image is read with `sceIoPread` and 64-bit offsets;
   64-byte aligned buffers and 512-byte multiple offsets (the SDK's
   guidance); NAND attributes live in a journal (exFAT has no extended
-  attributes); logs go to the console's TTY.
+  attributes); logs go to the console's TTY. Large reads through stdio go
+  unbuffered (`setvbuf(file, nullptr, _IONBF, 0)`): through newlib's stream
+  buffer a 1.5 MiB `fread` took 5.6-6.6 s on the devkit, and the audio
+  streams' extracted copies read in 34 ms instead of 15 ms a request
+  ([asset conversion](../assets/load-time-asset-conversion.md)).
 - **Input**: `sceCtrl` mapped to the Classic Controller
   ([controller input](../system/controller-input.md)).
 - **Audio**: one output thread on core 3, blocking in `sceAudioOutOutput`

@@ -440,6 +440,12 @@ struct AssetCache::Impl {
 
         e.copy = std::fopen(ExtractPath(e).string().c_str(), "rb");
         openCopies += e.copy != nullptr;
+
+        // Unbuffered: newlib reads each served range in one call (a buffered
+        // fread took 6.6 s for a 1.5 MiB model payload on the Vita).
+        if (e.copy)
+            std::setvbuf(e.copy, nullptr, _IONBF, 0);
+
         return e.copy;
     }
 
