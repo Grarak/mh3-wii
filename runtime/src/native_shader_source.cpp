@@ -746,7 +746,11 @@ float2 texgen(int role, float2 uv, float selector, float3 position, float3 norma
 #endif
     if ((bits & 8) == 0)
         coordinate = mul(float4(coordinate, 1.0f), t.post);
-    return coordinate.z != 0.0f ? coordinate.xy / coordinate.z : clamp(coordinate.xy / 2.0f, -1.0f, 1.0f);
+    // Selects, not branches: psp2cgc turns a vector ?: or an if on a vertex's
+    // values into dynamic flow control, which runs the program in per-instance
+    // mode (one vertex per USSE thread instead of four).
+    float projective = coordinate.z != 0.0f ? 1.0f : 0.0f;
+    return lerp(clamp(coordinate.xy / 2.0f, -1.0f, 1.0f), coordinate.xy / (coordinate.z + (1.0f - projective)), projective);
 }
 float2 affine(int role, float2 uv) { return mul(float4(uv, 1.0f, 1.0f), draw.texgen[role].main).xy; }
 void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, float2 a_uv1, float2 a_uv2,
@@ -769,15 +773,11 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
     float3 n1 = cross(m2.xyz, m0.xyz);
     float3 n2 = cross(m0.xyz, m1.xyz);
     float det = dot(m0.xyz, n0);
-    if (abs(det) < 1e-36f) {
-        n0 = m0.xyz;
-        n1 = m1.xyz;
-        n2 = m2.xyz;
-    } else {
-        n0 /= det;
-        n1 /= det;
-        n2 /= det;
-    }
+    float singular = abs(det) < 1e-36f ? 1.0f : 0.0f;
+    float inverse = 1.0f / (det + singular);
+    n0 = lerp(n0 * inverse, m0.xyz, singular);
+    n1 = lerp(n1 * inverse, m1.xyz, singular);
+    n2 = lerp(n2 * inverse, m2.xyz, singular);
     float4 p = float4(a_position, 1.0f);
     float3 position = float3(dot(p, m0), dot(p, m1), dot(p, m2));
 #else
@@ -792,7 +792,8 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
 #else
     float3 normal = mul(float4(a_normal, 0.0f), palette.normal[slot]);
 #endif
-    normal = dot(normal, normal) > 1e-10f ? normalize(normal) : normal;
+    float length2 = dot(normal, normal);
+    normal *= length2 > 1e-10f ? rsqrt(length2) : 1.0f;
     v_color0 = light_channel(position, normal, vertex);
 #else
     v_color0 = light_channel(position, float3(0.0f, 0.0f, 0.0f), vertex);
