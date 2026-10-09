@@ -100,15 +100,19 @@ TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t m
 
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   ZoneScoped;
-  return std::make_shared<TextureRef>(gl::create_texture(width, height, 1, gl::Format::RGBA8, label),
+  auto handle = std::make_shared<TextureRef>(gl::create_texture(width, height, 1, gl::Format::RGBA8, label),
                                       Extent{width, height, 1}, gl::Format::RGBA8, 1, gxFormat);
+  handle->isRenderTarget = true;
+  return handle;
 }
 
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   ZoneScoped;
   const auto format = to_gl_format(gxFormat);
-  return std::make_shared<TextureRef>(gl::create_texture(width, height, 1, format, label), Extent{width, height, 1},
+  auto handle = std::make_shared<TextureRef>(gl::create_texture(width, height, 1, format, label), Extent{width, height, 1},
                                       format, 1, gxFormat);
+  handle->isRenderTarget = true;
+  return handle;
 }
 
 void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept {

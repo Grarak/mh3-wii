@@ -37,6 +37,7 @@ struct TextureRef {
   u32 gxFormat;
   bool hasArbitraryMips = false;
   bool isReplacement = false;
+  bool isRenderTarget = false;
 
   TextureRef(gl::TexturePtr texture, Extent size, gl::Format format, uint32_t mipCount, u32 gxFormat)
   : texture(std::move(texture)), size(size), format(format), mipCount(mipCount), gxFormat(gxFormat) {}

@@ -84,6 +84,7 @@ namespace {
 struct CachedBindGroup {
   std::shared_ptr<const TextureBindGroup> bindGroup;
   uint32_t lastUsedFrame = 0;
+  bool transient = false;
 };
 
 constexpr uint32_t BindGroupCacheRetainFrames = 32;
@@ -1162,13 +1163,19 @@ uint32_t current_frame() noexcept { return g_frameIndex; }
 // The only place that erases from g_cachedBindGroups, whose handles the frame being encoded still
 // holds, so it runs in the seal prologue with the renderer mutex held and the producer excluded.
 void expire_bind_group_cache() noexcept {
-  if (g_cachedBindGroups.empty() || g_frameIndex == UINT32_MAX || g_frameIndex % BindGroupCacheSweepPeriod != 0) {
+  if (g_cachedBindGroups.empty() || g_frameIndex == UINT32_MAX) {
     return;
   }
 
   ZoneScoped;
   for (auto it = g_cachedBindGroups.begin(); it != g_cachedBindGroups.end();) {
-    if (g_frameIndex - it->second.lastUsedFrame > BindGroupCacheRetainFrames) {
+    // Per-frame copy targets are not reusable while a cached group pins them.
+    // Retire their groups promptly; sealed frames still own retired groups
+    // through execution, preserving all queued readers and interpolation.
+    const bool transient = it->second.transient;
+    const u32 retainFrames = transient ? 2 : BindGroupCacheRetainFrames;
+    if ((transient || g_frameIndex % BindGroupCacheSweepPeriod == 0) &&
+        g_frameIndex - it->second.lastUsedFrame > retainFrames) {
       g_retiredBindGroups.emplace_back(std::move(it->second.bindGroup));
       g_cachedBindGroups.erase(it++);
     } else {
@@ -1608,9 +1615,12 @@ BindGroupRef bind_group_ref(TextureBindGroup&& group) {
   const auto id = hash_bind_group(group);
   const auto it = g_cachedBindGroups.find(id);
   if (it == g_cachedBindGroups.end()) {
+    const bool transient = std::any_of(group.textures.begin(), group.textures.end(),
+        [](const auto& binding) { return binding.ref && binding.ref->isRenderTarget; });
     g_cachedBindGroups.emplace(id, CachedBindGroup{
                                        .bindGroup = std::make_shared<const TextureBindGroup>(std::move(group)),
                                        .lastUsedFrame = g_frameIndex,
+                                       .transient = transient,
                                    });
   } else {
     it->second.lastUsedFrame = g_frameIndex;
