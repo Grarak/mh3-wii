@@ -6,6 +6,7 @@
 #include "village_boot.h"
 #include "field_jump.h"
 #include "disc_image.h"
+#include "widescreen.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
 #include <aurora/thread_role.hpp>
@@ -405,6 +406,8 @@ bool Run() {
         Page page = Page::Main;
         size_t selected = 0;
         bool creating = false, noDamage = false, noStamina = false;
+        // The game reads it once, at RenderInit, after the hand-off.
+        bool widescreen = WidescreenSetting().value_or(true);
         SaveSlot save{};
         std::vector<SaveSlot> saves;
         std::vector<QuestCatalog::Quest> quests;
@@ -443,8 +446,8 @@ bool Run() {
             switch (page) {
             case Page::Main:
                 title = "Main menu";
-                rows = {"Start game", "Quests", "Create custom quest", "Cheats"};
-                detail = "Continue through the game's title and character selection";
+                rows = {"Start game", "Quests", "Create custom quest", "Cheats", "Widescreen: " + std::string(widescreen ? "ON (16:9)" : "OFF (4:3)")};
+                detail = selected == 4 ? "The game's own 16:9 mode on the whole display, or 4:3 with side bars" : "Continue through the game's title and character selection";
                 break;
             case Page::Categories:
                 title = "Quests";
@@ -599,8 +602,13 @@ bool Run() {
                     } else if (selected == 2) {
                         creating = true;
                         enter(Page::Templates);
-                    } else
+                    } else if (selected == 3)
                         enter(Page::Cheats);
+                    else {
+                        widescreen = !widescreen;
+                        SetWidescreenSetting(widescreen);
+                        Log("widescreen %s", widescreen ? "on" : "off");
+                    }
                     break;
                 case Page::Saves:
                     save = saves[selected];

@@ -143,8 +143,12 @@ rectangles (see [the renderer section](#renderer-and-hand-off-to-the-game)).
 | Cross on editor Name | Open the native Vita keyboard |
 | Triangle in Custom quests | Edit the selected saved quest |
 
-The main menu contains `Start game`, `Quests`, `Create custom quest` and
-`Cheats`. The Quests submenu contains `Offline quests`, `Online quests`,
+The main menu contains `Start game`, `Quests`, `Create custom quest`,
+`Cheats` and `Widescreen`. `Widescreen` toggles the game's 16:9 mode for this
+launch (on by default; `MH3_WIDESCREEN=0` starts it off) through
+`SetWidescreenSetting`; the game reads it once, at `RenderInit`, after the
+hand-off. Off, the game runs in 4:3 on a pillarboxed 777×544 target
+([vita-widescreen.md](vita-widescreen.md)). The Quests submenu contains `Offline quests`, `Online quests`,
 `Arena` and `Custom quests`. Online quests are the disc's online quest
 catalogue launched locally; this menu does not establish an online service.
 
@@ -303,8 +307,10 @@ Quests > Online quests > three pages down > quest 10057:
 The launcher logs its pages, inputs, dialogs and
 `starting the game (...) after N launcher frames`. The harness counts
 readiness frames from that point. `--pad-script` sends timed CTRLP `pad`
-states; the launcher reads `sceCtrlPeekBufferPositive`, but CTRLP's effect
-there is untested. On the host, `MH3 --launcher-screen-check` draws launcher
+states. The game sees them (Circle, the Classic Controller's A, skips the
+intro movie: `scripts/launcher-input/skip-intro.pad`); the launcher's own
+`sceCtrlPeekBufferPositive` reads are untested with CTRLP. Pad script entries
+not yet sent when the readiness count is reached are dropped. On the host, `MH3 --launcher-screen-check` draws launcher
 frames through the render thread, hands off, restarts the renderer at
 640×456 and checks pixels and the target size.
 
@@ -313,29 +319,48 @@ Results, run directories under `build/vita-devkit/`:
 | Run | Result |
 | --- | --- |
 | `launcher-baseline-1` (before this work) | The launcher stopped at its first frame: `[fatal] [aurora::native_geometry] Geometry allocated outside game thread`. HDMI was black after the home screen. |
-| `launcher-quest-1` | The menu renders at full screen and the script navigates to quest 10057 (L/R paging included). The hand-off frame shows, and the game boots into the quest's loading screen. 253 KiB peak native vertex memory. |
-| `launcher-start-1` | The no-save message (`SceMsgDialog`) draws over the menu and closes. Start game hands off and the game reaches the THP startup. |
-| `launcher-direct-area0-1` | Control run: the same build, launched with `--quest 10057 --area -1`, plays normally. |
+| `launcher-quest-1` | The menu renders at full screen and the script navigates to quest 10057 (L/R paging included). The hand-off frame shows, and the game boots into the quest's loading screen. 253 KiB peak native vertex memory. The run ended 15.6 s into the shader freeze below. |
+| `launcher-start-1` | The no-save message (`SceMsgDialog`) draws over the menu and closes. Start game hands off and the game reaches the THP intro, where the process output stopped with the profiler running (below). |
+| `launcher-direct-area0-1` | Control run: the same build, launched with `--quest 10057 --area -1`. Packets also stop for 25 s (51.5–76.1 s) and 21 s (92.2–113.9 s) while the render thread creates GXM programs. |
+| `launcher-diag-quest-1` | `0db3efe` plus the stall report and the Widescreen row (committed as `4e1a6a6`, `b7cd2b9`): quest 10057 through the menu. Freeze 56.6–81.2 s at packet 769 (records 1..13, model draws), then gameplay; the replay moves the hunter into the next area. Profiled. |
+| `launcher-diag-start-1` | Start game, profiler started before the intro: process output stops mid-line 7.6 s later, DECI requests time out (as in `launcher-start-1`). |
+| `launcher-diag-start-2` | Start game without a profiler during the intro: the intro plays, slowly (below). |
+| `launcher-diag-start-3` | Start game, Circle skips the intro, the title (PRESS A) shows; profiled at the title. |
+| `launcher-final-quest-1` | Final build `b7cd2b9`: quest 10057 through the menu, freeze 58–77 s, then the 3D scene and the replay (`--playback`; movement and camera confirmed). Profiled in gameplay. |
+| `launcher-final-start-4x3-1` | Final build, `widescreen-off-start.tsv`: Widescreen off in the menu, Start game, Circle skips the intro; the title shows in 4:3, pillarboxed (the 960×544 target shrinks to 777×544 after the hand-off). Profiled at the title. |
 
-**Open:** after the hand-off, the restarted render thread stops replaying
-packets. In `launcher-quest-1` this happened at the quest's first 3D frames
-(`packets_total` frozen at 280; the game thread kept running, the screen froze
-on Now Loading). In `launcher-start-1` it happened about 16 s after the hand-off
-at the title's THP startup; the game thread then stalled too and the CPU profiler's
-DECI requests timed out. The direct launch never shows this, so it belongs to
-the launcher path: the render-thread restart, or the target resize from
-960×544. The host check covers only 20 frames after the restart.
+**No hand-off stall.** The render-thread restart and the target resize work;
+the two stalls the first runs showed belong to the game, not the launcher:
 
-Next steps:
+- **Quest: runtime GXM program creation.** At the quest's first model draws
+  the render thread creates about 25 GXM programs
+  (`aurora::gxm::runtime_shader_binary`): about 1 s per cached program
+  (`MH3 loaded cached GXM shader`), 3–5 s per compiled one. It replays no
+  packet meanwhile, so the screen holds the loading screen for about 20–25 s,
+  in a direct `--quest` launch as well. In `launcher-diag-quest-1`'s profile
+  (59–89 s, mostly this freeze) 73% of the render thread's samples are in the
+  kernel, at about 20% CPU: waiting, not computing (the profile has no
+  render-thread stacks). Likely file I/O: the cached path reads three files
+  and rewrites two (`.cg`, `.origin.json`) in `ux0:/data/mh3-wii/shaders` per
+  program while the asset-cache workers and disc reads also use `ux0`. Shader
+  work, outside the launcher.
+- **Start game: the THP intro.** The intro movie decodes on the game thread at
+  about 320 ms per step (93% of its core, about 3 logical fps; the picture
+  shows only its blue channel). It is slow, not stopped. With the vprof
+  register profiler (8 KiB stack snapshots) running during the intro, the
+  process output (TTY and `host0:` log) stopped mid-line about 7 s after the
+  profiler started, twice, and its DECI requests timed out. Profile after the
+  intro: skip it with Circle (`--pad-script scripts/launcher-input/skip-intro.pad`)
+  and set `--ready-copies` past it (1100 frames after the hand-off).
 
-1. Rehearse the hand-off on the host before a full game run (launcher frames,
-   `HandOffScreen`, then `--quest`).
-2. Alternatively, keep the launcher's render thread for the game: open the
-   assets and reconfigure the target as render-thread tasks instead of
-   stopping it.
+Development builds report a render thread that makes no progress for two
+statistics intervals: `MH3 render thread: no progress for N reports in draw
+of packet P, record R kind K` (or the task stage). A slow but moving freeze,
+such as the program creation above, does not trigger it.
 
-Input scripts are in `scripts/launcher-input/`: `quest-10057.tsv` and
-`no-save-then-start.tsv` (both used above), and `tour-custom-quest.tsv` (cheats,
+Input scripts are in `scripts/launcher-input/`: `quest-10057.tsv`,
+`no-save-then-start.tsv` and `widescreen-off-start.tsv` (used above), the pad
+script `skip-intro.pad`, and `tour-custom-quest.tsv` (cheats,
 editor with the keyboard, save, launch of the saved custom quest). There is
 also `hold-dialogs.tsv`, which only keeps dialogs closing by themselves, for
 example with `MH3_DISC_DIR` set to an empty `host0:` directory for the
