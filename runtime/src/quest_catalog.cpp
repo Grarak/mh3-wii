@@ -18,6 +18,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <set>
+#include <span>
 #include <stdexcept>
 
 namespace QuestCatalog {
@@ -191,6 +192,97 @@ std::string MapName(uint8_t map) {
     }
 
     return "map " + std::to_string(map);
+}
+
+namespace {
+
+// The numbers the maps show for their areas, by the game's area index
+// (get_now_areano 0x802AFCE8): 0 the base camp, -1 an area that has none.
+// The game keeps no such table. A map's art (04/map_mXXd_eng.brres) has no
+// numbers in it; the minimap draws them at places on the art. These were
+// read off the minimap in every area (--spawn exit:tour and --area runs,
+// 2026-10-07). The small maps number them in the game's order.
+constexpr int8_t kDesertedIsland[] = {0, 1, 3, 2, 7, 5, 9, 11, 12, 6, 8, 4, 10};
+constexpr int8_t kSandyPlains[] = {0, 1, 2, 3, 4, 5, 8, 9, 10, 7, 11, 6};
+constexpr int8_t kFloodedForest[] = {0, 1, 3, 4, 5, 2, 8, 7, 6, 9, 10};
+constexpr int8_t kTundra[] = {0, 1, 3, 2, 5, 7, 4, 6, -1, -1}; // 8: the path between 7 and 6; 9: off the art beside 7
+constexpr int8_t kVolcano[] = {0, 2, 1, 3, 5, 6, 4, 7, 8, 10, 9};
+constexpr int8_t kGreatDesert[] = {0, 1, 2};
+constexpr int8_t kCeadeusLair[] = {0, 1, 2, 3};
+constexpr int8_t kSacredPinnacle[] = {-1, 1}; // one area (stage/m11d/m11a01d)
+
+// Empty for a map without numbers (the arenas: 0 the land arena, 1 the
+// water arena) or not known here: its areas keep the game's index.
+std::span<const int8_t> AreaNumbers(uint8_t map) {
+    switch (map) {
+    case 1:
+        return kDesertedIsland;
+    case 2:
+        return kSandyPlains;
+    case 3:
+        return kFloodedForest;
+    case 4:
+        return kTundra;
+    case 5:
+        return kVolcano;
+    case 6:
+        return kGreatDesert;
+    case 7:
+        return kCeadeusLair;
+    case 11:
+        return kSacredPinnacle;
+    }
+
+    return {};
+}
+
+} // namespace
+
+int AreaIndex(uint8_t map, int number) {
+    const auto numbers = AreaNumbers(map);
+
+    if (numbers.empty())
+        return number;
+
+    const auto it = std::find(numbers.begin(), numbers.end(), number);
+    return number >= 0 && it != numbers.end() ? int(it - numbers.begin()) : -1;
+}
+
+int AreaNumber(uint8_t map, int index) {
+    const auto numbers = AreaNumbers(map);
+
+    if (numbers.empty())
+        return index;
+
+    return index >= 0 && size_t(index) < numbers.size() ? numbers[size_t(index)] : -1;
+}
+
+std::string AreaName(uint8_t map, int index) {
+    const auto numbers = AreaNumbers(map);
+    const int number = AreaNumber(map, index);
+
+    if (numbers.empty())
+        return "area " + std::to_string(index);
+
+    const std::string game = number == index ? "" : " (the game's " + std::to_string(index) + ")";
+
+    if (number == 0)
+        return "the base camp" + game;
+
+    return (number < 0 ? std::string("an area without a number") : "area " + std::to_string(number)) + game;
+}
+
+std::string AreaNumbersText(uint8_t map) {
+    const auto numbers = AreaNumbers(map);
+
+    if (numbers.empty())
+        return "its areas have no numbers";
+
+    // The numbers run from 1 without gaps.
+    const int last = *std::max_element(numbers.begin(), numbers.end());
+    const bool camp = std::find(numbers.begin(), numbers.end(), 0) != numbers.end();
+    const std::string areas = last == 1 ? "1" : "1 to " + std::to_string(last);
+    return camp ? "0 the base camp, " + areas : areas;
 }
 
 void Print(Set set) {

@@ -99,8 +99,10 @@ MH3 --launcher                # development builds: the Vita launcher's menus
 ```
 
 `--quest <id>|free [--area <n>] [--spawn x,y,z|exit:<n>] [--no-damage]` starts a
-quest directly; `--spawn exit:<n>` puts the hunter into the start area's exit
-to area n, so the game changes area as it does in play.
+quest directly, in the area numbered n on the in-game map (`camp` or 0: the
+base camp; `--area-index <n>` takes the game's own area order instead);
+`--spawn exit:<n>` puts the hunter into the start area's exit to area n, so
+the game changes area as it does in play.
 `--cheat <name>[=<value>]` (repeatable, with any option) turns on a code of
 the launcher's cheat list, for example `--cheat "Infinite health"` or
 `--cheat "Bully:Super speed=L+R+Up"` ([cheats](docs/vita-launcher.md#custom-quests-and-cheats)).

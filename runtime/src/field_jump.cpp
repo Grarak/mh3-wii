@@ -18,7 +18,9 @@
 //
 // The quest's map setup (0x803AF518) puts its start area in the field's move
 // work (+0xEA, copied to +0xEE and the current area 0x806BB806); the stage
-// then loads that area. --area n replaces it.
+// then loads that area. --area n replaces it with the area the map numbers n
+// (main.cpp converts it: QuestCatalog::AreaIndex), --area-index n with the
+// game's area n.
 //
 // --spawn x,y,z moves the hunter there once the quest has placed them (the
 // player's move work, kind 2 in the table 0x8065AB04, position at +0x3C) and
@@ -27,13 +29,13 @@
 // --spawn 0,300,0 drops the hunter into the pit.
 //
 // --spawn exit:n instead puts the hunter, kExitSettle steps into the field,
-// into the current area's exit toward area n, and the game changes area as if
-// they had walked there: the exit check (0x802B2754, each step of the field)
-// tests, while the hunter may leave, their position against the area's exits
-// (0x802AFEC0(map, area): 0x34-byte records up to an s8 -1, +0 the area they
-// lead to, +2 the shape, 0 a cylinder at +4 x, +8 y, +0xC z) and on a hit
-// starts the change (0x8028D150(area, the position +0x24 there, the angle
-// +0x30)).
+// into the current area's exit toward area n (numbered as on the map), and the
+// game changes area as if they had walked there: the exit check (0x802B2754,
+// each step of the field) tests, while the hunter may leave, their position
+// against the area's exits (0x802AFEC0(map, area): 0x34-byte records up to an
+// s8 -1, +0 the area they lead to, +2 the shape, 0 a cylinder at +4 x, +8 y,
+// +0xC z) and on a hit starts the change (0x8028D150(area, the position +0x24
+// there, the angle +0x30)).
 //
 // --spawn exit:tour keeps going: kExitSettle steps after each arrival the
 // hunter takes the area's next exit in turn (each area's exits in rotation,
@@ -63,6 +65,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 extern "C" void func_8021F40C(CpuContext* ctx);
 
@@ -274,6 +277,11 @@ void FieldJumpFrame(uint64_t gameFrame) {
 // exit.
 extern "C" void func_802B2754(CpuContext* ctx);
 
+// An area for messages: the number its map shows and the game's index.
+static std::string AreaText(int area) {
+    return QuestCatalog::AreaName(Memory::Read8(kCurrentMap), area);
+}
+
 // The tour's next exit: the current area's exits in turn. An exit that left
 // the hunter in the area kExitSettle * 4 checks later is passed over.
 static void TourStep(CpuContext* ctx, Jump& jump) {
@@ -288,7 +296,7 @@ static void TourStep(CpuContext* ctx, Jump& jump) {
 
     if (area != jump.tourArea) {
         if (jump.tourArea >= 0)
-            std::fprintf(stderr, "MH3 field jump: tour change %u: in area %d\n", ++jump.tourChanges, area);
+            std::fprintf(stderr, "MH3 field jump: tour change %u: in %s\n", ++jump.tourChanges, AreaText(area).c_str());
 
         jump.tourArea = area;
         jump.exitChecks = 0;
@@ -311,7 +319,7 @@ static void TourStep(CpuContext* ctx, Jump& jump) {
         count += Memory::Read16(e + 2) == kExitCylinder;
 
     if (!count) {
-        std::fprintf(stderr, "MH3 field jump: tour: area %d has no exit\n", area);
+        std::fprintf(stderr, "MH3 field jump: tour: %s has no exit\n", AreaText(area).c_str());
         return;
     }
 
@@ -325,7 +333,7 @@ static void TourStep(CpuContext* ctx, Jump& jump) {
     for (int i = 0; i < 3; ++i)
         Memory::WriteFloat32(player + kPosition + 4 * i, Memory::ReadFloat32(exit + 4 + 4 * i));
 
-    std::fprintf(stderr, "MH3 field jump: tour: area %d's exit %u of %u, to area %d\n", area, pick + 1, count, int8_t(Memory::Read8(exit)));
+    std::fprintf(stderr, "MH3 field jump: tour: %s, exit %u of %u, to %s\n", AreaText(area).c_str(), pick + 1, count, AreaText(int8_t(Memory::Read8(exit))).c_str());
 }
 
 extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
@@ -348,18 +356,18 @@ extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
                 break;
 
         if (!exit || int8_t(Memory::Read8(exit)) == -1) {
-            std::fprintf(stderr, "MH3 field jump: area %d has no exit to area %d (exits to", area, jump.exitArea);
+            std::fprintf(stderr, "MH3 field jump: %s has no exit to %s (exits to", AreaText(area).c_str(), AreaText(jump.exitArea).c_str());
 
             for (uint32_t e = exits; e && int8_t(Memory::Read8(e)) != -1; e += kExitBytes)
                 if (Memory::Read16(e + 2) == kExitCylinder)
-                    std::fprintf(stderr, " %d", int8_t(Memory::Read8(e)));
+                    std::fprintf(stderr, " %s;", AreaText(int8_t(Memory::Read8(e))).c_str());
 
             std::fprintf(stderr, ")\n");
         } else {
             for (int i = 0; i < 3; ++i)
                 Memory::WriteFloat32(player + kPosition + 4 * i, Memory::ReadFloat32(exit + 4 + 4 * i));
 
-            std::fprintf(stderr, "MH3 field jump: moved the hunter into area %d's exit to area %d\n", area, jump.exitArea);
+            std::fprintf(stderr, "MH3 field jump: moved the hunter into the exit of %s to %s\n", AreaText(area).c_str(), AreaText(jump.exitArea).c_str());
         }
     }
 
@@ -419,7 +427,8 @@ static void QuestMapSetupPort(CpuContext* ctx) {
     if (!work)
         return;
 
-    std::fprintf(stderr, "MH3 quest: starting in area %d instead of %u\n", area, Memory::Read8(work + kWorkArea));
+    const uint8_t map = quest ? Memory::Read8(quest + 0x8B) : 0;
+    std::fprintf(stderr, "MH3 quest: starting in %s instead of %s\n", QuestCatalog::AreaName(map, area).c_str(), QuestCatalog::AreaName(map, Memory::Read8(work + kWorkArea)).c_str());
     Memory::Write8(work + kWorkArea, uint8_t(area));
     Memory::Write8(work + kWorkStartArea, uint8_t(area));
     Memory::Write8(kCurrentArea, uint8_t(area));

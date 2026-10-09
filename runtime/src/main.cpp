@@ -134,11 +134,14 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --city                         start File 1 / character 1 in the City (online play)\n"
                                "  --list quests|online-quests|arena-quests\n"
                                "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-                               "  --quest <id>|free [--area <n>] [--spawn <x,y,z>|exit:<n>|exit:tour]\n"
+                               "  --quest <id>|free [--area <n>|camp] [--spawn <x,y,z>|exit:<n>|exit:tour]\n"
                                "                                 start a quest (village, arena or online) or the\n"
-                               "                                 Moga Woods free roam from the village; --spawn\n"
-                               "                                 moves the hunter there (arena pit: 0,300,0), or\n"
-                               "                                 into the area's exit to area n\n"
+                               "                                 Moga Woods free roam from the village, in the area\n"
+                               "                                 numbered n on the map; --spawn moves the hunter\n"
+                               "                                 there (arena pit: 0,300,0), or into the area's exit\n"
+                               "                                 to area n\n"
+                               "  --area-index <n>               (with --quest) start in the game's area n instead\n"
+                               "                                 (its own order, also the areas without a number)\n"
                                "  --quest-monster <name|id>      (development, with --quest) replace the quest's large monster\n"
                                "                                 (any monster in the arena pit: --quest 9004 --spawn 0,300,0)\n"
                                "  --quest-small <name|id>        (development, with --quest) replace the quest's small monsters\n"
@@ -187,19 +190,25 @@ void PrepareGameData(const char* rom) {
 }
 #endif
 
-// --quest <id>|free [--area <n>] [--spawn <x,y,z>]. The quest sets' ids don't overlap (village
-// 1000.., arena 9000.., online 10000..): the id picks the set.
+// --quest <id>|free [--area <n>|camp] [--area-index <n>] [--spawn <x,y,z>|exit:<n>|exit:tour].
+// The quest sets' ids don't overlap (village 1000.., arena 9000.., online
+// 10000..): the id picks the set. --area and exit:<n> take the number the
+// quest's map shows for the area (QuestCatalog::AreaIndex), --area-index the
+// game's index.
 void StartQuestBoot(int argc, char** argv) {
     using QuestCatalog::Set;
     const std::string_view id = argv[2];
-    int area = -1;
+    int area = -1, number = -1, exitNumber = -1;
     std::string monster, small;
 
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
         float x, y, z;
 
-        if (option == "--area" && i + 1 < argc)
+        if (option == "--area" && i + 1 < argc) {
+            const std::string_view value = argv[++i];
+            number = value == "camp" ? 0 : std::stoi(argv[i]);
+        } else if (option == "--area-index" && i + 1 < argc)
             area = std::stoi(argv[++i]);
         else if (option == "--quest-monster" && i + 1 < argc)
             monster = argv[++i];
@@ -208,7 +217,7 @@ void StartQuestBoot(int argc, char** argv) {
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]) == "exit:tour")
             ++i, RequestQuestTour();
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
-            RequestQuestExit(std::stoi(argv[++i] + 5));
+            exitNumber = std::stoi(argv[++i] + 5);
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
             RequestQuestSpawn(x, y, z);
         else
@@ -217,6 +226,7 @@ void StartQuestBoot(int argc, char** argv) {
 
     Set set = Set::Village;
     uint32_t quest = 0;
+    uint8_t map = 1; // the free roam's
 
     if (id != "free") {
         quest = uint32_t(std::stoul(std::string(id)));
@@ -230,6 +240,7 @@ void StartQuestBoot(int argc, char** argv) {
                 continue;
 
             set = candidate;
+            map = it->map;
             found = true;
             std::cerr << "MH3 quest: " << it->id << " " << it->name << " (" << QuestCatalog::MapName(it->map) << ")\n";
             break;
@@ -266,6 +277,24 @@ void StartQuestBoot(int argc, char** argv) {
             CheckStatus(VitaLauncher::ReplaceQuestSmallMonsters(set, uint16_t(quest), monsterId(small)));
 #endif
     }
+
+    const auto index = [&](int shown) {
+        const int i = QuestCatalog::AreaIndex(map, shown);
+
+        if (i < 0)
+            MH3_THROW(std::runtime_error(QuestCatalog::MapName(map) + " has no area " + std::to_string(shown) + " on its map (areas: " + QuestCatalog::AreaNumbersText(map) +
+                                         "; --area-index takes the game's own index)"));
+
+        return i;
+    };
+
+    if (number >= 0) {
+        area = index(number);
+        std::cerr << "MH3 quest: " << QuestCatalog::AreaName(map, area) << "\n";
+    }
+
+    if (exitNumber >= 0)
+        RequestQuestExit(index(exitNumber));
 
     RequestQuestJump(quest, set, area);
     StartVillageBoot();
