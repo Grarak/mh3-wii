@@ -59,12 +59,17 @@
 {0x80124BCCu, TickSite::Countdown},
 {0x801298A0u, TickSite::Countdown},          // enemy (80129870): countdown (s16 +0x44C), clamped at 0
 {0x80130850u, TickSite::Countup},            // enemy (80130808): steps (s16 +0x442) against a table length
+{0x80134ED0u, TickSite::PerStep},           // flying enemy (80134E8C): vertical speed (+0x314) += 0.85 a step, below 100
+{0x80134FA8u, TickSite::PerStep},           // flying enemy (80134F7C): the same toward -10
+{0x80135538u, TickSite::PerStep},           // enemy (80135518): vertical speed (+0x314) += acceleration (+0x320) a step
 {0x8013896Cu, TickSite::PerStep},           // enemy update (801382A0): fast turn speed (+0x1AC) slows by 10 a step
 {0x801389ACu, TickSite::Decay},             // enemy update: slow turn speed (+0x1AC) *= 0.9 a step
 {0x801389C0u, TickSite::PerStep},           // enemy update: yaw (+0x1A4) += turn speed a step
 {0x80138D14u, TickSite::Countdown},         // enemy (80138BC4): countdown (s16 +0x764)
 {0x80138D40u, TickSite::Countdown},
 {0x8014823Cu, TickSite::Countup},            // enemy (8014823C): steps (s16 +0x354), wrapping at 50
+{0x8014F6F0u, TickSite::PerStep},           // flying enemy (8014F654): y (+0x18C) += 10 a step while below the target
+{0x8014F708u, TickSite::Countdown},         // flying enemy: countdown (+0x20, from 300)
 {0x801A1488u, TickSite::Countdown},          // enemy action (801A13E8): countdown (+0x20), fires at 0
 {0x801A1524u, TickSite::Countdown},          // enemy action (801A14B8): countdown (+0x20), fires at 0
 {0x801A9810u, TickSite::PerStep},            // enemy (801A97AC): f32 ramp (+0x34C) down by a constant a step

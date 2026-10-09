@@ -13,10 +13,12 @@
 // Enemies and other objects move the same way through VecAddInPlace
 // (0x80073FCC: *r3 += *r4 through PSVECAdd, returns r3), called once a step
 // with position += velocity or velocity += acceleration from the places in
-// kRateCalls (by return address): the enemy helper 0x8013548C (+0x188 +=
-// +0x310, +0x310 += +0x31C) and the monsters that call it inline (0x801A0CAC,
+// kRateCalls (by return address): the enemy helpers 0x8013548C (+0x188 +=
+// +0x310, +0x310 += +0x31C; 0x8013547C, the position add alone, is its own
+// native below) and 0x80135558 (+0x188 += +0x310 rotated by the
+// heading, for flight), the monsters that call it inline (0x801A0CAC,
 // a desert enemy's swim, ...), the camera demo actor, the ambient creatures,
-// falling debris. For those the addend is taken over this step's length; the
+// falling debris, the desert object group. For those the addend is taken over this step's length; the
 // other 200-odd callers (offsets, collision push-outs, one-off sums) add it
 // whole. The desert enemy also takes the distance it moved, the length of
 // its velocity (VecMagWrapper 0x80050F88, through PSVECMag), off a budget
@@ -64,6 +66,7 @@ void ShellRateAddGPort(CpuContext* ctx) {
 // VecAddInPlace calls that move by a rate, by return address (the bl + 4).
 constexpr uint32_t kRateCalls[] = {
     0x801354ACu, 0x801354B8u, // 0x8013548C enemy: position += velocity, velocity += acceleration
+    0x801355D0u,              // 0x80135558 enemy: position += rotated velocity (flying)
     0x80135650u,              // 0x8013562C enemy: velocity += acceleration
     0x80135C08u, 0x80135C14u, // 0x80135BE8: +0x14 += +0x5C, +0x5C += +0x68
     0x801A07DCu, 0x801A0AE4u, 0x801A0EBCu, // desert enemy swims: position += velocity
@@ -153,6 +156,30 @@ static void VecAddInPlaceChecked([[maybe_unused]] uint32_t r1, uint32_t lr, uint
 }
 extern "C" void MH3_VecAddInPlace(CpuContext* ctx) { VecAddInPlaceChecked(ctx->gpr[1], ctx->lr, ctx->gpr[3], ctx->gpr[4]); }
 REGISTER_NATIVE_FUNCTION_AS(0x80073FCC, MH3_VecAddInPlace, "VecAddInPlace");
+
+// 0x8013547C: enemy position (+0x188) += velocity (+0x310), a tail call of
+// VecAddInPlace from its callers (whose return addresses it then sees): the
+// move of every enemy that calls it, so it always takes the step's share.
+constexpr uint32_t kEnemyPosition = 0x188, kEnemyVelocity = 0x310;
+static void EnemyAddVelocityPort(CpuContext* ctx) {
+    const uint32_t enemy = ctx->gpr[3];
+    AddScaled(enemy + kEnemyPosition, enemy + kEnemyVelocity, float(GameStep::Scale()));
+    ctx->gpr[3] = enemy + kEnemyPosition;
+    ctx->gpr[4] = enemy + kEnemyVelocity;
+}
+extern "C" void func_8013547C(CpuContext* ctx);
+extern "C" void MH3_EnemyAddVelocity(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("EnemyAddVelocity");
+    if (check) [[unlikely]] {
+        PortCheck::RunOutput(ctx, "EnemyAddVelocity", func_8013547C, EnemyAddVelocityPort,
+                             {{ctx->gpr[3] + kEnemyPosition, 12}});
+        return;
+    }
+#endif
+    EnemyAddVelocityPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8013547C, MH3_EnemyAddVelocity, "EnemyAddVelocity");
 
 extern "C" void func_80050F88(CpuContext* ctx);
 static double VecMagWrapperChecked(uint32_t lr, uint32_t v) {

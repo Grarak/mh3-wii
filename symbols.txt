@@ -944,3 +944,7 @@
 8012ba20 EnemyGaugeAdd3A4
 80368dcc GroupShuttle
 803692f0 GroupTravel
+80299f5c HitTimerStep
+8013547c EnemyAddVelocity
+80135558 EnemyAddTurnedVelocity
+80135064 EnemyGlide
