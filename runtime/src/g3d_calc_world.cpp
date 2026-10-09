@@ -253,6 +253,12 @@ void AddVec3(uint32_t a, uint32_t b) {
         WriteFloat(a + k, ReadFloat(a + k) + ReadFloat(b + k));
 }
 
+// The per-node virtual calls' memos (GuestCall::VirtualAt): other sites of
+// these slots call other classes.
+const RawDispatchRecord* anmResultMemo = nullptr;
+const RawDispatchRecord* callbackAMemo = nullptr;
+const RawDispatchRecord* callbackBMemo = nullptr;
+
 void CalcWorld(CpuContext* ctx) {
     GuestFrame frame(ctx, kFrame);
     const uint32_t world = frame.Arg(3), flags = frame.Arg(4), base = frame.Arg(6), mdl = frame.Arg(7);
@@ -315,7 +321,7 @@ void CalcWorld(CpuContext* ctx) {
         if (anmObj) {
             const uint32_t nodeId = node ? Read32(node + 0xC) : 0;
             GuestCall game{ctx};
-            chr = game.Virtual<0x38>(anmObj, {result, nodeId});
+            chr = game.VirtualAt(anmResultMemo, anmObj, 0x38, {result, nodeId});
         }
 
         if (!anmObj || Read32(chr) == 0) {
@@ -354,7 +360,7 @@ void CalcWorld(CpuContext* ctx) {
             if (Read16(callback + 6) == nodeIndex && (Read8(callback + 4) & 1) != 0) {
                 MemoryInline::FlatWrite32(frame[kTemp10], Read32(mdl));
                 GuestCall game{ctx};
-                game.Virtual<0xC>(Read32(callback), {result, frame[kTemp10], callback});
+                game.VirtualAt(callbackAMemo, Read32(callback), 0xC, {result, frame[kTemp10], callback});
             }
         }
 
@@ -371,7 +377,7 @@ void CalcWorld(CpuContext* ctx) {
             MemoryInline::FlatWrite32(frame[kCalcArgs + 4], nodeScale);
             MemoryInline::FlatWrite32(frame[kCalcArgs + 8], flagsAt);
             GuestCall game{ctx};
-            game.Virtual<0x10>(Read32(callback), {frame[kCalcArgs], frame[kTempC], callback});
+            game.VirtualAt(callbackBMemo, Read32(callback), 0x10, {frame[kCalcArgs], frame[kTempC], callback});
         }
     }
 

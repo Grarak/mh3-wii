@@ -111,6 +111,10 @@ uint32_t Find(uint32_t player, uint32_t index, uint32_t pos, uint32_t kindOut, u
     return 0xFFFF;
 }
 
+// Memos of the two lists' update calls (GuestCall::CallAt).
+const RawDispatchRecord* spotMemo = nullptr;
+const RawDispatchRecord* entryMemo = nullptr;
+
 void Update(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
@@ -137,14 +141,14 @@ void Update(CpuContext* ctx) {
         const uint32_t spot = Read32(manager + 0x1C) + uint32_t(i) * 0x224;
 
         if (MemoryInline::FlatRead8(spot))
-            game(Read32(spot + 0x1BC), {spot});
+            game.CallAt(spotMemo, Read32(spot + 0x1BC), {spot});
     }
 
     for (int32_t i = 0; i < int32_t(Read32(manager + 0x28)); ++i) {
         const uint32_t entry = Read32(manager + 0x24) + uint32_t(i) * 0x20C;
 
         if (MemoryInline::FlatRead8(entry))
-            game(Read32(entry + 0x1BC), {entry});
+            game.CallAt(entryMemo, Read32(entry + 0x1BC), {entry});
     }
 }
 

@@ -223,11 +223,22 @@ uint32_t MaterialAnimated(uint32_t anm, uint32_t i) {
 // options) when the object has a callback of that kind for that timing.
 template <uint32_t Slot, uint32_t Kind>
 void SceneCallback(GuestCall& game, uint32_t obj, uint32_t timing, uint32_t arg, uint32_t options) {
+    static const RawDispatchRecord* memo = nullptr;
     const uint32_t cb = Read32(obj + kCallback);
 
     if (cb && (MemoryInline::FlatRead16(obj + kCallbackKinds) & Kind) && (MemoryInline::FlatRead8(obj + kCallbackTiming) & timing))
-        game.Virtual<Slot>(cb, {timing, obj, arg, options});
+        game.VirtualAt(memo, cb, Slot, {timing, obj, arg, options});
 }
+
+// Memos of the tasks' virtual calls (GuestCall::VirtualAt): the animations'
+// GetResult (+0x38) by kind, the objects' CalcWorld (+0x30) and value
+// getter (+0x24).
+const RawDispatchRecord* texPatMemo = nullptr;
+const RawDispatchRecord* texSrtMemo = nullptr;
+const RawDispatchRecord* clrMemo = nullptr;
+const RawDispatchRecord* objCalcWorldMemo = nullptr;
+const RawDispatchRecord* mdlCalcWorldMemo = nullptr;
+const RawDispatchRecord* mdlValueMemo = nullptr;
 
 // Guest stack offsets of CalcMat's locals.
 constexpr uint32_t kSlotA = 0x08, kSlotB = 0x0C, kRefreshSlot = 0x10;
@@ -244,12 +255,19 @@ void CalcMat(CpuContext* ctx) {
     const uint32_t count = MaterialCount(data);
 
     for (uint32_t i = 0; i < count; ++i) {
-        const uint32_t mat = Material(data, i);
-
-        for (const uint32_t bit : kRefreshOrder) {
-            if (Read32(Read32(mdl + kDirty) + 4 * i) & bit)
-                Refresh(game, frame[kRefreshSlot], mdl, i, bit);
+        if (Read32(Read32(mdl + kDirty) + 4 * i)) {
+            for (const uint32_t bit : kRefreshOrder) {
+                if (Read32(Read32(mdl + kDirty) + 4 * i) & bit)
+                    Refresh(game, frame[kRefreshSlot], mdl, i, bit);
+            }
         }
+
+        const uint32_t texPat = Read32(mdl + kAnmTexPat), texSrt = Read32(mdl + kAnmTexSrt), clr = Read32(mdl + kAnmClr);
+
+        if (!texPat && !texSrt && !clr)
+            continue;
+
+        const uint32_t mat = Material(data, i);
 
         auto setDirty = [&](uint32_t bits) {
             const uint32_t word = Read32(mdl + kDirty) + 4 * i;
@@ -257,9 +275,9 @@ void CalcMat(CpuContext* ctx) {
         };
 
         // Texture pattern: ModelTextureReplace(&texture, &palette, result).
-        if (const uint32_t anm = Read32(mdl + kAnmTexPat); anm && MaterialAnimated(anm, i)) {
+        if (const uint32_t anm = texPat; anm && MaterialAnimated(anm, i)) {
             game.Call<0x8006F58C>({frame[kTexPatResult]});
-            const uint32_t result = game.Virtual<0x38>(anm, {frame[kTexPatResult], i});
+            const uint32_t result = game.VirtualAt(texPatMemo, anm, 0x38, {frame[kTexPatResult], i});
             Write32(frame[kSlotA], PartFor(mdl, mat, i, 0x1));
             Write32(frame[kSlotB], PartFor(mdl, mat, i, 0x2));
             game.Call<0x80069A2C>({frame[kSlotA], frame[kSlotB], result});
@@ -268,7 +286,7 @@ void CalcMat(CpuContext* ctx) {
 
         // Texture SRT: 0x8006E39C(&srt, &indirect, result).
         if (const uint32_t anm = Read32(mdl + kAnmTexSrt); anm && MaterialAnimated(anm, i)) {
-            const uint32_t result = game.Virtual<0x38>(anm, {frame[kTexSrtResult], i});
+            const uint32_t result = game.VirtualAt(texSrtMemo, anm, 0x38, {frame[kTexSrtResult], i});
             Write32(frame[kSlotA], PartFor(mdl, mat, i, 0x4));
             Write32(frame[kSlotB], PartFor(mdl, mat, i, 0x200));
             game.Call<0x8006E39C>({frame[kSlotA], frame[kSlotB], result});
@@ -279,7 +297,7 @@ void CalcMat(CpuContext* ctx) {
         if (const uint32_t anm = Read32(mdl + kAnmClr); anm && MaterialAnimated(anm, i)) {
             Write32(frame[kSlotA], PartFor(mdl, mat, i, 0x100));
             Write32(frame[kSlotB], PartFor(mdl, mat, i, 0x8));
-            const uint32_t result = game.Virtual<0x38>(anm, {frame[kClrResult], i});
+            const uint32_t result = game.VirtualAt(clrMemo, anm, 0x38, {frame[kClrResult], i});
             game.Call<0x8006418C>({frame[kSlotA], frame[kSlotB], result});
             setDirty(0x108);
         }
@@ -321,7 +339,7 @@ void ScnObjG3dProc(CpuContext* ctx) {
         // (obj, options, &arg), which may change arg.
         SceneCallback<0xC, 1>(game, obj, 1, arg, options);
         Write32(frame[8], arg);
-        game.Virtual<0x30>(obj, {options, frame[8]});
+        game.VirtualAt(objCalcWorldMemo, obj, 0x30, {options, frame[8]});
         arg = Read32(frame[8]);
         SceneCallback<0xC, 1>(game, obj, 2, arg, options);
         SceneCallback<0xC, 1>(game, obj, 4, arg, options);
@@ -364,7 +382,7 @@ void SimpleCalcWorld(CpuContext* ctx) {
     uint32_t arg = frame.Arg(4);
     SceneCallback<0xC, 1>(game, mdl, 1, arg, options);
     Write32(frame[8], arg);
-    game.Virtual<0x30>(mdl, {options, frame[8]});
+    game.VirtualAt(mdlCalcWorldMemo, mdl, 0x30, {options, frame[8]});
     arg = Read32(frame[8]);
     SceneCallback<0xC, 1>(game, mdl, 2, arg, options);
     Write32(mdl + 0x104, Read32(mdl + 0x104) & ~1u);
@@ -374,7 +392,7 @@ void SimpleCalcWorld(CpuContext* ctx) {
     // virtual +0x24 (0x20001).
     uint32_t rootFlags = 0xF0000000u;
     const float sx = MemoryInline::FlatReadFloat32(mdl + 0xDC), sy = MemoryInline::FlatReadFloat32(mdl + 0xE0);
-    game.Virtual<0x24>(mdl, {0x20001, frame[0x1C]});
+    game.VirtualAt(mdlValueMemo, mdl, 0x24, {0x20001, frame[0x1C]});
 
     if (sx == sy && sy == MemoryInline::FlatReadFloat32(mdl + 0xE4))
         rootFlags = MemoryInline::FlatReadFloat32(0x8079FF60u - 31804) == sx ? rootFlags : rootFlags & 0x3FFFFFFFu;

@@ -91,6 +91,47 @@ struct GuestCall {
         return cpu->gpr[3];
     }
 
+    // Virtual() and operator() with the call site's own memo (a static the
+    // port declares): sites whose objects' classes differ from those of the
+    // other Virtual<Slot> sites of the same slot would evict their memo on
+    // every call.
+    [[gnu::always_inline]] uint32_t VirtualAt(const RawDispatchRecord*& memo, uint32_t object, uint32_t slot, std::initializer_list<uint32_t> ints = {},
+                                              std::initializer_list<double> floats = {}) {
+        const uint32_t fn = Memory::Read32(Memory::Read32(object) + slot);
+        uint32_t r = 3, f = 1;
+        cpu->gpr[r++] = object;
+
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
+
+        if (const RawDispatchRecord* record = memo; record && record->address == fn) [[likely]]
+            record->entry(cpu);
+        else
+            Rebind(fn, cpu, memo);
+
+        return cpu->gpr[3];
+    }
+
+    [[gnu::always_inline]] uint32_t CallAt(const RawDispatchRecord*& memo, uint32_t fn, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
+        uint32_t r = 3, f = 1;
+
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
+
+        if (const RawDispatchRecord* record = memo; record && record->address == fn) [[likely]]
+            record->entry(cpu);
+        else
+            Rebind(fn, cpu, memo);
+
+        return cpu->gpr[3];
+    }
+
     float F1() const { return float(cpu->fpr[1].d); }
 
   private:

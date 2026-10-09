@@ -32,6 +32,9 @@ constexpr uint32_t kManager = 0x80796E38u;   // r13 - 17576
 constexpr uint32_t kOnlineMode = 0x8065AA84u; // u8, GetOnlineMode (0x800CF26C)
 constexpr uint32_t kMyPlayer = 0x8065AA87u;   // u8, MyPlayerIndex (0x800CF3E8)
 
+// The sources' position hooks' memo (GuestCall::CallAt).
+const RawDispatchRecord* hookMemo = nullptr;
+
 void Update(CpuContext* ctx) {
     GuestFrame frame(ctx, 0xF0);
     GuestCall game{ctx};
@@ -99,7 +102,7 @@ void Update(CpuContext* ctx) {
             continue;
 
         if (const uint32_t hook = Read32(source + 0xA44))
-            game(hook, {Read32(source + 4), Read32(source + 8)});
+            game.CallAt(hookMemo, hook, {Read32(source + 4), Read32(source + 8)});
 
         Copy12(source + 0x18, manager + 4);
         Copy12(source + 0x24, manager + 0x1C);

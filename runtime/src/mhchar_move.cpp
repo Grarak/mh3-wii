@@ -36,6 +36,10 @@ void Write32(uint32_t a, uint32_t v) {
 
 constexpr uint32_t kModel = 0x118;
 
+// Memos of the virtual calls (GuestCall::VirtualAt).
+const RawDispatchRecord* modelMemo = nullptr;
+const RawDispatchRecord* ownerMemo = nullptr;
+
 // 0x800E086C: the model's scale (+0xDC) from the character's.
 void CopyScale(uint32_t model, uint32_t ch) {
     for (uint32_t k = 0; k < 12; k += 4)
@@ -63,7 +67,7 @@ void SetWorld(GuestCall& game, uint32_t ch, uint32_t m) {
     G3dNative::MtxCopy(m, model + 0xC);
 
     if (Read32(ch + 0x160))
-        game.Virtual<0xC>(model, {1, 0, 0});
+        game.VirtualAt(modelMemo, model, 0xC, {1, 0, 0});
 }
 
 void SetWorldPort(CpuContext* ctx) {
@@ -82,7 +86,7 @@ void Move(CpuContext* ctx) {
 
     if (Read32(ch + 0x160)) {
         if (const uint32_t owner = Read32(ch + 0x40))
-            game.Virtual<0x18>(owner, {Read32(ch + kModel), 1, Read32(ch + 0xEC)});
+            game.VirtualAt(ownerMemo, owner, 0x18, {Read32(ch + kModel), 1, Read32(ch + 0xEC)});
     }
 
     CopyScale(Read32(ch + kModel), ch);

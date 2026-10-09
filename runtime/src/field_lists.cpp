@@ -47,6 +47,11 @@ void WriteFloat(uint32_t a, float v) {
 
 constexpr uint32_t kEffectObjects = 0x806A4570u;
 
+// Memos of the loops' indirect calls (GuestCall::CallAt, VirtualAt).
+const RawDispatchRecord* effectObjectMemo = nullptr;
+const RawDispatchRecord* effectManagerMemo = nullptr;
+const RawDispatchRecord* fieldObjectMemo = nullptr;
+
 void EffectObjectsUpdate(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
@@ -62,10 +67,10 @@ void EffectObjectsUpdate(CpuContext* ctx) {
         const uint32_t entry = Read32(kEffectObjects + 0x10) + uint32_t(i) * 0x48;
 
         if (MemoryInline::FlatRead8(entry))
-            game(Read32(entry + 0x34), {entry});
+            game.CallAt(effectObjectMemo, Read32(entry + 0x34), {entry});
     }
 
-    game.Virtual<0xC>(Read32(manager));
+    game.VirtualAt(effectManagerMemo, Read32(manager), 0xC);
 }
 
 // The 32 shell slots: kinds 3 and 4 advanced (when `advance`), updated and
@@ -118,7 +123,7 @@ void FieldObjectsUpdate(CpuContext* ctx) {
         if (!MemoryInline::FlatRead8(object) || MemoryInline::FlatRead8(object + 0x108) != phase)
             continue;
 
-        game(Read32(object + 0xF8), {object});
+        game.CallAt(fieldObjectMemo, Read32(object + 0xF8), {object});
         game.Call<0x8029F040>({object + 0x5C});
         game.Call<0x8029F070>({object + 0xB8});
     }
