@@ -25,6 +25,9 @@
 #endif
 #include <iostream>
 #include <string_view>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 
 extern "C" void InitializeDataSections();
 extern "C" void MH3_OSExceptionInit(CpuContext*);
@@ -193,6 +196,9 @@ int main(int argc, char** argv) {
     InstallLegacyGxPanicHandler();
 #ifdef __vita__
     InitializeVitaPlatform(argc, argv);
+#endif
+#ifdef MH3_DEVELOPMENT
+    ReportRetiredVariables();
 #endif
     // Ctrl-C ends the process at once (the default action); SDL would turn it
     // into a quit event the game only sees at its next event check.

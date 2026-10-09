@@ -53,6 +53,7 @@
 #include "gx/gx.hpp"
 #endif
 #ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
 #include "gx/command_processor.hpp"
 #include "isa/ppc_isa_context.h"
 #endif
@@ -281,19 +282,20 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     const char* frameskip = std::getenv("MH3_FRAMESKIP");
     if (frameskip && frameskip[0] == '0')
         aurora_set_frameskip(false);
-    if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
-        if (const char* interval = std::getenv("MH3_CAPTURE_INTERVAL")) {
-            const auto value = std::stoul(interval);
-            if (!value || value >= UINT32_MAX)
-                throw std::runtime_error("MH3_CAPTURE_INTERVAL must be between 1 and 4294967294");
-            captureInterval = static_cast<uint32_t>(value);
+    // MH3_CAPTURE=PATH[,interval=N[,start=N]|,frame=N]: frame dumps (BMP).
+    // With interval, every Nth frame (from frame `start`) as PATH-<frame>.bmp;
+    // otherwise frame `frame` (default 30) as PATH.
+    const DevOptions& capture = CaptureOptions();
+    if (!capture.List().empty()) {
+        const char* path = capture.List().front().c_str();
+        if (const uint64_t interval = capture.Number("interval", 0)) {
+            if (interval >= UINT32_MAX)
+                throw std::runtime_error("MH3_CAPTURE interval must be between 1 and 4294967294");
+            captureInterval = static_cast<uint32_t>(interval);
             capturePath = path;
-            // MH3_CAPTURE_START=n: no captures before frame n.
-            if (const char* start = std::getenv("MH3_CAPTURE_START"))
-                captureStart = uint32_t(std::stoul(start));
+            captureStart = uint32_t(capture.Number("start", 0));
         } else {
-            const char* frame = std::getenv("MH3_CAPTURE_FRAME");
-            aurora_request_frame_capture(frame ? std::stoul(frame) : 30, path);
+            aurora_request_frame_capture(uint32_t(capture.Number("frame", 30)), path);
         }
     }
 #endif

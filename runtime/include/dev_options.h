@@ -1,0 +1,140 @@
+// Development option strings (docs/flags.md). Each development tool reads one
+// variable holding a comma-separated list of items: a bare word (a flag the
+// tool knows, or a list entry such as a path or a port name) or name=value:
+//
+//   MH3_CAPTURE=logs/frame.bmp,interval=150
+//   MH3_PORT_CHECK=VecAddInPlace,YureChain,every
+//
+// `known` names the tool's flags and options; an unknown name=value item is
+// reported, and so is an unknown bare word when the tool takes no list.
+#pragma once
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+class DevOptions {
+public:
+    enum class Words {
+        None,   // every item is a known flag or option
+        Allowed // other bare words form the tool's list (Words())
+    };
+
+    DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None) : variable_(variable) {
+        const char* text = std::getenv(variable);
+        if (!text)
+            return;
+        set_ = *text != 0;
+        const std::string_view all(text);
+        for (size_t at = 0; at < all.size();) {
+            size_t end = all.find(',', at);
+            if (end == std::string_view::npos)
+                end = all.size();
+            const std::string_view item = all.substr(at, end - at);
+            at = end + 1;
+            if (item.empty())
+                continue;
+            const size_t equals = item.find('=');
+            const std::string_view name = item.substr(0, equals);
+            bool listed = false;
+            for (const std::string_view k : known)
+                listed |= k == name;
+            if (equals != std::string_view::npos) {
+                if (!listed)
+                    Unknown(item);
+                options_.emplace_back(std::string(name), std::string(item.substr(equals + 1)));
+            } else if (listed) {
+                flags_.emplace_back(item);
+            } else {
+                if (words == Words::None)
+                    Unknown(item);
+                words_.emplace_back(item);
+            }
+        }
+    }
+
+    // The variable is set and not empty.
+    bool Set() const { return set_; }
+    // A bare flag.
+    bool Has(std::string_view flag) const {
+        for (const std::string& f : flags_)
+            if (f == flag)
+                return true;
+        return false;
+    }
+    // The value of name=value (the last one given), or nullptr.
+    const char* Value(std::string_view name) const {
+        for (auto it = options_.rbegin(); it != options_.rend(); ++it)
+            if (it->first == name)
+                return it->second.c_str();
+        return nullptr;
+    }
+    // A numeric value (decimal, or 0x hexadecimal), or `fallback` when absent.
+    uint64_t Number(std::string_view name, uint64_t fallback) const {
+        const char* value = Value(name);
+        if (!value)
+            return fallback;
+        char* end = nullptr;
+        const unsigned long long parsed = std::strtoull(value, &end, 0);
+        if (end == value || *end || *value == '-') {
+            std::fprintf(stderr, "MH3: %s: %.*s=%s is not a number; using %llu\n", variable_, int(name.size()), name.data(), value, static_cast<unsigned long long>(fallback));
+            return fallback;
+        }
+        return parsed;
+    }
+    // The bare words that are not flags, in order.
+    const std::vector<std::string>& List() const { return words_; }
+    bool Listed(std::string_view word) const {
+        for (const std::string& w : words_)
+            if (w == word)
+                return true;
+        return false;
+    }
+
+private:
+    void Unknown(std::string_view item) const {
+        std::fprintf(stderr, "MH3: %s: unknown option '%.*s' (docs/flags.md)\n", variable_, int(item.size()), item.data());
+    }
+
+    const char* variable_;
+    bool set_ = false;
+    std::vector<std::string> flags_, words_;
+    std::vector<std::pair<std::string, std::string>> options_;
+};
+
+// Variables that a family replaced or that were removed: reported at startup,
+// so that a stale script or runtime.env does not silently lose its effect.
+inline void ReportRetiredVariables() {
+    static constexpr struct {
+        const char* name;
+        const char* family; // nullptr: removed
+    } kRetired[] = {
+        {"MH3_CAPTURE_PATH", "MH3_CAPTURE"},
+        {"MH3_CAPTURE_INTERVAL", "MH3_CAPTURE"},
+        {"MH3_CAPTURE_START", "MH3_CAPTURE"},
+        {"MH3_CAPTURE_FRAME", "MH3_CAPTURE"},
+        {"MH3_AUDIO_DUMP", "MH3_CAPTURE"},
+    };
+    for (const auto& retired : kRetired) {
+        if (!std::getenv(retired.name))
+            continue;
+        if (retired.family)
+            std::fprintf(stderr, "MH3: %s is ignored; it is now part of %s (docs/flags.md)\n", retired.name, retired.family);
+        else
+            std::fprintf(stderr, "MH3: %s is ignored; it was removed (docs/flags.md)\n", retired.name);
+    }
+}
+
+// Families read in more than one place; each is parsed (and reported) once.
+
+// MH3_CAPTURE=[PATH][,interval=N][,start=N][,frame=N][,audio=FILE]: frame
+// dumps (graphics_host.cpp) and the audio output (audio_output.cpp).
+inline const DevOptions& CaptureOptions() {
+    static const DevOptions options("MH3_CAPTURE", {"interval", "start", "frame", "audio"}, DevOptions::Words::Allowed);
+    return options;
+}

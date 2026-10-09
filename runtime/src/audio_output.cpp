@@ -1,6 +1,9 @@
 #include "audio_dma.h"
 #include "audio_output_statistics.h"
 #include "audio/native_audio_mixer.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <atomic>
@@ -47,10 +50,10 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
         streamRate = rate;
     }
 #ifdef MH3_DEVELOPMENT
-    // MH3_AUDIO_DUMP=file: every guest PCM block as raw s16le stereo at the
-    // rate printed at open (playback drops below do not apply).
+    // MH3_CAPTURE=...,audio=FILE: every guest PCM block as raw s16le stereo
+    // at the rate printed at open (playback drops below do not apply).
     static FILE* dump = [] {
-        const char* path = std::getenv("MH3_AUDIO_DUMP");
+        const char* path = CaptureOptions().Value("audio");
         return path ? std::fopen(path, "wb") : nullptr;
     }();
     if (dump) {
@@ -88,10 +91,10 @@ std::atomic<bool> nullSinkStop{false};
 constexpr uint32_t kChunkFrames = 384;  // 12 ms
 
 #ifdef MH3_DEVELOPMENT
-// MH3_AUDIO_DUMP=file: the mixed output, raw s16le stereo at 32 kHz.
+// MH3_CAPTURE=...,audio=FILE: the mixed output, raw s16le stereo at 32 kHz.
 FILE* DumpFile() {
     static FILE* dump = [] {
-        const char* path = std::getenv("MH3_AUDIO_DUMP");
+        const char* path = CaptureOptions().Value("audio");
         return path ? std::fopen(path, "wb") : nullptr;
     }();
     return dump;

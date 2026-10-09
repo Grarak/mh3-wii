@@ -5,7 +5,7 @@ option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexamp
 option(MH3_WRITE_WATCH "Debug: report the guest code storing to MH3_WRITE_WATCH=start,length (rebuilds all generated code)" OFF)
 option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinations and log host accesses" OFF)
 # Development-only runtime features, compiled out of release builds: MH3_STATS
-# speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE_* frame
+# speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE frame
 # dumps, MH3_FRAMESKIP, and scripted input (MH3_INPUT_FILE / _RECORD / _PLAYBACK).
 option(MH3_DEVELOPMENT "Build development/debug features (stats, captures, scripted input)" OFF)
 # Quest selection and native launcher features are present in every build.
