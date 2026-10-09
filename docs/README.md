@@ -18,7 +18,8 @@ were deleted on 2026-10-03; they remain in git history.
 - [vita-launcher.md](vita-launcher.md): launcher, reading the disc image in place and load-time texture/model conversion.
 - [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and earlier devkit checkpoints.
 - [vita-native-cdram-capacity.md](vita-native-cdram-capacity.md): CDRAM budgets.
-- [vita-runtime-shaders.md](vita-runtime-shaders.md): the devkit's runtime Cg compiler and cache.
+- [vita-shader-bank.md](vita-shader-bank.md): every GXM program compiled offline at build time and embedded; why the set is complete; the development miss check and audit.
+- [vita-runtime-shaders.md](vita-runtime-shaders.md): the devkit's runtime Cg compiler and cache, now only a development fallback for bank misses.
 - [vita-fixed-shader-abi.md](vita-fixed-shader-abi.md), [vita-selector-preflight.md](vita-selector-preflight.md): actual GXP reflection, matrix-selector and RGBA hardware fixtures behind the hunter/tint fixes.
 - [vita-oct03-linear-fog.md](vita-oct03-linear-fog.md): exact linear fog specialization and optimized Sony shader cycle counts.
 - [native-model-preparation-recipes.md](native-model-preparation-recipes.md), [native-gpu-palette-preparation.md](native-gpu-palette-preparation.md), [native-texture-srt-preparation.md](native-texture-srt-preparation.md): admitted structural reuse, direct final palette writes and selective native SRT decoding.
