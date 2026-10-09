@@ -270,7 +270,8 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
             const std::array<float, 3> fresh = RootAt(game, self, anim, from, rootResult, rootOut);
             game.Virtual(anim, kSetFrame, {}, {kept});
             for (uint32_t k = 0; k < 3; ++k) worst = std::max(worst, std::fabs(fresh[k] - root.at[k]));
-            if ((++checked & (checked - 1)) == 0 && checked >= 256)
+            ++checked;
+            if ((checked & (checked - 1)) == 0 && checked >= 256)
                 std::fprintf(stderr, "MH3 root cache: %llu joined windows, largest start difference %g\n",
                              static_cast<unsigned long long>(checked), double(worst));
         }
