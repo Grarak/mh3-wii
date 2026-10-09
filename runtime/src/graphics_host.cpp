@@ -19,6 +19,7 @@
 #include <thread>
 #include <memory>
 #include <webgpu/webgpu_cpp.h>
+bool mh3_aurora_flush_draws();
 namespace aurora::webgpu { extern wgpu::Queue g_queue; extern wgpu::Instance g_instance; }
 namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); }
 
@@ -29,6 +30,7 @@ uint32_t process(const uint8_t*, uint32_t, bool);
 namespace {
 bool initialized = false;
 bool frameActive = false;
+bool gpuSynchronized = true, displayCopyPending = false, hasBegunFrame = false;
 uint32_t captureInterval = 0;
 std::filesystem::path capturePath;
 GuestGxStream guestStream;
@@ -40,7 +42,7 @@ uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 void FlushHostEfbPokes() {
     if (!efbDirty) return;
     using namespace aurora::webgpu;
-    if (frameActive || g_graphicsConfig.msaaSamples != 1)
+    if (!gpuSynchronized || g_graphicsConfig.msaaSamples != 1)
         throw std::runtime_error("EFB pokes require a completed single-sample framebuffer");
     aurora_wait_for_frame_worker();
     const wgpu::TexelCopyTextureInfo to{.texture = g_frameBuffer.texture, .origin = {efbMinX, efbMinY, 0}};
@@ -50,7 +52,7 @@ void FlushHostEfbPokes() {
     g_queue.WriteTexture(&to, efbPixels.data() + offset, efbPixels.size() - offset, &layout, &extent);
     // GXDrawDone is a synchronization point, not a Wii EFB clear. The next
     // host frame must retain the CPU's pixels for subsequent GXCopyTex/draws.
-    aurora::gfx::preserve_next_efb_frame();
+    if (!frameActive) aurora::gfx::preserve_next_efb_frame();
     efbDirty = false;
 }
 uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0, guestDraws = 0, guestTextureCopies = 0;
@@ -101,12 +103,15 @@ void InitializeGraphics(int argc, char** argv) {
 void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     FlushHostEfbPokes();
     efbPixels.clear();
+    gpuSynchronized = false;
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
     if (!frameActive) {
         aurora_update();
+        if (hasBegunFrame) aurora::gfx::preserve_next_efb_frame();
         frameActive = aurora_begin_frame();
+        hasBegunFrame = true;
         if (!frameActive) throw std::runtime_error("Aurora could not begin the guest GX frame");
     }
     guestStream.Write(std::span<const uint8_t>(data, size), [](auto packet) {
@@ -127,6 +132,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         GXSetDispCopyDst(copy.width, copy.height);
         GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
         ++guestCopies;
+        displayCopyPending = true;
     }, [](const GuestGxStream::TextureCopy& copy) {
         GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
         GXSetTexCopyDst(copy.width, copy.height, static_cast<GXTexFmt>(copy.format), copy.halfScale ? GX_TRUE : GX_FALSE);
@@ -150,7 +156,9 @@ void CompleteHostGraphics() {
     if (!initialized) return;
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
-    if (frameActive) {
+    if (frameActive && !displayCopyPending) {
+        if (!mh3_aurora_flush_draws()) throw std::runtime_error("GXDrawDone could not resume the in-progress frame");
+    } else if (frameActive) {
         // Aurora advances its frame index while sealing, before capture encoding.
         const auto frame = aurora::gfx::current_frame() + 1;
         if (captureInterval && frame % captureInterval == 0) {
@@ -158,7 +166,7 @@ void CompleteHostGraphics() {
                 (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
             aurora_request_frame_capture(frame, path.c_str());
         }
-        aurora_end_frame(); frameActive = false;
+        aurora_end_frame(); frameActive = false; displayCopyPending = false;
     }
     aurora_wait_for_frame_worker();
     // Wait for actual submitted GPU work, not just the renderer worker's CPU
@@ -169,6 +177,7 @@ void CompleteHostGraphics() {
     const auto wait = aurora::webgpu::g_instance.WaitAny(future, 10000000000ULL);
     if (wait != wgpu::WaitStatus::Success || *result != wgpu::QueueWorkDoneStatus::Success)
         throw std::runtime_error("GXDrawDone failed while waiting for Metal completion");
+    gpuSynchronized = true;
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
         std::fprintf(stderr, "MH3 GX draw completion %u: Metal work finished\n", completions);
@@ -176,7 +185,7 @@ void CompleteHostGraphics() {
 
 uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
     using namespace aurora::webgpu;
-    if (!initialized || frameActive || guestStream.PendingBytes())
+    if (!initialized || !gpuSynchronized || guestStream.PendingBytes())
         throw std::runtime_error("EFB color peek requires a completed GXDrawDone boundary");
     aurora_wait_for_frame_worker();
     const auto& source = g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved : g_frameBuffer;
@@ -317,7 +326,18 @@ int RunEfbCheck(int argc, char** argv) {
         throw std::runtime_error("Metal EFB dirty-rectangle upload failed");
     frameActive = aurora_begin_frame();
     if (!frameActive) throw std::runtime_error("EFB preservation check could not begin a frame");
+    gpuSynchronized = false;
+    const auto beforeFence = aurora::gfx::current_frame();
     CompleteHostGraphics();
+    if (!frameActive || aurora::gfx::current_frame() != beforeFence)
+        throw std::runtime_error("GXDrawDone incorrectly presented an intermediate pass");
+    efbPixels.clear();
+    if (ReadHostEfbColor(1, 1) != 0xFF336699)
+        throw std::runtime_error("GXDrawDone lost the in-progress EFB");
+    displayCopyPending = true; // Exercise the completed-frame branch of the fence.
+    CompleteHostGraphics();
+    if (frameActive || aurora::gfx::current_frame() != beforeFence + 1)
+        throw std::runtime_error("Completed display frame was not presented");
     efbPixels.clear();
     if (ReadHostEfbColor(1, 1) != 0xFF336699)
         throw std::runtime_error("CPU EFB pixels were lost across a host frame boundary");
