@@ -240,7 +240,7 @@
 802b05fc MapClimate
 80276e6c PlStatusUpdate
 80260abc PlCanRecoverHealth
-802762f0 PlRecoverHealth
+802762f0 PlAddHealth
 800d2f80 PlayTimeTick
 80212680 VillageStepCounters
 8021dc88 VillageTalkStep

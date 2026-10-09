@@ -5,6 +5,7 @@
 #include "village_boot.h"
 #include "field_jump.h"
 #include "quest_catalog.h"
+#include "player_health.h"
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -80,6 +81,7 @@ constexpr const char* kUsage =
     "  --quest <id>|free [--area <n>]\n"
     "                                 start a quest (village, arena or online) or the\n"
     "                                 Moga Woods free roam from the village\n"
+    "  --no-damage                    (with any of the above) the hunter takes no damage\n"
 #endif
     ;
 
@@ -118,6 +120,15 @@ void StartQuestBoot(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     try {
+#ifdef MH3_DEVELOPMENT
+        // --no-damage goes with any other option.
+        const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });
+        if (noDamage != argv + argc) {
+            PlayerHealth::SetNoDamage(true);
+            std::cerr << "MH3: no damage\n";
+            argc = int(noDamage - argv);
+        }
+#endif
 #ifdef MH3_HAS_AURORA
         if (argc == 2 && std::string_view(argv[1]) == "--efb-check")
             return RunEfbCheck(argc, argv);
