@@ -411,8 +411,6 @@ uint32_t poseVersions = 0;
 constinit const NativePoseVersion emptyPose{};
 #ifdef MH3_DEVELOPMENT
 NativePoseStatistics poseStats{};
-uint64_t poseVerified = 0, poseMismatches = 0;
-std::atomic<uint64_t> poseLifetimeErrors{0};
 #define MH3_POSE_STAT(...) __VA_ARGS__
 #else
 #define MH3_POSE_STAT(...)
@@ -447,9 +445,6 @@ NativePoseVersion* AcquirePose(size_t bytes) {
     if (auto& free = poseFree[size_class]; !free.empty()) {
         auto* version = free.back();
         free.pop_back();
-#ifdef MH3_DEVELOPMENT
-        version->epoch.fetch_add(1, std::memory_order_relaxed);
-#endif
         return version;
     }
 
@@ -668,10 +663,6 @@ const NativePoseVersion* VersionNativeModelPose(const uint32_t addresses[3], con
         // No producer completed on these arrays since the version was taken.
         if (binding.generation == live.generation) {
             MH3_POSE_STAT(++poseStats.same_revision;)
-#ifdef MH3_DEVELOPMENT
-            if (VerifyNativeModelPoses())
-                VerifyNativeModelPose(*binding.version, live);
-#endif
             return binding.version;
         }
 
@@ -692,35 +683,8 @@ const NativePoseVersion* VersionNativeModelPose(const uint32_t addresses[3], con
     return version;
 }
 #ifdef MH3_DEVELOPMENT
-bool VerifyNativeModelPoses() {
-    static const bool enabled = VerifyOptions().Has("pose");
-    return enabled;
-}
-
-void VerifyNativeModelPose(const NativePoseVersion& version, const mh3_matrix_sources& live) {
-    ++poseVerified;
-
-    if (SamePoseLayout(version.sources, live) && SamePoseContents(version, live))
-        return;
-
-    if (poseMismatches++ < 20)
-        std::fprintf(stderr, "MH3 verify pose: a reused version differs from the live arrays (%u matrices, revision %llu)\n", unsigned(live.positions.count),
-                     static_cast<unsigned long long>(live.generation));
-}
-
-void CheckNativeModelPoseLifetime(const NativePoseVersion& version, uint32_t epoch) {
-    if (version.epoch.load(std::memory_order_relaxed) == epoch)
-        return;
-
-    if (poseLifetimeErrors.fetch_add(1, std::memory_order_relaxed) < 20)
-        std::fprintf(stderr, "MH3 verify pose: a version was reused before an item that references it rendered\n");
-}
-
 NativePoseStatistics TakeNativePoseStatistics() {
     auto result = std::exchange(poseStats, {});
-    result.verified = poseVerified;
-    result.mismatches = poseMismatches;
-    result.lifetime_errors = poseLifetimeErrors.load(std::memory_order_relaxed);
     result.versions = poseVersions;
     result.bindings = uint32_t(poseBindings.size());
     return result;

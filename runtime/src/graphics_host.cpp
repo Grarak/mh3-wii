@@ -92,10 +92,9 @@ uint32_t process(const uint8_t*, uint32_t, bool);
 } // namespace aurora::gx::fifo
 
 namespace {
-void BeginHostGraphicsFrame();
 bool initialized = false;
 bool frameActive = false;
-bool gpuSynchronized = true, displayCopyPending = false, hasBegunFrame = false;
+bool gpuSynchronized = true, displayCopyPending = false;
 #ifdef __vita__
 uint64_t razorNativeFrameStarted = 0;
 #endif
@@ -437,35 +436,6 @@ void PollHostGraphicsEvents() {
             quitRequested = true;
 }
 
-namespace {
-void BeginHostGraphicsFrame() {
-    if (frameActive)
-        return;
-
-    if (hasBegunFrame)
-        aurora::gfx::preserve_next_efb_frame();
-
-    frameActive = aurora_begin_frame();
-    hasBegunFrame = true;
-
-    if (!frameActive)
-        MH3_THROW(std::runtime_error("Aurora could not begin the guest GX frame"));
-
-    const auto frame = aurora::gfx::current_frame() + 1;
-
-    if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
-        aurora::gfx::require_frame_render();
-#ifdef MH3_DEVELOPMENT
-    std::lock_guard lock(dumpLock);
-
-    if (!dumpPath.empty() && !dumpFrame) {
-        dumpFrame = frame;
-        aurora::gfx::require_frame_render();
-    }
-#endif
-}
-} // namespace
-
 #ifdef MH3_DEVELOPMENT
 void RequestFrameDump(std::string path) {
     std::lock_guard lock(dumpLock);
@@ -769,17 +739,15 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         std::fprintf(stderr, "MH3 native work: owner CPU unavailable\n");
 
     if (const auto scene = TakeNativeSceneCullStatistics(); scene.models)
-        std::fprintf(stderr, "MH3 scene cull: %llu of %llu scene models culled, %llu tested (untested: %llu class, %llu callback, %llu no table, %llu unbounded), check %llu/%llu mismatches\n",
+        std::fprintf(stderr, "MH3 scene cull: %llu of %llu scene models culled, %llu tested (untested: %llu class, %llu callback, %llu no table, %llu unbounded)\n",
                      static_cast<unsigned long long>(scene.culled), static_cast<unsigned long long>(scene.models), static_cast<unsigned long long>(scene.tested),
                      static_cast<unsigned long long>(scene.other_class), static_cast<unsigned long long>(scene.callback), static_cast<unsigned long long>(scene.no_table),
-                     static_cast<unsigned long long>(scene.unbounded), static_cast<unsigned long long>(scene.mismatches), static_cast<unsigned long long>(scene.checked));
+                     static_cast<unsigned long long>(scene.unbounded));
     if (const auto pose = TakeNativePoseStatistics(); pose.captures)
         std::fprintf(stderr,
-                     "MH3 pose versions: %llu captures, %llu copied (%.1f KiB), %llu same revision, %llu same contents; %u versions, %u bindings; verified %llu, %llu "
-                     "mismatches, %llu lifetime errors\n",
+                     "MH3 pose versions: %llu captures, %llu copied (%.1f KiB), %llu same revision, %llu same contents; %u versions, %u bindings\n",
                      static_cast<unsigned long long>(pose.captures), static_cast<unsigned long long>(pose.copies), double(pose.copied_bytes) / 1024.0,
-                     static_cast<unsigned long long>(pose.same_revision), static_cast<unsigned long long>(pose.same_contents), pose.versions, pose.bindings,
-                     static_cast<unsigned long long>(pose.verified), static_cast<unsigned long long>(pose.mismatches), static_cast<unsigned long long>(pose.lifetime_errors));
+                     static_cast<unsigned long long>(pose.same_revision), static_cast<unsigned long long>(pose.same_contents), pose.versions, pose.bindings);
     if (const auto cull = TakeNativeModelCullStatistics(); cull.draws)
         std::fprintf(stderr, "MH3 model cull: %llu of %llu mesh draws culled (%.1f%%)\n", static_cast<unsigned long long>(cull.culled),
                      static_cast<unsigned long long>(cull.draws), 100.0 * double(cull.culled) / double(cull.draws));

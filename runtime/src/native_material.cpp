@@ -1024,114 +1024,6 @@ std::optional<aurora::gl::ShadedBlocks> ShadeGpuBlocks(const AuroraNativeUniform
     return blocks;
 }
 #ifdef MH3_DEVELOPMENT
-// MH3_VERIFY=material: compare the coefficients the programs derive from the
-// Material and Animated blocks with mh3_shade_fill, and the SRT rows with the
-// post matrices, for every material-GPU draw.
-bool MaterialGpuVerify() {
-    static const bool enabled = VerifyOptions().Has("material");
-    return enabled;
-}
-
-struct VerifyState {
-    uint64_t draws = 0, mismatches = 0, srtRoles = 0, srtMismatches = 0;
-} verifyState;
-
-bool Near(float a, float b) {
-    return std::fabs(a - b) <= 1e-5f * std::max(1.f, std::max(std::fabs(a), std::fabs(b)));
-}
-
-void VerifyMaterialGpu(const ShadeEntry& entry, const mh3_shade_gpu_material& material, const mh3_shade_gpu_animated& values, const mh3_resolved_mesh_submit* mesh) {
-    auto& v = verifyState;
-    ++v.draws;
-    mh3_shade_draw expected;
-    std::memset(&expected, 0, sizeof expected);
-    mh3_shade_fill(&entry.shading, &Mat(render), &expected);
-    mh3_shade_fragment actual;
-    mh3_shade_gpu_resolve(&entry.shading, &material, &values, &actual);
-    const auto& e = expected.fragment;
-    std::string diff;
-    const auto lanes = [&](const char* name, const float* x, const float* y, unsigned first, unsigned last) {
-        for (unsigned i = first; i < last; ++i)
-            if (!Near(x[i], y[i])) {
-                char text[96];
-                std::snprintf(text, sizeof text, " %s[%u] %g/%g", name, i, x[i], y[i]);
-                diff += text;
-                return;
-            }
-    };
-
-    if (entry.shading.alpha_test)
-        lanes("alpha", e.alpha_range, actual.alpha_range, 0, 2);
-
-    if (entry.shading.overlay)
-        lanes("overlay", e.overlay, actual.overlay, 0, 3);
-
-    if (!entry.shading.pure_modulate) {
-        if (entry.shading.model == MH3_SHADE_MODULATE) {
-            const auto &x = e.shading.modulate, &y = actual.shading.modulate;
-            lanes("w0", x.w0, y.w0, 0, 4);
-            lanes("w1", x.w1, y.w1, 0, 4);
-            lanes("offset", x.offset, y.offset, 0, 4);
-            lanes("kv", x.kv, y.kv, 0, 4);
-            lanes("kc", x.kc, y.kc, 0, 4);
-            lanes("d", x.d, y.d, 0, 4);
-            lanes("s", x.s, y.s, 0, 4);
-        } else {
-            const auto &x = e.shading.basic, &y = actual.shading.basic;
-
-            for (unsigned i = 0; i < 4; ++i) {
-                lanes("color.offset", x.color_input[i].offset, y.color_input[i].offset, 0, 3);
-                lanes("color.scale", x.color_input[i].scale, y.color_input[i].scale, 0, 3);
-                lanes("color.select", x.color_input[i].select, y.color_input[i].select, 0, 4);
-                lanes("color.swizzle", x.color_input[i].swizzle, y.color_input[i].swizzle, 0, 1);
-                lanes("alpha.offset", x.alpha_input[i].offset, y.alpha_input[i].offset, 3, 4);
-                lanes("alpha.scale", x.alpha_input[i].scale, y.alpha_input[i].scale, 3, 4);
-                lanes("alpha.select", x.alpha_input[i].select, y.alpha_input[i].select, 0, 4);
-            }
-
-            lanes("color.equation", x.color_equation, y.color_equation, 0, 3);
-            lanes("alpha.equation", x.alpha_equation, y.alpha_equation, 0, 3);
-        }
-    }
-
-    if (mesh) {
-        // Pure-SRT roles: the rows the vertex program builds against the post matrix.
-        for (unsigned role = 0; role < entry.shading.textures; ++role) {
-            mh3_shade_gpu_srt srt[3];
-            const uint8_t roles = ShadeSrtRoles(entry.shading, srt);
-
-            if (!(roles & (1u << role)))
-                continue;
-
-            ++v.srtRoles;
-            const unsigned coordinate = entry.shading.texture_coordinate[role];
-            const unsigned slot = Mat(render).texgen[coordinate].values[MH3_TEXGEN_POST_MATRIX_ROW] / 3u;
-            const float* post = mesh->texture_matrices[slot];
-            float row0[3], row1[3];
-            mh3_shade_gpu_srt_rows(&srt[role], row0, row1);
-            const float expect[12] = {row0[0], row0[1], 0.f, row0[2], row1[0], row1[1], 0.f, row1[2], 0.f, 0.f, 1.f, 0.f};
-
-            for (unsigned i = 0; i < 12; ++i)
-                if (!Near(post[i], expect[i])) {
-                    ++v.srtMismatches;
-                    char text[96];
-                    std::snprintf(text, sizeof text, " srt%u[%u] %g/%g", role, i, post[i], expect[i]);
-                    diff += text;
-                    break;
-                }
-        }
-    }
-
-    if (!diff.empty() && v.mismatches++ < 40)
-        std::fprintf(stderr, "MH3 material GPU verify: draw %llu structure %016llx model %u:%s\n", (unsigned long long)v.draws, (unsigned long long)entry.key, entry.shading.model, diff.c_str());
-
-    if (v.draws % 20000 == 0)
-        std::fprintf(stderr, "MH3 material GPU verify: %llu draws, %llu mismatches, %llu SRT roles (%llu mismatched), %llu baked\n", (unsigned long long)v.draws, (unsigned long long)v.mismatches,
-                     (unsigned long long)v.srtRoles, (unsigned long long)v.srtMismatches, (unsigned long long)gpuStatistics.baked);
-}
-#endif
-
-#ifdef MH3_DEVELOPMENT
 // MH3_STATS: material-GPU counters every 300 rendered frames.
 void ReportMaterialGpu() {
     static const bool enabled = std::getenv("MH3_STATS") != nullptr;
@@ -1641,10 +1533,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 
         if (!materialBlock)
             return;
-#ifdef MH3_DEVELOPMENT
-        if (MaterialGpuVerify())
-            VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? *static_cast<const mh3_shade_gpu_material*>(resolved.block.data) : entry.material, animated.values[animated.last], &draw);
-#endif
+
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
         blocks = ShadeGpuBlocks(memory, paletteBytes, *materialBlock, *animatedBlock);
@@ -1722,10 +1611,7 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
 
         if (!materialBlock)
             return;
-#ifdef MH3_DEVELOPMENT
-        if (MaterialGpuVerify())
-            VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? *static_cast<const mh3_shade_gpu_material*>(resolved.block.data) : entry.material, animated.values[animated.last], nullptr);
-#endif
+
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
         blocks = ShadeGpuBlocks(memory, 0, *materialBlock, *animatedBlock);
@@ -2326,22 +2212,6 @@ const mh3_native_light_slots& GetNativeModelLights(NativeOwner owner) {
     return M(owner).lightSlots;
 }
 
-void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to) {
-    if (from == NativeOwner::Game)
-        ObserveRasterPublications();
-
-    auto& source = M(from);
-    auto& target = M(to);
-    Mat(target) = Mat(source);
-    target.shadeStructureDirty = source.shadeStructureDirty;
-    target.depthBeforeTexture = source.depthBeforeTexture;
-    target.postTextureMatrices = source.postTextureMatrices;
-    target.postSrt = source.postSrt;
-    ++target.srtRevision;
-    Changed(NATIVE_STATE_MATERIAL, to);
-    Changed(NATIVE_STATE_POST, to);
-}
-
 void ResetNativeMaterialOwner(NativeOwner owner) {
     M(owner) = {};
     Changed(NATIVE_STATE_MATERIAL, owner);
@@ -2432,64 +2302,6 @@ std::string CompareNativeShadeInputs(const mh3_native_material_state& a, const m
     return diff;
 }
 
-std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b) {
-    const auto& x = M(a);
-    const auto& y = M(b);
-    std::string result;
-    auto material = Mat(M(a)), other = Mat(M(b));
-    material.generation = other.generation = 0;
-
-    if (std::memcmp(&material, &other, sizeof material)) {
-        // Each differing field and item, '+' past a's count.
-        using S = mh3_native_material_state;
-        struct Field {
-            const char* name;
-            size_t offset, size, items;
-            uint32_t count;
-        };
-
-        const Field fields[] = {{"counts", 0, offsetof(S, tev), 1, 1},
-                                {"tev", offsetof(S, tev), sizeof(S::tev[0]), 16, material.tev_count},
-                                {"color", offsetof(S, color), sizeof(S::color[0]), 4, 4},
-                                {"konst", offsetof(S, konst), sizeof(S::konst[0]), 4, 4},
-                                {"swaps", offsetof(S, swaps), sizeof(S::swaps[0]), 4, 4},
-                                {"indirect", offsetof(S, indirect), sizeof(S::indirect[0]), 4, material.indirect_count},
-                                {"indirect-matrix", offsetof(S, indirect_matrix), sizeof(S::indirect_matrix[0]), 3, 3},
-                                {"texgen", offsetof(S, texgen), sizeof(S::texgen[0]), 8, material.texgen_count},
-                                {"channel", offsetof(S, channel), sizeof(S::channel[0]), 2, material.channel_count},
-                                {"pixel", offsetof(S, pixel), sizeof(S::pixel), 1, 1},
-                                {"clip", offsetof(S, clip_mode_known), 2, 1, 1}};
-        const auto* p = reinterpret_cast<const uint8_t*>(&material);
-        const auto* q = reinterpret_cast<const uint8_t*>(&other);
-        result += " material";
-
-        for (const auto& f : fields)
-            for (size_t i = 0; i < f.items; ++i)
-                if (std::memcmp(p + f.offset + i * f.size, q + f.offset + i * f.size, f.size))
-                    result += std::string(" ") + f.name + (f.items > 1 ? std::to_string(i) : "") + (i >= f.count ? "+" : "");
-    }
-
-    if (x.depthBeforeTexture != y.depthBeforeTexture)
-        result += " depth-before-texture";
-
-    for (unsigned i = 0; i < 8; ++i) {
-        const auto& p = x.postTextureMatrices[i];
-        const auto& q = y.postTextureMatrices[i];
-
-        if (p.known != q.known || (p.known && (p.matrix3x4 != q.matrix3x4 || std::memcmp(p.values.data(), q.values.data(), 48)))) {
-            float most = 0;
-
-            for (unsigned j = 0; j < 12; ++j)
-                most = std::max(most, std::fabs(p.values[j] - q.values[j]));
-
-            char detail[64];
-            std::snprintf(detail, sizeof detail, "(known %d/%d, max %g)", int(p.known), int(q.known), double(most));
-            result += " post" + std::to_string(i) + detail;
-        }
-    }
-
-    return result;
-}
 #endif
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     if (NativeGraphicsFrameShouldRender())

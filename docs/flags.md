@@ -27,9 +27,15 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (culling edge checks) | development |
 | `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file (`draw-tables.bin`) | all |
 | `MH3_GXM_SHADER_DUMP` | a directory: mirror runtime-compiled GXPs (development bank misses, preflights) there; set by the selector preflight | Vita |
+| `MH3_LANGUAGE` | `en`, `fr`, `de`, `it` or `es`: the game's language (the console's `IPL.LNG`), as the launcher's `Language` row does, for runs started without the launcher | all |
+| `MH3_ONLINE_SERVER` | `DOMAIN[:PORT]` or `IP[:PORT]`: the online server (default `mh3sp.com`), as the launcher's online server setting does ([online](online.md)) | all |
+| `MH3_ONLINE_SKIP_TLS` | `1`: TLS sessions pass their bytes through unencrypted (a local MH3SP with `UseSSL = OFF`; [online](online.md)) | all |
 | `MH3_ONLINE_CA` | a DER file: the root CA the game pins for its Capcom server instead of the MH3SP one (a local MH3SP server's `cert/ca.der`; [online](online.md)) | all |
 | `MH3_ONLINE_HOSTS` | `name=address[,...]` (`*.domain` for every host in it): answer these lookups without DNS ([online](online.md)) | Linux |
 | `MH3_ONLINE_PORTS` | `from=to[,...]`: connect to port `to` instead of `from` (a local account server instead of port 80; [online](online.md)) | Linux |
+| `MH3_ONLINE_ADDRESSES` | `from=to[,...]`: reach IPv4 address `from` at `to`, and read packets from `to` as from `from` (a server that names its ZeroTier address, reached from a Vita on the LAN; [online](online.md)) | Linux |
+| `MH3_ONLINE_COMMUNITY_TEST` | `1`: every server counts as a community server, for its loading-screen lines ([online](online.md)) | development |
+| `MH3_ONLINE_AUTO` | `id=N,server=N,gate=N,city=N,post=QUEST[,members=N][,depart=N]` or `...,join=N`: the online autopilot takes a `--city` launch through the online screens into a quest without input (`runtime/src/net/online_auto.cpp`) | development |
 
 ## Development tools
 
@@ -74,8 +80,6 @@ changes the interval).
 | `fuzz-samples=N` | player fuzz samples per function (default 64; the A: fuzz runs four times as many) |
 | `fuzz-demo=V/V/...` | A: fuzz: every fourth run of 16 samples sets the event demo clock to one of these steps (for `steps == K` tests) |
 | `fuzz-frames=V/V/...` | A: fuzz: every other run of 16 samples puts the motion on (or half a frame or a frame before) one of these frames |
-| `EffectBatch` | not a port: every material geometry draw's replayed state (its snapshots, colours applied) against the Game state at its submission ([effect batching](native-effects-port.md#batched-particle-draws-and-the-ported-particle-path-2026-10-04)) |
-| `CurvesAt` | not a port: the particle curve blend of the owned words against the whole-block blend, at the variable step |
 
 While `MH3_PORT_CHECK` is set nothing runs beside the game thread: the effect
 calculation stays on it, the world matrix pass is not split (but for
@@ -130,17 +134,20 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_VERIFY`: native paths against what they replace
 
-`MH3_VERIFY=[pose][,material][,cull][,prep][,prep-image][,draw-table][,replay]`
+`MH3_VERIFY=prep-image`
 
 | Item | Effect |
 | --- | --- |
-| `pose` | every model draw that reuses a pose version compares it with the live view arrays; the render thread checks that each item's version was not reused before it rendered. The `MH3 pose versions` stats line counts the checks and the mismatches ([game-thread copies](game-thread-copies.md)) |
-| `material` | every material-GPU draw compares the coefficients its program derives from the Material and Animated blocks with `mh3_shade_fill`, and the SRT rows with the post matrices |
-| `cull` | the game-side scene cull draws every model and checks each it would have rejected (`MH3 scene cull` line) |
-| `prep` | models are prepared on the game thread (the original path) and the render thread's preparation of the captured inputs is checked against it for every dispatch |
 | `prep-image` | every model material dispatch drawn from its record's compiled draw material (kept across the record's dispatches) is compared after its shape step with one built from the record's image for this dispatch alone (its own colours, channels, indirect operator and matrix selectors), by what a draw derives from each: structure, classification, fill, palette and alpha range, texgens, the lit channel and the raster (`MH3 prep image check` lines name the differing parts, with the counts every 20,000 dispatches) |
-| `draw-table` | indexed draw items resolve by address too, compared with their draw table (`MH3 draw tables` line) |
-| `replay` | the render thread compares its material and colour registers at every material geometry draw (effects, particles, layouts) with the game thread's snapshots for that draw; `MH3 replay check` lines report the first mismatches and the counts every 65,536 draws |
+
+The checks of settled ports were removed on 2026-10-08 (a stale one prints
+`MH3: MH3_VERIFY: '...' is ignored; it was removed`): `pose` (reused pose
+versions against the live view arrays), `material` (the material programs'
+coefficients against `mh3_shade_fill`), `cull` (every model the scene cull
+rejects drawn and checked), `prep` (game-thread model preparation against the
+render thread's), `draw-table` (indexed draw items resolved by address too)
+and `replay` (the render thread's material and colour registers at material
+geometry draws against the game thread's snapshots).
 
 ### `MH3_INPUT`: scripted controller input
 
@@ -275,7 +282,6 @@ The model tests and the asset scripts (`vita-active-play.py`,
 | `MH3_WRITE_WATCH_LIST=FILE`, `MH3_WRITE_WATCH_MS=N` | `MH3_WRITE_WATCH=list=FILE,ms=N` |
 | `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |
 | `MH3_PROFILE_FRAMES=N`, `MH3_MODEL_SPLIT=1`, `MH3_RENDER_SYNC=1` | `MH3_PROFILE=frames=N,split,sync` |
-| `MH3_MATERIAL_GPU_VERIFY=1`, `MH3_MODEL_CULL_GAME=2`, `MH3_RENDER_PREP=2`, `MH3_DRAW_TABLE=2` | `MH3_VERIFY=material,cull,prep,draw-table` |
 | `MH3_RAM_DUMP=FIRST,COUNT` | `MH3_CAPTURE=ram=FIRST,ram-frames=COUNT` |
 | `MH3_TRACE_INPUT=1` | `MH3_TRACE=input` |
 | `MH3_NET_TRACE=1`, `MH3_THREAD_TRACE=1` | `MH3_TRACE=net,threads` |
@@ -298,6 +304,10 @@ Removed with the code behind them (git history keeps them):
   `MH3_ANM_KEYS_CHECK`, `MH3_ANM_BAKED_CHECK`, `MH3_EFFECT_CURVE_CHECK`,
   `MH3_TICK_SURVEY` (with the `Survey` tick-site kind), `MH3_STEP_LOG`,
   `MH3_STEP_LOG_WORDS`.
+- Checks of settled effect paths (2026-10-08): the `MH3_PORT_CHECK` items
+  `EffectBatch` (replayed material geometry state) and `CurvesAt` (the owned
+  curve words' blend), and `MH3_EFFECT_SETUP_CHECK` (skipped effect Setups);
+  [effect checks](native-effects-port.md#checks).
 - System traces: `MH3_SLOW_PATH_TRACE`, `MH3_AUDIO_TRACE`, and
   `MH3_TRACE_ERRORS` in the IOS, memory and locked-cache code.
 - Settings that are now always on, with their alternative paths:
@@ -305,6 +315,9 @@ Removed with the code behind them (git history keeps them):
   uniforms remain for materials without a GPU block), `MH3_MATERIAL_GPU_RING`,
   `MH3_MODEL_CULL=0`, `MH3_MODEL_CULL_GAME=0`, `MH3_RENDER_PREP=0`,
   `MH3_DRAW_TABLE=0`, `MH3_DRAW_TABLE_DISCOVER=0`, `MH3_DRAW_TABLE_TRACE`,
+  the checks `MH3_MATERIAL_GPU_VERIFY=1`, `MH3_MODEL_CULL_GAME=2`,
+  `MH3_RENDER_PREP=2` and `MH3_DRAW_TABLE=2` (later `MH3_VERIFY` items, removed
+  2026-10-08),
   `MH3_GXM_ALPHA_ONE=0`, `MH3_GXM_SERIAL_SCENES=1`; and the `MH3_PROFILE`
   items `draw-inline`, `draw-thread`, `serial-prepare`, `serial-world`,
   `queue=N` and `unpaced` (2026-10-05, [above](#mh3_profile-frame-profile-split-timers-serial-frames)).

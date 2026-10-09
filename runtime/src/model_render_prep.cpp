@@ -1044,15 +1044,6 @@ void ReleaseNativeMaterialGroupVersion(const NativeMaterialGroupVersion* version
     retiredVersions.push_back(version);
 }
 
-ModelPrepMode NativeModelPrepMode() {
-#ifdef MH3_DEVELOPMENT
-    static const ModelPrepMode mode = VerifyOptions().Has("prep") ? ModelPrepMode::Verify : ModelPrepMode::Deferred;
-    return mode;
-#else
-    return ModelPrepMode::Deferred;
-#endif
-}
-
 mh3_res_mut_span ModelPrepMirror::At(uint32_t address, size_t size) {
     if (address >= BaseA && address - BaseA + size <= SizeA)
         return {a + (address - BaseA), size};

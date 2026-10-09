@@ -280,11 +280,6 @@ void ApplyNativeRenderRaster() {
         aurora::gl::apply_raster_state(BackendRaster(d.drawState.raster));
 }
 
-void CopyNativeDrawRaster(NativeOwner from, NativeOwner to) {
-    D(to).drawState.raster = D(from).drawState.raster;
-    D(to).rasterKnown = D(from).rasterKnown;
-}
-
 void ResetNativeDrawRaster(NativeOwner owner) {
     D(owner).drawState.raster = DrawOwner{}.drawState.raster;
     D(owner).rasterKnown = false;

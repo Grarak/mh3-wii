@@ -81,7 +81,6 @@ namespace {
 struct List {
     uint32_t address;
     uint32_t First() const { return MemoryInline::FlatRead32(address); }
-    uint32_t Last() const { return MemoryInline::FlatRead32(address + 4); }
     uint32_t Next(uint32_t object) const { return MemoryInline::FlatRead32(object + MemoryInline::FlatRead16(address + 0xA) + 4); }
 };
 
@@ -676,30 +675,6 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
         WriteCurves(particle, BlendCurves(kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), &cache.owned));
     else
         BlendOwned(particle, kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), cache.owned);
-#ifdef MH3_DEVELOPMENT
-    // MH3_PORT_CHECK=CurvesAt: the block BlendOwned left is the whole-block
-    // blend it replaces (BlendCurves, every word written).
-    const bool check = PortCheck::Enabled("CurvesAt");
-
-    if (check) [[unlikely]] {
-        static uint64_t checks = 0, mismatches = 0;
-        const Curves expected = BlendCurves(kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), &cache.owned);
-        Curves actual;
-        ReadCurves(particle, actual);
-        ++checks;
-
-        if (actual != expected) {
-            if (++mismatches <= 20)
-                for (size_t i = 0; i < kCurveWords; ++i)
-                    if (actual[i] != expected[i]) {
-                        std::printf("MH3 port check: CurvesAt word %lu is %08x, the whole-block blend %08x (particle %08x) owned %u kept %08x before %08x a %08x b %08x t %g\n", static_cast<unsigned long>(i), actual[i], expected[i], particle,
-                                    unsigned(cache.owned.bits[i / 8] >> (4 * (i % 8)) & 15), kept[i], cache.values[slotOf[0]][i], cache.values[slotOf[1]][i], cache.values[slotOf[2]][i], double(at - tick));
-                        break;
-                    }
-        } else if ((checks & (checks - 1)) == 0)
-            std::printf("MH3 port check: CurvesAt matches the original (%llu blends, %llu differ)\n", static_cast<unsigned long long>(checks), static_cast<unsigned long long>(mismatches));
-    }
-#endif
 }
 
 } // namespace

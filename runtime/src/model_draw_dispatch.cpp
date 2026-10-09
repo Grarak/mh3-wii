@@ -89,25 +89,7 @@ struct Model {
         return {Bytes(address, size_t(count) * 48), count, 48, 1};
     }
 };
-#ifdef MH3_DEVELOPMENT
-// MH3_DRAW_TABLE=2: the item's entries from the table are the dictionaries'.
-void CompareEntries(const Model& model, const mh3_model_draw_item& item) {
-    const struct {
-        mh3_res_kind kind;
-        uint32_t id;
-        size_t offset;
-        const char* name;
-    } entries[]{{MH3_RES_MATERIALS, item.draw.material_id, item.material.offset, "material entry"},
-                {MH3_RES_SHAPES, item.draw.shape_id, item.shape.offset, "shape entry"},
-                {MH3_RES_NODES, item.draw.node_id, item.node.offset, "node entry"}};
-    for (const auto& e : entries) {
-        mh3_res_entry expected{};
 
-        if (mh3_res_model_entry(&model.value, e.kind, e.id, &expected) != MH3_RES_OK || expected.offset != e.offset)
-            ReportNativeModelDrawTableMismatch(e.name);
-    }
-}
-#endif
 struct Submit {
     const Model& model;
     uint32_t replacement;
@@ -118,10 +100,6 @@ struct Submit {
     static mh3_res_status Emit(void* user, const mh3_model_draw_item* item) {
         auto& s = *static_cast<Submit*>(user);
         const auto& r = s.refs;
-#ifdef MH3_DEVELOPMENT
-        if (s.table && NativeModelDrawTableCompare())
-            CompareEntries(s.model, *item);
-#endif
         const uint32_t shape = s.model.Address(item->shape.offset), material = s.model.Address(item->material.offset);
         Memory::Write32(r.shape, shape);
         Memory::Write32(r.node, s.model.Address(item->node.offset));

@@ -53,10 +53,6 @@ bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t mate
 // The table's draw-stream entries for mh3_model_draw_walk_entries.
 const mh3_model_draw_entries* NativeModelDrawEntries(const NativeModelDrawTable& table);
 
-// MH3_DRAW_TABLE=2: check indexed draws against the address path.
-bool NativeModelDrawTableCompare();
-void ReportNativeModelDrawTableMismatch(const char* what);
-
 // Builds the tables of every certified model that has none (loading screens).
 void PrepareNativeModelDrawTables();
 

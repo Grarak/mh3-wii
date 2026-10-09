@@ -509,26 +509,16 @@ struct NativeModelDrawTable {
     NativeModelDrawTable() = default;
     NativeModelDrawTable(const NativeModelDrawTable&) = delete;
 
-    // Shape sources may be bound in place (DispatchDeferred).
+    // Shape sources may be bound in place (Dispatch).
     ~NativeModelDrawTable() { ReleaseNativeVertexSources(shapes.data(), shapes.data() + shapes.size()); }
 };
 
 namespace {
 // Draw items resolve through their model's draw table (by address when it has
-// none); MH3_VERIFY=draw-table (development) resolves indexed items both ways
-// and compares them.
-bool CompareDrawTables() {
-#ifdef MH3_DEVELOPMENT
-    static const bool compare = VerifyOptions().Has("draw-table");
-    return compare;
-#else
-    return false;
-#endif
-}
-
+// none).
 struct TableStats {
     uint64_t built = 0, cached = 0, materials = 0, shapes = 0, missing_materials = 0, missing_shapes = 0, failed = 0, eager = 0;
-    uint64_t indexed = 0, unindexed = 0, aliases = 0, compared = 0, mismatches = 0, in_place = 0;
+    uint64_t indexed = 0, unindexed = 0, aliases = 0, in_place = 0;
     uint64_t files_written = 0, bytes_written = 0;
 
     // Table construction (resolved, from the cache) and cache file reads/writes.
@@ -1148,23 +1138,6 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
     result = std::move(table);
     return {};
 }
-#ifdef MH3_DEVELOPMENT
-bool SameScope(const mh3_model_material_scope& a, const mh3_model_material_scope& b) {
-    return a.material_address == b.material_address && a.fur_address == b.fur_address && a.replacement_mask == b.replacement_mask &&
-           !std::memcmp(&a.selected, &b.selected, sizeof a.selected);
-}
-
-bool SameSource(const mh3_native_vertex_source& a, const mh3_native_vertex_source& b) {
-    return a.resource_address == b.resource_address && a.payload_address == b.payload_address && a.source_id == b.source_id && a.resource_bytes == b.resource_bytes &&
-           a.payload_bytes == b.payload_bytes && a.count == b.count && a.stride == b.stride && a.components == b.components && a.format == b.format && a.fraction == b.fraction &&
-           a.component_mode == b.component_mode && a.sample_index == b.sample_index && a.sample_count == b.sample_count && a.sample_stride == b.sample_stride && a.kind == b.kind;
-}
-
-bool SameOwnerRecord(const NativeModelOwner& a, const NativeModelOwner& b) {
-    return a.pack == b.pack && a.catalog == b.catalog && a.catalog_model_index == b.catalog_model_index && a.container_address == b.container_address && a.model_address == b.model_address &&
-           a.resident_handle == b.resident_handle && a.resident_generation == b.resident_generation && a.source_generation == b.source_generation;
-}
-#endif
 } // namespace
 
 std::shared_ptr<const NativeModelNodeViews> FindNativeModelNodeViews(uint32_t model) {
@@ -1269,17 +1242,6 @@ const mh3_model_draw_entries* NativeModelDrawEntries(const NativeModelDrawTable&
     return &table.entries;
 }
 
-bool NativeModelDrawTableCompare() {
-    return CompareDrawTables();
-}
-
-void ReportNativeModelDrawTableMismatch(const char* what) {
-    ++tableStats.compared;
-
-    if (tableStats.mismatches++ < 40)
-        std::fprintf(stderr, "MH3 draw table mismatch: %s\n", what);
-}
-
 void PrepareNativeModelDrawTables() {
     const auto start = std::chrono::steady_clock::now();
 
@@ -1350,16 +1312,16 @@ void ReportNativeModelDrawTables() {
     if (loading.open && std::chrono::steady_clock::now() - loading.last > std::chrono::seconds(1))
         ReportLoadingScreen();
 
-    if (!CompareDrawTables() && !ActiveNativeModelPreparationDiagnostics())
+    if (!ActiveNativeModelPreparationDiagnostics())
         return;
 
     const auto& s = tableStats;
     const auto n = [](uint64_t value) { return static_cast<unsigned long long>(value); };
     std::fprintf(stderr,
                  "MH3 draw tables: %lu owners; %llu built in %.2f ms, %llu from the cache in %.2f ms (%llu eager, %llu failed); %llu materials (%llu missing) %llu shapes (%llu missing); "
-                 "cache files %.2f ms, %llu written (%llu bytes); items %llu indexed %llu by address (%llu sources in place); %llu alias misses; compared %llu mismatches %llu\n",
+                 "cache files %.2f ms, %llu written (%llu bytes); items %llu indexed %llu by address (%llu sources in place); %llu alias misses\n",
                  static_cast<unsigned long>(CountNativeModelOwners()), n(s.built), s.build_ms, n(s.cached), s.cached_ms, n(s.eager), n(s.failed), n(s.materials), n(s.missing_materials), n(s.shapes),
-                 n(s.missing_shapes), s.cache_ms, n(s.files_written), n(s.bytes_written), n(s.indexed), n(s.unindexed), n(s.in_place), n(s.aliases), n(s.compared), n(s.mismatches));
+                 n(s.missing_shapes), s.cache_ms, n(s.files_written), n(s.bytes_written), n(s.indexed), n(s.unindexed), n(s.in_place), n(s.aliases));
 }
 
 namespace {
@@ -1484,9 +1446,6 @@ struct ModelItem {
     mh3_matrix_runtime_storage storage;
     mh3_shape_matrix_input input;
     const NativePoseVersion* pose;
-#ifdef MH3_DEVELOPMENT
-    uint32_t pose_epoch; // the version's epoch when captured (MH3_VERIFY=pose)
-#endif
     mh3_model_texcoord_sizes coordinate_sizes;
 
     // Deferred items carry the dispatch's preparation inputs instead of its
@@ -1542,13 +1501,8 @@ struct DrawPose {
 const NativePoseVersion* Pose(const uint32_t addresses[3], uint32_t model) {
     const uint64_t sequence = NativeFramePacketSequence();
 
-    if (drawPose.active && drawPose.version && drawPose.sequence == sequence && !std::memcmp(drawPose.address, addresses, sizeof drawPose.address)) {
-#ifdef MH3_DEVELOPMENT
-        if (addresses[0] && VerifyNativeModelPoses())
-            VerifyNativeModelPose(*drawPose.version, ReadNativeModelPose(addresses, model));
-#endif
+    if (drawPose.active && drawPose.version && drawPose.sequence == sequence && !std::memcmp(drawPose.address, addresses, sizeof drawPose.address))
         return drawPose.version;
-    }
 
     const auto live = addresses[0] ? ReadNativeModelPose(addresses, model) : mh3_matrix_sources{};
     drawPose.version = VersionNativeModelPose(addresses, live);
@@ -1559,9 +1513,6 @@ const NativePoseVersion* Pose(const uint32_t addresses[3], uint32_t model) {
 
 void CapturePose(ModelItem& item, const uint32_t addresses[3]) {
     item.pose = Pose(addresses, item.owner.model_address);
-#ifdef MH3_DEVELOPMENT
-    item.pose_epoch = item.pose->epoch.load(std::memory_order_relaxed);
-#endif
 }
 
 // The bound array of `semantic` is the shape's authored source, unwritten
@@ -1782,19 +1733,10 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
             submit_one(i);
     else
         submit_one(0);
-#ifdef MH3_DEVELOPMENT
-    // After every read of the version: its storage was not reused meanwhile.
-    if (VerifyNativeModelPoses())
-        CheckNativeModelPoseLifetime(*item.pose, item.pose_epoch);
-#endif
 }
 } // namespace
 
 namespace {
-#ifdef MH3_DEVELOPMENT
-// The item the original path prepared last (MH3_RENDER_PREP=2 checks it).
-const ModelItem* lastSubmitted = nullptr;
-#endif
 void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
     auto& capture = Store();
 
@@ -1809,9 +1751,7 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
     }
 
     item.coordinate_sizes = coordinate_sizes;
-#ifdef MH3_DEVELOPMENT
-    lastSubmitted = &item;
-#endif
+
     if (&capture == &scratch)
         return;
 
@@ -1934,53 +1874,6 @@ bool ShapeVisible(const NativeModelDispatch& d, const Resolved* r) {
     return visible != 0;
 }
 
-void DispatchGameThread(const NativeModelDispatch& d, const Resolved* r) {
-    TraceNativeModelDispatch(d);
-    mh3_model_material_scope scope;
-    {
-        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MATERIAL_PREP);
-        scope = r ? r->scope : Scope(d.material, d.bindings);
-        const bool ignore = !scope.material_address || (d.flags & 16);
-        PrepareContext context{};
-        Checked(mh3_model_material_prepare_scope(&scope, d.flags, d.descriptor, ignore, PrepareStep, &context));
-    }
-
-    if (!ShapeVisible(d, r))
-        return;
-
-    if (scope.fur_address)
-        MH3_THROW(std::runtime_error("Fur model needs native sampled-shell material preparation"));
-    // A dispatch resolves its shape's owner and sources once for the
-    // primitive setup, replacements and submission. Without a shape only the
-    // replacements (which require one) have an effect: they fail.
-    if (!r && !Resource(d.shape)) {
-        if (!(d.flags & 2))
-            Replacements(ResolveShape(d.shape), scope);
-
-        return;
-    }
-
-    const auto shape = [&] {
-        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        return r ? r->shape : ResolveShape(d.shape);
-    }();
-
-    if (!(d.flags & 2)) {
-        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        PrePrimitive(shape);
-        Replacements(shape, scope);
-    }
-
-    if (d.flags & 4) {
-        // The original republishes the whole material with front culling.
-        OverlayNativeMaterialTop(MH3_MATERIAL_TOP_CULL, 0, 0, 0, 0, 1);
-        std::memset(GuestRange(0x80685504, 12), 0, 12);
-        Memory::Write8(sync_address, 1);
-    }
-
-    SubmitShape(shape, d.position, d.normal);
-}
-
 // ---- Deferred preparation (model_render_prep.h) ----
 // 80076220 steps 1 (fog) and 10 (light set) stay on the game thread: they
 // publish the lighting snapshot and keep the guest fog/light caches.
@@ -2087,7 +1980,7 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
     item.prep.has_binding = binding.address[0] != 0;
 }
 
-void DispatchDeferred(const NativeModelDispatch& d, const Resolved* r) {
+void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
     TraceNativeModelDispatch(d);
 
     // Skipped frames record nothing (the game-side steps still run); the
@@ -2176,185 +2069,6 @@ void DispatchDeferred(const NativeModelDispatch& d, const Resolved* r) {
     RecordNativeModelDraw(uint32_t(capture->itemCount++), true);
 }
 
-#ifdef MH3_DEVELOPMENT
-// MH3_RENDER_PREP=2: run the original preparation, then execute the captured
-// inputs on the Shadow owner from the same starting state and compare.
-struct Verify {
-    ModelPrepMirror mirror;
-    ModelPrepSrtList srts;
-    uint64_t dispatches = 0, mismatches = 0, reported = 0;
-    std::map<std::string, uint64_t> kinds; // mismatching dispatches by part (without details)
-} verify;
-
-void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
-    auto& m = verify.mirror;
-    CopyNativeMaterialOwner(NativeOwner::Game, NativeOwner::Shadow);
-    CopyNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow);
-    CopyNativeDrawRaster(NativeOwner::Game, NativeOwner::Shadow);
-    std::memcpy(m.a, Memory::GetPointer(ModelPrepMirror::BaseA, ModelPrepMirror::SizeA), ModelPrepMirror::SizeA);
-    std::memcpy(m.b, Memory::GetPointer(ModelPrepMirror::BaseB, ModelPrepMirror::SizeB), ModelPrepMirror::SizeB);
-    m.pipeline_address = pipeline_address;
-    m.pipeline_revision = pipeline_revision;
-    m.coordinate_map_known = coordinate_map_known;
-    m.map_sizes = map_sizes;
-    m.coordinate_sizes = coordinate_sizes;
-    m.selectors = ReadNativeModelSelectors();
-    lastSubmitted = nullptr;
-    DispatchGameThread(d, r);
-
-    // Capture what the original consumed (its fog/light steps already ran).
-    const auto scope = r ? r->scope : Scope(d.material, d.bindings);
-    const bool ignore = !scope.material_address || (d.flags & 16);
-    ModelPrepInputs in;
-    in.flags = d.flags;
-    in.material = !ignore;
-    in.visible = lastSubmitted != nullptr;
-    verify.srts.count = 0;
-    CaptureInputs(in, d, scope, ignore, verify.srts);
-    mh3_matrix34 position{}, normal{};
-
-    if (in.visible) {
-        const auto shape = r ? r->shape : ResolveShape(d.shape);
-        std::memcpy(in.shape_cache, Bytes(shape.shape + 12, 12).data, 12);
-        in.matrix_id = shape.sources->matrix_id;
-        in.has_normal = shape.sources->has_normal;
-        in.has_binding = ReadNativeModelMatrixSources(locations.arrays).address[0] != 0;
-
-        if (d.position) {
-            mh3_matrix_read34_unchecked({Bytes(d.position, 48), 1, 48, 1}, 0, &position);
-
-            if (d.normal)
-                mh3_matrix_read34_unchecked({Bytes(d.normal, 48), 1, 48, 1}, 0, &normal);
-        }
-    }
-
-    ModelPrepShapeResult shape;
-    ExecuteModelPrep(NativeOwner::Shadow, m, in, in.srt >= 0 ? &verify.srts.items[in.srt] : nullptr, d.position ? &position : nullptr, d.position && d.normal ? &normal : nullptr,
-                     &shape);
-    std::string diff = CompareNativeMaterialOwners(NativeOwner::Game, NativeOwner::Shadow);
-
-    if (!EqualNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow))
-        diff += " textures" + CompareNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow);
-
-    if (std::memcmp(&GetNativeDrawState(NativeOwner::Game).raster, &GetNativeDrawState(NativeOwner::Shadow).raster, sizeof(mh3_raster_state)))
-        diff += " raster";
-
-    for (uint32_t i = 0; i < ModelPrepMirror::SizeA; i++)
-        if (m.a[i] != static_cast<const uint8_t*>(Memory::GetPointer(ModelPrepMirror::BaseA, ModelPrepMirror::SizeA))[i]) {
-            diff += " cacheA@" + std::to_string(i);
-            break;
-        }
-    for (uint32_t i = 0; i < ModelPrepMirror::SizeB; i++)
-        if (m.b[i] != static_cast<const uint8_t*>(Memory::GetPointer(ModelPrepMirror::BaseB, ModelPrepMirror::SizeB))[i]) {
-            diff += " cacheB@" + std::to_string(i);
-            break;
-        }
-    if (m.pipeline_address != pipeline_address || m.pipeline_revision != pipeline_revision || m.coordinate_map_known != coordinate_map_known)
-        diff += " pipeline";
-
-    if (std::memcmp(&m.map_sizes, &map_sizes, sizeof map_sizes) || std::memcmp(&m.coordinate_sizes, &coordinate_sizes, sizeof coordinate_sizes))
-        diff += " sizes";
-
-    const auto selectors = ReadNativeModelSelectors();
-
-    if (std::memcmp(&m.selectors, &selectors, sizeof selectors))
-        diff += " selectors";
-
-    if (lastSubmitted) {
-        const auto& a = lastSubmitted->input;
-        const auto& b = shape.input;
-
-        if (a.valid != b.valid || a.has_normal != b.has_normal || a.matrix_id != b.matrix_id || std::memcmp(a.texture_source, b.texture_source, sizeof a.texture_source) ||
-            a.current_is_valid != b.current_is_valid || a.view_array_is_valid != b.view_array_is_valid || !a.direct_position != !b.direct_position || !a.direct_normal != !b.direct_normal)
-            diff += " shape-input";
-        if (std::memcmp(&lastSubmitted->coordinate_sizes, &shape.coordinate_sizes, sizeof shape.coordinate_sizes))
-            diff += " item-sizes";
-    }
-
-    ++verify.dispatches;
-
-    if (!diff.empty()) {
-        ++verify.mismatches;
-        std::string kind;
-
-        for (size_t at = 0; at < diff.size(); ++at)
-            if (diff[at] != '(')
-                kind += diff[at];
-            else if ((at = diff.find(')', at)) == std::string::npos)
-                break;
-
-        ++verify.kinds[kind];
-
-        if (verify.reported++ < 40)
-            std::fprintf(stderr, "MH3 render prep verify: dispatch %llu material %08x shape %08x flags %x:%s\n", static_cast<unsigned long long>(verify.dispatches), scope.material_address,
-                         Resource(d.shape), d.flags, diff.c_str());
-    }
-
-    if (verify.dispatches % 5000 == 0)
-        std::fprintf(stderr, "MH3 render prep verify: %llu dispatches, %llu mismatches\n", static_cast<unsigned long long>(verify.dispatches), static_cast<unsigned long long>(verify.mismatches));
-
-    if (verify.dispatches % 50000 == 0) {
-        std::string kinds;
-
-        for (const auto& [kind, count] : verify.kinds)
-            kinds += " [" + std::to_string(count) + ":" + kind + " ]";
-
-        std::fprintf(stderr, "MH3 render prep verify kinds:%s\n", kinds.c_str());
-    }
-}
-#endif
-void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
-    switch (NativeModelPrepMode()) {
-    case ModelPrepMode::Deferred:
-        DispatchDeferred(d, r);
-        break;
-    case ModelPrepMode::Verify:
-#ifdef MH3_DEVELOPMENT
-        DispatchVerify(d, r);
-#else
-        DispatchGameThread(d, r);
-#endif
-        break;
-    }
-}
-#ifdef MH3_DEVELOPMENT
-// MH3_DRAW_TABLE=2: the item's address resolution must equal its table's.
-void CompareIndexed(const NativeModelDispatch& d, const Resolved& r) {
-    ++tableStats.compared;
-    std::string diff;
-
-    if (Resource(d.material) != r.scope.material_address)
-        diff += " material-address";
-
-    if (!SameScope(Scope(d.material, d.bindings), r.scope))
-        diff += " scope";
-
-    const auto shape = ResolveShape(d.shape);
-
-    if (shape.shape != r.shape.shape || shape.reference != r.shape.reference)
-        diff += " shape-address";
-
-    if (!SameOwnerRecord(shape.owner, r.shape.owner))
-        diff += " owner";
-
-    const auto& a = *shape.sources;
-    const auto& b = *r.shape.sources;
-
-    if (a.prepared != b.prepared || a.matrix_id != b.matrix_id || a.has_normal != b.has_normal || a.known != b.known || a.address != b.address || !SameOwnerRecord(a.owner, b.owner))
-        diff += " shape-record";
-
-    for (uint32_t i = 0; i < 12; i++)
-        if ((a.known & (1u << i)) && !SameSource(a.source[i], b.source[i])) {
-            diff += " source" + std::to_string(i);
-            break;
-        }
-    if (diff.empty())
-        return;
-
-    if (tableStats.mismatches++ < 40)
-        std::fprintf(stderr, "MH3 draw table mismatch: material %08x shape %08x flags %x:%s\n", r.scope.material_address, r.shape.shape, d.flags, diff.c_str());
-}
-#endif
 } // namespace
 
 void DispatchNativeModel(const NativeModelDispatch& d) {
@@ -2384,10 +2098,6 @@ bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t mate
 
     r.shape = {d.shape, sources.address, sources.owner, &sources};
     ++tableStats.indexed;
-#ifdef MH3_DEVELOPMENT
-    if (CompareDrawTables())
-        CompareIndexed(d, r);
-#endif
     Dispatch(d, &r);
     return true;
 }

@@ -520,70 +520,7 @@ void Push(Kind kind, uint32_t payload, bool textured = false) {
     RequireRecorder();
     recording->records.push_back({kind, textured, payload, CaptureState()});
 }
-#ifdef MH3_DEVELOPMENT
-// MH3_PORT_CHECK=EffectBatch (development): checks that the state a material
-// geometry draw is replayed with (its draw, material + colour, lighting and
-// texture snapshots, shared with the draws batched with it) is the complete
-// Game state at its submission, which an unbatched, fully copied draw would
-// have captured.
-void CheckBatchedState(const Packet& p, const StateIndices& state) {
-    static const bool enabled = PortCheck::Enabled("EffectBatch");
 
-    if (!enabled)
-        return;
-
-    static uint64_t checks = 0, mismatches = 0;
-    ++checks;
-    std::string differs;
-    NativeMaterialSnapshot material, replayed = p.materials.items[state[NATIVE_STATE_MATERIAL]];
-    CaptureNativeMaterialSnapshot(material);
-    ApplyNativeColorSnapshot(replayed.material, p.colors.items[state[NATIVE_STATE_COLORS]]);
-
-    if (!BytesEqual(&material.material, &replayed.material, sizeof material.material) || material.depthBeforeTexture != replayed.depthBeforeTexture)
-        differs += " material";
-
-    NativeDrawSnapshot draw;
-    CaptureNativeDrawSnapshot(draw);
-    const auto& drawn = p.draws.items[state[NATIVE_STATE_DRAW]];
-
-    if (!BytesEqual(&draw.draw, &drawn.draw, sizeof draw.draw) || draw.scissor != drawn.scissor || draw.viewportKnown != drawn.viewportKnown || draw.scissorKnown != drawn.scissorKnown ||
-        draw.rasterKnown != drawn.rasterKnown)
-        differs += " draw";
-    NativeLightingSnapshot lighting;
-    CaptureNativeLightingSnapshot(lighting);
-    const auto& lit = p.lighting.items[state[NATIVE_STATE_LIGHTING]];
-
-    if (!BytesEqual(&lighting.lights, &lit.lights, sizeof lighting.lights) || !BytesEqual(&lighting.preparedLights, &lit.preparedLights, sizeof lighting.preparedLights) ||
-        !BytesEqual(&lighting.fog, &lit.fog, sizeof lighting.fog) || !BytesEqual(&lighting.preparedFog, &lit.preparedFog, sizeof lighting.preparedFog) || lighting.fogKnown != lit.fogKnown)
-        differs += " lighting";
-    // Field by field: the bindings have padding the producers leave unset.
-    NativeTextureSnapshot textures;
-    CaptureNativeTextureSnapshot(textures);
-    const auto& recorded = p.textures.items[state[NATIVE_STATE_TEXTURES]];
-    bool sameTextures = textures.valid == recorded.valid && !std::memcmp(textures.palettes.data(), recorded.palettes.data(), sizeof textures.palettes);
-
-    for (unsigned unit = 0; unit < 8 && sameTextures; ++unit) {
-        if (!(textures.valid >> unit & 1))
-            continue;
-
-        const auto &x = textures.textures[unit], &y = recorded.textures[unit];
-        const auto &a = x.source, &b = y.source;
-        sameTextures = a.resource_address == b.resource_address && a.payload_address == b.payload_address && a.asset_id == b.asset_id && a.format == b.format && a.width == b.width &&
-                       a.height == b.height && a.levels == b.levels && a.min_lod == b.min_lod && a.max_lod == b.max_lod && a.generation == b.generation && a.indexed == b.indexed &&
-                       a.mutable_source == b.mutable_source && x.sampler.wrap_s == y.sampler.wrap_s && x.sampler.wrap_t == y.sampler.wrap_t && x.sampler.min_filter == y.sampler.min_filter &&
-                       x.sampler.mag_filter == y.sampler.mag_filter && x.sampler.anisotropy == y.sampler.anisotropy && x.sampler.lod_bias == y.sampler.lod_bias &&
-                       x.sampler.bias_clamp == y.sampler.bias_clamp && x.sampler.edge_lod == y.sampler.edge_lod && x.map_id == y.map_id && x.tlut_id == y.tlut_id;
-    }
-
-    if (!sameTextures)
-        differs += " textures";
-
-    if (!differs.empty() && ++mismatches <= 20)
-        std::printf("MH3 port check: EffectBatch replays draw %llu with other state:%s\n", static_cast<unsigned long long>(checks), differs.c_str());
-    else if (differs.empty() && (checks & (checks - 1)) == 0)
-        std::printf("MH3 port check: EffectBatch matches the original (%llu draws, %llu with other state)\n", static_cast<unsigned long long>(checks), static_cast<unsigned long long>(mismatches));
-}
-#endif
 // Appends next to previous when it directly follows it in both arenas and the
 // combined draw stays within 16-bit indices: one triangle list, same order.
 bool AppendGeometry(AuroraNativeMaterialGeometry& previous, const AuroraNativeMaterialGeometry& next) {
@@ -724,33 +661,6 @@ void Restore(const Packet& p, const StateIndices& state, StateIndices& applied) 
     if (forget)
         ForgetNativeModelPrepCaches();
 }
-#ifdef MH3_DEVELOPMENT
-// MH3_VERIFY=replay: the render thread's material and colours, as Restore
-// left them, against the game thread's snapshots for this draw.
-void VerifyReplayedState(const Packet& p, const StateIndices& state, uint32_t record) {
-    static const bool enabled = VerifyOptions().Has("replay");
-
-    if (!enabled)
-        return;
-
-    static uint32_t checks = 0, mismatches = 0;
-    NativeMaterialSnapshot expected = p.materials.items[state[NATIVE_STATE_MATERIAL]];
-    ApplyNativeColorSnapshot(expected.material, p.colors.items[state[NATIVE_STATE_COLORS]]);
-    const auto& actual = GetNativeMaterialState(NativeOwner::Render);
-    ++checks;
-
-    if (!BytesEqual(&actual, &expected.material, sizeof actual)) {
-        const bool colours = std::memcmp(actual.color, expected.material.color, sizeof actual.color) || std::memcmp(actual.konst, expected.material.konst, sizeof actual.konst);
-
-        if (++mismatches <= 20)
-            std::fprintf(stderr, "MH3 replay check: record %u (after %u) draws with another material%s\n", record, record ? unsigned(p.records[record - 1].kind) : 0u,
-                         colours ? " and other colours" : "");
-    }
-
-    if ((checks & 0xFFFF) == 0)
-        std::fprintf(stderr, "MH3 replay check: %u of %u material geometry draws mismatched\n", mismatches, checks);
-}
-#endif
 #ifdef __vita__
 // GXM reads vertices and indices in place when it executes the frame, so the
 // packet's heap arenas cannot be drawn from: copy each draw into the
@@ -939,10 +849,7 @@ void Draw(const Packet& p) {
         }
 
         Restore(p, record.state, applied);
-#ifdef MH3_DEVELOPMENT
-        if (record.kind == Kind::MaterialGeometry)
-            VerifyReplayedState(p, record.state, index - 1);
-#endif
+
         switch (record.kind) {
         case Kind::Model:
             MH3_RENDER_PART(ModelPrep);
@@ -1463,7 +1370,6 @@ void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     const StateIndices state = CaptureState(false);
 #ifdef MH3_DEVELOPMENT
     ++geometrySubmitted;
-    CheckBatchedState(p, state);
 #endif
     // Batching: geometry drawn with exactly the state of the draw before it
     // (the same draw, material, colour, lighting and texture snapshots; its post

@@ -226,65 +226,11 @@ void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner ow
     Changed(owner);
 }
 
-void CopyNativeTextureBindings(NativeOwner from, NativeOwner to) {
-    T(to) = T(from);
-    Changed(to);
-}
-
 void ResetNativeTextureBindings(NativeOwner owner) {
     T(owner) = {};
     Changed(owner);
 }
 
-#ifdef MH3_DEVELOPMENT
-std::string CompareNativeTextureBindings(NativeOwner a, NativeOwner b) {
-    const auto& x = T(a);
-    const auto& y = T(b);
-    std::string out;
-    char line[160];
-
-    for (unsigned slot = 0; slot < x.palettes.size(); ++slot)
-        if (std::memcmp(&x.palettes[slot], &y.palettes[slot], sizeof x.palettes[slot])) {
-            const auto &p = x.palettes[slot], &q = y.palettes[slot];
-            std::snprintf(line, sizeof line, " palette%u(%08x/%08x gen %llu/%llu)", slot, p.payload_address, q.payload_address, static_cast<unsigned long long>(p.generation),
-                          static_cast<unsigned long long>(q.generation));
-            out += line;
-        }
-
-    for (unsigned unit = 0; unit < x.textures.size(); ++unit) {
-        const auto &p = x.textures[unit], &q = y.textures[unit];
-
-        if (p.valid != q.valid) {
-            std::snprintf(line, sizeof line, " unit%u(valid %d/%d)", unit, int(p.valid), int(q.valid));
-            out += line;
-        } else if (p.valid && std::memcmp(&p.value, &q.value, sizeof p.value)) {
-            std::snprintf(line, sizeof line, " unit%u(%08x/%08x gen %llu/%llu tlut %u/%u)", unit, p.value.source.payload_address, q.value.source.payload_address,
-                          static_cast<unsigned long long>(p.value.source.generation), static_cast<unsigned long long>(q.value.source.generation), p.value.tlut_id, q.value.tlut_id);
-            out += line;
-        }
-    }
-
-    return out;
-}
-#endif
-
-bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b) {
-    const auto& x = T(a);
-    const auto& y = T(b);
-
-    if (std::memcmp(x.palettes.data(), y.palettes.data(), sizeof x.palettes))
-        return false;
-
-    for (unsigned unit = 0; unit < x.textures.size(); ++unit) {
-        if (x.textures[unit].valid != y.textures[unit].valid)
-            return false;
-
-        if (x.textures[unit].valid && std::memcmp(&x.textures[unit].value, &y.textures[unit].value, sizeof x.textures[unit].value))
-            return false;
-    }
-
-    return true;
-}
 
 bool NativeTextureSnapshotCurrent(const NativeTextureSnapshot& snapshot) {
     const auto& [palettes, textures] = T();

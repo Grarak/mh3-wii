@@ -22,12 +22,6 @@
 #include <memory>
 #include <vector>
 
-// Model preparation runs on the render thread (Deferred); MH3_VERIFY=prep
-// (development) prepares on the game thread (the original path) and checks a
-// Shadow execution of the captured inputs against it for every dispatch.
-enum class ModelPrepMode : uint8_t { Deferred, Verify };
-ModelPrepMode NativeModelPrepMode();
-
 // The render thread's compiled material steps of a record (model_render_prep.cpp).
 struct ModelPrepDispatch;
 

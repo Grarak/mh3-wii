@@ -26,18 +26,13 @@ struct NativePoseVersion {
     uint8_t* bytes;
     uint8_t size_class;
 
-    // GPU skinning (docs/gpu-skinning.md): skin bones whose matrix IDs lie
+    // GPU skinning (docs/optimizations/rendering/gpu-skinning.md): skin bones whose matrix IDs lie
     // beyond the view matrices have only world matrices. Rows [bone_first,
     // bone_first + bone_count) of the model's world array (host order, in
     // `bytes`) and the camera the view pass used for the view matrices.
     uint32_t bone_first, bone_count;
     const float (*bones)[12];
     float camera[12];
-#ifdef MH3_DEVELOPMENT
-    // Advances whenever the storage is reused for other arrays: an item that
-    // renders after its version's reuse is a lifetime error (MH3_VERIFY=pose).
-    std::atomic<uint32_t> epoch{0};
-#endif
 };
 
 /* View pass: a model whose skin bones lie beyond its `count` view matrices
@@ -54,20 +49,14 @@ void PublishSkinView(uint32_t position, uint32_t world, uint32_t camera, uint32_
  * an empty one. Valid until the packets recorded meanwhile have rendered. */
 const NativePoseVersion* VersionNativeModelPose(const uint32_t addresses[3], const mh3_matrix_sources& live);
 #ifdef MH3_DEVELOPMENT
-/* MH3_VERIFY=pose: compare every reused version with the live arrays. */
-bool VerifyNativeModelPoses();
-void VerifyNativeModelPose(const NativePoseVersion& version, const mh3_matrix_sources& live);
-/* Render thread, after reading a version an item captured at `epoch`. */
-void CheckNativeModelPoseLifetime(const NativePoseVersion& version, uint32_t epoch);
 struct NativePoseStatistics {
     // Captures, those copied (and their bytes), those reusing the version of
-    // an unchanged producer revision or of equal contents; checked reuses,
-    // and versions reused for other arrays before their items rendered.
-    uint64_t captures, copies, copied_bytes, same_revision, same_contents, verified, mismatches, lifetime_errors;
+    // an unchanged producer revision or of equal contents.
+    uint64_t captures, copies, copied_bytes, same_revision, same_contents;
     uint32_t versions, bindings;
 };
 
-/* Since the last call; verified/mismatches are totals. */
+/* Since the last call. */
 NativePoseStatistics TakeNativePoseStatistics();
 #endif
 /* 80080BC0/80080C0C/80080C68: the scene's current view array (0 position,

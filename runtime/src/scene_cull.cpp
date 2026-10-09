@@ -1,8 +1,5 @@
 // Game-side visibility of scene-queue models (scene_cull.h).
 #include "scene_cull.h"
-#ifdef MH3_DEVELOPMENT
-#include "dev_options.h"
-#endif
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -24,18 +21,6 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
-// MH3_VERIFY=cull (development): draw every model and check each the cull
-// would reject.
-enum class Mode : uint8_t { Cull, Check };
-Mode ReadMode() {
-#ifdef MH3_DEVELOPMENT
-    static const Mode mode = VerifyOptions().Has("cull") ? Mode::Check : Mode::Cull;
-    return mode;
-#else
-    return Mode::Cull;
-#endif
-}
-
 // The render path's margin (model_cull.cpp): 1% of the rectangle's NDC extent
 // on every side covers rounding and the rasterizer's sub-pixel offset.
 constexpr float Margin = 0.02f;
@@ -44,12 +29,6 @@ constexpr float Margin = 0.02f;
 constexpr uint32_t ScnMdlProc = 0x8007DE60;
 constexpr uint32_t CallbackObject = 0xd4, CallbackMask = 0xd8, CallbackFlags = 0xda, ProcDisabled = 0xcc, ResMdl = 0xe8;
 constexpr uint32_t ViewMatrixCount = 0x68; // ResMdlInfo numViewMtx, from the MDL0
-
-struct Mesh {
-    const mh3_prepared_mesh* prepared;
-    int32_t matrix_id;
-    bool selectors;
-};
 
 // One model's bounds: valid while its certified draw table is the current one
 // (a table is dropped with its owner's certificate and pack).
@@ -61,7 +40,6 @@ struct Record {
     // One box per view matrix ID.
     std::vector<uint32_t> ids;
     std::vector<mh3_cull_box> boxes;
-    std::vector<Mesh> meshes;
 };
 
 FastMap<uint32_t, Record> records;
@@ -81,7 +59,7 @@ void TransformBox(const float* m, const float* min, const float* max, float* out
     }
 }
 
-// A skinned mesh (docs/gpu-skinning.md): every vertex blends its rows, so
+// A skinned mesh (docs/optimizations/rendering/gpu-skinning.md): every vertex blends its rows, so
 // the mesh lies within its bounds under each row matrix. A rigid row is a view
 // matrix; a skin bone row is its view matrix times the inverse bind matrix,
 // whose transform of the bounds goes into the view matrix's box.
@@ -154,8 +132,6 @@ void Build(Record& r, uint32_t model, std::shared_ptr<NativeModelDrawTable> tabl
                 return;
         } else if (!mh3_scene_cull_add_mesh(&record, &prepared->immutable.mesh, matrix_id, selectors, prepared->palette_batches, prepared->palette_batch_count))
             return;
-
-        r.meshes.push_back({prepared, matrix_id, selectors});
     }
 
     for (uint32_t i = 0; i < record.count; ++i) {
@@ -248,107 +224,9 @@ void Demand(const NativeModelOwner& owner) {
     demanded.push_back(pack);
     QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [pack] { ObserveNativeModelAssetDemand(pack.first, pack.second); });
 }
-#ifdef MH3_DEVELOPMENT
-// MH3_MODEL_CULL_GAME=2: rebuild the render path's palettes from the same
-// view arrays and test every mesh batch the way the render thread does.
-bool CheckCulled(const Record& r, uint32_t object, uint32_t model, const mh3_cull_frustum& f) {
-    const uint32_t addresses[3] = {NativeModelViewArray(object, 0), NativeModelViewArray(object, 1), NativeModelViewArray(object, 2)};
-    mh3_matrix_sources sources{};
-
-    if (const Status pose = TryReadNativeModelPose(addresses, model, sources); !pose.ok()) {
-        std::fprintf(stderr, "MH3 scene cull check: model %08x pose: %s\n", model, pose.message().c_str());
-        return false;
-    }
-
-    for (const auto& mesh : r.meshes) {
-        const auto& prepared = *mesh.prepared;
-
-        if (prepared.skin_row_count) {
-            // The render thread's rows (model_scope.cpp SkinPalette).
-            std::vector<std::array<float, 12>> rows(prepared.skin_row_count);
-            std::vector<const float*> matrices(prepared.skin_row_count);
-            std::vector<mh3_cull_box> boxes(prepared.skin_row_count);
-
-            for (uint32_t i = 0; i < prepared.skin_row_count; i++) {
-                const auto& row = prepared.skin_rows[i];
-                mh3_matrix34 view;
-
-                if (mh3_matrix_read34(sources.positions, row.matrix, &view) != MH3_RES_OK)
-                    return false;
-
-                if (row.kind) {
-                    for (unsigned a = 0; a < 3; a++)
-                        for (unsigned c = 0; c < 4; c++)
-                            rows[i][a * 4 + c] = view.v[a][0] * row.inverse_bind[c] + view.v[a][1] * row.inverse_bind[4 + c] + view.v[a][2] * row.inverse_bind[8 + c] + (c == 3 ? view.v[a][3] : 0.f);
-                } else
-                    std::memcpy(rows[i].data(), &view, 48);
-
-                matrices[i] = rows[i].data();
-                std::memcpy(boxes[i].min, prepared.immutable.mesh.bounds_min, sizeof boxes[i].min);
-                std::memcpy(boxes[i].max, prepared.immutable.mesh.bounds_max, sizeof boxes[i].max);
-            }
-
-            if (!mh3_cull_boxes_outside(&f, matrices.data(), boxes.data(), prepared.skin_row_count))
-                return false;
-
-            continue;
-        }
-
-        mh3_model_palette palette{};
-
-        if (mesh.matrix_id >= 0) {
-            mh3_shape_matrix_input input{};
-            input.valid = 1;
-            input.matrix_id = mesh.matrix_id;
-            input.view_array_is_valid = 1;
-            mh3_model_palette_rigid(&input, &sources, &palette);
-        }
-
-        const auto test = [&](const mh3_pack_palette_batch* batch) {
-            const uint16_t used = mesh.selectors && batch ? batch->position_required : 1;
-            const float* matrices[10];
-            mh3_cull_box box[10];
-            unsigned n = 0;
-
-            for (unsigned slot = 0; slot < 10; ++slot) {
-                if (!(used & (1u << slot)))
-                    continue;
-
-                if (!(palette.position_valid & (1u << slot)))
-                    return false;
-
-                matrices[n] = &palette.position[slot].v[0][0];
-                std::memcpy(box[n].min, prepared.immutable.mesh.bounds_min, sizeof box[n].min);
-                std::memcpy(box[n].max, prepared.immutable.mesh.bounds_max, sizeof box[n].max);
-                ++n;
-            }
-
-            return mh3_cull_boxes_outside(&f, matrices, box, n) != 0;
-        };
-
-        if (!prepared.palette_batch_count) {
-            if (!test(nullptr))
-                return false;
-
-            continue;
-        }
-
-        for (uint32_t i = 0; i < prepared.palette_batch_count; ++i) {
-            mh3_model_palette_apply_batch(&prepared.palette_batches[i], &sources, &palette, &palette);
-
-            if (!test(&prepared.palette_batches[i]))
-                return false;
-        }
-    }
-
-    return true;
-}
-#endif
 } // namespace
 
 bool SkipNativeSceneModel(uint32_t object) {
-    const Mode mode = ReadMode();
-
     if (!object)
         return false;
 
@@ -411,21 +289,7 @@ bool SkipNativeSceneModel(uint32_t object) {
 
     if (!mh3_cull_boxes_outside(f, matrixPointers.data(), r->boxes.data(), unsigned(count)))
         return false;
-#ifdef MH3_DEVELOPMENT
-    if (mode == Mode::Check) {
-        ++stats.checked;
 
-        if (!CheckCulled(*r, object, model, *f)) {
-            static uint32_t reported = 0;
-            ++stats.mismatches;
-
-            if (reported++ < 40)
-                std::fprintf(stderr, "MH3 scene cull check: model %08x (object %08x) has a visible mesh batch\n", model, object);
-        }
-
-        return false;
-    }
-#endif
     ++stats.culled;
     Demand(r->owner);
     return true;

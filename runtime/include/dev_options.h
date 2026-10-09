@@ -192,10 +192,6 @@ inline void ReportRetiredVariables() {
         {"MH3_PROFILE_FRAMES", "MH3_PROFILE"},
         {"MH3_MODEL_SPLIT", "MH3_PROFILE"},
         {"MH3_RENDER_SYNC", "MH3_PROFILE"},
-        {"MH3_MATERIAL_GPU_VERIFY", "MH3_VERIFY"},
-        {"MH3_MODEL_CULL_GAME", "MH3_VERIFY"},
-        {"MH3_RENDER_PREP", "MH3_VERIFY"},
-        {"MH3_DRAW_TABLE", "MH3_VERIFY"},
         {"MH3_RAM_DUMP", "MH3_CAPTURE"},
         {"MH3_TRACE_INPUT", "MH3_TRACE"},
         {"MH3_NET_TRACE", "MH3_TRACE"},
@@ -213,6 +209,10 @@ inline void ReportRetiredVariables() {
         {"MH3_MODEL_POSE_TRACE", nullptr},
         {"MH3_GX_DRAW_LOG", nullptr},
         {"MH3_GX_SOURCE_CAPTURE", nullptr},
+        {"MH3_MATERIAL_GPU_VERIFY", nullptr},
+        {"MH3_MODEL_CULL_GAME", nullptr},
+        {"MH3_RENDER_PREP", nullptr},
+        {"MH3_DRAW_TABLE", nullptr},
         {"MH3_GX_DEBUG_CONTROL", nullptr},
         {"MH3_TRACE_EFB", nullptr},
         {"MH3_MISSING_TARGET_MEM1_DUMP", nullptr},
@@ -345,19 +345,11 @@ private:
     std::atomic<bool>* on_;
 };
 
-// MH3_VERIFY=[pose][,material][,cull][,prep][,prep-image][,draw-table][,replay]: in-run checks of
-// a native path against what it replaces: `pose` compares every reused pose
-// version with the live view arrays (model_pose.cpp), `material` the material
-// programs' coefficients with mh3_shade_fill (native_material.cpp), `cull`
-// draws every model and checks each the scene cull would reject
-// (scene_cull.cpp), `prep` prepares models on the game thread and checks the
-// render thread's preparation against it, `prep-image` compares each
-// compiled model dispatch's draw material with one built from its record's
-// image for it alone (model_render_prep.cpp), `draw-table` resolves indexed
-// draw items by address too and compares them (model_scope.cpp), and
-// `replay` compares the render thread's material and colours at every
-// material geometry draw with the game thread's (native_frame_packet.cpp).
+// MH3_VERIFY=prep-image: in-run check of a native path against what it
+// replaces: each compiled model dispatch's draw material against one built
+// from its record's image for it alone (model_render_prep.cpp). The removed
+// checks of settled ports are reported as removed.
 inline const DevOptions& VerifyOptions() {
-    static const DevOptions options("MH3_VERIFY", {"pose", "material", "cull", "prep", "prep-image", "draw-table", "replay"});
+    static const DevOptions options("MH3_VERIFY", {"prep-image"}, DevOptions::Words::None, {"pose", "material", "cull", "prep", "draw-table", "replay"});
     return options;
 }

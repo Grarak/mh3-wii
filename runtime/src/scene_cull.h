@@ -29,9 +29,6 @@ struct NativeSceneCullStatistics {
     // Not tested: another object class, a draw callback, no draw table, an
     // unbounded mesh.
     uint64_t other_class = 0, callback = 0, no_table = 0, unbounded = 0;
-
-    // MH3_MODEL_CULL_GAME=2: culled models with a visible mesh batch.
-    uint64_t checked = 0, mismatches = 0;
 };
 
 // Counts since the previous call (game thread).

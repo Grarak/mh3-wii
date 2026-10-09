@@ -110,15 +110,7 @@ void ForgetNativeTextureBindings();
 void RetireNativeTextureSources(uint32_t address, uint32_t bytes);
 void QueueNativeTextureRetirements();
 
-// Deferred model preparation (model_render_prep.h): copy one owner's logical
-// material/post, texture and raster state into another (MH3_RENDER_PREP=2
-// starts its Shadow from the Game state) and compare the results.
-void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to);
-void CopyNativeTextureBindings(NativeOwner from, NativeOwner to);
-void CopyNativeDrawRaster(NativeOwner from, NativeOwner to);
-bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b);
-
-// An owner with nothing known: no material fields, texture bindings or
+// Deferred model preparation (model_render_prep.h): an owner with nothing known: no material fields, texture bindings or
 // palettes, the default raster (a model dispatch's compile starts Shadow there).
 void ResetNativeMaterialOwner(NativeOwner owner);
 void ResetNativeTextureBindings(NativeOwner owner);
@@ -146,10 +138,6 @@ bool NativeRenderMaterialRedirected(const mh3_native_material_state* draw);
 void PublishNativeMaterialRaster(NativeOwner owner);
 #ifdef MH3_DEVELOPMENT
 #include <string>
-// Empty when equal; otherwise the differing parts.
-std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b);
-std::string CompareNativeTextureBindings(NativeOwner a, NativeOwner b);
-
 // What a model draw derives from a material state (structure, classification,
 // fill, palette and alpha range, the texgens below the count, the channel the
 // shading lights with, the raster its publication makes from `raster`):
