@@ -440,7 +440,7 @@ std::atomic<const NativeAssets*> g_nativeAssets{nullptr};
 Caps g_caps;
 Renderer& renderer() {
   if (!g_context || !on_render_thread() || !g_context->renderer)
-    throw std::runtime_error("Native operation called outside the game thread");
+    throw std::runtime_error("Native operation called outside the GXM context owner");
   return *g_context->renderer;
 }
 constexpr std::array<FormatInfo, 19> FormatInfos{{
@@ -514,7 +514,7 @@ void shutdown() noexcept {
   if (!g_context)
     return;
   if (!on_render_thread())
-    fail("GXM shutdown called outside the game thread");
+    fail("GXM shutdown called outside the context owner");
   auto* thread = g_context;
   g_nativeAssets.store(nullptr, std::memory_order_release);
   thread->renderer.reset();
@@ -548,7 +548,7 @@ void post(Task task) noexcept {
   if (!g_context)
     return;
   if (!on_render_thread())
-    fail("GXM task called outside the game thread");
+    fail("GXM task called outside the context owner");
   guarded([&] { std::move(task)(); });
 }
 void call(Task task) noexcept {
