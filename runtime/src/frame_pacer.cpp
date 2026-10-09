@@ -225,6 +225,37 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
                          Memory::ReadFloat32(plw + 0x44), chr ? Memory::Read16(chr + 0x54) : 0, chr ? Memory::ReadFloat32(chr + 0x78) : 0.0f, chr ? Memory::ReadFloat32(chr + 0x60) : 0.0f);
         }
     }
+    // MH3_TRACE_INPUT: once per tick of game time, the input as the game read
+    // it and what it moved: the field camera's yaw and pitch (current and
+    // target), player 0's position and facing, and how many steps since the
+    // last line reported a key repeat (comparing step modes by game time).
+    static const bool traceInput = std::getenv("MH3_TRACE_INPUT") != nullptr;
+    if (traceInput) {
+        constexpr uint32_t kPad = 0x8065B7D0;    // Psw, channel 0 (0x350 bytes a channel)
+        constexpr uint32_t kCamera = 0x806BDC60; // field camera work
+        static int64_t lastTick = -1;
+        static uint32_t steps = 0, padRepeats = 0, keyRepeats = 0;
+        ++steps;
+        padRepeats += Memory::Read16(kPad + 0xF8) != 0;  // Classic repeat buttons (0x8065B8C8)
+        keyRepeats += Memory::Read16(kPad + 0x2D4) != 0; // game key repeat (0x8065BAA4)
+        const int64_t tick = int64_t(GameStep::Elapsed());
+        if (tick != lastTick) {
+            lastTick = tick;
+            const uint32_t table = Memory::Read32(0x8065AB04);
+            const uint32_t plw = table ? Memory::Read32(table + 16 + 2 * 4) : 0;
+            const bool player = plw && Memory::Read8(plw);
+            std::fprintf(stderr,
+                         "MH3 input: game %.3f s %.3f stick %d %d %d %d keys %04x camera yaw %u -> %u pitch %d -> %d player %.2f %.2f %.2f facing %u steps %u repeats %u %u "
+                         "commands %08x stick-camera %u ramp %d distance %u state %u\n",
+                         GameStep::Elapsed(), GameStep::Scale(), int16_t(Memory::Read16(kPad + 0x8E)), int16_t(Memory::Read16(kPad + 0x90)), int16_t(Memory::Read16(kPad + 0x92)),
+                         int16_t(Memory::Read16(kPad + 0x94)), Memory::Read16(kPad + 0x2C0), Memory::Read32(kCamera + 0x70) & 0xFFFF, Memory::Read32(kCamera + 0x68) & 0xFFFF,
+                         int16_t(Memory::Read32(kCamera + 0x6C)), int16_t(Memory::Read32(kCamera + 0x64)), player ? Memory::ReadFloat32(plw + 0x3C) : 0.0f, player ? Memory::ReadFloat32(plw + 0x40) : 0.0f,
+                         player ? Memory::ReadFloat32(plw + 0x44) : 0.0f, player ? Memory::Read32(plw + 0x58) & 0xFFFF : 0, steps, padRepeats, keyRepeats,
+                         player ? Memory::Read32(plw + 0xDC) : 0, player ? Memory::Read8(plw + 0x5C5) : 0, int8_t(Memory::Read8(kCamera + 0xA1)), Memory::Read8(kCamera + 0x7C),
+                         player ? Memory::Read8(plw + 9) : 0);
+            steps = padRepeats = keyRepeats = 0;
+        }
+    }
     if (ramDump.first && pacedFrames >= ramDump.first && pacedFrames < ramDump.first + ramDump.second) {
         const std::string name = "mh3-ram-" + std::to_string(pacedFrames) + ".bin";
         if (FILE* f = std::fopen(name.c_str(), "wb")) {
