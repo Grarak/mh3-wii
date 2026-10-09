@@ -739,6 +739,26 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
         at = stop;
     }
 }
+bool AssetCache::Converted(uint64_t offset, size_t bytes, std::chrono::milliseconds limit) {
+    auto& m = *impl;
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    const uint64_t end = offset + bytes;
+    std::unique_lock guard(m.lock);
+    for (uint64_t at = offset; at < end;) {
+        auto next = std::upper_bound(m.sources.begin(), m.sources.end(), at, [](uint64_t value, const Impl::Source& source) { return value < source.file.offset; });
+        if (next == m.sources.begin() || at - std::prev(next)->file.offset >= std::prev(next)->file.bytes) {
+            at = next == m.sources.end() ? end : next->file.offset;
+            continue;
+        }
+        auto& s = *std::prev(next);
+        // Timed: a lost wakeup (Impl::Wait) only delays the next check.
+        while (s.checked && !(s.texturesDone && s.modelsDone))
+            if (m.changed.wait_until(guard, deadline) == std::cv_status::timeout && !(s.texturesDone && s.modelsDone))
+                return false;
+        at = s.file.offset + s.file.bytes;
+    }
+    return true;
+}
 void AssetCache::PrefetchStreams(const std::string& map) {
     auto& m = *impl;
     std::lock_guard guard(m.lock);

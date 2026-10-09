@@ -1371,3 +1371,17 @@
 8027a0f0 PlAimPitch583
 802b97a4 AimStickScale
 80279f20 PlAimMotion
+# DVD wait for synchronous loads (ios.cpp WaitDvd) and its callees.
+80435ea8 WaitDvd
+804edca0 WPADGetStatus
+800e874c SetMasterVolume
+800e8338 SePause
+800e8378 SeResume
+800d849c SeStop
+800e4b30 StreamPause
+800e4b70 StreamResume
+80040890 RunDrawHook
+80435dbc DrawDiscErrorMessage
+80044ab8 RumbleStopAll
+804d2ba0 OSShutdownSystem
+803a91f0 QuestResetTimeBase

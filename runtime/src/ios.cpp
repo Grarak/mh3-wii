@@ -1,12 +1,22 @@
 #include "abi_bridge.h"
 #include "ios_host.h"
 #include "disc_image.h"
+#include "asset_cache.h"
+#include "guest_call.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
+#include <aurora/thread_role.hpp>
 #include <cstring>
 #include <array>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <deque>
+#include <exception>
+#include <mutex>
+#include <pthread.h>
+#include <thread>
 #include <filesystem>
 #include <fstream>
 #include <fcntl.h>
@@ -50,6 +60,139 @@ uint32_t nextHandle = 100;
 uint32_t lastDiscPosition = 0;
 DiscImage& Disc() {
     return GameDiscImage();
+}
+// Disc reads the DVD library sends with IOS_IoctlAsync (DI 0x71) run on a
+// reader thread, as a Wii drive reads while the game runs, and their replies
+// reach the library's callback at a later pump. The game's file loader issues
+// a read and polls for its reply once a frame, so its loading screens keep
+// animating while the reader works. With load-time conversion (asset_cache.h)
+// a read is answered only once the textures and models of the files it
+// touches are converted: nothing that looks them up later (draw-table
+// preparation, model and texture binding) waits for them.
+class DiscReader {
+  public:
+    // Game thread. A read (length != 0) is answered once the reader has it,
+    // anything else at once; replies keep the order of their requests.
+    void Submit(uint32_t callback, uint32_t argument, int32_t result, uint32_t output = 0, uint64_t offset = 0, uint32_t length = 0) {
+        std::lock_guard guard(lock);
+        replies.push_back({callback, argument, output, length, offset, result, length == 0});
+        if (length && !started) {
+            started = true;
+            pthread_attr_t attributes;
+            pthread_attr_init(&attributes);
+            pthread_attr_setstacksize(&attributes, 1u << 20);
+            const int failed = pthread_create(
+                &thread, &attributes,
+                [](void* self) -> void* {
+                    static_cast<DiscReader*>(self)->Run();
+                    return nullptr;
+                },
+                this);
+            pthread_attr_destroy(&attributes);
+            if (failed)
+                throw std::runtime_error("Cannot start the disc reader");
+        }
+        changed.notify_all();
+    }
+    // Game thread: hands the replies that are ready, in order, to the IOS
+    // completions, writing each read into guest memory first.
+    void Deliver() {
+        std::unique_lock guard(lock);
+        while (!replies.empty() && replies.front().ready) {
+            Reply reply = std::move(replies.front());
+            replies.pop_front();
+            guard.unlock();
+            if (reply.failure)
+                std::rethrow_exception(reply.failure);
+            if (reply.length) {
+                std::memcpy(Memory::GetPointer(reply.output, reply.length), reply.data.data(), reply.length);
+                RecordNativeDiscWrite(reply.output, reply.offset, reply.length);
+            }
+            completions.push_back({reply.callback, reply.result, reply.argument});
+            guard.lock();
+        }
+    }
+    // Game thread: waits up to `limit` for the next reply to be ready; false
+    // when there is none in flight.
+    bool Await(std::chrono::milliseconds limit) {
+        std::unique_lock guard(lock);
+        if (replies.empty())
+            return false;
+        if (!replies.front().ready)
+            changed.wait_for(guard, limit);
+        return true;
+    }
+    ~DiscReader() {
+        {
+            std::lock_guard guard(lock);
+            stopping = true;
+        }
+        changed.notify_all();
+        if (started)
+            pthread_join(thread, nullptr);
+    }
+
+  private:
+    struct Reply {
+        uint32_t callback, argument, output, length;
+        uint64_t offset;
+        int32_t result;
+        bool ready, taken = false;
+        std::vector<uint8_t> data;
+        std::exception_ptr failure;
+    };
+    void Run() {
+        // Core 0 (Vita): the game and render threads keep cores 2 and 1.
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+        std::unique_lock guard(lock);
+        for (;;) {
+            Reply* next = nullptr;
+            const auto pending = [&] {
+                for (auto& reply : replies)
+                    if (!reply.ready && !reply.taken)
+                        return next = &reply, true;
+                return false;
+            };
+            // Timed: VitaSDK's condition variable can lose a notification.
+            while (!stopping && !pending())
+                changed.wait_for(guard, std::chrono::milliseconds(20));
+            if (stopping)
+                return;
+            // Earlier replies stay put while this one is read (deque references
+            // survive push_back, and only ready replies are removed).
+            next->taken = true;
+            const uint64_t offset = next->offset;
+            const uint32_t length = next->length;
+            guard.unlock();
+            std::vector<uint8_t> data;
+            std::exception_ptr failure;
+            try {
+                data = Disc().Read(offset, length);
+                if (auto* cache = GameAssetCache())
+                    while (!cache->Converted(offset, length, std::chrono::milliseconds(20)) && !stopping) {
+                    }
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            guard.lock();
+            next->data = std::move(data);
+            next->failure = failure;
+            next->ready = true;
+            changed.notify_all();
+        }
+    }
+    std::mutex lock;
+    std::condition_variable changed;
+    std::deque<Reply> replies;
+    std::atomic<bool> stopping{false};
+    bool started = false;
+    pthread_t thread{};
+};
+DiscReader& Reader() {
+    // After the disc and its asset cache, so destroyed before them at exit.
+    (void)Disc();
+    static DiscReader reader;
+    return reader;
 }
 int32_t Error() {
     switch (errno) {
@@ -559,7 +702,31 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
         ctx->gpr[3] = 0;
         return;
     }
-    if (files.contains(ctx->gpr[3]) || (it != devices.end() && (it->second == "/dev/di" || it->second == "/dev/stm/immediate" || it->second == "/dev/fs" || it->second == "/dev/usb/hid"))) {
+    if (it != devices.end() && it->second == "/dev/di") {
+        const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
+        if (!callback) {
+            ctx->gpr[3] = -4;
+            return;
+        }
+        const uint32_t input = ctx->gpr[5], output = ctx->gpr[7], capacity = ctx->gpr[8];
+        if (ctx->gpr[4] == 0x71 && ctx->gpr[6] == 0x20 && Memory::Contains(input, 0x20)) {
+            // Command buffer: byte length at +4, word-addressed offset at +8.
+            const uint32_t length = Memory::Read32(input + 4), position = Memory::Read32(input + 8);
+            if (length > capacity || !Memory::Contains(output, length))
+                Reader().Submit(callback, argument, 32);
+            else if (length) {
+                lastDiscPosition = position;
+                Reader().Submit(callback, argument, 1, output, uint64_t(position) * 4, length);
+            } else
+                Reader().Submit(callback, argument, 1);
+        } else {
+            MH3_IOSIoctl(ctx);
+            Reader().Submit(callback, argument, static_cast<int32_t>(ctx->gpr[3]));
+        }
+        ctx->gpr[3] = 0;
+        return;
+    }
+    if (files.contains(ctx->gpr[3]) || (it != devices.end() && (it->second == "/dev/stm/immediate" || it->second == "/dev/fs" || it->second == "/dev/usb/hid"))) {
         const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
         if (!callback) {
             ctx->gpr[3] = -4;
@@ -971,6 +1138,7 @@ void PumpIosCompletions(CpuContext* ctx) {
         bool& flag;
         ~Reset() { flag = false; }
     } reset{pumping};
+    Reader().Deliver();
     for (unsigned i = 0; i < 32; ++i) {
         auto completion = TakeIosCompletion();
         if (!completion)
@@ -1034,3 +1202,126 @@ extern "C" void MH3_DVDGetDriveStatus(CpuContext* ctx) {
     ctx->gpr[3] = status;
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804AAD90, MH3_DVDGetDriveStatus, "DVDGetDriveStatus");
+
+// WaitDvd (0x80435EA8), decompiled with Ghidra: the game's synchronous file
+// loads (load_file 0x800CECC8 and its siblings) call it to wait until the DVD
+// command block `block` is done, or with 0 until the drive is idle as the
+// retrace callback last sampled it (DVDGetDriveStatus). While the drive
+// reports an error it shows the disc error screen, drawing frames itself;
+// a reset or power press stops the sound and restarts or shuts down.
+//
+// On the Wii the retrace interrupt and the drive's reply arrive during the
+// spin. Here they arrive at pump points and disc reads finish on the reader
+// thread, so while the drive is busy the wait delivers device work and
+// sleeps until the reader's next reply (or 1 ms): otherwise a busy status
+// sampled before the spin would never change.
+void PumpDevices(CpuContext* cpu); // os_sleep.cpp
+namespace {
+enum : uint32_t {
+    WPADGetStatus = 0x804EDCA0, // the WPAD library state, interrupts disabled
+    WPADDisconnect = 0x804EEF40,
+    DVDGetCommandBlockStatus = 0x804AACC0,
+    SetMasterVolume = 0x800E874C, // AXSetMasterVolume, interrupts disabled
+    SePause = 0x800E8338,         // SeManager state 2
+    SeResume = 0x800E8378,        // SeManager state 4
+    SeStop = 0x800D849C,          // SeManager state 1
+    StreamPause = 0x800E4B30,     // StreamManager state 2
+    StreamResume = 0x800E4B70,    // StreamManager state 4
+    VIEnableDimming = 0x804E96A0,
+    func_8045607C = 0x8045607C,
+    RunDrawHook = 0x80040890, // the installed draw callback (0x8065B360), if any
+    DrawDiscErrorMessage = 0x80435DBC,
+    FontFlush = 0x8005C174,
+    NativeFrameEnd = 0x8003FFFC,
+    FramePacer = 0x800401A8,
+    FontStackReset = 0x8005B52C, // flfntStackReset
+    RumbleStopAll = 0x80044AB8,
+    BgmStopAll = 0x800F6398,
+    NativeMovieCleanup = 0x804360B0,
+    OSShutdownSystem = 0x804D2BA0,
+    OSRestart = 0x804D2CC0,
+    QuestResetTimeBase = 0x803A91F0,
+};
+constexpr uint32_t kWaiting = 0x8065B2D0;   // u8: inside WaitDvd
+constexpr uint32_t kErrorSeen = 0x8065B2D1; // u8: the drive reported a fatal error
+constexpr uint32_t kWait = 0x806D6D40;      // s32 +4 error screen kind (-1 none), u8 +9 dimming, u8 +11 outer kWaiting
+constexpr int32_t kDriveStatus = -0x4688;   // r13: s32 DVDGetDriveStatus at the last retrace
+constexpr int32_t kPowerPressed = -0x467A;  // r13: u8
+constexpr int32_t kResetPressed = -0x467B;  // r13: u8
+
+void WaitDvd(GuestCall& game, uint32_t block, uint32_t sda) {
+    Memory::Write8(kWait + 11, Memory::Read8(kWaiting) != 0);
+    Memory::Write8(kWaiting, 1);
+    int32_t status;
+    do {
+        if (int32_t(game.Call<WPADGetStatus>()) == 3) {
+            game.Call<WPADDisconnect>({2});
+            game.Call<WPADDisconnect>({3});
+        }
+        status = block ? int32_t(game.Call<DVDGetCommandBlockStatus>({block})) : int32_t(Memory::Read32(sda + uint32_t(kDriveStatus)));
+        int32_t screen = -1;
+        switch (status) {
+        case -1: // fatal error
+            screen = 3;
+            Memory::Write8(kErrorSeen, 1);
+            break;
+        case 4: // no disc
+            screen = 0;
+            break;
+        case 6: // wrong disc
+            screen = 1;
+            break;
+        case 11: // retry
+            screen = 2;
+            break;
+        }
+        Memory::Write32(kWait + 4, uint32_t(screen));
+        if (screen != -1) {
+            game.Call<SetMasterVolume>({0});
+            game.Call<SePause>();
+            game.Call<StreamPause>();
+            Memory::Write8(kWait + 9, game.Call<VIEnableDimming>({1}) != 0);
+            game.Call<func_8045607C>();
+            game.Call<RunDrawHook>();
+            game.Call<DrawDiscErrorMessage>();
+            game.Call<FontFlush>();
+            game.Call<NativeFrameEnd>();
+            game.Call<FramePacer>();
+            game.Call<FontStackReset>();
+        }
+        if (status != -1 && (Memory::Read8(sda + uint32_t(kPowerPressed)) == 1 || Memory::Read8(sda + uint32_t(kResetPressed)) == 1)) {
+            if (int32_t(game.Call<WPADGetStatus>()) == 3)
+                game.Call<RumbleStopAll>();
+            game.Call<SeStop>();
+            game.Call<BgmStopAll>();
+            game.Call<NativeMovieCleanup>();
+            if (Memory::Read8(sda + uint32_t(kPowerPressed)))
+                game.Call<OSShutdownSystem>();
+            if (Memory::Read8(sda + uint32_t(kResetPressed)))
+                game.Call<OSRestart>({0});
+        }
+        if (status != 0 && screen == -1) {
+            // Busy: let the reply and the retrace that report the drive idle arrive.
+            const CpuContext saved = *game.cpu;
+            PumpDevices(game.cpu);
+            *game.cpu = saved;
+            if (!Reader().Await(std::chrono::milliseconds(1)))
+                std::this_thread::sleep_for(std::chrono::microseconds(500));
+        }
+    } while (status != 0);
+    game.Call<SetMasterVolume>({0x8000});
+    game.Call<SeResume>();
+    game.Call<StreamResume>();
+    Memory::Write8(kWaiting, Memory::Read8(kWait + 11));
+    if (int32_t(Memory::Read32(kWait + 4)) != -1) {
+        game.Call<VIEnableDimming>({Memory::Read8(kWait + 9)});
+        game.Call<QuestResetTimeBase>();
+    }
+}
+} // namespace
+extern "C" void MH3_WaitDvd(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    WaitDvd(game, frame.Arg(3), frame.Arg(13));
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80435EA8, MH3_WaitDvd, "WaitDvd");

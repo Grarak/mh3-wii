@@ -94,23 +94,39 @@ Textures and models are converted while the game loads them
 texture/model source file (every standalone BRRES, the two common and ten map
 effect archives) reads the whole file, parses its textures and models, and
 assigns their IDs: the next free texture and model IDs, recorded for good in
-`disc/cache/index.log` with each texture's tag offset. The read returns at once
+`disc/cache/index.log` with each texture's tag offset. The read gets the bytes
 with the native texture tags patched in; the file's textures and models are
 queued for three conversion workers whose affinity covers all user cores (on
 the Vita only one of them converts models at a time). While a file awaits
-conversion its bytes stay in memory and the game's further reads of it are
-served from there; past 16 MiB (Vita) or 48 MiB (other hosts) of pending files
-the game thread waits for the workers. The disc's audio streams are copied to
-plain files in `disc/cache/files/` the same way ([native audio](native-audio.md#streams-from-the-disc-image)).
+conversion its bytes stay in memory and further reads of it are served from
+there; past 16 MiB (Vita) or 48 MiB (other hosts) of pending files a read
+waits for the workers. The disc's audio streams are copied to plain files in
+`disc/cache/files/` the same way ([native audio](native-audio.md#streams-from-the-disc-image)).
+
+The game thread does not do this work. The DVD library reads through
+`IOS_IoctlAsync` (DI 0x71); those reads run on a disc reader thread
+(`DiscReader`, `runtime/src/ios.cpp`, core 0 on the Vita), as a Wii drive
+reads while the game runs, and their replies reach the library's callback at
+a later pump. A read is answered only once the files it touches are
+converted (`AssetCache::Converted`), so nothing that looks their packs up
+later waits: not the loading screen's draw-table preparation, not model or
+texture binding. The game's file loader (`load_file_req` 0x800CEB14, served
+once a frame by 0x800CE704) issues a read and polls for its reply each
+frame, so its loading screens keep animating through the conversions. Its
+synchronous loads (`load_file` 0x800CECC8) spin in `WaitDvd` (0x80435EA8,
+native) until the drive is idle, as on the Wii; while the drive is busy the
+port delivers device work and sleeps until the reader's next reply, since
+the retrace that refreshes the drive status it polls is only delivered at
+pump points.
 
 Results go to `disc/cache/textures/` (one M3VT v2 pack per file; header word 4
 holds the ID before its first record) and `disc/cache/models/` (M3MP/M3ID pair,
 or `.skip` when the file's models cannot be converted). Files are named by the
 source file's partition offset and first ID and written under a temporary name
 first, so a file under its final name is complete. A texture or model consumer
-that arrives before its file is converted waits for it; the loading screens
-absorb that. Later launches reuse every converted file and only parse what is
-new. `version.txt` names the cache format; a mismatch rebuilds the cache.
+that still arrives before its file is converted (a read outside the DVD
+library) waits for it; development builds log waits over 0.5 s. Later
+launches reuse every converted file and only parse what is new. `version.txt` names the cache format; a mismatch rebuilds the cache.
 
 The conversions are the ones the whole-disc stages (`PrepareTextures`,
 `PrepareModels`, kept for development tools) use per file: authored mipmaps

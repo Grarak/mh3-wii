@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -11,7 +12,8 @@
 // root/cache/index.log) and queues its conversion on worker threads that are
 // free to run on any core. Converted packs are written under root/cache/ and
 // reused by later launches. Consumers that need a pack before its conversion
-// finishes wait for it; the game's loading screens absorb that time. Audio
+// finishes wait for it; disc reads are answered after the conversion of the
+// files they touch, so the game's loading screens absorb that time. Audio
 // stream files are extracted the same way, at their first read (the quest's
 // loading screen), to plain files that later reads use directly.
 class AssetCache {
@@ -31,6 +33,12 @@ class AssetCache {
     // A game disc read: indexes the source files it touches and patches their
     // native texture tags into the bytes.
     void Read(uint64_t offset, uint8_t* out, size_t bytes);
+    // Whether the textures and models of the source files that [offset,
+    // offset + bytes) touches are converted (or failed), waiting up to
+    // `limit` for them; files the read did not index count as converted.
+    // Disc reads are answered only after this (ios.cpp), so that their
+    // consumers find the packs ready.
+    bool Converted(uint64_t offset, size_t bytes, std::chrono::milliseconds limit);
     // A map's overlay is loading: from now on stream reads are recorded for
     // `map`, and the streams it read before are extracted ahead of their use.
     void PrefetchStreams(const std::string& map);

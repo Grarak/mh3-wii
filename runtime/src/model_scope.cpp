@@ -920,15 +920,15 @@ struct LoadingScreen {
     std::chrono::steady_clock::time_point first, last;
     uint32_t frames = 0, quiet = 0;
     uint64_t certified = 0, tables = 0, cached = 0;
-    double prepare_ms = 0;
+    double prepare_ms = 0, longest_ms = 0; // longest frame: span between two calls
 } loading;
 void ReportLoadingScreen() {
 #ifdef MH3_DEVELOPMENT
     if (!loading.open)
         return;
     loading.open = false;
-    std::fprintf(stderr, "MH3 loading screen: %.3f s, %u frames; draw table preparation %.2f ms (%llu models certified, %llu tables, %llu from the cache)\n",
-                 std::chrono::duration<double>(loading.last - loading.first).count(), loading.frames, loading.prepare_ms, static_cast<unsigned long long>(loading.certified),
+    std::fprintf(stderr, "MH3 loading screen: %.3f s, %u frames, longest %.0f ms; draw table preparation %.2f ms (%llu models certified, %llu tables, %llu from the cache)\n",
+                 std::chrono::duration<double>(loading.last - loading.first).count(), loading.frames, loading.longest_ms, loading.prepare_ms, static_cast<unsigned long long>(loading.certified),
                  static_cast<unsigned long long>(loading.tables), static_cast<unsigned long long>(loading.cached));
 #endif
 }
@@ -959,7 +959,8 @@ void PrepareNativeModelDrawTables() {
         loading = {};
         loading.open = true;
         loading.first = start;
-    }
+    } else
+        loading.longest_ms = std::max(loading.longest_ms, std::chrono::duration<double, std::milli>(start - loading.last).count());
     const uint64_t cachedBefore = tableStats.cached;
     const size_t certified = discover ? CertifyLoadedNativeModels() : 0;
     std::vector<NativeModelOwner> owners;
