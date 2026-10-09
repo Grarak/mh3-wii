@@ -662,6 +662,68 @@ mh3_res_status mh3_camera_project(mh3_native_camera *c, const mh3_vec3 *point, m
     return MH3_RES_OK;
 }
 
+mh3_res_status mh3_camera_texture_matrices(mh3_res_span record, float texture[12], float environment[12]) {
+    const uint8_t *p = record.data;
+    float m[12] = {0}, scale_s, scale_t, trans_s, trans_t, top, bottom, left, right, horizontal, vertical, cot;
+    uint32_t flags;
+
+    if (!p || !texture || !environment)
+        return MH3_RES_INVALID;
+
+    if (record.size < 220)
+        return MH3_RES_RANGE;
+
+    flags = be32(p + 112);
+    top = real(p + 188);
+    bottom = real(p + 192);
+    left = real(p + 196);
+    right = real(p + 200);
+    scale_s = real(p + 204);
+    scale_t = -real(p + 208);
+    trans_s = real(p + 212);
+    trans_t = real(p + 216);
+
+    /* Unchecked like the original: a degenerate unused slot divides by zero. */
+    if (flags & 64) {
+        horizontal = 1.0f / (right - left);
+        vertical = 1.0f / (top - bottom);
+        m[0] = (2.0f * horizontal) * scale_s;
+        m[3] = trans_s + scale_s * (horizontal * -(right + left));
+        m[5] = (2.0f * vertical) * scale_t;
+        m[7] = trans_t + scale_t * (vertical * -(top + bottom));
+        m[11] = 1.0f;
+    } else if (flags & 16) {
+        const float near2 = 2.0f * real(p + 180);
+
+        horizontal = 1.0f / (right - left);
+        vertical = 1.0f / (top - bottom);
+        m[0] = scale_s * (near2 * horizontal);
+        m[2] = scale_s * (horizontal * (right + left)) - trans_s;
+        m[5] = scale_t * (near2 * vertical);
+        m[6] = scale_t * (vertical * (top + bottom)) - trans_t;
+        m[10] = -1.0f;
+    } else {
+        /* pi / 180 as the original's single 0x3C8EFA35; tan in double, rounded
+         * to single like the original's fdlibm call. */
+        cot = 1.0f / (float)tan((double)(0x1.1df46ap-6f * (0.5f * real(p + 172))));
+        m[0] = scale_s * (cot / real(p + 176));
+        m[2] = -trans_s;
+        m[5] = cot * scale_t;
+        m[6] = -trans_t;
+        m[10] = -1.0f;
+    }
+
+    memcpy(texture, m, sizeof m);
+    memset(m, 0, sizeof m);
+    m[0] = scale_s;
+    m[3] = trans_s;
+    m[5] = scale_t;
+    m[7] = trans_t;
+    m[11] = 1.0f;
+    memcpy(environment, m, sizeof m);
+    return MH3_RES_OK;
+}
+
 mh3_res_status mh3_scene_camera_select(mh3_res_span scene, uint32_t address, int split, int player, mh3_res_span ids, uint32_t *out) {
     uint32_t index;
     size_t offset;

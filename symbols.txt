@@ -1231,6 +1231,8 @@
 800752bc CameraProject
 800753f8 CameraView
 800754a4 CameraProjection
+80075550 CameraTextureProjection
+80075684 CameraEnvironmentProjection
 80075740 CameraApplyViewport
 8007580c CameraApplyProjection
 800758ac CameraApplyScissor
@@ -1241,6 +1243,9 @@
 8007a3b8 FogApply
 8008551c ModelLightSetting
 80085758 ModelLightSelect
+80082c30 ScnRootCurrentCamera
+80082d40 ScnRootSetGlbSettings
+800880ec G3dStateSetFog
 80085bb8 ModelLightReference
 80085dfc ModelDepthCompare
 80085eac ModelTextureSelect

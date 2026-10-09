@@ -105,6 +105,11 @@ mh3_res_status mh3_camera_store_matrices(mh3_res_mut_span record, const mh3_nati
 /* Screen projection preserves Wii depth/viewport convention. Backend clip
  * conversion must be applied once separately, never inside this calculation. */
 mh3_res_status mh3_camera_project(mh3_native_camera *camera, const mh3_vec3 *point, mh3_vec3 *out);
+/* 80075550 and 80075684: a CameraData record's projected-texture matrix
+ * (C_MTXLightOrtho, C_MTXLightFrustum or C_MTXLightPerspective by flag 64, 16
+ * or neither) and its environment-map matrix, both from the texture scale and
+ * translation at +204, row-major 3x4 in the original's single steps. */
+mh3_res_status mh3_camera_texture_matrices(mh3_res_span record, float texture[12], float environment[12]);
 /* ScnRoot's 32 inline CameraData records. The current index is at +F4;
  * split-screen selection uses the game's explicit per-player camera IDs. */
 mh3_res_status mh3_scene_camera_select(mh3_res_span scene, uint32_t scene_address, int split, int player, mh3_res_span player_camera_ids, uint32_t *out);

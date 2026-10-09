@@ -11,6 +11,10 @@
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_model_state.h"
 #include "model_render_prep.h"
+#include "port_check.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 #include <string>
@@ -140,30 +144,54 @@ extern "C" void MH3_CameraProject(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800752BC, MH3_CameraProject, "CameraProject");
 
-extern "C" void MH3_CameraView(CpuContext* cpu) {
-    const uint32_t resource = Resource(cpu->gpr[3]);
-
-    if (CopyPreparedMatrix(resource, 8, 0, 48, cpu->gpr[4]))
+namespace {
+void CameraView(uint32_t resource, uint32_t destination) {
+    if (CopyPreparedMatrix(resource, 8, 0, 48, destination))
         return;
 
     auto camera = Camera(resource);
     const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_view(&camera));
     StorePreparedCamera(resource, camera, flags);
-    StoreFloats(cpu->gpr[4], &camera.view.v[0][0], 12);
+    StoreFloats(destination, &camera.view.v[0][0], 12);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800753F8, MH3_CameraView, "CameraView");
-extern "C" void MH3_CameraProjection(CpuContext* cpu) {
-    const uint32_t resource = Resource(cpu->gpr[3]);
 
-    if (CopyPreparedMatrix(resource, 128, 48, 64, cpu->gpr[4]))
+void CameraProjection(uint32_t resource, uint32_t destination) {
+    if (CopyPreparedMatrix(resource, 128, 48, 64, destination))
         return;
 
     auto camera = Camera(resource);
     const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_projection(&camera));
     StorePreparedCamera(resource, camera, flags);
-    StoreFloats(cpu->gpr[4], camera.projection, 16);
+    StoreFloats(destination, camera.projection, 16);
+}
+
+void ApplyViewport(uint32_t resource) {
+    const auto camera = Camera(resource);
+    auto y = camera.viewport[1];
+
+    if (Memory::Read8(0x8068a7e0) && !(camera.flags & 256))
+        y -= 0.5f;
+
+    SetNativeViewport(camera.viewport[0], y, camera.viewport[2], camera.viewport[3], camera.viewport[4], camera.viewport[5]);
+}
+
+void ApplyProjection(uint32_t resource) {
+    auto camera = Camera(resource);
+    const uint32_t flags = camera.flags;
+    Checked(mh3_camera_prepare_projection(&camera));
+    StorePreparedCamera(resource, camera, flags);
+    SetNativeProjection(camera.projection, camera.projection_type == 0);
+}
+} // namespace
+
+extern "C" void MH3_CameraView(CpuContext* cpu) {
+    CameraView(Resource(cpu->gpr[3]), cpu->gpr[4]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800753F8, MH3_CameraView, "CameraView");
+extern "C" void MH3_CameraProjection(CpuContext* cpu) {
+    CameraProjection(Resource(cpu->gpr[3]), cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800754A4, MH3_CameraProjection, "CameraProjection");
 extern "C" void MH3_CameraPrepareProjection(CpuContext* cpu) {
@@ -177,22 +205,11 @@ extern "C" void MH3_CameraPrepareProjection(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80075E3C, MH3_CameraPrepareProjection, "CameraPrepareProjection");
 extern "C" void MH3_CameraApplyViewport(CpuContext* cpu) {
-    const auto camera = Camera(Resource(cpu->gpr[3]));
-    auto y = camera.viewport[1];
-
-    if (Memory::Read8(0x8068a7e0) && !(camera.flags & 256))
-        y -= 0.5f;
-
-    SetNativeViewport(camera.viewport[0], y, camera.viewport[2], camera.viewport[3], camera.viewport[4], camera.viewport[5]);
+    ApplyViewport(Resource(cpu->gpr[3]));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80075740, MH3_CameraApplyViewport, "CameraApplyViewport");
 extern "C" void MH3_CameraApplyProjection(CpuContext* cpu) {
-    const uint32_t resource = Resource(cpu->gpr[3]);
-    auto camera = Camera(resource);
-    const uint32_t flags = camera.flags;
-    Checked(mh3_camera_prepare_projection(&camera));
-    StorePreparedCamera(resource, camera, flags);
-    SetNativeProjection(camera.projection, camera.projection_type == 0);
+    ApplyProjection(Resource(cpu->gpr[3]));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007580C, MH3_CameraApplyProjection, "CameraApplyProjection");
 extern "C" void MH3_CameraApplyScissor(CpuContext* cpu) {
@@ -204,16 +221,21 @@ extern "C" void MH3_CameraApplyScissorOffset(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007592C, MH3_CameraApplyScissorOffset, "CameraApplyScissorOffset");
 
-extern "C" void MH3_FogRange(CpuContext* cpu) {
-    const uint32_t resource = Resource(cpu->gpr[3]);
-    float projection[16];
+namespace {
+void FogRange(uint32_t resource, uint16_t width, uint16_t center, const float projection[16]) {
     uint16_t table[10];
+    Checked(mh3_fog_range_table(width, projection, table));
+    Checked(mh3_fog_range_store(Mutable(resource, 48), center, table));
+}
+} // namespace
+
+extern "C" void MH3_FogRange(CpuContext* cpu) {
+    float projection[16];
 
     for (uint32_t i = 0; i < 16; i++)
         projection[i] = Memory::ReadFloat32(cpu->gpr[6] + i * 4);
 
-    Checked(mh3_fog_range_table(uint16_t(cpu->gpr[4]), projection, table));
-    Checked(mh3_fog_range_store(Mutable(resource, 48), uint16_t(cpu->gpr[5]), table));
+    FogRange(Resource(cpu->gpr[3]), uint16_t(cpu->gpr[4]), uint16_t(cpu->gpr[5]), projection);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007A30C, MH3_FogRange, "FogRange");
 extern "C" void MH3_FogApply(CpuContext* cpu) {
@@ -232,8 +254,8 @@ extern "C" void MH3_FogSelect(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80088200, MH3_FogSelect, "FogSelect");
 
-extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
-    const uint32_t state = cpu->gpr[3], setting = cpu->gpr[4];
+namespace {
+void ModelLightSetting(uint32_t state, uint32_t setting, [[maybe_unused]] uint32_t caller) {
     const uint16_t count = Memory::Read16(setting), sets = Memory::Read16(setting + 2);
 
     if (count > 128 || sets > 128)
@@ -264,7 +286,7 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
                 continue;
 
             const uint32_t light = objects + i * 68;
-            std::fprintf(stderr, "MH3 light: setting %08x caller %08x light %u change %u flags %08x words %08x %08x ambient %08x", setting, cpu->lr, i,
+            std::fprintf(stderr, "MH3 light: setting %08x caller %08x light %u change %u flags %08x words %08x %08x ambient %08x", setting, caller, i,
                          it->second.second - 1, Memory::Read32(light), Memory::Read32(light + 4), Memory::Read32(light + 8), Memory::Read32(ambients + i * 4));
 
             for (uint32_t w = 3; w < 17; w++)
@@ -286,7 +308,139 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
     entry.revision = ++light_revision;
     SetNativeModelLightSelection(entry.slots, &entry, entry.revision);
 }
+} // namespace
+
+extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
+    ModelLightSetting(cpu->gpr[3], cpu->gpr[4], cpu->lr);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8008551C, MH3_ModelLightSetting, "ModelLightSetting");
+
+namespace {
+// G3D's camera state (0x80688D94: u16 flags, the selected index, then 32
+// views, projections, texture and environment matrices), fog state
+// (0x80685D60: flags, the selected index, 32 FogData records) and light state.
+constexpr uint32_t kCameraState = 0x80688d94, kFogState = 0x80685d60, kLightState = 0x80686368;
+
+// FloatToU16Gqr3 (80082F7C): psq_st through GQR3, the game's u16 store type:
+// scaled, clamped and truncated.
+uint16_t QuantizeU16(float value, uint32_t gqr) {
+    if ((gqr & 7) != 5)
+        MH3_THROW(std::runtime_error("SetGlbSettings: GQR3 is not a u16 store type"));
+
+    const int scale = int(gqr >> 8 & 0x3F);
+    return uint16_t(std::clamp(value * std::ldexp(1.0f, scale < 32 ? scale : scale - 64), 0.0f, 65535.0f));
+}
+
+// The record's projection, prepared and stored first while its valid flag is clear.
+void PreparedProjection(uint32_t resource, float out[16]) {
+    if (!(Memory::Read32(resource + 112) & 128)) {
+        auto camera = Camera(resource);
+        const uint32_t flags = camera.flags;
+        Checked(mh3_camera_prepare_projection(&camera));
+        StorePreparedCamera(resource, camera, flags);
+    }
+
+    for (uint32_t i = 0; i < 16; i++)
+        out[i] = Memory::ReadFloat32(resource + 48 + i * 4);
+}
+
+// G3dStateSetCamera (80085CD4) for one of the root's CameraData records.
+void SetStateCamera(uint32_t resource, uint32_t index) {
+    float texture[12], environment[12];
+    CameraView(resource, kCameraState + 0x34 + index * 48);
+    CameraProjection(resource, kCameraState + 0x634 + index * 64);
+    Checked(mh3_camera_texture_matrices(Bytes(resource, 268), texture, environment));
+    StoreFloats(kCameraState + 0xE34 + index * 48, texture, 12);
+    StoreFloats(kCameraState + 0x1434 + index * 48, environment, 12);
+}
+
+// The fog state's slot (800880EC): a changed record for the selected slot
+// clears the state's flags so the next selection applies it.
+void SetStateFog(uint32_t resource, uint32_t index) {
+    const uint8_t* fog = GuestRange(resource, 48);
+    uint8_t* slot = GuestRange(kFogState + 8 + index * 48, 48);
+
+    if (Memory::Read32(kFogState + 4) == index) {
+        if (!std::memcmp(fog, slot, 48))
+            return;
+
+        Memory::Write32(kFogState, 0);
+    }
+
+    std::memcpy(slot, fog, 48);
+}
+
+// 80082D40 ScnRoot::SetGlbSettings: the current camera's viewport, projection
+// and scissor; the G3D camera state for all 32 CameraData records (+F8,
+// stride 268) with the current one (+F4) selected; the 32 FogData records
+// (+2278, stride 48) given the camera's planes and orthographic flag, range
+// tables for the range-adjusted ones, and copied to the fog state; then the
+// root's LightSetting (+2878) imported against the selected view (800882B4).
+void SetGlbSettings(CpuContext* cpu) {
+    const uint32_t root = cpu->gpr[3], current = Memory::Read8(root + 0xF4), camera = root + 0xF8 + current * 268;
+    ApplyViewport(camera);
+    ApplyProjection(camera);
+
+    // CameraApplyScissor and CameraApplyScissorOffset set the same rectangle.
+    ApplyScissor(Camera(camera));
+
+    for (uint32_t i = 0; i < 32; i++)
+        SetStateCamera(root + 0xF8 + i * 268, i);
+
+    if (current < 32) {
+        Memory::Write16(kCameraState + 2, uint16_t(current));
+        Memory::Write16(kCameraState, Memory::Read16(kCameraState) & 0xFFFE);
+    }
+
+    const float near_plane = Memory::ReadFloat32(camera + 180), far_plane = Memory::ReadFloat32(camera + 184);
+    const uint32_t orthographic = Memory::Read32(camera + 168) == 1 ? 8 : 0;
+    float projection[16];
+    uint16_t width = 0, center = 0;
+    bool ranged = false;
+
+    for (uint32_t i = 0; i < 32; i++) {
+        const uint32_t fog = root + 0x2278 + i * 48;
+        Memory::WriteFloat32(fog + 12, near_plane);
+        Memory::WriteFloat32(fog + 16, far_plane);
+
+        if (const uint32_t type = Memory::Read32(fog))
+            Memory::Write32(fog, (type & ~8u) | orthographic);
+
+        if (Memory::Read8(fog + 24) == 1) {
+            if (!ranged) {
+                const float x = Memory::ReadFloat32(camera + 220), extent = Memory::ReadFloat32(camera + 228);
+                PreparedProjection(camera, projection);
+                width = QuantizeU16(extent, cpu->gqr[3]);
+                center = QuantizeU16(x + 0.5f * extent, cpu->gqr[3]);
+                ranged = true;
+            }
+
+            FogRange(fog, width, center, projection);
+        }
+
+        SetStateFog(fog, i);
+    }
+
+    ModelLightSetting(kLightState, root + 0x2878, cpu->lr);
+}
+} // namespace
+
+extern "C" void func_80082D40(CpuContext* ctx);
+
+extern "C" void MH3_ScnRootSetGlbSettings(CpuContext* cpu) {
+#ifdef MH3_DEVELOPMENT
+    // Its writes: the G3D camera, fog and light states and the root's camera
+    // and fog records (the walk runs beside the game thread, so no RAM-wide diff).
+    if (PortCheck::Enabled("ScnRootSetGlbSettings")) [[unlikely]] {
+        const uint32_t root = cpu->gpr[3];
+        PortCheck::RunOutput(cpu, "ScnRootSetGlbSettings", func_80082D40, SetGlbSettings,
+                             {{kCameraState, 0x1A34}, {kFogState, 8 + 32 * 48}, {kLightState, MH3_LIGHT_STATE_BYTES}, {root + 0xF8, 32 * 268}, {root + 0x2278, 32 * 48}});
+        return;
+    }
+#endif
+    SetGlbSettings(cpu);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80082D40, MH3_ScnRootSetGlbSettings, "ScnRootSetGlbSettings");
 const mh3_native_light_slots& SelectNativeModelLightSet(uint32_t state, uint32_t set_id) {
     const auto found = light_slots.find(state);
 
