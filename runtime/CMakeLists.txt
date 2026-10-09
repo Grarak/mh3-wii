@@ -86,6 +86,22 @@ if(NOT MH3_DEVELOPMENT)
   # objects so that a relink only recompiles the modules that changed.
   add_link_options("-Wl,--lto-O2" "-Wl,--thinlto-cache-dir=${CMAKE_BINARY_DIR}/thinlto-cache"
     "-Wl,--thinlto-cache-policy=cache_size_bytes=4g")
+
+  # Nor do they have exceptions or unwind tables. Nothing recovers from an
+  # exception: an operation whose caller can go on returns a Status, and a
+  # failure that stops the game stops where it happens (MH3_THROW in
+  # runtime/include/fatal.h, AURORA_THROW in Aurora). Aurora's libraries and the
+  # fetched dependencies get these too; the host tools and tests keep
+  # exceptions (the end of this file). MH3_PROFILE_FRAME_POINTERS, when turned
+  # on, keeps its unwind tables.
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+
+  if(NOT MH3_PROFILE_FRAME_POINTERS)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fno-unwind-tables;-fno-asynchronous-unwind-tables>")
+
+    # Fatal reports leave out the host backtrace: there is nothing to walk.
+    add_compile_definitions(MH3_NO_UNWIND_TABLES=1)
+  endif()
 endif()
 
 if(MH3_AURORA_ROOT)
@@ -531,4 +547,19 @@ if(TARGET aurora::core)
   target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3ControllerHostTest PRIVATE ${AURORA_SDL3_TARGET})
   add_test(NAME mh3_sdl_controller_test COMMAND MH3ControllerHostTest)
+endif()
+
+# The host tools and tests catch failures to report them, so they keep
+# exceptions in release builds (the Aurora libraries they link have none: a
+# failure there stops the tool).
+if(NOT MH3_DEVELOPMENT)
+  get_property(mh3_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+
+  foreach(mh3_target IN LISTS mh3_targets)
+    get_target_property(mh3_target_type ${mh3_target} TYPE)
+
+    if(mh3_target_type STREQUAL "EXECUTABLE" AND NOT mh3_target STREQUAL "MH3")
+      target_compile_options(${mh3_target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-fexceptions>" "$<$<COMPILE_LANGUAGE:C,CXX>:-funwind-tables>")
+    endif()
+  endforeach()
 endif()

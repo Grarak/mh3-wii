@@ -57,7 +57,7 @@ void SystemBridge::DumpCpuState(const CpuContext* cpu) {
 }
 
 void DumpHostStackTraceForRuntimeHelper() {
-#ifndef __vita__
+#if !defined(__vita__) && !defined(MH3_NO_UNWIND_TABLES)
     void* frames[40];
     int count = backtrace(frames, 40);
     backtrace_symbols_fd(frames, count, 2);

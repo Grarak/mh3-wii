@@ -16,7 +16,7 @@
 #endif
 
 namespace {
-#ifdef __vita__
+#if defined(__vita__) && !defined(MH3_NO_UNWIND_TABLES)
 _Unwind_Reason_Code NativeFrame(_Unwind_Context *context, void *user) {
     auto &count = *static_cast<unsigned *>(user);
     const uintptr_t address = _Unwind_GetIP(context);
@@ -91,9 +91,11 @@ extern "C" [[noreturn]] void MH3_OSFatal(CpuContext *cpu) {
     MarkFatalErrorReported();
     DumpHostStackTraceForRuntimeHelper();
 #ifdef __vita__
+#ifndef MH3_NO_UNWIND_TABLES
     unsigned frames = 0;
     std::fputs("Native OSFatal backtrace:\n", stderr);
     _Unwind_Backtrace(NativeFrame, &frames);
+#endif
     std::fflush(nullptr);
     sceKernelExitProcess(1);
 #endif

@@ -126,7 +126,9 @@ Compare timings only between builds with the same setting.
 ranges in the module info (the stock tool writes zero ranges) and emits the
 module TLS template. It then runs `scripts/vita-check-unwind.py`, which fails
 the build for missing or wrong registration and writes
-`build/vita/unwind-packaging.json`.
+`build/vita/unwind-packaging.json`. A release build (`MH3_DEVELOPMENT=OFF`)
+has no unwind tables of its own (nor exceptions) and is not checked: profile
+development builds.
 
 ### Memory and math helpers in Vita profiles
 

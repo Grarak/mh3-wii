@@ -24,6 +24,7 @@ void GuestLocation(const char* label, uint32_t address) {
     std::fputc('\n', stderr);
 }
 
+#ifndef MH3_NO_UNWIND_TABLES
 struct NativeTrace {
     unsigned count = 0;
 };
@@ -51,6 +52,7 @@ _Unwind_Reason_Code NativeFrame(_Unwind_Context* context, void* value) {
     std::fputc('\n', stderr);
     return _URC_NO_REASON;
 }
+#endif
 } // namespace
 
 [[noreturn]] void PanicLegacyGx(const char* entry, uint32_t guestAddress, const CpuContext* cpu) noexcept {
@@ -100,9 +102,11 @@ _Unwind_Reason_Code NativeFrame(_Unwind_Context* context, void* value) {
         std::fprintf(stderr, "  No active guest CPU context\n");
     }
 
+#ifndef MH3_NO_UNWIND_TABLES
     std::fprintf(stderr, "Native backtrace (symbolize addresses against this build's ELF):\n");
     NativeTrace trace;
     _Unwind_Backtrace(NativeFrame, &trace);
+#endif
     std::fprintf(stderr, "GX calls and FIFO decoding must be replaced with native submissions.\n");
     std::fflush(nullptr);
 #ifdef __vita__
