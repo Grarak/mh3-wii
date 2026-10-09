@@ -1848,19 +1848,20 @@ void shaded_mesh_now(Renderer& r, GLuint buffer, const uint8_t* bufferData, cons
 // turns it off.
 constexpr unsigned MaxLayerFlushes = 3;
 
-// AURORA_LAYER_PASS (development): 0 off, lava the map's layers only, all
-// (the default) the effects' quads and geometry as well.
+// AURORA_LAYER_PASS (development): 0 off, lava (the default) the map's
+// layers only, all the effects' quads and geometry as well (they looked too
+// soft at half resolution; the user's call, 2026-10-05).
 enum class LayerPass { Off, Lava, All };
 
 LayerPass layer_pass_mode() {
 #ifdef MH3_DEVELOPMENT
   static const LayerPass mode = [] {
-    const std::string value = std::getenv("AURORA_LAYER_PASS") ? std::getenv("AURORA_LAYER_PASS") : "all";
-    return value == "0" ? LayerPass::Off : value == "lava" ? LayerPass::Lava : LayerPass::All;
+    const std::string value = std::getenv("AURORA_LAYER_PASS") ? std::getenv("AURORA_LAYER_PASS") : "lava";
+    return value == "0" ? LayerPass::Off : value == "all" ? LayerPass::All : LayerPass::Lava;
   }();
   return mode;
 #else
-  return LayerPass::All;
+  return LayerPass::Lava;
 #endif
 }
 
