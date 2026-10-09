@@ -21,6 +21,14 @@ typedef struct {
     uint8_t texcoord_mask, nonzero_projective_mask, zero_projective_mask;
     uint16_t matrix_index_mask;
 } mh3_model_gpu_inputs;
+/* Draw-time metadata without a second copy of the 1440-byte palette. */
+typedef struct {
+    float projection[16];
+    mh3_matrix34 position, normal;
+    mh3_model_gpu_texgen texgen[8];
+    uint8_t texcoord_mask, nonzero_projective_mask, zero_projective_mask;
+    uint16_t matrix_index_mask;
+} mh3_model_gpu_draw_inputs;
 /* Prepare only consumed inputs, transactionally. near_z/far_z are the logical
  * viewport values; projection follows mh3_draw_vertex's reversed-depth rule.
  * Bound-based Q certification is conservative; uncertified does not mean zero.
@@ -28,6 +36,13 @@ typedef struct {
  * position/color source; composed cancellation and unknown sources stay exact.
  * No immutable vertex/index bytes are inspected. */
 mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh, uint8_t texcoord_mask, int normal_required, float near_z, float far_z, mh3_model_gpu_inputs *out);
+/* Prepare directly into final draw metadata and three 10-slot palette arrays.
+ * The caller owns writable arrays in its admitted GPU frame allocation.
+ * Failure can leave outputs partially written; consume them only on success.
+ * All input checks and conservative projective-Q rules match the transactional
+ * API above. No pointer into live guest pose memory is retained. */
+mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, uint8_t texcoord_mask, int normal_required, float near_z, float far_z, mh3_model_gpu_draw_inputs *out,
+                                        mh3_matrix34 *positions, mh3_matrix34 *normals, mh3_matrix34 *textures);
 #ifdef __cplusplus
 }
 #endif

@@ -154,7 +154,7 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     const uint32_t key = uint32_t(variant.vertex) | uint32_t(variant.lighting) << 1 | uint32_t(variant.lights) << 3 | uint32_t(variant.model) << 7 | uint32_t(variant.textures) << 8 |
                          uint32_t(variant.overlay) << 10 | uint32_t(variant.alpha_test) << 11 | uint32_t(variant.fog) << 12 | uint32_t(variant.texgen[0]) << 13 | uint32_t(variant.texgen[1]) << 15 |
-                         uint32_t(variant.texgen[2]) << 17;
+                         uint32_t(variant.texgen[2]) << 17 | uint32_t(variant.linear_fog) << 19;
     auto& program = shade.programs[key];
     if (!program) {
         auto sources = NativeShaderSource(variant);
@@ -281,6 +281,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.overlay = shading.overlay != 0;
     variant.alpha_test = shading.alpha_test != 0;
     variant.fog = fogKnown && fogSource.type != 0;
+    variant.linear_fog = variant.fog && (fogSource.type & 7) < 4;
     return variant;
 }
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
@@ -299,8 +300,11 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     auto draw = mesh;
     draw.mesh = *resident.mesh;
     draw.material = &material;
-    mh3_model_gpu_inputs inputs{};
-    Check(mh3_model_gpu_prepare(&draw, coordinates, lighting.lit(), GetNativeDrawState().viewport[4], GetNativeDrawState().viewport[5], &inputs), "Native model GPU inputs");
+    mh3_model_gpu_draw_inputs inputs;
+    auto& palette = *reinterpret_cast<mh3_shade_palette*>(static_cast<char*>(memory.data) + ShadePaletteOffset(shading.model));
+    Check(mh3_model_gpu_prepare_draw(&draw, coordinates, lighting.lit(), GetNativeDrawState().viewport[4], GetNativeDrawState().viewport[5], &inputs,
+                                   reinterpret_cast<mh3_matrix34*>(palette.position[0]), reinterpret_cast<mh3_matrix34*>(palette.normal[0]),
+                                   reinterpret_cast<mh3_matrix34*>(palette.position[10])), "Native model GPU inputs");
     const auto& layout = *resident.layout;
     const auto present = [&](unsigned location) {
         return std::any_of(layout.attributes.begin(), layout.attributes.end(), [&](const auto& a) { return a.location == location; });
@@ -350,10 +354,6 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     auto variant = ShadeVariant(shading, NativeShaderVertex::Mesh, lighting);
     std::copy(kinds.begin(), kinds.end(), variant.texgen);
     const GLuint program = ShadeProgram(variant)->get();
-    auto& palette = *reinterpret_cast<mh3_shade_palette*>(static_cast<char*>(memory.data) + ShadePaletteOffset(shading.model));
-    std::memcpy(palette.position[0], inputs.position_palette, sizeof inputs.position_palette);
-    std::memcpy(palette.position[10], inputs.texture_palette, sizeof inputs.texture_palette);
-    std::memcpy(palette.normal[0], inputs.normal_palette, sizeof inputs.normal_palette);
     const auto blocks = ShadeBlocks(memory, shading.model, true);
     if (!blocks)
         return;

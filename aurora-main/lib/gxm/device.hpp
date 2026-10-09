@@ -28,7 +28,7 @@ struct DisplayStatistics {
 DisplayStatistics display_statistics() noexcept;
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
-// to the game thread. The display callback is pinned to worker core 0.
+// to the render owner. The display callback is pinned to worker core 0.
 class Device {
 public:
   explicit Device(bool vsync);
@@ -61,6 +61,7 @@ private:
   // Slot 0 is owned by this application context for ordered scene retirement.
   volatile unsigned* m_notification = nullptr;
   uint32_t m_sceneSerial = 0;
+  uint32_t m_sceneFlags = 0;
   aurora::GpuFrameRing m_frames;
   SceGxmContext* m_context = nullptr;
   SceGxmShaderPatcher* m_patcher = nullptr;
