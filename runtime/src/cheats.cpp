@@ -158,6 +158,7 @@ constexpr Entry kEntries[]{
     {Id::NoDamage, {kBasic, "No damage", "The hunter takes no damage."}},
     {Id::NoStaminaDrain, {kBasic, "No action stamina drain", "Running, guarding and other continuous actions cost no stamina."}},
     {Id::AllItems, {kBasic, "All items in the item box", "As the character first loads, the item box grows to its 8 pages (both box guides obtained), is emptied and gets this many of every item (713).", kItemCounts}},
+    {Id::AllEquipment, {kBasic, "All equipment in the equipment box", "As the character first loads, the equipment box grows to 8 pages, keeps what is worn and gets a talisman per skill and the rarest weapons and armor that fit."}},
 
     {Id::GalleryClips, {kStuff, "Unlock all gallery clips", "Every movie of the gallery can be watched; saved with the game."}},
     {Id::TurnItUpTo11, {kStuff, "Turn it up to 11", "Music volume past the option's maximum."}},
@@ -561,7 +562,7 @@ void ConsumePresses() {
 void Step(CpuContext*) {
     static const bool any = [] {
         for (size_t i = 0; i < size_t(Id::Count); ++i)
-            if (g_on[i] && Id(i) != Id::NoDamage && Id(i) != Id::NoStaminaDrain && Id(i) != Id::AllItems)
+            if (g_on[i] && Id(i) != Id::NoDamage && Id(i) != Id::NoStaminaDrain && Id(i) != Id::AllItems && Id(i) != Id::AllEquipment)
                 return true;
         return false;
     }();
