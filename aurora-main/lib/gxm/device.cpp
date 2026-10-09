@@ -34,13 +34,37 @@ std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
 std::atomic<uint64_t> g_displayWaitMicros{0};
 std::atomic<uint64_t> g_pacedFlips{0}, g_pacingErrorMicros{0}, g_flipVblanks[4]{};
 std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
+std::atomic<uint64_t> g_latencyFlips{0}, g_latencyMicros[4]{};
+std::atomic<uint32_t> g_latencyMaxMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 bool g_commonDialogActive = false;
 
 struct DisplayData {
   void* address;
-  uint64_t game_us; // game time of the frame, 0 = unknown
+  uint64_t game_us;                         // game time of the frame, 0 = unknown
+  uint64_t input_us, published_us, presented_us; // steady clock; input 0 = unknown
 };
+
+uint64_t steady_us() {
+  return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// Display callback only: the flipped frame's input-to-flip time in its parts.
+void record_latency(const DisplayData& display, uint64_t gpuDoneUs, uint64_t flipUs) {
+  if (!display.input_us)
+    return;
+
+  const uint64_t marks[5] = {display.input_us, display.published_us, display.presented_us, gpuDoneUs, flipUs};
+
+  for (unsigned i = 0; i < 4; ++i)
+    g_latencyMicros[i].fetch_add(marks[i + 1] - marks[i], std::memory_order_relaxed);
+
+  g_latencyFlips.fetch_add(1, std::memory_order_relaxed);
+  const uint32_t total = uint32_t(std::min<uint64_t>(flipUs - display.input_us, UINT32_MAX));
+
+  if (total > g_latencyMaxMicros.load(std::memory_order_relaxed))
+    g_latencyMaxMicros.store(total, std::memory_order_relaxed);
+}
 
 // Display callback only: compares each flip's interval with the game time its
 // frame advanced over the previous flipped frame. Equal intervals are smooth
@@ -73,6 +97,7 @@ void record_pacing(uint64_t gameUs) {
 void display_callback(const void* data) {
   aurora::pin_current_thread(aurora::ThreadRole::Worker);
   const auto& display = *static_cast<const DisplayData*>(data);
+  const uint64_t gpuDoneUs = steady_us();
   SceDisplayFrameBuf frame{};
   frame.size = sizeof(frame);
   frame.base = display.address;
@@ -96,6 +121,7 @@ void display_callback(const void* data) {
   if (setResult >= 0 && waitResult >= 0) {
     g_displayPresented.fetch_add(1, std::memory_order_relaxed);
     record_pacing(display.game_us);
+    record_latency(display, gpuDoneUs, steady_us());
   } else
     g_displayFailures.fetch_add(1, std::memory_order_relaxed);
 
@@ -412,6 +438,13 @@ DisplayStatistics display_statistics() noexcept {
   for (unsigned i = 0; i < 4; ++i)
     result.flip_vblanks[i] = g_flipVblanks[i].load(std::memory_order_relaxed);
 
+  result.latency_flips = g_latencyFlips.load(std::memory_order_relaxed);
+
+  for (unsigned i = 0; i < 4; ++i)
+    result.latency_us[i] = g_latencyMicros[i].load(std::memory_order_relaxed);
+
+  result.latency_max_us = g_latencyMaxMicros.exchange(0, std::memory_order_relaxed);
+
   const auto* device = g_frameDevice.load(std::memory_order_acquire);
 
   if (device)
@@ -438,7 +471,7 @@ void Device::flip() {
 
   check(sceGxmPadHeartbeat(&m_display[back], m_sync[back]), "display heartbeat");
   razor_frame();
-  const DisplayData display{m_displayData[back], m_presentGameUs};
+  const DisplayData display{m_displayData[back], m_presentGameUs, m_presentInputUs, m_presentPublishedUs, m_presentInputUs ? steady_us() : 0};
   g_displayQueued.fetch_add(1, std::memory_order_release);
   check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[back], &display), "queue display");
   m_front = back;

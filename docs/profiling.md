@@ -24,6 +24,7 @@ harness records as `[TTY0]` lines in `RUN/console.txt`.
 | `MH3 native work: render waited for packets` | time the render thread waited for the game thread |
 | `MH3 native work: render CPU` | the render thread's scheduled CPU, thread ID, core |
 | `MH3 native work: displayed ... backlog ... callback wait` | completed display flips, queued display entries, pending GXM scenes, display errors and the core-0 display callback's wait |
+| `MH3 native work: latency input to flip` | development, Vita: per flipped frame, the time from the frame's packet begin (just before the logic reads the input) to its flip, average and largest, and its parts: the game thread (to the packet's publication), the render thread's queue and replay (to the present), the GPU and earlier queued flips (to the display callback) and the VBlank wait |
 | `MH3 frame split:` | the game frame timed as logic (input, scene update, tasks, timers) and draw (DrawScene, fonts, fade, HUD, movie) |
 | `MH3 draw split:`, `MH3 scene split:` | the draw pass by family (traverse, model, effect, ..., the 2D layers and UI sprites around the scene) and DrawScene's setup, buckets and post effects |
 | `MH3 packet snapshots:` | records per frame and state snapshots captured/stored per component |

@@ -22,11 +22,16 @@ const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
 
 // Read on the graphics owner. Callback retirement releases display-queue
 // bookkeeping; presented counts successful VBlank flips (SetFrameBuf + Wait).
-// Pacing, for flips whose frame carries a game time (set_present_game_time):
+// Pacing, for flips whose frame carries a game time (set_present_timing):
 // paced_flips counts them, pacing_error_us adds |flip interval - game time the
 // frame advanced| over them, pacing_error_max_us is the largest since the
 // previous call, and flip_vblanks counts flip intervals of 1, 2, 3 and 4 or
-// more VBlanks.
+// more VBlanks. Latency, for flips whose frame carries its input time:
+// latency_us adds, per flip, the time from reading the input to the packet's
+// publication (the game thread), to the present (the render thread's queue
+// and replay), to the display callback (the GPU, and earlier flips still
+// queued) and to the flip (VBlank), and latency_max_us is the largest
+// input-to-flip time since the last call.
 struct DisplayStatistics {
   uint32_t queued = 0, retired = 0, presented = 0, failures = 0;
   uint32_t backlog = 0, pending_scenes = 0;
@@ -34,6 +39,8 @@ struct DisplayStatistics {
   uint64_t paced_flips = 0, pacing_error_us = 0;
   uint32_t pacing_error_max_us = 0;
   uint64_t flip_vblanks[4]{};
+  uint64_t latency_flips = 0, latency_us[4]{};
+  uint32_t latency_max_us = 0;
 };
 
 DisplayStatistics display_statistics() noexcept;
@@ -75,8 +82,14 @@ public:
   void begin_display();
   void flip();
 
-  // Game time (microseconds, 0 = none) of the frame the next flip() shows.
-  void set_present_game_time(uint64_t us) noexcept { m_presentGameUs = us; }
+  // Game time, input and publication time (microseconds, 0 = none) of the
+  // frame the next flip() shows.
+  void set_present_timing(uint64_t gameUs, uint64_t inputUs, uint64_t publishedUs) noexcept {
+    m_presentGameUs = gameUs;
+    m_presentInputUs = inputUs;
+    m_presentPublishedUs = publishedUs;
+  }
+
   const void* display_pixels() const noexcept { return m_displayData[m_frames.slot()]; }
   static constexpr uint32_t Width = 960, Height = 544, Stride = 960;
 
@@ -98,7 +111,7 @@ private:
   SceGxmColorSurface m_display[aurora::GpuFrameRing::BufferCount]{};
   SceGxmSyncObject* m_sync[aurora::GpuFrameRing::BufferCount]{};
   unsigned m_front = aurora::GpuFrameRing::BufferCount - 1;
-  uint64_t m_presentGameUs = 0;
+  uint64_t m_presentGameUs = 0, m_presentInputUs = 0, m_presentPublishedUs = 0;
 };
 
 // Reflection supplies the vertex-ID / instance-ID stream register indices.

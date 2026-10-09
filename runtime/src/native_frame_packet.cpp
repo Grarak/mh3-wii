@@ -100,6 +100,7 @@ struct Packet {
     size_t vertexCursor = 0, indexCursor = 0;
 #ifdef MH3_DEVELOPMENT
     uint64_t publishedNs = 0; // RenderMonotonicNs at publication
+    uint64_t inputNs = 0;     // RenderMonotonicNs at the begin, just before the logic reads the input
     uint64_t gameUs = 0;      // game time of the frame (GameStep::Elapsed), for pacing statistics
 #endif
     void Reset(uint64_t next, bool admitted) {
@@ -865,7 +866,7 @@ void Execute(const Packet& p) {
         renderSplitPackets.fetch_add(renderSplit, std::memory_order_relaxed);
 #endif
 #ifdef MH3_DEVELOPMENT
-        aurora::gl::set_present_game_time(p.gameUs);
+        aurora::gl::set_present_timing({p.gameUs, p.inputNs / 1000, p.publishedNs / 1000});
 #endif
         aurora_end_native_frame();
     }
@@ -1378,6 +1379,7 @@ void BeginNativeFramePacket(bool render) {
     p.Reset(++sequence, render);
 #ifdef MH3_DEVELOPMENT
     p.gameUs = uint64_t(GameStep::Elapsed() * (1e6 / 30.0));
+    p.inputNs = RenderMonotonicNs();
 #endif
     recording = &p;
 }

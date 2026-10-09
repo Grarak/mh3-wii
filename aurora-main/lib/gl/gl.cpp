@@ -1381,7 +1381,7 @@ void clear_depth(float depth) noexcept {
 }
 
 void set_depth_liveness(GLuint, bool, bool) noexcept {}
-void set_present_game_time(uint64_t) noexcept {}
+void set_present_timing(const PresentTiming&) noexcept {}
 void clear_depth_full_target(float depth) noexcept {
   if (!aurora::native_frame_drawing_allowed())
     return;

@@ -637,6 +637,14 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      static_cast<unsigned long long>(display.flip_vblanks[1] - previousDisplay.flip_vblanks[1]),
                      static_cast<unsigned long long>(display.flip_vblanks[2] - previousDisplay.flip_vblanks[2]),
                      static_cast<unsigned long long>(display.flip_vblanks[3] - previousDisplay.flip_vblanks[3]));
+
+    // Latency: input read to flip, and its parts.
+    if (const uint64_t flips = display.latency_flips - previousDisplay.latency_flips) {
+        const auto ms = [&](unsigned part) { return (display.latency_us[part] - previousDisplay.latency_us[part]) / (1000.0 * double(flips)); };
+        std::fprintf(stderr, "MH3 native work: latency input to flip %.2f ms avg/%.2f max over %llu flips: game %.2f, render queue+replay %.2f, GPU+display queue %.2f, VBlank %.2f\n",
+                     ms(0) + ms(1) + ms(2) + ms(3), display.latency_max_us / 1000.0, static_cast<unsigned long long>(flips), ms(0), ms(1), ms(2), ms(3));
+    }
+
     previousDisplay = display;
     const auto residency = aurora::gxm::residency_statistics();
     std::fprintf(stderr,

@@ -1458,8 +1458,8 @@ void set_depth_liveness(GLuint depth, bool reads, bool readsAfterScene) noexcept
   });
 }
 
-void set_present_game_time(uint64_t us) noexcept {
-  guarded([&] { renderer().device.set_present_game_time(us); });
+void set_present_timing(const PresentTiming& timing) noexcept {
+  guarded([&] { renderer().device.set_present_timing(timing.game_us, timing.input_us, timing.published_us); });
 }
 
 void clear_depth_full_target(float depth) noexcept {

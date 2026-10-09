@@ -353,9 +353,14 @@ void clear_depth_full_target(float depth) noexcept;
 // that nothing reads; GLES ignores it. depth 0 forgets the hint.
 void set_depth_liveness(GLuint depth, bool reads, bool readsAfterScene) noexcept;
 
-// Game time in microseconds (0 = none) of the frame the next present shows,
-// for GXM's pacing statistics; GLES ignores it.
-void set_present_game_time(uint64_t us) noexcept;
+// The frame the next present shows: its game time, and when its input was
+// read and its packet published (steady clock), in microseconds (0 = none),
+// for GXM's pacing and latency statistics; GLES ignores it.
+struct PresentTiming {
+  uint64_t game_us = 0, input_us = 0, published_us = 0;
+};
+
+void set_present_timing(const PresentTiming& timing) noexcept;
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
 
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted
