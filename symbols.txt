@@ -1237,6 +1237,13 @@
 8005ac3c DrawBetaTexture
 8005af74 BetaTextureCoordinates
 8005af80 DebugDrawSetup
+8005b83c FontTextColumns
+8005bb58 FontPutGlyph
+8005bda0 FontUtf8Next
+8005bf84 FontGlyphIndex
+8005bfcc FontGlyphColumns
+8005c010 FontGlyphNarrow
+8005c040 FontPutsText
 8005c174 FontFlush
 8005c564 FontTextureCoordinates
 80069a2c ModelTextureReplace
