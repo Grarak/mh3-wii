@@ -261,12 +261,18 @@ float CpuFloatCall(void *context, uint32_t fn, const uint32_t *args, unsigned co
     return float(cpu->fpr[1].d);
 }
 
-void CpuCopy(void *, uint32_t destination, uint32_t source, uint32_t bytes) {
-    std::memcpy(Memory::GetPointer(destination, bytes), Memory::GetPointer(source, bytes), bytes);
+// Resource copies and fills as the original makes them: through memcpy
+// (0x80004000) and memset (0x80004350), whose native ports record the copied
+// bytes' source and retire what a fill overwrites (model_catalog.cpp,
+// native_resource_lifetime.cpp). A host copy lost that: equipping other
+// armour moved its part model into the hunter's part buffer with no source,
+// and its draw stopped ("Model has no complete native loader provenance").
+void CpuCopy(void *context, uint32_t destination, uint32_t source, uint32_t bytes) {
+    GuestCall{static_cast<CpuContext *>(context)}.Call<0x80004000>({destination, source, bytes});
 }
 
-void CpuZero(void *, uint32_t destination, uint32_t bytes) {
-    std::memset(Memory::GetPointer(destination, bytes), 0, bytes);
+void CpuZero(void *context, uint32_t destination, uint32_t bytes) {
+    GuestCall{static_cast<CpuContext *>(context)}.Call<0x80004350>({destination, 0, bytes});
 }
 
 void CpuStringCopy(void *, uint32_t destination, uint32_t source) {
@@ -278,7 +284,8 @@ void CpuStringCopy(void *, uint32_t destination, uint32_t source) {
     if (length == 320)
         MH3_THROW(std::runtime_error("Equipment resource name exceeds authored scratch buffer"));
 
-    CpuCopy(nullptr, destination, source, length + 1);
+    // Into the caller's stack scratch, as strcpy: no resource bytes.
+    std::memcpy(Memory::GetPointer(destination, length + 1), Memory::GetPointer(source, length + 1), length + 1);
 }
 
 int CpuStringCompare(void *, uint32_t first, uint32_t second) {
