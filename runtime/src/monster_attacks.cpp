@@ -1,5 +1,5 @@
 // Monster attacks with counts per call, RMHP08. C reconstructions (decompiled
-// with Ghidra) of seven enemy actions that count their calls at +0x20 while a
+// with Ghidra) of eight enemy actions that count their calls at +0x20 while a
 // motion is before or past a frame, which the enemy update calls once per
 // step:
 //
@@ -16,6 +16,8 @@
 //                           docs/monster-control.md found it)
 //   0x8014CF5C              their flying charge (7.22-7.29): its give-up,
 //                           braking and landing counted in calls
+//   0x8038A81C              Uragaan's roll: its curves turned and its holds
+//                           counted once a call
 //
 // At 120 steps a second the sounds and sparks came four times as often and
 // the blend took a quarter of the time. The counts take the step's whole
@@ -721,6 +723,341 @@ void Em001FlyChargePort(CpuContext* ctx) {
     }
 }
 
+// kind 9 0x8038A81C (r4 the roll 0-23, r5 how it ends): Uragaan's roll.
+// State 0 sets up the way (0x80134068: 500, 0, -300 or -500 by roll, -800
+// for 23, less 1500 when r5 is 1; rolls 10-22 follow the route table
+// 0x805F04A4 through 0x801262DC); state 1 curls up (turning by 2.15 degrees
+// times 0.5 or 0.83 times the motion's advance for rolls 2-5, TurnWhile for
+// 8-9) and from frame 164 starts rolling (+0x318 23.6, +0x324 4 times the
+// motion's rate and its size); state 2 rolls (0x8013562C, the speed at most
+// 150 or 95), its magma every 4 ticks from frame 168, curving 0x5B or 0x98
+// a tick (2-5), or by 6 or 4 degrees times the speed's share of its limit a
+// tick until a three-quarter, half or two-third turn is done (6-9, with holds
+// of 15 and 5 ticks), or along the route (10-22); states 3-5 stop. The
+// original turned by its amounts and counted its holds once a call, so at 60
+// or 120 steps a second the roll curved two or four times as fast: here the
+// turns take the step's share and the holds the step's ticks (its moves and
+// its tests of the step counter already were).
+void Em009RollPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x50);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x08];
+    const uint8_t roll = uint8_t(frame.Arg(4)), ending = uint8_t(frame.Arg(5));
+    const uint32_t route = uint32_t(roll) - 10; // rolls 10-22: 0-12
+    const float s = float(GameStep::Scale());
+    const int32_t ticks = int32_t(GameStep::Ticks());
+    constexpr uint32_t kRouteTable = 0x805F04A4, kRate = 0x80, kAcc = 0x328, kYaw = kAngles + 4;
+    float limit = 95.0f;
+    bool done = false;
+
+    const auto yaw = [&](int32_t delta) { Memory::Write32(work + kYaw, Memory::Read32(work + kYaw) + uint32_t(delta)); };
+    const auto rate = [&] { return Memory::ReadFloat32(work + kRate); };
+
+    // The original's per-call turn, 0.5 + 65536 * 2.1538 * (k * rate) / 360
+    // in whole units, over the step's advance (rate * s) instead of the rate.
+    const auto curl = [&](float k) {
+        const float advance = rate() * s;
+        return int32_t(int32_t(0.5f + 65536.0f * (2.1538463f * (k * advance)) / 360.0f) & 0xFFFF);
+    };
+
+    // The per-call turn by the speed's share of the limit, k degrees.
+    const auto spin = [&](float k) {
+        const float share = Memory::ReadFloat32(work + 0x318) / limit;
+        return int32_t(int32_t(0.5f + (65536.0f * (k * share) / 360.0f) * s) & 0xFFFF);
+    };
+
+    const auto nextNode = [&] {
+        const uint8_t node = Memory::Read8(kRouteTable + route * 12 + Memory::Read8(work + 6));
+        return node;
+    };
+
+    const auto toNode = [&](uint8_t node) {
+        game.Call<0x801262DC>({work, uint32_t((Memory::Read8(work + 0x1E1) & 0xF) << 8 | node) & 0xFFFF, work + 0x36C});
+        game.Call<0x80134068>({work, 0x10}, {0.0});
+        Memory::Write8(work + 6, uint8_t(Memory::Read8(work + 6) + 1));
+    };
+
+    const auto magma = [&](uint32_t joint, uint32_t effect, uint32_t spawn, float z) {
+        if (game.Call<0x80130180>({work}) == 1) { // em_magma_check
+            if (joint)
+                game.Call<JointPosition>({work, joint, at});
+            else
+                game.Call<0x80041EA4>({at, work + 0x188});
+
+            Memory::WriteFloat32(at + 4, Memory::ReadFloat32(work + 0x214));
+            game.Call<0x801049B0>({effect, at, work + kAngles, Memory::Read8(work + 0x1E1)}, {1.0}); // eft009_set_pos
+        } else {
+            game.Call<Em::Vec3Set>({at}, {0.0, 0.0, double(z)});
+            game.Call<Em::Spawn>({work, spawn, joint ? joint : 1, at}, {1.0});
+
+            if (!joint)
+                game.Call<Em::Spawn>({work, 0x82, 1, at}, {1.0});
+        }
+    };
+
+    game.Call<0x80043F0C>({at});
+    game.Call<0x8012CF84>({work});
+
+    if (route <= 0xC)
+        game.Call<0x80131ED8>({work});
+
+    switch (em.State()) {
+    case 0: {
+        em.State(1);
+        Memory::Write8(work + 6, 0);
+        em.Count(0);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0x17, 6, 0);
+        game.Call<SetMotionSpeed>({work}, {1.3f});
+        game.Call<RoarVoice>({work, 0, 0x15, 8});
+        game.Call<0x80130D40>({work, uint32_t(-20)});
+        const float extra = ending == 1 ? -1500.0f : 0.0f;
+        const auto way = [&](float distance) { game.Call<0x80134068>({work, 0x10}, {double(distance)}); };
+
+        if (roll < 10) {
+            if (roll >= 8)
+                way(0.0f);
+            else if (roll >= 6)
+                way(500.0f);
+            else if (roll >= 2)
+                way(-300.0f + extra);
+            else
+                way(-500.0f + extra);
+        } else if (roll == 23)
+            way(-800.0f + extra);
+        else if (roll > 23)
+            way(-500.0f + extra);
+        else {
+            game.Call<0x80131DE8>({work});
+            game.Call<0x80131E58>({work});
+            Memory::Write16(work + 0x338, 0);
+            toNode(nextNode());
+        }
+
+        break;
+    }
+    case 1:
+        if (roll == 6 || roll == 7) {
+            if (em.At(30.0f, 1))
+                game.Call<SetMotionSpeed>({work}, {0.8f});
+
+            if (em.At(92.0f, 1))
+                game.Call<SetMotionSpeed>({work}, {1.3f});
+        }
+
+        switch (roll) {
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+            if (em.At(90.0f, 1)) {
+                const int32_t turn = curl(roll < 4 ? 0.5f : 0.8333333f);
+                yaw(roll & 1 ? -turn : turn);
+            }
+
+            game.Call<TurnStep>({work, 0, 0});
+            break;
+        case 8:
+        case 9:
+            game.Call<TurnWhile>({work, roll == 8 ? uint32_t(-0x1555) : 0x1555u}, {90.0, 110.0});
+            game.Call<TurnStep>({work, 0, 0});
+            break;
+        default:
+            if (route <= 0xC) {
+                game.Call<0x80131DE8>({work});
+                game.Call<0x80131E58>({work});
+                game.Call<TurnStep>({work, 0, em.At(90.0f, 1) ? 0x200u : 0u});
+            } else
+                game.Call<TurnStep>({work, 0, em.At(90.0f, 1) ? 0x100u : 0u});
+
+            break;
+        }
+
+        if (em.At(120.0f))
+            game.Call<RoarVoice>({work, 0, 6, 27});
+
+        if (em.At(164.0f, 1)) {
+            em.NextState();
+
+            for (uint32_t i = 0; i < 6; ++i)
+                Memory::WriteFloat32(work + 0x310 + 4 * i, 0.0f);
+
+            game.Call<ChangeScale>({work});
+            Memory::WriteFloat32(work + 0x318, 23.6f * rate() * game.F1());
+            game.Call<ChangeScale>({work});
+            Memory::WriteFloat32(work + 0x324, 4.0f * rate() * game.F1());
+            game.Call<RoarVoice>({work, 0, 24, 27});
+        }
+
+        break;
+    case 2: {
+        if (route <= 13 || roll <= 5)
+            limit = 150.0f;
+        else if (roll - 6u <= 3)
+            limit = 95.0f;
+
+        game.Call<0x8013562C>({work, work + kAngles});
+
+        if (Memory::ReadFloat32(work + 0x318) > limit)
+            Memory::WriteFloat32(work + 0x318, limit);
+        else
+            game.Call<SetMotionSpeed>({work}, {Memory::ReadFloat32(work + 0x7C4) + 0.01f * rate()});
+
+        if (em.At(168.0f, 1) && StepCounter::Every(4))
+            magma(0, 0x8B, 0x44, 150.0f);
+
+        const auto ends = [&] { return em.At(166.0f, 1); };
+
+        switch (roll) {
+        case 0:
+            game.Call<0x80133CB4>({work, 0x100});
+            game.Call<TurnStep>({work, 0, 0});
+            break;
+        case 2:
+        case 3:
+        case 4:
+        case 5: {
+            const int32_t turn = GameStep::Share(roll < 4 ? 0x5B : 0x98);
+            yaw(roll & 1 ? -turn : turn);
+            done = game.Call<TurnStep>({work, 0, 0}) == 1 && ends();
+            break;
+        }
+        case 6:
+        case 7:
+            if (Memory::Read8(work + 6) == 0) {
+                if (game.Call<TurnStep>({work, 0, 0}) == 1) {
+                    Memory::Write8(work + 6, 1);
+                    Memory::Write32(work + kAcc, 0);
+                }
+            } else if (Memory::Read8(work + 6) == 1) {
+                em.Count(em.Count() + ticks);
+                const int32_t turn = spin(6.0f);
+                yaw(roll == 6 ? turn : -turn);
+                Memory::Write32(work + kAcc, Memory::Read32(work + kAcc) + uint32_t(turn));
+
+                if (Memory::Read32(work + kAcc) >= 0xC000) {
+                    Memory::Write8(work + 6, 2);
+                    em.Count(0);
+                }
+            } else if (Memory::Read8(work + 6) == 2) {
+                em.Count(em.Count() + ticks);
+                done = em.Count() >= 15 && ends();
+            }
+
+            break;
+        case 8:
+        case 9: {
+            const uint8_t sub = Memory::Read8(work + 6);
+
+            if (sub == 0) {
+                em.Count(em.Count() + ticks);
+
+                if (em.Count() >= 0) {
+                    Memory::Write8(work + 6, 1);
+                    em.Count(0);
+                    Memory::Write32(work + kAcc, 0);
+                }
+            } else if (sub == 1 || sub == 2) {
+                em.Count(em.Count() + ticks);
+                const int32_t turn = spin(sub == 1 ? 4.0f : 6.0f);
+                yaw(roll == 8 ? turn : -turn);
+                Memory::Write32(work + kAcc, Memory::Read32(work + kAcc) + uint32_t(turn));
+
+                if (Memory::Read32(work + kAcc) >= (sub == 1 ? 0x8000u : 0xAAABu)) {
+                    Memory::Write8(work + 6, uint8_t(sub + 1));
+                    em.Count(0);
+
+                    if (sub == 1)
+                        Memory::Write32(work + kAcc, 0);
+                }
+            } else if (sub == 3) {
+                em.Count(em.Count() + ticks);
+                done = em.Count() >= 5 && ends();
+            }
+
+            break;
+        }
+        default:
+            if (route <= 0xC) {
+                game.Call<0x80131DE8>({work});
+                game.Call<0x80131E58>({work});
+
+                if (game.Call<TurnStep>({work, 0, 0x400}) == 1) {
+                    if (const uint8_t node = nextNode(); node == 0xFF)
+                        done = true;
+                    else
+                        toNode(node);
+                }
+            } else
+                done = game.Call<TurnStep>({work, 0, 0x80}) == 1 && ends();
+
+            break;
+        }
+
+        if (done) {
+            if (ending == 0) {
+                em.State(3);
+                em.SetMotion(0x18, 0, 0);
+                game.Call<RoarVoice>({work, 1, 14, 24});
+            } else {
+                em.State(4);
+                em.SetMotion(0x19, 0, 0);
+                game.Call<RoarVoice>({work, 0, 23, 24});
+            }
+
+            Memory::WriteFloat32(work + 0x318, Memory::ReadFloat32(work + 0x318) * 0.1f);
+            Memory::WriteFloat32(work + 0x31C, 0.0f);
+            Memory::WriteFloat32(work + 0x320, 0.0f);
+            Memory::WriteFloat32(work + 0x324, -2.0f);
+        }
+
+        break;
+    }
+    case 3:
+        if (em.At(40.0f, 3, 52.0f) && StepCounter::Every(2))
+            magma(0x23, 0x8C, 0x45, 0.0f);
+
+        if (em.At(72.0f, 3, 84.0f) && StepCounter::Every(2))
+            magma(0x23, 0x8C, 0x45, 0.0f);
+
+        if (em.At(24.0f))
+            game.Call<RoarVoice>({work, 0, 0x12, 0x10});
+
+        game.Call<0x8013562C>({work, work + kAngles});
+
+        if (Memory::ReadFloat32(work + 0x318) < 0.0f)
+            Memory::WriteFloat32(work + 0x318, 0.0f);
+
+        if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    case 4:
+        if (em.At(108.0f))
+            game.Call<0x80129788>({work, 0});
+
+        game.Call<0x8013562C>({work, work + kAngles});
+
+        if (Memory::ReadFloat32(work + 0x318) < 0.0f)
+            Memory::WriteFloat32(work + 0x318, 0.0f);
+
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0x71, 0, 0);
+        }
+
+        break;
+    case 5:
+        if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    default:
+        break;
+    }
+}
+
 } // namespace
 
 extern "C" void func_8014BBA4(CpuContext* ctx);
@@ -764,3 +1101,9 @@ extern "C" void MH3_Em001FlyCharge(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em001FlyCharge", func_8014CF5C, Em001FlyChargePort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8014CF5C, MH3_Em001FlyCharge, "Em001FlyCharge");
+
+extern "C" void func_8038A81C(CpuContext* ctx);
+extern "C" void MH3_Em009Roll(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em009Roll", func_8038A81C, Em009RollPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8038A81C, MH3_Em009Roll, "Em009Roll");

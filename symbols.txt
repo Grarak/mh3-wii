@@ -1012,6 +1012,8 @@
 8015ac34 Em003Actions
 8014de50 Em001Dive
 8014cf5c Em001FlyCharge
+8038a81c Em009Roll
+8038ba98 Em009Attacks
 8014e410 Em001Attacks
 80151128 Em001Actions
 801db788 Em007Actions
