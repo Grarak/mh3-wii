@@ -1584,6 +1584,13 @@
 80052298 VecLerp
 802b8244 CameraCollide
 802b72bc CameraLimit
+802b8ed0 BindCamera
+802b988c ScopeCamera
+802b9c68 AimCamera
+802ba400 ZoneCamera
+802baf70 ZoneCameraBlend
+802bac0c ZoneAngleBlend
+802bae68 ZonePointBlend
 # Player aiming (player_aim.cpp), from the gunner's aiming actions.
 8027a5e0 PlAimInput
 8027a064 PlAimPitch64F

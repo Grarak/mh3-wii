@@ -33,6 +33,7 @@
 #include "native_frame_packet.h"
 #include <chrono>
 #include <cstdio>
+#include <iterator>
 #endif
 
 #include <algorithm>
@@ -72,7 +73,7 @@ enum : uint32_t {
     CameraCollide = 0x802B8244,    // (camera, PLW)
     CameraPush = 0x802B8940,       // (camera), when +0xA6
     VecAddInPlace = 0x80073FCC,    // (a, b): a += b
-    CameraShake = 0x802B8ED0,      // (camera, PLW)
+    BindCamera = 0x802B8ED0,       // (camera, PLW): a monster's hold of the player (below)
     CameraLimit = 0x802B72BC,      // (camera, camera, PLW)
     ResetCurve = 0x802BB0B0,       // (r3 s16 steps left; f1 rate, f2) -> f1 old weight
     Lerp = 0x80052298,             // (out, a, b; f1 t): a*t + b*(1-t)
@@ -269,6 +270,93 @@ void ReportMonsters(GuestCall& game) {
                          F(m + kMovePosition + 8));
     }
 }
+
+// MH3_TRACE=camera-blends: how long each camera blend ran, in ticks of game
+// time, read a step late at the next field camera update, and on how many of
+// its steps the values it blends moved (a blend that moves only on ticks
+// steps at 30 Hz): the field camera's reset (+0x42; the eye), the collision
+// camera's release blends (+0x100 height, +0x101 sideways; their offsets),
+// the aim view's blend (+0x234 steps left; its eye +0x1F0), the zone camera's
+// blend (the zone +0x42; the region's kind, +1; the zone's eye +0x00 and
+// distance and angles +0x60) and the scope zoom (+0x1DC, +0x1E0 changing).
+constexpr uint32_t kZone = 0x348; // the zone camera (0x802BA400)
+
+void ReportBlends(uint32_t cam) {
+    static const bool enabled = TraceOptions().Has("camera-blends");
+
+    if (!enabled)
+        return;
+
+    struct Words {
+        uint32_t offset, count;
+    };
+
+    struct Blend {
+        const char* name;
+        Words watched[2];
+        double began;
+        uint32_t steps, moved, last;
+    };
+
+    static Blend blends[] = {
+        {"reset", {{kEye, 3}, {0, 0}}, -1, 0, 0, 0},
+        {"collision height", {{0xC8, 1}, {0xE0, 1}}, -1, 0, 0, 0},
+        {"collision sideways", {{0xC4, 3}, {0xDC, 3}}, -1, 0, 0, 0},
+        {"aim", {{0x1F0, 3}, {0, 0}}, -1, 0, 0, 0},
+        {"zone", {{kZone, 3}, {kZone + 0x60, 4}}, -1, 0, 0, 0},
+        {"zoom", {{0x1DC, 2}, {0, 0}}, -1, 0, 0, 0},
+    };
+
+    static float zoom[2], zoomFrom[2];
+    const float zoomNow[2] = {F(cam + 0x1DC), F(cam + 0x1E0)};
+    const uint32_t region = R32(cam + kZone + 0x58);
+    const bool active[] = {
+        Memory::Read8(cam + kReset) != 0,
+        Memory::Read8(cam + 0x100) != 0,
+        Memory::Read8(cam + 0x101) != 0,
+        int16_t(Memory::Read16(cam + 0x234)) > 0,
+        Memory::Read8(cam + kZone + 0x42) != 0,
+        zoomNow[0] != zoom[0] || zoomNow[1] != zoom[1],
+    };
+
+    for (size_t i = 0; i < std::size(blends); ++i) {
+        Blend& blend = blends[i];
+        uint32_t hash = 0;
+
+        for (const Words& words : blend.watched)
+            for (uint32_t k = 0; k < words.count; ++k)
+                hash = hash * 31 + R32(cam + words.offset + 4 * k);
+
+        if (active[i] && blend.began < 0) {
+            blend.began = GameStep::Elapsed();
+            blend.steps = blend.moved = 0;
+
+            if (i == 5) {
+                zoomFrom[0] = zoom[0];
+                zoomFrom[1] = zoom[1];
+            }
+        } else if (active[i]) {
+            ++blend.steps;
+            blend.moved += hash != blend.last;
+        } else if (blend.began >= 0) {
+            const double ticks = GameStep::Elapsed() - blend.began;
+            char what[64] = "";
+
+            if (i == 4)
+                std::snprintf(what, sizeof(what), " (kind %u)", region ? Memory::Read8(region + 1) : 0xFFu);
+            else if (i == 5)
+                std::snprintf(what, sizeof(what), " %.2f %.2f -> %.2f %.2f", zoomFrom[0], zoomFrom[1], zoomNow[0], zoomNow[1]);
+
+            std::fprintf(stderr, "MH3 camera blend: %s%s for %.1f ticks from tick %.1f, moved on %u of %u steps\n", blend.name, what, ticks, blend.began, blend.moved, blend.steps);
+            blend.began = -1;
+        }
+
+        blend.last = hash;
+    }
+
+    zoom[0] = zoomNow[0];
+    zoom[1] = zoomNow[1];
+}
 #endif
 } // namespace
 
@@ -281,6 +369,9 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     const auto act = [&](uint32_t kind, uint32_t action) {
         return game.Call<ActionCheck>({plw, kind, action});
     };
+#ifdef MH3_DEVELOPMENT
+    ReportBlends(cam);
+#endif
 
     if (Memory::Read8(plw) == 0 || (game.Call<GetOnlineMode>() & 0xFF) == 2)
         return;
@@ -561,7 +652,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
 
     game.Call<VecAddInPlace>({cam + kEye, cam + kShakeEye});
     game.Call<VecAddInPlace>({cam + kTarget, cam + kShakeTarget});
-    game.Call<CameraShake>({cam, plw});
+    game.Call<BindCamera>({cam, plw});
     game.Call<CameraLimit>({cam, cam, plw});
 
     if (game.Call<CameraEvent>({plw, 3}) == 1) {
@@ -634,6 +725,181 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
 #endif
     game.Call<CameraSet>({0, cam + kEye, cam + kTarget}, {F(cam + kFovA), F(cam + kFovB)});
 }
+
+// 0x802B8ED0 BindCamera (camera, PLW), each step after the field camera
+// update: while a monster holds the player (0x8012D4FC; kinds +3 1, 2, 4 and
+// 7) it moves the eye and target along the hold's path. A count of steps
+// since the hold began (+0x114) picks the time in keyed paths (kinds 4 and 7,
+// two phases at +0x144) or drives eases of an orbit (kinds 1 and 2: the yaw
+// +0x11A and pitch +0x11C by 1/n of the gap a step, the offset +0x138). All
+// of it counted steps, so at 400 fps the path ran 13 times as fast. Here the
+// original runs once per tick of the step. At a step without a tick it runs
+// for the eye and target it places, and its state (+0x114..+0x145) is put
+// back after, so the path moves on a tick at a time, as on the Wii.
+constexpr uint32_t kBindSteps = 0x114, kBindStateEnd = 0x146;
+
+extern "C" void func_802B8ED0(CpuContext* ctx);
+
+static void BindCameraPort(CpuContext* ctx) {
+    const uint32_t cam = ctx->gpr[3], plw = ctx->gpr[4], ticks = GameStep::Ticks();
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=bind-camera: each hold's length in ticks of game time and
+    // the count it reached, and each change of its state (+0x118), phase
+    // (+0x144) and next-phase signal (+0x145, set by 0x802B95B0).
+    static const bool traced = TraceOptions().Has("bind-camera");
+    static double began = -1;
+    static int32_t reached = 0;
+    const int32_t before = int32_t(Memory::Read32(cam + kBindSteps));
+    const uint32_t flags = Memory::Read8(cam + 0x118) << 16 | Memory::Read8(cam + 0x144) << 8 | Memory::Read8(cam + 0x145);
+#endif
+
+    if (ticks == 0) {
+        uint8_t state[kBindStateEnd - kBindSteps];
+
+        for (uint32_t i = 0; i < sizeof(state); ++i)
+            state[i] = Memory::Read8(cam + kBindSteps + i);
+
+        func_802B8ED0(ctx);
+
+        for (uint32_t i = 0; i < sizeof(state); ++i)
+            Memory::Write8(cam + kBindSteps + i, state[i]);
+    }
+
+    for (uint32_t i = 0; i < ticks; ++i) {
+        ctx->gpr[3] = cam;
+        ctx->gpr[4] = plw;
+        func_802B8ED0(ctx);
+    }
+
+#ifdef MH3_DEVELOPMENT
+    if (traced) {
+        const int32_t after = int32_t(Memory::Read32(cam + kBindSteps));
+        const uint32_t now = Memory::Read8(cam + 0x118) << 16 | Memory::Read8(cam + 0x144) << 8 | Memory::Read8(cam + 0x145);
+
+        if (now != flags)
+            std::fprintf(stderr, "MH3 bind camera: tick %.2f (%u ticks) state %d -> %d, phase %u -> %u, signal %u -> %u, count %d -> %d\n", GameStep::Elapsed(), ticks, int8_t(flags >> 16),
+                         int8_t(now >> 16), (flags >> 8) & 0xFF, (now >> 8) & 0xFF, flags & 0xFF, now & 0xFF, before, after);
+
+        if (before <= 0 && after > 0)
+            began = GameStep::Elapsed() - 1;
+
+        reached = std::max(reached, after);
+
+        if (before > 0 && after == 0 && began >= 0) {
+            std::fprintf(stderr, "MH3 bind camera: hold of %.1f ticks, count %d\n", GameStep::Elapsed() - began, reached);
+            began = -1;
+            reached = 0;
+        }
+    }
+#endif
+}
+
+extern "C" void MH3_BindCamera(CpuContext* ctx) {
+    PortCheck::Call(ctx, "BindCamera", func_802B8ED0, BindCameraPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802B8ED0, MH3_BindCamera, "BindCamera");
+
+// 0x802BB0B0 CameraResetCurve (r3 steps left; f1 1 / length, f2 power) -> f1,
+// the share of the old pose a camera blend keeps: with x = left / length,
+// (2x)^p / 2 below 1/2 and 1 - (2(1 - x))^p / 2 above, an ease in and out.
+// The collision camera's release blends (CameraCollide 0x802B8244), the
+// offset blend (0x802B9C68) and the zone camera's angle and point blends
+// (0x802BAC0C, 0x802BAE68) count their steps left down right after the call,
+// once a tick (tick sites), so the weight held between ticks and at a high
+// frame rate those blends moved the camera 30 times a second. For these calls
+// the count is read at the step's game time: the step's n ticks would have
+// used left .. left - n + 1, and a step ending f of a tick past its last tick
+// is f of the way on to the next, kept between the blend's first count and 0.
+// Other calls (the field camera's reset, FieldCameraUpdatePort) keep it.
+struct TimedCurve {
+    uint32_t lr;
+    float first; // the blend's first count, less its length
+};
+
+constexpr TimedCurve kTimedCurves[] = {
+    {0x802B884C, 0.0f},  // CameraCollide: release blends (u8 +0x102, +0x103)
+    {0x802B9F4C, 0.0f},  // offset blend (s16 +0x234)
+    {0x802BACE4, -1.0f}, // zone camera, kind 0: distance and angles (s16 zone +0x44)
+    {0x802BAF18, -1.0f}, // zone camera, kind 1: the eye's point
+};
+
+static void CameraResetCurvePort(CpuContext* ctx) {
+    const float rate = float(ctx->fpr[1].d), power = float(ctx->fpr[2].d);
+    const bool stock = GameStep::Ticks() == 1 && GameStep::Fraction() == 0.0;
+    float left = float(int32_t(ctx->gpr[3]));
+
+    for (const TimedCurve& curve : kTimedCurves) {
+        if (curve.lr != ctx->lr)
+            continue;
+
+        if (!stock && rate > 0.0f) {
+            const float first = std::max(std::nearbyint(1.0f / rate) + curve.first, 0.0f);
+            left = std::clamp(left + 1.0f - float(GameStep::Ticks()) - float(GameStep::Fraction()), 0.0f, first);
+        }
+
+        break;
+    }
+
+    const float x = left * rate;
+    float keep;
+
+    if (x < 0.5f) {
+        const float d = 2.0f * x;
+        keep = 0.5f * float(std::pow(double(d), double(power)));
+    } else {
+        const float d = 2.0f * (1.0f - x);
+        keep = 1.0f - 0.5f * float(std::pow(double(d), double(power)));
+    }
+
+    ctx->fpr[1].d = double(keep);
+}
+
+extern "C" void func_802BB0B0(CpuContext* ctx);
+extern "C" void MH3_CameraResetCurve(CpuContext* ctx) {
+    if (PortCheck::Enabled("CameraResetCurve")) [[unlikely]]
+        PortCheck::RunPure(ctx, "CameraResetCurve", PortCheck::Returns::Fpr1, func_802BB0B0, CameraResetCurvePort);
+    else
+        CameraResetCurvePort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802BB0B0, MH3_CameraResetCurve, "CameraResetCurve");
+
+// 0x802B9C68 AimCamera (camera), each step after the field camera: the
+// gunner's aim view (the aim pitch PLW +0x64F). While it is on (+0x232, and
+// +0x9E this step) its yaw offset (s16 +0x23E) eases toward +-0x800 (the sign
+// of +0x240) by 6/64 of the gap a step, so at 400 fps it swung 13 times as
+// fast. Here the offset is first moved back so that the original's step lands
+// where a step of s ticks would, with the gap shrunk by (58/64)^s; if the
+// original did not ease it, it is put back. The 9 steps blending the view in
+// (+0x234) are a tick site. Unverified in play: never aimed at a variable
+// step.
+constexpr uint32_t kAimOn = 0x232, kAimWanted = 0x9E, kAimOffset = 0x23E, kAimSide = 0x240;
+
+extern "C" void func_802B9C68(CpuContext* ctx);
+
+static void AimCameraPort(CpuContext* ctx) {
+    const uint32_t cam = ctx->gpr[3];
+    const double s = GameStep::Scale();
+    const int32_t offset = int16_t(Memory::Read16(cam + kAimOffset));
+    const int32_t goal = int16_t(Memory::Read16(cam + kAimSide)) < 0 ? -0x800 : 0x800;
+    const bool on = Memory::Read8(cam + kAimOn) != 0 && Memory::Read8(cam + kAimWanted) != 0;
+    const bool easing = s != 1.0 && on && (goal < 0 ? offset > goal : offset < goal);
+    int32_t from = offset;
+
+    if (easing) {
+        from = std::clamp(goal - int32_t(std::lround((goal - offset) * std::pow(58.0 / 64.0, s) * 64.0 / 58.0)), -0x8000, 0x7FFF);
+        Memory::Write16(cam + kAimOffset, uint16_t(from));
+    }
+
+    func_802B9C68(ctx);
+
+    if (easing && int16_t(Memory::Read16(cam + kAimOffset)) == from)
+        Memory::Write16(cam + kAimOffset, uint16_t(offset));
+}
+
+extern "C" void MH3_AimCamera(CpuContext* ctx) {
+    PortCheck::Call(ctx, "AimCamera", func_802B9C68, AimCameraPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802B9C68, MH3_AimCamera, "AimCamera");
 
 extern "C" void func_802B5CBC(CpuContext* ctx);
 extern "C" void MH3_FieldCameraUpdate(CpuContext* ctx) {

@@ -266,7 +266,7 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_TRACE=[input][,draw-pages[=N]][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles][,loading][,effect-objects]:
+// MH3_TRACE=[input][,draw-pages[=N]][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles][,loading][,effect-objects][,bind-camera][,camera-blends]:
 // the input as the game read it once per tick of game time (frame_pacer.cpp),
 // the guest RAM pages each frame's draw touches against those the next frame's
 // logic writes (draw_pages.cpp: what a draw running beside the next logic step
@@ -279,10 +279,11 @@ inline const DevOptions& ProfileOptions() {
 // (native_resource_lifetime.cpp, model_draw_dispatch.cpp), and every third
 // tick of game time the live particles of each emitter resource
 // (effect_step.cpp), each loading-screen frame's progress counters
-// (load_progress.cpp), and each effect object update callback and kind the
-// first time it runs (field_lists.cpp).
+// (load_progress.cpp), each effect object update callback and kind the
+// first time it runs (field_lists.cpp), each monster hold's camera
+// length and count, and how long each camera blend ran (field_camera.cpp).
 inline const DevOptions& TraceOptions() {
-    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects"});
+    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects", "bind-camera", "camera-blends"});
     return options;
 }
 

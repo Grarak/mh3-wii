@@ -39,9 +39,9 @@
 {0x800DF778u, TickSite::Countdown},
 {0x800DF834u, TickSite::Countdown},
 {0x800DF90Cu, TickSite::Countdown},
-{0x800EB40Cu, TickSite::Countup},            // MHchar colour fade (800EB378): steps (+0x74) against a length (+0x70)
+{0x800EB40Cu, TickSite::Countup},            // stream volume fade (StreamUpdateVolume 800EB378): steps (+0x74) against a length (+0x70)
 {0x800EB490u, TickSite::Countup},
-{0x800EB514u, TickSite::Countup},            // MHchar colour fade: steps (+0xA0) against a length (+0xBC)
+{0x800EB514u, TickSite::Countup},            // stream volume fade: steps (+0xA0) against a length (+0xBC)
 {0x800EB664u, TickSite::Countup},
 {0x800EB7CCu, TickSite::Countup},
 {0x800FB6D8u, TickSite::Countup},            // enemy part (800FB1C4): steps (+0x10)
@@ -167,7 +167,15 @@
 {0x802B6610u, TickSite::EaseDivisor},
 {0x802B7960u, TickSite::Countdown},         // camera climb mode (802B7880, twice a step): steps before the climb view (s16 +0x86)
 {0x802B799Cu, TickSite::Countdown},         // camera climb mode: steps before leaving it
-{0x802BACE8u, TickSite::Countdown},         // camera shake (802BAC0C): steps left (s16 +0x44)
+{0x802B832Cu, TickSite::Countup},           // camera collision (CameraCollide 802B8244): ticks a height correction is held, to the row's limit (s8 +0xA5 while pushed)
+{0x802B8364u, TickSite::Countup},           // camera collision: the same (s8 +0xA2)
+{0x802B8518u, TickSite::Countup},           // camera collision: ticks a sideways correction is held (+0xA5 while pushed)
+{0x802B8578u, TickSite::Countup},           // camera collision: the same (+0xA2)
+{0x802B8850u, TickSite::Countdown},         // camera collision: release blends' steps left (u8 +0x102, +0x103; the curve reads the step's time)
+{0x802B99F0u, TickSite::PerStep},           // scope camera (802B988C): zoom (+0x1DC, +0x1E0) by 1.75 a step
+{0x802B9F50u, TickSite::Countdown},         // camera offset blend (802B9C68): steps left (s16 +0x234)
+{0x802BACE8u, TickSite::Countdown},         // zone camera angle blend (802BAC0C): steps left (s16 zone +0x44)
+{0x802BAF18u, TickSite::Countdown},         // zone camera point blend (802BAE68): steps left (s16 zone +0x44)
 {0x802BCDC8u, TickSite::CountdownPastZero}, // camera script wait (op 0x25): frames left, done below 0
 {0x802BD878u, TickSite::Countdown},         // camera path hold (802BD78C): steps before playing
 {0x802BD8B0u, TickSite::Countup},           // camera path frame (802BD78C)

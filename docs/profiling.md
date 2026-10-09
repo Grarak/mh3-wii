@@ -56,7 +56,11 @@ Stage `RUN/game.elf` (`build/vita/MH3`) and `RUN/game.velf`
 (`build/vita/MH3.velf`) next to `RUN/host0/game/`; the harness checks the
 pair's unwind registration (`scripts/vita-check-unwind.py`) before it starts.
 `--cpu-profile-seconds N` (1–60) starts the collector after the readiness
-count (`--ready-copies`, default 300 frames):
+count (`--ready-copies`, default 300 frames), `--cpu-profile-delay S` seconds
+later; `--cpu-profile-from-launch S` starts it S seconds after the game's
+process starts instead (the launch's LOADP reply, which the collector reads
+the process from; loading the eboot over host0 takes about 5 s), to profile
+the load:
 
 - **Flat** (no `--cpu-registers`): Sony's DTrace sampler at 997 Hz, PC only.
   Use this in Alatreon. The harness asks for no user-stack backtrace
