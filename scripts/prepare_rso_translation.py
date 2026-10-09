@@ -3,6 +3,7 @@
 import hashlib
 import struct
 from link_rso import ROOT, Rso, static_exports, u32
+from tick_sites_filter import write_filtered
 
 MODULES = (
     ('hbm', 0x808196E0, '120d69080b793e636045b29a741c52c758c5c8de1700a638682f563644f714a2'),
@@ -101,6 +102,9 @@ def main():
     config = config.replace('Assets/DATA/sys/main.dol', 'build/translation.dol')
     config = config.replace(hashlib.sha256((ROOT / 'Assets/DATA/sys/main.dol').read_bytes()).hexdigest(),
                             hashlib.sha256(dol).hexdigest())
+    # The boot modules' tick sites, without the overlays' at shared addresses.
+    write_filtered(ROOT / 'build/tick_sites-base.inc', {module for module, _, _ in MODULES})
+    config = config.replace('runtime/src/tick_sites.inc', 'build/tick_sites-base.inc')
     (ROOT / 'build/recomp-analysis.yml').write_text(config)
     with (ROOT / 'build/MAP.txt').open('a') as out:
         for address, name in sorted(seeds.items()):

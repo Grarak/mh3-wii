@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from link_rso import ROOT, Rso, static_exports, u32
 from prepare_rso_translation import discover
+from tick_sites_filter import write_filtered
 
 PROFILES = {
     'map_village': ('map_village', 0x8097D080,
@@ -120,6 +121,9 @@ def main():
     config = config.replace('build/MAP.txt', f'build/rso-overlays/{profile}/MAP.txt')
     config = config.replace(DOL_DIGEST, hashlib.sha256(dol).hexdigest())
     config = config.replace('0x80006310', f'0x{prolog:08X}')
+    # Only this overlay's tick sites where it shares addresses with a boot module.
+    write_filtered(work / 'tick_sites.inc', {profile})
+    config = config.replace('runtime/src/tick_sites.inc', f'build/rso-overlays/{profile}/tick_sites.inc')
     write_changed(work / 'recomp.yml', config)
     toolchain = Path(os.environ.get('WIICOMPILED_ROOT', str(ROOT / 'toolchain')))
     translator = toolchain / 'translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cli.dll'

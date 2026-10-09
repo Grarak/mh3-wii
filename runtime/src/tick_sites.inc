@@ -1,6 +1,9 @@
 // Tick sites: guest loads of step counters and countdowns (recomp.yml
-// translation.tick_sites_path; tick_sites.cpp). {pc, kind[, limit]}, sorted
-// by pc. The value loaded at pc is followed by the site's +1 / -1: MH3_TickLoad
+// translation.tick_sites_path; tick_sites.cpp). {pc, kind[, limit[, module]]},
+// sorted by pc. A module ("demo", or an overlay profile such as "net_data")
+// marks a site in addresses a boot module and an overlay share: only that
+// module's translation hooks it (scripts/tick_sites_filter.py). The value
+// loaded at pc is followed by the site's +1 / -1: MH3_TickLoad
 // adjusts it so that the store advances it by the ticks of the step.
 // Float sites (lfs): EaseDivisor loads the d of `x += (goal - x) / d`, PerStep an
 // amount applied once per step. Integer Advance sites load a value the guest
@@ -310,9 +313,9 @@
 {0x80449B20u, TickSite::Countdown},         // name-entry keyboard open (80449B00): input wait (0x8079722C), 15 after opening
 {0x8044A058u, TickSite::Countdown},         // name-entry keyboard update (8044A038): the same input wait
 {0x8044C784u, TickSite::CountdownPastZero}, // name-entry keyboard (8044C72C): close delay (the same word, from 2), fires below 0
-{0x808CAF3Cu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x4)
-{0x808DEA90u, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x10)
-{0x808DF69Cu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x10)
+{0x808CAF3Cu, TickSite::Countup, 0, "quest_field"}, // quest object (quest_data RSO): steps (+0x4)
+{0x808DEA90u, TickSite::Countup, 0, "quest_field"}, // quest object (quest_data RSO): steps (+0x10)
+{0x808DF69Cu, TickSite::Countup, 0, "quest_field"}, // quest object (quest_data RSO): steps (+0x10)
 {0x808E07D4u, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x10)
 {0x808E1058u, TickSite::Countdown},          // quest object (quest_data RSO): countdown (+0x14)
 {0x808E10A8u, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x14)
@@ -405,33 +408,42 @@
 {0x808F91CCu, TickSite::Countdown},          // quest object (quest_data RSO): countdown (+0x14)
 {0x808FB1C0u, TickSite::Countdown},          // quest object (quest_data RSO): countdown (+0x10)
 {0x809735B4u, TickSite::Countup},            // enemy (em_data RSO): steps (+0x14) while +0x43D is 1
-{0x8097DDE0u, TickSite::Advance, 1024},     // title character view (8097DCFC): turn (+0x1142) while the button is held
-{0x8097DDF8u, TickSite::Advance, -1024},
-{0x8097EC5Cu, TickSite::Countdown},         // title (demo_title_move 8097EBE4): wait (+4) before the state runs
-{0x8097ED38u, TickSite::Countdown},         // title: state timer (+6) counting down
-{0x8097ED70u, TickSite::Countdown},
-{0x8097EF14u, TickSite::Countup, 899},      // title screen: idle steps (+6) until the attract movie at 900
-{0x8097EF54u, TickSite::Rate},              // title: pulse phase (+0x104C) += rate (+0x1050, 512)
-{0x8097EFECu, TickSite::Countup},           // title: steps (+6) of the fade to the attract movie, 20
-{0x8097F144u, TickSite::Countdown},
-{0x8097F694u, TickSite::Rate},
-{0x8097FA50u, TickSite::Countdown},
-{0x8097FBFCu, TickSite::Rate},
-{0x8097FEA8u, TickSite::Countdown},
-{0x809808F8u, TickSite::Rate},
-{0x80980FA8u, TickSite::Countup},           // title: steps (+0x1140) until the menu music starts
-{0x80981144u, TickSite::Countdown},
-{0x80981218u, TickSite::Rate},
-{0x809814D0u, TickSite::Countdown},
-{0x80981654u, TickSite::Rate},
-{0x80981ECCu, TickSite::Rate},
-{0x809828A0u, TickSite::Rate},
-{0x80982B78u, TickSite::Countdown},
-{0x80982DCCu, TickSite::Rate},
-{0x80982DECu, TickSite::Countup},           // title menu: blink steps (+6), mod 30
-{0x809831C8u, TickSite::Rate},
-{0x809833DCu, TickSite::Countdown},
-{0x80983918u, TickSite::Countdown},
-{0x80984200u, TickSite::Countdown},
-{0x80993528u, TickSite::Countdown},         // title task (Demo_task 80993470): logo timer (+0xC)
-{0x80993560u, TickSite::Countdown},
+{0x8097DDE0u, TickSite::Advance, 1024, "demo"}, // title character view (8097DCFC): turn (+0x1142) while the button is held
+{0x8097DDF8u, TickSite::Advance, -1024, "demo"},
+{0x8097EC5Cu, TickSite::Countdown, 0, "demo"}, // title (demo_title_move 8097EBE4): wait (+4) before the state runs
+{0x8097ED38u, TickSite::Countdown, 0, "demo"}, // title: state timer (+6) counting down
+{0x8097ED70u, TickSite::Countdown, 0, "demo"},
+{0x8097EF14u, TickSite::Countup, 899, "demo"}, // title screen: idle steps (+6) until the attract movie at 900
+{0x8097EF54u, TickSite::Rate, 0, "demo"},    // title: pulse phase (+0x104C) += rate (+0x1050, 512)
+{0x8097EFECu, TickSite::Countup, 0, "demo"}, // title: steps (+6) of the fade to the attract movie, 20
+{0x8097F144u, TickSite::Countdown, 0, "demo"},
+{0x8097F2C0u, TickSite::Countdown, 0, "net_data"}, // net menu (net_data RSO, 8097F2AC): Felyne frame countdown (+0x12C) from 20, flips +0x130 at 0
+{0x8097F694u, TickSite::Rate, 0, "demo"},    // title
+{0x8097F778u, TickSite::Countdown, 0, "net_data"}, // net menu text list (8097F774): arrow bumps (u8 0x80995EBA, +1) from 4
+{0x8097F794u, TickSite::Countdown, 0, "net_data"},
+{0x8097F830u, TickSite::Countup, 11, "net_data"}, // net menu text list: steps a direction is held (+0x2C), scrolls each step from 12
+{0x8097FA50u, TickSite::Countdown, 0, "demo"}, // title
+{0x8097FBFCu, TickSite::Rate, 0, "demo"},
+{0x8097FEA8u, TickSite::Countdown, 0, "demo"},
+{0x80980520u, TickSite::Countdown, 0, "net_data"}, // net menu window (8097FFF8): Felyne frame countdown (+0x12C) from 20
+{0x8098054Cu, TickSite::Countdown, 0, "net_data"}, // net menu window: message cycle countdown (+0x12E) from 150, moves +0x131 on
+{0x809808F8u, TickSite::Rate, 0, "demo"},    // title
+{0x80980EA0u, TickSite::Countup, 0, "net_data"}, // online_sub_reflect (80980DE4): steps waiting (+0x128), shown as seconds (/ 30)
+{0x80980EF8u, TickSite::Countup, 0, "net_data"},
+{0x80980FA8u, TickSite::Countup, 0, "demo"}, // title: steps (+0x1140) until the menu music starts
+{0x80981144u, TickSite::Countdown, 0, "demo"},
+{0x8098114Cu, TickSite::Countup, 0, "net_data"}, // online_sub_reflect: steps waiting (+0x128)
+{0x80981218u, TickSite::Rate, 0, "demo"},    // title
+{0x809814D0u, TickSite::Countdown, 0, "demo"},
+{0x80981654u, TickSite::Rate, 0, "demo"},
+{0x80981ECCu, TickSite::Rate, 0, "demo"},
+{0x809828A0u, TickSite::Rate, 0, "demo"},
+{0x80982B78u, TickSite::Countdown, 0, "demo"},
+{0x80982DCCu, TickSite::Rate, 0, "demo"},
+{0x80982DECu, TickSite::Countup, 0, "demo"}, // title menu: blink steps (+6), mod 30
+{0x809831C8u, TickSite::Rate, 0, "demo"},
+{0x809833DCu, TickSite::Countdown, 0, "demo"},
+{0x80983918u, TickSite::Countdown, 0, "demo"},
+{0x80984200u, TickSite::Countdown, 0, "demo"},
+{0x80993528u, TickSite::Countdown, 0, "demo"}, // title task (Demo_task 80993470): logo timer (+0xC)
+{0x80993560u, TickSite::Countdown, 0, "demo"},

@@ -58,11 +58,28 @@ struct Site {
     // Advance: the amount the guest adds each step.
     // CountupEvery / CountdownEvery: the N of the % N == 0 test.
     int32_t limit = 0;
+
+    // The module whose code holds the site where a boot module and an RSO
+    // overlay share addresses ("demo", or an overlay profile of
+    // scripts/translate_rso_overlays.py): only that module's translation
+    // hooks the load. Untagged sites apply to every translation.
+    const char* module = nullptr;
 };
 
 constexpr Site kSites[] = {
 #include "tick_sites.inc"
 };
+
+// Find() takes the first site at a pc: two modules' sites can't share one.
+constexpr bool SortedUnique() {
+    for (size_t i = 1; i < std::size(kSites); ++i)
+        if (kSites[i - 1].pc >= kSites[i].pc)
+            return false;
+
+    return true;
+}
+
+static_assert(SortedUnique(), "tick_sites.inc: pcs must be sorted and unique");
 
 const Site* Find(uint32_t pc) {
     const auto* it = std::lower_bound(std::begin(kSites), std::end(kSites), pc, [](const Site& s, uint32_t v) { return s.pc < v; });
