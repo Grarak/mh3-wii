@@ -215,6 +215,40 @@ mh3_native_texture_binding NativeTextureObject(uint32_t object) {
     return found->second;
 }
 
+bool SameNativeTextureObjects(uint32_t objects, uint32_t present, const mh3_native_texture_binding* have) {
+    std::lock_guard lock(objectsLock);
+    const auto& textures = O().textures;
+
+    for (uint32_t i = 0; i < 8; i++) {
+        if (!(present & (1u << i)))
+            continue;
+
+        const auto found = textures.find(objects + i * 32);
+
+        if (found == textures.end() || !EqualNativeTextureBinding(have[i], found->second))
+            return false;
+    }
+
+    return true;
+}
+
+bool SameNativePaletteObjects(uint32_t objects, uint32_t present, const mh3_native_palette_source* have) {
+    std::lock_guard lock(objectsLock);
+    const auto& palettes = O().palettes;
+
+    for (uint32_t i = 0; i < 8; i++) {
+        if (!(present & (1u << i)))
+            continue;
+
+        const auto found = palettes.find(objects + i * 12);
+
+        if (found == palettes.end() || !EqualNativePaletteSource(have[i], found->second))
+            return false;
+    }
+
+    return true;
+}
+
 mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
     return NativeTextureObject(object);
 }

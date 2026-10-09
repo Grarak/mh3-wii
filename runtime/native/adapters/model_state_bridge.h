@@ -7,10 +7,16 @@ mh3_native_palette_source ReadNativeResPalette(uint32_t reference);
 mh3_native_texture_binding ReadNativeTextureObject(uint32_t object);
 void StoreNativeTextureObject(uint32_t object, const mh3_native_texture_binding& binding);
 mh3_native_palette_source ReadNativePaletteObject(uint32_t object);
-/* The stored bindings in place, for comparing without a copy (game thread;
- * valid until the next store). */
+/* Copies of the stored bindings, taken under the objects' lock (the game and
+ * draw threads both use them). */
 mh3_native_texture_binding NativeTextureObject(uint32_t object);
 mh3_native_palette_source NativePaletteObject(uint32_t object);
+
+/* Whether the eight objects from `objects` (texture objects 32 bytes apart,
+ * palette objects 12) that `present` selects are stored and equal `have`;
+ * one hold of the objects' lock for all of them, no copies. */
+bool SameNativeTextureObjects(uint32_t objects, uint32_t present, const mh3_native_texture_binding* have);
+bool SameNativePaletteObjects(uint32_t objects, uint32_t present, const mh3_native_palette_source* have);
 /* Advances whenever a typed texture or palette object, or the generation of
  * an image one refers to, changes (game thread). */
 uint64_t ReadNativeTextureObjectRevision();

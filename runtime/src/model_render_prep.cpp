@@ -526,22 +526,15 @@ bool SameObjectBytes(const uint8_t* captured, uint32_t objects, uint32_t stride)
 }
 
 // The record's typed bindings are still the objects' current ones.
+// A missing object is a change too: the rebuild reports it.
 bool SameBindings(const ModelPrepMaterial& record, const uint32_t* slots) {
-    if (const uint32_t objects = slots[MH3_MAT_PALETTE_OBJECTS]) {
-        const uint32_t present = Word(record.palette_objects);
+    if (const uint32_t objects = slots[MH3_MAT_PALETTE_OBJECTS])
+        if (!SameNativePaletteObjects(objects + 4, Word(record.palette_objects), record.palettes))
+            return false;
 
-        for (uint32_t i = 0; i < 8; i++)
-            if ((present & (1u << i)) && !EqualNativePaletteSource(record.palettes[i], NativePaletteObject(objects + 4 + i * 12)))
-                return false;
-    }
-
-    if (const uint32_t objects = slots[MH3_MAT_TEXTURE_OBJECTS]) {
-        const uint32_t present = Word(record.texture_objects);
-
-        for (uint32_t i = 0; i < 8; i++)
-            if ((present & (1u << i)) && !EqualNativeTextureBinding(record.textures[i], NativeTextureObject(objects + 4 + i * 32)))
-                return false;
-    }
+    if (const uint32_t objects = slots[MH3_MAT_TEXTURE_OBJECTS])
+        if (!SameNativeTextureObjects(objects + 4, Word(record.texture_objects), record.textures))
+            return false;
 
     return true;
 }
