@@ -46,6 +46,8 @@ uint32_t current_frame() noexcept;
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <map>
+#include <tuple>
 #include <vector>
 
 constinit uint32_t nativeStateRevision[NativeOwnerCount][NATIVE_STATE_COMPONENTS]{};
@@ -1154,6 +1156,114 @@ void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderV
     fillFrame = frame;
 }
 #endif
+#ifdef MH3_DEVELOPMENT
+// MH3_PROFILE=census: what the frame's model draws are, for batching. Every
+// 240 frames, per frame: draws, the extra index ranges of a mesh (palette
+// batches), ranges drawn again (instances, passes), runs of consecutive draws
+// sharing program and material, and the assets with the most draws.
+struct CensusDraw {
+    uint32_t asset, model, shape, mesh, first;
+    uint64_t material;
+    GLuint program;
+    bool batch;
+};
+
+struct Census {
+    std::vector<CensusDraw> frame;
+    uint32_t frameId = 0, frames = 0;
+    uint64_t draws = 0, batchDraws = 0, ranges = 0, meshes = 0, runs = 0, materials = 0, programs = 0;
+    std::map<uint32_t, std::array<uint64_t, 3>> assets; // draws, ranges, meshes
+} census;
+
+void CensusFrame() {
+    auto& c = census;
+    auto& f = c.frame;
+    c.draws += f.size();
+
+    for (size_t i = 0; i < f.size(); ++i) {
+        c.batchDraws += f[i].batch;
+        c.runs += !i || f[i].program != f[i - 1].program || f[i].material != f[i - 1].material || f[i].asset != f[i - 1].asset;
+    }
+
+    auto unique = [&](auto key) {
+        std::vector<decltype(key(f[0]))> keys;
+
+        for (const auto& d : f)
+            keys.push_back(key(d));
+
+        std::sort(keys.begin(), keys.end());
+        return uint64_t(std::unique(keys.begin(), keys.end()) - keys.begin());
+    };
+
+    if (!f.empty()) {
+        c.ranges += unique([](const CensusDraw& d) { return std::tuple(d.asset, d.model, d.shape, d.mesh, d.first); });
+        c.meshes += unique([](const CensusDraw& d) { return std::tuple(d.asset, d.model, d.shape, d.mesh); });
+        c.materials += unique([](const CensusDraw& d) { return d.material; });
+        c.programs += unique([](const CensusDraw& d) { return d.program; });
+    }
+
+    std::map<uint32_t, std::vector<const CensusDraw*>> byAsset;
+
+    for (const auto& d : f)
+        byAsset[d.asset].push_back(&d);
+
+    for (auto& [asset, draws] : byAsset) {
+        auto& totals = c.assets[asset];
+        totals[0] += draws.size();
+        std::vector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>> ranges, meshes;
+
+        for (const auto* d : draws) {
+            ranges.emplace_back(d->model, d->shape, d->mesh, d->first);
+            meshes.emplace_back(d->model, d->shape, d->mesh, 0);
+        }
+
+        std::sort(ranges.begin(), ranges.end());
+        std::sort(meshes.begin(), meshes.end());
+        totals[1] += uint64_t(std::unique(ranges.begin(), ranges.end()) - ranges.begin());
+        totals[2] += uint64_t(std::unique(meshes.begin(), meshes.end()) - meshes.begin());
+    }
+
+    f.clear();
+
+    if (++c.frames < 240)
+        return;
+
+    const double n = c.frames;
+    std::fprintf(stderr,
+                 "MH3 draw census: %.1f model draws/frame, %.1f skinned batch draws; %.1f distinct ranges (%.1f drawn again), %.1f meshes (%.1f extra palette-batch ranges); "
+                 "%.1f runs of one program+material+asset; %.1f materials, %.1f programs\n",
+                 c.draws / n, c.batchDraws / n, c.ranges / n, (c.draws - c.ranges) / n, c.meshes / n, (c.ranges - c.meshes) / n, c.runs / n, c.materials / n, c.programs / n);
+    std::vector<std::pair<uint64_t, uint32_t>> top;
+
+    for (const auto& [asset, totals] : c.assets)
+        top.emplace_back(totals[0], asset);
+
+    std::sort(top.rbegin(), top.rend());
+
+    for (size_t i = 0; i < top.size() && i < 10; ++i) {
+        const auto& t = c.assets[top[i].second];
+        std::fprintf(stderr, "MH3 draw census:   asset %5u: %.1f draws, %.1f ranges, %.1f meshes\n", top[i].second, t[0] / n, t[1] / n, t[2] / n);
+    }
+
+    c = {};
+}
+
+void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GLuint program) {
+    static const bool enabled = ProfileOptions().Has("census");
+
+    if (!enabled)
+        return;
+
+    const auto frame = aurora::gfx::current_frame();
+
+    if (frame != census.frameId) {
+        CensusFrame();
+        census.frameId = frame;
+    }
+
+    census.frame.push_back({mesh.asset_id, mesh.model_id, mesh.shape_id, mesh.mesh_index, mesh.first_index, material, program, mesh.palette_batch != nullptr});
+}
+#endif
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
 #ifdef MH3_DEVELOPMENT
     ReportMaterialGpu();
@@ -1347,6 +1457,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
+    CountCensusDraw(mesh, entry.key, program);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
     aurora::gl::draw_shaded_mesh(*resident.buffer, layout, bind, resident.mesh->vertex_offset, resident.mesh->vertex_count, resident.mesh->index_offset + mesh.first_index * 2, mesh.index_count,

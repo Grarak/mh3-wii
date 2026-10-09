@@ -102,6 +102,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
 | `split-world` | the scene's world matrix pass is split between the game thread and the guest worker; off by default, as it did not pay off on the devkit ([guest worker](guest-worker.md)) |
 | `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
+| `census` | every 240 frames, the `MH3 draw census` lines: per frame, the model draws, the skinned palette-batch draws, the distinct index ranges and meshes (a mesh split into palette batches draws once per batch), runs of draws sharing program, material and asset, and the ten assets with the most draws |
 
 ### `MH3_VERIFY`: native paths against what they replace
 
