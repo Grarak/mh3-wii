@@ -158,12 +158,8 @@ void mh3_model_pose_retire(mh3_model_pose_owner *owner, uint32_t address, uint32
         }
 }
 mh3_res_status mh3_model_matrix_select(mh3_model_matrix_selectors *state, const uint32_t rows[8]) {
-    if (!state || !rows)
-        return MH3_RES_INVALID;
     mh3_model_matrix_selectors result = *state;
     for (unsigned i = 0; i < 8; i++) {
-        if (rows[i] > 60 || rows[i] % 3)
-            return MH3_RES_UNSUPPORTED;
         result.row[i] = (uint8_t)rows[i];
     }
     result.known = 255;
@@ -171,35 +167,23 @@ mh3_res_status mh3_model_matrix_select(mh3_model_matrix_selectors *state, const 
     return MH3_RES_OK;
 }
 void mh3_model_matrix_reset(mh3_model_matrix_selectors *state) {
-    if (!state)
-        return;
     memset(state->row, 60, sizeof state->row);
     state->known = 255;
 }
 mh3_res_status mh3_model_matrix_dual(mh3_model_matrix_selectors *state, int enabled) {
-    if (!state || enabled < 0 || enabled > 1)
-        return MH3_RES_INVALID;
     state->dual_known = 1;
     state->dual_enabled = (uint8_t)enabled;
     return MH3_RES_OK;
 }
 mh3_res_status mh3_model_matrix_overlay(const mh3_model_matrix_selectors *selectors, mh3_native_material_state *material) {
-    if (!selectors || !material || selectors->dual_known > 1 || selectors->dual_enabled > 1)
-        return MH3_RES_INVALID;
-    for (unsigned i = 0; i < 8; i++)
-        if ((selectors->known & (1u << i)) && (selectors->row[i] > 60 || selectors->row[i] % 3))
-            return MH3_RES_UNSUPPORTED;
     (void)mh3_model_matrix_overlay_unchecked(selectors, material);
     return MH3_RES_OK;
 }
 uint16_t mh3_model_matrix_overlay_unchecked(const mh3_model_matrix_selectors *selectors, mh3_native_material_state *material) {
-    assert(selectors && material);
-    assert(selectors->dual_known <= 1 && selectors->dual_enabled <= 1);
     uint16_t changed = 0;
     for (unsigned i = 0; i < 8; i++) {
         mh3_pack_texgen *to = &material->texgen[i];
         if (selectors->known & (1u << i)) {
-            assert(selectors->row[i] <= 60 && selectors->row[i] % 3 == 0);
             if (!(to->known & (1u << MH3_TEXGEN_MATRIX_ROW)) || to->values[MH3_TEXGEN_MATRIX_ROW] != selectors->row[i])
                 changed |= (uint16_t)(1u << i);
             to->known |= 1u << MH3_TEXGEN_MATRIX_ROW;
@@ -215,8 +199,6 @@ uint16_t mh3_model_matrix_overlay_unchecked(const mh3_model_matrix_selectors *se
     return changed;
 }
 mh3_res_status mh3_model_matrix_rows(const uint32_t sources[8], int32_t matrix_id, uint32_t rows[8], int *apply) {
-    if (!sources || !rows || !apply)
-        return MH3_RES_INVALID;
     if (matrix_id < 0) {
         *apply = 0;
         return MH3_RES_OK;

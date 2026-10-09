@@ -38,6 +38,8 @@ void mh3_matrix_bind(mh3_matrix_binding *state, const uint32_t addresses[3]);
 
 mh3_res_status mh3_matrix_read34(mh3_matrix_table table, size_t index, mh3_matrix34 *out);
 mh3_res_status mh3_matrix_read33(mh3_matrix_table table, size_t index, mh3_matrix33 *out);
+/* Trusted runtime palette copy, including endian conversion; no admission. */
+void mh3_matrix_read34_unchecked(mh3_matrix_table table, size_t index, mh3_matrix34 *out);
 void mh3_matrix_concat(const mh3_matrix34 *a, const mh3_matrix34 *b, mh3_matrix34 *out);
 /* Returns ABSENT when |det| < 1e-36f, leaving out untouched. The runtime
  * view-normal reader separately applies MH3's upper-3x3 singular fallback. */
@@ -78,8 +80,9 @@ mh3_res_status mh3_shape_matrix_submit(const mh3_shape_matrix_input *input, mh3_
 
 /* Native palettes for direct mesh submission. Indexed loads use the decoded
  * descriptor from the offline converter, in original command order. Position
- * slots are PNMTX0..9; texture slots are TEXMTX0..9. Coefficients and produced/
- * required masks are producer state, not revalidated palette admission. */
+ * slots are PNMTX0..9; texture slots are TEXMTX0..9. Palette APIs trust source
+ * storage, descriptors, masks and selectors; they perform no admission checks.
+ * The status return is retained for inspection API compatibility (always OK). */
 typedef struct {
     mh3_matrix34 position[10], texture[10];
     mh3_matrix33 normal[10];
@@ -100,8 +103,8 @@ mh3_res_status mh3_model_palette_load(const mh3_matrix_sources *sources, const m
 mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, const mh3_model_palette *produced, mh3_model_palette *out);
 /* Apply an admitted effective M3PL source map to certified pose extents.
  * Clear known bits preserve the actual inherited slot. Required masks do not
- * validate inherited values; absent normal/environment source arrays never get synthesized.
- * New loads require a completed producer generation. No GX bytes/vertices are
+ * validate inherited values. Source pointers/indices are caller obligations.
+ * No GX bytes/vertices are
  * read here; the extractor already resolved command order and index spans. */
 mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch, const mh3_matrix_sources *sources, const mh3_model_palette *inherited, mh3_model_palette *out);
 

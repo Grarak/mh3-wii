@@ -558,13 +558,7 @@ void SetNativeModelLights(const mh3_native_light_slots& source) {
 }
 void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4) {
     Owner();
-    TextureMatrix* destination = nullptr;
-    if (selector >= 30 && selector < 60 && (selector - 30) % 3 == 0)
-        destination = &textureMatrices[(selector - 30) / 3];
-    else if (selector >= 64 && selector < 124 && (selector - 64) % 3 == 0)
-        destination = &postTextureMatrices[(selector - 64) / 3];
-    if (!destination || !matrix)
-        throw std::runtime_error("Invalid native texture-matrix producer");
+    TextureMatrix* destination = selector >= 64 ? &postTextureMatrices[(selector - 64) / 3] : &textureMatrices[(selector - 30) / 3];
     PublishNativeModelTextureMatrix(selector, matrix, matrix3x4);
     std::memcpy(destination->values.data(), matrix, 48);
     destination->known = true;
@@ -574,13 +568,7 @@ void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matr
 }
 bool GetNativeTextureMatrix(uint32_t selector, float matrix[12], bool* matrix3x4) {
     Owner();
-    const TextureMatrix* source = nullptr;
-    if (selector >= 30 && selector < 60 && (selector - 30) % 3 == 0)
-        source = &textureMatrices[(selector - 30) / 3];
-    else if (selector >= 64 && selector < 124 && (selector - 64) % 3 == 0)
-        source = &postTextureMatrices[(selector - 64) / 3];
-    if (!source || !matrix)
-        throw std::runtime_error("Invalid native texture-matrix consumer");
+    const TextureMatrix* source = selector >= 64 ? &postTextureMatrices[(selector - 64) / 3] : &textureMatrices[(selector - 30) / 3];
     if (!source->known)
         return false;
     std::memcpy(matrix, source->values.data(), 48);

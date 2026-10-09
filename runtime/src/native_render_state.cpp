@@ -64,8 +64,6 @@ void SetNativePositionMatrix(const float matrix[12]) {
 }
 void SetNativeNormalMatrix(uint32_t selector, const float matrix[9]) {
     RequireOwner();
-    if (!matrix || selector % 3 || selector / 3 >= normalMatrices.size())
-        throw std::runtime_error("Invalid native normal-matrix selector");
     PublishNativeModelNormalMatrix(selector, matrix);
     auto& destination = normalMatrices[selector / 3];
     std::memcpy(destination.values.data(), matrix, sizeof(float) * 9);
@@ -73,8 +71,6 @@ void SetNativeNormalMatrix(uint32_t selector, const float matrix[9]) {
 }
 bool GetNativeNormalMatrix(uint32_t selector, float matrix[9]) {
     RequireOwner();
-    if (!matrix || selector % 3 || selector / 3 >= normalMatrices.size())
-        throw std::runtime_error("Invalid native normal-matrix selector");
     const auto& source = normalMatrices[selector / 3];
     if (!source.known)
         return false;

@@ -29,13 +29,11 @@ static int attribute(const mh3_pack_layout *layout, unsigned semantic) {
             return 1;
     return 0;
 }
-static mh3_res_status main_matrix(const mh3_model_palette *palette, unsigned selector, mh3_matrix34 *out) {
+static void main_matrix(const mh3_model_palette *palette, unsigned selector, mh3_matrix34 *out) {
     if (selector == 60) {
         *out = identity();
-        return MH3_RES_OK;
+        return;
     }
-    if (selector % 3 || selector >= 60)
-        return MH3_RES_UNSUPPORTED;
     unsigned slot = selector / 3;
     if (slot < 10) {
         *out = palette->position[slot];
@@ -43,7 +41,6 @@ static mh3_res_status main_matrix(const mh3_model_palette *palette, unsigned sel
         slot -= 10;
         *out = palette->texture[slot];
     }
-    return MH3_RES_OK;
 }
 /* Interval bound with a deliberately generous float roundoff guard. Returning
  * false only keeps the exact conditional divide; it never changes coordinates.
@@ -184,7 +181,7 @@ static unsigned indexed_q(const mh3_resolved_mesh_submit *mesh, const mh3_model_
     return !have ? 0 : all_zero ? 2 : same_sign ? 1 : 0;
 }
 mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, uint8_t mask, int normal_required, float near_z, float far_z, mh3_model_gpu_draw_inputs *out, mh3_matrix34 *positions_out, mh3_matrix34 *normals_out, mh3_matrix34 *textures_out) {
-    if (!mesh || !out || !positions_out || !normals_out || !textures_out || !mesh->palette || !mesh->projection || !mesh->material || mesh->layout.count > 16 || normal_required < 0 || normal_required > 1 || !__builtin_isfinite(near_z) ||
+    if (!mesh || !out || !positions_out || !normals_out || !textures_out || !mesh->projection || !mesh->material || mesh->layout.count > 16 || normal_required < 0 || normal_required > 1 || !__builtin_isfinite(near_z) ||
         !__builtin_isfinite(far_z))
         return MH3_RES_INVALID;
     memset(out, 0, sizeof *out);
@@ -195,8 +192,6 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
     out->position = out->normal = identity();
     if (out->matrix_index_mask) {
         const mh3_pack_palette_batch *batch = mesh->palette_batch;
-        if (!batch)
-            return MH3_RES_ABSENT;
         const uint16_t positions = batch->position_required | ((out->matrix_index_mask & 1) ? 0 : 1);
         for (unsigned slot = 0; slot < 10; slot++) {
             if (positions & (1u << slot)) {
@@ -268,9 +263,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             gen->main_slot = 20;
             gen->main_identity = indexed || v[MH3_TEXGEN_MATRIX_ROW] == 60;
             if (!indexed) {
-                const mh3_res_status status = main_matrix(mesh->palette, v[MH3_TEXGEN_MATRIX_ROW], &gen->main);
-                if (status != MH3_RES_OK)
-                    return status;
+                main_matrix(mesh->palette, v[MH3_TEXGEN_MATRIX_ROW], &gen->main);
                 gen->main_slot = (uint8_t)(v[MH3_TEXGEN_MATRIX_ROW] / 3);
                 if (gen->main_slot < 10)
                     positions_out[gen->main_slot] = gen->main;
@@ -288,10 +281,6 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 gen->normalize = v[MH3_TEXGEN_NORMALIZE];
                 const unsigned post = v[MH3_TEXGEN_POST_MATRIX_ROW];
                 if (post != 61) {
-                    if (post % 3 || post / 3 >= 8)
-                        return MH3_RES_UNSUPPORTED;
-                    if (!mesh->texture_matrices)
-                        return MH3_RES_ABSENT;
                     memcpy(gen->post.v, mesh->texture_matrices[post / 3], sizeof gen->post.v);
                     gen->post_identity = 0;
                 }

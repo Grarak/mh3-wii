@@ -84,8 +84,6 @@ void TraceInput(const char*, uint32_t, const uint32_t[3], uint32_t) {}
 void TraceOwner(const char*, const mh3_model_pose_owner&, mh3_res_status = MH3_RES_OK) {}
 #endif
 void AdvancePalette() {
-    if (matrix_palette_revision == UINT64_MAX)
-        throw std::runtime_error("Native matrix palette revision overflow");
     ++matrix_palette_revision;
 }
 void Checked(mh3_res_status status) {
@@ -157,7 +155,7 @@ void PublishSelectors() {
     SetNativeModelMatrixSelectors(selectors);
 }
 void Select(const uint32_t rows[8]) {
-    Checked(mh3_model_matrix_select(&selectors, rows));
+    mh3_model_matrix_select(&selectors, rows);
     PublishSelectors();
 }
 } // namespace
@@ -265,7 +263,7 @@ mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t mod
     return result;
 }
 void PublishNativeModelDualTexture(bool enabled) {
-    Checked(mh3_model_matrix_dual(&selectors, enabled ? 1 : 0));
+    mh3_model_matrix_dual(&selectors, enabled ? 1 : 0);
     PublishSelectors();
 }
 void ApplyNativeModelSelectors() {
@@ -282,15 +280,11 @@ void PublishNativeModelMatrixRows(const uint32_t rows[8]) {
     Select(rows);
 }
 void PublishNativeModelPositionMatrix(uint32_t selector, const float matrix[12]) {
-    if (!matrix || selector % 3 || selector > 27)
-        throw std::runtime_error("Native position matrix selector invalid");
     AdvancePalette();
     std::memcpy(&matrix_palette.position[selector / 3], matrix, 48);
     matrix_palette.position_valid |= uint16_t(1u << (selector / 3));
 }
 void PublishNativeModelNormalMatrix(uint32_t selector, const float matrix[9]) {
-    if (!matrix || selector % 3 || selector > 27)
-        throw std::runtime_error("Native normal matrix selector invalid");
     AdvancePalette();
     std::memcpy(&matrix_palette.normal[selector / 3], matrix, 36);
     matrix_palette.normal_valid |= uint16_t(1u << (selector / 3));
@@ -298,8 +292,6 @@ void PublishNativeModelNormalMatrix(uint32_t selector, const float matrix[9]) {
 void PublishNativeModelTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4) {
     if (selector >= 64)
         return; // post/SRT matrices have an independent owner
-    if (!matrix || selector < 30 || selector > 57 || selector % 3)
-        throw std::runtime_error("Native texture palette selector invalid");
     AdvancePalette();
     std::memcpy(&matrix_palette.texture[(selector - 30) / 3], matrix, matrix3x4 ? 48 : 32);
     if (matrix3x4)
@@ -373,7 +365,7 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
     int apply = 0;
     for (uint32_t i = 0; i < 8; i++)
         types[i] = DrawMemory::Read32(cpu->gpr[3] + 4 * i);
-    Checked(mh3_model_matrix_rows(types, int32_t(cpu->gpr[4]), rows, &apply));
+    mh3_model_matrix_rows(types, int32_t(cpu->gpr[4]), rows, &apply);
     const bool identity = std::all_of(std::begin(rows), std::end(rows), [](uint32_t row) { return row == 60; });
     if (identity) {
         if (!DrawMemory::Read8(0x80796db4)) {
@@ -391,7 +383,7 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
         input.matrix_id = int32_t(cpu->gpr[4]);
         std::copy(std::begin(types), std::end(types), std::begin(input.texture_source));
         mh3_model_palette palette{};
-        Checked(mh3_model_palette_rigid(&input, &sources, &palette));
+        mh3_model_palette_rigid(&input, &sources, &palette);
         for (unsigned i = 0; i < 8; i++)
             if (types[i] == 1)
                 SetNativeTextureMatrix(30 + i * 3, &palette.texture[i].v[0][0], true);

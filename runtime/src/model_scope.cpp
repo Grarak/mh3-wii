@@ -555,17 +555,15 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         throw std::runtime_error("Indexed model matrix has no completed pose producer");
     item.storage = {};
     if (direct_position) {
-        Checked(mh3_matrix_read34({Bytes(direct_position, 48), 1, 48, 1}, 0, &item.storage.direct_position));
+        mh3_matrix_read34_unchecked({Bytes(direct_position, 48), 1, 48, 1}, 0, &item.storage.direct_position);
         if (direct_normal)
-            Checked(mh3_matrix_read34({Bytes(direct_normal, 48), 1, 48, 1}, 0, &item.storage.direct_normal));
+            mh3_matrix_read34_unchecked({Bytes(direct_normal, 48), 1, 48, 1}, 0, &item.storage.direct_normal);
     }
     mh3_model_shape_input_unchecked(originals.matrix_id, originals.has_normal, Bytes(locations.texture_sources, 32).data,
         DrawMemory::Read8(locations.current_valid) != 0, binding.address[0] != 0,
         direct_position ? &item.storage.direct_position : nullptr, direct_position && direct_normal ? &item.storage.direct_normal : nullptr, &item.input);
     if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
-    if (item.input.matrix_id >= 0)
-        Checked(mh3_model_shape_pose_extents(&item.input, &sources));
     item.pose = CapturePose(capture, binding.address, sources);
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     if (item.input.matrix_id >= 0) {
@@ -605,8 +603,8 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
     mh3_model_palette palette = ReadNativeModelPalette();
     if (input.matrix_id >= 0) {
         mh3_model_palette produced{};
-        Checked(mh3_model_palette_rigid(&input, &sources, &produced));
-        Checked(mh3_model_palette_overlay(&palette, &produced, &palette));
+        mh3_model_palette_rigid(&input, &sources, &produced);
+        mh3_model_palette_overlay(&palette, &produced, &palette);
         PublishNativeModelPalette(palette);
         SetNativePositionMatrix(&produced.position[0].v[0][0]);
         if (produced.normal_valid & 1)
@@ -629,7 +627,7 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
         mh3_resolved_mesh_submit submit{};
         if (prepared.palette_batch_count) {
             const auto& batch = prepared.palette_batches[batch_index];
-            Checked(mh3_model_palette_apply_batch(&batch, &sources, &palette, &palette));
+            mh3_model_palette_apply_batch(&batch, &sources, &palette, &palette);
             PublishNativeModelPalette(palette);
             if (batch.position_known & 1)
                 SetNativePositionMatrix(&palette.position[0].v[0][0]);

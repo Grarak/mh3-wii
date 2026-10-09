@@ -8,23 +8,28 @@ _Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24, "Requ
 static uint32_t be32(const uint8_t *p) {
     return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
 }
-static mh3_res_status read_matrix(mh3_matrix_table t, size_t index, size_t words, void *out) {
-    size_t at, i;
+/* Palette sources and selectors are trusted producer inputs. The public table
+ * inspection API below keeps its own checks; draws use only this copy. */
+static void read_palette_matrix(mh3_matrix_table t, size_t index, size_t words, void *out) {
+    const size_t at = index * t.stride;
     uint8_t *destination = out;
-    if (!out || !t.bytes.data)
-        return MH3_RES_INVALID;
-    if (index >= t.count || t.stride < words * 4 || index > SIZE_MAX / t.stride)
-        return MH3_RES_RANGE;
-    at = index * t.stride;
-    if (at > t.bytes.size || words * 4 > t.bytes.size - at)
-        return MH3_RES_RANGE;
-    for (i = 0; i < words; i++) {
+    for (size_t i = 0; i < words; i++) {
         if (t.big_endian) {
             uint32_t bits = be32(t.bytes.data + at + i * 4);
             memcpy(destination + i * 4, &bits, 4);
         } else
             memcpy(destination + i * 4, t.bytes.data + at + i * 4, 4);
     }
+}
+static mh3_res_status read_matrix(mh3_matrix_table t, size_t index, size_t words, void *out) {
+    if (!out || !t.bytes.data)
+        return MH3_RES_INVALID;
+    if (index >= t.count || t.stride < words * 4 || index > SIZE_MAX / t.stride)
+        return MH3_RES_RANGE;
+    const size_t at = index * t.stride;
+    if (at > t.bytes.size || words * 4 > t.bytes.size - at)
+        return MH3_RES_RANGE;
+    read_palette_matrix(t, index, words, out);
     return MH3_RES_OK;
 }
 mh3_res_status mh3_matrix_read34(mh3_matrix_table t, size_t i, mh3_matrix34 *out) {
@@ -33,9 +38,10 @@ mh3_res_status mh3_matrix_read34(mh3_matrix_table t, size_t i, mh3_matrix34 *out
 mh3_res_status mh3_matrix_read33(mh3_matrix_table t, size_t i, mh3_matrix33 *out) {
     return out ? read_matrix(t, i, 9, out) : MH3_RES_INVALID;
 }
+void mh3_matrix_read34_unchecked(mh3_matrix_table t, size_t i, mh3_matrix34 *out) {
+    read_palette_matrix(t, i, 12, out);
+}
 void mh3_matrix_bind(mh3_matrix_binding *state, const uint32_t addresses[3]) {
-    if (!state || !addresses)
-        return;
     memcpy(state->address, addresses, sizeof state->address);
     if (++state->generation == 0)
         state->generation = 1;
@@ -190,61 +196,48 @@ mh3_res_status mh3_shape_matrix_submit(const mh3_shape_matrix_input *in, mh3_mat
         out->current_is_valid = 0;
     return MH3_RES_OK;
 }
-static mh3_res_status normal_at(const mh3_matrix_sources *s, size_t id, mh3_matrix33 *out) {
+static void normal_at(const mh3_matrix_sources *s, size_t id, mh3_matrix33 *out) {
     mh3_matrix34 position;
     mh3_res_status status;
-    if (s->normals.bytes.data)
-        return mh3_matrix_read33(s->normals, id, out);
-    status = mh3_matrix_read34(s->positions, id, &position);
-    if (status)
-        return status;
+    if (s->normals.bytes.data) {
+        read_palette_matrix(s->normals, id, 9, out);
+        return;
+    }
+    read_palette_matrix(s->positions, id, 12, &position);
     status = mh3_matrix_inverse_normal(&position, out);
     /* MH3's 80087F7C ignores the inverse status. Its inverse routine copies
      * the position's upper 3x3 on a singular input (unlike older ogws' identity
      * fallback). The direct reader owns the result, so no guest cache is needed. */
     if (status == MH3_RES_ABSENT) {
         *out = upper(position);
-        return MH3_RES_OK;
     }
-    return status;
 }
 mh3_res_status mh3_model_palette_rigid(const mh3_shape_matrix_input *in, const mh3_matrix_sources *s, mh3_model_palette *out) {
     size_t i, id;
-    mh3_res_status status;
-    if (!in || !s || !out)
-        return MH3_RES_INVALID;
     memset(out, 0, sizeof *out);
     for (i = 0; i < 8; i++)
         out->texture_ids[i] = 60;
     if (!in->valid)
         return MH3_RES_OK;
     if (in->matrix_id < 0)
-        return s->positions.bytes.data ? MH3_RES_OK : MH3_RES_INVALID;
+        return MH3_RES_OK;
     id = (uint32_t)in->matrix_id & 0xffff;
     if (in->direct_position)
         out->position[0] = *in->direct_position;
-    else {
-        status = mh3_matrix_read34(s->positions, id, &out->position[0]);
-        if (status)
-            return status;
-    }
+    else
+        read_palette_matrix(s->positions, id, 12, &out->position[0]);
     out->position_valid = 1;
     if (in->has_normal) {
         if (in->direct_position)
             out->normal[0] = upper(in->direct_normal ? *in->direct_normal : *in->direct_position);
-        else {
-            status = mh3_matrix_read33(s->normals, id, &out->normal[0]);
-            if (status)
-                return status;
-        }
+        else
+            read_palette_matrix(s->normals, id, 9, &out->normal[0]);
         out->normal_valid = 1;
     }
     for (i = 0; i < 8; i++) {
         if (in->texture_source[i] == 1) {
             mh3_matrix33 n;
-            status = normal_at(s, id, &n);
-            if (status)
-                return status;
+            normal_at(s, id, &n);
             out->texture[i] = expanded(n);
             out->texture_valid |= (uint8_t)(1u << i);
             out->texture_ids[i] = 30 + (uint32_t)i * 3;
@@ -255,37 +248,22 @@ mh3_res_status mh3_model_palette_rigid(const mh3_shape_matrix_input *in, const m
 }
 mh3_res_status mh3_model_palette_load(const mh3_matrix_sources *s, const mh3_matrix_load *load, mh3_model_palette *p) {
     size_t slot;
-    mh3_res_status status;
-    if (!s || !load || !p)
-        return MH3_RES_INVALID;
-    if (load->array == 0 && load->xf_address < 120 && load->xf_address % 12 == 0 && load->word_count == 12) {
+    if (load->array == 0) {
         slot = load->xf_address / 12;
-        status = mh3_matrix_read34(s->positions, load->source_index, &p->position[slot]);
-        if (!status)
-            p->position_valid |= (uint16_t)(1u << slot);
-        return status;
-    }
-    if (load->array == 1 && load->xf_address >= 0x400 && load->xf_address < 0x45a && (load->xf_address - 0x400) % 9 == 0 && load->word_count == 9) {
+        read_palette_matrix(s->positions, load->source_index, 12, &p->position[slot]);
+        p->position_valid |= (uint16_t)(1u << slot);
+    } else if (load->array == 1) {
         slot = (load->xf_address - 0x400) / 9;
-        status = mh3_matrix_read33(s->normals, load->source_index, &p->normal[slot]);
-        if (!status)
-            p->normal_valid |= (uint16_t)(1u << slot);
-        return status;
-    }
-    if (load->array == 2 && load->xf_address >= 120 && load->xf_address < 240 && (load->xf_address - 120) % 12 == 0 && load->word_count == 12) {
+        read_palette_matrix(s->normals, load->source_index, 9, &p->normal[slot]);
+        p->normal_valid |= (uint16_t)(1u << slot);
+    } else {
         slot = (load->xf_address - 120) / 12;
-        status = mh3_matrix_read34(s->environment, load->source_index, &p->texture[slot]);
-        if (!status)
-            p->texture_valid |= (uint16_t)(1u << slot);
-        return status;
+        read_palette_matrix(s->environment, load->source_index, 12, &p->texture[slot]);
+        p->texture_valid |= (uint16_t)(1u << slot);
     }
-    /* Partial, overlapping or other XF destinations require an explicit
-     * converter descriptor extension; do not silently reinterpret them. */
-    return MH3_RES_UNSUPPORTED;
+    return MH3_RES_OK;
 }
 mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, const mh3_model_palette *produced, mh3_model_palette *out) {
-    if (!inherited || !produced || !out)
-        return MH3_RES_INVALID;
     mh3_model_palette next = *inherited;
     for (unsigned i = 0; i < 10; i++) {
         if (produced->position_valid & (1u << i))
@@ -303,23 +281,14 @@ mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, con
     return MH3_RES_OK;
 }
 mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch, const mh3_matrix_sources *sources, const mh3_model_palette *inherited, mh3_model_palette *out) {
-    if (!batch || !sources || !inherited || !out || !batch->index_count || batch->first_index % 3 || batch->index_count % 3)
-        return MH3_RES_INVALID;
     const uint16_t known[3] = {batch->position_known, batch->normal_known, batch->texture_known};
     const uint16_t *const ids[3] = {batch->position_source, batch->normal_source, batch->texture_source};
-    if ((known[0] | known[1] | known[2]) && !sources->generation)
-        return MH3_RES_ABSENT;
     mh3_model_palette next = *inherited;
     for (unsigned slot = 0; slot < 10; slot++) {
         for (unsigned group = 0; group < 3; group++)
             if (known[group] & (1u << slot)) {
-                const mh3_matrix_table table = group == 0 ? sources->positions : group == 1 ? sources->normals : sources->environment;
-                if (!table.bytes.data)
-                    return MH3_RES_ABSENT;
                 const mh3_matrix_load load = {(uint8_t)group, ids[group][slot], (uint16_t)(group == 0 ? slot * 12 : group == 1 ? 0x400 + slot * 9 : 120 + slot * 12), (uint8_t)(group == 1 ? 9 : 12)};
-                const mh3_res_status status = mh3_model_palette_load(sources, &load, &next);
-                if (status != MH3_RES_OK)
-                    return status;
+                mh3_model_palette_load(sources, &load, &next);
             }
     }
     *out = next;
@@ -667,9 +636,7 @@ mh3_res_status mh3_matrix_runtime_indirect(const mh3_res_memory *m, const mh3_ma
         s = sources_at(m, loc->arrays, count, &sources);
         if (s)
             return s;
-        s = normal_at(&sources, (uint32_t)in.shape_matrix_id, &in.view_normal);
-        if (s)
-            return s;
+        normal_at(&sources, (uint32_t)in.shape_matrix_id, &in.view_normal);
         s = reference(m, node_ref, &node_address);
         if (s || !node_address)
             return s ? s : MH3_RES_INVALID;

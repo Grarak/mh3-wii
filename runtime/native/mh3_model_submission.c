@@ -212,7 +212,7 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint
                                          mh3_resolved_mesh_submit *out) {
     if (prepared && prepared->palette_batch_count)
         return MH3_PACK_UNSUPPORTED;
-    if (!prepared || !out || !palette || !source_generation || !pose_generation || resident_generation != prepared->immutable.resident_generation)
+    if (!prepared || !out || !source_generation || !pose_generation || resident_generation != prepared->immutable.resident_generation)
         return MH3_PACK_INVALID;
     mh3_resolved_mesh_submit r = prepared->immutable;
     r.source_generation = source_generation;
@@ -223,7 +223,7 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint
 }
 mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uint32_t index, uint64_t resident_generation, uint64_t source_generation, uint64_t palette_generation,
                                           const mh3_model_palette *palette, mh3_resolved_mesh_submit *out) {
-    if (!prepared || !palette || !out || !prepared->palette_batches || index >= prepared->palette_batch_count || !source_generation || !palette_generation ||
+    if (!prepared || !out || !prepared->palette_batches || index >= prepared->palette_batch_count || !source_generation || !palette_generation ||
         resident_generation != prepared->immutable.resident_generation)
         return MH3_PACK_INVALID;
     const mh3_pack_palette_batch *batch = &prepared->palette_batches[index];

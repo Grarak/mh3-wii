@@ -562,26 +562,6 @@ static mh3_res_status draw_pass(render *r, unsigned pass) {
         }
         const mh3_prepared_mesh *mesh = &m->meshes[record->shape];
         const uint32_t matrix_id = (uint32_t)shape_info->matrix;
-        assert(matrix_id < m->view_count);
-#ifndef NDEBUG
-        /* Existing checked APIs remain a debug oracle. Cold asset and packet
-         * admission already prove the hot binding contracts. */
-        const mh3_matrix_sources sources = {{{(const uint8_t *)(r->work->position + first), (size_t)m->view_count * sizeof(mh3_matrix34)}, m->view_count, sizeof(mh3_matrix34), 0},
-                                            {{(const uint8_t *)(r->work->normal + first), (size_t)m->view_count * sizeof(mh3_matrix33)}, m->view_count, sizeof(mh3_matrix33), 0},
-                                            {0},
-                                            r->packet->input.generation};
-        mh3_shape_matrix_input shape = {0};
-        shape.valid = 1;
-        shape.matrix_id = shape_info->matrix;
-        shape.has_normal = mesh->normal_required;
-        shape.current_is_valid = 1;
-        shape.view_array_is_valid = 1;
-        mh3_model_palette produced, expected;
-        mh3_res_status oracle = mh3_model_palette_rigid(&shape, &sources, &produced);
-        assert(oracle == MH3_RES_OK);
-        oracle = mh3_model_palette_overlay(&r->state->palette, &produced, &expected);
-        assert(oracle == MH3_RES_OK);
-#endif
         /* Rigid, untextured effective loads write slot0 only. Other PN/normal/
          * texture slots retain sticky contents; all eight row selectors are
          * authored identity (60). No whole-palette zero/copy/merge per draw. */
@@ -593,19 +573,11 @@ static mh3_res_status draw_pass(render *r, unsigned pass) {
         }
         for (unsigned i = 0; i < 8; i++)
             r->state->palette.texture_ids[i] = 60;
-#ifndef NDEBUG
-        assert(!memcmp(&r->state->palette, &expected, sizeof expected));
-#endif
         mh3_owned_scene_submission submission;
         submission.mesh = mesh->immutable;
         submission.mesh.source_generation = object->source_generation;
         submission.mesh.pose_generation = r->packet->input.generation;
         submission.mesh.palette = &r->state->palette;
-#ifndef NDEBUG
-        mh3_resolved_mesh_submit checked;
-        const mh3_pack_status bound = mh3_model_mesh_bind_pose(mesh, mesh->immutable.resident_generation, object->source_generation, r->packet->input.generation, &r->state->palette, &checked);
-        assert(bound == MH3_PACK_OK && !memcmp(&checked, &submission.mesh, sizeof checked));
-#endif
         mh3_res_status s;
         submission.mesh.material = &r->state->material;
         submission.mesh.projection = r->packet->input.projection;
