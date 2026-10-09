@@ -52,14 +52,15 @@ uint32_t NativeFramePacketSlot();
 uint64_t NativeFramePacketSequence();
 
 // Game thread: every packet up to this sequence has rendered or was skipped
-// unrendered (MH3_PROFILE=unpaced), so nothing it recorded is read any more (all of them while no
-// render thread runs).
+// unrendered (the game thread limit off), so nothing it recorded is read any
+// more (all of them while no render thread runs).
 uint64_t NativeFramePacketsDone();
 
 // ---- Frame lifecycle (graphics_host.cpp) ----
 // Start hands the calling (game) thread's graphics context to a new render
-// thread; stop drains it, runs every queued task and hands the context back.
-// The launcher stops its render thread and the game's startup starts another.
+// thread and applies the game thread limit (frame_limit.h); stop drains it,
+// runs every queued task and hands the context back. The launcher stops its
+// render thread and the game's startup starts another.
 void StartNativeRenderThread();
 void StopNativeRenderThread();
 bool NativeRenderThreadRunning();
@@ -67,7 +68,7 @@ bool NativeRenderThreadRunning();
 // Begins the next packet; it records draws only when render is true.
 // Game thread, before a frame: the game thread limiter. Waits while one
 // published packet (two with MH3_PROFILE=queue=2) waits for the render thread
-// (MH3_PROFILE=unpaced: only until the next packet's slot is free).
+// (the limit off: only until the next packet's slot is free).
 void PaceNativeFramePacket();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();

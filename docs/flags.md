@@ -15,7 +15,7 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_WIDESCREEN` | `0`: the console's 4:3 setting; default 16:9 ([widescreen](vita-widescreen.md)) | all |
 | `MH3_STATS` | `0` turns off the once-per-second statistics lines (default on; [profiling](profiling.md#statistics-lines)); set to anything, it also prints the material-GPU counters | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
-| `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution | development |
+| `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution (448·n rows); overrides the launcher's `Upscaling` ([launcher](vita-launcher.md)) | development |
 | `MH3_AUDIO_NULL` | `1`: no playback device; the mix is consumed at 32 kHz | development |
 | `MH3_LAUNCHER_INPUT` | launcher input script, on the Vita and with `MH3 --launcher` on a host ([launcher](vita-launcher.md)) | development |
 | `MH3_VARIABLE_STEP` | `0`: the game's fixed 1/30 s steps instead of the variable step | development |
@@ -97,7 +97,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 | `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry), or meshes of model draws: skinned ones (`skinned`), those whose material blends (`blended`) or alpha tests (`discard`); for attributing GPU time with Razor |
 | `fill` | every 300 frames, the `MH3 material fill` lines: screen area (in screens) that material geometry covers per fragment program and blend, clipped to the viewport |
-| `unpaced` | turns the game thread limiter off: the game thread records its next frame packet even when published ones wait for the render thread, which then takes the newest and skips the older ones ([packet ring](frame-packet-ring.md); for A/B runs) |
+| `unpaced` | turns the game thread limiter off, as the launcher's `Game thread limit: OFF` does: the game thread records its next frame packet even when published ones wait for the render thread, which then takes the newest and skips the older ones ([packet ring](frame-packet-ring.md); for A/B runs) |
 | `queue=N` | the game thread limiter lets N published frame packets wait for the render thread, 1 (the default) or 2; each adds a render frame of latency while the render thread sets the rate ([packet ring](frame-packet-ring.md)) |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
 | `serial-world` | the scene's world matrix pass runs on the game thread alone, not split between the game thread and the guest worker as in every build by default ([guest worker](guest-worker.md)) |
