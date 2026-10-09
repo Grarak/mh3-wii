@@ -14,10 +14,21 @@
 // this step (none on a short step: the current frame is drawn again), and
 // always the first frame after Movie_open clears the drawn flag. At the stock
 // step it decodes one frame per call, as the original.
+//
+// The movie players (0x8021F62C, 0x8028C1CC, 0x8028D7DC, 0x803A16F0 and the
+// demo module's 0x8097EBE4) open a movie (Movie_open 0x80434344), poll
+// Check_movie_finish (0x80434604) each step and close it (Movie_close
+// 0x804345C4) when it says the last frame was drawn; Movie_cut (0x80434648)
+// closes it early where the player lets a button skip it. The debug port's
+// `movie skip` (SkipMovie) makes the next finish check say so, once no frame
+// is pending (Movie_cut's condition).
+#include "movie_draw.h"
+
 #include "abi_bridge.h"
 #include "game_step.h"
 #include "native_effect_draw.h"
 #include "memory.h"
+#include "port_check.h"
 #include <initializer_list>
 
 namespace {
@@ -30,6 +41,8 @@ enum : uint32_t {
     kRetraceStamp = 0x10, // u32 VI retrace count at the last draw
     kDrawResult = 0x14,   // u32 DrawFrame result
     kPendingFlag = 0x18,  // u32 cleared on every draw
+    kFrameCount = 0x70,   // u32 the THP header's frame count
+    kOpen = 0xB0,         // u32 nonzero while a movie is open
     kFrameDrawn = 0x1A4,  // u8
 };
 
@@ -96,3 +109,49 @@ extern "C" void MH3_MovieDrawFrame(CpuContext* ctx) {
     MovieDrawFrame(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804344F8, MH3_MovieDrawFrame, "MovieDrawFrame");
+
+namespace {
+
+#ifdef MH3_DEVELOPMENT
+bool skipMovie = false;
+#endif
+
+// The open movie's frame count, 0 while none is open (0x804352A4).
+uint32_t MovieFrames() {
+    return Memory::Read32(kMovie + kOpen) ? Memory::Read32(kMovie + kFrameCount) : 0;
+}
+
+// Check_movie_finish: whether the frame drawn last (DrawFrame's result) is
+// the movie's last, compared unsigned (never with no movie open).
+void CheckMovieFinishPort(CpuContext* ctx) {
+    ctx->gpr[3] = Memory::Read32(kMovie + kDrawResult) >= MovieFrames() - 1;
+}
+
+} // namespace
+
+extern "C" void func_80434604(CpuContext* ctx);
+
+extern "C" void MH3_MovieFrames(CpuContext* ctx) {
+    ctx->gpr[3] = MovieFrames();
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804352A4, MH3_MovieFrames, "MovieFrames");
+
+extern "C" void MH3_CheckMovieFinish(CpuContext* ctx) {
+    PortCheck::Call(ctx, "CheckMovieFinish", func_80434604, CheckMovieFinishPort);
+#ifdef MH3_DEVELOPMENT
+    // As Movie_cut, only with no frame pending (a read or decode in flight
+    // would land in the closed movie's buffers).
+    if (skipMovie && Memory::Read32(kMovie + kPendingFlag) == 0) {
+        skipMovie = false;
+        ctx->gpr[3] = 1;
+    }
+#endif
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80434604, MH3_CheckMovieFinish, "Check_movie_finish");
+#ifdef MH3_DEVELOPMENT
+
+bool SkipMovie() {
+    skipMovie = MovieFrames() != 0;
+    return skipMovie;
+}
+#endif

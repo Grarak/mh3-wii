@@ -35,6 +35,7 @@ when one is an error.
 | `shot PATH` | dumps the next drawn frame to PATH (BMP) |
 | `call ADDR [INT...] [f FLOAT...]` | calls the guest function at ADDR with the ints (hex) in r3.. and the floats in f1..; answers r3 and f1 |
 | `cheat NAME[=VALUE]` | turns on an integrated cheat (as `--cheat`) |
+| `movie skip` | ends the open movie: its player sees it finished at its next check (once no frame is pending, as the game's own Movie_cut) and closes it as at its last frame, also where a button can't skip it (the opening after character creation, the Loc Lac movie); `error: no movie is open` otherwise |
 | `trace` | the `MH3_TRACE` items that can be switched, each `=on` or `=off` |
 | `trace ITEM on\|off` | turns a trace item on or off ([flags](flags.md#mh3_trace-game-state-over-game-time)) |
 

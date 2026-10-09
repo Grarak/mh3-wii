@@ -76,7 +76,7 @@ enum : uint32_t {
     flfntStackReset = 0x8005B52C,
     UpdateScene = 0x80046EFC,       // scene root update when a scene is loaded
     Setup2DProjection = 0x80046E98, // ortho projection + identity position matrix
-    MovieUpdate = 0x80435B54,
+    DiscErrorPause = 0x80435B54,    // pauses the game while the disc reports an error
     NetworkResetCheck = 0x8044E258,
     RunTasks = 0x800416F8,
     GrabScreen = 0x800586A0,
@@ -615,7 +615,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         if (render)
             call(Setup2DProjection);
 
-        call(MovieUpdate);
+        call(DiscErrorPause);
         call(NetworkResetCheck);
         Memory::Write8(kSystem + kFramePhase, 2);
 #ifdef MH3_DEVELOPMENT
@@ -655,7 +655,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
                     if (render)
                         call(Setup2DProjection);
 
-                    call(MovieUpdate);
+                    call(DiscErrorPause);
                 }
 
                 call(RunTasks);

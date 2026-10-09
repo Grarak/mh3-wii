@@ -136,6 +136,9 @@
 80434ffc MovieDecodeFrame
 804351c4 MovieDrawTexture
 80434688 MovieFrameDrawn
+80434604 Check_movie_finish
+804352a4 MovieFrames
+80434648 Movie_cut
 # Soft reset (HOME): fade out / hold / fade in, reset hooks.
 800d2230 ResetFade
 800d26c4 ClearFadeCounters
@@ -161,7 +164,7 @@
 80041f6c PollControllers
 80046e98 Setup2DProjection
 80046efc UpdateScene
-80435b54 MovieUpdate
+80435b54 DiscErrorPause
 8044e258 NetworkResetCheck
 800586a0 GrabScreen
 80044af4 TickSystemTimers

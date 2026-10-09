@@ -19,6 +19,7 @@
 //   cheat NAME[=VALUE]        turn on an integrated cheat
 //   trace [ITEM on|off]       the MH3_TRACE items and which are on, or turn
 //                             one on or off
+//   movie skip                end the open movie (as at its last frame)
 // Development builds on the hosts only (CMakeLists.txt adds this file to
 // those).
 #include "debug_port.h"
@@ -30,6 +31,7 @@
 #include "gx_host.h"
 #include "launcher_cheats.h"
 #include "memory.h"
+#include "movie_draw.h"
 #include "ppc_runtime.h"
 
 #include <arpa/inet.h>
@@ -264,7 +266,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat trace (docs/debug-port.md)";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat trace movie (docs/debug-port.md)";
 
     if (word == "state")
         return State(s);
@@ -420,6 +422,13 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
 
         on->store(state == "on");
         return "ok";
+    }
+
+    if (word == "movie") {
+        if (!(in >> arg) || arg != "skip")
+            return "error: movie skip";
+
+        return SkipMovie() ? "ok" : "error: no movie is open";
     }
 
     return "error: unknown command " + word;
