@@ -1,5 +1,7 @@
 #include "abi_bridge.h"
 #include "generated/RuntimeConfig.h"
+#include "disc_image.h"
+#include <fstream>
 #include <cstdlib>
 #include <execinfo.h>
 #include <iostream>
@@ -42,6 +44,16 @@ void WriteCrashArtifacts(std::string_view reason, std::string_view details, cons
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 6 && std::string_view(argv[1]) == "--disc-read") {
+            DiscImage disc(argv[2]);
+            const auto size = std::stoull(argv[4], nullptr, 0);
+            if (size > 64 * 1024 * 1024) throw std::runtime_error("Disc read too large");
+            auto bytes = disc.Read(std::stoull(argv[3], nullptr, 0), static_cast<uint32_t>(size));
+            std::ofstream output(argv[5], std::ios::binary);
+            output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            if (!output) throw std::runtime_error("Disc read output failed");
+            return 0;
+        }
         Memory::Init(24 * 1024 * 1024);
         InitializePersistentCpuContext();
         auto& cpu = GetPersistentCpuContext();
