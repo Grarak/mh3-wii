@@ -55,6 +55,33 @@ public sealed partial class CxxLinearCodeGenerator
         /// </summary>
         public uint ExitPreservedGprMask { get; set; }
 
+        /// <summary>
+        /// Set when this body is a register-argument variant: its argument registers start from
+        /// the C parameters, and its exits leave the returned registers (and arguments the
+        /// function never changes) out of CpuContext.
+        /// </summary>
+        public RegArgsSignature? RegArgsEntry { get; private set; }
+        private uint _exitExcludedGprMask;
+        private uint _exitExcludedFprMask;
+
+        /// <summary>
+        /// Turns this body into <paramref name="signature"/>'s variant. The argument registers are
+        /// marked written: the caller never stored them, so every boundary that syncs them must.
+        /// </summary>
+        public void EnterThroughRegArgs(RegArgsSignature signature, GuestAbiContract contract)
+        {
+            RegArgsEntry = signature;
+            foreach (var gpr in signature.ArgGprs)
+                if (_gprs.Contains(gpr)) _writtenGprs.Add(gpr);
+            foreach (var fpr in signature.ArgFprs)
+                if (_fprs.Contains(fpr)) _writtenFprs.Add(fpr);
+            _exitExcludedGprMask = signature.RetGprMask | (signature.ArgGprMask & ~contract.GprPossibleWriteMask);
+            _exitExcludedFprMask = signature.RetFprMask | (signature.ArgFprMask & ~contract.FprPossibleWriteMask);
+        }
+
+        public bool HasGpr(int index) => _gprs.Contains(index);
+        public bool HasFpr(int index) => _fprs.Contains(index);
+
         public static string GprLocal(int index) => GprRegisterName(index);
         public static string FprLocal(int index) => FprRegisterName(index);
         public const string CrLocal = "cr";
@@ -169,10 +196,27 @@ public sealed partial class CxxLinearCodeGenerator
         public void AppendEntryLoads(StringBuilder sb)
         {
             if (_recording) return;
+            var argGprs = RegArgsEntry?.ArgGprMask ?? 0u;
+            var argFprs = RegArgsEntry?.ArgFprMask ?? 0u;
             foreach (var gpr in _gprs)
-                sb.Append("    uint32_t ").Append(GprLocal(gpr)).Append(" = ctx->gpr[").Append(gpr).AppendLine("];");
+            {
+                if ((argGprs & (1u << gpr)) != 0)
+                    sb.Append("    uint32_t ").Append(GprLocal(gpr)).Append(" = arg_r").Append(gpr).AppendLine(";");
+                else
+                    sb.Append("    uint32_t ").Append(GprLocal(gpr)).Append(" = ctx->gpr[").Append(gpr).AppendLine("];");
+            }
             foreach (var fpr in _fprs)
-                sb.Append("    PPC_FPR ").Append(FprLocal(fpr)).Append(" = ctx->fpr[").Append(fpr).AppendLine("];");
+            {
+                if ((argFprs & (1u << fpr)) != 0)
+                    sb.Append("    PPC_FPR ").Append(FprLocal(fpr)).Append("; ").Append(FprLocal(fpr)).Append(".d = arg_f").Append(fpr).AppendLine(";");
+                else
+                    sb.Append("    PPC_FPR ").Append(FprLocal(fpr)).Append(" = ctx->fpr[").Append(fpr).AppendLine("];");
+            }
+            // Arguments only callees read: they belong in the context from the start.
+            foreach (var gpr in RegArgsEntry?.ArgGprs ?? Array.Empty<int>())
+                if (!_gprs.Contains(gpr)) sb.Append("    ctx->gpr[").Append(gpr).Append("] = arg_r").Append(gpr).AppendLine(";");
+            foreach (var fpr in RegArgsEntry?.ArgFprs ?? Array.Empty<int>())
+                if (!_fprs.Contains(fpr)) sb.Append("    ctx->fpr[").Append(fpr).Append("].d = arg_f").Append(fpr).AppendLine(";");
             if (_cr) sb.AppendLine($"    uint32_t {CrLocal} = ctx->cr;");
             if (_ctr) sb.AppendLine($"    uint32_t {CtrLocal} = ctx->ctr;");
             if (_xer) sb.AppendLine($"    uint32_t {XerLocal} = ctx->xer;");
@@ -185,6 +229,15 @@ public sealed partial class CxxLinearCodeGenerator
         /// </summary>
         public void AppendFlush(StringBuilder sb, string pad) =>
             AppendFlush(sb, pad, ResidencyBoundarySync.Full.ExceptGprs(ExitPreservedGprMask));
+
+        /// <summary>
+        /// Flush before a return to the caller. A register-argument variant hands its results
+        /// back as the C return value instead.
+        /// </summary>
+        public void AppendExitFlush(StringBuilder sb, string pad) =>
+            AppendFlush(sb, pad, ResidencyBoundarySync.Full
+                .ExceptGprs(ExitPreservedGprMask | _exitExcludedGprMask)
+                .ExceptFprs(_exitExcludedFprMask));
 
         /// <summary>
         /// Contract-narrowed flush. Only the registers the boundary can observe
@@ -279,6 +332,12 @@ public sealed partial class CxxLinearCodeGenerator
             ReloadGprMask = ReloadGprMask & ~mask
         };
 
+        public ResidencyBoundarySync ExceptFprs(uint mask) => mask == 0 ? this : this with
+        {
+            FlushFprMask = FlushFprMask & ~mask,
+            ReloadFprMask = ReloadFprMask & ~mask
+        };
+
         public bool FlushesGpr(int index) => (FlushGprMask & (1u << index)) != 0;
         public bool FlushesFpr(int index) => (FlushFprMask & (1u << index)) != 0;
         public bool ReloadsGpr(int index) => (ReloadGprMask & (1u << index)) != 0;
@@ -358,6 +417,11 @@ public sealed partial class CxxLinearCodeGenerator
     private static void AppendFlush(StringBuilder sb, string pad)
     {
         if (_activeResidency is { } residency) residency.AppendFlush(sb, pad);
+    }
+
+    private static void AppendExitFlush(StringBuilder sb, string pad)
+    {
+        if (_activeResidency is { } residency) residency.AppendExitFlush(sb, pad);
     }
 
     private static void AppendReload(StringBuilder sb, string pad)

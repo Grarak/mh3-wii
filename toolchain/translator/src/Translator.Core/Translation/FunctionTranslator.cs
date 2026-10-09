@@ -49,6 +49,11 @@ public sealed record TranslationOptions(
     bool GqrConstantsRequireRuntimeGuard = false,
     bool EnableLeafAbiSpillElision = false,
     IReadOnlySet<uint>? ModOverridableCallTargets = null,
+    /// <summary>
+    /// Base functions this translation emits that direct callers may enter with register
+    /// arguments (see <c>CxxLinearCodeGenerator.RegArgsSignature</c>); null disables it.
+    /// </summary>
+    IReadOnlySet<uint>? RegArgsFunctions = null,
     bool GenerateCxx = true,
     bool DiscoveryOnly = false,
     /// <summary>
@@ -746,7 +751,8 @@ public sealed class FunctionTranslator
             gqrCalleeWriteMasks: options.GqrCalleeWriteMasks,
             gqrConstantsRequireRuntimeGuard: options.GqrConstantsRequireRuntimeGuard,
             enableLeafAbiSpillElision: options.EnableLeafAbiSpillElision,
-            modOverridableCallTargets: options.ModOverridableCallTargets);
+            modOverridableCallTargets: options.ModOverridableCallTargets,
+            regArgsFunctions: options.RegArgsFunctions);
         return GuestHardwareAccess.Current.Contains(entryPoint)
             ? emission with { Code = GuestHardwareAccess.Rewrite(emission.Code) }
             : emission;

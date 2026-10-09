@@ -1192,6 +1192,10 @@ int RunTranslateRecursive(string[] argsTail)
                     StringComparer.OrdinalIgnoreCase);
             }
 
+            // Natives have contracts too but no translated body to enter.
+            var regArgsFunctions = emissionAddresses
+                .Where(address => !nativeGuestEffects.Contracts.ContainsKey(address))
+                .ToHashSet();
             TranslationOptions BuildEmissionOptions(
                 uint address,
                 IReadOnlyDictionary<uint, GuestAbiContract> stateFreeAbiContracts)
@@ -1214,7 +1218,8 @@ int RunTranslateRecursive(string[] argsTail)
                         StateFreeCallSymbols: stateFreeCallSymbols,
                         StateFreeCallSiteVariants: stateFreeCallSiteVariantsByCaller.GetValueOrDefault(address),
                          StateFreeEntryVariants: stateFreeEntryVariantsByTarget.GetValueOrDefault(address),
-                         ModOverridableCallTargets: modOverridableCallTargets),
+                         ModOverridableCallTargets: modOverridableCallTargets,
+                         RegArgsFunctions: regArgsFunctions),
                     residentPolicy,
                     address);
             }

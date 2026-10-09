@@ -369,6 +369,16 @@ public sealed partial class CxxLinearCodeGenerator
                         // the callee contract does not mention it.
                         boundarySync = boundarySync.WithFpr(1);
                     }
+                    if (!usesStateFreeCall &&
+                        argumentNormalization.Length == 0 &&
+                        !resumesThroughLinkRegister &&
+                        !IsGuestPairedScalarFloatReturn(guestAbiProvider, call.Target) &&
+                        ResolveRegArgsCallSignature(addr, guestAbiContracts, modOverridableCallTargets) is { } regArgs)
+                    {
+                        EmitRegArgsDirectCall(sb, pad, bufferBaseLength, addr, regArgs, boundarySync);
+                        EmitNormalizeGuestCallFloatReturn(call.Target, sb, pad, localPaired, guestAbiProvider);
+                        break;
+                    }
                     AppendFlush(sb, pad, boundarySync);
                     sb.Append(argumentNormalization);
                     if (usesStateFreeCall)
@@ -422,7 +432,7 @@ public sealed partial class CxxLinearCodeGenerator
                             sb.AppendLine($"{fallbackPad}if (TranslatedFunctionRegistry::FindByAddressPtr(ctx->lr) != nullptr) {{");
                             sb.AppendLine($"{fallbackPad}    InvokeIndirectCpu(ctx->lr, ctx);");
                             sb.AppendLine($"{fallbackPad}}}");
-                            sb.AppendLine($"{fallbackPad}return;");
+                            sb.AppendLine($"{fallbackPad}{ReturnStatement(fromContext: true)}");
                         }
                         if (localFallthroughLr.HasValue)
                         {
@@ -530,7 +540,7 @@ public sealed partial class CxxLinearCodeGenerator
                     // locals must not be written back afterwards.
                     AppendFlush(sb, pad);
                     sb.AppendLine($"{pad}InvokeIndirectJump({jumpTarget}, ctx);");
-                    sb.AppendLine($"{pad}return;");
+                    sb.AppendLine($"{pad}{ReturnStatement(fromContext: true)}");
                 }
                 break;
             case IrComment comment:

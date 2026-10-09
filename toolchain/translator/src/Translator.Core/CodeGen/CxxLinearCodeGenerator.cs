@@ -100,8 +100,10 @@ public sealed partial class CxxLinearCodeGenerator
         bool gqrConstantsRequireRuntimeGuard = false,
         bool enableLeafAbiSpillElision = false,
         IReadOnlySet<uint>? modOverridableCallTargets = null,
-        bool enableGpuFifoBurstCoalescing = true)
+        bool enableGpuFifoBurstCoalescing = true,
+        IReadOnlySet<uint>? regArgsFunctions = null)
     {
+        regArgsFunctions ??= new HashSet<uint>();
         modOverridableCallTargets ??= new HashSet<uint>();
         nonReturningCallTargets ??= new HashSet<uint>();
         lrContinuationCallTargets ??= new HashSet<uint>();
@@ -209,6 +211,16 @@ public sealed partial class CxxLinearCodeGenerator
         {
             sb.AppendLine();
         }
+        var regArgsDeclarations = RegArgsCallDeclarations(
+            func.Blocks.SelectMany(static block => block.Instructions)
+                .OfType<IrCall>()
+                .Select(static call => TryParseAddress(call.Target, out var target) ? target : 0u)
+                .Where(static target => target != 0),
+            guestAbiContracts,
+            modOverridableCallTargets,
+            regArgsFunctions).ToList();
+        foreach (var declaration in regArgsDeclarations) sb.AppendLine(declaration);
+        if (regArgsDeclarations.Count > 0) sb.AppendLine();
 
         var implementationName = cxxName;
         foreach (var target in guestAbiContract.DirectCallTargets.Where(stateFreeCallSymbols.ContainsKey))
@@ -281,6 +293,10 @@ public sealed partial class CxxLinearCodeGenerator
         var emittedLocalLabelAddresses = new SortedSet<uint>();
         string EmitFunctionBody(RegisterResidency? residency, int bufferBaseLength, bool discardResult = false)
         {
+            var previousRegArgsBody = _activeRegArgsBody;
+            var previousRegArgsFunctions = _activeRegArgsFunctions;
+            _activeRegArgsBody = residency?.RegArgsEntry;
+            _activeRegArgsFunctions = regArgsFunctions;
             var previousResidency = _activeResidency;
             var previousDirectCallTargets = _emittedDirectCallTargets;
             var previousLocalLabels = _emittedLocalLabelAddresses;
@@ -423,13 +439,13 @@ public sealed partial class CxxLinearCodeGenerator
                     {
                         case IrUndefined undef:
                             EmitInstruction(block.Label, -1, undef, body, bufferBaseLength, 1, cfg, labelNames, types, signature, localPaired, _guestAbiProvider, knownConstants, localConstants, linkedAddressRemap, nonReturningCallTargets, lrContinuationCallTargets, stackFacts, inlineGuestThunkStackBase: false, localFallthroughLr: null, guestAbiContracts, stateFreeAbiContracts, stateFreeCallSymbols, stateFreeCallSiteVariants, modOverridableCallTargets, shareLrContinuationDispatch);
-                            AppendFlush(body, "    ");
-                            body.AppendLine("    return;");
+                            AppendExitFlush(body, "    ");
+                            body.AppendLine($"    {ReturnStatement(fromContext: false)}");
                             break;
 
                         case IrReturn ret:
-                            AppendFlush(body, "    ");
-                            body.AppendLine("    return;");
+                            AppendExitFlush(body, "    ");
+                            body.AppendLine($"    {ReturnStatement(fromContext: false)}");
                             break;
 
                         case IrJump jump:
@@ -479,7 +495,7 @@ public sealed partial class CxxLinearCodeGenerator
                             // not treat this arm as an exit, so r14-r31 go too.
                             AppendFlush(body, "        ", ResidencyBoundarySync.Full);
                             body.AppendLine($"        InvokeIndirectJump({selectorExpr}, ctx);");
-                            body.AppendLine("        return;");
+                            body.AppendLine($"        {ReturnStatement(fromContext: true)}");
                             body.AppendLine("    }");
                             break;
 
@@ -498,9 +514,9 @@ public sealed partial class CxxLinearCodeGenerator
                                 // unreachable and must not write them back.
                                 if (term is not IrIndirectJump)
                                 {
-                                    AppendFlush(body, "    ");
+                                    AppendExitFlush(body, "    ");
                                 }
-                                body.AppendLine("    return;");
+                                body.AppendLine($"    {ReturnStatement(fromContext: term is IrIndirectJump)}");
                             }
                             break;
                     }
@@ -513,13 +529,13 @@ public sealed partial class CxxLinearCodeGenerator
                 {
                     // Every call site has already reloaded the callee's state.
                     // Keep the complete local target set, but emit it only once.
-                    body.AppendLine("    return;");
+                    body.AppendLine($"    {ReturnStatement(fromContext: true)}");
                     body.AppendLine("[[maybe_unused]] lr_continuation_dispatch:");
                     EmitLocalLrContinuationDispatch(body, "    ", labelNames);
                     body.AppendLine("    if (TranslatedFunctionRegistry::FindByAddressPtr(ctx->lr) != nullptr) {");
                     body.AppendLine("        InvokeIndirectCpu(ctx->lr, ctx);");
                     body.AppendLine("    }");
-                    body.AppendLine("    return;");
+                    body.AppendLine($"    {ReturnStatement(fromContext: true)}");
                 }
                 body.Append('}');
                 // The residency discovery pass only exists for its side effects
@@ -531,6 +547,8 @@ public sealed partial class CxxLinearCodeGenerator
             {
                 body.Clear();
                 _reusableFunctionBodyBuilder = body;
+                _activeRegArgsBody = previousRegArgsBody;
+                _activeRegArgsFunctions = previousRegArgsFunctions;
                 _activeResidency = previousResidency;
                 _emittedDirectCallTargets = previousDirectCallTargets;
                 _emittedLocalLabelAddresses = previousLocalLabels;
@@ -543,8 +561,19 @@ public sealed partial class CxxLinearCodeGenerator
         // really formats (inline EABI thunks read r11 with no IR operand; raw branch conditions reference CR/CTR
         // as plain text), then discard the result. The buffer offset below matters because call-site temporaries
         // uniquify themselves by position in the translation unit.
+        // Base functions a direct call can enter with register arguments. The body itself becomes
+        // that variant when nothing below rewrites it by name; otherwise an adapter provides it.
+        var regArgs = !emitModRegistration && linkedAddressRemap is null && publishedContract is not null &&
+                      regArgsFunctions.Contains(entryPoint)
+            ? TryGetRegArgsSignature(entryPoint, publishedContract)
+            : null;
+        var versionsGuardedGqr = CanVersionGuardedGqrFunction(func, gqrEntryGuards);
+        var regArgsCanOwnBody = regArgs is not null && residencyOwnsPrimaryBody && !versionsGuardedGqr;
+        var primaryDefinition = regArgsCanOwnBody
+            ? regArgs!.Definition
+            : FunctionDefinitionSignature(implementationName);
         var bodyBufferBaseLength = sb.Length +
-            FunctionDefinitionSignature(implementationName).Length +
+            primaryDefinition.Length +
             Environment.NewLine.Length;
         RegisterResidency? residency = null;
         {
@@ -564,8 +593,20 @@ public sealed partial class CxxLinearCodeGenerator
             }
         }
 
-        sb.AppendLine(FunctionDefinitionSignature(implementationName));
-        sb.AppendLine(EmitFunctionBody(residencyOwnsPrimaryBody ? residency : null, bodyBufferBaseLength));
+        var regArgsOwnsBody = regArgsCanOwnBody && residency is not null;
+        if (regArgsOwnsBody)
+        {
+            residency!.EnterThroughRegArgs(regArgs!, publishedContract!);
+            sb.AppendLine(primaryDefinition);
+            sb.AppendLine(EmitFunctionBody(residency, bodyBufferBaseLength));
+            sb.AppendLine();
+            AppendRegArgsContextWrapper(sb, implementationName, regArgs!);
+        }
+        else
+        {
+            sb.AppendLine(FunctionDefinitionSignature(implementationName));
+            sb.AppendLine(EmitFunctionBody(residencyOwnsPrimaryBody ? residency : null, bodyBufferBaseLength));
+        }
 
         var aliasName = $"func_{entryPoint:X8}";
         if (!emitModRegistration && !cxxName.Equals(aliasName, StringComparison.OrdinalIgnoreCase))
@@ -686,9 +727,16 @@ public sealed partial class CxxLinearCodeGenerator
                 ordinaryStateFreeFallbackBody ?? throw new InvalidOperationException(
                     $"Missing ordinary state-free fallback body for 0x{entryPoint:X8}."));
         }
-        if (CanVersionGuardedGqrFunction(func, gqrEntryGuards))
+        if (versionsGuardedGqr)
         {
             code = ApplyGuardedGqrFunctionVersioning(code, implementationName, gqrEntryGuards);
+        }
+        if (regArgs is not null && !regArgsOwnsBody)
+        {
+            var adapter = new StringBuilder(code);
+            adapter.AppendLine();
+            AppendRegArgsAdapter(adapter, implementationName, regArgs);
+            code = adapter.ToString();
         }
 
         return new CxxEmissionResult(

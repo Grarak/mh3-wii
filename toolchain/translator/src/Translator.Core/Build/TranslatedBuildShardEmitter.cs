@@ -687,7 +687,7 @@ public static partial class TranslatedBuildShardEmitter
         });
     }
 
-    private static bool RequiresGenericDirectCall(uint address) => address switch
+    internal static bool RequiresGenericDirectCall(uint address) => address switch
     {
         // Runtime-toggle diagnostics and phase tracing intentionally remain on
         // the generic cold path. Ordinary calls have no runtime branch.

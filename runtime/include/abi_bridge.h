@@ -319,6 +319,24 @@ struct KnownPreciseNativeCpuCall {
 #include "../../generated/build_shards/precise_native_calls.inc"
 #endif
 
+// Whether a translated direct call may enter the callee's register-argument variant
+// (func_XXXXXXXX_ra*, arguments and results in host registers): the call must bind
+// statically to the base translation `baseEntry`, exactly like MKW_STATIC_TRANSLATED_CALL,
+// with no native override and no nonvolatile FPR guard.
+template <uint32_t Target>
+constexpr bool KnownRegArgsCpuCall(void (*baseEntry)(CpuContext*)) {
+    if constexpr (KnownPreciseNativeCpuCall<Target>::kAvailable ||
+                  KnownNativeCpuCall<Target>::kAvailable ||
+                  KnownTypedNativeCpuCall<Target>::kAvailable) {
+        return false;
+    } else {
+        return KnownTranslatedCpuCall<Target>::kAvailable &&
+               !KnownTranslatedCpuCall<Target>::kMustRemainDynamicallyDispatchable &&
+               KnownTranslatedCpuCall<Target>::kNonvolatileFprWriteMask == 0 &&
+               KnownTranslatedCpuCall<Target>::Entry == baseEntry;
+    }
+}
+
 // Direct-mapped thread-local memo in front of the sorted registry lookup every bctrl performs;
 // a miss just re-runs the sorted lookup. 512 entries (12 KiB) covers the per-frame indirect
 // working set while staying L1/L2 resident, unlike 4096 which would thrash L2. Must stay a
