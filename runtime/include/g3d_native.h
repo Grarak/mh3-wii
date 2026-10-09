@@ -11,6 +11,7 @@ uint32_t ResDicAtOffset14(uint32_t mdl, uint32_t index); // 0x80097F7C
 // mtx.cpp
 void MtxCopy(uint32_t src, uint32_t dst);                 // 0x804C62C0 PSMTXCopy
 void MtxConcat(uint32_t a, uint32_t b, uint32_t ab);      // 0x804C6300 PSMTXConcat
+void MtxMultVec(uint32_t m, uint32_t src, uint32_t dst);  // 0x804C6F20 PSMTXMultVec
 void MtxApplyScale(uint32_t out, uint32_t m, uint32_t s); // 0x805019BC MTX34Scale
 void MtxConcatArray(uint32_t a, uint32_t src, uint32_t dst, uint32_t count,
                     uint32_t r13);                        // 0x804C63D0 PSMTXConcatArray

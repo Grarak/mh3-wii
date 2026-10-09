@@ -222,6 +222,8 @@
 800f0c78 ShellFind
 800dfdb4 MapSoundLoopHandle
 800e8090 VoicePlaying
+800e8f5c SoundListenerPolar
+800e6378 SoundVoiceUpdate3D
 800dfd8c MapSoundReleaseLoopHandle
 800dfc70 MapSoundAllocLoopHandle
 8028f99c ClampToBox

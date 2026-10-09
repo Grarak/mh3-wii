@@ -465,6 +465,7 @@ extern "C" void MH3_MTX34Scale(CpuContext* ctx) { ApplyScaleChecked(ctx->gpr[1],
 REGISTER_NATIVE_FUNCTION_AS(0x805019BC, MH3_MTX34Scale, "MTX34Scale");
 
 void G3dNative::MtxCopy(uint32_t src, uint32_t dst) { Copy(src, dst); }
+void G3dNative::MtxMultVec(uint32_t m, uint32_t src, uint32_t dst) { MultVec(m, src, dst); }
 void G3dNative::MtxConcat(uint32_t a, uint32_t b, uint32_t ab) { Concat(a, b, ab); }
 void G3dNative::MtxApplyScale(uint32_t out, uint32_t m, uint32_t s) { ApplyScale(out, m, s); }
 uint32_t G3dNative::WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale,
