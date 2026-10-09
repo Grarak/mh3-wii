@@ -3,7 +3,8 @@
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
 but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
 initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
-function, and stops in video-interface initialization at `0xCC002002`.
+function, passes video-interface initialization, and stops in GX FIFO setup at
+unsupported command-processor register `0xCC000002`.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -105,8 +106,9 @@ With `MH3_TRACE_ERRORS=1`, runtime failures emit symbolized native backtraces
 before unwinding, so routine diagnosis needs no LLDB authorization.
 
 Boot now passes IPC, STM, NAND, system configuration, DVD initialization and
-C++ constructors. The latest trace reaches game main (`0x8003F278`) and
-`VIInit` (`0x804E7B00`), which reads unimplemented video register `0xCC002002`.
+C++ constructors. The latest trace enters game main (`0x8003F278`), passes
+the original `VIInit` (`0x804E7B00`), and reaches GX initialization. The next
+unsupported access is command-processor register `0xCC000002`.
 The DOL constructor/destructor tables are explicitly seeded for static translation,
 including constructor stubs with no ordinary stack prologue.
 IOS synchronous open/close/read/write use a private NAND root at
@@ -156,7 +158,11 @@ and executable modifications. It does not claim those operations succeeded.
 
 Aurora already supports native Metal in the supplied WiiCompiled checkout
 (`aurora-main/lib/dawn/MetalBinding.mm`), so MoltenVK is unnecessary. The current
-MH3 executable has no renderer linked yet.
+MH3 executable has no renderer linked yet. `./scripts/build-aurora.sh` builds
+Aurora core and GX libraries with Metal enabled in `build/aurora`, using the
+sibling source (override with `AURORA_ROOT`). Both libraries build successfully;
+this does not yet verify a rendered frame. The local CMake hook fixes SDK header
+ordering and standard-header visibility without changing the sibling checkout.
 
 ## Tools and evidence
 
@@ -171,3 +177,9 @@ MH3 executable has no renderer linked yet.
 
 ROMs, extracted assets, generated game code/data, build products, SDKs, and logs
 are ignored by `.gitignore` and must remain out of source commits.
+
+The scoped host VI interface retains register state and supplies beam positions;
+the original VI timing and framebuffer setup still runs. Analog encoder writes
+are retained by a native I2C boundary. Retrace interrupts and scanout are not yet
+connected. Static jump-table discovery follows a scaled selector back to its
+logical register, fixing the VI format switch; all nine jump-table tests pass.

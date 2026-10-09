@@ -1,0 +1,6 @@
+#pragma once
+#include <cstdint>
+
+void ResetVideoInterface();
+bool ReadVideoRegister16(uint32_t address, uint16_t& value);
+bool WriteVideoRegister16(uint32_t address, uint16_t value);

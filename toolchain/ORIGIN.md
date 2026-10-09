@@ -10,6 +10,8 @@ MH3-specific changes:
 
 - Translator recursive discovery stops at full native replacements. Named
   `REGISTER_NATIVE_FUNCTION_AS` wrappers still discover their original bodies.
+- Jump-table bounds follow word-scaled selector definitions instead of using
+  stale comparisons of their destination register.
 - MH3 ABI bridge removes Mario Kart's argument rewrite at `0x8023BD38` and its
   native CPU-call address catalog.
 - Checked-memory FlatLoad/FlatStore also cover translator-proven stack accesses;

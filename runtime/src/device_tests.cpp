@@ -1,5 +1,6 @@
 #include "abi_bridge.h"
 #include "ios_host.h"
+#include "video_interface.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -33,6 +34,18 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    if (Memory::Read16(0xCC002002) != 0x0101)
+        throw std::runtime_error("VI initial PAL mode failed");
+    Memory::Write16(0xCC002048, 0x2828);
+    if (Memory::Read16(0x0C002048) != 0x2828)
+        throw std::runtime_error("VI register alias/storage failed");
+    const uint16_t line = Memory::Read16(0xCC00202C);
+    const uint16_t sample = Memory::Read16(0xCC00202E);
+    if (line < 1 || line > 625 || sample < 1 || sample > 864)
+        throw std::runtime_error("VI beam position out of PAL bounds");
+    uint16_t unused;
+    if (ReadVideoRegister16(0xCC003000, unused) || ReadVideoRegister16(0xCC002001, unused))
+        throw std::runtime_error("VI intercepted an unrelated or unaligned register");
     MH3_OSGetResetCode(cpu);
     if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
     Memory::Write32(0x8074F740, 1);

@@ -10,6 +10,32 @@ public class JumpTableDetectorTests
         => ordered.Select((ins, idx) => new { ins.Address, idx }).ToDictionary(x => x.Address, x => x.idx);
 
     [Fact]
+    public void ScaledSelectorIgnoresStaleDestinationComparison()
+    {
+        const uint start = 0x80000000;
+        var words = new uint[] {
+            0x2C000000, // cmpwi r0, 0 (unrelated earlier value)
+            0x28050008, // cmplwi r5, 8
+            0x54A0103A, // slwi r0, r5, 2
+            0x3C808000, // lis r4, 0x8000
+            0x38840100, // addi r4, r4, 0x100
+            0x7C84002E, // lwzx r4, r4, r0
+            0x7C8903A6, // mtctr r4
+            0x4E800420, // bctr
+        };
+        var ordered = words.Select((word, i) => PpcDecoder.Decode(start + (uint)i * 4, word)).ToArray();
+        var image = TranslatorCppTestHarness.CreateImage(
+            (start + 0x100, start + 0x40), (start + 0x104, start + 0x50),
+            (start + 0x108, start + 0x40), (start + 0x10C, start + 0x40),
+            (start + 0x110, start + 0x60), (start + 0x114, start + 0x50),
+            (start + 0x118, start + 0x40), (start + 0x11C, start + 0x40),
+            (start + 0x120, start + 0x60));
+        Assert.True(JumpTableDetector.TryRecognize(ordered, BuildIndex(ordered), start + 28,
+            start, start + 0x100, image, out var targets));
+        Assert.Equal(new uint[] { start + 0x40, start + 0x50, start + 0x60 }, targets);
+    }
+
+    [Fact]
     public void RecognizesLwzxBackedSwitchTable()
     {
         const uint baseAddr = 0x80000000;
