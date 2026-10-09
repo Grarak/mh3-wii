@@ -1,18 +1,14 @@
-// The guest worker (guest_worker.h): one host thread with its own CPU context
-// and guest stack, running jobs the game thread hands it.
+// Guest threads (guest_worker.h): host threads with their own CPU context and
+// guest stack, running jobs another thread hands them.
 #include "guest_worker.h"
 
 #include "fatal.h"
-#include "isa/ppc_isa_context.h"
 #include "memory.h"
-#include "spin_signal.h"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <pthread.h>
 #include <stdexcept>
 #include <thread>
 #ifdef MH3_DEVELOPMENT
@@ -25,29 +21,7 @@
 #include <psp2/kernel/threadmgr.h>
 #endif
 
-namespace GuestWorker {
 namespace {
-uint32_t stackBase = 0, workArea = 0;
-bool started = false;
-pthread_t thread;
-
-// Written by the game thread before it publishes a submission, read by the
-// worker after it sees one.
-CpuContext seed;
-Job job = nullptr;
-void* jobData = nullptr;
-
-// Jobs handed over (the worker waits on it) and jobs done (the game thread
-// waits on it).
-SpinSignal submitted, finished;
-
-// The worker's host stack, which the game thread publishes (PpcThread).
-std::atomic<uintptr_t> hostLow{0}, hostHigh{0};
-std::atomic<bool> hostKnown{false};
-#ifdef MH3_DEVELOPMENT
-std::atomic<uint64_t> jobCount{0}, jobTime{0};
-uint64_t waitCount = 0, waitTime = 0;
-#endif
 
 uint64_t NowNs() {
 #ifdef __vita__
@@ -57,16 +31,22 @@ uint64_t NowNs() {
 #endif
 }
 
-[[noreturn]] void Fatal(const char* reason) {
-    std::fprintf(stderr, "MH3 guest worker: %s\n", reason);
+[[noreturn]] void Fatal(const char* name, const char* reason) {
+    std::fprintf(stderr, "MH3 %s: %s\n", name, reason);
     std::abort();
 }
 
-void* Run(void*) {
+} // namespace
+
+void* GuestThread::Run(void* self) {
+    static_cast<GuestThread*>(self)->Loop();
+    return nullptr;
+}
+
+void GuestThread::Loop() {
 #ifdef __vita__
-    // Core 3 (the devkit's cap unlocker opens it); core 0 otherwise.
-    if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0 << 3) < 0) {
-        std::printf("MH3 guest worker: core 3 is not available, running on core 0\n");
+    if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0 << core_) < 0) {
+        std::printf("MH3 %s: core %u is not available, running on core 0\n", name_, core_);
         sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
     }
 
@@ -74,154 +54,156 @@ void* Run(void*) {
     info.size = sizeof(info);
 
     if (sceKernelGetThreadInfo(sceKernelGetThreadId(), &info) < 0)
-        Fatal("no thread information");
+        Fatal(name_, "no thread information");
 
-    hostLow.store(uintptr_t(info.stack), std::memory_order_relaxed);
-    hostHigh.store(uintptr_t(info.stack) + info.stackSize, std::memory_order_relaxed);
+    hostLow_.store(uintptr_t(info.stack), std::memory_order_relaxed);
+    hostHigh_.store(uintptr_t(info.stack) + info.stackSize, std::memory_order_relaxed);
 #else
     pthread_attr_t attributes;
     void* address = nullptr;
     size_t size = 0;
 
     if (pthread_getattr_np(pthread_self(), &attributes) != 0 || pthread_attr_getstack(&attributes, &address, &size) != 0)
-        Fatal("no stack range");
+        Fatal(name_, "no stack range");
 
     pthread_attr_destroy(&attributes);
-    hostLow.store(uintptr_t(address), std::memory_order_relaxed);
-    hostHigh.store(uintptr_t(address) + size, std::memory_order_relaxed);
+    hostLow_.store(uintptr_t(address), std::memory_order_relaxed);
+    hostHigh_.store(uintptr_t(address) + size, std::memory_order_relaxed);
 #endif
-    hostKnown.store(true, std::memory_order_release);
+    hostKnown_.store(true, std::memory_order_release);
 
-    // Created once, the worker stays for the whole process, waiting on
-    // `submitted` between jobs. Its context stays current from the first job
+    // Created once, the thread stays for the whole process, waiting on
+    // `submitted_` between jobs. Its context stays current from the first job
     // on: leaving the scope would restore the FP control register the thread
     // started with, and with it the NI mirror the game thread shares.
-    uint32_t seen = submitted.AwaitChange(0, 0);
-    CpuContext cpu = seed;
+    uint32_t seen = submitted_.AwaitChange(0, 0);
+    CpuContext cpu = seed_;
     CpuContextScope scope(&cpu);
 
     for (;;) {
-#ifdef MH3_DEVELOPMENT
         const uint64_t start = NowNs();
-#endif
-        // Fresh registers for every job, on the worker's own guest stack with
+
+        // Fresh registers for every job, on the thread's own guest stack with
         // an empty back chain.
-        cpu = seed;
-        cpu.gpr[1] = (stackBase + kGuestStackBytes - 16) & ~0xFu;
+        cpu = seed_;
+        cpu.gpr[1] = (stackBase_ + stackBytes_ - 16) & ~0xFu;
         Memory::Write32(cpu.gpr[1], 0);
-        job(&cpu, jobData);
-#ifdef MH3_DEVELOPMENT
-        jobTime.fetch_add(NowNs() - start, std::memory_order_relaxed);
-        jobCount.fetch_add(1, std::memory_order_relaxed);
-#endif
+        job_(&cpu, data_);
+        jobTime_.fetch_add(NowNs() - start, std::memory_order_relaxed);
+        jobCount_.fetch_add(1, std::memory_order_relaxed);
+
         // Jobs come once a frame: park at once (no spin) until the next.
-        finished.Advance();
-        seen = submitted.AwaitChange(seen, 0);
+        finished_.Advance();
+        seen = submitted_.AwaitChange(seen, 0);
     }
 }
 
-void Start() {
+void GuestThread::Start() {
     pthread_attr_t attributes;
     pthread_attr_init(&attributes);
     pthread_attr_setstacksize(&attributes, 1u << 20);
-    const int failed = pthread_create(&thread, &attributes, Run, nullptr);
+    const int failed = pthread_create(&thread_, &attributes, Run, this);
     pthread_attr_destroy(&attributes);
 
     if (failed)
-        MH3_THROW(std::runtime_error("Cannot start the guest worker"));
+        MH3_THROW(std::runtime_error(std::string("Cannot start the ") + name_));
 
-    while (!hostKnown.load(std::memory_order_acquire))
+    while (!hostKnown_.load(std::memory_order_acquire))
         std::this_thread::yield();
 
-    // Published by the game thread while it runs no guest code, so its own
-    // context lookups never see half of the range. The worker reads them only
+    // Published by the submitter while it runs no guest code, so its own
+    // context lookups never see half of the range. The thread reads them only
     // after a submission, which orders them.
-    PpcThread::workerStackLow = hostLow.load(std::memory_order_relaxed);
-    PpcThread::workerStackHigh = hostHigh.load(std::memory_order_relaxed);
-    started = true;
-}
-} // namespace
+    const uintptr_t low = hostLow_.load(std::memory_order_relaxed), high = hostHigh_.load(std::memory_order_relaxed);
 
-void ReserveGuestStack(uint32_t base) {
-    stackBase = base;
-}
+    if (role_ == PpcThread::Worker) {
+        PpcThread::workerStackLow = low;
+        PpcThread::workerStackHigh = high;
+    } else {
+        PpcThread::drawStackLow = low;
+        PpcThread::drawStackHigh = high;
+    }
 
-void ReserveWorkArea(uint32_t base) {
-    workArea = base;
-}
-
-uint32_t WorkArea() {
-    return workArea;
+    started_ = true;
 }
 
-bool Available() {
-    return stackBase != 0 && workArea != 0;
-}
-
-void Submit(const CpuContext& game, Job work, void* data) {
-    if (!stackBase)
-        MH3_THROW(std::runtime_error("Guest worker: no guest stack"));
+void GuestThread::Submit(const CpuContext& seed, Job job, void* data) {
+    if (!stackBase_)
+        MH3_THROW(std::runtime_error(std::string(name_) + ": no guest stack"));
 
     if (Pending())
-        MH3_THROW(std::runtime_error("Guest worker: a job is still pending"));
+        MH3_THROW(std::runtime_error(std::string(name_) + ": a job is still pending"));
 
-    if (!started)
+    if (!started_)
         Start();
 
-    seed = game;
-    job = work;
-    jobData = data;
-    submitted.Advance();
+    seed_ = seed;
+    job_ = job;
+    data_ = data;
+    submitted_.Advance();
 }
 
-void Wait() {
-    const uint32_t target = submitted.Load();
+void GuestThread::Wait() {
+    const uint32_t target = submitted_.Load();
 
-    if (finished.Load() == target)
+    if (finished_.Load() == target)
         return;
-#ifdef MH3_DEVELOPMENT
+
     const uint64_t start = NowNs();
-#endif
-    // A job is a part of the frame the game thread would otherwise run
-    // itself: spin, which also skips a condition variable's wake latency.
-    for (uint32_t done = finished.Load(); done != target;)
-        done = finished.SpinForChange(done);
-#ifdef MH3_DEVELOPMENT
-    waitTime += NowNs() - start;
-    ++waitCount;
-#endif
+
+    // A job is a part of the frame the submitter would otherwise run itself:
+    // spin, which also skips a condition variable's wake latency.
+    for (uint32_t done = finished_.Load(); done != target;)
+        done = finished_.SpinForChange(done);
+
+    waitTime_ += NowNs() - start;
+    ++waitCount_;
 }
 
-bool Pending() {
-    return finished.Load() != submitted.Load();
+bool GuestThread::Pending() const {
+    return finished_.Load() != submitted_.Load();
+}
+
+GuestThread::Statistics GuestThread::TakeStatistics() {
+    Statistics out;
+    out.jobs = jobCount_.exchange(0, std::memory_order_relaxed);
+    out.jobNs = jobTime_.exchange(0, std::memory_order_relaxed);
+    out.waits = waitCount_;
+    out.waitNs = waitTime_;
+    waitCount_ = waitTime_ = 0;
+    return out;
+}
+
+namespace GuestWorker {
+GuestThread& Thread() {
+    // Core 3 (the devkit's cap unlocker opens it); core 0 otherwise.
+    static GuestThread worker("guest worker", PpcThread::Worker, 3);
+    return worker;
 }
 
 #ifdef MH3_DEVELOPMENT
 void NoteShared(const char* what) {
-    if (PpcThread::CurrentThread() != PpcThread::Worker)
+    const unsigned thread = PpcThread::CurrentThread();
+
+    if (thread == PpcThread::Game)
         return;
 
     static std::mutex lock;
-    static std::vector<const char*> reported;
+    static std::vector<std::pair<const char*, unsigned>> reported;
     std::lock_guard guard(lock);
 
-    if (std::find(reported.begin(), reported.end(), what) != reported.end())
+    if (std::find(reported.begin(), reported.end(), std::pair{what, thread}) != reported.end())
         return;
 
-    reported.push_back(what);
-    std::printf("MH3 guest worker: unsafe %s on the worker\n", what);
+    reported.emplace_back(what, thread);
+    std::printf("MH3 guest worker: unsafe %s on the %s\n", what, thread == PpcThread::Worker ? "worker" : "draw thread");
 }
 #endif
-
-Statistics TakeStatistics() {
-    Statistics out;
-#ifdef MH3_DEVELOPMENT
-    out.jobs = jobCount.exchange(0, std::memory_order_relaxed);
-    out.jobNs = jobTime.exchange(0, std::memory_order_relaxed);
-    out.waits = waitCount;
-    out.waitNs = waitTime;
-    waitCount = waitTime = 0;
-#endif
-    return out;
-}
 } // namespace GuestWorker
+
+namespace DrawThread {
+GuestThread& Thread() {
+    static GuestThread draw("draw thread", PpcThread::Draw, 3);
+    return draw;
+}
+} // namespace DrawThread

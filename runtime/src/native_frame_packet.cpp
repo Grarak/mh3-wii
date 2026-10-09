@@ -6,6 +6,7 @@
 #include "native_shade_snapshot.h"
 #include "frame_split.h"
 #include "game_step.h"
+#include "isa/ppc_isa_thread_state.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_frame_state_exchange.h"
 #include "model_render_prep.h"
@@ -306,8 +307,14 @@ struct FeedbackTarget {
 std::unordered_map<const void*, FeedbackTarget> feedbackTargets;
 uint64_t feedbackRevision = 0;
 
+// The game thread, or the draw thread while it runs the frame's draw for the
+// waiting game thread (docs/pipelined-draw.md).
+bool OnProducer() {
+    return std::this_thread::get_id() == gameThread || PpcThread::CurrentThread() == PpcThread::Draw;
+}
+
 void RequireGame() {
-    if (std::this_thread::get_id() != gameThread && running)
+    if (running && !OnProducer())
         MH3_THROW(std::runtime_error("Frame packet recorded outside the game thread"));
 }
 
@@ -1021,7 +1028,7 @@ void WaitCompleted(uint64_t target) {
 } // namespace
 
 bool OnNativeGraphicsThread() {
-    return aurora::gl::on_render_thread() || (running.load(std::memory_order_relaxed) && std::this_thread::get_id() == gameThread);
+    return aurora::gl::on_render_thread() || (running.load(std::memory_order_relaxed) && OnProducer());
 }
 
 bool AllocateNativeGeometry(uint32_t vertices, uint32_t indices, AuroraNativeGeometry& out) {

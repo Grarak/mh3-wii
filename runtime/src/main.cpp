@@ -482,10 +482,12 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80000038, arenaHi);
         Memory::Write32(0x8000003C, fstSize);
 
-        // The guest worker's stack sits below the FST; the game's arena ends
-        // under it.
-        const uint32_t gameArenaHi = arenaHi - GuestWorker::kGuestStackBytes;
-        GuestWorker::ReserveGuestStack(gameArenaHi);
+        // The guest worker's stack sits below the FST, the draw thread's below
+        // it; the game's arena ends under them.
+        const uint32_t workerStack = arenaHi - GuestWorker::kGuestStackBytes;
+        GuestWorker::ReserveGuestStack(workerStack);
+        const uint32_t gameArenaHi = workerStack - DrawThread::kGuestStackBytes;
+        DrawThread::Thread().ReserveGuestStack(gameArenaHi, DrawThread::kGuestStackBytes);
 
         // Standard Wii boot information, with MH3's own arena boundary.
         Memory::Write32(0x80000000, 0x524D4850); // RMHP
@@ -518,9 +520,12 @@ int main(int argc, char** argv) {
         Memory::Write32(0x80003120, 0x93600000);
         Memory::Write32(0x80003124, 0x90000800);
 
-        // The guest worker's copy of the g3d scratch ends the MEM2 arena.
-        const uint32_t mem2ArenaHi = 0x935E0000 - GuestWorker::kWorkAreaBytes;
-        GuestWorker::ReserveWorkArea(mem2ArenaHi);
+        // The guest worker's and the draw thread's copies of the g3d scratch
+        // end the MEM2 arena.
+        const uint32_t workerArea = 0x935E0000 - GuestWorker::kWorkAreaBytes;
+        GuestWorker::ReserveWorkArea(workerArea);
+        const uint32_t mem2ArenaHi = workerArea - GuestWorker::kWorkAreaBytes;
+        DrawThread::Thread().ReserveWorkArea(mem2ArenaHi);
         Memory::Write32(0x80003128, mem2ArenaHi);
         Memory::Write32(0x80003130, 0x935E0000);
         Memory::Write32(0x80003134, 0x93600000);

@@ -89,7 +89,7 @@ struct MH3FrameSplitScope {
     unsigned family;
     bool active;
     MH3SplitClock::time_point start;
-    explicit MH3FrameSplitScope(unsigned value) : family(value), active(PpcThread::CurrentThread() == PpcThread::Game) {
+    explicit MH3FrameSplitScope(unsigned value) : family(value), active(PpcThread::CurrentThread() != PpcThread::Worker) {
         if (active && !mh3SplitDepth[family]++)
             start = MH3SplitClock::now();
     }
@@ -108,7 +108,7 @@ struct MH3FrameSplitDetailScope {
     unsigned family;
     bool active;
     MH3SplitClock::time_point start;
-    explicit MH3FrameSplitDetailScope(unsigned value) : family(value), active(mh3SplitDetail && PpcThread::CurrentThread() == PpcThread::Game) {
+    explicit MH3FrameSplitDetailScope(unsigned value) : family(value), active(mh3SplitDetail && PpcThread::CurrentThread() != PpcThread::Worker) {
         if (active && !mh3SplitDepth[family]++)
             start = MH3SplitClock::now();
     }

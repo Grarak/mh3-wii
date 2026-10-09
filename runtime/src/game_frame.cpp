@@ -181,8 +181,8 @@ uint32_t mh3SplitFrame;
 // initialization.
 bool mh3SplitDetail = false;
 void MH3FrameSplitCall(unsigned kind) {
-    // The guest worker's calls are not the game thread's.
-    if (PpcThread::CurrentThread() != PpcThread::Game)
+    // The guest worker's calls are not the frame's (the draw thread's are).
+    if (PpcThread::CurrentThread() == PpcThread::Worker)
         return;
 
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
@@ -280,6 +280,75 @@ struct FrameSplit {
     }
 } split;
 #endif
+
+// The draw section of the frame body: the scene, fonts and fade overlay, the
+// fade timers (and the grabbed screen's restore), the HUD and the movie.
+void DrawSection(CpuContext* ctx, bool render) {
+    auto call = [ctx](uint32_t fn) {
+        InvokeIndirectCpu(fn, ctx);
+        return ctx->gpr[3];
+    };
+
+#ifdef MH3_DEVELOPMENT
+#define MH3_SPLIT(bucket) split.Lap(split.bucket)
+#else
+#define MH3_SPLIT(bucket)
+#endif
+    if (render) {
+        DrawPages::DrawBegins(ctx->gpr[1]);
+        call(DrawScene);
+        {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
+            call(flfntFlush);
+        }
+
+        MH3_SPLIT_SCOPE(MH3_SPLIT_FADE);
+        call(DrawFadeOverlay);
+    }
+
+    // Joined in DrawAll; this runs the calls of a frame that drew no scene.
+    EffectStep::Join(ctx);
+    MH3_SPLIT(draw);
+    call(TickFades);
+
+    if (render && Memory::Read8(kSystem + kScreenGrab)) {
+        Memory::Write8(kSystem + kScreenGrab, 0);
+        call(RestoreGrabbedScreen);
+    }
+
+    MH3_SPLIT(logic);
+
+    if (render) {
+        {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_HUD);
+            call(DrawHud);
+        }
+
+        MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
+        call(MovieDraw);
+        DrawPages::DrawEnds();
+    }
+#undef MH3_SPLIT
+}
+
+// MH3_PROFILE=draw-thread (development, docs/pipelined-draw.md): the draw
+// section runs on the draw thread while the game thread waits.
+bool DrawOnThread() {
+#ifdef MH3_DEVELOPMENT
+    static const bool enabled = ProfileOptions().Has("draw-thread") && DrawThread::Thread().Available();
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+struct DrawJob {
+    bool render;
+};
+
+void RunDrawJob(CpuContext* cpu, void* data) {
+    DrawSection(cpu, static_cast<DrawJob*>(data)->render);
+}
 
 } // namespace
 
@@ -409,39 +478,14 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         Memory::Write8(kSystem + kFramePhase, 3);
         MH3_SPLIT(logic);
 
-        if (render) {
-            DrawPages::DrawBegins(ctx->gpr[1]);
-            call(DrawScene);
-            {
-                MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
-                call(flfntFlush);
-            }
-
-            MH3_SPLIT_SCOPE(MH3_SPLIT_FADE);
-            call(DrawFadeOverlay);
-        }
-
-        // Joined in DrawAll; this runs the calls of a frame that drew no scene.
-        EffectStep::Join(ctx);
-        MH3_SPLIT(draw);
-        call(TickFades);
-
-        if (render && Memory::Read8(kSystem + kScreenGrab)) {
-            Memory::Write8(kSystem + kScreenGrab, 0);
-            call(RestoreGrabbedScreen);
-        }
-
-        MH3_SPLIT(logic);
-
-        if (render) {
-            {
-                MH3_SPLIT_SCOPE(MH3_SPLIT_HUD);
-                call(DrawHud);
-            }
-
-            MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
-            call(MovieDraw);
-            DrawPages::DrawEnds();
+        if (DrawOnThread()) {
+            // Stage 1 of docs/pipelined-draw.md: the same section on the draw
+            // thread, the game thread waiting.
+            DrawJob job{render};
+            DrawThread::Thread().Submit(*ctx, RunDrawJob, &job);
+            DrawThread::Thread().Wait();
+        } else {
+            DrawSection(ctx, render);
         }
 
         MH3_SPLIT(draw);
