@@ -43,6 +43,9 @@ struct NativeShaderVariant {
     bool linear_fog = false;
     // Exact cached single-texture RGBA product; literal zero/one coefficients.
     bool pure_modulate = false;
+    // Physical target is certified A=1; preserve original alpha/discard, then
+    // return A=1 so an unblended RGB mask can become a full GXM color write.
+    bool target_alpha_one = false;
     bool operator==(const NativeShaderVariant&) const = default;
 };
 

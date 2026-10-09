@@ -1437,6 +1437,8 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
   glBindVertexArray(g_state.emptyVao);
 }
 
+bool shaded_target_alpha_one() noexcept { return false; }
+
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {
   use_program(program);
   glUniform4f(glGetUniformLocation(program, name), x, y, z, w);

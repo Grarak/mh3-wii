@@ -2,6 +2,7 @@
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
 #include "../gfx/native_mesh_layout.hpp"
+#include "../gfx/target_alpha.hpp"
 #include "alpha_compare.hpp"
 #include "../gfx/native_texture_set.hpp"
 #include "device.hpp"
@@ -61,6 +62,7 @@ decltype(auto) guarded(F&& operation) noexcept {
 struct TextureEntry {
   std::unique_ptr<TextureStorage> storage;
   unsigned pins = 0;
+  gfx::TargetAlpha alpha;
 };
 struct NativeProgram {
   std::string label;
@@ -73,6 +75,7 @@ struct NativeProgram {
   MeshLayout nativeMeshLayout;
   // draw_shaded_*: hand-written Cg patched once per distinct vertex binding.
   bool shaded = false;
+  bool preservesTargetAlphaOne = false;
   uint64_t vertexHash = 0, fragmentHash = 0;
   std::vector<std::pair<std::vector<VertexInput>, std::shared_ptr<PatchedProgram>>> bindings;
 };
@@ -230,6 +233,18 @@ public:
     }
   }
   SceGxmOutputRegisterFormat output_format() { return state.color ? texture(state.color).output_format() : SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4; }
+  bool shaded_alpha_one() {
+    static const char* option = std::getenv("MH3_GXM_ALPHA_ONE");
+    if (!state.color || (option && option[0] == '0'))
+      return false;
+    const auto& target = entry(state.color);
+    return gfx::target_alpha_one_eligible(target.storage->format == Format::RGBA8, state.display, target.alpha,
+                                         state.raster.blend, state.raster.colorMask);
+  }
+  void invalidate_alpha() {
+    for (auto& [id, target] : textures)
+      target.alpha.invalidate();
+  }
   void viewport() {
     const auto& v = state.viewport;
     apply_viewport(device.context(), v[0], v[1], v[2], v[3], state.depthRange[0], state.depthRange[1]);
@@ -328,6 +343,11 @@ public:
     auto blend = blend_info(state.raster, state.blendColor);
     if (!state.display && !state.color)
       blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
+    if (native.preservesTargetAlphaOne) {
+      if (!gfx::target_alpha_one_expand(shaded_alpha_one(), native.shaded, true, native.replacesDepth))
+        throw std::runtime_error("Fixed alpha-one shader lost its target certificate");
+      blend.colorMask = SCE_GXM_COLOR_MASK_ALL;
+    }
     bind_program(program, blend);
     draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
     for (const auto& [samplerName, slot] : native.samplers) {
@@ -373,6 +393,8 @@ public:
     clearProgram.set_fragment_uniform("color", color, 4);
     utility_draw(6);
     capture_draw(depthOnly ? "clear-depth" : "clear-color", 0, 6, 6, 1, &raster);
+    if (!depthOnly && state.color)
+      entry(state.color).alpha.clear(raster.colorMask[3], color[3], !state.scissorEnabled);
   }
   void collect() {
     pool.collect();
@@ -418,8 +440,15 @@ public:
     }
     textures.erase(id);
   }
-  void capture_draw(std::string_view kind, GLuint program, uint32_t vertices, uint32_t indices, uint32_t instances = 1, const RasterState* actualRaster = nullptr, GLuint texture0 = 0) {
-    const auto& r = actualRaster ? *actualRaster : state.raster;
+  void capture_draw(std::string_view kind, GLuint program, uint32_t vertices, uint32_t indices, uint32_t instances = 1, const RasterState* actualRaster = nullptr, GLuint texture0 = 0,
+                    bool preservesAlphaOne = false) {
+    auto r = actualRaster ? *actualRaster : state.raster;
+    // Unconditional: tracing may be disabled. Expanded fixed RGB writes
+    // output the already-certified one and preserve the certificate.
+    if (preservesAlphaOne)
+      r.colorMask[3] = true;
+    if (state.color && r.colorMask[3] && !preservesAlphaOne)
+      entry(state.color).alpha.draw(r.colorMask[3]);
     if (razor_scene_tracing()) {
       const auto found = programs.find(program);
       const auto* native = found == programs.end() ? nullptr : &found->second;
@@ -621,6 +650,7 @@ void discard_native_frame() noexcept {
   guarded([] {
     auto& r = renderer();
     r.device.end();
+    r.invalidate_alpha();
     r.collect();
   });
 }
@@ -714,7 +744,12 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
 }
 void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
   gfx::port_capture::upload(&texture, mip, uint64_t(bytesPerRow) * height);
-  guarded([&] { renderer().texture(texture.gl()).upload(mip, x, y, width, height, data, bytesPerRow); });
+  guarded([&] {
+    auto& r = renderer();
+    r.texture(texture.gl()).upload(mip, x, y, width, height, data, bytesPerRow);
+    if (!mip && width && height)
+      r.entry(texture.gl()).alpha.invalidate();
+  });
 }
 void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept {
   if (!texture || !width || !height)
@@ -795,6 +830,9 @@ GLuint Program::get() noexcept {
     native.nativeMaterialVertices = m_desc.nativeMaterialVertices;
     native.nativeMeshLayout = m_desc.nativeMeshLayout;
     native.shaded = m_desc.cg;
+    native.preservesTargetAlphaOne = m_desc.preservesTargetAlphaOne;
+    if (native.preservesTargetAlphaOne && (!native.shaded || native.replacesDepth))
+      throw std::runtime_error("Alpha-one output promise requires an ordinary fixed shaded program");
     native.vertexHash = m_vertexHash;
     native.fragmentHash = m_fragmentHash;
     // Shaded programs patch per vertex binding at draw time (shaded_program).
@@ -929,6 +967,7 @@ void invalidate_state() noexcept {
   guarded([] {
     auto& r = renderer();
     r.device.end();
+    r.invalidate_alpha();
     r.reset_texture_bindings();
     r.state.program = 0;
     r.state.uniformValid = false;
@@ -1024,7 +1063,11 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
                              dst.pixels(), dstX, dstY, dst.row_bytes(), nullptr, 0, nullptr),
           "copy texture region");
     check(sceGxmTransferFinish(), "finish texture region copy");
+    r.entry(dest).alpha.copy(r.entry(source).alpha.one, !dstX && !dstY && uint32_t(width) == dst.width && uint32_t(height) == dst.height);
   });
+}
+bool shaded_target_alpha_one() noexcept {
+  return guarded([] { return renderer().shaded_alpha_one(); });
 }
 void clear_color(const float* color) noexcept {
   if (aurora::native_frame_drawing_allowed())
@@ -1197,7 +1240,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   r.prepare_shaded(native, r.shaded_program(native, {bound, count}), blocks, textureUnits);
   check(sceGxmSetVertexStream(r.device.context(), 0, buffer.data() + vertexOffset), "bind shaded mesh attributes");
   check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw shaded mesh");
-  r.capture_draw("shaded-mesh", program, vertexCount, indexCount);
+  r.capture_draw("shaded-mesh", program, vertexCount, indexCount, 1, nullptr, 0, native.preservesTargetAlphaOne);
 }
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
@@ -1221,7 +1264,7 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
     r.prepare_shaded(native, r.shaded_program(native, inputs), blocks, textureUnits);
     check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind shaded geometry attributes");
     check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, geometry.indices, geometry.index_count), "draw shaded geometry");
-    r.capture_draw("shaded-geometry", program, geometry.vertex_count, geometry.index_count);
+    r.capture_draw("shaded-geometry", program, geometry.vertex_count, geometry.index_count, 1, nullptr, 0, native.preservesTargetAlphaOne);
   });
 }
 

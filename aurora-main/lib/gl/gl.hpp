@@ -191,7 +191,13 @@ struct ProgramDesc {
   // GXM: vertex/fragment are hand-written Cg for draw_shaded_* (no GLSL
   // conversion); blocks name BUFFER indices, vertex attributes bind per draw.
   bool cg = false;
+  // Fixed fragment computes original discard first, then outputs A=1. GXM
+  // may expand RGB-only writes only while its target is certified A=1.
+  bool preservesTargetAlphaOne = false;
 };
+
+// Render owner only. GLES returns false. No submission, waits or pixel reads.
+bool shaded_target_alpha_one() noexcept;
 
 // One immutable converted-pack payload. Vita reads directly into CDRAM; GLES
 // uploads once and retains a 16-byte-aligned CPU view for common pack validation.

@@ -345,6 +345,9 @@ void main() {
 #endif
     result.rgb = mix(result.rgb, scene.fog_color.rgb, clamp(amount, 0.0, 1.0));
 #endif
+#if TARGET_ALPHA_ONE
+    result.a = 1.0;
+#endif
     frag_color = result;
 }
 )GLSL";
@@ -631,6 +634,9 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
 #endif
     result.rgb = lerp(result.rgb, scene.fog_color.rgb, saturate(amount));
 #endif
+#if TARGET_ALPHA_ONE
+    result.a = 1.0f;
+#endif
     return result;
 }
 )CG";
@@ -670,7 +676,7 @@ bool PureModulate(NativeShaderVariant variant) {
 }
 std::string FragmentDefines(NativeShaderVariant variant) {
     return Define("MODULATE", variant.model == NativeShaderModel::Modulate) + Define("TEXTURES", variant.textures) + Define("OVERLAY", variant.overlay) + Define("ALPHA_TEST", variant.alpha_test) +
-           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog) + Define("PURE_MODULATE", PureModulate(variant));
+           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog) + Define("PURE_MODULATE", PureModulate(variant)) + Define("TARGET_ALPHA_ONE", variant.target_alpha_one);
 }
 } // namespace
 
@@ -698,6 +704,8 @@ NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
         // Geometry includes full-screen composition and fades. Keep those
         // authored equations when isolating mesh vertex lighting.
         if (!result.empty() && ((std::string(probe) != "vertex" && std::string(probe) != "vertex-white") || mesh)) {
+            if (variant.target_alpha_one)
+                result = "float4((" + result + ").rgb, 1.0f)";
             const auto at = out.cg_fragment.rfind("return result;");
             out.cg_fragment.replace(at, std::string("return result;").size(), "return " + result + ";");
         }
@@ -725,5 +733,5 @@ std::string NativeShaderVertexName(NativeShaderVariant variant) {
 
 std::string NativeShaderFragmentName(NativeShaderVariant variant) {
     return std::string(variant.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(variant.textures) + (variant.overlay ? "_overlay" : "") + (PureModulate(variant) ? "_pure" : "") +
-           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "");
+           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "") + (variant.target_alpha_one ? "_a1" : "");
 }
