@@ -79,6 +79,9 @@ void MH3PrintWorldSplit(unsigned frames);
 
 // The MH3 layer split line (frame_draw.cpp), which it then resets.
 void MH3PrintLayerSplit(unsigned frames);
+
+// The MH3 hud split line (hud_draw.cpp), which it then resets.
+void MH3PrintHudSplit(unsigned frames);
 void MH3FrameSplitTime(unsigned family, MH3SplitClock::duration elapsed);
 extern uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 extern uint32_t mh3SplitFrame; // frame bodies started

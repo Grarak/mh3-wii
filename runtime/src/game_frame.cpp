@@ -258,6 +258,7 @@ struct FrameSplit {
                         f(MH3_SPLIT_G3D_VIEW), n(MH3_SPLIT_G3D_VIEW), f(MH3_SPLIT_G3D_UPDATE), n(MH3_SPLIT_G3D_UPDATE), f(MH3_SPLIT_G3D_OTHER), n(MH3_SPLIT_G3D_OTHER));
             MH3PrintFieldSplit(frames);
             MH3PrintLayerSplit(frames);
+            MH3PrintHudSplit(frames);
         }
 
         uint32_t snapshots[3][6];
