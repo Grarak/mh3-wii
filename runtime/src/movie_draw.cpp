@@ -16,6 +16,7 @@
 // step it decodes one frame per call, as the original.
 #include "abi_bridge.h"
 #include "game_step.h"
+#include "native_effect_draw.h"
 #include "port_check.h"
 #include "memory.h"
 #include <initializer_list>
@@ -65,9 +66,13 @@ static void MovieDrawFrame(CpuContext* ctx) {
     Memory::Write32(kMovie + kRetraceStamp, Memory::Read32(sda + uint32_t(kRetraceCount)));
     const uint32_t frames = Memory::Read8(kMovie + kFrameDrawn) ? GameStep::Ticks() : 1;
     for (uint32_t i = 0; i < frames; ++i) {
-        if (Memory::Read8(kResetting) == 0 && call(DecodeFrame) == 1) {
-            ctx->cr &= ~(1u << (31 - 6)); // crclr 6: no float varargs
-            call(OSPanic, {kSourceFile, 0x11A, kDecodeError});
+        if (Memory::Read8(kResetting) == 0) {
+            if (call(DecodeFrame) == 1) {
+                ctx->cr &= ~(1u << (31 - 6)); // crclr 6: no float varargs
+                call(OSPanic, {kSourceFile, 0x11A, kDecodeError});
+            } else {
+                NativeMovieFrameDecoded();
+            }
         }
     }
     const uint32_t rmode = Memory::Read32(sda + uint32_t(kRenderMode));
