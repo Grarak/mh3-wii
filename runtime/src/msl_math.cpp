@@ -8,9 +8,15 @@
 //   0x80464BE0 atan2        f1 = atan2(f1, f2) (__ieee754_atan2, y then x)
 //   0x80464488 atan2f       f1 = (float)atan2(f1, f2)
 //
+// nw4r::math, also on the host:
+//
+//   0x8009C7C4 SinCosRad    (f32* sin, f32* cos, f1 radians)
+//
 // fdlibm also stores EDOM to errno (0x807972C8) for a NaN, infinite or
 // negative sqrt argument; the port drops that store.
 #include "abi_bridge.h"
+#include "memory.h"
+#include "port_check.h"
 #include "ppc_runtime.h"
 
 #include <cmath>
@@ -28,3 +34,24 @@ extern "C" void MH3_Atan2f(CpuContext* ctx) {
     ctx->fpr[1].d = double(float(std::atan2(ctx->fpr[1].d, ctx->fpr[2].d)));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80464488, MH3_Atan2f, "atan2f");
+
+// SinCosRad: the angle in 1/256 turns (times 256 / 2 pi), its magnitude
+// wrapped below 65536 and cut to an index into the 256 entries {sin, cos,
+// dsin, dcos} at 0x805744A0; each value interpolated with the fraction (the
+// paired-single madd, one rounding) and the sine negated for a negative angle.
+static void SinCosRadPort(CpuContext* ctx) {
+    constexpr uint32_t kTable = 0x805744A0;
+    const float index = float(ctx->fpr[1].d) * Memory::ReadFloat32(0x8079FF60 - 31528); // 256 / 2 pi
+    float magnitude = std::fabs(index);
+    while (magnitude >= 65536.0f) magnitude -= 65536.0f;
+    const uint32_t whole = uint32_t(magnitude);
+    const float fraction = magnitude - float(whole & 0xFFFF);
+    const uint32_t entry = kTable + 16 * (whole & 0xFF);
+    const float sine = float(PPC_Fmadds(Memory::ReadFloat32(entry + 8), fraction, Memory::ReadFloat32(entry + 0)));
+    const float cosine = float(PPC_Fmadds(Memory::ReadFloat32(entry + 12), fraction, Memory::ReadFloat32(entry + 4)));
+    Memory::WriteFloat32(ctx->gpr[4], cosine);
+    Memory::WriteFloat32(ctx->gpr[3], index < 0.0f ? -sine : sine);
+}
+extern "C" void func_8009C7C4(CpuContext* ctx);
+extern "C" void MH3_SinCosRad(CpuContext* ctx) { PortCheck::Call(ctx, "SinCosRad", func_8009C7C4, SinCosRadPort); }
+REGISTER_NATIVE_FUNCTION_AS(0x8009C7C4, MH3_SinCosRad, "SinCosRad");

@@ -52,7 +52,7 @@ enum : uint32_t {
     GXLoadTexObj = 0x804B8DA0,
     GXLoadTexMtxImm = 0x804BACD0,
     GXSetTexCoordGen2 = 0x804B61B0,
-    SinCosIdx = 0x8009C7C4,
+    SinCosRad = 0x8009C7C4,
 };
 
 // The matrix element offsets of the 3x4 texture matrix.
@@ -137,7 +137,7 @@ uint32_t Setup(CpuContext* ctx) {
         Store(mtx + M13, offsetT);
         if (rotation != zero) {
             const double centeredS = Fsubs(offsetS, half), centeredT = Fsubs(offsetT, half);
-            game.Call<SinCosIdx>({frame[0x18], frame[0x14]}, {rotation});
+            game.Call<SinCosRad>({frame[0x18], frame[0x14]}, {rotation});
             const double c = Load(frame[0x14]), s = Load(frame[0x18]);
             Store(mtx + M11, c);
             Store(mtx + M00, c);
