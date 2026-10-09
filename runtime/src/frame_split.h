@@ -69,7 +69,7 @@ struct MH3FrameSplitScope {
 // Per-draw parts (material/shape preparation, packet record) run about a
 // hundred times per frame; MH3_PROFILE=split times them (two clock reads
 // each, ~1.5 ms/frame on the Vita).
-extern const bool mh3SplitDetail;
+extern bool mh3SplitDetail;
 struct MH3FrameSplitDetailScope {
     unsigned family;
     bool active;

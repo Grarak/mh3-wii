@@ -160,7 +160,9 @@ uint32_t splitScopes[MH3_SPLIT_FAMILIES];
 #ifdef MH3_DEVELOPMENT
 uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 uint32_t mh3SplitFrame;
-extern const bool mh3SplitDetail = ProfileOptions().Has("split");
+// Set at the first frame: the Vita applies runtime.env after static
+// initialization.
+bool mh3SplitDetail = false;
 void MH3FrameSplitCall(unsigned kind) {
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];
@@ -184,6 +186,8 @@ struct FrameSplit {
     Clock::time_point reported = Clock::now();
     static double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
     void Begin() {
+        if (!mh3SplitFrame)
+            mh3SplitDetail = ProfileOptions().Has("split");
         ++mh3SplitFrame;
         start = mark = Clock::now();
     }

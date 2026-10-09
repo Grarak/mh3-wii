@@ -83,7 +83,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 | Item | Effect |
 | --- | --- |
-| `frames=N` | the frame profile (wall/CPU ms per frame, completion, queue) and GX counters every N frames |
+| `frames=N` | the legacy frame profile (`MH3 profile:` line) every N frames; only the GLES self-check reaches it now, so game runs print nothing |
 | `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw: ~1.5 ms/frame on the Vita) |
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 
@@ -134,6 +134,7 @@ merged or removed in a second pass.
 | `MH3_TRACE_PLAYER` | player 0's position and motion by game time | development | remove |
 | `MH3_RENDER_PREP` | model preparation: `0` game thread, `1` (default) render thread, `2` both, checked | all (`2`: development) | `2` into `MH3_VERIFY` |
 | `MH3_DRAW_TABLE` | draw items: `1` (default) through the model's draw table, `0` by address, `2` both, compared | all (`2`: development) | `2` into `MH3_VERIFY` |
+| `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file | all | keep or remove after its A/B |
 | `MH3_DRAW_TABLE_DISCOVER` | `0`: draw tables only for models already drawn | all | remove |
 | `MH3_DRAW_TABLE_TRACE` | draw-table statistics | development | remove |
 | `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory | all | remove |
