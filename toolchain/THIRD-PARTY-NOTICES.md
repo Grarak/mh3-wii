@@ -110,6 +110,31 @@ fallback - though this project's x86_64-only target only ever compiles amd64.c) 
 Source: <https://github.com/higan-emu/libco>. Full license text:
 `runtime/third_party/libco/LICENSE`.
 
+### libbzip2 1.0.8 - bzip2 license (BSD-style)
+
+Copyright (C) 1996-2019 Julian R Seward.
+The disc image decoder (`runtime/src/rom_decoder.cpp`) decompresses bzip2 RVZ/WIA groups with
+the library sources of the official `bzip2-1.0.8.tar.gz` (SHA-256
+`ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269`), unmodified, vendored in
+`runtime/third_party/bzip2`. Source: <https://sourceware.org/bzip2/>. Full license text:
+`runtime/third_party/bzip2/LICENSE`.
+
+### LZMA SDK 25.01 decoders - public domain
+
+Igor Pavlov. The disc image decoder's LZMA and LZMA2 decompression uses `LzmaDec` and `Lzma2Dec`
+with their headers from the 7-Zip 25.01 source release (`7z2501-src.tar.xz`, SHA-256
+`ed087f83ee789c1ea5f39c464c55a5c9d4008deb0efe900814f2df262b82c36e`), unmodified, vendored in
+`runtime/third_party/lzma`. Each file states that it is in the public domain.
+Source: <https://www.7-zip.org/sdk.html>
+
+### nod - MIT OR Apache-2.0 (reference)
+
+Copyright (c) Luke Street. The disc image decoder reproduces the reads of nod 1.4.4's
+`Disc`/partition streams for this project's bridge; no nod code is included in it. nod itself is
+built only with `MH3_ROM_DECODER_NOD=ON` (`runtime/vita/rom_decoder`).
+Source: <https://github.com/encounter/nod>. The RVZ junk generator follows Dolphin's
+`docs/WiaAndRvz.md` (CC0-1.0).
+
 ---
 
 ## Fetched at build time and redistributed in release builds
