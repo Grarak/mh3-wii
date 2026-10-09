@@ -51,6 +51,7 @@ uint32_t current_frame() noexcept;
 #include <vector>
 
 constinit uint32_t nativeStateRevision[NativeOwnerCount][NATIVE_STATE_COMPONENTS]{};
+constinit uint32_t nativeMaterialStoreCopies = 0;
 namespace {
 constexpr uint64_t Bit(unsigned field) {
     return UINT64_C(1) << field;
@@ -78,6 +79,7 @@ struct MaterialOwner {
     bool shadeStructureDirty = true;
     mh3_native_fog fogSource{};
     mh3_shader_fog preparedFog{};
+    float fogViewportWidth = 0; // the width preparedFog was prepared at
     bool fogKnown = false, depthBeforeTexture = false;
     mh3_native_light_slots lightSlots{};
     std::array<mh3_shader_light, 8> preparedLights{};
@@ -2038,16 +2040,25 @@ void OverlayNativeMaterialIndirectMatrices(const mh3_pack_indirect_matrix matric
 }
 
 void SetNativeFog(const mh3_native_fog& source) {
-    auto next = M().preparedFog;
-    Check(mh3_material_prepare_fog(&source, GetNativeDrawState().viewport[2], &next), "Native fog producer");
+    auto& m = M();
+    const float width = GetNativeDrawState().viewport[2];
 
-    // Producers republish per model; the scene block changes only with content.
-    if (!M().fogKnown || std::memcmp(&M().fogSource, &source, sizeof source) || std::memcmp(&M().preparedFog, &next, sizeof next))
+    // Producers republish per model and effect: the same fog at the same width
+    // prepares as before (preparation keeps only fields of its own output).
+    if (m.fogKnown && m.fogViewportWidth == width && BytesEqual(&m.fogSource, &source, sizeof source))
+        return;
+
+    auto next = m.preparedFog;
+    Check(mh3_material_prepare_fog(&source, width, &next), "Native fog producer");
+
+    // The scene block changes only with content.
+    if (!m.fogKnown || std::memcmp(&m.fogSource, &source, sizeof source) || std::memcmp(&m.preparedFog, &next, sizeof next))
         Changed(NATIVE_STATE_LIGHTING);
 
-    M().fogSource = source;
-    M().preparedFog = next;
-    M().fogKnown = true;
+    m.fogSource = source;
+    m.preparedFog = next;
+    m.fogViewportWidth = width;
+    m.fogKnown = true;
 }
 
 namespace {
@@ -2548,6 +2559,7 @@ void ClearNativeMaterialPrograms() {
 
 void CopyNativeMaterialStoreForDraw() {
     owners[unsigned(NativeOwner::Draw)] = owners[unsigned(NativeOwner::Game)];
+    ++nativeMaterialStoreCopies;
 
     for (const auto component : {NATIVE_STATE_MATERIAL, NATIVE_STATE_LIGHTING, NATIVE_STATE_POST, NATIVE_STATE_COLORS})
         nativeStateRevision[unsigned(NativeOwner::Draw)][component] = nativeStateRevision[unsigned(NativeOwner::Game)][component];

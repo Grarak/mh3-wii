@@ -27,6 +27,11 @@ enum NativeStateComponent : unsigned {
 
 extern constinit uint32_t nativeStateRevision[NativeOwnerCount][NATIVE_STATE_COMPONENTS];
 
+// Advances when the handoff copies Game's material store over Draw's with its
+// revisions (CopyNativeMaterialStoreForDraw): Draw's material revision can
+// then repeat an earlier value for other contents.
+extern constinit uint32_t nativeMaterialStoreCopies;
+
 // native_render_state.cpp: projection, position, viewport, raster, scissor.
 struct NativeDrawSnapshot {
     mh3_draw_state draw;

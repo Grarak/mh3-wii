@@ -1,5 +1,6 @@
 // ABI adapters for the typed NW4R effects C producers. No GX calls/FIFO writes.
 #include "native_effect_draw.h"
+#include "bytes_equal.h"
 #include "fatal.h"
 #include "effect_particle.h"
 #include "native_frame_packet.h"
@@ -21,6 +22,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -39,6 +41,7 @@ using MemoryInline::FlatWriteFloat32;
 struct EffectInputs {
     mh3_effect_material resource{};
     uint32_t resource_address = 0; // the guest settings decoded into resource
+    std::array<uint8_t, 0xac> resource_bytes{}; // and their bytes
     // Texture matrices and sources of the draw (texture setup writes them),
     // the vertex producer's inputs as they are, with no per-quad copy.
     mh3_effect_vertex_inputs vertex{};
@@ -75,9 +78,19 @@ void StoreColor(uint32_t p, const uint8_t in[4]) {
         FlatWrite8(p + i, in[i]);
 }
 
+// Decodes the draw settings at p, unless they are the bytes decoded last (the
+// decoding is a function of them alone).
 void LoadResource(uint32_t p) {
-    Require(mh3_effect_material_read(Span(p, 0xac), &effect.resource), "Invalid NW4R effect draw resource");
+    const auto span = Span(p, 0xac);
+
+    if (effect.resource_address && BytesEqual(span.data, effect.resource_bytes.data(), 0xac)) {
+        effect.resource_address = p;
+        return;
+    }
+
+    Require(mh3_effect_material_read(span, &effect.resource), "Invalid NW4R effect draw resource");
     effect.resource_address = p;
+    std::memcpy(effect.resource_bytes.data(), span.data, 0xac);
 }
 
 // The decoded settings of a resource: the draw's own, or decoded now (the
@@ -104,6 +117,8 @@ void ApplyTextureMaps(uint32_t strategy) {
     }
 }
 
+void ApplyFog(uint32_t info);
+
 void ApplyMaterial(uint32_t strategy, uint32_t resource, uint32_t info) {
     effect.strategy = strategy;
     mh3_native_material_state material;
@@ -120,6 +135,11 @@ void ApplyMaterial(uint32_t strategy, uint32_t resource, uint32_t info) {
     raster.cull_mode = 0;
     SetNativeRaster(raster);
     SetNativeDepthCompareBeforeTexture((effect.resource.flags & 4) != 0);
+    ApplyFog(info);
+}
+
+// The fog the draw's settings ask for (state outside the material).
+void ApplyFog(uint32_t info) {
     mh3_native_fog fog{};
     fog.end = fog.far_plane = 1;
 
@@ -135,28 +155,9 @@ void ApplyMaterial(uint32_t strategy, uint32_t resource, uint32_t info) {
     SetNativeFog(fog);
 }
 
-void Channels(uint32_t strategy, uint32_t resource, uint32_t info) {
-    mh3_native_material_state material = GetNativeMaterialState();
-    material.channel_count = 1;
-    auto &channel = material.channel[0];
-    channel.flags = 63;
-    CopyColor(info + 0x98, channel.material_color);
-    CopyColor(info + 0x9c, channel.ambient_color);
-    const bool lighting = FlatRead8(info + 0x60) != 0;
-    channel.color = {0,
-                     0,
-                     uint8_t(lighting && FlatRead8(resource + 0x60) == 1),
-                     0,
-                     uint8_t(lighting && FlatRead8(resource + 0x60) == 1 ? (FlatRead8(info + 0x6c) ? 1 : 2) : 2),
-                     uint8_t(lighting && FlatRead8(resource + 0x60) == 1 ? FlatRead32(info + 0x64) : 0)};
-    channel.alpha = {0,
-                     0,
-                     uint8_t(lighting && FlatRead8(resource + 0x68) == 1),
-                     0,
-                     uint8_t(lighting && FlatRead8(resource + 0x68) == 1 ? (FlatRead8(info + 0x6c) ? 1 : 2) : 2),
-                     uint8_t(lighting && FlatRead8(resource + 0x68) == 1 ? FlatRead32(info + 0x68) : 0)};
-    material.channel[1].color = material.channel[1].alpha = {0, 0, 0, 0, 2, 0};
-    material.channel[1].flags |= 48;
+// The strategy's colour caches and the colour inputs its particles use
+// (+0xB0..+0xBF), as the channel setup leaves them.
+void ChannelSelectors(uint32_t strategy, uint32_t resource) {
     FlatWrite32(strategy + 0xb0, 0xffffffff);
     FlatWrite32(strategy + 0xb4, 0xffffffff);
 
@@ -184,7 +185,35 @@ void Channels(uint32_t strategy, uint32_t resource, uint32_t info) {
             }
         }
     }
+}
 
+// Channel 0's colours and controls as the draw's settings light it.
+void LightChannel(uint32_t resource, uint32_t info, mh3_pack_channel &channel) {
+    CopyColor(info + 0x98, channel.material_color);
+    CopyColor(info + 0x9c, channel.ambient_color);
+    const bool lighting = FlatRead8(info + 0x60) != 0;
+    channel.color = {0,
+                     0,
+                     uint8_t(lighting && FlatRead8(resource + 0x60) == 1),
+                     0,
+                     uint8_t(lighting && FlatRead8(resource + 0x60) == 1 ? (FlatRead8(info + 0x6c) ? 1 : 2) : 2),
+                     uint8_t(lighting && FlatRead8(resource + 0x60) == 1 ? FlatRead32(info + 0x64) : 0)};
+    channel.alpha = {0,
+                     0,
+                     uint8_t(lighting && FlatRead8(resource + 0x68) == 1),
+                     0,
+                     uint8_t(lighting && FlatRead8(resource + 0x68) == 1 ? (FlatRead8(info + 0x6c) ? 1 : 2) : 2),
+                     uint8_t(lighting && FlatRead8(resource + 0x68) == 1 ? FlatRead32(info + 0x68) : 0)};
+}
+
+void Channels(uint32_t strategy, uint32_t resource, uint32_t info) {
+    mh3_native_material_state material = GetNativeMaterialState();
+    material.channel_count = 1;
+    material.channel[0].flags = 63;
+    LightChannel(resource, info, material.channel[0]);
+    material.channel[1].color = material.channel[1].alpha = {0, 0, 0, 0, 2, 0};
+    material.channel[1].flags |= 48;
+    ChannelSelectors(strategy, resource);
     SetNativeMaterial(material);
 }
 
@@ -198,13 +227,123 @@ void Material(uint32_t strategy, uint32_t resource, uint32_t info) {
     ApplyMaterial(strategy, resource, info);
 }
 
+// What the material and raster Setup publishes are made of: the decoded
+// settings ApplyMaterial reads (without the particle colour sources and the
+// first two texture maps, which only the guest writes and particle colours
+// use), the settings' raster bytes and the lit channel. Emitters drawn one
+// after another differ mostly in what is left out.
+struct SetupKey {
+    mh3_effect_material material;
+    std::array<uint8_t, 5> raster;
+    mh3_pack_channel channel; // as LightChannel writes it (flags and raw controls zero)
+};
+
+SetupKey MakeSetupKey(uint32_t resource, uint32_t info) {
+    SetupKey key;
+    std::memset(&key, 0, sizeof key);
+    std::memcpy(&key.material, &effect.resource, sizeof key.material);
+    auto& m = key.material;
+    m.flags &= 0x4f; // depth test and write, depth before texture, clipping, indirect
+    std::memset(m.rgb_sources, 0, sizeof m.rgb_sources);
+    std::memset(m.alpha_sources, 0, sizeof m.alpha_sources);
+    m.texture_maps[0] = m.texture_maps[1] = 0;
+
+    if (!(m.flags & 0x40)) {
+        m.texture_maps[2] = 0;
+        m.indirect_exponent = 0;
+        std::memset(m.indirect_matrix, 0, sizeof m.indirect_matrix);
+    }
+
+    for (uint32_t i = m.stage_count; i < 4; i++)
+        std::memset(&m.stages[i], 0, sizeof m.stages[i]);
+
+    const uint32_t raster[5] = {0x5c, 0x5d, 0x5e, 0x5f, 0x70};
+
+    for (uint32_t i = 0; i < 5; i++)
+        key.raster[i] = FlatRead8(resource + raster[i]);
+
+    LightChannel(resource, info, key.channel);
+    return key;
+}
+
+// What Setup last published, as native_ui.cpp's MaterialCurrent: its inputs
+// and the material store, revision and raster right after. While all are
+// unchanged, the material and raster it would publish are the current ones:
+// it writes no colour register or alpha reference, the only material fields
+// that change without advancing the revision.
+struct PublishedSetup {
+    uint32_t owner = UINT32_MAX, copies = 0, revision = 0;
+    SetupKey key{};
+    mh3_raster_state raster{};
+} publishedSetup;
+
+// The draw thread's material store is a copy of the game thread's from each
+// handoff, revisions included (nativeMaterialStoreCopies tells them apart).
+bool SetupCurrent(const PublishedSetup& published, const SetupKey& key) {
+    const unsigned owner = NativeOwnerIndex(NativeOwner::Game);
+    return published.owner == owner && published.copies == nativeMaterialStoreCopies && published.revision == nativeStateRevision[owner][NATIVE_STATE_MATERIAL] &&
+           BytesEqual(&published.key, &key, sizeof key) && BytesEqual(&published.raster, &GetNativeDrawState().raster, sizeof published.raster);
+}
+
+#ifdef MH3_DEVELOPMENT
+// MH3_EFFECT_SETUP_CHECK=1: a Setup skipped as current runs in full as well
+// and must leave the material, its revision and the raster as they were.
+// Every 4096 skips report how many did not.
+bool SetupCheck() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("MH3_EFFECT_SETUP_CHECK");
+        return value && *value && value[0] != '0';
+    }();
+    return enabled;
+}
+
+void CheckSkippedSetup(uint32_t strategy, uint32_t resource, uint32_t info) {
+    static uint64_t setups = 0, changed = 0;
+    const mh3_native_material_state material = GetNativeMaterialState();
+    const unsigned owner = NativeOwnerIndex(NativeOwner::Game);
+    const uint32_t revision = nativeStateRevision[owner][NATIVE_STATE_MATERIAL];
+    const mh3_raster_state raster = GetNativeDrawState().raster;
+    ApplyMaterial(strategy, resource, info);
+    Channels(strategy, resource, info);
+    changed += !BytesEqual(&material, &GetNativeMaterialState(), sizeof material) || revision != nativeStateRevision[owner][NATIVE_STATE_MATERIAL] ||
+               !BytesEqual(&raster, &GetNativeDrawState().raster, sizeof raster);
+
+    if (++setups % 4096 == 0)
+        std::fprintf(stderr, "MH3 effect setup check: %llu skipped, %llu changed the material or raster\n", static_cast<unsigned long long>(setups),
+                     static_cast<unsigned long long>(changed));
+}
+#endif
+
 // TextureMaps, Material and Channels, as a strategy's draw sets them up, with
-// the resource decoded once.
+// the resource decoded once. Consecutive emitters often share settings: only
+// the guest writes and the fog are left to redo then. In the village about 60%
+// of the Setups (host count); on the devkit the billboard draws' setup went
+// from 12% to 6% of the draw thread, which bounds the frame there.
 void Setup(uint32_t strategy, uint32_t resource, uint32_t info) {
     LoadResource(resource);
     ApplyTextureMaps(strategy);
+    const SetupKey key = MakeSetupKey(resource, info);
+    auto& published = publishedSetup;
+
+    if (SetupCurrent(published, key)) {
+#ifdef MH3_DEVELOPMENT
+        if (SetupCheck()) [[unlikely]] {
+            CheckSkippedSetup(strategy, resource, info);
+            return;
+        }
+#endif
+        ChannelSelectors(strategy, resource);
+        ApplyFog(info);
+        return;
+    }
+
     ApplyMaterial(strategy, resource, info);
     Channels(strategy, resource, info);
+    published.owner = NativeOwnerIndex(NativeOwner::Game);
+    published.copies = nativeMaterialStoreCopies;
+    published.revision = nativeStateRevision[published.owner][NATIVE_STATE_MATERIAL];
+    published.key = key;
+    published.raster = GetNativeDrawState().raster;
 }
 
 uint32_t Alpha(uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t force) {
