@@ -63,11 +63,13 @@ count (`--ready-copies`, default 300 frames):
   (`--stack-depth 0`): Sony's USTACK returns no callers from the profile timer
   anyway, and with the 32-frame default about a third of the runs froze the
   console as the sampler started (three of nine on 2026-10-05; then six of six
-  clean at depth 0).
+  clean at depth 0). The walk overruns the stack: `vita_vprof.py` defaults to
+  depth 0 and refuses more than 8 frames.
 - **With stack snapshots** (`--cpu-registers --cpu-stack-bytes N`): a second
   stream of registers and N bytes of stack at 199 Hz for offline caller
   recovery. Snapshots can freeze the Vita: in Alatreon, 8 KiB snapshots froze
-  it in about half the runs and 32 KiB within about 4 s of sampling; during
+  it in about half the runs and 32 KiB within about 4 s of sampling (stack
+  overrun). Both scripts default to 2 KiB and refuse more than 4 KiB; during
   the THP intro they stopped the process's output. The render thread's
   snapshots all fail, so it has no stacks.
 

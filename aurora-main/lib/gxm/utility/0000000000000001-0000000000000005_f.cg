@@ -1,6 +1,8 @@
 // Preserve integer palette indices and full F32 depth through texture reads.
+// The sources have one level: tex2D reads it at the interpolated coordinate
+// (non-dependent; tex2Dlod's explicit level made the read dependent).
 float4 main(float2 uv : TEXCOORD0, uniform sampler2D source : TEXUNIT0) : COLOR
 {
-    float value = tex2Dlod<float>(source, float4(uv, 0.0, 0.0));
+    float value = tex2D<float>(source, uv);
     return float4(value, 0.0, 0.0, 1.0);
 }

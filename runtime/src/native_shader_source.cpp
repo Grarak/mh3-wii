@@ -26,6 +26,8 @@
 // are static * picked animated palette entries, evaluated from uniforms only.
 #include "native_shader_source.h"
 #include "fatal.h"
+#include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <set>
 #include <stdexcept>
@@ -1130,10 +1132,16 @@ std::string Define(const char* name, int value) {
 }
 
 // One statement per role; TEXGEN_OUTPUTS expands inside the mesh main().
+// General texgens first: psp2cgc -O3 crashed (a null read in the compiler)
+// on skinned programs with SRT roles 0 and 1 before a general role 2, and
+// the bank fell back to -O2 (mesh_spot*_ssg_gpu_skin: 646.5 cycles; with the
+// texgen first, -O3: 324.25).
 std::string TexgenOutputs(const NativeShaderVertexKey& key, bool cg) {
     std::string out = "#define TEXGEN_OUTPUTS";
+    std::array<unsigned, 3> order{0, 1, 2};
+    std::stable_partition(order.begin(), order.end(), [&](unsigned role) { return key.texgen[role] == NativeShaderTexgen::General; });
 
-    for (unsigned role = 0; role < 3; ++role) {
+    for (const unsigned role : order) {
         const auto r = std::to_string(role);
         out += " v_uv" + r + " = ";
 

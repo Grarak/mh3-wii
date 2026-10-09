@@ -45,6 +45,9 @@ uint32_t current_frame() noexcept;
 }
 
 namespace aurora::gl {
+// AURORA_SKIP_DRAWS's noblend on this frame (skip_draws below).
+bool measure_noblend();
+
 namespace {
 using namespace gxm;
 [[noreturn]] void fail(const char* message) {
@@ -206,6 +209,11 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   return memo.view;
 }
 
+class Renderer;
+
+// The half-resolution layer pass (below): composites the deferred layers.
+void flush_layers(Renderer& r);
+
 class Renderer {
 public:
   Renderer()
@@ -266,6 +274,9 @@ public:
     if (state.color == color && state.depth == depth && state.display == (!color && !depth))
       return;
 
+    if (!layers.empty() && !replayingLayers)
+      flush_layers(*this);
+
     device.end();
     pin(state.color, false);
     pin(state.depth, false);
@@ -301,9 +312,13 @@ public:
     if (!device.scene_active()) {
       if (state.display)
         device.begin_display();
-      else
+      else {
+        const auto depthScene = state.depth ? depth_scene(clearDepth) : Device::DepthScene{};
         device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr,
-                     nullptr, state.depth ? depth_scene(clearDepth) : Device::DepthScene{});
+                     nullptr, depthScene);
+        sceneStoresDepth = state.depth && depthScene.store;
+      }
+
       razor_scene_begin(gfx::current_frame(), device.current_fence().value, width, height, state.color, state.depth, state.display);
 
       // Stored DF32M contains coverage from the previous scene. Recreate the
@@ -369,6 +384,9 @@ public:
   }
 
   void prepare(GLuint id) {
+    if (!layers.empty() && !replayingLayers)
+      flush_layers(*this);
+
     auto found = programs.find(id);
 
     if (found == programs.end())
@@ -433,6 +451,9 @@ public:
   // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette; fragment BUFFER[0] Shade,
   // [1] Scene. Sampler slot r reads the texture bound at unit units[r].
   void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units) {
+    if (!layers.empty() && !replayingLayers)
+      flush_layers(*this);
+
     scene();
     viewport();
     apply_raster(state.raster, device.context());
@@ -447,6 +468,9 @@ public:
 
       blend.colorMask = SCE_GXM_COLOR_MASK_ALL;
     }
+
+    if (measure_noblend())
+      blend.colorFunc = blend.alphaFunc = SCE_GXM_BLEND_FUNC_NONE;
 
     bind_program(program, blend);
     draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
@@ -491,6 +515,9 @@ public:
   }
 
   void clear(const float* color, float depth, bool depthOnly) {
+    if (!layers.empty() && !replayingLayers)
+      flush_layers(*this);
+
     if (depthOnly && (!state.depth || !state.raster.depthWrite))
       return;
 
@@ -698,6 +725,25 @@ public:
   PatchedProgram clearProgram, presentProgram;
   std::unique_ptr<PatchedProgram> nativeGeometryPrograms[2];
 
+  // The half-resolution layer pass (draw_shaded_mesh, flush_layers): the
+  // scene's deferred translucent layers, their targets and depth program.
+  // A deferred draw: its state as recorded and the draw itself.
+  struct DeferredDraw {
+    State state;
+    std::function<void()> draw;
+  };
+
+  std::vector<DeferredDraw> layers;
+  TexturePtr layerColor, layerDepth;
+  std::unique_ptr<PatchedProgram> layerDepthProgram;
+  bool replayingLayers = false;
+  unsigned layerFlushes = 0;
+
+  // A scene's depth store is decided as it begins: a frame whose scene
+  // deferred layers (or wanted to) stores the next frame's scene depth, which
+  // the pass then reads. sceneStoresDepth: the running scene's.
+  bool layerPassExpected = false, layerWanted = false, sceneStoresDepth = false;
+
   // Utility block: quad vertex IDs at 0, quad indices at 64, the constant
   // attribute defaults at DefaultAttributesOffset.
   static constexpr size_t DefaultAttributesOffset = 128;
@@ -735,6 +781,10 @@ public:
       result.load &= liveness.reads;
       result.store = liveness.reads && liveness.readsAfterScene;
     }
+
+    // The half-resolution layer pass reads this scene's depth (flush_layers).
+    if (layerPassExpected && !replayingLayers && state.color && texture(state.color).width >= 512)
+      result.store = true;
 
     if (result.load && liveness.unstored == state.depth) {
       std::fprintf(stderr, "Aurora GXM: a scene loads depth its previous scene did not store; depth liveness disabled\n");
@@ -1361,20 +1411,25 @@ void invalidate_state() noexcept {
 }
 
 void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMemory. */ }
+
 // GPU measurement (docs/vita-razor.md), development builds:
 // AURORA_SKIP_DRAWS=quads,geometry,blended-meshes,opaque-meshes leaves those
 // draws out, and program:TEXT items the draws whose program label contains
 // TEXT (labels need MH3_RAZOR's scenes), so a Razor run shows what they cost.
-// Read at first use (the Vita applies runtime.env after static
-// initialization).
+// noblend draws the shaded draws without blending (blending's cost);
+// alternate applies the list on odd frames only, so neighbouring frames of
+// the same shot compare in one run. Read at first use (the Vita applies
+// runtime.env after static initialization).
 enum SkipKind : uint32_t { SkipQuads = 1, SkipGeometry = 2, SkipBlendedMeshes = 4, SkipOpaqueMeshes = 8 };
 
-bool skip_draws(uint32_t kind, GLuint program) {
+struct Skips {
+  uint32_t kinds = 0;
+  std::vector<std::string> programs;
+  bool noblend = false, alternate = false;
+};
+
+const Skips& draw_skips() {
 #ifdef MH3_DEVELOPMENT
-  struct Skips {
-    uint32_t kinds = 0;
-    std::vector<std::string> programs;
-  };
 
   static const Skips skips = [] {
     Skips result;
@@ -1389,6 +1444,9 @@ bool skip_draws(uint32_t kind, GLuint program) {
       if (item.starts_with("program:"))
         result.programs.emplace_back(item.substr(8));
 
+      result.noblend |= item == "noblend";
+      result.alternate |= item == "alternate";
+
       for (const auto& [name, bit] : {std::pair{"quads", SkipQuads}, {"geometry", SkipGeometry}, {"blended-meshes", SkipBlendedMeshes}, {"opaque-meshes", SkipOpaqueMeshes}})
         if (item == name)
           result.kinds |= bit;
@@ -1397,7 +1455,28 @@ bool skip_draws(uint32_t kind, GLuint program) {
     return result;
   }();
 
-  if (!skips.kinds && skips.programs.empty())
+  return skips;
+#else
+  static const Skips none;
+  return none;
+#endif
+}
+
+// Whether the measurement list applies to this frame.
+bool skips_active() {
+  const auto& skips = draw_skips();
+  return !skips.alternate || (gfx::current_frame() & 1);
+}
+
+bool measure_noblend() {
+  return draw_skips().noblend && skips_active();
+}
+
+bool skip_draws(uint32_t kind, GLuint program) {
+#ifdef MH3_DEVELOPMENT
+  const auto& skips = draw_skips();
+
+  if ((!skips.kinds && skips.programs.empty()) || !skips_active())
     return false;
 
   auto& r = renderer();
@@ -1714,20 +1793,13 @@ SceGxmAttributeFormat attribute_format(MeshAttributeFormat format, unsigned& com
 }
 } // namespace
 
-void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
-                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
-  if (!aurora::native_frame_drawing_allowed() || !indexCount || skip_draws(SkipBlendedMeshes, program))
-    return;
+namespace {
+// The mesh `buffer` (its data `bufferData`) must still be resident.
+void shaded_mesh_now(Renderer& r, GLuint buffer, const uint8_t* bufferData, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount,
+                     uint32_t indexOffset, uint32_t indexCount, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+  const auto found = r.meshes.find(buffer);
 
-  gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
-
-  if (!blocks.draw || !blocks.paletteBytes || !blocks.scene)
-    AURORA_THROW(std::runtime_error("Shaded mesh has no uniform blocks"));
-
-  auto& r = renderer();
-  const auto found = r.meshes.find(buffer.get());
-
-  if (found == r.meshes.end() || found->second.data() != buffer.data())
+  if (found == r.meshes.end() || found->second.data() != bufferData)
     AURORA_THROW(std::runtime_error("Resident mesh backing was retired"));
   // Same order as the Cg mesh entry point; a selector lane reads one byte.
   static constexpr const char* Names[] = {"a_position", "a_normal", "a_color0", "a_uv0", "a_uv1", "a_uv2", "a_select", "a_select0", "a_select1", "a_select2", "a_bones", "a_weights"};
@@ -1755,10 +1827,200 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 
   auto& native = r.programs.at(program);
   r.prepare_shaded(native, r.shaded_program(native, {bound, count}), blocks, textureUnits);
-  check(sceGxmSetVertexStream(r.device.context(), 0, buffer.data() + vertexOffset), "bind shaded mesh attributes");
-  check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw shaded mesh");
+  check(sceGxmSetVertexStream(r.device.context(), 0, bufferData + vertexOffset), "bind shaded mesh attributes");
+  check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, bufferData + indexOffset, indexCount), "draw shaded mesh");
   r.capture_draw("shaded-mesh", program, vertexCount, indexCount, 1, nullptr, 0, native.preservesTargetAlphaOne);
 }
+
+// The half-resolution layer pass. The scene's static translucent layers (the
+// lava falls, haze and embers of the volcanic maps: unskinned meshes blended
+// source alpha over, depth tested without writing) are fill-bound on the
+// Vita: each covered pixel costs about ten USSE cycles whatever the program
+// (Alatreon's intro, devkit: 6.8 shaded layers per pixel, 6 ms of a 16 ms
+// main scene). They are drawn at half resolution instead: deferred while the
+// scene draws, then, at the next other draw or target change, the scene's
+// depth is reduced to half size (the nearest of each 2x2 block, so they stay
+// behind everything in front of them), the layers are drawn over transparent
+// black in their order (colour blended as before, alpha accumulated: the
+// target holds their premultiplied sum) and the result is blended over the
+// scene (one, one minus alpha). Up to MaxLayerFlushes such passes a frame;
+// later layers draw at full resolution. AURORA_LAYER_PASS=0 (development)
+// turns it off.
+constexpr unsigned MaxLayerFlushes = 3;
+
+// AURORA_LAYER_PASS (development): 0 off, lava the map's layers only, all
+// (the default) the effects' quads and geometry as well.
+enum class LayerPass { Off, Lava, All };
+
+LayerPass layer_pass_mode() {
+#ifdef MH3_DEVELOPMENT
+  static const LayerPass mode = [] {
+    const std::string value = std::getenv("AURORA_LAYER_PASS") ? std::getenv("AURORA_LAYER_PASS") : "all";
+    return value == "0" ? LayerPass::Off : value == "lava" ? LayerPass::Lava : LayerPass::All;
+  }();
+  return mode;
+#else
+  return LayerPass::All;
+#endif
+}
+
+// Whether the draw about to be made can go to the half-resolution pass:
+// blended over (source alpha or premultiplied) or added, without depth
+// writes, on the scene's own target. Skinned meshes (characters) stay.
+bool deferrable_layer(Renderer& r, GLuint program, bool skinned, bool effect) {
+  const auto& s = r.state;
+  const auto& raster = s.raster;
+  const auto mode = layer_pass_mode();
+
+  if (mode == LayerPass::Off || (effect && mode != LayerPass::All) || r.replayingLayers || r.layerFlushes >= MaxLayerFlushes || s.display || !s.color || !s.depth || skinned)
+    return false;
+
+  // The scene's own target, not an offscreen capture.
+  const auto& target = r.texture(s.color);
+
+  if (target.width < 512 || target.format != Format::RGBA8 || r.programs.at(program).preservesTargetAlphaOne)
+    return false;
+
+  const bool sources = raster.srcColor == GL_SRC_ALPHA || raster.srcColor == GL_ONE;
+  const bool destinations = raster.dstColor == GL_ONE_MINUS_SRC_ALPHA || raster.dstColor == GL_ONE;
+
+  if (!(raster.blend && raster.colorEquation == GL_FUNC_ADD && sources && destinations && !raster.depthWrite && raster.colorMask[0] && raster.colorMask[1] && raster.colorMask[2]))
+    return false;
+
+  // The running scene must store its depth for the pass to read; else the
+  // next frame's will (layerPassExpected).
+  r.layerWanted = true;
+  return r.device.scene_active() && r.sceneStoresDepth;
+}
+
+void flush_layers(Renderer& r) {
+  auto layers = std::move(r.layers);
+  r.layers.clear();
+  ++r.layerFlushes;
+  const State saved = r.state;
+  const GLuint mainColor = saved.color, mainDepth = saved.depth;
+  const uint32_t fullWidth = r.texture(mainColor).width, fullHeight = r.texture(mainColor).height;
+  const uint32_t width = (fullWidth + 1) / 2, height = (fullHeight + 1) / 2;
+
+  if (!r.layerColor || r.layerColor->width != width || r.layerColor->height != height) {
+    r.layerColor = create_texture(width, height, 1, Format::RGBA8, "Aurora layer pass colour");
+    r.layerDepth = create_texture(width, height, 1, Format::Depth32F, "Aurora layer pass depth");
+  }
+
+  if (!r.layerDepthProgram)
+    r.layerDepthProgram = std::make_unique<PatchedProgram>(r.device, 9, 9);
+
+  const GLuint layerColor = r.layerColor->gl(), layerDepth = r.layerDepth->gl();
+  r.replayingLayers = true;
+
+  // The depth: the nearest of each 2x2 block of the scene's (stored at the
+  // end of its scene); the colour transparent. Whole targets, unscissored.
+  r.state.scissorEnabled = false;
+  r.bind_target(layerColor, layerDepth);
+  r.scene();
+  apply_viewport(r.device.context(), 0, 0, int32_t(width), int32_t(height), 0.f, 1.f);
+  RasterState depthRaster;
+  depthRaster.depthTest = true;
+  depthRaster.depthWrite = true;
+  depthRaster.depthFunc = GL_ALWAYS;
+  apply_raster(depthRaster, r.device.context());
+  r.layerDepthProgram->bind(blend_info(depthRaster, {}), SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4);
+  const float region[4]{-1.f, 1.f, 2.f, -2.f}, zero = 0.f;
+  const float offset[4]{0.5f / float(fullWidth), 0.5f / float(fullHeight), 0.f, 0.f};
+  r.layerDepthProgram->set_vertex_uniform("region", region, 4);
+  r.layerDepthProgram->set_vertex_uniform("depth", &zero, 1);
+  r.layerDepthProgram->set_vertex_uniform("offset", offset, 4);
+  r.texture(mainDepth).note_gpu_use();
+  const auto depthView = sampling_view(r.texture(mainDepth), NearestClamp);
+  check(sceGxmSetFragmentTexture(r.device.context(), 0, &depthView), "bind layer pass depth source");
+  r.utility_draw(6);
+
+  // The layers, in their order, at half size: colour blended as recorded,
+  // alpha accumulated over transparent black (premultiplied).
+  bool alpha = true;
+
+  for (const auto& d : layers) {
+    r.state = d.state;
+    r.state.color = layerColor;
+    r.state.depth = layerDepth;
+    r.state.display = false;
+
+    for (auto* rect : {&r.state.viewport, &r.state.scissor})
+      for (auto& value : *rect)
+        value /= 2;
+
+    // Over: alpha accumulates (the target's colour is premultiplied);
+    // added: the alpha stays.
+    const bool added = d.state.raster.dstColor == GL_ONE;
+    alpha = alpha && d.state.raster.colorMask[3];
+    r.state.raster.alphaEquation = GL_FUNC_ADD;
+    r.state.raster.srcAlpha = added ? GL_ZERO : GL_ONE;
+    r.state.raster.dstAlpha = added ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA;
+    r.state.raster.colorMask = {true, true, true, true};
+    r.state.clipDirty = true;
+    d.draw();
+  }
+
+  // Over the scene: one, one minus alpha (the scene's alpha as the layers
+  // left it only when they all wrote it).
+  r.state = saved;
+  r.state.color = layerColor;
+  r.state.depth = layerDepth;
+  r.state.display = false;
+  r.state.scissorEnabled = false;
+  r.bind_target(mainColor, mainDepth);
+  r.state.clipDirty = true;
+  r.scene();
+  apply_viewport(r.device.context(), 0, 0, int32_t(fullWidth), int32_t(fullHeight), 0.f, 1.f);
+  RasterState over;
+  over.blend = true;
+  over.srcColor = over.srcAlpha = GL_ONE;
+  over.dstColor = over.dstAlpha = GL_ONE_MINUS_SRC_ALPHA;
+  over.colorMask = {true, true, true, alpha};
+  apply_raster(over, r.device.context());
+  r.presentProgram.bind(blend_info(over, {}), r.output_format());
+  r.presentProgram.set_vertex_uniform("region", region, 4);
+  r.presentProgram.set_vertex_uniform("depth", &zero, 1);
+  r.texture(layerColor).note_gpu_use();
+  const auto colorView = sampling_view(r.texture(layerColor), LinearClamp);
+  check(sceGxmSetFragmentTexture(r.device.context(), 0, &colorView), "bind layer pass colour");
+  r.utility_draw(6);
+  r.state = saved;
+  r.state.clipDirty = true;
+  r.replayingLayers = false;
+}
+} // namespace
+
+void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
+                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+  if (!aurora::native_frame_drawing_allowed() || !indexCount || skip_draws(SkipBlendedMeshes, program))
+    return;
+
+  gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
+
+  if (!blocks.draw || !blocks.paletteBytes || !blocks.scene)
+    AURORA_THROW(std::runtime_error("Shaded mesh has no uniform blocks"));
+
+  auto& r = renderer();
+
+  // a_bones: a skinned mesh.
+  if (deferrable_layer(r, program, inputs.location[10] >= 0, false)) {
+    r.layers.push_back({r.state, [&r, id = buffer.get(), data = buffer.data(), layout, inputs, vertexOffset, vertexCount, indexOffset, indexCount, program, blocks, textureUnits] {
+                          // A mesh retired meanwhile is left out.
+                          if (const auto found = r.meshes.find(id); found != r.meshes.end() && found->second.data() == data)
+                            shaded_mesh_now(r, id, data, layout, inputs, vertexOffset, vertexCount, indexOffset, indexCount, program, blocks, textureUnits);
+                        }});
+    return;
+  }
+
+  shaded_mesh_now(r, buffer.get(), buffer.data(), layout, inputs, vertexOffset, vertexCount, indexOffset, indexCount, program, blocks, textureUnits);
+}
+
+namespace {
+void shaded_geometry_now(Renderer& r, const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
+                         const std::array<uint8_t, 3>& textureUnits);
+void shaded_quads_now(Renderer& r, const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits);
+} // namespace
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
                           const std::array<uint8_t, 3>& textureUnits) noexcept {
@@ -1770,6 +2032,20 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
       AURORA_THROW(std::runtime_error("Shaded geometry has no uniform blocks"));
 
     auto& r = renderer();
+
+    if (deferrable_layer(r, program, false, true)) {
+      r.layers.push_back({r.state, [&r, geometry, coordinates, program, blocks, textureUnits] { shaded_geometry_now(r, geometry, coordinates, program, blocks, textureUnits); }});
+      return;
+    }
+
+    shaded_geometry_now(r, geometry, coordinates, program, blocks, textureUnits);
+  });
+}
+
+namespace {
+void shaded_geometry_now(Renderer& r, const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
+                         const std::array<uint8_t, 3>& textureUnits) {
+  {
     constexpr uint16_t stride = sizeof(AuroraNativeMaterialVertex);
     const auto texcoord = [&](unsigned role) { return uint16_t(offsetof(AuroraNativeMaterialVertex, texcoord) + std::min<unsigned>(coordinates[role], 7) * 12); };
     const VertexInput inputs[]{{"a_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, offsetof(AuroraNativeMaterialVertex, position), stride, 0},
@@ -1784,12 +2060,14 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
     check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind shaded geometry attributes");
     check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, geometry.indices, geometry.index_count), "draw shaded geometry");
     r.capture_draw("shaded-geometry", program, geometry.vertex_count, geometry.index_count, 1, nullptr, 0, native.preservesTargetAlphaOne);
-  });
+  }
 }
+} // namespace
 
 void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
     return;
+
   if (skip_draws(SkipQuads, program))
     return;
 
@@ -1798,6 +2076,19 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, G
       AURORA_THROW(std::runtime_error("Shaded quads have no uniform blocks"));
 
     auto& r = renderer();
+
+    if (deferrable_layer(r, program, false, true)) {
+      r.layers.push_back({r.state, [&r, vertices, quads, program, blocks, textureUnits] { shaded_quads_now(r, vertices, quads, program, blocks, textureUnits); }});
+      return;
+    }
+
+    shaded_quads_now(r, vertices, quads, program, blocks, textureUnits);
+  });
+}
+
+namespace {
+void shaded_quads_now(Renderer& r, const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+  {
 
     // Every quad is (0 1 2) (0 2 3): one pattern in GPU memory, made once.
     static uint16_t* indices = [&] {
@@ -1824,8 +2115,9 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, G
     check(sceGxmSetVertexStream(r.device.context(), 0, vertices), "bind shaded quad attributes");
     check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, quads * 6), "draw shaded quads");
     r.capture_draw("shaded-quads", program, quads * 4, quads * 6, 1, nullptr, 0, native.preservesTargetAlphaOne);
-  });
+  }
 }
+} // namespace
 
 UniformBlock create_uniform_block(const void* bytes, uint32_t size) noexcept {
   return guarded([&] { return renderer().create_uniform_block(bytes, size); });
@@ -1907,6 +2199,9 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
     }
 
     r.device.flip();
+    r.layerPassExpected = r.layerWanted;
+    r.layerWanted = false;
+    r.layerFlushes = 0;
     r.collect();
 
     if (g_residencyRequested.exchange(false, std::memory_order_relaxed)) {

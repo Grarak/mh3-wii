@@ -207,6 +207,7 @@ The model tests and the asset scripts (`vita-active-play.py`,
 | --- | --- | --- |
 | `AURORA_PORT_CAPTURE` | `DIR`: a per-draw state log (`DIR/events.tsv`) and the shader sources (`DIR/shaders/`) | all |
 | `AURORA_PORT_CAPTURE_DRAW_INTERVAL` | `N`: log every Nth draw (default 30) | all |
+| `AURORA_LAYER_PASS` | Vita: `0` draws every blended layer at full resolution, `lava` sends only the map's blended layers to the [half-resolution pass](native-renderer-status.md#half-resolution-layers), `all` (default; release builds always) sends the effects' quads and geometry too | development |
 | `AURORA_GROUP_CUTOUTS` | `1`: within each run of depth-tested, depth-writing, unblended draws, draw the opaque ones before the discard (cutout) ones, to cut discard-to-opaque transitions (experimental; coplanar order not validated) | all |
 
 ## Read by tools, not the runtime
