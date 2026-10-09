@@ -20,6 +20,11 @@ inline void read_mesh_payload(const char* path, uint64_t offset, void* destinati
   if (!file || std::fseek(file.get(), long(offset), SEEK_SET))
     AURORA_THROW(std::runtime_error("Cannot open or seek native mesh payload"));
 
+  // Unbuffered: newlib reads each piece in one call. Buffered, a 1.5 MiB
+  // payload took 5.6 s of a render packet on the devkit (a black screen
+  // after loading).
+  std::setvbuf(file.get(), nullptr, _IONBF, 0);
+
   auto* out = static_cast<unsigned char*>(destination);
 
   while (bytes) {

@@ -621,6 +621,12 @@ class PackPreparer {
         payload.data.reset(data, [](uint8_t* p) { ::operator delete[](p, std::align_val_t(64)); });
         std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen(payload.path.c_str(), "rb"), &std::fclose);
 
+        // Unbuffered: newlib reads the payload in one call. Buffered, a
+        // 1.5 MiB payload took 6.6 s on the devkit and was still being read
+        // when the next area drew it.
+        if (file)
+            std::setvbuf(file.get(), nullptr, _IONBF, 0);
+
         if (!file || payload.offset > uint64_t(LONG_MAX) || std::fseek(file.get(), long(payload.offset), SEEK_SET) ||
             std::fread(data, 1, payload.bytes, file.get()) != payload.bytes)
             payload.data.reset();
@@ -1016,6 +1022,7 @@ bool EnsureNativeModelAssetGPU(uintptr_t handle, uint64_t epoch) {
     }
 
     const auto name = asset.path.string();
+    std::fprintf(stderr, "MH3 native model assets: %u GPU bytes of %s read from the card at a draw\n", asset.pack.gpu_bytes, name.c_str());
     RegisterNativeModelGPU(asset.pack, name.c_str(), handle, epoch);
     asset.gpuRegistered = true;
     NoteResident(handle, epoch, m.demandFrame);

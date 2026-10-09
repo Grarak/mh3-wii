@@ -48,11 +48,10 @@ game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`;
   certification then claims the read pack instead of reading it on the game
   thread. The disc reader answers the file's read only once its pack is read,
   and certification skips a pack not read yet until a later frame, so the
-  card reads happen during Now Loading: certification that waited for them
-  froze the loading screen's last frame (a black screen after loading, 0.6 s
-  per area on a slow card). A second worker reads the pack's GPU data, and the render thread
-  only copies it into GPU memory, while the area loads, not at the model's
-  first draw.
+  card reads happen during Now Loading, not in a frame of it. A second
+  worker reads the pack's GPU data, and the render thread only copies it
+  into GPU memory, while the area loads, not at the model's first draw.
+  Both read it unbuffered (see Why); a GPU read at a draw is logged.
 - **On the Vita** packs land in CDRAM (models within their own reservation),
   with no decode, staging copy or content hash. Textures are never spilled
   to main RAM.
@@ -74,6 +73,12 @@ game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`;
   50 ms. Moving the GPU data reads off the render thread took a Vita loading
   screen from 11.28 to 10.85 s and the game thread's waits for packet slots
   from 2.4 s to 26 ms.
+- Reading the GPU data unbuffered: through newlib's stream buffer the Vita
+  read a 1.5 MiB payload in 5.6-6.6 s. The next area's stage model, loaded
+  while the hunter was still in the previous area, was still being read
+  when the area first drew it; the render thread read it again from the
+  card, and the screen stayed black for 5.95 s after Now Loading (devkit,
+  island quest area 1 to 2). Unbuffered: 0.23 s, the fade.
 - No converted asset is distributed: everything is made from the user's
   disc on their device.
 
