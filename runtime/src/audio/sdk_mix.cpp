@@ -382,8 +382,16 @@ void UpdateSettings() {
 }
 
 // Setters: r3 voice, r4 value; each marks the channel for the next update.
+// A value equal to the stored one leaves the channel as it is: the update
+// would compute the volume or buses it already has (the sound engine sets
+// the pan and volume of its 3D voices every 3 ms frame, mostly unchanged
+// within a game frame). MIXSetSoundMode marks every channel instead.
 void SetField(uint32_t voice, uint32_t field, uint32_t value, uint32_t dirty) {
     const uint32_t c = Channel(voice);
+
+    if (FlatRead32(c + field) == value)
+        return;
+
     FlatWrite32(c + field, value);
     FlatWrite32(c + kMode, FlatRead32(c + kMode) | dirty);
 }
@@ -422,6 +430,10 @@ void SetInput(uint32_t voice, int32_t db) {
 
 void SetPan(uint32_t voice, int32_t pan) {
     const uint32_t c = Channel(voice);
+
+    if (FlatRead32(c + kPan) == ClampPan(pan))
+        return; // ::SetPan derives the same values (SetField)
+
     FlatWrite32(c + kPan, ClampPan(pan));
     ::SetPan(c);
     FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
@@ -429,6 +441,10 @@ void SetPan(uint32_t voice, int32_t pan) {
 
 void SetSPan(uint32_t voice, int32_t span) {
     const uint32_t c = Channel(voice);
+
+    if (FlatRead32(c + kSPan) == ClampPan(span))
+        return;
+
     FlatWrite32(c + kSPan, ClampPan(span));
     ::SetPan(c);
     FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
@@ -460,6 +476,20 @@ void MH3_MIXQuit(CpuContext*) {
 
 void MH3_MIXSetSoundMode(CpuContext* cpu) {
     FlatWrite32(kSoundMode, cpu->gpr[3]);
+
+    // The buses follow the mode: the setters skip unchanged values (SetField),
+    // so every channel is computed anew at the next update.
+    if (FlatRead32(kInitialized) == 0)
+        return;
+
+    const uint32_t count = FlatRead32(kVoiceCount), channels = FlatRead32(kChannels);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t c = channels + i * kChannelSize;
+
+        if (FlatRead32(c + kVoice))
+            FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
+    }
 }
 
 void MH3_MIXInitChannel(CpuContext* cpu) {
