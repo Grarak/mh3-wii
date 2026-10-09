@@ -312,8 +312,13 @@ constexpr Entry kEntries[]{
     {Id::UnlimitedTraps, {kArgon, "Set unlimited traps", "Traps on the field never count against the limit."}},
 
     {Id::NoFallZoom, {kDoudley, "Cancel camera zoom-in when falling", "The camera does not zoom in on falls under 300 units."}},
+    {Id::EnhancedLeap, {kDoudley, "Enhanced leap at will (press dash and action button)", "While dashing, A leaps off flat ground; A in the air carries the leap forward."}},
+    {Id::JumpAtWill, {kDoudley, "Jump at will (press the action button to jump)", "A jumps from anywhere: a tap jumps low, holding it longer jumps higher."}},
+    {Id::JumpVeryHigh, {kDoudley, "Jump very high (press dash and action button)", "With Jump at will: R and A together jump much higher and fall slowly."}},
     {Id::FaceForwardStick, {kDoudley, "Always face forward when using R stick", "The hunter turns with the camera while the right stick moves."}},
     {Id::FaceForwardDpad, {kDoudley, "Always face forward when using left/right d-pad", "The hunter turns with the camera while d-pad left or right is held."}},
+    {Id::DoudleyMoonJump, {kDoudley, "Moonjump (A button)", "While dashing, A jumps high and floats down slowly."}},
+    {Id::Glider, {kDoudley, "Glider (single play)", "Holding A as a jump starts glides; the stick steers in the air."}},
     {Id::AntiGravity, {kDoudley, "Enable anti-gravity", "The hunter floats; ZL pushes up, ZR pulls down."}},
     {Id::RunInMidAir, {kDoudley, "Run and dash in mid air", "Hold L in the air to run, with R to dash."}},
     {Id::MidAirDpad, {kDoudley, "Mid air d-pad version", "With Run and dash in mid air: d-pad up runs upwards, down downwards."}},
@@ -369,9 +374,18 @@ constexpr Entry kEntries[]{
     {Id::SleepAnywhere, {kDoudley, "Sleep anywhere", "SELECT and B together lie the hunter down to sleep (standing on the ground)."}},
     {Id::BackToCamp, {kDoudley, "Thrown back to camp", "SELECT and R together faint the hunter back to camp."}},
     {Id::EnhancedMovement, {kDoudley, "Enhanced movement speed (quest/village)", "Actions play twice as fast and walking is faster."}},
+    {Id::EnhancedDashing, {kDoudley, "Enhanced dashing (quest/village)", "Dashes start faster and cover far more ground."}},
+    {Id::EnhancedPanicJump, {kDoudley, "Enhanced panic jump", "The panic dive goes farther and higher."}},
+    {Id::EnhancedEvade, {kDoudley, "Enhanced evade distances", "Evade+ always: every evade is the skill's longer one."}},
+    {Id::EvadeDistanceX2, {kDoudley, "Evade distance x2 (needs Enhanced evade distances)", "Evades go about twice as far."}},
+    {Id::EvadeDistanceX10, {kDoudley, "Evade distance x10 (needs Enhanced evade distances)", "Evades go about ten times as far."}},
+    {Id::WeaponReach, {kDoudley, "Exceed weapon size on attack", "While the first hunter attacks, hits reach twice as far."}},
     {Id::UnknockablePlayers, {kDoudley, "Unknockable players", "Hits do not knock hunters back or down."}},
     {Id::InvinciblePlayers, {kDoudley, "Invincible players", "Hunters take no damage."}},
+    {Id::WalkThroughWalls, {kDoudley, "Walk through walls (on/off)", "The buttons switch it on and off: while on, walls do not stop the hunter.", kActivators}},
+    {Id::PassThroughMonsters, {kDoudley, "Pass through monsters (on/off)", "The buttons switch it on and off: while on, monsters do not push the hunter.", kActivators}},
     {Id::ShowMonstersOnMap, {kDoudley, "Show all monsters on the map", "Every monster shows on the map."}},
+    {Id::SlowMo, {kDoudley, "Slow-mo mode", "The buttons slow every motion to an eighth; moving the stick ends it.", kActivators}},
     {Id::FreezeMonsters, {kDoudley, "Freeze monsters", "The buttons freeze monsters before their next action.", kActivators}},
     {Id::SwitchAxeGaugeFull, {kDoudley, "Switch axe power gauge always full", "The switch axe's phial gauge stays full."}},
     {Id::AttackUpForever, {kDoudley, "Atk up durations have no limit", "Attack items' boost never runs out."}},
@@ -480,7 +494,7 @@ namespace {
 bool g_toggled[size_t(Id::Count)];
 
 // The cheats switched by their buttons.
-constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly, Id::ItemsGet10Toggle, Id::FreezeUnfreezeMonsters, Id::AltOneHitKillsToggle, Id::CantGather, Id::CantLeaveArea};
+constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly, Id::ItemsGet10Toggle, Id::FreezeUnfreezeMonsters, Id::AltOneHitKillsToggle, Id::CantGather, Id::CantLeaveArea, Id::WalkThroughWalls, Id::PassThroughMonsters};
 } // namespace
 
 bool Toggled(Id id) {
@@ -529,6 +543,7 @@ void Step(CpuContext*) {
     StepHunterCodes();
     StepPlayer();
     StepMonsters();
+    StepMovementCodes();
 }
 
 } // namespace Cheats

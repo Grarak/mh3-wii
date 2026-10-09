@@ -221,8 +221,13 @@ enum class Id : uint16_t {
     UnlimitedTraps,
     // Doudley
     NoFallZoom,
+    EnhancedLeap,
+    JumpAtWill,
+    JumpVeryHigh,
     FaceForwardStick,
     FaceForwardDpad,
+    DoudleyMoonJump,
+    Glider,
     AntiGravity,
     RunInMidAir,
     MidAirDpad,
@@ -278,9 +283,18 @@ enum class Id : uint16_t {
     SleepAnywhere,
     BackToCamp,
     EnhancedMovement,
+    EnhancedDashing,
+    EnhancedPanicJump,
+    EnhancedEvade,
+    EvadeDistanceX2,
+    EvadeDistanceX10,
+    WeaponReach,
     UnknockablePlayers,
     InvinciblePlayers,
+    WalkThroughWalls,
+    PassThroughMonsters,
     ShowMonstersOnMap,
+    SlowMo,
     FreezeMonsters,
     SwitchAxeGaugeFull,
     AttackUpForever,
@@ -320,6 +334,32 @@ bool QuestEndPressed();
 // x, y and z.
 uint32_t FallKeeps(uint32_t plw);
 
+// Doudley's movement codes (cheat_movement.cpp) in the ports of the functions
+// they patched: the values the original's constants take for this player.
+
+// The jump (Jump15) and the climb over a ledge (ClimbOver) in
+// field_player_actions.cpp.
+struct JumpValues {
+    float rise = 18.0f;                 // kind 0's upward speed
+    float sideways = 0.0f;              // kind 0's x speed and x and z acceleration
+    float floorX = 0.0f, floorZ = 0.0f; // the fall's least x and z speeds
+    float reach = 180.0f;               // how far down a ledge is caught (0x80277CF8)
+    float climbSpeed = 15.0f;           // the jump off the top of a climb
+};
+
+JumpValues Jump(uint32_t plw);
+
+// Run119's step forward (2), and the village dash's motion speed (1.25) and
+// first push (5) in village_player_actions.cpp.
+float RunStep();
+float VillageDashSpeed();
+float VillageDashPush();
+
+// Slow-mo is on (its buttons pressed, the stick not moved since) with the
+// first hunter in play: motions play at an eighth (the motions' rates in
+// cheat_hunter.cpp and cheat_movement.cpp).
+bool SlowMotion();
+
 // The data writes, once per logic step before the task pass (MH3_GameFrame).
 void Step(CpuContext* ctx);
 
@@ -330,6 +370,7 @@ void StepMonsterCodes();
 void StepHunterCodes();
 void StepPlayer();
 void StepMonsters();
+void StepMovementCodes();
 
 // The game's data.
 constexpr uint32_t kSystem = 0x8065AA60; // system_w

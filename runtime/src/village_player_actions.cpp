@@ -41,6 +41,7 @@
 // glide and the yaw ease were amounts per step: here they follow the step's
 // length (GameStep::Scale()). At the stock 1/30 s step (one tick) these are
 // the originals.
+#include "cheats.h"
 #include "player_work.h"
 #include "port_check.h"
 
@@ -64,6 +65,7 @@ enum : uint32_t {
     kMotionSpeed = 0x354, // f32: the motion's speed (0x8026A320 sets the MHchar's rate to twice it each step)
     kMode = 0xB00,        // u8: 3 runs in motion 39 (0x80208B4C); 2 in kind 12 is the special stance
 };
+
 constexpr uint32_t kVillage = 0x806ACFC4;            // village scene work (step_counter.cpp)
 constexpr uint32_t kVillageReady = kVillage + 325;   // u8
 constexpr uint32_t kVillageText13 = kVillage + 303;  // char[]
@@ -108,6 +110,7 @@ struct Player : Plw::Player {
         if (Memory::Read8(kSessionFlag) == 1)
             game.Call<SendText>({(Index() + id) & 0xFF, text});
     }
+
     void Message(uint32_t id) const { game.Call<ShowMessage>({0, game.Call<MessageText>({3, id})}); }
 };
 
@@ -117,30 +120,36 @@ bool IdleMotions(const Player& p) {
     p.CountUp();
     const int32_t idle = int16_t(Memory::Read16(plw + kIdleSteps)) + int32_t(GameStep::Ticks());
     Memory::Write16(plw + kIdleSteps, uint16_t(int16_t(idle) < 150 ? idle : 150));
+
     switch (p.Motion()) {
     case 1:
         if (!p.Idle(false) && p.Timer() > 30)
             p.Set(Memory::Read8(plw + kFlag20) == 0 ? 66 : 63, -6, 0);
+
         break;
     case 5:
         if (!p.Idle(true) && p.Master() && p.Timer() > 60) {
             p.game.Call<NextAction>({plw, 0, 37, 0});
             return false;
         }
+
         break;
     case 21:
         if (!p.Idle(true) && p.Ended()) {
             p.Set(5, 0, 145);
             p.Timer(0);
         }
+
         break;
     case 63:
         if (!p.Idle(false) && p.Ended())
             p.Set(65, -2, 0);
+
         break;
     case 66:
         if (!p.Idle(false) && p.Ended())
             p.Set(67, -2, 0);
+
         break;
     case 65:
     case 67:
@@ -149,8 +158,10 @@ bool IdleMotions(const Player& p) {
     default:
         if (!p.Idle(false))
             p.SetX(1, -4, 0);
+
         break;
     }
+
     return true;
 }
 
@@ -161,14 +172,17 @@ void Idle(CpuContext* ctx) {
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw;
     const uint32_t state = p.State();
+
     if (state == 0) {
         p.NextState();
         p.Timer(0);
         p.Flag9(0);
         Memory::Write8(plw + kStarted, 0);
     }
+
     if (state <= 1 && !IdleMotions(p))
         return;
+
     if (Memory::Read8(plw + kStarted) == 0)
         Memory::Write8(plw + kStarted, 1);
     else
@@ -180,6 +194,7 @@ void HoldAndRelease(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -196,12 +211,14 @@ void HoldAndRelease(CpuContext* ctx) {
         } else {
             p.HoldMotion(1);
         }
+
         break;
     case 2:
         if (p.Ended()) {
             p.NextState();
             p.SetX(609, 6, 0);
         }
+
         break;
     }
 }
@@ -212,6 +229,7 @@ void TurnAndWait(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw;
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -221,6 +239,7 @@ void TurnAndWait(CpuContext* ctx) {
     case 1:
         if (!p.Ended())
             break;
+
         p.NextState();
         p.SetX(210, 0, 146);
         Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) + 0x4000);
@@ -230,8 +249,10 @@ void TurnAndWait(CpuContext* ctx) {
     case 2:
         if (!p.Master() || !p.CountDown())
             break;
+
         if (p.Master())
             p.Send(1, kVillageText13);
+
         game.Call<SetAction>({plw, 0, 13, 32});
         break;
     }
@@ -241,14 +262,18 @@ void TurnAndWait(CpuContext* ctx) {
 void WaitForVillage(const Player& p, bool master) {
     if (!master || Memory::Read8(kVillageReady) == 0)
         return;
+
     p.NextState();
     p.Timer(20);
+
     if (p.Master())
         p.Send(13, kVillageText14);
 }
+
 void LeaveAfterWait(const Player& p) {
     if (!p.CountDown())
         return;
+
     p.game.Call<NextAction>({p.plw, 0, 0, 0x8000});
     p.End();
 }
@@ -259,16 +284,19 @@ void GoToSpot(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw;
+
     switch (p.State()) {
     case 0:
         p.NextState();
         p.Flag9(0);
         p.SetX(630, 4, 0);
+
         if (const uint32_t spot = game.Call<FindSpot>({plw, 8, uint32_t(int32_t(int16_t(p.Index())))})) {
             game.Call<VecToMh>({plw + kGlideTarget, spot + 4});
             Memory::Write32(plw + kAngle, Memory::Read32(spot + 16));
             game.Call<GlideTo>({plw, 20});
         }
+
         break;
     case 1:
         WaitForVillage(p, p.Master());
@@ -285,6 +313,7 @@ void PlayTwiceAndWait(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t motion = frame.Arg(4) ? 632 : 631;
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -295,9 +324,12 @@ void PlayTwiceAndWait(CpuContext* ctx) {
     case 1:
         if (!p.Ended())
             break;
+
         p.Set(motion, 18, 344);
+
         if (!p.Master() || Memory::Read8(kVillageReady) == 0)
             break;
+
         p.NextState();
         p.Timer(20);
         p.Send(13, kVillageText14);
@@ -315,18 +347,22 @@ void StandFor(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
+
     switch (p.State()) {
     case 0:
         p.NextState();
         p.Timer(Steps);
         p.Flag9(0);
         p.SetX(1, 6, 0);
+
         if (Text && (!MasterOnly || p.Master()))
             p.Message(Text);
+
         break;
     case 1:
         if (p.CountDown())
             p.End();
+
         break;
     }
 }
@@ -337,6 +373,7 @@ void MoveInFade(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw;
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -347,6 +384,7 @@ void MoveInFade(CpuContext* ctx) {
     case 1:
         if (!p.CountDown())
             break;
+
         p.NextState();
         game.Call<Fade>({0, 1});
         p.Timer(20);
@@ -354,9 +392,11 @@ void MoveInFade(CpuContext* ctx) {
     case 2:
         if (!p.CountDown())
             break;
+
         p.NextState();
         game.Call<Fade>({0, 2});
         p.Timer(10);
+
         // Three calls, each given the one before's result.
         game.Call<0x8004D274>({88});
         game.Call<0x802FBA78>();
@@ -369,6 +409,7 @@ void MoveInFade(CpuContext* ctx) {
     case 3:
         if (!p.CountDown())
             break;
+
         p.NextState();
         p.Timer(150);
         p.Set(502, 4, 0);
@@ -378,6 +419,7 @@ void MoveInFade(CpuContext* ctx) {
     case 4:
         if (p.CountDown())
             p.End();
+
         break;
     }
 }
@@ -389,6 +431,7 @@ void AwaitAnswer(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -400,28 +443,35 @@ void AwaitAnswer(CpuContext* ctx) {
             p.End();
             break;
         }
+
         const int8_t answer = int8_t(Memory::Read8(Answer));
+
         if (answer == 1) {
             Yes(p);
         } else if (answer < 0) {
             p.Timer(20);
             p.NextState();
         }
+
         break;
     }
     case 2:
         if (p.CountDown())
             p.End();
+
         break;
     }
 }
+
 void GoToSpotOrSay(const Player& p) {
     const uint32_t spot = p.game.Call<FindSpot>({p.plw, 5, p.Index()});
+
     if (spot)
         p.game.Call<GoToAnswer>({p.plw, spot});
     else
         p.Send(1, kVillageText13);
 }
+
 void AnswerAction(const Player& p) {
     p.game.Call<Answered>({p.plw});
     p.game.Call<SetAction>({p.plw, 0, p.Index() == 0 ? 19u : 20u, 32});
@@ -435,6 +485,7 @@ void AwaitSignal(CpuContext* ctx) {
     const uint32_t plw = p.plw;
     Memory::Write8(plw + 1623, 1);
     game.Call<Watch>({plw, plw + 1432});
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -446,14 +497,18 @@ void AwaitSignal(CpuContext* ctx) {
     case 1: {
         if (game.Call<MasterCheck>({plw}) == 0)
             break;
+
         p.CountUp();
         const uint32_t signal = Memory::Read8(plw + 1622);
+
         if (p.Timer() <= 600 && signal == 0)
             break;
+
         if (signal == 1)
             game.Call<NextAction>({plw, 0, 44, 0});
         else
             game.Call<NextAction>({plw, 0, 0, 0x8000});
+
         break;
     }
     }
@@ -471,6 +526,7 @@ void StanceMotion(CpuContext* ctx) {
     const auto special = [&] {
         return game.Call<SpecialStance>({plw}) != 0;
     };
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -478,19 +534,24 @@ void StanceMotion(CpuContext* ctx) {
         game.Call<SetActFlags>({plw, 192});
         Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
         p.Set(Motion, 4, 0);
+
         if (special())
             p.Timer(10);
+
         break;
     case 1:
         if (p.Ended()) {
             game.Call<EndAction>({plw, 0, 10, 0});
         } else if (special()) {
             p.Timer(p.Timer() - int32_t(GameStep::Ticks()));
+
             if (p.Timer() <= 10)
                 game.Call<EndAction>({plw, 0, 10, 0});
         }
+
         break;
     }
+
     if (IdleAfter)
         game.Call<IdleStep>({plw});
 }
@@ -499,17 +560,21 @@ void StanceMotion(CpuContext* ctx) {
 // local player's) action 11 with the stick held, else 0x8020D64C.
 void MotionThenAct(const Player& p) {
     p.CountDownToZero();
+
     if (!p.Master() || p.Timer() > 0)
         return;
+
     if ((p.game.Call<StickLevel>({p.plw, 0}) & 0xFF) != 0)
         p.game.Call<SetAction>({p.plw, 11, 0, 0});
     else
         p.game.Call<ActionDone>({p.plw});
 }
+
 void TableMotion(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
+
     switch (p.State()) {
     case 0: {
         p.NextState();
@@ -518,6 +583,7 @@ void TableMotion(CpuContext* ctx) {
         const auto s16 = [](uint32_t a) {
             return int32_t(int16_t(Memory::Read16(a)));
         };
+
         p.Set(uint32_t(s16(entry)) & 0xFFFF, s16(entry + 2), s16(entry + 4));
         p.Timer(60);
         break;
@@ -527,10 +593,12 @@ void TableMotion(CpuContext* ctx) {
         break;
     }
 }
+
 void Motion507(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
+
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -560,6 +628,7 @@ enum : uint32_t {
     kYaw = 0x58,       // u32 (u16 angle), as Plw::kAngle2
     kWantedYaw = 0xA8, // u32 (u16 angle), as Plw::kAngle
 };
+
 constexpr float kRunPush = 1.0f, kStartPush = 5.0f; // f32 0x8079BFE8, 0x8079C0A0
 
 // Pushes the player forward along its yaw by `forward` times the step's
@@ -569,6 +638,7 @@ void PushForward(const Player& p, uint32_t move, float forward) {
     Memory::WriteFloat32(move + 4, 0.0f);
     Memory::WriteFloat32(move + 8, float(forward * GameStep::Scale()));
     p.game.Call<RotVecY>({move, Memory::Read32(p.plw + kYaw)});
+
     for (uint32_t k = 0; k < 12; k += 4)
         Memory::WriteFloat32(p.plw + kPosition + k, Memory::ReadFloat32(p.plw + kPosition + k) + Memory::ReadFloat32(move + k));
 }
@@ -580,8 +650,10 @@ bool MoveWaitOut(const Player& p) {
 // The first step of a kind-1 run: motion 3, or 39 in mode 3 (0x80208B4C).
 void StartRun(const Player& p, bool start) {
     const uint32_t plw = p.plw;
+
     if (Memory::Read8(plw + kMode) == 3) {
         p.SetX(39, 4, 0);
+
         if (!start)
             return; // (no wait set)
         Memory::WriteFloat32(plw + kMotionSpeed, 1.1f);
@@ -592,9 +664,11 @@ void StartRun(const Player& p, bool start) {
             p.SetX(3, 0, 38);
         else
             p.SetX(3, 4, 0);
+
         if (!p.game.Call<SpecialStance>({plw}))
-            Memory::WriteFloat32(plw + kMotionSpeed, 1.25f);
+            Memory::WriteFloat32(plw + kMotionSpeed, Cheats::VillageDashSpeed()); // 1.25
     }
+
     Memory::Write8(plw + kMoveWait, 10);
 }
 
@@ -602,8 +676,10 @@ void StartRun(const Player& p, bool start) {
 void StartStanceRun(const Player& p, bool start) {
     const uint32_t plw = p.plw;
     p.SetX(Memory::Read8(plw + kFlag20) == 0 ? 53 : 59, 4, 0);
+
     if (start && !p.game.Call<SpecialStance>({plw}))
         Memory::WriteFloat32(plw + kMotionSpeed, 1.25f);
+
     Memory::Write8(plw + kMoveWait, 10);
 }
 
@@ -614,32 +690,42 @@ void Run(CpuContext* ctx) {
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw;
     constexpr uint32_t kind = Stance12 ? 12 : 1, run = Stance12 ? 2 : 1, stop = Stance12 ? 4 : 3;
+
     switch (p.State()) {
     case 0:
         p.NextState();
         p.Flag9(0);
+
         if (Stance12)
             StartStanceRun(p, Start);
         else
             StartRun(p, Start);
+
         break;
     case 1:
         if (!p.Master())
             break;
+
         if ((game.Call<StickLevel>({plw, 0}) & 0xFF) == 0) {
             if (MoveWaitOut(p)) {
                 game.Call<SetAction>({plw, kind, stop, 0});
+
                 if (Stance12)
                     return; // (kind 12 skips its step then)
             }
+
             break;
         }
+
         game.Call<SteerByStick>({plw});
-        PushForward(p, frame[8], Start ? kStartPush : kRunPush);
+        PushForward(p, frame[8], !Start ? kRunPush : Stance12 ? kStartPush : Cheats::VillageDashPush());
+
         if (Start && game.Call<CommandBit>({plw, 0}) == 0 && MoveWaitOut(p))
             game.Call<SetAction>({plw, kind, run, 0});
+
         break;
     }
+
     game.Call<Stance12 ? StanceStep : IdleStep>({plw});
 }
 
@@ -652,17 +738,23 @@ void GlideToPort(CpuContext* ctx) {
     const uint32_t plw = frame.Arg(3);
     const int16_t steps = int16_t(frame.Arg(4));
     game.Call<DistanceSquared>({plw + kPosition, plw + kGlideTarget});
+
     // f1 is left as a paired single (ps_sum0): the scalar is its ps0.
     const double distanceSquared = PPC_PsToScalarInline(ctx->fpr[1].d);
+
     if (distanceSquared >= 800.0f * 800.0f || steps == 0) { // f32 640000 at 0x8079C07C
         Memory::Write16(plw + kGlideSteps, 0);
+
         for (uint32_t k = 0; k < 12; k += 4) {
             Memory::Write32(plw + kPosition + k, Memory::Read32(plw + kGlideTarget + k)); // Vec3Copy
             Memory::WriteFloat32(plw + kGlideMove + k, 0.0f);
         }
+
         return;
     }
+
     Memory::Write16(plw + kGlideSteps, uint16_t(steps));
+
     for (uint32_t k = 0; k < 12; k += 4)
         Memory::WriteFloat32(plw + kGlideMove + k, (Memory::ReadFloat32(plw + kGlideTarget + k) - Memory::ReadFloat32(plw + kPosition + k)) / float(steps));
 }
@@ -673,6 +765,7 @@ struct Glide {
     int16_t steps = 0;
     double used = 0;
 };
+
 std::unordered_map<uint32_t, Glide> glides;
 
 // 0x8020A1BC, each step from the player's movement (0x802094EC). Another
@@ -687,20 +780,28 @@ void GlideStepPort(CpuContext* ctx) {
     GuestCall game{ctx};
     const uint32_t plw = frame.Arg(3);
     const double s = GameStep::Scale();
+
     if (game.Call<MasterCheck>({plw}) == 0) {
         const uint32_t yaw = Memory::Read32(plw + kYaw);
         const int32_t gap = int16_t(uint16_t(Memory::Read32(plw + kWantedYaw) - yaw));
         Memory::Write32(plw + kYaw, yaw + uint32_t(int32_t(gap * (1.0 - std::pow(0.75, s)))));
     }
+
     int16_t steps = int16_t(Memory::Read16(plw + kGlideSteps));
+
     if (steps <= 0)
         return;
+
     Glide& glide = glides[plw];
+
     if (glide.steps != steps)
         glide.used = 0;
+
     double time = s, moved = 0;
+
     while (steps > 0 && time > 0) {
         const double need = 1.0 - glide.used;
+
         if (time >= need) {
             time -= need;
             moved += need;
@@ -712,8 +813,10 @@ void GlideStepPort(CpuContext* ctx) {
             time = 0;
         }
     }
+
     glide.steps = steps;
     Memory::Write16(plw + kGlideSteps, uint16_t(steps));
+
     for (uint32_t k = 0; k < 12; k += 4)
         Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(plw + kGlideMove + k) * float(moved));
 }

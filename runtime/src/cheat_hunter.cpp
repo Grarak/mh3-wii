@@ -43,7 +43,6 @@ enum : uint32_t {
     kTrapsSet = 0x30C,     // u8
     kBarrelsSet = 0x30E,   // u8
     kCharge = 0x310,       // s16 (charge time), +0x312 more of it
-    kCrossbow = 0x318,     // u32
     kRunSpeed = 0x354,     // f32: the action's motion speed
     kGauge36C = 0x36C,     // s16, 0 to 100
     kStamina = 0x378,      // s16, maximum at +2
@@ -750,28 +749,6 @@ extern "C" void MH3_CheatBowgunShot(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80287A30, MH3_CheatBowgunShot, "CheatBowgunShot");
 
-// FieldSetAction (0x80275754, plw, group, action, flags): starts an action,
-// clearing its state (+0x318 among it) and setting the motion speed (+0x354,
-// 1). Crossbow rapid fire (US 0x80275790, EU 0x802757F4: the clear dropped)
-// keeps +0x318; Enhanced movement speed (US 0x80275784, EU 0x802757E8) makes
-// the speed 2.
-extern "C" void func_80275754(CpuContext* ctx);
-
-extern "C" void MH3_CheatSetAction(CpuContext* ctx) {
-    const uint32_t plw = ctx->gpr[3];
-    const uint32_t crossbow = Memory::Read32(plw + kCrossbow);
-
-    func_80275754(ctx);
-
-    if (On(Id::CrossbowRapidFire))
-        Memory::Write32(plw + kCrossbow, crossbow);
-
-    if (On(Id::EnhancedMovement) && !TwoHunters())
-        Memory::WriteFloat32(plw + kRunSpeed, 2.0f);
-}
-
-REGISTER_NATIVE_FUNCTION_AS(0x80275754, MH3_CheatSetAction, "CheatSetAction");
-
 // 0x8027EE6C (equipment, &data, &...): the equipment's data; the weapon's
 // stats (func_80273B78, from 0x80273C34) read its attack at +0xA. Weapon max
 // attack base (C2 at US 0x80273C08, EU 0x80273C6C), with its buttons held,
@@ -964,16 +941,17 @@ REGISTER_NATIVE_FUNCTION_AS(0x8024AAB8, MH3_CheatGrill, "CheatGrill");
 
 // MHcharSetRate (0x800E16A4, mhchar, f1 rate): the motion's rate (+0x5C, twice
 // the given one). Speed up when running (C2 at US 0x800E1664, EU 0x800E16C8)
-// makes it 6 while the first hunter's motion speed (+0x354) is 1.25.
+// makes it 6 while the first hunter's motion speed (+0x354) is 1.25; Slow-mo
+// (US 0x800E165C, EU 0x800E16C0: the factor 2 made 0.25) an eighth of it.
 extern "C" void func_800E16A4(CpuContext* ctx);
 
 extern "C" void MH3_CheatCharRate(CpuContext* ctx) {
-    if (On(Id::RunSpeedUp)) {
-        const uint32_t first = Hunter(0);
+    const uint32_t first = Hunter(0);
 
-        if (first != 0 && Memory::Read16(first + kRunSpeed) == 0x3FA0)
-            ctx->fpr[1].d = 6.0 / Constant(-30304);
-    }
+    if (On(Id::RunSpeedUp) && first != 0 && Memory::Read16(first + kRunSpeed) == 0x3FA0)
+        ctx->fpr[1].d = 6.0 / Constant(-30304);
+    else if (Cheats::SlowMotion())
+        ctx->fpr[1].d *= 0.125;
 
     func_800E16A4(ctx);
 }

@@ -1597,3 +1597,19 @@
 80274bc0 PlAmmoLevel
 8026a378 Pl_frame_check
 8024aab8 PlGrillStep
+
+# Cheats in the movement functions (cheat_movement.cpp)
+80277cf8 PlLedgeFind
+80252c78 FieldActionWalk101
+80252704 FieldActionRun3
+80253750 FieldActionRun39
+802539f8 FieldActionRun38
+80254190 FieldActionRun115
+8024f674 FieldActionPanicDive
+80225498 AttackHitShape
+8029f268 HitSetup
+80298ca0 PlBodyCapsule
+800e0e44 MHcharMotionSet
+800510c8 rotVecY
+80051224 rotVecXYZ
+8026a608 PlJumpGravity
