@@ -2,6 +2,7 @@
 // mirror the verified host packer in scripts/vita_texture_pack.cpp.
 #include "vita_launcher.h"
 #include "disc_image.h"
+#include "launcher_texture_inventory.h"
 #include "gfx/texture_convert.hpp"
 #include <algorithm>
 #include <array>
@@ -18,10 +19,8 @@ namespace VitaLauncher {
 namespace {
 struct Record { uint32_t id,format,width,height,mips,flags,bytes,reserved; uint64_t offset; };
 static_assert(sizeof(Record)==40);
-struct Source {
- uint32_t id,offset,bytes,width,height,format,mips,palette,entries,paletteFormat;
+struct Source : TextureInventory::Texture {
  std::string path;
- uint64_t patch;
 };
 uint16_t be16(const uint8_t* p) { return uint16_t(p[0]) << 8 | p[1]; }
 uint8_t reverse_pairs(uint8_t value) {
@@ -108,26 +107,6 @@ std::vector<uint8_t> linear(const Source& s, const uint8_t* data) {
   }
   return output;
 }
-uint32_t Word(const std::vector<uint8_t>& b,size_t at) {
- if(at>b.size() || b.size()-at<4)throw std::runtime_error("Truncated BRRES");
- return uint32_t(b[at])<<24|uint32_t(b[at+1])<<16|uint32_t(b[at+2])<<8|b[at+3];
-}
-std::string Name(const std::vector<uint8_t>& b,size_t at) {
- const uint64_t start=at+uint64_t(Word(b,at+20));
- if(start>=b.size())throw std::runtime_error("Invalid BRRES resource name");
- const auto end=std::find(b.begin()+start,b.end(),0);
- if(end==b.end())throw std::runtime_error("Unterminated BRRES resource name");
- return {b.begin()+start,end};
-}
-std::vector<size_t> Chunks(const std::vector<uint8_t>& b,const char* magic) {
- std::vector<size_t> result;
- for(size_t at=0;at+64<=b.size();++at) {
-  if(std::memcmp(b.data()+at,magic,4)!=0)continue;
-  const uint32_t size=Word(b,at+4);
-  if(size>=64 && Word(b,at+8)==3 && size<=b.size()-at)result.push_back(at);
- }
- return result;
-}
 void Little32(std::ostream& out,uint32_t value){const char bytes[]={char(value),char(value>>8),char(value>>16),char(value>>24)};out.write(bytes,4);}
 void Little64(std::ostream& out,uint64_t value){Little32(out,value);Little32(out,value>>32);}
 void Publish(const std::filesystem::path& temporary,const std::filesystem::path& destination) {
@@ -144,34 +123,18 @@ void Publish(const std::filesystem::path& temporary,const std::filesystem::path&
 void PrepareTextures(const std::filesystem::path& root,const Progress& progress) {
  // Read authored resource headers, even when repairing an interrupted pack.
  DiscImage disc(root,false);
- auto names=disc.FileNames();
- names.erase(std::remove_if(names.begin(),names.end(),[](const auto& n){return !n.ends_with(".brres");}),names.end());
+ const auto names=TextureInventory::SourceNames(disc.FileNames());
  std::vector<Source> sources;
  std::vector<uint8_t> data;
  size_t processed=0;
  for(const auto& path:names) {
   progress("Indexing game textures",processed++,names.size());
+  if(disc.FileSize(path)>TextureInventory::MaxSourceBytes)throw std::runtime_error("Oversized texture source: "+path);
   data=disc.ReadFile(path);
-  // RMHP08's largest BRRES is 5.4 MiB. A hard cap bounds source + RGBA
-  // mip conversion under the launcher's 112 MiB heap even on corrupt input.
-  if(data.size()>8*1024*1024 || data.size()<12 || std::memcmp(data.data(),"bres",4)!=0 || Word(data,8)>data.size())throw std::runtime_error("Invalid or oversized BRRES: "+path);
-  struct Palette {uint32_t at,entries,format;};
-  std::map<std::string,Palette> palettes;
-  for(size_t at:Chunks(data,"PLT0")) {
-   const uint64_t start=at+uint64_t(Word(data,at+16));
-   const uint32_t entries=be16(data.data()+at+28),fmt=Word(data,at+24);
-   if(fmt>2 || start>at+Word(data,at+4) || entries*2>at+Word(data,at+4)-start)throw std::runtime_error("Invalid palette");
-   palettes[Name(data,at)]={uint32_t(start),entries,fmt};
-  }
-  for(size_t at:Chunks(data,"TEX0")) {
-   const uint64_t start=at+uint64_t(Word(data,at+16));
-   const uint32_t width=be16(data.data()+at+28),height=be16(data.data()+at+30),format=Word(data,at+32),mips=Word(data,at+36);
-   if(start!=at+64 || Word(data,at+60)!=0 || !width || !height || width>2048 || height>2048 || !mips || mips>std::bit_width(std::max(width,height)))throw std::runtime_error("Unsupported texture dimensions/header");
-   const auto p=palettes.find(Name(data,at));Palette palette{};
-   if(p!=palettes.end())palette=p->second;
-   if((format==8 || format==9 || format==10) && !palette.entries)throw std::runtime_error("Missing texture palette");
-   if(sources.size()>=32768)throw std::runtime_error("Too many texture assets");
-   sources.push_back({uint32_t(sources.size()+1),uint32_t(start),uint32_t(at+Word(data,at+4)-start),width,height,format,mips,palette.at,palette.entries,palette.format,path,disc.FileOffset(path)+at+60});
+  // RMHP08's largest BRRES is 5.4 MiB. Source and dimension limits bound
+  // conversion buffers; dictionaries and names have separate parser caps.
+  for(auto texture:TextureInventory::Parse(data,disc.FileOffset(path),uint32_t(sources.size()+1))) {
+   Source source;static_cast<TextureInventory::Texture&>(source)=std::move(texture);source.path=path;sources.push_back(std::move(source));
   }
  }
  data.clear();data.shrink_to_fit();
@@ -184,7 +147,8 @@ void PrepareTextures(const std::filesystem::path& root,const Progress& progress)
  std::string path;
  for(size_t i=0;i<sources.size();++i) {
   const auto& s=sources[i];progress("Converting game textures",i,sources.size());
-  if(s.path!=path){path=s.path;data=disc.ReadFile(path);}
+  if(s.path!=path){path=s.path;if(disc.FileSize(path)>TextureInventory::MaxSourceBytes)throw std::runtime_error("Oversized texture source reread");data=disc.ReadFile(path);}
+  TextureInventory::ValidateSource(data,disc.FileOffset(path),s);
   const aurora::ArrayRef<uint8_t> bytes{data.data()+s.offset,s.bytes};
   auto converted=s.entries ? aurora::gfx::convert_texture_palette(s.format,s.width,s.height,s.mips,bytes,GXTlutFmt(s.paletteFormat),s.entries,{data.data()+s.palette,size_t(s.entries)*2}) : aurora::gfx::convert_texture(s.format,s.width,s.height,s.mips,bytes);
   if(converted.data.empty())throw std::runtime_error("Texture conversion failed: "+path);

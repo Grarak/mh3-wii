@@ -262,3 +262,8 @@ uint64_t DiscImage::FileOffset(const std::string& name) const {
     if (it == fileEntries.end()) throw std::runtime_error("Missing FST file: " + name);
     return it->second.first;
 }
+uint32_t DiscImage::FileSize(const std::string& name) const {
+    const auto it = fileEntries.find(name);
+    if (it == fileEntries.end()) throw std::runtime_error("Missing FST file: " + name);
+    return it->second.second;
+}

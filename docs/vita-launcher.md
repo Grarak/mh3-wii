@@ -40,16 +40,26 @@ and uses the host packer's verified CMPR-to-BC1/BC3 and SGX Morton layout.
 No game artwork, fonts, ROM bytes, or extracted resources are embedded in the
 program or committed to the repository.
 
+Texture discovery follows bounded BRRES dictionaries and the declared LE
+directories in the two common and ten map effect archives. The 8,394 standalone
+IDs stay fixed, the common effects retain IDs 8,395–8,467, and map effects append
+IDs 8,468–8,562. Palettes resolve within the same embedded BRRES. Source size is
+checked before allocation; rereads verify the exact member and texture metadata
+before conversion. Payload bytes are not searched for resource magic or hashed.
+
 The final directory is published only after `DiscImage` validation and native
-pack/table extent validation succeed. A truncated partition, pack or table is
+pack/table extent validation succeed. Both existing M3VT v1 and v2 packs are
+accepted after layout validation and exact effect texture tag/ID checks.
+Older packs that omit effect resources are incomplete. A truncated partition, pack or table is
 not ready. Interrupted staging is regenerated on the next attempt; an
 incomplete previously published output is preserved as an `.incomplete`
 sibling. Existing prepared data directly under `ux0:/data/mh3-wii/` remains
 supported. Missing/broken native packs there can be regenerated from their
 original partition; old generated packs are preserved as `.previous` files.
 
-For this disc the converted partition is 4,286,328,832 bytes and the native
-texture payload is 804,292,160 bytes. Leave room for both outputs in addition
+For this disc the converted partition is 4,286,328,832 bytes and the launcher's
+full native texture payload is 806,738,128 bytes (807,109,568 bytes with its
+records and alignment). Leave room for both outputs in addition
 to the original ROM. Recovery copies from interrupted older preparations may
 require additional space.
 
@@ -58,6 +68,18 @@ are limited to 8 MiB and textures to 2048 pixels per dimension. RMHP08's
 largest BRRES is approximately 5.4 MiB. Decoder buffers are released before
 texture conversion. These are processing limits, not claims about measured
 Vita memory use or throughput.
+
+### Pending native model preparation
+
+Automatic processing currently prepares the partition and textures. The native
+renderer also requires `disc/native-models/models.index.bin` and its referenced
+M3MP/M3ID source packs, produced by `scripts/prepare_vita_model_archive.py`.
+`ProcessDisc` does not yet perform this model conversion, and `DiscReady` only
+certifies the partition and texture stage. A complete on-device preparation
+path still needs bounded model/material conversion, stable source identities,
+texture joins and index publication checks. The current traced source coverage
+and portable texture tests are recorded in
+[native-model-resource-archives.md](native-model-resource-archives.md).
 
 ## Navigation and menus
 
@@ -170,6 +192,8 @@ cmake --build build/linux-arm64 --target MH3LauncherTests -j$(nproc)
 build/linux-arm64/MH3LauncherTests /tmp/mh3-launcher-test-data
 # Optional validation against the user's external prepared game assets:
 build/linux-arm64/MH3LauncherTests --quest-audit Assets/DATA
+python3 scripts/test_launcher_texture_inventory.py --asset-root Assets/DATA \
+  --launcher build/linux-arm64/MH3LauncherTests -v
 ```
 
 The tests create synthetic assets in their own temporary subdirectory. They
@@ -181,7 +205,7 @@ rejection of a truncated native texture pack. The external European quest audit
 passed for 107 authored base/encounter/hunt-or-capture configurations. This
 checks parser and overlay consistency; it is not a gameplay completion test.
 
-The production processor was also run on the actual external European RVZ
+The earlier standalone-only production processor was run on the external European RVZ
 and nodtool-decrypted ISO through the native C/Rust bridge. Both produced
 1,522 BRRES resources and 8,394 native textures. Offline SHA-256 comparisons
 matched `partition.bin`, `sys/main.dol`, `sys/fst.bin`,
@@ -196,3 +220,10 @@ Vita clang codec build passed. No launcher display/controller test on physical
 hardware has been performed in this work. End-to-end gameplay remains subject
 to the current native rendering migration described in
 [vita-render-investigation.md](vita-render-investigation.md).
+
+The updated production texture stage converted all 8,562 resources in an isolated
+host output in 2.34 seconds with 35,000 KiB peak RSS. Its complete tag map matched
+the offline inventory byte for byte. Seven focused portable parser/production
+tests and the existing save/quest/ISO tests pass; independent clang 21 host and
+Vita launcher objects compile. This does not measure on-device preparation or
+certify the pending native model conversion stage.

@@ -20,6 +20,7 @@ public:
     void SetFileOverride(const std::string& name, std::vector<uint8_t> bytes);
     std::vector<std::string> FileNames() const;
     uint64_t FileOffset(const std::string& name) const;
+    uint32_t FileSize(const std::string& name) const;
 private:
     struct Extent { uint64_t offset, size; std::filesystem::path path; };
     std::vector<Extent> extents;

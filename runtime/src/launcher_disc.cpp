@@ -1,5 +1,7 @@
 #include "vita_launcher.h"
 #include "disc_image.h"
+#include "launcher_texture_inventory.h"
+#include "gfx/native_texture_pack.hpp"
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -129,7 +131,7 @@ bool DiscReady(const std::filesystem::path& output) {
     try {
         File boot(output/"sys/boot.bin");const auto id=boot.Read(0,6);
         if(std::string(id.begin(),id.end())!="RMHP08")return false;
-        DiscImage disc(output);
+        DiscImage disc(output,false);
         File pack(output/"native-textures.bin"), map(output/"native-texture-map.bin");
         if(pack.size<32 || map.size<12)return false;
         const auto header=pack.Read(0,32), tags=map.Read(0,12);
@@ -137,12 +139,61 @@ bool DiscReady(const std::filesystem::path& output) {
         // Pack headers are little endian. Validate record extents as well as
         // exact table sizes; a half-written payload must never be considered ready.
         const auto le=[](const std::vector<uint8_t>& b,size_t at){return uint32_t(b.at(at))|uint32_t(b.at(at+1))<<8|uint32_t(b.at(at+2))<<16|uint32_t(b.at(at+3))<<24;};
-        const uint32_t count=le(header,8);
-        if(le(header,4)!=1 || le(header,12)!=40 || count>32768 || le(tags,4)!=1 || le(tags,8)!=count || map.size!=12+uint64_t(count)*12 || pack.size<32+uint64_t(count)*40)return false;
-        const auto records=pack.Read(32,count*40);
+        const uint32_t count=le(header,8),version=le(header,4),stride=le(header,12);
+        if((version!=1 && version!=2) || stride!=(version==1?40u:64u) || count>TextureInventory::MaxAssets ||
+           le(header,16) || le(header,20) || le(header,24) || le(header,28) || le(tags,4)!=1 || le(tags,8)!=count ||
+           map.size!=12+uint64_t(count)*12 || pack.size<32+uint64_t(count)*stride)return false;
+        const auto records=pack.Read(32,count*stride);
+        uint64_t end=32+uint64_t(count)*stride;
         for(uint32_t i=0;i<count;++i) {
-            const uint64_t offset=le(records,i*40+32)|uint64_t(le(records,i*40+36))<<32;
-            if(le(records,i*40)!=i+1 || offset>pack.size || le(records,i*40+24)>pack.size-offset)return false;
+            const auto record=aurora::gfx::decode_native_texture_record({records.data()+size_t(i)*stride,stride},version);
+            aurora::gfx::validate_native_texture_record(record,version,i+1,end,pack.size);
+            end=record.offset+record.bytes;
+        }
+        const auto files=disc.FileNames();std::vector<std::pair<uint64_t,uint32_t>> ranges;
+        for(const auto& path:files)ranges.emplace_back(disc.FileOffset(path),disc.FileSize(path));
+        std::sort(ranges.begin(),ranges.end());
+        const auto patches=map.Read(12,count*12);std::vector<bool> ids(count);
+        uint64_t previous=0;size_t range=0;
+        for(uint32_t i=0;i<count;++i) {
+            const uint64_t offset=le(patches,i*12)|uint64_t(le(patches,i*12+4))<<32;
+            const uint32_t tag=Word(patches,i*12+8),id=tag&0x0fffffff;
+            if((tag&0xf0000000)!=0xa0000000 || !id || id>count || ids[id-1] ||
+               offset>UINT64_MAX-4 || (i && offset<previous+4))return false;
+            while(range<ranges.size() && offset>=ranges[range].first+ranges[range].second)++range;
+            if(range==ranges.size() || offset<ranges[range].first ||
+               ranges[range].second<4 || offset-ranges[range].first>ranges[range].second-4)return false;
+            ids[id-1]=true;previous=offset;
+        }
+        // Old standalone-only preparations have valid tables but omit effect
+        // resources. Check the exact appended dictionary inventory and IDs.
+        std::vector<TextureInventory::Texture> required;
+        for(const auto& path:TextureInventory::SourceNames(files)) {
+            if(path.ends_with(".brres"))continue;
+            if(disc.FileSize(path)>TextureInventory::MaxSourceBytes)return false;
+            const auto bytes=disc.ReadFile(path);
+            for(const auto& texture:TextureInventory::Parse(bytes,disc.FileOffset(path))) {
+                if(required.size()>=TextureInventory::MaxAssets)return false;
+                required.push_back(texture);
+            }
+        }
+        if(required.size()>count)return false;
+        const uint32_t first=count-uint32_t(required.size())+1;
+        for(size_t i=0;i<required.size();++i) {
+            const auto& texture=required[i];
+            uint32_t lo=0,hi=count;
+            while(lo<hi) {
+                const uint32_t mid=lo+(hi-lo)/2;
+                const uint64_t offset=le(patches,mid*12)|uint64_t(le(patches,mid*12+4))<<32;
+                if(offset<texture.patch)lo=mid+1;else hi=mid;
+            }
+            if(lo==count || (le(patches,lo*12)|uint64_t(le(patches,lo*12+4))<<32)!=texture.patch ||
+               Word(patches,lo*12+8)!=(0xa0000000|uint32_t(first+i)))return false;
+            const auto record=aurora::gfx::decode_native_texture_record({records.data()+size_t(first+i-1)*stride,stride},version);
+            if(record.width!=texture.width || record.height!=texture.height || record.mips!=texture.mips)return false;
+            if(version==2 && (record.source_format!=texture.format || record.source_palette_entries!=texture.entries ||
+               record.source_palette_format!=texture.paletteFormat ||
+               record.source_palette_delta!=(texture.entries?int64_t(texture.palette)-texture.offset:0)))return false;
         }
         return true;
     } catch(const std::exception&) {return false;}

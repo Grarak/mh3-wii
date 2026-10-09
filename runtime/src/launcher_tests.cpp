@@ -98,6 +98,13 @@ void DiscTests(const std::filesystem::path& root) {
 }
 int main(int argc,char** argv) {
     try {
+        if(argc==3 && std::string_view(argv[1])=="--disc-ready") {
+            return VitaLauncher::DiscReady(argv[2])?0:1;
+        }
+        if(argc==3 && std::string_view(argv[1])=="--prepare-textures") {
+            VitaLauncher::PrepareTextures(argv[2],[](const std::string&,uint64_t,uint64_t){});
+            Check(VitaLauncher::DiscReady(argv[2]),"prepared external texture readiness");return 0;
+        }
         if(argc==3 && std::string_view(argv[1])=="--quest-audit") {
             setenv("MH3_DISC_DIR",argv[2],1);unsigned combinations=0;
             for(unsigned set=0;set<3;++set) {
