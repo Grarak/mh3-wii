@@ -1,5 +1,8 @@
 #include "controller_host.h"
 #include "fatal.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include "../native/mh3_classic_map.h"
 #include <algorithm>
 #include <cmath>
@@ -18,16 +21,23 @@ std::optional<ClassicControllerSample> testSample;
 uint64_t inputFrame = 0;
 bool playbackHeld = false;
 
-// Frame-indexed input logs for repeatable runs. Each line is
-// "frame buttons(hex) lx ly rx ry": the sample in effect from that paced
-// frame on. MH3_INPUT_RECORD writes one line per change of the host input;
-// MH3_INPUT_PLAYBACK replaces the host input with a log.
+// MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH]: scripted controller
+// input. file: a one-sample control file, read every frame, replaces the host
+// controller. record and playback: frame-indexed input logs for repeatable
+// runs; each line is "frame buttons(hex) lx ly rx ry", the sample in effect
+// from that paced frame on. record writes one line per change of the host
+// input; playback replaces the host input with a log.
+const DevOptions& InputOptions() {
+    static const DevOptions options("MH3_INPUT", {"file", "record", "playback"});
+    return options;
+}
+
 bool SameInput(const ClassicControllerSample& a, const ClassicControllerSample& b) {
     return a.buttons == b.buttons && a.leftX == b.leftX && a.leftY == b.leftY && a.rightX == b.rightX && a.rightY == b.rightY;
 }
 
 void RecordInput(const ClassicControllerSample& sample) {
-    static const char* path = std::getenv("MH3_INPUT_RECORD");
+    static const char* path = InputOptions().Value("record");
 
     if (!path)
         return;
@@ -43,7 +53,7 @@ void RecordInput(const ClassicControllerSample& sample) {
 }
 
 std::optional<ClassicControllerSample> PlaybackInput() {
-    static const char* path = std::getenv("MH3_INPUT_PLAYBACK");
+    static const char* path = InputOptions().Value("playback");
 
     if (!path)
         return std::nullopt;
@@ -62,13 +72,13 @@ std::optional<ClassicControllerSample> PlaybackInput() {
 
         while (input >> frame >> std::hex >> buttons >> std::dec >> lx >> ly >> rx >> ry) {
             if (!result.empty() && frame < result.back().frame)
-                MH3_THROW(std::runtime_error("MH3_INPUT_PLAYBACK frames must not decrease"));
+                MH3_THROW(std::runtime_error("MH3_INPUT playback frames must not decrease"));
 
             result.push_back({frame, {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)}});
         }
 
         if (!input.eof() || result.empty())
-            MH3_THROW(std::runtime_error("Invalid MH3_INPUT_PLAYBACK log"));
+            MH3_THROW(std::runtime_error("Invalid MH3_INPUT playback log"));
 
         return result;
     }();
@@ -148,7 +158,7 @@ ClassicControllerSample ReadHostController() {
 ClassicControllerSample ReadLiveController() {
     ClassicControllerSample sample;
 #ifdef MH3_DEVELOPMENT
-    if (const char* path = std::getenv("MH3_INPUT_FILE")) {
+    if (const char* path = InputOptions().Value("file")) {
         // Explicit diagnostic controller; the normal source is SDL. This lets
         // unattended runs exercise the same guest input path while macOS is locked.
         std::ifstream input(path);
@@ -156,7 +166,7 @@ ClassicControllerSample ReadLiveController() {
         int lx, ly, rx, ry;
 
         if (!(input >> std::hex >> buttons >> std::dec >> lx >> ly >> rx >> ry) || buttons > 0xFFFF || lx < -512 || lx > 511 || ly < -512 || ly > 511 || rx < -512 || rx > 511 || ry < -512 || ry > 511)
-            MH3_THROW(std::runtime_error("Invalid MH3_INPUT_FILE: expected hex buttons and four signed axes (-512..511)"));
+            MH3_THROW(std::runtime_error("Invalid MH3_INPUT file: expected hex buttons and four signed axes (-512..511)"));
 
         sample = {true, uint16_t(buttons), int16_t(lx), int16_t(ly), int16_t(rx), int16_t(ry)};
         return sample;

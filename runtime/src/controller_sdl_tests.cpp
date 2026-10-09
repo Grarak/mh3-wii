@@ -29,7 +29,7 @@ SDL_JoystickID Attach() {
 
 int main() {
     try {
-        unsetenv("MH3_INPUT_FILE");
+        unsetenv("MH3_INPUT");
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
         SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
         SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT, "0xF00D/0xBEEF");

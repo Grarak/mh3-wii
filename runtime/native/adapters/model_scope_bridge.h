@@ -60,5 +60,5 @@ void ReportNativeModelDrawTableMismatch(const char* what);
 // Builds the tables of every certified model that has none (loading screens).
 void PrepareNativeModelDrawTables();
 
-// Development statistics (MH3_PREPARE_DIAGNOSTICS / MH3_DRAW_TABLE_TRACE).
+// Development statistics (MH3_PROFILE=prepare, MH3_VERIFY=draw-table).
 void ReportNativeModelDrawTables();

@@ -18,6 +18,10 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution | development |
 | `MH3_AUDIO_NULL` | `1`: no playback device; the mix is consumed at 32 kHz | development |
 | `MH3_LAUNCHER_INPUT` | launcher input script, on the Vita and with `MH3 --launcher` on a host ([launcher](vita-launcher.md)) | development |
+| `MH3_VARIABLE_STEP` | `0`: the game's fixed 1/30 s steps instead of the variable step | development |
+| `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (culling edge checks) | development |
+| `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file (`draw-tables.bin`) | all |
+| `MH3_GXM_SHADER_DUMP` | a directory: mirror runtime-compiled GXPs (development bank misses, preflights) there; set by the selector preflight | Vita |
 
 ## Development tools
 
@@ -26,9 +30,9 @@ value is a comma-separated list of items: a flag, `name=value`, or (where the
 tool takes one) a list entry such as a path or a port name. An unknown item is
 reported at startup (`MH3: MH3_X: unknown option`).
 
-### `MH3_CAPTURE`: frame and audio dumps
+### `MH3_CAPTURE`: frame, audio and RAM dumps
 
-`MH3_CAPTURE=PATH[,interval=N][,start=N][,frame=N][,audio=FILE]`
+`MH3_CAPTURE=PATH[,interval=N][,start=N][,frame=N][,audio=FILE][,ram=N[,ram-frames=N]]`
 
 | Item | Effect |
 | --- | --- |
@@ -37,6 +41,8 @@ reported at startup (`MH3: MH3_X: unknown option`).
 | `start=N` | no interval dumps before frame N |
 | `frame=N` | without `interval`: the one frame N (default 30) |
 | `audio=FILE` | the audio output as raw s16le stereo (32 kHz from the native mixer) |
+| `ram=N` | MEM1 then MEM2 to `mh3-ram-<frame>.bin` in the working directory after paced frame N |
+| `ram-frames=N` | with `ram`: after each of N frames from it (default 1) |
 
 Frames count frame packets. `scripts/dev/run-heartbeat.sh` sets
 `MH3_CAPTURE=logs/runs/frames/NAME.bmp,interval=150` (`CAPTURE_INTERVAL`
@@ -81,7 +87,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,serial-world]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,serial-world][,prepare[,prepare-frames=FIRST-LAST]]`
 
 | Item | Effect |
 | --- | --- |
@@ -94,6 +100,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `unpaced` | the game thread records its next frame packet even when the render thread has not taken the last one, which the new packet then replaces (the behaviour before pacing; for A/B runs) |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
 | `serial-world` | the scene's world matrix pass runs on the game thread alone instead of split with the guest worker ([guest worker](guest-worker.md); for A/B runs) |
+| `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
 
 ### `MH3_VERIFY`: native paths against what they replace
 
@@ -106,6 +113,24 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `cull` | the game-side scene cull draws every model and checks each it would have rejected (`MH3 scene cull` line) |
 | `prep` | models are prepared on the game thread (the original path) and the render thread's preparation of the captured inputs is checked against it for every dispatch |
 | `draw-table` | indexed draw items resolve by address too, compared with their draw table (`MH3 draw tables` line) |
+
+### `MH3_INPUT`: scripted controller input
+
+`MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH]` ([WPAD bridge](wpad-bridge.md#scripted-input-development-builds))
+
+| Item | Effect |
+| --- | --- |
+| `file=PATH` | a one-sample control file (hex buttons and four axes), read every frame, replaces the host controller |
+| `record=PATH` | logs the host input, one line per change: `frame buttons lx ly rx ry` in 30 Hz frames of game time |
+| `playback=PATH` | replays such a log instead of the host input |
+
+### `MH3_TRACE`: game state over game time
+
+`MH3_TRACE=input`
+
+| Item | Effect |
+| --- | --- |
+| `input` | once per tick of game time: the sticks and game keys as the game read them, the field camera's yaw and pitch, player 0's position and facing, steps and key repeats since the last line ([variable step](variable-step.md#7-input-from-the-host-to-the-game)) |
 
 ## Build-option tools
 
@@ -155,31 +180,6 @@ The model tests and the asset scripts (`vita-active-play.py`,
 | `AURORA_PORT_CAPTURE_DRAW_INTERVAL` | `N`: log every Nth draw (default 30) | all |
 | `AURORA_GROUP_CUTOUTS` | `1`: within each run of depth-tested, depth-writing, unblended draws, draw the opaque ones before the discard (cutout) ones, to cut discard-to-opaque transitions (experimental; coplanar order not validated) | all |
 
-## Not yet merged
-
-A second cleanup pass merges or removes these; the last column says how.
-
-| Variable | Effect | Builds | Plan |
-| --- | --- | --- | --- |
-| `MH3_INPUT_FILE`, `MH3_INPUT_RECORD`, `MH3_INPUT_PLAYBACK` | scripted controller input; record and play back | development | one input family |
-| `MH3_VARIABLE_STEP` | `0`: the game's fixed 1/30 s steps | development | keep |
-| `MH3_VCNT` | `n`: the fixed step's retrace budget | development | remove |
-| `MH3_STEP_SCALE` | `s`: every variable step is s ticks long | development | remove |
-| `MH3_RAM_DUMP` | `FIRST,COUNT`: MEM1+MEM2 to `mh3-ram-<frame>.bin` after COUNT frames from FIRST | development | into `MH3_CAPTURE` |
-| `MH3_TRACE_PLAYER` | player 0's position and motion by game time | development | remove |
-| `MH3_TRACE_INPUT` | once per tick of game time: the sticks and game keys as the game read them, the field camera's yaw and pitch, player 0's position and facing, steps and key repeats since the last line ([variable step](variable-step.md#7-input-from-the-host-to-the-game)) | development | with `MH3_TRACE_PLAYER` into one trace tool |
-| `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file | all | keep or remove after its A/B |
-| `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (edge check) | development | keep for culling checks |
-| `MH3_DRAW_CENSUS` | `N`: the model draw pass's owners every N frames | development | remove |
-| `MH3_PREPARE_DIAGNOSTICS` | model preparation diagnostics for a frame range | development | remove |
-| `MH3_NATIVE_ASSET_TRACE` | model catalog registration log (`model_catalog.cpp`) | development | remove |
-| `MH3_TRACE_ERRORS` | WPAD data-format log (`wpad_services.cpp`) | all | remove |
-| `MH3_GXM_SHADE_PROBE` | replace a shaded program's output stage (`blue`, ...) | Vita | remove |
-| `MH3_GXM_SHADE_DATA_DUMP` | dump shaded programs' uniform blocks | Vita | remove |
-| `MH3_GXM_SHADER_ABI_TRACE` | log each GXM program's reflection once | Vita | remove |
-| `MH3_GXM_WAIT_TRACE` | log the first `sceGxmFinish` waits | Vita | remove |
-| `MH3_GXM_SHADER_DUMP` | mirror runtime-compiled GXPs (development bank misses, preflights) to a directory; set by the selector preflight | Vita | keep for the preflight |
-
 ## Read by tools, not the runtime
 
 - `MH3_NV_DEBUG=FUNCTION`: the translator prints which instruction rejects
@@ -212,6 +212,10 @@ A second cleanup pass merges or removes these; the last column says how.
 | `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |
 | `MH3_PROFILE_FRAMES=N`, `MH3_MODEL_SPLIT=1`, `MH3_RENDER_SYNC=1` | `MH3_PROFILE=frames=N,split,sync` |
 | `MH3_MATERIAL_GPU_VERIFY=1`, `MH3_MODEL_CULL_GAME=2`, `MH3_RENDER_PREP=2`, `MH3_DRAW_TABLE=2` | `MH3_VERIFY=material,cull,prep,draw-table` |
+| `MH3_RAM_DUMP=FIRST,COUNT` | `MH3_CAPTURE=ram=FIRST,ram-frames=COUNT` |
+| `MH3_TRACE_INPUT=1` | `MH3_TRACE=input` |
+| `MH3_PREPARE_DIAGNOSTICS=1`, `=FIRST,LAST` | `MH3_PROFILE=prepare`, `MH3_PROFILE=prepare,prepare-frames=FIRST-LAST` |
+| `MH3_INPUT_FILE=PATH`, `MH3_INPUT_RECORD=PATH`, `MH3_INPUT_PLAYBACK=PATH` | `MH3_INPUT=file=PATH,record=PATH,playback=PATH` |
 
 Removed with the code behind them (git history keeps them):
 
@@ -237,5 +241,10 @@ Removed with the code behind them (git history keeps them):
   `MH3_MODEL_CULL=0`, `MH3_MODEL_CULL_GAME=0`, `MH3_RENDER_PREP=0`,
   `MH3_DRAW_TABLE=0`, `MH3_DRAW_TABLE_DISCOVER=0`, `MH3_DRAW_TABLE_TRACE`,
   `MH3_GXM_ALPHA_ONE=0`, `MH3_GXM_SERIAL_SCENES=1`.
+- Diagnostics: `MH3_VCNT` (the fixed step's retrace budget), `MH3_STEP_SCALE`
+  (a forced step length), `MH3_TRACE_PLAYER` (`MH3_TRACE=input` prints the
+  player's position), `MH3_DRAW_CENSUS`, `MH3_NATIVE_ASSET_TRACE`,
+  `MH3_TRACE_ERRORS` (WPAD data formats), `MH3_GXM_SHADE_PROBE`,
+  `MH3_GXM_SHADE_DATA_DUMP`, `MH3_GXM_SHADER_ABI_TRACE`, `MH3_GXM_WAIT_TRACE`.
 - Earlier: `MH3_MODEL_INSTANCES` (the model-instance path), `MH3_AX_MIX_WORKER`
   and the other AX switches (AX is gone), `MH3_GX_WORKER`, `AURORA_GL_VSYNC`.

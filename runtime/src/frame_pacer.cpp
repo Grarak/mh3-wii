@@ -17,6 +17,9 @@
 // game catches up (capped, so a long stall doesn't cause a burst of frames).
 #include "abi_bridge.h"
 #include "controller_host.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include "field_jump.h"
 #include "game_step.h"
 #include "memory.h"
@@ -135,20 +138,12 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // no fixed rate.
     bool variableStep = true;
 #ifdef MH3_DEVELOPMENT
-    // MH3_VARIABLE_STEP=0: the game's own fixed steps (its retrace budget);
-    // MH3_VCNT=n forces that budget to n retraces.
-    static const int32_t forcedVcnt = [] {
-        const char* v = std::getenv("MH3_VCNT");
-        return v ? std::atoi(v) : 0;
-    }();
+    // MH3_VARIABLE_STEP=0: the game's own fixed steps (its retrace budget).
     static const bool variable = [] {
         const char* v = std::getenv("MH3_VARIABLE_STEP");
         return !(v && v[0] == '0');
     }();
     variableStep = variable;
-
-    if (forcedVcnt > 0)
-        Memory::Write32(at(kRetracesPerFrame), uint32_t(forcedVcnt));
 #endif
     // 0x8003F588, an inlined getter. SetSystemVcnt clamps it to >= 1.
     const int32_t budget = std::max<int32_t>(1, int32_t(Memory::Read32(at(kRetracesPerFrame))));
@@ -166,19 +161,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         stepTicks = std::chrono::duration<double>(step) / period;
 
         // The next step is assumed to take as long as this one.
-        double next = std::max(stepTicks, 1e-3) / 2;
-#ifdef MH3_DEVELOPMENT
-        // MH3_STEP_SCALE=s (debugging): every step is s ticks long, whatever
-        // time it took.
-        static const double forcedScale = [] {
-            const char* v = std::getenv("MH3_STEP_SCALE");
-            return v ? std::atof(v) : 0.0;
-        }();
-
-        if (forcedScale > 0)
-            next = forcedScale;
-#endif
-        GameStep::Begin(next);
+        GameStep::Begin(std::max(stepTicks, 1e-3) / 2);
 
         // No wait: only deliver the device work due (audio, alarms, IOS, VI).
         const CpuContext frame = *ctx;
@@ -227,40 +210,16 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     SetInputFrame(uint64_t(pacedTicks / 2));
     FieldJumpFrame(uint64_t(pacedTicks / 2));
 #ifdef MH3_DEVELOPMENT
-    // MH3_RAM_DUMP=first,count: write MEM1 then MEM2 to mh3-ram-<frame>.bin after each of
-    // `count` frames starting at paced frame `first` (offline state diffing).
-    static const auto ramDump = [] {
-        std::pair<uint64_t, uint64_t> range{0, 0};
+    // MH3_CAPTURE=ram=FIRST[,ram-frames=COUNT]: write MEM1 then MEM2 to
+    // mh3-ram-<frame>.bin after each of COUNT (default 1) frames from paced
+    // frame FIRST (offline state diffing).
+    static const uint64_t ramFirst = CaptureOptions().Number("ram", 0), ramFrames = CaptureOptions().Number("ram-frames", 1);
 
-        if (const char* v = std::getenv("MH3_RAM_DUMP")) {
-            char* end = nullptr;
-            range.first = std::strtoull(v, &end, 10);
-            range.second = *end == ',' ? std::strtoull(end + 1, nullptr, 10) : 1;
-        }
-
-        return range;
-    }();
-
-    // MH3_TRACE_PLAYER: log player 0's position and motion frame every paced
-    // frame, against game time in 30 Hz frames (logic-rate comparisons).
-    static const bool tracePlayer = std::getenv("MH3_TRACE_PLAYER") != nullptr;
-
-    if (tracePlayer) {
-        const uint32_t table = Memory::Read32(0x8065AB04); // move work table
-        const uint32_t plw = table ? Memory::Read32(table + 16 + 2 * 4) : 0;
-
-        if (plw && Memory::Read8(plw)) {
-            const uint32_t chr = Memory::Read32(plw + 0x13C); // MHchar
-            std::fprintf(stderr, "MH3 player: t=%.1f pos %.2f %.2f %.2f motion %u frame %.2f rate %.2f\n", pacedTicks / 2, Memory::ReadFloat32(plw + 0x3C), Memory::ReadFloat32(plw + 0x40),
-                         Memory::ReadFloat32(plw + 0x44), chr ? Memory::Read16(chr + 0x54) : 0, chr ? Memory::ReadFloat32(chr + 0x78) : 0.0f, chr ? Memory::ReadFloat32(chr + 0x60) : 0.0f);
-        }
-    }
-
-    // MH3_TRACE_INPUT: once per tick of game time, the input as the game read
+    // MH3_TRACE=input: once per tick of game time, the input as the game read
     // it and what it moved: the field camera's yaw and pitch (current and
     // target), player 0's position and facing, and how many steps since the
     // last line reported a key repeat (comparing step modes by game time).
-    static const bool traceInput = std::getenv("MH3_TRACE_INPUT") != nullptr;
+    static const bool traceInput = DevOptions("MH3_TRACE", {"input"}).Has("input");
 
     if (traceInput) {
         constexpr uint32_t kPad = 0x8065B7D0;    // Psw, channel 0 (0x350 bytes a channel)
@@ -290,7 +249,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         }
     }
 
-    if (ramDump.first && pacedFrames >= ramDump.first && pacedFrames < ramDump.first + ramDump.second) {
+    if (ramFirst && pacedFrames >= ramFirst && pacedFrames < ramFirst + ramFrames) {
         const std::string name = "mh3-ram-" + std::to_string(pacedFrames) + ".bin";
 
         if (FILE* f = std::fopen(name.c_str(), "wb")) {

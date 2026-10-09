@@ -16,7 +16,7 @@ option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinatio
 
 # Development-only runtime features, compiled out of release builds: MH3_STATS
 # speed line, MH3_PROFILE profile and GX counters, MH3_CAPTURE frame
-# dumps, MH3_FRAMESKIP, and scripted input (MH3_INPUT_FILE / _RECORD / _PLAYBACK).
+# dumps and scripted input (MH3_INPUT).
 option(MH3_DEVELOPMENT "Build development/debug features (stats, captures, scripted input)" OFF)
 
 # Quest selection and native launcher features are present in every build.

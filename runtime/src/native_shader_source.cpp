@@ -1081,38 +1081,6 @@ NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
     out.glsl_fragment = GlslFragmentSource(fragment);
     out.cg_vertex = NativeShaderCgVertex(vertex);
     out.cg_fragment = NativeShaderCgFragment(fragment);
-#if defined(__vita__) && defined(MH3_DEVELOPMENT)
-    // Diagnostic stage isolation; source identity changes, so a probe never
-    // reuses a banked or cached production GXP (it compiles at runtime, a
-    // reported bank miss). All shader arithmetic remains float.
-    if (const char* probe = std::getenv("MH3_GXM_SHADE_PROBE")) {
-        const bool mesh = variant.vertex == NativeShaderVertex::Mesh;
-        std::string result;
-
-        if (std::string(probe) == "blue")
-            result = "float4(0.0f, 0.0f, 1.0f, 1.0f)";
-        else if (std::string(probe) == "texture")
-            result = "t0";
-        else if (std::string(probe) == "vertex" || std::string(probe) == "vertex-white")
-            result = "v_color0";
-        else if (std::string(probe) == "geometry-texture" && !mesh && variant.textures)
-            result = "t0";
-        // Geometry includes full-screen composition and fades. Keep those
-        // authored equations when isolating mesh vertex lighting.
-        if (!result.empty() && ((std::string(probe) != "vertex" && std::string(probe) != "vertex-white") || mesh)) {
-            if (variant.target_alpha_one)
-                result = "float4((" + result + ").rgb, 1.0f)";
-
-            const auto at = out.cg_fragment.rfind("return result;");
-            out.cg_fragment.replace(at, std::string("return result;").size(), "return " + result + ";");
-        }
-
-        if (mesh && std::string(probe) == "vertex-white") {
-            const auto at = out.cg_vertex.rfind("v_position =");
-            out.cg_vertex.insert(at, "v_color0 = float4(1.0f, 1.0f, 1.0f, 1.0f);\n    ");
-        }
-    }
-#endif
     return out;
 }
 

@@ -22,6 +22,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <charconv>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 
 namespace {
 constexpr size_t capacity = 8192;
@@ -111,24 +114,25 @@ NativeModelPreparationDiagnostics diagnostics;
 struct DiagnosticConfig {
     bool enabled = false;
     uint32_t first = 0, last = UINT32_MAX;
+
+    // MH3_PROFILE=prepare[,prepare-frames=FIRST-LAST]: the preparation
+    // counters, with the source-epoch writers sampled in that frame range.
     DiagnosticConfig() {
 #ifdef MH3_DEVELOPMENT
-        const char* setting = std::getenv("MH3_PREPARE_DIAGNOSTICS");
-
-        if (!setting || !*setting || !std::strcmp(setting, "0"))
+        if (!ProfileOptions().Has("prepare"))
             return;
 
-        if (std::strcmp(setting, "1")) {
-            const char* end = setting + std::strlen(setting);
-            const auto a = std::from_chars(setting, end, first);
+        if (const char* frames = ProfileOptions().Value("prepare-frames")) {
+            const char* end = frames + std::strlen(frames);
+            const auto a = std::from_chars(frames, end, first);
 
-            if (a.ec != std::errc{} || a.ptr == end || *a.ptr != ',')
-                MH3_THROW(std::runtime_error("MH3_PREPARE_DIAGNOSTICS expects 1 or first,last"));
+            if (a.ec != std::errc{} || a.ptr == end || *a.ptr != '-')
+                MH3_THROW(std::runtime_error("MH3_PROFILE prepare-frames expects FIRST-LAST"));
 
             const auto b = std::from_chars(a.ptr + 1, end, last);
 
             if (b.ec != std::errc{} || b.ptr != end || last < first)
-                MH3_THROW(std::runtime_error("MH3_PREPARE_DIAGNOSTICS expects 1 or first,last"));
+                MH3_THROW(std::runtime_error("MH3_PROFILE prepare-frames expects FIRST-LAST"));
         }
 
         enabled = true;
@@ -727,18 +731,6 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
 }
 
 Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t handle, uint64_t generation) {
-    const auto trace = [](const char* stage, uint32_t index) {
-#ifdef MH3_DEVELOPMENT
-        if (std::getenv("MH3_NATIVE_ASSET_TRACE"))
-            std::fprintf(stderr, "MH3 native catalog trace: %s %u\n", stage, index);
-#else
-        (void)stage;
-        (void)index;
-#endif
-    };
-
-    trace("validate", 0);
-
     if (!handle || !generation || mh3_model_catalog_validate_pack(catalog, pack) != MH3_PACK_OK)
         return Status::Error("Invalid external native model pack registration");
 
@@ -757,7 +749,6 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
     }
 
     Pack admitted{pack, catalog, handle, generation, {}, {}, {}, {}, {}, {}};
-    trace("prepare meshes", pack->counts[MH3_PACK_MESHES]);
     admitted.meshes.resize(pack->counts[MH3_PACK_MESHES]);
     admitted.palette_batches.resize(admitted.meshes.size());
 
@@ -795,7 +786,6 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
     }
 
     admitted.materials.resize(pack->counts[MH3_PACK_MATERIALS]);
-    trace("prepare materials", pack->counts[MH3_PACK_MATERIALS]);
     admitted.material_catalog_indices.resize(admitted.materials.size(), UINT32_MAX);
     admitted.material_blocks.resize(admitted.materials.size());
 
@@ -813,8 +803,6 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
     }
 
     for (uint32_t i = 0; i < admitted.materials.size(); i++) {
-        trace("material", i);
-
         if (mh3_model_material_prepare(pack, i, &admitted.materials[i]) != MH3_PACK_OK)
             return Status::Error("Native model requires complete supported typed material payload");
 
@@ -856,7 +844,6 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
     }
 
     InstallPack(std::make_shared<const Pack>(std::move(admitted)));
-    trace("publish", 0);
     return {};
 }
 

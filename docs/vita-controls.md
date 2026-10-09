@@ -3,8 +3,8 @@
 The game always sees one Wii Remote with a Classic Controller (the original
 RVL-005, not the Pro) on channel 0. The PS Vita's controls, SDL gamepads and
 the keyboard are mapped onto that controller's buttons, sticks and analog L/R
-triggers. Recordings and playback (`MH3_INPUT_RECORD`/`MH3_INPUT_PLAYBACK`)
-and `MH3_INPUT_FILE` hold the resulting Classic report, so they replay the
+triggers. Recordings and playback (`MH3_INPUT=record=`/`playback=`) and the
+control file (`file=`) hold the resulting Classic report, so they replay the
 same on every host.
 
 ## How the game reads the Classic Controller

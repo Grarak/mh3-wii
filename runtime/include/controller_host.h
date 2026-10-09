@@ -9,17 +9,17 @@ struct ClassicControllerSample {
     uint8_t triggerL = 0, triggerR = 0;
 };
 
-// The host input as the game sees it (after MH3_INPUT_PLAYBACK / _RECORD).
+// The host input as the game sees it (after MH3_INPUT playback / record).
 ClassicControllerSample ReadHostController();
 
 // The frame index of the input logs (the frame pacer's frame count).
 void SetInputFrame(uint64_t frame);
 
-// Holds MH3_INPUT_PLAYBACK before its next entry (while the village shortcut drives input).
+// Holds MH3_INPUT playback before its next entry (while the village shortcut drives input).
 void HoldInputPlayback(bool hold);
 
 // The live controls: SDL keyboard/gamepad on Linux, the Vita's pad and touch
-// panels on the Vita; MH3_INPUT_FILE in development builds.
+// panels on the Vita; MH3_INPUT=file= in development builds.
 ClassicControllerSample ReadLiveController();
 #ifdef __vita__
 // sceCtrl and sceTouch through mh3_vita_pad_to_classic (runtime/vita/vita_controller.cpp).

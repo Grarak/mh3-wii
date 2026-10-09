@@ -37,26 +37,6 @@ std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 bool g_commonDialogActive = false;
 
-// Compare the actual on-device compiler ABI with the offline compiler while
-// diagnosing shaded programs. Reflection is cold, once per binary, and opt-in.
-void trace_shader_abi(const SceGxmProgram* program, uint64_t hash, char stage) {
-  if (!std::getenv("MH3_GXM_SHADER_ABI_TRACE"))
-    return;
-
-  static std::set<const SceGxmProgram*> traced;
-
-  if (!traced.insert(program).second)
-    return;
-
-  for (unsigned i = 0, total = sceGxmProgramGetParameterCount(program); i < total; ++i) {
-    const auto* p = sceGxmProgramGetParameter(program, i);
-    std::fprintf(stderr, "MH3 GXM ABI %016llx_%c: %s category=%u type=%u components=%u array=%u buffer=%u resource=%u\n",
-                 static_cast<unsigned long long>(hash), stage, sceGxmProgramParameterGetName(p), unsigned(sceGxmProgramParameterGetCategory(p)),
-                 unsigned(sceGxmProgramParameterGetType(p)), sceGxmProgramParameterGetComponentCount(p), sceGxmProgramParameterGetArraySize(p),
-                 sceGxmProgramParameterGetContainerIndex(p), sceGxmProgramParameterGetResourceIndex(p));
-  }
-}
-
 struct DisplayData {
   void* address;
   uint64_t game_us; // game time of the frame, 0 = unknown
@@ -400,10 +380,7 @@ void Device::finish() {
   sceGxmFinish(m_context);
   const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
   g_finishMicros.fetch_add(micros, std::memory_order_relaxed);
-  const auto call = g_finishCalls.fetch_add(1, std::memory_order_relaxed);
-
-  if (call < 32 && std::getenv("MH3_GXM_WAIT_TRACE"))
-    std::fprintf(stderr, "MH3 GXM Finish caller %p: %lld us, scene %u\n", __builtin_return_address(0), static_cast<long long>(micros), m_sceneSerial);
+  g_finishCalls.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Device::begin_display() {
@@ -476,8 +453,6 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
 : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)), m_fragmentHash(fragmentHash) {
   check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
   check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
-  trace_shader_abi(m_vertexBinary, vertexHash, 'v');
-  trace_shader_abi(m_fragmentBinary, fragmentHash, 'f');
   check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
   check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
   SceGxmVertexAttribute attributes[16]{};

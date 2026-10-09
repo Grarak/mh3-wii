@@ -131,9 +131,6 @@ extern "C" void MH3_WPADSetDataFormat(CpuContext* cpu) {
 
     if (!status) {
         Memory::Write32(block + 0x8B8, format);
-
-        if (std::getenv("MH3_TRACE_ERRORS"))
-            std::cerr << "MH3 WPAD: channel " << channel << " format " << format << '\n';
     }
 
     cpu->gpr[3] = status;

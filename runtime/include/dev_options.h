@@ -166,6 +166,12 @@ inline void ReportRetiredVariables() {
         {"MH3_MODEL_CULL_GAME", "MH3_VERIFY"},
         {"MH3_RENDER_PREP", "MH3_VERIFY"},
         {"MH3_DRAW_TABLE", "MH3_VERIFY"},
+        {"MH3_RAM_DUMP", "MH3_CAPTURE"},
+        {"MH3_TRACE_INPUT", "MH3_TRACE"},
+        {"MH3_PREPARE_DIAGNOSTICS", "MH3_PROFILE"},
+        {"MH3_INPUT_FILE", "MH3_INPUT"},
+        {"MH3_INPUT_RECORD", "MH3_INPUT"},
+        {"MH3_INPUT_PLAYBACK", "MH3_INPUT"},
         {"MH3_ANIM_WHOLE_FRAMES", nullptr},
         {"MH3_EFFECT_TICK_CURVES", nullptr},
         {"MH3_STEP_COUNTER_RAW", nullptr},
@@ -196,6 +202,16 @@ inline void ReportRetiredVariables() {
         {"MH3_DRAW_TABLE_TRACE", nullptr},
         {"MH3_GXM_ALPHA_ONE", nullptr},
         {"MH3_GXM_SERIAL_SCENES", nullptr},
+        {"MH3_GXM_SHADE_PROBE", nullptr},
+        {"MH3_GXM_SHADE_DATA_DUMP", nullptr},
+        {"MH3_GXM_SHADER_ABI_TRACE", nullptr},
+        {"MH3_GXM_WAIT_TRACE", nullptr},
+        {"MH3_DRAW_CENSUS", nullptr},
+        {"MH3_NATIVE_ASSET_TRACE", nullptr},
+        {"MH3_TRACE_ERRORS", nullptr},
+        {"MH3_VCNT", nullptr},
+        {"MH3_STEP_SCALE", nullptr},
+        {"MH3_TRACE_PLAYER", nullptr},
     };
 
     for (const auto& retired : kRetired) {
@@ -211,22 +227,24 @@ inline void ReportRetiredVariables() {
 
 // Families read in more than one place; each is parsed (and reported) once.
 
-// MH3_CAPTURE=[PATH][,interval=N][,start=N][,frame=N][,audio=FILE]: frame
-// dumps (graphics_host.cpp) and the audio output (audio_output.cpp).
+// MH3_CAPTURE=[PATH][,interval=N][,start=N][,frame=N][,audio=FILE][,ram=N[,ram-frames=N]]:
+// frame dumps (graphics_host.cpp), the audio output (audio_output.cpp) and
+// RAM dumps (frame_pacer.cpp).
 inline const DevOptions& CaptureOptions() {
-    static const DevOptions options("MH3_CAPTURE", {"interval", "start", "frame", "audio"}, DevOptions::Words::Allowed);
+    static const DevOptions options("MH3_CAPTURE", {"interval", "start", "frame", "audio", "ram", "ram-frames"}, DevOptions::Words::Allowed);
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,serial-world]:
+// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,serial-world][,prepare[,prepare-frames=FIRST-LAST]]:
 // the frame profile and GX counters every N frames (graphics_host.cpp), the
 // per-draw split timers (game_frame.cpp), the render thread's sampled split,
 // serial frames, dropped draw kinds and unpaced packets
 // (native_frame_packet.cpp), material geometry screen area
 // (native_material.cpp), the disc image's read speed (rom_image.cpp), the
-// scene's world matrix pass on the game thread alone (scene_world.cpp).
+// scene's world matrix pass on the game thread alone (scene_world.cpp), the
+// model preparation counters (model_catalog.cpp).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "disc", "serial-world"});
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "disc", "serial-world", "prepare", "prepare-frames"});
     return options;
 }
 
