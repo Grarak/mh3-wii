@@ -14,6 +14,69 @@
 static void require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
 }
+// Cold read-FBO creation and updates to an already compiled program must
+// preserve their intended target. This reproduces sticky live-upload errors
+// without consuming them before the operation being checked.
+static void binding_probe() {
+  namespace gl=aurora::gl;
+  auto target=gl::create_texture(4,4,1,gl::Format::RGBA8,"binding probe target");
+  require(aurora_begin_native_frame(),"binding probe frame admission failed");
+  gl::bind_framebuffer(target->gl(),0);
+  gl::set_viewport(0,0,4,4,0,1);gl::set_scissor_enabled(false);
+  gl::RasterState raster{};raster.cull=false;raster.depthTest=false;raster.blend=false;
+  gl::apply_raster_state(raster);
+  gl::ProgramDesc desc;
+  desc.label="uniform program binding probe";
+  desc.vertex=gl::vertex_source(R"(
+void main() {
+  vec2 xy=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));
+  gl_Position=vec4(xy*2.0-1.0,0.0,1.0);
+})");
+  desc.fragment=gl::fragment_source(R"(
+uniform vec4 fixture_color;
+layout(location=0) out vec4 fixture_output;
+void main() { fixture_output=fixture_color; }
+)");
+  gl::Program red(desc),blue(desc);
+  const GLuint redID=red.get(),blueID=blue.get();
+  require(redID && blueID && redID!=blueID,"binding probe programs failed");
+  require(glGetUniformLocation(redID,"fixture_color")==glGetUniformLocation(blueID,"fixture_color"),
+          "binding probe failed to reproduce colliding locations");
+  for(unsigned pass=0;pass<2;++pass) {
+    const auto program=pass?blueID:redID;
+    gl::uniform4(program,"fixture_color",pass?0.f:1.f,0.f,pass?1.f:0.f,1.f);
+    gl::draw_fullscreen(program);
+    std::array<uint8_t,4> pixel{};gl::read_pixels(target->gl(),2,2,1,1,pixel.data());
+    require(pixel==(pass?std::array<uint8_t,4>{0,0,255,255}:std::array<uint8_t,4>{255,0,0,255}),
+            "existing-program uniform update reached another program");
+  }
+  GLint binding=0;glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&binding);
+  const GLuint expected=GLuint(binding);
+  const auto check_binding=[&] {
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&binding);
+    require(GLuint(binding)==expected,"read-FBO lookup changed the draw target");
+  };
+  std::array<uint8_t,64> green{};
+  for(size_t i=0;i<green.size();i+=4) {green[i+1]=green[i+3]=255;}
+  const auto source=[&] {
+    auto texture=gl::create_texture(4,4,1,gl::Format::RGBA8,"cold read-FBO probe");
+    gl::write_texture(texture,0,0,0,4,4,green.data(),16);
+    return texture;
+  };
+  auto direct=source();require(gl::framebuffer(direct->gl(),0),"read FBO was not created");check_binding();
+  auto read=source();std::array<uint8_t,4> pixel{};
+  gl::read_pixels(read->gl(),2,2,1,1,pixel.data());check_binding();
+  require(pixel==std::array<uint8_t,4>{0,255,0,255},"cold read-FBO pixel differs");
+  auto copy=source();gl::copy_texture_region(copy->gl(),target->gl(),0,0,0,0,4,4);check_binding();
+  gl::read_pixels(target->gl(),2,2,1,1,pixel.data());
+  require(pixel==std::array<uint8_t,4>{0,255,0,255},"cold copy source changed target pixels");
+  auto display=source();gl::present(display,0,0,64,64);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&binding);
+  require(binding==0,"cold presentation changed the default draw framebuffer");
+  require(glGetError()==GL_NO_ERROR,"binding probe emitted a GLES error");
+  aurora_end_native_frame();
+  std::puts("GLES bindings passed: existing-program uniform pixels, cold read/copy FBOs, cold presentation and no sticky errors");
+}
 // Diagnostic-only CPU reference bytes are built once. Production never
 // expands resident vertices; this compares its actual palette shader equation.
 static void indexed_palette_probe(const std::filesystem::path& path) {
@@ -139,6 +202,7 @@ int main(int argc, char** argv) {
     require(aurora_initialize(argc,argv,&config).initializationStatus==AURORA_INITIALIZATION_SUCCESS,
             "renderer initialization failed");
     struct Shutdown { ~Shutdown() { aurora_shutdown(); } } shutdown;
+    binding_probe();
     indexed_palette_probe(directory/"indexed-palettes.bin");
     GLuint sentinel=0; glGenBuffers(1,&sentinel); glBindBuffer(GL_COPY_WRITE_BUFFER,sentinel);
     {

@@ -62,6 +62,9 @@ set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model
 target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_lifetime.c)
 target_sources(MH3 PRIVATE src/field_resources.cpp native/mh3_field_resources.c)
 target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
+target_sources(MH3 PRIVATE src/model_view.cpp native/mh3_model_view.c)
+set_source_files_properties(native/mh3_model_view.c
+  PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE src/native_startup_textures.cpp native/mh3_startup_textures.c)
 target_sources(MH3 PRIVATE src/native_system_fatal.cpp native/mh3_system_fatal.c)
 target_sources(MH3 PRIVATE src/native_ui_cursor.cpp native/mh3_ui_cursor.c)

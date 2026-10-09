@@ -516,10 +516,13 @@ GLuint sampler(const SamplerDesc& desc) noexcept {
 GLuint framebuffer(GLuint color, GLuint depth) noexcept {
   const auto [it, inserted] = g_framebuffers.try_emplace(FramebufferKey{color, depth}, 0);
   if (inserted) {
+    // Callers also request FBOs for reads. Creating one must not replace their
+    // draw target, including the default framebuffer during presentation.
+    GLint previous = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous);
     GLuint fbo = 0;
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-    g_state.drawFramebuffer = fbo;
     if (color != 0) {
       glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
     } else {
@@ -533,6 +536,7 @@ GLuint framebuffer(GLuint color, GLuint depth) noexcept {
     if (status != GL_FRAMEBUFFER_COMPLETE) {
       Log.error("Framebuffer (color {}, depth {}) is incomplete: 0x{:X}", color, depth, status);
     }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(previous));
     it->second = fbo;
   }
   return it->second;
@@ -1056,6 +1060,7 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
   glBindVertexArray(g_state.emptyVao);
 }
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {
+  use_program(program);
   glUniform4f(glGetUniformLocation(program, name), x, y, z, w);
 }
 } // namespace aurora::gl
