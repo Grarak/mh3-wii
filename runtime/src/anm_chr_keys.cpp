@@ -445,8 +445,8 @@ REGISTER_NATIVE_FUNCTION_AS(0x8008AAF0, MH3_AnmChrKeyEvalFVS96, "AnmChrKeyEvalFV
 //     FVS48, FVS96), per-axis constant bits 13-15, uniform bit 4 (one value);
 //   rotation (0x8008C09C) as degrees to result +0x10 and the matrix at +0x1C
 //     (MTX34RotXYZFIdx of the degrees times 256/360), format bits 27-29
-//     (also three per-frame formats, 0x8008C4FC/C864/CBFC, run as guest
-//     code), per-axis constant bits 16-18, and flag bit 31 set;
+//     (also three baked formats, one value per frame, below), per-axis
+//     constant bits 16-18, and flag bit 31 set;
 //   translation (0x8008CF90) to the matrix's +0xC/+0x1C/+0x2C: format bits
 //     30-31, per-axis constant bits 19-21.
 // Unanimated scale is 1, an unanimated rotation the identity, translation 0.
@@ -488,6 +488,44 @@ struct ResultPort {
         return data;
     }
 
+    // Formats 4-6, baked (0x8008CBFC, 0x8008C864, 0x8008C4FC): a value per
+    // whole frame from the track at node + data word, frame count + 1 of them,
+    // read by 0x8008CD64, 0x8008C9CC and 0x8008C664. Format 4 stores u8s and
+    // 5 u16s from track +8, each scale (+0) * value + offset (+4)
+    // (0x8008CF54, 0x8008CBBC); 6 stores f32s from +0. Between frames the value
+    // is interpolated linearly; at or before frame 0 it is the first, from the
+    // frame count on the last. The frame's index is a GQR3 u16 store
+    // (0x80082F7C), which the caller has checked is u16.
+    float Baked(uint32_t format, uint32_t data, bool constant) const {
+        if (constant) return Load(data);
+        const uint32_t track = node + MemoryInline::FlatRead32(data); // 0x8008B0DC
+        if (!ValidPointer(track)) Panic("NW4R:Pointer Error pAnm is not valid", track);
+        auto value = [&](uint32_t i) {
+            switch (format) {
+            case 4: return Madd(Load(track), float(MemoryInline::FlatRead8(track + 8 + i)), Load(track + 4));
+            case 5: return Madd(Load(track), float(MemoryInline::FlatRead16(track + 8 + 2 * i)), Load(track + 4));
+            default: return Load(track + 4 * i);
+            }
+        };
+        const float zero = Load(r2 - 0x7BD0);
+        if (frame <= zero) return value(0);
+        const uint32_t index = Quantize<uint16_t>(float(frame), StoreFactor(ctx->gqr[3]));
+        const uint32_t count = MemoryInline::FlatRead16(frames);
+        if (index >= count) return value(count);
+        const float t = float(frame - double(index));
+        const float v = value(index);
+        if (t == zero) return v;
+        return Madd(t, value((index + 1) & 0xFFFF) - v, v);
+    }
+
+    float BakedOriginal(uint32_t format, uint32_t data, bool constant) const {
+        static constexpr uint32_t kBaked[3] = {0x8008CBFCu, 0x8008C864u, 0x8008C4FCu};
+        GuestCall game{ctx};
+        ctx->gpr[1] = r1;
+        game(kBaked[format - 4], {node, data, MemoryInline::FlatRead16(frames), uint32_t(constant)}, {frame});
+        return float(ctx->fpr[1].d);
+    }
+
     // 0x8008A6C8.
     uint32_t Scale(uint32_t result, uint32_t data) const {
         const uint32_t format = flags >> 25 & 3;
@@ -507,16 +545,31 @@ struct ResultPort {
         float r[3];
         if (format <= 3) {
             data = Vector(format, data, 0x10000, r);
-        } else if (format <= 6) {
-            static constexpr uint32_t kBaked[3] = {0x8008CBFCu, 0x8008C864u, 0x8008C4FCu};
-            GuestCall game{ctx};
-            for (int i = 0; i < 3; ++i, data += 4) {
-                ctx->gpr[1] = r1;
-                game(kBaked[format - 4],
-                     {node, data, MemoryInline::FlatRead16(frames), uint32_t((flags & 0x10000u << i) != 0)},
-                     {frame});
-                r[i] = float(ctx->fpr[1].d);
+        } else if (format <= 6 && (ctx->gqr[3] & 7) == 5) {
+            for (int i = 0; i < 3; ++i) r[i] = Baked(format, data + 4 * i, flags & 0x10000u << i);
+#ifdef MH3_DEVELOPMENT
+            // MH3_ANM_BAKED_CHECK=1 (debugging): compare with the originals.
+            static const bool check = std::getenv("MH3_ANM_BAKED_CHECK") != nullptr;
+            if (check) [[unlikely]] {
+                static uint64_t calls = 0, checked = 0, differing = 0;
+                ++calls;
+                for (int i = 0; i < 3; ++i) {
+                    const float original = BakedOriginal(format, data + 4 * i, flags & 0x10000u << i);
+                    ++checked;
+                    if (std::fabs(original - r[i]) > 1e-4f * std::max(1.0f, std::fabs(original))) {
+                        if (++differing <= 8)
+                            std::fprintf(stderr, "MH3 anm baked: format %u frame %g port %g original %g\n", format,
+                                         frame, r[i], original);
+                    }
+                }
+                if ((calls & (calls - 1)) == 0)
+                    std::fprintf(stderr, "MH3 anm baked check: %llu values, %llu differ\n",
+                                 (unsigned long long)checked, (unsigned long long)differing);
             }
+#endif
+            data += 12;
+        } else if (format <= 6) { // GQR3 not u16: the originals
+            for (int i = 0; i < 3; ++i, data += 4) r[i] = BakedOriginal(format, data, flags & 0x10000u << i);
         } else {
             Panic("NW4R:Internal error ResAnmChrNodeData rotation format", flags);
         }

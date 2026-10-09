@@ -667,6 +667,19 @@
 8008d4e0 AnmChrResultST
 8008d370 AnmChrResultRT
 8008d58c AnmChrResultSRT
+# Baked rotation formats (one value per frame; ResultPort::Baked in anm_chr_keys.cpp).
+8008cbfc AnmChrRotationBakedU8
+8008cc04 AnmChrRotationBakedU8Track
+8008cd64 AnmChrBakedU8Eval
+8008cf54 AnmChrBakedU8Value
+8008c864 AnmChrRotationBakedU16
+8008c86c AnmChrRotationBakedU16Track
+8008c9cc AnmChrBakedU16Eval
+8008cbbc AnmChrBakedU16Value
+8008c4fc AnmChrRotationBakedF32
+8008c504 AnmChrRotationBakedF32Track
+8008c664 AnmChrBakedF32Eval
+8008b0dc AnmChrTrackAddress
 8008e224 ChrAnmResultGetTranslation
 800606bc AnmChrBlendGetResult
 # g3d NodeTree bytecode: world matrices (0x80074180 the NodeMix skinning pass), view matrices, draw opa/xlu.
@@ -789,3 +802,7 @@
 800c745c DrawStrategySetupTevColors
 800c60c8 DrawStrategySetupGx
 804b6ef0 GXBegin
+# MSL math on the host libm (msl_math.cpp); 0x80464488 atan2f is ForceSingleAngleWrapper above
+804685fc sqrt
+804645f4 sqrtf
+80467bf0 atan
