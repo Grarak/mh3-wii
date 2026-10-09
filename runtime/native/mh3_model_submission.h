@@ -88,6 +88,9 @@ mh3_pack_status mh3_model_material_fields_select(const mh3_native_material_state
  * for their original hardware underflow semantics. Both outputs transactional. */
 mh3_res_status mh3_model_texcoord_sizes_select(const mh3_prepared_material *prepared, uint32_t count, const mh3_model_texcoord_sizes *map_sizes, const mh3_model_texcoord_sizes *current,
                                                mh3_model_texcoord_sizes *out, uint8_t *written);
+/* The same selection from a bare coordinate-to-map table (no recipe). */
+mh3_res_status mh3_model_texcoord_sizes_select_map(const uint8_t texcoord_map[8], uint8_t texcoord_map_known, uint32_t count, const mh3_model_texcoord_sizes *map_sizes,
+                                                   const mh3_model_texcoord_sizes *current, mh3_model_texcoord_sizes *out, uint8_t *written);
 /* Immutable defaults/known masks, SRT recipes and texture binding IDs are
  * assembled once. Strings borrow pack metadata, never a live source object. */
 mh3_pack_status mh3_model_material_prepare(const mh3_mesh_pack *pack, uint32_t material_index, mh3_prepared_material *out);

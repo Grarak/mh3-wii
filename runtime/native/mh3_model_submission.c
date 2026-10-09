@@ -4,14 +4,20 @@
 
 mh3_res_status mh3_model_texcoord_sizes_select(const mh3_prepared_material *prepared, uint32_t count, const mh3_model_texcoord_sizes *maps, const mh3_model_texcoord_sizes *current,
                                                mh3_model_texcoord_sizes *out, uint8_t *written) {
-    if (!prepared || !maps || !current || !out || !written || count > 8)
+    if (!prepared)
+        return MH3_RES_INVALID;
+    return mh3_model_texcoord_sizes_select_map(prepared->texcoord_map, prepared->texcoord_map_known, count, maps, current, out, written);
+}
+mh3_res_status mh3_model_texcoord_sizes_select_map(const uint8_t texcoord_map[8], uint8_t texcoord_map_known, uint32_t count, const mh3_model_texcoord_sizes *maps,
+                                                   const mh3_model_texcoord_sizes *current, mh3_model_texcoord_sizes *out, uint8_t *written) {
+    if (!texcoord_map || !maps || !current || !out || !written || count > 8)
         return MH3_RES_INVALID;
     mh3_model_texcoord_sizes result = *current;
     uint8_t changed = 0;
     for (uint32_t i = 0; i < count; i++) {
-        if (!(prepared->texcoord_map_known & (1u << i)))
+        if (!(texcoord_map_known & (1u << i)))
             return MH3_RES_UNSUPPORTED;
-        const uint32_t map = prepared->texcoord_map[i];
+        const uint32_t map = texcoord_map[i];
         if (map == 255)
             continue;
         if (map > 7)

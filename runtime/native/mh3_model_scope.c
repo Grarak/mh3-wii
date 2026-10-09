@@ -204,18 +204,17 @@ mh3_res_status mh3_model_coordinate_prepare(mh3_res_mut_span cache, uint32_t cou
         *apply = 0;
         return MH3_RES_OK;
     }
-    mh3_prepared_material recipe;
-    memset(&recipe, 0, sizeof recipe);
-    memcpy(recipe.texcoord_map, cache.data + 100, 8);
-    recipe.texcoord_map_known = map_known;
+    /* Only the coordinate-to-map table takes part: no 2.6 KB recipe. */
+    uint8_t texcoord_map[8];
+    memcpy(texcoord_map, cache.data + 100, 8);
     mh3_model_texcoord_sizes result;
     uint8_t changed = 0;
-    mh3_res_status status = mh3_model_texcoord_sizes_select(&recipe, count, maps, current, &result, &changed);
+    mh3_res_status status = mh3_model_texcoord_sizes_select_map(texcoord_map, map_known, count, maps, current, &result, &changed);
     if (status)
         return status;
     for (unsigned i = 0; i < count; i++)
         if (changed & (1u << i)) {
-            const unsigned map = recipe.texcoord_map[i];
+            const unsigned map = texcoord_map[i];
             if (result.width[i] != half(cache.data + 4 + map * 4) || result.height[i] != half(cache.data + 6 + map * 4))
                 return MH3_RES_INVALID;
         }
