@@ -35,6 +35,8 @@ public:
     // Textures hashed, and clears of the hashes kept until an invalidation.
     inline static uint64_t textureHashCount = 0, textureInvalidateCount = 0;
     static void InvalidateTextureHashes();
+    // Drops the hashes of textures overlapping host bytes [address, address + size).
+    static void InvalidateTextureHashes(uintptr_t address, uint64_t size);
     size_t PendingBytes() const { return pending.size(); }
 private:
     std::vector<uint8_t> pending;

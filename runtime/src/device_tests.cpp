@@ -589,6 +589,20 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             draw();
             if (std::equal(version.begin(), version.end(), metadata.begin() + 33))
                 throw std::runtime_error("Rewritten GX texture kept a stale cache identity");
+            // A copy into other bytes keeps the hash; one over the texture drops it.
+            const auto rewritten = std::vector<uint8_t>(metadata.begin() + 33, metadata.end());
+            const auto base = reinterpret_cast<uintptr_t>(textureBytes.data());
+            textureBytes[0] ^= 0xFF;
+            GuestGxStream::InvalidateTextureHashes(base + bytes, 64);
+            textureStream.Write(repeat, textureSink, resolve);
+            draw();
+            if (!std::equal(rewritten.begin(), rewritten.end(), metadata.begin() + 33))
+                throw std::runtime_error("A copy elsewhere dropped a GX texture hash");
+            GuestGxStream::InvalidateTextureHashes(base + bytes - 1, 1);
+            textureStream.Write(repeat, textureSink, resolve);
+            draw();
+            if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
+                throw std::runtime_error("A copy over a GX texture kept its hash");
         }
     };
     textureCase(4, 4, 4, false, 32, true);

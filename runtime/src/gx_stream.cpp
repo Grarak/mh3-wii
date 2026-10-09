@@ -28,8 +28,9 @@ uint32_t TextureContentsVersion(const void* data, size_t size) {
 // Hashes of the textures loaded since the last invalidation, by host address.
 // GX reads texture memory through TMEM, which keeps what it loaded until the
 // game invalidates it (GXInvalidateTexAll/Region, BP 0x66): a texture drawn
-// again before that needs no new hash. EFB texture copies and each frame's
-// display copy also clear it, so a CPU change shows at the latest one frame on.
+// again before that needs no new hash. An EFB texture copy drops the textures
+// it overwrites and each frame's display copy clears it, so a CPU change shows
+// at the latest one frame on.
 std::unordered_map<uintptr_t, std::pair<uint32_t, uint32_t>>& TextureHashes() {
     static std::unordered_map<uintptr_t, std::pair<uint32_t, uint32_t>> hashes;
     return hashes;
@@ -74,6 +75,11 @@ void GuestGxStream::InvalidateTextureHashes() {
     if (TextureHashes().empty()) return;
     TextureHashes().clear();
     ++textureInvalidateCount;
+}
+void GuestGxStream::InvalidateTextureHashes(uintptr_t address, uint64_t size) {
+    std::erase_if(TextureHashes(), [&](const auto& entry) {
+        return entry.first < address + size && address < entry.first + entry.second.first;
+    });
 }
 
 std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned format) const {
@@ -480,7 +486,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                         throw std::runtime_error("GX texture copy exceeds guest RAM");
                     run.at = offset + length; // the copy follows the commands before it
                     run.Flush();
-                    InvalidateTextureHashes();
+                    // The copy rewrites only its destination.
+                    InvalidateTextureHashes(view.address, uint64_t(rowBytes) * ((height + tileHeight - 1) / tileHeight));
                     textureCopy({view.address, bp[0x4B] << 5,
                                  rowBytes * ((height + tileHeight - 1) / tileHeight), bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
                                  sourceWidth, sourceHeight, width, height, format, halfScale, (trigger & 0x800) != 0});
