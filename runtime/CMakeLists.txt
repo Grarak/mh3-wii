@@ -51,6 +51,9 @@ add_executable(MH3
 target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/model_submission_trace.cpp
   native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
 target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
+target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
+  native/mh3_model_submission.c)
+target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
 target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
@@ -59,10 +62,13 @@ target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/
   src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
   src/native_ui.cpp native/mh3_ui.c
   src/native_effect_draw.cpp native/mh3_effect_draw.c
+  src/native_scene_feedback.cpp native/mh3_scene_feedback.c
+  src/native_scene_queue.cpp native/mh3_scene_queue.c
   src/launcher_support.cpp)
 # Clang's precise float pragma is unsupported for the Vita target. Keep the
 # CPU fog/light producer's range/finite checks and operation order intact.
 set_source_files_properties(native/mh3_material_state.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+set_source_files_properties(native/mh3_scene_queue.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized MH3_TRACE_ERRORS stack traces.
@@ -126,6 +132,16 @@ if(TARGET aurora::core)
     target_include_directories(mh3_native_material_check PRIVATE "${MH3_AURORA_ROOT}/lib" include)
     target_compile_features(mh3_native_material_check PRIVATE cxx_std_20)
     target_link_libraries(mh3_native_material_check PRIVATE aurora::core aurora::gx aurora::vi)
+    add_executable(mh3_native_scene_feedback_check EXCLUDE_FROM_ALL
+      "${MH3_AURORA_ROOT}/tests/native_scene_feedback_check.cpp")
+    target_include_directories(mh3_native_scene_feedback_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+    target_compile_features(mh3_native_scene_feedback_check PRIVATE cxx_std_20)
+    target_link_libraries(mh3_native_scene_feedback_check PRIVATE aurora::core aurora::gx aurora::vi)
+    add_executable(mh3_native_mesh_buffer_check EXCLUDE_FROM_ALL
+      "${MH3_AURORA_ROOT}/tests/native_mesh_buffer_check.cpp")
+    target_include_directories(mh3_native_mesh_buffer_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+    target_compile_features(mh3_native_mesh_buffer_check PRIVATE cxx_std_20)
+    target_link_libraries(mh3_native_mesh_buffer_check PRIVATE aurora::core aurora::gx aurora::vi)
   endif()
 endif()
 

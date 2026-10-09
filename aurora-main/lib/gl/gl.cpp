@@ -2,6 +2,7 @@
 
 #include "../internal.hpp"
 #include "../gfx/port_capture.hpp"
+#include "../gfx/native_mesh_io.hpp"
 #include <aurora/gpu_completion.hpp>
 #include <aurora/native_frame_gate.hpp>
 
@@ -23,6 +24,30 @@
 #endif
 
 namespace aurora::gl {
+NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
+  if (!on_render_thread() || !bytes) throw std::runtime_error("Native mesh load outside context owner or empty payload");
+  auto data = std::make_unique<uint8_t[]>(bytes);
+  gfx::read_mesh_payload(path, offset, data.get(), bytes);
+  GLint previous = 0;
+  glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING, &previous);
+  glGenBuffers(1, &m_buffer);
+  glBindBuffer(GL_COPY_WRITE_BUFFER, m_buffer);
+  glBufferData(GL_COPY_WRITE_BUFFER, bytes, data.get(), GL_STATIC_DRAW);
+  const auto error = glGetError();
+  glBindBuffer(GL_COPY_WRITE_BUFFER, GLuint(previous));
+  if (error != GL_NO_ERROR || !m_buffer) {
+    if (m_buffer) glDeleteBuffers(1, &m_buffer);
+    m_buffer = 0;
+    throw std::runtime_error("Native mesh GPU allocation failed");
+  }
+  m_data = data.release(); m_bytes = bytes;
+}
+NativeMeshBuffer::~NativeMeshBuffer() {
+  // GL retains an in-flight object's storage after deletion. No finish/fence
+  // wait and no live vertex/index data can be overwritten through this API.
+  if (m_buffer && initialized()) post([buffer = m_buffer] { glDeleteBuffers(1, &buffer); });
+  delete[] m_data;
+}
 namespace {
 Module Log("aurora::gl");
 
@@ -667,6 +692,44 @@ void draw_fullscreen(GLuint program) noexcept {
   use_program(program);
   glBindVertexArray(g_state.emptyVao);
   glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+OffscreenState save_offscreen_state() noexcept {
+  OffscreenState saved;saved.raster=g_state.raster;saved.rasterValid=g_state.rasterValid;
+  saved.viewport=g_state.viewport;saved.depthRange=g_state.depthRange;saved.scissor=g_state.scissor;
+  saved.scissorEnabled=g_state.scissorEnabled;saved.blendColor=g_state.blendColor;
+  saved.textures=g_state.textures;saved.samplers=g_state.samplers;
+  for(unsigned i=0;i<saved.uniforms.size();++i){const auto &u=g_state.uniforms[i];saved.uniforms[i]={u.buffer,u.offset,u.size};}
+  // Utility draws use an empty VAO; a following generic indexed draw can rely
+  // on its preceding VAO. Query host binding metadata, never framebuffer data.
+  GLint value=0;glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&value);saved.vertexArray=GLuint(value);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&value);saved.arrayBuffer=GLuint(value);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&value);saved.framebuffer=GLuint(value);
+  glGetIntegerv(GL_CURRENT_PROGRAM,&value);saved.program=GLuint(value);
+  glGetIntegerv(GL_ACTIVE_TEXTURE,&value);saved.activeTexture=GLuint(value-GL_TEXTURE0);
+  if(saved.viewport[2]<0)glGetIntegerv(GL_VIEWPORT,saved.viewport.data());
+  if(saved.scissor[2]<0)glGetIntegerv(GL_SCISSOR_BOX,saved.scissor.data());
+  if(saved.depthRange[0]<0)glGetFloatv(GL_DEPTH_RANGE,saved.depthRange.data());
+  if(saved.scissorEnabled<0)saved.scissorEnabled=glIsEnabled(GL_SCISSOR_TEST);
+  if(saved.blendColor[0]<0)glGetFloatv(GL_BLEND_COLOR,saved.blendColor.data());
+  for(unsigned i=0;i<saved.textures.size();++i){
+    if(saved.textures[i]==UINT32_MAX){glActiveTexture(GL_TEXTURE0+i);glGetIntegerv(GL_TEXTURE_BINDING_2D,&value);saved.textures[i]=GLuint(value);}
+    if(saved.samplers[i]==UINT32_MAX){glGetIntegeri_v(GL_SAMPLER_BINDING,i,&value);saved.samplers[i]=GLuint(value);}
+  }
+  glActiveTexture(GL_TEXTURE0+saved.activeTexture);
+  return saved;
+}
+void restore_offscreen_state(const OffscreenState& saved) noexcept {
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved.framebuffer);g_state.drawFramebuffer=saved.framebuffer;
+  if(saved.rasterValid)apply_raster_state(saved.raster);else g_state.rasterValid=false;
+  set_viewport(saved.viewport[0],saved.viewport[1],saved.viewport[2],saved.viewport[3],saved.depthRange[0],saved.depthRange[1]);
+  set_scissor(saved.scissor[0],saved.scissor[1],saved.scissor[2],saved.scissor[3]);set_scissor_enabled(saved.scissorEnabled>0);
+  set_blend_color(saved.blendColor[0],saved.blendColor[1],saved.blendColor[2],saved.blendColor[3]);
+  for(unsigned i=0;i<saved.textures.size();++i)if(saved.textures[i]!=UINT32_MAX&&saved.samplers[i]!=UINT32_MAX)bind_texture(i,saved.textures[i],saved.samplers[i]);
+  for(unsigned i=0;i<saved.uniforms.size();++i){const auto &u=saved.uniforms[i];if(u.buffer==UINT32_MAX)continue;
+    if(u.buffer&&u.size)bind_uniform_range(i,u.buffer,u.offset,u.size);else{glBindBufferBase(GL_UNIFORM_BUFFER,i,0);g_state.uniforms[i]={};}}
+  use_program(saved.program);glBindVertexArray(saved.vertexArray);glBindBuffer(GL_ARRAY_BUFFER,saved.arrayBuffer);
+  glActiveTexture(GL_TEXTURE0+saved.activeTexture);g_state.activeUnit=saved.activeTexture;
 }
 
 // ---- Presentation and readback ----

@@ -20,6 +20,7 @@
 #include <cstring>
 #include <aurora/aurora.h>
 #include <aurora/generated_texture.hpp>
+#include <aurora/native_scene_feedback.hpp>
 #include <aurora/native_draw_memory.hpp>
 #include <aurora/thread_role.hpp>
 #include <cstdlib>
@@ -124,6 +125,7 @@ void ShutdownGraphics() {
         // drain is only at shutdown; frame admission/submission never waits.
         aurora::gl::finish();
         ClearNativeMaterialPrograms();
+        aurora::clear_scene_feedback_textures();
         aurora::clear_generated_textures();
         aurora_shutdown(); initialized = false; frameActive = false;
     }

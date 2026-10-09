@@ -154,6 +154,25 @@ struct ProgramDesc {
   bool nativeMaterialVertices = false;
 };
 
+// One immutable converted-pack payload. Vita reads directly into CDRAM; GLES
+// uploads once and retains a CPU view for common metadata range validation.
+// Creation/destruction belong to the context owner. Retiring a live GPU buffer
+// never waits; its backing allocation survives all preceding submissions.
+class NativeMeshBuffer {
+public:
+  NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes);
+  ~NativeMeshBuffer();
+  NativeMeshBuffer(const NativeMeshBuffer&) = delete;
+  NativeMeshBuffer& operator=(const NativeMeshBuffer&) = delete;
+  GLuint get() const noexcept { return m_buffer; }
+  const uint8_t* data() const noexcept { return m_data; }
+  uint32_t size() const noexcept { return m_bytes; }
+private:
+  GLuint m_buffer = 0;
+  const uint8_t* m_data = nullptr;
+  uint32_t m_bytes = 0;
+};
+
 class Program {
 public:
   explicit Program(ProgramDesc desc) noexcept;
@@ -201,6 +220,23 @@ struct RasterState {
   GLenum cullFace = GL_BACK;
   std::array<bool, 4> colorMask{true, true, true, true};
 };
+
+// Graphics-owner snapshot for isolated native offscreen work. These values are
+// backend state, not framebuffer pixels. Restore includes generic draw inputs.
+struct OffscreenState {
+  RasterState raster;
+  std::array<int32_t,4> viewport{},scissor{};
+  std::array<float,2> depthRange{};
+  std::array<float,4> blendColor{};
+  std::array<GLuint,16> textures{},samplers{};
+  struct UniformRange {GLuint buffer=0;uint32_t offset=0,size=0;};
+  std::array<UniformRange,4> uniforms{};
+  GLuint framebuffer=0,color=0,depth=0,program=0,vertexArray=0,arrayBuffer=0,activeTexture=0;
+  int scissorEnabled=0;
+  bool rasterValid=false,uniformValid=false;
+};
+OffscreenState save_offscreen_state() noexcept;
+void restore_offscreen_state(const OffscreenState& state) noexcept;
 
 // Render thread state cache.
 void apply_raster_state(const RasterState& state) noexcept;

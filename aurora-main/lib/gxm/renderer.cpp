@@ -1,5 +1,6 @@
 #include "../gl/gl.hpp"
 #include "../gfx/port_capture.hpp"
+#include "../gfx/native_mesh_io.hpp"
 #include "alpha_compare.hpp"
 #include "native_assets.hpp"
 #include "device.hpp"
@@ -261,6 +262,10 @@ public:
   }
   void collect() {
     pool.collect();
+    for (auto it = retiredMeshes.begin(); it != retiredMeshes.end();) {
+      if (int32_t(*it->first.address - it->first.value) < 0) { ++it; continue; }
+      it = retiredMeshes.erase(it);
+    }
     for (auto it = retiredPrograms.begin(); it != retiredPrograms.end();) {
       if (int32_t(*it->first.address - it->first.value) < 0) { ++it; continue; }
       it = retiredPrograms.erase(it);
@@ -299,6 +304,8 @@ public:
   std::map<GLuint, TextureEntry> textures;
   std::map<GLuint, NativeProgram> programs;
   std::vector<std::pair<SceGxmNotification, NativeProgram>> retiredPrograms;
+  std::map<GLuint, MappedMemory> meshes;
+  std::vector<std::pair<SceGxmNotification, MappedMemory>> retiredMeshes;
   std::map<std::pair<uint64_t, uint64_t>, std::weak_ptr<PatchedProgram>> patchedPrograms;
   std::map<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
@@ -326,6 +333,29 @@ constexpr std::array<FormatInfo, 9> FormatInfos{{
     {0, 0, 0, 4, false, true, false},
     {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
 }};
+}
+NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
+  auto& r = renderer();
+  if (!bytes) throw std::runtime_error("Empty native mesh payload");
+  MappedMemory memory(bytes, MappedMemory::Kind::Cdram, "Aurora model pack");
+  gfx::read_mesh_payload(path, offset, memory.data(), bytes);
+  const auto id = r.name();
+  const auto* data = static_cast<const uint8_t*>(memory.data());
+  r.meshes.emplace(id, std::move(memory));
+  m_buffer = id; m_data = data; m_bytes = bytes;
+}
+NativeMeshBuffer::~NativeMeshBuffer() {
+  if (!m_buffer || !initialized()) return;
+  post([id = m_buffer] {
+    auto& r = renderer();
+    const auto it = r.meshes.find(id);
+    if (it == r.meshes.end()) return;
+    // Include the current scene without ending it just to retire a resource.
+    // Collection polls this notification after normal submission/presentation.
+    r.retiredMeshes.emplace_back(r.device.current_fence(), std::move(it->second));
+    r.meshes.erase(it);
+    r.collect();
+  });
 }
 bool initialize(SDL_Window* window, bool vsync) noexcept {
   if (g_context) return g_context->window == window;
@@ -554,6 +584,16 @@ void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMem
 void draw_fullscreen(GLuint id) noexcept {
   if (!aurora::native_frame_drawing_allowed()) return;
   guarded([&] { auto& r = renderer(); r.state.program = id; r.prepare(id); r.utility_draw(3); });
+}
+OffscreenState save_offscreen_state() noexcept {
+  return guarded([]{const auto &s=renderer().state;OffscreenState out;out.raster=s.raster;out.rasterValid=true;out.viewport=s.viewport;out.depthRange=s.depthRange;out.scissor=s.scissor;out.scissorEnabled=s.scissorEnabled;out.blendColor=s.blendColor;out.color=s.color;out.depth=s.depth;out.program=s.program;
+    for(unsigned i=0;i<s.textures.size();++i){out.textures[i]=s.textures[i].texture;out.samplers[i]=s.textures[i].sampler;}
+    out.uniforms[0]={0,s.uniformOffset,s.uniformBytes};out.uniformValid=s.uniformValid;return out;});
+}
+void restore_offscreen_state(const OffscreenState& saved) noexcept {
+  guarded([&]{auto &r=renderer();r.bind_target(saved.color,saved.depth);r.state.raster=saved.raster;r.state.viewport=saved.viewport;r.state.depthRange=saved.depthRange;r.state.scissor=saved.scissor;r.state.scissorEnabled=saved.scissorEnabled;r.state.blendColor=saved.blendColor;r.state.program=saved.program;
+    for(unsigned i=0;i<saved.textures.size();++i)r.texture_binding(i,saved.textures[i],saved.samplers[i]);
+    r.state.uniformOffset=saved.uniforms[0].offset;r.state.uniformBytes=saved.uniforms[0].size;r.state.uniformValid=saved.uniformValid;r.state.clipDirty=true;});
 }
 GLuint create_buffer() noexcept { return guarded([] { return renderer().name(); }); }
 void destroy_buffer(GLuint) noexcept { /* Buffer storage belongs to the mapped frame slot. */ }
