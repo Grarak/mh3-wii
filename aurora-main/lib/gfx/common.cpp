@@ -75,8 +75,7 @@ struct Command {
 };
 } // namespace aurora::gfx
 
-void aurora_set_guest_write_hooks(AuroraGuestWriteGenerationCallback generation,
-                                  AuroraGuestWriteNotifyCallback notify) {
+void aurora_set_guest_write_hooks(AuroraGuestWriteGenerationCallback generation, AuroraGuestWriteNotifyCallback notify) {
   aurora::g_guestWriteGenerationHook = generation;
   aurora::g_guestWriteNotifyHook = notify;
 }
@@ -132,18 +131,32 @@ struct RetiredStagingSet {
 static std::vector<RetiredStagingSet> g_retiredStaging;
 static void reclaim_staging_sets_locked() {
   for (auto it = g_retiredStaging.begin(); it != g_retiredStaging.end();) {
-    if (it->fence.address && int32_t(*it->fence.address - it->fence.value) < 0) { ++it; continue; }
+    if (it->fence.address && int32_t(*it->fence.address - it->fence.value) < 0) {
+      ++it;
+      continue;
+    }
     auto set = std::move(it->set);
-    set->verts.clear(); set->uniforms.clear(); set->indices.clear(); set->storage.clear();
+    set->verts.clear();
+    set->uniforms.clear();
+    set->indices.clear();
+    set->storage.clear();
     g_stagingPool.push_back(std::move(set));
     it = g_retiredStaging.erase(it);
   }
 }
 #endif
-static ByteBuffer& g_verts() noexcept { return g_staging->verts; }
-static ByteBuffer& g_uniforms() noexcept { return g_staging->uniforms; }
-static ByteBuffer& g_indices() noexcept { return g_staging->indices; }
-static ByteBuffer& g_storage() noexcept { return g_staging->storage; }
+static ByteBuffer& g_verts() noexcept {
+  return g_staging->verts;
+}
+static ByteBuffer& g_uniforms() noexcept {
+  return g_staging->uniforms;
+}
+static ByteBuffer& g_indices() noexcept {
+  return g_staging->indices;
+}
+static ByteBuffer& g_storage() noexcept {
+  return g_staging->storage;
+}
 static size_t currentStagingBuffer = 0;
 static uint32_t g_uniformAlignment = 256;
 constexpr uint32_t StorageAlignment = 16;
@@ -239,7 +252,9 @@ static void release_command_list(CommandList&& list) noexcept {
   g_commandListPool.emplace_back(std::move(list));
 }
 
-static void release_render_pass(RenderPass& pass) noexcept { release_command_list(std::move(pass.commands)); }
+static void release_render_pass(RenderPass& pass) noexcept {
+  release_command_list(std::move(pass.commands));
+}
 
 static void recycle_render_passes(std::vector<RenderPass>& passes) noexcept {
   for (auto& pass : passes) {
@@ -279,8 +294,7 @@ static ClipRect g_suspendedEfbScissor;
 // Prefix referenced by a suspended EFB pass. Preserve its offsets across an
 // offscreen split, without rendering it before the bake it may sample finishes.
 static StagingSizes g_suspendedEfbBytes{};
-static constexpr StagingSizes PhysicalStagingCapacity{
-    VertexBufferSize, UniformBufferSize, IndexBufferSize, StorageBufferSize};
+static constexpr StagingSizes PhysicalStagingCapacity{VertexBufferSize, UniformBufferSize, IndexBufferSize, StorageBufferSize};
 static StagingSizes g_stagingCapacity = PhysicalStagingCapacity;
 static uint64_t g_stagingEpoch = 0;
 static uint64_t g_stagingSplitCount = 0;
@@ -293,8 +307,7 @@ std::array<uint64_t, 4> staging_wait_counters() noexcept {
 #else
   const std::array<uint64_t, 2> finish{};
 #endif
-  return {g_stagingWaitMicros.load(std::memory_order_relaxed), finish[0],
-          g_stagingWaitCount.load(std::memory_order_relaxed), finish[1]};
+  return {g_stagingWaitMicros.load(std::memory_order_relaxed), finish[0], g_stagingWaitCount.load(std::memory_order_relaxed), finish[1]};
 }
 
 StagingSizes staging_usage() noexcept {
@@ -303,11 +316,21 @@ StagingSizes staging_usage() noexcept {
   }
   return {g_verts().size(), g_uniforms().size(), g_indices().size(), g_storage().size()};
 }
-StagingSizes staging_high_water() noexcept { return g_stagingHighWater; }
-uint64_t staging_epoch() noexcept { return g_stagingEpoch; }
-uint64_t staging_split_count() noexcept { return g_stagingSplitCount; }
-uint64_t staging_uniform_bytes(uint64_t bytes) { return staging_padded(bytes, g_uniformAlignment); }
-uint64_t staging_storage_bytes(uint64_t bytes) { return staging_padded(bytes, StorageAlignment); }
+StagingSizes staging_high_water() noexcept {
+  return g_stagingHighWater;
+}
+uint64_t staging_epoch() noexcept {
+  return g_stagingEpoch;
+}
+uint64_t staging_split_count() noexcept {
+  return g_stagingSplitCount;
+}
+uint64_t staging_uniform_bytes(uint64_t bytes) {
+  return staging_padded(bytes, g_uniformAlignment);
+}
+uint64_t staging_storage_bytes(uint64_t bytes) {
+  return staging_padded(bytes, StorageAlignment);
+}
 void set_staging_capacity_limits_for_testing(const StagingSizes& limits) {
   for (unsigned i = 0; i < limits.size(); ++i) {
     if (limits[i] > PhysicalStagingCapacity[i])
@@ -326,7 +349,8 @@ bool staging_has_space(const StagingSizes& demand) {
   return staging_fits(staging_usage(), demand, tail, g_stagingCapacity);
 }
 void ensure_staging_space(const StagingSizes& demand) {
-  if (staging_has_space(demand)) return;
+  if (staging_has_space(demand))
+    return;
   split_staging_batch();
   if (!staging_has_space(demand))
     throw StagingCapacityError("GPU operation still exceeds staging capacity after submission");
@@ -339,7 +363,9 @@ static void discard_suspended_efb_pass() noexcept {
   }
 }
 
-static bool has_current_render_pass() noexcept { return g_currentRenderPass < g_renderPasses.size(); }
+static bool has_current_render_pass() noexcept {
+  return g_currentRenderPass < g_renderPasses.size();
+}
 static gl::TexturePtr g_offscreenColor;
 static gl::TexturePtr g_offscreenDepth;
 
@@ -349,23 +375,14 @@ struct ResolveSamplingPlan {
   bool usesLinearSampling = false;
 };
 
-static ResolveSamplingPlan make_resolve_sampling_plan(const TextureHandle& target, GXTexFmt format,
-                                                       const ClipRect& resolveRect, const Vec4<float>& sourceRect,
-                                                       bool halfScale, bool copyFilterActive,
-                                                       bool forceOpaqueAlpha) noexcept {
+static ResolveSamplingPlan make_resolve_sampling_plan(const TextureHandle& target, GXTexFmt format, const ClipRect& resolveRect, const Vec4<float>& sourceRect, bool halfScale, bool copyFilterActive,
+                                                      bool forceOpaqueAlpha) noexcept {
   const auto differs = [](float lhs, float rhs) { return std::abs(lhs - rhs) > 0.01f; };
-  const auto differsFromDst = [&](uint32_t dst, float src) {
-    return differs(static_cast<float>(dst), src);
-  };
-  const bool sourceMatchesIntegerRect =
-      !differs(sourceRect.x(), static_cast<float>(resolveRect.x)) &&
-      !differs(sourceRect.y(), static_cast<float>(resolveRect.y)) &&
-      !differs(sourceRect.z(), static_cast<float>(resolveRect.width)) &&
-      !differs(sourceRect.w(), static_cast<float>(resolveRect.height));
-  const bool dstMatchesSource = target && !differsFromDst(target->size.width, sourceRect.z()) &&
-                                !differsFromDst(target->size.height, sourceRect.w());
-  const bool needsShaderSampling =
-      halfScale || copyFilterActive || forceOpaqueAlpha || !sourceMatchesIntegerRect || !dstMatchesSource;
+  const auto differsFromDst = [&](uint32_t dst, float src) { return differs(static_cast<float>(dst), src); };
+  const bool sourceMatchesIntegerRect = !differs(sourceRect.x(), static_cast<float>(resolveRect.x)) && !differs(sourceRect.y(), static_cast<float>(resolveRect.y)) &&
+                                        !differs(sourceRect.z(), static_cast<float>(resolveRect.width)) && !differs(sourceRect.w(), static_cast<float>(resolveRect.height));
+  const bool dstMatchesSource = target && !differsFromDst(target->size.width, sourceRect.z()) && !differsFromDst(target->size.height, sourceRect.w());
+  const bool needsShaderSampling = halfScale || copyFilterActive || forceOpaqueAlpha || !sourceMatchesIntegerRect || !dstMatchesSource;
   return {
       .needsConversion = tex_copy_conv::needs_conversion(format),
       .needsShaderSampling = needsShaderSampling,
@@ -467,11 +484,9 @@ void push_draw_command(clear::DrawData data) {
   push_draw_command(ShaderDrawCommand{.type = ShaderType::Clear, .clear = data});
 }
 
-void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
-                  Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                  const Vec4<float>* sourceRectPixels, bool halfScale,
-                  const std::array<u32, 3>* copyFilterCoefficients, bool forceOpaqueAlpha,
-                  float copyFilterRowStride, bool clampTop, bool clampBottom, bool persistentCopy) {
+void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
+                  const Vec4<float>* sourceRectPixels, bool halfScale, const std::array<u32, 3>* copyFilterCoefficients, bool forceOpaqueAlpha, float copyFilterRowStride, bool clampTop,
+                  bool clampBottom, bool persistentCopy) {
   // Resolve current render pass
   if (!has_current_render_pass()) {
     Log.warn("Dropping resolve pass without an active render pass");
@@ -485,10 +500,8 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
     Log.warn("Dropping resolve pass with invalid target size {}x{}", targetWidth, targetHeight);
     return;
   }
-  Vec4<float> sourceRect = sourceRectPixels != nullptr
-                               ? *sourceRectPixels
-                               : Vec4<float>{static_cast<float>(rect.x), static_cast<float>(rect.y),
-                                             static_cast<float>(rect.width), static_cast<float>(rect.height)};
+  Vec4<float> sourceRect =
+      sourceRectPixels != nullptr ? *sourceRectPixels : Vec4<float>{static_cast<float>(rect.x), static_cast<float>(rect.y), static_cast<float>(rect.width), static_cast<float>(rect.height)};
   if (targetWidth > 0 && targetHeight > 0) {
     const int32_t left = std::clamp(rect.x, 0, targetWidth - 1);
     const int32_t top = std::clamp(rect.y, 0, targetHeight - 1);
@@ -516,14 +529,9 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
   prevPass.resolveFormat = resolveFormat;
   prevPass.resolveHalfScale = halfScale;
   prevPass.resolveForceOpaqueAlpha = forceOpaqueAlpha;
-  prevPass.resolveCopyFilterCoefficients =
-      copyFilterCoefficients != nullptr ? *copyFilterCoefficients : std::array<u32, 3>{0, 64, 0};
-  prevPass.resolveCopyFilterActive = prevPass.resolveCopyFilterCoefficients[0] != 0 ||
-                                     prevPass.resolveCopyFilterCoefficients[1] != 64 ||
-                                     prevPass.resolveCopyFilterCoefficients[2] != 0;
-  const auto samplingPlan = make_resolve_sampling_plan(
-      prevPass.resolveTarget, resolveFormat, rect, sourceRect, halfScale,
-      prevPass.resolveCopyFilterActive, forceOpaqueAlpha);
+  prevPass.resolveCopyFilterCoefficients = copyFilterCoefficients != nullptr ? *copyFilterCoefficients : std::array<u32, 3>{0, 64, 0};
+  prevPass.resolveCopyFilterActive = prevPass.resolveCopyFilterCoefficients[0] != 0 || prevPass.resolveCopyFilterCoefficients[1] != 64 || prevPass.resolveCopyFilterCoefficients[2] != 0;
+  const auto samplingPlan = make_resolve_sampling_plan(prevPass.resolveTarget, resolveFormat, rect, sourceRect, halfScale, prevPass.resolveCopyFilterActive, forceOpaqueAlpha);
   prevPass.resolveNeedsConversion = samplingPlan.needsConversion;
   prevPass.resolveNeedsShaderSampling = samplingPlan.needsShaderSampling;
   prevPass.resolveLinearSampling = samplingPlan.usesLinearSampling;
@@ -535,8 +543,7 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
   // GX's copy-clamp bits pin every vertical filter tap to the first or last source texel; without
   // it a filtered copy at internal resolution samples an unrelated EFB row as a visible border.
   const float clampTopPixels = clampTop ? uniformSourceRect.y() : 0.0f;
-  const float clampBottomPixels =
-      clampBottom ? uniformSourceRect.y() + uniformSourceRect.w() : srcH;
+  const float clampBottomPixels = clampBottom ? uniformSourceRect.y() + uniformSourceRect.w() : srcH;
   const float clampTopUv = (clampTopPixels + 0.5f) / srcH;
   const float clampBottomUv = (clampBottomPixels - 0.5f) / srcH;
   // Push UV transform uniform for tex_copy_conv (crop region in UV space)
@@ -555,9 +562,7 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
       clampBottomUv,
   };
   prevPass.resolveUniformRange = push_uniform(resolveUniform);
-  const bool clearFullTarget = rect.x <= 0 && rect.y <= 0 &&
-                               rect.width >= static_cast<int32_t>(prevPass.targetSize.width) &&
-                               rect.height >= static_cast<int32_t>(prevPass.targetSize.height);
+  const bool clearFullTarget = rect.x <= 0 && rect.y <= 0 && rect.width >= static_cast<int32_t>(prevPass.targetSize.width) && rect.height >= static_cast<int32_t>(prevPass.targetSize.height);
   const bool useAttachmentColorClear = clearFullTarget && clearColor && clearAlpha;
   const bool useAttachmentDepthClear = clearFullTarget && clearDepth;
 
@@ -601,7 +606,9 @@ void queue_palette_conv(tex_palette_conv::ConvRequest req) {
   g_renderPasses[g_currentRenderPass].paletteConvs.push_back(std::move(req));
 }
 
-bool is_offscreen() noexcept { return g_inOffscreen; }
+bool is_offscreen() noexcept {
+  return g_inOffscreen;
+}
 
 uint32_t get_sample_count() noexcept {
   if (!has_current_render_pass()) {
@@ -721,8 +728,7 @@ static std::unique_ptr<StagingSet> new_staging_set() {
   auto set = std::make_unique<StagingSet>();
 #ifdef AURORA_GXM
   auto& memory = set->memory[0];
-  memory = gxm::MappedMemory(gxm::NativeSlotBytes, gxm::MappedMemory::Kind::Draw,
-                             "Aurora native draw slot");
+  memory = gxm::MappedMemory(gxm::NativeSlotBytes, gxm::MappedMemory::Kind::Draw, "Aurora native draw slot");
   auto* base = static_cast<uint8_t*>(memory.data());
   set->verts = ByteBuffer{base + gxm::NativeVertexOffset, VertexBufferSize};
   set->uniforms = ByteBuffer{base + gxm::NativeUniformOffset, UniformBufferSize};
@@ -790,8 +796,7 @@ static void upload_batch(StagingSet& set) {
   ZoneScopedN("Upload staging batch");
 #ifdef AURORA_GXM
   // No upload or word textures: native Cg reads explicit uniform buffers.
-  gxm::bind_draw_memory(set.uniforms.data(), set.uniforms.size(), set.indices.data(), set.indices.size(),
-                        set.verts.data(), set.verts.size(), set.storage.data(), set.storage.size());
+  gxm::bind_draw_memory(set.uniforms.data(), set.uniforms.size(), set.indices.data(), set.indices.size(), set.verts.data(), set.verts.size(), set.storage.data(), set.storage.size());
 #else
   auto& gpu = g_gpu;
   gpu.slot = (gpu.slot + 1) % FrameSlotCount;
@@ -840,10 +845,8 @@ void initialize() {
   currentStagingBuffer = 0;
 #ifndef AURORA_GXM
   for (size_t i = 0; i < FrameSlotCount; ++i) {
-    g_gpu.verts[i] = gl::create_texture(WordBufferRowWords, word_buffer_rows(VertexBufferSize) + 1, 1,
-                                        gl::Format::R32UI, "Vertex word buffer");
-    g_gpu.storage[i] = gl::create_texture(WordBufferRowWords, word_buffer_rows(StorageBufferSize) + 1, 1,
-                                          gl::Format::R32UI, "Storage word buffer");
+    g_gpu.verts[i] = gl::create_texture(WordBufferRowWords, word_buffer_rows(VertexBufferSize) + 1, 1, gl::Format::R32UI, "Vertex word buffer");
+    g_gpu.storage[i] = gl::create_texture(WordBufferRowWords, word_buffer_rows(StorageBufferSize) + 1, 1, gl::Format::R32UI, "Storage word buffer");
   }
 #endif
   gl::post([] {
@@ -867,10 +870,14 @@ void shutdown() {
   gx::shutdown();
 
   gl::finish();
-  for (auto& slot : g_nativeDrawSlots) slot.reset();
+  for (auto& slot : g_nativeDrawSlots)
+    slot.reset();
 #ifdef AURORA_GXM
   gl::call([] { g_gpu.active.reset(); });
-  { std::lock_guard lock(g_stagingPoolMutex); g_retiredStaging.clear(); }
+  {
+    std::lock_guard lock(g_stagingPoolMutex);
+    g_retiredStaging.clear();
+  }
 #endif
   g_cachedBindGroups.clear();
   g_retiredBindGroups.clear();
@@ -897,7 +904,9 @@ void shutdown() {
 }
 
 static bool g_preserveNextEfb = false;
-void preserve_next_efb_frame() noexcept { g_preserveNextEfb = true; }
+void preserve_next_efb_frame() noexcept {
+  g_preserveNextEfb = true;
+}
 
 static bool begin_frame_impl(bool clearEfb, bool capacityResume = false) {
   ZoneScoped;
@@ -910,7 +919,8 @@ static bool begin_frame_impl(bool clearEfb, bool capacityResume = false) {
     gx::begin_frame_interpolation();
   }
   discard_suspended_efb_pass();
-  if (!capacityResume) gpu::clear_present_source_override();
+  if (!capacityResume)
+    gpu::clear_present_source_override();
 
   push_render_pass(RenderPass{});
   set_efb_targets(g_renderPasses[0]);
@@ -921,8 +931,7 @@ static bool begin_frame_impl(bool clearEfb, bool capacityResume = false) {
   g_currentRenderPass = 0;
   // Refresh paired render viewport/scissor from logical state in case the FB size changed.
   const auto mappedRenderState = gx::map_logical_render_state();
-  const bool renderStateChanged = gx::g_gxState.renderViewport != mappedRenderState.viewport ||
-                                  gx::g_gxState.renderScissor != mappedRenderState.scissor;
+  const bool renderStateChanged = gx::g_gxState.renderViewport != mappedRenderState.viewport || gx::g_gxState.renderScissor != mappedRenderState.scissor;
   gx::g_gxState.renderViewport = mappedRenderState.viewport;
   gx::g_gxState.renderScissor = mappedRenderState.scissor;
   gx::g_gxState.stateDirty = gx::g_gxState.stateDirty || renderStateChanged;
@@ -942,8 +951,12 @@ static int g_skipDecision = -1; // -1: not decided yet for this frame
 static std::atomic<uint32_t> g_framesInFlight{0};
 static std::atomic<uint64_t> g_skippedFrames{0};
 
-void set_frameskip(bool enabled) noexcept { g_frameskip = enabled; }
-void require_frame_render() noexcept { g_mustRender = true; }
+void set_frameskip(bool enabled) noexcept {
+  g_frameskip = enabled;
+}
+void require_frame_render() noexcept {
+  g_mustRender = true;
+}
 bool frame_skipped() noexcept {
   if (g_skipDecision < 0) {
     const bool pending = g_framesInFlight.load(std::memory_order_acquire) > 0 || gl::gpu_frame_pending();
@@ -951,10 +964,18 @@ bool frame_skipped() noexcept {
   }
   return g_skipDecision == 1;
 }
-void count_skipped_frame() noexcept { g_skippedFrames.fetch_add(1, std::memory_order_relaxed); }
-void frame_render_posted() noexcept { g_framesInFlight.fetch_add(1, std::memory_order_release); }
-void frame_render_finished() noexcept { g_framesInFlight.fetch_sub(1, std::memory_order_release); }
-uint64_t skipped_frame_count() noexcept { return g_skippedFrames.load(std::memory_order_relaxed); }
+void count_skipped_frame() noexcept {
+  g_skippedFrames.fetch_add(1, std::memory_order_relaxed);
+}
+void frame_render_posted() noexcept {
+  g_framesInFlight.fetch_add(1, std::memory_order_release);
+}
+void frame_render_finished() noexcept {
+  g_framesInFlight.fetch_sub(1, std::memory_order_release);
+}
+uint64_t skipped_frame_count() noexcept {
+  return g_skippedFrames.load(std::memory_order_relaxed);
+}
 
 bool begin_frame() {
   // A new guest frame: the previous one was sealed, so reset the skip decision.
@@ -965,7 +986,9 @@ bool begin_frame() {
   return begin_frame_impl(clear);
 }
 
-bool resume_frame() { return begin_frame_impl(false); }
+bool resume_frame() {
+  return begin_frame_impl(false);
+}
 
 void abort_frame() noexcept {
   efb_ram::cancel();
@@ -999,16 +1022,16 @@ static void end_batch_impl(bool advanceFrame) {
   if (g_staging) {
     g_uniforms().append_zeroes(gx::MaxUniformSize); // Pad the end of the buffer
     const auto used = staging_usage();
-    for (unsigned i = 0; i < used.size(); ++i) g_stagingHighWater[i] = std::max(g_stagingHighWater[i], used[i]);
+    for (unsigned i = 0; i < used.size(); ++i)
+      g_stagingHighWater[i] = std::max(g_stagingHighWater[i], used[i]);
     g_stats.drawCallCount = g_drawCallCount;
     g_stats.mergedDrawCallCount = g_mergedDrawCallCount;
     g_stats.lastVertSize = g_verts().size();
     g_stats.lastUniformSize = g_uniforms().size();
     g_stats.lastIndexSize = g_indices().size();
     g_stats.lastStorageSize = g_storage().size();
-    port_capture::frame(g_frameIndex, g_drawCallCount, g_mergedDrawCallCount,
-                        static_cast<uint32_t>(g_renderPasses.size()), g_verts().size(), g_uniforms().size(),
-                        g_indices().size(), g_storage().size());
+    port_capture::frame(g_frameIndex, g_drawCallCount, g_mergedDrawCallCount, static_cast<uint32_t>(g_renderPasses.size()), g_verts().size(), g_uniforms().size(), g_indices().size(),
+                        g_storage().size());
     gl::post([set = std::move(g_staging)]() mutable {
 #ifdef AURORA_GXM
       // End the last scene using the previous slot and retain its memory until
@@ -1039,9 +1062,13 @@ static void end_batch_impl(bool advanceFrame) {
   }
 }
 
-void end_frame() { end_batch_impl(true); }
+void end_frame() {
+  end_batch_impl(true);
+}
 
-void end_batch() { end_batch_impl(false); }
+void end_batch() {
+  end_batch_impl(false);
+}
 
 // Hands the passes recorded so far to the render thread, after the batch holding their data.
 static void submit_recorded_passes() {
@@ -1104,7 +1131,8 @@ void split_staging_batch() {
   // target. Its command may arrive in the next batch, after this prefix has
   // already been submitted. Preserve every prefix; target kind cannot tell
   // us whether the guest will later retain these pixels in a texture.
-  for (auto& pass : g_renderPasses) pass.requireReadyPipelines = true;
+  for (auto& pass : g_renderPasses)
+    pass.requireReadyPipelines = true;
   flush_recording();
   if (!begin_frame_impl(false, true))
     throw StagingCapacityError("Staging remap failed after capacity submission");
@@ -1114,7 +1142,8 @@ void split_staging_batch() {
   g_suspendedEfbPass = std::move(suspended);
   std::array<ByteBuffer*, 4> fresh{&g_verts(), &g_uniforms(), &g_indices(), &g_storage()};
   for (unsigned i = 0; i < fresh.size(); ++i) {
-    if (!retained[i].empty()) fresh[i]->append(retained[i].data(), retained[i].size());
+    if (!retained[i].empty())
+      fresh[i]->append(retained[i].data(), retained[i].size());
   }
   g_inOffscreen = offscreen;
   g_cachedViewport = viewport;
@@ -1127,22 +1156,27 @@ void split_staging_batch() {
   ++g_stagingSplitCount;
 }
 
-uint32_t current_frame() noexcept { return g_frameIndex; }
-void advance_native_frame() noexcept { ++g_frameIndex; }
+uint32_t current_frame() noexcept {
+  return g_frameIndex;
+}
+void advance_native_frame() noexcept {
+  ++g_frameIndex;
+}
 
 NativeDrawMemory native_draw_memory(unsigned slot) {
-  if (slot >= FrameSlotCount) throw std::runtime_error("Native draw slot exceeds the triple buffer");
+  if (slot >= FrameSlotCount)
+    throw std::runtime_error("Native draw slot exceeds the triple buffer");
   auto& set = g_nativeDrawSlots[slot];
   if (!set) {
     // Reuse the three existing bounded allocations. Native frames never wait
     // on the recorded GX staging pool or create additional mapped slots.
     std::lock_guard lock(g_stagingPoolMutex);
-    if (g_stagingPool.empty()) throw std::runtime_error("Native and recorded draw slots cannot be mixed");
+    if (g_stagingPool.empty())
+      throw std::runtime_error("Native and recorded draw slots cannot be mixed");
     set = std::move(g_stagingPool.back());
     g_stagingPool.pop_back();
   }
-  return {{set->verts.data(), VertexBufferSize}, {set->uniforms.data(), UniformBufferSize},
-          {set->indices.data(), IndexBufferSize}, {set->storage.data(), StorageBufferSize}};
+  return {{set->verts.data(), VertexBufferSize}, {set->uniforms.data(), UniformBufferSize}, {set->indices.data(), IndexBufferSize}, {set->storage.data(), StorageBufferSize}};
 }
 
 // The only place that erases from g_cachedBindGroups, whose handles the frame being encoded still
@@ -1159,8 +1193,7 @@ void expire_bind_group_cache() noexcept {
     // through execution, preserving all queued readers and interpolation.
     const bool transient = it->second.transient;
     const u32 retainFrames = transient ? 2 : BindGroupCacheRetainFrames;
-    if ((transient || g_frameIndex % BindGroupCacheSweepPeriod == 0) &&
-        g_frameIndex - it->second.lastUsedFrame > retainFrames) {
+    if ((transient || g_frameIndex % BindGroupCacheSweepPeriod == 0) && g_frameIndex - it->second.lastUsedFrame > retainFrames) {
       g_retiredBindGroups.emplace_back(std::move(it->second.bindGroup));
       g_cachedBindGroups.erase(it++);
     } else {
@@ -1173,19 +1206,15 @@ void expire_bind_group_cache() noexcept {
 // fmt::format for a name nothing reads outside a capture.
 static const char* render_pass_label(u32 index) noexcept {
   static constexpr std::array<const char*, 16> kRenderPassLabels{
-      "Render pass 0",  "Render pass 1",  "Render pass 2",  "Render pass 3",
-      "Render pass 4",  "Render pass 5",  "Render pass 6",  "Render pass 7",
-      "Render pass 8",  "Render pass 9",  "Render pass 10", "Render pass 11",
-      "Render pass 12", "Render pass 13", "Render pass 14", "Render pass 15",
+      "Render pass 0", "Render pass 1", "Render pass 2",  "Render pass 3",  "Render pass 4",  "Render pass 5",  "Render pass 6",  "Render pass 7",
+      "Render pass 8", "Render pass 9", "Render pass 10", "Render pass 11", "Render pass 12", "Render pass 13", "Render pass 14", "Render pass 15",
   };
   return index < kRenderPassLabels.size() ? kRenderPassLabels[index] : "Render pass";
 }
 
-static void render_pass_impl(const std::vector<RenderPass>& passes, u32 idx, int32_t interpolatedFrame,
-                             DebugFrameData& debugFrame);
+static void render_pass_impl(const std::vector<RenderPass>& passes, u32 idx, int32_t interpolatedFrame, DebugFrameData& debugFrame);
 
-static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpolatedFrame, bool finalize,
-                        DebugFrameData& debugFrame, const depth_peek::FrameMapping& depthMapping,
+static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpolatedFrame, bool finalize, DebugFrameData& debugFrame, const depth_peek::FrameMapping& depthMapping,
                         bool skipDraws = false) {
   ZoneScoped;
   // Palette conversions and EFB copies depend on sealed frame state, not on the interpolation
@@ -1219,8 +1248,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
       gl::set_scissor_enabled(false);
       if (passInfo.clearColor) {
         gl::set_color_mask(true, true, true, true);
-        const std::array color{passInfo.clearColorValue.x(), passInfo.clearColorValue.y(),
-                               passInfo.clearColorValue.z(), passInfo.clearColorValue.w()};
+        const std::array color{passInfo.clearColorValue.x(), passInfo.clearColorValue.y(), passInfo.clearColorValue.z(), passInfo.clearColorValue.w()};
         gl::clear_color(color.data());
       }
       if (passInfo.clearDepth && passInfo.depth) {
@@ -1231,8 +1259,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
     render_pass_impl(renderPasses, i, interpolatedFrame, debugFrame);
 
     if (finalize && i == renderPasses.size() - 1) {
-      depth_peek::encode_frame_snapshot(passInfo.depth, passInfo.targetSize.width, passInfo.targetSize.height,
-                                        depthMapping);
+      depth_peek::encode_frame_snapshot(passInfo.depth, passInfo.targetSize.width, passInfo.targetSize.height, depthMapping);
     }
 
     if (passInfo.resolveTarget) {
@@ -1243,8 +1270,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
           .src = resolveSource,
           .uniformRange = passInfo.resolveUniformRange,
           .dst = passInfo.resolveTarget,
-          .sampleFilter = passInfo.resolveLinearSampling ? tex_copy_conv::SampleFilter::Linear
-                                                         : tex_copy_conv::SampleFilter::Nearest,
+          .sampleFilter = passInfo.resolveLinearSampling ? tex_copy_conv::SampleFilter::Linear : tex_copy_conv::SampleFilter::Nearest,
           .forceOpaqueAlpha = passInfo.resolveForceOpaqueAlpha,
       };
       if (passInfo.resolveNeedsConversion) {
@@ -1283,17 +1309,20 @@ static void group_cutout_draws(std::vector<RenderPass>& passes, u32 frameIndex) 
     const char* value = std::getenv("AURORA_GROUP_CUTOUTS");
     return value && std::strcmp(value, "1") == 0;
   }();
-  if (!enabled) return;
+  if (!enabled)
+    return;
   ZoneScopedN("CPU cutout grouping");
   const auto pipeline = [](const Command& command) -> const Pipeline* {
-    if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX) return nullptr;
+    if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX)
+      return nullptr;
     const auto* p = find_pipeline_object(command.data.draw.gx.pipeline);
-    if (!p || !p->program || p->program->replaces_depth()) return nullptr;
+    if (!p || !p->program || p->program->replaces_depth())
+      return nullptr;
     const auto& state = p->raster;
-    if (state.blend || !state.depthTest || !state.depthWrite || !state.colorMask[0] ||
-        !state.colorMask[1] || !state.colorMask[2]) return nullptr;
-    if (state.depthFunc != GL_LESS && state.depthFunc != GL_LEQUAL &&
-        state.depthFunc != GL_GREATER && state.depthFunc != GL_GEQUAL) return nullptr;
+    if (state.blend || !state.depthTest || !state.depthWrite || !state.colorMask[0] || !state.colorMask[1] || !state.colorMask[2])
+      return nullptr;
+    if (state.depthFunc != GL_LESS && state.depthFunc != GL_LEQUAL && state.depthFunc != GL_GREATER && state.depthFunc != GL_GEQUAL)
+      return nullptr;
     return p;
   };
   uint32_t regions = 0, draws = 0, transitionsBefore = 0, transitionsAfter = 0;
@@ -1301,15 +1330,18 @@ static void group_cutout_draws(std::vector<RenderPass>& passes, u32 frameIndex) 
     auto& commands = pass.commands;
     for (size_t begin = 0; begin < commands.size();) {
       const auto* first = pipeline(commands[begin]);
-      if (!first) { ++begin; continue; }
+      if (!first) {
+        ++begin;
+        continue;
+      }
       size_t end = begin + 1;
       bool lastDiscard = first->program->uses_discard();
       bool anyDiscard = lastDiscard, anyOpaque = !lastDiscard;
       uint32_t transitions = 0;
       while (end < commands.size()) {
         const auto* next = pipeline(commands[end]);
-        if (!next || next->raster.depthFunc != first->raster.depthFunc ||
-            next->raster.colorMask != first->raster.colorMask) break;
+        if (!next || next->raster.depthFunc != first->raster.depthFunc || next->raster.colorMask != first->raster.colorMask)
+          break;
         const bool discard = next->program->uses_discard();
         transitions += discard != lastDiscard;
         lastDiscard = discard;
@@ -1344,24 +1376,26 @@ static void group_cutout_draws(std::vector<RenderPass>& passes, u32 frameIndex) 
 }
 
 static void prepare_recorded_passes(SealedFrameData& data, u32 frameIndex) {
-  if (data.skipDraws) return;
+  if (data.skipDraws)
+    return;
   auto& passes = data.passes;
   group_cutout_draws(passes, frameIndex);
   if (port_capture::enabled()) {
     // Intermediate staging flushes submit before the final seal. Keep their
     // passes in the same frame graph with unique, monotonically increasing IDs.
     static u32 captureFrame = UINT32_MAX, nextPass = 0;
-    if (captureFrame != frameIndex) { captureFrame = frameIndex; nextPass = 0; }
+    if (captureFrame != frameIndex) {
+      captureFrame = frameIndex;
+      nextPass = 0;
+    }
     for (u32 i = 0; i < passes.size(); ++i) {
       auto& pass = passes[i];
       const u32 passIndex = nextPass++;
       for (auto& command : pass.commands)
         if (command.type == CommandType::Draw && command.data.draw.type == ShaderType::GX)
           command.data.draw.gx.capture.passIndex = passIndex;
-      port_capture::pass(frameIndex, passIndex, pass.color.get(), pass.depth.get(),
-          pass.resolveTarget ? pass.resolveTarget->texture.get() : nullptr,
-          nullptr,
-          pass.targetSize.width, pass.targetSize.height, pass.commands.size());
+      port_capture::pass(frameIndex, passIndex, pass.color.get(), pass.depth.get(), pass.resolveTarget ? pass.resolveTarget->texture.get() : nullptr, nullptr, pass.targetSize.width,
+                         pass.targetSize.height, pass.commands.size());
     }
   }
 }
@@ -1390,14 +1424,15 @@ void seal_frame(SealedFrame& out) noexcept {
 }
 
 void render(SealedFrame& frame, int32_t interpolatedFrame, bool finalize) {
-  render_impl(frame.data().passes, interpolatedFrame, finalize, frame.data().debug, frame.data().depthMapping,
-              frame.data().skipDraws);
+  render_impl(frame.data().passes, interpolatedFrame, finalize, frame.data().debug, frame.data().depthMapping, frame.data().skipDraws);
   if (finalize) {
     frame.data().retiredBindGroups.clear();
   }
 }
 
-void after_submit() noexcept { depth_peek::after_submit(); }
+void after_submit() noexcept {
+  depth_peek::after_submit();
+}
 
 static void bind_word_buffers() {
 #ifndef AURORA_GXM
@@ -1407,10 +1442,11 @@ static void bind_word_buffers() {
 #endif
 }
 
-GLuint uniform_buffer() noexcept { return g_gpu.uniform; }
+GLuint uniform_buffer() noexcept {
+  return g_gpu.uniform;
+}
 
-static void render_pass_impl(const std::vector<RenderPass>& renderPasses, u32 idx, int32_t interpolatedFrame,
-                             DebugFrameData& debugFrame) {
+static void render_pass_impl(const std::vector<RenderPass>& renderPasses, u32 idx, int32_t interpolatedFrame, DebugFrameData& debugFrame) {
   (void)debugFrame;
   // Per-invocation, not per-process: bindings do not carry across passes.
   gx::DrawEncodeState encodeState{};
@@ -1433,8 +1469,7 @@ static void render_pass_impl(const std::vector<RenderPass>& renderPasses, u32 id
       const float minDepth = gx::UseReversedZ ? 1.0f - vp.zfar : vp.znear;
       const float maxDepth = gx::UseReversedZ ? 1.0f - vp.znear : vp.zfar;
       // Every pass renders vertically flipped, so the top-left origin maps to GL rows directly.
-      gl::set_viewport(static_cast<int32_t>(std::lround(vp.left)), static_cast<int32_t>(std::lround(vp.top)),
-                       static_cast<int32_t>(std::lround(vp.width)), static_cast<int32_t>(std::lround(vp.height)),
+      gl::set_viewport(static_cast<int32_t>(std::lround(vp.left)), static_cast<int32_t>(std::lround(vp.top)), static_cast<int32_t>(std::lround(vp.width)), static_cast<int32_t>(std::lround(vp.height)),
                        std::clamp(minDepth, 0.f, 1.f), std::clamp(maxDepth, 0.f, 1.f));
     } break;
     case CommandType::SetScissor: {
@@ -1451,9 +1486,7 @@ static void render_pass_impl(const std::vector<RenderPass>& renderPasses, u32 id
       switch (draw.type) {
       case ShaderType::GX: {
         const gfx::Range* uniformOverride = nullptr;
-        if (interpolatedFrame >= 0 &&
-            static_cast<size_t>(interpolatedFrame) < draw.gx.interpolatedUniformRanges.size() &&
-            draw.gx.interpolatedUniformRanges[interpolatedFrame].size != 0) {
+        if (interpolatedFrame >= 0 && static_cast<size_t>(interpolatedFrame) < draw.gx.interpolatedUniformRanges.size() && draw.gx.interpolatedUniformRanges[interpolatedFrame].size != 0) {
           uniformOverride = &draw.gx.interpolatedUniformRanges[interpolatedFrame];
         }
         gx::render(draw.gx, encodeState, pass.requireReadyPipelines, uniformOverride);
@@ -1528,10 +1561,18 @@ static inline Range map(ByteBuffer& target, size_t length, size_t alignment) {
   }
   return {static_cast<uint32_t>(begin), static_cast<uint32_t>(length + padding)};
 }
-Range push_verts(const uint8_t* data, size_t length) { return push(g_verts(), data, length, 0); }
-Range push_indices(const uint8_t* data, size_t length) { return push(g_indices(), data, length, 0); }
-Range push_uniform(const uint8_t* data, size_t length) { return push(g_uniforms(), data, length, g_uniformAlignment); }
-Range push_storage(const uint8_t* data, size_t length) { return push(g_storage(), data, length, StorageAlignment); }
+Range push_verts(const uint8_t* data, size_t length) {
+  return push(g_verts(), data, length, 0);
+}
+Range push_indices(const uint8_t* data, size_t length) {
+  return push(g_indices(), data, length, 0);
+}
+Range push_uniform(const uint8_t* data, size_t length) {
+  return push(g_uniforms(), data, length, g_uniformAlignment);
+}
+Range push_storage(const uint8_t* data, size_t length) {
+  return push(g_storage(), data, length, StorageAlignment);
+}
 std::pair<ByteBuffer, Range> map_verts(size_t length) {
   const auto range = map(g_verts(), length, 4);
   return {ByteBuffer{g_verts().data() + range.offset, range.size}, range};
@@ -1582,8 +1623,7 @@ BindGroupRef bind_group_ref(TextureBindGroup&& group) {
   const auto id = hash_bind_group(group);
   const auto it = g_cachedBindGroups.find(id);
   if (it == g_cachedBindGroups.end()) {
-    const bool transient = std::any_of(group.textures.begin(), group.textures.end(),
-        [](const auto& binding) { return binding.ref && binding.ref->isRenderTarget; });
+    const bool transient = std::any_of(group.textures.begin(), group.textures.end(), [](const auto& binding) { return binding.ref && binding.ref->isRenderTarget; });
     g_cachedBindGroups.emplace(id, CachedBindGroup{
                                        .bindGroup = std::make_shared<const TextureBindGroup>(std::move(group)),
                                        .lastUsedFrame = g_frameIndex,
@@ -1601,7 +1641,9 @@ const TextureBindGroup* find_bind_group(BindGroupRef id) {
   return it->second.bindGroup.get();
 }
 
-uint32_t align_uniform(uint32_t value) { return AURORA_ALIGN(value, g_uniformAlignment); }
+uint32_t align_uniform(uint32_t value) {
+  return AURORA_ALIGN(value, g_uniformAlignment);
+}
 
 void insert_debug_marker(std::string label) {
 #if defined(AURORA_GFX_DEBUG_GROUPS)
@@ -1634,4 +1676,6 @@ void aurora_pop_debug_group() {
 #endif
 }
 
-const AuroraStats* aurora_get_stats() { return &aurora::gfx::g_stats; }
+const AuroraStats* aurora_get_stats() {
+  return &aurora::gfx::g_stats;
+}

@@ -20,7 +20,8 @@ class StagingMapState {
 public:
   uint64_t request() {
     std::lock_guard lock(mutex_);
-    if (state_ != BufferMapState::Unmapped) return 0;
+    if (state_ != BufferMapState::Unmapped)
+      return 0;
     state_ = BufferMapState::Mapping;
     return ++generation_;
   }
@@ -28,7 +29,8 @@ public:
   bool complete(uint64_t generation, BufferMapState state) {
     {
       std::lock_guard lock(mutex_);
-      if (generation != generation_ || state_ != BufferMapState::Mapping) return false;
+      if (generation != generation_ || state_ != BufferMapState::Mapping)
+        return false;
       state_ = state;
     }
     changed_.notify_all();
@@ -53,8 +55,7 @@ public:
     std::unique_lock lock(mutex_);
     // ProcessEvents is still serviced between waits for implementations that
     // need it. A spontaneous completion wakes immediately, without polling.
-    changed_.wait_for(lock, std::chrono::milliseconds(1),
-                      [&] { return state_ != BufferMapState::Mapping; });
+    changed_.wait_for(lock, std::chrono::milliseconds(1), [&] { return state_ != BufferMapState::Mapping; });
   }
 };
 

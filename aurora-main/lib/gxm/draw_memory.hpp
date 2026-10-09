@@ -15,8 +15,7 @@ public:
   ~DrawMemory();
   DrawMemory(const DrawMemory&) = delete;
   DrawMemory& operator=(const DrawMemory&) = delete;
-  void bind(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes,
-            const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes);
+  void bind(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes);
   SceGxmNotification completion_fence();
   void bind_uniform_range(uint32_t offset, uint32_t bytes);
   void draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instances);
@@ -36,8 +35,5 @@ private:
 SceGxmNotification draw_memory_fence();
 bool gpu_frame_pending() noexcept;
 std::array<uint64_t, 2> finish_wait_counters() noexcept;
-void bind_draw_memory(const void* uniforms, size_t uniformBytes,
-                      const void* indices, size_t indexBytes,
-                      const void* vertices, size_t vertexBytes,
-                      const void* attributes, size_t attributeBytes);
-}
+void bind_draw_memory(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes);
+} // namespace aurora::gxm

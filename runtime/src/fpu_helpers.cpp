@@ -23,7 +23,7 @@ double RoundNearestEven(double value) {
     const double half = floor_value / 2.0;
     return half == std::floor(half) ? floor_value : floor_value + 1.0;
 }
-}
+} // namespace
 
 // CurrentCpuContext() aborts on a null context (isa/ppc_isa_context.h), so it
 // never returns nullptr - none of the helpers below guard against one.
@@ -42,8 +42,7 @@ extern "C" void PPC_Mtfsf(uint32_t fieldMask, double source) {
     const uint32_t incoming = PPC_FprLowWordInline(source);
 
     if (fieldMask == 0xFFu) {
-        cpu->fpscr = (cpu->fpscr & kFpscrReadOnlySummaryMask) |
-                     (incoming & ~kFpscrReadOnlySummaryMask);
+        cpu->fpscr = (cpu->fpscr & kFpscrReadOnlySummaryMask) | (incoming & ~kFpscrReadOnlySummaryMask);
         MkwApplyHostNiMode(cpu->fpscr);
         return;
     }

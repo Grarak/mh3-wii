@@ -131,8 +131,7 @@ inline uint8_t* MixResolveWriteRange(uint32_t addr, size_t bytes) {
 // only ever be got right or wrong once; stays header-inline since the shipped build has no LTO.
 template <typename T>
 inline T MixReadBE(uint32_t addr) {
-    static_assert(std::is_same<T, uint16_t>::value || std::is_same<T, uint32_t>::value,
-                  "the AX mix only reads 16- and 32-bit guest words");
+    static_assert(std::is_same<T, uint16_t>::value || std::is_same<T, uint32_t>::value, "the AX mix only reads 16- and 32-bit guest words");
     if (const uint8_t* host = MixResolveRange(addr, sizeof(T))) {
         T value = 0;
         std::memcpy(&value, host, sizeof(value));
@@ -153,9 +152,13 @@ inline T MixReadBE(uint32_t addr) {
     }
 }
 
-inline uint16_t MixRead16(uint32_t addr) { return MixReadBE<uint16_t>(addr); }
+inline uint16_t MixRead16(uint32_t addr) {
+    return MixReadBE<uint16_t>(addr);
+}
 
-inline uint32_t MixRead32(uint32_t addr) { return MixReadBE<uint32_t>(addr); }
+inline uint32_t MixRead32(uint32_t addr) {
+    return MixReadBE<uint32_t>(addr);
+}
 
 inline void MixWrite16(uint32_t addr, uint16_t value) {
     if (uint8_t* host = MixResolveWriteRange(addr, sizeof(uint16_t))) {
@@ -213,8 +216,7 @@ bool ResolveAramWindow(uint32_t addr, AramWindow& window);
 
 inline uint8_t ReadAramByte(uint32_t addr) {
     static thread_local AramWindow window{};
-    if (addr >= window.begin && addr < window.end &&
-        window.generation == g_aramWindowGeneration.load(std::memory_order_relaxed)) {
+    if (addr >= window.begin && addr < window.end && window.generation == g_aramWindowGeneration.load(std::memory_order_relaxed)) {
         return window.host[addr - window.begin];
     }
     if (ResolveAramWindow(addr, window)) {
@@ -532,7 +534,7 @@ void WriteGuestS32Buffer(uint32_t addr, const int* src, size_t count);
 void ReadGuestS32Buffer(uint32_t addr, int* dst, size_t count);
 
 class Accelerator {
-public:
+  public:
     void Setup(AXPBWii* pb) {
         m_pb = pb;
         m_start = Hilo(pb->audio_addr.loop_addr_hi, pb->audio_addr.loop_addr_lo) & 0x3fffffffu;
@@ -580,20 +582,25 @@ public:
         uint32_t end = Hilo(pb.audio_addr.end_addr_hi, pb.audio_addr.end_addr_lo) & 0x3fffffffu;
         uint32_t current = Hilo(pb.audio_addr.cur_addr_hi, pb.audio_addr.cur_addr_lo) & 0xbfffffffu;
         const uint16_t format = pb.audio_addr.sample_format;
-        if (format != 0 && format != 0x19 && format != 0x0a) return false;
+        if (format != 0 && format != 0x19 && format != 0x0a)
+            return false;
         bool stopped = false;
         const uint32_t size = format & 3u, decode = (format >> 2) & 3u;
         for (uint32_t i = 0; i < count; ++i) {
-            if (stopped) break;
-            if (!visit(size == 0 ? current >> 1 : size == 1 ? current : current * 2,
-                       size == 2 ? 2u : 1u)) return false;
+            if (stopped)
+                break;
+            if (!visit(size == 0 ? current >> 1 : size == 1 ? current : current * 2, size == 2 ? 2u : 1u))
+                return false;
             uint8_t step = 2;
             if (decode == 0) {
                 ++current;
-                if ((end & 0xf) == 0 && current == end) current = start + 1;
-                else if ((end & 0xf) == 1 && current == end - 1) current = start;
+                if ((end & 0xf) == 0 && current == end)
+                    current = start + 1;
+                else if ((end & 0xf) == 1 && current == end - 1)
+                    current = start;
                 else if ((current & 15) == 0) {
-                    if (!visit((current & ~15u) >> 1, 1u)) return false;
+                    if (!visit((current & ~15u) >> 1, 1u))
+                        return false;
                     current += 2;
                     step += 2;
                 }
@@ -647,9 +654,7 @@ public:
             const int coef_idx = (m_pred_scale >> 4) & 0x7;
             const int32_t coef1 = m_pb->adpcm.coefs[coef_idx * 2 + 0];
             const int32_t coef2 = m_pb->adpcm.coefs[coef_idx * 2 + 1];
-            value = static_cast<int16_t>(((static_cast<int32_t>(m_gain) * pcm) >> gain_shift) +
-                                         ((coef1 * m_yn1) >> gain_shift) +
-                                         ((coef2 * m_yn2) >> gain_shift));
+            value = static_cast<int16_t>(((static_cast<int32_t>(m_gain) * pcm) >> gain_shift) + ((coef1 * m_yn1) >> gain_shift) + ((coef2 * m_yn2) >> gain_shift));
             m_yn2 = m_yn1;
             m_yn1 = value;
             if (decode != 1) {
@@ -711,7 +716,7 @@ public:
         return ReadAramByte(addr);
     }
 
-private:
+  private:
     void SetYn2(int16_t yn2) {
         m_yn2 = yn2;
         m_reads_stopped = false;
@@ -748,4 +753,4 @@ private:
     mutable uint32_t m_hostSize = 0;
 };
 
-}
+} // namespace AxDspHle

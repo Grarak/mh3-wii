@@ -46,4 +46,4 @@ MixWorkerStats GetMixWorkerStats();
 
 void InitAram();
 
-}
+} // namespace AxDspHle

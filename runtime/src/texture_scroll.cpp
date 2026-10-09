@@ -45,62 +45,73 @@
 namespace {
 
 enum : uint32_t {
-    GetResMat = 0x8007BF10,       // (out, model, material index)
+    GetResMat = 0x8007BF10,         // (out, model, material index)
     ResMatTexCoordGen = 0x8007BC10, // (resmat, 0) -> handle data
-    HandleCopy = 0x8006F368,      // (out, in): *out = *in
-    TexCoordGenData = 0x800878D4, // null check + data (panics on null)
-    TexCoordGenData2 = 0x8006E310, // the same from SetEffectMtx
-    SinIdx = 0x800502B0,          // (u16 index) -> f1
-    GetTevColor = 0x800E2D38,     // (mdl, material, register, out)
-    SetTevColor = 0x800E2DC4,     // (mdl, material, register, color)
-    GetTevKColor = 0x800E2B58,    // (mdl, material, register, out) -> 1 if present
-    SetTevKColor = 0x800E2950,    // (mdl, material, register, color, 0)
-    CreateModel = 0x800F8EC0,     // res_eft_model_create (MHchar, 67, 268) -> 0 when it failed
-    EndPass = 0x8031F364,         // (this)
-    FinishPass = 0x8031F050,      // (this)
-    CopyPosition = 0x80041EA4,    // (dst, src)
-    RotateZXY = 0x80051278,       // rotVecZXY (v, CP_VECTOR angles)
-    VecScaleBy = 0x80051454,      // (v, f1)
-    VecAngles = 0x80050D7C,       // calcVecAngXY (v, out x, out y)
+    HandleCopy = 0x8006F368,        // (out, in): *out = *in
+    TexCoordGenData = 0x800878D4,   // null check + data (panics on null)
+    TexCoordGenData2 = 0x8006E310,  // the same from SetEffectMtx
+    SinIdx = 0x800502B0,            // (u16 index) -> f1
+    GetTevColor = 0x800E2D38,       // (mdl, material, register, out)
+    SetTevColor = 0x800E2DC4,       // (mdl, material, register, color)
+    GetTevKColor = 0x800E2B58,      // (mdl, material, register, out) -> 1 if present
+    SetTevKColor = 0x800E2950,      // (mdl, material, register, color, 0)
+    CreateModel = 0x800F8EC0,       // res_eft_model_create (MHchar, 67, 268) -> 0 when it failed
+    EndPass = 0x8031F364,           // (this)
+    FinishPass = 0x8031F050,        // (this)
+    CopyPosition = 0x80041EA4,      // (dst, src)
+    RotateZXY = 0x80051278,         // rotVecZXY (v, CP_VECTOR angles)
+    VecScaleBy = 0x80051454,        // (v, f1)
+    VecAngles = 0x80050D7C,         // calcVecAngXY (v, out x, out y)
 };
 
-constexpr uint32_t r2 = 0x8079FF60;    // the sda2 base
+constexpr uint32_t r2 = 0x8079FF60;           // the sda2 base
 constexpr uint32_t kTickCounter = 0x8065AA6C; // system_w+0xC (ticks, step_counter.cpp)
 constexpr uint32_t kRandSeed = 0x8065AA78;    // system_w+0x18: RNG 0 (s16)
 constexpr uint32_t kKindMap = 0x805CF500;     // u8[256], 255: unmapped
 constexpr uint32_t kEntrySize = 52, kEntryFlags = 171, kEntryMtx = 172;
 
-float F(uint32_t a) { return Memory::ReadFloat32(a); }
-void F(uint32_t a, float v) { Memory::WriteFloat32(a, v); }
-float Step() { return float(GameStep::Scale()); }
+float F(uint32_t a) {
+    return Memory::ReadFloat32(a);
+}
+void F(uint32_t a, float v) {
+    Memory::WriteFloat32(a, v);
+}
+float Step() {
+    return float(GameStep::Scale());
+}
 
 void CopyMtx(uint32_t src, uint32_t dst) {
-    for (uint32_t i = 0; i < 48; i += 4) Memory::Write32(dst + i, Memory::Read32(src + i));
+    for (uint32_t i = 0; i < 48; i += 4)
+        Memory::Write32(dst + i, Memory::Read32(src + i));
 }
 
 // The handle's data: its null check panics as the original's does.
 uint32_t Data(CpuContext* ctx, uint32_t handle, uint32_t check) {
     const uint32_t data = Memory::Read32(handle);
-    if (data) [[likely]] return data;
+    if (data) [[likely]]
+        return data;
     GuestCall game{ctx};
     game(check, {handle});
     return Memory::Read32(handle);
 }
 
 uint32_t GetEffectMtx(CpuContext* ctx, uint32_t handle, uint32_t index, uint32_t out) {
-    if (!out || index >= 8) return 0;
+    if (!out || index >= 8)
+        return 0;
     CopyMtx(Data(ctx, handle, TexCoordGenData) + index * kEntrySize + kEntryMtx, out);
     return 1;
 }
 
 uint32_t SetEffectMtx(CpuContext* ctx, uint32_t handle, uint32_t index, uint32_t mtx) {
-    if (index >= 8) return 0;
+    if (index >= 8)
+        return 0;
     const uint32_t entry = Data(ctx, handle, TexCoordGenData2) + index * kEntrySize;
     if (mtx) {
         CopyMtx(mtx, entry + kEntryMtx);
         Memory::Write8(entry + kEntryFlags, Memory::Read8(entry + kEntryFlags) & 0xFE);
     } else {
-        for (uint32_t i = 0; i < 12; ++i) F(entry + kEntryMtx + 4 * i, i % 5 == 0 ? 1.0f : 0.0f);
+        for (uint32_t i = 0; i < 12; ++i)
+            F(entry + kEntryMtx + 4 * i, i % 5 == 0 ? 1.0f : 0.0f);
         Memory::Write8(entry + kEntryFlags, Memory::Read8(entry + kEntryFlags) | 1);
     }
     return 1;
@@ -109,7 +120,8 @@ uint32_t SetEffectMtx(CpuContext* ctx, uint32_t handle, uint32_t index, uint32_t
 // A material's texture coordinate handle in `handle` (4 bytes), through the
 // scratch word `scratch`; false when the model has no such material.
 bool MaterialTexCoords(GuestCall& game, uint32_t resmat, uint32_t scratch, uint32_t handle) {
-    if (!Memory::Read32(resmat)) return false;
+    if (!Memory::Read32(resmat))
+        return false;
     Memory::Write32(scratch, game.Call<ResMatTexCoordGen>({resmat, 0}));
     game.Call<HandleCopy>({handle, scratch});
     return true;
@@ -118,7 +130,8 @@ bool MaterialTexCoords(GuestCall& game, uint32_t resmat, uint32_t scratch, uint3
 // 0x800CEF20 for RNG 0: seed * 176 mod 65363 (a zero seed counts as 1).
 uint32_t Rand() {
     uint32_t seed = Memory::Read16(kRandSeed);
-    if (!seed) seed = 1;
+    if (!seed)
+        seed = 1;
     seed = seed * 176 % 65363;
     Memory::Write16(kRandSeed, uint16_t(seed));
     return seed;
@@ -139,19 +152,23 @@ void SeaSurfacePort(CpuContext* ctx) {
         game.Call<SinIdx>({(Memory::Read32(kTickCounter) << 7) & 0xFF80});
         F(mtx + 12, F(r2 - 8660) * game.F1());
         float v = F(mtx + 28) + F(r2 - 7740) * Step();
-        if (v > F(r2 - 8792)) v -= F(r2 - 8792);
+        if (v > F(r2 - 8792))
+            v -= F(r2 - 8792);
         F(mtx + 28, v);
         SetEffectMtx(ctx, frame[20], 1, mtx);
         SetEffectMtx(ctx, frame[16], 1, mtx);
     }
     const uint32_t mdl = self + 36, color = frame[24];
     game.Call<GetTevColor>({mdl, 6, 3, color});
-    for (uint32_t i = 0; i < 3; ++i) Memory::Write8(color + i, Memory::Read8(self + 825 + i));
+    for (uint32_t i = 0; i < 3; ++i)
+        Memory::Write8(color + i, Memory::Read8(self + 825 + i));
     game.Call<SetTevColor>({mdl, 6, 3, color});
     game.Call<GetTevColor>({mdl, 0, 0, color});
     const bool white = Memory::Read8(self + 481) && !(Memory::Read8(self + 485) == 13 && Memory::Read8(self + 486) == 2);
-    for (uint32_t i = 0; i < 3; ++i) Memory::Write8(color + i, white ? 255 : 150);
-    for (uint32_t reg = 0; reg < 4; ++reg) game.Call<SetTevColor>({mdl, reg, 0, color});
+    for (uint32_t i = 0; i < 3; ++i)
+        Memory::Write8(color + i, white ? 255 : 150);
+    for (uint32_t reg = 0; reg < 4; ++reg)
+        game.Call<SetTevColor>({mdl, reg, 0, color});
 }
 
 void Mat6ScrollPort(CpuContext* ctx) {
@@ -159,14 +176,16 @@ void Mat6ScrollPort(CpuContext* ctx) {
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3), mdl = self + 36, color = frame[24];
     uint32_t kind = Memory::Read8(self + 480);
-    if (const uint32_t mapped = Memory::Read8(kKindMap + kind); mapped != 255) kind = mapped;
+    if (const uint32_t mapped = Memory::Read8(kKindMap + kind); mapped != 255)
+        kind = mapped;
     if (kind == 6 && Memory::Read8(self + 481) == 1) {
         const uint32_t mat = frame[28], mtx = frame[80];
         game.Call<GetResMat>({mat, Memory::Read32(self + 316), 6});
         if (MaterialTexCoords(game, mat, frame[16], frame[20])) {
             GetEffectMtx(ctx, frame[20], 0, mtx);
             float u = F(mtx + 12) - F(r2 - 21892) * Step();
-            if (u < F(r2 - 21864)) u += F(r2 - 21880);
+            if (u < F(r2 - 21864))
+                u += F(r2 - 21880);
             F(mtx + 12, u);
             SetEffectMtx(ctx, frame[20], 0, mtx);
         }
@@ -200,7 +219,8 @@ void ObjectListPort(CpuContext* ctx) {
         }
         game.Call<CopyPosition>({obj + 4, self + 24});
         if ((int16_t(Memory::Read16(list + 22)) & 1) == 0) {
-            for (uint32_t k = 0; k < 12; k += 4) Memory::Write32(obj + 40 + k, Memory::Read32(self + 36 + k));
+            for (uint32_t k = 0; k < 12; k += 4)
+                Memory::Write32(obj + 40 + k, Memory::Read32(self + 36 + k));
         } else {
             const uint32_t v = frame[16];
             F(v, low), F(v + 4, low), F(v + 8, one);
@@ -220,8 +240,10 @@ void ObjectListPort(CpuContext* ctx) {
         if (MaterialTexCoords(game, mat, frame[8], frame[12])) {
             GetEffectMtx(ctx, frame[12], 0, mtx);
             float u = F(mtx + 12) - speed * Step();
-            if (u < low) u += one;
-            if (u >= one) u -= one;
+            if (u < low)
+                u += one;
+            if (u >= one)
+                u -= one;
             F(mtx + 12, u);
             SetEffectMtx(ctx, frame[12], 0, mtx);
         }
@@ -230,8 +252,12 @@ void ObjectListPort(CpuContext* ctx) {
     game.Call<FinishPass>({self});
 }
 
-void GetEffectMtxPort(CpuContext* ctx) { ctx->gpr[3] = GetEffectMtx(ctx, ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]); }
-void SetEffectMtxPort(CpuContext* ctx) { ctx->gpr[3] = SetEffectMtx(ctx, ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]); }
+void GetEffectMtxPort(CpuContext* ctx) {
+    ctx->gpr[3] = GetEffectMtx(ctx, ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+}
+void SetEffectMtxPort(CpuContext* ctx) {
+    ctx->gpr[3] = SetEffectMtx(ctx, ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+}
 
 } // namespace
 

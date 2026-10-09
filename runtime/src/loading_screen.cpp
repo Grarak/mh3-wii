@@ -19,17 +19,17 @@ namespace {
 // s16 slide at +0x7A + 2i, s16 height at +0x90 + 2i, s32 tilt at +0x08 + 4i.
 constexpr uint32_t kLoading = 0x806977A0;
 enum : uint32_t {
-    kPhase = 0x02,    // u8: 0 hop in, 1 hold, 2 hop out, 3 hold
-    kLead = 0x03,     // s8: last letter that has started its hop
-    kLanded = 0x04,   // s8: letters whose hop has finished
-    kCounter = 0x06,  // s16: frames in this phase (hold: frames left)
+    kPhase = 0x02,   // u8: 0 hop in, 1 hold, 2 hop out, 3 hold
+    kLead = 0x03,    // s8: last letter that has started its hop
+    kLanded = 0x04,  // s8: letters whose hop has finished
+    kCounter = 0x06, // s16: frames in this phase (hold: frames left)
     kTilt = 0x08,
     kHop = 0x64,
     kSlide = 0x7A,
     kHeight = 0x90,
 };
-constexpr uint32_t kLanguage = 0x8065AA69;   // u8 (System_w +9)
-constexpr int32_t kLetterCounts = -0x7AC0;   // r13: u8 letters per language
+constexpr uint32_t kLanguage = 0x8065AA69; // u8 (System_w +9)
+constexpr int32_t kLetterCounts = -0x7AC0; // r13: u8 letters per language
 constexpr int32_t kHopStep = 8, kTiltStep = 1820;
 constexpr int16_t kHoldFrames = 4;
 
@@ -40,9 +40,7 @@ struct Letters {
     void W8(uint32_t o, int32_t v) const { Memory::Write8(kLoading + o, uint8_t(v)); }
     void W16(uint32_t o, int32_t v) const { Memory::Write16(kLoading + o, uint16_t(v)); }
     void Add16(uint32_t o, int32_t v) const { W16(o, S16(o) + v); }
-    void AddTilt(uint32_t i, int32_t v) const {
-        Memory::Write32(kLoading + kTilt + i * 4, Memory::Read32(kLoading + kTilt + i * 4) + uint32_t(v));
-    }
+    void AddTilt(uint32_t i, int32_t v) const { Memory::Write32(kLoading + kTilt + i * 4, Memory::Read32(kLoading + kTilt + i * 4) + uint32_t(v)); }
 
     // One frame of letter i's hop: two frames up (tilting by `tiltUp`), two
     // frames down (tilting by `tiltDown`); it slides by `slide` on the way up.
@@ -57,7 +55,8 @@ struct Letters {
             Add16(kHeight + i * 2, kHopStep);
             AddTilt(i, tiltDown);
             Add16(kHop + i * 2, 1);
-            if (S16(kHop + i * 2) == 4) W8(kLanded, S8(kLanded) + 1);
+            if (S16(kHop + i * 2) == 4)
+                W8(kLanded, S8(kLanded) + 1);
         }
     }
 
@@ -67,14 +66,16 @@ struct Letters {
         W8(kPhase, phase);
         W16(kCounter, 1);
         W8(kLanded, 0);
-        for (uint32_t i = 0; i < count; ++i) W16(kHop + i * 2, 0);
+        for (uint32_t i = 0; i < count; ++i)
+            W16(kHop + i * 2, 0);
         Memory::Write32(kLoading + tiltAt, tilt);
     }
 
     // A hold phase: counts the frames left down; false once they are out.
     bool Holding() const {
         const int16_t left = S16(kCounter);
-        if (left > 0) W16(kCounter, left - 1);
+        if (left > 0)
+            W16(kCounter, left - 1);
         return left > 0;
     }
 
@@ -83,7 +84,8 @@ struct Letters {
         switch (Memory::Read8(kLoading + kPhase)) {
         case 0: // hop in, left to right, a letter every other frame
             if ((S16(kCounter) & 1) == 0) {
-                if (S8(kLead) < last) W8(kLead, S8(kLead) + 1);
+                if (S8(kLead) < last)
+                    W8(kLead, S8(kLead) + 1);
                 if (S8(kLanded) == int8_t(count)) {
                     W8(kPhase, 1);
                     W16(kCounter, kHoldFrames);
@@ -95,11 +97,13 @@ struct Letters {
             W16(kCounter, S16(kCounter) + 1);
             return;
         case 1:
-            if (!Holding()) Restart(2, last, kTilt - 4 + count * 4, 3639);
+            if (!Holding())
+                Restart(2, last, kTilt - 4 + count * 4, 3639);
             return;
         case 2: // hop out, right to left
             if ((S16(kCounter) & 1) == 0) {
-                if (S8(kLead) > 0) W8(kLead, S8(kLead) - 1);
+                if (S8(kLead) > 0)
+                    W8(kLead, S8(kLead) - 1);
                 if (S8(kLanded) == int8_t(count)) {
                     W8(kPhase, 3);
                     W16(kCounter, kHoldFrames);
@@ -111,7 +115,8 @@ struct Letters {
             W16(kCounter, S16(kCounter) + 1);
             return;
         case 3:
-            if (!Holding()) Restart(0, 0, kTilt, 0x10000 - 3641);
+            if (!Holding())
+                Restart(0, 0, kTilt, 0x10000 - 3641);
             return;
         }
     }
@@ -119,7 +124,8 @@ struct Letters {
 
 void LoadingLetters(CpuContext* ctx) {
     const Letters letters{Memory::Read8(ctx->gpr[13] + uint32_t(kLetterCounts) + Memory::Read8(kLanguage))};
-    for (uint32_t i = 0, ticks = GameStep::Ticks(); i < ticks; ++i) letters.Frame();
+    for (uint32_t i = 0, ticks = GameStep::Ticks(); i < ticks; ++i)
+        letters.Frame();
 }
 
 } // namespace

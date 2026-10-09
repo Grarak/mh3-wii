@@ -13,22 +13,24 @@
 struct GuestCall {
     CpuContext* cpu;
 
-    uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {},
-                        std::initializer_list<double> floats = {}) {
+    uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         uint32_t r = 3, f = 1;
-        for (uint32_t v : ints) cpu->gpr[r++] = v;
-        for (double v : floats) cpu->fpr[f++].d = v;
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
     // Calls the virtual function at `slot` in `object`'s vtable (at offset 0).
-    uint32_t Virtual(uint32_t object, uint32_t slot, std::initializer_list<uint32_t> ints = {},
-                     std::initializer_list<double> floats = {}) {
+    uint32_t Virtual(uint32_t object, uint32_t slot, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         const uint32_t fn = Memory::Read32(Memory::Read32(object) + slot);
         uint32_t r = 3, f = 1;
         cpu->gpr[r++] = object;
-        for (uint32_t v : ints) cpu->gpr[r++] = v;
-        for (double v : floats) cpu->fpr[f++].d = v;
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
@@ -38,11 +40,12 @@ struct GuestCall {
     // guard of a native target (the port's GuestFrame restores the GPRs).
     // Targets that may change the nonvolatile FPRs keep the guarded dispatch.
     template <uint32_t Target>
-    [[gnu::always_inline]] uint32_t Call(std::initializer_list<uint32_t> ints = {},
-                                         std::initializer_list<double> floats = {}) {
+    [[gnu::always_inline]] uint32_t Call(std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         uint32_t r = 3, f = 1;
-        for (uint32_t v : ints) cpu->gpr[r++] = v;
-        for (double v : floats) cpu->fpr[f++].d = v;
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
         static void (*bound)(CpuContext*) = nullptr;
         if (bound) [[likely]]
             bound(cpu);
@@ -54,13 +57,14 @@ struct GuestCall {
     // Virtual() for a constant slot: remembers the last function the slot
     // resolved to, so a loop over objects of one class binds it once.
     template <uint32_t Slot>
-    [[gnu::always_inline]] uint32_t Virtual(uint32_t object, std::initializer_list<uint32_t> ints = {},
-                                            std::initializer_list<double> floats = {}) {
+    [[gnu::always_inline]] uint32_t Virtual(uint32_t object, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         const uint32_t fn = Memory::Read32(Memory::Read32(object) + Slot);
         uint32_t r = 3, f = 1;
         cpu->gpr[r++] = object;
-        for (uint32_t v : ints) cpu->gpr[r++] = v;
-        for (double v : floats) cpu->fpr[f++].d = v;
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
         static Memo memo;
         if (memo.fn == fn) [[likely]]
             memo.entry(cpu);
@@ -71,7 +75,7 @@ struct GuestCall {
 
     float F1() const { return float(cpu->fpr[1].d); }
 
-private:
+  private:
     struct Memo {
         uint32_t fn = 0;
         void (*entry)(CpuContext*) = nullptr;
@@ -89,20 +93,20 @@ private:
     }
 
     template <uint32_t Target>
-    static void Dispatch(CpuContext* cpu) { InvokeIndirectCpu(Target, cpu); }
+    static void Dispatch(CpuContext* cpu) {
+        InvokeIndirectCpu(Target, cpu);
+    }
 
     // Runs `target` through the generic dispatch and returns what later calls
     // enter: its entry point when that is safe, else `dispatch` (the generic
     // path); null before the registry is published. Overlay code can unload,
     // so overlay targets always dispatch.
-    [[gnu::noinline]] static void (*Bind(uint32_t target, CpuContext* cpu,
-                                         void (*dispatch)(CpuContext*)))(CpuContext*) {
+    [[gnu::noinline]] static void (*Bind(uint32_t target, CpuContext* cpu, void (*dispatch)(CpuContext*)))(CpuContext*) {
         void (*entry)(CpuContext*) = nullptr;
         if (TranslatedFunctionRegistry::IsLookupPublished()) {
             entry = dispatch;
             const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(target);
-            if (target < 0x80800000u && TryGetCpuContext() == cpu && record && record->entry &&
-                (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
+            if (target < 0x80800000u && TryGetCpuContext() == cpu && record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
                 entry = record->entry;
         }
         InvokeIndirectCpu(target, cpu);
@@ -117,7 +121,7 @@ private:
 // guards them) and the rest is volatile. The copies are inline: a whole
 // CpuContext each way was two memcpy calls per port call on the Cortex-A9.
 class GuestFrame {
-public:
+  public:
     GuestFrame(CpuContext* cpu, uint32_t size) : cpu_(cpu), cr_(cpu->cr) {
         Copy(gpr_, cpu->gpr);
         sp_ = (gpr_[1] - size) & ~0xFu;
@@ -133,16 +137,19 @@ public:
     uint32_t operator[](uint32_t offset) const { return sp_ + offset; }
     uint32_t Arg(int gpr) const { return gpr_[gpr]; }
 
-private:
+  private:
     // NEON: the compiler turns a plain copy (even __builtin_memcpy_inline,
     // once it splits the array) back into a memcpy call.
     static void Copy(uint32_t (&to)[32], const uint32_t (&from)[32]) {
 #if defined(__ARM_NEON)
         uint32x4_t v[8];
-        for (int i = 0; i < 8; ++i) v[i] = vld1q_u32(from + 4 * i);
-        for (int i = 0; i < 8; ++i) vst1q_u32(to + 4 * i, v[i]);
+        for (int i = 0; i < 8; ++i)
+            v[i] = vld1q_u32(from + 4 * i);
+        for (int i = 0; i < 8; ++i)
+            vst1q_u32(to + 4 * i, v[i]);
 #else
-        for (int i = 0; i < 32; ++i) to[i] = from[i];
+        for (int i = 0; i < 32; ++i)
+            to[i] = from[i];
 #endif
     }
 

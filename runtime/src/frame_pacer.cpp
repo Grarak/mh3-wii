@@ -40,19 +40,19 @@ namespace {
 
 // Small-data globals (offsets from r13; lower-case names are mh3.sel exports).
 enum : int32_t {
-    kBlackPending = -0x8000,       // u8: clear VI black on the next flip
-    kWidemodeParam = -0x7FFF,      // u8 set_widemode_param: 4:3/16:9 mode to apply (0xFF = none)
-    kWidemodeFlag = -0x4690,       // u8 set_widemode_flag: a widescreen switch is pending
-    kFrameCount = -0x45B8,         // u32: frames paced so far
-    kRetracesThisFrame = -0x4680,  // s32: retraces since the last flip (reset only)
-    kRetracesPerFrame = -0x4684,   // s32: frame budget in retraces
-    kViFlag = -0x467C,             // u8: value passed to SetViFlag
-    kViFlagCurrent = -0x4C81,      // u8: SetViFlag's stored value (VI library)
-    kViChanged = -0x3790,          // u32: VI registers to rewrite at the next retrace
-    kFrameBuffers = -0x46B0,       // u32[2]: the two XFBs
-    kBackBufferIndex = -0x46A4,    // u32: 0/1
-    kNextFrameBuffer = -0x46A8,    // u32: XFB to show at the next flip
-    kDriveStatus = -0x4688,        // s32: DVDGetDriveStatus at the last retrace
+    kBlackPending = -0x8000,      // u8: clear VI black on the next flip
+    kWidemodeParam = -0x7FFF,     // u8 set_widemode_param: 4:3/16:9 mode to apply (0xFF = none)
+    kWidemodeFlag = -0x4690,      // u8 set_widemode_flag: a widescreen switch is pending
+    kFrameCount = -0x45B8,        // u32: frames paced so far
+    kRetracesThisFrame = -0x4680, // s32: retraces since the last flip (reset only)
+    kRetracesPerFrame = -0x4684,  // s32: frame budget in retraces
+    kViFlag = -0x467C,            // u8: value passed to SetViFlag
+    kViFlagCurrent = -0x4C81,     // u8: SetViFlag's stored value (VI library)
+    kViChanged = -0x3790,         // u32: VI registers to rewrite at the next retrace
+    kFrameBuffers = -0x46B0,      // u32[2]: the two XFBs
+    kBackBufferIndex = -0x46A4,   // u32: 0/1
+    kNextFrameBuffer = -0x46A8,   // u32: XFB to show at the next flip
+    kDriveStatus = -0x4688,       // s32: DVDGetDriveStatus at the last retrace
 };
 
 using Clock = std::chrono::steady_clock;
@@ -68,7 +68,7 @@ constexpr auto kMaxStep = std::chrono::milliseconds(100);
 constexpr auto kMaxDebt = std::chrono::milliseconds(100);
 
 enum : uint32_t {
-    ApplyWidemode = 0x8003FA48,       // reconfigures VI/copy for 4:3 or 16:9
+    ApplyWidemode = 0x8003FA48, // reconfigures VI/copy for 4:3 or 16:9
     OSSleepTicks = 0x804D5320,
     VIFlush = 0x804E9010,
     VISetNextFrameBuffer = 0x804E9130,
@@ -81,7 +81,8 @@ enum : uint32_t {
 // marks VI register group 0x20 for rewrite when it changes. Not matched to an
 // SDK name yet.
 void SetViFlag(uint32_t sda, uint8_t value) {
-    if (Memory::Read8(sda + uint32_t(kViFlagCurrent)) == value) return;
+    if (Memory::Read8(sda + uint32_t(kViFlagCurrent)) == value)
+        return;
     Memory::Write8(sda + uint32_t(kViFlagCurrent), value);
     Memory::Write32(sda + uint32_t(kViChanged), Memory::Read32(sda + uint32_t(kViChanged)) | 0x20);
 }
@@ -90,7 +91,8 @@ struct Guest {
     CpuContext* cpu;
     uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
         uint32_t r = 3;
-        for (uint32_t v : ints) cpu->gpr[r++] = v;
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
@@ -101,7 +103,9 @@ struct Guest {
 extern "C" void MH3_FramePacer(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     const uint32_t sda = saved.gpr[13];
-    auto at = [sda](int32_t offset) { return sda + uint32_t(offset); };
+    auto at = [sda](int32_t offset) {
+        return sda + uint32_t(offset);
+    };
     // Guest stack frame below the caller's (keep the back chain aligned).
     ctx->gpr[1] = (saved.gpr[1] - 0x20) & ~0xFu;
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
@@ -109,9 +113,9 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // OSSleepTicks keeps pumping audio, alarms, IOS and VI callbacks while waiting.
     auto sleepUntil = [&](Clock::time_point t) {
         const auto now = Clock::now();
-        if (now >= t) return;
-        const uint64_t ticks = TimeBaseContract::NanosecondsToTicks(
-            uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(t - now).count()));
+        if (now >= t)
+            return;
+        const uint64_t ticks = TimeBaseContract::NanosecondsToTicks(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(t - now).count()));
         os(OSSleepTicks, {uint32_t(ticks >> 32), uint32_t(ticks)});
     };
     const auto period = std::chrono::nanoseconds(VideoRetracePeriodNs());
@@ -130,12 +134,14 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         return !(v && v[0] == '0');
     }();
     variableStep = variable;
-    if (forcedVcnt > 0) Memory::Write32(at(kRetracesPerFrame), uint32_t(forcedVcnt));
+    if (forcedVcnt > 0)
+        Memory::Write32(at(kRetracesPerFrame), uint32_t(forcedVcnt));
 #endif
     // 0x8003F588, an inlined getter. SetSystemVcnt clamps it to >= 1.
     const int32_t budget = std::max<int32_t>(1, int32_t(Memory::Read32(at(kRetracesPerFrame))));
     const auto now = Clock::now();
-    if (!started) frameEnd = now - budget * period;
+    if (!started)
+        frameEnd = now - budget * period;
     started = true;
     GameStep::SetVariable(variableStep);
     double stepTicks; // game time of the step that just ran, in retraces
@@ -152,7 +158,8 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
             const char* v = std::getenv("MH3_STEP_SCALE");
             return v ? std::atof(v) : 0.0;
         }();
-        if (forcedScale > 0) next = forcedScale;
+        if (forcedScale > 0)
+            next = forcedScale;
 #endif
         GameStep::Begin(next);
         // No wait: only deliver the device work due (audio, alarms, IOS, VI).
@@ -161,7 +168,8 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         *ctx = frame;
     } else {
         frameEnd += budget * period;
-        if (now - frameEnd > kMaxDebt) frameEnd = now; // too far behind: drop the debt
+        if (now - frameEnd > kMaxDebt)
+            frameEnd = now; // too far behind: drop the debt
         stepTicks = budget;
         GameStep::Begin(budget / 2.0);
         // Flip one retrace before the end, as the original does.
@@ -185,7 +193,8 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     Memory::Write32(at(kNextFrameBuffer), Memory::Read32(at(kFrameBuffers) + back * 4));
     os(SystemCall);
 
-    if (!variableStep) sleepUntil(frameEnd);
+    if (!variableStep)
+        sleepUntil(frameEnd);
     pacedTicks += stepTicks;
     ++pacedFrames;
     // Input record/playback is indexed by game time in 30 Hz frames (2 retraces),
@@ -212,10 +221,8 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         const uint32_t plw = table ? Memory::Read32(table + 16 + 2 * 4) : 0;
         if (plw && Memory::Read8(plw)) {
             const uint32_t chr = Memory::Read32(plw + 0x13C); // MHchar
-            std::fprintf(stderr, "MH3 player: t=%.1f pos %.2f %.2f %.2f motion %u frame %.2f rate %.2f\n",
-                         pacedTicks / 2, Memory::ReadFloat32(plw + 0x3C), Memory::ReadFloat32(plw + 0x40),
-                         Memory::ReadFloat32(plw + 0x44), chr ? Memory::Read16(chr + 0x54) : 0,
-                         chr ? Memory::ReadFloat32(chr + 0x78) : 0.0f, chr ? Memory::ReadFloat32(chr + 0x60) : 0.0f);
+            std::fprintf(stderr, "MH3 player: t=%.1f pos %.2f %.2f %.2f motion %u frame %.2f rate %.2f\n", pacedTicks / 2, Memory::ReadFloat32(plw + 0x3C), Memory::ReadFloat32(plw + 0x40),
+                         Memory::ReadFloat32(plw + 0x44), chr ? Memory::Read16(chr + 0x54) : 0, chr ? Memory::ReadFloat32(chr + 0x78) : 0.0f, chr ? Memory::ReadFloat32(chr + 0x60) : 0.0f);
         }
     }
     if (ramDump.first && pacedFrames >= ramDump.first && pacedFrames < ramDump.first + ramDump.second) {
@@ -245,7 +252,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x800401A8, MH3_FramePacer, "FramePacer");
 extern "C" void MH3_CountRetrace(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     const uint32_t sda = saved.gpr[13];
-    auto at = [sda](int32_t offset) { return sda + uint32_t(offset); };
+    auto at = [sda](int32_t offset) {
+        return sda + uint32_t(offset);
+    };
     Memory::Write32(at(kRetracesThisFrame), Memory::Read32(at(kRetracesThisFrame)) + 1);
     ctx->gpr[1] = (saved.gpr[1] - 0x10) & ~0xFu;
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);

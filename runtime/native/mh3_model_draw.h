@@ -25,16 +25,21 @@ typedef mh3_res_status (*mh3_model_draw_emit)(void *user, const mh3_model_draw_i
  * A nonempty span contains one byte per runtime node ID. Read live resource
  * flags on each iteration; animations may change them between submissions.
  * Callback order is bytecode order. Only a submitted material updates cache. */
-mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t bytecode,
-                                  mh3_res_span visibility, uint32_t options,
-                                  mh3_model_draw_emit emit, void *user,
-                                  mh3_model_draw_stats *stats);
+mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t bytecode, mh3_res_span visibility, uint32_t options, mh3_model_draw_emit emit, void *user, mh3_model_draw_stats *stats);
 
 typedef enum {
-    MH3_MAT_TEXTURE_OBJECTS, MH3_MAT_PALETTE_OBJECTS, MH3_MAT_GENERAL_MODE,
-    MH3_MAT_TEV, MH3_MAT_PIXEL_STATE, MH3_MAT_TEV_COLORS,
-    MH3_MAT_INDIRECT_MATRIX_SCALE, MH3_MAT_CHANNELS, MH3_MAT_TEXCOORD_GENERATION,
-    MH3_MAT_MISC, MH3_MAT_TEXTURE_SRT, MH3_MAT_RESOURCE_COUNT
+    MH3_MAT_TEXTURE_OBJECTS,
+    MH3_MAT_PALETTE_OBJECTS,
+    MH3_MAT_GENERAL_MODE,
+    MH3_MAT_TEV,
+    MH3_MAT_PIXEL_STATE,
+    MH3_MAT_TEV_COLORS,
+    MH3_MAT_INDIRECT_MATRIX_SCALE,
+    MH3_MAT_CHANNELS,
+    MH3_MAT_TEXCOORD_GENERATION,
+    MH3_MAT_MISC,
+    MH3_MAT_TEXTURE_SRT,
+    MH3_MAT_RESOURCE_COUNT
 } mh3_material_resource_kind;
 
 /* Typed result of the per-material replacement selection in 80077ed4.
@@ -47,8 +52,7 @@ typedef struct {
     uint32_t vertex_tables[3];
 } mh3_model_material_bindings;
 
-mh3_res_status mh3_model_material_select(mh3_res_span replacement, uint32_t material,
-                                        mh3_model_material_bindings *out);
+mh3_res_status mh3_model_material_select(mh3_res_span replacement, uint32_t material, mh3_model_material_bindings *out);
 
 #ifdef __cplusplus
 }

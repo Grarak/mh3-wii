@@ -14,8 +14,7 @@
 #error "ppc_isa_config.h has no SIMD intrinsics header for this architecture"
 #endif
 
-inline constexpr bool MkwStateFreeAbiEnabled(uint32_t) noexcept
-{
+inline constexpr bool MkwStateFreeAbiEnabled(uint32_t) noexcept {
     return true;
 }
 
@@ -35,6 +34,5 @@ inline constexpr bool MkwStateFreeAbiEnabled(uint32_t) noexcept
 #endif
 #define MKW_PPC_ALWAYS_INLINE_BODY __attribute__((always_inline))
 #define MKW_PPC_COLD __attribute__((cold))
-
 
 using MkwStateFreeResult2 = uint64_t __attribute__((ext_vector_type(2)));

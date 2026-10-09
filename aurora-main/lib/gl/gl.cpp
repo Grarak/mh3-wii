@@ -20,7 +20,9 @@
 
 #include "tracy/Tracy.hpp"
 
-namespace aurora::gfx { uint32_t current_frame() noexcept; }
+namespace aurora::gfx {
+uint32_t current_frame() noexcept;
+}
 
 #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 #define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
@@ -33,16 +35,14 @@ namespace aurora::gl {
 namespace {
 size_t nativeMeshLiveBytes = 0;
 std::vector<std::pair<GLsync, size_t>> nativeMeshRetired;
-}
+} // namespace
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
-  if (!on_render_thread() || !bytes) throw std::runtime_error("Native mesh load outside context owner or empty payload");
+  if (!on_render_thread() || !bytes)
+    throw std::runtime_error("Native mesh load outside context owner or empty payload");
   // The shared compact pack reader requires a 16-byte base. ARM32's
   // ordinary byte-array allocation can be only eight-byte aligned.
-  const auto release = [](uint8_t* pointer) {
-    ::operator delete[](pointer, std::align_val_t(16));
-  };
-  std::unique_ptr<uint8_t, decltype(release)> data(
-      static_cast<uint8_t*>(::operator new[](bytes, std::align_val_t(16))), release);
+  const auto release = [](uint8_t* pointer) { ::operator delete[](pointer, std::align_val_t(16)); };
+  std::unique_ptr<uint8_t, decltype(release)> data(static_cast<uint8_t*>(::operator new[](bytes, std::align_val_t(16))), release);
   gfx::read_mesh_payload(path, offset, data.get(), bytes);
   GLint previous = 0;
   glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING, &previous);
@@ -52,37 +52,47 @@ NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t b
   const auto error = glGetError();
   glBindBuffer(GL_COPY_WRITE_BUFFER, GLuint(previous));
   if (error != GL_NO_ERROR || !m_buffer) {
-    if (m_buffer) glDeleteBuffers(1, &m_buffer);
+    if (m_buffer)
+      glDeleteBuffers(1, &m_buffer);
     m_buffer = 0;
     throw std::runtime_error("Native mesh GPU allocation failed");
   }
-  m_data = data.release(); m_bytes = bytes;
+  m_data = data.release();
+  m_bytes = bytes;
   nativeMeshLiveBytes += bytes;
 }
 NativeMeshBuffer::~NativeMeshBuffer() {
   // GL retains an in-flight object's storage after deletion. No finish/fence
   // wait and no live vertex/index data can be overwritten through this API.
-  if (m_buffer && initialized()) post([buffer = m_buffer, bytes = m_bytes] {
-    const auto fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    glDeleteBuffers(1, &buffer);
-    nativeMeshLiveBytes -= bytes;
-    nativeMeshRetired.emplace_back(fence, bytes);
-  });
+  if (m_buffer && initialized())
+    post([buffer = m_buffer, bytes = m_bytes] {
+      const auto fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+      glDeleteBuffers(1, &buffer);
+      nativeMeshLiveBytes -= bytes;
+      nativeMeshRetired.emplace_back(fence, bytes);
+    });
   ::operator delete[](const_cast<uint8_t*>(m_data), std::align_val_t(16));
 }
 size_t native_mesh_allocation_bytes(uint32_t bytes) {
-  if (!on_render_thread()) throw std::runtime_error("Model allocation query outside context owner");
+  if (!on_render_thread())
+    throw std::runtime_error("Model allocation query outside context owner");
   return bytes;
 }
 size_t native_mesh_resident_bytes() {
-  if (!on_render_thread()) throw std::runtime_error("Model backing query outside context owner");
+  if (!on_render_thread())
+    throw std::runtime_error("Model backing query outside context owner");
   size_t bytes = nativeMeshLiveBytes;
   for (auto it = nativeMeshRetired.begin(); it != nativeMeshRetired.end();) {
     const auto status = it->first ? glClientWaitSync(it->first, 0, 0) : GL_WAIT_FAILED;
-    if (status == GL_WAIT_FAILED) throw std::runtime_error("GL model retirement notification failed");
+    if (status == GL_WAIT_FAILED)
+      throw std::runtime_error("GL model retirement notification failed");
     if (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED) {
-      glDeleteSync(it->first); it = nativeMeshRetired.erase(it);
-    } else { bytes += it->second; ++it; }
+      glDeleteSync(it->first);
+      it = nativeMeshRetired.erase(it);
+    } else {
+      bytes += it->second;
+      ++it;
+    }
   }
   return bytes;
 }
@@ -127,22 +137,30 @@ struct State {
   GLuint emptyVao = 0;
 };
 State g_state;
-void capture_native_draw(std::string_view kind,uint32_t vertices,uint32_t indices,uint32_t instances=1) {
+void capture_native_draw(std::string_view kind, uint32_t vertices, uint32_t indices, uint32_t instances = 1) {
   using namespace gfx::port_capture;
-  if (!enabled()) return;
-  NativeDraw s;s.frame=gfx::current_frame();s.program=g_state.program;
-  s.vertices=vertices;s.indices=indices;s.instances=instances;
-  const auto& r=g_state.raster;
-  s.flags=(r.depthTest?DepthCompare:0u)|(r.depthWrite?DepthWrite:0u)|(r.blend?Blend:0u)|
-      ((r.colorMask[0]||r.colorMask[1]||r.colorMask[2])?ColorWrite:0u)|(r.colorMask[3]?AlphaWrite:0u);
-  s.depthFunction=r.depthFunc;s.target=g_state.drawFramebuffer;s.display=s.target==0;
-  s.rasterKnown=g_state.rasterValid;
-  std::copy_n(g_state.textures.begin(),s.textures.size(),s.textures.begin());native_draw(kind,s);
+  if (!enabled())
+    return;
+  NativeDraw s;
+  s.frame = gfx::current_frame();
+  s.program = g_state.program;
+  s.vertices = vertices;
+  s.indices = indices;
+  s.instances = instances;
+  const auto& r = g_state.raster;
+  s.flags = (r.depthTest ? DepthCompare : 0u) | (r.depthWrite ? DepthWrite : 0u) | (r.blend ? Blend : 0u) | ((r.colorMask[0] || r.colorMask[1] || r.colorMask[2]) ? ColorWrite : 0u) |
+            (r.colorMask[3] ? AlphaWrite : 0u);
+  s.depthFunction = r.depthFunc;
+  s.target = g_state.drawFramebuffer;
+  s.display = s.target == 0;
+  s.rasterKnown = g_state.rasterValid;
+  std::copy_n(g_state.textures.begin(), s.textures.size(), s.textures.begin());
+  native_draw(kind, s);
 }
 ProgramPtr g_nativePrograms[2];
 GLuint g_nativeVao = 0, g_nativeVertexBuffer = 0, g_nativeIndexBuffer = 0;
-GLuint g_meshVao=0,g_meshUniformBuffer=0;
-GLuint g_materialVao=0,g_materialVertexBuffer=0,g_materialIndexBuffer=0,g_materialUniformBuffer=0;
+GLuint g_meshVao = 0, g_meshUniformBuffer = 0;
+GLuint g_materialVao = 0, g_materialVertexBuffer = 0, g_materialIndexBuffer = 0, g_materialUniformBuffer = 0;
 
 struct FramebufferKey {
   GLuint color;
@@ -161,8 +179,7 @@ struct SamplerKey {
   template <typename H>
   friend H AbslHashValue(H h, const SamplerKey& key) {
     const auto& d = key.desc;
-    return H::combine(std::move(h), d.wrapS, d.wrapT, d.minFilter, d.magFilter, d.minLod, d.maxLod,
-                      d.maxAnisotropy, d.lodBias);
+    return H::combine(std::move(h), d.wrapS, d.wrapT, d.minFilter, d.magFilter, d.minLod, d.maxLod, d.maxAnisotropy, d.lodBias);
   }
 };
 absl::flat_hash_map<SamplerKey, GLuint> g_samplers;
@@ -209,7 +226,6 @@ constexpr std::array<FormatInfo, 19> FormatInfos{{
     {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
 }};
 
-
 GLuint compile_shader(GLenum stage, const std::string& source, const std::string& label) {
   GLuint shader = glCreateShader(stage);
   const char* src = source.c_str();
@@ -222,8 +238,7 @@ GLuint compile_shader(GLenum stage, const std::string& source, const std::string
     glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
     std::string info(static_cast<size_t>(std::max(len, 1)), '\0');
     glGetShaderInfoLog(shader, len, nullptr, info.data());
-    Log.error("Failed to compile {} shader '{}':\n{}\n--- source ---\n{}",
-              stage == GL_VERTEX_SHADER ? "vertex" : "fragment", label, info, source);
+    Log.error("Failed to compile {} shader '{}':\n{}\n--- source ---\n{}", stage == GL_VERTEX_SHADER ? "vertex" : "fragment", label, info, source);
     glDeleteShader(shader);
     return 0;
   }
@@ -290,23 +305,33 @@ void shutdown() noexcept {
   if (rt == nullptr) {
     return;
   }
-  if (!on_render_thread()) Log.fatal("GL shutdown called outside the game thread");
+  if (!on_render_thread())
+    Log.fatal("GL shutdown called outside the game thread");
   post([] {
     g_nativeTextureArchive.reset();
     g_nativePrograms[0].reset();
     g_nativePrograms[1].reset();
-    if (g_nativeVao) glDeleteVertexArrays(1, &g_nativeVao);
-    if (g_nativeVertexBuffer) glDeleteBuffers(1, &g_nativeVertexBuffer);
-    if (g_nativeIndexBuffer) glDeleteBuffers(1, &g_nativeIndexBuffer);
+    if (g_nativeVao)
+      glDeleteVertexArrays(1, &g_nativeVao);
+    if (g_nativeVertexBuffer)
+      glDeleteBuffers(1, &g_nativeVertexBuffer);
+    if (g_nativeIndexBuffer)
+      glDeleteBuffers(1, &g_nativeIndexBuffer);
     g_nativeVao = g_nativeVertexBuffer = g_nativeIndexBuffer = 0;
-    if(g_meshVao) glDeleteVertexArrays(1,&g_meshVao);
-    if(g_meshUniformBuffer) glDeleteBuffers(1,&g_meshUniformBuffer);
-    g_meshVao=g_meshUniformBuffer=0;
-    if(g_materialVao) glDeleteVertexArrays(1,&g_materialVao);
-    if(g_materialVertexBuffer) glDeleteBuffers(1,&g_materialVertexBuffer);
-    if(g_materialIndexBuffer) glDeleteBuffers(1,&g_materialIndexBuffer);
-    if(g_materialUniformBuffer) glDeleteBuffers(1,&g_materialUniformBuffer);
-    g_materialVao=g_materialVertexBuffer=g_materialIndexBuffer=g_materialUniformBuffer=0;
+    if (g_meshVao)
+      glDeleteVertexArrays(1, &g_meshVao);
+    if (g_meshUniformBuffer)
+      glDeleteBuffers(1, &g_meshUniformBuffer);
+    g_meshVao = g_meshUniformBuffer = 0;
+    if (g_materialVao)
+      glDeleteVertexArrays(1, &g_materialVao);
+    if (g_materialVertexBuffer)
+      glDeleteBuffers(1, &g_materialVertexBuffer);
+    if (g_materialIndexBuffer)
+      glDeleteBuffers(1, &g_materialIndexBuffer);
+    if (g_materialUniformBuffer)
+      glDeleteBuffers(1, &g_materialUniformBuffer);
+    g_materialVao = g_materialVertexBuffer = g_materialIndexBuffer = g_materialUniformBuffer = 0;
     for (auto& [_, fbo] : g_framebuffers) {
       glDeleteFramebuffers(1, &fbo);
     }
@@ -325,10 +350,14 @@ void shutdown() noexcept {
   });
   // Teardown is the only unconditional finish in this ownership path.
   glFinish();
-  for (const auto& item : nativeMeshRetired) if (item.first) glDeleteSync(item.first);
-  nativeMeshRetired.clear(); nativeMeshLiveBytes = 0;
+  for (const auto& item : nativeMeshRetired)
+    if (item.first)
+      glDeleteSync(item.first);
+  nativeMeshRetired.clear();
+  nativeMeshLiveBytes = 0;
   for (auto& fence : g_frameFences) {
-    if (fence) glDeleteSync(fence);
+    if (fence)
+      glDeleteSync(fence);
     fence = nullptr;
   }
   g_frameSlot = 0;
@@ -338,14 +367,22 @@ void shutdown() noexcept {
   delete rt;
 }
 
-bool initialized() noexcept { return g_context != nullptr; }
-const Caps& caps() noexcept { return g_caps; }
+bool initialized() noexcept {
+  return g_context != nullptr;
+}
+const Caps& caps() noexcept {
+  return g_caps;
+}
 
-bool on_render_thread() noexcept { return g_context != nullptr && std::this_thread::get_id() == g_context->threadId; }
+bool on_render_thread() noexcept {
+  return g_context != nullptr && std::this_thread::get_id() == g_context->threadId;
+}
 
 void post(Task task) noexcept {
-  if (!g_context) return;
-  if (!on_render_thread()) Log.fatal("GL task called outside the game thread");
+  if (!g_context)
+    return;
+  if (!on_render_thread())
+    Log.fatal("GL task called outside the game thread");
   std::move(task)();
 }
 
@@ -355,22 +392,31 @@ void call(Task task) noexcept {
 
 bool gpu_frame_pending() noexcept {
   auto& fence = g_frameFences[g_frameSlot];
-  if (!g_context || !fence) return false;
-  if (!on_render_thread()) Log.fatal("GL GPU completion queried outside the game thread");
+  if (!g_context || !fence)
+    return false;
+  if (!on_render_thread())
+    Log.fatal("GL GPU completion queried outside the game thread");
   const GLenum result = glClientWaitSync(fence, 0, 0);
-  if (result == GL_TIMEOUT_EXPIRED) return true;
-  if (result == GL_WAIT_FAILED) Log.fatal("GL frame completion query failed");
+  if (result == GL_TIMEOUT_EXPIRED)
+    return true;
+  if (result == GL_WAIT_FAILED)
+    Log.fatal("GL frame completion query failed");
   glDeleteSync(fence);
   fence = nullptr;
   return false;
 }
-uint32_t native_frame_slot() noexcept { return g_frameSlot; }
+uint32_t native_frame_slot() noexcept {
+  return g_frameSlot;
+}
 void discard_native_frame() noexcept {
-  if (!on_render_thread()) Log.fatal("GL native frame discarded outside the game thread");
+  if (!on_render_thread())
+    Log.fatal("GL native frame discarded outside the game thread");
   auto& fence = g_frameFences[g_frameSlot];
-  if (fence) glDeleteSync(fence);
+  if (fence)
+    glDeleteSync(fence);
   fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-  if (!fence) Log.fatal("GL canceled frame fence allocation failed");
+  if (!fence)
+    Log.fatal("GL canceled frame fence allocation failed");
   glFlush();
 }
 
@@ -381,28 +427,29 @@ void finish() noexcept {
 
 // ---- Formats and textures ----
 
-const FormatInfo& format_info(Format format) noexcept { return FormatInfos[static_cast<size_t>(format)]; }
+const FormatInfo& format_info(Format format) noexcept {
+  return FormatInfos[static_cast<size_t>(format)];
+}
 
-Texture::Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept
-: width(width), height(height), mips(mips), format(format), m_name(new Name) {
+Texture::Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept : width(width), height(height), mips(mips), format(format), m_name(new Name) {
   gfx::port_capture::texture(this, true, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel, label);
   auto create = [name = m_name, width, height, mips, format] {
     const auto& info = format_info(format);
     glGenTextures(1, &name->value);
     glBindTexture(GL_TEXTURE_2D, name->value);
-    glTexStorage2D(GL_TEXTURE_2D, static_cast<GLsizei>(std::max(mips, 1u)), info.internalFormat,
-                   static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+    glTexStorage2D(GL_TEXTURE_2D, static_cast<GLsizei>(std::max(mips, 1u)), info.internalFormat, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(std::max(mips, 1u) - 1));
     // Samplers override filtering; keep the texture complete without one.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    if(format>=Format::U8_RRRR&&format<=Format::U8U8_GRRR) {
-      const std::array<GLint,4> swizzle=format==Format::U8_RRRR?std::array<GLint,4>{GL_RED,GL_RED,GL_RED,GL_RED}:
-          format==Format::U8_1RRR?std::array<GLint,4>{GL_RED,GL_RED,GL_RED,GL_ONE}:
-          format==Format::U8_R000?std::array<GLint,4>{GL_ZERO,GL_ZERO,GL_ZERO,GL_RED}:
-          format==Format::U8_R111?std::array<GLint,4>{GL_ONE,GL_ONE,GL_ONE,GL_RED}:
-          std::array<GLint,4>{GL_RED,GL_RED,GL_RED,GL_GREEN};
-      for(unsigned c=0;c<4;c++)glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_R+c,swizzle[c]);
+    if (format >= Format::U8_RRRR && format <= Format::U8U8_GRRR) {
+      const std::array<GLint, 4> swizzle = format == Format::U8_RRRR   ? std::array<GLint, 4>{GL_RED, GL_RED, GL_RED, GL_RED}
+                                           : format == Format::U8_1RRR ? std::array<GLint, 4>{GL_RED, GL_RED, GL_RED, GL_ONE}
+                                           : format == Format::U8_R000 ? std::array<GLint, 4>{GL_ZERO, GL_ZERO, GL_ZERO, GL_RED}
+                                           : format == Format::U8_R111 ? std::array<GLint, 4>{GL_ONE, GL_ONE, GL_ONE, GL_RED}
+                                                                       : std::array<GLint, 4>{GL_RED, GL_RED, GL_RED, GL_GREEN};
+      for (unsigned c = 0; c < 4; c++)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R + c, swizzle[c]);
     }
     g_state.activeUnit = UINT32_MAX;
     for (auto& bound : g_state.textures) {
@@ -428,20 +475,21 @@ Texture::~Texture() {
   });
 }
 
-TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format,
-                          std::string_view label) noexcept {
+TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
 }
 
 bool render_target_reusable(const Texture& texture) noexcept {
-  if (!on_render_thread()) Log.fatal("GL target reuse queried outside the game thread");
+  if (!on_render_thread())
+    Log.fatal("GL target reuse queried outside the game thread");
   const auto id = texture.gl();
   GLint active = -1;
   bool sampled = false;
   for (unsigned unit = 0; unit < g_state.textures.size(); ++unit) {
     auto bound = g_state.textures[unit];
     if (bound == UINT32_MAX) {
-      if (active < 0) glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+      if (active < 0)
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
       glActiveTexture(GL_TEXTURE0 + unit);
       GLint actual = 0;
       glGetIntegerv(GL_TEXTURE_BINDING_2D, &actual);
@@ -449,19 +497,21 @@ bool render_target_reusable(const Texture& texture) noexcept {
     }
     sampled |= bound == id;
   }
-  if (active >= 0) glActiveTexture(GLenum(active));
-  if (sampled) return false;
+  if (active >= 0)
+    glActiveTexture(GLenum(active));
+  if (sampled)
+    return false;
   GLint framebuffer = 0;
   glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
   if (framebuffer) {
     GLint type = 0, attached = 0;
     for (const GLenum attachment : {GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT}) {
-      glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
-                                           GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
-      if (type != GL_TEXTURE) continue;
-      glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
-                                           GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &attached);
-      if (GLuint(attached) == id) return false;
+      glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+      if (type != GL_TEXTURE)
+        continue;
+      glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &attached);
+      if (GLuint(attached) == id)
+        return false;
     }
   }
   // One context orders every earlier consumer before the later overwrite.
@@ -469,50 +519,67 @@ bool render_target_reusable(const Texture& texture) noexcept {
   return true;
 }
 bool render_target_allocation_available(size_t bytes) noexcept {
-  if (!on_render_thread()) Log.fatal("GL target allocation queried outside the game thread");
+  if (!on_render_thread())
+    Log.fatal("GL target allocation queried outside the game thread");
   return bytes != 0;
 }
 
 void open_native_texture_pack(const char* path) noexcept {
-  call([path=std::string(path)]{
-    if(g_nativeTextureArchive)throw std::runtime_error("Host native texture pack already open");
-    auto archive=std::make_unique<gfx::NativeTextureArchive>();archive->open(path.c_str());g_nativeTextureArchive=std::move(archive);
+  call([path = std::string(path)] {
+    if (g_nativeTextureArchive)
+      throw std::runtime_error("Host native texture pack already open");
+    auto archive = std::make_unique<gfx::NativeTextureArchive>();
+    archive->open(path.c_str());
+    g_nativeTextureArchive = std::move(archive);
   });
 }
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
-  if(!g_nativeTextureArchive)Log.fatal("Host native texture pack is not open");
-  const auto& r=g_nativeTextureArchive->record(asset);
-  return {gfx::native_texture_format(r.format),r.width,r.height,r.mips,r.bytes,bool(r.flags&1),
-    r.image_bytes,r.palette_offset,r.palette_bytes,r.source_palette_delta,r.source_palette_entries,
-    r.source_palette_format,r.source_format,g_nativeTextureArchive->pack_version()==2};
+  if (!g_nativeTextureArchive)
+    Log.fatal("Host native texture pack is not open");
+  const auto& r = g_nativeTextureArchive->record(asset);
+  return {gfx::native_texture_format(r.format),
+          r.width,
+          r.height,
+          r.mips,
+          r.bytes,
+          bool(r.flags & 1),
+          r.image_bytes,
+          r.palette_offset,
+          r.palette_bytes,
+          r.source_palette_delta,
+          r.source_palette_entries,
+          r.source_palette_format,
+          r.source_format,
+          g_nativeTextureArchive->pack_version() == 2};
 }
 TexturePtr native_texture_asset(uint32_t asset) noexcept {
-  if(!on_render_thread())Log.fatal("Host native texture asset load outside graphics owner");
-  const auto info=native_texture_info(asset);const auto& r=g_nativeTextureArchive->record(asset);
-  auto payload=g_nativeTextureArchive->payload(asset);
-  const auto layout=gfx::native_texture_layout(info.width,info.height,info.mips,info.format);
-  const bool expand=gfx::native_swizzled(info.format);
-  auto texture=create_texture(info.width,info.height,info.mips,expand?Format::RGBA8:info.format,"Offline native texture host probe");
-  for(unsigned mip=0;mip<info.mips;mip++){
-    const auto& level=layout.levels[mip];
-    if(expand){auto rgba=gfx::native_texture_rgba_level(r,payload,mip);upload_texture(*texture,mip,0,0,level.width,level.height,rgba.data(),level.width*4);}
-    else upload_texture(*texture,mip,0,0,level.width,level.height,payload.data()+level.offset,level.pitch);
+  if (!on_render_thread())
+    Log.fatal("Host native texture asset load outside graphics owner");
+  const auto info = native_texture_info(asset);
+  const auto& r = g_nativeTextureArchive->record(asset);
+  auto payload = g_nativeTextureArchive->payload(asset);
+  const auto layout = gfx::native_texture_layout(info.width, info.height, info.mips, info.format);
+  const bool expand = gfx::native_swizzled(info.format);
+  auto texture = create_texture(info.width, info.height, info.mips, expand ? Format::RGBA8 : info.format, "Offline native texture host probe");
+  for (unsigned mip = 0; mip < info.mips; mip++) {
+    const auto& level = layout.levels[mip];
+    if (expand) {
+      auto rgba = gfx::native_texture_rgba_level(r, payload, mip);
+      upload_texture(*texture, mip, 0, 0, level.width, level.height, rgba.data(), level.width * 4);
+    } else
+      upload_texture(*texture, mip, 0, 0, level.width, level.height, payload.data() + level.offset, level.pitch);
   }
   return texture;
 }
 
-void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
-                   uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept {
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept {
   if (!texture || width == 0 || height == 0) {
     return;
   }
-  post([texture, mip, x, y, width, height, data = std::move(data), bytesPerRow] {
-    upload_texture(*texture, mip, x, y, width, height, data.data(), bytesPerRow);
-  });
+  post([texture, mip, x, y, width, height, data = std::move(data), bytesPerRow] { upload_texture(*texture, mip, x, y, width, height, data.data(), bytesPerRow); });
 }
 
-void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
-                    const void* data, uint32_t bytesPerRow) noexcept {
+void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
   gfx::port_capture::upload(&texture, mip, uint64_t(bytesPerRow) * height);
   const auto& info = format_info(texture.format);
   if (g_state.activeUnit != 0) {
@@ -525,22 +592,20 @@ void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y
   }
   const uint32_t pixelsPerRow = bytesPerRow / info.bytesPerPixel;
   glPixelStorei(GL_UNPACK_ROW_LENGTH, pixelsPerRow == width ? 0 : static_cast<GLint>(pixelsPerRow));
-  glTexSubImage2D(GL_TEXTURE_2D, static_cast<GLint>(mip), static_cast<GLint>(x), static_cast<GLint>(y),
-                  static_cast<GLsizei>(width), static_cast<GLsizei>(height), info.format, info.type, data);
+  glTexSubImage2D(GL_TEXTURE_2D, static_cast<GLint>(mip), static_cast<GLint>(x), static_cast<GLint>(y), static_cast<GLsizei>(width), static_cast<GLsizei>(height), info.format, info.type, data);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
-void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
-                   uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
   const auto* bytes = static_cast<const uint8_t*>(data);
-  write_texture(texture, mip, x, y, width, height,
-                std::vector<uint8_t>(bytes, bytes + static_cast<size_t>(bytesPerRow) * height), bytesPerRow);
+  write_texture(texture, mip, x, y, width, height, std::vector<uint8_t>(bytes, bytes + static_cast<size_t>(bytesPerRow) * height), bytesPerRow);
 }
 
 // ---- Samplers and framebuffers ----
 
 GLuint sampler(const SamplerDesc& desc) noexcept {
-  if (desc.lodBias != 0.f) Log.fatal("GLES sampler bias must be passed through the material shader");
+  if (desc.lodBias != 0.f)
+    Log.fatal("GLES sampler bias must be passed through the material shader");
   const auto [it, inserted] = g_samplers.try_emplace(SamplerKey{desc}, 0);
   if (inserted) {
     GLuint s = 0;
@@ -552,8 +617,7 @@ GLuint sampler(const SamplerDesc& desc) noexcept {
     glSamplerParameterf(s, GL_TEXTURE_MIN_LOD, desc.minLod);
     glSamplerParameterf(s, GL_TEXTURE_MAX_LOD, desc.maxLod);
     if (desc.maxAnisotropy > 1 && g_caps.maxAnisotropy > 1) {
-      glSamplerParameterf(s, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                          static_cast<float>(std::min<int32_t>(desc.maxAnisotropy, g_caps.maxAnisotropy)));
+      glSamplerParameterf(s, GL_TEXTURE_MAX_ANISOTROPY_EXT, static_cast<float>(std::min<int32_t>(desc.maxAnisotropy, g_caps.maxAnisotropy)));
     }
     it->second = s;
   }
@@ -599,16 +663,17 @@ void bind_framebuffer(GLuint color, GLuint depth) noexcept {
 
 // ---- Programs ----
 
-
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
   m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
   m_usesDiscard = m_desc.fragment.find("discard;") != std::string::npos;
   m_replacesDepth = m_desc.fragment.find("gl_FragDepth =") != std::string::npos;
-  const auto captured=gfx::port_capture::shader(m_desc.label,m_desc.vertex,m_desc.fragment,m_desc.origin,
-    m_desc.portableVertex,m_desc.portableFragment,m_desc.portableOrigin);
-  m_capturePortableHashes=captured.portableHashes;m_capturePortableOrigin=captured.originFile;
-  m_desc.portableVertex={};m_desc.portableFragment={};m_desc.portableOrigin={};
+  const auto captured = gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin, m_desc.portableVertex, m_desc.portableFragment, m_desc.portableOrigin);
+  m_capturePortableHashes = captured.portableHashes;
+  m_capturePortableOrigin = captured.originFile;
+  m_desc.portableVertex = {};
+  m_desc.portableFragment = {};
+  m_desc.portableOrigin = {};
 }
 
 Program::~Program() {
@@ -672,8 +737,7 @@ GLuint Program::get() noexcept {
   m_desc.vertex = {};
   m_desc.fragment = {};
   m_program = program;
-  gfx::port_capture::native_program(program,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label,
-    m_capturePortableHashes,m_capturePortableOrigin);
+  gfx::port_capture::native_program(program, m_vertexHash, m_fragmentHash, m_usesDiscard, m_replacesDepth, m_desc.label, m_capturePortableHashes, m_capturePortableOrigin);
   return program;
 }
 
@@ -689,8 +753,7 @@ void apply_raster_state(const RasterState& s) noexcept {
     if (force || !c.blend || s.colorEquation != c.colorEquation || s.alphaEquation != c.alphaEquation) {
       glBlendEquationSeparate(s.colorEquation, s.alphaEquation);
     }
-    if (force || !c.blend || s.srcColor != c.srcColor || s.dstColor != c.dstColor || s.srcAlpha != c.srcAlpha ||
-        s.dstAlpha != c.dstAlpha) {
+    if (force || !c.blend || s.srcColor != c.srcColor || s.dstColor != c.dstColor || s.srcAlpha != c.srcAlpha || s.dstAlpha != c.dstAlpha) {
       glBlendFuncSeparate(s.srcColor, s.dstColor, s.srcAlpha, s.dstAlpha);
     }
   }
@@ -852,49 +915,96 @@ void bind_draw_vao(GLuint indexBuffer) noexcept {
 }
 
 void draw_fullscreen(GLuint program) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
+  if (!aurora::native_frame_drawing_allowed())
+    return;
   use_program(program);
   glBindVertexArray(g_state.emptyVao);
   glDrawArrays(GL_TRIANGLES, 0, 3);
-  capture_native_draw("fullscreen",3,0);
+  capture_native_draw("fullscreen", 3, 0);
 }
 
 OffscreenState save_offscreen_state() noexcept {
-  OffscreenState saved;saved.raster=g_state.raster;saved.rasterValid=g_state.rasterValid;
-  saved.viewport=g_state.viewport;saved.depthRange=g_state.depthRange;saved.scissor=g_state.scissor;
-  saved.scissorEnabled=g_state.scissorEnabled;saved.blendColor=g_state.blendColor;
-  saved.textures=g_state.textures;saved.samplers=g_state.samplers;
-  for(unsigned i=0;i<saved.uniforms.size();++i){const auto &u=g_state.uniforms[i];saved.uniforms[i]={u.buffer,u.offset,u.size};}
+  OffscreenState saved;
+  saved.raster = g_state.raster;
+  saved.rasterValid = g_state.rasterValid;
+  saved.viewport = g_state.viewport;
+  saved.depthRange = g_state.depthRange;
+  saved.scissor = g_state.scissor;
+  saved.scissorEnabled = g_state.scissorEnabled;
+  saved.blendColor = g_state.blendColor;
+  saved.textures = g_state.textures;
+  saved.samplers = g_state.samplers;
+  for (unsigned i = 0; i < saved.uniforms.size(); ++i) {
+    const auto& u = g_state.uniforms[i];
+    saved.uniforms[i] = {u.buffer, u.offset, u.size};
+  }
   // Utility draws use an empty VAO; a following generic indexed draw can rely
   // on its preceding VAO. Query host binding metadata, never framebuffer data.
-  GLint value=0;glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&value);saved.vertexArray=GLuint(value);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&value);saved.arrayBuffer=GLuint(value);
-  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&value);saved.framebuffer=GLuint(value);
-  glGetIntegerv(GL_CURRENT_PROGRAM,&value);saved.program=GLuint(value);
-  glGetIntegerv(GL_ACTIVE_TEXTURE,&value);saved.activeTexture=GLuint(value-GL_TEXTURE0);
-  if(saved.viewport[2]<0)glGetIntegerv(GL_VIEWPORT,saved.viewport.data());
-  if(saved.scissor[2]<0)glGetIntegerv(GL_SCISSOR_BOX,saved.scissor.data());
-  if(saved.depthRange[0]<0)glGetFloatv(GL_DEPTH_RANGE,saved.depthRange.data());
-  if(saved.scissorEnabled<0)saved.scissorEnabled=glIsEnabled(GL_SCISSOR_TEST);
-  if(saved.blendColor[0]<0)glGetFloatv(GL_BLEND_COLOR,saved.blendColor.data());
-  for(unsigned i=0;i<saved.textures.size();++i){
-    if(saved.textures[i]==UINT32_MAX){glActiveTexture(GL_TEXTURE0+i);glGetIntegerv(GL_TEXTURE_BINDING_2D,&value);saved.textures[i]=GLuint(value);}
-    if(saved.samplers[i]==UINT32_MAX){glGetIntegeri_v(GL_SAMPLER_BINDING,i,&value);saved.samplers[i]=GLuint(value);}
+  GLint value = 0;
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &value);
+  saved.vertexArray = GLuint(value);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &value);
+  saved.arrayBuffer = GLuint(value);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &value);
+  saved.framebuffer = GLuint(value);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &value);
+  saved.program = GLuint(value);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &value);
+  saved.activeTexture = GLuint(value - GL_TEXTURE0);
+  if (saved.viewport[2] < 0)
+    glGetIntegerv(GL_VIEWPORT, saved.viewport.data());
+  if (saved.scissor[2] < 0)
+    glGetIntegerv(GL_SCISSOR_BOX, saved.scissor.data());
+  if (saved.depthRange[0] < 0)
+    glGetFloatv(GL_DEPTH_RANGE, saved.depthRange.data());
+  if (saved.scissorEnabled < 0)
+    saved.scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+  if (saved.blendColor[0] < 0)
+    glGetFloatv(GL_BLEND_COLOR, saved.blendColor.data());
+  for (unsigned i = 0; i < saved.textures.size(); ++i) {
+    if (saved.textures[i] == UINT32_MAX) {
+      glActiveTexture(GL_TEXTURE0 + i);
+      glGetIntegerv(GL_TEXTURE_BINDING_2D, &value);
+      saved.textures[i] = GLuint(value);
+    }
+    if (saved.samplers[i] == UINT32_MAX) {
+      glGetIntegeri_v(GL_SAMPLER_BINDING, i, &value);
+      saved.samplers[i] = GLuint(value);
+    }
   }
-  glActiveTexture(GL_TEXTURE0+saved.activeTexture);
+  glActiveTexture(GL_TEXTURE0 + saved.activeTexture);
   return saved;
 }
 void restore_offscreen_state(const OffscreenState& saved) noexcept {
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,saved.framebuffer);g_state.drawFramebuffer=saved.framebuffer;
-  if(saved.rasterValid)apply_raster_state(saved.raster);else g_state.rasterValid=false;
-  set_viewport(saved.viewport[0],saved.viewport[1],saved.viewport[2],saved.viewport[3],saved.depthRange[0],saved.depthRange[1]);
-  set_scissor(saved.scissor[0],saved.scissor[1],saved.scissor[2],saved.scissor[3]);set_scissor_enabled(saved.scissorEnabled>0);
-  set_blend_color(saved.blendColor[0],saved.blendColor[1],saved.blendColor[2],saved.blendColor[3]);
-  for(unsigned i=0;i<saved.textures.size();++i)if(saved.textures[i]!=UINT32_MAX&&saved.samplers[i]!=UINT32_MAX)bind_texture(i,saved.textures[i],saved.samplers[i]);
-  for(unsigned i=0;i<saved.uniforms.size();++i){const auto &u=saved.uniforms[i];if(u.buffer==UINT32_MAX)continue;
-    if(u.buffer&&u.size)bind_uniform_range(i,u.buffer,u.offset,u.size);else{glBindBufferBase(GL_UNIFORM_BUFFER,i,0);g_state.uniforms[i]={};}}
-  use_program(saved.program);glBindVertexArray(saved.vertexArray);glBindBuffer(GL_ARRAY_BUFFER,saved.arrayBuffer);
-  glActiveTexture(GL_TEXTURE0+saved.activeTexture);g_state.activeUnit=saved.activeTexture;
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, saved.framebuffer);
+  g_state.drawFramebuffer = saved.framebuffer;
+  if (saved.rasterValid)
+    apply_raster_state(saved.raster);
+  else
+    g_state.rasterValid = false;
+  set_viewport(saved.viewport[0], saved.viewport[1], saved.viewport[2], saved.viewport[3], saved.depthRange[0], saved.depthRange[1]);
+  set_scissor(saved.scissor[0], saved.scissor[1], saved.scissor[2], saved.scissor[3]);
+  set_scissor_enabled(saved.scissorEnabled > 0);
+  set_blend_color(saved.blendColor[0], saved.blendColor[1], saved.blendColor[2], saved.blendColor[3]);
+  for (unsigned i = 0; i < saved.textures.size(); ++i)
+    if (saved.textures[i] != UINT32_MAX && saved.samplers[i] != UINT32_MAX)
+      bind_texture(i, saved.textures[i], saved.samplers[i]);
+  for (unsigned i = 0; i < saved.uniforms.size(); ++i) {
+    const auto& u = saved.uniforms[i];
+    if (u.buffer == UINT32_MAX)
+      continue;
+    if (u.buffer && u.size)
+      bind_uniform_range(i, u.buffer, u.offset, u.size);
+    else {
+      glBindBufferBase(GL_UNIFORM_BUFFER, i, 0);
+      g_state.uniforms[i] = {};
+    }
+  }
+  use_program(saved.program);
+  glBindVertexArray(saved.vertexArray);
+  glBindBuffer(GL_ARRAY_BUFFER, saved.arrayBuffer);
+  glActiveTexture(GL_TEXTURE0 + saved.activeTexture);
+  g_state.activeUnit = saved.activeTexture;
 }
 
 // ---- Presentation and readback ----
@@ -909,7 +1019,8 @@ std::pair<uint32_t, uint32_t> drawable_size() noexcept {
 }
 
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
+  if (!aurora::native_frame_drawing_allowed())
+    return;
   ZoneScoped;
   const auto [drawableWidth, drawableHeight] = drawable_size();
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -922,16 +1033,17 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer(source->gl(), 0));
     // Texture rows are top-down while the window's row 0 is the bottom one.
     const int32_t top = static_cast<int32_t>(drawableHeight) - y;
-    glBlitFramebuffer(0, 0, static_cast<GLint>(source->width), static_cast<GLint>(source->height), x, top,
-                      x + width, top - height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBlitFramebuffer(0, 0, static_cast<GLint>(source->width), static_cast<GLint>(source->height), x, top, x + width, top - height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   }
   // Submit the scene without waiting for completion. The next game frame can
   // run while the GPU consumes it; frameskip polls this fence with timeout 0.
   auto& fence = g_frameFences[g_frameSlot];
-  if (fence) glDeleteSync(fence);
+  if (fence)
+    glDeleteSync(fence);
   fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-  if (!fence) Log.fatal("GL frame fence allocation failed");
+  if (!fence)
+    Log.fatal("GL frame fence allocation failed");
   glFlush();
   SDL_GL_SwapWindow(g_context->window);
   g_frameSlot = (g_frameSlot + 1) % aurora::GpuFrameRing::BufferCount;
@@ -939,8 +1051,7 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
 
 void read_pixels(GLuint texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height, void* out) noexcept {
   glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer(texture, 0));
-  glReadPixels(static_cast<GLint>(x), static_cast<GLint>(y), static_cast<GLsizei>(width),
-               static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, out);
+  glReadPixels(static_cast<GLint>(x), static_cast<GLint>(y), static_cast<GLsizei>(width), static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, out);
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 }
 
@@ -949,14 +1060,15 @@ GLuint create_buffer() noexcept {
   glGenBuffers(1, &result);
   return result;
 }
-void destroy_buffer(GLuint buffer) noexcept { glDeleteBuffers(1, &buffer); }
+void destroy_buffer(GLuint buffer) noexcept {
+  glDeleteBuffers(1, &buffer);
+}
 void write_buffer(GLuint buffer, bool indices, const void* bytes, size_t size) noexcept {
   const GLenum target = indices ? GL_ELEMENT_ARRAY_BUFFER : GL_UNIFORM_BUFFER;
   glBindBuffer(target, buffer);
   glBufferData(target, static_cast<GLsizeiptr>(size), bytes, GL_STREAM_DRAW);
 }
-void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
-                         int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept {
+void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY, int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept {
   glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer(source, 0));
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, dest);
@@ -965,16 +1077,20 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
   invalidate_state();
 }
 void clear_color(const float* color) noexcept {
-  if (aurora::native_frame_drawing_allowed()) glClearBufferfv(GL_COLOR, 0, color);
+  if (aurora::native_frame_drawing_allowed())
+    glClearBufferfv(GL_COLOR, 0, color);
 }
 void clear_depth(float depth) noexcept {
-  if (aurora::native_frame_drawing_allowed()) glClearBufferfv(GL_DEPTH, 0, &depth);
+  if (aurora::native_frame_drawing_allowed())
+    glClearBufferfv(GL_DEPTH, 0, &depth);
 }
 void clear_depth_full_target(float depth) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
+  if (!aurora::native_frame_drawing_allowed())
+    return;
   const bool scissor = g_state.scissorEnabled >= 0 ? g_state.scissorEnabled != 0 : glIsEnabled(GL_SCISSOR_TEST);
   GLboolean depthWrite = g_state.raster.depthWrite;
-  if (!g_state.rasterValid) glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+  if (!g_state.rasterValid)
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
   set_scissor_enabled(false);
   set_depth_write(true);
   clear_depth(depth);
@@ -982,14 +1098,15 @@ void clear_depth_full_target(float depth) noexcept {
   set_scissor_enabled(scissor);
 }
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
-  glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT,
-                         reinterpret_cast<const void*>(static_cast<uintptr_t>(indexOffset)),
-                         static_cast<GLsizei>(instances));
-  if (indexCount && instances) capture_native_draw("indexed",0,indexCount,instances);
+  if (!aurora::native_frame_drawing_allowed())
+    return;
+  glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT, reinterpret_cast<const void*>(static_cast<uintptr_t>(indexOffset)), static_cast<GLsizei>(instances));
+  if (indexCount && instances)
+    capture_native_draw("indexed", 0, indexCount, instances);
 }
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept {
-  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
+    return;
   auto& program = g_nativePrograms[textured];
   if (!program) {
     ProgramDesc desc;
@@ -1011,12 +1128,14 @@ in vec4 native_color;
 uniform sampler2D native_texture;
 layout(location=0) out vec4 native_output;
 void main() { native_output = texture(native_texture, native_uv) * native_color; }
-)" : R"(
+)"
+                                             : R"(
 in vec4 native_color;
 layout(location=0) out vec4 native_output;
 void main() { native_output = native_color; }
 )");
-    if (textured) desc.samplers.emplace_back("native_texture", 0);
+    if (textured)
+      desc.samplers.emplace_back("native_texture", 0);
     program = std::make_shared<Program>(std::move(desc));
   }
   use_program(program->get());
@@ -1027,87 +1146,102 @@ void main() { native_output = native_color; }
     glBindVertexArray(g_nativeVao);
     glBindBuffer(GL_ARRAY_BUFFER, g_nativeVertexBuffer);
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(AuroraNativeVertex), nullptr);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(AuroraNativeVertex),
-                          reinterpret_cast<void*>(offsetof(AuroraNativeVertex, uv)));
-    glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(AuroraNativeVertex),
-                          reinterpret_cast<void*>(offsetof(AuroraNativeVertex, color)));
-    for (unsigned i = 0; i < 3; ++i) glEnableVertexAttribArray(i);
-  } else glBindVertexArray(g_nativeVao);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(AuroraNativeVertex), reinterpret_cast<void*>(offsetof(AuroraNativeVertex, uv)));
+    glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(AuroraNativeVertex), reinterpret_cast<void*>(offsetof(AuroraNativeVertex, color)));
+    for (unsigned i = 0; i < 3; ++i)
+      glEnableVertexAttribArray(i);
+  } else
+    glBindVertexArray(g_nativeVao);
   glBindBuffer(GL_ARRAY_BUFFER, g_nativeVertexBuffer);
-  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(AuroraNativeVertex),
-               geometry.vertices, GL_STREAM_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(AuroraNativeVertex), geometry.vertices, GL_STREAM_DRAW);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_nativeIndexBuffer);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * sizeof(uint16_t),
-               geometry.indices, GL_STREAM_DRAW);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * sizeof(uint16_t), geometry.indices, GL_STREAM_DRAW);
   glDrawElements(GL_TRIANGLES, geometry.index_count, GL_UNSIGNED_SHORT, nullptr);
-  capture_native_draw(textured?"geometry-textured":"geometry-colored",geometry.vertex_count,geometry.index_count);
+  capture_native_draw(textured ? "geometry-textured" : "geometry-colored", geometry.vertex_count, geometry.index_count);
   // The recorded/native generic draw VAO has its own element-buffer binding.
   glBindVertexArray(g_state.emptyVao);
 }
-void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
-                                  const AuroraNativeUniforms& uniforms) noexcept {
-  if(!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry, GLuint program, const AuroraNativeUniforms& uniforms) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
+    return;
   use_program(program);
-  if(!g_materialVao) {
-    glGenVertexArrays(1,&g_materialVao);
-    glGenBuffers(1,&g_materialVertexBuffer);glGenBuffers(1,&g_materialIndexBuffer);glGenBuffers(1,&g_materialUniformBuffer);
-    glBindVertexArray(g_materialVao);glBindBuffer(GL_ARRAY_BUFFER,g_materialVertexBuffer);
-    const auto attribute=[](unsigned location,int components,GLenum type,bool normalized,size_t offset) {
-      glVertexAttribPointer(location,components,type,normalized,sizeof(AuroraNativeMaterialVertex),reinterpret_cast<void*>(offset));
+  if (!g_materialVao) {
+    glGenVertexArrays(1, &g_materialVao);
+    glGenBuffers(1, &g_materialVertexBuffer);
+    glGenBuffers(1, &g_materialIndexBuffer);
+    glGenBuffers(1, &g_materialUniformBuffer);
+    glBindVertexArray(g_materialVao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_materialVertexBuffer);
+    const auto attribute = [](unsigned location, int components, GLenum type, bool normalized, size_t offset) {
+      glVertexAttribPointer(location, components, type, normalized, sizeof(AuroraNativeMaterialVertex), reinterpret_cast<void*>(offset));
       glEnableVertexAttribArray(location);
     };
-    attribute(0,4,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,position));
-    attribute(1,3,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,view_position));
-    attribute(2,3,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,normal));
-    attribute(3,4,GL_UNSIGNED_BYTE,true,offsetof(AuroraNativeMaterialVertex,color));
-    attribute(4,4,GL_UNSIGNED_BYTE,true,offsetof(AuroraNativeMaterialVertex,color)+4);
-    for(unsigned i=0;i<8;++i) attribute(i+5,3,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,texcoord)+i*12);
-  } else glBindVertexArray(g_materialVao);
-  glBindBuffer(GL_ARRAY_BUFFER,g_materialVertexBuffer);
-  glBufferData(GL_ARRAY_BUFFER,size_t(geometry.vertex_count)*sizeof(*geometry.vertices),geometry.vertices,GL_STREAM_DRAW);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,g_materialIndexBuffer);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER,size_t(geometry.index_count)*2,geometry.indices,GL_STREAM_DRAW);
-  glBindBuffer(GL_UNIFORM_BUFFER,g_materialUniformBuffer);
-  glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
-  bind_uniform_range(0,g_materialUniformBuffer,0,uniforms.size);
-  glDrawElements(GL_TRIANGLES,geometry.index_count,GL_UNSIGNED_SHORT,nullptr);
-  capture_native_draw("material",geometry.vertex_count,geometry.index_count);
+    attribute(0, 4, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, position));
+    attribute(1, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, view_position));
+    attribute(2, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, normal));
+    attribute(3, 4, GL_UNSIGNED_BYTE, true, offsetof(AuroraNativeMaterialVertex, color));
+    attribute(4, 4, GL_UNSIGNED_BYTE, true, offsetof(AuroraNativeMaterialVertex, color) + 4);
+    for (unsigned i = 0; i < 8; ++i)
+      attribute(i + 5, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, texcoord) + i * 12);
+  } else
+    glBindVertexArray(g_materialVao);
+  glBindBuffer(GL_ARRAY_BUFFER, g_materialVertexBuffer);
+  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(*geometry.vertices), geometry.vertices, GL_STREAM_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_materialIndexBuffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * 2, geometry.indices, GL_STREAM_DRAW);
+  glBindBuffer(GL_UNIFORM_BUFFER, g_materialUniformBuffer);
+  glBufferData(GL_UNIFORM_BUFFER, uniforms.size, uniforms.data, GL_STREAM_DRAW);
+  bind_uniform_range(0, g_materialUniformBuffer, 0, uniforms.size);
+  glDrawElements(GL_TRIANGLES, geometry.index_count, GL_UNSIGNED_SHORT, nullptr);
+  capture_native_draw("material", geometry.vertex_count, geometry.index_count);
   glBindVertexArray(g_state.emptyVao);
 }
-void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
-                      uint32_t vertexOffset, uint32_t vertexCount,
-                      uint32_t indexOffset, uint32_t indexCount, GLuint program,
+void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount, GLuint program,
                       const AuroraNativeUniforms& uniforms) {
-  if (!aurora::native_frame_drawing_allowed() || !indexCount) return;
-  gfx::validate_mesh_draw(buffer,layout,vertexOffset,vertexCount,indexOffset,indexCount);
-  if (!uniforms.data || !uniforms.size) throw std::runtime_error("Native mesh has no uniforms");
+  if (!aurora::native_frame_drawing_allowed() || !indexCount)
+    return;
+  gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
+  if (!uniforms.data || !uniforms.size)
+    throw std::runtime_error("Native mesh has no uniforms");
   use_program(program);
   if (!g_meshVao) {
-    glGenVertexArrays(1,&g_meshVao);
-    glGenBuffers(1,&g_meshUniformBuffer);
+    glGenVertexArrays(1, &g_meshVao);
+    glGenBuffers(1, &g_meshUniformBuffer);
   }
   glBindVertexArray(g_meshVao);
-  glBindBuffer(GL_ARRAY_BUFFER,buffer.get());
-  for (unsigned i=0;i<12;++i) glDisableVertexAttribArray(i);
+  glBindBuffer(GL_ARRAY_BUFFER, buffer.get());
+  for (unsigned i = 0; i < 12; ++i)
+    glDisableVertexAttribArray(i);
   for (const auto& attribute : layout.attributes) {
-    GLenum type=GL_FLOAT; GLboolean normalized=GL_FALSE;
-    switch(attribute.format) {
-    case MeshAttributeFormat::F32: break;
-    case MeshAttributeFormat::F16: type=GL_HALF_FLOAT; break;
-    case MeshAttributeFormat::U8N: type=GL_UNSIGNED_BYTE; normalized=GL_TRUE; break;
-    case MeshAttributeFormat::U8: type=GL_UNSIGNED_BYTE; break;
-    case MeshAttributeFormat::S16N: type=GL_SHORT; normalized=GL_TRUE; break;
+    GLenum type = GL_FLOAT;
+    GLboolean normalized = GL_FALSE;
+    switch (attribute.format) {
+    case MeshAttributeFormat::F32:
+      break;
+    case MeshAttributeFormat::F16:
+      type = GL_HALF_FLOAT;
+      break;
+    case MeshAttributeFormat::U8N:
+      type = GL_UNSIGNED_BYTE;
+      normalized = GL_TRUE;
+      break;
+    case MeshAttributeFormat::U8:
+      type = GL_UNSIGNED_BYTE;
+      break;
+    case MeshAttributeFormat::S16N:
+      type = GL_SHORT;
+      normalized = GL_TRUE;
+      break;
     }
-    glVertexAttribPointer(attribute.location,attribute.components,type,normalized,layout.stride,
-                          reinterpret_cast<const void*>(uintptr_t(vertexOffset)+attribute.offset));
+    glVertexAttribPointer(attribute.location, attribute.components, type, normalized, layout.stride, reinterpret_cast<const void*>(uintptr_t(vertexOffset) + attribute.offset));
     glEnableVertexAttribArray(attribute.location);
   }
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,buffer.get());
-  glBindBuffer(GL_UNIFORM_BUFFER,g_meshUniformBuffer);
-  glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
-  bind_uniform_range(0,g_meshUniformBuffer,0,uniforms.size);
-  glDrawElements(GL_TRIANGLES,indexCount,GL_UNSIGNED_SHORT,reinterpret_cast<const void*>(uintptr_t(indexOffset)));
-  capture_native_draw("mesh",vertexCount,indexCount);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.get());
+  glBindBuffer(GL_UNIFORM_BUFFER, g_meshUniformBuffer);
+  glBufferData(GL_UNIFORM_BUFFER, uniforms.size, uniforms.data, GL_STREAM_DRAW);
+  bind_uniform_range(0, g_meshUniformBuffer, 0, uniforms.size);
+  glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_SHORT, reinterpret_cast<const void*>(uintptr_t(indexOffset)));
+  capture_native_draw("mesh", vertexCount, indexCount);
   glBindVertexArray(g_state.emptyVao);
 }
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {

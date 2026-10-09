@@ -26,7 +26,9 @@
 
 #include <thread>
 
-namespace aurora::gfx { uint32_t current_frame() noexcept; }
+namespace aurora::gfx {
+uint32_t current_frame() noexcept;
+}
 
 namespace aurora::gl {
 namespace {
@@ -38,10 +40,15 @@ using namespace gxm;
   sceKernelExitProcess(1);
   std::abort();
 }
-template <typename F> decltype(auto) guarded(F&& operation) noexcept {
-  try { return operation(); }
-  catch (const std::exception& error) { fail(error.what()); }
-  catch (...) { fail("Unknown native renderer failure"); }
+template <typename F>
+decltype(auto) guarded(F&& operation) noexcept {
+  try {
+    return operation();
+  } catch (const std::exception& error) {
+    fail(error.what());
+  } catch (...) {
+    fail("Unknown native renderer failure");
+  }
 }
 struct TextureEntry {
   std::unique_ptr<TextureStorage> storage;
@@ -63,24 +70,29 @@ struct State {
   std::array<float, 4> blendColor{};
   bool scissorEnabled = false, clipDirty = true, display = true;
   GLuint color = 0, depth = 0, program = 0;
-  struct TextureBinding { GLuint texture = 0, sampler = 0; };
+  struct TextureBinding {
+    GLuint texture = 0, sampler = 0;
+  };
   std::array<TextureBinding, 16> textures{};
   uint32_t uniformOffset = 0, uniformBytes = 0;
   bool uniformValid = false;
 };
 uint32_t address_mode(GLenum mode) {
   switch (mode) {
-  case GL_REPEAT: return 0;
-  case GL_MIRRORED_REPEAT: return 1;
-  case GL_CLAMP_TO_EDGE: return 2;
-  default: throw std::runtime_error("Unsupported native texture address mode");
+  case GL_REPEAT:
+    return 0;
+  case GL_MIRRORED_REPEAT:
+    return 1;
+  case GL_CLAMP_TO_EDGE:
+    return 2;
+  default:
+    throw std::runtime_error("Unsupported native texture address mode");
   }
 }
 SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& desc) {
   SceGxmTexture result = texture.sampled();
   set_texture_address_modes(result, address_mode(desc.wrapS), address_mode(desc.wrapT));
-  const bool minLinear = desc.minFilter == GL_LINEAR || desc.minFilter == GL_LINEAR_MIPMAP_NEAREST ||
-                         desc.minFilter == GL_LINEAR_MIPMAP_LINEAR;
+  const bool minLinear = desc.minFilter == GL_LINEAR || desc.minFilter == GL_LINEAR_MIPMAP_NEAREST || desc.minFilter == GL_LINEAR_MIPMAP_LINEAR;
   const bool mipmapped = desc.minFilter != GL_NEAREST && desc.minFilter != GL_LINEAR;
   const bool mipLinear = desc.minFilter == GL_NEAREST_MIPMAP_LINEAR || desc.minFilter == GL_LINEAR_MIPMAP_LINEAR;
   if (texture.format == Format::Depth32F) {
@@ -90,7 +102,8 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
     return result;
   }
   const int bias = sampler_bias_encoding(desc.lodBias);
-  if (bias < 0) throw std::runtime_error("Native GXM sampler bias is not exactly representable");
+  if (bias < 0)
+    throw std::runtime_error("Native GXM sampler bias is not exactly representable");
   check(sceGxmTextureSetLodBias(&result, uint32_t(bias)), "set sampler LOD bias");
   check(sceGxmTextureSetMinFilter(&result, minLinear ? SCE_GXM_TEXTURE_FILTER_LINEAR : SCE_GXM_TEXTURE_FILTER_POINT), "set min filter");
   check(sceGxmTextureSetMagFilter(&result, desc.magFilter == GL_LINEAR ? SCE_GXM_TEXTURE_FILTER_LINEAR : SCE_GXM_TEXTURE_FILTER_POINT), "set mag filter");
@@ -113,9 +126,7 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
 class Renderer {
 public:
   explicit Renderer(bool vsync)
-      : device(vsync), pool(device), draws(device), clip(device),
-        clearProgram(device, 1, 1), presentProgram(device, 1, 2),
-        utility(4096, MappedMemory::Kind::Draw, "Aurora utility draws") {
+  : device(vsync), pool(device), draws(device), clip(device), clearProgram(device, 1, 1), presentProgram(device, 1, 2), utility(4096, MappedMemory::Kind::Draw, "Aurora utility draws") {
     const float ids[4]{0, 1, 2, 3};
     const uint16_t indices[6]{0, 1, 2, 2, 1, 3};
     std::memcpy(utility.data(), ids, sizeof(ids));
@@ -127,32 +138,41 @@ public:
     textures.clear();
   }
   GLuint name() {
-    if (!nextName) throw std::runtime_error("Native GPU name space exhausted");
+    if (!nextName)
+      throw std::runtime_error("Native GPU name space exhausted");
     return nextName++;
   }
   TextureEntry& entry(GLuint id) {
     const auto it = textures.find(id);
-    if (it == textures.end()) throw std::runtime_error("Unknown native texture name");
+    if (it == textures.end())
+      throw std::runtime_error("Unknown native texture name");
     return it->second;
   }
   TextureStorage& texture(GLuint id) { return *entry(id).storage; }
   void pin(GLuint id, bool add) {
-    if (!id) return;
+    if (!id)
+      return;
     auto& value = entry(id);
-    if (add) ++value.pins;
+    if (add)
+      ++value.pins;
     else {
-      if (!value.pins) throw std::runtime_error("Native texture pin accounting underflow");
+      if (!value.pins)
+        throw std::runtime_error("Native texture pin accounting underflow");
       --value.pins;
     }
     value.storage->pin(value.pins != 0);
   }
   void bind_target(GLuint color, GLuint depth) {
-    if (state.color == color && state.depth == depth && state.display == (!color && !depth)) return;
+    if (state.color == color && state.depth == depth && state.display == (!color && !depth))
+      return;
     device.end();
-    pin(state.color, false); pin(state.depth, false);
-    state.color = color; state.depth = depth;
+    pin(state.color, false);
+    pin(state.depth, false);
+    state.color = color;
+    state.depth = depth;
     state.display = !color && !depth;
-    pin(color, true); pin(depth, true);
+    pin(color, true);
+    pin(depth, true);
     if (color && texture(color).format == Format::Depth32F)
       throw std::runtime_error("Native color attachment has a depth format");
     if (depth && texture(depth).format != Format::Depth32F)
@@ -162,41 +182,46 @@ public:
     state.clipDirty = true;
   }
   std::pair<uint32_t, uint32_t> target_size() {
-    if (state.display) return {Device::Width, Device::Height};
+    if (state.display)
+      return {Device::Width, Device::Height};
     const auto& target = texture(state.color ? state.color : state.depth);
     return {target.width, target.height};
   }
   void scene() {
     const auto [width, height] = target_size();
     if (!device.scene_active()) {
-      if (state.display) device.begin_display();
-      else device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr,
-                         state.depth ? texture(state.depth).depth_surface() : nullptr);
+      if (state.display)
+        device.begin_display();
+      else
+        device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr);
       // Stored DF32M contains coverage from the previous scene. Recreate the
       // current coverage even when the logical scissor has not changed.
       state.clipDirty = state.depth || state.scissorEnabled;
-      if (state.color) texture(state.color).note_gpu_use(true);
-      if (state.depth) texture(state.depth).note_gpu_use(true);
+      if (state.color)
+        texture(state.color).note_gpu_use(true);
+      if (state.depth)
+        texture(state.depth).note_gpu_use(true);
     }
     if (state.clipDirty) {
       clip.apply(width, height, state.scissorEnabled, state.scissor[0], state.scissor[1], state.scissor[2], state.scissor[3]);
       state.clipDirty = false;
     }
   }
-  SceGxmOutputRegisterFormat output_format() {
-    return state.color ? texture(state.color).output_format() : SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4;
-  }
+  SceGxmOutputRegisterFormat output_format() { return state.color ? texture(state.color).output_format() : SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4; }
   void viewport() {
     const auto& v = state.viewport;
     apply_viewport(device.context(), v[0], v[1], v[2], v[3], state.depthRange[0], state.depthRange[1]);
   }
   void texture_binding(uint32_t unit, GLuint id, GLuint samplerId) {
-    if (unit >= state.textures.size()) throw std::runtime_error("Native texture unit out of range");
+    if (unit >= state.textures.size())
+      throw std::runtime_error("Native texture unit out of range");
     auto& bound = state.textures[unit];
     if (bound.texture != id) {
-      pin(bound.texture, false); pin(id, true);
+      pin(bound.texture, false);
+      pin(id, true);
       bound.texture = id;
-      if (id) pool.touch(texture(id));
+      if (id)
+        pool.touch(texture(id));
     }
     bound.sampler = samplerId;
   }
@@ -208,16 +233,19 @@ public:
   }
   void prepare(GLuint id) {
     auto found = programs.find(id);
-    if (found == programs.end()) throw std::runtime_error("Unknown native program name");
+    if (found == programs.end())
+      throw std::runtime_error("Unknown native program name");
     auto& native = found->second;
     scene();
     viewport();
     apply_raster(state.raster, device.context());
     auto blend = blend_info(state.raster, state.blendColor);
-    if (!state.display && !state.color) blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
+    if (!state.display && !state.color)
+      blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
     native.program->bind(blend, output_format());
     if (native.buffer0) {
-      if (!state.uniformValid) throw std::runtime_error("Native shader requires an unbound uniform range");
+      if (!state.uniformValid)
+        throw std::runtime_error("Native shader requires an unbound uniform range");
       draws.bind_uniform_range(state.uniformOffset, state.uniformBytes);
     }
     for (const auto& [uniform, values] : native.uniforms) {
@@ -226,7 +254,8 @@ public:
     }
     for (const auto& [samplerName, unit] : native.samplers) {
       const auto& bound = state.textures.at(unit);
-      if (!bound.texture) throw std::runtime_error("Native shader requires an unbound sampled texture");
+      if (!bound.texture)
+        throw std::runtime_error("Native shader requires an unbound sampled texture");
       auto& source = texture(bound.texture);
       source.note_gpu_use();
       const SamplerDesc desc = bound.sampler ? samplers.at(bound.sampler) : NearestClamp;
@@ -243,12 +272,13 @@ public:
   void utility_draw(uint32_t count) {
     check(sceGxmSetVertexStream(device.context(), 0, utility.data()), "bind utility vertex IDs");
     check(sceGxmSetVertexStream(device.context(), 1, utility.data()), "bind utility instance IDs");
-    check(sceGxmDraw(device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
-                    static_cast<char*>(utility.data()) + 64, count), "draw native utility geometry");
+    check(sceGxmDraw(device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, static_cast<char*>(utility.data()) + 64, count), "draw native utility geometry");
   }
   void clear(const float* color, float depth, bool depthOnly) {
-    if (depthOnly && (!state.depth || !state.raster.depthWrite)) return;
-    if (!depthOnly && !state.display && !state.color) return;
+    if (depthOnly && (!state.depth || !state.raster.depthWrite))
+      return;
+    if (!depthOnly && !state.display && !state.color)
+      return;
     scene();
     const auto [width, height] = target_size();
     apply_viewport(device.context(), 0, 0, width, height, 0.f, 1.f);
@@ -270,48 +300,70 @@ public:
   void collect() {
     pool.collect();
     for (auto it = retiredMeshes.begin(); it != retiredMeshes.end();) {
-      if (int32_t(*it->first.address - it->first.value) < 0) { ++it; continue; }
+      if (int32_t(*it->first.address - it->first.value) < 0) {
+        ++it;
+        continue;
+      }
       it = retiredMeshes.erase(it);
     }
     for (auto it = retiredPrograms.begin(); it != retiredPrograms.end();) {
-      if (int32_t(*it->first.address - it->first.value) < 0) { ++it; continue; }
+      if (int32_t(*it->first.address - it->first.value) < 0) {
+        ++it;
+        continue;
+      }
       it = retiredPrograms.erase(it);
     }
   }
   void forget_program(GLuint id) {
     const auto found = programs.find(id);
-    if (found == programs.end()) return;
+    if (found == programs.end())
+      return;
     const auto fence = device.completion_fence();
-    if (state.program == id) state.program = 0;
+    if (state.program == id)
+      state.program = 0;
     retiredPrograms.emplace_back(fence, std::move(found->second));
     programs.erase(found);
     collect();
   }
   void forget_texture(GLuint id) {
-    for (auto& bound : state.textures) if (bound.texture == id) {
-      pin(id, false); bound = {};
-    }
+    for (auto& bound : state.textures)
+      if (bound.texture == id) {
+        pin(id, false);
+        bound = {};
+      }
     if (state.color == id || state.depth == id)
       bind_target(state.color == id ? 0 : state.color, state.depth == id ? 0 : state.depth);
     for (auto it = framebuffers.begin(); it != framebuffers.end();) {
-      if (it->first.first == id || it->first.second == id) it = framebuffers.erase(it);
-      else ++it;
+      if (it->first.first == id || it->first.second == id)
+        it = framebuffers.erase(it);
+      else
+        ++it;
     }
     textures.erase(id);
   }
-  void capture_draw(std::string_view kind,GLuint program,uint32_t vertices,uint32_t indices,
-                    uint32_t instances=1,const RasterState* actualRaster=nullptr,GLuint texture0=0) {
+  void capture_draw(std::string_view kind, GLuint program, uint32_t vertices, uint32_t indices, uint32_t instances = 1, const RasterState* actualRaster = nullptr, GLuint texture0 = 0) {
     using namespace gfx::port_capture;
-    if (!enabled()) return;
-    NativeDraw s;s.frame=gfx::current_frame();s.program=program;
-    s.vertices=vertices;s.indices=indices;s.instances=instances;
-    const auto& r=actualRaster ? *actualRaster : state.raster;
-    s.flags=(r.depthTest?DepthCompare:0u)|(r.depthWrite?DepthWrite:0u)|(r.blend?Blend:0u)|
-        ((r.colorMask[0]||r.colorMask[1]||r.colorMask[2])?ColorWrite:0u)|(r.colorMask[3]?AlphaWrite:0u);
-    s.depthFunction=r.depthFunc;s.target=state.color;s.depthTarget=state.depth;s.display=state.display;
-    if (actualRaster) s.textures[0]=texture0;
-    else for (unsigned i=0;i<s.textures.size();i++) s.textures[i]=state.textures[i].texture;
-    native_draw(kind,s);
+    if (!enabled())
+      return;
+    NativeDraw s;
+    s.frame = gfx::current_frame();
+    s.program = program;
+    s.vertices = vertices;
+    s.indices = indices;
+    s.instances = instances;
+    const auto& r = actualRaster ? *actualRaster : state.raster;
+    s.flags = (r.depthTest ? DepthCompare : 0u) | (r.depthWrite ? DepthWrite : 0u) | (r.blend ? Blend : 0u) | ((r.colorMask[0] || r.colorMask[1] || r.colorMask[2]) ? ColorWrite : 0u) |
+              (r.colorMask[3] ? AlphaWrite : 0u);
+    s.depthFunction = r.depthFunc;
+    s.target = state.color;
+    s.depthTarget = state.depth;
+    s.display = state.display;
+    if (actualRaster)
+      s.textures[0] = texture0;
+    else
+      for (unsigned i = 0; i < s.textures.size(); i++)
+        s.textures[i] = state.textures[i].texture;
+    native_draw(kind, s);
   }
   Device device;
   TexturePool pool;
@@ -348,34 +400,33 @@ Renderer& renderer() {
   return *g_context->renderer;
 }
 constexpr std::array<FormatInfo, 19> FormatInfos{{
-    {0, 0, 0, 4, false, false, true}, {0, 0, 0, 1, false, false, true},
-    {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, true, false, false},
-    {0, 0, 0, 4, false, false, false}, {0, 0, 0, 4, true, false, false},
-    {0, 0, 0, 4, false, true, false},
-    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
-    {0, 0, 0, 1, false, false, true}, {0, 0, 0, 1, false, false, true},
-    {0, 0, 0, 1, false, false, true}, {0, 0, 0, 1, false, false, true},
-    {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, false, false, true},
-    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
-    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
+    {0, 0, 0, 4, false, false, true}, {0, 0, 0, 1, false, false, true}, {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, true, false, false}, {0, 0, 0, 4, false, false, false},
+    {0, 0, 0, 4, true, false, false}, {0, 0, 0, 4, false, true, false}, {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true}, {0, 0, 0, 1, false, false, true},
+    {0, 0, 0, 1, false, false, true}, {0, 0, 0, 1, false, false, true}, {0, 0, 0, 1, false, false, true}, {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, false, false, true},
+    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
 }};
-}
+} // namespace
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
   auto& r = renderer();
-  if (!bytes) throw std::runtime_error("Empty native mesh payload");
+  if (!bytes)
+    throw std::runtime_error("Empty native mesh payload");
   MappedMemory memory(bytes, MappedMemory::Kind::Cdram, "Aurora model pack");
   gfx::read_mesh_payload(path, offset, memory.data(), bytes);
   const auto id = r.name();
   const auto* data = static_cast<const uint8_t*>(memory.data());
   r.meshes.emplace(id, std::move(memory));
-  m_buffer = id; m_data = data; m_bytes = bytes;
+  m_buffer = id;
+  m_data = data;
+  m_bytes = bytes;
 }
 NativeMeshBuffer::~NativeMeshBuffer() {
-  if (!m_buffer || !initialized()) return;
+  if (!m_buffer || !initialized())
+    return;
   post([id = m_buffer] {
     auto& r = renderer();
     const auto it = r.meshes.find(id);
-    if (it == r.meshes.end()) return;
+    if (it == r.meshes.end())
+      return;
     // Include the current scene without ending it just to retire a resource.
     // Collection polls this notification after normal submission/presentation.
     r.retiredMeshes.emplace_back(r.device.current_fence(), std::move(it->second));
@@ -391,12 +442,15 @@ size_t native_mesh_resident_bytes() {
   auto& r = renderer();
   r.collect();
   size_t bytes = 0;
-  for (const auto& item : r.meshes) bytes += item.second.size();
-  for (const auto& item : r.retiredMeshes) bytes += item.second.size();
+  for (const auto& item : r.meshes)
+    bytes += item.second.size();
+  for (const auto& item : r.retiredMeshes)
+    bytes += item.second.size();
   return bytes;
 }
 bool initialize(SDL_Window* window, bool vsync) noexcept {
-  if (g_context) return g_context->window == window;
+  if (g_context)
+    return g_context->window == window;
   try {
     auto thread = std::make_unique<RenderContext>();
     thread->window = window;
@@ -413,20 +467,30 @@ bool initialize(SDL_Window* window, bool vsync) noexcept {
   }
 }
 void shutdown() noexcept {
-  if (!g_context) return;
-  if (!on_render_thread()) fail("GXM shutdown called outside the game thread");
+  if (!g_context)
+    return;
+  if (!on_render_thread())
+    fail("GXM shutdown called outside the game thread");
   auto* thread = g_context;
   g_nativeAssets.store(nullptr, std::memory_order_release);
   thread->renderer.reset();
   g_context = nullptr;
   delete thread;
 }
-bool initialized() noexcept { return g_context != nullptr; }
-bool on_render_thread() noexcept { return g_context && g_context->id == std::this_thread::get_id(); }
-const Caps& caps() noexcept { return g_caps; }
+bool initialized() noexcept {
+  return g_context != nullptr;
+}
+bool on_render_thread() noexcept {
+  return g_context && g_context->id == std::this_thread::get_id();
+}
+const Caps& caps() noexcept {
+  return g_caps;
+}
 void post(Task task) noexcept {
-  if (!g_context) return;
-  if (!on_render_thread()) fail("GXM task called outside the game thread");
+  if (!g_context)
+    return;
+  if (!on_render_thread())
+    fail("GXM task called outside the game thread");
   guarded([&] { std::move(task)(); });
 }
 void call(Task task) noexcept {
@@ -440,14 +504,23 @@ bool gpu_frame_pending() noexcept {
     return gxm::gpu_frame_pending();
   });
 }
-uint32_t native_frame_slot() noexcept { return guarded([] { return renderer().device.frame_slot(); }); }
-void discard_native_frame() noexcept {
-  guarded([] { auto& r = renderer(); r.device.end(); r.collect(); });
+uint32_t native_frame_slot() noexcept {
+  return guarded([] { return renderer().device.frame_slot(); });
 }
-void finish() noexcept { call([] { renderer().device.finish(); }); }
-const FormatInfo& format_info(Format format) noexcept { return FormatInfos[size_t(format)]; }
-Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view label)
-    noexcept : width(width_), height(height_), mips(mips_), format(format_), m_name(new Name) {
+void discard_native_frame() noexcept {
+  guarded([] {
+    auto& r = renderer();
+    r.device.end();
+    r.collect();
+  });
+}
+void finish() noexcept {
+  call([] { renderer().device.finish(); });
+}
+const FormatInfo& format_info(Format format) noexcept {
+  return FormatInfos[size_t(format)];
+}
+Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view label) noexcept : width(width_), height(height_), mips(mips_), format(format_), m_name(new Name) {
   gfx::port_capture::texture(this, true, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel, label);
   auto create = [name = m_name, width_, height_, mips_, format_] {
     auto& r = renderer();
@@ -456,13 +529,21 @@ Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format forma
     r.textures.emplace(id, TextureEntry{std::move(storage)});
     name->value = id;
   };
-  if (on_render_thread()) guarded(create);
-  else post(std::move(create));
+  if (on_render_thread())
+    guarded(create);
+  else
+    post(std::move(create));
 }
 Texture::~Texture() {
   gfx::port_capture::texture(this, false, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel);
-  if (!initialized()) { delete m_name; return; }
-  post([name = m_name] { renderer().forget_texture(name->value); delete name; });
+  if (!initialized()) {
+    delete m_name;
+    return;
+  }
+  post([name = m_name] {
+    renderer().forget_texture(name->value);
+    delete name;
+  });
 }
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
@@ -490,7 +571,8 @@ void open_native_texture_pack(const char* path) noexcept {
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
   return guarded([&] {
     const auto* assets = g_nativeAssets.load(std::memory_order_acquire);
-    if (!assets) throw std::runtime_error("Native texture pack is not open");
+    if (!assets)
+      throw std::runtime_error("Native texture pack is not open");
     return assets->info(asset);
   });
 }
@@ -503,49 +585,56 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
   });
   return texture;
 }
-void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
-                    const void* data, uint32_t bytesPerRow) noexcept {
+void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
   gfx::port_capture::upload(&texture, mip, uint64_t(bytesPerRow) * height);
   guarded([&] { renderer().texture(texture.gl()).upload(mip, x, y, width, height, data, bytesPerRow); });
 }
-void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
-                   uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept {
-  if (!texture || !width || !height) return;
-  if (uint64_t(bytesPerRow) * height > data.size()) fail("Texture upload source is too short");
-  post([texture, mip, x, y, width, height, data = std::move(data), bytesPerRow] {
-    upload_texture(*texture, mip, x, y, width, height, data.data(), bytesPerRow);
-  });
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept {
+  if (!texture || !width || !height)
+    return;
+  if (uint64_t(bytesPerRow) * height > data.size())
+    fail("Texture upload source is too short");
+  post([texture, mip, x, y, width, height, data = std::move(data), bytesPerRow] { upload_texture(*texture, mip, x, y, width, height, data.data(), bytesPerRow); });
 }
-void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
-                   uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
-  if (!texture || !width || !height) return;
-  if (!data) fail("Null texture upload source");
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept {
+  if (!texture || !width || !height)
+    return;
+  if (!data)
+    fail("Null texture upload source");
   const auto* bytes = static_cast<const uint8_t*>(data);
-  write_texture(texture, mip, x, y, width, height,
-                std::vector<uint8_t>(bytes, bytes + size_t(bytesPerRow) * height), bytesPerRow);
+  write_texture(texture, mip, x, y, width, height, std::vector<uint8_t>(bytes, bytes + size_t(bytesPerRow) * height), bytesPerRow);
 }
 GLuint sampler(const SamplerDesc& desc) noexcept {
   return guarded([&] {
     auto& r = renderer();
-    for (const auto& [id, existing] : r.samplers) if (desc == existing) return id;
-    const auto id = r.name(); r.samplers.emplace(id, desc); return id;
+    for (const auto& [id, existing] : r.samplers)
+      if (desc == existing)
+        return id;
+    const auto id = r.name();
+    r.samplers.emplace(id, desc);
+    return id;
   });
 }
 GLuint framebuffer(GLuint color, GLuint depth) noexcept {
   return guarded([&] {
-    if (!color && !depth) return GLuint(0);
+    if (!color && !depth)
+      return GLuint(0);
     auto& r = renderer();
     auto [it, inserted] = r.framebuffers.try_emplace({color, depth}, 0);
-    if (inserted) it->second = r.name();
+    if (inserted)
+      it->second = r.name();
     return it->second;
   });
 }
-void bind_framebuffer(GLuint color, GLuint depth) noexcept { guarded([&] { renderer().bind_target(color, depth); }); }
+void bind_framebuffer(GLuint color, GLuint depth) noexcept {
+  guarded([&] { renderer().bind_target(color, depth); });
+}
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   guarded([&] {
     m_usesAlphaReferences = parameterize_alpha_references(m_desc.fragment, m_alphaReferences);
-    const auto captured=gfx::port_capture::shader(m_desc.label,m_desc.vertex,m_desc.fragment,m_desc.origin);
-    m_capturePortableHashes=captured.portableHashes;m_capturePortableOrigin=captured.originFile;
+    const auto captured = gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin);
+    m_capturePortableHashes = captured.portableHashes;
+    m_capturePortableOrigin = captured.originFile;
     m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
     m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
     // Construction also covers unused diagnostic programs. Compile/register
@@ -556,66 +645,72 @@ Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   });
 }
 Program::~Program() {
-  if (m_program && initialized()) post([id = m_program] {
-    auto& r = renderer();
-    r.forget_program(id);
-  });
+  if (m_program && initialized())
+    post([id = m_program] {
+      auto& r = renderer();
+      r.forget_program(id);
+    });
 }
 GLuint Program::get() noexcept {
   return guarded([&] {
-    if (m_program) return m_program;
+    if (m_program)
+      return m_program;
     auto& r = renderer();
-    register_runtime_shader_sources(m_vertexHash, m_fragmentHash, m_desc.vertex,
-        m_desc.fragment, m_desc.origin.empty() ? m_desc.label : m_desc.origin + "; " + m_desc.label);
+    register_runtime_shader_sources(m_vertexHash, m_fragmentHash, m_desc.vertex, m_desc.fragment, m_desc.origin.empty() ? m_desc.label : m_desc.origin + "; " + m_desc.label);
     const auto* binary = fragment_binary(m_fragmentHash);
     m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
     m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
     NativeProgram native;
-    native.nativeMaterialVertices=m_desc.nativeMaterialVertices;
-    native.nativeMeshLayout=m_desc.nativeMeshLayout;
+    native.nativeMaterialVertices = m_desc.nativeMaterialVertices;
+    native.nativeMeshLayout = m_desc.nativeMeshLayout;
     auto& shared = r.patchedPrograms[{m_vertexHash, m_fragmentHash}];
     // Compact layouts own their patched program. Shader hashes alone cannot
     // distinguish vertex strides/offsets. The frontend caches each full layout.
-    if (!m_desc.nativeMeshLayout.stride) native.program = shared.lock();
+    if (!m_desc.nativeMeshLayout.stride)
+      native.program = shared.lock();
     if (!native.program) {
-      if(m_desc.nativeMeshLayout.stride) {
+      if (m_desc.nativeMeshLayout.stride) {
         gfx::validate_mesh_layout(m_desc.nativeMeshLayout);
         std::vector<VertexInput> inputs;
         for (const auto& attribute : m_desc.nativeMeshLayout.attributes) {
-          SceGxmAttributeFormat format=SCE_GXM_ATTRIBUTE_FORMAT_F32;
-          switch(attribute.format) {
-          case MeshAttributeFormat::F32: break;
-          case MeshAttributeFormat::F16: format=SCE_GXM_ATTRIBUTE_FORMAT_F16; break;
-          case MeshAttributeFormat::U8N: format=SCE_GXM_ATTRIBUTE_FORMAT_U8N; break;
-          case MeshAttributeFormat::U8: format=SCE_GXM_ATTRIBUTE_FORMAT_U8; break;
-          case MeshAttributeFormat::S16N: format=SCE_GXM_ATTRIBUTE_FORMAT_S16N; break;
+          SceGxmAttributeFormat format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+          switch (attribute.format) {
+          case MeshAttributeFormat::F32:
+            break;
+          case MeshAttributeFormat::F16:
+            format = SCE_GXM_ATTRIBUTE_FORMAT_F16;
+            break;
+          case MeshAttributeFormat::U8N:
+            format = SCE_GXM_ATTRIBUTE_FORMAT_U8N;
+            break;
+          case MeshAttributeFormat::U8:
+            format = SCE_GXM_ATTRIBUTE_FORMAT_U8;
+            break;
+          case MeshAttributeFormat::S16N:
+            format = SCE_GXM_ATTRIBUTE_FORMAT_S16N;
+            break;
           }
-          inputs.push_back({gfx::MeshAttributeNames[attribute.location],format,
-                            attribute.components,attribute.offset,m_desc.nativeMeshLayout.stride,0});
+          inputs.push_back({gfx::MeshAttributeNames[attribute.location], format, attribute.components, attribute.offset, m_desc.nativeMeshLayout.stride, 0});
         }
-        native.program=std::make_shared<PatchedProgram>(r.device,m_vertexHash,m_fragmentHash,SCE_GXM_INDEX_FORMAT_U16,inputs);
-      } else if(m_desc.nativeMaterialVertices) {
-        constexpr uint16_t stride=sizeof(AuroraNativeMaterialVertex);
-        const VertexInput inputs[]{
-          {"a_native_position",SCE_GXM_ATTRIBUTE_FORMAT_F32,4,0,stride,0},
-          {"a_native_view_position",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,16,stride,0},
-          {"a_native_normal",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,28,stride,0},
-          {"a_native_color0",SCE_GXM_ATTRIBUTE_FORMAT_U8N,4,136,stride,0},
-          {"a_native_color1",SCE_GXM_ATTRIBUTE_FORMAT_U8N,4,140,stride,0},
-          {"a_native_tex0",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,40,stride,0},
-          {"a_native_tex1",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,52,stride,0},
-          {"a_native_tex2",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,64,stride,0},
-          {"a_native_tex3",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,76,stride,0},
-          {"a_native_tex4",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,88,stride,0},
-          {"a_native_tex5",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,100,stride,0},
-          {"a_native_tex6",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,112,stride,0},
-          {"a_native_tex7",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,124,stride,0}};
-        static_assert(stride==144 && offsetof(AuroraNativeMaterialVertex,color)==136);
-        native.program=std::make_shared<PatchedProgram>(r.device,m_vertexHash,m_fragmentHash,SCE_GXM_INDEX_FORMAT_U16,inputs);
-      } else native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
-      if (!m_desc.nativeMeshLayout.stride) shared = native.program;
+        native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash, SCE_GXM_INDEX_FORMAT_U16, inputs);
+      } else if (m_desc.nativeMaterialVertices) {
+        constexpr uint16_t stride = sizeof(AuroraNativeMaterialVertex);
+        const VertexInput inputs[]{{"a_native_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, 0, stride, 0}, {"a_native_view_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 16, stride, 0},
+                                   {"a_native_normal", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 28, stride, 0},  {"a_native_color0", SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, 136, stride, 0},
+                                   {"a_native_color1", SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, 140, stride, 0}, {"a_native_tex0", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 40, stride, 0},
+                                   {"a_native_tex1", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 52, stride, 0},    {"a_native_tex2", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 64, stride, 0},
+                                   {"a_native_tex3", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 76, stride, 0},    {"a_native_tex4", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 88, stride, 0},
+                                   {"a_native_tex5", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 100, stride, 0},   {"a_native_tex6", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 112, stride, 0},
+                                   {"a_native_tex7", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, 124, stride, 0}};
+        static_assert(stride == 144 && offsetof(AuroraNativeMaterialVertex, color) == 136);
+        native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash, SCE_GXM_INDEX_FORMAT_U16, inputs);
+      } else
+        native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
+      if (!m_desc.nativeMeshLayout.stride)
+        shared = native.program;
     }
-    if (m_usesAlphaReferences) native.uniforms.emplace("aur_alpha_refs", m_alphaReferences);
+    if (m_usesAlphaReferences)
+      native.uniforms.emplace("aur_alpha_refs", m_alphaReferences);
     for (const auto& [name, unit] : m_desc.samplers) {
       const auto* parameter = sceGxmProgramFindParameterByName(fragment_binary(m_fragmentHash), name.c_str());
       if (parameter && sceGxmProgramParameterGetCategory(parameter) == SCE_GXM_PARAMETER_CATEGORY_SAMPLER) {
@@ -625,192 +720,306 @@ GLuint Program::get() noexcept {
       }
     }
     for (const auto& [name, binding] : m_desc.blocks) {
-      if (binding != 0) throw std::runtime_error("Native shader uniform block uses an unsupported binding");
+      if (binding != 0)
+        throw std::runtime_error("Native shader uniform block uses an unsupported binding");
       native.buffer0 = true;
     }
     const auto id = r.name();
     r.programs.emplace(id, std::move(native));
-    m_desc.vertex.clear(); m_desc.fragment.clear();
+    m_desc.vertex.clear();
+    m_desc.fragment.clear();
     m_program = id;
-    gfx::port_capture::native_program(id,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label,
-      m_capturePortableHashes,m_capturePortableOrigin);
+    gfx::port_capture::native_program(id, m_vertexHash, m_fragmentHash, m_usesDiscard, m_replacesDepth, m_desc.label, m_capturePortableHashes, m_capturePortableOrigin);
     return id;
   });
 }
-void apply_raster_state(const RasterState& value) noexcept { guarded([&] { renderer().state.raster = value; }); }
+void apply_raster_state(const RasterState& value) noexcept {
+  guarded([&] { renderer().state.raster = value; });
+}
 void set_viewport(int32_t x, int32_t y, int32_t width, int32_t height, float minDepth, float maxDepth) noexcept {
-  guarded([&] { auto& s = renderer().state; s.viewport = {x, y, width, height}; s.depthRange = {minDepth, maxDepth}; });
+  guarded([&] {
+    auto& s = renderer().state;
+    s.viewport = {x, y, width, height};
+    s.depthRange = {minDepth, maxDepth};
+  });
 }
 void set_scissor(int32_t x, int32_t y, int32_t width, int32_t height) noexcept {
-  guarded([&] { auto& s = renderer().state; const std::array value{x, y, width, height};
-    if (s.scissor != value) { s.scissor = value; s.clipDirty = s.scissorEnabled; } });
+  guarded([&] {
+    auto& s = renderer().state;
+    const std::array value{x, y, width, height};
+    if (s.scissor != value) {
+      s.scissor = value;
+      s.clipDirty = s.scissorEnabled;
+    }
+  });
 }
 void set_scissor_enabled(bool enabled) noexcept {
-  guarded([&] { auto& s = renderer().state; if (s.scissorEnabled != enabled) { s.scissorEnabled = enabled; s.clipDirty = true; } });
+  guarded([&] {
+    auto& s = renderer().state;
+    if (s.scissorEnabled != enabled) {
+      s.scissorEnabled = enabled;
+      s.clipDirty = true;
+    }
+  });
 }
-void set_blend_color(float r, float g, float b, float a) noexcept { guarded([&] { renderer().state.blendColor = {r, g, b, a}; }); }
-void use_program(GLuint id) noexcept { guarded([&] { renderer().state.program = id; }); }
+void set_blend_color(float r, float g, float b, float a) noexcept {
+  guarded([&] { renderer().state.blendColor = {r, g, b, a}; });
+}
+void use_program(GLuint id) noexcept {
+  guarded([&] { renderer().state.program = id; });
+}
 void bind_texture(uint32_t unit, GLuint texture, GLuint samplerId) noexcept {
   guarded([&] { renderer().texture_binding(unit, texture, samplerId); });
 }
 void bind_uniform_range(uint32_t binding, GLuint, uint32_t offset, uint32_t bytes) noexcept {
-  guarded([&] { if (binding != 0) throw std::runtime_error("Unsupported native uniform binding");
-    auto& s = renderer().state; s.uniformOffset = offset; s.uniformBytes = bytes; s.uniformValid = true; });
+  guarded([&] {
+    if (binding != 0)
+      throw std::runtime_error("Unsupported native uniform binding");
+    auto& s = renderer().state;
+    s.uniformOffset = offset;
+    s.uniformBytes = bytes;
+    s.uniformValid = true;
+  });
 }
-void set_color_mask(bool r, bool g, bool b, bool a) noexcept { guarded([&] { renderer().state.raster.colorMask = {r, g, b, a}; }); }
-void set_depth_write(bool enabled) noexcept { guarded([&] { renderer().state.raster.depthWrite = enabled; }); }
+void set_color_mask(bool r, bool g, bool b, bool a) noexcept {
+  guarded([&] { renderer().state.raster.colorMask = {r, g, b, a}; });
+}
+void set_depth_write(bool enabled) noexcept {
+  guarded([&] { renderer().state.raster.depthWrite = enabled; });
+}
 void invalidate_state() noexcept {
-  guarded([] { auto& r = renderer(); r.device.end(); r.reset_texture_bindings();
-    r.state.program = 0; r.state.uniformValid = false; r.state.clipDirty = true; });
+  guarded([] {
+    auto& r = renderer();
+    r.device.end();
+    r.reset_texture_bindings();
+    r.state.program = 0;
+    r.state.uniformValid = false;
+    r.state.clipDirty = true;
+  });
 }
 void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMemory. */ }
 void draw_fullscreen(GLuint id) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
-  guarded([&] { auto& r = renderer(); r.state.program = id; r.prepare(id); r.utility_draw(3);
-    r.capture_draw("fullscreen",id,3,3); });
+  if (!aurora::native_frame_drawing_allowed())
+    return;
+  guarded([&] {
+    auto& r = renderer();
+    r.state.program = id;
+    r.prepare(id);
+    r.utility_draw(3);
+    r.capture_draw("fullscreen", id, 3, 3);
+  });
 }
 OffscreenState save_offscreen_state() noexcept {
-  return guarded([]{const auto &s=renderer().state;OffscreenState out;out.raster=s.raster;out.rasterValid=true;out.viewport=s.viewport;out.depthRange=s.depthRange;out.scissor=s.scissor;out.scissorEnabled=s.scissorEnabled;out.blendColor=s.blendColor;out.color=s.color;out.depth=s.depth;out.program=s.program;
-    for(unsigned i=0;i<s.textures.size();++i){out.textures[i]=s.textures[i].texture;out.samplers[i]=s.textures[i].sampler;}
-    out.uniforms[0]={0,s.uniformOffset,s.uniformBytes};out.uniformValid=s.uniformValid;return out;});
+  return guarded([] {
+    const auto& s = renderer().state;
+    OffscreenState out;
+    out.raster = s.raster;
+    out.rasterValid = true;
+    out.viewport = s.viewport;
+    out.depthRange = s.depthRange;
+    out.scissor = s.scissor;
+    out.scissorEnabled = s.scissorEnabled;
+    out.blendColor = s.blendColor;
+    out.color = s.color;
+    out.depth = s.depth;
+    out.program = s.program;
+    for (unsigned i = 0; i < s.textures.size(); ++i) {
+      out.textures[i] = s.textures[i].texture;
+      out.samplers[i] = s.textures[i].sampler;
+    }
+    out.uniforms[0] = {0, s.uniformOffset, s.uniformBytes};
+    out.uniformValid = s.uniformValid;
+    return out;
+  });
 }
 void restore_offscreen_state(const OffscreenState& saved) noexcept {
-  guarded([&]{auto &r=renderer();r.bind_target(saved.color,saved.depth);r.state.raster=saved.raster;r.state.viewport=saved.viewport;r.state.depthRange=saved.depthRange;r.state.scissor=saved.scissor;r.state.scissorEnabled=saved.scissorEnabled;r.state.blendColor=saved.blendColor;r.state.program=saved.program;
-    for(unsigned i=0;i<saved.textures.size();++i)r.texture_binding(i,saved.textures[i],saved.samplers[i]);
-    r.state.uniformOffset=saved.uniforms[0].offset;r.state.uniformBytes=saved.uniforms[0].size;r.state.uniformValid=saved.uniformValid;r.state.clipDirty=true;});
-}
-GLuint create_buffer() noexcept { return guarded([] { return renderer().name(); }); }
-void destroy_buffer(GLuint) noexcept { /* Buffer storage belongs to the mapped frame slot. */ }
-void write_buffer(GLuint, bool, const void*, size_t bytes) noexcept { if (bytes) fail("Native draws must bind their mapped payload directly"); }
-void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
-                         int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept {
   guarded([&] {
-    if (width <= 0 || height <= 0) return;
-    auto& r = renderer(); auto& src = r.texture(source); auto& dst = r.texture(dest);
-    if (srcX < 0 || srcY < 0 || dstX < 0 || dstY < 0 ||
-        uint64_t(srcX) + width > src.width || uint64_t(srcY) + height > src.height ||
-        uint64_t(dstX) + width > dst.width || uint64_t(dstY) + height > dst.height || src.format != dst.format)
+    auto& r = renderer();
+    r.bind_target(saved.color, saved.depth);
+    r.state.raster = saved.raster;
+    r.state.viewport = saved.viewport;
+    r.state.depthRange = saved.depthRange;
+    r.state.scissor = saved.scissor;
+    r.state.scissorEnabled = saved.scissorEnabled;
+    r.state.blendColor = saved.blendColor;
+    r.state.program = saved.program;
+    for (unsigned i = 0; i < saved.textures.size(); ++i)
+      r.texture_binding(i, saved.textures[i], saved.samplers[i]);
+    r.state.uniformOffset = saved.uniforms[0].offset;
+    r.state.uniformBytes = saved.uniforms[0].size;
+    r.state.uniformValid = saved.uniformValid;
+    r.state.clipDirty = true;
+  });
+}
+GLuint create_buffer() noexcept {
+  return guarded([] { return renderer().name(); });
+}
+void destroy_buffer(GLuint) noexcept { /* Buffer storage belongs to the mapped frame slot. */ }
+void write_buffer(GLuint, bool, const void*, size_t bytes) noexcept {
+  if (bytes)
+    fail("Native draws must bind their mapped payload directly");
+}
+void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY, int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept {
+  guarded([&] {
+    if (width <= 0 || height <= 0)
+      return;
+    auto& r = renderer();
+    auto& src = r.texture(source);
+    auto& dst = r.texture(dest);
+    if (srcX < 0 || srcY < 0 || dstX < 0 || dstY < 0 || uint64_t(srcX) + width > src.width || uint64_t(srcY) + height > src.height || uint64_t(dstX) + width > dst.width ||
+        uint64_t(dstY) + height > dst.height || src.format != dst.format)
       throw std::runtime_error("Native texture copy has incompatible formats or exceeds bounds");
     SceGxmTransferFormat format;
     switch (src.format) {
-    case Format::R8: format = SCE_GXM_TRANSFER_FORMAT_U8_R; break;
-    case Format::RG8: format = SCE_GXM_TRANSFER_FORMAT_RAW16; break;
-    default: format = SCE_GXM_TRANSFER_FORMAT_RAW32; break;
+    case Format::R8:
+      format = SCE_GXM_TRANSFER_FORMAT_U8_R;
+      break;
+    case Format::RG8:
+      format = SCE_GXM_TRANSFER_FORMAT_RAW16;
+      break;
+    default:
+      format = SCE_GXM_TRANSFER_FORMAT_RAW32;
+      break;
     }
     r.device.finish();
-    check(sceGxmTransferCopy(width, height, 0, 0, SCE_GXM_TRANSFER_COLORKEY_NONE,
-        format, SCE_GXM_TRANSFER_LINEAR, src.pixels(), srcX, srcY, src.row_bytes(),
-        format, SCE_GXM_TRANSFER_LINEAR, dst.pixels(), dstX, dstY, dst.row_bytes(), nullptr, 0, nullptr), "copy texture region");
+    check(sceGxmTransferCopy(width, height, 0, 0, SCE_GXM_TRANSFER_COLORKEY_NONE, format, SCE_GXM_TRANSFER_LINEAR, src.pixels(), srcX, srcY, src.row_bytes(), format, SCE_GXM_TRANSFER_LINEAR,
+                             dst.pixels(), dstX, dstY, dst.row_bytes(), nullptr, 0, nullptr),
+          "copy texture region");
     check(sceGxmTransferFinish(), "finish texture region copy");
   });
 }
 void clear_color(const float* color) noexcept {
-  if (aurora::native_frame_drawing_allowed()) guarded([&] { renderer().clear(color, 0.f, false); });
+  if (aurora::native_frame_drawing_allowed())
+    guarded([&] { renderer().clear(color, 0.f, false); });
 }
 void clear_depth(float depth) noexcept {
-  if (aurora::native_frame_drawing_allowed()) guarded([&] { const float ignored[4]{}; renderer().clear(ignored, depth, true); });
+  if (aurora::native_frame_drawing_allowed())
+    guarded([&] {
+      const float ignored[4]{};
+      renderer().clear(ignored, depth, true);
+    });
 }
 void clear_depth_full_target(float depth) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
+  if (!aurora::native_frame_drawing_allowed())
+    return;
   guarded([&] {
-    auto& r=renderer();
-    const bool depthWrite=r.state.raster.depthWrite,scissor=r.state.scissorEnabled;
-    r.state.raster.depthWrite=true;
-    if(scissor) {r.state.scissorEnabled=false;r.state.clipDirty=true;}
+    auto& r = renderer();
+    const bool depthWrite = r.state.raster.depthWrite, scissor = r.state.scissorEnabled;
+    r.state.raster.depthWrite = true;
+    if (scissor) {
+      r.state.scissorEnabled = false;
+      r.state.clipDirty = true;
+    }
     const float ignored[4]{};
-    r.clear(ignored,depth,true);
-    r.state.raster.depthWrite=depthWrite;
-    if(scissor) {r.state.scissorEnabled=true;r.state.clipDirty=true;}
+    r.clear(ignored, depth, true);
+    r.state.raster.depthWrite = depthWrite;
+    if (scissor) {
+      r.state.scissorEnabled = true;
+      r.state.clipDirty = true;
+    }
   });
 }
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
-  guarded([&] { if (!indexCount || !instances) return; auto& r = renderer(); r.prepare(r.state.program); r.draws.draw(indexCount, indexOffset, instances);
-    r.capture_draw("indexed",r.state.program,0,indexCount,instances); });
+  if (!aurora::native_frame_drawing_allowed())
+    return;
+  guarded([&] {
+    if (!indexCount || !instances)
+      return;
+    auto& r = renderer();
+    r.prepare(r.state.program);
+    r.draws.draw(indexCount, indexOffset, instances);
+    r.capture_draw("indexed", r.state.program, 0, indexCount, instances);
+  });
 }
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept {
-  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
+    return;
   guarded([&] {
     auto& r = renderer();
     auto& program = r.nativeGeometryPrograms[textured];
     if (!program) {
       static_assert(sizeof(AuroraNativeVertex) == 28);
       const VertexInput inputs[]{
-        {"position_in", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, 0, 28, 0},
-        {"uv_in", SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, 16, 28, 0},
-        {"color_in", SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, 24, 28, 0}};
-      program = std::make_unique<PatchedProgram>(r.device, 7, textured ? 8 : 7,
-                                                SCE_GXM_INDEX_FORMAT_U16, inputs);
+          {"position_in", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, 0, 28, 0}, {"uv_in", SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, 16, 28, 0}, {"color_in", SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, 24, 28, 0}};
+      program = std::make_unique<PatchedProgram>(r.device, 7, textured ? 8 : 7, SCE_GXM_INDEX_FORMAT_U16, inputs);
     }
     r.scene();
     r.viewport();
     apply_raster(r.state.raster, r.device.context());
     auto blend = blend_info(r.state.raster, r.state.blendColor);
-    if (!r.state.display && !r.state.color) blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
+    if (!r.state.display && !r.state.color)
+      blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
     program->bind(blend, r.output_format());
     if (textured) {
       const auto& binding = r.state.textures[0];
-      if (!binding.texture) throw std::runtime_error("Native geometry has no texture binding");
+      if (!binding.texture)
+        throw std::runtime_error("Native geometry has no texture binding");
       auto& texture = r.texture(binding.texture);
       texture.note_gpu_use();
       const auto sampled = sampling_view(texture, binding.sampler ? r.samplers.at(binding.sampler) : NearestClamp);
       check(sceGxmSetFragmentTexture(r.device.context(), 0, &sampled), "bind native geometry texture");
     }
     check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind native vertex attributes");
-    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
-                    geometry.indices, geometry.index_count), "draw native triangles");
+    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, geometry.indices, geometry.index_count), "draw native triangles");
     // Fixed embedded geometry programs bypass the Program object namespace.
-    r.capture_draw(textured?"geometry-textured":"geometry-colored",0,geometry.vertex_count,geometry.index_count);
+    r.capture_draw(textured ? "geometry-textured" : "geometry-colored", 0, geometry.vertex_count, geometry.index_count);
   });
 }
-void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
-                                  const AuroraNativeUniforms& uniforms) noexcept {
-  if(!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry, GLuint program, const AuroraNativeUniforms& uniforms) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
+    return;
   guarded([&] {
-    auto& r=renderer();
-    if(!r.programs.at(program).nativeMaterialVertices)
+    auto& r = renderer();
+    if (!r.programs.at(program).nativeMaterialVertices)
       throw std::runtime_error("Native material draw has a different vertex layout");
-    r.state.uniformOffset=uniforms.offset;r.state.uniformBytes=uniforms.size;r.state.uniformValid=true;
+    r.state.uniformOffset = uniforms.offset;
+    r.state.uniformBytes = uniforms.size;
+    r.state.uniformValid = true;
     r.prepare(program);
-    check(sceGxmSetVertexStream(r.device.context(),0,geometry.vertices),"bind native material attributes");
-    check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
-                    geometry.indices,geometry.index_count),"draw native material triangles");
-    r.capture_draw("material",program,geometry.vertex_count,geometry.index_count);
+    check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind native material attributes");
+    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, geometry.indices, geometry.index_count), "draw native material triangles");
+    r.capture_draw("material", program, geometry.vertex_count, geometry.index_count);
   });
 }
-void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
-                      uint32_t vertexOffset, uint32_t vertexCount,
-                      uint32_t indexOffset, uint32_t indexCount, GLuint program,
+void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount, GLuint program,
                       const AuroraNativeUniforms& uniforms) {
-  if (!aurora::native_frame_drawing_allowed() || !indexCount) return;
-  gfx::validate_mesh_draw(buffer,layout,vertexOffset,vertexCount,indexOffset,indexCount);
-  auto& r=renderer();
-  if (!(r.programs.at(program).nativeMeshLayout==layout))
+  if (!aurora::native_frame_drawing_allowed() || !indexCount)
+    return;
+  gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
+  auto& r = renderer();
+  if (!(r.programs.at(program).nativeMeshLayout == layout))
     throw std::runtime_error("Resident mesh differs from patched vertex layout");
-  const auto found=r.meshes.find(buffer.get());
-  if(found==r.meshes.end() || found->second.data()!=buffer.data())
+  const auto found = r.meshes.find(buffer.get());
+  if (found == r.meshes.end() || found->second.data() != buffer.data())
     throw std::runtime_error("Resident mesh backing was retired");
-  if (!uniforms.data || !uniforms.size) throw std::runtime_error("Native mesh has no uniforms");
-  r.state.uniformOffset=uniforms.offset;r.state.uniformBytes=uniforms.size;r.state.uniformValid=true;
+  if (!uniforms.data || !uniforms.size)
+    throw std::runtime_error("Native mesh has no uniforms");
+  r.state.uniformOffset = uniforms.offset;
+  r.state.uniformBytes = uniforms.size;
+  r.state.uniformValid = true;
   r.prepare(program);
-  check(sceGxmSetVertexStream(r.device.context(),0,buffer.data()+vertexOffset),"bind resident mesh attributes");
-  check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
-                  buffer.data()+indexOffset,indexCount),"draw resident mesh triangles");
-  r.capture_draw("mesh",program,vertexCount,indexCount);
+  check(sceGxmSetVertexStream(r.device.context(), 0, buffer.data() + vertexOffset), "bind resident mesh attributes");
+  check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw resident mesh triangles");
+  r.capture_draw("mesh", program, vertexCount, indexCount);
 }
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });
 }
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept {
-  if (!aurora::native_frame_drawing_allowed()) return;
+  if (!aurora::native_frame_drawing_allowed())
+    return;
   guarded([&] {
-    auto& r = renderer(); r.bind_target(0, 0); r.reset_texture_bindings();
-    r.state.scissorEnabled = false; r.state.clipDirty = false;
+    auto& r = renderer();
+    r.bind_target(0, 0);
+    r.reset_texture_bindings();
+    r.state.scissorEnabled = false;
+    r.state.clipDirty = false;
     r.state.raster.colorMask = {true, true, true, true};
     const float black[4]{0.f, 0.f, 0.f, 1.f};
     r.clear(black, 0.f, false);
     if (source && width > 0 && height > 0) {
-      r.pin(source->gl(), true); r.pool.touch(r.texture(source->gl()));
+      r.pin(source->gl(), true);
+      r.pool.touch(r.texture(source->gl()));
       r.scene();
       apply_viewport(r.device.context(), x, y, width, height, 0.f, 1.f);
       apply_raster({}, r.device.context());
@@ -823,17 +1032,20 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
       check(sceGxmSetFragmentTexture(r.device.context(), 0, &sampled), "bind presentation source");
       r.utility_draw(6);
       const RasterState presentRaster{};
-      r.capture_draw("present",0,6,6,1,&presentRaster,source->gl());
+      r.capture_draw("present", 0, 6, 6, 1, &presentRaster, source->gl());
       r.pin(source->gl(), false);
     }
     r.device.flip();
     r.collect();
   });
 }
-std::pair<uint32_t, uint32_t> drawable_size() noexcept { return {Device::Width, Device::Height}; }
+std::pair<uint32_t, uint32_t> drawable_size() noexcept {
+  return {Device::Width, Device::Height};
+}
 void read_pixels(GLuint id, uint32_t x, uint32_t y, uint32_t width, uint32_t height, void* out) noexcept {
   guarded([&] {
-    auto& r = renderer(); auto& texture = r.texture(id);
+    auto& r = renderer();
+    auto& texture = r.texture(id);
     if (texture.format != Format::RGBA8 || uint64_t(x) + width > texture.width || uint64_t(y) + height > texture.height || !out)
       throw std::runtime_error("Native RGBA readback exceeds bounds or uses another format");
     r.device.finish();
@@ -841,19 +1053,22 @@ void read_pixels(GLuint id, uint32_t x, uint32_t y, uint32_t width, uint32_t hei
     auto* output = static_cast<char*>(out);
     for (unsigned row = 0; row < height; ++row) {
       std::memcpy(output, input, size_t(width) * 4);
-      input += texture.row_bytes(); output += size_t(width) * 4;
+      input += texture.row_bytes();
+      output += size_t(width) * 4;
     }
   });
 }
-}
+} // namespace aurora::gl
 
 namespace aurora::gxm {
 ResidencyStatistics residency_statistics() noexcept {
   return gl::guarded([] {
     const auto& r = gl::renderer();
     auto result = r.pool.statistics();
-    for (const auto& mesh : r.meshes) result.model_bytes += mesh.second.size();
-    for (const auto& mesh : r.retiredMeshes) result.retired_model_bytes += mesh.second.size();
+    for (const auto& mesh : r.meshes)
+      result.model_bytes += mesh.second.size();
+    for (const auto& mesh : r.retiredMeshes)
+      result.retired_model_bytes += mesh.second.size();
     return result;
   });
 }

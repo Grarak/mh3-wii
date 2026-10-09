@@ -46,11 +46,16 @@ inline bool RequiresSchedulerWait(int64_t timeoutMilliseconds) {
 
 inline short WiiEventsToNative(uint32_t events) {
     int native = 0;
-    if (events & 0x0001u) native |= POLLRDNORM;
-    if (events & 0x0002u) native |= POLLRDBAND;
-    if (events & 0x0004u) native |= POLLPRI;
-    if (events & 0x0008u) native |= POLLWRNORM;
-    if (events & 0x0010u) native |= POLLWRBAND;
+    if (events & 0x0001u)
+        native |= POLLRDNORM;
+    if (events & 0x0002u)
+        native |= POLLRDBAND;
+    if (events & 0x0004u)
+        native |= POLLPRI;
+    if (events & 0x0008u)
+        native |= POLLWRNORM;
+    if (events & 0x0010u)
+        native |= POLLWRBAND;
 
     // ERR/HUP/NVAL are return-only. Winsock's WSAPoll also rejects the
     // priority and write-band inputs which Dolphin masks on Windows.
@@ -63,19 +68,27 @@ inline short WiiEventsToNative(uint32_t events) {
 
 inline uint32_t NativeEventsToWii(short events) {
     uint32_t wii = 0;
-    if (events & POLLRDNORM) wii |= 0x0001u;
-    if (events & POLLRDBAND) wii |= 0x0002u;
-    if (events & POLLPRI) wii |= 0x0004u;
-    if (events & POLLWRNORM) wii |= 0x0008u;
-    if (events & POLLWRBAND) wii |= 0x0010u;
-    if (events & POLLERR) wii |= 0x0020u;
-    if (events & POLLHUP) wii |= 0x0040u;
-    if (events & POLLNVAL) wii |= 0x0080u;
+    if (events & POLLRDNORM)
+        wii |= 0x0001u;
+    if (events & POLLRDBAND)
+        wii |= 0x0002u;
+    if (events & POLLPRI)
+        wii |= 0x0004u;
+    if (events & POLLWRNORM)
+        wii |= 0x0008u;
+    if (events & POLLWRBAND)
+        wii |= 0x0010u;
+    if (events & POLLERR)
+        wii |= 0x0020u;
+    if (events & POLLHUP)
+        wii |= 0x0040u;
+    if (events & POLLNVAL)
+        wii |= 0x0080u;
     return wii;
 }
 
 class Timeout {
-public:
+  public:
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
 
@@ -89,24 +102,18 @@ public:
 
         using Milliseconds = std::chrono::milliseconds;
         const int64_t maximum = std::chrono::duration_cast<Milliseconds>(TimePoint::max() - now).count();
-        timeout.m_deadline = milliseconds >= maximum
-            ? TimePoint::max()
-            : now + Milliseconds(milliseconds);
+        timeout.m_deadline = milliseconds >= maximum ? TimePoint::max() : now + Milliseconds(milliseconds);
         return timeout;
     }
 
-    bool IsExpired(TimePoint now = Clock::now()) const {
-        return !m_infinite && now >= m_deadline;
-    }
+    bool IsExpired(TimePoint now = Clock::now()) const { return !m_infinite && now >= m_deadline; }
 
-    bool ShouldRemainPending(int nativeResult, TimePoint now = Clock::now()) const {
-        return nativeResult == 0 && !IsExpired(now);
-    }
+    bool ShouldRemainPending(int nativeResult, TimePoint now = Clock::now()) const { return nativeResult == 0 && !IsExpired(now); }
 
     bool IsInfinite() const { return m_infinite; }
     TimePoint Deadline() const { return m_deadline; }
 
-private:
+  private:
     bool m_infinite = false;
     TimePoint m_deadline{};
 };

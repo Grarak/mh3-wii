@@ -28,4 +28,4 @@ void main() {
     frag_color = vec4(uvec4(z & 0xffu, (z >> 8u) & 0xffu, z >> 16u, 255u)) / 255.0;
 }
 )";
-}
+} // namespace aurora::gfx::depth_peek::shaders

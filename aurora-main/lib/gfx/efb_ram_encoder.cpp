@@ -76,17 +76,14 @@ bool describe(GXTexFmt format, Layout& layout, BlockInfo& block) noexcept {
   }
 }
 
-Pixel read_pixel(const uint8_t* pixels, uint32_t hostWidth, uint32_t hostHeight, uint32_t bytesPerRow,
-                 HostPixelOrder order, uint32_t guestX, uint32_t guestY, uint32_t guestWidth,
+Pixel read_pixel(const uint8_t* pixels, uint32_t hostWidth, uint32_t hostHeight, uint32_t bytesPerRow, HostPixelOrder order, uint32_t guestX, uint32_t guestY, uint32_t guestWidth,
                  uint32_t guestHeight) noexcept {
   const uint32_t clampedGuestX = std::min(guestX, guestWidth - 1);
   const uint32_t clampedGuestY = std::min(guestY, guestHeight - 1);
   const uint64_t sampleXNumerator = (static_cast<uint64_t>(clampedGuestX) * 2 + 1) * hostWidth;
   const uint64_t sampleYNumerator = (static_cast<uint64_t>(clampedGuestY) * 2 + 1) * hostHeight;
-  const uint32_t hostX =
-      std::min<uint32_t>(static_cast<uint32_t>(sampleXNumerator / (guestWidth * 2ull)), hostWidth - 1);
-  const uint32_t hostY =
-      std::min<uint32_t>(static_cast<uint32_t>(sampleYNumerator / (guestHeight * 2ull)), hostHeight - 1);
+  const uint32_t hostX = std::min<uint32_t>(static_cast<uint32_t>(sampleXNumerator / (guestWidth * 2ull)), hostWidth - 1);
+  const uint32_t hostY = std::min<uint32_t>(static_cast<uint32_t>(sampleYNumerator / (guestHeight * 2ull)), hostHeight - 1);
   const auto* src = pixels + static_cast<size_t>(hostY) * bytesPerRow + static_cast<size_t>(hostX) * 4;
   if (order == HostPixelOrder::BGRA) {
     return {src[2], src[1], src[0], src[3]};
@@ -119,14 +116,12 @@ size_t encoded_size(GXTexFmt format, uint32_t width, uint32_t height) noexcept {
   return size <= SIZE_MAX ? static_cast<size_t>(size) : 0;
 }
 
-bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth, uint32_t guestHeight,
-            const uint8_t* hostPixels, uint32_t hostWidth, uint32_t hostHeight, uint32_t hostBytesPerRow,
+bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth, uint32_t guestHeight, const uint8_t* hostPixels, uint32_t hostWidth, uint32_t hostHeight, uint32_t hostBytesPerRow,
             HostPixelOrder order) noexcept {
   Layout layout{};
   BlockInfo block{};
   const size_t required = encoded_size(format, guestWidth, guestHeight);
-  if (dstValue == nullptr || hostPixels == nullptr || required == 0 || dstSize < required || hostWidth == 0 ||
-      hostHeight == 0 || hostBytesPerRow < hostWidth * 4 || !describe(format, layout, block)) {
+  if (dstValue == nullptr || hostPixels == nullptr || required == 0 || dstSize < required || hostWidth == 0 || hostHeight == 0 || hostBytesPerRow < hostWidth * 4 || !describe(format, layout, block)) {
     return false;
   }
 
@@ -143,8 +138,7 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
         uint8_t* gb = blockDst + 32;
         for (uint32_t y = 0; y < 4; ++y) {
           for (uint32_t x = 0; x < 4; ++x) {
-            const Pixel pixel = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * 4 + x,
-                                           blockY * 4 + y, guestWidth, guestHeight);
+            const Pixel pixel = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * 4 + x, blockY * 4 + y, guestWidth, guestHeight);
             *ar++ = pixel.a;
             *ar++ = pixel.r;
             *gb++ = pixel.g;
@@ -158,20 +152,15 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
       for (uint32_t y = 0; y < block.height; ++y) {
         if (layout == Layout::I4) {
           for (uint32_t x = 0; x < block.width; x += 2) {
-            const Pixel first =
-                read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x,
-                           blockY * block.height + y, guestWidth, guestHeight);
-            const Pixel second =
-                read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x + 1,
-                           blockY * block.height + y, guestWidth, guestHeight);
+            const Pixel first = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x, blockY * block.height + y, guestWidth, guestHeight);
+            const Pixel second = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x + 1, blockY * block.height + y, guestWidth, guestHeight);
             *out++ = static_cast<uint8_t>((first.r & 0xf0) | (second.r >> 4));
           }
           continue;
         }
 
         for (uint32_t x = 0; x < block.width; ++x) {
-          const Pixel pixel = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order,
-                                         blockX * block.width + x, blockY * block.height + y, guestWidth, guestHeight);
+          const Pixel pixel = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x, blockY * block.height + y, guestWidth, guestHeight);
           switch (layout) {
           case Layout::I8:
             *out++ = pixel.r;
@@ -184,17 +173,13 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
             *out++ = pixel.r;
             break;
           case Layout::RGB565: {
-            const uint16_t packed =
-                static_cast<uint16_t>(((pixel.r >> 3) << 11) | ((pixel.g >> 2) << 5) | (pixel.b >> 3));
+            const uint16_t packed = static_cast<uint16_t>(((pixel.r >> 3) << 11) | ((pixel.g >> 2) << 5) | (pixel.b >> 3));
             write_be16(out, packed);
             break;
           }
           case Layout::RGB5A3: {
-            const uint16_t packed =
-                pixel.a >= 224
-                    ? static_cast<uint16_t>(0x8000 | ((pixel.r >> 3) << 10) | ((pixel.g >> 3) << 5) | (pixel.b >> 3))
-                    : static_cast<uint16_t>(((pixel.a >> 5) << 12) | ((pixel.r >> 4) << 8) | ((pixel.g >> 4) << 4) |
-                                            (pixel.b >> 4));
+            const uint16_t packed = pixel.a >= 224 ? static_cast<uint16_t>(0x8000 | ((pixel.r >> 3) << 10) | ((pixel.g >> 3) << 5) | (pixel.b >> 3))
+                                                   : static_cast<uint16_t>(((pixel.a >> 5) << 12) | ((pixel.r >> 4) << 8) | ((pixel.g >> 4) << 4) | (pixel.b >> 4));
             write_be16(out, packed);
             break;
           }

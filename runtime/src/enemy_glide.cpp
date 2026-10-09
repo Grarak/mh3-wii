@@ -29,16 +29,16 @@
 namespace {
 
 enum : uint32_t {
-    kPosition = 0x188,   // VEC3
-    kPitch = 0x1BC,      // u32 (u16 angle)
+    kPosition = 0x188, // VEC3
+    kPitch = 0x1BC,    // u32 (u16 angle)
     kYaw = 0x1C0,
     kRoll = 0x1C4,
-    kSpeed = 0x318,      // f32 forward speed (velocity z)
-    kTarget = 0x36C,     // VEC3
-    kLean = 0x464,       // f32
-    kGliding = 0x784,    // u8
-    kPassed = 0x786,     // u8
-    kPassFrom = 0x788,   // VEC3
+    kSpeed = 0x318,    // f32 forward speed (velocity z)
+    kTarget = 0x36C,   // VEC3
+    kLean = 0x464,     // f32
+    kGliding = 0x784,  // u8
+    kPassed = 0x786,   // u8
+    kPassFrom = 0x788, // VEC3
 };
 // Motion table (r5).
 enum : uint32_t {
@@ -49,16 +49,20 @@ enum : uint32_t {
     kSpeedCap = 0x24,     // f32
     kSlowCap = 0x28,      // f32
 };
-enum : uint32_t { kNoPitch = 1, kFastGain = 2, kNoMotionSpeed = 0x20 };
+enum : uint32_t {
+    kNoPitch = 1,
+    kFastGain = 2,
+    kNoMotionSpeed = 0x20
+};
 
 enum : uint32_t {
     VecDot = 0x80052278,
-    VecYaw = 0x80050B08,         // calcVecAng3
-    VecPitch = 0x80050BAC,       // calcVecAngX
+    VecYaw = 0x80050B08,   // calcVecAng3
+    VecPitch = 0x80050BAC, // calcVecAngX
     BlendToward = 0x8012F8C4,
     TurnToward = 0x80133E14,
     PitchSetup = 0x80133CA0,
-    MotionNo = 0x8012F960,       // em_get_mot_no
+    MotionNo = 0x8012F960, // em_get_mot_no
     MotionEnded = 0x8012F9A0,
     StartMotion = 0x8012F568,
     StartMotionDone = 0x8012F874,
@@ -66,16 +70,24 @@ enum : uint32_t {
     MotionSpeedSet = 0x8012F838,
 };
 
-float F(uint32_t a) { return Memory::ReadFloat32(a); }
-void SetF(uint32_t a, float v) { Memory::WriteFloat32(a, v); }
+float F(uint32_t a) {
+    return Memory::ReadFloat32(a);
+}
+void SetF(uint32_t a, float v) {
+    Memory::WriteFloat32(a, v);
+}
 void Sub(uint32_t out, uint32_t a, uint32_t b) {
-    for (uint32_t k = 0; k < 12; k += 4) SetF(out + k, F(a + k) - F(b + k));
+    for (uint32_t k = 0; k < 12; k += 4)
+        SetF(out + k, F(a + k) - F(b + k));
 }
 // fctiwz: toward zero, saturating.
 int32_t Truncate(double v) {
-    if (std::isnan(v)) return INT32_MIN;
-    if (v >= 2147483648.0) return INT32_MAX;
-    if (v < -2147483648.0) return INT32_MIN;
+    if (std::isnan(v))
+        return INT32_MIN;
+    if (v >= 2147483648.0)
+        return INT32_MAX;
+    if (v < -2147483648.0)
+        return INT32_MIN;
     return int32_t(v);
 }
 
@@ -107,7 +119,8 @@ static void EnemyGlide(CpuContext* ctx) {
             turn = 0;
         }
         float bend = 0.0f;
-        if (turn != 0) bend = 360.0f * float(int16_t(turn)) / 65536.0f / 90.0f;
+        if (turn != 0)
+            bend = 360.0f * float(int16_t(turn)) / 65536.0f / 90.0f;
         call.Call<BlendToward>({e}, {bend, 0.05f});
 
         const float lean = std::fabs(F(e + kLean));
@@ -118,7 +131,8 @@ static void EnemyGlide(CpuContext* ctx) {
             SetF(e + kSpeed, F(e + kSpeed) - 1.7f * over * scale);
             const int32_t tilt = int32_t(rate & 0xFFFF) * 10;
             roll = tilt > 0x3000 ? 0x3000 : uint32_t(tilt) & 0xFFFF;
-            if (F(e + kLean) > 0.0f) roll = (0u - roll) & 0xFFFF;
+            if (F(e + kLean) > 0.0f)
+                roll = (0u - roll) & 0xFFFF;
         }
 
         if (!(flags & kNoPitch)) {
@@ -141,33 +155,33 @@ static void EnemyGlide(CpuContext* ctx) {
         uint32_t next;
         if (now < goal) {
             next = now + rollStep;
-            if ((next & 0xFFFF) > goal) next = goalBiased;
+            if ((next & 0xFFFF) > goal)
+                next = goalBiased;
         } else {
             next = now - rollStep;
-            if ((next & 0xFFFF) < goal) next = goalBiased;
+            if ((next & 0xFFFF) < goal)
+                next = goalBiased;
         }
         Memory::Write32(e + kRoll, (next & 0xFFFF) - 0x8000);
 
         const uint16_t glide = Memory::Read16(table + kGlideMotion);
         if (glide == uint16_t(call.Call<MotionNo>({e}))) {
             if (call.Call<MotionEnded>({e}) == 1) {
-                call.Call<StartMotion>({e, Memory::Read16(table + kTurnMotion), Memory::Read32(table + 4),
-                                        Memory::Read32(table + 8), Memory::Read32(table + 12)});
+                call.Call<StartMotion>({e, Memory::Read16(table + kTurnMotion), Memory::Read32(table + 4), Memory::Read32(table + 8), Memory::Read32(table + 12)});
                 call.Call<StartMotionDone>({e});
             }
             const float speed = F(e + kSpeed);
-            if (speed < F(table + kSpeedCap)) SetF(e + kSpeed, speed + (flags & kFastGain ? 1.6f : 0.8f) * scale);
+            if (speed < F(table + kSpeedCap))
+                SetF(e + kSpeed, speed + (flags & kFastGain ? 1.6f : 0.8f) * scale);
         } else if (F(e + kSpeed) <= F(table + kSlowCap)) {
-            call.Call<StartMotion>({e, glide, Memory::Read32(table + kOtherStart), Memory::Read32(table + kOtherStart + 4),
-                                    Memory::Read32(table + kOtherStart + 8)});
+            call.Call<StartMotion>({e, glide, Memory::Read32(table + kOtherStart), Memory::Read32(table + kOtherStart + 4), Memory::Read32(table + kOtherStart + 8)});
             call.Call<StartMotionDone>({e});
         }
 
         if (!(flags & kNoMotionSpeed) && Memory::Read16(table + kTurnMotion) == uint16_t(call.Call<MotionNo>({e}))) {
             call.Call<MotionSpeed>({e});
             const uint32_t speed = uint32_t(Truncate(ctx->fpr[1].d));
-            call.Call<MotionSpeedSet>({e, Memory::Read16(table + kSpeedMotions), Memory::Read16(table + kSpeedMotions + 2), speed},
-                                      {F(e + kLean)});
+            call.Call<MotionSpeedSet>({e, Memory::Read16(table + kSpeedMotions), Memory::Read16(table + kSpeedMotions + 2), speed}, {F(e + kLean)});
         }
         result = Memory::Read8(e + kPassed) != 0;
     }

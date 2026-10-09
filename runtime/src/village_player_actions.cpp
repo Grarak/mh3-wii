@@ -45,14 +45,14 @@ enum : uint32_t {
     kIdleSteps = 0x36, // s16: steps idle, up to 150
     kPosition = 0x90,  // VEC3
 };
-constexpr uint32_t kVillage = 0x806ACFC4;       // village scene work (step_counter.cpp)
+constexpr uint32_t kVillage = 0x806ACFC4;            // village scene work (step_counter.cpp)
 constexpr uint32_t kVillageReady = kVillage + 325;   // u8
 constexpr uint32_t kVillageText13 = kVillage + 303;  // char[]
 constexpr uint32_t kVillageText14 = kVillage + 305;  // char[]
 constexpr uint32_t kVillageAnswer = kVillage + 302;  // s8: 1 yes, < 0 no, 0 waiting
 constexpr uint32_t kVillageAnswer2 = kVillage + 304; // s8: likewise
-constexpr uint32_t kMotionTable = 0x805B99F0;       // s16[3] {motion, blend, flags} per index
-constexpr uint32_t kSessionFlag = 0x8065B233;   // system_w+0x7D3 (0x800D076C: == 1)
+constexpr uint32_t kMotionTable = 0x805B99F0;        // s16[3] {motion, blend, flags} per index
+constexpr uint32_t kSessionFlag = 0x8065B233;        // system_w+0x7D3 (0x800D076C: == 1)
 
 enum : uint32_t {
     SetAction = 0x8020A448,     // (plw, u8, u16 action, u16)
@@ -81,7 +81,8 @@ struct Player : Plw::Player {
     void End() const { game.Call<EndAction>({plw, 0, 4, 0}); }
     // Tells the other players (in a session) text `id` of the village's.
     void Send(uint32_t id, uint32_t text) const {
-        if (Memory::Read8(kSessionFlag) == 1) game.Call<SendText>({(Index() + id) & 0xFF, text});
+        if (Memory::Read8(kSessionFlag) == 1)
+            game.Call<SendText>({(Index() + id) & 0xFF, text});
     }
     void Message(uint32_t id) const { game.Call<ShowMessage>({0, game.Call<MessageText>({3, id})}); }
 };
@@ -94,7 +95,8 @@ bool IdleMotions(const Player& p) {
     Memory::Write16(plw + kIdleSteps, uint16_t(int16_t(idle) < 150 ? idle : 150));
     switch (p.Motion()) {
     case 1:
-        if (!p.Idle(false) && p.Timer() > 30) p.Set(Memory::Read8(plw + kFlag20) == 0 ? 66 : 63, -6, 0);
+        if (!p.Idle(false) && p.Timer() > 30)
+            p.Set(Memory::Read8(plw + kFlag20) == 0 ? 66 : 63, -6, 0);
         break;
     case 5:
         if (!p.Idle(true) && p.Master() && p.Timer() > 60) {
@@ -109,17 +111,20 @@ bool IdleMotions(const Player& p) {
         }
         break;
     case 63:
-        if (!p.Idle(false) && p.Ended()) p.Set(65, -2, 0);
+        if (!p.Idle(false) && p.Ended())
+            p.Set(65, -2, 0);
         break;
     case 66:
-        if (!p.Idle(false) && p.Ended()) p.Set(67, -2, 0);
+        if (!p.Idle(false) && p.Ended())
+            p.Set(67, -2, 0);
         break;
     case 65:
     case 67:
         p.Idle(false);
         break;
     default:
-        if (!p.Idle(false)) p.SetX(1, -4, 0);
+        if (!p.Idle(false))
+            p.SetX(1, -4, 0);
         break;
     }
     return true;
@@ -138,9 +143,12 @@ void Idle(CpuContext* ctx) {
         p.Flag9(0);
         Memory::Write8(plw + kStarted, 0);
     }
-    if (state <= 1 && !IdleMotions(p)) return;
-    if (Memory::Read8(plw + kStarted) == 0) Memory::Write8(plw + kStarted, 1);
-    else game.Call<IdleStep>({plw});
+    if (state <= 1 && !IdleMotions(p))
+        return;
+    if (Memory::Read8(plw + kStarted) == 0)
+        Memory::Write8(plw + kStarted, 1);
+    else
+        game.Call<IdleStep>({plw});
 }
 
 // 0x8020B090 (plw, u8 arg).
@@ -187,7 +195,8 @@ void TurnAndWait(CpuContext* ctx) {
         p.Flag9(0);
         break;
     case 1:
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         p.NextState();
         p.SetX(210, 0, 146);
         Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) + 0x4000);
@@ -195,8 +204,10 @@ void TurnAndWait(CpuContext* ctx) {
         p.Timer(60 + int32_t(game.Call<Rand>({1}) & 31));
         break;
     case 2:
-        if (!p.Master() || !p.CountDown()) break;
-        if (p.Master()) p.Send(1, kVillageText13);
+        if (!p.Master() || !p.CountDown())
+            break;
+        if (p.Master())
+            p.Send(1, kVillageText13);
         game.Call<SetAction>({plw, 0, 13, 32});
         break;
     }
@@ -204,13 +215,16 @@ void TurnAndWait(CpuContext* ctx) {
 
 // The end of 0x8020B6CC and 0x8020B834: once the village is ready, 20 steps.
 void WaitForVillage(const Player& p, bool master) {
-    if (!master || Memory::Read8(kVillageReady) == 0) return;
+    if (!master || Memory::Read8(kVillageReady) == 0)
+        return;
     p.NextState();
     p.Timer(20);
-    if (p.Master()) p.Send(13, kVillageText14);
+    if (p.Master())
+        p.Send(13, kVillageText14);
 }
 void LeaveAfterWait(const Player& p) {
-    if (!p.CountDown()) return;
+    if (!p.CountDown())
+        return;
     p.game.Call<NextAction>({p.plw, 0, 0, 0x8000});
     p.End();
 }
@@ -255,9 +269,11 @@ void PlayTwiceAndWait(CpuContext* ctx) {
         p.SetX(motion, 4, 0);
         break;
     case 1:
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         p.Set(motion, 18, 344);
-        if (!p.Master() || Memory::Read8(kVillageReady) == 0) break;
+        if (!p.Master() || Memory::Read8(kVillageReady) == 0)
+            break;
         p.NextState();
         p.Timer(20);
         p.Send(13, kVillageText14);
@@ -281,10 +297,12 @@ void StandFor(CpuContext* ctx) {
         p.Timer(Steps);
         p.Flag9(0);
         p.SetX(1, 6, 0);
-        if (Text && (!MasterOnly || p.Master())) p.Message(Text);
+        if (Text && (!MasterOnly || p.Master()))
+            p.Message(Text);
         break;
     case 1:
-        if (p.CountDown()) p.End();
+        if (p.CountDown())
+            p.End();
         break;
     }
 }
@@ -303,13 +321,15 @@ void MoveInFade(CpuContext* ctx) {
         p.SetX(1, 6, 0);
         break;
     case 1:
-        if (!p.CountDown()) break;
+        if (!p.CountDown())
+            break;
         p.NextState();
         game.Call<Fade>({0, 1});
         p.Timer(20);
         break;
     case 2:
-        if (!p.CountDown()) break;
+        if (!p.CountDown())
+            break;
         p.NextState();
         game.Call<Fade>({0, 2});
         p.Timer(10);
@@ -323,7 +343,8 @@ void MoveInFade(CpuContext* ctx) {
         Memory::Write32(plw + kAngle2, 0xFC72);
         break;
     case 3:
-        if (!p.CountDown()) break;
+        if (!p.CountDown())
+            break;
         p.NextState();
         p.Timer(150);
         p.Set(502, 4, 0);
@@ -331,7 +352,8 @@ void MoveInFade(CpuContext* ctx) {
         game.Call<0x800F5B2C>();
         break;
     case 4:
-        if (p.CountDown()) p.End();
+        if (p.CountDown())
+            p.End();
         break;
     }
 }
@@ -364,14 +386,17 @@ void AwaitAnswer(CpuContext* ctx) {
         break;
     }
     case 2:
-        if (p.CountDown()) p.End();
+        if (p.CountDown())
+            p.End();
         break;
     }
 }
 void GoToSpotOrSay(const Player& p) {
     const uint32_t spot = p.game.Call<FindSpot>({p.plw, 5, p.Index()});
-    if (spot) p.game.Call<GoToAnswer>({p.plw, spot});
-    else p.Send(1, kVillageText13);
+    if (spot)
+        p.game.Call<GoToAnswer>({p.plw, spot});
+    else
+        p.Send(1, kVillageText13);
 }
 void AnswerAction(const Player& p) {
     p.game.Call<Answered>({p.plw});
@@ -395,12 +420,16 @@ void AwaitSignal(CpuContext* ctx) {
         p.Timer(0);
         break;
     case 1: {
-        if (game.Call<MasterCheck>({plw}) == 0) break;
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
         p.CountUp();
         const uint32_t signal = Memory::Read8(plw + 1622);
-        if (p.Timer() <= 600 && signal == 0) break;
-        if (signal == 1) game.Call<NextAction>({plw, 0, 44, 0});
-        else game.Call<NextAction>({plw, 0, 0, 0x8000});
+        if (p.Timer() <= 600 && signal == 0)
+            break;
+        if (signal == 1)
+            game.Call<NextAction>({plw, 0, 44, 0});
+        else
+            game.Call<NextAction>({plw, 0, 0, 0x8000});
         break;
     }
     }
@@ -415,7 +444,9 @@ void StanceMotion(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw;
-    const auto special = [&] { return game.Call<SpecialStance>({plw}) != 0; };
+    const auto special = [&] {
+        return game.Call<SpecialStance>({plw}) != 0;
+    };
     switch (p.State()) {
     case 0:
         p.NextState();
@@ -423,27 +454,33 @@ void StanceMotion(CpuContext* ctx) {
         game.Call<SetActFlags>({plw, 192});
         Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
         p.Set(Motion, 4, 0);
-        if (special()) p.Timer(10);
+        if (special())
+            p.Timer(10);
         break;
     case 1:
         if (p.Ended()) {
             game.Call<EndAction>({plw, 0, 10, 0});
         } else if (special()) {
             p.Timer(p.Timer() - int32_t(GameStep::Ticks()));
-            if (p.Timer() <= 10) game.Call<EndAction>({plw, 0, 10, 0});
+            if (p.Timer() <= 10)
+                game.Call<EndAction>({plw, 0, 10, 0});
         }
         break;
     }
-    if (IdleAfter) game.Call<IdleStep>({plw});
+    if (IdleAfter)
+        game.Call<IdleStep>({plw});
 }
 
 // 0x8020D784 (plw, index) and 0x8020DAD0: a motion, then after 60 steps (the
 // local player's) action 11 when 0x8026F96C says so, else 0x8020D64C.
 void MotionThenAct(const Player& p) {
     p.CountDownToZero();
-    if (!p.Master() || p.Timer() > 0) return;
-    if ((p.game.Call<Nearby>({p.plw, 0}) & 0xFF) != 0) p.game.Call<SetAction>({p.plw, 11, 0, 0});
-    else p.game.Call<ActionDone>({p.plw});
+    if (!p.Master() || p.Timer() > 0)
+        return;
+    if ((p.game.Call<Nearby>({p.plw, 0}) & 0xFF) != 0)
+        p.game.Call<SetAction>({p.plw, 11, 0, 0});
+    else
+        p.game.Call<ActionDone>({p.plw});
 }
 void TableMotion(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
@@ -454,7 +491,9 @@ void TableMotion(CpuContext* ctx) {
         p.NextState();
         p.Flag9(0);
         const uint32_t entry = kMotionTable + 6 * frame.Arg(4);
-        const auto s16 = [](uint32_t a) { return int32_t(int16_t(Memory::Read16(a))); };
+        const auto s16 = [](uint32_t a) {
+            return int32_t(int16_t(Memory::Read16(a)));
+        };
         p.Set(uint32_t(s16(entry)) & 0xFFFF, s16(entry + 2), s16(entry + 4));
         p.Timer(60);
         break;
@@ -484,65 +523,97 @@ void Motion507(CpuContext* ctx) {
 } // namespace
 
 extern "C" void func_8020A800(CpuContext* ctx);
-extern "C" void MH3_VillageActionIdle(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionIdle", func_8020A800, Idle); }
+extern "C" void MH3_VillageActionIdle(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionIdle", func_8020A800, Idle);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020A800, MH3_VillageActionIdle, "VillageActionIdle");
 
 extern "C" void func_8020B090(CpuContext* ctx);
-extern "C" void MH3_VillageActionHoldAndRelease(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionHoldAndRelease", func_8020B090, HoldAndRelease); }
+extern "C" void MH3_VillageActionHoldAndRelease(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionHoldAndRelease", func_8020B090, HoldAndRelease);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020B090, MH3_VillageActionHoldAndRelease, "VillageActionHoldAndRelease");
 
 extern "C" void func_8020B188(CpuContext* ctx);
-extern "C" void MH3_VillageActionTurnAndWait(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionTurnAndWait", func_8020B188, TurnAndWait); }
+extern "C" void MH3_VillageActionTurnAndWait(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionTurnAndWait", func_8020B188, TurnAndWait);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020B188, MH3_VillageActionTurnAndWait, "VillageActionTurnAndWait");
 
 extern "C" void func_8020B6CC(CpuContext* ctx);
-extern "C" void MH3_VillageActionGoToSpot(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionGoToSpot", func_8020B6CC, GoToSpot); }
+extern "C" void MH3_VillageActionGoToSpot(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionGoToSpot", func_8020B6CC, GoToSpot);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020B6CC, MH3_VillageActionGoToSpot, "VillageActionGoToSpot");
 
 extern "C" void func_8020B834(CpuContext* ctx);
-extern "C" void MH3_VillageActionPlayTwiceAndWait(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionPlayTwiceAndWait", func_8020B834, PlayTwiceAndWait); }
+extern "C" void MH3_VillageActionPlayTwiceAndWait(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionPlayTwiceAndWait", func_8020B834, PlayTwiceAndWait);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020B834, MH3_VillageActionPlayTwiceAndWait, "VillageActionPlayTwiceAndWait");
 
 extern "C" void func_8020C784(CpuContext* ctx);
-extern "C" void MH3_VillageActionStand488(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionStand488", func_8020C784, StandFor<30, 488, false>); }
+extern "C" void MH3_VillageActionStand488(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStand488", func_8020C784, StandFor<30, 488, false>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020C784, MH3_VillageActionStand488, "VillageActionStand488");
 
 extern "C" void func_8020C980(CpuContext* ctx);
-extern "C" void MH3_VillageActionStand(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionStand", func_8020C980, StandFor<30, 0, false>); }
+extern "C" void MH3_VillageActionStand(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStand", func_8020C980, StandFor<30, 0, false>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020C980, MH3_VillageActionStand, "VillageActionStand");
 
 extern "C" void func_8020CE24(CpuContext* ctx);
-extern "C" void MH3_VillageActionStand491(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionStand491", func_8020CE24, StandFor<60, 491, true>); }
+extern "C" void MH3_VillageActionStand491(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStand491", func_8020CE24, StandFor<60, 491, true>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020CE24, MH3_VillageActionStand491, "VillageActionStand491");
 
 extern "C" void func_8020C5EC(CpuContext* ctx);
-extern "C" void MH3_VillageActionMoveInFade(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionMoveInFade", func_8020C5EC, MoveInFade); }
+extern "C" void MH3_VillageActionMoveInFade(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionMoveInFade", func_8020C5EC, MoveInFade);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020C5EC, MH3_VillageActionMoveInFade, "VillageActionMoveInFade");
 
 extern "C" void func_8020C830(CpuContext* ctx);
-extern "C" void MH3_VillageActionAwaitSpot(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionAwaitSpot", func_8020C830, AwaitAnswer<kVillageAnswer, -6, GoToSpotOrSay>); }
+extern "C" void MH3_VillageActionAwaitSpot(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionAwaitSpot", func_8020C830, AwaitAnswer<kVillageAnswer, -6, GoToSpotOrSay>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020C830, MH3_VillageActionAwaitSpot, "VillageActionAwaitSpot");
 
 extern "C" void func_8020CA14(CpuContext* ctx);
-extern "C" void MH3_VillageActionAwaitAnswer(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionAwaitAnswer", func_8020CA14, AwaitAnswer<kVillageAnswer2, 6, AnswerAction>); }
+extern "C" void MH3_VillageActionAwaitAnswer(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionAwaitAnswer", func_8020CA14, AwaitAnswer<kVillageAnswer2, 6, AnswerAction>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020CA14, MH3_VillageActionAwaitAnswer, "VillageActionAwaitAnswer");
 
 extern "C" void func_8020CC9C(CpuContext* ctx);
-extern "C" void MH3_VillageActionAwaitSignal(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionAwaitSignal", func_8020CC9C, AwaitSignal); }
+extern "C" void MH3_VillageActionAwaitSignal(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionAwaitSignal", func_8020CC9C, AwaitSignal);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020CC9C, MH3_VillageActionAwaitSignal, "VillageActionAwaitSignal");
 
 extern "C" void func_8020D448(CpuContext* ctx);
-extern "C" void MH3_VillageActionStanceMotion30(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionStanceMotion30", func_8020D448, StanceMotion<30, true>); }
+extern "C" void MH3_VillageActionStanceMotion30(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStanceMotion30", func_8020D448, StanceMotion<30, true>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020D448, MH3_VillageActionStanceMotion30, "VillageActionStanceMotion30");
 
 extern "C" void func_8020E3A8(CpuContext* ctx);
-extern "C" void MH3_VillageActionStanceMotion53(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionStanceMotion53", func_8020E3A8, StanceMotion<53, false>); }
+extern "C" void MH3_VillageActionStanceMotion53(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStanceMotion53", func_8020E3A8, StanceMotion<53, false>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020E3A8, MH3_VillageActionStanceMotion53, "VillageActionStanceMotion53");
 
 extern "C" void func_8020D784(CpuContext* ctx);
-extern "C" void MH3_VillageActionTableMotion(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionTableMotion", func_8020D784, TableMotion); }
+extern "C" void MH3_VillageActionTableMotion(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionTableMotion", func_8020D784, TableMotion);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020D784, MH3_VillageActionTableMotion, "VillageActionTableMotion");
 
 extern "C" void func_8020DAD0(CpuContext* ctx);
-extern "C" void MH3_VillageActionMotion507(CpuContext* ctx) { PortCheck::Call(ctx, "VillageActionMotion507", func_8020DAD0, Motion507); }
+extern "C" void MH3_VillageActionMotion507(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionMotion507", func_8020DAD0, Motion507);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8020DAD0, MH3_VillageActionMotion507, "VillageActionMotion507");

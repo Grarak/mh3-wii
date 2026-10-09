@@ -8,26 +8,33 @@
 void ServiceOsAlarms(CpuContext* cpu) {
     static bool servicing = false;
     static unsigned delivered = 0;
-    if (servicing) return;
+    if (servicing)
+        return;
     const auto saved = *cpu;
     const auto queue = saved.gpr[13] - 0x3B10;
     servicing = true;
     try {
         for (unsigned count = 0; count < 64; ++count) {
             const auto alarm = Memory::Read32(queue);
-            if (!alarm) break;
-            if (!Memory::Contains(alarm, 0x30)) throw std::runtime_error("Invalid OS alarm queue entry");
+            if (!alarm)
+                break;
+            if (!Memory::Contains(alarm, 0x30))
+                throw std::runtime_error("Invalid OS alarm queue entry");
             InvokeIndirectCpu(0x804D5400, cpu); // __OSGetSystemTime, same clock as InsertAlarm
             const uint64_t now = (uint64_t(cpu->gpr[3]) << 32) | cpu->gpr[4];
             const uint64_t due = Memory::Read64(alarm + 8);
             *cpu = saved;
-            if (static_cast<int64_t>(now) < static_cast<int64_t>(due)) break;
+            if (static_cast<int64_t>(now) < static_cast<int64_t>(due))
+                break;
             const auto next = Memory::Read32(alarm + 0x14);
             const auto callback = Memory::Read32(alarm);
-            if (!callback) throw std::runtime_error("Queued OS alarm has no callback");
+            if (!callback)
+                throw std::runtime_error("Queued OS alarm has no callback");
             Memory::Write32(queue, next);
-            if (next) Memory::Write32(next + 0x10, 0);
-            else Memory::Write32(queue + 4, 0);
+            if (next)
+                Memory::Write32(next + 0x10, 0);
+            else
+                Memory::Write32(queue + 4, 0);
             Memory::Write32(alarm, 0);
             if (static_cast<int64_t>(Memory::Read64(alarm + 0x18)) > 0) {
                 cpu->gpr[3] = alarm;
@@ -59,12 +66,19 @@ void ServiceOsAlarms(CpuContext* cpu) {
                 cpu->gpr[3] = alarm;
                 cpu->gpr[4] = oldContext;
                 InvokeIndirectCpu(callback, cpu);
-            } catch (...) { restore(); throw; }
+            } catch (...) {
+                restore();
+                throw;
+            }
             restore();
             if (++delivered <= 3)
                 std::fprintf(stderr, "MH3 OS alarm: callback %08x delivered\n", callback);
         }
-    } catch (...) { *cpu = saved; servicing = false; throw; }
+    } catch (...) {
+        *cpu = saved;
+        servicing = false;
+        throw;
+    }
     *cpu = saved;
     servicing = false;
 }

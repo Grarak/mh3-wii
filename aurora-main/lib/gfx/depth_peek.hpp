@@ -22,8 +22,7 @@ struct FrameMapping {
 FrameMapping capture_frame_mapping() noexcept;
 
 // Render thread.
-void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t height,
-                           const FrameMapping& mapping) noexcept;
+void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t height, const FrameMapping& mapping) noexcept;
 void after_submit() noexcept;
 
 namespace testing {

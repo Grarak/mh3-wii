@@ -10,14 +10,16 @@ namespace {
 SDL_AudioStream* stream = nullptr;
 uint32_t streamRate = 0;
 void Shutdown() {
-    if (stream) SDL_DestroyAudioStream(stream);
+    if (stream)
+        SDL_DestroyAudioStream(stream);
     stream = nullptr;
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 void Check(bool result) {
-    if (!result) throw std::runtime_error(std::string("SDL audio: ") + SDL_GetError());
+    if (!result)
+        throw std::runtime_error(std::string("SDL audio: ") + SDL_GetError());
 }
-}
+} // namespace
 void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
     if (bytes % 4 || (rate != 32000 && rate != 48000))
         throw std::runtime_error("Invalid Wii PCM block");
@@ -53,11 +55,16 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
     // corresponding guest completion callbacks. Report dropped audio explicitly.
     if (SDL_GetAudioStreamQueued(stream) > int(rate)) {
         static bool reported = false;
-        if (!reported) { std::fprintf(stderr, "MH3 audio: playback backlog; dropping excess PCM blocks\n"); reported = true; }
+        if (!reported) {
+            std::fprintf(stderr, "MH3 audio: playback backlog; dropping excess PCM blocks\n");
+            reported = true;
+        }
         return;
     }
     const auto samples = DecodeWiiPcm(data, bytes);
     Check(SDL_PutAudioStreamData(stream, samples.data(), bytes));
 }
 
-NativeAudioOutputStatistics GetNativeAudioOutputStatistics() {return {};}
+NativeAudioOutputStatistics GetNativeAudioOutputStatistics() {
+    return {};
+}

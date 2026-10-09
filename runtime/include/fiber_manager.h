@@ -40,64 +40,63 @@ enum class ThreadState : uint32_t {
 
 // Information about a guest fiber
 struct GuestFiber {
-    void* fiber = nullptr;              // Host context handle
-    uint32_t entryPoint = 0;            // Thread entry function
-    uint32_t entryArg = 0;              // Argument to entry function
-    CpuContext cpuContext{};            // Saved CPU context for this fiber
+    void* fiber = nullptr;   // Host context handle
+    uint32_t entryPoint = 0; // Thread entry function
+    uint32_t entryArg = 0;   // Argument to entry function
+    CpuContext cpuContext{}; // Saved CPU context for this fiber
     ThreadState state = ThreadState::READY;
-    bool isSchedulerFiber = false;      // True for the main scheduler fiber
-    bool terminated = false;            // Thread has exited
+    bool isSchedulerFiber = false; // True for the main scheduler fiber
+    bool terminated = false;       // Thread has exited
 };
 
 class GuestFiberManager {
-public:
+  public:
     // Initialize the fiber system - must be called from main thread
     static void Initialize();
-    
+
     // Shutdown the fiber system
     static void Shutdown();
-    
+
     // Check if fiber system is initialized
     static bool IsInitialized();
-    
+
     // Create a fiber for a guest thread (called from OSCreateThread HLE).
     // OSCreateThread's stackSize/priority are not passed: the host fiber models
     // neither, only the guest SP seeded from stackBase. Returns true on success.
-    static bool CreateGuestFiber(uint32_t guestThreadAddr, uint32_t entryPoint,
-                                  uint32_t entryArg, uint32_t stackBase);
-    
+    static bool CreateGuestFiber(uint32_t guestThreadAddr, uint32_t entryPoint, uint32_t entryArg, uint32_t stackBase);
+
     // Resume a guest thread (called from OSResumeThread HLE)
     // This marks the fiber as runnable
     static void ResumeGuestThread(uint32_t guestThreadAddr);
-    
+
     // Suspend a guest thread (called from OSSuspendThread HLE)
     static void SuspendGuestThread(uint32_t guestThreadAddr);
-    
+
     // Called when a guest thread exits or is canceled
     static void ExitGuestThread(uint32_t guestThreadAddr, ThreadState finalState);
-    
+
     // Switch to a specific guest thread's fiber (called from OSLoadContext)
     // This saves the current fiber's state and switches to the target
     static void SwitchToThread(uint32_t guestThreadAddr, CpuContext* cpu);
-    
+
     // Get the currently running guest thread address (0 if in scheduler)
     static uint32_t GetCurrentGuestThread();
-    
+
     // Get fiber info for a guest thread (may be null)
     static GuestFiber* GetFiber(uint32_t guestThreadAddr);
-    
+
     // Check for VI retrace and process it (called from scheduler idle)
     static void ProcessTimerEvents(CpuContext* cpu);
-    
+
     // Register the current host fiber as a guest thread fiber
     // This is used for the default/main thread that exists before OSCreateThread
     static bool RegisterMainThreadAsFiber(uint32_t guestThreadAddr, CpuContext* cpu);
-    
+
     // Check if a fiber exists for a guest thread
     static bool HasFiber(uint32_t guestThreadAddr);
     static bool IsTerminated(uint32_t guestThreadAddr);
 
-private:
+  private:
     // The fiber entry point wrapper
 #if defined(_WIN32)
     static void CALLBACK FiberProc(void* param);

@@ -21,13 +21,19 @@
 
 #include <cmath>
 
-extern "C" void MH3_Sqrt(CpuContext* ctx) { ctx->fpr[1].d = std::sqrt(ctx->fpr[1].d); }
+extern "C" void MH3_Sqrt(CpuContext* ctx) {
+    ctx->fpr[1].d = std::sqrt(ctx->fpr[1].d);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x804685FC, MH3_Sqrt, "sqrt");
 
-extern "C" void MH3_Sqrtf(CpuContext* ctx) { ctx->fpr[1].d = double(float(std::sqrt(ctx->fpr[1].d))); }
+extern "C" void MH3_Sqrtf(CpuContext* ctx) {
+    ctx->fpr[1].d = double(float(std::sqrt(ctx->fpr[1].d)));
+}
 REGISTER_NATIVE_FUNCTION_AS(0x804645F4, MH3_Sqrtf, "sqrtf");
 
-extern "C" void MH3_Atan2(CpuContext* ctx) { ctx->fpr[1].d = std::atan2(ctx->fpr[1].d, ctx->fpr[2].d); }
+extern "C" void MH3_Atan2(CpuContext* ctx) {
+    ctx->fpr[1].d = std::atan2(ctx->fpr[1].d, ctx->fpr[2].d);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80464BE0, MH3_Atan2, "atan2");
 
 extern "C" void MH3_Atan2f(CpuContext* ctx) {
@@ -43,7 +49,8 @@ static void SinCosRadPort(CpuContext* ctx) {
     constexpr uint32_t kTable = 0x805744A0;
     const float index = float(ctx->fpr[1].d) * Memory::ReadFloat32(0x8079FF60 - 31528); // 256 / 2 pi
     float magnitude = std::fabs(index);
-    while (magnitude >= 65536.0f) magnitude -= 65536.0f;
+    while (magnitude >= 65536.0f)
+        magnitude -= 65536.0f;
     const uint32_t whole = uint32_t(magnitude);
     const float fraction = magnitude - float(whole & 0xFFFF);
     const uint32_t entry = kTable + 16 * (whole & 0xFF);
@@ -53,5 +60,7 @@ static void SinCosRadPort(CpuContext* ctx) {
     Memory::WriteFloat32(ctx->gpr[3], index < 0.0f ? -sine : sine);
 }
 extern "C" void func_8009C7C4(CpuContext* ctx);
-extern "C" void MH3_SinCosRad(CpuContext* ctx) { PortCheck::Call(ctx, "SinCosRad", func_8009C7C4, SinCosRadPort); }
+extern "C" void MH3_SinCosRad(CpuContext* ctx) {
+    PortCheck::Call(ctx, "SinCosRad", func_8009C7C4, SinCosRadPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8009C7C4, MH3_SinCosRad, "SinCosRad");

@@ -37,27 +37,33 @@ enum : uint32_t {
 enum : uint32_t {
     kConditionA = 0x80,
     kConditionB = 0x40,
-    kSkillHalve = 0xA8,     // drains halved (1: only on even steps)
-    kSkillDouble = 0xA9,    // drains doubled every fifth step
+    kSkillHalve = 0xA8,  // drains halved (1: only on even steps)
+    kSkillDouble = 0xA9, // drains doubled every fifth step
     kCatSkillEvenOnly = 0x17,
 };
 
-bool Is(GuestCall& game, uint32_t fn, uint32_t plw, uint32_t arg) { return game(fn, {plw, arg}) == 1; }
+bool Is(GuestCall& game, uint32_t fn, uint32_t plw, uint32_t arg) {
+    return game(fn, {plw, arg}) == 1;
+}
 
 // 0x8027695C: stamina changes by `delta`; a drain is adjusted.
 void Change(GuestCall& game, uint32_t plw, int16_t delta) {
-    if (noStaminaDrain && delta < 0) return;
-    if (game.Call<MasterCheck>({plw}) == 0) return;
+    if (noStaminaDrain && delta < 0)
+        return;
+    if (game.Call<MasterCheck>({plw}) == 0)
+        return;
     if (delta < 0) {
         if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB))
             delta = int16_t(delta * 3);
         const int32_t steps = int32_t(Memory::Read32(plw + kSteps));
         if (delta == -1) {
-            if (Is(game, SkillCheck, plw, kSkillHalve) && (steps & 1) != 0) return;
+            if (Is(game, SkillCheck, plw, kSkillHalve) && (steps & 1) != 0)
+                return;
         } else if (Is(game, SkillCheck, plw, kSkillHalve)) {
             delta = int16_t(delta / 2);
         }
-        if (Is(game, SkillCheck, plw, kSkillDouble) && steps % 5 == 0) delta = int16_t(delta * 2);
+        if (Is(game, SkillCheck, plw, kSkillDouble) && steps % 5 == 0)
+            delta = int16_t(delta * 2);
     }
     game.Call<SetConditionState>({plw, uint32_t(int32_t(delta))});
 }
@@ -65,19 +71,24 @@ void Change(GuestCall& game, uint32_t plw, int16_t delta) {
 // 0x80276AA0: a drain of 1 (3 in the conditions), on even steps only with the
 // halving skills.
 void Drain(GuestCall& game, uint32_t plw) {
-    if (noStaminaDrain) return;
+    if (noStaminaDrain)
+        return;
     int16_t delta = -1;
-    if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB)) delta = -3;
+    if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB))
+        delta = -3;
     uint16_t skipMask = Is(game, SkillCheck, plw, kSkillHalve) ? 1 : 0;
-    if (Is(game, CatSkillCheck, plw, kCatSkillEvenOnly)) skipMask = skipMask != 0 ? 3 : 1;
-    if (skipMask != 0 && (Memory::Read32(plw + kSteps) & skipMask) != 0) return;
+    if (Is(game, CatSkillCheck, plw, kCatSkillEvenOnly))
+        skipMask = skipMask != 0 ? 3 : 1;
+    if (skipMask != 0 && (Memory::Read32(plw + kSteps) & skipMask) != 0)
+        return;
     if (Is(game, SkillCheck, plw, kSkillDouble) && int32_t(Memory::Read32(plw + kSteps)) % 5 == 0)
         delta = int16_t(delta * 2);
     game.Call<SetConditionState>({plw, uint32_t(int32_t(delta))});
 }
 
 // Runs `once` for each tick of this step, with the step counter of that tick.
-template <typename F> void PerTick(uint32_t plw, F once) {
+template <typename F>
+void PerTick(uint32_t plw, F once) {
     const uint32_t ticks = GameStep::Ticks();
     const uint32_t steps = Memory::Read32(plw + kSteps);
     for (uint32_t t = 0; t < ticks; ++t) {
@@ -88,7 +99,9 @@ template <typename F> void PerTick(uint32_t plw, F once) {
 }
 
 } // namespace
-void LauncherCheats::SetNoStaminaDrain(bool enabled) { noStaminaDrain = enabled; }
+void LauncherCheats::SetNoStaminaDrain(bool enabled) {
+    noStaminaDrain = enabled;
+}
 
 extern "C" void func_8027695C(CpuContext* ctx);
 extern "C" void func_80276AA0(CpuContext* ctx);

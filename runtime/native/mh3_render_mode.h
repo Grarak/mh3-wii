@@ -7,8 +7,14 @@
 extern "C" {
 #endif
 
-enum { MH3_RENDER_MODE_BYTES = 60 };
-enum { MH3_MODE_NTSC, MH3_MODE_PROGRESSIVE, MH3_MODE_PAL };
+enum {
+    MH3_RENDER_MODE_BYTES = 60
+};
+enum {
+    MH3_MODE_NTSC,
+    MH3_MODE_PROGRESSIVE,
+    MH3_MODE_PAL
+};
 
 /* Ordinary CPU display configuration. Only read/store translate the legacy
  * big endian compatibility record still consumed by translated game code. */
@@ -38,14 +44,11 @@ mh3_res_status mh3_render_mode_store(mh3_res_mut_span record, const mh3_render_m
 mh3_res_status mh3_render_mode_crop(mh3_render_mode *mode, uint16_t horizontal, uint16_t vertical);
 /* defaults are ordered NTSC, progressive, PAL. A custom mode preserves the
  * destination's five reserved bytes, matching 8003f9a4. */
-mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences,
-    const mh3_render_mode defaults[3], const mh3_render_mode *custom,
-    mh3_render_configuration *out);
+mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences, const mh3_render_mode defaults[3], const mh3_render_mode *custom, mh3_render_configuration *out);
 
 /* ApplyWidemode only changes VI width/origin, retaining the current EFB and
  * other display fields. Unlike RenderInit it does not test component cable. */
-mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences,
-    const mh3_render_mode defaults[3], mh3_render_mode *current);
+mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences, const mh3_render_mode defaults[3], mh3_render_mode *current);
 
 #ifdef __cplusplus
 }

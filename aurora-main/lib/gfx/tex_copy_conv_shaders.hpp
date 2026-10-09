@@ -83,4 +83,4 @@ void main() {
     frag_color = sample_copy(v_uv);
 }
 )";
-}
+} // namespace aurora::gfx::tex_copy_conv::shaders

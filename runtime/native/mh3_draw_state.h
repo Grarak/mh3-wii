@@ -23,10 +23,9 @@ typedef struct mh3_draw_state {
 
 void mh3_draw_identity_position(float out[12]);
 /* Wii camera convention, row-major: near maps to -w, far to zero. */
-int mh3_draw_ortho(float out[16],float top,float bottom,float left,float right,float near_z,float far_z);
+int mh3_draw_ortho(float out[16], float top, float bottom, float left, float right, float near_z, float far_z);
 /* Writes homogeneous GL clip coordinates in reversed depth, Y up. */
-void mh3_draw_vertex(const mh3_draw_state *state,const float position[3],
-                     const float uv[2],const uint8_t color[4],AuroraNativeVertex *out);
+void mh3_draw_vertex(const mh3_draw_state *state, const float position[3], const float uv[2], const uint8_t color[4], AuroraNativeVertex *out);
 #ifdef __cplusplus
 }
 #endif

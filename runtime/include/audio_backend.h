@@ -8,7 +8,7 @@
 #include <SDL3/SDL_audio.h>
 
 class AudioBackend {
-public:
+  public:
     static AudioBackend& Instance();
 
     bool Init(uint32_t sampleRate, uint32_t channels);
@@ -23,7 +23,7 @@ public:
     void SetMasterVolume(float volume);
     void SetMuted(bool muted);
 
-private:
+  private:
     AudioBackend() = default;
     ~AudioBackend() = default;
     AudioBackend(const AudioBackend&) = delete;

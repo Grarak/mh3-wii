@@ -34,14 +34,13 @@ inline thread_local bool g_mkwHostNiActive = false;
 // Same state in the form PpcForceSingleValueInline consumes: the pre-round subnormal threshold
 // while NI is active, 0.0 (identity, `|value| < 0.0` is always false) otherwise, so that path
 // needs no branch. Every writer of g_mkwHostNiActive must write this beside it in agreement.
-inline constexpr double kMkwNiFlushThreshold = 0x1p-126;  // 0x3810000000000000
+inline constexpr double kMkwNiFlushThreshold = 0x1p-126; // 0x3810000000000000
 inline thread_local double g_mkwNiFlushThreshold = 0.0;
 
 // Host FP control register access (MXCSR on x86_64, FPCR on AArch64), abstracted so
 // MkwApplyHostNiMode/MkwRestoreHostMxcsr and CpuContextScope (ppc_isa_context.h) don't each need
 // their own per-arch branch.
-inline uint32_t MkwGetHostFpControl() noexcept
-{
+inline uint32_t MkwGetHostFpControl() noexcept {
 #if defined(__x86_64__)
     return _mm_getcsr();
 #elif defined(__aarch64__)
@@ -55,8 +54,7 @@ inline uint32_t MkwGetHostFpControl() noexcept
 #endif
 }
 
-inline void MkwSetHostFpControl(uint32_t value) noexcept
-{
+inline void MkwSetHostFpControl(uint32_t value) noexcept {
 #if defined(__x86_64__)
     _mm_setcsr(value);
 #elif defined(__aarch64__)
@@ -65,19 +63,16 @@ inline void MkwSetHostFpControl(uint32_t value) noexcept
     uint64_t fpcr = 0;
     __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
     fpcr = (fpcr & ~static_cast<uint64_t>(0xFFFFFFFFu)) | value;
-    __asm__ __volatile__("msr fpcr, %0" :: "r"(fpcr));
+    __asm__ __volatile__("msr fpcr, %0" ::"r"(fpcr));
 #elif defined(__arm__)
-    __asm__ __volatile__("vmsr fpscr, %0" :: "r"(value));
+    __asm__ __volatile__("vmsr fpscr, %0" ::"r"(value));
 #endif
 }
 
-inline void MkwApplyHostNiMode(uint32_t fpscr) noexcept
-{
+inline void MkwApplyHostNiMode(uint32_t fpscr) noexcept {
     const uint32_t csr = MkwGetHostFpControl();
     const bool wantNi = (fpscr & 0x4u) != 0;
-    const uint32_t want = wantNi
-        ? (csr | kMkwFpControlFlushToZeroBits)
-        : (csr & ~kMkwFpControlFlushToZeroBits);
+    const uint32_t want = wantNi ? (csr | kMkwFpControlFlushToZeroBits) : (csr & ~kMkwFpControlFlushToZeroBits);
     if (want != csr)
         MkwSetHostFpControl(want);
     // `want` has every flush-to-zero bit set or every one clear, so this is exactly
@@ -93,8 +88,7 @@ inline void MkwApplyHostNiMode(uint32_t fpscr) noexcept
 /// restore has to go through here; a bare MkwSetHostFpControl would leave the mirror describing
 /// the FP environment that was just replaced.
 /// </summary>
-inline void MkwRestoreHostMxcsr(uint32_t csr) noexcept
-{
+inline void MkwRestoreHostMxcsr(uint32_t csr) noexcept {
     MkwSetHostFpControl(csr);
     const bool niActive = (csr & kMkwFpControlFlushToZeroBits) != 0;
     g_mkwHostNiActive = niActive;

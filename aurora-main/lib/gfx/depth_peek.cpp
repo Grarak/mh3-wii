@@ -63,16 +63,14 @@ Params make_params(uint32_t srcWidth, uint32_t srcHeight, const FrameMapping& ma
     return params;
   }
 
-  const bool stretch = mapping.viewportPolicy == AURORA_VIEWPORT_STRETCH ||
-                       mapping.viewportPolicy == AURORA_VIEWPORT_16_9;
+  const bool stretch = mapping.viewportPolicy == AURORA_VIEWPORT_STRETCH || mapping.viewportPolicy == AURORA_VIEWPORT_16_9;
   const float scaleX = static_cast<float>(srcWidth) / static_cast<float>(logicalSize.x);
   const float scaleY = static_cast<float>(srcHeight) / static_cast<float>(logicalSize.y);
   const float scale = std::min(scaleX, scaleY);
   params.scaleX = stretch ? scaleX : scale;
   params.scaleY = stretch ? scaleY : scale;
   params.offsetX = stretch ? 0.f : (static_cast<float>(srcWidth) - static_cast<float>(logicalSize.x) * scale) * 0.5f;
-  params.offsetY =
-      stretch ? 0.f : (static_cast<float>(srcHeight) - static_cast<float>(logicalSize.y) * scale) * 0.5f;
+  params.offsetY = stretch ? 0.f : (static_cast<float>(srcHeight) - static_cast<float>(logicalSize.y) * scale) * 0.5f;
   return params;
 }
 } // namespace
@@ -112,8 +110,7 @@ FrameMapping capture_frame_mapping() noexcept {
   return {vi::configured_fb_size(), gx::g_gxState.viewportPolicy};
 }
 
-void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t height,
-                           const FrameMapping& mapping) noexcept {
+void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t height, const FrameMapping& mapping) noexcept {
   ZoneScoped;
   const auto now = Clock::now();
   {

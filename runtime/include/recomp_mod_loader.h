@@ -27,9 +27,8 @@ struct MemoryReservation {
 inline thread_local uint32_t g_currentTranslatedExecutionAddress = 0;
 
 class ScopedTranslatedExecutionAddress {
-public:
-    explicit ScopedTranslatedExecutionAddress(uint32_t address) noexcept
-        : previous_(g_currentTranslatedExecutionAddress) {
+  public:
+    explicit ScopedTranslatedExecutionAddress(uint32_t address) noexcept : previous_(g_currentTranslatedExecutionAddress) {
         // Address 0 means "nothing new to report" - the enclosing scope's value
         // stays visible, and the unconditional restore below keeps nesting exact.
         if (address != 0) {
@@ -37,14 +36,12 @@ public:
         }
     }
 
-    ~ScopedTranslatedExecutionAddress() noexcept {
-        g_currentTranslatedExecutionAddress = previous_;
-    }
+    ~ScopedTranslatedExecutionAddress() noexcept { g_currentTranslatedExecutionAddress = previous_; }
 
     ScopedTranslatedExecutionAddress(const ScopedTranslatedExecutionAddress&) = delete;
     ScopedTranslatedExecutionAddress& operator=(const ScopedTranslatedExecutionAddress&) = delete;
 
-private:
+  private:
     uint32_t previous_ = 0;
 };
 

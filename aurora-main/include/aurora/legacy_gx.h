@@ -15,4 +15,3 @@ AURORA_GX_NORETURN void aurora_legacy_gx_panic(const char* entry);
 }
 #endif
 #undef AURORA_GX_NORETURN
-

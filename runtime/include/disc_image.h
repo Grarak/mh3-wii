@@ -11,7 +11,7 @@ class DiscFile;
 // Read-only decrypted partition view. Extracted mode preserves the original
 // file checks; disc-layout.txt selects a single exact partition with sys metadata.
 class DiscImage {
-public:
+  public:
     explicit DiscImage(const std::filesystem::path& root, bool applyNativeTextures = true);
     ~DiscImage();
     std::vector<uint8_t> Read(uint64_t offset, uint32_t length) const;
@@ -21,8 +21,12 @@ public:
     std::vector<std::string> FileNames() const;
     uint64_t FileOffset(const std::string& name) const;
     uint32_t FileSize(const std::string& name) const;
-private:
-    struct Extent { uint64_t offset, size; std::filesystem::path path; };
+
+  private:
+    struct Extent {
+        uint64_t offset, size;
+        std::filesystem::path path;
+    };
     std::vector<Extent> extents;
     std::map<std::string, std::pair<uint64_t, uint32_t>> fileEntries;
     std::unique_ptr<DiscFile> partition;
@@ -30,7 +34,10 @@ private:
     bool packed = false;
     std::map<uint64_t, std::vector<uint8_t>> fileOverrides;
     void ApplyFileOverrides(uint64_t offset, std::vector<uint8_t>& data) const;
-    struct NativeTexturePatch { uint64_t offset; std::array<uint8_t, 4> bytes; };
+    struct NativeTexturePatch {
+        uint64_t offset;
+        std::array<uint8_t, 4> bytes;
+    };
     std::vector<NativeTexturePatch> nativeTexturePatches;
     void ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const;
     void Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify = true);

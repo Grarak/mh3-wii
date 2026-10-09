@@ -25,9 +25,11 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
 // compares the return register (r3 when gpr, f1 otherwise) bit for bit,
 // reporting each distinct mismatch with the argument registers. No RAM
 // snapshot, so it can check every call.
-enum class Returns { Gpr3, Fpr1 };
-void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*),
-             void (*port)(CpuContext*));
+enum class Returns {
+    Gpr3,
+    Fpr1
+};
+void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*));
 
 // For ports whose only guest writes (besides their stack frames) are a few
 // output buffers: runs the original and then, with the buffers restored, the
@@ -36,8 +38,7 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 struct Region {
     uint32_t address, bytes;
 };
-void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*),
-               std::initializer_list<Region> outputs);
+void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs);
 
 // MH3_PORT_FUZZ=P:0xADDR,E:0xADDR,... (development): ports the game rarely
 // reaches, checked from a spread of made-up states. The PortCheck::Fuzz hooks
@@ -56,7 +57,9 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work);
 
 // The port, checked against the original when MH3_PORT_CHECK names it.
 inline void Call(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
-    if (Enabled(name)) Run(ctx, name, original, port);
-    else port(ctx);
+    if (Enabled(name))
+        Run(ctx, name, original, port);
+    else
+        port(ctx);
 }
 } // namespace PortCheck

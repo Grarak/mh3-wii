@@ -50,14 +50,14 @@ void aurora_get_present_timing(AuroraPresentTiming* timing);
 // Interpolation health: the per-frame fields describe the last sealed frame, the counters
 // accumulate since it was configured. This answers "output FPS dropped but the game held 60".
 typedef struct {
-  uint32_t targetFps;          // configured target, 0 when interpolation is off
-  uint32_t targetSamples;      // slots the pacing controller currently aims for
-  uint32_t activeSamples;      // slots latched for the latest sealed frame
-  uint32_t candidates;         // perspective draws in the latest sealed frame
-  uint32_t matchable;          // candidates whose identity also existed last frame
-  uint32_t matches;            // draws matched to the previous frame
-  uint32_t eligible;           // latest frame inserted interpolated slots
-  uint32_t replaySafe;         // latest frame could replay its command stream
+  uint32_t targetFps;     // configured target, 0 when interpolation is off
+  uint32_t targetSamples; // slots the pacing controller currently aims for
+  uint32_t activeSamples; // slots latched for the latest sealed frame
+  uint32_t candidates;    // perspective draws in the latest sealed frame
+  uint32_t matchable;     // candidates whose identity also existed last frame
+  uint32_t matches;       // draws matched to the previous frame
+  uint32_t eligible;      // latest frame inserted interpolated slots
+  uint32_t replaySafe;    // latest frame could replay its command stream
   uint64_t framesSealed;
   uint64_t framesLowMatch;
   uint64_t framesReplayUnsafe;
@@ -87,8 +87,7 @@ bool aurora_get_disable_copy_filter();
 #define AURORA_GUEST_WRITE_UNTRACKED UINT64_MAX
 typedef uint64_t (*AuroraGuestWriteGenerationCallback)(const void* hostPtr, size_t size);
 typedef void (*AuroraGuestWriteNotifyCallback)(const void* hostPtr, size_t size);
-void aurora_set_guest_write_hooks(AuroraGuestWriteGenerationCallback generation,
-                                  AuroraGuestWriteNotifyCallback notify);
+void aurora_set_guest_write_hooks(AuroraGuestWriteGenerationCallback generation, AuroraGuestWriteNotifyCallback notify);
 
 #ifdef __cplusplus
 }

@@ -36,7 +36,9 @@ inline Identity FromSerial(std::string serial) {
 
     return {
         std::move(serial),
-        {}, {}, {},
+        {},
+        {},
+        {},
         {
             0x00,
             0x09,
@@ -52,9 +54,7 @@ inline Identity LoadFromNand() {
     const auto root = RuntimeNandPath::DiscoverNandRootPath();
     const auto settings = RuntimeNandSettings::Read(root);
     if (!settings || !RuntimeNandSettings::HasIdentity(*settings)) {
-        RuntimeNandPath::FailNandRoot(
-            "NAND setting.txt is missing or has invalid console identity fields (SERNO, CODE, AREA, GAME)",
-            root / "title/00000001/00000002/data/setting.txt");
+        RuntimeNandPath::FailNandRoot("NAND setting.txt is missing or has invalid console identity fields (SERNO, CODE, AREA, GAME)", root / "title/00000001/00000002/data/setting.txt");
     }
     Identity identity = FromSerial(settings->at("SERNO"));
     identity.productCode = settings->at("CODE");

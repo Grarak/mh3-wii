@@ -23,8 +23,10 @@ bool Enabled(const char* name) {
         const char* v = std::getenv("MH3_PORT_CHECK");
         return std::string(v ? v : "");
     }();
-    if (list.empty()) return false;
-    if (list == "all") return true;
+    if (list.empty())
+        return false;
+    if (list == "all")
+        return true;
     const std::string n = name;
     for (size_t at = 0; (at = list.find(n, at)) != std::string::npos; at += n.size())
         if ((at == 0 || list[at - 1] == ',') && (at + n.size() == list.size() || list[at + n.size()] == ','))
@@ -54,10 +56,7 @@ struct Snapshot {
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
     }
-    static uint32_t Address(size_t offset) {
-        return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset)
-                                          : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size);
-    }
+    static uint32_t Address(size_t offset) { return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset) : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size); }
 };
 
 // Fuzz: every call checked, whatever the clock or the rate.
@@ -83,8 +82,7 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     const auto now = std::chrono::steady_clock::now();
     auto& previous = last[name];
     static const bool every = std::getenv("MH3_PORT_CHECK_EVERY") != nullptr;
-    if (GameStep::Ticks() != 1 || (!forced && !every &&
-                                   (now - lastAny < std::chrono::milliseconds(500) || now - previous < std::chrono::seconds(2)))) {
+    if (GameStep::Ticks() != 1 || (!forced && !every && (now - lastAny < std::chrono::milliseconds(500) || now - previous < std::chrono::seconds(2)))) {
         port(ctx);
         return;
     }
@@ -108,7 +106,8 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     CaptureGuestGx(&actualGx);
     port(ctx);
     CaptureGuestGx(nullptr);
-    if (!actualGx.empty()) SubmitGuestGxBytes(actualGx.data(), actualGx.size());
+    if (!actualGx.empty())
+        SubmitGuestGxBytes(actualGx.data(), actualGx.size());
 
     Snapshot actual;
     actual.Save();
@@ -121,14 +120,15 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
             continue;
         }
         const uint32_t a = Word(expected.bytes, i), b = Word(actual.bytes, i);
-        if (a == b) continue;
+        if (a == b)
+            continue;
         const uint32_t address = Snapshot::Address(i);
         // Callee stack frames, and the LR save word the callee stores in the caller's.
-        if (address < sp + 8 && address >= sp - 0x10000) continue;
+        if (address < sp + 8 && address >= sp - 0x10000)
+            continue;
         if (++differences <= 32) {
             char line[96];
-            std::snprintf(line, sizeof line, "  %08x original %08x port %08x before %08x\n", address, a, b,
-                          Word(before.bytes, i));
+            std::snprintf(line, sizeof line, "  %08x original %08x port %08x before %08x\n", address, a, b, Word(before.bytes, i));
             lines += line;
         }
     }
@@ -136,16 +136,16 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
         lines += "  stack/sda registers differ after return\n";
     if (expectedGx != actualGx) {
         size_t at = 0;
-        while (at < expectedGx.size() && at < actualGx.size() && expectedGx[at] == actualGx[at]) ++at;
+        while (at < expectedGx.size() && at < actualGx.size() && expectedGx[at] == actualGx[at])
+            ++at;
         size_t bytes = 0;
-        for (size_t i = 0; i < expectedGx.size() && i < actualGx.size(); ++i) bytes += expectedGx[i] != actualGx[i];
+        for (size_t i = 0; i < expectedGx.size() && i < actualGx.size(); ++i)
+            bytes += expectedGx[i] != actualGx[i];
         char line[256];
-        int n = std::snprintf(line, sizeof line, "  GX FIFO: %llu bytes original, %llu port, %llu differ from byte %llu:",
-                              static_cast<unsigned long long>(expectedGx.size()), static_cast<unsigned long long>(actualGx.size()),
-                              static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(at));
+        int n = std::snprintf(line, sizeof line, "  GX FIFO: %llu bytes original, %llu port, %llu differ from byte %llu:", static_cast<unsigned long long>(expectedGx.size()),
+                              static_cast<unsigned long long>(actualGx.size()), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(at));
         for (size_t i = at & ~size_t(3); i < (at & ~size_t(3)) + 8 && n < 200; ++i)
-            n += std::snprintf(line + n, sizeof line - n, " %02x/%02x", i < expectedGx.size() ? expectedGx[i] : 0,
-                               i < actualGx.size() ? actualGx[i] : 0);
+            n += std::snprintf(line + n, sizeof line - n, " %02x/%02x", i < expectedGx.size() ? expectedGx[i] : 0, i < actualGx.size() ? actualGx[i] : 0);
         lines += line;
         lines += "\n";
         // MH3_PORT_CHECK_DUMP=dir: the first few differing streams, as NAME-N-{original,port}.gx.
@@ -154,8 +154,7 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
         if (dump && dumped < 8) {
             ++dumped;
             for (int which = 0; which < 2; ++which) {
-                const std::string path = std::string(dump) + "/" + name + "-" + std::to_string(dumped) +
-                                         (which ? "-port.gx" : "-original.gx");
+                const std::string path = std::string(dump) + "/" + name + "-" + std::to_string(dumped) + (which ? "-port.gx" : "-original.gx");
                 if (FILE* f = std::fopen(path.c_str(), "wb")) {
                     const std::vector<uint8_t>& b = which ? actualGx : expectedGx;
                     std::fwrite(b.data(), 1, b.size(), f);
@@ -168,8 +167,7 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     if (differences || !lines.empty()) {
         const std::string key = name + std::string(":") + lines.substr(0, lines.find('\n'));
         if (reported.insert(key).second)
-            std::printf("MH3 port check: %s differs from the original (check %u, %llu words):\n%s", name, checks,
-                        static_cast<unsigned long long>(differences), lines.c_str());
+            std::printf("MH3 port check: %s differs from the original (check %u, %llu words):\n%s", name, checks, static_cast<unsigned long long>(differences), lines.c_str());
     } else if ((checks & (checks - 1)) == 0) {
         std::printf("MH3 port check: %s matches the original (%u checks)\n", name, checks);
     }
@@ -181,8 +179,7 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
 #endif
 }
 
-void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*),
-             void (*port)(CpuContext*)) {
+void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
 #ifdef MH3_DEVELOPMENT
     static std::map<std::string, uint64_t> counts;
     static std::set<std::string> reported;
@@ -196,11 +193,10 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
     ++checks;
     if (expected != actual) {
         char line[256];
-        std::snprintf(line, sizeof line,
-                      "MH3 port check: %s returns %016llx, the original %016llx (r3 %08x r4 %08x r5 %08x f1 %016llx f2 %016llx)\n",
-                      name, (unsigned long long)actual, (unsigned long long)expected, entry.gpr[3], entry.gpr[4],
-                      entry.gpr[5], (unsigned long long)entry.fpr[1].raw, (unsigned long long)entry.fpr[2].raw);
-        if (reported.size() < 64 && reported.insert(line).second) std::printf("%s", line);
+        std::snprintf(line, sizeof line, "MH3 port check: %s returns %016llx, the original %016llx (r3 %08x r4 %08x r5 %08x f1 %016llx f2 %016llx)\n", name, (unsigned long long)actual,
+                      (unsigned long long)expected, entry.gpr[3], entry.gpr[4], entry.gpr[5], (unsigned long long)entry.fpr[1].raw, (unsigned long long)entry.fpr[2].raw);
+        if (reported.size() < 64 && reported.insert(line).second)
+            std::printf("%s", line);
     } else if ((checks & (checks - 1)) == 0) {
         std::printf("MH3 port check: %s matches the original (%llu calls)\n", name, (unsigned long long)checks);
     }
@@ -213,8 +209,7 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 #endif
 }
 
-void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*),
-               std::initializer_list<Region> outputs) {
+void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {
 #ifdef MH3_DEVELOPMENT
     static std::map<std::string, uint64_t> counts;
     static std::set<std::string> reported;
@@ -241,16 +236,18 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
         const uint8_t* out = Memory::GetPointer(r.address, r.bytes);
         const std::vector<uint8_t>& want = expected[i++];
         size_t at = 0;
-        while (at < r.bytes && out[at] == want[at]) ++at;
-        if (at == r.bytes) continue;
+        while (at < r.bytes && out[at] == want[at])
+            ++at;
+        if (at == r.bytes)
+            continue;
         same = false;
         char line[256];
         std::snprintf(line, sizeof line,
                       "MH3 port check: %s writes %02x at %08x, the original %02x (r3 %08x r4 %08x r5 %08x r6 %08x "
                       "r7 %08x r8 %08x)\n",
-                      name, out[at], r.address + uint32_t(at), want[at], entry.gpr[3], entry.gpr[4], entry.gpr[5],
-                      entry.gpr[6], entry.gpr[7], entry.gpr[8]);
-        if (reported.size() < 64 && reported.insert(line).second) std::printf("%s", line);
+                      name, out[at], r.address + uint32_t(at), want[at], entry.gpr[3], entry.gpr[4], entry.gpr[5], entry.gpr[6], entry.gpr[7], entry.gpr[8]);
+        if (reported.size() < 64 && reported.insert(line).second)
+            std::printf("%s", line);
         break;
     }
     if (same && (checks & (checks - 1)) == 0)
@@ -272,7 +269,8 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
         return v ? uint32_t(std::strtoul(v, nullptr, 0)) : 900u;
     }();
     static std::map<char, uint32_t> calls;
-    if (!list || ++calls[kind] != after) return;
+    if (!list || ++calls[kind] != after)
+        return;
     constexpr uint32_t kStepCounter = 0x8065AA6C;
     AxDspHle::JoinMixWorker();
     const CpuContext entry = *ctx;
@@ -285,10 +283,12 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
     const std::string s = list;
     for (size_t at = 0; at < s.size();) {
         size_t end = s.find(',', at);
-        if (end == std::string::npos) end = s.size();
+        if (end == std::string::npos)
+            end = s.size();
         const std::string item = s.substr(at, end - at);
         at = end + 1;
-        if (item.size() < 3 || item[0] != kind || item[1] != ':') continue;
+        if (item.size() < 3 || item[0] != kind || item[1] != ':')
+            continue;
         const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
         if (kind == 'P') {
             // Samples (MH3_PORT_FUZZ_SAMPLES, default 64) of the action state
@@ -310,7 +310,8 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
                 Memory::Write8(work + 5, uint8_t(state));
                 Memory::Write32(work + 0x20, state * 25);
                 Memory::Write32(work + 0x28, timer);
-                for (uint32_t k = 0xE0; k < 0x100; k += 4) Memory::Write32(work + k, bits);
+                for (uint32_t k = 0xE0; k < 0x100; k += 4)
+                    Memory::Write32(work + k, bits);
                 Memory::Write16(work + 0xC8, uint16_t(bits));
                 Memory::Write16(work + 0xCC, uint16_t(bits >> 1));
                 Memory::Write8(work + 6, uint8_t(bits & 1));
@@ -342,13 +343,16 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
     // checks see the updates of what they start.
     for (size_t at = 0; kind == 'P' && at < s.size();) {
         size_t end = s.find(',', at);
-        if (end == std::string::npos) end = s.size();
+        if (end == std::string::npos)
+            end = s.size();
         const std::string item = s.substr(at, end - at);
         at = end + 1;
-        if (item.size() < 3 || item[0] != 'C' || item[1] != ':') continue;
+        if (item.size() < 3 || item[0] != 'C' || item[1] != ':')
+            continue;
         const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
         const uint32_t zero = (entry.gpr[1] - 0x400) & ~15u; // below the stack
-        for (uint32_t i = 0; i < 16; i += 4) Memory::Write32(zero + i, 0);
+        for (uint32_t i = 0; i < 16; i += 4)
+            Memory::Write32(zero + i, 0);
         game(fn, {work + 0x3C, zero, 0, work}); // PLW+0x3C: the position
         *ctx = entry;
         std::printf("MH3 port fuzz: started %08x\n", fn);

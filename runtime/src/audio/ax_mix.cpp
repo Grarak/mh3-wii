@@ -40,8 +40,7 @@ void PrivateMixTestHook();
 namespace {
 
 uint64_t MixTimeNs() {
-    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count());
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 // The DSP mixes in parallel with the CPU on the Wii, so the mix runs on its own
@@ -50,7 +49,8 @@ uint64_t MixTimeNs() {
 // MH3_AX_MIX_WORKER=0 (development) mixes inline on the guest thread.
 bool MixWorkerWanted() {
 #ifdef MH3_DEVELOPMENT
-    if (const char* value = std::getenv("MH3_AX_MIX_WORKER")) return value[0] != '0';
+    if (const char* value = std::getenv("MH3_AX_MIX_WORKER"))
+        return value[0] != '0';
 #endif
 #ifdef __vita__
     // The Vita SDK's sysconf(_SC_NPROCESSORS_ONLN) returns EINVAL, so its
@@ -64,7 +64,8 @@ bool MixWorkerWanted() {
 std::filesystem::path FindDspCoefficientRom() {
 #ifdef __vita__
     for (const char* path : {"app0:/dsp_coef.bin", "host0:/game/dsp_coef.bin"}) {
-        if (std::filesystem::is_regular_file(path)) return path;
+        if (std::filesystem::is_regular_file(path))
+            return path;
     }
     throw std::runtime_error("Missing bundled Wii DSP coefficient ROM (dsp_coef.bin)");
 #else
@@ -85,15 +86,18 @@ std::filesystem::path FindDspCoefficientRom() {
 }
 
 class AXWii {
-public:
+  public:
     AXWii() {
         m_lastMainVolume = 0x8000;
         m_lastAuxVolumes.fill(0x8000);
     }
 
     ~AXWii() {
-        try { ShutdownMixWorker(); }
-        catch (const std::exception& error) { ReportMixWorkerFailure(error.what()); }
+        try {
+            ShutdownMixWorker();
+        } catch (const std::exception& error) {
+            ReportMixWorkerFailure(error.what());
+        }
     }
 
     void Initialize() {
@@ -180,16 +184,20 @@ public:
         result.workerThread = m_mixStartup.threadId;
         result.workerCore = m_mixStartup.cpuId;
         result.workerAffinity = m_mixStartup.affinityMask;
-        result.storageBytes = sizeof(m_privateMemory) + sizeof(m_savedMixState) +
-            sizeof(m_admissionPbs) + sizeof(m_admissionWrites);
+        result.storageBytes = sizeof(m_privateMemory) + sizeof(m_savedMixState) + sizeof(m_admissionPbs) + sizeof(m_admissionWrites);
         return result;
     }
 
     void ShutdownMixWorker() {
         std::exception_ptr failure;
-        try { JoinMix(); } catch (...) { failure = std::current_exception(); }
+        try {
+            JoinMix();
+        } catch (...) {
+            failure = std::current_exception();
+        }
         if (!m_mixThread.joinable()) {
-            if (failure) std::rethrow_exception(failure);
+            if (failure)
+                std::rethrow_exception(failure);
             return;
         }
         {
@@ -198,7 +206,8 @@ public:
         }
         m_mixWake.notify_all();
         m_mixThread.join();
-        if (failure) std::rethrow_exception(failure);
+        if (failure)
+            std::rethrow_exception(failure);
     }
 
     void SetMixWorkerEnabled(bool enabled) {
@@ -251,7 +260,7 @@ public:
         return m_lastCpuMail;
     }
 
-private:
+  private:
     struct CommandListScan {
         uint32_t outputCommands = 0;
     };
@@ -274,7 +283,6 @@ private:
         CMD_END = 0x0e,
     };
 
-
     static constexpr uint16_t kCmdSetPbAddressOld = 0x04;
 
     struct DecodedCommand {
@@ -294,19 +302,13 @@ private:
 
     // The old layout runs the PB chain the previous SET_PB_ADDRESS stashed, and
     // ProcessPBList applies the old per-millisecond PB update walk for it.
-    static bool UsesStashedPbAddress(AXCommandLayout layout) {
-        return layout == AXCommandLayout::Old;
-    }
+    static bool UsesStashedPbAddress(AXCommandLayout layout) { return layout == AXCommandLayout::Old; }
 
     // Only the plain New encoding puts a volume halfword in front of OUTPUT's
     // two addresses; Old and NewNoOutputVolume both imply 0x8000.
-    static bool OutputCarriesVolume(AXCommandLayout layout) {
-        return layout != AXCommandLayout::Old && layout != AXCommandLayout::NewNoOutputVolume;
-    }
+    static bool OutputCarriesVolume(AXCommandLayout layout) { return layout != AXCommandLayout::Old && layout != AXCommandLayout::NewNoOutputVolume; }
 
-    void PushMail(uint32_t mail) {
-        m_cpuMails.push_back(mail);
-    }
+    void PushMail(uint32_t mail) { m_cpuMails.push_back(mail); }
 
     void HandleMail(uint32_t mail) {
         switch (m_mailState) {
@@ -367,7 +369,8 @@ private:
         // complete serial fallback; a larger list is never silently truncated.
         if (!sizeWords || !Memory::Contains(addr, sizeWords * sizeof(uint16_t)))
             throw std::runtime_error("AX command list is empty or outside guest RAM");
-        if (m_cmdList.size() < sizeWords) m_cmdList.resize(sizeWords);
+        if (m_cmdList.size() < sizeWords)
+            m_cmdList.resize(sizeWords);
         for (uint32_t i = 0; i < sizeWords; ++i)
             m_cmdList[i] = Memory::Read16(addr + i * 2);
     }
@@ -381,9 +384,7 @@ private:
             const bool validNew = ScanCommandList(AXCommandLayout::New, nullptr);
             const bool validNewNoOutputVolume = ScanCommandList(AXCommandLayout::NewNoOutputVolume, nullptr);
             const bool validOld = ScanCommandList(AXCommandLayout::Old, nullptr);
-            layout = validNew ? AXCommandLayout::New :
-                     (validNewNoOutputVolume ? AXCommandLayout::NewNoOutputVolume :
-                      (validOld ? AXCommandLayout::Old : AXCommandLayout::New));
+            layout = validNew ? AXCommandLayout::New : (validNewNoOutputVolume ? AXCommandLayout::NewNoOutputVolume : (validOld ? AXCommandLayout::Old : AXCommandLayout::New));
         }
 
         CommandListScan scan{};
@@ -398,7 +399,8 @@ private:
             const uint64_t elapsed = MixTimeNs() - prepareStart;
             m_stats.prepareNs += elapsed;
             m_stats.maxPrepareNs = std::max(m_stats.maxPrepareNs, elapsed);
-            if (!admitted) ++m_stats.rejected;
+            if (!admitted)
+                ++m_stats.rejected;
         }
         const bool deferred = admitted && EnsureMixWorker();
         m_privateJob = deferred;
@@ -414,7 +416,8 @@ private:
             ++m_stats.serial;
             m_privateMemory.Reset();
         }
-        for (uint32_t i = 0; i < scan.outputCommands; ++i) PushMail(kDspSync);
+        for (uint32_t i = 0; i < scan.outputCommands; ++i)
+            PushMail(kDspSync);
 
         m_mixLayout = layout;
         m_mixCmdListSize = m_cmdListSize;
@@ -430,9 +433,7 @@ private:
         ExecuteCommandList(m_mixLayout, m_mixCmdListSize);
     }
 
-    bool CanReadWords(uint32_t idx, uint32_t count) const {
-        return idx <= m_cmdListSize && count <= m_cmdListSize - idx;
-    }
+    bool CanReadWords(uint32_t idx, uint32_t count) const { return idx <= m_cmdListSize && count <= m_cmdListSize - idx; }
 
     // Walks the command list for a candidate layout
     bool ScanCommandList(AXCommandLayout layout, CommandListScan* scan) const {
@@ -454,7 +455,8 @@ private:
 
             const DecodedCommand decoded = DecodeCommand(cmd, layout);
             if (decoded.setsPbAddress) {
-                if (!skip(2)) return false;
+                if (!skip(2))
+                    return false;
                 continue;
             }
 
@@ -463,30 +465,38 @@ private:
             case CMD_ADD_TO_LR:
             case CMD_SUB_TO_LR:
             case CMD_ADD_SUB_TO_LR:
-                if (!skip(2)) return false;
+                if (!skip(2))
+                    return false;
                 break;
             case CMD_PROCESS:
-                if (!UsesStashedPbAddress(layout) && !skip(2)) return false;
+                if (!UsesStashedPbAddress(layout) && !skip(2))
+                    return false;
                 break;
             case CMD_MIX_AUXA:
             case CMD_MIX_AUXB:
             case CMD_MIX_AUXC:
-                if (!skip(5)) return false;
+                if (!skip(5))
+                    return false;
                 break;
             case CMD_UPL_AUXA_MIX_LRSC:
             case CMD_UPL_AUXB_MIX_LRSC:
-                if (!skip(13)) return false;
+                if (!skip(13))
+                    return false;
                 break;
             case CMD_COMPRESSOR:
-                if (!skip(4)) return false;
+                if (!skip(4))
+                    return false;
                 break;
             case CMD_OUTPUT:
             case CMD_OUTPUT_DPL2:
-                if (!skip(OutputCarriesVolume(layout) ? 5 : 4)) return false;
-                if (scan) ++scan->outputCommands;
+                if (!skip(OutputCarriesVolume(layout) ? 5 : 4))
+                    return false;
+                if (scan)
+                    ++scan->outputCommands;
                 break;
             case CMD_WM_OUTPUT:
-                if (!skip(8)) return false;
+                if (!skip(8))
+                    return false;
                 break;
             case CMD_END:
                 end = true;
@@ -498,7 +508,9 @@ private:
         return idx <= m_cmdListSize;
     }
 
-    struct AdmissionRange { uint32_t begin, end; };
+    struct AdmissionRange {
+        uint32_t begin, end;
+    };
     std::array<AdmissionRange, 256> m_admissionPbs{};
     std::array<AdmissionRange, PrivateMixMemory::kMaxSpans> m_admissionWrites{};
     size_t m_admissionPbCount = 0, m_admissionWriteCount = 0;
@@ -507,34 +519,42 @@ private:
     bool AddJobRange(uint32_t addr, size_t bytes, bool write = false, bool pb = false) {
         uint32_t physical;
         uint8_t* host = MixResolveRange(addr, bytes);
-        if (!host || !NormalizeMixAddress(addr, bytes, physical)) return false;
+        if (!host || !NormalizeMixAddress(addr, bytes, physical))
+            return false;
         if (write && !pb) {
-            if (m_admissionWriteCount == m_admissionWrites.size()) return false;
+            if (m_admissionWriteCount == m_admissionWrites.size())
+                return false;
             m_admissionWrites[m_admissionWriteCount++] = {physical, physical + uint32_t(bytes)};
         }
         return m_privateMemory.Add(addr, bytes, host, write);
     }
 
     bool PreparePBChain(uint32_t addr) {
-        if (m_pbLayout == PBLayout::Unknown) return false;
+        if (m_pbLayout == PBLayout::Unknown)
+            return false;
         std::array<PBSegment, 3> segments{};
         const size_t segmentCount = PBSegmentsForLayout(m_pbLayout, segments);
         const size_t pbBytes = segments[segmentCount - 1].guestOffset + segments[segmentCount - 1].byteCount;
         while (addr) {
-            if (m_admissionPbCount == m_admissionPbs.size()) return false;
+            if (m_admissionPbCount == m_admissionPbs.size())
+                return false;
             constexpr size_t headerBytes = offsetof(AXPBWii, running) + sizeof(uint16_t);
-            if (!MixResolveRange(addr, headerBytes)) return false;
+            if (!MixResolveRange(addr, headerBytes))
+                return false;
             const bool running = MixRead16(addr + offsetof(AXPBWii, running)) == 1;
             uint32_t physical;
             const size_t bytes = running ? pbBytes : headerBytes;
-            if (!NormalizeMixAddress(addr, bytes, physical)) return false;
+            if (!NormalizeMixAddress(addr, bytes, physical))
+                return false;
             const AdmissionRange range{physical, physical + uint32_t(bytes)};
             for (size_t i = 0; i < m_admissionPbCount; ++i) {
                 const auto& previous = m_admissionPbs[i];
-                if (range.begin < previous.end && previous.begin < range.end) return false;
+                if (range.begin < previous.end && previous.begin < range.end)
+                    return false;
             }
             m_admissionPbs[m_admissionPbCount++] = range;
-            if (!AddJobRange(addr, bytes, running, true)) return false;
+            if (!AddJobRange(addr, bytes, running, true))
+                return false;
             if (!running) {
                 addr = Hilo(MixRead16(addr), MixRead16(addr + 2));
                 continue;
@@ -545,36 +565,36 @@ private:
             const uint32_t ratio = Hilo(voice.src.ratio_hi, voice.src.ratio_lo);
             // Retain the uint32 resampler's exact no-wrap read count. Unusual
             // ratios use the complete serial route rather than a huge snapshot.
-            if (ratio > 0x00400000u) return false;
-            const uint32_t reads = voice.src_type <= 1 ?
-                uint32_t((uint64_t(voice.src.cur_addr_frac) + uint64_t(ratio) * kAxSamplesPerFrame) >> 16) :
-                kAxSamplesPerFrame;
+            if (ratio > 0x00400000u)
+                return false;
+            const uint32_t reads = voice.src_type <= 1 ? uint32_t((uint64_t(voice.src.cur_addr_frac) + uint64_t(ratio) * kAxSamplesPerFrame) >> 16) : kAxSamplesPerFrame;
             uint32_t spanBegin = 0, spanEnd = 0;
             bool haveSpan = false;
             auto flush = [&] {
-                if (!haveSpan) return true;
+                if (!haveSpan)
+                    return true;
                 const bool result = AddJobRange(spanBegin, spanEnd - spanBegin);
                 haveSpan = false;
                 return result;
             };
-            const bool traced = Accelerator::VisitSampleReads(voice, reads,
-                [&](uint32_t aram, uint32_t count) {
-                    const uint32_t normalized = aram & 0x10000000u ?
-                        (0x10000000u | (aram & uint32_t(Memory::kMem2Size - 1))) :
-                        (aram & 0x01ffffffu);
-                    uint32_t check;
-                    if (!NormalizeMixAddress(normalized, count, check)) return false;
-                    if (haveSpan && normalized >= spanBegin && normalized <= spanEnd) {
-                        spanEnd = std::max(spanEnd, normalized + count);
-                        return true;
-                    }
-                    if (!flush()) return false;
-                    spanBegin = normalized;
-                    spanEnd = normalized + count;
-                    haveSpan = true;
+            const bool traced = Accelerator::VisitSampleReads(voice, reads, [&](uint32_t aram, uint32_t count) {
+                const uint32_t normalized = aram & 0x10000000u ? (0x10000000u | (aram & uint32_t(Memory::kMem2Size - 1))) : (aram & 0x01ffffffu);
+                uint32_t check;
+                if (!NormalizeMixAddress(normalized, count, check))
+                    return false;
+                if (haveSpan && normalized >= spanBegin && normalized <= spanEnd) {
+                    spanEnd = std::max(spanEnd, normalized + count);
                     return true;
-                });
-            if (!traced || !flush()) return false;
+                }
+                if (!flush())
+                    return false;
+                spanBegin = normalized;
+                spanEnd = normalized + count;
+                haveSpan = true;
+                return true;
+            });
+            if (!traced || !flush())
+                return false;
             addr = Hilo(voice.next_pb_hi, voice.next_pb_lo);
         }
         return true;
@@ -588,8 +608,12 @@ private:
         // separate admission proof. The canonical MH3 ucode uses New commands.
         bool valid = layout != AXCommandLayout::Old;
         uint32_t idx = 0, processes = 0, compressors = 0;
-        auto address = [&] { return ReadAddress(idx); };
-        auto input = [&](uint32_t addr, size_t bytes) { return AddJobRange(addr, bytes); };
+        auto address = [&] {
+            return ReadAddress(idx);
+        };
+        auto input = [&](uint32_t addr, size_t bytes) {
+            return AddJobRange(addr, bytes);
+        };
         auto output = [&](uint32_t addr, size_t bytes, bool skipZero = false) {
             return (skipZero && !addr) || AddJobRange(addr, bytes, true);
         };
@@ -598,36 +622,44 @@ private:
             uint32_t addr = 0, addr2 = 0;
             switch (cmd) {
             case CMD_SETUP:
-                valid = input(address(), kAxBusCount * 6); break;
+                valid = input(address(), kAxBusCount * 6);
+                break;
             case CMD_ADD_TO_LR:
             case CMD_SUB_TO_LR:
-                valid = input(address(), kAxSamplesPerFrame * 4); break;
+                valid = input(address(), kAxSamplesPerFrame * 4);
+                break;
             case CMD_ADD_SUB_TO_LR:
-                valid = input(address(), kAxSamplesPerFrame * 8); break;
+                valid = input(address(), kAxSamplesPerFrame * 8);
+                break;
             case CMD_PROCESS:
                 addr = address();
-                valid = ++processes == 1 && PreparePBChain(addr); break;
+                valid = ++processes == 1 && PreparePBChain(addr);
+                break;
             case CMD_MIX_AUXA:
             case CMD_MIX_AUXB:
             case CMD_MIX_AUXC:
-                ++idx; addr = address(); addr2 = address();
-                valid = (!addr || output(addr, kAxSamplesPerFrame * 12)) &&
-                        input(addr2, kAxSamplesPerFrame * 12); break;
+                ++idx;
+                addr = address();
+                addr2 = address();
+                valid = (!addr || output(addr, kAxSamplesPerFrame * 12)) && input(addr2, kAxSamplesPerFrame * 12);
+                break;
             case CMD_UPL_AUXA_MIX_LRSC:
             case CMD_UPL_AUXB_MIX_LRSC: {
                 ++idx;
                 std::array<uint32_t, 6> addresses{};
-                for (auto& at : addresses) at = address();
+                for (auto& at : addresses)
+                    at = address();
                 for (uint32_t channel = 0; channel < 3 && valid; ++channel)
-                    valid = output(addresses[0] + channel * kAxSamplesPerFrame * 4,
-                                   kAxSamplesPerFrame * 4, true);
-                if (valid) valid = output(addresses[1], kAxSamplesPerFrame * 4, true);
+                    valid = output(addresses[0] + channel * kAxSamplesPerFrame * 4, kAxSamplesPerFrame * 4, true);
+                if (valid)
+                    valid = output(addresses[1], kAxSamplesPerFrame * 4, true);
                 for (uint32_t slot = 2; slot < 6 && valid; ++slot)
                     valid = input(addresses[slot], kAxSamplesPerFrame * 4);
                 break;
             }
             case CMD_COMPRESSOR: {
-                idx += 2; addr = address();
+                idx += 2;
+                addr = address();
                 constexpr uint32_t frameBytes = kAxSamplesPerFrame * 2;
                 valid = ++compressors == 1 && input(addr + m_compressorPos * frameBytes, frameBytes);
                 if (valid && m_compressorPos)
@@ -636,23 +668,27 @@ private:
             }
             case CMD_OUTPUT:
             case CMD_OUTPUT_DPL2:
-                if (OutputCarriesVolume(layout)) ++idx;
-                addr = address(); addr2 = address();
-                valid = output(addr, kAxSamplesPerFrame * 4, true) &&
-                        output(addr2, kAxSamplesPerFrame * 4);
+                if (OutputCarriesVolume(layout))
+                    ++idx;
+                addr = address();
+                addr2 = address();
+                valid = output(addr, kAxSamplesPerFrame * 4, true) && output(addr2, kAxSamplesPerFrame * 4);
                 if (valid && cmd == CMD_OUTPUT_DPL2)
                     valid = output(addr + kAxSamplesPerFrame * 4, kAxSamplesPerFrame * 4, true);
                 break;
             case CMD_WM_OUTPUT:
                 for (unsigned channel = 0; channel < 4; ++channel) {
                     addr = address();
-                    if (valid) valid = output(addr, kAxWiimoteSamplesPerFrame * 2);
+                    if (valid)
+                        valid = output(addr, kAxWiimoteSamplesPerFrame * 2);
                 }
                 break;
             case CMD_END:
-                idx = m_cmdListSize; break;
+                idx = m_cmdListSize;
+                break;
             default:
-                valid = false; break;
+                valid = false;
+                break;
             }
         }
         // An output that rewrites a PB can change a later link or sample
@@ -672,10 +708,8 @@ private:
             m_privateMemory.Reset();
         } else if (!m_loggedPrivateJob) {
             m_loggedPrivateJob = true;
-            RT_LOGF(RT_TAG_AUDIO, "AX private epoch: %u PBs, %llu source/result bytes, %llu spans; %llu-byte storage\n",
-                unsigned(m_admissionPbCount), static_cast<unsigned long long>(m_privateMemory.Bytes()),
-                static_cast<unsigned long long>(m_privateMemory.SpanCount()),
-                static_cast<unsigned long long>(sizeof(m_privateMemory)));
+            RT_LOGF(RT_TAG_AUDIO, "AX private epoch: %u PBs, %llu source/result bytes, %llu spans; %llu-byte storage\n", unsigned(m_admissionPbCount),
+                    static_cast<unsigned long long>(m_privateMemory.Bytes()), static_cast<unsigned long long>(m_privateMemory.SpanCount()), static_cast<unsigned long long>(sizeof(m_privateMemory)));
             std::fflush(stderr);
         }
         return valid;
@@ -774,9 +808,7 @@ private:
         if (m_loggedUnknownCommand.exchange(true, std::memory_order_relaxed)) {
             return;
         }
-        RT_LOGF(RT_TAG_AUDIO,
-                     "unknown AX command 0x%04X at word %u; abandoning the command list\n",
-                     cmd, word);
+        RT_LOGF(RT_TAG_AUDIO, "unknown AX command 0x%04X at word %u; abandoning the command list\n", cmd, word);
         std::fflush(stderr);
     }
 
@@ -802,8 +834,7 @@ private:
     void SetupProcessing(uint32_t initAddr) {
         const AXBuffers buffers = MixBuffers();
         for (size_t i = 0; i < buffers.size(); ++i) {
-            const uint32_t value = (MixRead16(initAddr + static_cast<uint32_t>(i * 6)) << 16) |
-                                   MixRead16(initAddr + static_cast<uint32_t>(i * 6 + 2));
+            const uint32_t value = (MixRead16(initAddr + static_cast<uint32_t>(i * 6)) << 16) | MixRead16(initAddr + static_cast<uint32_t>(i * 6 + 2));
             const int16_t delta = static_cast<int16_t>(MixRead16(initAddr + static_cast<uint32_t>(i * 6 + 4)));
             const int count = (i < kAxRegularBusCount ? 32 : 6) * 3;
             if (value == 0) {
@@ -839,26 +870,46 @@ private:
 
     static AXMixControl ConvertMixerControl(uint32_t mixerControl) {
         uint32_t ret = 0;
-        if (mixerControl & 0x00000001) ret |= MIX_MAIN_L;
-        if (mixerControl & 0x00000002) ret |= MIX_MAIN_R;
-        if (mixerControl & 0x00000004) ret |= MIX_MAIN_L | MIX_MAIN_R | MIX_MAIN_L_RAMP | MIX_MAIN_R_RAMP;
-        if (mixerControl & 0x00000008) ret |= MIX_MAIN_S;
-        if (mixerControl & 0x00000010) ret |= MIX_MAIN_S | MIX_MAIN_S_RAMP;
-        if (mixerControl & 0x00010000) ret |= MIX_AUXA_L;
-        if (mixerControl & 0x00020000) ret |= MIX_AUXA_R;
-        if (mixerControl & 0x00040000) ret |= MIX_AUXA_L | MIX_AUXA_R | MIX_AUXA_L_RAMP | MIX_AUXA_R_RAMP;
-        if (mixerControl & 0x00080000) ret |= MIX_AUXA_S;
-        if (mixerControl & 0x00100000) ret |= MIX_AUXA_S | MIX_AUXA_S_RAMP;
-        if (mixerControl & 0x00200000) ret |= MIX_AUXB_L;
-        if (mixerControl & 0x00400000) ret |= MIX_AUXB_R;
-        if (mixerControl & 0x00800000) ret |= MIX_AUXB_L | MIX_AUXB_R | MIX_AUXB_L_RAMP | MIX_AUXB_R_RAMP;
-        if (mixerControl & 0x01000000) ret |= MIX_AUXB_S;
-        if (mixerControl & 0x02000000) ret |= MIX_AUXB_S | MIX_AUXB_S_RAMP;
-        if (mixerControl & 0x04000000) ret |= MIX_AUXC_L;
-        if (mixerControl & 0x08000000) ret |= MIX_AUXC_R;
-        if (mixerControl & 0x10000000) ret |= MIX_AUXC_L | MIX_AUXC_R | MIX_AUXC_L_RAMP | MIX_AUXC_R_RAMP;
-        if (mixerControl & 0x20000000) ret |= MIX_AUXC_S;
-        if (mixerControl & 0x40000000) ret |= MIX_AUXC_S | MIX_AUXC_S_RAMP;
+        if (mixerControl & 0x00000001)
+            ret |= MIX_MAIN_L;
+        if (mixerControl & 0x00000002)
+            ret |= MIX_MAIN_R;
+        if (mixerControl & 0x00000004)
+            ret |= MIX_MAIN_L | MIX_MAIN_R | MIX_MAIN_L_RAMP | MIX_MAIN_R_RAMP;
+        if (mixerControl & 0x00000008)
+            ret |= MIX_MAIN_S;
+        if (mixerControl & 0x00000010)
+            ret |= MIX_MAIN_S | MIX_MAIN_S_RAMP;
+        if (mixerControl & 0x00010000)
+            ret |= MIX_AUXA_L;
+        if (mixerControl & 0x00020000)
+            ret |= MIX_AUXA_R;
+        if (mixerControl & 0x00040000)
+            ret |= MIX_AUXA_L | MIX_AUXA_R | MIX_AUXA_L_RAMP | MIX_AUXA_R_RAMP;
+        if (mixerControl & 0x00080000)
+            ret |= MIX_AUXA_S;
+        if (mixerControl & 0x00100000)
+            ret |= MIX_AUXA_S | MIX_AUXA_S_RAMP;
+        if (mixerControl & 0x00200000)
+            ret |= MIX_AUXB_L;
+        if (mixerControl & 0x00400000)
+            ret |= MIX_AUXB_R;
+        if (mixerControl & 0x00800000)
+            ret |= MIX_AUXB_L | MIX_AUXB_R | MIX_AUXB_L_RAMP | MIX_AUXB_R_RAMP;
+        if (mixerControl & 0x01000000)
+            ret |= MIX_AUXB_S;
+        if (mixerControl & 0x02000000)
+            ret |= MIX_AUXB_S | MIX_AUXB_S_RAMP;
+        if (mixerControl & 0x04000000)
+            ret |= MIX_AUXC_L;
+        if (mixerControl & 0x08000000)
+            ret |= MIX_AUXC_R;
+        if (mixerControl & 0x10000000)
+            ret |= MIX_AUXC_L | MIX_AUXC_R | MIX_AUXC_L_RAMP | MIX_AUXC_R_RAMP;
+        if (mixerControl & 0x20000000)
+            ret |= MIX_AUXC_S;
+        if (mixerControl & 0x40000000)
+            ret |= MIX_AUXC_S | MIX_AUXC_S_RAMP;
         return static_cast<AXMixControl>(ret);
     }
 
@@ -877,12 +928,10 @@ private:
         // its link without the full read and write-back (most of the chain).
         // Not when a per-ms update block could start it (the old layout's
         // updates, which only SkipBiquadGapOnly carries).
-        const bool skipStopped = m_pbLayout != PBLayout::Unknown &&
-                                 !(oldAxLayout && m_pbLayout == PBLayout::SkipBiquadGapOnly);
+        const bool skipStopped = m_pbLayout != PBLayout::Unknown && !(oldAxLayout && m_pbLayout == PBLayout::SkipBiquadGapOnly);
         while (pbAddr && guard++ < 256) {
             if (skipStopped && MixRead16(pbAddr + offsetof(AXPBWii, running)) != 1) {
-                pbAddr = Hilo(MixRead16(pbAddr + offsetof(AXPBWii, next_pb_hi)),
-                              MixRead16(pbAddr + offsetof(AXPBWii, next_pb_lo)));
+                pbAddr = Hilo(MixRead16(pbAddr + offsetof(AXPBWii, next_pb_hi)), MixRead16(pbAddr + offsetof(AXPBWii, next_pb_lo)));
                 continue;
             }
             AXPBWii pb{};
@@ -906,9 +955,7 @@ private:
 
     // Four consecutive 0x200-halfword polyphase banks; only the voice resample selects a
     // bank (VoiceCoefficients). Wiimote downsample always uses bank 0 at its fixed ratio.
-    const int16_t* BaseCoefficients() const {
-        return m_hasCoeffs ? m_coeffs.data() : nullptr;
-    }
+    const int16_t* BaseCoefficients() const { return m_hasCoeffs ? m_coeffs.data() : nullptr; }
 
     // Mirrors GetInputSamples' coeffs += pb.coef_select * 0x200, but bounds-checked since
     // coef_select is a guest halfword; a corrupt PB degrades to linear interpolation instead
@@ -933,18 +980,15 @@ private:
         const auto path = FindDspCoefficientRom();
         std::ifstream stream(path, std::ios::binary | std::ios::ate);
         if (!stream || stream.tellg() != static_cast<std::streamoff>(m_coeffs.size() * 2)) {
-            throw std::runtime_error("Bundled Wii DSP coefficient ROM has an invalid size: " +
-                                     path.string());
+            throw std::runtime_error("Bundled Wii DSP coefficient ROM has an invalid size: " + path.string());
         }
         stream.seekg(0);
         std::array<uint8_t, kResamplingCoefficientCount * 2> bytes{};
         if (!stream.read(reinterpret_cast<char*>(bytes.data()), bytes.size())) {
-            throw std::runtime_error("Failed to read bundled Wii DSP coefficient ROM: " +
-                                     path.string());
+            throw std::runtime_error("Failed to read bundled Wii DSP coefficient ROM: " + path.string());
         }
         for (size_t i = 0; i < m_coeffs.size(); ++i) {
-            const uint16_t word = static_cast<uint16_t>(bytes[i * 2]) << 8 |
-                                  static_cast<uint16_t>(bytes[i * 2 + 1]);
+            const uint16_t word = static_cast<uint16_t>(bytes[i * 2]) << 8 | static_cast<uint16_t>(bytes[i * 2 + 1]);
             m_coeffs[i] = static_cast<int16_t>(word);
         }
         m_hasCoeffs = true;
@@ -990,10 +1034,8 @@ private:
 
     // Both directions take their offsets in the same order - guest side first,
     // then host side - so a mirrored read/write pair reads the same way round.
-    static void CopyGuestToStruct(uint32_t addr, size_t guestOffset, char* dst, size_t structOffset,
-                                  size_t byteCount) {
-        if (const uint8_t* guest =
-                MixResolveRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
+    static void CopyGuestToStruct(uint32_t addr, size_t guestOffset, char* dst, size_t structOffset, size_t byteCount) {
+        if (const uint8_t* guest = MixResolveRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
             for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
                 uint16_t value = 0;
                 std::memcpy(&value, guest + i, sizeof(value));
@@ -1002,17 +1044,16 @@ private:
             return;
         }
         for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
-            *reinterpret_cast<uint16_t*>(dst + structOffset + i) =
-                MixRead16(addr + static_cast<uint32_t>(guestOffset + i));
+            *reinterpret_cast<uint16_t*>(dst + structOffset + i) = MixRead16(addr + static_cast<uint32_t>(guestOffset + i));
         }
     }
 
-    static void CopyStructToGuest(uint32_t addr, size_t guestOffset, const char* src, size_t structOffset,
-                                  size_t byteCount) {
+    static void CopyStructToGuest(uint32_t addr, size_t guestOffset, const char* src, size_t structOffset, size_t byteCount) {
         if (t_onMixWorker) {
             const uint32_t begin = addr + static_cast<uint32_t>(guestOffset);
             const uint8_t* guest = MixResolveRange(begin, byteCount);
-            if (!guest) ReportMixAddressOutOfRange(begin, byteCount);
+            if (!guest)
+                ReportMixAddressOutOfRange(begin, byteCount);
             for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
                 uint16_t previous;
                 std::memcpy(&previous, guest + i, sizeof(previous));
@@ -1022,17 +1063,14 @@ private:
             }
             return;
         }
-        if (uint8_t* guest =
-                MixResolveWriteRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
+        if (uint8_t* guest = MixResolveWriteRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
             for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
-                BigEndian::Write16(
-                    guest + i, *reinterpret_cast<const uint16_t*>(src + structOffset + i));
+                BigEndian::Write16(guest + i, *reinterpret_cast<const uint16_t*>(src + structOffset + i));
             }
             return;
         }
         for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
-            MixWrite16(addr + static_cast<uint32_t>(guestOffset + i),
-                       *reinterpret_cast<const uint16_t*>(src + structOffset + i));
+            MixWrite16(addr + static_cast<uint32_t>(guestOffset + i), *reinterpret_cast<const uint16_t*>(src + structOffset + i));
         }
     }
 
@@ -1085,8 +1123,7 @@ private:
         std::array<PBSegment, 3> segments{};
         const size_t count = PBSegmentsForLayout(layout, segments);
         for (size_t i = 0; i < count; ++i) {
-            CopyGuestToStruct(addr, segments[i].guestOffset, dst, segments[i].structOffset,
-                              segments[i].byteCount);
+            CopyGuestToStruct(addr, segments[i].guestOffset, dst, segments[i].structOffset, segments[i].byteCount);
         }
     }
 
@@ -1101,18 +1138,13 @@ private:
         std::array<PBSegment, 3> segments{};
         const size_t count = PBSegmentsForLayout(layout, segments);
         for (size_t i = 0; i < count; ++i) {
-            CopyStructToGuest(addr, segments[i].guestOffset, src, segments[i].structOffset,
-                              segments[i].byteCount);
+            CopyStructToGuest(addr, segments[i].guestOffset, src, segments[i].structOffset, segments[i].byteCount);
         }
     }
 
-    static bool LooksLikeMainRamPointer(uint32_t addr) {
-        return addr == 0 || MixContains(addr, sizeof(uint16_t) * 8);
-    }
+    static bool LooksLikeMainRamPointer(uint32_t addr) { return addr == 0 || MixContains(addr, sizeof(uint16_t) * 8); }
 
-    static bool LooksLikeAxSampleFormat(uint16_t format) {
-        return format == 0 || format == 0x19 || format == 0x0a;
-    }
+    static bool LooksLikeAxSampleFormat(uint16_t format) { return format == 0 || format == 0x19 || format == 0x0a; }
 
     static int ScorePBLayout(uint32_t addr, const AXPBWii& pb) {
         int score = 0;
@@ -1230,15 +1262,12 @@ private:
 
         for (uint32_t i = 0; i < kAxSamplesPerFrame; ++i) {
             const uint16_t coef = MixRead16(tableAddr + tableOffset + i * sizeof(uint16_t));
-            m_bus[kBusMainL][i] =
-                static_cast<int>((static_cast<int64_t>(m_bus[kBusMainL][i]) * coef) >> 15);
-            m_bus[kBusMainR][i] =
-                static_cast<int>((static_cast<int64_t>(m_bus[kBusMainR][i]) * coef) >> 15);
+            m_bus[kBusMainL][i] = static_cast<int>((static_cast<int64_t>(m_bus[kBusMainL][i]) * coef) >> 15);
+            m_bus[kBusMainR][i] = static_cast<int>((static_cast<int64_t>(m_bus[kBusMainR][i]) * coef) >> 15);
         }
     }
 
-    void ProcessVoice(AXPBWii& pb, const AXBuffers& buffers, uint32_t count, AXMixControl control,
-                      const int16_t* coeffs, bool newFilter) {
+    void ProcessVoice(AXPBWii& pb, const AXBuffers& buffers, uint32_t count, AXMixControl control, const int16_t* coeffs, bool newFilter) {
         if (pb.running != 1) {
             return;
         }
@@ -1250,9 +1279,7 @@ private:
         // Same wrapping 16-bit ramp as MixAdd, minus the accumulate. The two's
         // complement wrap of the int16 envelope is bit-identical to the uint16
         // wrap the kernel performs, so the value stored back is unchanged.
-        pb.vol_env.cur_volume = static_cast<int16_t>(AxMixKernels::ScaleRamp(
-            samples.data(), count, static_cast<uint16_t>(pb.vol_env.cur_volume),
-            static_cast<uint16_t>(pb.vol_env.cur_volume_delta)));
+        pb.vol_env.cur_volume = static_cast<int16_t>(AxMixKernels::ScaleRamp(samples.data(), count, static_cast<uint16_t>(pb.vol_env.cur_volume), static_cast<uint16_t>(pb.vol_env.cur_volume_delta)));
         if (pb.lpf.on) {
             LowPassFilter(samples.data(), count, pb.lpf);
         }
@@ -1290,12 +1317,8 @@ private:
 
             const uint32_t wmCount = count == kAxSamplesPerFrame ? 18u : 6u;
             std::array<int16_t, 18> wmSamples{};
-            pb.remote_src.cur_addr_frac = static_cast<uint16_t>(ResampleAudio(
-                [&samples, count](uint32_t index) {
-                    return samples[std::min<uint32_t>(index, count - 1)];
-                },
-                wmSamples.data(), wmCount, pb.remote_src.last_samples, pb.remote_src.cur_addr_frac,
-                0x00055555u, 0, coeffs));
+            pb.remote_src.cur_addr_frac = static_cast<uint16_t>(ResampleAudio([&samples, count](uint32_t index) { return samples[std::min<uint32_t>(index, count - 1)]; }, wmSamples.data(), wmCount,
+                                                                              pb.remote_src.last_samples, pb.remote_src.cur_addr_frac, 0x00055555u, 0, coeffs));
 
             auto mixRemote = [&](uint32_t channel, int* out, VolumeData& vd, int16_t& dpop) {
                 const uint16_t mode = static_cast<uint16_t>((pb.remote_mixer_control >> (channel * 2)) & 3u);
@@ -1316,9 +1339,7 @@ private:
     }
 
     template <typename Reader>
-    static uint32_t ResampleAudio(Reader&& readSample, int16_t* out, uint32_t count, int16_t* lastSamples,
-                                  uint32_t pos, uint32_t ratio, uint16_t srcType,
-                                  const int16_t* coeffs = nullptr) {
+    static uint32_t ResampleAudio(Reader&& readSample, int16_t* out, uint32_t count, int16_t* lastSamples, uint32_t pos, uint32_t ratio, uint16_t srcType, const int16_t* coeffs = nullptr) {
         if (coeffs && srcType == 0) {
             std::array<int16_t, 4> temp{};
             std::memcpy(temp.data(), lastSamples, sizeof(int16_t) * 4);
@@ -1389,15 +1410,9 @@ private:
 
     // `coeffs` is the DROM base; the bank is selected here, per voice, exactly
     // where GetInputSamples selects it.
-    static void Resample(Accelerator& accel, AXPBWii& pb, int16_t* out, uint32_t count,
-                         const int16_t* coeffs) {
-        pb.src.cur_addr_frac = static_cast<uint16_t>(ResampleAudio(
-            [&accel](uint32_t) {
-                return accel.ReadSample();
-            },
-            out, count, pb.src.last_samples, pb.src.cur_addr_frac,
-            Hilo(pb.src.ratio_hi, pb.src.ratio_lo), pb.src_type,
-            VoiceCoefficients(coeffs, pb.coef_select)));
+    static void Resample(Accelerator& accel, AXPBWii& pb, int16_t* out, uint32_t count, const int16_t* coeffs) {
+        pb.src.cur_addr_frac = static_cast<uint16_t>(ResampleAudio([&accel](uint32_t) { return accel.ReadSample(); }, out, count, pb.src.last_samples, pb.src.cur_addr_frac,
+                                                                   Hilo(pb.src.ratio_hi, pb.src.ratio_lo), pb.src_type, VoiceCoefficients(coeffs, pb.coef_select)));
     }
 
     static void MixAdd(int* out, const int16_t* input, uint32_t count, VolumeData& vd, int16_t& dpop, bool ramp) {
@@ -1409,8 +1424,7 @@ private:
 
     static void LowPassFilter(int16_t* samples, uint32_t count, PBLowPassFilter& filter) {
         for (uint32_t i = 0; i < count; ++i) {
-            filter.yn1 = samples[i] = ClampS16((filter.a0 * static_cast<int32_t>(samples[i]) +
-                                                filter.b0 * static_cast<int32_t>(filter.yn1)) >> 15);
+            filter.yn1 = samples[i] = ClampS16((filter.a0 * static_cast<int32_t>(samples[i]) + filter.b0 * static_cast<int32_t>(filter.yn1)) >> 15);
         }
     }
 
@@ -1439,9 +1453,12 @@ private:
         GenerateVolumeRamp(ramp.data(), m_lastAuxVolumes[auxId], volume, ramp.size());
         m_lastAuxVolumes[auxId] = volume;
         std::array<int*, 3> src{};
-        if (auxId == 0) src = {m_bus[kBusAuxAL].data(), m_bus[kBusAuxAR].data(), m_bus[kBusAuxAS].data()};
-        if (auxId == 1) src = {m_bus[kBusAuxBL].data(), m_bus[kBusAuxBR].data(), m_bus[kBusAuxBS].data()};
-        if (auxId == 2) src = {m_bus[kBusAuxCL].data(), m_bus[kBusAuxCR].data(), m_bus[kBusAuxCS].data()};
+        if (auxId == 0)
+            src = {m_bus[kBusAuxAL].data(), m_bus[kBusAuxAR].data(), m_bus[kBusAuxAS].data()};
+        if (auxId == 1)
+            src = {m_bus[kBusAuxBL].data(), m_bus[kBusAuxBR].data(), m_bus[kBusAuxBS].data()};
+        if (auxId == 2)
+            src = {m_bus[kBusAuxCL].data(), m_bus[kBusAuxCR].data(), m_bus[kBusAuxCS].data()};
         if (writeAddr) {
             for (int* buffer : src) {
                 WriteAuxOutBuffer(writeAddr, buffer, kAxSamplesPerFrame);
@@ -1469,13 +1486,11 @@ private:
         std::array<uint16_t, kAxSamplesPerFrame> ramp{};
         GenerateVolumeRamp(ramp.data(), m_lastAuxVolumes[auxId], volume, ramp.size());
         m_lastAuxVolumes[auxId] = volume;
-        std::array<int*, 4> mixDest = {m_bus[kBusMainL].data(), m_bus[kBusMainR].data(),
-                                       m_bus[kBusMainS].data(), m_bus[kBusAuxCL].data()};
+        std::array<int*, 4> mixDest = {m_bus[kBusMainL].data(), m_bus[kBusMainR].data(), m_bus[kBusMainS].data(), m_bus[kBusAuxCL].data()};
         std::array<int, kAxSamplesPerFrame> temp{};
         for (uint32_t i = 0; i < mixDest.size(); ++i) {
             ReadAuxInBuffer(addresses[2 + i], temp.data(), kAxSamplesPerFrame);
-            AxMixKernels::MixAccumRamp32(mixDest[i], temp.data(), ramp.data(),
-                                         kAxSamplesPerFrame);
+            AxMixKernels::MixAccumRamp32(mixDest[i], temp.data(), ramp.data(), kAxSamplesPerFrame);
         }
     }
 
@@ -1485,8 +1500,7 @@ private:
         m_lastMainVolume = volume;
         WriteGuestS32Buffer(surroundAddr, m_bus[kBusMainS].data(), kAxSamplesPerFrame);
         if (uploadAuxC) {
-            WriteGuestS32Buffer(surroundAddr + kAxSamplesPerFrame * sizeof(int32_t),
-                                m_bus[kBusAuxCL].data(), kAxSamplesPerFrame);
+            WriteGuestS32Buffer(surroundAddr + kAxSamplesPerFrame * sizeof(int32_t), m_bus[kBusAuxCL].data(), kAxSamplesPerFrame);
         }
         std::array<int16_t, kAxSamplesPerFrame * 2> pcm{};
         for (uint32_t i = 0; i < kAxSamplesPerFrame; ++i) {
@@ -1514,8 +1528,7 @@ private:
 
     void OutputWMSamples(uint32_t* addresses) {
         const AXBuffers all = MixBuffers();
-        const std::array<int*, 4> buffers = {all[kBusWm0Main], all[kBusWm1Main], all[kBusWm2Main],
-                                             all[kBusWm3Main]};
+        const std::array<int*, 4> buffers = {all[kBusWm0Main], all[kBusWm1Main], all[kBusWm2Main], all[kBusWm3Main]};
         for (uint32_t i = 0; i < buffers.size(); ++i) {
             for (uint32_t j = 0; j < kAxWiimoteSamplesPerFrame; ++j) {
                 MixWrite16(addresses[i] + j * 2, static_cast<uint16_t>(ClampS16(buffers[i][j])));
@@ -1526,12 +1539,8 @@ private:
     // Aux shares the same byte view as every other job range. Exact and
     // partial aliases see prior writes in authored command order, without a
     // separate per-block shadow cap or an extra audio epoch.
-    void WriteAuxOutBuffer(uint32_t addr, const int* src, uint32_t count) {
-        WriteGuestS32Buffer(addr, src, count);
-    }
-    void ReadAuxInBuffer(uint32_t addr, int* dst, uint32_t count) {
-        ReadGuestS32Buffer(addr, dst, count);
-    }
+    void WriteAuxOutBuffer(uint32_t addr, const int* src, uint32_t count) { WriteGuestS32Buffer(addr, src, count); }
+    void ReadAuxInBuffer(uint32_t addr, int* dst, uint32_t count) { ReadGuestS32Buffer(addr, dst, count); }
 
     bool EnsureMixWorker() {
         if (m_mixThread.joinable()) {
@@ -1560,17 +1569,13 @@ private:
         if (!startup.Ready()) {
             m_mixThread.join();
             char message[192];
-            std::snprintf(message, sizeof(message),
-                "AX/DSP worker startup %s: thread 0x%08x set 0x%08x mask 0x%08x CPU %d",
-                MixWorkerStartupStatusName(startup.status), unsigned(startup.threadId),
-                unsigned(startup.setResult), unsigned(startup.affinityMask), startup.cpuId);
+            std::snprintf(message, sizeof(message), "AX/DSP worker startup %s: thread 0x%08x set 0x%08x mask 0x%08x CPU %d", MixWorkerStartupStatusName(startup.status), unsigned(startup.threadId),
+                          unsigned(startup.setResult), unsigned(startup.affinityMask), startup.cpuId);
             throw std::runtime_error(message);
         }
 #ifdef __vita__
-        RT_LOGF(RT_TAG_AUDIO,
-            "AX/DSP worker admitted: thread 0x%08x set 0x%08x mask 0x%08x core %d\n",
-            unsigned(startup.threadId), unsigned(startup.setResult),
-            unsigned(startup.affinityMask), startup.cpuId);
+        RT_LOGF(RT_TAG_AUDIO, "AX/DSP worker admitted: thread 0x%08x set 0x%08x mask 0x%08x core %d\n", unsigned(startup.threadId), unsigned(startup.setResult), unsigned(startup.affinityMask),
+                startup.cpuId);
         std::fflush(stderr);
 #endif
         return true;
@@ -1580,15 +1585,14 @@ private:
         MixWorkerStartupProof startup;
 #ifdef __vita__
         static_assert(kMixWorkerCore0Mask == SCE_KERNEL_CPU_MASK_USER_0);
-        startup = CheckMixWorkerCore0({sceKernelGetThreadId,
-            sceKernelChangeThreadCpuAffinityMask, sceKernelGetThreadCpuAffinityMask,
-            sceKernelGetCpuId});
+        startup = CheckMixWorkerCore0({sceKernelGetThreadId, sceKernelChangeThreadCpuAffinityMask, sceKernelGetThreadCpuAffinityMask, sceKernelGetCpuId});
 #else
         startup.core0Required = false;
         startup.status = MixWorkerStartupStatus::Ready;
 #endif
         PublishMixWorkerStartup(m_mixMutex, m_mixIdle, m_mixStartup, startup);
-        if (!startup.Ready()) return;
+        if (!startup.Ready())
+            return;
         t_onMixWorker = true;
         for (;;) {
             {
@@ -1619,8 +1623,10 @@ private:
                 const uint64_t elapsed = MixTimeNs() - workerStart;
                 m_stats.workerNs += elapsed;
                 m_stats.maxWorkerNs = std::max(m_stats.maxWorkerNs, elapsed);
-                if (failure) ++m_stats.failed;
-                else ++m_stats.completed;
+                if (failure)
+                    ++m_stats.failed;
+                else
+                    ++m_stats.completed;
                 m_mixFailure = failure;
                 m_mixBusy = false;
             }
@@ -1661,8 +1667,8 @@ private:
     // Mix worker handshake.
     std::thread m_mixThread;
     mutable std::mutex m_mixMutex;
-    std::condition_variable m_mixWake;  // guest -> worker
-    std::condition_variable m_mixIdle;  // worker -> guest
+    std::condition_variable m_mixWake; // guest -> worker
+    std::condition_variable m_mixIdle; // worker -> guest
     bool m_mixStop = false;
     bool m_mixPending = false;
     bool m_mixBusy = false;
@@ -1686,9 +1692,7 @@ private:
         uint16_t mainVolume;
         decltype(m_lastAuxVolumes) auxVolumes;
     } m_savedMixState{};
-    void SaveMixState() {
-        m_savedMixState = {m_bus, m_wmBus, m_compressorPos, m_lastMainVolume, m_lastAuxVolumes};
-    }
+    void SaveMixState() { m_savedMixState = {m_bus, m_wmBus, m_compressorPos, m_lastMainVolume, m_lastAuxVolumes}; }
     void RestoreMixState() {
         m_bus = m_savedMixState.bus;
         m_wmBus = m_savedMixState.wmBus;
@@ -1696,7 +1700,6 @@ private:
         m_lastMainVolume = m_savedMixState.mainVolume;
         m_lastAuxVolumes = m_savedMixState.auxVolumes;
     }
-
 };
 
 AXWii& Instance() {

@@ -89,8 +89,7 @@ private:
 };
 using TexturePtr = std::shared_ptr<Texture>;
 
-TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format,
-                          std::string_view label) noexcept;
+TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept;
 // Owner only; never submits or waits. Reuse also requires exclusive shared
 // ownership. GXM checks the texture's latest actual GPU use, not a frame slot;
 // ordered host GL draws may overwrite after earlier queued consumers.
@@ -102,10 +101,10 @@ struct NativeTextureInfo {
   Format format;
   uint32_t width, height, mips, bytes;
   bool arbitraryMips;
-  uint32_t imageBytes=0,paletteOffset=0,paletteBytes=0;
-  int32_t sourcePaletteDelta=0;
-  uint32_t sourcePaletteEntries=0,sourcePaletteFormat=0,sourceFormat=0;
-  bool sourceProvenance=false;
+  uint32_t imageBytes = 0, paletteOffset = 0, paletteBytes = 0;
+  int32_t sourcePaletteDelta = 0;
+  uint32_t sourcePaletteEntries = 0, sourcePaletteFormat = 0, sourceFormat = 0;
+  bool sourceProvenance = false;
 };
 void open_native_texture_pack(const char* path) noexcept;
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
@@ -114,14 +113,11 @@ NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
 TexturePtr native_texture_asset(uint32_t asset) noexcept;
 // Uploads `data` (rows of `bytesPerRow`, tightly following each other) into
 // the given region. The bytes are copied before returning.
-void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
-                   uint32_t height, const void* data, uint32_t bytesPerRow) noexcept;
-void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
-                   uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept;
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept;
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept;
 
 // Render thread only: upload immediately.
-void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
-                    const void* data, uint32_t bytesPerRow) noexcept;
+void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept;
 
 struct SamplerDesc {
   GLenum wrapS = GL_CLAMP_TO_EDGE;
@@ -134,8 +130,8 @@ struct SamplerDesc {
   float lodBias = 0.f;
 
   bool operator==(const SamplerDesc& rhs) const noexcept {
-    return wrapS == rhs.wrapS && wrapT == rhs.wrapT && minFilter == rhs.minFilter && magFilter == rhs.magFilter &&
-           minLod == rhs.minLod && maxLod == rhs.maxLod && maxAnisotropy == rhs.maxAnisotropy && lodBias == rhs.lodBias;
+    return wrapS == rhs.wrapS && wrapT == rhs.wrapT && minFilter == rhs.minFilter && magFilter == rhs.magFilter && minLod == rhs.minLod && maxLod == rhs.maxLod && maxAnisotropy == rhs.maxAnisotropy &&
+           lodBias == rhs.lodBias;
   }
 };
 // Render thread only: the cached sampler object for `desc`.
@@ -176,7 +172,7 @@ struct ProgramDesc {
   std::string fragment;
   // Host capture can retain GLES pixels/hashes while compiling the counterpart
   // selected by the authoritative admitted GXM sampler policy.
-  std::string portableVertex,portableFragment,portableOrigin;
+  std::string portableVertex, portableFragment, portableOrigin;
   // Sampler uniform name -> texture unit.
   std::vector<std::pair<std::string, int>> samplers;
   // Uniform block name -> binding point.
@@ -200,6 +196,7 @@ public:
   GLuint get() const noexcept { return m_buffer; }
   const uint8_t* data() const noexcept { return m_data; }
   uint32_t size() const noexcept { return m_bytes; }
+
 private:
   GLuint m_buffer = 0;
   const uint8_t* m_data = nullptr;
@@ -228,7 +225,7 @@ public:
 private:
   ProgramDesc m_desc;
   uint64_t m_vertexHash = 0, m_fragmentHash = 0;
-  std::array<uint64_t,2> m_capturePortableHashes{};
+  std::array<uint64_t, 2> m_capturePortableHashes{};
   std::string m_capturePortableOrigin;
   std::array<float, 4> m_alphaReferences{};
   bool m_usesAlphaReferences = false;
@@ -264,15 +261,18 @@ struct RasterState {
 // backend state, not framebuffer pixels. Restore includes generic draw inputs.
 struct OffscreenState {
   RasterState raster;
-  std::array<int32_t,4> viewport{},scissor{};
-  std::array<float,2> depthRange{};
-  std::array<float,4> blendColor{};
-  std::array<GLuint,16> textures{},samplers{};
-  struct UniformRange {GLuint buffer=0;uint32_t offset=0,size=0;};
-  std::array<UniformRange,4> uniforms{};
-  GLuint framebuffer=0,color=0,depth=0,program=0,vertexArray=0,arrayBuffer=0,activeTexture=0;
-  int scissorEnabled=0;
-  bool rasterValid=false,uniformValid=false;
+  std::array<int32_t, 4> viewport{}, scissor{};
+  std::array<float, 2> depthRange{};
+  std::array<float, 4> blendColor{};
+  std::array<GLuint, 16> textures{}, samplers{};
+  struct UniformRange {
+    GLuint buffer = 0;
+    uint32_t offset = 0, size = 0;
+  };
+  std::array<UniformRange, 4> uniforms{};
+  GLuint framebuffer = 0, color = 0, depth = 0, program = 0, vertexArray = 0, arrayBuffer = 0, activeTexture = 0;
+  int scissorEnabled = 0;
+  bool rasterValid = false, uniformValid = false;
 };
 OffscreenState save_offscreen_state() noexcept;
 void restore_offscreen_state(const OffscreenState& state) noexcept;
@@ -302,8 +302,7 @@ void draw_fullscreen(GLuint program) noexcept;
 GLuint create_buffer() noexcept;
 void destroy_buffer(GLuint buffer) noexcept;
 void write_buffer(GLuint buffer, bool indices, const void* bytes, size_t size) noexcept;
-void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
-                         int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept;
+void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY, int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept;
 void clear_color(const float* color) noexcept;
 void clear_depth(float depth) noexcept;
 // Full current-target depth clear, independent of the application's scissor
@@ -313,13 +312,10 @@ void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances)
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted
 // CDRAM allocation directly; GLES uploads the host allocation into VBOs.
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept;
-void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
-                                  const AuroraNativeUniforms& uniforms) noexcept;
+void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry, GLuint program, const AuroraNativeUniforms& uniforms) noexcept;
 // Immutable resident U16 triangle payload; only the small uniform block is
 // uploaded per draw. Byte offsets are relative to this buffer's file range.
-void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
-                      uint32_t vertexOffset, uint32_t vertexCount,
-                      uint32_t indexOffset, uint32_t indexCount, GLuint program,
+void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount, GLuint program,
                       const AuroraNativeUniforms& uniforms);
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
 

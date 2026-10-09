@@ -42,8 +42,7 @@ static inline HashType xxh3_hash(const T& input, HashType seed = 0) {
 // Folds two 64-bit hashes. Chaining them instead drops XXH3 onto its seeded long path past 240
 // bytes, and that path regenerates a 192-byte secret on every call.
 static inline HashType hash_combine(HashType lhs, HashType rhs) {
-  uint64_t mixed = static_cast<uint64_t>(lhs) ^ (static_cast<uint64_t>(rhs) + 0x9E3779B97F4A7C15ull +
-                                                 (static_cast<uint64_t>(lhs) << 6) + (static_cast<uint64_t>(lhs) >> 2));
+  uint64_t mixed = static_cast<uint64_t>(lhs) ^ (static_cast<uint64_t>(rhs) + 0x9E3779B97F4A7C15ull + (static_cast<uint64_t>(lhs) << 6) + (static_cast<uint64_t>(lhs) >> 2));
   mixed ^= mixed >> 33;
   mixed *= 0xFF51AFD7ED558CCDull;
   mixed ^= mixed >> 29;
@@ -100,16 +99,14 @@ private:
 class ByteBuffer {
 public:
   ByteBuffer() noexcept = default;
-  explicit ByteBuffer(size_t size) noexcept
-  : m_data(static_cast<uint8_t*>(calloc(1, size))), m_length(size), m_capacity(size) {}
+  explicit ByteBuffer(size_t size) noexcept : m_data(static_cast<uint8_t*>(calloc(1, size))), m_length(size), m_capacity(size) {}
   explicit ByteBuffer(uint8_t* data, size_t size) noexcept : m_data(data), m_capacity(size), m_owned(false) {}
   ~ByteBuffer() noexcept {
     if (m_data != nullptr && m_owned) {
       free(m_data);
     }
   }
-  ByteBuffer(ByteBuffer&& rhs) noexcept
-  : m_data(rhs.m_data), m_length(rhs.m_length), m_capacity(rhs.m_capacity), m_owned(rhs.m_owned) {
+  ByteBuffer(ByteBuffer&& rhs) noexcept : m_data(rhs.m_data), m_length(rhs.m_length), m_capacity(rhs.m_capacity), m_owned(rhs.m_owned) {
     rhs.m_data = nullptr;
     rhs.m_length = 0;
     rhs.m_capacity = 0;
@@ -171,9 +168,7 @@ public:
     m_owned = true;
   }
 
-  void clear() {
-    m_length = 0;
-  }
+  void clear() { m_length = 0; }
 
   void reserve_extra(size_t size) { resize(m_length + size, true); }
 
@@ -236,10 +231,10 @@ inline constexpr uint64_t VertexBufferSize = gxm::NativeVertexBytes;
 inline constexpr uint64_t IndexBufferSize = gxm::NativeIndexBytes;
 inline constexpr uint64_t StorageBufferSize = 0;
 #else
-inline constexpr uint64_t UniformBufferSize = 25165824;  // 24mb
-inline constexpr uint64_t VertexBufferSize = 3145728;    // 3mb
-inline constexpr uint64_t IndexBufferSize = 2097152;     // 2mb
-inline constexpr uint64_t StorageBufferSize = 8388608;   // 8mb
+inline constexpr uint64_t UniformBufferSize = 25165824; // 24mb
+inline constexpr uint64_t VertexBufferSize = 3145728;   // 3mb
+inline constexpr uint64_t IndexBufferSize = 2097152;    // 2mb
+inline constexpr uint64_t StorageBufferSize = 8388608;  // 8mb
 #endif
 
 extern AuroraStats g_stats;
@@ -342,12 +337,9 @@ void expire_bind_group_cache() noexcept;
 void after_submit() noexcept;
 // `persistentCopy` marks resolves whose destination outlives the frame with no re-issue path, so
 // the pass waits for its pipelines instead of dropping draws that would be baked in permanently.
-void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
-                  Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat = GX_TF_RGBA8,
-                  const Vec4<float>* sourceRectPixels = nullptr, bool halfScale = false,
-                  const std::array<u32, 3>* copyFilterCoefficients = nullptr, bool forceOpaqueAlpha = false,
-                  float copyFilterRowStride = 1.0f, bool clampTop = false, bool clampBottom = false,
-                  bool persistentCopy = false);
+void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat = GX_TF_RGBA8,
+                  const Vec4<float>* sourceRectPixels = nullptr, bool halfScale = false, const std::array<u32, 3>* copyFilterCoefficients = nullptr, bool forceOpaqueAlpha = false,
+                  float copyFilterRowStride = 1.0f, bool clampTop = false, bool clampBottom = false, bool persistentCopy = false);
 
 // Submit the passes recorded so far (with their staging batch) to the render
 // thread. The caller resumes recording with resume_frame().
@@ -447,7 +439,6 @@ uint64_t staging_split_count() noexcept;
 std::array<uint64_t, 4> staging_wait_counters() noexcept;
 // Internal integration-test seam: never increases the physical allocation.
 void set_staging_capacity_limits_for_testing(const StagingSizes& limits);
-
 
 Vec2<uint32_t> get_render_target_size() noexcept;
 // Same value as get_render_target_size() outside a render pass, but never

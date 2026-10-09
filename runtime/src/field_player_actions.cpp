@@ -100,110 +100,112 @@ using namespace Plw;
 
 // PLW fields of the field's actions.
 enum : uint32_t {
-    kFlag1 = 1,          // u8
-    kFlag6 = 6,          // u8
-    kFlag7 = 7,          // u8
-    kFlag20 = 20,        // u8
-    kFlag24 = 24,        // u8
-    kPosition = 0x3C,    // VEC3
+    kFlag1 = 1,           // u8
+    kFlag6 = 6,           // u8
+    kFlag7 = 7,           // u8
+    kFlag20 = 20,         // u8
+    kFlag24 = 24,         // u8
+    kPosition = 0x3C,     // VEC3
     kPositionCopy = 0x48, // VEC3 (0x80041EA4 copies the position there)
-    kLastY = 0x60,       // f32 (copied back to the position's y)
-    kSpeed = 0x6C,       // f32
-    kFlag614 = 0x266,    // u8
-    kCondition = 0x378,  // s16: stamina (stamina.cpp)
-    kInputs = 6,         // u8: inputs counted in the escape stage (0x80257EEC)
-    kStages = 7,         // u8: escape stages left (0x80257EEC)
-    kVisible = 0x77,     // u8
-    kWord1008 = 0x3F0,   // s16
+    kLastY = 0x60,        // f32 (copied back to the position's y)
+    kSpeed = 0x6C,        // f32
+    kFlag614 = 0x266,     // u8
+    kCondition = 0x378,   // s16: stamina (stamina.cpp)
+    kInputs = 6,          // u8: inputs counted in the escape stage (0x80257EEC)
+    kStages = 7,          // u8: escape stages left (0x80257EEC)
+    kVisible = 0x77,      // u8
+    kWord1008 = 0x3F0,    // s16
     kChargeSteps = 0x310, // s16: steps charged (0x8028138C)
     kChargeLevel = 0x312, // u8: the level they reach (0x802812C0)
-    kMotionRate = 0x354, // f32: the motion's speed
-    kLean = 0xAC,        // u32: a turn (0x10000 a circle), as s16
-    kCommandBits = 0xE0, // u32[]: command bits (0x8026A6A8 tests one)
-    kCommands = 0xF0,    // u32[]: the step's command bits (0x8026A708 tests one)
-    kPadHeld = 0xC8,     // u16
-    kPadPressed = 0xCC,  // u16
-    kFlag15 = 15,        // u8
-    kWord16 = 16,        // u16
-    kGroundKind = 22,    // u8 (GetGroundHit's)
-    kClimbs = 0x5C7,     // u8
-    kWord1020 = 0x3FC,   // s16
-    kWord1024 = 0x400,   // s16
-    kFlag789 = 0x315,    // u8
-    kFlag1468 = 0x5BC,   // u8
-    kFlag1469 = 0x5BD,   // u8
-    kFlag1470 = 0x5BE,   // u8
-    kFlag1640 = 0x668,   // u8
-    kSteps1012 = 0x3F4,  // s16: steps, to 200 (0x80258230)
-    kSignal = 0x656,     // u8 (set by others while +0x657 is 1)
-    kWatching = 0x657,   // u8
-    kStaminaMax = 0x37A, // s16: the stamina gauge's length (?): a rest ends adding it; the idle is tired at 150 or less
-    kItem774 = 0x306,    // u16
-    kWord1606 = 0x646,   // s16
-    kWord1608 = 0x648,   // s16
-    kState918 = 0x396,   // s16 (0x80277BA8)
-    kState1408 = 0x580,  // s16 (0x80277CAC)
+    kMotionRate = 0x354,  // f32: the motion's speed
+    kLean = 0xAC,         // u32: a turn (0x10000 a circle), as s16
+    kCommandBits = 0xE0,  // u32[]: command bits (0x8026A6A8 tests one)
+    kCommands = 0xF0,     // u32[]: the step's command bits (0x8026A708 tests one)
+    kPadHeld = 0xC8,      // u16
+    kPadPressed = 0xCC,   // u16
+    kFlag15 = 15,         // u8
+    kWord16 = 16,         // u16
+    kGroundKind = 22,     // u8 (GetGroundHit's)
+    kClimbs = 0x5C7,      // u8
+    kWord1020 = 0x3FC,    // s16
+    kWord1024 = 0x400,    // s16
+    kFlag789 = 0x315,     // u8
+    kFlag1468 = 0x5BC,    // u8
+    kFlag1469 = 0x5BD,    // u8
+    kFlag1470 = 0x5BE,    // u8
+    kFlag1640 = 0x668,    // u8
+    kSteps1012 = 0x3F4,   // s16: steps, to 200 (0x80258230)
+    kSignal = 0x656,      // u8 (set by others while +0x657 is 1)
+    kWatching = 0x657,    // u8
+    kStaminaMax = 0x37A,  // s16: the stamina gauge's length (?): a rest ends adding it; the idle is tired at 150 or less
+    kItem774 = 0x306,     // u16
+    kWord1606 = 0x646,    // s16
+    kWord1608 = 0x648,    // s16
+    kState918 = 0x396,    // s16 (0x80277BA8)
+    kState1408 = 0x580,   // s16 (0x80277CAC)
 };
 
 enum : uint32_t {
-    NextAction = 0x80275B28,  // (plw, u8, u16 action, u16): +14 = 1, then 0x80275754 sets it
-    ActionFlags = 0x80275B68, // (plw, u16 flag9 | 0x8000, a, b): flag 9 and act flags 1, 2, 4
-    EndAction = 0x8027621C,   // (plw, u8 flag9, s32 blend, s32 flags): back to the field stance
-    MotionAfterSet = 0x80277CBC, // (plw)
-    CanGoOn = 0x802D7A08,     // () -> 1
-    WaitStart = 0x802D7AB4,   // ()
-    CameraFollow = 0x802BC700, // ()
-    RotVecY = 0x800510C8,     // rotVecY (VEC3*, u32 angle)
-    VecAdd = 0x80073FCC,      // (inout VEC3*, add VEC3*)
-    ButtonBlocked = 0x802A0368, // (plw) -> 0 when a held button may count
-    ClearActFlags = 0x8026FF54, // (plw, flags): clears flag bits (as SetActFlags)
-    Nearby = 0x8026F96C,      // (plw, 0) -> u8
-    InEventDemo = 0x8027BCAC, // PlInEventDemo (1) -> 1
-    CopyVec = 0x80041EA4,     // (dst, src)
-    FrameCheck = 0x8026A378,  // Pl_frame_check (plw, u16 channel, f1 frame, f2) -> 1 once past it
-    StatusMessage = 0x802672D4, // PlShowStatusMessage (plw, 1, id, 0)
-    StaminaChange = 0x8027695C, // PlStaminaChange (plw, s16 delta), per tick (stamina.cpp)
-    AddHealth = 0x802762F0,   // PlAddHealth (plw, s16 amount) (player_health.cpp)
-    Watch = 0x802DE5DC,       // (plw, plw + 1432)
-    SetCondition = 0x802768CC, // PlSetConditionState (plw, s16 delta): stamina (stamina.cpp)
-    SetEffect013 = 0x801072B4, // eft013_set (plw, u8)
-    Cue = 0x80245D54,         // (plw, u16 id, u8 table 0-3): 0x802779D8 with the table's lists
-    SkillCheck = 0x80271374,  // Pl_Skill_ck (plw, skill) -> 1
-    SetState1408 = 0x80277CAC, // (plw, s16): +0x580
-    SetState918 = 0x80277BA8, // (plw, s16): +0x396
-    EscapeStages = 0x80794510, // u8[]: the inputs each escape stage takes, by stages left
-    ChargeLevel = 0x802812C0, // (plw) -> u8: the level +0x310 reaches (thresholds 0x805C7478)
-    ChargeTime = 0x80281210, // (plw, s16 steps) -> s16: scaled by skills 191, 192
-    ChargeEffect = 0x802811B0, // (plw)
-    GroundHit = 0x802916A0,   // GetGroundHit (VEC3*, s32, u8 kind) -> f1 height
-    ClimateActive = 0x80276864, // PlClimateActive (plw, 0) -> 1 in heat or cold without protection
-    InWater = 0x80278878,     // Pl_suimen_ck (plw) -> 1 at the water's surface
-    AnyInput = 0x8026F8EC,    // (plw) -> 1 when the local player moves the stick or presses a button
-    Vec3Ctor = 0x80043F0C,    // (VEC3*): nothing
-    CatSkillCheck = 0x80272B14, // Pl_cat_skill_ck (plw, skill) -> 1
-    PlayModeCheck = 0x800CF27C, // PlayMode_ck () -> u8
-    MotionFrame = 0x8026A3B0, // (plw) -> f1: the motion's frame
-    SetMotionAttr = 0x8026A138, // Pl_chr_set_attr (plw, u16 motion, s32 blend, s32 frame, u32)
-    RotVecXYZ = 0x80051224,   // rotVecXYZ (VEC3*, u32 angles[3])
-    GroundHit2 = 0x802916C8,  // GetGroundHit2 (VEC3*, s32, u8 kind, u8* hit) -> f1 height
-    ClearVelocity = 0x8026A5D4, // (plw): +0x78..+0x8C = 0
+    NextAction = 0x80275B28,        // (plw, u8, u16 action, u16): +14 = 1, then 0x80275754 sets it
+    ActionFlags = 0x80275B68,       // (plw, u16 flag9 | 0x8000, a, b): flag 9 and act flags 1, 2, 4
+    EndAction = 0x8027621C,         // (plw, u8 flag9, s32 blend, s32 flags): back to the field stance
+    MotionAfterSet = 0x80277CBC,    // (plw)
+    CanGoOn = 0x802D7A08,           // () -> 1
+    WaitStart = 0x802D7AB4,         // ()
+    CameraFollow = 0x802BC700,      // ()
+    RotVecY = 0x800510C8,           // rotVecY (VEC3*, u32 angle)
+    VecAdd = 0x80073FCC,            // (inout VEC3*, add VEC3*)
+    ButtonBlocked = 0x802A0368,     // (plw) -> 0 when a held button may count
+    ClearActFlags = 0x8026FF54,     // (plw, flags): clears flag bits (as SetActFlags)
+    Nearby = 0x8026F96C,            // (plw, 0) -> u8
+    InEventDemo = 0x8027BCAC,       // PlInEventDemo (1) -> 1
+    CopyVec = 0x80041EA4,           // (dst, src)
+    FrameCheck = 0x8026A378,        // Pl_frame_check (plw, u16 channel, f1 frame, f2) -> 1 once past it
+    StatusMessage = 0x802672D4,     // PlShowStatusMessage (plw, 1, id, 0)
+    StaminaChange = 0x8027695C,     // PlStaminaChange (plw, s16 delta), per tick (stamina.cpp)
+    AddHealth = 0x802762F0,         // PlAddHealth (plw, s16 amount) (player_health.cpp)
+    Watch = 0x802DE5DC,             // (plw, plw + 1432)
+    SetCondition = 0x802768CC,      // PlSetConditionState (plw, s16 delta): stamina (stamina.cpp)
+    SetEffect013 = 0x801072B4,      // eft013_set (plw, u8)
+    Cue = 0x80245D54,               // (plw, u16 id, u8 table 0-3): 0x802779D8 with the table's lists
+    SkillCheck = 0x80271374,        // Pl_Skill_ck (plw, skill) -> 1
+    SetState1408 = 0x80277CAC,      // (plw, s16): +0x580
+    SetState918 = 0x80277BA8,       // (plw, s16): +0x396
+    EscapeStages = 0x80794510,      // u8[]: the inputs each escape stage takes, by stages left
+    ChargeLevel = 0x802812C0,       // (plw) -> u8: the level +0x310 reaches (thresholds 0x805C7478)
+    ChargeTime = 0x80281210,        // (plw, s16 steps) -> s16: scaled by skills 191, 192
+    ChargeEffect = 0x802811B0,      // (plw)
+    GroundHit = 0x802916A0,         // GetGroundHit (VEC3*, s32, u8 kind) -> f1 height
+    ClimateActive = 0x80276864,     // PlClimateActive (plw, 0) -> 1 in heat or cold without protection
+    InWater = 0x80278878,           // Pl_suimen_ck (plw) -> 1 at the water's surface
+    AnyInput = 0x8026F8EC,          // (plw) -> 1 when the local player moves the stick or presses a button
+    Vec3Ctor = 0x80043F0C,          // (VEC3*): nothing
+    CatSkillCheck = 0x80272B14,     // Pl_cat_skill_ck (plw, skill) -> 1
+    PlayModeCheck = 0x800CF27C,     // PlayMode_ck () -> u8
+    MotionFrame = 0x8026A3B0,       // (plw) -> f1: the motion's frame
+    SetMotionAttr = 0x8026A138,     // Pl_chr_set_attr (plw, u16 motion, s32 blend, s32 frame, u32)
+    RotVecXYZ = 0x80051224,         // rotVecXYZ (VEC3*, u32 angles[3])
+    GroundHit2 = 0x802916C8,        // GetGroundHit2 (VEC3*, s32, u8 kind, u8* hit) -> f1 height
+    ClearVelocity = 0x8026A5D4,     // (plw): +0x78..+0x8C = 0
     ClearAcceleration = 0x8026A5F4, // (plw): +0x84..+0x8C = 0
-    PlVelocityStep = 0x8026A57C, // (plw): VelocityStep below
-    JointPos = 0x8026A3EC,    // pl_get_joint_wpos (plw, joint, VEC3* out)
-    EnemyJointPos = 0x8013599C, // get_joint_wpos_em (em, joint, VEC3* out)
-    VecSub = 0x80050D04,      // (out, a, b): a - b
-    VecAngles = 0x80050D7C,   // calcVecAngXY (VEC3*, u32* x, u32* y)
-    VecAngle2 = 0x80050AF4,   // calcVecAng2 (VEC3* from, VEC3* to) -> u32 y angle
-    GetMoveWorkAdrs = 0x800CFAF4, // get_move_work_adrs (type) -> the works (2840 bytes each for 3)
-    GetMoveWorkMax = 0x800CFB34, // get_move_work_max (type) -> u16
-    GetNowAreaNo = 0x802AFCE8, // get_now_areano () -> u8
-    SetAction = 0x80275754,   // (plw, u8, u16 action, u16)
-    EndActionReset = 0x8027629C, // (plw, u8 flag9, s32 blend, s32 flags): +0x442 = 0, +0x30A = 255, then as EndAction
+    PlVelocityStep = 0x8026A57C,    // (plw): VelocityStep below
+    JointPos = 0x8026A3EC,          // pl_get_joint_wpos (plw, joint, VEC3* out)
+    EnemyJointPos = 0x8013599C,     // get_joint_wpos_em (em, joint, VEC3* out)
+    VecSub = 0x80050D04,            // (out, a, b): a - b
+    VecAngles = 0x80050D7C,         // calcVecAngXY (VEC3*, u32* x, u32* y)
+    VecAngle2 = 0x80050AF4,         // calcVecAng2 (VEC3* from, VEC3* to) -> u32 y angle
+    GetMoveWorkAdrs = 0x800CFAF4,   // get_move_work_adrs (type) -> the works (2840 bytes each for 3)
+    GetMoveWorkMax = 0x800CFB34,    // get_move_work_max (type) -> u16
+    GetNowAreaNo = 0x802AFCE8,      // get_now_areano () -> u8
+    SetAction = 0x80275754,         // (plw, u8, u16 action, u16)
+    EndActionReset = 0x8027629C,    // (plw, u8 flag9, s32 blend, s32 flags): +0x442 = 0, +0x30A = 255, then as EndAction
 };
 constexpr uint32_t kCharFlag246 = 0xF6; // MHchar u8 (0x8026A350)
 
 // Bit n of the u32 array at `words` (0x8026A6A8 and 0x8026A708 on the PLW's).
-bool Bit(uint32_t words, uint32_t n) { return (Memory::Read32(words + n / 32 * 4) >> (n % 32)) & 1; }
+bool Bit(uint32_t words, uint32_t n) {
+    return (Memory::Read32(words + n / 32 * 4) >> (n % 32)) & 1;
+}
 
 struct Player : Plw::Player {
     void Flags(uint32_t mode, uint32_t a, uint32_t b) const { game.Call<ActionFlags>({plw, mode, a, b}); }
@@ -213,7 +215,8 @@ struct Player : Plw::Player {
 
 // 0x802580D4: effect 13 (10) every 50 steps.
 void Effect13Every50(const Player& p) {
-    if (p.Every(50)) p.game.Call<SetEffect013>({p.plw, 10});
+    if (p.Every(50))
+        p.game.Call<SetEffect013>({p.plw, 10});
 }
 
 // 0x802535B8.
@@ -229,7 +232,8 @@ void Motion8(CpuContext* ctx) {
         p.Set(8, 10, 0);
         break;
     case 1:
-        if (game.Call<MasterCheck>({p.plw}) != 0 && p.CountDown()) p.End(1, 4);
+        if (game.Call<MasterCheck>({p.plw}) != 0 && p.CountDown())
+            p.End(1, 4);
         break;
     }
 }
@@ -249,7 +253,8 @@ void Motion26(CpuContext* ctx) {
         p.Timer(frame.Arg(4) ? 80 : 40);
         break;
     case 1:
-        if (p.CountDown()) p.End(0, 12);
+        if (p.CountDown())
+            p.End(0, 12);
         break;
     }
 }
@@ -270,8 +275,10 @@ void Wait120(CpuContext* ctx) {
         game.Call<WaitStart>();
         break;
     case 1:
-        if (p.CountDown()) p.End(0, 4);
-        else if (game.Call<CanGoOn>() == 1) p.Next(0, 34, 0);
+        if (p.CountDown())
+            p.End(0, 4);
+        else if (game.Call<CanGoOn>() == 1)
+            p.Next(0, 34, 0);
         break;
     }
 }
@@ -293,7 +300,8 @@ void Slide221(CpuContext* ctx) {
         p.Set(221, 0, 0);
         p.Timer(0);
         p.Flags(0, 0, 0);
-        if (p.Master()) game.Call<CameraFollow>();
+        if (p.Master())
+            game.Call<CameraFollow>();
         Memory::WriteFloat32(plw + kSpeed, 40.0f);
         break;
     case 1: {
@@ -331,8 +339,10 @@ void ButtonHold(CpuContext* ctx) {
         case 0: {
             Memory::Write8(held, 0);
             const bool alternative = Memory::Read8(pad + 112) == 1 && i == 1;
-            if ((Memory::Read16(pad + (alternative ? 4 : 0)) & mask) == 0) break;
-            if (game.Call<ButtonBlocked>({plw}) != 0 && i != 6) break;
+            if ((Memory::Read16(pad + (alternative ? 4 : 0)) & mask) == 0)
+                break;
+            if (game.Call<ButtonBlocked>({plw}) != 0 && i != 6)
+                break;
             Memory::Write8(state, uint8_t(Memory::Read8(state) + 1));
             Memory::Write8(held, 1);
             break;
@@ -389,8 +399,10 @@ void Sink206(CpuContext* ctx) {
         const float s = float(GameStep::Scale());
         const float speed = Memory::ReadFloat32(plw + kSpeed) - 4.0f * s;
         Memory::WriteFloat32(plw + kSpeed, speed);
-        if (speed < -250.0f) Memory::WriteFloat32(plw + kSpeed, -250.0f);
-        else Memory::WriteFloat32(plw + kPosition + 8, Memory::ReadFloat32(plw + kPosition + 8) + 10.0f * s);
+        if (speed < -250.0f)
+            Memory::WriteFloat32(plw + kSpeed, -250.0f);
+        else
+            Memory::WriteFloat32(plw + kPosition + 8, Memory::ReadFloat32(plw + kPosition + 8) + 10.0f * s);
         game.Call<CopyVec>({plw + kPositionCopy, plw + kPosition});
         break;
     }
@@ -457,8 +469,7 @@ void Walk52(CpuContext* ctx) {
         const uint32_t step = frame[8];
         MoveTurned(p, step, 2.0f);
         for (uint32_t k = 0; k < 12; k += 4)
-            Memory::WriteFloat32(plw + kPosition + k,
-                                 Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(step + k));
+            Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(step + k));
         p.CountDownToZero();
         game.Call<0x80259030>({plw, 1, arg, 0});
         break;
@@ -472,7 +483,9 @@ void TableMotionThenGo(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw, index = frame.Arg(4), alt = frame.Arg(5);
-    const auto s16 = [](uint32_t a) { return int32_t(int16_t(Memory::Read16(a))); };
+    const auto s16 = [](uint32_t a) {
+        return int32_t(int16_t(Memory::Read16(a)));
+    };
     switch (p.State()) {
     case 0: {
         p.NextState();
@@ -484,7 +497,8 @@ void TableMotionThenGo(CpuContext* ctx) {
     }
     case 1:
         p.CountDownToZero();
-        if (!p.Master() || p.Timer() > 0) break;
+        if (!p.Master() || p.Timer() > 0)
+            break;
         if ((game.Call<Nearby>({plw, 0}) & 0xFF) != 0 || game.Call<InEventDemo>({1}) == 1)
             game.Call<EndAction>({plw, Memory::Read8(plw + kFlag9), 4, 0});
         else
@@ -523,7 +537,8 @@ void Motion318(CpuContext* ctx) {
             Memory::Write8(plw + kFlag6, 1);
             game.Call<StatusMessage>({plw, 1, 25, 0});
         }
-        if (p.Ended()) p.End(0, 4);
+        if (p.Ended())
+            p.End(0, 4);
         break;
     }
 }
@@ -549,14 +564,18 @@ void Motion39(CpuContext* ctx) {
         break;
     case 1: {
         Effect13Every50(p);
-        if (game.Call<MasterCheck>({plw}) == 0) break;
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
         p.CountDownToZero();
         // The original counts this by 1 a step (it was left counting steps).
         const int32_t steps = int16_t(Memory::Read16(plw + kSteps1012)) + int32_t(GameStep::Ticks());
         Memory::Write16(plw + kSteps1012, uint16_t(steps));
-        if (int16_t(steps) >= 200) p.Next(6, 30, 12);
-        else if ((game.Call<Nearby>({plw, 0}) & 0xFF) >= 1) game.Call<0x8026A40C>({plw});
-        else if (p.Timer() <= 0) p.Next(6, 28, 1);
+        if (int16_t(steps) >= 200)
+            p.Next(6, 30, 12);
+        else if ((game.Call<Nearby>({plw, 0}) & 0xFF) >= 1)
+            game.Call<0x8026A40C>({plw});
+        else if (p.Timer() <= 0)
+            p.Next(6, 28, 1);
         break;
     }
     }
@@ -584,13 +603,16 @@ void Motion120(CpuContext* ctx) {
     case 1:
         game.Call<StaminaChange>({plw, uint32_t(-1)});
         p.CountDownToZero();
-        if (!p.Master()) break;
+        if (!p.Master())
+            break;
         if ((game.Call<Nearby>({plw, 0}) & 0xFF) >= 1 && game.Call<0x8026A6A8>({plw, 37}) == 1) {
             game.Call<0x8026A450>({plw});
             game.Call<0x80252B50>({plw, 0xC16D, 16020, 43, 44});
         } else if (p.Timer() <= 0) {
-            if (int16_t(Memory::Read16(plw + kCondition)) > 0) p.Next(1, 8, 0);
-            else p.Next(0, 150, 0);
+            if (int16_t(Memory::Read16(plw + kCondition)) > 0)
+                p.Next(1, 8, 0);
+            else
+                p.Next(0, 150, 0);
         }
         break;
     }
@@ -611,16 +633,21 @@ void AwaitSignal(CpuContext* ctx) {
         p.Flags(alt ? 3 : 0, 0, 0);
         p.SetX(alt ? 100 : 1, 6, 0);
         game.Call<MotionAfterSet>({plw});
-        if (game.Call<0x8045169C>() == 1) Memory::Write8(plw + kSignal, 0);
+        if (game.Call<0x8045169C>() == 1)
+            Memory::Write8(plw + kSignal, 0);
         p.Timer(0);
         break;
     case 1: {
-        if (game.Call<MasterCheck>({plw}) == 0) break;
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
         p.CountUp();
         const uint32_t signal = Memory::Read8(plw + kSignal);
-        if (p.Timer() <= 600 && signal == 0) break;
-        if (signal == 1) p.Next(0, alt ? 160 : 73, 0);
-        else game.Call<EndAction>({plw, Memory::Read8(plw + kFlag9), 2, 0});
+        if (p.Timer() <= 600 && signal == 0)
+            break;
+        if (signal == 1)
+            p.Next(0, alt ? 160 : 73, 0);
+        else
+            game.Call<EndAction>({plw, Memory::Read8(plw + kFlag9), 2, 0});
         break;
     }
     }
@@ -644,8 +671,10 @@ void Motion51(CpuContext* ctx) {
             Memory::Write16(plw + 1008, 0);
             game.Call<0x80257ED4>({plw});
             game.Call<0x80245E04>({plw, 0});
-            if (b == 0) Memory::Write16(plw + 1048, 900);
-            else Memory::Write16(plw + 1054, 450);
+            if (b == 0)
+                Memory::Write16(plw + 1048, 900);
+            else
+                Memory::Write16(plw + 1054, 450);
             Memory::Write16(plw + 1114, 0);
             Memory::Write16(plw + 1116, 0);
         } else {
@@ -657,14 +686,16 @@ void Motion51(CpuContext* ctx) {
         game.Call<0x8027714C>({plw, 0x805C571C, 0});
         [[fallthrough]];
     case 1:
-        if (p.CountDown()) p.NextState();
+        if (p.CountDown())
+            p.NextState();
         counting = 1;
         break;
     case 2:
         counting = 0;
         break;
     }
-    if (p.Master()) game.Call<0x80259030>({plw, 0, uint32_t(int32_t(int16_t(b))), counting});
+    if (p.Master())
+        game.Call<0x80259030>({plw, 0, uint32_t(int32_t(int16_t(b))), counting});
 }
 
 // 0x80250630: sleep.
@@ -692,7 +723,8 @@ void Sleep(CpuContext* ctx) {
         if (p.Motion() == 327) {
             // The original rolls once a step: here once a tick.
             for (uint32_t tick = 0, ticks = GameStep::Ticks(); tick < ticks; ++tick) {
-                if ((game.Call<Rand>({1}) & 0x7F) != 0) continue;
+                if ((game.Call<Rand>({1}) & 0x7F) != 0)
+                    continue;
                 p.Set(328, 4, 0);
                 break;
             }
@@ -719,20 +751,26 @@ void Rest(CpuContext* ctx) {
         p.NextState();
         Memory::Write8(plw + kFlag24, 0);
         p.Flags(standing ? 0 : 3, 0, 0);
-        if (standing) p.Set(5, 4, 0);
-        else p.Set(122, 6, 0);
+        if (standing)
+            p.Set(5, 4, 0);
+        else
+            p.Set(122, 6, 0);
         p.Timer(150);
         break;
     case 1:
-        if (!p.CountDown()) break;
+        if (!p.CountDown())
+            break;
         p.NextState();
         p.Set(standing ? 6 : 124, 4, 0);
         break;
     case 2:
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         game.Call<SetCondition>({plw, uint32_t(int32_t(int16_t(Memory::Read16(plw + kStaminaMax))))});
-        if (standing) p.End(0, 6);
-        else p.End(3, 4);
+        if (standing)
+            p.End(0, 6);
+        else
+            p.End(3, 4);
         break;
     }
 }
@@ -759,7 +797,8 @@ void Motion8Or364(CpuContext* ctx) {
         p.Timer(0);
         if (p.Master()) {
             game.Call<0x8024D1A8>({plw});
-            if (game.Call<InEventDemo>({1}) == 0) game.Call<0x80272E94>({plw, Memory::Read16(plw + kItem774), uint32_t(-1)});
+            if (game.Call<InEventDemo>({1}) == 0)
+                game.Call<0x80272E94>({plw, Memory::Read16(plw + kItem774), uint32_t(-1)});
         }
         break;
     case 1:
@@ -774,7 +813,8 @@ void Motion8Or364(CpuContext* ctx) {
         }
         break;
     case 2:
-        if (p.Ended()) game.Call<EndAction>({plw, Memory::Read8(plw + kFlag9), 2, 0});
+        if (p.Ended())
+            game.Call<EndAction>({plw, Memory::Read8(plw + kFlag9), 2, 0});
         break;
     }
 }
@@ -795,10 +835,15 @@ void Motion507Cues(CpuContext* ctx) {
         break;
     case 1: {
         p.CountDownToZero();
-        constexpr struct { float frame; uint32_t id; } kCues[] = {{48, 8}, {68, 9}, {168, 9}, {190, 8}};
+        constexpr struct {
+            float frame;
+            uint32_t id;
+        } kCues[] = {{48, 8}, {68, 9}, {168, 9}, {190, 8}};
         for (const auto& cue : kCues)
-            if (game.Call<FrameCheck>({plw, 0}, {cue.frame, 0.0}) == 1) game.Call<Cue>({plw, cue.id, 3});
-        if (!p.Master() || p.Timer() > 0) break;
+            if (game.Call<FrameCheck>({plw, 0}, {cue.frame, 0.0}) == 1)
+                game.Call<Cue>({plw, cue.id, 3});
+        if (!p.Master() || p.Timer() > 0)
+            break;
         if ((game.Call<Nearby>({plw, 0}) & 0xFF) != 0 || game.Call<InEventDemo>({1}) == 1)
             p.End(Memory::Read8(plw + kFlag9), 4);
         else
@@ -832,7 +877,8 @@ void Struggle(CpuContext* ctx) {
         break;
     case 1:
         Effect13Every50(p);
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         p.NextState();
         p.Timer(game.Call<SkillCheck>({plw, 6}) == 1 ? 480 : 240);
         p.Set(210, 0, 154);
@@ -854,7 +900,8 @@ void Struggle(CpuContext* ctx) {
         break;
     }
     case 3:
-        if (p.Ended()) game.Call<EndActionReset>({plw, 0, 4, 0});
+        if (p.Ended())
+            game.Call<EndActionReset>({plw, 0, 4, 0});
         break;
     }
 }
@@ -905,8 +952,10 @@ void Escape(CpuContext* ctx) {
             const uint32_t inputs = Memory::Read8(plw + kInputs) + GameStep::Ticks();
             Memory::Write8(plw + kInputs, uint8_t(std::min(inputs, 255u)));
             int8_t needed = int8_t(Memory::Read8(EscapeStages + Memory::Read8(plw + kStages)));
-            if (game.Call<SkillCheck>({plw, 9}) == 1) needed = int8_t(needed * 2);
-            if (int32_t(Memory::Read8(plw + kInputs)) >= needed) nextStage();
+            if (game.Call<SkillCheck>({plw, 9}) == 1)
+                needed = int8_t(needed * 2);
+            if (int32_t(Memory::Read8(plw + kInputs)) >= needed)
+                nextStage();
         }
         if (Memory::Read8(plw + kStages) == 0) {
             game.Call<0x80257ED4>({plw});
@@ -925,7 +974,8 @@ void RemoteStep(const Player& p) {
     p.game.Call<SetState918>({plw, 10});
     p.game.Call<0x8027A1E0>({plw});
     p.game.Call<0x8027AC70>({plw});
-    for (const uint32_t flag : {kFlag1468, kFlag1469, kFlag1640, kFlag1470}) Memory::Write8(plw + flag, 0);
+    for (const uint32_t flag : {kFlag1468, kFlag1469, kFlag1640, kFlag1470})
+        Memory::Write8(plw + flag, 0);
     p.game.Call<ClearActFlags>({plw, 2048});
 }
 void RemoteStart(const Player& p) {
@@ -935,9 +985,11 @@ void RemoteStart(const Player& p) {
 }
 // The steps count only for players that aren't this console's.
 void RemoteWait(const Player& p) {
-    if (p.game.Call<MasterCheck>({p.plw}) != 0) return;
+    if (p.game.Call<MasterCheck>({p.plw}) != 0)
+        return;
     p.Timer(p.Timer() - int32_t(GameStep::Ticks()));
-    if (p.Timer() < 0) p.NextState();
+    if (p.Timer() < 0)
+        p.NextState();
 }
 void RemoteFree(const Player& p) {
     Memory::Write8(p.plw + 0, 0);
@@ -964,8 +1016,12 @@ void RemoteStand(CpuContext* ctx) {
             p.Set(259, 4, 0);
         }
         break;
-    case 1: RemoteWait(p); break;
-    case 2: RemoteFree(p); break;
+    case 1:
+        RemoteWait(p);
+        break;
+    case 2:
+        RemoteFree(p);
+        break;
     }
 }
 
@@ -996,8 +1052,12 @@ void RemoteRest(CpuContext* ctx) {
             p.Set(5, 0, 146);
         }
         break;
-    case 2: RemoteWait(p); break;
-    case 3: RemoteFree(p); break;
+    case 2:
+        RemoteWait(p);
+        break;
+    case 3:
+        RemoteFree(p);
+        break;
     }
 }
 
@@ -1025,7 +1085,8 @@ void Walk53(CpuContext* ctx) {
         game.Call<0x8027714C>({plw, 0x805C571C, 0});
         break;
     case 1: {
-        if (game.Call<MasterCheck>({plw}) == 0) break;
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
         if (game.Call<0x80277E10>({plw, 0}, {85.0, -60.0}) != 0) {
             Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2) & 0xFFFF);
             p.Next(6, arg ? 68 : 48, 0);
@@ -1034,8 +1095,7 @@ void Walk53(CpuContext* ctx) {
         const uint32_t step = frame[8];
         MoveTurned(p, step, 5.0f);
         for (uint32_t k = 0; k < 12; k += 4)
-            Memory::WriteFloat32(plw + kPosition + k,
-                                 Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(step + k));
+            Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(step + k));
         p.CountDownToZero();
         game.Call<0x80259030>({plw, 1, arg, 0});
         break;
@@ -1047,8 +1107,7 @@ void Walk53(CpuContext* ctx) {
 // step's ticks, so a charge takes the same time at any step length.
 void ChargeStep(const Player& p) {
     const uint32_t plw = p.plw;
-    Memory::Write16(plw + kChargeSteps,
-                    uint16_t(int16_t(Memory::Read16(plw + kChargeSteps)) + int32_t(GameStep::Ticks())));
+    Memory::Write16(plw + kChargeSteps, uint16_t(int16_t(Memory::Read16(plw + kChargeSteps)) + int32_t(GameStep::Ticks())));
     Memory::Write8(plw + kChargeLevel, uint8_t(p.game.Call<ChargeLevel>({plw})));
     p.game.Call<ChargeEffect>({plw});
 }
@@ -1085,11 +1144,13 @@ void ChargeHold(CpuContext* ctx) {
                 game.Call<0x8011ADBC>({plw, 0});
             }
             // Command 17 clear (the button let go) or 13 ends the charge (+6).
-            if (!Bit(plw + kCommands, 17) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
+            if (!Bit(plw + kCommands, 17) || Bit(plw + kCommands, 13))
+                Memory::Write8(plw + kFlag6, 1);
             if (Memory::Read8(plw + kFlag6) == 0) {
                 Memory::WriteFloat32(plw + kMotionRate, 0.5f);
                 ChargeStep(p);
-                if (p.CountDown()) Memory::Write8(plw + kFlag6, 1);
+                if (p.CountDown())
+                    Memory::Write8(plw + kFlag6, 1);
             } else {
                 Memory::WriteFloat32(plw + kMotionRate, 1.0f);
             }
@@ -1140,7 +1201,8 @@ void ClimbUp(CpuContext* ctx) {
     }
     case 1:
         p.CountDownToZero();
-        if (game.Call<MasterCheck>({plw}) == 0) break;
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
         if (game.Call<0x80277144>({plw}) == 1 || Bit(plw + kCommandBits, 6) || (Memory::Read16(plw + kPadHeld) & 0x2000))
             p.Next(0, 7, 0);
         else if ((Memory::Read16(plw + kPadPressed) & 0x1000) && p.Timer() == 0)
@@ -1162,21 +1224,29 @@ void Stand(CpuContext* ctx) {
         p.NextState();
         p.Flags(0x8003, 0, 0);
         p.Timer(30);
-        if (Memory::Read8(plw + kFlag24) == 0) game.Call<0x8027714C>({plw, 0x805BEFE4, 0});
-        else game.Call<0x80277204>({plw, 0});
+        if (Memory::Read8(plw + kFlag24) == 0)
+            game.Call<0x8027714C>({plw, 0x805BEFE4, 0});
+        else
+            game.Call<0x80277204>({plw, 0});
         break;
     case 1:
         // The original counts on past 0 while 0x8027A3A4 says no.
         if (p.Timer() > 0 || game.Call<0x8027A3A4>({plw}) == 0) {
-            if (p.CountDown()) Memory::Write32(plw + kLean, 0);
+            if (p.CountDown())
+                Memory::Write32(plw + kLean, 0);
         }
         if (p.Master() && game.Call<0x8026FEA8>({plw}) == 1 && Memory::Read8(plw + kFlag24) == 1)
             game.Call<0x8027A5E0>({plw, 1050, 0});
-        if (Memory::Read8(plw + kFlag24) == 1) break;
-        if (game.Call<ClimateActive>({plw, 0}) == 1) p.SetX(121, 4, 0);
-        else if (int16_t(Memory::Read16(plw + kStaminaMax)) <= 150) p.SetX(360, 4, 0);
-        else if (game.Call<InWater>({plw}) == 1) p.SetX(118, 4, 0);
-        else p.SetX(100, 4, 0);
+        if (Memory::Read8(plw + kFlag24) == 1)
+            break;
+        if (game.Call<ClimateActive>({plw, 0}) == 1)
+            p.SetX(121, 4, 0);
+        else if (int16_t(Memory::Read16(plw + kStaminaMax)) <= 150)
+            p.SetX(360, 4, 0);
+        else if (game.Call<InWater>({plw}) == 1)
+            p.SetX(118, 4, 0);
+        else
+            p.SetX(100, 4, 0);
         break;
     }
 }
@@ -1202,8 +1272,10 @@ void Motion105(CpuContext* ctx) {
         p.Timer(25);
         // Within 60 degrees (10923): the original's bounds, -10922 .. 10923.
         const int32_t lean = int16_t(Memory::Read32(plw + kLean));
-        if (lean <= -10922) Memory::Write32(plw + kLean, 0x10000 - 10922);
-        else if (lean >= 10923) Memory::Write32(plw + kLean, 10923);
+        if (lean <= -10922)
+            Memory::Write32(plw + kLean, 0x10000 - 10922);
+        else if (lean >= 10923)
+            Memory::Write32(plw + kLean, 10923);
         break;
     }
     case 1:
@@ -1211,11 +1283,16 @@ void Motion105(CpuContext* ctx) {
             p.CountDownToZero();
             game.Call<StaminaChange>({plw, uint32_t(-4)}); // per tick (stamina.cpp)
         }
-        if (!p.Ended()) break;
-        if (game.Call<MasterCheck>({plw}) == 0) p.Next(1, 9, 128);
-        else if ((game.Call<Nearby>({plw, 0}) & 0xFF) < 1) p.Next(1, 8, 0);
-        else if (Bit(plw + kCommandBits, 37)) p.Next(1, 9, 128);
-        else p.Next(1, 7, 128);
+        if (!p.Ended())
+            break;
+        if (game.Call<MasterCheck>({plw}) == 0)
+            p.Next(1, 9, 128);
+        else if ((game.Call<Nearby>({plw, 0}) & 0xFF) < 1)
+            p.Next(1, 8, 0);
+        else if (Bit(plw + kCommandBits, 37))
+            p.Next(1, 9, 128);
+        else
+            p.Next(1, 7, 128);
         break;
     }
 }
@@ -1233,24 +1310,30 @@ void Motion63Or66(CpuContext* ctx) {
     case 0:
         p.NextState();
         p.Flags(0x8000, 0, 0);
-        if (Memory::Read8(plw + kFlag24) == 0) game.Call<0x8027714C>({plw, 0x805BE408, 0});
-        else game.Call<0x80277204>({plw, 0});
+        if (Memory::Read8(plw + kFlag24) == 0)
+            game.Call<0x8027714C>({plw, 0x805BE408, 0});
+        else
+            game.Call<0x80277204>({plw, 0});
         p.Timer(0);
         [[fallthrough]];
     case 1:
         p.CountUp();
-        if (p.Timer() > 30 && p.Motion() == 1) p.Set(Memory::Read8(plw + kFlag20) ? 63 : 66, 6, 0);
+        if (p.Timer() > 30 && p.Motion() == 1)
+            p.Set(Memory::Read8(plw + kFlag20) ? 63 : 66, 6, 0);
         if (p.Master() && game.Call<0x8026FEA8>({plw}) == 1 && Memory::Read8(plw + kFlag24) == 1)
             game.Call<0x8027A5E0>({plw, 1001, 0});
         switch (p.Motion()) {
         case 21:
-            if (p.Ended()) p.Set(5, 4, 144);
+            if (p.Ended())
+                p.Set(5, 4, 144);
             break;
         case 63:
-            if (p.Ended()) p.Set(65, 2, 0);
+            if (p.Ended())
+                p.Set(65, 2, 0);
             break;
         case 66:
-            if (p.Ended()) p.Set(67, 2, 0);
+            if (p.Ended())
+                p.Set(67, 2, 0);
             break;
         default:
             if (Memory::Read8(plw + kFlag24) != 1 && int16_t(Memory::Read16(plw + kStaminaMax)) <= 150)
@@ -1283,7 +1366,8 @@ void UseItem(CpuContext* ctx) {
         }
         game.Call<MotionAfterSet>({plw});
         p.Timer(60);
-        if (p.Master() && int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) <= 0) break;
+        if (p.Master() && int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) <= 0)
+            break;
         if (game.Call<InEventDemo>({1}) == 0 && Memory::Read16(plw + kItem774) != 384)
             game.Call<0x80272E94>({plw, Memory::Read16(plw + kItem774), uint32_t(-1)});
         game.Call<0x802BE5CC>({plw, 0});
@@ -1299,9 +1383,9 @@ void UseItem(CpuContext* ctx) {
     case 1: {
         // The original fires only as the countdown reaches 0 (not below).
         const int32_t before = p.Timer();
-        if (!p.CountDown() || before <= 0) break;
-        if (int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) < 1 ||
-            Memory::Read16(plw + kItem774) == 384)
+        if (!p.CountDown() || before <= 0)
+            break;
+        if (int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) < 1 || Memory::Read16(plw + kItem774) == 384)
             p.End(Memory::Read8(plw + kFlag9), 6);
         else
             p.Next(0, alt ? 173 : 170, 44);
@@ -1333,7 +1417,8 @@ void UseItemRepeat(CpuContext* ctx) {
             Memory::Write8(plw + 0x583, 0);
             Memory::Write16(plw + 0x38, uint16_t(Memory::Read32(plw + kAngle)));
         } else {
-            if (p.Master()) game.Call<0x800DDD1C>({13, plw + kPosition}); // map_se_req
+            if (p.Master())
+                game.Call<0x800DDD1C>({13, plw + kPosition}); // map_se_req
             p.Set(motion, 0, 66);
         }
         game.Call<MotionAfterSet>({plw});
@@ -1344,20 +1429,21 @@ void UseItemRepeat(CpuContext* ctx) {
         p.CountDownToZero();
         const uint32_t hold = Memory::Read8(plw + kFlag6);
         Memory::Write8(plw + kFlag6, uint8_t(hold - std::min(hold, GameStep::Ticks())));
-        if (!p.Master()) break;
+        if (!p.Master())
+            break;
         if (game.Call<InEventDemo>({1}) == 1) {
             p.End(Memory::Read8(plw + kFlag9), 6);
             break;
         }
         if (Memory::Read8(plw + kFlag6) == 0) {
             game.Call<0x8027A5E0>({plw, motion, 2});
-            if (game.Call<0x8026A6A8>({plw, 76}) == 1 &&
-                int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) >= 1) {
+            if (game.Call<0x8026A6A8>({plw, 76}) == 1 && int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) >= 1) {
                 p.Next(0, alt == 0 ? 171 : 174, 108);
                 break;
             }
         }
-        if (p.Timer() == 0 && game.Call<0x8026A6A8>({plw, 7}) == 1) p.End(Memory::Read8(plw + kFlag9), 6);
+        if (p.Timer() == 0 && game.Call<0x8026A6A8>({plw, 7}) == 1)
+            p.End(Memory::Read8(plw + kFlag9), 6);
         break;
     }
     }
@@ -1397,9 +1483,11 @@ void Weapon1001(CpuContext* ctx) {
     case 1: {
         if (const uint32_t n = Memory::Read8(plw + kFlag6)) {
             Memory::Write8(plw + kFlag6, uint8_t(n - std::min(n, GameStep::Ticks())));
-            if (Memory::Read8(plw + kFlag6) == 0) game.Call<0x8031D2F8>({plw, 0});
+            if (Memory::Read8(plw + kFlag6) == 0)
+                game.Call<0x8031D2F8>({plw, 0});
         }
-        if (!game.Call<MasterCheck>({plw})) break;
+        if (!game.Call<MasterCheck>({plw}))
+            break;
         if (p.CountDown()) {
             const uint32_t action = Memory::Read16((alt == 0 ? 0x80794654 : 0x8079465C) + 2 * next);
             game.Call<SetAction>({plw, 4, action, alt == 0 ? 5u : 133u});
@@ -1431,13 +1519,16 @@ void Motion241(CpuContext* ctx) {
         p.Flags(0, 0, 1);
         game.Call<0x8027D554>({plw});
         Memory::Write8(plw + kFlag24, 0);
-        if (mode == 0) p.Timer(300);
+        if (mode == 0)
+            p.Timer(300);
         Memory::Write8(plw + kFlag6, 30);
         Memory::Write8(plw + kFlag7, 3);
-        if (mode == 1) game.Call<0x8027714C>({plw, 0x805C5880, 0});
+        if (mode == 1)
+            game.Call<0x8027714C>({plw, 0x805C5880, 0});
         break;
     case 1: {
-        if (!p.Master()) break;
+        if (!p.Master())
+            break;
         const uint32_t n = Memory::Read8(plw + kFlag6);
         Memory::Write8(plw + kFlag6, uint8_t(n - std::min(n, GameStep::Ticks())));
         if (mode == 0) {
@@ -1450,10 +1541,12 @@ void Motion241(CpuContext* ctx) {
             }
             // The original fires once the countdown was out before the step.
             p.Timer(p.Timer() - int32_t(GameStep::Ticks()));
-            if (p.Timer() < 0 || Memory::Read8(found) == 1) p.Next(7, 3, 0);
+            if (p.Timer() < 0 || Memory::Read8(found) == 1)
+                p.Next(7, 3, 0);
         } else if (mode == 1) {
             game.Call<0x8025A860>({plw});
-            if (Memory::Read8(plw + 0x3A4) == 0 || game.Call<0x8012D4CC>({1, plw, found}) == 0) p.Next(7, 3, 0);
+            if (Memory::Read8(plw + 0x3A4) == 0 || game.Call<0x8012D4CC>({1, plw, found}) == 0)
+                p.Next(7, 3, 0);
         }
         break;
     }
@@ -1498,14 +1591,14 @@ void Motion7Or8(CpuContext* ctx) {
         }
         break;
     case 2:
-        if (!game.Call<MasterCheck>({plw})) break;
+        if (!game.Call<MasterCheck>({plw}))
+            break;
         game.Call<0x8027A5E0>({plw, kind == 2 ? 118u : 8u, 1});
         if (p.Timer() > 0) {
             p.CountDownToZero();
             break;
         }
-        if (game.Call<0x8026A6A8>({plw, 7}) == 1 || game.Call<0x8026A6A8>({plw, 1}) == 1 ||
-            game.Call<InEventDemo>({1}) == 1) {
+        if (game.Call<0x8026A6A8>({plw, 7}) == 1 || game.Call<0x8026A6A8>({plw, 1}) == 1 || game.Call<InEventDemo>({1}) == 1) {
             game.Call<0x8027A1E0>({plw});
             p.End(kind == 2 ? 3 : 1, 4);
         }
@@ -1550,17 +1643,21 @@ void Charge1150(CpuContext* ctx) {
         }
         break;
     case 2:
-        if (!game.Call<MasterCheck>({plw})) break;
-        if (game.Call<FrameCheck>({plw, 1}, {48.0, 0.0}) != 1) break;
+        if (!game.Call<MasterCheck>({plw}))
+            break;
+        if (game.Call<FrameCheck>({plw, 1}, {48.0, 0.0}) != 1)
+            break;
         if (Memory::Read8(plw + kFlag7) == 0) {
             Memory::Write8(plw + kFlag7, 1);
             game.Call<0x8011ADBC>({plw, 0});
         }
-        if (!Bit(plw + kCommands, 5) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
+        if (!Bit(plw + kCommands, 5) || Bit(plw + kCommands, 13))
+            Memory::Write8(plw + kFlag6, 1);
         if (Memory::Read8(plw + kFlag6) == 0) {
             Memory::WriteFloat32(plw + kMotionRate, 0.5f);
             ChargeStep(p);
-            if (p.CountDown()) Memory::Write8(plw + kFlag6, 1);
+            if (p.CountDown())
+                Memory::Write8(plw + kFlag6, 1);
         }
         if (Memory::Read8(plw + kFlag6) == 1) {
             Memory::WriteFloat32(plw + kMotionRate, 1.0f);
@@ -1589,15 +1686,19 @@ void Motion210(CpuContext* ctx) {
     Memory::Write8(plw + kFlag1469, 0);
     Memory::Write8(plw + kFlag1640, 0);
     game.Call<ClearActFlags>({plw, 2048});
-    if (kind == 2) Memory::Write8(p.Char() + kCharFlag246, 2);
+    if (kind == 2)
+        Memory::Write8(p.Char() + kCharFlag246, 2);
     const uint32_t state = p.State();
     if (state == 0) {
         p.NextState();
         game.Call<0x8027AC70>({plw});
         p.Timer(0);
-        if (kind == 0) p.Set(210, 0, 0);
-        else if (kind == 1) p.Set(210, 0, 170);
-        else if (kind == 2) p.Set(209, 0, 120);
+        if (kind == 0)
+            p.Set(210, 0, 0);
+        else if (kind == 1)
+            p.Set(210, 0, 170);
+        else if (kind == 2)
+            p.Set(209, 0, 120);
         game.Call<0x80275524>({plw, 3});
         game.Call<MotionAfterSet>({plw});
         game.Call<0x8025B138>({plw});
@@ -1611,12 +1712,15 @@ void Motion210(CpuContext* ctx) {
         }
         return;
     }
-    if (state > 2) return;
+    if (state > 2)
+        return;
     const uint32_t motion = p.Motion();
     if (motion == 210) {
-        if (game.Call<FrameCheck>({plw, 0}, {164.0, 0.0}) == 1 && (game.Call<Rand>({1}) & 63) == 0) p.Set(223, 0, 0);
+        if (game.Call<FrameCheck>({plw, 0}, {164.0, 0.0}) == 1 && (game.Call<Rand>({1}) & 63) == 0)
+            p.Set(223, 0, 0);
     } else if (motion == 223) {
-        if (p.Ended()) p.Set(210, 0, 164);
+        if (p.Ended())
+            p.Set(210, 0, 164);
     }
     if (p.Master() && p.State() == 1) {
         p.CountUp();
@@ -1667,9 +1771,12 @@ void Spin(CpuContext* ctx) {
             else if (game.Call<0x8026FB84>({plw, 1024}) == 1)
                 Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) - uint32_t(GameStep::Share(192)));
         }
-        if (game.Call<FrameCheck>({plw, 0}, {26.0, 0.0}) == 1) game.Call<0x80284268>({plw, k.cue26, 0});
-        if (game.Call<FrameCheck>({plw, 0}, {52.0, 0.0}) == 1) game.Call<0x80284268>({plw, k.cue52, 0});
-        if (game.Call<FrameCheck>({plw, 0}, {44.0, 0.0}) != 1) break;
+        if (game.Call<FrameCheck>({plw, 0}, {26.0, 0.0}) == 1)
+            game.Call<0x80284268>({plw, k.cue26, 0});
+        if (game.Call<FrameCheck>({plw, 0}, {52.0, 0.0}) == 1)
+            game.Call<0x80284268>({plw, k.cue52, 0});
+        if (game.Call<FrameCheck>({plw, 0}, {44.0, 0.0}) != 1)
+            break;
         p.Timer(p.Timer() + 1);
         Memory::Write8(plw + kFlag6, uint8_t(Memory::Read8(plw + kFlag6) - 1));
         if (Memory::Read8(plw + kFlag6) == 0) {
@@ -1684,8 +1791,10 @@ void Spin(CpuContext* ctx) {
         break;
     case 2:
         game.Call<0x80277CB4>({plw, 2});
-        if (p.Ended()) p.End(k.flag9, 6);
-        else game.Call<0x80284654>({plw}, {k.rate});
+        if (p.Ended())
+            p.End(k.flag9, 6);
+        else
+            game.Call<0x80284654>({plw}, {k.rate});
         break;
     }
 }
@@ -1729,11 +1838,13 @@ bool FallMove(const Player& p, uint32_t move) {
     const uint32_t plw = p.plw;
     const float s = float(GameStep::Scale());
     for (uint32_t k = 0; k < 12; k += 4)
-        Memory::WriteFloat32(plw + kVelocity + k, Memory::ReadFloat32(plw + kVelocity + k) +
-                                                      Memory::ReadFloat32(plw + kAcceleration + k) * s);
-    if (Memory::ReadFloat32(plw + kVelocity + 0) < 0.0f) Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
-    if (Memory::ReadFloat32(plw + kVelocity + 8) < 0.0f) Memory::WriteFloat32(plw + kVelocity + 8, 0.0f);
-    for (uint32_t k = 0; k < 12; k += 4) Memory::WriteFloat32(move + k, Memory::ReadFloat32(plw + kVelocity + k) * s);
+        Memory::WriteFloat32(plw + kVelocity + k, Memory::ReadFloat32(plw + kVelocity + k) + Memory::ReadFloat32(plw + kAcceleration + k) * s);
+    if (Memory::ReadFloat32(plw + kVelocity + 0) < 0.0f)
+        Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+    if (Memory::ReadFloat32(plw + kVelocity + 8) < 0.0f)
+        Memory::WriteFloat32(plw + kVelocity + 8, 0.0f);
+    for (uint32_t k = 0; k < 12; k += 4)
+        Memory::WriteFloat32(move + k, Memory::ReadFloat32(plw + kVelocity + k) * s);
     p.game.Call<RotVecY>({move, Memory::Read32(plw + kAngle2)});
     for (uint32_t k = 0; k < 12; k += 4)
         Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(move + k));
@@ -1744,9 +1855,11 @@ bool FallMove(const Player& p, uint32_t move) {
 // step count (+0x28) takes 1 more a step while falling.
 bool FallStep(const Player& p, uint32_t move) {
     const uint32_t plw = p.plw;
-    if (!FallMove(p, move)) return false;
+    if (!FallMove(p, move))
+        return false;
     p.CountUp();
-    if (!(Memory::ReadFloat32(plw + kPosition + 4) < Memory::ReadFloat32(plw + kLastY))) return false;
+    if (!(Memory::ReadFloat32(plw + kPosition + 4) < Memory::ReadFloat32(plw + kLastY)))
+        return false;
     Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(plw + kLastY));
     Memory::Write8(plw + 27, 1);
     Memory::Write8(plw + kFlag9, 0);
@@ -1775,7 +1888,8 @@ void Fall(CpuContext* ctx) {
         Memory::Write8(plw + kFlag7, 0);
         break;
     case 1:
-        if (!FallStep(p, frame[8])) break;
+        if (!FallStep(p, frame[8]))
+            break;
         if (p.Timer() >= 50) {
             game.Call<0x80245E04>({plw, 0});
             p.Next(2, 2, 0);
@@ -1808,9 +1922,11 @@ void Fall2(CpuContext* ctx) {
         game.Call<0x8027AC70>({plw});
         break;
     case 1: {
-        if (!FallStep(p, frame[8])) break;
+        if (!FallStep(p, frame[8]))
+            break;
         int32_t hard = 50, soft = 30;
-        if (game.Call<CatSkillCheck>({plw, 36}) != 1 && game.Call<0x8027BE38>({plw}) == 1) hard = 60, soft = 40;
+        if (game.Call<CatSkillCheck>({plw, 36}) != 1 && game.Call<0x8027BE38>({plw}) == 1)
+            hard = 60, soft = 40;
         if (p.Timer() >= hard && game.Call<CatSkillCheck>({plw, 36}) == 0) {
             Memory::Write8(plw + 0x5C4, Memory::Read8(plw + 0x5C4) & 0xF0);
             game.Call<0x8010D6EC>({plw});
@@ -1860,23 +1976,30 @@ void AwaitPlace(CpuContext* ctx) {
     case 1: {
         switch (p.Motion()) {
         case 1:
-            if (p.Timer() <= 0) p.Set(Memory::Read8(plw + kFlag20) == 0 ? 66 : 63, 6, 0);
+            if (p.Timer() <= 0)
+                p.Set(Memory::Read8(plw + kFlag20) == 0 ? 66 : 63, 6, 0);
             break;
-        case 63: if (p.Ended()) p.Set(65, 2, 0); break;
-        case 66: if (p.Ended()) p.Set(67, 2, 0); break;
+        case 63:
+            if (p.Ended())
+                p.Set(65, 2, 0);
+            break;
+        case 66:
+            if (p.Ended())
+                p.Set(67, 2, 0);
+            break;
         }
-        if (!p.Master() || p.Timer() > 0) break;
-        if (game.Call<InEventDemo>({1}) == 1 ||
-            ((game.Call<PlayModeCheck>() & 0xFF) != 2 && Memory::Read8(plw + kFlag1469) == 0)) {
+        if (!p.Master() || p.Timer() > 0)
+            break;
+        if (game.Call<InEventDemo>({1}) == 1 || ((game.Call<PlayModeCheck>() & 0xFF) != 2 && Memory::Read8(plw + kFlag1469) == 0)) {
             p.End(0, 4);
             break;
         }
-        if ((game.Call<PlayModeCheck>() & 0xFF) != 2 && Memory::Read8(plw + kFlag1469) != 1) break;
+        if ((game.Call<PlayModeCheck>() & 0xFF) != 2 && Memory::Read8(plw + kFlag1469) != 1)
+            break;
         const uint32_t mode = Memory::Read8(plw + 0x5BF);
         if (mode == 0) {
             const uint32_t kind = frame[8], angle = frame[20];
-            const uint32_t found = game.Call<0x803BAA14>(
-                {Memory::Read8(plw + 8), Memory::Read8(plw + kGroundKind), plw + kPosition, kind, spot, frame[16], frame[12]});
+            const uint32_t found = game.Call<0x803BAA14>({Memory::Read8(plw + 8), Memory::Read8(plw + kGroundKind), plw + kPosition, kind, spot, frame[16], frame[12]});
             if ((found & 0xFFFF) == 0xFFFF) {
                 p.End(0, 4);
                 Memory::Write8(plw + kFlag1469, 0);
@@ -1938,15 +2061,18 @@ void Run119(CpuContext* ctx) {
                 Memory::WriteFloat32(plw + kMotionRate, Memory::ReadFloat32(plw + kMotionRate) * 0.9f);
         }
         Memory::Write8(plw + kFlag614, 10);
-        if (Memory::Read8(plw + kFlag24) == 0) game.Call<0x8027714C>({plw, 0x805BF5D4, 0});
-        else game.Call<0x80277204>({plw, 0});
+        if (Memory::Read8(plw + kFlag24) == 0)
+            game.Call<0x8027714C>({plw, 0x805BF5D4, 0});
+        else
+            game.Call<0x80277204>({plw, 0});
         p.Timer(40);
         Memory::Write8(plw + kFlag7, 15);
         Memory::Write16(plw + kWord1606, 0);
         Memory::Write16(plw + kWord1608, 0);
         return;
     case 1: {
-        if (Memory::Read8(plw + kFlag6) != 0) game.Call<StaminaChange>({plw, uint32_t(-1)});
+        if (Memory::Read8(plw + kFlag6) != 0)
+            game.Call<StaminaChange>({plw, uint32_t(-1)});
         const uint32_t wait = Memory::Read8(plw + kFlag7);
         Memory::Write8(plw + kFlag7, uint8_t(wait - std::min(wait, GameStep::Ticks())));
         p.CountDownToZero();
@@ -2026,9 +2152,9 @@ void Jump15(CpuContext* ctx) {
         Memory::Write8(plw + kFlag7, 0);
         break;
     case 1: {
-        if (!FallMove(p, move)) break;
-        if (game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1 &&
-            Memory::Read8(plw + kClimbs) <= 20) {
+        if (!FallMove(p, move))
+            break;
+        if (game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1 && Memory::Read8(plw + kClimbs) <= 20) {
             Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(height));
             Memory::WriteFloat32(plw + kLastY, Memory::ReadFloat32(height));
             Memory::Write8(plw + 27, 1);
@@ -2039,7 +2165,8 @@ void Jump15(CpuContext* ctx) {
         game.Call<GroundHit2>({plw + kPosition, uint32_t(-6), Memory::Read8(plw + kGroundKind), hit});
         const float ground = float(game.F1());
         Memory::WriteFloat32(height, ground);
-        if (!(ground >= Memory::ReadFloat32(plw + kPosition + 4)) || Memory::Read8(hit) == 0) break;
+        if (!(ground >= Memory::ReadFloat32(plw + kPosition + 4)) || Memory::Read8(hit) == 0)
+            break;
         game.Call<0x80275B60>({plw, 0});
         Memory::WriteFloat32(plw + kPosition + 4, ground);
         Memory::Write8(plw + 0x585, 0);
@@ -2051,8 +2178,7 @@ void Jump15(CpuContext* ctx) {
             p.Next(2, 2, 0);
             break;
         }
-        if (p.Master() && game.Call<0x8027AC7C>({plw}) == 0 && Memory::Read8(plw + kFlag24) == 0 &&
-            game.Call<0x8026A6A8>({plw, 0}) == 1 && (game.Call<Nearby>({plw, 0}) & 0xFF) >= 1) {
+        if (p.Master() && game.Call<0x8027AC7C>({plw}) == 0 && Memory::Read8(plw + kFlag24) == 0 && game.Call<0x8026A6A8>({plw, 0}) == 1 && (game.Call<Nearby>({plw, 0}) & 0xFF) >= 1) {
             p.NextState();
             p.Set(16, 0, 0);
         } else {
@@ -2061,7 +2187,8 @@ void Jump15(CpuContext* ctx) {
         break;
     }
     case 2:
-        if (p.Ended()) p.Next(1, 14, 0);
+        if (p.Ended())
+            p.Next(1, 14, 0);
         break;
     }
 }
@@ -2123,7 +2250,8 @@ void ClimbOver(CpuContext* ctx) {
         p.Timer(0);
         break;
     case 1: {
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         p.NextState();
         game.Call<ClearAcceleration>({plw});
         const float speed = 15.0f * (Memory::Read8(plw + kFlag24) == 1 ? 0.8f : 1.0f);
@@ -2137,7 +2265,8 @@ void ClimbOver(CpuContext* ctx) {
     }
     case 2: {
         game.Call<PlVelocityStep>({plw});
-        if (game.Call<0x80245ED0>({plw}) == 1 || !(Memory::ReadFloat32(plw + kVelocity + 4) < 0.0f)) break;
+        if (game.Call<0x80245ED0>({plw}) == 1 || !(Memory::ReadFloat32(plw + kVelocity + 4) < 0.0f))
+            break;
         if (kind != 2 && game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1) {
             Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
             Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(height));
@@ -2149,7 +2278,8 @@ void ClimbOver(CpuContext* ctx) {
         game.Call<GroundHit2>({plw + kPosition, uint32_t(-6), Memory::Read8(plw + kGroundKind), hit});
         const float ground = float(game.F1());
         Memory::WriteFloat32(height, ground);
-        if (!(ground >= Memory::ReadFloat32(plw + kPosition + 4)) || Memory::Read8(hit) == 0) break;
+        if (!(ground >= Memory::ReadFloat32(plw + kPosition + 4)) || Memory::Read8(hit) == 0)
+            break;
         Memory::WriteFloat32(plw + kPosition + 4, ground);
         game.Call<0x80275B60>({plw, 0});
         if (int16_t(Memory::Read16(plw + 0x370)) <= 0 && p.Master()) {
@@ -2163,7 +2293,8 @@ void ClimbOver(CpuContext* ctx) {
         break;
     }
     case 3:
-        if (p.Ended()) p.End(0, 4);
+        if (p.Ended())
+            p.End(0, 4);
         break;
     }
 }
@@ -2199,7 +2330,9 @@ void Charge1101(CpuContext* ctx) {
             p.Set(1131, 2, 0);
             game.Call<0x8027E21C>({plw, 1});
             break;
-        case 2: p.Set(1120, 4, 0); break;
+        case 2:
+            p.Set(1120, 4, 0);
+            break;
         case 3:
             p.NextState();
             p.Set(1118, 4, 0);
@@ -2212,7 +2345,8 @@ void Charge1101(CpuContext* ctx) {
             break;
         case 5:
         case 6: {
-            if (kind == 5) p.NextState();
+            if (kind == 5)
+                p.NextState();
             const uint32_t angle = Memory::Read32(plw + kAngle2) + (kind == 5 ? 8192 : uint32_t(-8192));
             Memory::Write32(plw + kAngle2, angle);
             Memory::Write32(plw + kAngle, angle & 0xFFFF);
@@ -2233,7 +2367,8 @@ void Charge1101(CpuContext* ctx) {
         break;
     }
     case 2: {
-        if (!game.Call<MasterCheck>({plw})) break;
+        if (!game.Call<MasterCheck>({plw}))
+            break;
         const double start = kind == 3 ? 0.0 : kind == 5 ? 2.0 : 34.0;
         const double end = kind == 3 ? 24.0 : kind == 5 ? 26.0 : 58.0;
         if (game.Call<FrameCheck>({plw, 1}, {start, 0.0}) == 1) {
@@ -2241,11 +2376,13 @@ void Charge1101(CpuContext* ctx) {
                 Memory::Write8(plw + kFlag7, 1);
                 game.Call<0x8011ADBC>({plw, 0});
             }
-            if (!Bit(plw + kCommands, 5) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
+            if (!Bit(plw + kCommands, 5) || Bit(plw + kCommands, 13))
+                Memory::Write8(plw + kFlag6, 1);
             if (Memory::Read8(plw + kFlag6) == 0) {
                 Memory::WriteFloat32(plw + kMotionRate, 0.5f);
                 ChargeStep(p);
-                if (p.CountDown()) Memory::Write8(plw + kFlag6, 1);
+                if (p.CountDown())
+                    Memory::Write8(plw + kFlag6, 1);
             } else {
                 Memory::WriteFloat32(plw + kMotionRate, 1.0f);
             }
@@ -2253,9 +2390,12 @@ void Charge1101(CpuContext* ctx) {
         if (game.Call<FrameCheck>({plw, 1}, {end, 0.0}) == 1 && Memory::Read8(plw + kFlag6) == 1) {
             Memory::Write8(plw + kChargeLevel, uint8_t(game.Call<ChargeLevel>({plw})));
             Memory::WriteFloat32(plw + kMotionRate, 1.0f);
-            if (kind == 3) p.Next(4, 32, 4);
-            else if (kind == 5) p.Next(4, 33, 4);
-            else p.Next(4, 31, 260);
+            if (kind == 3)
+                p.Next(4, 32, 4);
+            else if (kind == 5)
+                p.Next(4, 33, 4);
+            else
+                p.Next(4, 31, 260);
         }
         break;
     }
@@ -2291,9 +2431,12 @@ void KnockedFlying(CpuContext* ctx) {
         Memory::WriteFloat32(v + 4, 0.0f);
         p.Set(Memory::Read16(0x805C56B8 + 4 * kind), 0, Memory::Read16(0x805C56B8 + 4 * kind + 2));
         float speed = 0, fall = 0;
-        if (kind == 0) speed = Memory::ReadFloat32(0x8079FF60 - 15176), fall = Memory::ReadFloat32(0x8079FF60 - 15172);
-        else if (kind == 2) speed = Memory::ReadFloat32(0x8079FF60 - 15168), fall = Memory::ReadFloat32(0x8079FF60 - 15164);
-        else if (kind == 1 || kind == 3) speed = 23.0f, fall = -0.25f;
+        if (kind == 0)
+            speed = Memory::ReadFloat32(0x8079FF60 - 15176), fall = Memory::ReadFloat32(0x8079FF60 - 15172);
+        else if (kind == 2)
+            speed = Memory::ReadFloat32(0x8079FF60 - 15168), fall = Memory::ReadFloat32(0x8079FF60 - 15164);
+        else if (kind == 1 || kind == 3)
+            speed = 23.0f, fall = -0.25f;
         if (kind <= 3) {
             Memory::WriteFloat32(v + 8, speed);
             Memory::WriteFloat32(plw + kAcceleration + 4, fall);
@@ -2307,20 +2450,25 @@ void KnockedFlying(CpuContext* ctx) {
     }
     case 1: {
         if (p.Ended()) {
-            if (p.Motion() == 205) p.Set(214, 0, 0);
-            if (p.Motion() == 208) p.Set(220, 0, 0);
+            if (p.Motion() == 205)
+                p.Set(214, 0, 0);
+            if (p.Motion() == 208)
+                p.Set(220, 0, 0);
         }
         game.Call<PlVelocityStep>({plw});
-        if (game.Call<0x80245ED0>({plw}) == 1) break;
+        if (game.Call<0x80245ED0>({plw}) == 1)
+            break;
         game.Call<0x8025FF70>({plw, 0});
         const uint32_t on = game.Call<0x80246B18>({plw, ground});
         const float y = Memory::ReadFloat32(plw + kPosition + 4), floor = Memory::ReadFloat32(ground);
         if (p.Timer() > 0) {
             p.CountDownToZero();
-            if (y <= floor + 63.0f && on != 0) Memory::WriteFloat32(plw + kPosition + 4, floor + 63.0f);
+            if (y <= floor + 63.0f && on != 0)
+                Memory::WriteFloat32(plw + kPosition + 4, floor + 63.0f);
             break;
         }
-        if (!(Memory::ReadFloat32(plw + kVelocity + 4) <= 0.0f)) break;
+        if (!(Memory::ReadFloat32(plw + kVelocity + 4) <= 0.0f))
+            break;
         if (on == 1 && y <= floor + 63.0f) {
             p.NextState();
             Memory::WriteFloat32(plw + kPosition + 4, floor);
@@ -2331,14 +2479,17 @@ void KnockedFlying(CpuContext* ctx) {
             Memory::WriteFloat32(plw + kPosition + 4, floor);
             Memory::Write8(plw + 27, 1);
             Memory::Write8(plw + kFlag9, 3);
-            if (p.Master() && int16_t(Memory::Read16(plw + 0x370)) <= 0) game.Call<0x80278C48>({plw});
-            else p.Next(0, 151, 12);
+            if (p.Master() && int16_t(Memory::Read16(plw + 0x370)) <= 0)
+                game.Call<0x80278C48>({plw});
+            else
+                p.Next(0, 151, 12);
         }
         break;
     }
     case 2: {
         const bool done = kind == 2 ? game.Call<FrameCheck>({plw, 1}, {58.0, 0.0}) == 1 : p.Ended();
-        if (!done) break;
+        if (!done)
+            break;
         if (int16_t(Memory::Read16(plw + 0x370)) > 0) {
             p.NextState();
             p.Set(Memory::Read16(0x805C56C8 + 4 * kind), Memory::Read16(0x805C56C8 + 4 * kind + 2), 0);
@@ -2401,9 +2552,12 @@ void Grabbed(CpuContext* ctx) {
         uint32_t em = game.Call<GetMoveWorkAdrs>({3});
         const uint32_t count = game.Call<GetMoveWorkMax>({3}) & 0xFFFF;
         for (uint32_t i = 0; i < count && !found; ++i, em += 2840) {
-            if (Memory::Read8(em + 0) == 0 || Memory::Read8(em + 1) == 0) continue;
-            if (Memory::Read8(em + 481) != (game.Call<GetNowAreaNo>() & 0xFF)) continue;
-            if ((Memory::Read16(em + 26) & 0xFF) != Memory::Read8(plw + 0x3B6)) continue;
+            if (Memory::Read8(em + 0) == 0 || Memory::Read8(em + 1) == 0)
+                continue;
+            if (Memory::Read8(em + 481) != (game.Call<GetNowAreaNo>() & 0xFF))
+                continue;
+            if ((Memory::Read16(em + 26) & 0xFF) != Memory::Read8(plw + 0x3B6))
+                continue;
             const uint32_t emKind = Memory::Read8(em + 3);
             if (kind == 0 && emKind == 18) {
                 found = true;
@@ -2441,24 +2595,27 @@ void Grabbed(CpuContext* ctx) {
         if (kind == 0) {
             Memory::WriteFloat32(plw + kVelocity + 4, Memory::ReadFloat32(v + 4));
         } else {
-            if (Memory::ReadFloat32(v + 4) <= 15.0f) Memory::WriteFloat32(v + 4, 15.0f);
+            if (Memory::ReadFloat32(v + 4) <= 15.0f)
+                Memory::WriteFloat32(v + 4, 15.0f);
             Memory::WriteFloat32(plw + kVelocity + 4, Memory::ReadFloat32(v + 4));
             game.Call<0x8026A608>({plw, 50});
         }
         break;
     }
     case 1:
-        if (p.Ended() && p.Motion() == 219) p.Set(220, 0, 0);
+        if (p.Ended() && p.Motion() == 219)
+            p.Set(220, 0, 0);
         game.Call<PlVelocityStep>({plw});
-        if (game.Call<0x80245ED0>({plw}) == 1) break;
+        if (game.Call<0x80245ED0>({plw}) == 1)
+            break;
         if (kind == 0) {
-            if (!p.CountDown()) break;
+            if (!p.CountDown())
+                break;
             Memory::Write8(plw + kState, 3);
             p.Set(273, 4, 0);
             break;
         }
-        if (!(Memory::ReadFloat32(plw + kVelocity + 4) <= 0.0f) ||
-            !(Memory::ReadFloat32(plw + kPosition + 4) <= Memory::ReadFloat32(plw + kLastY) + 63.0f))
+        if (!(Memory::ReadFloat32(plw + kVelocity + 4) <= 0.0f) || !(Memory::ReadFloat32(plw + kPosition + 4) <= Memory::ReadFloat32(plw + kLastY) + 63.0f))
             break;
         p.NextState();
         game.Call<SetState918>({plw, 10});
@@ -2473,14 +2630,16 @@ void Grabbed(CpuContext* ctx) {
         break;
     case 2:
         game.Call<SetState918>({plw, 10});
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         p.NextState();
         Memory::Write32(plw + kAngle2, (Memory::Read32(plw + kAngle2) + 0x8000) & 0xFFFF);
         Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
         p.Set(216, 0, 0);
         break;
     case 3:
-        if (!p.Ended()) break;
+        if (!p.Ended())
+            break;
         game.Call<EndActionReset>({plw, kind == 0 ? 3u : 0u, 8, 0});
         game.Call<SetState918>({plw, 10});
         break;
@@ -2490,123 +2649,183 @@ void Grabbed(CpuContext* ctx) {
 } // namespace
 
 extern "C" void func_802535B8(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion8(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion8", func_802535B8, Motion8); }
+extern "C" void MH3_FieldActionMotion8(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion8", func_802535B8, Motion8);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802535B8, MH3_FieldActionMotion8, "FieldActionMotion8");
 
 extern "C" void func_80257E08(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion26(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion26", func_80257E08, Motion26); }
+extern "C" void MH3_FieldActionMotion26(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion26", func_80257E08, Motion26);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80257E08, MH3_FieldActionMotion26, "FieldActionMotion26");
 
 extern "C" void func_8025198C(CpuContext* ctx);
-extern "C" void MH3_FieldActionWait120(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionWait120", func_8025198C, Wait120); }
+extern "C" void MH3_FieldActionWait120(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionWait120", func_8025198C, Wait120);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025198C, MH3_FieldActionWait120, "FieldActionWait120");
 
 extern "C" void func_8025D5F8(CpuContext* ctx);
-extern "C" void MH3_FieldActionSlide221(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSlide221", func_8025D5F8, Slide221); }
+extern "C" void MH3_FieldActionSlide221(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionSlide221", func_8025D5F8, Slide221);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025D5F8, MH3_FieldActionSlide221, "FieldActionSlide221");
 
 extern "C" void func_8026AB00(CpuContext* ctx);
-extern "C" void MH3_PlButtonHoldUpdate(CpuContext* ctx) { PortCheck::Call(ctx, "PlButtonHoldUpdate", func_8026AB00, ButtonHold); }
+extern "C" void MH3_PlButtonHoldUpdate(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlButtonHoldUpdate", func_8026AB00, ButtonHold);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8026AB00, MH3_PlButtonHoldUpdate, "PlButtonHoldUpdate");
 
 extern "C" void func_80259C9C(CpuContext* ctx);
-extern "C" void MH3_FieldActionSink206(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSink206", func_80259C9C, Sink206); }
+extern "C" void MH3_FieldActionSink206(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionSink206", func_80259C9C, Sink206);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80259C9C, MH3_FieldActionSink206, "FieldActionSink206");
 
 extern "C" void func_8025B3BC(CpuContext* ctx);
-extern "C" void MH3_FieldActionWait300(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionWait300", func_8025B3BC, Wait300); }
+extern "C" void MH3_FieldActionWait300(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionWait300", func_8025B3BC, Wait300);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025B3BC, MH3_FieldActionWait300, "FieldActionWait300");
 
 extern "C" void func_802595A0(CpuContext* ctx);
-extern "C" void MH3_FieldActionWalk52(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionWalk52", func_802595A0, Walk52); }
+extern "C" void MH3_FieldActionWalk52(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionWalk52", func_802595A0, Walk52);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802595A0, MH3_FieldActionWalk52, "FieldActionWalk52");
 
 extern "C" void func_8025BC60(CpuContext* ctx);
-extern "C" void MH3_FieldActionTableMotion(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionTableMotion", func_8025BC60, TableMotionThenGo); }
+extern "C" void MH3_FieldActionTableMotion(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionTableMotion", func_8025BC60, TableMotionThenGo);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025BC60, MH3_FieldActionTableMotion, "FieldActionTableMotion");
 
 extern "C" void func_80250D40(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion318(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion318", func_80250D40, Motion318); }
+extern "C" void MH3_FieldActionMotion318(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion318", func_80250D40, Motion318);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80250D40, MH3_FieldActionMotion318, "FieldActionMotion318");
 
 extern "C" void func_80258230(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion39(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion39", func_80258230, Motion39); }
+extern "C" void MH3_FieldActionMotion39(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion39", func_80258230, Motion39);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80258230, MH3_FieldActionMotion39, "FieldActionMotion39");
 
 extern "C" void func_802547A0(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion120(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion120", func_802547A0, Motion120); }
+extern "C" void MH3_FieldActionMotion120(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion120", func_802547A0, Motion120);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802547A0, MH3_FieldActionMotion120, "FieldActionMotion120");
 
 extern "C" void func_802497CC(CpuContext* ctx);
-extern "C" void MH3_FieldActionAwaitSignal(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionAwaitSignal", func_802497CC, AwaitSignal); }
+extern "C" void MH3_FieldActionAwaitSignal(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionAwaitSignal", func_802497CC, AwaitSignal);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802497CC, MH3_FieldActionAwaitSignal, "FieldActionAwaitSignal");
 
 extern "C" void func_80259374(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion51(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion51", func_80259374, Motion51); }
+extern "C" void MH3_FieldActionMotion51(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion51", func_80259374, Motion51);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80259374, MH3_FieldActionMotion51, "FieldActionMotion51");
 
 extern "C" void func_80250630(CpuContext* ctx);
-extern "C" void MH3_FieldActionSleep(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSleep", func_80250630, Sleep); }
+extern "C" void MH3_FieldActionSleep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionSleep", func_80250630, Sleep);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80250630, MH3_FieldActionSleep, "FieldActionSleep");
 
 extern "C" void func_8024A7C0(CpuContext* ctx);
-extern "C" void MH3_FieldActionRest(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionRest", func_8024A7C0, Rest); }
+extern "C" void MH3_FieldActionRest(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionRest", func_8024A7C0, Rest);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8024A7C0, MH3_FieldActionRest, "FieldActionRest");
 
 extern "C" void func_8024B8CC(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion8Or364(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion8Or364", func_8024B8CC, Motion8Or364); }
+extern "C" void MH3_FieldActionMotion8Or364(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion8Or364", func_8024B8CC, Motion8Or364);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8024B8CC, MH3_FieldActionMotion8Or364, "FieldActionMotion8Or364");
 
 extern "C" void func_8025C100(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion507Cues(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion507Cues", func_8025C100, Motion507Cues); }
+extern "C" void MH3_FieldActionMotion507Cues(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion507Cues", func_8025C100, Motion507Cues);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025C100, MH3_FieldActionMotion507Cues, "FieldActionMotion507Cues");
 
 extern "C" void func_80258394(CpuContext* ctx);
-extern "C" void MH3_FieldActionStruggle(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionStruggle", func_80258394, Struggle); }
+extern "C" void MH3_FieldActionStruggle(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionStruggle", func_80258394, Struggle);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80258394, MH3_FieldActionStruggle, "FieldActionStruggle");
 
 extern "C" void func_802580D4(CpuContext* ctx);
-extern "C" void MH3_PlEffect13Every50(CpuContext* ctx) { PortCheck::Call(ctx, "PlEffect13Every50", func_802580D4, Effect13); }
+extern "C" void MH3_PlEffect13Every50(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlEffect13Every50", func_802580D4, Effect13);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802580D4, MH3_PlEffect13Every50, "PlEffect13Every50");
 
 extern "C" void func_80257EEC(CpuContext* ctx);
-extern "C" void MH3_FieldActionEscape(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionEscape", func_80257EEC, Escape); }
+extern "C" void MH3_FieldActionEscape(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionEscape", func_80257EEC, Escape);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80257EEC, MH3_FieldActionEscape, "FieldActionEscape");
 
 extern "C" void func_8025DC40(CpuContext* ctx);
-extern "C" void MH3_FieldActionRemoteStand(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionRemoteStand", func_8025DC40, RemoteStand); }
+extern "C" void MH3_FieldActionRemoteStand(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionRemoteStand", func_8025DC40, RemoteStand);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025DC40, MH3_FieldActionRemoteStand, "FieldActionRemoteStand");
 
 extern "C" void func_8025DA9C(CpuContext* ctx);
-extern "C" void MH3_FieldActionRemoteRest(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionRemoteRest", func_8025DA9C, RemoteRest); }
+extern "C" void MH3_FieldActionRemoteRest(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionRemoteRest", func_8025DA9C, RemoteRest);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025DA9C, MH3_FieldActionRemoteRest, "FieldActionRemoteRest");
 
 extern "C" void func_802596E8(CpuContext* ctx);
-extern "C" void MH3_FieldActionWalk53(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionWalk53", func_802596E8, Walk53); }
+extern "C" void MH3_FieldActionWalk53(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionWalk53", func_802596E8, Walk53);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802596E8, MH3_FieldActionWalk53, "FieldActionWalk53");
 
 extern "C" void func_8028138C(CpuContext* ctx);
-extern "C" void MH3_PlChargeStep(CpuContext* ctx) { PortCheck::Call(ctx, "PlChargeStep", func_8028138C, Charge); }
+extern "C" void MH3_PlChargeStep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlChargeStep", func_8028138C, Charge);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8028138C, MH3_PlChargeStep, "PlChargeStep");
 
 extern "C" void func_80281DBC(CpuContext* ctx);
-extern "C" void MH3_FieldActionCharge1133(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionCharge1133", func_80281DBC, ChargeHold<0, 1133, 36, 0>); }
+extern "C" void MH3_FieldActionCharge1133(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCharge1133", func_80281DBC, ChargeHold<0, 1133, 36, 0>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80281DBC, MH3_FieldActionCharge1133, "FieldActionCharge1133");
 
 extern "C" void func_80282770(CpuContext* ctx);
-extern "C" void MH3_FieldActionCharge1170(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionCharge1170", func_80282770, ChargeHold<3, 1170, 65, 128>); }
+extern "C" void MH3_FieldActionCharge1170(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCharge1170", func_80282770, ChargeHold<3, 1170, 65, 128>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80282770, MH3_FieldActionCharge1170, "FieldActionCharge1170");
 
 extern "C" void func_80247704(CpuContext* ctx);
-extern "C" void MH3_FieldActionClimbUp(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionClimbUp", func_80247704, ClimbUp); }
+extern "C" void MH3_FieldActionClimbUp(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionClimbUp", func_80247704, ClimbUp);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80247704, MH3_FieldActionClimbUp, "FieldActionClimbUp");
 
 extern "C" void func_80249944(CpuContext* ctx);
-extern "C" void MH3_FieldActionStand(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionStand", func_80249944, Stand); }
+extern "C" void MH3_FieldActionStand(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionStand", func_80249944, Stand);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80249944, MH3_FieldActionStand, "FieldActionStand");
 
 extern "C" void func_80253CA0(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion105(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion105", func_80253CA0, Motion105); }
+extern "C" void MH3_FieldActionMotion105(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion105", func_80253CA0, Motion105);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80253CA0, MH3_FieldActionMotion105, "FieldActionMotion105");
 
 extern "C" void func_80246BE0(CpuContext* ctx);
@@ -2616,7 +2835,9 @@ extern "C" void MH3_FieldActionMotion63Or66(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80246BE0, MH3_FieldActionMotion63Or66, "FieldActionMotion63Or66");
 
 extern "C" void func_802516C0(CpuContext* ctx);
-extern "C" void MH3_FieldActionUseItem(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionUseItem", func_802516C0, UseItem); }
+extern "C" void MH3_FieldActionUseItem(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionUseItem", func_802516C0, UseItem);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802516C0, MH3_FieldActionUseItem, "FieldActionUseItem");
 
 extern "C" void func_80251470(CpuContext* ctx);
@@ -2626,69 +2847,103 @@ extern "C" void MH3_FieldActionUseItemRepeat(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80251470, MH3_FieldActionUseItemRepeat, "FieldActionUseItemRepeat");
 
 extern "C" void func_802886AC(CpuContext* ctx);
-extern "C" void MH3_FieldActionWeapon1001(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionWeapon1001", func_802886AC, Weapon1001); }
+extern "C" void MH3_FieldActionWeapon1001(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionWeapon1001", func_802886AC, Weapon1001);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802886AC, MH3_FieldActionWeapon1001, "FieldActionWeapon1001");
 
 extern "C" void func_8025AA9C(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion241(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion241", func_8025AA9C, Motion241); }
+extern "C" void MH3_FieldActionMotion241(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion241", func_8025AA9C, Motion241);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025AA9C, MH3_FieldActionMotion241, "FieldActionMotion241");
 
 extern "C" void func_8024FF6C(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion7Or8(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion7Or8", func_8024FF6C, Motion7Or8); }
+extern "C" void MH3_FieldActionMotion7Or8(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion7Or8", func_8024FF6C, Motion7Or8);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8024FF6C, MH3_FieldActionMotion7Or8, "FieldActionMotion7Or8");
 
 extern "C" void func_802821DC(CpuContext* ctx);
-extern "C" void MH3_FieldActionCharge1150(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionCharge1150", func_802821DC, Charge1150); }
+extern "C" void MH3_FieldActionCharge1150(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCharge1150", func_802821DC, Charge1150);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802821DC, MH3_FieldActionCharge1150, "FieldActionCharge1150");
 
 extern "C" void func_8025B15C(CpuContext* ctx);
-extern "C" void MH3_FieldActionMotion210(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion210", func_8025B15C, Motion210); }
+extern "C" void MH3_FieldActionMotion210(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion210", func_8025B15C, Motion210);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025B15C, MH3_FieldActionMotion210, "FieldActionMotion210");
 
 extern "C" void func_8028563C(CpuContext* ctx);
-extern "C" void MH3_FieldActionSpin1103(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSpin1103", func_8028563C, Spin<kSpin1103>); }
+extern "C" void MH3_FieldActionSpin1103(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionSpin1103", func_8028563C, Spin<kSpin1103>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8028563C, MH3_FieldActionSpin1103, "FieldActionSpin1103");
 
 extern "C" void func_802869D4(CpuContext* ctx);
-extern "C" void MH3_FieldActionSpin1162(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionSpin1162", func_802869D4, Spin<kSpin1162>); }
+extern "C" void MH3_FieldActionSpin1162(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionSpin1162", func_802869D4, Spin<kSpin1162>);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802869D4, MH3_FieldActionSpin1162, "FieldActionSpin1162");
 
 extern "C" void func_802598C4(CpuContext* ctx);
-extern "C" void MH3_FieldActionFall(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionFall", func_802598C4, Fall); }
+extern "C" void MH3_FieldActionFall(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionFall", func_802598C4, Fall);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802598C4, MH3_FieldActionFall, "FieldActionFall");
 
 extern "C" void func_8025CECC(CpuContext* ctx);
-extern "C" void MH3_FieldActionFall2(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionFall2", func_8025CECC, Fall2); }
+extern "C" void MH3_FieldActionFall2(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionFall2", func_8025CECC, Fall2);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8025CECC, MH3_FieldActionFall2, "FieldActionFall2");
 
 extern "C" void func_802501B8(CpuContext* ctx);
-extern "C" void MH3_FieldActionAwaitPlace(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionAwaitPlace", func_802501B8, AwaitPlace); }
+extern "C" void MH3_FieldActionAwaitPlace(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionAwaitPlace", func_802501B8, AwaitPlace);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802501B8, MH3_FieldActionAwaitPlace, "FieldActionAwaitPlace");
 
 extern "C" void func_80253038(CpuContext* ctx);
-extern "C" void MH3_FieldActionRun119(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionRun119", func_80253038, Run119); }
+extern "C" void MH3_FieldActionRun119(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionRun119", func_80253038, Run119);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80253038, MH3_FieldActionRun119, "FieldActionRun119");
 
 extern "C" void func_80254A28(CpuContext* ctx);
-extern "C" void MH3_FieldActionJump15(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionJump15", func_80254A28, Jump15); }
+extern "C" void MH3_FieldActionJump15(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionJump15", func_80254A28, Jump15);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80254A28, MH3_FieldActionJump15, "FieldActionJump15");
 
 extern "C" void func_80254F18(CpuContext* ctx);
-extern "C" void MH3_FieldActionClimbOver(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionClimbOver", func_80254F18, ClimbOver); }
+extern "C" void MH3_FieldActionClimbOver(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionClimbOver", func_80254F18, ClimbOver);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80254F18, MH3_FieldActionClimbOver, "FieldActionClimbOver");
 
 extern "C" void func_802813D0(CpuContext* ctx);
-extern "C" void MH3_FieldActionCharge1101(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionCharge1101", func_802813D0, Charge1101); }
+extern "C" void MH3_FieldActionCharge1101(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCharge1101", func_802813D0, Charge1101);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802813D0, MH3_FieldActionCharge1101, "FieldActionCharge1101");
 
 extern "C" void func_80256A58(CpuContext* ctx);
-extern "C" void MH3_FieldActionKnockedFlying(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionKnockedFlying", func_80256A58, KnockedFlying); }
+extern "C" void MH3_FieldActionKnockedFlying(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionKnockedFlying", func_80256A58, KnockedFlying);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80256A58, MH3_FieldActionKnockedFlying, "FieldActionKnockedFlying");
 
 extern "C" void func_80258AC8(CpuContext* ctx);
-extern "C" void MH3_FieldActionGrabbed(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionGrabbed", func_80258AC8, Grabbed); }
+extern "C" void MH3_FieldActionGrabbed(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionGrabbed", func_80258AC8, Grabbed);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80258AC8, MH3_FieldActionGrabbed, "FieldActionGrabbed");
 
 extern "C" void func_8026A57C(CpuContext* ctx);
-extern "C" void MH3_VelocityStep(CpuContext* ctx) { PortCheck::Call(ctx, "VelocityStep", func_8026A57C, VelocityStep); }
+extern "C" void MH3_VelocityStep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VelocityStep", func_8026A57C, VelocityStep);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8026A57C, MH3_VelocityStep, "VelocityStep");

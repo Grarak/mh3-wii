@@ -50,7 +50,8 @@ REGISTER_NATIVE_FUNCTION_AS(0x8012F8C4, MH3_EnemyBlendToward, "EnemyBlendToward"
 //   0x8012BA20 (enemy, player, amount): +0x3A4 + 4 * player, from 0x8012C0FC
 namespace {
 void ShareAt(CpuContext* ctx, uint32_t perStepReturn, int reg) {
-    if (ctx->lr == perStepReturn) ctx->gpr[reg] = uint32_t(GameStep::Share(int32_t(ctx->gpr[reg])));
+    if (ctx->lr == perStepReturn)
+        ctx->gpr[reg] = uint32_t(GameStep::Share(int32_t(ctx->gpr[reg])));
 }
 } // namespace
 

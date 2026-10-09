@@ -41,7 +41,9 @@ uint aur_word(highp usampler2D b, uint i) { return texelFetch(b, ivec2(int(i & 2
 )";
 
 }
-std::string_view glsl_prelude() noexcept { return Prelude; }
+std::string_view glsl_prelude() noexcept {
+  return Prelude;
+}
 
 std::string vertex_source(std::string_view body) {
   std::string out = "#version 300 es\n";
@@ -59,4 +61,4 @@ std::string fragment_source(std::string_view body) {
   return out;
 }
 
-}
+} // namespace aurora::gl

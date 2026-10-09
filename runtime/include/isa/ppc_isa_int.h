@@ -11,16 +11,14 @@
 #include <cstring>
 #include <limits>
 
-inline uint32_t PpcRotl32Inline(uint32_t value, uint32_t shift)
-{
+inline uint32_t PpcRotl32Inline(uint32_t value, uint32_t shift) {
     return __builtin_rotateleft32(value, shift);
 }
 
 extern "C" uint32_t OSSystemCall();
 // dcbz: zero one 32-byte block of guest memory (the translator aligns the
 // address). Never used on hardware.
-inline int32_t memset_zero_32(int32_t address)
-{
+inline int32_t memset_zero_32(int32_t address) {
     std::memset(GuestFlat::Host(static_cast<uint32_t>(address)), 0, 32);
     return 0;
 }
@@ -68,8 +66,7 @@ extern "C" void PPC_Ecowx(uint32_t addr, uint32_t value);
 extern "C" void PPC_TrapWord(uint32_t trapOptions, uint32_t lhs, uint32_t rhs);
 extern "C" uint32_t PPC_Cntlzw(uint32_t value);
 
-MKW_PPC_FORCE_INLINE uint32_t PPC_CntlzwInline(uint32_t value)
-{
+MKW_PPC_FORCE_INLINE uint32_t PPC_CntlzwInline(uint32_t value) {
     return value == 0 ? 32u : static_cast<uint32_t>(__builtin_clz(value));
 }
 
@@ -83,14 +80,18 @@ template <typename T>
 inline int32_t CompareUnsigned(T a, T b) {
     uint32_t ua = static_cast<uint32_t>(a);
     uint32_t ub = static_cast<uint32_t>(b);
-    if (ua < ub) return -1;
-    if (ua > ub) return 1;
+    if (ua < ub)
+        return -1;
+    if (ua > ub)
+        return 1;
     return 0;
 }
 
 template <int Bits>
 inline int32_t SignExtend(uint32_t val) {
-    struct { int32_t x : Bits; } s;
+    struct {
+        int32_t x : Bits;
+    } s;
     s.x = val;
     return s.x;
 }
@@ -99,35 +100,29 @@ inline int32_t ArithmeticShiftRight(int32_t val, int amount) {
     return val >> amount;
 }
 
-inline uint32_t PPC_Slw(uint32_t value, uint32_t amount)
-{
+inline uint32_t PPC_Slw(uint32_t value, uint32_t amount) {
     return (amount & 0x20u) != 0 ? 0u : value << (amount & 0x1Fu);
 }
 
-inline uint32_t PPC_Srw(uint32_t value, uint32_t amount)
-{
+inline uint32_t PPC_Srw(uint32_t value, uint32_t amount) {
     return (amount & 0x20u) != 0 ? 0u : value >> (amount & 0x1Fu);
 }
 
-inline uint32_t PPC_Sraw(uint32_t value, uint32_t amount)
-{
-    if ((amount & 0x20u) != 0)
-    {
+inline uint32_t PPC_Sraw(uint32_t value, uint32_t amount) {
+    if ((amount & 0x20u) != 0) {
         return (value & 0x80000000u) != 0 ? 0xFFFFFFFFu : 0u;
     }
 
     return static_cast<uint32_t>(static_cast<int32_t>(value) >> (amount & 0x1Fu));
 }
 
-inline uint32_t PPC_Divwu(uint32_t dividend, uint32_t divisor)
-{
+inline uint32_t PPC_Divwu(uint32_t dividend, uint32_t divisor) {
     // Gekko does not raise a program exception for non-OE division by zero.
     // Match the hardware result used by Dolphin's interpreter/JIT.
     return divisor == 0 ? 0u : dividend / divisor;
 }
 
-inline int32_t PPC_Divw(int32_t dividend, int32_t divisor)
-{
+inline int32_t PPC_Divw(int32_t dividend, int32_t divisor) {
     if (divisor == 0 || (dividend == std::numeric_limits<int32_t>::min() && divisor == -1))
         return dividend < 0 ? -1 : 0;
 

@@ -23,15 +23,18 @@ void NativeFrameAccumulator::Reset(uint64_t now_ns, OwnerCpuSample owner) noexce
 }
 
 void NativeFrameAccumulator::Begin(uint64_t now_ns) noexcept {
-    if (!m_started) Reset(now_ns);
+    if (!m_started)
+        Reset(now_ns);
     m_frameStart = now_ns;
     m_active = true;
 }
 
 void NativeFrameAccumulator::End(uint64_t now_ns, bool rendered) noexcept {
     ++m_window.logical_frames;
-    if (rendered) ++m_window.rendered_frames;
-    else ++m_window.skipped_frames;
+    if (rendered)
+        ++m_window.rendered_frames;
+    else
+        ++m_window.skipped_frames;
     if (m_active && now_ns >= m_frameStart) {
         const auto elapsed = now_ns - m_frameStart;
         ++m_window.measured_frames;
@@ -56,8 +59,7 @@ NativeFrameWindow NativeFrameAccumulator::Take(uint64_t now_ns, OwnerCpuSample o
     result.owner_thread = owner.thread;
     result.owner_core = owner.core;
     result.owner_affinity = owner.affinity;
-    result.owner_running_available = owner.available && m_owner.available &&
-        owner.thread == m_owner.thread && owner.running_us >= m_owner.running_us;
+    result.owner_running_available = owner.available && m_owner.available && owner.thread == m_owner.thread && owner.running_us >= m_owner.running_us;
     if (result.owner_running_available)
         result.owner_running_us = owner.running_us - m_owner.running_us;
     m_window = {};
@@ -102,7 +104,8 @@ mh3::statistics::OwnerCpuSample owner_cpu() noexcept {
         if (sched_getaffinity(0, sizeof(affinity), &affinity) == 0) {
             uint32_t mask = 0;
             for (unsigned core = 0; core < 32; ++core)
-                if (CPU_ISSET(core, &affinity)) mask |= uint32_t(1) << core;
+                if (CPU_ISSET(core, &affinity))
+                    mask |= uint32_t(1) << core;
             result.affinity = int32_t(mask);
         }
         result.available = true;
@@ -110,7 +113,7 @@ mh3::statistics::OwnerCpuSample owner_cpu() noexcept {
 #endif
     return result;
 }
-}
+} // namespace
 
 void BeginNativeFrameStatistics() noexcept {
     if (!started) {

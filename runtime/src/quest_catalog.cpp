@@ -23,10 +23,13 @@ namespace QuestCatalog {
 namespace {
 
 uint32_t U32(const std::vector<uint8_t>& d, size_t o) {
-    if (o + 4 > d.size()) throw std::runtime_error("Quest file truncated");
+    if (o + 4 > d.size())
+        throw std::runtime_error("Quest file truncated");
     return uint32_t(d[o]) << 24 | uint32_t(d[o + 1]) << 16 | uint32_t(d[o + 2]) << 8 | d[o + 3];
 }
-uint16_t U16(const std::vector<uint8_t>& d, size_t o) { return uint16_t(U32(d, o) >> 16); }
+uint16_t U16(const std::vector<uint8_t>& d, size_t o) {
+    return uint16_t(U32(d, o) >> 16);
+}
 
 std::string Text(const uint8_t* p, size_t max) {
     std::string s(reinterpret_cast<const char*>(p), strnlen(reinterpret_cast<const char*>(p), max));
@@ -35,15 +38,26 @@ std::string Text(const uint8_t* p, size_t max) {
 }
 
 enum : size_t {
-    kName = 0x00, kId = 0x2C, kGoal = 0x2E, kGoalEnd = 0x88, kStars = 0x8A, kMap = 0x8B,
-    kLarge = 0x314, kObjectives = 0x330, kSpawnTables = 0x4B8, kSpawnSize = 0x30,
+    kName = 0x00,
+    kId = 0x2C,
+    kGoal = 0x2E,
+    kGoalEnd = 0x88,
+    kStars = 0x8A,
+    kMap = 0x8B,
+    kLarge = 0x314,
+    kObjectives = 0x330,
+    kSpawnTables = 0x4B8,
+    kSpawnSize = 0x30,
 };
 
 const char* FileName(Set set) {
     switch (set) {
-    case Set::Village: return "05/quest00_eng.bin";
-    case Set::Online: return "05/quest01_eng.bin";
-    case Set::Arena: return "05/quest03_eng.bin";
+    case Set::Village:
+        return "05/quest00_eng.bin";
+    case Set::Online:
+        return "05/quest01_eng.bin";
+    case Set::Arena:
+        return "05/quest03_eng.bin";
     }
     return "";
 }
@@ -68,27 +82,32 @@ std::vector<Quest> Load(Set set) {
         q.stars = e[kStars];
         q.map = e[kMap];
         for (size_t k = 0; k < 3; ++k) {
-            const Objective o{U32(e, kObjectives + 8 * k), U16(e, kObjectives + 8 * k + 4),
-                              U16(e, kObjectives + 8 * k + 6)};
-            if (o.type || o.target) q.objectives.push_back(o);
+            const Objective o{U32(e, kObjectives + 8 * k), U16(e, kObjectives + 8 * k + 4), U16(e, kObjectives + 8 * k + 6)};
+            if (o.type || o.target)
+                q.objectives.push_back(o);
             const uint8_t monster = e[kLarge + 8 * k];
-            if (e[kLarge + 8 * k + 3] == 1 && monster) q.largeMonsters.push_back(monster);
+            if (e[kLarge + 8 * k + 3] == 1 && monster)
+                q.largeMonsters.push_back(monster);
         }
         std::set<uint8_t> small;
         // Some quests (the Ceadeus and Alatreon fights) have no spawn tables.
         const uint32_t tables = e.size() >= kSpawnTables + 12 ? U32(e, kSpawnTables) : 0;
         for (uint32_t t = 0; t < tables; ++t) {
             const size_t at = kSpawnTables + 12 + 8 * t;
-            if (at + 8 > e.size()) break;
+            if (at + 8 > e.size())
+                break;
             const uint32_t spawns = U32(e, at), bytes = U32(e, at + 4);
             for (uint32_t b = 0; b + kSpawnSize <= bytes; b += kSpawnSize) {
                 const size_t s = kSpawnTables + spawns + b;
-                if (s + 4 > e.size()) break;
+                if (s + 4 > e.size())
+                    break;
                 const uint32_t monster = U32(e, s);
-                if (monster > 0 && monster < 0x40) small.insert(uint8_t(monster));
+                if (monster > 0 && monster < 0x40)
+                    small.insert(uint8_t(monster));
             }
         }
-        for (uint8_t m : q.largeMonsters) small.erase(m);
+        for (uint8_t m : q.largeMonsters)
+            small.erase(m);
         q.smallMonsters.assign(small.begin(), small.end());
         quests.push_back(std::move(q));
     }
@@ -99,14 +118,17 @@ std::vector<std::string> MonsterNames() {
     const auto data = GameDiscImage().ReadFile("00/data00_eng.bin");
     const std::string text(data.begin(), data.end());
     size_t at = text.find(std::string("NO_DATA\0", 8));
-    if (at == std::string::npos) throw std::runtime_error("Monster name list not found");
+    if (at == std::string::npos)
+        throw std::runtime_error("Monster name list not found");
     std::vector<std::string> names{""};
     at += 8;
     while (at < text.size()) {
-        while (at < text.size() && text[at] == '\0') ++at;
+        while (at < text.size() && text[at] == '\0')
+            ++at;
         const size_t end = text.find('\0', at);
         const std::string name = text.substr(at, end - at);
-        if (name == "BrdWyv" || end == std::string::npos) break; // the class names follow
+        if (name == "BrdWyv" || end == std::string::npos)
+            break; // the class names follow
         names.push_back(name);
         at = end;
     }
@@ -115,16 +137,26 @@ std::vector<std::string> MonsterNames() {
 
 std::string MapName(uint8_t map) {
     switch (map) {
-    case 1: return "Deserted Island (Moga Woods)";
-    case 2: return "Sandy Plains";
-    case 3: return "Flooded Forest";
-    case 4: return "Tundra";
-    case 5: return "Volcano";
-    case 6: return "Great Desert";
-    case 7: return "Ceadeus's lair";
-    case 9: return "Land Arena";
-    case 10: return "Water Arena";
-    case 11: return "Sacred Pinnacle";
+    case 1:
+        return "Deserted Island (Moga Woods)";
+    case 2:
+        return "Sandy Plains";
+    case 3:
+        return "Flooded Forest";
+    case 4:
+        return "Tundra";
+    case 5:
+        return "Volcano";
+    case 6:
+        return "Great Desert";
+    case 7:
+        return "Ceadeus's lair";
+    case 9:
+        return "Land Arena";
+    case 10:
+        return "Water Arena";
+    case 11:
+        return "Sacred Pinnacle";
     }
     return "map " + std::to_string(map);
 }
@@ -136,14 +168,13 @@ void Print(Set set) {
     };
     const auto join = [&](const std::vector<uint8_t>& ids) {
         std::string s;
-        for (uint8_t id : ids) s += (s.empty() ? "" : ", ") + name(id);
+        for (uint8_t id : ids)
+            s += (s.empty() ? "" : ", ") + name(id);
         return s.empty() ? std::string("-") : s;
     };
-    std::printf("%-6s %-5s %-29s %-38s %-34s %s\n", "id", "stars", "map", "name", "large monsters",
-                "small monsters");
+    std::printf("%-6s %-5s %-29s %-38s %-34s %s\n", "id", "stars", "map", "name", "large monsters", "small monsters");
     for (const Quest& q : Load(set))
-        std::printf("%-6u %-5u %-29s %-38s %-34s %s\n    goal: %s\n", q.id, q.stars, MapName(q.map).c_str(),
-                    q.name.c_str(), join(q.largeMonsters).c_str(), join(q.smallMonsters).c_str(),
+        std::printf("%-6u %-5u %-29s %-38s %-34s %s\n    goal: %s\n", q.id, q.stars, MapName(q.map).c_str(), q.name.c_str(), join(q.largeMonsters).c_str(), join(q.smallMonsters).c_str(),
                     q.goal.c_str());
 }
 

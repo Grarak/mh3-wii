@@ -22,8 +22,12 @@ bool variable = false;
 // use multiplies by it), and its counters then advance once per frame: at
 // variable step they advance by whole ticks, so the float stays at the tick
 // rate, 30.
-void SetVariable(bool enabled) { variable = enabled; }
-bool Variable() { return variable; }
+void SetVariable(bool enabled) {
+    variable = enabled;
+}
+bool Variable() {
+    return variable;
+}
 
 void Begin(double s) {
     scale = s;
@@ -36,16 +40,26 @@ void Begin(double s) {
     clock -= whole;
 }
 
-double Scale() { return scale; }
-uint32_t Ticks() { return ticks; }
-double Elapsed() { return elapsed; }
-double Fraction() { return clock; }
+double Scale() {
+    return scale;
+}
+uint32_t Ticks() {
+    return ticks;
+}
+double Elapsed() {
+    return elapsed;
+}
+double Fraction() {
+    return clock;
+}
 
 int32_t Share(int32_t amount) {
     return int32_t(std::lround(amount * elapsed) - std::lround(amount * (elapsed - scale)));
 }
 
-State Save() { return {scale, clock, ticks, elapsed, EffectStep::Save()}; }
+State Save() {
+    return {scale, clock, ticks, elapsed, EffectStep::Save()};
+}
 
 void Restore(const State& state) {
     scale = state.scale;

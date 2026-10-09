@@ -104,15 +104,14 @@ struct XmlNode {
             return fallback;
         }
         const bool negative = (*value)[0] == '-';
-        const uint32_t magnitude =
-            AttributeUintFromText(negative ? value->substr(1) : *value, 0x80000000u);
+        const uint32_t magnitude = AttributeUintFromText(negative ? value->substr(1) : *value, 0x80000000u);
         if (magnitude == 0x80000000u && !negative) {
             return fallback;
         }
         return negative ? -static_cast<int>(magnitude) : static_cast<int>(magnitude);
     }
 
-private:
+  private:
     static uint32_t AttributeUintFromText(const std::string& text, uint32_t fallback) {
         XmlNode probe;
         probe.attributes.push_back({"v", text});
@@ -149,8 +148,7 @@ inline XmlNode CopyXmlNode(const pugi::xml_node& source) {
 // malformed. load_buffer accepts the UTF-8 BOM used by some Riivolution packs.
 inline std::optional<XmlNode> ParseXml(std::string_view text) {
     pugi::xml_document document;
-    const pugi::xml_parse_result result = document.load_buffer(
-        text.data(), text.size(), pugi::parse_default, pugi::encoding_utf8);
+    const pugi::xml_parse_result result = document.load_buffer(text.data(), text.size(), pugi::parse_default, pugi::encoding_utf8);
     if (!result) {
         return std::nullopt;
     }
@@ -249,8 +247,7 @@ struct Disc {
     std::vector<Section> sections;
     std::vector<Patch> patches;
 
-    bool IsValidForGame(const std::string& gameId, std::optional<uint16_t> revision,
-                        std::optional<uint8_t> discNumber) const;
+    bool IsValidForGame(const std::string& gameId, std::optional<uint16_t> revision, std::optional<uint8_t> discNumber) const;
     std::vector<Patch> GeneratePatches(const std::string& gameId) const;
 };
 
@@ -278,8 +275,7 @@ struct OptionSelection {
 
 namespace Detail {
 
-inline std::map<std::string, std::string> ReadParams(const XmlNode& node,
-                                                     std::map<std::string, std::string> params = {}) {
+inline std::map<std::string, std::string> ReadParams(const XmlNode& node, std::map<std::string, std::string> params = {}) {
     for (const XmlNode& paramNode : node.children) {
         if (paramNode.name != "param") {
             continue;
@@ -451,8 +447,7 @@ inline std::optional<Config> ParseConfigString(std::string_view xml) {
 // Game matching and patch generation
 // ============================================================================
 
-inline bool Disc::IsValidForGame(const std::string& gameId, std::optional<uint16_t> revision,
-                                 std::optional<uint8_t> discNumber) const {
+inline bool Disc::IsValidForGame(const std::string& gameId, std::optional<uint16_t> revision, std::optional<uint8_t> discNumber) const {
     if (gameId.size() != 6) {
         return false;
     }
@@ -477,8 +472,7 @@ inline bool Disc::IsValidForGame(const std::string& gameId, std::optional<uint16
     }
     if (gameFilter.regions) {
         const auto& regions = *gameFilter.regions;
-        if (!regions.empty() &&
-            std::find(regions.begin(), regions.end(), std::string(gameRegion)) == regions.end()) {
+        if (!regions.empty() && std::find(regions.begin(), regions.end(), std::string(gameRegion)) == regions.end()) {
             return false;
         }
     }
@@ -492,28 +486,27 @@ inline std::vector<Patch> Disc::GeneratePatches(const std::string& gameId) const
     const std::string_view gameRegion = gameIdFull.substr(3, 1);
     const std::string_view gameDeveloper = gameIdFull.size() >= 6 ? gameIdFull.substr(4, 2) : std::string_view();
 
-    const auto replaceVariables =
-        [](std::string_view sv, const std::vector<std::pair<std::string, std::string_view>>& replacements) {
-            std::string result;
-            result.reserve(sv.size());
-            while (!sv.empty()) {
-                bool replaced = false;
-                for (const auto& replacement : replacements) {
-                    if (XmlDetail::StartsWith(sv, replacement.first)) {
-                        result.append(replacement.second.data(), replacement.second.size());
-                        sv = sv.substr(replacement.first.size());
-                        replaced = true;
-                        break;
-                    }
+    const auto replaceVariables = [](std::string_view sv, const std::vector<std::pair<std::string, std::string_view>>& replacements) {
+        std::string result;
+        result.reserve(sv.size());
+        while (!sv.empty()) {
+            bool replaced = false;
+            for (const auto& replacement : replacements) {
+                if (XmlDetail::StartsWith(sv, replacement.first)) {
+                    result.append(replacement.second.data(), replacement.second.size());
+                    sv = sv.substr(replacement.first.size());
+                    replaced = true;
+                    break;
                 }
-                if (replaced) {
-                    continue;
-                }
-                result.push_back(sv[0]);
-                sv = sv.substr(1);
             }
-            return result;
-        };
+            if (replaced) {
+                continue;
+            }
+            result.push_back(sv[0]);
+            sv = sv.substr(1);
+        }
+        return result;
+    };
 
     // Take only selected patches, replace placeholders in all strings, and
     // return them.
@@ -526,9 +519,7 @@ inline std::vector<Patch> Disc::GeneratePatches(const std::string& gameId) const
             }
             const Choice& choice = option.choices[selected - 1];
             for (const PatchReference& patchReference : choice.patchReferences) {
-                const auto patch = std::find_if(patches.begin(), patches.end(), [&](const Patch& candidate) {
-                    return candidate.id == patchReference.id;
-                });
+                const auto patch = std::find_if(patches.begin(), patches.end(), [&](const Patch& candidate) { return candidate.id == patchReference.id; });
                 if (patch == patches.end()) {
                     continue;
                 }
@@ -575,9 +566,7 @@ inline void ApplyConfigDefaults(Disc& disc, const Config& config) {
     for (const ConfigOption& configOption : config.options) {
         for (Section& section : disc.sections) {
             for (Option& option : section.options) {
-                const bool matches = option.id.empty()
-                    ? (section.name + option.name) == configOption.id
-                    : option.id == configOption.id;
+                const bool matches = option.id.empty() ? (section.name + option.name) == configOption.id : option.id == configOption.id;
                 if (matches) {
                     option.selectedChoice = configOption.defaultChoice;
                 }
@@ -595,8 +584,7 @@ inline void ApplySelections(Disc& disc, const std::vector<OptionSelection>& sele
                 continue;
             }
             for (Option& option : section.options) {
-                const bool matches = (!option.id.empty() && option.id == selection.option) ||
-                                     option.name == selection.option;
+                const bool matches = (!option.id.empty() && option.id == selection.option) || option.name == selection.option;
                 if (matches && selection.choice <= option.choices.size()) {
                     option.selectedChoice = selection.choice;
                 }
@@ -611,9 +599,7 @@ inline void ApplySelections(Disc& disc, const std::vector<OptionSelection>& sele
 // generic_string() first); returns nullopt for ".." traversal or a backslash, which Riivolution
 // treats as a filename character that Windows paths can't replicate.
 
-inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRoot,
-                                                           std::string_view patchRoot,
-                                                           std::string_view externalRelativePath) {
+inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRoot, std::string_view patchRoot, std::string_view externalRelativePath) {
     if (externalRelativePath.find('\\') != std::string_view::npos) {
         return std::nullopt;
     }
@@ -667,8 +653,7 @@ inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRo
 
 // Computes a patch's effective root directory from the XML file's directory
 // and the patch's 'root' attribute.
-inline std::string ResolvePatchRoot(std::string_view sdRoot, std::string_view xmlDirectory,
-                                    std::string_view rootAttribute) {
+inline std::string ResolvePatchRoot(std::string_view sdRoot, std::string_view xmlDirectory, std::string_view rootAttribute) {
     std::string patchRoot(xmlDirectory);
     if (!rootAttribute.empty()) {
         if (auto resolved = MakeAbsoluteFromRelative(sdRoot, xmlDirectory, rootAttribute)) {

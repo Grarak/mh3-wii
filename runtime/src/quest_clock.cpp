@@ -21,17 +21,19 @@ enum : uint32_t {
     OSGetTime = 0x804D53D0,
 };
 enum : uint32_t {
-    kTimeLeft = 0x24,         // s32 frames, for the HUD and the time-up check
-    kNow = 0x6A48,            // f64 OSGetTime at this call
-    kPrevious = 0x6A50,       // f64 OSGetTime at the previous call
-    kFramePeriod = 0x6A58,    // f64 microseconds per frame
-    kTimeLeftExact = 0x6A60,  // f64 frames
+    kTimeLeft = 0x24,        // s32 frames, for the HUD and the time-up check
+    kNow = 0x6A48,           // f64 OSGetTime at this call
+    kPrevious = 0x6A50,      // f64 OSGetTime at the previous call
+    kFramePeriod = 0x6A58,   // f64 microseconds per frame
+    kTimeLeftExact = 0x6A60, // f64 frames
 };
 constexpr uint32_t kFrameRate = 0x8065B4D0; // f32
 constexpr uint32_t kBusClock = 0x800000F8;
 constexpr float kNoLimitMinutes = 99.0f;
 
-double ReadF64(uint32_t a) { return Memory::ReadFloat64(a); }
+double ReadF64(uint32_t a) {
+    return Memory::ReadFloat64(a);
+}
 
 // 0x803A9014(running): counts the time limit down; `running` 0 holds it.
 void QuestClockTick(CpuContext* ctx) {
@@ -39,10 +41,12 @@ void QuestClockTick(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     const uint32_t work = game.Call<QuestWork>();
-    if (!work) return;
+    if (!work)
+        return;
     // 99 minutes or more: no time limit.
     const float left = float(int32_t(Memory::Read32(work + kTimeLeft)));
-    if (left >= kNoLimitMinutes * (60.0f * Memory::ReadFloat32(kFrameRate))) return;
+    if (left >= kNoLimitMinutes * (60.0f * Memory::ReadFloat32(kFrameRate)))
+        return;
 
     Memory::WriteFloat64(work + kPrevious, ReadF64(work + kNow));
     game.Call<OSGetTime>();
@@ -56,16 +60,19 @@ void QuestClockTick(CpuContext* ctx) {
         } else {
             const double timerPerTick = double((Memory::Read32(kBusClock) >> 2) / 125000u);
             frames = (ReadF64(work + kNow) - previous) * 8000.0 / timerPerTick / 1000.0 / ReadF64(work + kFramePeriod);
-            if (frames < 1.0) frames = 1.0;
+            if (frames < 1.0)
+                frames = 1.0;
         }
-        if (running == 0) frames = 0.0;
+        if (running == 0)
+            frames = 0.0;
         Memory::WriteFloat64(work + kTimeLeftExact, ReadF64(work + kTimeLeftExact) - frames);
     } else if (running == 1) {
         Memory::WriteFloat64(work + kTimeLeftExact, ReadF64(work + kTimeLeftExact) - 1.0);
     }
     if (int32_t(Memory::Read32(work + kTimeLeft)) > 0) {
         int32_t frames = int32_t(ReadF64(work + kTimeLeftExact));
-        if (frames < 0) frames = 0;
+        if (frames < 0)
+            frames = 0;
         Memory::Write32(work + kTimeLeft, uint32_t(frames));
     }
 }

@@ -38,13 +38,13 @@ struct NativeFrameWindow {
 // wall intervals exclude the pacer when Begin/End surround NativeFrameBegin,
 // GameFrame and NativeFrameEnd in their original main-loop order.
 class NativeFrameAccumulator {
-public:
+  public:
     void Reset(uint64_t now_ns, OwnerCpuSample owner = {}) noexcept;
     void Begin(uint64_t now_ns) noexcept;
     void End(uint64_t now_ns, bool rendered) noexcept;
     NativeFrameWindow Take(uint64_t now_ns, OwnerCpuSample owner = {}) noexcept;
 
-private:
+  private:
     NativeFrameWindow m_window{};
     OwnerCpuSample m_owner{};
     uint64_t m_windowStart = 0;

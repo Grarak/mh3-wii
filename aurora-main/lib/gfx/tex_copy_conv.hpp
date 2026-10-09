@@ -13,9 +13,9 @@ enum class SampleFilter : uint8_t {
 
 struct ConvRequest {
   GXTexFmt fmt;
-  gl::TexturePtr src;        // Resolved EFB / offscreen color or depth texture
-  Range uniformRange;        // UV transform uniform (offset + scale)
-  TextureHandle dst;         // Destination texture
+  gl::TexturePtr src; // Resolved EFB / offscreen color or depth texture
+  Range uniformRange; // UV transform uniform (offset + scale)
+  TextureHandle dst;  // Destination texture
   SampleFilter sampleFilter = SampleFilter::Nearest;
   bool forceOpaqueAlpha = false;
 };

@@ -15,7 +15,12 @@
 
 namespace {
 
-enum : uint32_t { kActionGroup = 0x0A, kHealth = 0x370, kMaxHealth = 0x372, kRedHealth = 0x376 };
+enum : uint32_t {
+    kActionGroup = 0x0A,
+    kHealth = 0x370,
+    kMaxHealth = 0x372,
+    kRedHealth = 0x376
+};
 constexpr uint8_t kActionDown = 8;
 enum : uint32_t {
     Pl_master_ck = 0x8026FE38,  // (PLW*) -> non-zero for the player this console controls
@@ -24,11 +29,15 @@ enum : uint32_t {
 
 bool noDamage = false;
 
-int16_t Read16s(uint32_t address) { return int16_t(Memory::Read16(address)); }
+int16_t Read16s(uint32_t address) {
+    return int16_t(Memory::Read16(address));
+}
 
 } // namespace
 
-void PlayerHealth::SetNoDamage(bool enabled) { noDamage = enabled; }
+void PlayerHealth::SetNoDamage(bool enabled) {
+    noDamage = enabled;
+}
 
 // 0x802762F0 PlAddHealth(PLW* player, s16 amount).
 extern "C" void func_802762F0(CpuContext* ctx);
@@ -38,18 +47,27 @@ static void PlAddHealthPort(CpuContext* ctx) {
     {
         GuestFrame frame{ctx, 16};
         GuestCall game{ctx};
-        if (!game.Call<Pl_master_ck>({player})) return;
-        if (game.Call<PlInEventDemo>({0}) == 1 && amount < 0) return;
+        if (!game.Call<Pl_master_ck>({player}))
+            return;
+        if (game.Call<PlInEventDemo>({0}) == 1 && amount < 0)
+            return;
     }
-    if (Memory::Read8(player + kActionGroup) == kActionDown) return;
-    if (noDamage && amount < 0) return;
+    if (Memory::Read8(player + kActionGroup) == kActionDown)
+        return;
+    if (noDamage && amount < 0)
+        return;
     int16_t health = int16_t(Read16s(player + kHealth) + amount);
-    if (health <= 0) health = 0;
+    if (health <= 0)
+        health = 0;
     const int16_t maxHealth = Read16s(player + kMaxHealth);
-    if (health >= maxHealth) health = maxHealth;
+    if (health >= maxHealth)
+        health = maxHealth;
     Memory::Write16(player + kHealth, uint16_t(health));
-    if (Read16s(player + kRedHealth) < health) Memory::Write16(player + kRedHealth, uint16_t(health));
+    if (Read16s(player + kRedHealth) < health)
+        Memory::Write16(player + kRedHealth, uint16_t(health));
 }
 
-extern "C" void MH3_PlAddHealth(CpuContext* ctx) { PortCheck::Call(ctx, "PlAddHealth", func_802762F0, PlAddHealthPort); }
+extern "C" void MH3_PlAddHealth(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlAddHealth", func_802762F0, PlAddHealthPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802762F0, MH3_PlAddHealth, "PlAddHealth");

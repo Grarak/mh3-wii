@@ -180,7 +180,9 @@ inline bool IsSupportedGraphicsApi(std::string_view value) {
 
 inline bool IsSupportedDisplayMode(std::string_view value) {
     static constexpr std::array<std::string_view, 3> values{
-        "windowed", "borderless", "exclusive",
+        "windowed",
+        "borderless",
+        "exclusive",
     };
     return std::find(values.begin(), values.end(), value) != values.end();
 }
@@ -343,8 +345,7 @@ inline void EnsureConfigFile() {
 }
 
 template <typename T>
-inline std::optional<T> FindConfigValue(
-    const toml::value& document, std::string_view section, std::string_view key) {
+inline std::optional<T> FindConfigValue(const toml::value& document, std::string_view section, std::string_view key) {
     try {
         return toml::find<T>(document, std::string(section), std::string(key));
     } catch (const std::exception&) {
@@ -352,8 +353,7 @@ inline std::optional<T> FindConfigValue(
     }
 }
 
-inline std::optional<uint32_t> FindConfigUint(
-    const toml::value& document, std::string_view section, std::string_view key) {
+inline std::optional<uint32_t> FindConfigUint(const toml::value& document, std::string_view section, std::string_view key) {
     const auto value = FindConfigValue<int64_t>(document, section, key);
     if (!value || *value < 0 || static_cast<uint64_t>(*value) > UINT32_MAX) {
         return std::nullopt;
@@ -361,8 +361,7 @@ inline std::optional<uint32_t> FindConfigUint(
     return static_cast<uint32_t>(*value);
 }
 
-inline std::optional<int32_t> FindConfigInt(
-    const toml::value& document, std::string_view section, std::string_view key) {
+inline std::optional<int32_t> FindConfigInt(const toml::value& document, std::string_view section, std::string_view key) {
     const auto value = FindConfigValue<int64_t>(document, section, key);
     if (!value || *value < INT32_MIN || *value > INT32_MAX) {
         return std::nullopt;
@@ -370,17 +369,14 @@ inline std::optional<int32_t> FindConfigInt(
     return static_cast<int32_t>(*value);
 }
 
-inline std::optional<float> FindConfigFloat(
-    const toml::value& document, std::string_view section, std::string_view key) {
+inline std::optional<float> FindConfigFloat(const toml::value& document, std::string_view section, std::string_view key) {
     std::optional<double> value = FindConfigValue<double>(document, section, key);
     if (!value) {
         if (const auto integer = FindConfigValue<int64_t>(document, section, key)) {
             value = static_cast<double>(*integer);
         }
     }
-    if (!value || !std::isfinite(*value) ||
-        *value < -static_cast<double>(std::numeric_limits<float>::max()) ||
-        *value > static_cast<double>(std::numeric_limits<float>::max())) {
+    if (!value || !std::isfinite(*value) || *value < -static_cast<double>(std::numeric_limits<float>::max()) || *value > static_cast<double>(std::numeric_limits<float>::max())) {
         return std::nullopt;
     }
     return static_cast<float>(*value);
@@ -409,8 +405,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         "a", "b", "x", "y", "start", "z", "l", "r", "up", "down", "left", "right",
     };
     for (size_t index = 0; index < buttonKeys.size(); ++index) {
-        config.controllerButtons[index] =
-            FindConfigValue<std::string>(document, "controller", buttonKeys[index]);
+        config.controllerButtons[index] = FindConfigValue<std::string>(document, "controller", buttonKeys[index]);
     }
 
     config.rumbleEnabled = FindConfigValue<bool>(document, "controller", "rumble");
@@ -418,8 +413,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         config.muteHotkey = *value;
     }
 
-    if (const auto* section = document.contains("controller") ? &document.at("controller") : nullptr;
-        section != nullptr && section->is_table()) {
+    if (const auto* section = document.contains("controller") ? &document.at("controller") : nullptr; section != nullptr && section->is_table()) {
         for (const auto& [key, value] : section->as_table()) {
             if (key.rfind("expr_", 0) == 0 && value.is_string()) {
                 config.controllerExpressions[key] = value.as_string();
@@ -437,20 +431,17 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     if (auto value = FindConfigUint(document, "video", "window_height"); value && *value != 0) {
         config.windowHeight = *value;
     }
-    if (auto value = FindConfigFloat(document, "video", "resolution_multiplier");
-        value && IsSupportedResolutionMultiplier(*value)) {
+    if (auto value = FindConfigFloat(document, "video", "resolution_multiplier"); value && IsSupportedResolutionMultiplier(*value)) {
         config.resolutionMultiplier = *value;
     }
     if (auto value = FindConfigValue<std::string>(document, "video", "graphics_api")) {
         if (IsSupportedGraphicsApi(*value)) {
             config.graphicsApi = *value;
         } else {
-            std::cerr << "[runtime] Unknown video.graphics_api=\"" << *value
-                      << "\", using the automatic backend" << std::endl;
+            std::cerr << "[runtime] Unknown video.graphics_api=\"" << *value << "\", using the automatic backend" << std::endl;
         }
     }
-    if (auto value = FindConfigValue<std::string>(document, "video", "display_mode");
-        value && IsSupportedDisplayMode(*value)) {
+    if (auto value = FindConfigValue<std::string>(document, "video", "display_mode"); value && IsSupportedDisplayMode(*value)) {
         config.displayMode = *value;
     }
     if (auto value = FindConfigUint(document, "video", "frame_interpolation_fps")) {
@@ -464,8 +455,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
     config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
     config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
-    if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
-        value && (*value & ~0x10u) == 0) {
+    if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths"); value && (*value & ~0x10u) == 0) {
         config.disabledPostProcessingPaths = *value & 0x10u;
     }
 
@@ -480,8 +470,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.audioVoicesVolume = readVolume("voices_volume");
     config.audioMuted = FindConfigValue<bool>(document, "audio", "muted");
     config.audioMixWorker = FindConfigValue<bool>(document, "audio", "mix_worker");
-    config.attenuateMusicWhenMediaPlays =
-        FindConfigValue<bool>(document, "audio", "attenuate_music_when_media_plays");
+    config.attenuateMusicWhenMediaPlays = FindConfigValue<bool>(document, "audio", "attenuate_music_when_media_plays");
     config.wiiRemotes = FindConfigValue<bool>(document, "controller", "wii_remotes");
     config.wiiContinuousScan = FindConfigValue<bool>(document, "controller", "wii_continuous_scan");
     config.wiiAccelOffsetX = FindConfigValue<double>(document, "controller", "wii_accel_offset_x");
@@ -513,8 +502,7 @@ inline RuntimeUserConfig ParseConfig(std::istream& input, std::string sourceName
     try {
         return ParseConfigDocument(toml::parse(input, std::move(sourceName)));
     } catch (const std::exception& exception) {
-        std::cerr << "[runtime-config] Invalid TOML; using built-in defaults: "
-                  << exception.what() << std::endl;
+        std::cerr << "[runtime-config] Invalid TOML; using built-in defaults: " << exception.what() << std::endl;
         return {};
     }
 }
@@ -876,8 +864,7 @@ inline bool SetWiiContinuousScanEnabled(bool value) {
 // when the remote has not been calibrated.
 inline std::array<double, 3> WiiAccelOffset() {
     const RuntimeUserConfig& config = Get();
-    return {config.wiiAccelOffsetX.value_or(0.0), config.wiiAccelOffsetY.value_or(0.0),
-            config.wiiAccelOffsetZ.value_or(0.0)};
+    return {config.wiiAccelOffsetX.value_or(0.0), config.wiiAccelOffsetY.value_or(0.0), config.wiiAccelOffsetZ.value_or(0.0)};
 }
 
 // Whether to write the per-frame accelerometer trace (off unless asked for).
@@ -962,8 +949,7 @@ inline std::string DvdRoot(std::string fallback = "") {
 // The one resolver for configured paths. A relative value means the same thing
 // everywhere it can be configured: relative to the config file that named it,
 // never to the process working directory (docs/WHEELWIZARD_CONTRACT.md).
-inline std::filesystem::path ResolveRelativeTo(const std::filesystem::path& base,
-                                               const std::string& value) {
+inline std::filesystem::path ResolveRelativeTo(const std::filesystem::path& base, const std::string& value) {
     std::filesystem::path path = PathFromUtf8(value);
     if (path.is_relative()) {
         path = base / path;
@@ -1011,8 +997,7 @@ inline void LogLoadedConfig() {
                 std::cout << " widescreen=" << (*config.widescreen ? "true" : "false");
             }
             if (config.windowWidth || config.windowHeight) {
-                std::cout << " window=" << config.windowWidth.value_or(0) << "x"
-                          << config.windowHeight.value_or(0);
+                std::cout << " window=" << config.windowWidth.value_or(0) << "x" << config.windowHeight.value_or(0);
             }
             if (config.resolutionMultiplier) {
                 std::cout << " resolution_multiplier=" << *config.resolutionMultiplier;

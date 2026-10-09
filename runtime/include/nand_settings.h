@@ -63,15 +63,13 @@ inline std::optional<Settings> Read(const std::filesystem::path& nandRoot) {
 
 inline bool HasIdentity(const Settings& settings) {
     const auto serial = settings.find("SERNO");
-    if (serial == settings.end() || serial->second.empty() || serial->second.size() > 9 ||
-        serial->second.find_first_not_of("0123456789") != std::string::npos ||
+    if (serial == settings.end() || serial->second.empty() || serial->second.size() > 9 || serial->second.find_first_not_of("0123456789") != std::string::npos ||
         serial->second.find_first_not_of('0') == std::string::npos) {
         return false;
     }
     for (const auto& field : {std::pair{"CODE", 5u}, {"AREA", 3u}, {"GAME", 2u}}) {
         const auto value = settings.find(field.first);
-        if (value == settings.end() || value->second.empty() ||
-            value->second.size() > field.second) {
+        if (value == settings.end() || value->second.empty() || value->second.size() > field.second) {
             return false;
         }
     }
@@ -102,9 +100,8 @@ inline std::optional<std::array<uint8_t, 256>> EncodeNew(const std::string& seri
         bytes[position++] = static_cast<uint8_t>(value) ^ static_cast<uint8_t>(key);
         key = (key << 1) | (key >> 31);
     };
-    for (const std::string& line : {std::string("AREA=EUR\r\n"), std::string("MODEL=RVL-001(EUR)\r\n"),
-             std::string("DVD=0\r\n"), std::string("MPCH=0x7FFE\r\n"), std::string("CODE=LEH\r\n"),
-             "SERNO=" + serial + "\r\n", std::string("VIDEO=PAL\r\n"), std::string("GAME=EU\r\n")}) {
+    for (const std::string& line : {std::string("AREA=EUR\r\n"), std::string("MODEL=RVL-001(EUR)\r\n"), std::string("DVD=0\r\n"), std::string("MPCH=0x7FFE\r\n"), std::string("CODE=LEH\r\n"),
+                                    "SERNO=" + serial + "\r\n", std::string("VIDEO=PAL\r\n"), std::string("GAME=EU\r\n")}) {
         for (;;) {
             if (position + line.size() > bytes.size()) {
                 return std::nullopt;
@@ -131,13 +128,14 @@ inline std::optional<std::array<uint8_t, 256>> EncodeNew(const std::string& seri
 
 // Atomically claim our own scratch directory. A collision belongs to another
 // launch (or a previous crashed launch); leave it untouched and try another name.
-inline std::optional<std::filesystem::path> CreateScratchDirectory(
-    const std::filesystem::path& parent, const std::string& token, std::error_code& ec) {
+inline std::optional<std::filesystem::path> CreateScratchDirectory(const std::filesystem::path& parent, const std::string& token, std::error_code& ec) {
     for (unsigned attempt = 0; attempt < 128; ++attempt) {
         const auto candidate = parent / (".setting-init-" + token + "-" + std::to_string(attempt));
         ec.clear();
-        if (std::filesystem::create_directory(candidate, ec)) return candidate;
-        if (ec && ec != std::errc::file_exists) return std::nullopt;
+        if (std::filesystem::create_directory(candidate, ec))
+            return candidate;
+        if (ec && ec != std::errc::file_exists)
+            return std::nullopt;
     }
     ec = std::make_error_code(std::errc::file_exists);
     return std::nullopt;
@@ -145,8 +143,7 @@ inline std::optional<std::filesystem::path> CreateScratchDirectory(
 
 // Never replace an existing file, including an unreadable or damaged one.
 // Publish a complete file atomically so simultaneous launches use one identity.
-inline bool Ensure(const std::filesystem::path& root, std::string& error,
-                   std::time_t now = std::time(nullptr)) {
+inline bool Ensure(const std::filesystem::path& root, std::string& error, std::time_t now = std::time(nullptr)) {
     const auto path = FilePath(root);
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(path, ec);
@@ -181,9 +178,7 @@ inline bool Ensure(const std::filesystem::path& root, std::string& error,
     const auto processId = getpid();
 #endif
     const auto scratch = CreateScratchDirectory(path.parent_path(),
-        std::to_string(processId) + "-" + std::to_string(
-            std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-            std::to_string(sequence++), ec);
+                                                std::to_string(processId) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(sequence++), ec);
     if (!scratch) {
         error = "Cannot create temporary NAND settings directory: " + ec.message();
         return false;
@@ -212,8 +207,7 @@ inline bool Ensure(const std::filesystem::path& root, std::string& error,
     if (persisted && HasIdentity(*persisted)) {
         return true;
     }
-    error = published ? "Cannot read newly initialized NAND setting.txt" :
-                        "Cannot persist NAND setting.txt; check NAND directory permissions";
+    error = published ? "Cannot read newly initialized NAND setting.txt" : "Cannot persist NAND setting.txt; check NAND directory permissions";
     return false;
 }
 

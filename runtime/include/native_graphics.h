@@ -14,15 +14,15 @@ const mh3_draw_state& GetNativeDrawState();
 void GetNativeRenderViewportSize(float out[2]);
 void SetNativeProjection(const float row_major[16], bool perspective);
 void SetNativePositionMatrix(const float row_major[12]);
-void SetNativeNormalMatrix(uint32_t selector,const float row_major[9]);
-bool GetNativeNormalMatrix(uint32_t selector,float row_major[9]);
-void SetNativeViewport(float x,float y,float width,float height,float near_z,float far_z);
-void SetNativeScissor(int32_t x,int32_t y,int32_t width,int32_t height);
+void SetNativeNormalMatrix(uint32_t selector, const float row_major[9]);
+bool GetNativeNormalMatrix(uint32_t selector, float row_major[9]);
+void SetNativeViewport(float x, float y, float width, float height, float near_z, float far_z);
+void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height);
 // Returns the published logical rectangle, including skipped-frame changes.
 // An unpublished rectangle returns false and leaves out untouched.
 bool GetNativeScissor(int32_t out[4]);
 void SetNativeRaster(const mh3_raster_state& raster);
-using NativeRasterObserver=void(*)(const mh3_raster_state&);
+using NativeRasterObserver = void (*)(const mh3_raster_state&);
 void SetNativeRasterObserver(NativeRasterObserver observer);
 void RestoreNativeRenderState();
 // Clear only far depth on the current admitted target. Covers the whole target
@@ -32,18 +32,18 @@ void ClearNativeDepthTarget();
 void BindNativeTexture(const mh3_native_texture_binding& binding);
 const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit);
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);
-void BindNativePalette(uint32_t slot,const mh3_native_palette_source& palette);
+void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette);
 void SetNativeFog(const mh3_native_fog& fog);
 void SetNativeModelLights(const mh3_native_light_slots& lights);
-void SetNativeTextureMatrix(uint32_t selector,const float row_major[12],bool matrix3x4);
-bool GetNativeTextureMatrix(uint32_t selector,float row_major[12],bool* matrix3x4=nullptr);
+void SetNativeTextureMatrix(uint32_t selector, const float row_major[12], bool matrix3x4);
+bool GetNativeTextureMatrix(uint32_t selector, float row_major[12], bool* matrix3x4 = nullptr);
 void SetNativeDepthCompareBeforeTexture(bool before);
 void SetNativeMaterial(const mh3_native_material_state& material);
 // Internal sparse publication from typed renderer producers; only declared
 // fields replace sticky inherited state. DEBUG asserts producer domains and
 // dependencies; external assets retain checked admission. Raster capability
 // failures leave the material unchanged. Runs on skipped logical frames too.
-void OverlayNativeMaterial(const mh3_native_material_state& patch,uint32_t top_known=0);
+void OverlayNativeMaterial(const mh3_native_material_state& patch, uint32_t top_known = 0);
 const mh3_native_material_state& GetNativeMaterialState();
 // Explicit current-matrix producer: updates row/dual fields directly and marks
 // consumed shader fields dirty only when those fields actually change.
@@ -57,7 +57,9 @@ void GetNativeMaterialPreparationStatistics(uint64_t statistics[12]);
 // Owner-only cumulative program memo hits (base/model), map lookups
 // (base/model), full config equality checks and memo-dropping suffix changes.
 void GetNativeMaterialProgramStatistics(uint64_t statistics[6]);
-inline void ApplyNativeMaterial(const mh3_native_material_state& material) { SetNativeMaterial(material); }
+inline void ApplyNativeMaterial(const mh3_native_material_state& material) {
+    SetNativeMaterial(material);
+}
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // Direct compact resident mesh boundary. Caller supplies typed live uniforms;
 // immutable vertex/index payloads remain in their admitted GPU allocation.
@@ -67,7 +69,7 @@ void ClearNativeMaterialPrograms();
 
 // Create the renderer on the game thread. Native targets use only the selected
 // visible dimensions, with no guest FIFO or XFB allocation/initialization.
-void InitializeNativeGraphics(uint32_t width, uint32_t height,bool load_native_assets=true);
+void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets = true);
 
 // The game thread owns both frame admission and submission. Begin polls GPU
 // completion once, before draw preparation or CDRAM writes. Always end the

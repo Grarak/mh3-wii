@@ -12,6 +12,7 @@ public:
   void open(const char* path);
   gl::NativeTextureInfo info(uint32_t id) const;
   void load(uint32_t id, TextureStorage& texture) const;
+
 private:
   using Record = gfx::NativeTextureRecord;
   const Record& record(uint32_t id) const;
@@ -19,4 +20,4 @@ private:
   std::vector<Record> m_records;
   uint32_t m_version = 0;
 };
-}
+} // namespace aurora::gxm

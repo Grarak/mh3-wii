@@ -51,17 +51,13 @@ AuroraNativeDrawStats aurora_native_draw_stats(void);
 // Returns false on a skipped frame or exhausted space. An admitted frame that
 // exhausts space is canceled as a whole. Never waits or wraps.
 // Fill before submitting and do not retain a writable view after frame end.
-int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indices,
-                                    AuroraNativeGeometry* out);
-int aurora_allocate_native_material_geometry(uint32_t vertices, uint32_t indices,
-                                             AuroraNativeMaterialGeometry* out);
-int aurora_allocate_native_uniforms(uint32_t bytes,AuroraNativeUniforms* out);
-void aurora_submit_native_material_geometry(const AuroraNativeMaterialGeometry* geometry,
-                                            uint32_t program,const AuroraNativeUniforms* uniforms);
+int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indices, AuroraNativeGeometry* out);
+int aurora_allocate_native_material_geometry(uint32_t vertices, uint32_t indices, AuroraNativeMaterialGeometry* out);
+int aurora_allocate_native_uniforms(uint32_t bytes, AuroraNativeUniforms* out);
+void aurora_submit_native_material_geometry(const AuroraNativeMaterialGeometry* geometry, uint32_t program, const AuroraNativeUniforms* uniforms);
 // Submit using the backend's current target, viewport, raster and sampler 0.
 // texture_modulate selects sampled RGBA * vertex RGBA; zero selects vertex RGBA.
-void aurora_submit_native_geometry(const AuroraNativeGeometry* geometry,
-                                   int texture_modulate);
+void aurora_submit_native_geometry(const AuroraNativeGeometry* geometry, int texture_modulate);
 #ifdef __cplusplus
 }
 #endif

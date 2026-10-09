@@ -32,9 +32,9 @@ namespace {
 
 constexpr uint32_t kSystem = 0x8065AA60; // game system flags
 enum : uint32_t {
-    kBootState = 0x22,     // u8 0x8065AA82: 0 boot, 1-2 running
-    kFramePhase = 0x23,    // u8 0x8065AA83
-    kScreenGrab = 0x872,   // u8 0x8065B2D2: copy the grabbed screen back to the EFB
+    kBootState = 0x22,   // u8 0x8065AA82: 0 boot, 1-2 running
+    kFramePhase = 0x23,  // u8 0x8065AA83
+    kScreenGrab = 0x872, // u8 0x8065B2D2: copy the grabbed screen back to the EFB
 };
 
 enum : uint32_t {
@@ -85,19 +85,15 @@ struct Ram {
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
     }
-    uint32_t Word(size_t offset) const {
-        return uint32_t(bytes[offset]) << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3];
-    }
-    static uint32_t Address(size_t offset) {
-        return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset)
-                                          : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size);
-    }
+    uint32_t Word(size_t offset) const { return uint32_t(bytes[offset]) << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]; }
+    static uint32_t Address(size_t offset) { return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset) : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size); }
 };
 
 // MH3_STEP_PROBE_SETTLE=1: both runs then take one more 1/30 s step, so
 // words that keep the value from before the step (previous positions, frames,
 // joint matrices) agree again; only amounts still applied per step differ.
-template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
+template <typename RunTasks>
+void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
     static const bool settle = [] {
         const char* v = std::getenv("MH3_STEP_PROBE_SETTLE");
         return v && *v == '1';
@@ -129,15 +125,18 @@ template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks ru
 
     const std::string name = "mh3-step-probe-" + std::to_string(step) + ".txt";
     FILE* out = std::fopen(name.c_str(), "w");
-    if (!out) return;
-    std::fprintf(out, settle ? "# address before whole(2x1/30) halves(2x1/60+1/30) as u32 and f32\n"
-                             : "# address before whole(1/30) halves(2x1/60) as u32 and f32\n");
+    if (!out)
+        return;
+    std::fprintf(out, settle ? "# address before whole(2x1/30) halves(2x1/60+1/30) as u32 and f32\n" : "# address before whole(1/30) halves(2x1/60) as u32 and f32\n");
     size_t changed = 0;
     for (size_t i = 0; i + 4 <= before.bytes.size(); i += 4) {
         const uint32_t a = before.Word(i), b = whole.Word(i), c = halves.Word(i);
-        if (a == b && a == c) continue;
+        if (a == b && a == c)
+            continue;
         float fa, fb, fc;
-        std::memcpy(&fa, &a, 4); std::memcpy(&fb, &b, 4); std::memcpy(&fc, &c, 4);
+        std::memcpy(&fa, &a, 4);
+        std::memcpy(&fb, &b, 4);
+        std::memcpy(&fc, &c, 4);
         std::fprintf(out, "%08x %08x %08x %08x %g %g %g\n", Ram::Address(i), a, b, c, fa, fb, fc);
         ++changed;
     }
@@ -155,7 +154,8 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
     auto call = [ctx](uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
         uint32_t r = 3;
-        for (uint32_t v : ints) ctx->gpr[r++] = v;
+        for (uint32_t v : ints)
+            ctx->gpr[r++] = v;
         InvokeIndirectCpu(fn, ctx);
         return ctx->gpr[3];
     };
@@ -171,7 +171,8 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     if (uint8_t(boot - 1) <= 1) {
         call(flfntStackReset);
         call(UpdateScene);
-        if (render) call(Setup2DProjection);
+        if (render)
+            call(Setup2DProjection);
         call(MovieUpdate);
         call(NetworkResetCheck);
         Memory::Write8(kSystem + kFramePhase, 2);
@@ -189,7 +190,8 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
             for (const char* v = std::getenv("MH3_STEP_PROBE_TICK"); v && *v;) {
                 char* end = nullptr;
                 ticks.push_back(std::strtod(v, &end));
-                if (end == v) break;
+                if (end == v)
+                    break;
                 v = *end == ',' ? end + 1 : end;
             }
             return ticks;
@@ -197,20 +199,39 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         static size_t nextTickProbe = 0;
         ++logicSteps;
         const bool tickDue = nextTickProbe < probeTicks.size() && GameStep::Elapsed() >= probeTicks[nextTickProbe];
-        if (tickDue) ++nextTickProbe;
+        if (tickDue)
+            ++nextTickProbe;
         // MH3_STEP_PROBE_ALL: probe the whole frame (scene update, tasks and
         // drawing) instead of the task pass alone.
         static const bool probeAll = std::getenv("MH3_STEP_PROBE_ALL") != nullptr;
-        if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] {
-            if (probeAll) { call(flfntStackReset); call(UpdateScene); if (render) call(Setup2DProjection); call(MovieUpdate); }
-            call(RunTasks);
-            if (!probeAll) return;
-            call(GrabScreen); call(ResetFade); call(TickSystemTimers);
-            if (render) { call(DrawScene); call(flfntFlush); call(DrawFadeOverlay); }
-            call(TickFades);
-            if (render) { call(DrawHud); call(MovieDraw); }
-            call(PauseHook); call(OverlayHook);
-        });
+        if (logicSteps == probeAt || tickDue)
+            ProbeStepDependence(logicSteps, [&] {
+                if (probeAll) {
+                    call(flfntStackReset);
+                    call(UpdateScene);
+                    if (render)
+                        call(Setup2DProjection);
+                    call(MovieUpdate);
+                }
+                call(RunTasks);
+                if (!probeAll)
+                    return;
+                call(GrabScreen);
+                call(ResetFade);
+                call(TickSystemTimers);
+                if (render) {
+                    call(DrawScene);
+                    call(flfntFlush);
+                    call(DrawFadeOverlay);
+                }
+                call(TickFades);
+                if (render) {
+                    call(DrawHud);
+                    call(MovieDraw);
+                }
+                call(PauseHook);
+                call(OverlayHook);
+            });
 #endif
         GameTasks::SkipStrapScreen();
         StepVillageBoot(ctx);

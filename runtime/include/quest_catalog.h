@@ -10,7 +10,11 @@ namespace QuestCatalog {
 
 // The disc's quest sets: 05/quest00 (village), 05/quest01 (online, Port
 // Tanzia), 05/quest03 (arena).
-enum class Set { Village, Online, Arena };
+enum class Set {
+    Village,
+    Online,
+    Arena
+};
 
 struct Objective {
     uint32_t type;   // 1 hunt, 0x81 capture, 0x101/0x8101 slay, 2 deliver, 0x404 repel, ...

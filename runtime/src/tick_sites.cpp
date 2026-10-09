@@ -42,17 +42,17 @@
 namespace {
 
 enum class TickSite : uint32_t {
-    Countdown,          // x - 1 while x > limit (0): stops at limit
-    CountdownPastZero,  // x - 1 until x < 0
-    Countup,            // x + 1
-    EaseDivisor,        // f32 d of x += (goal - x) / d (MH3_EaseDivisor)
-    PerStep,            // f32 amount applied once per step (MH3_PerStep)
-    Decay,              // f32 factor f of x *= f (MH3_Decay)
-    Advance,            // x + limit: moved on by limit * s
-    Rate,               // the amount k of x + k: k * s
-    CountupEvery,       // x + 1, then tested % limit == 0
-    CountdownEvery,     // x - 1, then tested % limit == 0
-    Survey,             // development: record the site, return the value (limit: the guest's +-1)
+    Countdown,         // x - 1 while x > limit (0): stops at limit
+    CountdownPastZero, // x - 1 until x < 0
+    Countup,           // x + 1
+    EaseDivisor,       // f32 d of x += (goal - x) / d (MH3_EaseDivisor)
+    PerStep,           // f32 amount applied once per step (MH3_PerStep)
+    Decay,             // f32 factor f of x *= f (MH3_Decay)
+    Advance,           // x + limit: moved on by limit * s
+    Rate,              // the amount k of x + k: k * s
+    CountupEvery,      // x + 1, then tested % limit == 0
+    CountdownEvery,    // x - 1, then tested % limit == 0
+    Survey,            // development: record the site, return the value (limit: the guest's +-1)
 };
 
 struct Site {
@@ -69,8 +69,7 @@ constexpr Site kSites[] = {
 };
 
 const Site* Find(uint32_t pc) {
-    const auto* it = std::lower_bound(std::begin(kSites), std::end(kSites), pc,
-                                      [](const Site& s, uint32_t v) { return s.pc < v; });
+    const auto* it = std::lower_bound(std::begin(kSites), std::end(kSites), pc, [](const Site& s, uint32_t v) { return s.pc < v; });
     return it != std::end(kSites) && it->pc == pc ? it : nullptr;
 }
 
@@ -88,12 +87,13 @@ std::unordered_map<uint32_t, SurveyEntry> survey;
 
 void SurveyDump() {
     const char* path = std::getenv("MH3_TICK_SURVEY");
-    if (!path) return;
+    if (!path)
+        return;
     FILE* f = std::fopen(path, "w");
-    if (!f) return;
+    if (!f)
+        return;
     for (const auto& [pc, e] : survey)
-        std::fprintf(f, "%08x %llu %llu %llu %llu\n", pc, (unsigned long long)e.execs, (unsigned long long)e.steps,
-                     (unsigned long long)e.continued, (unsigned long long)e.maxPerStep);
+        std::fprintf(f, "%08x %llu %llu %llu %llu\n", pc, (unsigned long long)e.execs, (unsigned long long)e.steps, (unsigned long long)e.continued, (unsigned long long)e.maxPerStep);
     std::fclose(f);
 }
 
@@ -111,7 +111,10 @@ void SurveyRecord(uint32_t pc, uint32_t value, int32_t imm) {
     }
     SurveyEntry& e = survey[pc];
     if (e.lastStep != step) {
-        if (e.lastStep + 1 == step) e.prev.swap(e.cur); else e.prev.clear();
+        if (e.lastStep + 1 == step)
+            e.prev.swap(e.cur);
+        else
+            e.prev.clear();
         e.cur.clear();
         e.lastStep = step;
         ++e.steps;
@@ -119,8 +122,10 @@ void SurveyRecord(uint32_t pc, uint32_t value, int32_t imm) {
     }
     ++e.execs;
     e.maxPerStep = std::max(e.maxPerStep, ++e.perStep);
-    if (std::find(e.prev.begin(), e.prev.end(), value) != e.prev.end()) ++e.continued;
-    if (e.cur.size() < 64) e.cur.push_back(value + uint32_t(imm));
+    if (std::find(e.prev.begin(), e.prev.end(), value) != e.prev.end())
+        ++e.continued;
+    if (e.cur.size() < 64)
+        e.cur.push_back(value + uint32_t(imm));
 }
 #endif
 
@@ -132,18 +137,22 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     if (site && site->kind == TickSite::Advance) {
         return value + uint32_t(GameStep::Share(site->limit) - site->limit);
     }
-    if (site && site->kind == TickSite::Rate) return uint32_t(GameStep::Share(int32_t(value)));
+    if (site && site->kind == TickSite::Rate)
+        return uint32_t(GameStep::Share(int32_t(value)));
     if (site && site->kind == TickSite::Survey) {
 #ifdef MH3_DEVELOPMENT
         SurveyRecord(pc, value, site->limit);
 #endif
         return value;
     }
-    if (!site || ticks == 1) return value;
+    if (!site || ticks == 1)
+        return value;
     const int32_t v = int32_t(value);
     if (site->kind == TickSite::CountupEvery || site->kind == TickSite::CountdownEvery) {
         const int64_t n = site->limit;
-        const auto mod = [n](int64_t x) { return (x % n + n) % n; };
+        const auto mod = [n](int64_t x) {
+            return (x % n + n) % n;
+        };
         const int64_t step = site->kind == TickSite::CountupEvery ? 1 : -1;
         int64_t target;
         if (ticks == 0) {
@@ -152,7 +161,8 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
             target = v + step * ticks;
             // The multiple of N passed first (nearest v), if one was passed.
             const int64_t first = step > 0 ? v + 1 + mod(-(v + 1)) : v - 1 - mod(v - 1);
-            if (mod(target) != 0 && (step > 0 ? first < target : first > target)) target = first;
+            if (mod(target) != 0 && (step > 0 ? first < target : first > target))
+                target = first;
         }
         return uint32_t(int32_t(target - step));
     }
@@ -171,7 +181,8 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     case TickSite::Survey:
         return value;
     case TickSite::Countup:
-        if (site->limit != 0 && v > site->limit) return value;
+        if (site->limit != 0 && v > site->limit)
+            return value;
         return uint32_t(site->limit != 0 ? std::min(v + ticks - 1, site->limit) : v + ticks - 1);
     }
     return value;
@@ -179,12 +190,15 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
 
 extern "C" double MH3_EaseDivisor(double d) {
     const double s = GameStep::Scale();
-    if (s == 1.0 || !(d > 1.0)) return d;
+    if (s == 1.0 || !(d > 1.0))
+        return d;
     const double closed = 1.0 - std::pow(1.0 - 1.0 / d, s);
     return closed > 0.0 ? 1.0 / closed : HUGE_VAL;
 }
 
-extern "C" double MH3_PerStep(double amount) { return amount * GameStep::Scale(); }
+extern "C" double MH3_PerStep(double amount) {
+    return amount * GameStep::Scale();
+}
 
 extern "C" double MH3_Decay(double factor) {
     const double s = GameStep::Scale();

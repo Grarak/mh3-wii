@@ -27,13 +27,26 @@ enum : uint32_t {
     kSystemCharacter = 0x95C,     // u32: the working character record
 };
 enum : uint32_t {
-    kSaveName = 0x14, kSaveBuffer = 0x54, kSaveSize = 0x58, kSaveRequest = 0x5C, kSaveResult = 0x60,
-    kSaveProgress = 0x64, kSaveFile = 0x100, kSaveAccess = 0x101,
+    kSaveName = 0x14,
+    kSaveBuffer = 0x54,
+    kSaveSize = 0x58,
+    kSaveRequest = 0x5C,
+    kSaveResult = 0x60,
+    kSaveProgress = 0x64,
+    kSaveFile = 0x100,
+    kSaveAccess = 0x101,
 };
 constexpr uint32_t kRequestRead = 5;
-enum : uint32_t { kCharacterWords = 0x3920, kCharacterId = 0x1C };
+enum : uint32_t {
+    kCharacterWords = 0x3920,
+    kCharacterId = 0x1C
+};
 constexpr int32_t kWorkingCharacterSda = -17824; // r13-relative copy of system_w+0x95C
-enum : uint32_t { Memcpy = 0x80004000, Memset = 0x80004350, Strcpy = 0x8045FBD4 };
+enum : uint32_t {
+    Memcpy = 0x80004000,
+    Memset = 0x80004350,
+    Strcpy = 0x8045FBD4
+};
 
 // 0x80049F6C LoadCharacterWork(record): copies a character record into the
 // working character and takes a few of its fields into the system work.
@@ -56,7 +69,8 @@ void LoadCharacterWork(CpuContext* ctx, uint32_t record) {
 extern "C" void func_80441AD8(CpuContext* ctx);
 static void SaveReadRequestPort(CpuContext* ctx) {
     const auto file = int8_t(ctx->gpr[3]), access = int8_t(ctx->gpr[4]);
-    for (uint32_t word = 0; word <= 0x10; word += 4) Memory::Write32(kSave + word, 0);
+    for (uint32_t word = 0; word <= 0x10; word += 4)
+        Memory::Write32(kSave + word, 0);
     Memory::Write8(kSave + kSaveFile, uint8_t(file));
     Memory::Write8(kSave + kSaveAccess, uint8_t(access));
     uint32_t result = 0;
@@ -78,14 +92,20 @@ static void SaveReadRequestPort(CpuContext* ctx) {
     ctx->gpr[3] = result;
 }
 
-extern "C" void MH3_SaveReadRequest(CpuContext* ctx) { PortCheck::Call(ctx, "SaveReadRequest", func_80441AD8, SaveReadRequestPort); }
+extern "C" void MH3_SaveReadRequest(CpuContext* ctx) {
+    PortCheck::Call(ctx, "SaveReadRequest", func_80441AD8, SaveReadRequestPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80441AD8, MH3_SaveReadRequest, "SaveReadRequest");
 
 // 0x80049F6C LoadCharacterWork(record).
 extern "C" void func_80049F6C(CpuContext* ctx);
-static void LoadCharacterWorkPort(CpuContext* ctx) { LoadCharacterWork(ctx, ctx->gpr[3]); }
+static void LoadCharacterWorkPort(CpuContext* ctx) {
+    LoadCharacterWork(ctx, ctx->gpr[3]);
+}
 
-extern "C" void MH3_LoadCharacterWork(CpuContext* ctx) { PortCheck::Call(ctx, "LoadCharacterWork", func_80049F6C, LoadCharacterWorkPort); }
+extern "C" void MH3_LoadCharacterWork(CpuContext* ctx) {
+    PortCheck::Call(ctx, "LoadCharacterWork", func_80049F6C, LoadCharacterWorkPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80049F6C, MH3_LoadCharacterWork, "LoadCharacterWork");
 
 // 0x80442088 LoadCharacter(u8 slot) -> 1, or 0 when the save buffer's sum is
@@ -95,14 +115,20 @@ uint32_t SaveData::LoadCharacter(CpuContext* ctx, uint8_t slot) {
     const uint32_t file = Memory::Read32(kSave + kSaveBuffer);
     const uint8_t* bytes = Memory::GetPointer(file, kFileSize);
     uint32_t sum = 0;
-    for (uint32_t i = 8; i < kFileSize; ++i) sum += bytes[i];
-    if (Memory::Read32(file + 4) != sum || Memory::Read32(file) == 0) return 0;
+    for (uint32_t i = 8; i < kFileSize; ++i)
+        sum += bytes[i];
+    if (Memory::Read32(file + 4) != sum || Memory::Read32(file) == 0)
+        return 0;
     LoadCharacterWork(ctx, file + kCharacters + slot * kCharacterSize);
     return 1;
 }
 
 extern "C" void func_80442088(CpuContext* ctx);
-static void LoadCharacterPort(CpuContext* ctx) { ctx->gpr[3] = SaveData::LoadCharacter(ctx, uint8_t(ctx->gpr[3])); }
+static void LoadCharacterPort(CpuContext* ctx) {
+    ctx->gpr[3] = SaveData::LoadCharacter(ctx, uint8_t(ctx->gpr[3]));
+}
 
-extern "C" void MH3_LoadCharacter(CpuContext* ctx) { PortCheck::Call(ctx, "LoadCharacter", func_80442088, LoadCharacterPort); }
+extern "C" void MH3_LoadCharacter(CpuContext* ctx) {
+    PortCheck::Call(ctx, "LoadCharacter", func_80442088, LoadCharacterPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80442088, MH3_LoadCharacter, "LoadCharacter");

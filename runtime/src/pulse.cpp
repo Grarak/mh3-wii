@@ -37,5 +37,7 @@ static void PulseUpdatePort(CpuContext* ctx) {
     *ctx = saved;
 }
 extern "C" void func_802D9F18(CpuContext* ctx);
-extern "C" void MH3_PulseUpdate(CpuContext* ctx) { PortCheck::Call(ctx, "PulseUpdate", func_802D9F18, PulseUpdatePort); }
+extern "C" void MH3_PulseUpdate(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PulseUpdate", func_802D9F18, PulseUpdatePort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802D9F18, MH3_PulseUpdate, "PulseUpdate");

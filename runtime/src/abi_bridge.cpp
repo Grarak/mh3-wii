@@ -140,10 +140,7 @@ bool IsBetterCandidate(const TranslatedFunctionInfo& candidate, const Translated
 }
 
 bool IsSameRegistration(const TranslatedFunctionInfo& a, const TranslatedFunctionInfo& b) {
-    return a.address == b.address &&
-           a.kind == b.kind &&
-           EffectivePriority(a) == EffectivePriority(b) &&
-           a.moduleId == b.moduleId;
+    return a.address == b.address && a.kind == b.kind && EffectivePriority(a) == EffectivePriority(b) && a.moduleId == b.moduleId;
 }
 
 void RebuildIndicesLocked() {
@@ -172,9 +169,7 @@ void RebuildIndicesLocked() {
         }
     }
 
-    std::sort(hostIndex.begin(), hostIndex.end(), [](const HostEntryRef& a, const HostEntryRef& b) {
-        return a.addr < b.addr;
-    });
+    std::sort(hostIndex.begin(), hostIndex.end(), [](const HostEntryRef& a, const HostEntryRef& b) { return a.addr < b.addr; });
 
     const bool translatedWinnersAreGenerated = GeneratedIndirectDispatchTable() != nullptr;
     rawDispatchEntries.reserve(translatedWinnersAreGenerated ? 256u : addrIndex.size());
@@ -193,10 +188,7 @@ void RebuildIndicesLocked() {
             .preserveNonvolatileGprs = ShouldPreserveNonvolatileGprsForRawCpuCall(&entry),
         });
     }
-    std::sort(rawDispatchEntries.begin(), rawDispatchEntries.end(),
-              [](const RawDispatchRecord& a, const RawDispatchRecord& b) {
-                  return a.address < b.address;
-              });
+    std::sort(rawDispatchEntries.begin(), rawDispatchEntries.end(), [](const RawDispatchRecord& a, const RawDispatchRecord& b) { return a.address < b.address; });
 }
 
 std::string ValidateGeneratedIndirectDispatchLocked() {
@@ -211,12 +203,9 @@ std::string ValidateGeneratedIndirectDispatchLocked() {
     uint32_t previousAddress = 0;
     for (size_t i = 0; i < table->entryCount; ++i) {
         const auto& record = table->entries[i];
-        if ((record.address & 3u) != 0 || !record.entry ||
-            (i != 0 && record.address <= previousAddress) ||
-            FindStaticIndirectDispatchEntry(table, record.address) != &record) {
+        if ((record.address & 3u) != 0 || !record.entry || (i != 0 && record.address <= previousAddress) || FindStaticIndirectDispatchEntry(table, record.address) != &record) {
             std::ostringstream message;
-            message << "Malformed generated indirect dispatch entry " << i
-                    << " for profile '" << table->profileName << "'";
+            message << "Malformed generated indirect dispatch entry " << i << " for profile '" << table->profileName << "'";
             return message.str();
         }
         previousAddress = record.address;
@@ -224,48 +213,40 @@ std::string ValidateGeneratedIndirectDispatchLocked() {
         const auto winner = AddressIndex().find(record.address);
         if (winner == AddressIndex().end()) {
             std::ostringstream message;
-            message << "Generated indirect dispatch target 0x" << std::hex << record.address
-                    << " is not registered for profile '" << table->profileName << "'";
+            message << "Generated indirect dispatch target 0x" << std::hex << record.address << " is not registered for profile '" << table->profileName << "'";
             return message.str();
         }
         const auto& info = Registry()[winner->second];
-        if (info.kind == FunctionKind::Native || info.rawCpuInvoker != record.entry ||
-            NonvolatileFprGuardMaskFor(&info) != record.nonvolatileFprWriteMask ||
-            record.preserveNonvolatileGprs) {
+        if (info.kind == FunctionKind::Native || info.rawCpuInvoker != record.entry || NonvolatileFprGuardMaskFor(&info) != record.nonvolatileFprWriteMask || record.preserveNonvolatileGprs) {
             std::ostringstream message;
-            message << "Stale generated indirect dispatch winner at 0x" << std::hex
-                    << record.address << " for profile '" << table->profileName << "'";
+            message << "Stale generated indirect dispatch winner at 0x" << std::hex << record.address << " for profile '" << table->profileName << "'";
             return message.str();
         }
     }
 
     for (const auto& [address, index] : AddressIndex()) {
         const auto& info = Registry()[index];
-        if ((info.kind == FunctionKind::BaseTranslated || info.kind == FunctionKind::ModTranslated) &&
-            info.rawCpuInvoker && !FindStaticIndirectDispatchEntry(table, address)) {
+        if ((info.kind == FunctionKind::BaseTranslated || info.kind == FunctionKind::ModTranslated) && info.rawCpuInvoker && !FindStaticIndirectDispatchEntry(table, address)) {
             std::ostringstream message;
-            message << "Generated indirect dispatch profile '" << table->profileName
-                    << "' omits translated winner 0x" << std::hex << address;
+            message << "Generated indirect dispatch profile '" << table->profileName << "' omits translated winner 0x" << std::hex << address;
             return message.str();
         }
     }
     return {};
 }
-}
+} // namespace
 
 void RegisterStaticIndirectDispatchTable(const StaticIndirectDispatchTable* table) {
     std::lock_guard<std::mutex> lock(RegistryMutex());
     if (RegistryFrozen().load(std::memory_order_acquire)) {
         RT_LOG(RT_TAG_RUNTIME) << "ERROR: Generated indirect dispatch table registered after finalization" << std::endl;
-        ShowRuntimeFatalPopup("translated dispatch initialization failed",
-                              "A generated indirect-dispatch table was registered after the function registry was finalized.");
+        ShowRuntimeFatalPopup("translated dispatch initialization failed", "A generated indirect-dispatch table was registered after the function registry was finalized.");
         std::abort();
     }
     auto*& registered = GeneratedIndirectDispatchTable();
     if (registered && registered != table) {
         RT_LOG(RT_TAG_RUNTIME) << "ERROR: Multiple generated indirect dispatch profiles were linked" << std::endl;
-        ShowRuntimeFatalPopup("translated dispatch initialization failed",
-                              "Multiple generated indirect-dispatch profiles were linked into the same product.");
+        ShowRuntimeFatalPopup("translated dispatch initialization failed", "Multiple generated indirect-dispatch profiles were linked into the same product.");
         std::abort();
     }
     registered = table;
@@ -282,9 +263,7 @@ void RegisterBulkTranslatedFunctions(const BulkTranslatedFunctionRecord* records
         info.name = record.name ? record.name : "";
         info.moduleId = record.moduleId;
         info.priority = record.priority;
-        info.nonvolatileFprWriteMask = record.preservesNonvolatileFprs
-            ? 0u
-            : (record.nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask);
+        info.nonvolatileFprWriteMask = record.preservesNonvolatileFprs ? 0u : (record.nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask);
         info.entryPoint = reinterpret_cast<void*>(record.entry);
         info.rawCpuInvoker = record.entry;
         info.mustRemainDynamicallyDispatchable = record.mustRemainDynamicallyDispatchable;
@@ -296,10 +275,8 @@ void RegisterBulkTranslatedFunctions(const BulkTranslatedFunctionRecord* records
 void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
     std::lock_guard<std::mutex> lock(RegistryMutex());
     if (RegistryFrozen().load(std::memory_order_acquire)) {
-        RT_LOG(RT_TAG_RUNTIME) << "ERROR: Attempted to register function after registry was finalized: 0x"
-                  << std::hex << info.address << " '" << info.name << "'" << std::dec << std::endl;
-        ShowRuntimeFatalPopup("translated function registration failed",
-                              "A translated function was registered after guest execution had already been finalized.");
+        RT_LOG(RT_TAG_RUNTIME) << "ERROR: Attempted to register function after registry was finalized: 0x" << std::hex << info.address << " '" << info.name << "'" << std::dec << std::endl;
+        ShowRuntimeFatalPopup("translated function registration failed", "A translated function was registered after guest execution had already been finalized.");
         std::abort();
     }
     info.priority = EffectivePriority(info);
@@ -313,8 +290,7 @@ void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
         for (const size_t existingIndex : sameAddressIt->second) {
             const auto& existing = entries[existingIndex];
             if (IsSameRegistration(existing, info)) {
-                RT_LOG(RT_TAG_RUNTIME) << "Duplicate " << KindLabel(info.kind) << " registration for " << info.name << " (0x"
-                          << std::hex << info.address << ") ignored" << std::dec << std::endl;
+                RT_LOG(RT_TAG_RUNTIME) << "Duplicate " << KindLabel(info.kind) << " registration for " << info.name << " (0x" << std::hex << info.address << ") ignored" << std::dec << std::endl;
                 return;
             }
         }
@@ -339,8 +315,7 @@ void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
 
 void TranslatedFunctionRegistry::Finalize() {
     if (const size_t overrides = PriorityOverrideCount(); overrides != 0) {
-        RT_LOG(RT_TAG_RUNTIME) << overrides
-                  << " registration(s) took over an address by priority" << std::endl;
+        RT_LOG(RT_TAG_RUNTIME) << overrides << " registration(s) took over an address by priority" << std::endl;
     }
     std::string validationError;
     {
@@ -396,10 +371,7 @@ const RawDispatchRecord* TranslatedFunctionRegistry::FindRawByAddressPtrSlow(uin
         return generated;
     }
     const auto& entries = DynamicRawDispatchEntries();
-    const auto it = std::lower_bound(entries.begin(), entries.end(), address,
-        [](const RawDispatchRecord& entry, uint32_t target) {
-            return entry.address < target;
-        });
+    const auto it = std::lower_bound(entries.begin(), entries.end(), address, [](const RawDispatchRecord& entry, uint32_t target) { return entry.address < target; });
     return it != entries.end() && it->address == address ? &*it : nullptr;
 }
 
@@ -416,8 +388,7 @@ std::optional<TranslatedFunctionInfo> TranslatedFunctionRegistry::FindByHostAddr
         return std::nullopt;
     }
 
-    auto it = std::upper_bound(sorted.begin(), sorted.end(), hostAddr,
-                               [](uintptr_t addr, const HostEntryRef& ref) { return addr < ref.addr; });
+    auto it = std::upper_bound(sorted.begin(), sorted.end(), hostAddr, [](uintptr_t addr, const HostEntryRef& ref) { return addr < ref.addr; });
 
     if (it == sorted.begin()) {
         return std::nullopt;

@@ -25,9 +25,8 @@ extern "C" {
  * All top fields, classification, channels, clip, unknown bytes and padding
  * inherit. A caller must finish fallible pixel/raster/capability preflight
  * before invoking this mutating function. */
-int mh3_material_group_publish_unchecked(mh3_native_material_state *destination,
-    const mh3_native_material_state *source,mh3_model_material_block block,
-    uint32_t count,const mh3_material_requirements *consumed);
+int mh3_material_group_publish_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count,
+                                         const mh3_material_requirements *consumed);
 
 /* Only the first19 pixel fields belong to the resource pixel group. Merge them
  * into a small preview for the existing raster/capability preflight; current's
@@ -35,8 +34,7 @@ int mh3_material_group_publish_unchecked(mh3_native_material_state *destination,
  * output with either input is supported; otherwise records must be disjoint.
  * No aggregate material is constructed. Mutation of the material/raster is
  * still the caller's later commit. */
-void mh3_material_group_pixel_preview_unchecked(const mh3_pack_pixel_inputs *current,
-    const mh3_pack_pixel_inputs *source,mh3_pack_pixel_inputs *out);
+void mh3_material_group_pixel_preview_unchecked(const mh3_pack_pixel_inputs *current, const mh3_pack_pixel_inputs *source, mh3_pack_pixel_inputs *out);
 
 #ifdef __cplusplus
 }

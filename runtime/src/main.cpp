@@ -34,12 +34,16 @@ int RunCollisionCheck(CpuContext*);
 #endif
 
 void SystemBridge::DumpCpuState(std::ostream& out, const CpuContext* cpu) {
-    if (!cpu) return;
+    if (!cpu)
+        return;
     out << std::hex << "guest pc=" << cpu->pc << " lr=" << cpu->lr << " ctr=" << cpu->ctr << '\n';
-    for (unsigned i = 0; i < 32; ++i) out << "r" << std::dec << i << "=" << std::hex << cpu->gpr[i] << ((i % 4 == 3) ? '\n' : ' ');
+    for (unsigned i = 0; i < 32; ++i)
+        out << "r" << std::dec << i << "=" << std::hex << cpu->gpr[i] << ((i % 4 == 3) ? '\n' : ' ');
     out << std::dec;
 }
-void SystemBridge::DumpCpuState(const CpuContext* cpu) { DumpCpuState(std::cerr, cpu); }
+void SystemBridge::DumpCpuState(const CpuContext* cpu) {
+    DumpCpuState(std::cerr, cpu);
+}
 void DumpHostStackTraceForRuntimeHelper() {
 #ifndef __vita__
     void* frames[40];
@@ -66,7 +70,8 @@ void WriteCrashArtifacts(std::string_view reason, std::string_view details, cons
         try {
             std::ofstream dump(path, std::ios::binary | std::ios::trunc);
             dump.write(reinterpret_cast<const char*>(Memory::GetPointer(0x80000000, 0x1800000)), 0x1800000);
-            if (!dump) throw std::runtime_error("write failed");
+            if (!dump)
+                throw std::runtime_error("write failed");
             std::cerr << "MEM1 diagnostic snapshot: " << path << '\n';
         } catch (const std::exception& error) {
             std::cerr << "Cannot write MEM1 diagnostic snapshot: " << error.what() << '\n';
@@ -75,24 +80,22 @@ void WriteCrashArtifacts(std::string_view reason, std::string_view details, cons
     DumpHostStackTraceForRuntimeHelper();
     std::exit(1);
 }
-}
+} // namespace RuntimeCrash
 
 #ifdef MH3_HAS_AURORA
 int RunGraphicsCheck(int argc, char** argv);
 int RunEfbCheck(int argc, char** argv);
 #endif
 
-constexpr const char* kUsage =
-    "Unknown option. Options:\n"
-    "  --village                      start File 1 / character 1 in the village\n"
-    "  --list quests|online-quests|arena-quests\n"
-    "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-    "  --quest <id>|free [--area <n>] [--spawn <x,y,z>]\n"
-    "                                 start a quest (village, arena or online) or the\n"
-    "                                 Moga Woods free roam from the village; --spawn\n"
-    "                                 moves the hunter there (arena pit: 0,300,0)\n"
-    "  --no-damage                    (with any of the above) the hunter takes no damage\n"
-    ;
+constexpr const char* kUsage = "Unknown option. Options:\n"
+                               "  --village                      start File 1 / character 1 in the village\n"
+                               "  --list quests|online-quests|arena-quests\n"
+                               "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
+                               "  --quest <id>|free [--area <n>] [--spawn <x,y,z>]\n"
+                               "                                 start a quest (village, arena or online) or the\n"
+                               "                                 Moga Woods free roam from the village; --spawn\n"
+                               "                                 moves the hunter there (arena pit: 0,300,0)\n"
+                               "  --no-damage                    (with any of the above) the hunter takes no damage\n";
 
 // --quest <id>|free [--area <n>] [--spawn <x,y,z>]. The quest sets' ids don't overlap (village
 // 1000.., arena 9000.., online 10000..): the id picks the set.
@@ -103,10 +106,12 @@ void StartQuestBoot(int argc, char** argv) {
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
         float x, y, z;
-        if (option == "--area" && i + 1 < argc) area = std::stoi(argv[++i]);
+        if (option == "--area" && i + 1 < argc)
+            area = std::stoi(argv[++i]);
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
             RequestQuestSpawn(x, y, z);
-        else throw std::runtime_error(kUsage);
+        else
+            throw std::runtime_error(kUsage);
     }
     Set set = Set::Village;
     uint32_t quest = 0;
@@ -116,13 +121,15 @@ void StartQuestBoot(int argc, char** argv) {
         for (const Set candidate : {Set::Village, Set::Arena, Set::Online}) {
             const auto quests = QuestCatalog::Load(candidate);
             const auto it = std::find_if(quests.begin(), quests.end(), [&](const auto& q) { return q.id == quest; });
-            if (it == quests.end()) continue;
+            if (it == quests.end())
+                continue;
             set = candidate;
             found = true;
             std::cerr << "MH3 quest: " << it->id << " " << it->name << " (" << QuestCatalog::MapName(it->map) << ")\n";
             break;
         }
-        if (!found) throw std::runtime_error("No quest " + std::string(id) + "; see --list");
+        if (!found)
+            throw std::runtime_error("No quest " + std::string(id) + "; see --list");
     }
     RequestQuestJump(quest, set, area);
     StartVillageBoot();
@@ -138,7 +145,8 @@ int main(int argc, char** argv) {
     setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
     try {
 #ifdef __vita__
-        if (argc == 1 && !VitaLauncher::Run()) return 0;
+        if (argc == 1 && !VitaLauncher::Run())
+            return 0;
 #endif
         // --no-damage goes with any other option.
         const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });
@@ -156,19 +164,25 @@ int main(int argc, char** argv) {
         if (argc == 6 && std::string_view(argv[1]) == "--disc-read") {
             DiscImage disc(argv[2]);
             const auto size = std::stoull(argv[4], nullptr, 0);
-            if (size > 64 * 1024 * 1024) throw std::runtime_error("Disc read too large");
+            if (size > 64 * 1024 * 1024)
+                throw std::runtime_error("Disc read too large");
             auto bytes = disc.Read(std::stoull(argv[3], nullptr, 0), static_cast<uint32_t>(size));
             std::ofstream output(argv[5], std::ios::binary);
             output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-            if (!output) throw std::runtime_error("Disc read output failed");
+            if (!output)
+                throw std::runtime_error("Disc read output failed");
             return 0;
         }
         if (argc == 3 && std::string_view(argv[1]) == "--list") {
             const std::string_view what = argv[2];
-            if (what == "quests") QuestCatalog::Print(QuestCatalog::Set::Village);
-            else if (what == "online-quests") QuestCatalog::Print(QuestCatalog::Set::Online);
-            else if (what == "arena-quests") QuestCatalog::Print(QuestCatalog::Set::Arena);
-            else throw std::runtime_error(kUsage);
+            if (what == "quests")
+                QuestCatalog::Print(QuestCatalog::Set::Village);
+            else if (what == "online-quests")
+                QuestCatalog::Print(QuestCatalog::Set::Online);
+            else if (what == "arena-quests")
+                QuestCatalog::Print(QuestCatalog::Set::Arena);
+            else
+                throw std::runtime_error(kUsage);
             return 0;
         }
         Memory::Init(24 * 1024 * 1024);
@@ -185,15 +199,19 @@ int main(int argc, char** argv) {
             bool caught = false;
             // GX MMIO now terminates with a backtrace; an unrelated unclaimed
             // device address still reports an ordinary access violation.
-            try { Memory::Read32(0xCC009000); } catch (const Memory::AccessViolation&) { caught = true; }
-            if (!caught) throw std::runtime_error("MMIO must not silently read as RAM");
+            try {
+                Memory::Read32(0xCC009000);
+            } catch (const Memory::AccessViolation&) {
+                caught = true;
+            }
+            if (!caught)
+                throw std::runtime_error("MMIO must not silently read as RAM");
             MH3_OSExceptionInit(&cpu);
             if (Memory::Read32(0x80797798) != 0x80003000 || Memory::Read32(0x80003038) != 0x804CB930)
                 throw std::runtime_error("MH3 exception table initialization failed");
             Memory::Write32(0x800030BC, 0xFFFFFFFF);
             MH3_OSInterruptInit(&cpu);
-            if (Memory::Read32(0x80797828) != 0x80003040 || Memory::Read32(0x800030BC) != 0 ||
-                Memory::Read32(0x800000C4) != 0xFFFFFFF0 || Memory::Read32(0x80003010) != 0x804D1A70)
+            if (Memory::Read32(0x80797828) != 0x80003040 || Memory::Read32(0x800030BC) != 0 || Memory::Read32(0x800000C4) != 0xFFFFFFF0 || Memory::Read32(0x80003010) != 0x804D1A70)
                 throw std::runtime_error("MH3 interrupt initialization failed");
             RunDeviceSelfTests(&cpu);
             std::cout << "MH3 runtime self-test passed\n";
@@ -220,11 +238,12 @@ int main(int argc, char** argv) {
             RunAudioSelfTests(&cpu);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
+        if (argc == 2 && std::string_view(argv[1]) == "--village")
+            StartVillageBoot();
         else if (argc >= 3 && std::string_view(argv[1]) == "--quest")
             StartQuestBoot(argc, argv);
-        else
-        if (argc != 1) throw std::runtime_error(kUsage);
+        else if (argc != 1)
+            throw std::runtime_error(kUsage);
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
         // The apploader normally installs the FST in reserved high MEM1.
@@ -234,19 +253,19 @@ int main(int argc, char** argv) {
         const auto fstPath = std::filesystem::path(discOverride ? discOverride : "Assets/DATA") / "sys/fst.bin";
         std::ifstream fst(fstPath, std::ios::binary | std::ios::ate);
         const auto fstLength = fst ? fst.tellg() : std::streampos(-1);
-        if (fstLength < 12 || fstLength > 1024 * 1024) throw std::runtime_error("Invalid or missing boot FST");
+        if (fstLength < 12 || fstLength > 1024 * 1024)
+            throw std::runtime_error("Invalid or missing boot FST");
         const uint32_t fstSize = static_cast<uint32_t>(fstLength);
         const uint32_t arenaHi = (0x81800000u - fstSize) & ~31u;
         fst.seekg(0);
         fst.read(reinterpret_cast<char*>(Memory::GetPointer(arenaHi, fstSize)), fstSize);
-        if (!fst || Memory::Read8(arenaHi) != 1 || Memory::Read32(arenaHi + 8) < 1 ||
-            uint64_t(Memory::Read32(arenaHi + 8)) * 12 > fstSize)
+        if (!fst || Memory::Read8(arenaHi) != 1 || Memory::Read32(arenaHi + 8) < 1 || uint64_t(Memory::Read32(arenaHi + 8)) * 12 > fstSize)
             throw std::runtime_error("Invalid boot FST root");
         Memory::Write32(0x80000038, arenaHi);
         Memory::Write32(0x8000003C, fstSize);
         // Standard Wii boot information, with MH3's own arena boundary.
         Memory::Write32(0x80000000, 0x524D4850); // RMHP
-        Memory::Write16(0x80000004, 0x3038); // 08
+        Memory::Write16(0x80000004, 0x3038);     // 08
         Memory::Write32(0x80000020, 0x0D15EA5E);
         Memory::Write32(0x80000028, 24 * 1024 * 1024);
         Memory::Write32(0x8000002C, 0x23);

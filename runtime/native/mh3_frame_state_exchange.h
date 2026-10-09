@@ -31,7 +31,7 @@ struct mh3_frame_state_exchange {
     mh3_frame_state_consumer *consumer;
 };
 typedef enum {
-    MH3_FRAME_STATE_OK=0,
+    MH3_FRAME_STATE_OK = 0,
     MH3_FRAME_STATE_EMPTY,
     MH3_FRAME_STATE_BUSY,
     MH3_FRAME_STATE_STOPPED,
@@ -43,14 +43,13 @@ typedef enum {
  * values belong to the caller. Failed operations leave output arguments intact.
  * Recycled producer buffers may contain old renderer scratch: rebuild the full
  * logical input state before publishing; do not rely on inherited slot bytes. */
-mh3_frame_state_status mh3_frame_state_init(mh3_frame_state_exchange *,
-    mh3_frame_state_producer *,mh3_frame_state_consumer *,void *,void *,void *,size_t);
-mh3_frame_state_status mh3_frame_state_producer_buffer(mh3_frame_state_producer *,void **,size_t *);
-mh3_frame_state_status mh3_frame_state_publish(mh3_frame_state_producer *,uint64_t,uint32_t *replaced);
+mh3_frame_state_status mh3_frame_state_init(mh3_frame_state_exchange *, mh3_frame_state_producer *, mh3_frame_state_consumer *, void *, void *, void *, size_t);
+mh3_frame_state_status mh3_frame_state_producer_buffer(mh3_frame_state_producer *, void **, size_t *);
+mh3_frame_state_status mh3_frame_state_publish(mh3_frame_state_producer *, uint64_t, uint32_t *replaced);
 /* Acquire swaps the renderer's old private front with the newest pending
  * middle. EMPTY keeps the existing front. It creates no shared/frozen lease. */
 mh3_frame_state_status mh3_frame_state_acquire(mh3_frame_state_consumer *);
-mh3_frame_state_status mh3_frame_state_consumer_buffer(mh3_frame_state_consumer *,void **,size_t *,uint64_t *);
+mh3_frame_state_status mh3_frame_state_consumer_buffer(mh3_frame_state_consumer *, void **, size_t *, uint64_t *);
 /* Stop can race a publish/acquire already in progress: that operation may
  * finish. Both owners may finish using their existing private pointers, then
  * acknowledge idle. After idle, no payload/role access is permitted until reset

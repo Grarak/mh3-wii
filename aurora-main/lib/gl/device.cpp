@@ -69,8 +69,7 @@ bool initialize(SDL_Window* window) {
       .width = size.native_fb_width,
       .height = size.native_fb_height,
       .msaaSamples = 1,
-      .textureAnisotropy = static_cast<uint16_t>(
-          std::clamp<int32_t>(g_config.maxTextureAnisotropy, 1, std::max(caps.maxAnisotropy, 1))),
+      .textureAnisotropy = static_cast<uint16_t>(std::clamp<int32_t>(g_config.maxTextureAnisotropy, 1, std::max(caps.maxAnisotropy, 1))),
       .maxTextureDimension2D = static_cast<uint32_t>(std::max(caps.maxTextureSize, 1)),
   };
   if (g_config.msaa > 1) {
@@ -87,7 +86,9 @@ void shutdown() {
   gl::shutdown();
 }
 
-const RenderTarget& present_source() noexcept { return g_frameBuffer; }
+const RenderTarget& present_source() noexcept {
+  return g_frameBuffer;
+}
 
 PresentSource current_present_source() noexcept {
   if (g_presentSourceOverrideActive && g_presentSourceOverride.texture) {
@@ -114,20 +115,16 @@ void clear_present_source_override() noexcept {
   g_presentSourceOverride = {};
 }
 
-Viewport calculate_present_viewport_for_aspect(uint32_t surface_width, uint32_t surface_height,
-                                               float content_aspect) noexcept {
+Viewport calculate_present_viewport_for_aspect(uint32_t surface_width, uint32_t surface_height, float content_aspect) noexcept {
   if (surface_width == 0 || surface_height == 0 || !(content_aspect > 0.f)) {
     return {};
   }
 
   uint32_t viewport_width = surface_width;
-  uint32_t viewport_height = std::min<uint32_t>(
-      surface_height, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_width) *
-                                                                               static_cast<double>(1.f / content_aspect)))));
+  uint32_t viewport_height =
+      std::min<uint32_t>(surface_height, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_width) * static_cast<double>(1.f / content_aspect)))));
   if (viewport_height == surface_height) {
-    viewport_width = std::min<uint32_t>(
-        surface_width, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_height) *
-                                                                                static_cast<double>(content_aspect)))));
+    viewport_width = std::min<uint32_t>(surface_width, std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(static_cast<double>(viewport_height) * static_cast<double>(content_aspect)))));
   }
 
   return {
@@ -140,13 +137,11 @@ Viewport calculate_present_viewport_for_aspect(uint32_t surface_width, uint32_t 
   };
 }
 
-Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
-                                    uint32_t content_height) noexcept {
+Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width, uint32_t content_height) noexcept {
   if (content_width == 0 || content_height == 0) {
     return {};
   }
-  return calculate_present_viewport_for_aspect(
-      surface_width, surface_height, static_cast<float>(content_width) / static_cast<float>(content_height));
+  return calculate_present_viewport_for_aspect(surface_width, surface_height, static_cast<float>(content_width) / static_cast<float>(content_height));
 }
 
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height, bool force) {
@@ -163,8 +158,7 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
   }
   const auto clamped = clamp_frame_buffer_size(render_width, render_height);
   if (clamped.width != render_width || clamped.height != render_height) {
-    Log.warn("Render target {}x{} exceeds the framebuffer budget; clamping to {}x{}", render_width, render_height,
-             clamped.width, clamped.height);
+    Log.warn("Render target {}x{} exceeds the framebuffer budget; clamping to {}x{}", render_width, render_height, clamped.width, clamped.height);
   }
   render_width = clamped.width;
   render_height = clamped.height;

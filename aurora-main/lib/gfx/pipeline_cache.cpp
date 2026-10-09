@@ -67,14 +67,24 @@ void set_skip_unready_pipelines(bool enabled) noexcept {
   g_skipUnreadyPipelines.store(enabled, std::memory_order_relaxed);
 }
 
-bool skip_unready_pipelines() noexcept { return g_skipUnreadyPipelines.load(std::memory_order_relaxed); }
+bool skip_unready_pipelines() noexcept {
+  return g_skipUnreadyPipelines.load(std::memory_order_relaxed);
+}
 
-uint32_t queued_pipeline_count() noexcept { return 0; }
+uint32_t queued_pipeline_count() noexcept {
+  return 0;
+}
 
 } // namespace aurora::gfx
 
-void aurora_set_skip_unready_pipelines(const bool enabled) { aurora::gfx::set_skip_unready_pipelines(enabled); }
+void aurora_set_skip_unready_pipelines(const bool enabled) {
+  aurora::gfx::set_skip_unready_pipelines(enabled);
+}
 
-bool aurora_get_skip_unready_pipelines() { return aurora::gfx::skip_unready_pipelines(); }
+bool aurora_get_skip_unready_pipelines() {
+  return aurora::gfx::skip_unready_pipelines();
+}
 
-uint32_t aurora_get_queued_pipeline_count() { return aurora::gfx::queued_pipeline_count(); }
+uint32_t aurora_get_queued_pipeline_count() {
+  return aurora::gfx::queued_pipeline_count();
+}

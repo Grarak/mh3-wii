@@ -65,23 +65,23 @@ void ShellRateAddGPort(CpuContext* ctx) {
 
 // VecAddInPlace calls that move by a rate, by return address (the bl + 4).
 constexpr uint32_t kRateCalls[] = {
-    0x801354ACu, 0x801354B8u, // 0x8013548C enemy: position += velocity, velocity += acceleration
-    0x801355D0u,              // 0x80135558 enemy: position += rotated velocity (flying)
-    0x80135650u,              // 0x8013562C enemy: velocity += acceleration
-    0x80135C08u, 0x80135C14u, // 0x80135BE8: +0x14 += +0x5C, +0x5C += +0x68
-    0x801A07DCu, 0x801A0AE4u, 0x801A0EBCu, // desert enemy swims: position += velocity
+    0x801354ACu, 0x801354B8u,                           // 0x8013548C enemy: position += velocity, velocity += acceleration
+    0x801355D0u,                                        // 0x80135558 enemy: position += rotated velocity (flying)
+    0x80135650u,                                        // 0x8013562C enemy: velocity += acceleration
+    0x80135C08u, 0x80135C14u,                           // 0x80135BE8: +0x14 += +0x5C, +0x5C += +0x68
+    0x801A07DCu, 0x801A0AE4u, 0x801A0EBCu,              // desert enemy swims: position += velocity
     0x801BA68Cu, 0x801BA6C4u, 0x801BA950u, 0x801BA988u, // 0x801BA438: +0x34C += velocity, velocity += acceleration
-    0x801CC344u, 0x801CC368u, // 0x801CBD94: position += velocity
-    0x801CF5D4u, 0x801CF614u, // 0x801CF124: position += velocity
-    0x801D2674u, 0x801D2698u, // 0x801D2208: position += velocity
-    0x802C35C4u, 0x802C35D0u, // 0x802C3444: +0x178 += +0x1D4, +0x1D4 += +0x1E0
-    0x802D3304u,              // 0x802D32E0: +0x1D4 += +0x1E0
-    0x802D8578u,              // 0x802D853C camera demo actor: +0x178 += +0x470
-    0x802F513Cu,              // 0x802F511C: position += velocity
-    0x80308A18u,              // 0x80308960 debris: position += velocity
-    0x8031E48Cu,              // 0x8031DF1C: +0x14 += +0x20
-    0x80328E2Cu,              // 0x80328BDC enemy: velocity += acceleration
-    0x80369404u, 0x80369818u, 0x80369C54u, // 0x803692F0 desert object group: position += velocity
+    0x801CC344u, 0x801CC368u,                           // 0x801CBD94: position += velocity
+    0x801CF5D4u, 0x801CF614u,                           // 0x801CF124: position += velocity
+    0x801D2674u, 0x801D2698u,                           // 0x801D2208: position += velocity
+    0x802C35C4u, 0x802C35D0u,                           // 0x802C3444: +0x178 += +0x1D4, +0x1D4 += +0x1E0
+    0x802D3304u,                                        // 0x802D32E0: +0x1D4 += +0x1E0
+    0x802D8578u,                                        // 0x802D853C camera demo actor: +0x178 += +0x470
+    0x802F513Cu,                                        // 0x802F511C: position += velocity
+    0x80308A18u,                                        // 0x80308960 debris: position += velocity
+    0x8031E48Cu,                                        // 0x8031DF1C: +0x14 += +0x20
+    0x80328E2Cu,                                        // 0x80328BDC enemy: velocity += acceleration
+    0x80369404u, 0x80369818u, 0x80369C54u,              // 0x803692F0 desert object group: position += velocity
 };
 
 bool IsRateCall(uint32_t lr) {
@@ -93,7 +93,9 @@ void VecAddInPlace(uint32_t lr, uint32_t out, uint32_t add) {
     AddScaled(out, add, s != 1.0 && IsRateCall(lr) ? float(s) : 1.0f);
 }
 
-void VecAddInPlacePort(CpuContext* ctx) { VecAddInPlace(ctx->lr, ctx->gpr[3], ctx->gpr[4]); }
+void VecAddInPlacePort(CpuContext* ctx) {
+    VecAddInPlace(ctx->lr, ctx->gpr[3], ctx->gpr[4]);
+}
 
 // VecMagWrapper calls that measure a step's move, by return address.
 constexpr uint32_t kStepLengthCalls[] = {0x801A07E4u, 0x801A0AECu, 0x801A0EC4u}; // then +0x378 -= it
@@ -106,7 +108,8 @@ float VecMag(uint32_t v) {
                                       PpcPackPairedInline(MemoryInline::FlatReadFloat32(v), MemoryInline::FlatReadFloat32(v + 4)));
     const double z = PPC_PsFromScalarInline(MemoryInline::FlatReadFloat32(v + 8));
     const double sq = PPC_PsToScalarInline(PPC_PsSum0Inline(PPC_PsMaddInline(z, z, xy), xy, xy));
-    if (sq == 0.0) return float(sq);
+    if (sq == 0.0)
+        return float(sq);
     const double e = PPC_Frsqrte(sq);
     const double refine = PPC_Fnmsubs(PpcFmulsInline(e, e), sq, 3.0); // 3 - e*e*sq
     return float(PpcFmulsInline(sq, PpcFmulsInline(refine, PpcFmulsInline(e, 0.5))));
@@ -120,18 +123,24 @@ float VecMagWrapper(uint32_t lr, uint32_t v) {
     return mag;
 }
 
-void VecMagWrapperPort(CpuContext* ctx) { ctx->fpr[1].d = VecMagWrapper(ctx->lr, ctx->gpr[3]); }
+void VecMagWrapperPort(CpuContext* ctx) {
+    ctx->fpr[1].d = VecMagWrapper(ctx->lr, ctx->gpr[3]);
+}
 
 constexpr uint32_t kTintPhases[] = {0x13E, 0x140}; // u16
 
 } // namespace
 
 extern "C" void func_802AB3A8(CpuContext* ctx);
-extern "C" void MH3_ShellRateAdd(CpuContext* ctx) { PortCheck::Call(ctx, "ShellRateAdd", func_802AB3A8, ShellRateAddPort); }
+extern "C" void MH3_ShellRateAdd(CpuContext* ctx) {
+    PortCheck::Call(ctx, "ShellRateAdd", func_802AB3A8, ShellRateAddPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802AB3A8, MH3_ShellRateAdd, "ShellRateAdd");
 
 extern "C" void func_802AB3B8(CpuContext* ctx);
-extern "C" void MH3_ShellRateAddG(CpuContext* ctx) { PortCheck::Call(ctx, "ShellRateAddG", func_802AB3B8, ShellRateAddGPort); }
+extern "C" void MH3_ShellRateAddG(CpuContext* ctx) {
+    PortCheck::Call(ctx, "ShellRateAddG", func_802AB3B8, ShellRateAddGPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x802AB3B8, MH3_ShellRateAddG, "ShellRateAddG");
 
 extern "C" void func_80073FCC(CpuContext* ctx);
@@ -152,7 +161,9 @@ static void VecAddInPlaceChecked([[maybe_unused]] uint32_t r1, uint32_t lr, uint
 #endif
     VecAddInPlace(lr, out, add);
 }
-extern "C" void MH3_VecAddInPlace(CpuContext* ctx) { VecAddInPlaceChecked(ctx->gpr[1], ctx->lr, ctx->gpr[3], ctx->gpr[4]); }
+extern "C" void MH3_VecAddInPlace(CpuContext* ctx) {
+    VecAddInPlaceChecked(ctx->gpr[1], ctx->lr, ctx->gpr[3], ctx->gpr[4]);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80073FCC, MH3_VecAddInPlace, "VecAddInPlace");
 
 // 0x8013547C: enemy position (+0x188) += velocity (+0x310), a tail call of
@@ -170,8 +181,7 @@ extern "C" void MH3_EnemyAddVelocity(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("EnemyAddVelocity");
     if (check) [[unlikely]] {
-        PortCheck::RunOutput(ctx, "EnemyAddVelocity", func_8013547C, EnemyAddVelocityPort,
-                             {{ctx->gpr[3] + kEnemyPosition, 12}});
+        PortCheck::RunOutput(ctx, "EnemyAddVelocity", func_8013547C, EnemyAddVelocityPort, {{ctx->gpr[3] + kEnemyPosition, 12}});
         return;
     }
 #endif
@@ -193,19 +203,24 @@ static double VecMagWrapperChecked(uint32_t lr, uint32_t v) {
 #endif
     return VecMagWrapper(lr, v);
 }
-extern "C" void MH3_VecMagWrapper(CpuContext* ctx) { ctx->fpr[1].d = VecMagWrapperChecked(ctx->lr, ctx->gpr[3]); }
+extern "C" void MH3_VecMagWrapper(CpuContext* ctx) {
+    ctx->fpr[1].d = VecMagWrapperChecked(ctx->lr, ctx->gpr[3]);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80050F88, MH3_VecMagWrapper, "VecMagWrapper");
 
 extern "C" void func_802E77EC(CpuContext* ctx);
 extern "C" void MH3_PlayerTintPulse(CpuContext* ctx) {
     const uint32_t work = ctx->gpr[3];
     uint16_t before[2];
-    for (int i = 0; i < 2; ++i) before[i] = Memory::Read16(work + kTintPhases[i]);
+    for (int i = 0; i < 2; ++i)
+        before[i] = Memory::Read16(work + kTintPhases[i]);
     func_802E77EC(ctx);
-    if (GameStep::Scale() == 1.0) return;
+    if (GameStep::Scale() == 1.0)
+        return;
     for (int i = 0; i < 2; ++i) {
         const uint16_t after = Memory::Read16(work + kTintPhases[i]);
-        if (after == 0 || after == before[i]) continue; // ended, or not advancing
+        if (after == 0 || after == before[i])
+            continue; // ended, or not advancing
         const int32_t advance = uint16_t(after - before[i]);
         Memory::Write16(work + kTintPhases[i], uint16_t(before[i] + GameStep::Share(advance)));
     }

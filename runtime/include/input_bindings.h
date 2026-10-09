@@ -16,8 +16,8 @@ namespace InputBindings {
 struct ControlInfo {
     const char* dolphinName;
     const char* label;
-    uint16_t padButton;   // 0 for the analog-only controls below
-    int analog;           // 0 none, 1 trigger L, 2 trigger R
+    uint16_t padButton; // 0 for the analog-only controls below
+    int analog;         // 0 none, 1 trigger L, 2 trigger R
 };
 
 inline constexpr std::array<ControlInfo, 14> kControls = {{
@@ -61,7 +61,6 @@ std::string DefaultDolphinConfigPath() noexcept;
 
 // Imports [GCPad<padIndex>] into the given port. Returns the number of controls
 // imported, or -1 on failure with error filled.
-int ImportDolphinConfig(const std::string& path, int padIndex, uint32_t port,
-                        std::string& summary, std::string& error) noexcept;
+int ImportDolphinConfig(const std::string& path, int padIndex, uint32_t port, std::string& summary, std::string& error) noexcept;
 
 } // namespace InputBindings

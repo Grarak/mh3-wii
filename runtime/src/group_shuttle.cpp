@@ -29,13 +29,13 @@
 namespace {
 
 enum : uint32_t {
-    kGroup = 0x38,       // object: the group
-    kMember = 0x04,      // group, u32 per slot
-    kSpeedIndex = 0x35,  // group, u8 per slot
-    kCount = 0x40,       // group, s32 per slot
-    kState = 0x60,       // group, u8 per slot
-    kSpeed = 0x6E,       // group, u16 per speed index
-    kMemberZ = 0x0C,     // member, f32
+    kGroup = 0x38,         // object: the group
+    kMember = 0x04,        // group, u32 per slot
+    kSpeedIndex = 0x35,    // group, u8 per slot
+    kCount = 0x40,         // group, s32 per slot
+    kState = 0x60,         // group, u8 per slot
+    kSpeed = 0x6E,         // group, u16 per speed index
+    kMemberZ = 0x0C,       // member, f32
     kTargets = 0x805EE670, // Vec per target
 };
 
@@ -49,9 +49,12 @@ constexpr float kBaseSpeed = 20.0f, kCruiseDistance = 500.0f, kAccel = 0.5f;
 
 // fctiwz: toward zero, saturating (the speed can still be 0 on the first call).
 int32_t Truncate(float v) {
-    if (std::isnan(v)) return INT32_MIN;
-    if (v >= 2147483648.0f) return INT32_MAX;
-    if (v < -2147483648.0f) return INT32_MIN;
+    if (std::isnan(v))
+        return INT32_MIN;
+    if (v >= 2147483648.0f)
+        return INT32_MAX;
+    if (v < -2147483648.0f)
+        return INT32_MIN;
     return int32_t(v);
 }
 
@@ -84,7 +87,9 @@ static void GroupShuttle(CpuContext* ctx) {
             const float z = Memory::ReadFloat32(member + kMemberZ);
             Memory::WriteFloat32(member + kMemberZ, sign > 0 ? z + amount * scale : z - amount * scale);
         };
-        auto nextSpeed = [&] { Memory::Write16(speedAt, uint16_t(Truncate(kBaseSpeed + float(extra)))); };
+        auto nextSpeed = [&] {
+            Memory::Write16(speedAt, uint16_t(Truncate(kBaseSpeed + float(extra))));
+        };
 
         switch (state) {
         case 0:

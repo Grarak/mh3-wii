@@ -25,12 +25,10 @@ typedef struct mh3_model_view_dma_input {
  * before_store publishes destination retirement before any CPU output copy. */
 typedef struct mh3_model_view_callbacks {
     void *user;
-    mh3_res_status (*billboard)(void *user,uint32_t type,uint32_t matrix_index,
-                               int uniform_scale,mh3_res_mut_span position);
-    mh3_res_status (*before_store)(void *user,uint32_t kind,uint32_t first_index,size_t bytes);
+    mh3_res_status (*billboard)(void *user, uint32_t type, uint32_t matrix_index, int uniform_scale, mh3_res_mut_span position);
+    mh3_res_status (*before_store)(void *user, uint32_t kind, uint32_t first_index, size_t bytes);
 } mh3_model_view_callbacks;
-mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *input,
-                                 const mh3_model_view_callbacks *callbacks);
+mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *input, const mh3_model_view_callbacks *callbacks);
 
 /* Renderer-owned native float arrays for an already admitted static model.
  * Asset admission excludes billboard selectors and billboard-parent nodes.

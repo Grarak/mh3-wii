@@ -5,4 +5,4 @@
 namespace MemoryInline {
 extern bool g_slowPathTrace;
 void RecordSlowPathAccess(uint32_t address, uint32_t size, bool isWrite, const void* hostCaller);
-}
+} // namespace MemoryInline

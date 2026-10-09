@@ -265,8 +265,7 @@ RuntimeTextureKey build_runtime_key(const GXTexObj_& obj) noexcept {
 
 std::string format_replacement_filename(const RuntimeTextureKey& key) {
   if (key.hasTlut) {
-    return fmt::format("tex1_{}x{}_{:016x}_{:016x}_{}.dds", key.width, key.height,
-                       key.textureHash, key.tlutHash, key.format);
+    return fmt::format("tex1_{}x{}_{:016x}_{:016x}_{}.dds", key.width, key.height, key.textureHash, key.tlutHash, key.format);
   }
   return fmt::format("tex1_{}x{}_{:016x}_{}.dds", key.width, key.height, key.textureHash, key.format);
 }
@@ -385,10 +384,7 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
     return std::nullopt;
   }
   if (isUnsupportedTextureFormat(base.value())) {
-    Log.warn(
-      "texture_replacement: failed to load texture {} due to unsupported format: {}",
-      fs_path_to_string(entry.path),
-      static_cast<uint32_t>(base->format));
+    Log.warn("texture_replacement: failed to load texture {} due to unsupported format: {}", fs_path_to_string(entry.path), static_cast<uint32_t>(base->format));
     return std::nullopt;
   }
 
@@ -408,8 +404,7 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
       if (!lvl.has_value()) {
         Log.warn("texture_replacement: could not load mip {}", fs_path_to_string(mipPath));
       } else {
-        Log.warn("texture_replacement: expected {}x{} for mip {}, got {}x{}", ew, eh, fs_path_to_string(mipPath),
-                 lvl->width, lvl->height);
+        Log.warn("texture_replacement: expected {}x{} for mip {}, got {}x{}", ew, eh, fs_path_to_string(mipPath), lvl->width, lvl->height);
       }
 
       break;
@@ -501,11 +496,8 @@ void build_index() noexcept {
   }
 
   std::error_code ec;
-  for (std::filesystem::recursive_directory_iterator it(
-           s_replacementRoot,
-           std::filesystem::directory_options::skip_permission_denied |
-               std::filesystem::directory_options::follow_directory_symlink,
-           ec);
+  for (std::filesystem::recursive_directory_iterator it(s_replacementRoot, std::filesystem::directory_options::skip_permission_denied | std::filesystem::directory_options::follow_directory_symlink,
+                                                        ec);
        it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
     if (ec) {
       break;
@@ -580,21 +572,17 @@ gfx::TextureHandle load_replacement_texture(const RuntimeTextureKey& key, const 
   }
 
   const auto label = fmt::format("TextureReplacement {}", format_replacement_filename(key));
-  auto handle = std::make_shared<gfx::TextureRef>(
-      gl::create_texture(replacement->width, replacement->height, replacement->mips, replacement->format, label),
-      gfx::Extent{replacement->width, replacement->height, 1}, replacement->format, replacement->mips,
-      gfx::InvalidTextureFormat);
+  auto handle = std::make_shared<gfx::TextureRef>(gl::create_texture(replacement->width, replacement->height, replacement->mips, replacement->format, label),
+                                                  gfx::Extent{replacement->width, replacement->height, 1}, replacement->format, replacement->mips, gfx::InvalidTextureFormat);
   handle->isReplacement = true;
   gfx::write_texture(*handle, replacement->data);
   return handle;
 }
 
 void cache_replacement(const RuntimeTextureKey& key, const gfx::TextureHandle& handle) noexcept {
-  const uint64_t replacementBytes =
-      calc_texture_size(handle->format, handle->size.width, handle->size.height, handle->mipCount);
+  const uint64_t replacementBytes = calc_texture_size(handle->format, handle->size.width, handle->size.height, handle->mipCount);
   s_replacementLru.push_front(key);
-  s_replacementCache.emplace(
-      key, CachedReplacement{.handle = handle, .bytes = replacementBytes, .lruIt = s_replacementLru.begin()});
+  s_replacementCache.emplace(key, CachedReplacement{.handle = handle, .bytes = replacementBytes, .lruIt = s_replacementLru.begin()});
   s_replacementCacheBytes += replacementBytes;
   evict_replacement_cache_if_needed();
 }
@@ -610,9 +598,7 @@ bool dump_editable_texture_dds(const RuntimeTextureKey& key, const GXTexObj_& ob
     if (tlut == nullptr) {
       return false;
     }
-    pixels =
-        convert_texture_palette(obj.format(), texWidth, texHeight, 1, texData, static_cast<GXTlutFmt>(tlut->format),
-                                tlut->entries, {tlut->data.data(), tlut->data.size()});
+    pixels = convert_texture_palette(obj.format(), texWidth, texHeight, 1, texData, static_cast<GXTlutFmt>(tlut->format), tlut->entries, {tlut->data.data(), tlut->data.size()});
   } else {
     pixels = convert_texture(obj.format(), texWidth, texHeight, 1, texData);
   }
@@ -638,7 +624,9 @@ bool report_missing_key(const RuntimeTextureKey& key, const GXTexObj_& obj) noex
   return true;
 }
 
-void initialize() noexcept { build_index(); }
+void initialize() noexcept {
+  build_index();
+}
 
 void shutdown() noexcept {
   s_replacementIndex.clear();

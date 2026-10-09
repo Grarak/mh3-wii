@@ -48,17 +48,14 @@ public:
   ~TextureStorage();
   TextureStorage(const TextureStorage&) = delete;
   TextureStorage& operator=(const TextureStorage&) = delete;
-  void upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
-              const void* source, uint32_t sourcePitch);
+  void upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* source, uint32_t sourcePitch);
   const SceGxmTexture& sampled() const noexcept { return m_sampled; }
   const SceGxmColorSurface* color_surface() const;
   const SceGxmDepthStencilSurface* depth_surface() const;
   SceGxmOutputRegisterFormat output_format() const noexcept;
   bool in_cdram() const noexcept;
   bool has_gpu_use() const noexcept { return m_lastUse.address || m_gpuWritten; }
-  bool gpu_idle() const noexcept {
-    return !aurora::gpu_notification_pending(m_lastUse.address, m_lastUse.value);
-  }
+  bool gpu_idle() const noexcept { return !aurora::gpu_notification_pending(m_lastUse.address, m_lastUse.value); }
   void pin(bool pinned) noexcept { m_pinned = pinned; }
   void note_gpu_use(bool writes = false) noexcept {
     m_lastUse = m_pool.m_device.current_fence();
@@ -81,7 +78,7 @@ private:
   void* m_data = nullptr;
   MappedArena* m_arena = nullptr;
   size_t m_bytes = 0;
-  size_t m_imageBytes = 0,m_paletteOffset = 0,m_paletteBytes = 0;
+  size_t m_imageBytes = 0, m_paletteOffset = 0, m_paletteBytes = 0;
   uint32_t m_pixelBytes = 0;
   bool m_pinned = false, m_linked = false, m_gpuWritten = false;
   SceGxmNotification m_lastUse{};
@@ -95,4 +92,4 @@ private:
 // Native texture control words allow MIRROR on LINEAR textures. These bits
 // bypass libgxm's stricter policy; they do not change the memory layout.
 void set_texture_address_modes(SceGxmTexture& texture, uint32_t u, uint32_t v) noexcept;
-}
+} // namespace aurora::gxm

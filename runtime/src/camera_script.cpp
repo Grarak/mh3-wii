@@ -38,19 +38,22 @@ enum : uint32_t {
 // What 0x802BD938 sets: eye, target, and the two floats at +0x30.
 struct PathPose {
     float v[8];
-    static constexpr uint32_t kOffsets[8] = {kEye, kEye + 4, kEye + 8, kTarget, kTarget + 4, kTarget + 8,
-                                             kFovY, kAspect};
+    static constexpr uint32_t kOffsets[8] = {kEye, kEye + 4, kEye + 8, kTarget, kTarget + 4, kTarget + 8, kFovY, kAspect};
     void Read(uint32_t script) {
-        for (int i = 0; i < 8; ++i) v[i] = Memory::ReadFloat32(script + kOffsets[i]);
+        for (int i = 0; i < 8; ++i)
+            v[i] = Memory::ReadFloat32(script + kOffsets[i]);
     }
     void Write(uint32_t script) const {
-        for (int i = 0; i < 8; ++i) Memory::WriteFloat32(script + kOffsets[i], v[i]);
+        for (int i = 0; i < 8; ++i)
+            Memory::WriteFloat32(script + kOffsets[i], v[i]);
     }
 };
 
 // This step's time past the ticks counted before it: the counters run after
 // the evaluation, so it is ticks + fraction - 1 (0 at the stock step).
-double Pending() { return double(GameStep::Ticks()) + GameStep::Fraction() - 1.0; }
+double Pending() {
+    return double(GameStep::Ticks()) + GameStep::Fraction() - 1.0;
+}
 
 } // namespace
 
@@ -101,7 +104,8 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
         *ctx = entry;
         Memory::Write16(script + kFrame, uint16_t(int16_t(at)));
         func_802BD938(ctx);
-        if (pose) pose->Read(script);
+        if (pose)
+            pose->Read(script);
         return ctx->gpr[3];
     };
     const uint32_t result = evaluate(frame, nullptr);
@@ -109,7 +113,8 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
     PathPose a, b;
     evaluate(low, &a);
     evaluate(low + 1, &b);
-    for (int i = 0; i < 8; ++i) a.v[i] += (b.v[i] - a.v[i]) * blend;
+    for (int i = 0; i < 8; ++i)
+        a.v[i] += (b.v[i] - a.v[i]) * blend;
     a.Write(script);
     Memory::Write16(script + kFrame, uint16_t(frame));
     *ctx = after;

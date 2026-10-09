@@ -14,18 +14,21 @@
 #include <unistd.h>
 #ifdef MH3_HAS_AURORA
 #include <dolphin/gx.h>
-namespace aurora::gx::fifo { uint32_t process(const uint8_t*, uint32_t, bool); }
+namespace aurora::gx::fifo {
+uint32_t process(const uint8_t*, uint32_t, bool);
+}
 #endif
 
 namespace {
-void ExpectPanic(const char* name, const char* message, CpuContext* cpu,
-                 const std::function<void()>& operation) {
+void ExpectPanic(const char* name, const char* message, CpuContext* cpu, const std::function<void()>& operation) {
     int pipeFd[2];
-    if (pipe(pipeFd)) throw std::runtime_error("GX panic test pipe failed");
+    if (pipe(pipeFd))
+        throw std::runtime_error("GX panic test pipe failed");
     std::fflush(nullptr);
     const pid_t child = fork();
     if (child < 0) {
-        close(pipeFd[0]); close(pipeFd[1]);
+        close(pipeFd[0]);
+        close(pipeFd[1]);
         throw std::runtime_error("GX panic test fork failed");
     }
     if (!child) {
@@ -48,48 +51,62 @@ void ExpectPanic(const char* name, const char* message, CpuContext* cpu,
     for (;;) {
         pollfd descriptor{pipeFd[0], POLLIN | POLLHUP, 0};
         const int ready = poll(&descriptor, 1, 5000);
-        if (ready < 0 && errno == EINTR) continue;
-        if (ready <= 0 || output.size() > 65536) { timedOut = true; kill(child, SIGKILL); break; }
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready <= 0 || output.size() > 65536) {
+            timedOut = true;
+            kill(child, SIGKILL);
+            break;
+        }
         char bytes[2048];
         const ssize_t count = read(pipeFd[0], bytes, sizeof(bytes));
-        if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) break;
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            break;
         output.append(bytes, size_t(count));
     }
     close(pipeFd[0]);
     int status;
-    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-    if (timedOut || !WIFEXITED(status) || WEXITSTATUS(status) != 1 ||
-        output.find("MH3 GX PANIC: ") == std::string::npos ||
-        output.find(message) == std::string::npos ||
-        output.find("LR 0x8003f794") == std::string::npos ||
-        output.find("caller 0x8003fa48") == std::string::npos ||
-        output.find("Native backtrace") == std::string::npos ||
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+    }
+    if (timedOut || !WIFEXITED(status) || WEXITSTATUS(status) != 1 || output.find("MH3 GX PANIC: ") == std::string::npos || output.find(message) == std::string::npos ||
+        output.find("LR 0x8003f794") == std::string::npos || output.find("caller 0x8003fa48") == std::string::npos || output.find("Native backtrace") == std::string::npos ||
         output.find("#0 ") == std::string::npos)
         throw std::runtime_error(std::string("GX panic test failed: ") + name + "\n" + output);
 }
-}
+} // namespace
 #endif
 
 void RunGxPanicSelfTests(CpuContext* cpu) {
 #ifndef __vita__
     unsigned checked = 0;
     const auto expect = [&](const char* name, const char* message, auto operation) {
-        ExpectPanic(name, message, cpu, operation); ++checked;
+        ExpectPanic(name, message, cpu, operation);
+        ++checked;
     };
     expect("direct SDK", "GXInit", [&] { InvokeDirectCpu<0x804B3D10>(cpu); });
     expect("indirect SDK", "GXInvalidateTexAll", [&] { InvokeIndirectCpu(0x804B8FA0, cpu); });
     expect("unnamed SDK", "func_804B4AE0", [&] { InvokeIndirectCpu(0x804B4AE0, cpu); });
     expect("scalar FIFO", "GX FIFO write", [] { GX_HLE_FIFO_Write32(0x61000000); });
     expect("float FIFO", "GX FIFO write", [] { GX_HLE_FIFO_WriteFloat(1.f); });
-    expect("coalesced FIFO", "GX FIFO write", [] { const uint8_t command[5]{}; GX_HLE_FIFO_WriteBurst(command, 5); });
+    expect("coalesced FIFO", "GX FIFO write", [] {
+        const uint8_t command[5]{};
+        GX_HLE_FIFO_WriteBurst(command, 5);
+    });
     expect("open FIFO window", "GX FIFO write", [] {
         uint8_t buffer[32]{};
         gGxFifoWindow = {buffer, buffer + sizeof(buffer)};
         GX_HLE_FIFO_Write8(0x61);
     });
-    expect("full FIFO writer", "GX FIFO full write", [] { const uint8_t byte = 0; GX_HLE_FIFO_WriteFull(&byte, 1); });
-    expect("guest bytes", "GX FIFO write", [] { const uint8_t byte = 0; SubmitGuestGxBytes(&byte, 1); });
+    expect("full FIFO writer", "GX FIFO full write", [] {
+        const uint8_t byte = 0;
+        GX_HLE_FIFO_WriteFull(&byte, 1);
+    });
+    expect("guest bytes", "GX FIFO write", [] {
+        const uint8_t byte = 0;
+        SubmitGuestGxBytes(&byte, 1);
+    });
     expect("unlowered FIFO write", "GX direct memory write", [] { MemoryInline::FlatWriteRam32(0xCC008000, 0x61000000); });
     expect("unlowered CP read", "GX direct memory read", [] {
         volatile uint16_t value = MemoryInline::FlatLoad<uint16_t>(0xCC000020);
@@ -103,12 +120,21 @@ void RunGxPanicSelfTests(CpuContext* cpu) {
             expect("GX MMIO write", "GX CP/PE/FIFO register write", [&] { Memory::Write16(address, 0xFFFF); });
         }
     }
-    expect("CPU EFB read", "GX CPU EFB color read", [] { uint32_t pixel; ReadEfbColor32(0xC8000000, pixel); });
-    expect("CPU EFB out-of-bounds read", "GX CPU EFB color read", [] { uint32_t pixel; ReadEfbColor32(0xC8000A00, pixel); });
+    expect("CPU EFB read", "GX CPU EFB color read", [] {
+        uint32_t pixel;
+        ReadEfbColor32(0xC8000000, pixel);
+    });
+    expect("CPU EFB out-of-bounds read", "GX CPU EFB color read", [] {
+        uint32_t pixel;
+        ReadEfbColor32(0xC8000A00, pixel);
+    });
     expect("CPU EFB write", "GX CPU EFB color write", [] { WriteEfbColor32(0x88000000, 0xFFFFFFFF); });
 #ifdef MH3_HAS_AURORA
     expect("host GX API", "GXSetCopyClear", [] { GXSetCopyClear({20, 40, 80, 255}, GX_MAX_Z24); });
-    expect("FIFO decoder", "aurora::gx::fifo::process", [] { const uint8_t command = 0; aurora::gx::fifo::process(&command, 1, true); });
+    expect("FIFO decoder", "aurora::gx::fifo::process", [] {
+        const uint8_t command = 0;
+        aurora::gx::fifo::process(&command, 1, true);
+    });
 #endif
     std::fprintf(stderr, "MH3 GX tripwire self-test: %u fatal paths, guest and native backtraces matched\n", checked);
 #else

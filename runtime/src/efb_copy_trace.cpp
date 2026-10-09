@@ -58,10 +58,13 @@ std::atomic<uint32_t> hitCount{0};
 uint32_t nextRegion = 0;
 uint64_t frame = 0, copies = 0, touched = 0;
 const long pageSize = sysconf(_SC_PAGESIZE);
-struct sigaction previous{};
+struct sigaction previous {};
 thread_local bool gameThread = false;
 
-struct FaultContext { uintptr_t pc, lr; bool write; };
+struct FaultContext {
+    uintptr_t pc, lr;
+    bool write;
+};
 FaultContext Decode(const ucontext_t* uc) {
 #if defined(__aarch64__)
     // The ESR record in the signal frame carries WnR (bit 6) for data aborts.
@@ -83,21 +86,24 @@ void Handler(int signal, siginfo_t* info, void* context) {
     const auto address = reinterpret_cast<uintptr_t>(info->si_addr);
     for (uint32_t i = 0; i < kRegions; ++i) {
         auto& region = regions[i];
-        if (!region.active.load(std::memory_order_acquire) || address < region.pageStart ||
-            address >= region.pageEnd)
+        if (!region.active.load(std::memory_order_acquire) || address < region.pageStart || address >= region.pageEnd)
             continue;
-        mprotect(reinterpret_cast<void*>(region.pageStart), region.pageEnd - region.pageStart,
-                 PROT_READ | PROT_WRITE);
+        mprotect(reinterpret_cast<void*>(region.pageStart), region.pageEnd - region.pageStart, PROT_READ | PROT_WRITE);
         region.active.store(false, std::memory_order_release);
         const auto* uc = static_cast<const ucontext_t*>(context);
         const uint32_t slot = hitCount.fetch_add(1, std::memory_order_relaxed);
         if (slot < kHits) {
             const auto* cpu = TryGetCpuContext();
             const auto fault = Decode(uc);
-            hits[slot] = {i, address, fault.pc, fault.lr,
-                          RecompMod::g_currentTranslatedExecutionAddress, cpu ? cpu->lr : 0,
+            hits[slot] = {i,
+                          address,
+                          fault.pc,
+                          fault.lr,
+                          RecompMod::g_currentTranslatedExecutionAddress,
+                          cpu ? cpu->lr : 0,
                           fault.write,
-                          address >= region.start && address < region.end, gameThread,
+                          address >= region.start && address < region.end,
+                          gameThread,
                           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - region.armed).count(),
                           region.frame};
         }
@@ -109,10 +115,11 @@ void Handler(int signal, siginfo_t* info, void* context) {
 
 void Install() {
     static bool installed = false;
-    if (installed) return;
+    if (installed)
+        return;
     installed = true;
     gameThread = true;
-    struct sigaction action{};
+    struct sigaction action {};
     action.sa_sigaction = Handler;
     action.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset(&action.sa_mask);
@@ -125,9 +132,8 @@ std::string Describe(uintptr_t pc) {
     char text[256];
     if (dladdr(reinterpret_cast<void*>(pc), &info) && info.dli_fname) {
         const char* file = std::strrchr(info.dli_fname, '/');
-        std::snprintf(text, sizeof(text), "%s+0x%lx%s%s", file ? file + 1 : info.dli_fname,
-                      static_cast<unsigned long>(pc - reinterpret_cast<uintptr_t>(info.dli_fbase)),
-                      info.dli_sname ? " " : "", info.dli_sname ? info.dli_sname : "");
+        std::snprintf(text, sizeof(text), "%s+0x%lx%s%s", file ? file + 1 : info.dli_fname, static_cast<unsigned long>(pc - reinterpret_cast<uintptr_t>(info.dli_fbase)), info.dli_sname ? " " : "",
+                      info.dli_sname ? info.dli_sname : "");
     } else {
         std::snprintf(text, sizeof(text), "0x%lx", static_cast<unsigned long>(pc));
     }
@@ -146,13 +152,11 @@ void Drain() {
         auto& n = seen[{region.guest, hit.pc, hit.write}];
         if (n++ == 0) {
             std::fprintf(stderr,
-                "MH3 EFB copy trace: first %s of copy 0x%08x (%ux%u fmt %u) at +0x%lx%s, %.3f ms / %llu frames "
-                "after copy, %s thread\n    host pc %s\n    host lr %s\n    translated func 0x%08x, guest lr 0x%08x\n",
-                hit.write ? "WRITE" : "READ", region.guest, region.width, region.height, region.format,
-                static_cast<unsigned long>(hit.address - region.start), hit.inside ? "" : " (outside copy, same page)",
-                hit.ns / 1e6, static_cast<unsigned long long>(frame - hit.frame),
-                hit.gameThread ? "game" : "other", Describe(hit.pc).c_str(), Describe(hit.lr).c_str(),
-                hit.translated, hit.guestLr);
+                         "MH3 EFB copy trace: first %s of copy 0x%08x (%ux%u fmt %u) at +0x%lx%s, %.3f ms / %llu frames "
+                         "after copy, %s thread\n    host pc %s\n    host lr %s\n    translated func 0x%08x, guest lr 0x%08x\n",
+                         hit.write ? "WRITE" : "READ", region.guest, region.width, region.height, region.format, static_cast<unsigned long>(hit.address - region.start),
+                         hit.inside ? "" : " (outside copy, same page)", hit.ns / 1e6, static_cast<unsigned long long>(frame - hit.frame), hit.gameThread ? "game" : "other", Describe(hit.pc).c_str(),
+                         Describe(hit.lr).c_str(), hit.translated, hit.guestLr);
         }
     }
     if (hitCount.load() >= kHits) {
@@ -167,7 +171,8 @@ void BeforeCopy(uintptr_t host, uint32_t bytes) {
     Install();
     // The readback writes these bytes; lift any protection that covers them.
     for (auto& region : regions) {
-        if (!region.active.load() || host + bytes <= region.pageStart || host >= region.pageEnd) continue;
+        if (!region.active.load() || host + bytes <= region.pageStart || host >= region.pageEnd)
+            continue;
         mprotect(reinterpret_cast<void*>(region.pageStart), region.pageEnd - region.pageStart, PROT_READ | PROT_WRITE);
         region.active.store(false);
     }
@@ -199,13 +204,14 @@ void AfterCopy(uintptr_t host, uint32_t guest, uint32_t bytes, uint32_t width, u
 namespace {
 uint32_t suspended[kRegions];
 uint32_t suspendedCount = 0;
-}
+} // namespace
 
 void BeginHostRead(uintptr_t host, uint32_t bytes) {
     suspendedCount = 0;
     for (uint32_t i = 0; i < kRegions; ++i) {
         auto& region = regions[i];
-        if (!region.active.load() || host + bytes <= region.pageStart || host >= region.pageEnd) continue;
+        if (!region.active.load() || host + bytes <= region.pageStart || host >= region.pageEnd)
+            continue;
         mprotect(reinterpret_cast<void*>(region.pageStart), region.pageEnd - region.pageStart, PROT_READ | PROT_WRITE);
         suspended[suspendedCount++] = i;
     }
@@ -224,8 +230,7 @@ void EndFrame() {
     ++frame;
     Drain();
     if (frame % 60 == 0) {
-        std::fprintf(stderr, "MH3 EFB copy trace: %llu copies, %llu touched by the host so far\n",
-                     static_cast<unsigned long long>(copies), static_cast<unsigned long long>(touched));
+        std::fprintf(stderr, "MH3 EFB copy trace: %llu copies, %llu touched by the host so far\n", static_cast<unsigned long long>(copies), static_cast<unsigned long long>(touched));
     }
 }
 } // namespace EfbCopyTrace

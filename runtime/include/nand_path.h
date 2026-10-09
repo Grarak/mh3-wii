@@ -28,8 +28,7 @@ inline std::optional<std::filesystem::path> ExistingDirectory(const std::filesys
     if (path.empty()) {
         RT_LOGF(RT_TAG_NAND, "ERROR: %s\n", message);
     } else {
-        RT_LOGF(RT_TAG_NAND, "ERROR: %s: %s\n", message,
-                RuntimeConfigFile::PathToUtf8(path).c_str());
+        RT_LOGF(RT_TAG_NAND, "ERROR: %s: %s\n", message, RuntimeConfigFile::PathToUtf8(path).c_str());
     }
     RT_LOGF(RT_TAG_NAND, "Set [paths] nand_root in Config.toml.\n");
     std::string details = message ? message : "The configured NAND could not be initialized.";
@@ -80,10 +79,7 @@ inline std::optional<std::filesystem::path> BootstrapPayloadPath() {
     return std::nullopt;
 }
 
-inline bool CopyBootstrapFile(const std::filesystem::path& sourceRoot,
-                              const std::filesystem::path& destinationRoot,
-                              const std::filesystem::path& relativePath,
-                              std::error_code& ec) {
+inline bool CopyBootstrapFile(const std::filesystem::path& sourceRoot, const std::filesystem::path& destinationRoot, const std::filesystem::path& relativePath, std::error_code& ec) {
     const auto source = sourceRoot / relativePath;
     const auto destination = destinationRoot / relativePath;
     if (std::filesystem::exists(destination, ec)) {
@@ -100,17 +96,8 @@ inline bool CopyBootstrapFile(const std::filesystem::path& sourceRoot,
 
 // Create these WC24 files only for a new profile; never overwrite user data.
 constexpr std::string_view kBootstrapFiles[] = {
-    "shared2/wc24/misc.bin",
-    "shared2/wc24/nwc24dl.bin",
-    "shared2/wc24/nwc24fl.bin",
-    "shared2/wc24/nwc24fls.bin",
-    "shared2/wc24/nwc24msg.cbk",
-    "shared2/wc24/nwc24msg.cfg",
-    "shared2/wc24/mbox/Readme.txt",
-    "shared2/wc24/mbox/wc24recv.ctl",
-    "shared2/wc24/mbox/wc24recv.mbx",
-    "shared2/wc24/mbox/wc24send.ctl",
-    "shared2/wc24/mbox/wc24send.mbx",
+    "shared2/wc24/misc.bin",        "shared2/wc24/nwc24dl.bin",       "shared2/wc24/nwc24fl.bin",       "shared2/wc24/nwc24fls.bin",      "shared2/wc24/nwc24msg.cbk",      "shared2/wc24/nwc24msg.cfg",
+    "shared2/wc24/mbox/Readme.txt", "shared2/wc24/mbox/wc24recv.ctl", "shared2/wc24/mbox/wc24recv.mbx", "shared2/wc24/mbox/wc24send.ctl", "shared2/wc24/mbox/wc24send.mbx",
 };
 
 // Add first-run WC24 files only when the NAND has none yet.
@@ -124,9 +111,7 @@ inline bool SeedMissingBootstrapFiles(const std::filesystem::path& root) {
         const std::filesystem::path relativePath{std::string(file)};
         ec.clear();
         if (!CopyBootstrapFile(*payload, root, relativePath, ec)) {
-            RT_LOG(RT_TAG_NAND) << "could not create "
-                                << RuntimeConfigFile::PathToUtf8(root / relativePath)
-                                << std::endl;
+            RT_LOG(RT_TAG_NAND) << "could not create " << RuntimeConfigFile::PathToUtf8(root / relativePath) << std::endl;
             return false;
         }
     }
@@ -159,8 +144,7 @@ inline std::filesystem::path CreateManagedNandRoot() {
         }
     }
 
-    RT_LOG(RT_TAG_NAND) << "using managed NAND root: " << RuntimeConfigFile::PathToUtf8(root)
-                        << std::endl;
+    RT_LOG(RT_TAG_NAND) << "using managed NAND root: " << RuntimeConfigFile::PathToUtf8(root) << std::endl;
     return root;
 }
 

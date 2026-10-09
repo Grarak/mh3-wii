@@ -18,8 +18,10 @@ inline void read_mesh_payload(const char* path, uint64_t offset, void* destinati
   auto* out = static_cast<unsigned char*>(destination);
   while (bytes) {
     const size_t count = std::fread(out, 1, std::min(bytes, size_t(1u << 20)), file.get());
-    if (!count) throw std::runtime_error("Native mesh payload is truncated or unreadable");
-    out += count; bytes -= count;
+    if (!count)
+      throw std::runtime_error("Native mesh payload is truncated or unreadable");
+    out += count;
+    bytes -= count;
   }
 }
 } // namespace aurora::gfx

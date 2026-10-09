@@ -24,15 +24,28 @@ namespace {
 constexpr uint32_t kResetting = 0x8065AA65; // u8: soft reset in progress (reset_fade.cpp)
 constexpr uint32_t kFades = 0x8066D108;
 constexpr uint32_t kFadeCount = 4;
-enum : uint32_t { kLevel = 0, kState = 16, kStepsLeft = 48, kTarget = 80, kChange = 96 };
-enum : int32_t { kIdle = 0, kFadingUp = 1, kFadingDown = 2, kHolding = 3 };
+enum : uint32_t {
+    kLevel = 0,
+    kState = 16,
+    kStepsLeft = 48,
+    kTarget = 80,
+    kChange = 96
+};
+enum : int32_t {
+    kIdle = 0,
+    kFadingUp = 1,
+    kFadingDown = 2,
+    kHolding = 3
+};
 
 void TickFadesPort(CpuContext*) {
-    if (Memory::Read8(kResetting)) return;
+    if (Memory::Read8(kResetting))
+        return;
     const int32_t ticks = int32_t(GameStep::Ticks());
     for (uint32_t fade = kFades; fade < kFades + 4 * kFadeCount; fade += 4) {
         const int32_t state = int32_t(Memory::Read32(fade + kState));
-        if (state != kFadingUp && state != kFadingDown) continue;
+        if (state != kFadingUp && state != kFadingDown)
+            continue;
         const bool up = state == kFadingUp;
         const int32_t target = int32_t(Memory::Read32(fade + kTarget));
         int32_t level = Memory::Read8(fade + kLevel) + GameStep::Share(int32_t(Memory::Read32(fade + kChange)));
@@ -54,5 +67,7 @@ void TickFadesPort(CpuContext*) {
 } // namespace
 
 extern "C" void func_800581A4(CpuContext* ctx);
-extern "C" void MH3_TickFades(CpuContext* ctx) { PortCheck::Call(ctx, "TickFades", func_800581A4, TickFadesPort); }
+extern "C" void MH3_TickFades(CpuContext* ctx) {
+    PortCheck::Call(ctx, "TickFades", func_800581A4, TickFadesPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800581A4, MH3_TickFades, "TickFades");

@@ -114,10 +114,8 @@ bool arb_mip_check(uint32_t width, uint32_t height, uint32_t mips, ArrayRef<uint
   float totalDiff = 0.0f;
   for (uint32_t mip = 0; mip + 1 < mips; ++mip) {
     const uint8_t* src = mip == 0 ? levels[mip].data : downscaled.data();
-    downscaled = downscale(src, levels[mip].width, levels[mip].height, levels[mip + 1].width,
-                           levels[mip + 1].height);
-    totalDiff += avg_diff(levels[mip + 1].data, downscaled.data(), levels[mip + 1].width,
-                          levels[mip + 1].height);
+    downscaled = downscale(src, levels[mip].width, levels[mip].height, levels[mip + 1].width, levels[mip + 1].height);
+    totalDiff += avg_diff(levels[mip + 1].data, downscaled.data(), levels[mip + 1].width, levels[mip + 1].height);
   }
   return (totalDiff / static_cast<float>(mips - 1)) > kArbMipThreshold;
 }
@@ -207,8 +205,7 @@ static std::optional<size_t> RequiredTextureDataSize(u32 format, uint32_t width,
   for (uint32_t mip = 0; mip < mips; ++mip) {
     const size_t widthBlocks = (static_cast<size_t>(width) + blockWidth - 1) / blockWidth;
     const size_t heightBlocks = (static_cast<size_t>(height) + blockHeight - 1) / blockHeight;
-    if (widthBlocks > std::numeric_limits<size_t>::max() / heightBlocks ||
-        widthBlocks * heightBlocks > (std::numeric_limits<size_t>::max() - total) / blockSize) {
+    if (widthBlocks > std::numeric_limits<size_t>::max() / heightBlocks || widthBlocks * heightBlocks > (std::numeric_limits<size_t>::max() - total) / blockSize) {
       return std::nullopt;
     }
     total += widthBlocks * heightBlocks * blockSize;
@@ -356,9 +353,7 @@ struct TextureDecoderC4 {
   static constexpr uint32_t BlockWidth = 8;
   static constexpr uint32_t BlockHeight = 8;
 
-  static void decode_texel(Target* target, const Source* in, const uint32_t x) {
-    target[x] = in[x / 2] >> (x & 1 ? 0 : 4) & 0xf;
-  }
+  static void decode_texel(Target* target, const Source* in, const uint32_t x) { target[x] = in[x / 2] >> (x & 1 ? 0 : 4) & 0xf; }
 };
 
 struct TextureDecoderC8 {
@@ -568,8 +563,7 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
     return {};
   }
   if (*requiredDataSize > data.size()) {
-    Log.warn("convert_texture: invalid data size {} for {}x{} texture with {} mip levels (expected at least {} bytes)",
-             data.size(), width, height, mips, *requiredDataSize);
+    Log.warn("convert_texture: invalid data size {} for {}x{} texture with {} mip levels (expected at least {} bytes)", data.size(), width, height, mips, *requiredDataSize);
     return {};
   }
 
@@ -577,8 +571,7 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
   switch (format) {
     DEFAULT_FATAL("convert_texture: unknown texture format {}", format);
   case GX_TF_R8_PC:
-    converted = DecodeLinear<TextureDecoderI8>(static_cast<uint32_t>(ComputeMippedTexelCount(width, height, mips)),
-                                                data);
+    converted = DecodeLinear<TextureDecoderI8>(static_cast<uint32_t>(ComputeMippedTexelCount(width, height, mips)), data);
     break;
   case GX_TF_RGBA8_PC:
     return {}; // No conversion
@@ -637,8 +630,7 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
 ConvertedTexture convert_tlut(u32 format, uint32_t width, ArrayRef<uint8_t> data) {
   const size_t requiredDataSize = static_cast<size_t>(width) * sizeof(uint16_t);
   if (requiredDataSize > data.size()) {
-    Log.warn("convert_tlut: invalid data size {} for {} entries (expected at least {} bytes)", data.size(), width,
-             requiredDataSize);
+    Log.warn("convert_tlut: invalid data size {} for {} entries (expected at least {} bytes)", data.size(), width, requiredDataSize);
     return {};
   }
 
@@ -676,8 +668,7 @@ GXTexFmt tlut_texture_format(GXTlutFmt format) noexcept {
   }
 }
 
-ConvertedTexture convert_texture_palette(u32 textureFormat, uint32_t width, uint32_t height, uint32_t mips,
-                                         ArrayRef<uint8_t> textureData, GXTlutFmt tlutFormat, uint16_t tlutEntries,
+ConvertedTexture convert_texture_palette(u32 textureFormat, uint32_t width, uint32_t height, uint32_t mips, ArrayRef<uint8_t> textureData, GXTlutFmt tlutFormat, uint16_t tlutEntries,
                                          ArrayRef<uint8_t> tlutData) {
   const auto indices = convert_texture(textureFormat, width, height, mips, textureData);
   if (indices.data.empty()) {

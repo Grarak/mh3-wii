@@ -19,239 +19,352 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
-std::unordered_map<uint32_t,mh3_model_pose_owner> owners;
-struct Region {uint32_t bytes;std::vector<uint32_t> scenes;};
-std::map<uint32_t,Region> regions;
-std::unordered_map<uint32_t,std::vector<uint32_t>> positions;
-uint64_t pose_revision=0;
+std::unordered_map<uint32_t, mh3_model_pose_owner> owners;
+struct Region {
+    uint32_t bytes;
+    std::vector<uint32_t> scenes;
+};
+std::map<uint32_t, Region> regions;
+std::unordered_map<uint32_t, std::vector<uint32_t>> positions;
+uint64_t pose_revision = 0;
 mh3_model_matrix_selectors selectors{};
 mh3_model_palette matrix_palette{};
-uint64_t matrix_palette_revision=0;
+uint64_t matrix_palette_revision = 0;
 #ifdef MH3_DEVELOPMENT
 struct PoseTrace {
-    FILE* file=nullptr;
-    uint64_t event=0;
+    FILE* file = nullptr;
+    uint64_t event = 0;
     PoseTrace() {
-        const char* path=std::getenv("MH3_MODEL_POSE_TRACE");
-        if(!path || !*path) return;
-        file=std::fopen(path,"w");
-        if(!file) throw std::runtime_error("Could not open MH3_MODEL_POSE_TRACE");
-        std::fprintf(file,"# MH3 pose provenance v1; ordered CPU events; no pose inference\n");
+        const char* path = std::getenv("MH3_MODEL_POSE_TRACE");
+        if (!path || !*path)
+            return;
+        file = std::fopen(path, "w");
+        if (!file)
+            throw std::runtime_error("Could not open MH3_MODEL_POSE_TRACE");
+        std::fprintf(file, "# MH3 pose provenance v1; ordered CPU events; no pose inference\n");
     }
-    ~PoseTrace() {if(file) std::fclose(file);}
+    ~PoseTrace() {
+        if (file)
+            std::fclose(file);
+    }
 };
-PoseTrace& Trace() {static PoseTrace trace;return trace;}
-void TraceInput(const char* event,uint32_t model,const uint32_t addresses[3],uint32_t count) {
-    auto& trace=Trace();if(!trace.file) return;
-    std::fprintf(trace.file,"input\t%llu\t%s\t%08x\t%08x\t%08x\t%08x\t%u\n",
-        static_cast<unsigned long long>(++trace.event),event,model,addresses[0],addresses[1],addresses[2],count);
+PoseTrace& Trace() {
+    static PoseTrace trace;
+    return trace;
+}
+void TraceInput(const char* event, uint32_t model, const uint32_t addresses[3], uint32_t count) {
+    auto& trace = Trace();
+    if (!trace.file)
+        return;
+    std::fprintf(trace.file, "input\t%llu\t%s\t%08x\t%08x\t%08x\t%08x\t%u\n", static_cast<unsigned long long>(++trace.event), event, model, addresses[0], addresses[1], addresses[2], count);
     std::fflush(trace.file);
 }
-void TraceOwner(const char* event,const mh3_model_pose_owner& owner,mh3_res_status status=MH3_RES_OK) {
-    auto& trace=Trace();if(!trace.file) return;
-    std::fprintf(trace.file,"owner\t%llu\t%s\t%d\t%08x\t%08x\t%u\t%u\t%u\t%08x\t%08x\t%08x",
-        static_cast<unsigned long long>(++trace.event),event,int(status),owner.scene_address,owner.model_address,
-        owner.views,owner.current_view,owner.count,owner.base[0],owner.base[1],owner.base[2]);
-    for(unsigned view=0;view<owner.views;view++)
-        std::fprintf(trace.file,"\t%llu",static_cast<unsigned long long>(owner.revision[view]));
-    std::fprintf(trace.file,"\n");std::fflush(trace.file);
+void TraceOwner(const char* event, const mh3_model_pose_owner& owner, mh3_res_status status = MH3_RES_OK) {
+    auto& trace = Trace();
+    if (!trace.file)
+        return;
+    std::fprintf(trace.file, "owner\t%llu\t%s\t%d\t%08x\t%08x\t%u\t%u\t%u\t%08x\t%08x\t%08x", static_cast<unsigned long long>(++trace.event), event, int(status), owner.scene_address,
+                 owner.model_address, owner.views, owner.current_view, owner.count, owner.base[0], owner.base[1], owner.base[2]);
+    for (unsigned view = 0; view < owner.views; view++)
+        std::fprintf(trace.file, "\t%llu", static_cast<unsigned long long>(owner.revision[view]));
+    std::fprintf(trace.file, "\n");
+    std::fflush(trace.file);
 }
 #else
-void TraceInput(const char*,uint32_t,const uint32_t[3],uint32_t) {}
-void TraceOwner(const char*,const mh3_model_pose_owner&,mh3_res_status=MH3_RES_OK) {}
+void TraceInput(const char*, uint32_t, const uint32_t[3], uint32_t) {}
+void TraceOwner(const char*, const mh3_model_pose_owner&, mh3_res_status = MH3_RES_OK) {}
 #endif
 void AdvancePalette() {
-    if(matrix_palette_revision==UINT64_MAX) throw std::runtime_error("Native matrix palette revision overflow");
+    if (matrix_palette_revision == UINT64_MAX)
+        throw std::runtime_error("Native matrix palette revision overflow");
     ++matrix_palette_revision;
 }
 void Checked(mh3_res_status status) {
-    if(status!=MH3_RES_OK) throw std::runtime_error("Native model pose input failed: "+std::to_string(status));
+    if (status != MH3_RES_OK)
+        throw std::runtime_error("Native model pose input failed: " + std::to_string(status));
 }
-uint32_t Canonical(uint32_t address) {return address?(address&0x3fffffffu)|0x80000000u:0;}
-void Reindex(const std::unordered_map<uint32_t,mh3_model_pose_owner>& next) {
-    std::map<uint32_t,Region> ranges;
-    std::unordered_map<uint32_t,std::vector<uint32_t>> arrays;
-    auto add=[&](uint32_t start,uint32_t bytes,uint32_t scene) {
-        if(!bytes) return;
-        auto found=ranges.lower_bound(start);
-        if(found!=ranges.end() && found->first==start && found->second.bytes==bytes) {
-            found->second.scenes.push_back(scene);return;
+uint32_t Canonical(uint32_t address) {
+    return address ? (address & 0x3fffffffu) | 0x80000000u : 0;
+}
+void Reindex(const std::unordered_map<uint32_t, mh3_model_pose_owner>& next) {
+    std::map<uint32_t, Region> ranges;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> arrays;
+    auto add = [&](uint32_t start, uint32_t bytes, uint32_t scene) {
+        if (!bytes)
+            return;
+        auto found = ranges.lower_bound(start);
+        if (found != ranges.end() && found->first == start && found->second.bytes == bytes) {
+            found->second.scenes.push_back(scene);
+            return;
         }
-        if((found!=ranges.end() && uint64_t(start)+bytes>found->first) ||
-           (found!=ranges.begin() && uint64_t(std::prev(found)->first)+std::prev(found)->second.bytes>start))
+        if ((found != ranges.end() && uint64_t(start) + bytes > found->first) || (found != ranges.begin() && uint64_t(std::prev(found)->first) + std::prev(found)->second.bytes > start))
             throw std::runtime_error("Native pose allocation has overlapping or inconsistent owners");
-        ranges.emplace(start,Region{bytes,{scene}});
+        ranges.emplace(start, Region{bytes, {scene}});
     };
-    for(const auto& entry:next) {
-        const auto& owner=entry.second;add(owner.scene_address,0x104,entry.first);add(owner.model_address,0x70,entry.first);
-        for(unsigned i=0;i<3;i++) if(owner.base[i]) add(owner.base[i],owner.views*owner.slice_bytes[i],entry.first);
-        for(unsigned v=0;v<owner.views;v++) if(owner.base[0] && owner.count)
-            arrays[owner.base[0]+v*owner.slice_bytes[0]].push_back(entry.first);
+    for (const auto& entry : next) {
+        const auto& owner = entry.second;
+        add(owner.scene_address, 0x104, entry.first);
+        add(owner.model_address, 0x70, entry.first);
+        for (unsigned i = 0; i < 3; i++)
+            if (owner.base[i])
+                add(owner.base[i], owner.views * owner.slice_bytes[i], entry.first);
+        for (unsigned v = 0; v < owner.views; v++)
+            if (owner.base[0] && owner.count)
+                arrays[owner.base[0] + v * owner.slice_bytes[0]].push_back(entry.first);
     }
-    regions=std::move(ranges);positions=std::move(arrays);
+    regions = std::move(ranges);
+    positions = std::move(arrays);
 }
 mh3_model_pose_owner& Declare(uint32_t scene) {
-    mh3_model_pose_owner next{};Checked(mh3_model_pose_owner_read(&MH3NativeResourceMemory(),scene,&next));
-    const auto found=owners.find(next.scene_address);
-    if(found!=owners.end()) {
-        const auto& before=found->second;
-        if(before.model_address==next.model_address && before.count==next.count && before.views==next.views &&
-           std::equal(std::begin(before.base),std::end(before.base),std::begin(next.base))) {
-            found->second.current_view=next.current_view;TraceOwner("declare-existing",found->second);return found->second;
+    mh3_model_pose_owner next{};
+    Checked(mh3_model_pose_owner_read(&MH3NativeResourceMemory(), scene, &next));
+    const auto found = owners.find(next.scene_address);
+    if (found != owners.end()) {
+        const auto& before = found->second;
+        if (before.model_address == next.model_address && before.count == next.count && before.views == next.views &&
+            std::equal(std::begin(before.base), std::end(before.base), std::begin(next.base))) {
+            found->second.current_view = next.current_view;
+            TraceOwner("declare-existing", found->second);
+            return found->second;
         }
     }
     // Admission/owner replacement pays index construction once. Steady state
     // getters, producer completion and draws do not scan every scene.
-    auto prospective=owners;prospective.insert_or_assign(next.scene_address,next);Reindex(prospective);
-    owners=std::move(prospective);TraceOwner("declare-new",owners.at(next.scene_address));return owners.at(next.scene_address);
+    auto prospective = owners;
+    prospective.insert_or_assign(next.scene_address, next);
+    Reindex(prospective);
+    owners = std::move(prospective);
+    TraceOwner("declare-new", owners.at(next.scene_address));
+    return owners.at(next.scene_address);
 }
-void Array(CpuContext* cpu,uint32_t kind) {
-    const auto& owner=Declare(cpu->gpr[3]);
-    uint32_t result=0;Checked(mh3_model_pose_array(&owner,kind,&result));
+void Array(CpuContext* cpu, uint32_t kind) {
+    const auto& owner = Declare(cpu->gpr[3]);
+    uint32_t result = 0;
+    Checked(mh3_model_pose_array(&owner, kind, &result));
     // The native records use cached aliases; the guest getter retains its input
     // base alias exactly, including uncached resources.
-    const uint32_t base=Memory::Read32(cpu->gpr[3]+0xf4+kind*4);
-    if(base) result=base+(result-owner.base[kind]);
-    cpu->gpr[3]=result;
+    const uint32_t base = Memory::Read32(cpu->gpr[3] + 0xf4 + kind * 4);
+    if (base)
+        result = base + (result - owner.base[kind]);
+    cpu->gpr[3] = result;
 }
 void PublishSelectors() {
     SetNativeModelMatrixSelectors(selectors);
 }
 void Select(const uint32_t rows[8]) {
-    Checked(mh3_model_matrix_select(&selectors,rows));PublishSelectors();
+    Checked(mh3_model_matrix_select(&selectors, rows));
+    PublishSelectors();
 }
 } // namespace
 
-bool PublishNativeModelPose(uint32_t position,uint32_t normal,uint32_t environment,
-                            uint32_t count,uint32_t reference) {
-    if(!count) return false;
-    uint32_t model=0;Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(),reference,1,&model));
-    const uint32_t addresses[3]{position,normal,environment};TraceInput("completed-publish",model,addresses,count);
-    if(pose_revision==UINT64_MAX) throw std::runtime_error("Native model pose revision overflow");
-    const uint64_t revision=pose_revision+1;
+bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environment, uint32_t count, uint32_t reference) {
+    if (!count)
+        return false;
+    uint32_t model = 0;
+    Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &model));
+    const uint32_t addresses[3]{position, normal, environment};
+    TraceInput("completed-publish", model, addresses, count);
+    if (pose_revision == UINT64_MAX)
+        throw std::runtime_error("Native model pose revision overflow");
+    const uint64_t revision = pose_revision + 1;
     std::vector<mh3_model_pose_owner> updates;
-    const auto found=positions.find(Canonical(position));if(found==positions.end()) return false;
-    for(const uint32_t scene:found->second) {
-        auto next=owners.at(scene);
-        const auto status=mh3_model_pose_publish(&next,position,normal,environment,count,model,revision);
-        TraceOwner("publish-candidate",next,status);
-        if(status==MH3_RES_ABSENT) continue;
-        Checked(status);updates.push_back(next);
+    const auto found = positions.find(Canonical(position));
+    if (found == positions.end())
+        return false;
+    for (const uint32_t scene : found->second) {
+        auto next = owners.at(scene);
+        const auto status = mh3_model_pose_publish(&next, position, normal, environment, count, model, revision);
+        TraceOwner("publish-candidate", next, status);
+        if (status == MH3_RES_ABSENT)
+            continue;
+        Checked(status);
+        updates.push_back(next);
     }
-    for(const auto& next:updates) owners.at(next.scene_address)=next;
-    if(!updates.empty()) pose_revision=revision;
+    for (const auto& next : updates)
+        owners.at(next.scene_address) = next;
+    if (!updates.empty())
+        pose_revision = revision;
     return !updates.empty();
 }
-void RetireNativeModelPose(uint32_t address,uint32_t bytes) {
-    if(!bytes) return;
-    address=Canonical(address);const uint64_t end=uint64_t(address)+bytes;
-    auto it=regions.upper_bound(address);if(it!=regions.begin()) --it;
+void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
+    if (!bytes)
+        return;
+    address = Canonical(address);
+    const uint64_t end = uint64_t(address) + bytes;
+    auto it = regions.upper_bound(address);
+    if (it != regions.begin())
+        --it;
     std::vector<uint32_t> affected;
-    for(;it!=regions.end() && it->first<end;++it) if(uint64_t(it->first)+it->second.bytes>address)
-        affected.insert(affected.end(),it->second.scenes.begin(),it->second.scenes.end());
-    bool erased=false;
-    for(const uint32_t scene:affected) {
-        const auto found=owners.find(scene);if(found==owners.end()) continue;
-        const uint32_t retired[3]{address,0,0};TraceInput("retire",found->second.model_address,retired,bytes);
-        TraceOwner("retire-before",found->second);
-        mh3_model_pose_retire(&found->second,address,bytes);
-        TraceOwner("retire-after",found->second);
-        if(!found->second.scene_address) {owners.erase(found);erased=true;}
+    for (; it != regions.end() && it->first < end; ++it)
+        if (uint64_t(it->first) + it->second.bytes > address)
+            affected.insert(affected.end(), it->second.scenes.begin(), it->second.scenes.end());
+    bool erased = false;
+    for (const uint32_t scene : affected) {
+        const auto found = owners.find(scene);
+        if (found == owners.end())
+            continue;
+        const uint32_t retired[3]{address, 0, 0};
+        TraceInput("retire", found->second.model_address, retired, bytes);
+        TraceOwner("retire-before", found->second);
+        mh3_model_pose_retire(&found->second, address, bytes);
+        TraceOwner("retire-after", found->second);
+        if (!found->second.scene_address) {
+            owners.erase(found);
+            erased = true;
+        }
     }
-    if(erased) Reindex(owners);
+    if (erased)
+        Reindex(owners);
 }
-void ClearNativeModelPose() {owners.clear();regions.clear();positions.clear();selectors={};}
-mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3],uint32_t model) {
-    if(!addresses) throw std::runtime_error("Native model pose requires explicit source addresses");
-    TraceInput("read",model,addresses,0);
-    mh3_matrix_sources result{};bool found=false;
-    const auto matching=positions.find(Canonical(addresses[0]));
-    if(matching==positions.end()) throw std::runtime_error("Native model matrices have no allocation owner");
-    for(const uint32_t scene:matching->second) {
-        const auto& owner=owners.at(scene);
+void ClearNativeModelPose() {
+    owners.clear();
+    regions.clear();
+    positions.clear();
+    selectors = {};
+}
+mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
+    if (!addresses)
+        throw std::runtime_error("Native model pose requires explicit source addresses");
+    TraceInput("read", model, addresses, 0);
+    mh3_matrix_sources result{};
+    bool found = false;
+    const auto matching = positions.find(Canonical(addresses[0]));
+    if (matching == positions.end())
+        throw std::runtime_error("Native model matrices have no allocation owner");
+    for (const uint32_t scene : matching->second) {
+        const auto& owner = owners.at(scene);
         mh3_matrix_sources candidate{};
-        const auto status=mh3_model_pose_sources(&MH3NativeResourceMemory(),&owner,addresses,
-                                                model?model:owner.model_address,&candidate);
-        TraceOwner("read-candidate",owner,status);
-        if(status==MH3_RES_ABSENT) continue;
+        const auto status = mh3_model_pose_sources(&MH3NativeResourceMemory(), &owner, addresses, model ? model : owner.model_address, &candidate);
+        TraceOwner("read-candidate", owner, status);
+        if (status == MH3_RES_ABSENT)
+            continue;
         Checked(status);
-        if(found) throw std::runtime_error("Native model pose has ambiguous live allocation owners");
-        result=candidate;found=true;
+        if (found)
+            throw std::runtime_error("Native model pose has ambiguous live allocation owners");
+        result = candidate;
+        found = true;
     }
-    if(!found) throw std::runtime_error("Native model matrices have no completed typed pose producer");
+    if (!found)
+        throw std::runtime_error("Native model matrices have no completed typed pose producer");
     return result;
 }
 void PublishNativeModelDualTexture(bool enabled) {
-    Checked(mh3_model_matrix_dual(&selectors,enabled?1:0));PublishSelectors();
+    Checked(mh3_model_matrix_dual(&selectors, enabled ? 1 : 0));
+    PublishSelectors();
 }
-void ApplyNativeModelSelectors() {PublishSelectors();}
-void PublishNativeModelMatrixRows(const uint32_t rows[8]) {Select(rows);}
-void PublishNativeModelPositionMatrix(uint32_t selector,const float matrix[12]) {
-    if(!matrix || selector%3 || selector>27) throw std::runtime_error("Native position matrix selector invalid");
-    AdvancePalette();std::memcpy(&matrix_palette.position[selector/3],matrix,48);
-    matrix_palette.position_valid|=uint16_t(1u<<(selector/3));
+void ApplyNativeModelSelectors() {
+    PublishSelectors();
 }
-void PublishNativeModelNormalMatrix(uint32_t selector,const float matrix[9]) {
-    if(!matrix || selector%3 || selector>27) throw std::runtime_error("Native normal matrix selector invalid");
-    AdvancePalette();std::memcpy(&matrix_palette.normal[selector/3],matrix,36);
-    matrix_palette.normal_valid|=uint16_t(1u<<(selector/3));
-}
-void PublishNativeModelTextureMatrix(uint32_t selector,const float matrix[12],bool matrix3x4) {
-    if(selector>=64) return; // post/SRT matrices have an independent owner
-    if(!matrix || selector<30 || selector>57 || selector%3) throw std::runtime_error("Native texture palette selector invalid");
-    AdvancePalette();std::memcpy(&matrix_palette.texture[(selector-30)/3],matrix,matrix3x4?48:32);
-    if(matrix3x4) matrix_palette.texture_valid|=uint16_t(1u<<((selector-30)/3));
-}
-const mh3_model_palette& ReadNativeModelPalette() {return matrix_palette;}
-uint64_t ReadNativeModelPaletteRevision() {return matrix_palette_revision;}
-void PublishNativeModelPalette(const mh3_model_palette& palette) {
-    if((palette.position_valid|palette.normal_valid|palette.texture_valid)&~1023u)
-        throw std::runtime_error("Native palette known mask invalid");
-    AdvancePalette();matrix_palette=palette;
-}
-
-extern "C" void MH3_ModelViewPosition(CpuContext* cpu) {Array(cpu,0);}
-REGISTER_NATIVE_FUNCTION_AS(0x80080BC0,MH3_ModelViewPosition,"ModelViewPosition");
-extern "C" void MH3_ModelViewNormal(CpuContext* cpu) {Array(cpu,1);}
-REGISTER_NATIVE_FUNCTION_AS(0x80080C0C,MH3_ModelViewNormal,"ModelViewNormal");
-extern "C" void MH3_ModelViewEnvironment(CpuContext* cpu) {Array(cpu,2);}
-REGISTER_NATIVE_FUNCTION_AS(0x80080C68,MH3_ModelViewEnvironment,"ModelViewEnvironment");
-extern "C" void MH3_ModelViewCount(CpuContext* cpu) {
-    uint32_t count=0;Checked(mh3_model_pose_count({Memory::GetPointer(cpu->gpr[3],0x104),0x104},&count));cpu->gpr[3]=count;
-}
-REGISTER_NATIVE_FUNCTION_AS(0x8007FD0C,MH3_ModelViewCount,"ModelViewCount");
-
-extern "C" void MH3_ModelMainMatrixReset(CpuContext*) {
-    mh3_model_matrix_reset(&selectors);PublishSelectors();
-}
-REGISTER_NATIVE_FUNCTION_AS(0x8009B13C,MH3_ModelMainMatrixReset,"ModelMainMatrixReset");
-extern "C" void MH3_ModelMainMatrixSelect(CpuContext* cpu) {
-    uint32_t rows[8];for(uint32_t i=0;i<8;i++) rows[i]=Memory::Read32(cpu->gpr[3]+4*i);
+void PublishNativeModelMatrixRows(const uint32_t rows[8]) {
     Select(rows);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8009B1A4,MH3_ModelMainMatrixSelect,"ModelMainMatrixSelect");
-extern "C" void MH3_ModelCurrentMatrixReset(CpuContext* cpu) {
-    if(!Memory::Read8(cpu->gpr[3])) {mh3_model_matrix_reset(&selectors);PublishSelectors();Memory::Write8(cpu->gpr[3],1);}
+void PublishNativeModelPositionMatrix(uint32_t selector, const float matrix[12]) {
+    if (!matrix || selector % 3 || selector > 27)
+        throw std::runtime_error("Native position matrix selector invalid");
+    AdvancePalette();
+    std::memcpy(&matrix_palette.position[selector / 3], matrix, 48);
+    matrix_palette.position_valid |= uint16_t(1u << (selector / 3));
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80087CF0,MH3_ModelCurrentMatrixReset,"ModelCurrentMatrixReset");
+void PublishNativeModelNormalMatrix(uint32_t selector, const float matrix[9]) {
+    if (!matrix || selector % 3 || selector > 27)
+        throw std::runtime_error("Native normal matrix selector invalid");
+    AdvancePalette();
+    std::memcpy(&matrix_palette.normal[selector / 3], matrix, 36);
+    matrix_palette.normal_valid |= uint16_t(1u << (selector / 3));
+}
+void PublishNativeModelTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4) {
+    if (selector >= 64)
+        return; // post/SRT matrices have an independent owner
+    if (!matrix || selector < 30 || selector > 57 || selector % 3)
+        throw std::runtime_error("Native texture palette selector invalid");
+    AdvancePalette();
+    std::memcpy(&matrix_palette.texture[(selector - 30) / 3], matrix, matrix3x4 ? 48 : 32);
+    if (matrix3x4)
+        matrix_palette.texture_valid |= uint16_t(1u << ((selector - 30) / 3));
+}
+const mh3_model_palette& ReadNativeModelPalette() {
+    return matrix_palette;
+}
+uint64_t ReadNativeModelPaletteRevision() {
+    return matrix_palette_revision;
+}
+void PublishNativeModelPalette(const mh3_model_palette& palette) {
+    if ((palette.position_valid | palette.normal_valid | palette.texture_valid) & ~1023u)
+        throw std::runtime_error("Native palette known mask invalid");
+    AdvancePalette();
+    matrix_palette = palette;
+}
+
+extern "C" void MH3_ModelViewPosition(CpuContext* cpu) {
+    Array(cpu, 0);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80080BC0, MH3_ModelViewPosition, "ModelViewPosition");
+extern "C" void MH3_ModelViewNormal(CpuContext* cpu) {
+    Array(cpu, 1);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80080C0C, MH3_ModelViewNormal, "ModelViewNormal");
+extern "C" void MH3_ModelViewEnvironment(CpuContext* cpu) {
+    Array(cpu, 2);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80080C68, MH3_ModelViewEnvironment, "ModelViewEnvironment");
+extern "C" void MH3_ModelViewCount(CpuContext* cpu) {
+    uint32_t count = 0;
+    Checked(mh3_model_pose_count({Memory::GetPointer(cpu->gpr[3], 0x104), 0x104}, &count));
+    cpu->gpr[3] = count;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8007FD0C, MH3_ModelViewCount, "ModelViewCount");
+
+extern "C" void MH3_ModelMainMatrixReset(CpuContext*) {
+    mh3_model_matrix_reset(&selectors);
+    PublishSelectors();
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8009B13C, MH3_ModelMainMatrixReset, "ModelMainMatrixReset");
+extern "C" void MH3_ModelMainMatrixSelect(CpuContext* cpu) {
+    uint32_t rows[8];
+    for (uint32_t i = 0; i < 8; i++)
+        rows[i] = Memory::Read32(cpu->gpr[3] + 4 * i);
+    Select(rows);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8009B1A4, MH3_ModelMainMatrixSelect, "ModelMainMatrixSelect");
+extern "C" void MH3_ModelCurrentMatrixReset(CpuContext* cpu) {
+    if (!Memory::Read8(cpu->gpr[3])) {
+        mh3_model_matrix_reset(&selectors);
+        PublishSelectors();
+        Memory::Write8(cpu->gpr[3], 1);
+    }
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80087CF0, MH3_ModelCurrentMatrixReset, "ModelCurrentMatrixReset");
 extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
-    if(int32_t(cpu->gpr[4])<0) return;
-    uint32_t types[8],rows[8];int apply=0;
-    for(uint32_t i=0;i<8;i++) types[i]=Memory::Read32(cpu->gpr[3]+4*i);
-    Checked(mh3_model_matrix_rows(types,int32_t(cpu->gpr[4]),rows,&apply));
-    const bool identity=std::all_of(std::begin(rows),std::end(rows),[](uint32_t row){return row==60;});
-    if(identity) {
-        if(!Memory::Read8(0x80796db4)) {mh3_model_matrix_reset(&selectors);PublishSelectors();Memory::Write8(0x80796db4,1);}
+    if (int32_t(cpu->gpr[4]) < 0)
+        return;
+    uint32_t types[8], rows[8];
+    int apply = 0;
+    for (uint32_t i = 0; i < 8; i++)
+        types[i] = Memory::Read32(cpu->gpr[3] + 4 * i);
+    Checked(mh3_model_matrix_rows(types, int32_t(cpu->gpr[4]), rows, &apply));
+    const bool identity = std::all_of(std::begin(rows), std::end(rows), [](uint32_t row) { return row == 60; });
+    if (identity) {
+        if (!Memory::Read8(0x80796db4)) {
+            mh3_model_matrix_reset(&selectors);
+            PublishSelectors();
+            Memory::Write8(0x80796db4, 1);
+        }
         return;
     }
-    if(std::any_of(std::begin(types),std::end(types),[](uint32_t type){return type==1;})) {
-        const auto binding=ReadNativeModelMatrixSources(0x80685530);
-        const auto sources=ReadNativeModelPose(binding.address);
-        mh3_shape_matrix_input input{};input.valid=1;input.matrix_id=int32_t(cpu->gpr[4]);
-        std::copy(std::begin(types),std::end(types),std::begin(input.texture_source));
-        mh3_model_palette palette{};Checked(mh3_model_palette_rigid(&input,&sources,&palette));
-        for(unsigned i=0;i<8;i++) if(types[i]==1) SetNativeTextureMatrix(30+i*3,&palette.texture[i].v[0][0],true);
+    if (std::any_of(std::begin(types), std::end(types), [](uint32_t type) { return type == 1; })) {
+        const auto binding = ReadNativeModelMatrixSources(0x80685530);
+        const auto sources = ReadNativeModelPose(binding.address);
+        mh3_shape_matrix_input input{};
+        input.valid = 1;
+        input.matrix_id = int32_t(cpu->gpr[4]);
+        std::copy(std::begin(types), std::end(types), std::begin(input.texture_source));
+        mh3_model_palette palette{};
+        Checked(mh3_model_palette_rigid(&input, &sources, &palette));
+        for (unsigned i = 0; i < 8; i++)
+            if (types[i] == 1)
+                SetNativeTextureMatrix(30 + i * 3, &palette.texture[i].v[0][0], true);
     }
-    Select(rows);Memory::Write8(0x80796db4,0);
+    Select(rows);
+    Memory::Write8(0x80796db4, 0);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80087D30,MH3_ModelPreTextureMatrices,"ModelPreTextureMatrices");
+REGISTER_NATIVE_FUNCTION_AS(0x80087D30, MH3_ModelPreTextureMatrices, "ModelPreTextureMatrices");

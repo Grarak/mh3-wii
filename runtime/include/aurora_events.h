@@ -87,8 +87,7 @@ inline void ProcessAuroraEvents(const AuroraEvent* events) {
             }
             break;
         case AURORA_WINDOW_RESIZED:
-            if (aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED &&
-                event->windowSize.width != 0 && event->windowSize.height != 0) {
+            if (aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED && event->windowSize.width != 0 && event->windowSize.height != 0) {
                 WindowPlacementPersistence::width = event->windowSize.width;
                 WindowPlacementPersistence::height = event->windowSize.height;
                 WindowPlacementPersistence::sizeDirty = true;

@@ -31,17 +31,20 @@ extern "C" void OS_HLE_ProcessAlarmsDeferred(int maxToProcess);
 extern "C" void OS_HLE_BeginDeferredGuestCallbacks();
 extern "C" void OS_HLE_EndDeferredGuestCallbacks();
 
-
 // Defines and registers a faithful native reimplementation that REPLACES the translated function
 // at a PPC address (not a stub; genuine not-yet-implemented entries live in hle/gx/gx_fatal_stubs.cpp
 // and abort). The translator regex-parses these macro names to skip that address at build time, so
 // renaming requires updating Translator.Cli/Program.cs, RuntimeNativeGuestEffectAnalyzer.cs,
 // TranslatedBuildShardEmitter.cs and RuntimeNativeFunctionAbiProvider.cs together.
 
-#define PPC_NATIVE_OVERRIDE(addr_hex, name, ret_type, arg_list, call_list) \
-    extern "C" ret_type func_##addr_hex arg_list { return name call_list; } \
+#define PPC_NATIVE_OVERRIDE(addr_hex, name, ret_type, arg_list, call_list)                                                                                                                             \
+    extern "C" ret_type func_##addr_hex arg_list {                                                                                                                                                     \
+        return name call_list;                                                                                                                                                                         \
+    }                                                                                                                                                                                                  \
     REGISTER_NATIVE_FUNCTION(0x##addr_hex, name)
 
-#define PPC_NATIVE_OVERRIDE_VOID(addr_hex, name, arg_list, call_list) \
-    extern "C" void func_##addr_hex arg_list { name call_list; } \
+#define PPC_NATIVE_OVERRIDE_VOID(addr_hex, name, arg_list, call_list)                                                                                                                                  \
+    extern "C" void func_##addr_hex arg_list {                                                                                                                                                         \
+        name call_list;                                                                                                                                                                                \
+    }                                                                                                                                                                                                  \
     REGISTER_NATIVE_FUNCTION(0x##addr_hex, name)

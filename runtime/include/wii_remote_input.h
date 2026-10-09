@@ -21,7 +21,7 @@ namespace WiiRemoteInput {
 
 enum class Kind : uint8_t {
     NotWii,
-    Remote,             // Wii Remote with no extension
+    Remote, // Wii Remote with no extension
     RemoteWithNunchuk,
     RemoteWithClassic,
     WiiUPro,
@@ -39,18 +39,18 @@ const char* KindLabel(Kind kind);
 
 // One frame of a Wii Remote in the units KPAD uses.
 struct KpadSample {
-    uint32_t hold = 0;      // WPAD button bits (WPAD_BUTTON_*), Nunchuk C/Z included
-    float acc[3] = {};      // remote accelerometer in g, KPAD frame (rest: y = -1)
+    uint32_t hold = 0; // WPAD button bits (WPAD_BUTTON_*), Nunchuk C/Z included
+    float acc[3] = {}; // remote accelerometer in g, KPAD frame (rest: y = -1)
     bool hasNunchuk = false;
-    float stick[2] = {};    // Nunchuk stick, -1..1, +y up
+    float stick[2] = {}; // Nunchuk stick, -1..1, +y up
     float nunchukAcc[3] = {};
     bool hasClassic = false;
-    uint32_t clHold = 0;         // WPAD_CL_BUTTON_* bits
-    float clLStick[2] = {};      // Classic sticks, -1..1, +y up
+    uint32_t clHold = 0;    // WPAD_CL_BUTTON_* bits
+    float clLStick[2] = {}; // Classic sticks, -1..1, +y up
     float clRStick[2] = {};
     int16_t clLStickRaw[2] = {}; // as WPADCLStatus reports them: -512..511, centre 0, +y up
     int16_t clRStickRaw[2] = {};
-    uint8_t clTriggerL = 0;      // 0..255; SDL only exposes the digital click
+    uint8_t clTriggerL = 0; // 0..255; SDL only exposes the digital click
     uint8_t clTriggerR = 0;
 };
 

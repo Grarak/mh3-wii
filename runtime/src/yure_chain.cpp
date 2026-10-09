@@ -37,26 +37,35 @@
 namespace {
 
 enum : uint32_t {
-    kMode = 0x01,      // u8
-    kSet = 0x02,       // u8
-    kState = 0x03,     // u8
-    kPlane = 0x04,     // u8
-    kAnchor = 0x05,    // u8
-    kCount = 0x08,     // u32
-    kRootJoint = 0x0C, // u32
-    kJoints = 0x10,    // u32[]
-    kRoot = 0x18,      // VEC3[]: the root, then the nodes
-    kNode = 0x24,      // VEC3[]
-    kTarget = 0x30,    // VEC3 (mode 1)
-    kVelocity = 0x3C,  // VEC3[]
-    kRest = 0x54,      // VEC3[]
+    kMode = 0x01,       // u8
+    kSet = 0x02,        // u8
+    kState = 0x03,      // u8
+    kPlane = 0x04,      // u8
+    kAnchor = 0x05,     // u8
+    kCount = 0x08,      // u32
+    kRootJoint = 0x0C,  // u32
+    kJoints = 0x10,     // u32[]
+    kRoot = 0x18,       // VEC3[]: the root, then the nodes
+    kNode = 0x24,       // VEC3[]
+    kTarget = 0x30,     // VEC3 (mode 1)
+    kVelocity = 0x3C,   // VEC3[]
+    kRest = 0x54,       // VEC3[]
     kLastAnchor = 0x6C, // VEC3
-    kAngleA = 0x78,    // u32[]
-    kAngleB = 0x80,    // u32[]
-    kLength = 0x88,    // f32[]
+    kAngleA = 0x78,     // u32[]
+    kAngleB = 0x80,     // u32[]
+    kLength = 0x88,     // f32[]
 };
-enum : uint32_t { kSetSize = 0x24, kReach = 0x04, kSpring = 0x08, kDamping = 0x0C, kMargin = 0x10,
-                  kPull = 0x14, kGravityA = 0x18, kSpringShaken = 0x1C, kAngleOffset = 0x20 };
+enum : uint32_t {
+    kSetSize = 0x24,
+    kReach = 0x04,
+    kSpring = 0x08,
+    kDamping = 0x0C,
+    kMargin = 0x10,
+    kPull = 0x14,
+    kGravityA = 0x18,
+    kSpringShaken = 0x1C,
+    kAngleOffset = 0x20
+};
 
 constexpr uint32_t kEnemySets = 0x805CF1B0, kEnemyAnchors = 0x805CF020;
 constexpr uint32_t kPart5Sets = 0x805CF3A8, kPart5Anchors = 0x805CF0D8;
@@ -71,34 +80,42 @@ enum : uint32_t {
     sLengths = 16,     // f32[]: node lengths
     sPlane = 448,      // plane: normal, then its offset at +12
     sPlaneProbe = 464, // VEC3 + f32 margin at +12
-    sPlaneAt = 480, sPlaneN = 492, sPlanePoint = 540, sDir = 552, sRot = 564,
-    sOut = 600, sAccel = 624, sAnchor = 516, sJoints = 576,
-    sAnchorMtx = 648, sInverse = 696,
+    sPlaneAt = 480,
+    sPlaneN = 492,
+    sPlanePoint = 540,
+    sDir = 552,
+    sRot = 564,
+    sOut = 600,
+    sAccel = 624,
+    sAnchor = 516,
+    sJoints = 576,
+    sAnchorMtx = 648,
+    sInverse = 696,
 };
 
 enum : uint32_t {
     Original = 0x802AC4E8,
-    Ready = 0x802248E8,        // (player) the parts are loaded
+    Ready = 0x802248E8, // (player) the parts are loaded
     DemoBusy = 0x803C4890,
-    DemoState4 = 0x803C4878,   // IsEventDemoState4
+    DemoState4 = 0x803C4878,    // IsEventDemoState4
     EnemyJointMtx = 0x80135994, // get_joint_wmat_em
     EnemyJointPos = 0x8013599C, // get_joint_wpos_em
-    EnemyScale = 0x801359A4,   // get_em_scale
+    EnemyScale = 0x801359A4,    // get_em_scale
     CharJointMtx = 0x800E0A78,
     CharJointPos = 0x800E0AF8, // MHchar::get_joint_wpos
     MtxTranslation = 0x80101470,
     MtxCopy = 0x80053340,
     MtxInverse = 0x80088428,
-    MulVecMtx = 0x800514A4,    // v = m * v
-    RotateVec = 0x80501C48,    // out = m (rotation only) * v
-    ToMhVec = 0x8005001C,      // vec_to_mh_vec3
+    MulVecMtx = 0x800514A4, // v = m * v
+    RotateVec = 0x80501C48, // out = m (rotation only) * v
+    ToMhVec = 0x8005001C,   // vec_to_mh_vec3
     Magnitude = 0x80050F88,
     Magnitude2 = 0x80050F40,
     Normalize = 0x800508B4,
-    ClampReach = 0x80051324,   // (f1 reach, centre, point): point within reach of centre
+    ClampReach = 0x80051324, // (f1 reach, centre, point): point within reach of centre
     Dot = 0x80052278,
     OntoPlane = 0x80290588,
-    Atan2 = 0x80464488,        // ForceSingleAngleWrapper
+    Atan2 = 0x80464488, // ForceSingleAngleWrapper
     NodeAngles = 0x802AD830,
     NodeHeading = 0x802AD958,
 };
@@ -109,13 +126,17 @@ struct Vec {
     Vec operator-(const Vec& o) const { return {x - o.x, y - o.y, z - o.z}; }
     Vec operator*(float k) const { return {x * k, y * k, z * k}; }
 };
-Vec Load(uint32_t a) { return {Memory::ReadFloat32(a), Memory::ReadFloat32(a + 4), Memory::ReadFloat32(a + 8)}; }
+Vec Load(uint32_t a) {
+    return {Memory::ReadFloat32(a), Memory::ReadFloat32(a + 4), Memory::ReadFloat32(a + 8)};
+}
 void Store(uint32_t a, const Vec& v) {
     Memory::WriteFloat32(a, v.x);
     Memory::WriteFloat32(a + 4, v.y);
     Memory::WriteFloat32(a + 8, v.z);
 }
-float F(uint32_t a) { return Memory::ReadFloat32(a); }
+float F(uint32_t a) {
+    return Memory::ReadFloat32(a);
+}
 
 } // namespace
 
@@ -142,12 +163,17 @@ static void YureChain(CpuContext* ctx) {
         sets = kEnemySets;
         anchors = kEnemyAnchors;
     } else {
-        auto stop = [&] { Memory::Write8(chain + kState, 0); };
-        if (!(call.Call<Ready>({work}) & 0xFF)) return stop();
-        if ((call.Call<DemoBusy>() & 0xFF) || call.Call<DemoState4>()) return stop();
+        auto stop = [&] {
+            Memory::Write8(chain + kState, 0);
+        };
+        if (!(call.Call<Ready>({work}) & 0xFF))
+            return stop();
+        if ((call.Call<DemoBusy>() & 0xFF) || call.Call<DemoState4>())
+            return stop();
         const uint32_t parts = Memory::Read32(work + 0x13C);
         for (uint32_t k = 0; k < 7; ++k)
-            if (!Memory::Read8(parts + k * 0x164 + 0x38) || !Memory::Read8(parts + k + 0x9C0)) return stop();
+            if (!Memory::Read8(parts + k * 0x164 + 0x38) || !Memory::Read8(parts + k + 0x9C0))
+                return stop();
         if (part == 5) {
             sets = kPart5Sets;
             anchors = kPart5Anchors;
@@ -157,11 +183,18 @@ static void YureChain(CpuContext* ctx) {
         }
     }
     const uint32_t count = Memory::Read32(chain + kCount);
-    if (!count) return;
+    if (!count)
+        return;
 
-    auto set = [&] { return sets + Memory::Read8(chain + kSet) * kSetSize; };
-    auto anchorJoint = [&] { return uint32_t(Memory::Read8(anchors + Memory::Read8(chain + kAnchor) * 14 + 3)); };
-    auto charParts = [&] { return Memory::Read32(work + 0x13C); };
+    auto set = [&] {
+        return sets + Memory::Read8(chain + kSet) * kSetSize;
+    };
+    auto anchorJoint = [&] {
+        return uint32_t(Memory::Read8(anchors + Memory::Read8(chain + kAnchor) * 14 + 3));
+    };
+    auto charParts = [&] {
+        return Memory::Read32(work + 0x13C);
+    };
 
     float scale, spring, damping, pull, gravity;
     if (!player) {
@@ -189,8 +222,7 @@ static void YureChain(CpuContext* ctx) {
         call.Call<CharJointMtx>({charParts() + 4, anchorJoint(), frame[sAnchorMtx]});
         call.Call<CharJointPos>({charParts() + 4, Memory::Read32(chain + kRootJoint), frame[sAnchor]});
         for (uint32_t i = 0; i < count; ++i) {
-            call.Call<CharJointPos>(
-                {charParts() + part * 0x164 + 4, Memory::Read32(chain + kJoints + 4 * i), frame[sJoints] + 12 * i});
+            call.Call<CharJointPos>({charParts() + part * 0x164 + 4, Memory::Read32(chain + kJoints + 4 * i), frame[sJoints] + 12 * i});
             Memory::WriteFloat32(frame[sLengths] + 4 * i, F(chain + kLength + 4 * i) + F(set() + 4 * i));
         }
         scale = 1.0f;
@@ -230,7 +262,8 @@ static void YureChain(CpuContext* ctx) {
         Store(target, Load(root) + Load(frame[sRot]) * (length * scale));
         call.Call<ClampReach>({target, node}, {scale * F(set() + kReach)});
         Store(frame[sDir], Load(node) - Load(root));
-        if (magnitude(frame[sDir], Magnitude2) > kTiny) call.Call<Normalize>({frame[sDir], frame[sDir]});
+        if (magnitude(frame[sDir], Magnitude2) > kTiny)
+            call.Call<Normalize>({frame[sDir], frame[sDir]});
         Store(node, Load(root) + Load(frame[sDir]) * length);
         Store(velocity, Load(velocity) + (Load(target) - Load(node)) * (spring * s));
         Store(velocity, Load(velocity) * damp);
@@ -274,12 +307,15 @@ static void YureChain(CpuContext* ctx) {
         call.Call<ClampReach>({prev, node}, {scale * (10.0f + length)});
         Store(frame[sDir], Load(prev) - Load(node));
         const float stretch = magnitude(frame[sDir], Magnitude);
-        if (stretch > kTiny) call.Call<Normalize>({frame[sDir], frame[sDir]});
+        if (stretch > kTiny)
+            call.Call<Normalize>({frame[sDir], frame[sDir]});
         Store(accel, Load(accel) + Load(frame[sDir]) * (spring * (stretch - scale * length)));
         Store(velocity, Load(velocity) * damp + Load(accel) * s);
-        if (i == 0 && player) Store(prev, Load(prev) + (Load(frame[sAnchor]) - Load(chain + kLastAnchor)));
+        if (i == 0 && player)
+            Store(prev, Load(prev) + (Load(frame[sAnchor]) - Load(chain + kLastAnchor)));
         Store(frame[sDir], Load(node) - Load(prev));
-        if (magnitude(frame[sDir], Magnitude) > kTiny) call.Call<Normalize>({frame[sDir], frame[sDir]});
+        if (magnitude(frame[sDir], Magnitude) > kTiny)
+            call.Call<Normalize>({frame[sDir], frame[sDir]});
         const uint32_t out = frame[sOut] + 12 * i;
         Store(out, Load(frame[sDir]) * (scale * length));
         Store(node, Load(prev) + Load(out));
@@ -317,12 +353,12 @@ static void YureChain(CpuContext* ctx) {
         }
     }
     Store(chain + kLastAnchor, Load(frame[sAnchor]));
-    if (player) return;
+    if (player)
+        return;
     for (uint32_t i = 0; i < count; ++i) {
         if (Memory::Read8(chain + kMode) == 3) {
             call.Call<NodeHeading>({chain, frame[sAnchorMtx], chain + kAngleB + 4 * i, i});
-            Memory::Write32(chain + kAngleB + 4 * i,
-                            Memory::Read32(chain + kAngleB + 4 * i) + Memory::Read32(set() + kAngleOffset));
+            Memory::Write32(chain + kAngleB + 4 * i, Memory::Read32(chain + kAngleB + 4 * i) + Memory::Read32(set() + kAngleOffset));
         } else {
             call.Call<NodeAngles>({chain, frame[sAnchorMtx], chain + kAngleA + 4 * i, chain + kAngleB + 4 * i, i});
         }

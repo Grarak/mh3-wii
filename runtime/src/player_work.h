@@ -13,15 +13,15 @@
 namespace Plw {
 
 enum : uint32_t {
-    kState = 5,        // u8: the action's state
-    kFlag9 = 9,        // u8
-    kFlag14 = 14,      // u8 (set before the next action)
-    kSteps = 0x20,     // s32: the player's step counter, 1 a tick (player_timers.cpp)
-    kTimer = 0x28,     // s32: the action's step countdown (or count)
-    kAngle2 = 0x58,    // u32
-    kAngle = 0xA8,     // u32: facing
-    kPlayer = 0xB6,    // u16: the player's index (low byte)
-    kChar = 0x13C,     // MHchar*
+    kState = 5,     // u8: the action's state
+    kFlag9 = 9,     // u8
+    kFlag14 = 14,   // u8 (set before the next action)
+    kSteps = 0x20,  // s32: the player's step counter, 1 a tick (player_timers.cpp)
+    kTimer = 0x28,  // s32: the action's step countdown (or count)
+    kAngle2 = 0x58, // u32
+    kAngle = 0xA8,  // u32: facing
+    kPlayer = 0xB6, // u16: the player's index (low byte)
+    kChar = 0x13C,  // MHchar*
 };
 constexpr uint32_t kMotionHold = 0xF5;   // MHchar u8: 0x8026A334 / 0x8026A340
 constexpr uint32_t kMotionNumber = 0x54; // MHchar u16 (Get_motion_no 0x8026A36C)
@@ -51,7 +51,8 @@ struct Player {
     }
     // The originals take 1 a step while it is above 0.
     void CountDownToZero() const {
-        if (Timer() > 0) Timer(std::max(Timer() - int32_t(GameStep::Ticks()), 0));
+        if (Timer() > 0)
+            Timer(std::max(Timer() - int32_t(GameStep::Ticks()), 0));
     }
     // The originals add 1 a step.
     void CountUp() const { Timer(Timer() + int32_t(GameStep::Ticks())); }
@@ -59,7 +60,8 @@ struct Player {
     // at a time: true on the step whose ticks passed a multiple of n.
     bool Every(int32_t n) const {
         int32_t rest = int32_t(Memory::Read32(plw + kSteps)) % n;
-        if (rest < 0) rest += n;
+        if (rest < 0)
+            rest += n;
         return rest < int32_t(GameStep::Ticks());
     }
     uint32_t Index() const { return Memory::Read16(plw + kPlayer) & 0xFF; }
@@ -68,12 +70,8 @@ struct Player {
     void HoldMotion(uint8_t hold) const { Memory::Write8(Char() + kMotionHold, hold); }
     bool Master() const { return game.Call<MasterCheck>({plw}) == 1; }
     bool Ended() const { return game.Call<MotionEnded>({plw}) == 1; }
-    void Set(uint32_t motion, int32_t blend, int32_t flags) const {
-        game.Call<SetMotion>({plw, motion, uint32_t(blend), uint32_t(flags)});
-    }
-    void SetX(uint32_t motion, int32_t blend, int32_t flags) const {
-        game.Call<SetMotionX>({plw, motion, uint32_t(blend), uint32_t(flags)});
-    }
+    void Set(uint32_t motion, int32_t blend, int32_t flags) const { game.Call<SetMotion>({plw, motion, uint32_t(blend), uint32_t(flags)}); }
+    void SetX(uint32_t motion, int32_t blend, int32_t flags) const { game.Call<SetMotionX>({plw, motion, uint32_t(blend), uint32_t(flags)}); }
     void Flag9(uint8_t value) const { Memory::Write8(plw + kFlag9, value); } // 0x8020A650, 0x80275B60
 };
 

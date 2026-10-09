@@ -8,7 +8,8 @@
 #include <stdexcept>
 
 std::vector<int16_t> DecodeWiiPcm(const uint8_t* data, uint32_t bytes) {
-    if (bytes % 4) throw std::runtime_error("Partial Wii stereo PCM frame");
+    if (bytes % 4)
+        throw std::runtime_error("Partial Wii stereo PCM frame");
     std::vector<int16_t> samples(bytes / 2);
     for (uint32_t i = 0; i < bytes; i += 4) {
         samples[i / 2] = int16_t(uint16_t(data[i + 2]) << 8 | data[i + 3]);
@@ -26,8 +27,10 @@ uint64_t completed = 0;
 NativeAudioDmaStatistics statistics;
 Clock::time_point previousEnabledService;
 bool previousEnabledServiceValid = false;
-uint32_t Rate() { return (Memory::Read32(0xCD006C00) & 0x40) ? 32000 : 48000; }
+uint32_t Rate() {
+    return (Memory::Read32(0xCD006C00) & 0x40) ? 32000 : 48000;
 }
+} // namespace
 NativeAudioDmaStatistics GetNativeAudioDmaStatistics() {
     auto result = statistics;
     result.enabled = dma.enabled;
@@ -47,14 +50,18 @@ extern "C" void MH3_AIInitDMA(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION(0x8046DAF0, MH3_AIInitDMA);
 extern "C" void MH3_AIStartDMA(CpuContext*) {
     if (!dma.enabled) {
-        previous = Clock::now(); dma.elapsedNs = 0;
-        previousEnabledService = previous; previousEnabledServiceValid = true;
+        previous = Clock::now();
+        dma.elapsedNs = 0;
+        previousEnabledService = previous;
+        previousEnabledServiceValid = true;
     }
     dma.enabled = true;
 }
 REGISTER_NATIVE_FUNCTION(0x8046DB70, MH3_AIStartDMA);
 extern "C" void MH3_AIStopDMA(CpuContext*) {
-    dma.enabled = false; dma.elapsedNs = 0; previousEnabledServiceValid = false;
+    dma.enabled = false;
+    dma.elapsedNs = 0;
+    previousEnabledServiceValid = false;
 }
 REGISTER_NATIVE_FUNCTION(0x8046DB90, MH3_AIStopDMA);
 extern "C" void MH3_AIGetDMABytesLeft(CpuContext* cpu) {
@@ -62,9 +69,13 @@ extern "C" void MH3_AIGetDMABytesLeft(CpuContext* cpu) {
     cpu->gpr[3] = dma.BytesLeft(Rate());
 }
 REGISTER_NATIVE_FUNCTION(0x8046DBB0, MH3_AIGetDMABytesLeft);
-extern "C" void MH3_AIGetDMAStartAddr(CpuContext* cpu) { cpu->gpr[3] = dma.address; }
+extern "C" void MH3_AIGetDMAStartAddr(CpuContext* cpu) {
+    cpu->gpr[3] = dma.address;
+}
 REGISTER_NATIVE_FUNCTION(0x8046DBC0, MH3_AIGetDMAStartAddr);
-extern "C" void MH3_AIGetDMALength(CpuContext* cpu) { cpu->gpr[3] = dma.length; }
+extern "C" void MH3_AIGetDMALength(CpuContext* cpu) {
+    cpu->gpr[3] = dma.length;
+}
 REGISTER_NATIVE_FUNCTION(0x8046DBE0, MH3_AIGetDMALength);
 
 void ServiceAudioDma(CpuContext* cpu) {
@@ -73,19 +84,25 @@ void ServiceAudioDma(CpuContext* cpu) {
     if (dma.enabled)
         dma.elapsedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(now - previous).count();
     previous = now;
-    if (servicing || !dma.enabled || !dma.length) return;
+    if (servicing || !dma.enabled || !dma.length)
+        return;
     ++statistics.enabledServiceCalls;
     if (previousEnabledServiceValid) {
         const auto gap = std::chrono::duration_cast<std::chrono::nanoseconds>(now - previousEnabledService).count();
         statistics.maxServiceGapNs = std::max(statistics.maxServiceGapNs, uint64_t(gap));
     }
-    previousEnabledService = now; previousEnabledServiceValid = true;
+    previousEnabledService = now;
+    previousEnabledServiceValid = true;
     statistics.maxDebtNs = std::max(statistics.maxDebtNs, dma.elapsedNs);
     servicing = true;
     const auto saved = *cpu;
     struct Restore {
-        CpuContext* cpu; CpuContext saved;
-        ~Restore() { *cpu = saved; servicing = false; }
+        CpuContext* cpu;
+        CpuContext saved;
+        ~Restore() {
+            *cpu = saved;
+            servicing = false;
+        }
     } restore{cpu, saved};
     // Bounded catch-up preserves a callback between each completed audio block.
     // Remaining elapsed time is retained for the next cooperative service point.
@@ -114,15 +131,20 @@ void ServiceAudioDma(CpuContext* cpu) {
                 InvokeIndirectCpu(callback, cpu);
                 Memory::Write32(busy, 0);
                 AxDspHle::ServiceDeferredCallbacks();
-            } catch (...) { Memory::Write32(busy, 0); throw; }
+            } catch (...) {
+                Memory::Write32(busy, 0);
+                throw;
+            }
             Memory::Write32(busy, 0);
         }
         *cpu = saved;
         ++statistics.completedBlocks;
         statistics.completedFrames += frames;
         statistics.completedDurationNs += period;
-        if (++completed <= 3) std::fprintf(stderr, "MH3 audio DMA: block %llu completed\n", static_cast<unsigned long long>(completed));
+        if (++completed <= 3)
+            std::fprintf(stderr, "MH3 audio DMA: block %llu completed\n", static_cast<unsigned long long>(completed));
     }
-    if (count == 16 && ready()) ++statistics.capHits;
+    if (count == 16 && ready())
+        ++statistics.capHits;
     statistics.maxDebtNs = std::max(statistics.maxDebtNs, dma.elapsedNs);
 }

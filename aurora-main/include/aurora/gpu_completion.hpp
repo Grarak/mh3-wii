@@ -6,8 +6,7 @@
 namespace aurora {
 // GXM's notification region is uncached GPU-written memory. Scene serials
 // wrap at 32 bits; fewer than 2^31 scenes can be outstanding at once.
-inline bool gpu_notification_pending(const volatile unsigned* notification,
-                                     uint32_t submitted) noexcept {
+inline bool gpu_notification_pending(const volatile unsigned* notification, uint32_t submitted) noexcept {
   return notification && uint32_t(*notification - submitted) >= 0x80000000u;
 }
 
@@ -21,13 +20,14 @@ public:
     const auto& fence = m_fences[m_slot];
     return gpu_notification_pending(fence.notification, fence.serial);
   }
-  void record_scene(volatile unsigned* notification, uint32_t serial) noexcept {
-    m_fences[m_slot] = {notification, serial};
-  }
+  void record_scene(volatile unsigned* notification, uint32_t serial) noexcept { m_fences[m_slot] = {notification, serial}; }
   void advance() noexcept { m_slot = (m_slot + 1) % BufferCount; }
 
 private:
-  struct Fence { volatile unsigned* notification = nullptr; uint32_t serial = 0; };
+  struct Fence {
+    volatile unsigned* notification = nullptr;
+    uint32_t serial = 0;
+  };
   std::array<Fence, BufferCount> m_fences{};
   unsigned m_slot = 0;
 };

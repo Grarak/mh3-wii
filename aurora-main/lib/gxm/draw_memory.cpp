@@ -11,31 +11,32 @@ void require_alignment(const void* pointer, size_t bytes, size_t alignment) {
   if (bytes && (!pointer || (reinterpret_cast<uintptr_t>(pointer) & (alignment - 1))))
     throw std::runtime_error("Unaligned native GXM draw buffer");
 }
-}
-DrawMemory::DrawMemory(Device& device)
-    : m_device(device), m_ids(65536 * sizeof(float), MappedMemory::Kind::Draw, "Aurora vertex and instance IDs") {
-  if (g_draw) throw std::runtime_error("Native draw memory already initialized");
+} // namespace
+DrawMemory::DrawMemory(Device& device) : m_device(device), m_ids(65536 * sizeof(float), MappedMemory::Kind::Draw, "Aurora vertex and instance IDs") {
+  if (g_draw)
+    throw std::runtime_error("Native draw memory already initialized");
   auto* ids = static_cast<float*>(m_ids.data());
-  for (unsigned i = 0; i < 65536; ++i) ids[i] = static_cast<float>(i);
+  for (unsigned i = 0; i < 65536; ++i)
+    ids[i] = static_cast<float>(i);
   g_draw = this;
 }
 DrawMemory::~DrawMemory() {
   m_device.finish();
   g_draw = nullptr;
 }
-void DrawMemory::bind(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes,
-                      const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes) {
+void DrawMemory::bind(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes) {
   require_alignment(uniforms, uniformBytes, UniformAlignment);
   require_alignment(indices, indexBytes, IndexAlignment);
   require_alignment(vertices, vertexBytes, UniformAlignment);
   require_alignment(attributes, attributeBytes, UniformAlignment);
   m_lastUse = {};
-  m_uniforms = uniforms; m_uniformBytes = uniformBytes;
-  m_indices = indices; m_indexBytes = indexBytes;
+  m_uniforms = uniforms;
+  m_uniformBytes = uniformBytes;
+  m_indices = indices;
+  m_indexBytes = indexBytes;
 }
 void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {
-  if (!m_uniforms || (offset & (UniformAlignment - 1)) ||
-      uint64_t(offset) + bytes > m_uniformBytes)
+  if (!m_uniforms || (offset & (UniformAlignment - 1)) || uint64_t(offset) + bytes > m_uniformBytes)
     throw std::runtime_error("Native uniform range exceeds active draw slot");
   m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
@@ -46,10 +47,10 @@ void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {
   check(sceGxmSetFragmentUniformBuffer(context, 0, uniforms), "bind fragment uniforms");
 }
 void DrawMemory::draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) {
-  if (!indexCount || !instances) return;
-  if (!m_indices || (indexOffset & (IndexAlignment - 1)) ||
-      uint64_t(indexOffset) + uint64_t(indexCount) * sizeof(uint16_t) > m_indexBytes ||
-      instances > 65536 || uint64_t(indexCount) * instances > std::numeric_limits<uint32_t>::max())
+  if (!indexCount || !instances)
+    return;
+  if (!m_indices || (indexOffset & (IndexAlignment - 1)) || uint64_t(indexOffset) + uint64_t(indexCount) * sizeof(uint16_t) > m_indexBytes || instances > 65536 ||
+      uint64_t(indexCount) * instances > std::numeric_limits<uint32_t>::max())
     throw std::runtime_error("Native indexed draw exceeds active draw slot");
   m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
@@ -57,23 +58,23 @@ void DrawMemory::draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instan
   check(sceGxmSetVertexStream(context, 1, m_ids.data()), "bind instance IDs");
   const void* indices = static_cast<const char*>(m_indices) + indexOffset;
   if (instances == 1)
-    check(sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
-                    indices, indexCount), "draw recorded GX indices");
+    check(sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, indexCount), "draw recorded GX indices");
   else
-    check(sceGxmDrawInstanced(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
-                             indices, indexCount * instances, indexCount), "draw recorded GX instances");
+    check(sceGxmDrawInstanced(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, indexCount * instances, indexCount), "draw recorded GX instances");
 }
 SceGxmNotification DrawMemory::completion_fence() {
-  if (m_lastUse.address) m_device.end();
+  if (m_lastUse.address)
+    m_device.end();
   return m_lastUse;
 }
 SceGxmNotification draw_memory_fence() {
-  if (!g_draw) throw std::runtime_error("Native draw memory not initialized");
+  if (!g_draw)
+    throw std::runtime_error("Native draw memory not initialized");
   return g_draw->completion_fence();
 }
-void bind_draw_memory(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes,
-                      const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes) {
-  if (!g_draw) throw std::runtime_error("Native draw memory not initialized");
+void bind_draw_memory(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes) {
+  if (!g_draw)
+    throw std::runtime_error("Native draw memory not initialized");
   g_draw->bind(uniforms, uniformBytes, indices, indexBytes, vertices, vertexBytes, attributes, attributeBytes);
 }
-}
+} // namespace aurora::gxm

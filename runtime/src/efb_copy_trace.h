@@ -10,4 +10,4 @@ void EndFrame();
 // protection for the span and restore it afterwards, so guest reads stay visible.
 void BeginHostRead(uintptr_t host, uint32_t bytes);
 void EndHostRead();
-}
+} // namespace EfbCopyTrace

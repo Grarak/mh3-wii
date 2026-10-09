@@ -32,14 +32,16 @@ extern "C" void MH3_NativeDisplaySetup(CpuContext* cpu) {
     if (!mode || !Memory::Contains(mode, 60))
         throw std::runtime_error("Native display setup has no render mode");
     const auto index = Memory::Read32(sda - 0x46A4);
-    if (index > 1) throw std::runtime_error("Boot VI framebuffer index exceeds its compatibility pair");
+    if (index > 1)
+        throw std::runtime_error("Boot VI framebuffer index exceeds its compatibility pair");
     call(0x804E85E0, {mode});
     call(0x804E9130, {Memory::Read32(sda - 0x46B0 + index * 4)});
     Memory::Write32(sda - 0x46A4, index ^ 1);
     Memory::Write32(sda - 0x46A8, Memory::Read32(sda - 0x46B0 + (index ^ 1) * 4));
     call(0x804E9010);
     call(0x804E8050);
-    if (Memory::Read32(mode) & 1) call(0x804E8050);
+    if (Memory::Read32(mode) & 1)
+        call(0x804E8050);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8003FE94, MH3_NativeDisplaySetup, "NativeDisplaySetup");
 

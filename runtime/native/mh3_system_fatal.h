@@ -9,8 +9,7 @@ extern "C" {
  * checked span; both colors contain four RGBA bytes. Required includes NUL.
  * A sizing call uses an empty output and returns RANGE with required set.
  * Invalid/short inputs never change output. Overlapping output is supported. */
-mh3_res_status mh3_system_fatal_format(mh3_res_span foreground,mh3_res_span background,
-    mh3_res_span message,mh3_res_mut_span output,size_t *required);
+mh3_res_status mh3_system_fatal_format(mh3_res_span foreground, mh3_res_span background, mh3_res_span message, mh3_res_mut_span output, size_t *required);
 
 #ifdef __cplusplus
 }

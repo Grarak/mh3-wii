@@ -24,8 +24,7 @@ struct Fields {
     int8_t error = 0;
 };
 
-inline GuestStatus Encode(const Fields& fields)
-{
+inline GuestStatus Encode(const Fields& fields) {
     GuestStatus status{};
     BigEndian::Write16(status.data(), fields.buttons);
     status[0x02] = static_cast<uint8_t>(fields.stickX);
@@ -53,21 +52,19 @@ inline constexpr int32_t kErrorBadChannel = -6;
 inline constexpr int32_t kExtensionCore = 0;
 
 class State {
-public:
+  public:
     void Initialize() { m_initialized = true; }
     bool IsInitialized() const { return m_initialized; }
     int32_t GetLibraryStatus() const { return m_initialized ? kStatusReady : kStatusDisabled; }
 
-    int32_t GetDataFormat(uint32_t chan) const
-    {
+    int32_t GetDataFormat(uint32_t chan) const {
         if (chan >= kChannelCount) {
             return kErrorBadChannel;
         }
         return m_initialized ? 0 : kErrorNotReady;
     }
 
-    int32_t SetDataFormat(uint32_t chan, int32_t format) const
-    {
+    int32_t SetDataFormat(uint32_t chan, int32_t format) const {
         (void)format;
         if (chan >= kChannelCount) {
             return kErrorBadChannel;
@@ -75,7 +72,7 @@ public:
         return m_initialized ? kErrorNoController : kErrorNotReady;
     }
 
-private:
+  private:
     bool m_initialized = false;
 };
 

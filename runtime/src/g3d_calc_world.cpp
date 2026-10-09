@@ -49,9 +49,15 @@ namespace {
 constexpr uint32_t kWorkMatrices = 0x8066D300u;
 constexpr uint32_t kScales = 0x8066D300u, kMatrixIds = 0x80673300u;
 
-uint32_t Read32(uint32_t a) { return MemoryInline::FlatRead32(a); }
-uint32_t Read16(uint32_t a) { return MemoryInline::FlatRead16(a); }
-uint32_t Read8(uint32_t a) { return MemoryInline::FlatRead8(a); }
+uint32_t Read32(uint32_t a) {
+    return MemoryInline::FlatRead32(a);
+}
+uint32_t Read16(uint32_t a) {
+    return MemoryInline::FlatRead16(a);
+}
+uint32_t Read8(uint32_t a) {
+    return MemoryInline::FlatRead8(a);
+}
 float ReadFloat(uint32_t a) {
     const uint32_t bits = Read32(a);
     float f;
@@ -79,7 +85,8 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
             const uint32_t flagsAt = flags + 4 * dst;
             MemoryInline::FlatWrite32(flagsAt, 0xF0000000u);
             float sum[12];
-            for (float& s : sum) s = 0.0f;
+            for (float& s : sum)
+                s = 0.0f;
             for (uint32_t i = 0; i < count; ++i, code += 6) {
                 const uint32_t src = Read16(code);
                 const float weight = [&] {
@@ -89,10 +96,12 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
                     return f;
                 }();
                 const uint32_t m = kWorkMatrices + 0x30 * src;
-                for (unsigned k = 0; k < 12; ++k) sum[k] = ReadFloat(m + 4 * k) * weight + sum[k];
+                for (unsigned k = 0; k < 12; ++k)
+                    sum[k] = ReadFloat(m + 4 * k) * weight + sum[k];
                 MemoryInline::FlatWrite32(flagsAt, Read32(flagsAt) & Read32(flags + 4 * src));
             }
-            for (unsigned k = 0; k < 12; ++k) WriteFloat(out + 0x30 * dst + 4 * k, sum[k]);
+            for (unsigned k = 0; k < 12; ++k)
+                WriteFloat(out + 0x30 * dst + 4 * k, sum[k]);
         } else {
             // 5 (anything else is an assert in the original).
             const uint32_t dst = Read16(code + 1);
@@ -104,7 +113,8 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
 
     const uint32_t info = Read32(mdl) + 0x4C;
     const uint32_t mode = Read8(info + 0x23);
-    if (mode != 1 && mode != 2) return;
+    if (mode != 1 && mode != 2)
+        return;
     const uint32_t dic = NodeDic(mdl);
     const uint32_t nodes = dic ? Read32(dic + 4) : 0;
     const uint32_t matrices = Read32(info + 0x1C);
@@ -135,7 +145,8 @@ static void SkinningPort(CpuContext* ctx) {
         ctx->gpr[3] = r3;
         ctx->gpr[4] = r4;
         ctx->gpr[5] = r5;
-        if (code == 0) return;
+        if (code == 0)
+            return;
     }
     Skinning(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], code);
 }
@@ -176,18 +187,21 @@ void CalcWorld(CpuContext* ctx) {
     const uint32_t anmObj = frame.Arg(8), callback = frame.Arg(9), rootFlags = frame.Arg(10);
     auto call = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
         uint32_t r = 3;
-        for (uint32_t v : ints) ctx->gpr[r++] = v;
+        for (uint32_t v : ints)
+            ctx->gpr[r++] = v;
         fn(ctx);
         return ctx->gpr[3];
     };
 
     uint32_t code = frame.Arg(5);
-    if (code == 0 && (code = call(func_80097DA4, {mdl, 0x8058E938u})) == 0) return; // "NodeTree"
+    if (code == 0 && (code = call(func_80097DA4, {mdl, 0x8058E938u})) == 0)
+        return; // "NodeTree"
     const uint32_t info = Read32(mdl) + 0x4C;
     const bool maya = Read32(info + 8) == 1;
     const bool segmentScale = (rootFlags & 0x08000000u) != 0;
     const float one = ReadFloat(0x80798280u);
-    for (uint32_t k = 0; k < 12; k += 4) WriteFloat(kScales + k, one);
+    for (uint32_t k = 0; k < 12; k += 4)
+        WriteFloat(kScales + k, one);
     G3dNative::MtxCopy(base, world);
     MemoryInline::FlatWrite32(flags, rootFlags);
 
@@ -200,7 +214,8 @@ void CalcWorld(CpuContext* ctx) {
             MemoryInline::FlatWrite32(kMatrixIds + 4 * count++, a);
             MemoryInline::FlatWrite32(flags + 4 * a, Read32(flags + 4 * b));
             G3dNative::MtxCopy(world + 0x30 * b, world + 0x30 * a);
-            for (uint32_t k = 0; k < 12; k += 4) MemoryInline::FlatWrite32(kScales + 12 * a + k, Read32(kScales + 12 * b + k));
+            for (uint32_t k = 0; k < 12; k += 4)
+                MemoryInline::FlatWrite32(kScales + 12 * a + k, Read32(kScales + 12 * b + k));
             continue;
         }
         const uint32_t nodeIndex = a, parent = b;
@@ -224,8 +239,10 @@ void CalcWorld(CpuContext* ctx) {
             own = true;
         }
         auto toResult = [&] {
-            if (chr == result) return;
-            for (uint32_t k = 0; k < kResultBytes; k += 4) MemoryInline::FlatWrite32(result + k, Read32(chr + k));
+            if (chr == result)
+                return;
+            for (uint32_t k = 0; k < kResultBytes; k += 4)
+                MemoryInline::FlatWrite32(result + k, Read32(chr + k));
             chr = result;
         };
         if (nodeIndex != 0 && segmentScale && !own) {
@@ -245,11 +262,8 @@ void CalcWorld(CpuContext* ctx) {
             }
         }
         const uint32_t flagsAt = flags + 4 * id;
-        const uint32_t stepped =
-            maya ? G3dNative::WorldMtxNodeStepMayaScale(nodeWorld, nodeScale, world + 0x30 * parent,
-                                                        kScales + 12 * parent, parentFlags, chr)
-                 : call(func_800D7D88, {nodeWorld, nodeScale, world + 0x30 * parent, kScales + 12 * parent,
-                                        parentFlags, chr});
+        const uint32_t stepped = maya ? G3dNative::WorldMtxNodeStepMayaScale(nodeWorld, nodeScale, world + 0x30 * parent, kScales + 12 * parent, parentFlags, chr)
+                                      : call(func_800D7D88, {nodeWorld, nodeScale, world + 0x30 * parent, kScales + 12 * parent, parentFlags, chr});
         MemoryInline::FlatWrite32(flagsAt, (stepped & 0xFFFFFF00u) | (node ? Read32(node + 0x18) : 0));
         if (callback && Read16(callback + 6) == nodeIndex && (Read8(callback + 4) & 2) != 0) {
             MemoryInline::FlatWrite32(frame[kTempC], Read32(mdl));
@@ -322,7 +336,8 @@ void CalcViewLc(CpuContext* ctx) {
     const uint32_t viewPos = frame.Arg(3), nrm = frame.Arg(4), model = frame.Arg(5), attrib = frame.Arg(6);
     const uint32_t count = frame.Arg(7), view = frame.Arg(8), mdl = frame.Arg(9), tex = frame.Arg(10);
     const uint32_t r13 = frame.Arg(13);
-    if (count == 0) return;
+    if (count == 0)
+        return;
     uint32_t a = kLockedCache + 0x800, b = kLockedCache + 0x1000, c = kLockedCache + 0x1800;
     uint32_t a1 = kLockedCache + 0x2800, b1 = kLockedCache + 0x3000, c1 = kLockedCache + 0x3800;
     const uint32_t info = Read32(mdl) + 0x4C;
@@ -333,8 +348,10 @@ void CalcViewLc(CpuContext* ctx) {
     for (uint32_t first = 0; first < count; first += 40) {
         const uint32_t n = count - first > 40 ? 40 : count - first;
         const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
-        if (n > 1) G3dNative::MtxConcatArray(view, model + 0x30 * first, a, n, r13);
-        else G3dNative::MtxConcat(view, model + 0x30 * first, a);
+        if (n > 1)
+            G3dNative::MtxConcatArray(view, model + 0x30 * first, a, n, r13);
+        else
+            G3dNative::MtxConcat(view, model + 0x30 * first, a);
 
         for (uint32_t k = 0; k < n; ++k) {
             const uint32_t id = first + k, attr = Read32(attrib + 4 * id), mtx = a + 0x30 * k;
@@ -343,21 +360,26 @@ void CalcViewLc(CpuContext* ctx) {
                 MemoryInline::FlatWrite32(frame[0x30], Read32(mdl));
                 game(Read32(kBillboards + 4 * billboard), {mtx, model, (attr >> 29) & 1, view, frame[0x30], id});
                 const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(MatrixNode(info, id)));
-                if (node == 0 || Read32(node + 0x60) == 0) continue;
+                if (node == 0 || Read32(node + 0x60) == 0)
+                    continue;
                 // A billboard with children: what they are relative to.
                 const uint32_t scratch = kWorkMatrices + 0x30 * id;
                 if (G3dNative::MtxInv34(inverse, model + 0x30 * id) == 1) {
                     G3dNative::MtxConcat(mtx, inverse, scratch);
                 } else {
-                    for (unsigned w = 0; w < 12; ++w) WriteFloat(scratch + 4 * w, w % 5 == 0 ? 1.0f : 0.0f);
-                    for (uint32_t t = 0xC; t < 0x30; t += 0x10) MemoryInline::FlatWrite32(scratch + t, Read32(view + t));
+                    for (unsigned w = 0; w < 12; ++w)
+                        WriteFloat(scratch + 4 * w, w % 5 == 0 ? 1.0f : 0.0f);
+                    for (uint32_t t = 0xC; t < 0x30; t += 0x10)
+                        MemoryInline::FlatWrite32(scratch + t, Read32(view + t));
                 }
                 continue;
             }
             const int32_t nodeId = MatrixNode(info, id);
-            if (nodeId < 0) continue;
+            if (nodeId < 0)
+                continue;
             const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(nodeId));
-            if (node == 0 || (Read32(node + 0x14) & 0x400) == 0) continue;
+            if (node == 0 || (Read32(node + 0x14) & 0x400) == 0)
+                continue;
             const uint32_t parent = G3dNative::ResDicAtOffset14(mdl, Read32(node + 0x1C));
             const uint32_t parentId = parent ? Read32(parent + 0x10) : 0;
             G3dNative::MtxConcat(kWorkMatrices + 0x30 * parentId, model + 0x30 * id, mtx);
@@ -370,7 +392,8 @@ void CalcViewLc(CpuContext* ctx) {
                 if ((Read32(attrib + 4 * id) & 0x20000000u) != 0) {
                     if (tex) {
                         G3dNative::MtxCopy(mtx, t34);
-                        for (uint32_t t = 0xC; t < 0x30; t += 0x10) WriteFloat(t34 + t, zero);
+                        for (uint32_t t = 0xC; t < 0x30; t += 0x10)
+                            WriteFloat(t34 + t, zero);
                     }
                     G3dNative::MtxTo33(n33, mtx);
                 } else if (tex) {
@@ -381,7 +404,8 @@ void CalcViewLc(CpuContext* ctx) {
                 }
             }
             LcStore(nrm + 0x24 * first, b, blocksB);
-            if (tex) LcStore(tex + 0x30 * first, c, blocksA);
+            if (tex)
+                LcStore(tex + 0x30 * first, c, blocksA);
         }
         std::swap(a, a1);
         std::swap(b, b1);
@@ -393,17 +417,17 @@ void CalcViewLc(CpuContext* ctx) {
 
 extern "C" void func_800711FC(CpuContext* ctx);
 extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
-    const uint32_t position=ctx->gpr[3],normal=ctx->gpr[4],environment=ctx->gpr[10];
-    const uint32_t count=ctx->gpr[7],model_reference=ctx->gpr[9];
+    const uint32_t position = ctx->gpr[3], normal = ctx->gpr[4], environment = ctx->gpr[10];
+    const uint32_t count = ctx->gpr[7], model_reference = ctx->gpr[9];
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("G3dCalcViewLc");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "G3dCalcViewLc", func_800711FC, CalcViewLc);
-        PublishNativeModelPose(position,normal,environment,count,model_reference);
+        PublishNativeModelPose(position, normal, environment, count, model_reference);
         return;
     }
 #endif
     CalcViewLc(ctx);
-    PublishNativeModelPose(position,normal,environment,count,model_reference);
+    PublishNativeModelPose(position, normal, environment, count, model_reference);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800711FC, MH3_G3dCalcViewLc, "G3dCalcViewLc");

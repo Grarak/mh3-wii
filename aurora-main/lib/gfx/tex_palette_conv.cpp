@@ -108,8 +108,7 @@ void run(const ConvRequest& req) {
   }
   gl::bind_framebuffer(req.dst->texture->gl(), 0);
   gl::set_scissor_enabled(false);
-  gl::set_viewport(0, 0, static_cast<int32_t>(req.dst->size.width), static_cast<int32_t>(req.dst->size.height), 0.f,
-                   1.f);
+  gl::set_viewport(0, 0, static_cast<int32_t>(req.dst->size.width), static_cast<int32_t>(req.dst->size.height), 0.f, 1.f);
   gl::apply_raster_state({});
   const GLuint nearest = gl::sampler(gl::NearestClamp);
   gl::bind_texture(0, req.src->texture->gl(), nearest);

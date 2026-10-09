@@ -37,8 +37,7 @@ bool upload_mips(const TextureRef& ref, ArrayRef<uint8_t> data, const char* labe
     const uint32_t bytesPerRow = mipWidth * bytesPerPixel;
     const size_t dataSize = static_cast<size_t>(bytesPerRow) * mipHeight;
     if (offset > data.size() || dataSize > data.size() - offset) {
-      Log.warn("{}: stopping at mip {}: expected at least {} bytes, got {}", label, mip, offset + dataSize,
-               data.size());
+      Log.warn("{}: stopping at mip {}: expected at least {} bytes, got {}", label, mip, offset + dataSize, data.size());
       return false;
     }
     gl::write_texture(ref.texture, mip, 0, 0, mipWidth, mipHeight, data.data() + offset, bytesPerRow);
@@ -56,15 +55,14 @@ uint64_t calc_texture_size(gl::Format format, u32 width, u32 height, u32 mips) n
   uint64_t total = 0;
   for (uint32_t mip = 0; mip < mips; ++mip) {
     if (format == gl::Format::BC1 || format == gl::Format::BC3)
-      total += uint64_t(std::max((width >> mip) / 4, 1u)) * std::max((height >> mip) / 4, 1u) *
-               (format == gl::Format::BC1 ? 8 : 16);
-    else total += static_cast<uint64_t>(std::max(width >> mip, 1u)) * std::max(height >> mip, 1u) * bytesPerPixel;
+      total += uint64_t(std::max((width >> mip) / 4, 1u)) * std::max((height >> mip) / 4, 1u) * (format == gl::Format::BC1 ? 8 : 16);
+    else
+      total += static_cast<uint64_t>(std::max(width >> mip, 1u)) * std::max(height >> mip, 1u) * bytesPerPixel;
   }
   return total;
 }
 
-TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
-                                    bool tlut, const char* label) noexcept {
+TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept {
   ZoneScoped;
 
   mips = clamp_mip_count(width, height, mips, label);
@@ -89,19 +87,16 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
   return handle;
 }
 
-TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
-                                     const char* label) noexcept {
+TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat, const char* label) noexcept {
   ZoneScopedS(3);
   mips = clamp_mip_count(width, height, mips, label);
   const auto format = to_gl_format(gxFormat);
-  return std::make_shared<TextureRef>(gl::create_texture(width, height, mips, format, label),
-                                      Extent{width, height, 1}, format, mips, gxFormat);
+  return std::make_shared<TextureRef>(gl::create_texture(width, height, mips, format, label), Extent{width, height, 1}, format, mips, gxFormat);
 }
 
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   ZoneScoped;
-  auto handle = std::make_shared<TextureRef>(gl::create_texture(width, height, 1, gl::Format::RGBA8, label),
-                                      Extent{width, height, 1}, gl::Format::RGBA8, 1, gxFormat);
+  auto handle = std::make_shared<TextureRef>(gl::create_texture(width, height, 1, gl::Format::RGBA8, label), Extent{width, height, 1}, gl::Format::RGBA8, 1, gxFormat);
   handle->isRenderTarget = true;
   return handle;
 }
@@ -109,8 +104,7 @@ TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, 
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   ZoneScoped;
   const auto format = to_gl_format(gxFormat);
-  auto handle = std::make_shared<TextureRef>(gl::create_texture(width, height, 1, format, label), Extent{width, height, 1},
-                                      format, 1, gxFormat);
+  auto handle = std::make_shared<TextureRef>(gl::create_texture(width, height, 1, format, label), Extent{width, height, 1}, format, 1, gxFormat);
   handle->isRenderTarget = true;
   return handle;
 }

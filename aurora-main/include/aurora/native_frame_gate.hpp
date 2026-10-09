@@ -14,8 +14,14 @@ public:
   bool active() const noexcept { return m_active; }
   bool should_render() const noexcept { return m_active && m_render; }
   bool drawing_allowed() const noexcept { return !m_active || m_render; }
-  void cancel() noexcept { if (m_active) m_render = false; }
-  void end() noexcept { m_active = false; m_render = false; }
+  void cancel() noexcept {
+    if (m_active)
+      m_render = false;
+  }
+  void end() noexcept {
+    m_active = false;
+    m_render = false;
+  }
 
 private:
   bool m_active = false;

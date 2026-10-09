@@ -144,8 +144,7 @@ struct Mat4x2 {
   Vec2<T> m3{};
 
   constexpr Mat4x2() = default;
-  constexpr Mat4x2(const Vec2<T>& m0, const Vec2<T>& m1, const Vec2<T>& m2, const Vec2<T>& m3)
-  : m0(m0), m1(m1), m2(m2), m3(m3) {}
+  constexpr Mat4x2(const Vec2<T>& m0, const Vec2<T>& m1, const Vec2<T>& m2, const Vec2<T>& m3) : m0(m0), m1(m1), m2(m2), m3(m3) {}
 
   inline Mat4x2 transpose() const {
     return {
@@ -197,8 +196,7 @@ struct Mat4x4 {
   Vec4<T> m3{};
 
   constexpr Mat4x4() = default;
-  constexpr Mat4x4(const Vec4<T>& m0, const Vec4<T>& m1, const Vec4<T>& m2, const Vec4<T>& m3)
-  : m0(m0), m1(m1), m2(m2), m3(m3) {}
+  constexpr Mat4x4(const Vec4<T>& m0, const Vec4<T>& m1, const Vec4<T>& m2, const Vec4<T>& m3) : m0(m0), m1(m1), m2(m2), m3(m3) {}
   AURORA_MAT4X4_EXTRA
 
   [[nodiscard]] Mat4x4 transpose() const {
@@ -222,8 +220,7 @@ template <typename T>
 [[nodiscard]] Mat4x4<T> operator*(const Mat4x4<T>& a, const Mat4x4<T>& b) {
   Mat4x4<T> out;
   for (size_t i = 0; i < 4; ++i) {
-    *(&out.m0 + i) = a.m0 * b[i].template shuffle<0, 0, 0, 0>() + a.m1 * b[i].template shuffle<1, 1, 1, 1>() +
-                     a.m2 * b[i].template shuffle<2, 2, 2, 2>() + a.m3 * b[i].template shuffle<3, 3, 3, 3>();
+    *(&out.m0 + i) = a.m0 * b[i].template shuffle<0, 0, 0, 0>() + a.m1 * b[i].template shuffle<1, 1, 1, 1>() + a.m2 * b[i].template shuffle<2, 2, 2, 2>() + a.m3 * b[i].template shuffle<3, 3, 3, 3>();
   }
   return out;
 }

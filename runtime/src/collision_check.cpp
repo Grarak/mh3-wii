@@ -8,11 +8,13 @@ extern "C" void func_80296DC8(CpuContext*);
 
 namespace {
 void WriteHex(uint32_t address, std::string_view hex) {
-    const auto digit = [](char c) { return c <= '9' ? c - '0' : c - 'A' + 10; };
+    const auto digit = [](char c) {
+        return c <= '9' ? c - '0' : c - 'A' + 10;
+    };
     for (size_t i = 0; i < hex.size(); i += 2)
         Memory::Write8(address + i / 2, (digit(hex[i]) << 4) | digit(hex[i + 1]));
 }
-}
+} // namespace
 
 int RunCollisionCheck(CpuContext* cpu) {
     // Captured from the first divergent slope sweep. Dolphin receives the same
@@ -34,8 +36,7 @@ int RunCollisionCheck(CpuContext* cpu) {
     func_80292524(cpu);
     const uint32_t accepted = cpu->gpr[3];
     const uint32_t projected = cpu->gpr[1] - 56;
-    std::printf("candidate=%u (Dolphin=0), projected=%08x %08x %08x\n", accepted,
-                Memory::Read32(projected), Memory::Read32(projected + 4), Memory::Read32(projected + 8));
+    std::printf("candidate=%u (Dolphin=0), projected=%08x %08x %08x\n", accepted, Memory::Read32(projected), Memory::Read32(projected + 4), Memory::Read32(projected + 8));
     WriteHex(position, "445CA69243BA37BBC3A2B6DD");
     cpu->gpr[3] = position;
     cpu->gpr[4] = triangle + 8;

@@ -48,15 +48,12 @@ constexpr uint32_t kMsId = 2;
 constexpr uint32_t kNgKeyId = 0x6AAB8C59;
 
 constexpr std::array<uint8_t, 30> kDefaultPrivateKey{{
-    0x00, 0xAB, 0xEE, 0xC1, 0xDD, 0xB4, 0xA6, 0x16, 0x6B, 0x70, 0xFD, 0x7E, 0x56, 0x67, 0x70,
-    0x57, 0x55, 0x27, 0x38, 0xA3, 0x26, 0xC5, 0x46, 0x16, 0xF7, 0x62, 0xC9, 0xED, 0x73, 0xF2,
+    0x00, 0xAB, 0xEE, 0xC1, 0xDD, 0xB4, 0xA6, 0x16, 0x6B, 0x70, 0xFD, 0x7E, 0x56, 0x67, 0x70, 0x57, 0x55, 0x27, 0x38, 0xA3, 0x26, 0xC5, 0x46, 0x16, 0xF7, 0x62, 0xC9, 0xED, 0x73, 0xF2,
 }};
 
 constexpr EcSignature kDefaultSignature{{
-    0x00, 0xD8, 0x81, 0x63, 0xB2, 0x00, 0x6B, 0x0B, 0x54, 0x82, 0x88, 0x63, 0x81, 0x1C, 0x00,
-    0x71, 0x12, 0xED, 0xB7, 0xFD, 0x21, 0xAB, 0x0E, 0x50, 0x0E, 0x1F, 0xBF, 0x78, 0xAD, 0x37,
-    0x00, 0x71, 0x8D, 0x82, 0x41, 0xEE, 0x45, 0x11, 0xC7, 0x3B, 0xAC, 0x08, 0xB6, 0x83, 0xDC,
-    0x05, 0xB8, 0xA8, 0x90, 0x1F, 0xA8, 0x2A, 0x0E, 0x4E, 0x76, 0xEF, 0x44, 0x72, 0x99, 0xF8,
+    0x00, 0xD8, 0x81, 0x63, 0xB2, 0x00, 0x6B, 0x0B, 0x54, 0x82, 0x88, 0x63, 0x81, 0x1C, 0x00, 0x71, 0x12, 0xED, 0xB7, 0xFD, 0x21, 0xAB, 0x0E, 0x50, 0x0E, 0x1F, 0xBF, 0x78, 0xAD, 0x37,
+    0x00, 0x71, 0x8D, 0x82, 0x41, 0xEE, 0x45, 0x11, 0xC7, 0x3B, 0xAC, 0x08, 0xB6, 0x83, 0xDC, 0x05, 0xB8, 0xA8, 0x90, 0x1F, 0xA8, 0x2A, 0x0E, 0x4E, 0x76, 0xEF, 0x44, 0x72, 0x99, 0xF8,
 }};
 
 struct Identity {
@@ -95,10 +92,8 @@ inline std::optional<Identity> LoadIdentityFromKeysBin(const std::filesystem::pa
     std::copy_n(dump.data() + 0x20C, identity.signature.size(), identity.signature.begin());
     identity.fromNand = true;
 
-    const bool privateKeyEmpty = std::all_of(identity.privateKey.begin(), identity.privateKey.end(),
-                                            [](uint8_t b) { return b == 0; });
-    if (identity.deviceId == 0 || identity.caId == 0 || identity.msId == 0 ||
-        identity.ngKeyId == 0 || privateKeyEmpty) {
+    const bool privateKeyEmpty = std::all_of(identity.privateKey.begin(), identity.privateKey.end(), [](uint8_t b) { return b == 0; });
+    if (identity.deviceId == 0 || identity.caId == 0 || identity.msId == 0 || identity.ngKeyId == 0 || privateKeyEmpty) {
         return std::nullopt;
     }
     return identity;
@@ -188,8 +183,7 @@ inline std::string Hex16(uint64_t value) {
     return Hex8(static_cast<uint32_t>(value >> 32)) + Hex8(static_cast<uint32_t>(value));
 }
 
-inline EccCert MakeBlankEccCert(const std::string& issuer, const std::string& name,
-                                const uint8_t* privateKey, uint32_t keyId) {
+inline EccCert MakeBlankEccCert(const std::string& issuer, const std::string& name, const uint8_t* privateKey, uint32_t keyId) {
     EccCert cert{};
     BigEndian::Write32(cert.data() + 0x00, 0x00010002u);
     WriteString(cert.data() + 0x80, 0x40, issuer);
@@ -209,28 +203,22 @@ inline EccCert GetDeviceCertificate(const Identity& identity = CurrentIdentity()
     return cert;
 }
 
-inline void Sign(uint64_t titleId, const uint8_t* data, size_t dataSize,
-                 const Identity& identity,
-                 EcSignature& sigOut, EccCert& apCertOut) {
+inline void Sign(uint64_t titleId, const uint8_t* data, size_t dataSize, const Identity& identity, EcSignature& sigOut, EccCert& apCertOut) {
     std::array<uint8_t, 30> apPrivate{};
     apPrivate[0x1D] = 1;
 
-    const std::string signer = "Root-CA" + Hex8(identity.caId) + "-MS" + Hex8(identity.msId) +
-                               "-NG" + Hex8(identity.deviceId);
+    const std::string signer = "Root-CA" + Hex8(identity.caId) + "-MS" + Hex8(identity.msId) + "-NG" + Hex8(identity.deviceId);
     const std::string name = "AP" + Hex16(titleId);
     apCertOut = MakeBlankEccCert(signer, name, apPrivate.data(), 0);
 
-    const EcSignature apCertSig = SignMessage(
-        identity.privateKey.data(), apCertOut.data() + 0x80, apCertOut.size() - 0x80);
+    const EcSignature apCertSig = SignMessage(identity.privateKey.data(), apCertOut.data() + 0x80, apCertOut.size() - 0x80);
     std::copy(apCertSig.begin(), apCertSig.end(), apCertOut.begin() + 0x04);
 
     sigOut = SignMessage(apPrivate.data(), data, dataSize);
 }
 
-inline void Sign(uint64_t titleId, const uint8_t* data, size_t dataSize,
-                 EcSignature& sigOut, EccCert& apCertOut) {
+inline void Sign(uint64_t titleId, const uint8_t* data, size_t dataSize, EcSignature& sigOut, EccCert& apCertOut) {
     Sign(titleId, data, dataSize, CurrentIdentity(), sigOut, apCertOut);
 }
-
 
 } // namespace WiiEsCrypto

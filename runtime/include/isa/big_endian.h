@@ -8,15 +8,11 @@
 namespace BigEndian {
 
 inline uint16_t Read16(const uint8_t* src) {
-    return (static_cast<uint16_t>(src[0]) << 8) |
-           static_cast<uint16_t>(src[1]);
+    return (static_cast<uint16_t>(src[0]) << 8) | static_cast<uint16_t>(src[1]);
 }
 
 inline uint32_t Read32(const uint8_t* src) {
-    return (static_cast<uint32_t>(src[0]) << 24) |
-           (static_cast<uint32_t>(src[1]) << 16) |
-           (static_cast<uint32_t>(src[2]) << 8) |
-           static_cast<uint32_t>(src[3]);
+    return (static_cast<uint32_t>(src[0]) << 24) | (static_cast<uint32_t>(src[1]) << 16) | (static_cast<uint32_t>(src[2]) << 8) | static_cast<uint32_t>(src[3]);
 }
 
 inline float ReadFloat32(const uint8_t* src) {

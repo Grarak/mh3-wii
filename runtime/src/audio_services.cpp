@@ -3,19 +3,33 @@
 #include <iostream>
 #include <stdexcept>
 
-extern "C" void MH3_DSPInit(CpuContext*) { AxDspHle::Init(); }
+extern "C" void MH3_DSPInit(CpuContext*) {
+    AxDspHle::Init();
+}
 REGISTER_NATIVE_FUNCTION(0x804A5600, MH3_DSPInit);
-extern "C" void MH3_DSPAddTask(CpuContext* cpu) { cpu->gpr[3] = AxDspHle::AddTask(cpu->gpr[3]); }
+extern "C" void MH3_DSPAddTask(CpuContext* cpu) {
+    cpu->gpr[3] = AxDspHle::AddTask(cpu->gpr[3]);
+}
 REGISTER_NATIVE_FUNCTION(0x804A56D0, MH3_DSPAddTask);
-extern "C" void MH3_DSPAssertTask(CpuContext* cpu) { cpu->gpr[3] = AxDspHle::AssertTask(cpu->gpr[3]); }
+extern "C" void MH3_DSPAssertTask(CpuContext* cpu) {
+    cpu->gpr[3] = AxDspHle::AssertTask(cpu->gpr[3]);
+}
 REGISTER_NATIVE_FUNCTION(0x804A5780, MH3_DSPAssertTask);
-extern "C" void MH3_DSPSendMail(CpuContext* cpu) { AxDspHle::SendMailToDSP(cpu->gpr[3]); }
+extern "C" void MH3_DSPSendMail(CpuContext* cpu) {
+    AxDspHle::SendMailToDSP(cpu->gpr[3]);
+}
 REGISTER_NATIVE_FUNCTION(0x804A55E0, MH3_DSPSendMail);
-extern "C" void MH3_DSPCheckMailTo(CpuContext* cpu) { cpu->gpr[3] = AxDspHle::CheckMailToDSP(); }
+extern "C" void MH3_DSPCheckMailTo(CpuContext* cpu) {
+    cpu->gpr[3] = AxDspHle::CheckMailToDSP();
+}
 REGISTER_NATIVE_FUNCTION(0x804A55A0, MH3_DSPCheckMailTo);
-extern "C" void MH3_DSPCheckMailFrom(CpuContext* cpu) { cpu->gpr[3] = AxDspHle::CheckMailFromDSP(); }
+extern "C" void MH3_DSPCheckMailFrom(CpuContext* cpu) {
+    cpu->gpr[3] = AxDspHle::CheckMailFromDSP();
+}
 REGISTER_NATIVE_FUNCTION(0x804A55B0, MH3_DSPCheckMailFrom);
-extern "C" void MH3_DSPReadMail(CpuContext* cpu) { cpu->gpr[3] = AxDspHle::ReadMailFromDSP(); }
+extern "C" void MH3_DSPReadMail(CpuContext* cpu) {
+    cpu->gpr[3] = AxDspHle::ReadMailFromDSP();
+}
 REGISTER_NATIVE_FUNCTION(0x804A55C0, MH3_DSPReadMail);
 extern "C" void MH3_AXOutInitDSP(CpuContext* cpu) {
     // This HLE supports MH3's known AX Wii program. Do not silently choose a

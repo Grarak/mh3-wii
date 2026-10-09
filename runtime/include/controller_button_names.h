@@ -100,22 +100,20 @@ inline std::string TrimToken(std::string_view token) {
 
 inline const NativeButtonItem* FindNativeButton(std::string_view configName) {
     const std::string name = TrimToken(configName.substr(0, configName.find('@')));
-    const auto it = std::find_if(kNativeButtons.begin(), kNativeButtons.end(),
-                                 [&](const NativeButtonItem& item) { return name == item.configName; });
+    const auto it = std::find_if(kNativeButtons.begin(), kNativeButtons.end(), [&](const NativeButtonItem& item) { return name == item.configName; });
     return it == kNativeButtons.end() ? nullptr : &*it;
 }
 
 // Falls back to the "unmapped" entry so callers always have a label to draw.
 inline const NativeButtonItem& NativeButtonForValue(uint32_t nativeButton) {
-    const auto it = std::find_if(kNativeButtons.begin(), kNativeButtons.end(),
-                                 [&](const NativeButtonItem& item) { return PADAxisButtonIdentity(nativeButton) == PADAxisButtonIdentity(item.nativeButton); });
+    const auto it =
+        std::find_if(kNativeButtons.begin(), kNativeButtons.end(), [&](const NativeButtonItem& item) { return PADAxisButtonIdentity(nativeButton) == PADAxisButtonIdentity(item.nativeButton); });
     return it == kNativeButtons.end() ? *FindNativeButton("unmapped") : *it;
 }
 
 inline const GameCubeButtonItem* FindGameCubeButton(std::string_view configKey) {
     const std::string key = TrimToken(configKey);
-    const auto it = std::find_if(kGameCubeButtons.begin(), kGameCubeButtons.end(),
-                                 [&](const GameCubeButtonItem& item) { return key == item.configKey; });
+    const auto it = std::find_if(kGameCubeButtons.begin(), kGameCubeButtons.end(), [&](const GameCubeButtonItem& item) { return key == item.configKey; });
     return it == kGameCubeButtons.end() ? nullptr : &*it;
 }
 
@@ -126,8 +124,7 @@ inline uint16_t GameCubeMaskFromKeys(std::string_view keys) {
     size_t begin = 0;
     while (begin <= keys.size()) {
         const size_t comma = keys.find(',', begin);
-        const std::string_view token =
-            keys.substr(begin, comma == std::string_view::npos ? std::string_view::npos : comma - begin);
+        const std::string_view token = keys.substr(begin, comma == std::string_view::npos ? std::string_view::npos : comma - begin);
         if (const GameCubeButtonItem* item = FindGameCubeButton(token)) {
             mask |= static_cast<uint16_t>(item->padButton);
         }

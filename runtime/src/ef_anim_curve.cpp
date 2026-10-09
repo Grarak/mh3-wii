@@ -35,10 +35,8 @@
 namespace {
 
 bool ValidPointer(uint32_t p) {
-    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u ||
-           (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u ||
-           (p & 0xFF800000u) == 0xC1000000u || (p & 0xF8000000u) == 0xD0000000u ||
-           (p & 0xFFFFC000u) == 0xE0000000u;
+    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u || (p & 0xFF800000u) == 0xC1000000u ||
+           (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
 }
 
 struct Args {
@@ -56,7 +54,8 @@ struct Args {
     throw std::runtime_error(text);
 }
 void CheckPointer(uint32_t p, const char* what) {
-    if (!ValidPointer(p)) [[unlikely]] Panic(what, p);
+    if (!ValidPointer(p)) [[unlikely]]
+        Panic(what, p);
 }
 
 // The search's outputs, written as the original writes them (a sink either
@@ -79,18 +78,18 @@ struct HostKeyOutputs {
 };
 
 template <class Out>
-void SearchKeys(int32_t frame, double time, uint32_t keys, uint32_t stride, int32_t lo, int32_t hi, uint32_t r2,
-                Out& out) {
+void SearchKeys(int32_t frame, double time, uint32_t keys, uint32_t stride, int32_t lo, int32_t hi, uint32_t r2, Out& out) {
     CheckPointer(keys, "key");
-    auto key = [&](int32_t i) { return int32_t(MemoryInline::FlatRead16(keys + uint32_t(i) * stride)); };
+    auto key = [&](int32_t i) {
+        return int32_t(MemoryInline::FlatRead16(keys + uint32_t(i) * stride));
+    };
 
     // float(frame) through the lfd of 0x43300000:frame^0x80000000 less the
     // bias, then |float(frame) - time| < epsilon.
     uint64_t magic = uint64_t(0x43300000u) << 32 | (uint32_t(frame) ^ 0x80000000u);
     double biased;
     std::memcpy(&biased, &magic, 8);
-    const uint64_t biasBits = uint64_t(MemoryInline::FlatRead32(r2 - 0x7AD8)) << 32 |
-                              MemoryInline::FlatRead32(r2 - 0x7AD8 + 4);
+    const uint64_t biasBits = uint64_t(MemoryInline::FlatRead32(r2 - 0x7AD8)) << 32 | MemoryInline::FlatRead32(r2 - 0x7AD8 + 4);
     double bias;
     std::memcpy(&bias, &biasBits, 8);
     const double frameF = double(float(biased - bias));
@@ -115,7 +114,8 @@ void SearchKeys(int32_t frame, double time, uint32_t keys, uint32_t stride, int3
             return;
         }
         out.Exact(onTime);
-        if (!onTime) out.Upper(key(lo + 1));
+        if (!onTime)
+            out.Upper(key(lo + 1));
         return;
     }
     const int32_t last = key(hi);
@@ -161,7 +161,9 @@ float Sda2Float(uint32_t r2, int32_t offset) {
     std::memcpy(&f, &bits, 4);
     return f;
 }
-uint32_t ToInt(float v) { return PPC_FprLowWordInline(PPC_Fctiwz(v)); }
+uint32_t ToInt(float v) {
+    return PPC_FprLowWordInline(PPC_Fctiwz(v));
+}
 
 // 0x8009E8B8 (AnimCurveBlendU8): the u8 value between keys a (r4) and b (r5)
 // at t (r3, a 16.16 fraction for the linear mode, else frames of r2 - 0x7ACC
@@ -170,12 +172,15 @@ uint32_t ToInt(float v) { return PPC_FprLowWordInline(PPC_Fctiwz(v)); }
 // to 0-255), 2 step. Mode 3 panics. Equal keys give r4 as it came.
 uint32_t BlendU8(uint32_t t, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t r2) {
     const uint32_t a = r4 & 0xFF, b = r5 & 0xFF, mode = r6 & 0xFF;
-    if (a == b) return r4;
+    if (a == b)
+        return r4;
     switch (mode & 3) {
     case 0:
         return (a + ((t * (b - a)) >> 16 & 0xFFFF)) & 0xFF;
     case 1: {
-        auto k = [&](int32_t offset) { return Sda2Float(r2, offset); };
+        auto k = [&](int32_t offset) {
+            return Sda2Float(r2, offset);
+        };
         const float f5 = float(t) / k(-0x7ACC);
         const float span = float(int32_t(b - a));
         if (mode == 1) {
@@ -188,8 +193,10 @@ uint32_t BlendU8(uint32_t t, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t r2)
         const float f2 = f5 * (f5 * ((f6 + f7) - k(-0x7AC4)));
         const float f0 = f5 * (k(-0x7AC8) + (k(-0x7ABC) * f6 - f7));
         const float v = float(a) + f3 * (f6 + (f2 + f0));
-        if (!(v >= k(-0x7AE8))) return 0;
-        if (v > k(-0x7AB8)) return 0xFF;
+        if (!(v >= k(-0x7AE8)))
+            return 0;
+        if (v > k(-0x7AB8))
+            return 0xFF;
         return ToInt(v);
     }
     case 2:
@@ -203,15 +210,16 @@ uint32_t BlendU8(uint32_t t, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t r2)
 }
 
 Args FromContext(const CpuContext* c) {
-    return Args{c->gpr[3], c->gpr[4], c->gpr[5], c->gpr[6], int32_t(c->gpr[7]), c->fpr[1].d, c->gpr[8], c->gpr[9],
-                int32_t(c->gpr[10]), int32_t(MemoryInline::FlatRead32(c->gpr[1] + 8)), c->gpr[2]};
+    return Args{c->gpr[3], c->gpr[4], c->gpr[5], c->gpr[6], int32_t(c->gpr[7]), c->fpr[1].d, c->gpr[8], c->gpr[9], int32_t(c->gpr[10]), int32_t(MemoryInline::FlatRead32(c->gpr[1] + 8)), c->gpr[2]};
 }
 
 } // namespace
 
 extern "C" void func_8009EFEC(CpuContext* ctx);
 
-static void SearchPort(CpuContext* p) { Search(FromContext(p)); }
+static void SearchPort(CpuContext* p) {
+    Search(FromContext(p));
+}
 
 static void SearchChecked(uint32_t r1, const Args& a) {
 #ifdef MH3_DEVELOPMENT
@@ -229,8 +237,7 @@ static void SearchChecked(uint32_t r1, const Args& a) {
         c->gpr[8] = a.keys;
         c->gpr[9] = a.stride;
         c->gpr[10] = uint32_t(a.lo);
-        PortCheck::RunOutput(c, "AnimCurveKeySearch", func_8009EFEC, SearchPort,
-                             {{a.index, 4}, {a.exact, 1}, {a.lower, 2}, {a.upper, 2}});
+        PortCheck::RunOutput(c, "AnimCurveKeySearch", func_8009EFEC, SearchPort, {{a.index, 4}, {a.exact, 1}, {a.lower, 2}, {a.upper, 2}});
         return;
     }
 #else
@@ -240,14 +247,15 @@ static void SearchChecked(uint32_t r1, const Args& a) {
 }
 
 extern "C" void MH3_AnimCurveKeySearch(CpuContext* ctx) {
-    SearchChecked(ctx->gpr[1], Args{ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], int32_t(ctx->gpr[7]),
-                                    ctx->fpr[1].d, ctx->gpr[8], ctx->gpr[9], int32_t(ctx->gpr[10]),
+    SearchChecked(ctx->gpr[1], Args{ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], int32_t(ctx->gpr[7]), ctx->fpr[1].d, ctx->gpr[8], ctx->gpr[9], int32_t(ctx->gpr[10]),
                                     int32_t(MemoryInline::FlatRead32(ctx->gpr[1] + 8)), ctx->gpr[2]});
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009EFEC, MH3_AnimCurveKeySearch, "AnimCurveKeySearch");
 
 extern "C" void func_8009E8B8(CpuContext* ctx);
-static void BlendU8Port(CpuContext* p) { p->gpr[3] = BlendU8(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[2]); }
+static void BlendU8Port(CpuContext* p) {
+    p->gpr[3] = BlendU8(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[2]);
+}
 static uint32_t BlendU8Checked(uint32_t r1, uint32_t r2, uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveBlendU8");
@@ -288,12 +296,13 @@ REGISTER_NATIVE_FUNCTION_AS(0x8009E8B8, MH3_AnimCurveBlendU8, "AnimCurveBlendU8"
 // random set is {u32, then per channel u8 base, s8-scaled u8 range}.
 namespace {
 
-uint32_t Lcg(uint32_t s) { return s * 0x343FDu + 0x269EC3u; }
+uint32_t Lcg(uint32_t s) {
+    return s * 0x343FDu + 0x269EC3u;
+}
 
 // 0x8009EF58: the random seed of a key's pick.
 uint32_t PickSeed(uint32_t particleSeed, uint32_t salt, uint32_t set, uint32_t loop) {
-    const uint32_t w = loop * 0x7B929u + (set & 0xFFFF) * 0x371097E7u +
-                       ((particleSeed & 0xFFFF) * 0x3F81F635u + (salt & 0xFFFF) * 0x30A74193u + 0x4BF53u);
+    const uint32_t w = loop * 0x7B929u + (set & 0xFFFF) * 0x371097E7u + ((particleSeed & 0xFFFF) * 0x3F81F635u + (salt & 0xFFFF) * 0x30A74193u + 0x4BF53u);
     uint8_t b0 = uint8_t(w >> 24), b1 = uint8_t(w >> 16), b2 = uint8_t(w >> 8);
     const uint8_t b3 = uint8_t(w);
     b2 ^= b3;
@@ -303,14 +312,21 @@ uint32_t PickSeed(uint32_t particleSeed, uint32_t salt, uint32_t set, uint32_t l
 }
 
 // 0x8009F898 / 0x8009F8AC: channels in a mask, and its highest channel bit.
-uint32_t ChannelCount(uint32_t mask) { return MemoryInline::FlatRead8(0x80592428u + (mask & 0xFF)); }
-uint32_t ChannelBound(uint32_t mask) { return MemoryInline::FlatRead8(0x80592528u + (mask & 0xFF)); }
+uint32_t ChannelCount(uint32_t mask) {
+    return MemoryInline::FlatRead8(0x80592428u + (mask & 0xFF));
+}
+uint32_t ChannelBound(uint32_t mask) {
+    return MemoryInline::FlatRead8(0x80592528u + (mask & 0xFF));
+}
 
 // __cvt_fp2unsigned (0x80457360).
 uint32_t CvtToUnsigned(double v) {
-    if (v < 0.0) return 0;
-    if (!(v < 4294967296.0)) return 0xFFFFFFFFu;
-    if (v < 2147483648.0) return PPC_FprLowWordInline(PPC_Fctiwz(v));
+    if (v < 0.0)
+        return 0;
+    if (!(v < 4294967296.0))
+        return 0xFFFFFFFFu;
+    if (v < 2147483648.0)
+        return PPC_FprLowWordInline(PPC_Fctiwz(v));
     return PPC_FprLowWordInline(PPC_Fctiwz(v - 2147483648.0)) + 0x80000000u;
 }
 
@@ -359,7 +375,8 @@ TickFrame TickToFrame(uint32_t life, uint32_t header, uint32_t tick) {
         } else {
             f = float(tick) * (float(int32_t(last)) / float(life - 1));
             const float end = float(int32_t(last));
-            if (!(f <= end)) f = end;
+            if (!(f <= end))
+                f = end;
         }
         r.frame = f;
         r.tick = uint16_t(ToInt(f));
@@ -399,11 +416,12 @@ TickFrame TickToFrame(uint32_t life, uint32_t header, uint32_t tick) {
 void AdjustLoops(uint32_t header, uint32_t keys, int32_t index, uint32_t& low, uint32_t& high) {
     high = low;
     const uint32_t flags = MemoryInline::FlatRead8(header + 4);
-    if ((flags & 0x40) == 0 || ((flags & 0x20) == 0 && MemoryInline::FlatRead8(header + 5) <= 1)) return;
-    if ((low & 1) == 0 && index + 1 >= int32_t(MemoryInline::FlatRead16(keys)) - 1 &&
-        ((flags & 0x20) != 0 || low < MemoryInline::FlatRead8(header + 5) - 1u))
+    if ((flags & 0x40) == 0 || ((flags & 0x20) == 0 && MemoryInline::FlatRead8(header + 5) <= 1))
+        return;
+    if ((low & 1) == 0 && index + 1 >= int32_t(MemoryInline::FlatRead16(keys)) - 1 && ((flags & 0x20) != 0 || low < MemoryInline::FlatRead8(header + 5) - 1u))
         ++high;
-    if ((low & 1) != 0 && index == 0 && low != 0) ++low;
+    if ((low & 1) != 0 && index == 0 && low != 0)
+        ++low;
 }
 
 // 0x800A2568 (u8) / 0x800A2D54 (f32): a baked track, the frame's values
@@ -415,18 +433,24 @@ void ExecuteBaked(uint32_t track, uint32_t target, uint32_t tick, uint32_t life)
     const uint32_t mask = MemoryInline::FlatRead8(track + 3);
     const int32_t bound = int32_t(ChannelBound(mask));
     const uint32_t count = ChannelCount(mask);
-    if (count == 0) return;
+    if (count == 0)
+        return;
     const Tables t = ResolveTables(track);
     uint32_t src = t.keys + count * TickToFrame(life, t.header, tick).tick * width;
     for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, target += width) {
-        if ((mask & uint32_t(bit)) == 0) continue;
-        if constexpr (width == 1) MemoryInline::FlatWrite8(target, MemoryInline::FlatRead8(src));
-        else MemoryInline::FlatWrite32(target, MemoryInline::FlatRead32(src));
+        if ((mask & uint32_t(bit)) == 0)
+            continue;
+        if constexpr (width == 1)
+            MemoryInline::FlatWrite8(target, MemoryInline::FlatRead8(src));
+        else
+            MemoryInline::FlatWrite32(target, MemoryInline::FlatRead32(src));
         src += width;
     }
 }
 
-uint32_t Divide(uint32_t a, uint32_t b) { return b != 0 ? a / b : 0; }
+uint32_t Divide(uint32_t a, uint32_t b) {
+    return b != 0 ? a / b : 0;
+}
 
 // A random channel value: base + range * (seed's high half as s16) / 32768,
 // clamped to a byte.
@@ -449,22 +473,23 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
     const uint32_t mask = MemoryInline::FlatRead8(track + 3);
     const int32_t bound = int32_t(ChannelBound(mask));
     const uint32_t count = ChannelCount(mask) & 0xFF;
-    if (count == 0) return;
+    if (count == 0)
+        return;
     const uint32_t stride = (count + 0xD) & ~1u;
     const uint32_t setBytes = count * 2;
     const Tables t = ResolveTables(track);
     const TickFrame at = TickToFrame(life, t.header, tick);
     const uint32_t keys = t.keys + 4;
     HostKeyOutputs key;
-    SearchKeys(int32_t(at.tick), double(at.frame), keys, stride, 0, int32_t(MemoryInline::FlatRead16(t.keys)) - 1, r2,
-               key);
+    SearchKeys(int32_t(at.tick), double(at.frame), keys, stride, 0, int32_t(MemoryInline::FlatRead16(t.keys)) - 1, r2, key);
     const bool advance = (MemoryInline::FlatRead8(t.header + 4) & 4) == 0;
     const uint32_t salt = MemoryInline::FlatRead16(t.header + 6);
     // The values of a random key: its set, or a set picked from the pool.
     auto randomSet = [&](uint32_t k, uint32_t loop, uint32_t& seed) {
         const uint32_t set = MemoryInline::FlatRead16(k + 0xC);
         seed = PickSeed(particleSeed, salt, set, loop);
-        if ((MemoryInline::FlatRead8(k + 2) & 2) == 0) return t.random + set * setBytes + 4;
+        if ((MemoryInline::FlatRead8(k + 2) & 2) == 0)
+            return t.random + set * setBytes + 4;
         const uint32_t hi = seed >> 16, pool = MemoryInline::FlatRead16(t.pool);
         const uint32_t values = t.pool + setBytes * (hi - Divide(hi, pool) * pool) + 4;
         seed = Lcg(seed);
@@ -476,14 +501,17 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
         if (MemoryInline::FlatRead8(k + 2) == 0) {
             uint32_t values = k + 0xC;
             for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, ++target)
-                if (mask & uint32_t(bit)) MemoryInline::FlatWrite8(target, MemoryInline::FlatRead8(values++));
+                if (mask & uint32_t(bit))
+                    MemoryInline::FlatWrite8(target, MemoryInline::FlatRead8(values++));
             return;
         }
         uint32_t seed;
         uint32_t values = randomSet(k, at.loop, seed);
         for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, ++target) {
-            if (mask & uint32_t(bit)) MemoryInline::FlatWrite8(target, RandomChannel(values, seed));
-            if (advance) seed = Lcg(seed);
+            if (mask & uint32_t(bit))
+                MemoryInline::FlatWrite8(target, RandomChannel(values, seed));
+            if (advance)
+                seed = Lcg(seed);
         }
         return;
     }
@@ -503,7 +531,8 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
 
     if (!lowRandom && !highRandom) {
         for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, ++target, ++modes)
-            if (mask & uint32_t(bit)) put(MemoryInline::FlatRead8(low++), MemoryInline::FlatRead8(high++));
+            if (mask & uint32_t(bit))
+                put(MemoryInline::FlatRead8(low++), MemoryInline::FlatRead8(high++));
     } else if (lowRandom && !highRandom) {
         uint32_t seed;
         low = randomSet(lowKey, lowLoop, seed);
@@ -512,7 +541,8 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
                 const uint32_t a = RandomChannel(low, seed);
                 put(a, MemoryInline::FlatRead8(high++));
             }
-            if (advance) seed = Lcg(seed);
+            if (advance)
+                seed = Lcg(seed);
         }
     } else if (!lowRandom) {
         uint32_t seed;
@@ -522,7 +552,8 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
                 const uint32_t b = RandomChannel(high, seed);
                 put(MemoryInline::FlatRead8(low++), b);
             }
-            if (advance) seed = Lcg(seed);
+            if (advance)
+                seed = Lcg(seed);
         }
     } else {
         uint32_t lowSeed, highSeed;
@@ -531,9 +562,11 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
         for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, ++target, ++modes) {
             if (mask & uint32_t(bit)) {
                 const uint32_t a = RandomChannel(low, lowSeed);
-                if (advance) lowSeed = Lcg(lowSeed);
+                if (advance)
+                    lowSeed = Lcg(lowSeed);
                 const uint32_t b = RandomChannel(high, highSeed);
-                if (advance) highSeed = Lcg(highSeed);
+                if (advance)
+                    highSeed = Lcg(highSeed);
                 put(a, b);
             } else if (advance) {
                 lowSeed = Lcg(lowSeed);
@@ -543,18 +576,21 @@ void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particle
     }
 }
 
-
 // 0x800A0228 (AnimCurveBlendF32): the value between keys a and b at t (0-1)
 // by the interpolation mode, as BlendU8 without the byte rounding.
 float BlendF32(float t, float a, float b, uint32_t mode, uint32_t r2) {
-    if (a == b) return a;
+    if (a == b)
+        return a;
     mode &= 0xFF;
-    auto k = [&](int32_t offset) { return Sda2Float(r2, offset); };
+    auto k = [&](int32_t offset) {
+        return Sda2Float(r2, offset);
+    };
     switch (mode & 3) {
     case 0:
         return a + t * (b - a);
     case 1: {
-        if (mode == 1) return a + t * (t * ((k(-0x7AC8) - k(-0x7AC4) * t) * (b - a)));
+        if (mode == 1)
+            return a + t * (t * ((k(-0x7AC8) - k(-0x7AC4) * t) * (b - a)));
         const float f6 = (mode >> 3 & 1) ? k(-0x7AC0) : k(-0x7AE8);
         const float f7 = (mode >> 2 & 1) ? k(-0x7AC0) : k(-0x7AE8);
         const float f5 = t * (b - a);
@@ -603,14 +639,14 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
     const TickFrame at = TickToFrame(life, t.header, tick);
     const int32_t bound = int32_t(ChannelBound(mask));
     const uint32_t count = ChannelCount(mask) & 0xFF;
-    if (count == 0) return;
+    if (count == 0)
+        return;
     const uint32_t stride = count * 4 + 0xC;
     const uint32_t valueBytes = count * 8;
     const uint32_t setBytes = rotate ? valueBytes + 4 : valueBytes;
     const uint32_t keys = t.keys + 4;
     HostKeyOutputs key;
-    SearchKeys(int32_t(at.tick), double(at.frame), keys, stride, 0, int32_t(MemoryInline::FlatRead16(t.keys)) - 1, r2,
-               key);
+    SearchKeys(int32_t(at.tick), double(at.frame), keys, stride, 0, int32_t(MemoryInline::FlatRead16(t.keys)) - 1, r2, key);
     const bool advance = (MemoryInline::FlatRead8(t.header + 4) & 4) == 0;
     const uint32_t salt = MemoryInline::FlatRead16(t.header + 6);
     struct Pick {
@@ -646,7 +682,8 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
         if (MemoryInline::FlatRead8(k + 2) == 0) {
             uint32_t values = k + 0xC;
             for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, target += 4) {
-                if ((mask & uint32_t(bit)) == 0) continue;
+                if ((mask & uint32_t(bit)) == 0)
+                    continue;
                 MemoryInline::FlatWrite32(target, MemoryInline::FlatRead32(values));
                 values += 4;
             }
@@ -655,8 +692,10 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
         Pick p = randomSet(k, at.loop);
         for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, target += 4) {
             const bool present = (mask & uint32_t(bit)) != 0;
-            if (present) WriteFloat(target, p.Next());
-            if (advance && (rotate || present)) p.seed = Lcg(p.seed);
+            if (present)
+                WriteFloat(target, p.Next());
+            if (advance && (rotate || present))
+                p.seed = Lcg(p.seed);
         }
         return;
     }
@@ -669,8 +708,10 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
     const bool lowRandom = MemoryInline::FlatRead8(lowKey + 2) != 0;
     const bool highRandom = MemoryInline::FlatRead8(highKey + 2) != 0;
     Pick lowPick{0, 0, false}, highPick{0, 0, false};
-    if (lowRandom) lowPick = randomSet(lowKey, lowLoop);
-    if (highRandom) highPick = randomSet(highKey, highLoop);
+    if (lowRandom)
+        lowPick = randomSet(lowKey, lowLoop);
+    if (highRandom)
+        highPick = randomSet(highKey, highLoop);
     for (int32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, target += 4, ++modes) {
         const bool present = (mask & uint32_t(bit)) != 0;
         if (present) {
@@ -690,8 +731,10 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
             WriteFloat(target, BlendF32(blend, a, b, MemoryInline::FlatRead8(modes), r2));
         }
         if (advance && (rotate || present)) {
-            if (lowRandom) lowPick.seed = Lcg(lowPick.seed);
-            if (highRandom) highPick.seed = Lcg(highPick.seed);
+            if (lowRandom)
+                lowPick.seed = Lcg(lowPick.seed);
+            if (highRandom)
+                highPick.seed = Lcg(highPick.seed);
         }
     }
 }
@@ -717,8 +760,7 @@ static void TickToFramePort(CpuContext* p) {
     MemoryInline::FlatWrite32(p->gpr[7], bits);
     MemoryInline::FlatWrite32(p->gpr[8], r.loop);
 }
-static void TickToFrameChecked(uint32_t r1, uint32_t r2, uint32_t life, uint32_t header, uint32_t tick,
-                               uint32_t outTick, uint32_t outFrame, uint32_t outLoop) {
+static void TickToFrameChecked(uint32_t r1, uint32_t r2, uint32_t life, uint32_t header, uint32_t tick, uint32_t outTick, uint32_t outFrame, uint32_t outLoop) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveTickToFrame");
     if (check) [[unlikely]] {
@@ -731,8 +773,7 @@ static void TickToFrameChecked(uint32_t r1, uint32_t r2, uint32_t life, uint32_t
         c->gpr[6] = outTick;
         c->gpr[7] = outFrame;
         c->gpr[8] = outLoop;
-        PortCheck::RunOutput(c, "AnimCurveTickToFrame", func_8009CE20, TickToFramePort,
-                             {{outTick, 2}, {outFrame, 4}, {outLoop, 4}});
+        PortCheck::RunOutput(c, "AnimCurveTickToFrame", func_8009CE20, TickToFramePort, {{outTick, 2}, {outFrame, 4}, {outLoop, 4}});
         return;
     }
 #else
@@ -750,8 +791,7 @@ static void TickToFrameChecked(uint32_t r1, uint32_t r2, uint32_t life, uint32_t
     MemoryInline::FlatWrite32(outLoop, r.loop);
 }
 extern "C" void MH3_AnimCurveTickToFrame(CpuContext* ctx) {
-    TickToFrameChecked(ctx->gpr[1], ctx->gpr[2], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7],
-                       ctx->gpr[8]);
+    TickToFrameChecked(ctx->gpr[1], ctx->gpr[2], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7], ctx->gpr[8]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009CE20, MH3_AnimCurveTickToFrame, "AnimCurveTickToFrame");
 
@@ -784,8 +824,7 @@ extern "C" void MH3_AnimCurveFrameIndex(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A2818, MH3_AnimCurveFrameIndex, "AnimCurveFrameIndex");
 
-static void StoreTables(const Tables& t, uint32_t header, uint32_t keys, uint32_t random, uint32_t pool,
-                        uint32_t names) {
+static void StoreTables(const Tables& t, uint32_t header, uint32_t keys, uint32_t random, uint32_t pool, uint32_t names) {
     MemoryInline::FlatWrite32(header, t.header);
     MemoryInline::FlatWrite32(keys, t.keys);
     MemoryInline::FlatWrite32(random, t.random);
@@ -795,8 +834,7 @@ static void StoreTables(const Tables& t, uint32_t header, uint32_t keys, uint32_
 static void ResolveTablesPort(CpuContext* p) {
     StoreTables(ResolveTables(p->gpr[3]), p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7], p->gpr[8]);
 }
-static void ResolveTablesChecked(uint32_t r1, uint32_t track, uint32_t header, uint32_t keys, uint32_t random,
-                                 uint32_t pool, uint32_t names) {
+static void ResolveTablesChecked(uint32_t r1, uint32_t track, uint32_t header, uint32_t keys, uint32_t random, uint32_t pool, uint32_t names) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveTables");
     if (check) [[unlikely]] {
@@ -808,8 +846,7 @@ static void ResolveTablesChecked(uint32_t r1, uint32_t track, uint32_t header, u
         c->gpr[6] = random;
         c->gpr[7] = pool;
         c->gpr[8] = names;
-        PortCheck::RunOutput(c, "AnimCurveTables", func_8009F290, ResolveTablesPort,
-                             {{header, 4}, {keys, 4}, {random, 4}, {pool, 4}, {names, 4}});
+        PortCheck::RunOutput(c, "AnimCurveTables", func_8009F290, ResolveTablesPort, {{header, 4}, {keys, 4}, {random, 4}, {pool, 4}, {names, 4}});
         return;
     }
 #else
@@ -828,16 +865,16 @@ extern "C" void MH3_AnimCurveTables(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009F290, MH3_AnimCurveTables, "AnimCurveTables");
 
-static void AdjustLoopsStore(uint32_t header, uint32_t keys, uint32_t index, uint32_t lowAddress,
-                             uint32_t highAddress) {
+static void AdjustLoopsStore(uint32_t header, uint32_t keys, uint32_t index, uint32_t lowAddress, uint32_t highAddress) {
     uint32_t low = MemoryInline::FlatRead32(lowAddress), high;
     AdjustLoops(header, keys, int32_t(index), low, high);
     MemoryInline::FlatWrite32(highAddress, high);
     MemoryInline::FlatWrite32(lowAddress, low);
 }
-static void AdjustLoopsPort(CpuContext* p) { AdjustLoopsStore(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7]); }
-static void AdjustLoopsChecked(uint32_t r1, uint32_t header, uint32_t keys, uint32_t index, uint32_t low,
-                               uint32_t high) {
+static void AdjustLoopsPort(CpuContext* p) {
+    AdjustLoopsStore(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7]);
+}
+static void AdjustLoopsChecked(uint32_t r1, uint32_t header, uint32_t keys, uint32_t index, uint32_t low, uint32_t high) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveKeyLoops");
     if (check) [[unlikely]] {
@@ -865,7 +902,9 @@ extern "C" void MH3_AnimCurveKeyLoops(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009EAB0, MH3_AnimCurveKeyLoops, "AnimCurveKeyLoops");
 
-static void BakedU8Port(CpuContext* p) { ExecuteBaked<1>(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6]); }
+static void BakedU8Port(CpuContext* p) {
+    ExecuteBaked<1>(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6]);
+}
 static void BakedU8Checked(uint32_t r1, uint32_t track, uint32_t target, uint32_t tick, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveExecuteBakedU8");
@@ -892,8 +931,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800A2568, MH3_AnimCurveExecuteBakedU8, "AnimCurveE
 static void ExecuteU8Port(CpuContext* p) {
     ExecuteU8(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7], p->gpr[2]);
 }
-static void ExecuteU8Checked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick,
-                             uint32_t seed, uint32_t life) {
+static void ExecuteU8Checked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick, uint32_t seed, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveExecuteU8");
     if (check) [[unlikely]] {
@@ -945,7 +983,9 @@ extern "C" void MH3_AnimCurveBlendF32(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A0228, MH3_AnimCurveBlendF32, "AnimCurveBlendF32");
 
-static void BakedF32Port(CpuContext* p) { ExecuteBaked<4>(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6]); }
+static void BakedF32Port(CpuContext* p) {
+    ExecuteBaked<4>(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6]);
+}
 static void BakedF32Checked(uint32_t r1, uint32_t track, uint32_t target, uint32_t tick, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveExecuteBakedF32");
@@ -972,8 +1012,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800A2D54, MH3_AnimCurveExecuteBakedF32, "AnimCurve
 static void ExecuteF32Port(CpuContext* p) {
     ExecuteFloat<false>(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7], p->gpr[2]);
 }
-static void ExecuteF32Checked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick,
-                              uint32_t seed, uint32_t life) {
+static void ExecuteF32Checked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick, uint32_t seed, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveExecuteF32");
     if (check) [[unlikely]] {
@@ -1001,8 +1040,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8009F8C0, MH3_AnimCurveExecuteF32, "AnimCurveExecu
 static void ExecuteRotatePort(CpuContext* p) {
     ExecuteFloat<true>(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7], p->gpr[2]);
 }
-static void ExecuteRotateChecked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick,
-                                 uint32_t seed, uint32_t life) {
+static void ExecuteRotateChecked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick, uint32_t seed, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnimCurveExecuteRotate");
     if (check) [[unlikely]] {

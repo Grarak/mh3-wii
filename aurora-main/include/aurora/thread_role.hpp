@@ -21,4 +21,4 @@ inline void pin_current_thread(ThreadRole role) noexcept {
   (void)role;
 #endif
 }
-}
+} // namespace aurora

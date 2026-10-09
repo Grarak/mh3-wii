@@ -16,16 +16,21 @@
 namespace {
 
 constexpr uint32_t kFrameRate = 0x8065B4D0; // f32 frames per second
-float FrameRate() { return Memory::ReadFloat32(kFrameRate); }
-float F32(uint32_t address) { return Memory::ReadFloat32(address); }
+float FrameRate() {
+    return Memory::ReadFloat32(kFrameRate);
+}
+float F32(uint32_t address) {
+    return Memory::ReadFloat32(address);
+}
 
 struct Guest {
     CpuContext* cpu;
-    uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {},
-                        std::initializer_list<double> floats = {}) {
+    uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         uint32_t r = 3, f = 1;
-        for (uint32_t v : ints) cpu->gpr[r++] = v;
-        for (double v : floats) cpu->fpr[f++].d = v;
+        for (uint32_t v : ints)
+            cpu->gpr[r++] = v;
+        for (double v : floats)
+            cpu->fpr[f++].d = v;
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
@@ -52,8 +57,7 @@ extern "C" void MH3_TimedCheckByKind(CpuContext* ctx) {
     uint32_t result = 0;
     if (kind <= 5) {
         // Seconds per kind at 0x8079915C, 0x80799164..0x80799174; factor at 0x80799160.
-        static constexpr uint32_t kSeconds[] = {0x8079915C, 0x80799164, 0x80799168,
-                                                0x8079916C, 0x80799170, 0x80799174};
+        static constexpr uint32_t kSeconds[] = {0x8079915C, 0x80799164, 0x80799168, 0x8079916C, 0x80799170, 0x80799174};
         const float frames = F32(kSeconds[kind]) * (F32(0x80799160) * FrameRate());
         result = game(0x8012E958, {}, {frames});
     } else if (kind == 6) {
@@ -67,8 +71,7 @@ extern "C" void MH3_TimedCheckByKind(CpuContext* ctx) {
             if (Memory::Read8(p) && Memory::Read8(p + 0x1E1) == id10 && Memory::Read8(p + 3) == id2)
                 result = 0;
         for (uint32_t p = 0x806A7960; p < 0x806A7960 + 128 * 0x44 && result; p += 0x44)
-            if (Memory::Read8(p) && Memory::Read8(p + 10) == id10 && Memory::Read8(p + 2) == id2 &&
-                Memory::Read8(p + 0xC) == 1)
+            if (Memory::Read8(p) && Memory::Read8(p + 10) == id10 && Memory::Read8(p + 2) == id2 && Memory::Read8(p + 0xC) == 1)
                 result = 0;
     }
     *ctx = saved;
@@ -93,8 +96,12 @@ extern "C" void MH3_PlayerSkillTimers(CpuContext* ctx) {
         CounterStart = 0x803A8844,
     };
     const uint32_t kPeriodScale = 0x8079CE1C, kPeriodSeconds = 0x8079CDDC, kWindowSeconds = 0x8079CE20;
-    auto s16Positive = [](uint32_t address) { return int16_t(Memory::Read16(address)) > 0; };
-    auto period = [&] { return int32_t(F32(kPeriodScale) * (F32(kPeriodSeconds) * FrameRate())); };
+    auto s16Positive = [](uint32_t address) {
+        return int16_t(Memory::Read16(address)) > 0;
+    };
+    auto period = [&] {
+        return int32_t(F32(kPeriodScale) * (F32(kPeriodSeconds) * FrameRate()));
+    };
 
     uint32_t flags = 0;
     if (game(Pl_Skill_ck, {player, 0x97}) == 1) {
@@ -110,7 +117,8 @@ extern "C" void MH3_PlayerSkillTimers(CpuContext* ctx) {
             // step, several on a long one): once per call at the stock step.
             for (uint32_t tick = 0, ticks = GameStep::Ticks(); tick < ticks; ++tick) {
                 const int32_t window = int32_t(Memory::Read32(self + 0x188));
-                if (window > 0) Memory::Write32(self + 0x188, uint32_t(window - 1));
+                if (window > 0)
+                    Memory::Write32(self + 0x188, uint32_t(window - 1));
                 const int32_t timer = int32_t(Memory::Read32(self + 0x184));
                 if (timer <= 0) {
                     Memory::Write32(self + 0x184, uint32_t(period()));
@@ -135,7 +143,8 @@ extern "C" void MH3_PlayerSkillTimers(CpuContext* ctx) {
     } else if (game(Pl_cat_skill_ck, {player, 0x31}) == 1) {
         const int32_t now = int32_t(game(CounterNow));
         const int32_t gap = now - int32_t(game(CounterStart));
-        if (float(gap) < F32(kWindowSeconds) * FrameRate()) flags |= 1;
+        if (float(gap) < F32(kWindowSeconds) * FrameRate())
+            flags |= 1;
     }
     *ctx = saved;
     ctx->gpr[3] = flags;
@@ -166,7 +175,8 @@ extern "C" void MH3_QuestResultInit(CpuContext* ctx) {
         for (int32_t i = 0; i < int32_t(Memory::Read8(self + 7)); ++i) {
             // 0x8039D12C, inlined: reset the player's result row.
             const uint32_t row = self + 0x33DC + uint32_t(i) * 0x18;
-            for (uint32_t b : {0u, 2u, 4u, 5u, 9u, 10u}) Memory::Write8(row + b, 0);
+            for (uint32_t b : {0u, 2u, 4u, 5u, 9u, 10u})
+                Memory::Write8(row + b, 0);
             Memory::Write8(row + 1, uint8_t(i));
             Memory::Write8(row + 3, 2);
             Memory::Write8(row + 6, 4);

@@ -32,20 +32,19 @@ void SaveSram() {
         std::ofstream file(staging, std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(Memory::GetPointer(kSram, 0x40)), 0x40);
         file.close();
-        if (!file) throw std::runtime_error("Unable to persist host SRAM");
+        if (!file)
+            throw std::runtime_error("Unable to persist host SRAM");
     }
     std::filesystem::rename(staging, path);
 }
-}
+} // namespace
 
 // EXIInit: no GameCube memory cards or debug adapters are connected. Device
 // probing must report absence rather than fabricate a successful bus transfer.
 // The RTC/SRAM device is supplied by the dedicated host SRAM service below.
 extern "C" void MH3_EXIInit(CpuContext*) {
     Memory::Write32(0x800000C4, Memory::Read32(0x800000C4) | 0x007F8000);
-    constexpr std::array<uint32_t, 8> handlers = {
-        0x804B1310, 0x804B13D0, 0x804B15F0,
-        0x804B1310, 0x804B13D0, 0x804B15F0, 0x804B1310, 0x804B13D0};
+    constexpr std::array<uint32_t, 8> handlers = {0x804B1310, 0x804B13D0, 0x804B15F0, 0x804B1310, 0x804B13D0, 0x804B15F0, 0x804B1310, 0x804B13D0};
     for (unsigned i = 0; i < handlers.size(); ++i)
         Memory::Write32(0x80003040 + (9 + i) * 4, handlers[i]);
     // Probe timestamps and device-2 ID cache used by the original EXI library.
@@ -57,10 +56,13 @@ extern "C" void MH3_EXIInit(CpuContext*) {
 }
 REGISTER_NATIVE_FUNCTION(0x804B16C0, MH3_EXIInit);
 
-extern "C" void MH3_EXIProbe(CpuContext* ctx) { ctx->gpr[3] = 0; }
+extern "C" void MH3_EXIProbe(CpuContext* ctx) {
+    ctx->gpr[3] = 0;
+}
 REGISTER_NATIVE_FUNCTION(0x804B0D80, MH3_EXIProbe);
 extern "C" void MH3_EXIGetID(CpuContext* ctx) {
-    if (ctx->gpr[5]) Memory::Write32(ctx->gpr[5], 0);
+    if (ctx->gpr[5])
+        Memory::Write32(ctx->gpr[5], 0);
     ctx->gpr[3] = 0;
 }
 REGISTER_NATIVE_FUNCTION(0x804B1AA0, MH3_EXIGetID);
@@ -68,8 +70,10 @@ REGISTER_NATIVE_FUNCTION(0x804B1AA0, MH3_EXIGetID);
 // SIInit: initialize the original four transfer queues, channel state and
 // interrupt binding. Controller input will use host PAD/WPAD services.
 extern "C" void MH3_SIInit(CpuContext*) {
-    if (Memory::Read32(0x80797934)) return;
-    for (uint32_t i = 0; i < 4; ++i) Memory::Write32(0x80759AC8 + i * 0x20, 0xFFFFFFFF);
+    if (Memory::Read32(0x80797934))
+        return;
+    for (uint32_t i = 0; i < 4; ++i)
+        Memory::Write32(0x80759AC8 + i * 0x20, 0xFFFFFFFF);
     Memory::Write32(0x8062A8A4, 0);
     Memory::Write32(0x80003040 + 20 * 4, 0x804DE3A0);
     Memory::Write32(0x800000C4, Memory::Read32(0x800000C4) & ~0x800u);
@@ -82,7 +86,8 @@ REGISTER_NATIVE_FUNCTION(0x804DE900, MH3_SIInit);
 // through its completed-query path (rather than waiting for an SI interrupt).
 extern "C" void MH3_SIGetType(CpuContext* cpu) {
     const auto channel = cpu->gpr[3];
-    if (channel >= 4) throw std::runtime_error("SIGetType channel outside 0..3");
+    if (channel >= 4)
+        throw std::runtime_error("SIGetType channel outside 0..3");
     Memory::Write32(0x8062A8B8 + channel * 4, 8); // SI_ERROR_NO_RESPONSE
     cpu->gpr[3] = 8;
 }
@@ -99,14 +104,15 @@ extern "C" void MH3_OSInitSram(CpuContext*) {
             throw std::runtime_error("Host SRAM file must contain exactly 64 bytes");
         std::ifstream file(path, std::ios::binary);
         file.read(reinterpret_cast<char*>(Memory::GetPointer(kSram, 0x40)), 0x40);
-        if (!file) throw std::runtime_error("Unable to read host SRAM");
+        if (!file)
+            throw std::runtime_error("Unable to read host SRAM");
     } else {
-        Memory::Write8(kSram + 0x12, 0); // English
+        Memory::Write8(kSram + 0x12, 0);    // English
         Memory::Write8(kSram + 0x13, 0x0C); // stereo, setup complete
         FixSramChecksum();
     }
     Memory::Write32(kSram + 0x40, 0x40); // no dirty bytes
-    Memory::Write32(kSram + 0x4C, 1); // synchronized
+    Memory::Write32(kSram + 0x4C, 1);    // synchronized
 }
 REGISTER_NATIVE_FUNCTION(0x804D3350, MH3_OSInitSram);
 
@@ -116,7 +122,8 @@ extern "C" void MH3_UnlockSram(CpuContext* ctx) {
     if (ctx->gpr[3]) {
         if (ctx->gpr[4] == 0) {
             uint8_t flags = Memory::Read8(kSram + 0x13);
-            if ((flags & 3) == 3) Memory::Write8(kSram + 0x13, flags & ~3u);
+            if ((flags & 3) == 3)
+                Memory::Write8(kSram + 0x13, flags & ~3u);
             FixSramChecksum();
         }
         const uint16_t mode = Memory::Read16(kSram + 0x3C);
@@ -127,8 +134,10 @@ extern "C" void MH3_UnlockSram(CpuContext* ctx) {
     Memory::Write32(kSram + 0x40, 0x40);
     Memory::Write32(kSram + 0x48, 0);
     Memory::Write32(kSram + 0x4C, 1);
-    if (Memory::Read32(kSram + 0x44)) ctx->msr |= 0x8000;
-    else ctx->msr &= ~0x8000u;
+    if (Memory::Read32(kSram + 0x44))
+        ctx->msr |= 0x8000;
+    else
+        ctx->msr &= ~0x8000u;
     ctx->gpr[3] = 1;
 }
 REGISTER_NATIVE_FUNCTION(0x804D3550, MH3_UnlockSram);
@@ -154,8 +163,7 @@ REGISTER_NATIVE_FUNCTION(0x80464340, MH3_WriteConsole);
 // SISetXY: retain the SDK's scanline/line-count polling configuration. Host
 // controller services do not use the physical SI polling register.
 extern "C" void MH3_SISetXY(CpuContext* cpu) {
-    const uint32_t state = (Memory::Read32(0x8062A8A4) & 0xFC0000FFu) |
-        (cpu->gpr[3] << 16) | (cpu->gpr[4] << 8);
+    const uint32_t state = (Memory::Read32(0x8062A8A4) & 0xFC0000FFu) | (cpu->gpr[3] << 16) | (cpu->gpr[4] << 8);
     Memory::Write32(0x8062A8A4, state);
     cpu->gpr[3] = state;
 }

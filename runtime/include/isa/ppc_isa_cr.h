@@ -14,12 +14,10 @@ inline void SetCRResident(uint32_t& cr, uint32_t xer, int field, uint32_t a, uin
     cr = (cr & ~(0xFu << shift)) | (value << shift);
 }
 inline void SetCRFloatResident(uint32_t& cr, int field, double a, double b) noexcept {
-    uint32_t value = (std::isnan(a) || std::isnan(b)) ? 0x1u :
-        ((a < b ? 0x8u : 0u) | (a > b ? 0x4u : 0u) | (a == b ? 0x2u : 0u));
+    uint32_t value = (std::isnan(a) || std::isnan(b)) ? 0x1u : ((a < b ? 0x8u : 0u) | (a > b ? 0x4u : 0u) | (a == b ? 0x2u : 0u));
     const int shift = (7 - field) * 4;
     cr = (cr & ~(0xFu << shift)) | (value << shift);
 }
-
 
 inline bool GetCRBitResident(uint32_t cr, int field, int bit) noexcept {
     const int shift = (7 - field) * 4 + (3 - bit);
@@ -31,8 +29,7 @@ inline uint32_t PpcCrSetBitResident(uint32_t cr, uint32_t bitIndex, uint32_t val
     return (value & 1u) != 0 ? (cr | mask) : (cr & ~mask);
 }
 
-inline uint32_t PpcCrLogicalResident(
-    uint32_t cr, uint32_t op, uint32_t bt, uint32_t ba, uint32_t bb) noexcept {
+inline uint32_t PpcCrLogicalResident(uint32_t cr, uint32_t op, uint32_t bt, uint32_t ba, uint32_t bb) noexcept {
     const auto readBit = [cr](uint32_t index) noexcept {
         return (cr >> (31u - (index & 31u))) & 1u;
     };
@@ -40,14 +37,30 @@ inline uint32_t PpcCrLogicalResident(
     const uint32_t b = readBit(bb);
     uint32_t result = 0;
     switch (op & 7u) {
-        case 0: result = ~(a | b) & 1u; break;
-        case 1: result = a & (~b & 1u); break;
-        case 2: result = a ^ b; break;
-        case 3: result = ~(a & b) & 1u; break;
-        case 4: result = a & b; break;
-        case 5: result = ~(a ^ b) & 1u; break;
-        case 6: result = (~a & 1u) | b; break;
-        case 7: result = a | b; break;
+    case 0:
+        result = ~(a | b) & 1u;
+        break;
+    case 1:
+        result = a & (~b & 1u);
+        break;
+    case 2:
+        result = a ^ b;
+        break;
+    case 3:
+        result = ~(a & b) & 1u;
+        break;
+    case 4:
+        result = a & b;
+        break;
+    case 5:
+        result = ~(a ^ b) & 1u;
+        break;
+    case 6:
+        result = (~a & 1u) | b;
+        break;
+    case 7:
+        result = a | b;
+        break;
     }
     return PpcCrSetBitResident(cr, bt, result);
 }

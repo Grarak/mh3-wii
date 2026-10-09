@@ -25,16 +25,16 @@ namespace {
 // Movie player state (0x806D6B80).
 constexpr uint32_t kMovie = 0x806D6B80;
 enum : uint32_t {
-    kMovieWidth = 0x00,        // u32 video width
-    kMovieHeight = 0x04,       // u32 video height
-    kRetraceStamp = 0x10,      // u32 VI retrace count at the last draw
-    kDrawResult = 0x14,        // u32 DrawFrame result
-    kPendingFlag = 0x18,       // u32 cleared on every draw
-    kFrameDrawn = 0x1A4,       // u8
+    kMovieWidth = 0x00,   // u32 video width
+    kMovieHeight = 0x04,  // u32 video height
+    kRetraceStamp = 0x10, // u32 VI retrace count at the last draw
+    kDrawResult = 0x14,   // u32 DrawFrame result
+    kPendingFlag = 0x18,  // u32 cleared on every draw
+    kFrameDrawn = 0x1A4,  // u8
 };
 
-constexpr uint32_t kResetting = 0x8065AA65; // u8: reset/fade-out in progress
-constexpr uint32_t kSourceFile = 0x80604BE0; // "movie.cpp"
+constexpr uint32_t kResetting = 0x8065AA65;   // u8: reset/fade-out in progress
+constexpr uint32_t kSourceFile = 0x80604BE0;  // "movie.cpp"
 constexpr uint32_t kDecodeError = 0x80604C2C; // "Failed to decode video data"
 
 enum : int32_t {
@@ -57,7 +57,8 @@ static void MovieDrawFrame(CpuContext* ctx) {
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
     auto call = [ctx](uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
         uint32_t r = 3;
-        for (uint32_t v : ints) ctx->gpr[r++] = v;
+        for (uint32_t v : ints)
+            ctx->gpr[r++] = v;
         InvokeIndirectCpu(fn, ctx);
         return ctx->gpr[3];
     };

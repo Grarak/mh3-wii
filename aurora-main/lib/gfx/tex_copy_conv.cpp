@@ -38,7 +38,8 @@ uint gx_z24_at_coord(ivec2 unclamped_coord) {
     ivec2 tex_size = textureSize(src, 0);
     ivec2 coord = clamp(unclamped_coord, ivec2(0), tex_size - ivec2(1));
     float depth = texelFetch(src, coord, 0).r;
-)"s + (gx::UseReversedZ ? "    depth = 1.0 - depth;\n"s : ""s) + R"(
+)"s + (gx::UseReversedZ ? "    depth = 1.0 - depth;\n"s : ""s) +
+                                               R"(
     return min(uint(clamp(depth, 0.0, 1.0) * 16777215.0 + 0.5), 0x00ffffffu);
 }
 
@@ -225,13 +226,19 @@ struct ConvShader {
 };
 
 static constexpr std::array ConvShaders{
-    ConvShader{GX_TF_I4, FragI4, "TexCopyConv I4"},       ConvShader{GX_TF_I8, FragI8, "TexCopyConv I8"},
-    ConvShader{GX_TF_IA4, FragIA4, "TexCopyConv IA4"},    ConvShader{GX_TF_IA8, FragIA8, "TexCopyConv IA8"},
+    ConvShader{GX_TF_I4, FragI4, "TexCopyConv I4"},
+    ConvShader{GX_TF_I8, FragI8, "TexCopyConv I8"},
+    ConvShader{GX_TF_IA4, FragIA4, "TexCopyConv IA4"},
+    ConvShader{GX_TF_IA8, FragIA8, "TexCopyConv IA8"},
     ConvShader{GX_TF_RGB565, FragRGB565, "TexCopyConv RGB565"},
-    ConvShader{GX_CTF_R4, FragR4, "TexCopyConv R4"},      ConvShader{GX_CTF_RA4, FragRA4, "TexCopyConv RA4"},
-    ConvShader{GX_CTF_RA8, FragRA8, "TexCopyConv RA8"},   ConvShader{GX_CTF_A8, FragA8, "TexCopyConv A8"},
-    ConvShader{GX_CTF_R8, FragR8, "TexCopyConv R8"},      ConvShader{GX_CTF_G8, FragG8, "TexCopyConv G8"},
-    ConvShader{GX_CTF_B8, FragB8, "TexCopyConv B8"},      ConvShader{GX_CTF_RG8, FragRG8, "TexCopyConv RG8"},
+    ConvShader{GX_CTF_R4, FragR4, "TexCopyConv R4"},
+    ConvShader{GX_CTF_RA4, FragRA4, "TexCopyConv RA4"},
+    ConvShader{GX_CTF_RA8, FragRA8, "TexCopyConv RA8"},
+    ConvShader{GX_CTF_A8, FragA8, "TexCopyConv A8"},
+    ConvShader{GX_CTF_R8, FragR8, "TexCopyConv R8"},
+    ConvShader{GX_CTF_G8, FragG8, "TexCopyConv G8"},
+    ConvShader{GX_CTF_B8, FragB8, "TexCopyConv B8"},
+    ConvShader{GX_CTF_RG8, FragRG8, "TexCopyConv RG8"},
     ConvShader{GX_CTF_GB8, FragGB8, "TexCopyConv GB8"},
 };
 
@@ -258,7 +265,9 @@ static gl::ProgramPtr create_program(const ConvShader& conv, std::string_view pr
   });
 }
 
-bool needs_conversion(const GXTexFmt fmt) { return g_programs.contains(fmt); }
+bool needs_conversion(const GXTexFmt fmt) {
+  return g_programs.contains(fmt);
+}
 
 void initialize() {
   g_blitProgram = create_program({GX_TF_RGBA8, FragPassthrough, "TexCopyConv Blit"}, ShaderPreamble);
@@ -305,6 +314,8 @@ void run(const ConvRequest& req) {
   execute(req, *it->second);
 }
 
-void blit(const ConvRequest& req) { execute(req, *g_blitProgram); }
+void blit(const ConvRequest& req) {
+  execute(req, *g_blitProgram);
+}
 
 } // namespace aurora::gfx::tex_copy_conv

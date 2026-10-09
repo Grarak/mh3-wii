@@ -6,13 +6,15 @@
 
 namespace {
 void Check(bool ok, const char* message) {
-    if (!ok) throw std::runtime_error(std::string(message) + ": " + SDL_GetError());
+    if (!ok)
+        throw std::runtime_error(std::string(message) + ": " + SDL_GetError());
 }
 SDL_JoystickID Attach() {
     SDL_VirtualJoystickDesc desc{};
     SDL_INIT_INTERFACE(&desc);
     desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
-    desc.vendor_id = 0xF00D; desc.product_id = 0xBEEF;
+    desc.vendor_id = 0xF00D;
+    desc.product_id = 0xBEEF;
     desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
     desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
     desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
@@ -22,7 +24,7 @@ SDL_JoystickID Attach() {
     Check(id != 0, "attach virtual gamepad");
     return id;
 }
-}
+} // namespace
 int main() {
     try {
         unsetenv("MH3_INPUT_FILE");
@@ -45,8 +47,7 @@ int main() {
         SDL_UpdateJoysticks();
         auto state = ReadHostController();
         Check((state.buttons & 0x4090) == 0x4090, "Classic A, down, ZL mapping");
-        Check(state.leftX == 511 && state.leftY == 511 &&
-              state.rightX == -512 && state.rightY == -512, "stick ranges and Y inversion");
+        Check(state.leftX == 511 && state.leftY == 511 && state.rightX == -512 && state.rightY == -512, "stick ranges and Y inversion");
         Check(state.triggerL == 255, "analog trigger mapping");
         Check(SDL_SetJoystickVirtualButton(stick, SDL_GAMEPAD_BUTTON_EAST, false), "release east");
         Check(SDL_SetJoystickVirtualButton(stick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, false), "release down");
@@ -57,8 +58,7 @@ int main() {
         SDL_CloseJoystick(stick);
         SDL_UpdateJoysticks();
         state = ReadHostController();
-        Check(state.connected && state.buttons == 0 && state.leftX == 0 && state.rightY == 0,
-              "keyboard fallback after disconnect");
+        Check(state.connected && state.buttons == 0 && state.leftX == 0 && state.rightY == 0, "keyboard fallback after disconnect");
         id = Attach();
         stick = SDL_OpenJoystick(id);
         Check(stick != nullptr, "open reconnected joystick");

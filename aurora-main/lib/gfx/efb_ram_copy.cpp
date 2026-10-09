@@ -50,11 +50,11 @@ void ensure_native_texture(PendingCopy& pending, TextureHandle* cache = nullptr)
   if (pending.texture->size.width == pending.width && pending.texture->size.height == pending.height) {
     return;
   }
-  if (pending.nativeTexture && pending.nativeUniformEpoch == staging_epoch()) return;
+  if (pending.nativeTexture && pending.nativeUniformEpoch == staging_epoch())
+    return;
   if (pending.nativeTexture) {
     // Keep the texture; its old staging range belongs to a submitted batch.
-  } else if (cache != nullptr && *cache && (*cache)->size.width == pending.width &&
-      (*cache)->size.height == pending.height) {
+  } else if (cache != nullptr && *cache && (*cache)->size.width == pending.width && (*cache)->size.height == pending.height) {
     pending.nativeTexture = *cache;
   } else {
     pending.nativeTexture = new_conv_texture(pending.width, pending.height, GX_TF_RGBA8, "GX EFB RAM native readback");
@@ -78,9 +78,7 @@ bool read_back(const PendingCopy& pending, std::vector<uint8_t>& scratch) noexce
         .src = pending.texture->texture,
         .uniformRange = pending.nativeBlitUniform,
         .dst = pending.nativeTexture,
-        .sampleFilter = pending.format == GX_TF_Z16 || pending.format == GX_TF_Z24X8
-                            ? tex_copy_conv::SampleFilter::Nearest
-                            : tex_copy_conv::SampleFilter::Linear,
+        .sampleFilter = pending.format == GX_TF_Z16 || pending.format == GX_TF_Z24X8 ? tex_copy_conv::SampleFilter::Nearest : tex_copy_conv::SampleFilter::Linear,
     });
   }
   const auto& texture = pending.nativeTexture ? pending.nativeTexture : pending.texture;
@@ -89,11 +87,9 @@ bool read_back(const PendingCopy& pending, std::vector<uint8_t>& scratch) noexce
   scratch.resize(static_cast<size_t>(width) * height * 4);
   gl::read_pixels(texture->texture->gl(), 0, 0, width, height, scratch.data());
   const size_t outputSize = encoded_size(pending.format, pending.width, pending.height);
-  const bool ok = encode(pending.dest, outputSize, pending.format, pending.width, pending.height, scratch.data(),
-                         width, height, width * 4, HostPixelOrder::RGBA);
+  const bool ok = encode(pending.dest, outputSize, pending.format, pending.width, pending.height, scratch.data(), width, height, width * 4, HostPixelOrder::RGBA);
   if (!ok) {
-    Log.error("Failed to encode EFB RAM copy format=0x{:x} size={}x{}", static_cast<unsigned>(pending.format),
-              pending.width, pending.height);
+    Log.error("Failed to encode EFB RAM copy format=0x{:x} size={}x{}", static_cast<unsigned>(pending.format), pending.width, pending.height);
   }
   // Guest RAM written from outside the embedder, so nothing bumps its write generation and a
   // texture cached over this range would keep its digest.
@@ -140,9 +136,7 @@ void schedule(void* dest, uint32_t width, uint32_t height, GXTexFmt format, Text
   }
 
   auto& list = async ? g_asyncPending : g_pending;
-  if (auto it = std::find_if(list.begin(), list.end(),
-                             [dest](const PendingCopy& pending) { return pending.dest == dest; });
-      it != list.end()) {
+  if (auto it = std::find_if(list.begin(), list.end(), [dest](const PendingCopy& pending) { return pending.dest == dest; }); it != list.end()) {
     *it = std::move(request);
   } else {
     list.push_back(std::move(request));
@@ -150,22 +144,25 @@ void schedule(void* dest, uint32_t width, uint32_t height, GXTexFmt format, Text
 }
 
 bool has_pending(void* dest) noexcept {
-  if (dest == nullptr) return !g_pending.empty();
-  return std::any_of(g_pending.begin(), g_pending.end(),
-                     [dest](const PendingCopy& pending) { return pending.dest == dest; });
+  if (dest == nullptr)
+    return !g_pending.empty();
+  return std::any_of(g_pending.begin(), g_pending.end(), [dest](const PendingCopy& pending) { return pending.dest == dest; });
 }
 
 bool prepare_downloads(void* dest) {
   uint64_t copies = 0;
   for (const auto& pending : g_pending) {
-    if (dest != nullptr && pending.dest != dest) continue;
-    if (pending.texture->size.width != pending.width || pending.texture->size.height != pending.height) ++copies;
+    if (dest != nullptr && pending.dest != dest)
+      continue;
+    if (pending.texture->size.width != pending.width || pending.texture->size.height != pending.height)
+      ++copies;
   }
   // Reserve all copies, even already-prepared ones: a split retires their ranges.
   ensure_staging_space({0, copies * staging_uniform_bytes(48), 0, 0});
   bool found = false;
   for (auto& pending : g_pending) {
-    if (dest != nullptr && pending.dest != dest) continue;
+    if (dest != nullptr && pending.dest != dest)
+      continue;
     found = true;
     ensure_native_texture(pending);
   }

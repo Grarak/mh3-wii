@@ -15,9 +15,7 @@ struct PngStructs {
   png_infop pInfo;
   std::ifstream file;
 
-  ~PngStructs() {
-    png_destroy_read_struct(&pStruct, &pInfo, nullptr);
-  }
+  ~PngStructs() { png_destroy_read_struct(&pStruct, &pInfo, nullptr); }
 };
 
 static void readPngData(png_structp png, png_bytep data, const size_t length) {
@@ -29,8 +27,7 @@ static void readPngData(png_structp png, png_bytep data, const size_t length) {
   }
 }
 
-std::optional<ConvertedTexture>
-load_png_file(const std::filesystem::path& path) noexcept {
+std::optional<ConvertedTexture> load_png_file(const std::filesystem::path& path) noexcept {
   PngStructs structs{};
 
   structs.file = std::move(std::ifstream(path, std::ifstream::in | std::ifstream::binary));
@@ -91,12 +88,6 @@ load_png_file(const std::filesystem::path& path) noexcept {
   png_read_image(structs.pStruct, rowPointers.data());
   png_read_end(structs.pStruct, nullptr);
 
-  return ConvertedTexture{
-    .format = gl::Format::RGBA8,
-    .width = width,
-    .height = height,
-    .mips = 1,
-    .data = std::move(imageData)
-  };
+  return ConvertedTexture{.format = gl::Format::RGBA8, .width = width, .height = height, .mips = 1, .data = std::move(imageData)};
 }
-}
+} // namespace aurora::gfx::png

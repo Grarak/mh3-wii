@@ -39,12 +39,14 @@ public:
   SceGxmShaderPatcher* patcher() const noexcept { return m_patcher; }
   CdramArena& arena() noexcept { return *m_arena; }
   bool scene_active() const noexcept { return m_inScene; }
-  void begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color,
-             const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync = nullptr);
+  void begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color, const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync = nullptr);
   void end();
   void finish();
   SceGxmNotification current_fence() const noexcept { return {m_notification, m_sceneSerial + unsigned(m_inScene)}; }
-  SceGxmNotification completion_fence() { end(); return current_fence(); }
+  SceGxmNotification completion_fence() {
+    end();
+    return current_fence();
+  }
   bool frame_pending() const noexcept;
   uint32_t pending_scenes() const noexcept { return m_notification ? m_sceneSerial - *m_notification : 0; }
   unsigned frame_slot() const noexcept { return m_frames.slot(); }
@@ -81,14 +83,11 @@ struct VertexInput {
 };
 class PatchedProgram {
 public:
-  PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,
-                 SceGxmIndexFormat indices = SCE_GXM_INDEX_FORMAT_U16,
-                 std::span<const VertexInput> inputs = {});
+  PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash, SceGxmIndexFormat indices = SCE_GXM_INDEX_FORMAT_U16, std::span<const VertexInput> inputs = {});
   ~PatchedProgram();
   PatchedProgram(const PatchedProgram&) = delete;
   PatchedProgram& operator=(const PatchedProgram&) = delete;
-  void bind(const SceGxmBlendInfo& blend,
-            SceGxmOutputRegisterFormat output = SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4);
+  void bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterFormat output = SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4);
   void set_vertex_uniform(const char* name, const float* values, unsigned count);
   void set_fragment_uniform(const char* name, const float* values, unsigned count);
   bool uses_discard() const noexcept { return sceGxmProgramIsDiscardUsed(m_boundFragmentBinary ? m_boundFragmentBinary : m_fragmentBinary); }
@@ -109,4 +108,4 @@ private:
   void* m_fragmentDefault = nullptr;
   void release() noexcept;
 };
-}
+} // namespace aurora::gxm

@@ -34,7 +34,10 @@ namespace {
 SceUID debugLog = -1;
 int WriteDebugLog(void*, const char* bytes, int size) {
     const int written = sceIoWrite(debugLog, bytes, size);
-    if (written < 0) { errno = EIO; return -1; }
+    if (written < 0) {
+        errno = EIO;
+        return -1;
+    }
     return written;
 }
 int CloseDebugLog(void*) {
@@ -43,11 +46,14 @@ int CloseDebugLog(void*) {
     return result;
 }
 void OpenDebugLog() {
-    debugLog = sceIoOpen("host0:/game/runtime.log",
-                         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC | SCE_O_NOBUF, 0777);
-    if (debugLog < 0) return;
+    debugLog = sceIoOpen("host0:/game/runtime.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC | SCE_O_NOBUF, 0777);
+    if (debugLog < 0)
+        return;
     FILE* stream = funopen(nullptr, nullptr, WriteDebugLog, nullptr, CloseDebugLog);
-    if (!stream) { CloseDebugLog(nullptr); return; }
+    if (!stream) {
+        CloseDebugLog(nullptr);
+        return;
+    }
     // Native unbuffered device I/O avoids host0's file cache rewriting the
     // accumulated file on every flushed line. Keep newlib formatting.
     std::fflush(stderr);
@@ -55,7 +61,7 @@ void OpenDebugLog() {
     stderr = stream;
     std::setvbuf(stream, nullptr, _IOLBF, 0);
 }
-}
+} // namespace
 #endif
 
 void InitializeVitaPlatform(int& argc, char**& argv) {
@@ -67,14 +73,23 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     static std::vector<char*> arguments;
     arguments = {program};
     for (int i = 0; i < argc; ++i) {
-        if (!argv[i] || !argv[i][0]) continue;
+        if (!argv[i] || !argv[i][0])
+            continue;
         const std::string_view value(argv[i]);
-        if (value.ends_with("eboot.bin")) { arguments[0] = argv[i]; continue; }
+        if (value.ends_with("eboot.bin")) {
+            arguments[0] = argv[i];
+            continue;
+        }
         bool launchOption = false;
         for (const char* option : {"-budget", "-memsize", "-phcontmemsize", "-la_type", "-titleid", "-param", "-exit_to"}) {
-            if (value == option) { launchOption = true; ++i; break; }
+            if (value == option) {
+                launchOption = true;
+                ++i;
+                break;
+            }
         }
-        if (launchOption || value == "-livearea_off" || value == "-nonsuspendable" || value == "-usecdlg") continue;
+        if (launchOption || value == "-livearea_off" || value == "-nonsuspendable" || value == "-usecdlg")
+            continue;
         arguments.push_back(argv[i]);
     }
     argc = arguments.size();
@@ -84,12 +99,13 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     setenv("MH3_USER_DIR", "ux0:/data/mh3-wii/saves", 0);
 #ifdef MH3_DEVELOPMENT
     std::fprintf(stderr, "MH3 Vita: main thread core 2, heap 112 MiB, argv0=%s\n", argc ? argv[0] : "");
-    for (int i = 1; i < argc; ++i) std::fprintf(stderr, "MH3 Vita: argv[%d]=%s\n", i, argv[i]);
+    for (int i = 1; i < argc; ++i)
+        std::fprintf(stderr, "MH3 Vita: argv[%d]=%s\n", i, argv[i]);
     SceKernelFreeMemorySizeInfo memory{};
     memory.size = sizeof(memory);
     if (sceKernelGetFreeMemorySize(&memory) >= 0)
-        std::fprintf(stderr, "MH3 Vita: free main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB before guest RAM\n",
-            memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
+        std::fprintf(stderr, "MH3 Vita: free main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB before guest RAM\n", memory.size_user / 1048576.0, memory.size_cdram / 1048576.0,
+                     memory.size_phycont / 1048576.0);
 #else
     (void)argc;
     (void)argv;
@@ -101,37 +117,34 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     const int busClock = scePowerSetBusClockFrequency(222);
     const int gpuClock = scePowerSetGpuClockFrequency(222);
     const int xbarClock = scePowerSetGpuXbarClockFrequency(166);
-    std::fprintf(stderr, "MH3 Vita clocks: CPU %d, bus %d, GPU %d, crossbar %d MHz (set %d/%d/%d/%d)\n",
-        scePowerGetArmClockFrequency(), scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency(),
-        scePowerGetGpuXbarClockFrequency(), armClock, busClock, gpuClock, xbarClock);
+    std::fprintf(stderr, "MH3 Vita clocks: CPU %d, bus %d, GPU %d, crossbar %d MHz (set %d/%d/%d/%d)\n", scePowerGetArmClockFrequency(), scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency(),
+                 scePowerGetGpuXbarClockFrequency(), armClock, busClock, gpuClock, xbarClock);
     ReportVitaMemory();
 }
 
 void ReportVitaMemory() {
     static uint64_t last = 0, peakMain = 0, peakCdram = 0, peakPhycont = 0;
     const uint64_t now = sceKernelGetProcessTimeWide();
-    if (last && now - last < 1000000) return;
+    if (last && now - last < 1000000)
+        return;
     last = now;
     static bool budgetAvailable = true;
     if (budgetAvailable) {
         SceAppMgrBudgetInfo info{};
         info.size = sizeof(info);
         const int result = sceAppMgrGetBudgetInfo(&info);
-        if (result >= 0 && info.total_user_rw_mem && info.free_user_rw <= info.total_user_rw_mem &&
-            info.free_extra_mem <= info.total_extra_mem && info.free_cdram_mem <= info.total_cdram_mem &&
+        if (result >= 0 && info.total_user_rw_mem && info.free_user_rw <= info.total_user_rw_mem && info.free_extra_mem <= info.total_extra_mem && info.free_cdram_mem <= info.total_cdram_mem &&
             info.free_phycont_mem <= info.total_phycont_mem) {
-            const uint64_t main = uint64_t(info.total_user_rw_mem) - info.free_user_rw +
-                                  uint64_t(info.total_extra_mem) - info.free_extra_mem;
+            const uint64_t main = uint64_t(info.total_user_rw_mem) - info.free_user_rw + uint64_t(info.total_extra_mem) - info.free_extra_mem;
             peakMain = std::max(peakMain, main);
             const uint64_t cdram = uint64_t(info.total_cdram_mem) - info.free_cdram_mem;
             const uint64_t phycont = uint64_t(info.total_phycont_mem) - info.free_phycont_mem;
             peakCdram = std::max(peakCdram, cdram);
             peakPhycont = std::max(peakPhycont, phycont);
-            std::fprintf(stderr, "MH3 Vita budget: main %.2f MiB, sampled peak %.2f MiB; CDRAM %.2f MiB, sampled peak %.2f MiB; phycont %.2f MiB, sampled peak %.2f MiB\n",
-                main / 1048576.0, peakMain / 1048576.0,
-                cdram / 1048576.0, peakCdram / 1048576.0,
-                phycont / 1048576.0, peakPhycont / 1048576.0);
-            if (main >= 365000000) throw std::runtime_error("Vita main RAM exceeds the 365 MB port limit");
+            std::fprintf(stderr, "MH3 Vita budget: main %.2f MiB, sampled peak %.2f MiB; CDRAM %.2f MiB, sampled peak %.2f MiB; phycont %.2f MiB, sampled peak %.2f MiB\n", main / 1048576.0,
+                         peakMain / 1048576.0, cdram / 1048576.0, peakCdram / 1048576.0, phycont / 1048576.0, peakPhycont / 1048576.0);
+            if (main >= 365000000)
+                throw std::runtime_error("Vita main RAM exceeds the 365 MB port limit");
             return;
         }
         budgetAvailable = false;
@@ -140,7 +153,6 @@ void ReportVitaMemory() {
     SceKernelFreeMemorySizeInfo memory{};
     memory.size = sizeof(memory);
     if (sceKernelGetFreeMemorySize(&memory) >= 0)
-        std::fprintf(stderr, "MH3 Vita free: main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB\n",
-            memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
+        std::fprintf(stderr, "MH3 Vita free: main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB\n", memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
 }
 

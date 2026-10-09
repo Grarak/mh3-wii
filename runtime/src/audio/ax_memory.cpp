@@ -27,9 +27,7 @@ thread_local PrivateMixMemory* t_privateMixMemory = nullptr;
 // A missing admitted span is a failed epoch, never silence or a skipped write.
 [[noreturn]] void ReportMixAddressOutOfRange(uint32_t addr, size_t bytes) {
     char message[160];
-    std::snprintf(message, sizeof(message),
-        "AX private job accessed an unadmitted range at 0x%08X (%llu bytes)",
-        addr, static_cast<unsigned long long>(bytes));
+    std::snprintf(message, sizeof(message), "AX private job accessed an unadmitted range at 0x%08X (%llu bytes)", addr, static_cast<unsigned long long>(bytes));
     throw std::runtime_error(message);
 }
 
@@ -196,7 +194,8 @@ uint8_t ReadAramByteSlow(uint32_t addr) {
     if (const uint8_t* host = MixResolveRange(aliases.cached, 1)) {
         return *host;
     }
-    if (t_onMixWorker) ReportMixAddressOutOfRange(addr, 1);
+    if (t_onMixWorker)
+        ReportMixAddressOutOfRange(addr, 1);
     // Nothing else backs DSP ARAM: real AX traffic is MEM1/MEM2, and no code
     // path in the runtime ever writes a separate ARAM store, so an address that
     // resolves to neither alias reads as silence.

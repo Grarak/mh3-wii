@@ -20,4 +20,4 @@ struct MaterialComposition {
 void publish_generated_material(uint32_t owner, const void* guestData, MaterialComposition material);
 uint32_t generated_texture_version(const void* guestData, uint32_t width, uint32_t height);
 void clear_generated_textures();
-}
+} // namespace aurora

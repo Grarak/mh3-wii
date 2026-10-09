@@ -1,6 +1,6 @@
 ---
 BasedOnStyle: LLVM
-ColumnLimit: 120
+ColumnLimit: 200
 UseTab: Never
 TabWidth: 2
 ---
@@ -10,7 +10,7 @@ PointerAlignment: Left
 AlignAfterOpenBracket: Align
 AlignConsecutiveAssignments: false
 IndentCaseLabels: false
-AllowShortBlocksOnASingleLine: Always
+AllowShortBlocksOnASingleLine: Never
 AlignOperands: true
 AlignTrailingComments: true
 AlwaysBreakBeforeMultilineStrings: true
@@ -18,7 +18,7 @@ AlwaysBreakTemplateDeclarations: Yes
 BreakConstructorInitializersBeforeComma: true
 AlwaysBreakAfterReturnType: None
 AlwaysBreakAfterDefinitionReturnType: None
-AllowShortFunctionsOnASingleLine: All
+AllowShortFunctionsOnASingleLine: Inline
 Cpp11BracedListStyle: true
 NamespaceIndentation: None
 BinPackArguments: true
@@ -27,3 +27,6 @@ SortIncludes: false
 AccessModifierOffset: -2
 ConstructorInitializerIndentWidth: 0
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+ReflowComments: false

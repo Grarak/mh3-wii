@@ -145,12 +145,10 @@ std::optional<ParsedDDSLayout> resolve_dds_layout(ArrayRef<uint8_t> bytes, const
   }
 
   if ((header.ddspf.flags & 0x00000040) != 0 && header.ddspf.rgbBitCount == 32) {
-    if (header.ddspf.rBitMask == 0x000000FF && header.ddspf.gBitMask == 0x0000FF00 &&
-        header.ddspf.bBitMask == 0x00FF0000 && header.ddspf.aBitMask == 0xFF000000) {
+    if (header.ddspf.rBitMask == 0x000000FF && header.ddspf.gBitMask == 0x0000FF00 && header.ddspf.bBitMask == 0x00FF0000 && header.ddspf.aBitMask == 0xFF000000) {
       return out;
     }
-    if (header.ddspf.rBitMask == 0x00FF0000 && header.ddspf.gBitMask == 0x0000FF00 &&
-        header.ddspf.bBitMask == 0x000000FF && header.ddspf.aBitMask == 0xFF000000) {
+    if (header.ddspf.rBitMask == 0x00FF0000 && header.ddspf.gBitMask == 0x0000FF00 && header.ddspf.bBitMask == 0x000000FF && header.ddspf.aBitMask == 0xFF000000) {
       out.bgra = true;
       return out;
     }
@@ -236,8 +234,7 @@ ByteBuffer encode_rgba8_dds(uint32_t width, uint32_t height, ArrayRef<uint8_t> p
   return bytes;
 }
 
-bool write_rgba8_dds(const std::filesystem::path& path, uint32_t width, uint32_t height,
-                     ArrayRef<uint8_t> pixels) noexcept {
+bool write_rgba8_dds(const std::filesystem::path& path, uint32_t width, uint32_t height, ArrayRef<uint8_t> pixels) noexcept {
   return write_binary_file(path, encode_rgba8_dds(width, height, pixels));
 }
 } // namespace aurora::gfx::dds

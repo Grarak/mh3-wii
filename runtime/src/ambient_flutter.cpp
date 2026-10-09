@@ -41,13 +41,13 @@ enum : uint32_t {
     kLight = 0x6D,      // u8 (in the MHchar)
     kG3dWork = 0x144,
     kModel = 0x150,
-    kVelocity = 0x1C8,  // VEC3
-    kSize = 0x1D4,      // f32
-    kFlap0 = 0x1D8,     // u32 (u16 range)
+    kVelocity = 0x1C8, // VEC3
+    kSize = 0x1D4,     // f32
+    kFlap0 = 0x1D8,    // u32 (u16 range)
     kFlap1 = 0x1DC,
-    kPitch = 0x1E8,     // u32
-    kYaw = 0x1EC,       // u32
-    kOrbit = 0x1F0,     // u32 (u16 range)
+    kPitch = 0x1E8, // u32
+    kYaw = 0x1EC,   // u32
+    kOrbit = 0x1F0, // u32 (u16 range)
 };
 
 constexpr uint32_t kWaits = 0x80795B60;      // s16[4] (r13 - 22400)
@@ -70,14 +70,16 @@ enum : uint32_t {
 };
 
 void Copy3(uint32_t to, uint32_t from) {
-    for (uint32_t i = 0; i < 12; i += 4) Memory::Write32(to + i, Memory::Read32(from + i));
+    for (uint32_t i = 0; i < 12; i += 4)
+        Memory::Write32(to + i, Memory::Read32(from + i));
 }
 
 // The flap scale of one axis: size - sin * (size / 2), with |sin|.
 float FlapScale(GuestCall& call, uint32_t angle, float size) {
     call.Call<SinDegrees>({}, {360.0f * float(angle) / 65536.0f});
     float sin = call.F1();
-    if (sin < 0.0f) sin = sin * -1.0f;
+    if (sin < 0.0f)
+        sin = sin * -1.0f;
     return size - sin * (size * 0.5f);
 }
 
@@ -87,8 +89,12 @@ static void AmbientFlutter(CpuContext* ctx) {
     GuestFrame frame{ctx, 0x50};
     GuestCall call{ctx};
     const uint32_t w = frame.Arg(3);
-    auto random = [&] { return call.Call<Random>({0}) & 0xFFFF; };
-    auto wait = [&] { return int32_t(int16_t(Memory::Read16(kWaits + 2 * (random() & 3)))); };
+    auto random = [&] {
+        return call.Call<Random>({0}) & 0xFFFF;
+    };
+    auto wait = [&] {
+        return int32_t(int16_t(Memory::Read16(kWaits + 2 * (random() & 3))));
+    };
 
     switch (Memory::Read8(w + kState)) {
     case 0: {
@@ -134,7 +140,8 @@ static void AmbientFlutter(CpuContext* ctx) {
         if (substate == 0) {
             const int32_t left = int32_t(Memory::Read32(w + kWait)) - ticks;
             Memory::Write32(w + kWait, uint32_t(left));
-            if (left > 0) return;
+            if (left > 0)
+                return;
             Memory::Write8(w + kSubstate, 1);
             const int32_t base = wait();
             Memory::Write32(w + kWait, uint32_t(base + (Memory::Read8(w + kCircles) ? 35 : 40)));
@@ -160,8 +167,7 @@ static void AmbientFlutter(CpuContext* ctx) {
 
             const float s = float(GameStep::Scale());
             for (uint32_t i = 0; i < 12; i += 4)
-                Memory::WriteFloat32(w + kPos + i,
-                                     Memory::ReadFloat32(w + kPos + i) + Memory::ReadFloat32(w + kVelocity + i) * s);
+                Memory::WriteFloat32(w + kPos + i, Memory::ReadFloat32(w + kPos + i) + Memory::ReadFloat32(w + kVelocity + i) * s);
 
             if (Memory::Read8(w + kCircles) == 1) {
                 const uint32_t orbit = (Memory::Read32(w + kOrbit) + GameStep::Share(8192)) & 0xFFFF;

@@ -17,19 +17,20 @@
 // Keep the partition open and use positioned reads: no shared seek cursor,
 // no reopen per DVD request, and native 64-bit offsets on Vita's 32-bit newlib.
 class DiscFile {
-public:
+  public:
     explicit DiscFile(const std::filesystem::path& path) : name(path.string()) {
 #ifdef __vita__
         handle = sceIoOpen(name.c_str(), SCE_O_RDONLY, 0);
 #else
         handle = ::open(name.c_str(), O_RDONLY);
 #endif
-        if (handle < 0) throw std::runtime_error("Cannot open disc file: " + name);
+        if (handle < 0)
+            throw std::runtime_error("Cannot open disc file: " + name);
 #ifdef __vita__
         SceIoStat stat{};
         const auto result = sceIoGetstatByFd(handle, &stat);
 #else
-        struct stat stat{};
+        struct stat stat {};
         const auto result = ::fstat(handle, &stat);
 #endif
         if (result < 0 || stat.st_size < 0) {
@@ -50,13 +51,16 @@ public:
             const auto count = sceIoPread(handle, output + done, length - done, static_cast<SceOff>(offset + done));
 #else
             const auto count = ::pread(handle, output + done, length - done, static_cast<off_t>(offset + done));
-            if (count < 0 && errno == EINTR) continue;
+            if (count < 0 && errno == EINTR)
+                continue;
 #endif
-            if (count <= 0) throw std::runtime_error("Disc file read failed: " + name);
+            if (count <= 0)
+                throw std::runtime_error("Disc file read failed: " + name);
             done += static_cast<size_t>(count);
         }
     }
-private:
+
+  private:
     void Close() {
 #ifdef __vita__
         sceIoClose(handle);
@@ -73,8 +77,10 @@ bool Exists(const std::filesystem::path& path) {
 #ifdef __vita__
     SceIoStat stat{};
     const auto result = sceIoGetstat(path.string().c_str(), &stat);
-    if (result >= 0) return true;
-    if (static_cast<uint32_t>(result) == 0x80010002) return false;
+    if (result >= 0)
+        return true;
+    if (static_cast<uint32_t>(result) == 0x80010002)
+        return false;
     throw std::runtime_error("Cannot inspect disc path: " + path.string());
 #else
     return std::filesystem::exists(path);
@@ -82,21 +88,23 @@ bool Exists(const std::filesystem::path& path) {
 }
 std::vector<uint8_t> Load(const std::filesystem::path& path) {
     DiscFile file(path);
-    if (file.Size() > 64 * 1024 * 1024) throw std::runtime_error("Invalid disc metadata size");
+    if (file.Size() > 64 * 1024 * 1024)
+        throw std::runtime_error("Invalid disc metadata size");
     std::vector<uint8_t> bytes(static_cast<size_t>(file.Size()));
     file.Read(0, bytes.data(), bytes.size());
     return bytes;
 }
 uint32_t Word(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset > data.size() || data.size() - offset < 4) throw std::runtime_error("Truncated disc metadata");
-    return uint32_t(data[offset]) << 24 | uint32_t(data[offset+1]) << 16 |
-           uint32_t(data[offset+2]) << 8 | data[offset+3];
+    if (offset > data.size() || data.size() - offset < 4)
+        throw std::runtime_error("Truncated disc metadata");
+    return uint32_t(data[offset]) << 24 | uint32_t(data[offset + 1]) << 16 | uint32_t(data[offset + 2]) << 8 | data[offset + 3];
 }
-}
+} // namespace
 void DiscImage::Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify) {
     if (verify && DiscFile(path).Size() != expected)
         throw std::runtime_error("Extracted file length differs from disc metadata: " + path.string());
-    if (expected) extents.push_back({offset, expected, path});
+    if (expected)
+        extents.push_back({offset, expected, path});
 }
 DiscImage::~DiscImage() = default;
 DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures) {
@@ -118,15 +126,21 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
     const uint32_t count = Word(fst, 8);
     if (!count || uint64_t(count) * 12 > fst.size() || (Word(fst, 0) >> 24) != 1)
         throw std::runtime_error("Invalid FST root");
-    struct Directory { uint32_t index, end; std::filesystem::path path; };
+    struct Directory {
+        uint32_t index, end;
+        std::filesystem::path path;
+    };
     std::vector<Directory> stack{{0, count, root / "files"}};
     for (uint32_t index = 1; index < count; ++index) {
-        while (index >= stack.back().end) stack.pop_back();
+        while (index >= stack.back().end)
+            stack.pop_back();
         const uint32_t nameWord = Word(fst, index * 12);
         const size_t nameOffset = size_t(count) * 12 + (nameWord & 0xFFFFFF);
-        if (nameOffset >= fst.size()) throw std::runtime_error("Invalid FST name offset");
+        if (nameOffset >= fst.size())
+            throw std::runtime_error("Invalid FST name offset");
         auto end = std::find(fst.begin() + nameOffset, fst.end(), 0);
-        if (end == fst.end()) throw std::runtime_error("Unterminated FST name");
+        if (end == fst.end())
+            throw std::runtime_error("Unterminated FST name");
         std::string name(fst.begin() + nameOffset, end);
         if (name.empty() || name == "." || name == ".." || name.find('/') != name.npos || name.find('\\') != name.npos || name.find(':') != name.npos)
             throw std::runtime_error("Invalid FST path component");
@@ -141,11 +155,12 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
             if (!fileEntries.emplace(relative, std::pair{uint64_t(offset) * 4, size}).second)
                 throw std::runtime_error("Duplicate FST file name");
             Add(uint64_t(offset) * 4, path, size, !packed);
-        } else throw std::runtime_error("Invalid FST entry type");
+        } else
+            throw std::runtime_error("Invalid FST entry type");
     }
     std::sort(extents.begin(), extents.end(), [](const auto& a, const auto& b) { return a.offset < b.offset; });
     for (size_t i = 1; i < extents.size(); ++i)
-        if (extents[i-1].offset + extents[i-1].size > extents[i].offset)
+        if (extents[i - 1].offset + extents[i - 1].size > extents[i].offset)
             throw std::runtime_error("Overlapping extracted disc extents");
     const auto partitionPath = root / "partition.bin";
     if (Exists(partitionPath)) {
@@ -161,26 +176,26 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
         };
         verify(0, boot);
         verify(uint64_t(Word(boot, 0x424)) * 4, fst);
-    } else if (packed) throw std::runtime_error("Packed disc requires partition.bin");
+    } else if (packed)
+        throw std::runtime_error("Packed disc requires partition.bin");
     // A development deployment can select a complete versioned native asset
     // set without replacing the preserved disc or another processed generation.
     const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
     const auto assetRoot = nativeRoot ? std::filesystem::path(nativeRoot) : root;
     const auto mapPath = assetRoot / "native-texture-map.bin";
     if (applyNativeTextures && Exists(mapPath)) {
-        if (!Exists(assetRoot / "native-textures.bin")) throw std::runtime_error("Native texture map requires its payload pack");
+        if (!Exists(assetRoot / "native-textures.bin"))
+            throw std::runtime_error("Native texture map requires its payload pack");
         const auto map = Load(mapPath);
         const auto little32 = [&](size_t at) {
             return uint32_t(map[at]) | uint32_t(map[at + 1]) << 8 | uint32_t(map[at + 2]) << 16 | uint32_t(map[at + 3]) << 24;
         };
-        if (map.size() < 12 || little32(0) != 0x4d54334d || little32(4) != 1 ||
-            little32(8) > 32768 || map.size() != 12 + size_t(little32(8)) * 12)
+        if (map.size() < 12 || little32(0) != 0x4d54334d || little32(4) != 1 || little32(8) > 32768 || map.size() != 12 + size_t(little32(8)) * 12)
             throw std::runtime_error("Invalid native texture map");
         uint64_t previousEnd = 0;
         for (size_t at = 12; at < map.size(); at += 12) {
             const uint64_t offset = uint64_t(little32(at)) | uint64_t(little32(at + 4)) << 32;
-            if (offset < previousEnd || offset > UINT64_MAX - 4 ||
-                (partitionSize && offset + 4 > partitionSize) || (map[at + 8] & 0xf0) != 0xa0)
+            if (offset < previousEnd || offset > UINT64_MAX - 4 || (partitionSize && offset + 4 > partitionSize) || (map[at + 8] & 0xf0) != 0xa0)
                 throw std::runtime_error("Invalid native texture tag offset");
             nativeTexturePatches.push_back({offset, {map[at + 8], map[at + 9], map[at + 10], map[at + 11]}});
             previousEnd = offset + 4;
@@ -189,8 +204,7 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
 }
 void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const {
     const uint64_t end = offset + data.size();
-    auto it = std::lower_bound(nativeTexturePatches.begin(), nativeTexturePatches.end(), offset,
-        [](const NativeTexturePatch& patch, uint64_t start) { return patch.offset + 4 <= start; });
+    auto it = std::lower_bound(nativeTexturePatches.begin(), nativeTexturePatches.end(), offset, [](const NativeTexturePatch& patch, uint64_t start) { return patch.offset + 4 <= start; });
     for (; it != nativeTexturePatches.end() && it->offset < end; ++it)
         for (unsigned byte = 0; byte < 4; ++byte)
             if (it->offset + byte >= offset && it->offset + byte < end)
@@ -209,9 +223,9 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
     }
     size_t done = 0;
     while (done < length) {
-        auto it = std::upper_bound(extents.begin(), extents.end(), offset,
-            [](uint64_t value, const Extent& extent) { return value < extent.offset; });
-        if (it == extents.begin()) throw std::runtime_error("Disc read precedes extracted data");
+        auto it = std::upper_bound(extents.begin(), extents.end(), offset, [](uint64_t value, const Extent& extent) { return value < extent.offset; });
+        if (it == extents.begin())
+            throw std::runtime_error("Disc read precedes extracted data");
         --it;
         if (offset >= it->offset + it->size) {
             if (!partitionSize || offset >= partitionSize)
@@ -220,12 +234,14 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
             const uint64_t end = next == extents.end() ? partitionSize : std::min(partitionSize, next->offset);
             const size_t count = std::min<uint64_t>(length - done, end - offset);
             partition->Read(offset, result.data() + done, count);
-            offset += count; done += count;
+            offset += count;
+            done += count;
             continue;
         }
         const size_t count = std::min<uint64_t>(length - done, it->offset + it->size - offset);
         DiscFile(it->path).Read(offset - it->offset, result.data() + done, count);
-        offset += count; done += count;
+        offset += count;
+        done += count;
     }
     ApplyNativeTexturePatches(initialOffset, result);
     ApplyFileOverrides(initialOffset, result);
@@ -233,7 +249,8 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
 }
 std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {
     const auto it = fileEntries.find(name);
-    if (it == fileEntries.end()) throw std::runtime_error("Missing FST file: " + name);
+    if (it == fileEntries.end())
+        throw std::runtime_error("Missing FST file: " + name);
     return Read(it->second.first, it->second.second);
 }
 DiscImage& GameDiscImage() {
@@ -253,21 +270,25 @@ void DiscImage::SetFileOverride(const std::string& name, std::vector<uint8_t> by
 void DiscImage::ApplyFileOverrides(uint64_t offset, std::vector<uint8_t>& data) const {
     for (const auto& [start, bytes] : fileOverrides) {
         const auto first = std::max(offset, start), last = std::min(offset + data.size(), start + bytes.size());
-        if (first < last) std::copy(bytes.begin() + (first - start), bytes.begin() + (last - start), data.begin() + (first - offset));
+        if (first < last)
+            std::copy(bytes.begin() + (first - start), bytes.begin() + (last - start), data.begin() + (first - offset));
     }
 }
 std::vector<std::string> DiscImage::FileNames() const {
     std::vector<std::string> names;
-    for (const auto& [name, extent] : fileEntries) names.push_back(name);
+    for (const auto& [name, extent] : fileEntries)
+        names.push_back(name);
     return names;
 }
 uint64_t DiscImage::FileOffset(const std::string& name) const {
     const auto it = fileEntries.find(name);
-    if (it == fileEntries.end()) throw std::runtime_error("Missing FST file: " + name);
+    if (it == fileEntries.end())
+        throw std::runtime_error("Missing FST file: " + name);
     return it->second.first;
 }
 uint32_t DiscImage::FileSize(const std::string& name) const {
     const auto it = fileEntries.find(name);
-    if (it == fileEntries.end()) throw std::runtime_error("Missing FST file: " + name);
+    if (it == fileEntries.end())
+        throw std::runtime_error("Missing FST file: " + name);
     return it->second.second;
 }

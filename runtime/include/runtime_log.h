@@ -35,11 +35,8 @@
 // Shared epilogue for the `catch (const Memory::AccessViolation& e)` handlers
 // spread across the HLE. `who` is the guest function or operation that faulted;
 // the tag is its module.
-inline void LogMemoryError(const char* tag, const char* who,
-                           const ::Memory::AccessViolation& e)
-{
-    std::cerr << "[" << tag << "] " << who << ": memory error at 0x" << std::hex
-              << e.address() << std::dec << " (" << e.reason() << ")" << std::endl;
+inline void LogMemoryError(const char* tag, const char* who, const ::Memory::AccessViolation& e) {
+    std::cerr << "[" << tag << "] " << who << ": memory error at 0x" << std::hex << e.address() << std::dec << " (" << e.reason() << ")" << std::endl;
 }
 
 #endif // MKW_RUNTIME_LOG_H

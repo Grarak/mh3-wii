@@ -10,23 +10,23 @@
 namespace aurora::gxm {
 namespace {
 size_t aligned(size_t bytes, size_t alignment) {
-  if (bytes > SIZE_MAX - alignment + 1) throw std::bad_alloc();
+  if (bytes > SIZE_MAX - alignment + 1)
+    throw std::bad_alloc();
   return (bytes + alignment - 1) & ~(alignment - 1);
 }
-}
+} // namespace
 
 MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(kind) {
   m_size = aligned(bytes, kind == Kind::Phycont ? 0x100000 : 0x40000);
-  if (m_size == 0) throw std::bad_alloc();
+  if (m_size == 0)
+    throw std::bad_alloc();
   // All producer buffers, command rings and patched USSE programs live in
   // CDRAM. CPU-only metadata and archival asset bytes use ordinary RAM.
-  auto type = kind == Kind::Phycont ? SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW
-                                   : SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW;
+  auto type = kind == Kind::Phycont ? SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW : SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW;
   m_block = sceKernelAllocMemBlock(name, type, m_size, nullptr);
   if (m_block < 0) {
     char message[180];
-    std::snprintf(message, sizeof(message), "Vita allocation '%s' (%u bytes, type %08x) failed: %08x",
-                  name, unsigned(m_size), unsigned(type), unsigned(m_block));
+    std::snprintf(message, sizeof(message), "Vita allocation '%s' (%u bytes, type %08x) failed: %08x", name, unsigned(m_size), unsigned(type), unsigned(m_block));
     throw std::runtime_error(message);
   }
   int result = sceKernelGetMemBlockBase(m_block, &m_data);
@@ -36,8 +36,7 @@ MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(k
     else if (kind == Kind::FragmentUsse)
       result = sceGxmMapFragmentUsseMemory(m_data, m_size, &m_usseOffset);
     else
-      result = sceGxmMapMemory(m_data, m_size, static_cast<SceGxmMemoryAttribFlags>(
-          SCE_GXM_MEMORY_ATTRIB_READ | SCE_GXM_MEMORY_ATTRIB_WRITE));
+      result = sceGxmMapMemory(m_data, m_size, static_cast<SceGxmMemoryAttribFlags>(SCE_GXM_MEMORY_ATTRIB_READ | SCE_GXM_MEMORY_ATTRIB_WRITE));
   }
   if (result < 0) {
     sceKernelFreeMemBlock(m_block);
@@ -46,13 +45,17 @@ MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(k
     throw std::runtime_error("Cannot map Vita GPU memory");
   }
   razor_register_buffer(m_data, m_size);
-  std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0,
-               kind == Kind::Phycont ? "phycont" : "CDRAM", unsigned(reinterpret_cast<uintptr_t>(m_data)));
+  std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0, kind == Kind::Phycont ? "phycont" : "CDRAM", unsigned(reinterpret_cast<uintptr_t>(m_data)));
 }
-MappedMemory::~MappedMemory() { release(); }
-MappedMemory::MappedMemory(MappedMemory&& other) noexcept { *this = std::move(other); }
+MappedMemory::~MappedMemory() {
+  release();
+}
+MappedMemory::MappedMemory(MappedMemory&& other) noexcept {
+  *this = std::move(other);
+}
 MappedMemory& MappedMemory::operator=(MappedMemory&& other) noexcept {
-  if (this == &other) return *this;
+  if (this == &other)
+    return *this;
   release();
   m_block = std::exchange(other.m_block, -1);
   m_data = std::exchange(other.m_data, nullptr);
@@ -62,46 +65,57 @@ MappedMemory& MappedMemory::operator=(MappedMemory&& other) noexcept {
   return *this;
 }
 void MappedMemory::release() noexcept {
-  if (m_block < 0) return;
+  if (m_block < 0)
+    return;
   razor_unregister_buffer(m_data);
-  if (m_kind == Kind::VertexUsse) sceGxmUnmapVertexUsseMemory(m_data);
-  else if (m_kind == Kind::FragmentUsse) sceGxmUnmapFragmentUsseMemory(m_data);
-  else sceGxmUnmapMemory(m_data);
+  if (m_kind == Kind::VertexUsse)
+    sceGxmUnmapVertexUsseMemory(m_data);
+  else if (m_kind == Kind::FragmentUsse)
+    sceGxmUnmapFragmentUsseMemory(m_data);
+  else
+    sceGxmUnmapMemory(m_data);
   sceKernelFreeMemBlock(m_block);
   m_block = -1;
   m_data = nullptr;
   m_size = 0;
 }
 
-MappedArena::MappedArena(size_t bytes, MappedMemory::Kind kind)
-    : m_memory(bytes, kind, kind == MappedMemory::Kind::Cdram ? "Aurora CDRAM arena" : "Aurora spill arena") {
+MappedArena::MappedArena(size_t bytes, MappedMemory::Kind kind) : m_memory(bytes, kind, kind == MappedMemory::Kind::Cdram ? "Aurora CDRAM arena" : "Aurora spill arena") {
   m_free.emplace(0, m_memory.size());
 }
 void* MappedArena::allocate(size_t bytes) {
-  if (bytes == 0) return nullptr;
+  if (bytes == 0)
+    return nullptr;
   bytes = aligned(bytes, 64);
   std::lock_guard lock(m_mutex);
   // Best fit preserves larger spans for the EFB and full-screen copies.
   auto best = m_free.end();
   for (auto it = m_free.begin(); it != m_free.end(); ++it)
-    if (it->second >= bytes && (best == m_free.end() || it->second < best->second)) best = it;
-  if (best == m_free.end()) return nullptr;
+    if (it->second >= bytes && (best == m_free.end() || it->second < best->second))
+      best = it;
+  if (best == m_free.end())
+    return nullptr;
   const auto [offset, length] = *best;
   m_free.erase(best);
-  if (length > bytes) m_free.emplace(offset + bytes, length - bytes);
+  if (length > bytes)
+    m_free.emplace(offset + bytes, length - bytes);
   m_used += bytes;
   m_highWater = std::max(m_highWater, m_used);
   return static_cast<char*>(m_memory.data()) + offset;
 }
 bool MappedArena::can_allocate(size_t bytes) const noexcept {
-  if (!bytes) return false;
+  if (!bytes)
+    return false;
   bytes = aligned(bytes, 64);
   std::lock_guard lock(m_mutex);
-  for (const auto& block : m_free) if (block.second >= bytes) return true;
+  for (const auto& block : m_free)
+    if (block.second >= bytes)
+      return true;
   return false;
 }
 void MappedArena::free(void* pointer, size_t bytes) noexcept {
-  if (!pointer || bytes == 0) return;
+  if (!pointer || bytes == 0)
+    return;
   bytes = (bytes + 63) & ~size_t(63);
   size_t offset = static_cast<char*>(pointer) - static_cast<char*>(m_memory.data());
   std::lock_guard lock(m_mutex);
@@ -121,6 +135,12 @@ void MappedArena::free(void* pointer, size_t bytes) noexcept {
   }
   m_free.emplace(offset, bytes);
 }
-size_t MappedArena::used() const noexcept { std::lock_guard lock(m_mutex); return m_used; }
-size_t MappedArena::high_water() const noexcept { std::lock_guard lock(m_mutex); return m_highWater; }
+size_t MappedArena::used() const noexcept {
+  std::lock_guard lock(m_mutex);
+  return m_used;
 }
+size_t MappedArena::high_water() const noexcept {
+  std::lock_guard lock(m_mutex);
+  return m_highWater;
+}
+} // namespace aurora::gxm

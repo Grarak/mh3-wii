@@ -90,9 +90,7 @@ inline std::string CanonicalizePath(const std::string& input) {
 
 inline std::string NormalizeLookupPath(const std::string& input) {
     std::string path = CanonicalizePath(input);
-    std::transform(path.begin(), path.end(), path.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(path.begin(), path.end(), path.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return path;
 }
 
@@ -117,23 +115,15 @@ inline std::vector<std::string> Components(const std::string& canonicalPath) {
 }
 
 inline std::string Lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
-inline uint32_t EmitTree(const TreeNode& directory,
-                         uint32_t directoryIndex,
-                         const std::string& directoryPath,
-                         Image& image,
-                         std::vector<std::string>& names) {
+inline uint32_t EmitTree(const TreeNode& directory, uint32_t directoryIndex, const std::string& directoryPath, Image& image, std::vector<std::string>& names) {
     for (const auto& [lookupName, childPointer] : directory.children) {
         (void)lookupName;
         const TreeNode& child = *childPointer;
-        const std::string childPath = directoryPath == "/"
-            ? "/" + child.name
-            : directoryPath + "/" + child.name;
+        const std::string childPath = directoryPath == "/" ? "/" + child.name : directoryPath + "/" + child.name;
         const uint32_t index = static_cast<uint32_t>(image.entries.size());
 
         if (!child.children.empty()) {
@@ -151,8 +141,7 @@ inline uint32_t EmitTree(const TreeNode& directory,
             throw std::runtime_error("DVD FST contains an empty implicit node: " + childPath);
         }
         const RegisteredFile& file = *child.file;
-        image.entries.push_back({file.hostPath, childPath, file.size, file.discOffsetWords,
-                                 directoryIndex, index + 1, false});
+        image.entries.push_back({file.hostPath, childPath, file.size, file.discOffsetWords, directoryIndex, index + 1, false});
         names.push_back(child.name);
         image.pathToEntry.emplace(NormalizeLookupPath(childPath), static_cast<int32_t>(index));
     }
@@ -227,9 +216,7 @@ inline Image BuildImage(const std::vector<RegisteredFile>& registrations) {
     return image;
 }
 
-inline std::optional<GuestPlacement> ReserveBelowArena(uint32_t arenaLo,
-                                                        uint32_t arenaHi,
-                                                        size_t byteCount) {
+inline std::optional<GuestPlacement> ReserveBelowArena(uint32_t arenaLo, uint32_t arenaHi, size_t byteCount) {
     constexpr uint32_t kAlignment = 32;
     if (byteCount == 0 || byteCount > std::numeric_limits<uint32_t>::max() || arenaHi <= arenaLo) {
         return std::nullopt;
@@ -259,8 +246,7 @@ struct LowReadCompletion {
 };
 
 inline constexpr LowReadCompletion CompletionFor(bool succeeded) noexcept {
-    return succeeded ? LowReadCompletion{1, kInterruptTransferComplete}
-                     : LowReadCompletion{0, kInterruptDriveError};
+    return succeeded ? LowReadCompletion{1, kInterruptTransferComplete} : LowReadCompletion{0, kInterruptDriveError};
 }
 
 enum class HostReadFailure : uint8_t {
@@ -287,11 +273,7 @@ inline constexpr const char* Describe(HostReadFailure failure) noexcept {
 // Read into private storage first and publish it only after the complete host
 // range has been obtained. Callers can therefore leave a guest DMA destination
 // untouched for every failure, including a host file truncated after indexing.
-inline bool ReadExact(const std::filesystem::path& hostPath,
-                      uint64_t offset,
-                      uint32_t length,
-                      std::vector<uint8_t>& destination,
-                      HostReadFailure& failure) {
+inline bool ReadExact(const std::filesystem::path& hostPath, uint64_t offset, uint32_t length, std::vector<uint8_t>& destination, HostReadFailure& failure) {
     failure = HostReadFailure::None;
 
     std::ifstream file(hostPath, std::ios::binary);
@@ -302,9 +284,7 @@ inline bool ReadExact(const std::filesystem::path& hostPath,
 
     file.seekg(0, std::ios::end);
     const std::streamoff fileSize = file.tellg();
-    if (fileSize < 0 ||
-        offset > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max()) ||
-        offset >= static_cast<uint64_t>(fileSize)) {
+    if (fileSize < 0 || offset > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max()) || offset >= static_cast<uint64_t>(fileSize)) {
         failure = HostReadFailure::BadOffset;
         return false;
     }
@@ -323,8 +303,7 @@ inline bool ReadExact(const std::filesystem::path& hostPath,
     }
 
     if (length != 0) {
-        file.read(reinterpret_cast<char*>(staged.data()),
-                  static_cast<std::streamsize>(length));
+        file.read(reinterpret_cast<char*>(staged.data()), static_cast<std::streamsize>(length));
         if (file.gcount() != static_cast<std::streamsize>(length)) {
             failure = HostReadFailure::ShortRead;
             return false;

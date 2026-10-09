@@ -24,19 +24,26 @@
 namespace {
 
 enum : uint32_t {
-    kActive = 0x05,      // u8
-    kOwnerKind = 0x06,   // u8: 0 player, 1 enemy, 3 AI NPC
-    kOwner = 0x10,       // u32 owner work
-    kFlags = 0x20,       // u32
-    kMotions = 0x18,     // u16 x4
-    kPhases = 0x33,      // u8: bit 1 first phase started, bit 2 second
-    kDelay = 0x38,       // f32
-    kTime = 0x3C,        // f32
-    kFirst = 0x50,       // f32
-    kSecond = 0x54,      // f32
+    kActive = 0x05,    // u8
+    kOwnerKind = 0x06, // u8: 0 player, 1 enemy, 3 AI NPC
+    kOwner = 0x10,     // u32 owner work
+    kFlags = 0x20,     // u32
+    kMotions = 0x18,   // u16 x4
+    kPhases = 0x33,    // u8: bit 1 first phase started, bit 2 second
+    kDelay = 0x38,     // f32
+    kTime = 0x3C,      // f32
+    kFirst = 0x50,     // f32
+    kSecond = 0x54,    // f32
 };
-enum : uint32_t { kFlagMotions = 0x100, kFlagOwnerSpeed = 0x200 };
-enum : uint32_t { kPlayerSpeed = 0x358, kEnemySpeed = 0x80, kNpcSpeed = 0x64 };
+enum : uint32_t {
+    kFlagMotions = 0x100,
+    kFlagOwnerSpeed = 0x200
+};
+enum : uint32_t {
+    kPlayerSpeed = 0x358,
+    kEnemySpeed = 0x80,
+    kNpcSpeed = 0x64
+};
 
 enum : uint32_t {
     PlayerMotion = 0x8026A36C, // Get_motion_no(PLW*)
@@ -46,7 +53,9 @@ enum : uint32_t {
 
 constexpr float kFrames = 2.0f;
 
-float F(uint32_t a) { return Memory::ReadFloat32(a); }
+float F(uint32_t a) {
+    return Memory::ReadFloat32(a);
+}
 
 } // namespace
 
@@ -60,12 +69,14 @@ static void HitTimerStep(CpuContext* ctx) {
         const uint8_t kind = Memory::Read8(w + kOwnerKind);
         const uint32_t owner = Memory::Read32(w + kOwner);
         auto run = [&]() -> uint32_t {
-            if (!Memory::Read8(w + kActive)) return 0;
+            if (!Memory::Read8(w + kActive))
+                return 0;
             if ((flags & kFlagMotions) && (kind == 0 || kind == 1 || kind == 3)) {
                 const uint32_t fn = kind == 0 ? PlayerMotion : kind == 1 ? EnemyMotion : NpcMotion;
                 const uint16_t motion = uint16_t(call(fn, {owner}));
                 bool playing = false;
-                for (uint32_t i = 0; i < 4; ++i) playing |= motion == Memory::Read16(w + kMotions + 2 * i);
+                for (uint32_t i = 0; i < 4; ++i)
+                    playing |= motion == Memory::Read16(w + kMotions + 2 * i);
                 if (!playing) {
                     Memory::Write8(w + kActive, 0);
                     return 0;
@@ -73,9 +84,12 @@ static void HitTimerStep(CpuContext* ctx) {
             }
             float amount = kFrames;
             if (flags & kFlagOwnerSpeed) {
-                if (kind == 1) amount = F(owner + kEnemySpeed);
-                else if (kind == 0) amount = F(owner + kPlayerSpeed);
-                else if (kind == 3) amount = F(owner + kNpcSpeed);
+                if (kind == 1)
+                    amount = F(owner + kEnemySpeed);
+                else if (kind == 0)
+                    amount = F(owner + kPlayerSpeed);
+                else if (kind == 3)
+                    amount = F(owner + kNpcSpeed);
             }
             amount = float(amount * GameStep::Scale());
 

@@ -108,8 +108,7 @@ inline bool CanSkipDigest(uint64_t storedGeneration, uint64_t currentGeneration)
 // Host-to-guest inversion for one contiguous guest RAM alias. Aurora holds host
 // pointers only, so the generation and notification hooks it calls have to map
 // them back before they can touch the table.
-inline bool HostRangeToGuest(const void* hostBase, uint64_t hostSize, uint32_t guestBase,
-                             const void* hostPtr, size_t size, uint32_t& outAddr) noexcept {
+inline bool HostRangeToGuest(const void* hostBase, uint64_t hostSize, uint32_t guestBase, const void* hostPtr, size_t size, uint32_t& outAddr) noexcept {
     if (hostBase == nullptr || hostPtr == nullptr || size == 0) {
         return false;
     }

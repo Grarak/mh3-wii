@@ -10,18 +10,29 @@
 // Frames original big-endian GX commands before handing them to the host.
 // Pointer-bearing commands stay rejected until their conversion is implemented.
 class GuestGxStream {
-public:
+  public:
     // An array index in a vertex: its offset, width in bytes and attribute slot.
-    struct IndexField { uint16_t offset; uint8_t width, slot; };
+    struct IndexField {
+        uint16_t offset;
+        uint8_t width, slot;
+    };
     using Sink = std::function<void(std::span<const uint8_t>)>;
-    struct ArrayView { uintptr_t address; uint32_t size; };
+    struct ArrayView {
+        uintptr_t address;
+        uint32_t size;
+    };
     using ArrayResolver = std::function<ArrayView(uint32_t)>;
-    struct DisplayCopy { uintptr_t destination; uint32_t width, height; bool clear; };
+    struct DisplayCopy {
+        uintptr_t destination;
+        uint32_t width, height;
+        bool clear;
+    };
     using CopySink = std::function<void(const DisplayCopy&)>;
-    struct EfbClear { uint32_t x, y, sourceWidth, sourceHeight; };
+    struct EfbClear {
+        uint32_t x, y, sourceWidth, sourceHeight;
+    };
     using EfbClearSink = std::function<void(const EfbClear&)>;
-    void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {},
-               const CopySink& copy = {}, const EfbClearSink& clear = {});
+    void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {}, const CopySink& copy = {}, const EfbClearSink& clear = {});
     unsigned PixelFormat() const { return bp[0x43] & 7; }
     // Sink one command per call instead of runs of them (per-draw diagnostics).
     bool coalesce = true;
@@ -40,7 +51,8 @@ public:
     // Drops the hashes of textures overlapping host bytes [address, address + size).
     static void InvalidateTextureHashes(uintptr_t address, uint64_t size);
     size_t PendingBytes() const { return pending.size(); }
-private:
+
+  private:
     std::vector<uint8_t> pending;
     std::array<uint32_t, 256> bp{};
     std::array<uint32_t, 256> cp{};
@@ -67,12 +79,16 @@ private:
         uint32_t ContentsVersion(uint32_t start, uint32_t entries, uint32_t format);
     };
     std::shared_ptr<PaletteMemory> palettes;
-    struct PaletteBinding { uint32_t revision = 0, descriptor = 0, entries = 0; };
+    struct PaletteBinding {
+        uint32_t revision = 0, descriptor = 0, entries = 0;
+    };
     std::array<PaletteBinding, 8> paletteBindings{};
     void LoadPalette(const ArrayResolver& resolver);
     void BindDrawPalettes(const Sink& sink, const ArrayResolver& resolver);
     std::array<uint8_t, 37> TexturePacket(unsigned slot, const ArrayResolver& resolver);
-    struct Attribute { unsigned descriptor = 0, bytes = 0, indices = 1; };
+    struct Attribute {
+        unsigned descriptor = 0, bytes = 0, indices = 1;
+    };
     std::array<Attribute, 12> Attributes(unsigned format) const;
     static std::array<uint8_t, 16> ArrayPacket(unsigned slot, ArrayView view);
     void BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver);
@@ -90,7 +106,11 @@ private:
     const VertexLayout& Layout(unsigned format);
     // Each array base's resolution, from its register write (the guest memory
     // map is fixed).
-    struct ResolvedArray { uint32_t guest = 0; ArrayView view{}; bool valid = false; };
+    struct ResolvedArray {
+        uint32_t guest = 0;
+        ArrayView view{};
+        bool valid = false;
+    };
     std::array<ResolvedArray, 12> resolvedArrays{};
     size_t VertexSize(unsigned format);
 };

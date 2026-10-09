@@ -47,9 +47,7 @@ namespace RuntimeCrash {
 // Writes crash_<reason>.txt (and, once per process, the guest memory
 // snapshots) into the current run's log folder. Safe to call from any fatal
 // path; never throws.
-void WriteCrashArtifacts(std::string_view reason,
-                         std::string_view extraDetails = {},
-                         const uint32_t* missingGuestTarget = nullptr) noexcept;
+void WriteCrashArtifacts(std::string_view reason, std::string_view extraDetails = {}, const uint32_t* missingGuestTarget = nullptr) noexcept;
 
 // Full fatal path for a guest jump to an untranslated/invalid target:
 // stderr diagnostics, crash artifacts, popup, exit.
@@ -70,10 +68,10 @@ void ShowRuntimeFatalPopup(std::string_view category, std::string_view details) 
 inline constexpr uint32_t kDefaultEntryAddress = 0x800060A4u;
 
 class SystemBridge {
-public:
+  public:
     static void Initialize();
 
-public:
+  public:
     static void DumpCpuState(const struct CpuContext* cpu);
     static void DumpCpuState(std::ostream& os, const struct CpuContext* cpu);
 
@@ -81,7 +79,6 @@ public:
     // DumpCrashHeuristics prints plain-language "likely cause" hints derived
     // from the register state; WriteGuestMemorySnapshot writes MEM1 to
     // `mem1Path` and MEM2 to `mem1Path + ".mem2"`, logging outcomes to `os`.
-    static void DumpCrashHeuristics(std::ostream& os, const struct CpuContext* cpu,
-                                    const uint32_t* missingGuestTarget);
+    static void DumpCrashHeuristics(std::ostream& os, const struct CpuContext* cpu, const uint32_t* missingGuestTarget);
     static void WriteGuestMemorySnapshot(std::ostream& os, const std::filesystem::path& mem1Path);
 };

@@ -39,8 +39,7 @@ uint32_t ResDicAt(uint32_t dic, uint32_t idx) {
 
 // The port, or with MH3_PORT_CHECK naming it the port checked against the
 // original on every call (registers from the current context).
-uint32_t Checked(const char* name, bool check, void (*original)(CpuContext*), void (*port)(CpuContext*),
-                 uint32_t r1, uint32_t r3, uint32_t r4, uint32_t (*direct)(uint32_t, uint32_t)) {
+uint32_t Checked(const char* name, bool check, void (*original)(CpuContext*), void (*port)(CpuContext*), uint32_t r1, uint32_t r3, uint32_t r4, uint32_t (*direct)(uint32_t, uint32_t)) {
 #ifdef MH3_DEVELOPMENT
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
@@ -61,8 +60,12 @@ uint32_t Checked(const char* name, bool check, void (*original)(CpuContext*), vo
 extern "C" void func_800627B4(CpuContext* ctx);
 extern "C" void func_800628A4(CpuContext* ctx);
 
-static uint32_t ResDicAtDirect(uint32_t r3, uint32_t r4) { return ResDicAt(r3, r4); }
-static void ResDicAtPort(CpuContext* p) { p->gpr[3] = ResDicAt(p->gpr[3], p->gpr[4]); }
+static uint32_t ResDicAtDirect(uint32_t r3, uint32_t r4) {
+    return ResDicAt(r3, r4);
+}
+static void ResDicAtPort(CpuContext* p) {
+    p->gpr[3] = ResDicAt(p->gpr[3], p->gpr[4]);
+}
 static uint32_t ResDicAtChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
     static const bool check = PortCheck::Enabled("ResDicLookup");
     return Checked("ResDicLookup", check, func_800627B4, ResDicAtPort, r1, r3, r4, ResDicAtDirect);
@@ -72,8 +75,12 @@ extern "C" void MH3_ResDicLookup(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800627B4, MH3_ResDicLookup, "ResDicLookup");
 
-static uint32_t RefCheckDirect(uint32_t r3, uint32_t) { return ResCommonRefCheck(r3); }
-static void RefCheckPort(CpuContext* p) { p->gpr[3] = ResCommonRefCheck(p->gpr[3]); }
+static uint32_t RefCheckDirect(uint32_t r3, uint32_t) {
+    return ResCommonRefCheck(r3);
+}
+static void RefCheckPort(CpuContext* p) {
+    p->gpr[3] = ResCommonRefCheck(p->gpr[3]);
+}
 static uint32_t RefCheckChecked(uint32_t r1, uint32_t r3) {
     static const bool check = PortCheck::Enabled("ResCommonRefCheck");
     return Checked("ResCommonRefCheck", check, func_800628A4, RefCheckPort, r1, r3, 0, RefCheckDirect);

@@ -41,20 +41,20 @@ extern "C" void MH3_RenderInit(CpuContext* cpu) {
     Memory::Write8(sda - 0x469C, 0);
 
     std::array<mh3_render_mode, 3> defaults{};
-    for (size_t index = 0; index < defaults.size(); ++index) defaults[index] = Read(Defaults[index]);
+    for (size_t index = 0; index < defaults.size(); ++index)
+        defaults[index] = Read(Defaults[index]);
     mh3_render_configuration configuration{};
     configuration.mode = Read(ModeAddress);
     mh3_render_mode custom{};
-    if (customAddress) custom = Read(customAddress);
-    const auto status = mh3_render_mode_select(&preferences, defaults.data(),
-        customAddress ? &custom : nullptr, &configuration);
+    if (customAddress)
+        custom = Read(customAddress);
+    const auto status = mh3_render_mode_select(&preferences, defaults.data(), customAddress ? &custom : nullptr, &configuration);
     if (status == MH3_RES_UNSUPPORTED) {
         cpu->cr &= ~(1u << (31 - 6)); // integer-only variadic panic
         call(0x804CDD30, {0x8057CFE0, 0x2ED, 0x8057CFEC});
     }
     Checked(status);
-    Checked(mh3_render_mode_store({Memory::GetPointer(ModeAddress, MH3_RENDER_MODE_BYTES), MH3_RENDER_MODE_BYTES},
-        &configuration.mode));
+    Checked(mh3_render_mode_store({Memory::GetPointer(ModeAddress, MH3_RENDER_MODE_BYTES), MH3_RENDER_MODE_BYTES}, &configuration.mode));
     Memory::Write8(sda - 0x469C, configuration.pal);
     if (!customAddress) {
         cpu->cr &= ~(1u << (31 - 6));
@@ -71,17 +71,20 @@ extern "C" void MH3_ApplyWidemode(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x60);
     const auto wide = uint8_t(frame.Arg(3));
     const auto sda = frame.Arg(13);
-    if (wide == Memory::Read8(sda - 0x468F)) return;
+    if (wide == Memory::Read8(sda - 0x468F))
+        return;
     mh3_render_preferences preferences{};
     preferences.progressive = Memory::Read8(sda - 0x46A0);
     preferences.tv_format = Memory::Read8(sda - 0x469D);
     preferences.widescreen = wide;
     std::array<mh3_render_mode, 3> defaults{};
-    for (size_t i = 0; i < defaults.size(); ++i) defaults[i] = Read(Defaults[i]);
+    for (size_t i = 0; i < defaults.size(); ++i)
+        defaults[i] = Read(Defaults[i]);
     const auto address = Memory::Read32(sda + uint32_t(ModePointer));
     auto mode = Read(address);
     const auto status = mh3_render_mode_widescreen(&preferences, defaults.data(), &mode);
-    if (status == MH3_RES_UNSUPPORTED) return;
+    if (status == MH3_RES_UNSUPPORTED)
+        return;
     Checked(status);
     // Publish only the two fields written by the original caller.
     Memory::Write16(address + 14, mode.vi_width);

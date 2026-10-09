@@ -28,22 +28,22 @@
 namespace {
 
 enum : uint32_t {
-    kState = 0x05,       // u8
-    kTarget = 0x20,      // u32 x3
-    kPosX = 0x14,        // f32
+    kState = 0x05,  // u8
+    kTarget = 0x20, // u32 x3
+    kPosX = 0x14,   // f32
     kPosY = 0x18,
     kPosZ = 0x1C,
-    kPhase = 0x1A4,      // u32 (u16 range)
+    kPhase = 0x1A4,       // u32 (u16 range)
     kPhaseMirror = 0x1B0, // u32: 0x10000 - phase
-    kPhaseRate = 0x1B4,  // u16
-    kRising = 0x1B6,     // u8: phase counting up
-    kPhaseFlag = 0x1B7,  // u8, cleared every step
+    kPhaseRate = 0x1B4,   // u16
+    kRising = 0x1B6,      // u8: phase counting up
+    kPhaseFlag = 0x1B7,   // u8, cleared every step
     kHeightSpeed = 0x1C8, // f32
-    kAngle = 0x1CC,      // u32 (u16 range)
-    kCentreX = 0x1D0,    // f32
-    kBaseY = 0x1D4,      // f32
-    kCentreZ = 0x1D8,    // f32
-    kRangeY = 0x1F4,     // f32
+    kAngle = 0x1CC,       // u32 (u16 range)
+    kCentreX = 0x1D0,     // f32
+    kBaseY = 0x1D4,       // f32
+    kCentreZ = 0x1D8,     // f32
+    kRangeY = 0x1F4,      // f32
 };
 
 constexpr int32_t kSdaTargetSource = -22408; // r13: u32 copied to +0x20
@@ -53,14 +53,16 @@ constexpr int32_t kSdaTargetSource = -22408; // r13: u32 copied to +0x20
 // then turns. Of the time since the crossing (over / perTick ticks), the part
 // after that tick boundary moves it back; at the stock step there is none.
 uint32_t Back(uint32_t over, uint32_t perTick) {
-    if (!perTick) return 0;
+    if (!perTick)
+        return 0;
     const double past = double(over) / perTick, fraction = GameStep::Fraction();
-    if (past < fraction) return 0;
+    if (past < fraction)
+        return 0;
     return uint32_t(perTick * (fraction + std::floor(past - fraction)));
 }
 
 enum : uint32_t {
-    Random = 0x800CEF20,  // ran_suu(long)
+    Random = 0x800CEF20, // ran_suu(long)
     SinDegrees = 0x80059210,
     CosDegrees = 0x803BB7EC, // CosFIdx(deg * 256 / 360)
 };
@@ -72,8 +74,11 @@ static void AmbientHover(CpuContext* ctx) {
     GuestCall call{ctx};
     const uint32_t w = frame.Arg(3);
     const uint8_t state = Memory::Read8(w + kState);
-    if (state != 12 && state != 16) return;
-    auto random = [&] { return call(Random, {0}) & 0xFFFF; };
+    if (state != 12 && state != 16)
+        return;
+    auto random = [&] {
+        return call(Random, {0}) & 0xFFFF;
+    };
 
     const uint32_t perTick = Memory::Read16(w + kPhaseRate);
     const int32_t rate = GameStep::Share(int32_t(perTick));
@@ -84,7 +89,8 @@ static void AmbientHover(CpuContext* ctx) {
         if (phase >= 0x8000) {
             phase = Back(over, perTick);
             Memory::Write8(w + kRising, 1);
-            if (random() & 1) Memory::WriteFloat32(w + kHeightSpeed, 2.0f);
+            if (random() & 1)
+                Memory::WriteFloat32(w + kHeightSpeed, 2.0f);
         }
     } else {
         const uint32_t over = phase + uint32_t(rate) - 0x8000; // past 0x8000, when it gets there
@@ -92,7 +98,8 @@ static void AmbientHover(CpuContext* ctx) {
         if (phase >= 0x8000) {
             phase = 0x8000 - Back(over, perTick);
             Memory::Write8(w + kRising, 0);
-            if (random() & 1) Memory::WriteFloat32(w + kHeightSpeed, -2.0f);
+            if (random() & 1)
+                Memory::WriteFloat32(w + kHeightSpeed, -2.0f);
         }
     }
     Memory::Write32(w + kPhase, phase);
@@ -100,7 +107,8 @@ static void AmbientHover(CpuContext* ctx) {
     Memory::Write8(w + kPhaseFlag, 0);
 
     for (uint32_t tick = 0, ticks = GameStep::Ticks(); tick < ticks; ++tick) {
-        if ((random() & 3) == 0) Memory::Write32(w + kAngle, (Memory::Read32(w + kAngle) + 4096) & 0xFFFF);
+        if ((random() & 3) == 0)
+            Memory::Write32(w + kAngle, (Memory::Read32(w + kAngle) + 4096) & 0xFFFF);
         if ((random() & 31) == 0) {
             Memory::Write32(w + kTarget, Memory::Read32(frame.Arg(13) + uint32_t(kSdaTargetSource)));
             Memory::Write32(w + kTarget + 4, random());
@@ -123,7 +131,8 @@ static void AmbientHover(CpuContext* ctx) {
         Memory::WriteFloat32(w + kHeightSpeed, speed * -1.0f);
     const float top = Memory::ReadFloat32(w + kBaseY) + Memory::ReadFloat32(w + kRangeY);
     const float now = Memory::ReadFloat32(w + kHeightSpeed);
-    if (Memory::ReadFloat32(w + kPosY) > top && now > 0.0f) Memory::WriteFloat32(w + kHeightSpeed, now * -1.0f);
+    if (Memory::ReadFloat32(w + kPosY) > top && now > 0.0f)
+        Memory::WriteFloat32(w + kHeightSpeed, now * -1.0f);
 }
 extern "C" void func_803BB570(CpuContext* ctx);
 

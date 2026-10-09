@@ -20,23 +20,23 @@
 namespace {
 
 enum : uint32_t {
-    SinF = 0x80464560,        // sinf(f1) -> f1
-    MoveMHchar = 0x800E078C,  // MHchar::move(u16)
-    JointCount = 0x800E0C44,  // MHchar::get_joint_num() -> u32
+    SinF = 0x80464560,          // sinf(f1) -> f1
+    MoveMHchar = 0x800E078C,    // MHchar::move(u16)
+    JointCount = 0x800E0C44,    // MHchar::get_joint_num() -> u32
     SetVisibility = 0x800E3154, // MHchar::setVisibility(u32 joint, bool)
-    SubmitModel = 0x800F943C, // (work, MHchar**, 2, 1, 0)
+    SubmitModel = 0x800F943C,   // (work, MHchar**, 2, 1, 0)
 };
 
 enum : uint32_t {
     kWorkSteps = 0x10, // u32 work: +1 per model per step
     kWorkList = 0x38,  // list*
     // list
-    kCount = 0x00,     // s32 models
-    kModels = 0x04,    // MHchar*[count]
-    kPhase = 0x18,     // s16[count] swing phase
-    kFrame = 0x22,     // s16[count] flip-book joint
-    kHold = 0x2C,      // s16[count] steps held at an end of the swing
-    kParams = 0x38,    // params*[count]
+    kCount = 0x00,  // s32 models
+    kModels = 0x04, // MHchar*[count]
+    kPhase = 0x18,  // s16[count] swing phase
+    kFrame = 0x22,  // s16[count] flip-book joint
+    kHold = 0x2C,   // s16[count] steps held at an end of the swing
+    kParams = 0x38, // params*[count]
     // params
     kFirstFrame = 0x10, // u8 first flip-book joint
     kFrames = 0x11,     // u8 flip-book length
@@ -45,7 +45,7 @@ enum : uint32_t {
     kPhaseShift = 0x18, // u8 phase << shift = angle (0x10000 a turn)
     kHoldSteps = 0x1A,  // s16 steps to hold at the ends (<= 0: none)
     // MHchar
-    kYaw = 0x2C,        // u32
+    kYaw = 0x2C, // u32
 };
 
 float Sin(GuestCall& game, float x) {
@@ -78,7 +78,8 @@ static void SwingEffectUpdatePort(CpuContext* ctx) {
         for (uint32_t t = 0; t < ticks; ++t) {
             const int16_t first = int16_t(Memory::Read8(params + kFirstFrame));
             int16_t flip = int16_t(Memory::Read16(frameAt) + 1);
-            if (int32_t(first) + Memory::Read8(params + kFrames) <= flip) flip = first;
+            if (int32_t(first) + Memory::Read8(params + kFrames) <= flip)
+                flip = first;
             Memory::Write16(frameAt, uint16_t(flip));
             Memory::Write32(work + kWorkSteps, Memory::Read32(work + kWorkSteps) + 1);
             int16_t phase = int16_t(Memory::Read16(phaseAt) + 1);
@@ -101,8 +102,7 @@ static void SwingEffectUpdatePort(CpuContext* ctx) {
         // While held at an end the stored phase is one short of the end shown.
         const int16_t phase = int16_t(Memory::Read16(phaseAt));
         const bool held = int16_t(Memory::Read16(holdAt)) > 0;
-        const double at = held ? double((uint32_t(int32_t(phase) + 1) << shift) & 0xFFFF) / (1u << shift)
-                               : double((uint32_t(int32_t(phase)) << shift) & 0xFFFF) / (1u << shift) + fraction;
+        const double at = held ? double((uint32_t(int32_t(phase) + 1) << shift) & 0xFFFF) / (1u << shift) : double((uint32_t(int32_t(phase)) << shift) & 0xFFFF) / (1u << shift) + fraction;
         const float s = SwingSin(game, at, shift);
         const float yaw = 0.5f + float(65536.0f * float(s * Memory::ReadFloat32(params + kAmplitude))) / 360.0f;
         Memory::Write32(model + kYaw, (uint32_t(int32_t(yaw)) & 0xFFFF) + Memory::Read16(params + kBaseYaw));

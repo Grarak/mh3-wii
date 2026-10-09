@@ -21,9 +21,7 @@ struct Extent {
   uint32_t height = 0;
   uint32_t depthOrArrayLayers = 1;
 
-  bool operator==(const Extent& rhs) const noexcept {
-    return width == rhs.width && height == rhs.height && depthOrArrayLayers == rhs.depthOrArrayLayers;
-  }
+  bool operator==(const Extent& rhs) const noexcept { return width == rhs.width && height == rhs.height && depthOrArrayLayers == rhs.depthOrArrayLayers; }
 };
 
 uint64_t calc_texture_size(gl::Format format, uint32_t width, uint32_t height, uint32_t mips) noexcept;
@@ -43,10 +41,8 @@ struct TextureRef {
   : texture(std::move(texture)), size(size), format(format), mipCount(mipCount), gxFormat(gxFormat) {}
 };
 
-TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
-                                    ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept;
-TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
-                                     const char* label) noexcept;
+TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat, ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept;
+TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat, const char* label) noexcept;
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept;
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept;
 TextureHandle find_generated_texture(const void* guestData, uint32_t version);

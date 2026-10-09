@@ -9,7 +9,8 @@ struct AudioDmaState {
     uint64_t Period(uint32_t rate) const { return uint64_t(length) * 1000000000 / (rate * 4); }
     bool Ready(uint32_t rate) const { return enabled && length && elapsedNs >= Period(rate); }
     uint32_t BytesLeft(uint32_t rate) const {
-        if (!enabled || !length || Ready(rate)) return 0;
+        if (!enabled || !length || Ready(rate))
+            return 0;
         const auto consumed = elapsedNs * rate * 4 / 1000000000;
         return (length - uint32_t(consumed) + 31) & ~31u;
     }

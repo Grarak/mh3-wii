@@ -19,14 +19,16 @@ constexpr int32_t kMaxAge = 0x7FFF;
 
 void Age(uint32_t address) {
     const int32_t age = int16_t(Memory::Read16(address));
-    if (age < kMaxAge) Memory::Write16(address, uint16_t(std::min(age + int32_t(GameStep::Ticks()), kMaxAge)));
+    if (age < kMaxAge)
+        Memory::Write16(address, uint16_t(std::min(age + int32_t(GameStep::Ticks()), kMaxAge)));
 }
 
 void ObjectAgesTickPort(CpuContext* ctx) {
     const uint32_t object = ctx->gpr[3];
     Age(object + 0x34);
     Age(object + 0x1C);
-    if (int16_t(Memory::Read16(object + 0x1E)) >= 0) Age(object + 0x1E);
+    if (int16_t(Memory::Read16(object + 0x1E)) >= 0)
+        Age(object + 0x1E);
 }
 
 } // namespace

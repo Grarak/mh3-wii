@@ -43,10 +43,10 @@
 #include <cstring>
 #include <vector>
 
-extern "C" void func_800A4C20(CpuContext*); // nw4r::ef::Effect::Calc(bool onlyBillboard)
-extern "C" void func_800A8AC0(CpuContext*); // nw4r::ef::Emitter::CalcEmitter()
-extern "C" void func_800A8E5C(CpuContext*); // nw4r::ef::Emitter::CalcEmission()
-extern "C" void func_800AC35C(CpuContext*); // nw4r::ef::ParticleManager::Calc()
+extern "C" void func_800A4C20(CpuContext*);  // nw4r::ef::Effect::Calc(bool onlyBillboard)
+extern "C" void func_800A8AC0(CpuContext*);  // nw4r::ef::Emitter::CalcEmitter()
+extern "C" void func_800A8E5C(CpuContext*);  // nw4r::ef::Emitter::CalcEmission()
+extern "C" void func_800AC35C(CpuContext*);  // nw4r::ef::ParticleManager::Calc()
 void ParticleManagerCalcNative(CpuContext*); // its port (particle_manager_calc.cpp)
 // Native ports (ef_anim_curve.cpp, nw4r_accessors.cpp), called directly.
 extern "C" void MH3_ResEmitterNumPtclTrack(CpuContext*);
@@ -63,13 +63,15 @@ struct List {
     uint32_t address;
     uint32_t First() const { return MemoryInline::FlatRead32(address); }
     uint32_t Last() const { return MemoryInline::FlatRead32(address + 4); }
-    uint32_t Next(uint32_t object) const {
-        return MemoryInline::FlatRead32(object + MemoryInline::FlatRead16(address + 0xA) + 4);
-    }
+    uint32_t Next(uint32_t object) const { return MemoryInline::FlatRead32(object + MemoryInline::FlatRead16(address + 0xA) + 4); }
 };
 
-enum : uint32_t { kLifeActive = 1 };
-enum : uint32_t { kEvalWait = 0 };
+enum : uint32_t {
+    kLifeActive = 1
+};
+enum : uint32_t {
+    kEvalWait = 0
+};
 
 // Effect / Emitter / ParticleManager / Particle fields.
 enum : uint32_t {
@@ -95,19 +97,30 @@ enum : uint32_t {
     kParticleLife = 0xE0,          // u16
 };
 // Track header: u8 magic (0xAB/0xAC), u8 target offset, u8 kind, u8, u8 flags.
-enum : uint8_t { kTrackU8 = 0, kTrackF32 = 3, kTrackRotate = 6 };
-enum : uint8_t { kTrackSkip = 0x08, kTrackEmitterTick = 0x10 };
+enum : uint8_t {
+    kTrackU8 = 0,
+    kTrackF32 = 3,
+    kTrackRotate = 6
+};
+enum : uint8_t {
+    kTrackSkip = 0x08,
+    kTrackEmitterTick = 0x10
+};
 
 using Vec3 = std::array<float, 3>;
-Vec3 ReadVec(uint32_t a) { return {MemoryInline::FlatReadFloat32(a), MemoryInline::FlatReadFloat32(a + 4), MemoryInline::FlatReadFloat32(a + 8)}; }
+Vec3 ReadVec(uint32_t a) {
+    return {MemoryInline::FlatReadFloat32(a), MemoryInline::FlatReadFloat32(a + 4), MemoryInline::FlatReadFloat32(a + 8)};
+}
 void WriteVec(uint32_t a, const Vec3& v) {
-    for (int k = 0; k < 3; ++k) MemoryInline::FlatWriteFloat32(a + 4 * k, v[k]);
+    for (int k = 0; k < 3; ++k)
+        MemoryInline::FlatWriteFloat32(a + 4 * k, v[k]);
 }
 
 constexpr size_t kCurveWords = (kParticleCurvesEnd - kParticleCurves) / 4;
 using Curves = std::array<uint32_t, kCurveWords>;
 void ReadCurves(uint32_t particle, Curves& c) {
-    for (size_t i = 0; i < kCurveWords; ++i) c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
+    for (size_t i = 0; i < kCurveWords; ++i)
+        c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
 }
 Curves ReadCurves(uint32_t particle) {
     Curves c;
@@ -115,14 +128,23 @@ Curves ReadCurves(uint32_t particle) {
     return c;
 }
 void WriteCurves(uint32_t particle, const Curves& c) {
-    for (size_t i = 0; i < kCurveWords; ++i) MemoryInline::FlatWrite32(particle + kParticleCurves + 4 * i, c[i]);
+    for (size_t i = 0; i < kCurveWords; ++i)
+        MemoryInline::FlatWrite32(particle + kParticleCurves + 4 * i, c[i]);
 }
-float F(uint32_t bits) { float f; std::memcpy(&f, &bits, 4); return f; }
-uint32_t Bits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
+float F(uint32_t bits) {
+    float f;
+    std::memcpy(&f, &bits, 4);
+    return f;
+}
+uint32_t Bits(float f) {
+    uint32_t b;
+    std::memcpy(&b, &f, 4);
+    return b;
+}
 
 struct Particle {
-    uint16_t seed = 0; // identity: a reused slot or a stock tick invalidates the entry
-    double age = 0;    // ticks, fractional
+    uint16_t seed = 0;       // identity: a reused slot or a stock tick invalidates the entry
+    double age = 0;          // ticks, fractional
     uint64_t generation = 0; // Effect::Calc pass that last advanced it
 };
 
@@ -131,20 +153,25 @@ struct Particle {
 // inline, where std::unordered_map chased a node per lookup.
 template <class V>
 class AddressMap {
-public:
+  public:
     AddressMap() { Rehash(64); }
     bool Empty() const { return count_ == 0; }
     V* Find(uint32_t key) {
         for (uint32_t i = Home(key);; i = (i + 1) & mask_) {
-            if (slots_[i].key == key) return &slots_[i].value;
-            if (slots_[i].key == 0) return nullptr;
+            if (slots_[i].key == key)
+                return &slots_[i].value;
+            if (slots_[i].key == 0)
+                return nullptr;
         }
     }
     V& operator[](uint32_t key) {
-        if (V* v = Find(key)) return *v;
-        if (2 * (count_ + 1) > slots_.size()) Rehash(uint32_t(slots_.size()) * 2);
+        if (V* v = Find(key))
+            return *v;
+        if (2 * (count_ + 1) > slots_.size())
+            Rehash(uint32_t(slots_.size()) * 2);
         uint32_t i = Home(key);
-        while (slots_[i].key != 0) i = (i + 1) & mask_;
+        while (slots_[i].key != 0)
+            i = (i + 1) & mask_;
         ++count_;
         slots_[i] = {key, V{}};
         return slots_[i].value;
@@ -152,7 +179,8 @@ public:
     void Erase(uint32_t key) {
         uint32_t i = Home(key);
         while (slots_[i].key != key) {
-            if (slots_[i].key == 0) return;
+            if (slots_[i].key == 0)
+                return;
             i = (i + 1) & mask_;
         }
         // Backward-shift deletion: pull later entries of the run into the hole.
@@ -167,7 +195,7 @@ public:
         --count_;
     }
 
-private:
+  private:
     struct Slot {
         uint32_t key; // 0: empty
         V value;
@@ -180,7 +208,8 @@ private:
         shift_ = 32 - uint32_t(__builtin_ctz(size));
         count_ = 0;
         for (const Slot& s : old)
-            if (s.key != 0) (*this)[s.key] = s.value;
+            if (s.key != 0)
+                (*this)[s.key] = s.value;
     }
     std::vector<Slot> slots_;
     uint32_t mask_ = 0, shift_ = 0, count_ = 0;
@@ -204,7 +233,8 @@ void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t ti
     // their argument registers: call them without the indirect dispatch.
     auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
         uint32_t r = 3;
-        for (uint32_t v : ints) game.cpu->gpr[r++] = v;
+        for (uint32_t v : ints)
+            game.cpu->gpr[r++] = v;
         fn(game.cpu);
         return game.cpu->gpr[3];
     };
@@ -217,7 +247,8 @@ void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t ti
         const uint32_t track = native(MH3_ResEmitterGetPtclTrack, {res, i});
         const uint8_t magic = MemoryInline::FlatRead8(track), target = MemoryInline::FlatRead8(track + 1);
         const uint8_t kind = MemoryInline::FlatRead8(track + 2), flags = MemoryInline::FlatRead8(track + 4);
-        if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2) continue;
+        if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2)
+            continue;
         if (kind == kTrackU8)
             native(MH3_AnimCurveExecuteU8, {track, particle + kParticleCurves + target, tick, seed, life});
         else if (kind == kTrackF32)
@@ -240,7 +271,8 @@ struct CurveFootprint {
 CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
     auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
         uint32_t r = 3;
-        for (uint32_t v : ints) game.cpu->gpr[r++] = v;
+        for (uint32_t v : ints)
+            game.cpu->gpr[r++] = v;
         fn(game.cpu);
         return game.cpu->gpr[3];
     };
@@ -254,22 +286,30 @@ CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
         const uint8_t magic = MemoryInline::FlatRead8(track), target = MemoryInline::FlatRead8(track + 1);
         const uint8_t kind = MemoryInline::FlatRead8(track + 2), mask = MemoryInline::FlatRead8(track + 3);
         const uint8_t flags = MemoryInline::FlatRead8(track + 4);
-        if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2) continue;
+        if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2)
+            continue;
         uint32_t base, width;
-        if (kind == kTrackU8) base = target, width = 1;
-        else if (kind == kTrackF32) base = target, width = 4;
-        else if (kind == kTrackRotate) base = kParticleRotate - kParticleCurves, width = 4;
-        else continue;
-        if (MemoryInline::FlatRead8(kChannelCount + mask) == 0) continue;
+        if (kind == kTrackU8)
+            base = target, width = 1;
+        else if (kind == kTrackF32)
+            base = target, width = 4;
+        else if (kind == kTrackRotate)
+            base = kParticleRotate - kParticleCurves, width = 4;
+        else
+            continue;
+        if (MemoryInline::FlatRead8(kChannelCount + mask) == 0)
+            continue;
         const uint32_t bound = MemoryInline::FlatRead8(kChannelBound + mask);
         uint32_t at = base;
         for (uint32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, at += width) {
-            if ((mask & bit) == 0) continue;
+            if ((mask & bit) == 0)
+                continue;
             if (at + width > kParticleCurvesEnd - kParticleCurves) {
                 f.inside = false;
                 return f;
             }
-            for (uint32_t b = at; b < at + width; ++b) f.bits[b / 32] |= 1u << (b % 32);
+            for (uint32_t b = at; b < at + width; ++b)
+                f.bits[b / 32] |= 1u << (b % 32);
         }
     }
     return f;
@@ -280,8 +320,7 @@ CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
 // ticks either side, `a` (the tick's) and `b` (the next); one that jumps at
 // the tick holds the tick's value, as the Wii shows it for the whole tick.
 // `before` is the previous tick's. Bytes outside `owned` keep `kept`.
-Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, const Curves& b, float t,
-                   const CurveFootprint* owned) {
+Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, const Curves& b, float t, const CurveFootprint* owned) {
     // Into and out of the tick: the same step (within a tenth, or the
     // rounding of a u8) is a ramp.
     auto ramp = [](double in, double out, double slack) {
@@ -308,14 +347,14 @@ Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, co
         s[i] = v;
     }
     for (size_t i = colours; i < floats; ++i) {
-        if (owned && !owned->Has(i * 4)) continue;
+        if (owned && !owned->Has(i * 4))
+            continue;
         const float w = F(before[i]), x = F(a[i]), y = F(b[i]);
         // A rotation curve wrapping between the two ticks snaps. Texture
         // offsets step through a flipbook's frames even when evenly: never
         // blended.
         const bool wraps = i >= rotate && i < rotate + 3 && std::fabs(y - x) > 3.1415927f;
-        const bool blend = i < translate && std::isfinite(w) && std::isfinite(x) && std::isfinite(y) && !wraps &&
-                           ramp(double(x) - w, double(y) - x, 1e-6);
+        const bool blend = i < translate && std::isfinite(w) && std::isfinite(x) && std::isfinite(y) && !wraps && ramp(double(x) - w, double(y) - x, 1e-6);
         s[i] = blend ? Bits(x + (y - x) * t) : a[i];
     }
     return s;
@@ -358,7 +397,8 @@ AddressMap<CurveCache> curveCache;
 void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, uint32_t keptTick) {
     const uint32_t tick = uint32_t(at);
     // The first tick runs the initial tracks too: rare, and done in full.
-    if (tick == 0) return CurvesAtFull(game, manager, particle, at);
+    if (tick == 0)
+        return CurvesAtFull(game, manager, particle, at);
     const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
     const uint16_t seed = MemoryInline::FlatRead16(particle + kParticleSeed), life = MemoryInline::FlatRead16(particle + kParticleLife);
     CurveCache& cache = curveCache[particle];
@@ -369,7 +409,8 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
         cache.owned = FootprintOf(game, manager);
         cache.ticks = {~0u, ~0u, ~0u};
     }
-    if (!cache.owned.inside) return CurvesAtFull(game, manager, particle, at);
+    if (!cache.owned.inside)
+        return CurvesAtFull(game, manager, particle, at);
 
     // The three ticks' curves live in the cache's slots (128 bytes each: no
     // copies in and out). A tick already cached keeps its slot; the others
@@ -396,7 +437,8 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
                 continue;
             }
         }
-        if (want == keptTick) cache.values[s] = kept;
+        if (want == keptTick)
+            cache.values[s] = kept;
     }
     const std::array<const Curves*, 3> got{&cache.values[slotOf[0]], &cache.values[slotOf[1]], &cache.values[slotOf[2]]};
     WriteCurves(particle, BlendCurves(kept, *got[0], *got[1], *got[2], float(at - tick), &cache.owned));
@@ -405,8 +447,12 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
 } // namespace
 
 namespace EffectStep {
-std::any Save() { return step; }
-void Restore(const std::any& state) { step = std::any_cast<const Step&>(state); }
+std::any Save() {
+    return step;
+}
+void Restore(const std::any& state) {
+    step = std::any_cast<const Step&>(state);
+}
 } // namespace EffectStep
 
 static void EffectCalcPort(CpuContext* ctx) {
@@ -426,7 +472,8 @@ static void EffectCalcPort(CpuContext* ctx) {
         std::vector<std::pair<uint32_t, std::array<uint32_t, 6>>> kept;
         for (uint32_t e = emitters.First(); e; e = emitters.Next(e)) {
             std::array<uint32_t, 6> words;
-            for (size_t i = 0; i < 6; ++i) words[i] = MemoryInline::FlatRead32(e + kEmitterLastTranslate + i * 4);
+            for (size_t i = 0; i < 6; ++i)
+                words[i] = MemoryInline::FlatRead32(e + kEmitterLastTranslate + i * 4);
             kept.emplace_back(e, words);
         }
         step.particleStep = scale;
@@ -435,7 +482,8 @@ static void EffectCalcPort(CpuContext* ctx) {
         func_800A4C20(ctx);
         step.particlesOnly = false;
         for (const auto& [e, words] : kept)
-            for (size_t i = 0; i < 6; ++i) MemoryInline::FlatWrite32(e + kEmitterLastTranslate + i * 4, words[i]);
+            for (size_t i = 0; i < 6; ++i)
+                MemoryInline::FlatWrite32(e + kEmitterLastTranslate + i * 4, words[i]);
     } else {
         step.particleStep = scale / ticks;
         for (uint32_t i = 0; i < ticks; ++i) {
@@ -448,21 +496,29 @@ static void EffectCalcPort(CpuContext* ctx) {
     *ctx = saved;
 }
 extern "C" void func_800A4C20(CpuContext* ctx);
-extern "C" void MH3_EffectCalc(CpuContext* ctx) { PortCheck::Call(ctx, "EffectCalc", func_800A4C20, EffectCalcPort); }
+extern "C" void MH3_EffectCalc(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EffectCalc", func_800A4C20, EffectCalcPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800A4C20, MH3_EffectCalc, "EffectCalc");
 
 static void EmitterCalcEmitterPort(CpuContext* ctx) {
-    if (!step.particlesOnly) func_800A8AC0(ctx);
+    if (!step.particlesOnly)
+        func_800A8AC0(ctx);
 }
 extern "C" void func_800A8AC0(CpuContext* ctx);
-extern "C" void MH3_EmitterCalcEmitter(CpuContext* ctx) { PortCheck::Call(ctx, "EmitterCalcEmitter", func_800A8AC0, EmitterCalcEmitterPort); }
+extern "C" void MH3_EmitterCalcEmitter(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EmitterCalcEmitter", func_800A8AC0, EmitterCalcEmitterPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800A8AC0, MH3_EmitterCalcEmitter, "EmitterCalcEmitter");
 
 static void EmitterCalcEmissionPort(CpuContext* ctx) {
-    if (!step.particlesOnly) func_800A8E5C(ctx);
+    if (!step.particlesOnly)
+        func_800A8E5C(ctx);
 }
 extern "C" void func_800A8E5C(CpuContext* ctx);
-extern "C" void MH3_EmitterCalcEmission(CpuContext* ctx) { PortCheck::Call(ctx, "EmitterCalcEmission", func_800A8E5C, EmitterCalcEmissionPort); }
+extern "C" void MH3_EmitterCalcEmission(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EmitterCalcEmission", func_800A8E5C, EmitterCalcEmissionPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800A8E5C, MH3_EmitterCalcEmission, "EmitterCalcEmission");
 
 static void ParticleManagerCalcPort(CpuContext* ctx) {
@@ -499,17 +555,20 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
                 age = e.age;
                 // Calc again in the same pass (calc remain: a particle emitted
                 // with ticks to catch up) is a whole tick.
-                if (e.generation == step.generation) dt = 1.0;
+                if (e.generation == step.generation)
+                    dt = 1.0;
             }
         }
-        Work w{p, age, dt, MemoryInline::FlatReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity),
-               ReadVec(p + kParticlePosition)};
-        if (dt != 1.0) MemoryInline::FlatWriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
-        if (std::floor(age + dt) == std::floor(age)) betweenTicks[p] = true;
+        Work w{p, age, dt, MemoryInline::FlatReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity), ReadVec(p + kParticlePosition)};
+        if (dt != 1.0)
+            MemoryInline::FlatWriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
+        if (std::floor(age + dt) == std::floor(age))
+            betweenTicks[p] = true;
         work.push_back(w);
     }
     ParticleManagerCalcNative(ctx);
-    for (const Work& w : work) betweenTicks.Erase(w.address);
+    for (const Work& w : work)
+        betweenTicks.Erase(w.address);
 
     GuestCall game{ctx};
     for (const Work& w : work) {
@@ -545,9 +604,11 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
         // MH3_EFFECT_TICK_CURVES=1 (debugging): curves stay at the whole tick.
         static const bool tickCurves = std::getenv("MH3_EFFECT_TICK_CURVES") != nullptr;
-        if (tickCurves) continue;
+        if (tickCurves)
+            continue;
 #endif
-        if (age <= 1.0) continue;
+        if (age <= 1.0)
+            continue;
 #ifdef MH3_DEVELOPMENT
         // MH3_EFFECT_CURVE_CHECK=1 (debugging): compare the cached curves
         // with three fresh evaluations and report how many differ.
@@ -563,16 +624,15 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
             ++checked;
             if (cached != full) {
                 if (++differing <= 8) {
-                    std::fprintf(stderr, "MH3 effect curves: particle %08x age %.3f kept tick %u differs:", p, age,
-                                 uint32_t(w.age));
+                    std::fprintf(stderr, "MH3 effect curves: particle %08x age %.3f kept tick %u differs:", p, age, uint32_t(w.age));
                     for (size_t i = 0; i < kCurveWords; ++i)
-                        if (cached[i] != full[i]) std::fprintf(stderr, " +%02llx %08x/%08x", static_cast<unsigned long long>(0x20 + 4 * i), cached[i], full[i]);
+                        if (cached[i] != full[i])
+                            std::fprintf(stderr, " +%02llx %08x/%08x", static_cast<unsigned long long>(0x20 + 4 * i), cached[i], full[i]);
                     std::fprintf(stderr, "\n");
                 }
             }
             if ((checked & (checked - 1)) == 0 && checked >= 1024)
-                std::fprintf(stderr, "MH3 effect curves: %llu of %llu cached differ\n",
-                             static_cast<unsigned long long>(differing), static_cast<unsigned long long>(checked));
+                std::fprintf(stderr, "MH3 effect curves: %llu of %llu cached differ\n", static_cast<unsigned long long>(differing), static_cast<unsigned long long>(checked));
             continue;
         }
 #endif
@@ -580,14 +640,18 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     }
 }
 extern "C" void func_800AC35C(CpuContext* ctx);
-extern "C" void MH3_ParticleManagerCalc(CpuContext* ctx) { PortCheck::Call(ctx, "ParticleManagerCalc", func_800AC35C, ParticleManagerCalcPort); }
+extern "C" void MH3_ParticleManagerCalc(CpuContext* ctx) {
+    PortCheck::Call(ctx, "ParticleManagerCalc", func_800AC35C, ParticleManagerCalcPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800AC35C, MH3_ParticleManagerCalc, "ParticleManagerCalc");
-
 
 // Child emission is a curve event: only when the particle's age crosses a tick.
 extern "C" void func_800A1D0C(CpuContext* ctx);
 static void AnimCurveExecuteChildPort(CpuContext* ctx) {
-    if (!betweenTicks.Find(ctx->gpr[4])) func_800A1D0C(ctx);
+    if (!betweenTicks.Find(ctx->gpr[4]))
+        func_800A1D0C(ctx);
 }
-extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) { PortCheck::Call(ctx, "AnimCurveExecuteChild", func_800A1D0C, AnimCurveExecuteChildPort); }
+extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) {
+    PortCheck::Call(ctx, "AnimCurveExecuteChild", func_800A1D0C, AnimCurveExecuteChildPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800A1D0C, MH3_AnimCurveExecuteChild, "AnimCurveExecuteChild");

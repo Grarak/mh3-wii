@@ -18,10 +18,8 @@ inline constexpr size_t NativeSlotBytes = NativeIndexOffset + NativeIndexBytes;
 // DrawMemory's immutable IDs, PixelClip's rectangle and the renderer's
 // utility rectangle each own one rounded block. Keep headroom rounded to MiB.
 inline constexpr size_t NativeAuxiliaryBytes = 3 * CdramBlockAlignment;
-inline constexpr size_t NativeProducerBytes =
-    aurora::GpuFrameRing::BufferCount * NativeSlotBytes + NativeAuxiliaryBytes;
-inline constexpr size_t NativeProducerReserve =
-    (NativeProducerBytes + (1u << 20) - 1) & ~size_t((1u << 20) - 1);
+inline constexpr size_t NativeProducerBytes = aurora::GpuFrameRing::BufferCount * NativeSlotBytes + NativeAuxiliaryBytes;
+inline constexpr size_t NativeProducerReserve = (NativeProducerBytes + (1u << 20) - 1) & ~size_t((1u << 20) - 1);
 
 static_assert(NativeSlotBytes % CdramBlockAlignment == 0);
 static_assert(NativeUniformOffset % 256 == 0 && NativeIndexOffset % 16 == 0);

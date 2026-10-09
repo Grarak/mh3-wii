@@ -51,17 +51,29 @@ enum : uint32_t {
     FilterReset = 0x80058514,
 };
 constexpr uint32_t kFirstCounterQuest = 1000; // free-roam quests are 1..4
-constexpr uint32_t kPlayMode = 0x8065AA85; // u8
+constexpr uint32_t kPlayMode = 0x8065AA85;    // u8
 constexpr uint8_t kPlayModeOnline = 4;
-constexpr uint32_t MoveWork = 0x800CFAF4;  // get_move_work_adrs(u8 kind) -> move work
-constexpr uint32_t kCurrentArea = 0x806BB806; // u8, get_now_areano
+constexpr uint32_t MoveWork = 0x800CFAF4;       // get_move_work_adrs(u8 kind) -> move work
+constexpr uint32_t kCurrentArea = 0x806BB806;   // u8, get_now_areano
 constexpr uint32_t kMoveWorkTable = 0x8065AB04; // +16: move works by kind
 constexpr uint32_t kPlayerMoveWork = 2;
-enum : uint32_t { kPosition = 0x3C };
+enum : uint32_t {
+    kPosition = 0x3C
+};
 constexpr uint64_t kSpawnSettle = 60; // game frames (30 Hz)
-enum : uint32_t { kWorkArea = 0xEA, kWorkStartArea = 0xEE };
-enum : uint32_t { kPhase = 8, kState = 9, kSubState = 10 };
-enum : uint8_t { kStateLeave = 5, kSubStateTearDown = 2 };
+enum : uint32_t {
+    kWorkArea = 0xEA,
+    kWorkStartArea = 0xEE
+};
+enum : uint32_t {
+    kPhase = 8,
+    kState = 9,
+    kSubState = 10
+};
+enum : uint8_t {
+    kStateLeave = 5,
+    kSubStateTearDown = 2
+};
 
 struct Jump {
     bool enabled = false;
@@ -81,7 +93,8 @@ Jump& State() {
     static Jump jump = [] {
         Jump j;
 #ifdef MH3_DEVELOPMENT
-        if (const char* v = std::getenv("MH3_FIELD_WAIT")) j.wait = uint32_t(std::strtoul(v, nullptr, 0));
+        if (const char* v = std::getenv("MH3_FIELD_WAIT"))
+            j.wait = uint32_t(std::strtoul(v, nullptr, 0));
 #endif
         return j;
     }();
@@ -123,7 +136,9 @@ static void VillageTaskPort(CpuContext* ctx) {
     func_8021F40C(ctx);
 }
 
-extern "C" void MH3_VillageTask(CpuContext* ctx) { PortCheck::Call(ctx, "VillageTask", func_8021F40C, VillageTaskPort); }
+extern "C" void MH3_VillageTask(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageTask", func_8021F40C, VillageTaskPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8021F40C, MH3_VillageTask, "VillageTask");
 
 void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area) {
@@ -144,16 +159,20 @@ void RequestQuestSpawn(float x, float y, float z) {
 
 void FieldJumpFrame(uint64_t gameFrame) {
     Jump& jump = State();
-    if (!jump.spawn || !jump.done) return;
+    if (!jump.spawn || !jump.done)
+        return;
     const uint32_t table = Memory::Read32(kMoveWorkTable);
     const uint32_t plw = table ? Memory::Read32(table + 16 + kPlayerMoveWork * 4) : 0;
     if (!plw || !Memory::Read8(plw) || Memory::ReadFloat32(plw + kPosition) == 0.0f) {
         jump.placedAt = 0;
         return;
     }
-    if (!jump.placedAt) jump.placedAt = gameFrame;
-    if (gameFrame - jump.placedAt < kSpawnSettle) return;
-    for (int i = 0; i < 3; ++i) Memory::WriteFloat32(plw + kPosition + 4 * i, jump.spawnPos[i]);
+    if (!jump.placedAt)
+        jump.placedAt = gameFrame;
+    if (gameFrame - jump.placedAt < kSpawnSettle)
+        return;
+    for (int i = 0; i < 3; ++i)
+        Memory::WriteFloat32(plw + kPosition + 4 * i, jump.spawnPos[i]);
     std::fprintf(stderr, "MH3 field jump: moved the hunter to %.1f %.1f %.1f\n", jump.spawnPos[0], jump.spawnPos[1], jump.spawnPos[2]);
     jump.spawn = false;
 }
@@ -177,7 +196,9 @@ static void LoadQuestFilePort(CpuContext* ctx) {
     Memory::Write8(kPlayMode, playMode);
 }
 
-extern "C" void MH3_LoadQuestFile(CpuContext* ctx) { PortCheck::Call(ctx, "LoadQuestFile", func_803AD264, LoadQuestFilePort); }
+extern "C" void MH3_LoadQuestFile(CpuContext* ctx) {
+    PortCheck::Call(ctx, "LoadQuestFile", func_803AD264, LoadQuestFilePort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x803AD264, MH3_LoadQuestFile, "LoadQuestFile");
 
 // The quest's map setup; then the chosen start area.
@@ -185,17 +206,21 @@ extern "C" void func_803AF518(CpuContext* ctx);
 static void QuestMapSetupPort(CpuContext* ctx) {
     func_803AF518(ctx);
     const Jump& jump = State();
-    if (!jump.done || jump.area < 0) return;
+    if (!jump.done || jump.area < 0)
+        return;
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
     const uint32_t work = game.Call<MoveWork>({0});
     *ctx = saved;
-    if (!work) return;
+    if (!work)
+        return;
     std::fprintf(stderr, "MH3 field jump: starting in area %d instead of %u\n", jump.area, Memory::Read8(work + kWorkArea));
     Memory::Write8(work + kWorkArea, uint8_t(jump.area));
     Memory::Write8(work + kWorkStartArea, uint8_t(jump.area));
     Memory::Write8(kCurrentArea, uint8_t(jump.area));
 }
 
-extern "C" void MH3_QuestMapSetup(CpuContext* ctx) { PortCheck::Call(ctx, "QuestMapSetup", func_803AF518, QuestMapSetupPort); }
+extern "C" void MH3_QuestMapSetup(CpuContext* ctx) {
+    PortCheck::Call(ctx, "QuestMapSetup", func_803AF518, QuestMapSetupPort);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x803AF518, MH3_QuestMapSetup, "QuestMapSetup");

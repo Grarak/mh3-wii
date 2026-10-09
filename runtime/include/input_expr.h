@@ -23,7 +23,7 @@ using InputSource = std::function<double(const std::string&)>;
 struct Node;
 
 class Expression {
-public:
+  public:
     Expression();
     ~Expression();
     Expression(Expression&&) noexcept;
@@ -38,7 +38,7 @@ public:
     // Input names the expression references, for diagnostics.
     std::vector<std::string> ReferencedInputs() const;
 
-private:
+  private:
     std::unique_ptr<Node> m_root;
 };
 
@@ -46,8 +46,6 @@ private:
 // control of the requested pad, keyed by Dolphin's own control names
 // ("Buttons/A", "D-Pad/Up", "Triggers/L", ...). Returns false if the file
 // cannot be read or the section is missing.
-bool ReadDolphinConfig(const std::filesystem::path& path, int padIndex,
-                       std::vector<std::pair<std::string, std::string>>& controls,
-                       std::string& deviceName, std::string& error);
+bool ReadDolphinConfig(const std::filesystem::path& path, int padIndex, std::vector<std::pair<std::string, std::string>>& controls, std::string& deviceName, std::string& error);
 
 } // namespace InputExpr
