@@ -96,7 +96,8 @@ void InitializeGraphics(int argc, char** argv) {
     config.appName = "Monster Hunter Tri";
     config.userPath = user.c_str();
     config.cachePath = cache.c_str();
-    config.desiredBackend = BACKEND_METAL;
+    // MH3 renders only through Vulkan (arm64 Linux).
+    config.desiredBackend = BACKEND_VULKAN;
     config.windowWidth = 640;
     config.windowHeight = 480;
     config.msaa = 1;
@@ -113,7 +114,8 @@ void InitializeGraphics(int argc, char** argv) {
         profile.cpuStarted = std::clock();
     }
     std::atexit(ShutdownGraphics);
-    if (info.backend != BACKEND_METAL) throw std::runtime_error("Aurora did not select Metal");
+    // Aurora falls back to another backend when Vulkan fails; never run on one.
+    if (info.backend != BACKEND_VULKAN) throw std::runtime_error("Aurora did not select Vulkan");
     aurora::gx::fifo::init();
     if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
         if (const char* interval = std::getenv("MH3_CAPTURE_INTERVAL")) {
@@ -205,7 +207,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
     });
     // GXCopyDisp is the presentation boundary. Seal its owned draw data now,
-    // letting Metal encoding overlap guest work before GXDrawDone/next GX use.
+    // letting GPU encoding overlap guest work before GXDrawDone/next GX use.
     if (displayCopyPending) SealDisplayFrame();
 }
 
@@ -234,7 +236,7 @@ void CompleteHostGraphics() {
         [result](wgpu::QueueWorkDoneStatus status, wgpu::StringView) { *result = status; });
     const auto wait = aurora::webgpu::g_instance.WaitAny(future, 10000000000ULL);
     if (wait != wgpu::WaitStatus::Success || *result != wgpu::QueueWorkDoneStatus::Success)
-        throw std::runtime_error("GXDrawDone failed while waiting for Metal completion");
+        throw std::runtime_error("GXDrawDone failed while waiting for Vulkan completion");
     const auto afterGpu = FrameProfile::Clock::now();
     if (profile.interval) {
         auto ns = [](auto end, auto start) { return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); };
@@ -291,7 +293,7 @@ void CompleteHostGraphics() {
     gpuSynchronized = true;
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
-        std::fprintf(stderr, "MH3 GX draw completion %u: Metal work finished\n", completions);
+        std::fprintf(stderr, "MH3 GX draw completion %u: Vulkan work finished\n", completions);
 }
 
 uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
@@ -311,7 +313,7 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
                   source.format == wgpu::TextureFormat::BGRA8UnormSrgb;
         if (!efbBgra && source.format != wgpu::TextureFormat::RGBA8Unorm &&
             source.format != wgpu::TextureFormat::RGBA8UnormSrgb)
-            throw std::runtime_error("Unsupported Metal EFB color texture format");
+            throw std::runtime_error("Unsupported Vulkan EFB color texture format");
         efbPitch = (efbWidth * 4 + 255) & ~255u;
         const uint64_t bytes = uint64_t(efbPitch) * efbHeight;
         const wgpu::BufferDescriptor desc{.label = "MH3 CPU EFB color readback",
@@ -329,9 +331,9 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
             [status](wgpu::MapAsyncStatus value, wgpu::StringView) { status->store(value); });
         if (g_instance.WaitAny(future, 10000000000ULL) != wgpu::WaitStatus::Success ||
             status->load() != wgpu::MapAsyncStatus::Success)
-            throw std::runtime_error("Metal EFB color readback failed");
+            throw std::runtime_error("Vulkan EFB color readback failed");
         const auto* pixels = static_cast<const uint8_t*>(buffer.GetConstMappedRange(0, bytes));
-        if (!pixels) throw std::runtime_error("Metal EFB color readback has no mapped data");
+        if (!pixels) throw std::runtime_error("Vulkan EFB color readback has no mapped data");
         efbPixels.assign(pixels, pixels + bytes);
         ++guestEfbSnapshots;
         guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
@@ -424,12 +426,12 @@ int RunEfbCheck(int argc, char** argv) {
         for (auto address : {0x08000000u, 0x88000004u, 0xC8001004u}) {
             uint32_t value;
             if (!ReadEfbColor32(address, value) || value != expected)
-                throw std::runtime_error("Metal EFB color/row/alias check failed");
+                throw std::runtime_error("Vulkan EFB color/row/alias check failed");
         }
         WriteGxRegister(0xCC001008, 2, 0);
         uint32_t value;
         if (!ReadEfbColor32(0xC8000000, value) || value != (expected & 0xFFFFFF))
-            throw std::runtime_error("Metal EFB alpha-read check failed");
+            throw std::runtime_error("Vulkan EFB alpha-read check failed");
     }
     WriteGxRegister(0xCC001008, 2, 1);
     WriteGxRegister(0xCC001002, 2, 0x18);
@@ -440,7 +442,7 @@ int RunEfbCheck(int argc, char** argv) {
     FlushHostEfbPokes();
     efbPixels.clear();
     if (ReadHostEfbColor(1, 1) != 0xFF336699 || ReadHostEfbColor(0, 0) != 0xFFABCDEF)
-        throw std::runtime_error("Metal EFB dirty-rectangle upload failed");
+        throw std::runtime_error("Vulkan EFB dirty-rectangle upload failed");
     frameActive = aurora_begin_frame();
     if (!frameActive) throw std::runtime_error("EFB preservation check could not begin a frame");
     gpuSynchronized = false;
@@ -461,7 +463,7 @@ int RunEfbCheck(int argc, char** argv) {
     efbPixels.clear();
     if (ReadHostEfbColor(1, 1) != 0xFF336699)
         throw std::runtime_error("CPU EFB pixels were lost across a host frame boundary");
-    std::puts("MH3 Metal EFB color readback/poke check passed");
+    std::puts("MH3 Vulkan EFB color readback/poke check passed");
     return 0;
 }
 
@@ -480,7 +482,7 @@ int RunGraphicsCheck(int argc, char** argv) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
-    if (frames != 30) throw std::runtime_error("Metal frame check timed out");
-    std::fprintf(stderr, "MH3 Metal renderer check: %u frames submitted\n", frames);
+    if (frames != 30) throw std::runtime_error("Vulkan frame check timed out");
+    std::fprintf(stderr, "MH3 Vulkan renderer check: %u frames submitted\n", frames);
     return 0;
 }
