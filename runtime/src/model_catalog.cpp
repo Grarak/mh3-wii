@@ -709,8 +709,12 @@ bool CopyDestinationForDraw(uint32_t destination, uint32_t bytes) {
 std::atomic<uint64_t> quiesceWaits[2]{}, quiesceNs[2]{};
 #endif
 
-void QuiesceDraw(bool tracked) {
-    if (!tracked || PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending())
+// A game-thread change to data the in-flight draw may read (`tracked()`,
+// asked only then: it takes the lock, and the draw thread's own retirements
+// of its view arrays came here about 150 times a frame) waits for that draw.
+template <typename Tracked>
+void QuiesceDraw(Tracked&& tracked) {
+    if (PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending() || !tracked())
         return;
 
 #ifdef MH3_DEVELOPMENT
@@ -770,7 +774,7 @@ void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes
     if (!bytes)
         return;
 
-    QuiesceDraw(true);
+    QuiesceDraw([] { return true; });
     std::lock_guard guard(catalogLock);
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
@@ -789,7 +793,7 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("resource copy");
 #endif
-    QuiesceDraw(TrackedForDraw(destination, bytes) || TrackedForDraw(source, bytes));
+    QuiesceDraw([&] { return TrackedForDraw(destination, bytes) || TrackedForDraw(source, bytes); });
     std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
@@ -847,7 +851,7 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("resource owner retirement");
 #endif
-    QuiesceDraw(TrackedForDraw(address, bytes));
+    QuiesceDraw([&] { return TrackedForDraw(address, bytes); });
     std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
@@ -878,7 +882,7 @@ void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_
     if (!bytes)
         return;
 
-    QuiesceDraw(TrackedForDraw(address, bytes));
+    QuiesceDraw([&] { return TrackedForDraw(address, bytes); });
     std::lock_guard guard(catalogLock);
     Initialize();
     address = Canonical(address, bytes);
@@ -897,7 +901,7 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
     if (!bytes || destination == source)
         return;
 
-    QuiesceDraw(CopyDestinationForDraw(destination, bytes));
+    QuiesceDraw([&] { return CopyDestinationForDraw(destination, bytes); });
     std::lock_guard guard(catalogLock);
     Initialize();
     destination = Canonical(destination, bytes);

@@ -300,11 +300,11 @@ void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
             if (found == owners.end())
                 continue;
 
-            const mh3_model_pose_owner before = found->second;
             mh3_model_pose_retire(&found->second, address, bytes);
 
             if (!found->second.scene_address) {
-                erased.emplace_back(scene, before);
+                erased.emplace_back(scene, found->second);
+                erased.back().second.scene_address = scene;
                 owners.erase(found);
             }
         }

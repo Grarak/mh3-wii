@@ -203,7 +203,7 @@ void mh3_model_pose_retire(mh3_model_pose_owner *owner, uint32_t address, uint32
         return;
 
     if (intersects(owner->scene_address, 0x104, address, bytes) || intersects(owner->model_address, 0x70, address, bytes)) {
-        memset(owner, 0, sizeof *owner);
+        owner->scene_address = 0;
         return;
     }
 
