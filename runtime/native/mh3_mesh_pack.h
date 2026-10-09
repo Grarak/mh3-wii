@@ -1,6 +1,6 @@
 #ifndef MH3_MESH_PACK_H
 #define MH3_MESH_PACK_H
-/* External M3MP v1/v2 CPU metadata + GPU-ready payload.
+/* External M3MP v1/v2/v3 CPU metadata + GPU-ready payload.
  * The owner reads the GPU payload straight into mapped CDRAM, then binds it.
  * All returned pointers borrow the corresponding caller-owned byte spans. */
 #include <stddef.h>
@@ -30,6 +30,27 @@ typedef struct {
     float bounds_min[3], bounds_max[3], center[3];
     mh3_pack_span vertices, indices;
 } mh3_pack_mesh;
+/* V3 indexed matrix batches. Source IDs are indices into the certified live
+ * position/normal/environment arrays. A clear known bit preserves the actual
+ * inherited slot; UINT16_MAX marks that absence, never an identity matrix.
+ * Required masks are computed offline from the primitive's matrix selectors.
+ * Layout flags bits 8..16 hold PN + eight tex-matrix attribute presence bits.
+ * Semantics 12/13/14 contain raw U8 PN/tex0..2, tex3..6 and tex7 selectors.
+ * PN selectors are 0..9; texture selectors are PN 0..9, TEX 10..19, identity20.
+ */
+enum { MH3_MESH_INDEXED_PALETTE=8u, MH3_LAYOUT_MATRIX_MASK_SHIFT=8u };
+typedef struct { uint32_t count; mh3_pack_span bytes; } mh3_pack_palette_batches;
+typedef struct {
+    uint32_t first_index,index_count;
+    uint16_t position_known,normal_known,texture_known;
+    uint16_t position_required,normal_required,texture_required;
+    uint8_t texture_identity_mask,texture_position_mask;
+    uint16_t position_source[10],normal_source[10],texture_source[10];
+} mh3_pack_palette_batch;
+mh3_pack_status mh3_mesh_pack_palette_batches(const mh3_mesh_pack *pack,uint32_t mesh_index,
+                                             mh3_pack_palette_batches *out);
+mh3_pack_status mh3_mesh_pack_palette_batch(const mh3_pack_palette_batches *batches,uint32_t index,
+                                           mh3_pack_palette_batch *out);
 typedef struct {
     uint32_t mesh_index, first_index, index_count, flags;
     float bounds_min[3], bounds_max[3], centroid[3];
@@ -187,6 +208,8 @@ mh3_pack_status mh3_mesh_pack_weight(const mh3_pack_recipes *recipes, uint32_t i
 mh3_pack_status mh3_mesh_pack_matrix_node(const mh3_pack_recipes *recipes, uint32_t index, int32_t *out);
 /* Optional load/test gate: O(indices). Never call this per frame or read CDRAM
  * from the CPU during normal submission. */
+/* Once at GPU admission: index bounds, canonical absent selector lanes and
+ * exact per-batch matrix masks against the referenced immutable vertices. */
 mh3_pack_status mh3_mesh_pack_validate_indices(const mh3_mesh_pack *pack);
 /* Explicit experimental per-mesh ordering, never called automatically.
  * depth_row is the current local-to-camera positive-forward depth row, including

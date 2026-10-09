@@ -48,6 +48,59 @@ static const char *string_at(const mh3_mesh_pack *p,uint32_t at) {
 static void floats(float *out,const uint8_t *at,unsigned count) {
     unsigned i; for (i=0;i<count;++i) out[i]=lefloat(at+i*4);
 }
+static int indexed_version(const mh3_mesh_pack *p) {
+    return p && fits(p->metadata,0,8) && le32(p->metadata.data+4)==3;
+}
+
+mh3_pack_status mh3_mesh_pack_palette_batch(const mh3_pack_palette_batches *b,uint32_t index,
+                                           mh3_pack_palette_batch *out) {
+    if (!b || !out || index>=b->count || !fits(b->bytes,0,16) ||
+        memcmp(b->bytes.data,"M3PL",4) || le32(b->bytes.data+4)!=1 ||
+        le32(b->bytes.data+8)!=b->count || le32(b->bytes.data+12)!=96 ||
+        16+(uint64_t)b->count*96>b->bytes.size ||
+        !fits(b->bytes,16+(size_t)index*96,96)) return MH3_PACK_INVALID;
+    const uint8_t *r=b->bytes.data+16+(size_t)index*96;
+    mh3_pack_palette_batch next;memset(&next,0,sizeof next);
+    next.first_index=le32(r);next.index_count=le32(r+4);
+    next.position_known=le16(r+8);next.normal_known=le16(r+10);next.texture_known=le16(r+12);
+    next.position_required=le16(r+14);next.normal_required=le16(r+16);next.texture_required=le16(r+18);
+    next.texture_identity_mask=r[20];next.texture_position_mask=r[21];
+    if (!next.index_count || next.first_index%3 || next.index_count%3 || le16(r+22) ||
+        ((next.position_known|next.normal_known|next.texture_known|next.position_required|
+          next.normal_required|next.texture_required)&~1023u)) return MH3_PACK_INVALID;
+    const uint16_t masks[3]={next.position_known,next.normal_known,next.texture_known};
+    uint16_t *const sources[3]={next.position_source,next.normal_source,next.texture_source};
+    for (unsigned table=0;table<3;table++) for (unsigned slot=0;slot<10;slot++) {
+        const uint16_t source=le16(r+24+20*table+2*slot);
+        if (((masks[table]>>slot)&1u)==(source==UINT16_MAX)) return MH3_PACK_INVALID;
+        sources[table][slot]=source;
+    }
+    for (unsigned at=84;at<96;at+=4) if (le32(r+at)) return MH3_PACK_INVALID;
+    *out=next;return MH3_PACK_OK;
+}
+
+mh3_pack_status mh3_mesh_pack_palette_batches(const mh3_mesh_pack *p,uint32_t index,
+                                             mh3_pack_palette_batches *out) {
+    const uint8_t *mesh=record(p,MH3_PACK_MESHES,index);
+    if (!mesh || !out) return MH3_PACK_INVALID;
+    if (!indexed_version(p) || !(le32(mesh+12)&MH3_MESH_INDEXED_PALETTE)) return MH3_PACK_UNSUPPORTED;
+    const uint32_t at=le32(mesh+124);
+    if (!blob_fits(p,at,16)) return MH3_PACK_RANGE;
+    const uint8_t *header=p->metadata.data+at;const uint32_t count=le32(header+8);
+    const uint64_t bytes=16+(uint64_t)count*96;
+    if (memcmp(header,"M3PL",4) || le32(header+4)!=1 || le32(header+12)!=96 ||
+        !count || count>le32(mesh+24)/3 || !blob_fits(p,at,bytes)) return MH3_PACK_INVALID;
+    mh3_pack_palette_batches next={count,{header,(size_t)bytes}};
+    uint32_t covered=0;
+    for (uint32_t i=0;i<count;i++) {
+        mh3_pack_palette_batch batch;mh3_pack_status status=mh3_mesh_pack_palette_batch(&next,i,&batch);
+        if (status!=MH3_PACK_OK) return status;
+        if (batch.first_index!=covered || !range(covered,batch.index_count,le32(mesh+24))) return MH3_PACK_RANGE;
+        covered+=batch.index_count;
+    }
+    if (covered!=le32(mesh+24)) return MH3_PACK_RANGE;
+    *out=next;return MH3_PACK_OK;
+}
 
 mh3_pack_status mh3_mesh_pack_layout(const mh3_mesh_pack *p,uint32_t i,mh3_pack_layout *out) {
     const uint8_t *r=record(p,MH3_PACK_LAYOUTS,i);
@@ -56,21 +109,27 @@ mh3_pack_status mh3_mesh_pack_layout(const mh3_mesh_pack *p,uint32_t i,mh3_pack_
     memset(out,0,sizeof(*out));
     if (!r) return MH3_PACK_RANGE;
     out->count=le32(r); out->stride=le32(r+4); out->flags=le32(r+8);
-    if (!out->count || out->count>16 || !out->stride || out->stride>65535 || out->flags>1 || le32(r+12)) return MH3_PACK_INVALID;
+    const uint32_t matrix_mask=out->flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT;
+    if (!out->count || out->count>16 || !out->stride || out->stride>65535 ||
+        (out->flags&~(indexed_version(p)?UINT32_C(0x1ff01):1u)) || le32(r+12)) return MH3_PACK_INVALID;
     for (a=0;a<out->count;++a) {
         const uint8_t *v=r+16+a*8;
         uint32_t bytes;
         mh3_pack_attribute *attr=&out->attributes[a];
         attr->semantic=le16(v); attr->offset=le16(v+2); attr->format=v[4]; attr->components=v[5];
-        if (attr->semantic>=12 || (seen&(1u<<attr->semantic)) || !attr->components || attr->components>4 || le16(v+6)) return MH3_PACK_INVALID;
+        if (attr->semantic>=(indexed_version(p)?15u:12u) || (seen&(1u<<attr->semantic)) || !attr->components || attr->components>4 || le16(v+6)) return MH3_PACK_INVALID;
         seen|=1u<<attr->semantic;
-        if (attr->format==9) bytes=4*attr->components;
+        if (attr->semantic>=12 && (attr->format!=0 || attr->components!=(attr->semantic==14?1:4))) return MH3_PACK_INVALID;
+        if (attr->format==0 && attr->semantic>=12) bytes=attr->components;
+        else if (attr->format==9) bytes=4*attr->components;
         else if (attr->format==4) bytes=attr->components;
         else if (attr->format==7 || attr->format==8) bytes=2*attr->components;
         else return MH3_PACK_UNSUPPORTED;
         if (attr->offset>out->stride || bytes>out->stride-attr->offset) return MH3_PACK_RANGE;
     }
     if (!(seen&1)) return MH3_PACK_INVALID;
+    const uint32_t groups=((matrix_mask&15u)?1u<<12:0u)|((matrix_mask&240u)?1u<<13:0u)|((matrix_mask&256u)?1u<<14:0u);
+    if ((seen&UINT32_C(0x7000))!=groups) return MH3_PACK_INVALID;
     return MH3_PACK_OK;
 }
 
@@ -87,10 +146,16 @@ mh3_pack_status mh3_mesh_pack_mesh(const mh3_mesh_pack *p,uint32_t i,mh3_pack_me
     out->matrix_id=signed_word(le32(r+44)); out->component_first=le32(r+48); out->component_count=le32(r+52);
     out->template_offset=le32(r+56); out->template_indices=le32(r+60);
     floats(out->bounds_min,r+64,3); floats(out->bounds_max,r+76,3); floats(out->center,r+88,3);
-    if (!out->asset_id || !out->model_id || (out->flags&~7u) || !(out->flags&1) || out->matrix_id<0 ||
+    if (!out->asset_id || !out->model_id || (out->flags&~(indexed_version(p)?15u:7u)) || !(out->flags&1) ||
+        (out->matrix_id<0 && (!(out->flags&MH3_MESH_INDEXED_PALETTE) || out->matrix_id!=-1)) ||
         !out->vertex_count || out->vertex_count>65536 || !out->index_count || out->index_count%3 ||
         !valid_bounds(out->bounds_min,out->bounds_max,out->center)) return MH3_PACK_INVALID;
     s=mh3_mesh_pack_layout(p,out->layout_index,&layout); if (s) return s;
+    if (out->flags&MH3_MESH_INDEXED_PALETTE) {
+        mh3_pack_palette_batches batches;
+        if (!(layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)) return MH3_PACK_INVALID;
+        s=mh3_mesh_pack_palette_batches(p,i,&batches);if (s) return s;
+    } else if (layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT || (indexed_version(p) && le32(r+124))) return MH3_PACK_INVALID;
     if ((uint64_t)out->vertex_count*layout.stride!=out->vertex_bytes || (uint64_t)out->index_count*2!=out->index_bytes ||
         (out->vertex_offset&63) || (out->index_offset&63) || p->gpu_bytes<3 || !range(out->vertex_offset,out->vertex_bytes,p->gpu_bytes-3) ||
         !range(out->index_offset,out->index_bytes,p->gpu_bytes)) return MH3_PACK_RANGE;
@@ -165,7 +230,7 @@ mh3_pack_status mh3_mesh_pack_material(const mh3_mesh_pack *p,uint32_t i,mh3_pac
         if (bank>2 || (bank!=1 && addr>255) || (bank==1 && addr>65535) ||
             (bank==0 && (mask>0xffffff || le32(v+8)>0xffffff)) || (bank!=0 && mask!=UINT32_MAX)) return MH3_PACK_INVALID;
     }
-    if (le32(p->metadata.data+4)==2) {
+    if (le32(p->metadata.data+4)>=2) {
         mh3_pack_native_material native;
         mh3_pack_status status=mh3_mesh_pack_material_native(p,i,&native);
         if (status) return status;
@@ -275,7 +340,7 @@ static mh3_pack_status open_metadata_validated(mh3_pack_span metadata,mh3_mesh_p
     memset(out,0,sizeof(*out));
     if (!fits(metadata,0,128)) return MH3_PACK_RANGE;
     if (memcmp(metadata.data,"M3MP",4)) return MH3_PACK_INVALID;
-    if (le32(metadata.data+4)!=1 && le32(metadata.data+4)!=2) return MH3_PACK_UNSUPPORTED;
+    if (le32(metadata.data+4)!=1 && le32(metadata.data+4)!=2 && le32(metadata.data+4)!=3) return MH3_PACK_UNSUPPORTED;
     bytes=le32(metadata.data+8);
     if (bytes<128 || bytes>metadata.size || bytes&63) return MH3_PACK_RANGE;
     out->metadata=metadata; out->metadata.size=bytes;
@@ -338,7 +403,20 @@ static mh3_pack_status open_metadata_validated(mh3_pack_span metadata,mh3_mesh_p
                 cursor=signed_word(le32(record(out,MH3_PACK_NODES,(uint32_t)cursor)+8));
             }
         }
-        for (n=0;n<x.mesh_count;++n) if (le32(record(out,MH3_PACK_MESHES,x.mesh_first+n)+44)>=recipes.matrix_count) return MH3_PACK_RANGE;
+        for (n=0;n<x.mesh_count;++n) {
+            const uint32_t mesh_index=x.mesh_first+n;const uint8_t *mesh=record(out,MH3_PACK_MESHES,mesh_index);
+            if (le32(mesh+44)>=recipes.matrix_count && !(le32(mesh+12)&MH3_MESH_INDEXED_PALETTE)) return MH3_PACK_RANGE;
+            if (le32(mesh+12)&MH3_MESH_INDEXED_PALETTE) {
+                mh3_pack_palette_batches batches;s=mh3_mesh_pack_palette_batches(out,mesh_index,&batches);if (s) return s;
+                for (uint32_t b=0;b<batches.count;b++) {
+                    mh3_pack_palette_batch batch;s=mh3_mesh_pack_palette_batch(&batches,b,&batch);if (s) return s;
+                    const uint16_t masks[3]={batch.position_known,batch.normal_known,batch.texture_known};
+                    const uint16_t *sources[3]={batch.position_source,batch.normal_source,batch.texture_source};
+                    for (uint32_t table=0;table<3;table++) for (uint32_t slot=0;slot<10;slot++)
+                        if ((masks[table]&(1u<<slot)) && sources[table][slot]>=recipes.matrix_count) return MH3_PACK_RANGE;
+                }
+            }
+        }
     }
     if (model_ends[0]!=out->counts[MH3_PACK_NODES] || model_ends[1]!=out->counts[MH3_PACK_MESHES] ||
         model_ends[2]!=out->counts[MH3_PACK_MATERIALS] || model_ends[3]!=out->counts[MH3_PACK_DRAWS]) return MH3_PACK_INVALID;
@@ -388,6 +466,57 @@ mh3_pack_status mh3_mesh_pack_bind_gpu(mh3_mesh_pack *p,mh3_pack_span gpu) {
     return MH3_PACK_OK;
 }
 
+/* Admission proves the palette masks against the immutable GPU bytes. The
+ * render path can then use these masks for matrix bounds and sampling proofs
+ * without reading or scanning a vertex buffer every frame. */
+static mh3_pack_status validate_palette_indices(const mh3_mesh_pack *p,uint32_t mesh_index,
+                                                const mh3_pack_mesh *mesh) {
+    mh3_pack_layout layout;mh3_pack_palette_batches batches;
+    mh3_pack_status status=mh3_mesh_pack_layout(p,mesh->layout_index,&layout);
+    if (status) return status;
+    status=mh3_mesh_pack_palette_batches(p,mesh_index,&batches);if (status) return status;
+    const uint32_t mask=layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT;
+    uint16_t offsets[9]={0};uint32_t present=0;int has_normal=0;
+    for (uint32_t a=0;a<layout.count;a++) {
+        const mh3_pack_attribute *attribute=&layout.attributes[a];
+        if (attribute->semantic==1) has_normal=1;
+        if (attribute->semantic<12) continue;
+        const uint32_t first=attribute->semantic==12?0:attribute->semantic==13?4:8;
+        for (uint32_t lane=0;lane<attribute->components;lane++) {
+            offsets[first+lane]=(uint16_t)(attribute->offset+lane);present|=1u<<(first+lane);
+        }
+    }
+    for (uint32_t b=0;b<batches.count;b++) {
+        mh3_pack_palette_batch batch;
+        status=mh3_mesh_pack_palette_batch(&batches,b,&batch);if (status) return status;
+        uint16_t position=0,normal=0,texture=0;uint8_t identity_coords=0,position_coords=0;
+        for (uint32_t n=batch.first_index;n<batch.first_index+batch.index_count;n++) {
+            const uint16_t index=le16(mesh->indices.data+(size_t)n*2);
+            if (index>=mesh->vertex_count) return MH3_PACK_RANGE;
+            const uint8_t *vertex=mesh->vertices.data+(size_t)index*layout.stride;
+            for (uint32_t lane=0;lane<9;lane++)
+                if ((present&(1u<<lane)) && !(mask&(1u<<lane)) && vertex[offsets[lane]])
+                    return MH3_PACK_INVALID;
+            const uint8_t pn=(mask&1)?vertex[offsets[0]]:0;
+            if (pn>=10) return MH3_PACK_RANGE;
+            position|=(uint16_t)(1u<<pn);if (has_normal) normal|=(uint16_t)(1u<<pn);
+            for (uint32_t coordinate=0;coordinate<8;coordinate++) {
+                if (!(mask&(2u<<coordinate))) continue;
+                const uint8_t selector=vertex[offsets[coordinate+1]];
+                if (selector>20) return MH3_PACK_RANGE;
+                if (selector<10) {
+                    position|=(uint16_t)(1u<<selector);position_coords|=(uint8_t)(1u<<coordinate);
+                } else if (selector<20) texture|=(uint16_t)(1u<<(selector-10));
+                else identity_coords|=(uint8_t)(1u<<coordinate);
+            }
+        }
+        if (position!=batch.position_required || normal!=batch.normal_required ||
+            texture!=batch.texture_required || identity_coords!=batch.texture_identity_mask ||
+            position_coords!=batch.texture_position_mask) return MH3_PACK_INVALID;
+    }
+    return MH3_PACK_OK;
+}
+
 mh3_pack_status mh3_mesh_pack_validate_indices(const mh3_mesh_pack *p) {
     uint32_t i;
     if (!p || !p->gpu.data) return MH3_PACK_INVALID;
@@ -395,6 +524,9 @@ mh3_pack_status mh3_mesh_pack_validate_indices(const mh3_mesh_pack *p) {
         mh3_pack_mesh mesh; uint32_t n; mh3_pack_status s=mh3_mesh_pack_mesh(p,i,&mesh); if (s) return s;
         for (n=0;n<mesh.index_count;++n) if (le16(mesh.indices.data+(size_t)n*2)>=mesh.vertex_count) return MH3_PACK_RANGE;
         for (n=0;n<mesh.template_indices;++n) if (le16(p->metadata.data+mesh.template_offset+(size_t)n*2)>=mesh.vertex_count) return MH3_PACK_RANGE;
+        if (mesh.flags&MH3_MESH_INDEXED_PALETTE) {
+            s=validate_palette_indices(p,i,&mesh);if (s) return s;
+        }
     }
     return MH3_PACK_OK;
 }

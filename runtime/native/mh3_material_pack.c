@@ -149,7 +149,7 @@ mh3_pack_status mh3_mesh_pack_indirect_matrix(const mh3_pack_native_material *m,
 mh3_pack_status mh3_mesh_pack_material_native(const mh3_mesh_pack *pack,uint32_t i,mh3_pack_native_material *out) {
     mh3_pack_native_material x;const uint8_t *r,*p;size_t at;uint32_t offset,size,n;mh3_pack_status status;
     if (!pack || !out || !pack->metadata.data || pack->metadata.size<128) return MH3_PACK_INVALID;
-    if (word(pack->metadata.data+4)!=2) return MH3_PACK_UNSUPPORTED;
+    if (word(pack->metadata.data+4)!=2 && word(pack->metadata.data+4)!=3) return MH3_PACK_UNSUPPORTED;
     if (i>=pack->counts[MH3_PACK_MATERIALS]) return MH3_PACK_RANGE;
     at=pack->offsets[MH3_PACK_MATERIALS]+(size_t)i*128;
     if (at>pack->metadata.size || 128>pack->metadata.size-at) return MH3_PACK_RANGE;
