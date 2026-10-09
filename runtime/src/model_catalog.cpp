@@ -12,10 +12,13 @@
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <map>
 #include <sstream>
@@ -25,6 +28,9 @@
 #include <charconv>
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
+#endif
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
 #endif
 
 namespace {
@@ -272,6 +278,13 @@ Catalog& Initialize() {
     return c;
 }
 
+uint64_t NextRevision() {
+    if (C().material_revision == UINT64_MAX)
+        MH3_THROW(std::runtime_error("Native material producer revision overflow"));
+
+    return ++C().material_revision;
+}
+
 uint64_t NextGeneration() {
     if (C().tracker.generation == UINT64_MAX)
         MH3_THROW(std::runtime_error("Native model provenance generation overflow"));
@@ -429,7 +442,7 @@ std::vector<NativeLiveMaterialBlock> SnapshotLiveCopy(uint32_t source, uint32_t 
         if ((uint64_t)block.address + block.bytes <= (uint64_t)source + bytes) {
             auto copy = block;
             copy.address = destination + (block.address - source);
-            copy.fields.generation = NextNativeMaterialRevision();
+            copy.fields.generation = NextRevision();
             result.push_back(copy);
         }
 
@@ -603,7 +616,56 @@ namespace {
 // tracked resource data (a load) first waits for an in-flight draw, which may
 // be drawing that data: loads run serialized; the fight's untracked copies do
 // not wait.
-std::recursive_mutex catalogLock;
+//
+// The lock has no owner, so it is not recursive: a recursive mutex finds its
+// owner through TLS, which the Vita emulates (pte's lock calls took about 4%
+// of the draw thread). Each entry point locks once and calls the others'
+// unlocked forms. A holder may wait seconds for a model pack conversion, so a
+// long wait sleeps between tries. Host development builds catch a thread
+// taking it twice.
+class CatalogLock {
+public:
+    void lock() noexcept {
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+        if (held.load(std::memory_order_relaxed) && owner.load(std::memory_order_relaxed) == std::this_thread::get_id())
+            MH3Fatal("Model catalog lock taken twice by one thread");
+#endif
+        uint32_t tries = 0;
+
+        while (held.exchange(true, std::memory_order_acquire))
+            do
+                Pause(tries++);
+            while (held.load(std::memory_order_relaxed));
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+        owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
+#endif
+    }
+
+    void unlock() noexcept {
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+        owner.store({}, std::memory_order_relaxed);
+#endif
+        held.store(false, std::memory_order_release);
+    }
+
+private:
+    static void Pause(uint32_t tries) noexcept {
+        if (tries < 64)
+            return;
+#ifdef __vita__
+        sceKernelDelayThread(50);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+#endif
+    }
+
+    std::atomic<bool> held{false};
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+    std::atomic<std::thread::id> owner{};
+#endif
+};
+
+CatalogLock catalogLock;
 
 bool TrackedForDraw(uint32_t address, uint32_t bytes) {
     std::lock_guard guard(catalogLock);
@@ -797,9 +859,10 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
     InvalidateBlockCache();
 }
 
+// Pack admission and eviction (model_assets.cpp) run under the catalog lock
+// of the lookup that ensured the pack (TryEnsureNativeModelAssets), or at
+// startup before other threads: these three do not lock.
 Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t handle, uint64_t generation) {
-    std::lock_guard guard(catalogLock);
-
     if (!handle || !generation || mh3_model_catalog_validate_pack(catalog, pack) != MH3_PACK_OK)
         return Status::Error("Invalid external native model pack registration");
 
@@ -933,7 +996,6 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
 }
 
 void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
-    std::lock_guard guard(catalogLock);
     auto& c = C();
     InitializeDiagnostics(c);
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
@@ -967,8 +1029,6 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
 }
 
 bool NativeModelPackHasLiveSources(uintptr_t handle) {
-    std::lock_guard guard(catalogLock);
-
     for (const auto& owner : C().owners)
         if (owner.second.owner.resident_handle == handle)
             return true;
@@ -984,8 +1044,8 @@ bool NativeModelPackHasLiveSources(uintptr_t handle) {
     return false;
 }
 
-Status TryResolveNativeModelOwner(uint32_t model_address, NativeModelOwner& owner) {
-    std::lock_guard guard(catalogLock);
+namespace {
+Status TryResolveOwner(uint32_t model_address, NativeModelOwner& owner) {
     Initialize();
     MH3_RETURN_IF_ERROR(CanonicalAddress(model_address, 16, model_address));
     const auto cached = C().owners.find(model_address);
@@ -1067,10 +1127,16 @@ Status TryResolveNativeModelOwner(uint32_t model_address, NativeModelOwner& owne
 
     return Status::Error("Model has no complete native loader provenance or external converted pack");
 }
+} // namespace
 
-NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
-    // A certified owner (most draws) resolves without a Status.
+Status TryResolveNativeModelOwner(uint32_t model_address, NativeModelOwner& owner) {
     std::lock_guard guard(catalogLock);
+    return TryResolveOwner(model_address, owner);
+}
+
+namespace {
+NativeModelOwner ResolveOwner(uint32_t model_address) {
+    // A certified owner (most draws) resolves without a Status.
     Initialize();
     const auto cached = C().owners.find(Canonical(model_address, 16));
 
@@ -1078,14 +1144,20 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
         return cached->second.owner;
 
     NativeModelOwner owner{};
-    CheckStatus(TryResolveNativeModelOwner(model_address, owner));
+    CheckStatus(TryResolveOwner(model_address, owner));
     return owner;
 }
+} // namespace
 
-Status TryResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material, mh3_catalog_resource& result) {
+NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
     std::lock_guard guard(catalogLock);
+    return ResolveOwner(model_address);
+}
+
+namespace {
+Status TryResolveResource(const NativeModelOwner& owner, uint32_t resource, bool material, mh3_catalog_resource& result) {
     NativeModelOwner current{};
-    MH3_RETURN_IF_ERROR(TryResolveNativeModelOwner(owner.model_address, current));
+    MH3_RETURN_IF_ERROR(TryResolveOwner(owner.model_address, current));
 
     if (current.pack != owner.pack || current.catalog != owner.catalog || current.resident_handle != owner.resident_handle || current.resident_generation != owner.resident_generation ||
         current.source_generation != owner.source_generation || current.catalog_model_index != owner.catalog_model_index)
@@ -1129,12 +1201,17 @@ Status TryResolveNativeModelResource(const NativeModelOwner& owner, uint32_t res
     result = r;
     return {};
 }
+} // namespace
+
+Status TryResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material, mh3_catalog_resource& result) {
+    std::lock_guard guard(catalogLock);
+    return TryResolveResource(owner, resource, material, result);
+}
 
 namespace {
 // The cached resource of a still-current owner, as TryResolveNativeModelResource
 // finds it; false when that has to resolve (or report) it.
 bool CachedNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material, mh3_catalog_resource& result) {
-    std::lock_guard guard(catalogLock);
     Initialize();
     uint32_t model = 0;
 
@@ -1163,13 +1240,20 @@ bool CachedNativeModelResource(const NativeModelOwner& owner, uint32_t resource,
 }
 } // namespace
 
-mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material) {
+namespace {
+mh3_catalog_resource ResolveResource(const NativeModelOwner& owner, uint32_t resource, bool material) {
     mh3_catalog_resource result{};
 
     if (!CachedNativeModelResource(owner, resource, material, result))
-        CheckStatus(TryResolveNativeModelResource(owner, resource, material, result));
+        CheckStatus(TryResolveResource(owner, resource, material, result));
 
     return result;
+}
+} // namespace
+
+mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource, bool material) {
+    std::lock_guard guard(catalogLock);
+    return ResolveResource(owner, resource, material);
 }
 
 std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_address) {
@@ -1248,7 +1332,7 @@ size_t CertifyLoadedNativeModels() {
         for (const uint32_t address : models)
             if (!C().owners.contains(address)) {
                 NativeModelOwner owner{};
-                MH3_RETURN_IF_ERROR(TryResolveNativeModelOwner(address, owner));
+                MH3_RETURN_IF_ERROR(TryResolveOwner(address, owner));
                 ++certified;
             }
         return Status{};
@@ -1303,7 +1387,7 @@ void ListNativeModelOwnersWithoutDrawTable(std::vector<NativeModelOwner>& out) {
 Status ReadNativePreparedMesh(const NativeModelOwner& owner, uint32_t shape, const mh3_prepared_mesh*& mesh) {
     std::lock_guard guard(catalogLock);
     mh3_catalog_resource resource{};
-    MH3_RETURN_IF_ERROR(TryResolveNativeModelResource(owner, shape, false, resource));
+    MH3_RETURN_IF_ERROR(TryResolveResource(owner, shape, false, resource));
 
     if (resource.pack_index == UINT32_MAX)
         return Status::Error("Native model shape has no converted mesh");
@@ -1328,7 +1412,7 @@ const mh3_prepared_mesh* ReadNativePreparedMeshAt(const NativeModelOwner& owner,
 
 const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner& owner, uint32_t material) {
     std::lock_guard guard(catalogLock);
-    const mh3_catalog_resource resource = ResolveNativeModelResource(owner, material, true);
+    const mh3_catalog_resource resource = ResolveResource(owner, material, true);
 
     for (const auto& pack : Packs())
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
@@ -1338,7 +1422,7 @@ const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner&
 
 NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner, uint32_t material, mh3_model_material_block kind, uint32_t actual_block) {
     std::lock_guard guard(catalogLock);
-    const mh3_catalog_resource resource = ResolveNativeModelResource(owner, material, true);
+    const mh3_catalog_resource resource = ResolveResource(owner, material, true);
 
     if (kind < 0 || kind >= MH3_MODEL_MATERIAL_BLOCK_COUNT)
         MH3_THROW(std::runtime_error("Invalid native material block kind"));
@@ -1374,15 +1458,11 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
 
 uint64_t NextNativeMaterialRevision() {
     std::lock_guard guard(catalogLock);
-
-    if (C().material_revision == UINT64_MAX)
-        MH3_THROW(std::runtime_error("Native material producer revision overflow"));
-
-    return ++C().material_revision;
+    return NextRevision();
 }
 
-const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address, mh3_model_material_block kind) {
-    std::lock_guard guard(catalogLock);
+namespace {
+const NativeLiveMaterialBlock& ReadLiveBlock(uint32_t address, mh3_model_material_block kind) {
     Initialize();
     address = Canonical(address, 1);
     const auto key = LiveKey(address, kind);
@@ -1419,14 +1499,14 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
                 const auto status = mh3_source_owner_certify(&C().tracker, pack.catalog, uint32_t(candidate), &owner);
 
                 if (status == MH3_RES_OK)
-                    (void)ResolveNativeModelOwner(uint32_t(candidate));
+                    (void)ResolveOwner(uint32_t(candidate));
                 else if (status != MH3_RES_ABSENT)
                     Checked(status);
             }
         }
 
         NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state, address, source.bytes, kind, pack.handle, pack.generation, identity.partition_offset, generation, {}};
-        block.fields.generation = NextNativeMaterialRevision();
+        block.fields.generation = NextRevision();
         return PutLiveBlock(key, std::move(block));
     }
 
@@ -1435,14 +1515,20 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
            << identity.partition_offset;
     MH3_THROW(std::runtime_error(detail.str()));
 }
+} // namespace
+
+const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address, mh3_model_material_block kind) {
+    std::lock_guard guard(catalogLock);
+    return ReadLiveBlock(address, kind);
+}
 
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
     std::lock_guard guard(catalogLock);
-    return ReadNativeLiveMaterialBlockView(address, kind);
+    return ReadLiveBlock(address, kind);
 }
 
-NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
-    std::lock_guard guard(catalogLock);
+namespace {
+NativeLiveMaterialBlock* WritableLiveBlock(uint32_t address, mh3_model_material_block kind) {
     auto& c = Initialize();
     const auto found = c.live_index.find(LiveKey(Canonical(address, 1), kind));
 
@@ -1457,6 +1543,12 @@ NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_m
         return nullptr;
 
     return block;
+}
+} // namespace
+
+NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
+    std::lock_guard guard(catalogLock);
+    return WritableLiveBlock(address, kind);
 }
 
 void MarkNativeLiveMaterialBlockWritable(uint32_t address, mh3_model_material_block kind) {
@@ -1496,7 +1588,7 @@ void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t
     if (!mapping || !known)
         MH3_THROW(std::runtime_error("Native coordinate mapping requires outputs"));
 
-    const auto& block = ReadNativeLiveMaterialBlockView(pipeline, MH3_MODEL_MATERIAL_PIPELINE);
+    const auto& block = ReadLiveBlock(pipeline, MH3_MODEL_MATERIAL_PIPELINE);
 
     for (const auto& pack : Packs())
         if (pack.handle == block.resident_handle && pack.generation == block.resident_generation) {
@@ -1616,7 +1708,7 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     // while reading and replacing, but not into the typed copy below, which may
     // wait for that draw (QuiesceDraw).
     std::unique_lock guard(catalogLock);
-    const auto& from = ReadNativeLiveMaterialBlockView(source, kind);
+    const auto& from = ReadLiveBlock(source, kind);
     const uint32_t bytes = from.bytes;
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
@@ -1629,10 +1721,10 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     // writable block of the same size the copy replaces its fields in place;
     // the destination keeps no byte provenance, as after a typed write. An
     // unchanged group keeps its generation (frozen copies stay current).
-    if (auto* to = WritableNativeLiveMaterialBlock(destination, kind); to && to->bytes == bytes && to->address == destination &&
+    if (auto* to = WritableLiveBlock(destination, kind); to && to->bytes == bytes && to->address == destination &&
         (uint64_t(destination) + bytes <= source || uint64_t(source) + bytes <= destination)) {
         mh3_model_copy_bytes(output, input, bytes);
-        const uint64_t generation = SameGroup(to->fields, from.fields, kind) ? to->fields.generation : NextNativeMaterialRevision();
+        const uint64_t generation = SameGroup(to->fields, from.fields, kind) ? to->fields.generation : NextRevision();
         to->fields = from.fields;
         to->fields.generation = generation;
         to->resident_handle = from.resident_handle;
@@ -1643,7 +1735,7 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     }
 
     auto block = from;
-    const uint64_t revision = NextNativeMaterialRevision();
+    const uint64_t revision = NextRevision();
     guard.unlock();
     RecordNativeTypedMaterialCopy(destination, source, bytes, kind);
     mh3_model_copy_bytes(output, input, bytes);
