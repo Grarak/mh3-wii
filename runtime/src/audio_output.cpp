@@ -1,4 +1,5 @@
 #include "audio_dma.h"
+#include "audio_output_statistics.h"
 #include <SDL3/SDL.h>
 #include <cstdlib>
 #include <cstdio>
@@ -58,3 +59,5 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
     const auto samples = DecodeWiiPcm(data, bytes);
     Check(SDL_PutAudioStreamData(stream, samples.data(), bytes));
 }
+
+NativeAudioOutputStatistics GetNativeAudioOutputStatistics() {return {};}
