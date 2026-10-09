@@ -1,6 +1,7 @@
 // Typed native material state, pure equation generation, and direct frame-slot
 // uniforms. No GX state, command-list decoder, FIFO, or GPU wait participates.
 #include "frame_split.h"
+#include "bytes_equal.h"
 #include "native_graphics.h"
 #include "model_assets.h"
 #include "../native/mh3_material_state.h"
@@ -523,7 +524,7 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
         // state with a few fields changed: every field the state knows is
         // known in the source, so the field-by-field merge would produce the
         // source itself. Compare and copy it whole instead.
-        if (std::memcmp(&material, &source, sizeof material)) {
+        if (!BytesEqual(&material, &source, sizeof material)) {
             material = source;
             Changed(NATIVE_STATE_MATERIAL);
         }
@@ -577,13 +578,13 @@ constinit const void* lightOwner = nullptr;
 constinit uint64_t lightOwnerRevision = 0;
 void SetNativeModelLights(const mh3_native_light_slots& source) {
     // Models reselect their light set per draw; prepared lights follow the slots.
-    if (!std::memcmp(&game.lightSlots, &source, sizeof source))
+    if (BytesEqual(&game.lightSlots, &source, sizeof source))
         return;
     std::array<mh3_shader_light, 8> next{};
     for (unsigned i = 0; i < 8; ++i)
         if (source.valid_mask & (1u << i))
             Check(mh3_material_prepare_light(&source.lights[i], &next[i]), "Native light producer");
-    if (game.lightSlots.valid_mask != source.valid_mask || std::memcmp(&game.preparedLights, &next, sizeof next) || std::memcmp(&game.lightSlots, &source, sizeof source))
+    if (game.lightSlots.valid_mask != source.valid_mask || !BytesEqual(&game.preparedLights, &next, sizeof next) || !BytesEqual(&game.lightSlots, &source, sizeof source))
         Changed(NATIVE_STATE_LIGHTING);
     game.lightSlots = source;
     game.preparedLights = next;

@@ -1,5 +1,6 @@
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
+#include "bytes_equal.h"
 #include "memory.h"
 #include "../native/mh3_model_state.h"
 #include "../native/adapters/model_state_bridge.h"
@@ -91,7 +92,7 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
     if (binding.source.indexed && binding.tlut_id >= palettes.size())
         throw std::runtime_error("Invalid native texture palette slot");
     auto& texture = textures[binding.map_id];
-    if (texture.valid && !std::memcmp(&texture.value, &binding, sizeof binding))
+    if (texture.valid && BytesEqual(&texture.value, &binding, sizeof binding))
         return;
     texture = {binding, true};
     Changed();
@@ -109,14 +110,14 @@ void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out) {
 void RestoreNativeTextureSnapshot(const NativeTextureSnapshot& snapshot) {
     auto& [palettes, textures] = T(NativeOwner::Render);
     // Rebind only what differs; a palette change re-resolves indexed images.
-    const bool paletteChanged = std::memcmp(palettes.data(), snapshot.palettes.data(), sizeof palettes) != 0;
+    const bool paletteChanged = !BytesEqual(palettes.data(), snapshot.palettes.data(), sizeof palettes);
     if (paletteChanged)
         palettes = snapshot.palettes;
     for (unsigned unit = 0; unit < textures.size(); ++unit) {
         if (!(snapshot.valid & (1u << unit)))
             continue;
         const auto& binding = snapshot.textures[unit];
-        if (textures[unit].valid && !(paletteChanged && binding.source.indexed) && !std::memcmp(&textures[unit].value, &binding, sizeof binding))
+        if (textures[unit].valid && !(paletteChanged && binding.source.indexed) && BytesEqual(&textures[unit].value, &binding, sizeof binding))
             continue;
         BindBackend(binding);
     }

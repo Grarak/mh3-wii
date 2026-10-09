@@ -1,5 +1,6 @@
 // Game -> render thread frame packets (native_frame_packet.h).
 #include "native_frame_packet.h"
+#include "bytes_equal.h"
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
 #include "frame_split.h"
@@ -237,7 +238,7 @@ uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
     Capture(next);
     pool.revision = revision;
     // Producers republish unchanged state; keep one copy of equal contents.
-    if (pool.valid && !std::memcmp(&next, &pool.items[pool.current], sizeof next))
+    if (pool.valid && BytesEqual(&next, &pool.items[pool.current], sizeof next))
         return pool.current;
 #ifdef MH3_DEVELOPMENT
     ++snapshotCounts[2][component];
