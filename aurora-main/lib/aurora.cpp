@@ -1,6 +1,7 @@
 #include <aurora/aurora.h>
 #include <aurora/native_frame_gate.hpp>
 #include <aurora/native_draw_memory.hpp>
+#include <aurora/native_texture.hpp>
 #ifdef AURORA_GXM
 #include "gxm/draw_memory.hpp"
 #include "gxm/device.hpp"
@@ -422,6 +423,7 @@ void shutdown() noexcept {
   g_nativeFrame.end();
 #ifdef AURORA_ENABLE_GX
   imgui::shutdown();
+  clear_native_textures();
   gfx::shutdown();
   gpu::shutdown();
 #endif
@@ -491,6 +493,7 @@ bool begin_native_frame() noexcept {
   if (window::native_resize_pending() ||
       !window::native_window_size_matches(gpu::g_graphicsConfig.width, gpu::g_graphicsConfig.height))
     window::sync_frame_buffer_size();
+  restore_native_textures();
   return true;
 #else
   return g_nativeFrame.begin(g_nativeFrameskip, true, [] { return false; });

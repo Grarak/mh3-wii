@@ -1,0 +1,25 @@
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
+namespace aurora {
+// Immutable view of one explicitly published producer revision. Data is used
+// only when creating a new resident texture; no content hashing or protection.
+struct NativeTextureSource {
+  std::span<const uint8_t> bytes, palette;
+  uint32_t width=0,height=0,levels=1,format=0,asset=0;
+  uint32_t palette_format=0,palette_entries=0;
+  uint64_t generation=0,palette_generation=0;
+  bool mutable_source=false;
+};
+struct NativeTextureSampler {
+  uint32_t wrap_s=0,wrap_t=0,min_filter=0,mag_filter=0,anisotropy=0;
+  float min_lod=0,max_lod=0;
+};
+size_t native_texture_source_size(uint32_t format,uint32_t width,uint32_t height,uint32_t levels);
+void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const NativeTextureSampler& sampler);
+// Reapply logical bindings after presentation changed the backend's units.
+void restore_native_textures();
+void clear_native_textures();
+}

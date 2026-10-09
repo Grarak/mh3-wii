@@ -124,7 +124,7 @@ void ShutdownGraphics() {
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
-void InitializeGraphics(int argc, char** argv) {
+void InitializeGraphics(int argc, char** argv,bool loadNativeAssets=true) {
     if (initialized) return;
     const char* userRoot = std::getenv("MH3_USER_DIR");
     const auto graphicsRoot = (userRoot ? std::filesystem::path(userRoot) : "saves") / "graphics";
@@ -164,7 +164,9 @@ void InitializeGraphics(int argc, char** argv) {
 #ifdef __vita__
     const char* discRoot = std::getenv("MH3_DISC_DIR");
     const auto nativePack = std::filesystem::path(discRoot ? discRoot : "ux0:/data/mh3-wii") / "native-textures.bin";
-    if (std::filesystem::exists(nativePack)) aurora::gl::open_native_texture_pack(nativePack.string().c_str());
+    if (loadNativeAssets && std::filesystem::exists(nativePack)) aurora::gl::open_native_texture_pack(nativePack.string().c_str());
+#else
+    (void)loadNativeAssets;
 #endif
     initialized = true;
 #ifdef MH3_DEVELOPMENT
@@ -294,14 +296,14 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     task();
 }
 
-void InitializeNativeGraphics(uint32_t width, uint32_t height) {
+void InitializeNativeGraphics(uint32_t width, uint32_t height,bool load_native_assets) {
     if (initialized && !aurora::gl::on_render_thread())
         throw std::runtime_error("Native graphics initialized outside the game thread");
     if (!aurora_configure_native_target(width, height))
         throw std::runtime_error("Native graphics target has zero dimensions");
     char name[] = "MH3";
     char* argv[]{name, nullptr};
-    InitializeGraphics(1, argv);
+    InitializeGraphics(1, argv,load_native_assets);
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Native graphics initialized outside the game thread");
 }

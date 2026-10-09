@@ -2,6 +2,7 @@
 // depth and frame-slot reuse. No GX API or command decoder participates.
 #include <aurora/aurora.h>
 #include <aurora/native_geometry.h>
+#include <aurora/native_texture.hpp>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
 #include <array>
@@ -55,9 +56,23 @@ int main(int argc,char** argv) {
     require(info.initializationStatus==AURORA_INITIALIZATION_SUCCESS,"graphics initialization failed");
     struct Shutdown { ~Shutdown(){aurora_shutdown();} } shutdown;
     aurora_set_frameskip(true);
-    auto texture=aurora::gl::create_texture(1,1,1,aurora::gl::Format::RGBA8,"native test");
-    const uint8_t texel[]{128,255,64,255};
-    aurora::gl::write_texture(texture,0,0,0,1,1,texel,4);
+    require(aurora::native_texture_source_size(14,9,9,1)==128,"CMPR tile size mismatch");
+    require(aurora::native_texture_source_size(6,4,4,3)==192,"small mip tile size mismatch");
+    std::array<uint8_t,64> texels{};
+    const auto fill=[&](uint8_t red) {
+      for(unsigned i=0;i<16;++i) {
+        texels[i*2]=255;texels[i*2+1]=red;
+        texels[32+i*2]=255;texels[33+i*2]=64;
+      }
+    };
+    fill(64);
+    aurora::NativeTextureSource source;
+    source.bytes=texels;source.width=source.height=4;source.format=6;
+    source.generation=1;source.mutable_source=true;
+    std::array<uint8_t,32> indices{},palette{};
+    aurora::NativeTextureSource indexed;
+    indexed.bytes=indices;indexed.palette=palette;indexed.width=indexed.height=8;
+    indexed.format=8;indexed.palette_format=1;indexed.palette_entries=16;
     unsigned rendered=0,slots=0;
     for (unsigned frame=0;frame<12;++frame) {
       aurora_update();
@@ -75,10 +90,25 @@ int main(int argc,char** argv) {
         const float clear[]{20.f/255,40.f/255,80.f/255,1};
         aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
         quad(-.9f,-.1f,.1f,.9f,0,{255,0,0,255},false);
-        aurora::gl::bind_texture(0,texture->gl(),aurora::gl::sampler(aurora::gl::NearestClamp));
+        if(rendered==2) {fill(128);source.generation=2;}
+        // Deliberately mutate the staging bytes without publishing a new
+        // revision: sampling must retain revision 2, with no content inspection.
+        if(rendered==3) fill(0);
+        if(rendered<=2) aurora::bind_native_texture(0,source,{});
         quad(.1f,.9f,.1f,.9f,0,{255,128,255,255},true);
         quad(-.9f,.9f,-.9f,-.1f,.5f,{0,255,0,255},false);
         quad(-.9f,.9f,-.9f,-.1f,-.5f,{0,0,255,255},false);
+        // Two versions of one palette in the same frame must retain separate
+        // sampled images; publishing the second cannot overwrite the first.
+        palette[0]=0;palette[1]=31;indexed.palette_generation=rendered*2;
+        aurora::bind_native_texture(0,indexed,{});
+        quad(-.9f,-.1f,-.9f,-.1f,.75f,{255,255,255,255},true);
+        palette[0]=248;palette[1]=0;++indexed.palette_generation;
+        aurora::bind_native_texture(0,indexed,{});
+        quad(.1f,.9f,-.9f,-.1f,.75f,{255,255,255,255},true);
+        // Preserve this application binding across the present pass; the next
+        // frame deliberately draws before issuing another texture bind.
+        aurora::bind_native_texture(0,source,{});
       } else {
         AuroraNativeGeometry unavailable{};
         require(!aurora_allocate_native_geometry(4,6,&unavailable),"skipped frame exposed draw memory");
@@ -90,8 +120,9 @@ int main(int argc,char** argv) {
     pixel(16,16,{255,0,0,255});
     pixel(48,16,{128,128,64,255});
     pixel(32,48,{0,255,0,255});
-    std::printf("Native geometry passed: %u frames, slot mask %u, solid/texture/depth pixels\n",rendered,slots);
-    texture.reset();
+    pixel(16,48,{0,0,255,255});
+    pixel(48,48,{255,0,0,255});
+    std::printf("Native geometry passed: %u frames, slot mask %u, solid/texture/depth pixels, image/palette revisions\n",rendered,slots);
     return 0;
   } catch (const std::exception& error) {
     std::fprintf(stderr,"Native geometry check failed: %s\n",error.what());
