@@ -49,5 +49,6 @@ output:
   root: generated
   functions: functions
   runtime_config: RuntimeConfig.h
+  # Not built: the runtime reads the DOL from the disc (runtime/src/dol_sections.cpp).
   data_initializer: data_sections_init.cpp
   base_manifest: ../build/base/mh3_base_manifest.json

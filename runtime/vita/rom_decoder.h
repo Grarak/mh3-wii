@@ -13,6 +13,8 @@ int mh3_rom_read(void* reader, int flat_partition, uint64_t offset, uint8_t* byt
  * first on it. Returns 1 when it started. */
 int mh3_rom_read_ahead(void* reader, void (*thread_start)(void));
 void mh3_rom_close(void* reader);
+/* SHA-1 of size bytes at data into digest (20 bytes). */
+void mh3_sha1(const void* data, size_t size, uint8_t* digest);
 #ifdef __cplusplus
 }
 #endif

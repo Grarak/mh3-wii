@@ -45,6 +45,11 @@ below it (high-level emulation):
   never needs a switch there. (A second host thread does run guest code,
   the [guest worker](../threading/guest-worker.md), but only on jobs the game thread
   hands it.)
+- **The DOL's sections** are read into guest memory at boot from the
+  user's disc (`sys/main.dol` in the game data, checked by SHA-1;
+  `runtime/src/dol_sections.cpp`): the translated code runs natively, but
+  the game reads its data, constructor and exception tables there. The
+  executable carries none of the DOL.
 - **Boot and probes**: exception and interrupt init, memory protection,
   EXI/SI probes, SRAM (persisted to `saves/sram.bin`), the audio system
   init and console output are small natives (`runtime/src/os_boot.cpp`,

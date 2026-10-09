@@ -1409,3 +1409,8 @@ extern "C" int mh3_rom_read(void* reader, int flat, uint64_t offset, uint8_t* by
 extern "C" int mh3_rom_read_ahead(void* reader, void (*thread_start)(void)) { return static_cast<RomReader*>(reader)->StartReadAhead(thread_start) ? 1 : 0; }
 
 extern "C" void mh3_rom_close(void* reader) { delete static_cast<RomReader*>(reader); }
+
+extern "C" void mh3_sha1(const void* data, size_t size, uint8_t* digest) {
+    const auto hash = Sha1(static_cast<const uint8_t*>(data), size);
+    std::memcpy(digest, hash.data(), hash.size());
+}

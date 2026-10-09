@@ -40,6 +40,10 @@ widescreen, upscaling, MSAA and the frame limit ([launcher](docs/vita-launcher.m
 [controls](docs/vita-controls.md)). Online play uses the community
 [MH3SP](https://github.com/sepalani/MH3SP) servers ([online](docs/online.md)).
 
+The VPK holds the translated code and nothing of the disc: the game's
+executable sections (`sys/main.dol`, checked by hash), textures, models,
+sound and movies are read from your image.
+
 ## Building
 
 Tested on arm64 Linux. You need:

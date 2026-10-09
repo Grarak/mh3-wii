@@ -61,9 +61,10 @@ read it from disk. The first start passes `--rom` so the runtime writes
 to `/opfs/mh3/user` (`MH3_USER_DIR`). All of it stays in the browser profile
 between visits (`runtime/web/web_files.cpp`).
 
-Like the native executables, `MH3.wasm` embeds the DOL's data sections that the
-translator emits (`generated/data_sections_init_blobs.S`), so the build itself
-is not for redistribution.
+Like the native executables, `MH3.wasm` holds none of the DOL's bytes: the
+runtime reads the DOL's sections from `disc/sys/main.dol` at boot
+(`runtime/src/dol_sections.cpp`). The translated code is still derived from
+the game's executable.
 
 Page parameters (`runtime/web/mh3-web.js`):
 
@@ -191,9 +192,7 @@ multiply-add) wherever they test `__arm__`, except for the FP control register,
 which is a software word (`ppc_isa_fpenv.h`). Guest RAM cannot be mapped twice
 in linear memory, so the cached, uncached and physical aliases fold onto one
 backing as on the Vita (`guest_flat_memory.h`); the backing is a fixed range
-below the static data (`-sGLOBAL_BASE`, 16 to 336 MiB). The data sections the
-translator assembles with `.incbin` are embedded with `#embed` instead
-(`runtime/web/data_blobs.cmake`).
+below the static data (`-sGLOBAL_BASE`, 16 to 336 MiB).
 
 ## Status
 

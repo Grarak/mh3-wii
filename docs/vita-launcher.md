@@ -92,7 +92,8 @@ sibling holds work in progress, and the directory is published only after
 `DiscImage` validation. A development install of a prepared disc directly in
 `ux0:/data/mh3-wii/` (with `partition.bin`) is still used as is. No game
 artwork, fonts, ROM bytes, or extracted resources are embedded in the program
-or committed to the repository.
+or committed to the repository; the game's DOL sections are read from the
+prepared `sys/main.dol` at every start.
 
 ### Load-time texture and model conversion
 
