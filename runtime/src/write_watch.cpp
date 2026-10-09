@@ -1,14 +1,15 @@
 // Debug-only (MH3_WRITE_WATCH build): find the guest code that writes an
-// address range. MH3_WRITE_WATCH=start,length (hex) makes every inline guest
+// address range. MH3_WRITE_WATCH=START,LENGTH (hex) makes every inline guest
 // store into the range call NoteWatchedWrite, which records the host return
 // address: a translated func_XXXXXXXX (the build links
-// with -rdynamic so dladdr can name it). Every 5 s (MH3_WRITE_WATCH_MS) the
+// with -rdynamic so dladdr can name it). Every 5 s (the ms=N option) the
 // writers are listed per (function, guest lr, offset in the range), with a
 // count and the last value.
 //
-// MH3_WRITE_WATCH_LIST=file watches the words listed instead (one hex address
+// MH3_WRITE_WATCH=list=FILE watches the words listed instead (one hex address
 // per line, as the first field: a step probe's output works as is) and
 // reports each by its address.
+#include "dev_options.h"
 #include "memory_access.h"
 #include "isa/ppc_isa_context.h"
 
@@ -37,7 +38,7 @@ using Key = std::tuple<const void*, uint32_t, uint32_t>; // host caller, guest l
 std::map<Key, Writes> writes;
 std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 std::chrono::milliseconds interval{5000};
-std::vector<uint8_t> words; // MH3_WRITE_WATCH_LIST bitmap
+std::vector<uint8_t> words; // list= bitmap
 bool reporting = false;
 
 std::string Describe(const void* pc) {
@@ -67,9 +68,9 @@ void Report() {
 
 struct Arm {
     Arm() {
-        if (const char* ms = std::getenv("MH3_WRITE_WATCH_MS"))
-            interval = std::chrono::milliseconds(std::atoi(ms));
-        if (const char* list = std::getenv("MH3_WRITE_WATCH_LIST")) {
+        const DevOptions options("MH3_WRITE_WATCH", {"ms", "list"}, DevOptions::Words::Allowed);
+        interval = std::chrono::milliseconds(options.Number("ms", 5000));
+        if (const char* list = options.Value("list")) {
             std::vector<uint32_t> listed;
             std::ifstream in(list);
             for (std::string line; std::getline(in, line);) {
@@ -90,12 +91,11 @@ struct Arm {
             std::fprintf(stderr, "MH3 write watch: armed %llu words in [%08x, +%x)\n", static_cast<unsigned long long>(listed.size()), g_writeWatchStart, g_writeWatchLength);
             return;
         }
-        const char* v = std::getenv("MH3_WRITE_WATCH");
-        if (!v)
+        const auto& range = options.List();
+        if (range.empty())
             return;
-        char* end = nullptr;
-        g_writeWatchStart = uint32_t(std::strtoul(v, &end, 16));
-        g_writeWatchLength = *end == ',' ? uint32_t(std::strtoul(end + 1, nullptr, 16)) : 4;
+        g_writeWatchStart = uint32_t(std::strtoul(range[0].c_str(), nullptr, 16));
+        g_writeWatchLength = range.size() > 1 ? uint32_t(std::strtoul(range[1].c_str(), nullptr, 16)) : 4;
         std::fprintf(stderr, "MH3 write watch: armed [%08x, +%x)\n", g_writeWatchStart, g_writeWatchLength);
     }
 } arm;

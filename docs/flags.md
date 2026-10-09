@@ -76,6 +76,20 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `settle` | both runs take one more 1/30 s step, so copies of the previous step's values agree again |
 | `all` | probe the whole frame (scene update, tasks, drawing), not just the task pass |
 
+## Build-option tools
+
+These need a CMake option, which rebuilds the generated code.
+
+### `MH3_WRITE_WATCH`: the guest code storing to memory (`-DMH3_WRITE_WATCH=ON`)
+
+`MH3_WRITE_WATCH=START,LENGTH[,ms=N]` or `MH3_WRITE_WATCH=list=FILE[,ms=N]`
+
+| Item | Effect |
+| --- | --- |
+| `START,LENGTH` | the range to watch (hex; LENGTH defaults to 4) |
+| `list=FILE` | watch the words listed instead (first field of each line, hex: a step probe's output works as is) |
+| `ms=N` | report the writers every N ms (default 5000) |
+
 ## Renamed and removed
 
 A development build names any of these that is still set at startup.
@@ -92,3 +106,4 @@ A development build names any of these that is still set at startup.
 | `MH3_RAZOR_HIDE_HUD=1`, `_SCENE_TRACE=1`, `_CPU_TRACE=1` | `MH3_RAZOR=hide-hud,scenes,cpu` |
 | `MH3_STEP_PROBE=N`, `MH3_STEP_PROBE_TICK=T,...` | `MH3_STEP_PROBE=step=N`, `MH3_STEP_PROBE=T,...` |
 | `MH3_STEP_PROBE_SETTLE=1`, `MH3_STEP_PROBE_ALL` | `MH3_STEP_PROBE=...,settle,all` |
+| `MH3_WRITE_WATCH_LIST=FILE`, `MH3_WRITE_WATCH_MS=N` | `MH3_WRITE_WATCH=list=FILE,ms=N` |

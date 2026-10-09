@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 project(MH3Recompiled LANGUAGES C CXX ASM)
 option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrumentation" OFF)
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
-option(MH3_WRITE_WATCH "Debug: report the guest code storing to MH3_WRITE_WATCH=start,length (rebuilds all generated code)" OFF)
+option(MH3_WRITE_WATCH "Debug: report the guest code storing to MH3_WRITE_WATCH=START,LENGTH (rebuilds all generated code)" OFF)
 option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinations and log host accesses" OFF)
 # Development-only runtime features, compiled out of release builds: MH3_STATS
 # speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE frame
