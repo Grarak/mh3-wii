@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -16,4 +17,8 @@ public:
     size_t PendingBytes() const { return pending.size(); }
 private:
     std::vector<uint8_t> pending;
+    std::array<uint32_t, 256> bp{};
+    std::array<bool, 8> textureBound{};
+    uint32_t bpMask = 0xFFFFFF, textureRevision = 0;
+    std::array<uint8_t, 37> TexturePacket(unsigned slot, const ArrayResolver& resolver);
 };
