@@ -53,6 +53,7 @@ target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_res
 target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
+target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
 target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized MH3_TRACE_ERRORS stack traces.
