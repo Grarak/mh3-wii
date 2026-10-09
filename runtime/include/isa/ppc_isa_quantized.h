@@ -288,6 +288,14 @@ MKW_PPC_FORCE_INLINE uint8_t* PpcTryGetPsqWritableHostInline(uint32_t addr)
 
 inline double PpcLoadPairPsqFloatFastInline(uint32_t addr)
 {
+    if (GuestFlat::RequiresCheckedAccess())
+    {
+        // No flat window: the page-bias lookup of any scalar load, 8 bytes wide.
+        uint64_t packed = 0;
+        if (!MemoryInline::TryReadGuestScalar(addr, packed)) [[unlikely]]
+            packed = MemoryInline::Read64Slow(addr);
+        return PpcBitCastToDoubleInline(PpcLoadPairPsqFloatBitsPackedInline(packed));
+    }
     const uint8_t* host = PpcTryGetPsqReadableHostInline(addr);
     if (host != nullptr) [[likely]]
     {
@@ -343,6 +351,15 @@ inline double PpcLoadSinglePsqQuantizedFastInline(uint32_t addr, uint32_t scale)
 
 inline void PpcStorePairPsqFloatFastInline(uint32_t addr, double value)
 {
+    if (GuestFlat::RequiresCheckedAccess())
+    {
+        // No flat window: the writable page lookup of any scalar store (executable
+        // guard included), 8 bytes wide.
+        const uint64_t packed = PpcStorePairPsqFloatBitsPackedInline(PpcBitCastToU64Inline(value));
+        if (!MemoryInline::TryWriteGuestScalar(addr, packed)) [[unlikely]]
+            MemoryInline::Write64Slow(addr, packed);
+        return;
+    }
     uint8_t* host = PpcTryGetPsqWritableHostInline(addr);
     if (host != nullptr) [[likely]]
     {
