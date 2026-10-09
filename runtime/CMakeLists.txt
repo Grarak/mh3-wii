@@ -105,9 +105,9 @@ add_executable(MH3
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})
-target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/draw_memory.cpp src/model_submission_trace.cpp
+target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/model_submission_trace.cpp
   native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
-target_sources(MH3 PRIVATE src/model_draw_dispatch.cpp src/model_instance.cpp native/mh3_model_draw_dispatch.c)
+target_sources(MH3 PRIVATE src/model_draw_dispatch.cpp native/mh3_model_draw_dispatch.c)
 set_source_files_properties(native/mh3_model_draw_dispatch.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE native/mh3_model_matrices.c)

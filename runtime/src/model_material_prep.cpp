@@ -2,7 +2,6 @@
 // certified list groups come from predecoded M3MP/live producers, never FIFO.
 #include "abi_bridge.h"
 #include "memory.h"
-#include "draw_memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_material_bridge.h"
@@ -26,10 +25,10 @@ uint32_t Resource(uint32_t reference, bool required = false) {
     return resource;
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {DrawMemory::Pointer(address, size), size};
+    return {Memory::GetPointer(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {DrawMemory::Mutable(address, size), size};
+    return {Memory::GetPointer(address, size), size};
 }
 void Publish(const mh3_native_material_state& patch, uint32_t top = 0) {
     OverlayNativeMaterial(patch, top);
@@ -54,7 +53,7 @@ void Group(CpuContext* cpu, mh3_model_material_block kind, bool xf) {
     // CPU compatibility only; all typed state survives skipped GPU frames.
     if (!xf)
         PublishGenMode(genmode, false);
-    DrawMemory::Write8(sync_address, 0);
+    Memory::Write8(sync_address, 0);
     if (count)
         OverlayNativeModelMaterialGroup(*fields, kind, count);
     if (xf)
@@ -119,7 +118,7 @@ extern "C" void MH3_ModelCurrentLights(CpuContext* cpu) {
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
     for (unsigned i = 0; i < 4; i++)
         if (cpu->gpr[4 + i])
-            DrawMemory::Write32(cpu->gpr[4 + i], masks[i]);
+            Memory::Write32(cpu->gpr[4 + i], masks[i]);
     if (cpu->gpr[8])
         std::memcpy(Memory::GetPointer(cpu->gpr[8], 4), &slots.ambient, 4);
 }

@@ -1,29 +1,27 @@
 // Pure array binding ABI: retain typed source provenance instead of GXSetArray.
 #include "abi_bridge.h"
 #include "memory.h"
-#include "draw_memory.h"
-#include "draw_replica.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <array>
 #include <stdexcept>
 #include <unordered_map>
 
 namespace {
-// Bound arrays are draw state: each thread binds its own.
+// Bound arrays (game thread draw state).
 struct VertexBindings {
     std::array<mh3_native_vertex_source, 12> bindings{};
     std::array<bool, 12> known{};
     uint64_t generation = 0;
 };
-thread_local constinit VertexBindings vertexBindings{};
+constinit VertexBindings vertexBindings{};
 struct Revision {
     uint64_t value;
     uint32_t bytes;
 };
-// Producer revisions, one replica per drawing thread (draw_replica.h).
-std::array<std::unordered_map<uint32_t, Revision>, DrawReplica::Count> replicas;
+// Producer revisions.
+std::unordered_map<uint32_t, Revision> generations;
 std::unordered_map<uint32_t, Revision>& Generations() {
-    return replicas[DrawReplica::Current()];
+    return generations;
 }
 uint32_t Canonical(uint32_t address, uint32_t bytes = 1) {
     uint32_t canonical = 0;
@@ -51,12 +49,10 @@ void Retire(uint32_t address, uint32_t bytes) {
     }
 }
 void Observe() {
-    // Installed from the game thread (SeedNativeVertexReplica runs first).
-    if (DrawReplica::Current() == DrawReplica::Game)
-        SetNativeModelVertexRetireHook(Retire);
+    SetNativeModelVertexRetireHook(Retire);
 }
 void Bind(CpuContext* cpu, mh3_vertex_kind kind, uint32_t semantic) {
-    if (!DrawMemory::Read32(cpu->gpr[3]))
+    if (!Memory::Read32(cpu->gpr[3]))
         return; // Original invalid optional resource.
     StoreNativeVertexSource(semantic, ReadNativeVertexResource(cpu->gpr[3], kind));
 }
@@ -65,7 +61,6 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
         throw std::runtime_error("Invalid native vertex producer generation");
     Observe();
-    const DrawReplica::Mutation mutation([=] { MarkNativeVertexProduced(payload, generation); });
     payload = Canonical(payload);
     auto& generations = Generations();
     if (generations.contains(payload) && generation < generations.at(payload).value)
@@ -80,13 +75,13 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
         }
 }
 mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex_kind kind) {
-    return ReadNativeVertexResourceData(DrawMemory::Read32(reference), kind);
+    return ReadNativeVertexResourceData(Memory::Read32(reference), kind);
 }
 mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind) {
     Observe();
-    const uint32_t size = DrawMemory::Read32(resource);
+    const uint32_t size = Memory::Read32(resource);
     mh3_native_vertex_source source{};
-    if (mh3_vertex_source_read({DrawMemory::Pointer(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
+    if (mh3_vertex_source_read({Memory::GetPointer(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native vertex array resource");
     auto& generations = Generations();
     const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));
@@ -135,10 +130,10 @@ extern "C" void MH3_ModelColorArray(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80089178, MH3_ModelColorArray, "NativeModelColorArray");
 extern "C" void MH3_ModelFurPositionArray(CpuContext* cpu) {
-    const uint32_t resource = DrawMemory::Read32(cpu->gpr[3]);
+    const uint32_t resource = Memory::Read32(cpu->gpr[3]);
     if (!resource)
         return;
-    const uint32_t size = DrawMemory::Read32(resource);
+    const uint32_t size = Memory::Read32(resource);
     mh3_native_vertex_source source{};
     if (mh3_vertex_fur_source_read({Memory::GetPointer(resource, size), size}, resource, uint16_t(cpu->gpr[4]), &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native fur position sample");
@@ -149,9 +144,5 @@ extern "C" void MH3_ModelFurPositionArray(CpuContext* cpu) {
         generation->second.bytes = source.payload_bytes;
     }
     StoreNativeVertexSource(0, source);
-}
-void SeedNativeVertexReplica() {
-    Observe();
-    replicas[DrawReplica::Render] = replicas[DrawReplica::Game];
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8008961C, MH3_ModelFurPositionArray, "NativeModelFurPositionArray");

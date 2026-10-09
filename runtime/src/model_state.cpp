@@ -1,8 +1,6 @@
 // Platform memory/ownership bridge to typed native C model inputs. No GX,
 // guest rendering helper or source command-list decoder is called here.
 #include "memory.h"
-#include "draw_memory.h"
-#include "draw_replica.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include <stdexcept>
@@ -12,22 +10,21 @@
 #include <mutex>
 
 namespace {
-// Typed texture and palette objects, one replica per drawing thread.
+// Typed texture and palette objects (game thread).
 struct Objects {
     std::unordered_map<uint32_t, mh3_native_texture_binding> textures;
     std::unordered_map<uint32_t, mh3_native_palette_source> palettes;
-};
-std::array<Objects, DrawReplica::Count> replicas;
+} objects;
 Objects& O() {
-    return replicas[DrawReplica::Current()];
+    return objects;
 }
 // The render thread reads texture revisions while binding; the game thread
 // produces them. Only these two maps are shared.
 std::mutex generationLock;
 std::unordered_map<uint32_t, uint64_t> generations;
 std::unordered_map<uint32_t, uint64_t> initialized_generations;
-// Bound view arrays are draw state: each thread binds its own.
-thread_local std::unordered_map<uint32_t, mh3_matrix_binding> matrix_sources;
+// Bound view arrays (game thread draw state).
+std::unordered_map<uint32_t, mh3_matrix_binding> matrix_sources;
 uint64_t resource_generation = 0;
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
@@ -36,22 +33,19 @@ void Checked(mh3_res_status status) {
 uint32_t Resource(uint32_t reference) {
     if (!reference)
         throw std::runtime_error("Null native resource reference");
-    const uint32_t resource = DrawMemory::Read32(reference);
+    const uint32_t resource = Memory::Read32(reference);
     if (!resource)
         throw std::runtime_error("Null native resource data");
     return resource;
 }
 void PutTexture(uint32_t object, const mh3_native_texture_binding& binding) {
-    const DrawReplica::Mutation mutation([=] { PutTexture(object, binding); });
     O().textures.insert_or_assign(object, binding);
 }
 void PutPalette(uint32_t object, const mh3_native_palette_source& palette) {
-    const DrawReplica::Mutation mutation([=] { PutPalette(object, palette); });
     O().palettes.insert_or_assign(object, palette);
 }
 void PutCopiedObjects(uint32_t destination, bool palette, const std::array<bool, 8>& present, const std::array<mh3_native_texture_binding, 8>& textures,
                       const std::array<mh3_native_palette_source, 8>& colors) {
-    const DrawReplica::Mutation mutation([=] { PutCopiedObjects(destination, palette, present, textures, colors); });
     auto& o = O();
     for (uint32_t i = 0; i < 8; i++) {
         if (palette) {
@@ -70,9 +64,6 @@ void PutCopiedObjects(uint32_t destination, bool palette, const std::array<bool,
     }
 }
 } // namespace
-void SeedNativeTextureObjectReplica() {
-    replicas[DrawReplica::Render] = replicas[DrawReplica::Game];
-}
 
 uint64_t ReadNativeTextureGeneration(uint32_t payload) {
     std::lock_guard lock(generationLock);
@@ -88,14 +79,13 @@ bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation) {
 void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
         throw std::runtime_error("Native texture producer requires address and generation");
-    if (DrawReplica::Current() == DrawReplica::Game) {
+    {
         std::lock_guard lock(generationLock);
         auto& previous = generations[payload];
         if (generation < previous)
             throw std::runtime_error("Native texture producer generation went backwards");
         previous = generation;
     }
-    const DrawReplica::Mutation mutation([=] { MarkNativeTextureProduced(payload, generation); });
     for (auto& item : O().textures)
         if (item.second.source.payload_address == payload)
             mh3_texture_source_updated(&item.second.source, generation);
@@ -104,16 +94,16 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
             item.second.generation = generation;
 }
 mh3_native_texture_source ReadNativeResTexture(uint32_t reference) {
-    const uint32_t resource = Resource(reference), size = DrawMemory::Read32(resource + 4);
+    const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
     mh3_native_texture_source source{};
-    Checked(mh3_texture_source_read({DrawMemory::Pointer(resource, size), size}, resource, &source));
+    Checked(mh3_texture_source_read({Memory::GetPointer(resource, size), size}, resource, &source));
     source.generation = ReadNativeTextureGeneration(source.payload_address);
     return source;
 }
 mh3_native_palette_source ReadNativeResPalette(uint32_t reference) {
-    const uint32_t resource = Resource(reference), size = DrawMemory::Read32(resource + 4);
+    const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
     mh3_native_palette_source source{};
-    Checked(mh3_palette_source_read({DrawMemory::Pointer(resource, size), size}, resource, &source));
+    Checked(mh3_palette_source_read({Memory::GetPointer(resource, size), size}, resource, &source));
     source.generation = ReadNativeTextureGeneration(source.payload_address);
     return source;
 }
@@ -186,7 +176,7 @@ void StoreNativeModelMatrixSources(uint32_t state, const uint32_t addresses[3]) 
     if (next.generation == UINT64_MAX)
         throw std::runtime_error("Native matrix source revision overflow");
     mh3_matrix_bind(&next, addresses);
-    Checked(mh3_matrix_store_sources({DrawMemory::Mutable(state, 12), 12}, addresses));
+    Checked(mh3_matrix_store_sources({Memory::GetPointer(state, 12), 12}, addresses));
     matrix_sources.insert_or_assign(state, next);
 }
 mh3_matrix_binding ReadNativeModelMatrixSources(uint32_t state) {

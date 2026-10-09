@@ -3,10 +3,7 @@
 // forward direct material/mesh publications. No guest/GX/FIFO calls.
 #include "abi_bridge.h"
 #include "memory.h"
-#include "draw_memory.h"
-#include "draw_replica.h"
 #include "native_graphics.h"
-#include "runtime/native/adapters/model_instance_bridge.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_material_bridge.h"
@@ -29,12 +26,12 @@ const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 constexpr uint32_t genmode = 0x80685300, coordinate_cache = 0x8068530c, sync_address = 0x80796db0;
 constexpr mh3_matrix_runtime_locations locations{0x80685530, 0x80685510, 0x80796db4, 0x80688d94, 0x80686368};
-// G3D cache mirrors are draw state: each drawing thread keeps its own.
-thread_local constinit mh3_model_texcoord_sizes map_sizes{}, coordinate_sizes{};
-thread_local constinit uint8_t coordinate_map_known = 0;
-thread_local constinit uint32_t pipeline_address = 0, operator_address = 0;
-thread_local constinit uint64_t pipeline_revision = 0;
-thread_local constinit mh3_indirect_output current_operator{};
+// G3D cache mirrors (game thread draw state; recorded items carry their sizes).
+constinit mh3_model_texcoord_sizes map_sizes{}, coordinate_sizes{};
+constinit uint8_t coordinate_map_known = 0;
+constinit uint32_t pipeline_address = 0, operator_address = 0;
+constinit uint64_t pipeline_revision = 0;
+constinit mh3_indirect_output current_operator{};
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
         throw std::runtime_error("Native model scope failed: " + std::to_string(status));
@@ -44,10 +41,10 @@ void PackChecked(mh3_pack_status status) {
         throw std::runtime_error("Native model resident mesh failed: " + std::to_string(status));
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {DrawMemory::Pointer(address, size), size};
+    return {Memory::GetPointer(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {DrawMemory::Mutable(address, size), size};
+    return {Memory::GetPointer(address, size), size};
 }
 uint32_t Resource(uint32_t reference, bool required = false) {
     uint32_t data = 0;
@@ -78,7 +75,7 @@ void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
     const auto* fields = count ? &ReadNativeLiveMaterialBlockView(address, kind).fields : nullptr;
     if (!xf)
         Genmode(false);
-    DrawMemory::Write8(sync_address, 0);
+    Memory::Write8(sync_address, 0);
     if (count)
         OverlayNativeModelMaterialGroup(*fields, kind, count);
     if (xf)
@@ -90,13 +87,11 @@ template <class T> struct RecipeCache {
     NativePrepareCacheCounters* counters = nullptr;
 };
 template <class T> RecipeCache<T>& Recipes() {
-    static std::array<RecipeCache<T>, DrawReplica::Count> replicas;
-    const unsigned replica = DrawReplica::Current();
-    auto& cache = replicas[replica];
+    static RecipeCache<T> cache;
     const uint64_t revision = ReadNativeModelStructureRevision();
     if (cache.revision != revision) {
         if (cache.revision == UINT64_MAX) {
-            if (auto* d = NativeModelPreparationDiagnosticsForOwner(replica)) {
+            if (auto* d = ActiveNativeModelPreparationDiagnostics()) {
                 if constexpr (std::is_same_v<T, mh3_model_scope_recipe>)
                     cache.counters = &d->material;
                 else
@@ -131,7 +126,7 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     uint32_t version = 0;
     if (material) {
         uint32_t parent = 0;
-        Checked(mh3_res_runtime_offset(&MH3NativeResourceMemory(), reference, int32_t(DrawMemory::Read32(material + 4)), 4, &parent));
+        Checked(mh3_res_runtime_offset(&MH3NativeResourceMemory(), reference, int32_t(Memory::Read32(material + 4)), 4, &parent));
         const auto owner = ResolveNativeModelOwner(parent);
         (void)ResolveNativeModelResource(owner, material, true);
         mh3_catalog_model model{};
@@ -157,8 +152,8 @@ struct PrepareContext {
 };
 void OperatorKnown(uint32_t address) {
     Checked(mh3_matrix_runtime_operator(&MH3NativeResourceMemory(), address, 0x80088a5c, 0x800888bc));
-    const uint32_t table = DrawMemory::Read32(address);
-    if (DrawMemory::Read32(table + 8) != 0x80088aac)
+    const uint32_t table = Memory::Read32(address);
+    if (Memory::Read32(table + 8) != 0x80088aac)
         throw std::runtime_error("Custom indirect apply callback has no native producer");
 }
 void Indirect(uint32_t resource, uint32_t op) {
@@ -268,8 +263,8 @@ const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, u
     result.resident_generation = owner.resident_generation;
     result.owner = owner;
     result.prepared = &ReadNativePreparedMesh(owner, shape);
-    result.matrix_id = int32_t(DrawMemory::Read32(shape + 8));
-    result.has_normal = (DrawMemory::Read32(shape + 0x30) & (1u << 10)) != 0;
+    result.matrix_id = int32_t(Memory::Read32(shape + 8));
+    result.has_normal = (Memory::Read32(shape + 0x30) & (1u << 10)) != 0;
     for (uint32_t i = 0; i < 12; i++) {
         uint32_t resource = 0;
         Checked(mh3_res_runtime_shape_array(&MH3NativeResourceMemory(), reference, i, &resource));
@@ -330,7 +325,7 @@ void PrePrimitive(const ShapeContext& context) {
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     Genmode(true);
     Checked(mh3_model_shape_cache(Mutable(0x80685504, 12), Bytes(shape + 12, 12)));
-    DrawMemory::Write8(sync_address, 0);
+    Memory::Write8(sync_address, 0);
     for (uint32_t i = 0; i < 12; i++)
         if (sources.known & (1u << i))
             StoreNativeVertexSource(i, sources.source[i]);
@@ -346,12 +341,12 @@ void Replacements(const ShapeContext& context, const mh3_model_material_scope& s
         const uint32_t table = scope.selected.vertex_tables[i < 2 ? i : 2];
         if (!table)
             continue;
-        const int32_t id = int16_t(DrawMemory::Read16(shape + 0x48 + i * 2));
+        const int32_t id = int16_t(Memory::Read16(shape + 0x48 + i * 2));
         if (id < 0)
             continue;
         if (uint64_t(table) + uint32_t(id) * 4 > UINT32_MAX)
             throw std::runtime_error("Model replacement vertex table overflows");
-        const uint32_t resource = DrawMemory::Read32(table + uint32_t(id) * 4);
+        const uint32_t resource = Memory::Read32(table + uint32_t(id) * 4);
         const auto kind = i == 0 ? MH3_VERTEX_POSITION : i == 1 ? MH3_VERTEX_NORMAL : MH3_VERTEX_COLOR;
         const auto source = ReadNativeVertexResourceData(resource, kind);
         if (i == 0 && Canonical(source.payload_address) != Canonical(originals.source[0].payload_address))
@@ -386,16 +381,16 @@ void LoadNativeModelPipeline(uint32_t resource) {
         throw std::runtime_error("Model pipeline offset overflows");
     const auto& fields = ReadNativeLiveMaterialBlockView(resource + 32, MH3_MODEL_MATERIAL_PIPELINE).fields;
     const auto generation = fields.generation;
-    if (DrawMemory::Read32(0x80796dbc) == resource && pipeline_address == resource && pipeline_revision == generation)
+    if (Memory::Read32(0x80796dbc) == resource && pipeline_address == resource && pipeline_revision == generation)
         return;
     uint8_t table[8], known = 0;
     ReadNativeModelCoordinateMap(resource + 32, table, &known);
     Checked(mh3_model_coordinate_table(Mutable(coordinate_cache, 108), table));
     coordinate_map_known = known;
     Genmode(false);
-    DrawMemory::Write8(sync_address, 0);
+    Memory::Write8(sync_address, 0);
     OverlayNativeModelMaterialGroup(fields, MH3_MODEL_MATERIAL_PIPELINE);
-    DrawMemory::Write32(0x80796dbc, resource);
+    Memory::Write32(0x80796dbc, resource);
     pipeline_address = resource;
     pipeline_revision = generation;
     PrepareNativeModelCoordinateSizes(Mode().texgens);
@@ -438,56 +433,7 @@ struct ModelStore {
 std::array<ModelStore, 3> stores;
 // Frames that are not recorded still prepare (guest/selector side effects).
 ModelStore scratch;
-// The render thread draws a model instance's items as they are prepared.
-ModelStore instance;
-// Render thread: an instance prepares all its items first and then draws each
-// under the drawing state of its preparation, as the frame packet replays the
-// game thread's items. Drawing an item loads matrices that the preparation of
-// the items after it must not see.
-template <class T>
-struct Snapshots {
-    std::vector<T> items;
-    uint32_t count = 0, revision = 0;
-    bool valid = false;
-};
-struct Deferred {
-    Snapshots<NativeDrawSnapshot> draws;
-    Snapshots<NativeMaterialSnapshot> materials;
-    Snapshots<NativeLightingSnapshot> lighting;
-    Snapshots<NativePostSnapshot> posts;
-    Snapshots<NativeTextureSnapshot> textures;
-    std::vector<std::array<uint32_t, NATIVE_STATE_COMPONENTS>> state; // per item
-} deferred;
-template <class T, void (*Capture)(T&)>
-uint32_t Keep(Snapshots<T>& pool, NativeStateComponent component) {
-    const uint32_t revision = nativeStateRevision[component];
-    if (pool.valid && pool.revision == revision)
-        return pool.count - 1;
-    if (pool.count == pool.items.size())
-        pool.items.emplace_back();
-    Capture(pool.items[pool.count]);
-    pool.revision = revision;
-    pool.valid = true;
-    return pool.count++;
-}
-template <class T>
-void Clear(Snapshots<T>& pool) {
-    pool.count = 0;
-    pool.valid = false;
-}
-void Defer() {
-    auto& d = deferred;
-    std::array<uint32_t, NATIVE_STATE_COMPONENTS> state{};
-    state[NATIVE_STATE_DRAW] = Keep<NativeDrawSnapshot, CaptureNativeDrawSnapshot>(d.draws, NATIVE_STATE_DRAW);
-    state[NATIVE_STATE_MATERIAL] = Keep<NativeMaterialSnapshot, CaptureNativeMaterialSnapshot>(d.materials, NATIVE_STATE_MATERIAL);
-    state[NATIVE_STATE_LIGHTING] = Keep<NativeLightingSnapshot, CaptureNativeLightingSnapshot>(d.lighting, NATIVE_STATE_LIGHTING);
-    state[NATIVE_STATE_POST] = Keep<NativePostSnapshot, CaptureNativePostSnapshot>(d.posts, NATIVE_STATE_POST);
-    state[NATIVE_STATE_TEXTURES] = Keep<NativeTextureSnapshot, CaptureNativeTextureSnapshot>(d.textures, NATIVE_STATE_TEXTURES);
-    d.state.push_back(state);
-}
 ModelStore& Store() {
-    if (DrawReplica::Current() == DrawReplica::Render)
-        return instance;
     if (!NativeGraphicsFrameShouldRender()) {
         scratch.itemCount = scratch.poseCount = scratch.poseShared = 0;
         return scratch;
@@ -560,7 +506,7 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
             mh3_matrix_read34_unchecked({Bytes(direct_normal, 48), 1, 48, 1}, 0, &item.storage.direct_normal);
     }
     mh3_model_shape_input_unchecked(originals.matrix_id, originals.has_normal, Bytes(locations.texture_sources, 32).data,
-        DrawMemory::Read8(locations.current_valid) != 0, binding.address[0] != 0,
+        Memory::Read8(locations.current_valid) != 0, binding.address[0] != 0,
         direct_position ? &item.storage.direct_position : nullptr, direct_position && direct_normal ? &item.storage.direct_normal : nullptr, &item.input);
     if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
@@ -570,10 +516,10 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         // Row selectors depend on the shape's matrix sources, not pose values.
         uint32_t rows[8];
         const bool identity = mh3_model_shape_rows_unchecked(item.input.texture_source, rows);
-        if (!identity || !DrawMemory::Read8(locations.current_valid))
+        if (!identity || !Memory::Read8(locations.current_valid))
             PublishNativeModelMatrixRows(rows);
-        DrawMemory::Write8(locations.current_valid, identity ? 1 : 0);
-    } else if (!DrawMemory::Read8(locations.current_valid)) {
+        Memory::Write8(locations.current_valid, identity ? 1 : 0);
+    } else if (!Memory::Read8(locations.current_valid)) {
         // Envelope setup selects identity CURRENT tex-matrix rows; it does not
         // load identity position/normal slots. Per-vertex indices select the
         // actual ordered loads/inherited values in the converted primitives.
@@ -581,16 +527,17 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         for (auto& row : rows)
             row = 60;
         PublishNativeModelMatrixRows(rows);
-        DrawMemory::Write8(locations.current_valid, 1);
+        Memory::Write8(locations.current_valid, 1);
     }
     Genmode(true);
-    DrawMemory::Write8(sync_address, 0);
+    Memory::Write8(sync_address, 0);
     // Publish the producer's row/dual fields once. Palette batches consume the
     // owner's material directly; they do not submit a full material copy.
     ApplyNativeModelSelectors();
     if (item.input.matrix_id < 0)
-        DrawMemory::Write8(locations.current_valid, 0);
+        Memory::Write8(locations.current_valid, 0);
 }
+// Render thread: replays one recorded item against the Render owner's state.
 void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
     const auto& prepared = *item.prepared;
     const auto& owner = item.owner;
@@ -600,25 +547,25 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
         input.direct_position = &item.storage.direct_position;
     if (input.direct_normal)
         input.direct_normal = &item.storage.direct_normal;
-    mh3_model_palette palette = ReadNativeModelPalette();
+    mh3_model_palette palette = ReadNativeModelPalette(NativeOwner::Render);
     if (input.matrix_id >= 0) {
         mh3_model_palette produced{};
         mh3_model_palette_rigid(&input, &sources, &produced);
         mh3_model_palette_overlay(&palette, &produced, &palette);
-        PublishNativeModelPalette(palette);
-        SetNativePositionMatrix(&produced.position[0].v[0][0]);
+        PublishNativeModelPalette(palette, NativeOwner::Render);
+        SetNativePositionMatrix(&produced.position[0].v[0][0], NativeOwner::Render);
         if (produced.normal_valid & 1)
-            SetNativeNormalMatrix(0, &produced.normal[0].v[0][0]);
+            SetNativeNormalMatrix(0, &produced.normal[0].v[0][0], NativeOwner::Render);
         for (uint32_t i = 0; i < 10; i++)
             if (produced.texture_valid & (1u << i))
-                SetNativeTextureMatrix(30 + i * 3, &produced.texture[i].v[0][0], true);
+                SetNativeTextureMatrix(30 + i * 3, &produced.texture[i].v[0][0], true, NativeOwner::Render);
     }
-    const auto& material = GetNativeMaterialState();
+    const auto& material = GetNativeMaterialState(NativeOwner::Render);
     float post[8][12]{};
     uint8_t postKnown = 0, post3x4 = 0;
     for (uint32_t i = 0; i < 8; i++) {
         bool matrix3x4 = false;
-        if (GetNativeTextureMatrix(64 + i * 3, post[i], &matrix3x4)) {
+        if (GetNativeTextureMatrix(64 + i * 3, post[i], &matrix3x4, NativeOwner::Render)) {
             postKnown |= uint8_t(1u << i);
             post3x4 |= uint8_t(matrix3x4 ? 1u << i : 0);
         }
@@ -628,20 +575,20 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
         if (prepared.palette_batch_count) {
             const auto& batch = prepared.palette_batches[batch_index];
             mh3_model_palette_apply_batch(&batch, &sources, &palette, &palette);
-            PublishNativeModelPalette(palette);
+            PublishNativeModelPalette(palette, NativeOwner::Render);
             if (batch.position_known & 1)
-                SetNativePositionMatrix(&palette.position[0].v[0][0]);
+                SetNativePositionMatrix(&palette.position[0].v[0][0], NativeOwner::Render);
             for (uint32_t slot = 0; slot < 10; slot++) {
                 if (batch.normal_known & (1u << slot))
-                    SetNativeNormalMatrix(slot * 3, &palette.normal[slot].v[0][0]);
+                    SetNativeNormalMatrix(slot * 3, &palette.normal[slot].v[0][0], NativeOwner::Render);
                 if (batch.texture_known & (1u << slot))
-                    SetNativeTextureMatrix(30 + slot * 3, &palette.texture[slot].v[0][0], true);
+                    SetNativeTextureMatrix(30 + slot * 3, &palette.texture[slot].v[0][0], true, NativeOwner::Render);
             }
-            PackChecked(mh3_model_mesh_bind_batch(&prepared, batch_index, owner.resident_generation, owner.source_generation, ReadNativeModelPaletteRevision(), &palette, &submit));
+            PackChecked(mh3_model_mesh_bind_batch(&prepared, batch_index, owner.resident_generation, owner.source_generation, ReadNativeModelPaletteRevision(NativeOwner::Render), &palette, &submit));
         } else
-            PackChecked(mh3_model_mesh_bind_pose(&prepared, owner.resident_generation, owner.source_generation, ReadNativeModelPaletteRevision(), &palette, &submit));
+            PackChecked(mh3_model_mesh_bind_pose(&prepared, owner.resident_generation, owner.source_generation, ReadNativeModelPaletteRevision(NativeOwner::Render), &palette, &submit));
         submit.material = &material;
-        submit.projection = GetNativeDrawState().projection;
+        submit.projection = GetNativeDrawState(NativeOwner::Render).projection;
         submit.texture_matrices = post;
         submit.texture_matrix_known = postKnown;
         submit.texture_matrix_3x4 = post3x4;
@@ -667,15 +614,6 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
         PrepareModelItem(capture, item, context, direct_position, direct_normal);
     }
     item.coordinate_sizes = coordinate_sizes;
-#ifdef MH3_DEVELOPMENT
-    if (NoteNativeModelInstanceItem(item.prepared))
-        return;
-#endif
-    if (&capture == &instance) {
-        Defer();
-        capture.itemCount++;
-        return;
-    }
     if (&capture == &scratch)
         return;
     MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
@@ -685,37 +623,6 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
 void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
     if (Resource(reference))
         SubmitShape(ResolveShape(reference), direct_position, direct_normal);
-}
-void BeginNativeModelInstance() {
-    instance.itemCount = instance.poseCount = instance.poseShared = 0;
-    auto& d = deferred;
-    Clear(d.draws);
-    Clear(d.materials);
-    Clear(d.lighting);
-    Clear(d.posts);
-    Clear(d.textures);
-    d.state.clear();
-}
-void DrawNativeModelInstanceItems() {
-    const auto& d = deferred;
-    std::array<uint32_t, NATIVE_STATE_COMPONENTS> applied;
-    applied.fill(UINT32_MAX);
-    for (uint32_t i = 0; i < instance.itemCount; i++) {
-        const auto& state = d.state[i];
-        // Draw state first: the material snapshot holds its raster import.
-        if (applied[NATIVE_STATE_DRAW] != state[NATIVE_STATE_DRAW])
-            RestoreNativeDrawSnapshot(d.draws.items[state[NATIVE_STATE_DRAW]]);
-        if (applied[NATIVE_STATE_LIGHTING] != state[NATIVE_STATE_LIGHTING])
-            RestoreNativeLightingSnapshot(d.lighting.items[state[NATIVE_STATE_LIGHTING]]);
-        if (applied[NATIVE_STATE_POST] != state[NATIVE_STATE_POST])
-            RestoreNativePostSnapshot(d.posts.items[state[NATIVE_STATE_POST]]);
-        if (applied[NATIVE_STATE_TEXTURES] != state[NATIVE_STATE_TEXTURES])
-            RestoreNativeTextureSnapshot(d.textures.items[state[NATIVE_STATE_TEXTURES]]);
-        if (applied[NATIVE_STATE_MATERIAL] != state[NATIVE_STATE_MATERIAL])
-            RestoreNativeMaterialSnapshot(d.materials.items[state[NATIVE_STATE_MATERIAL]]);
-        applied = state;
-        ExecuteModelItem(instance, instance.items[i]);
-    }
 }
 void BeginNativeModelDraw() {
     auto& capture = Store();
@@ -752,12 +659,12 @@ uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_
     current_operator = {};
     operator_address = 0;
     const uint32_t material = Resource(material_reference), shape = Resource(shape_reference);
-    if (material && shape && (DrawMemory::Read8(material + 0x20) || DrawMemory::Read8(material + 0x21) || DrawMemory::Read8(material + 0x22))) {
+    if (material && shape && (Memory::Read8(material + 0x20) || Memory::Read8(material + 0x21) || Memory::Read8(material + 0x22))) {
         uint32_t parent = 0;
         Checked(mh3_res_runtime_shape_parent(&MH3NativeResourceMemory(), shape_reference, &parent));
         const auto owner = ResolveNativeModelOwner(parent);
         const auto binding = ReadNativeModelMatrixSources(locations.arrays);
-        if (int32_t(DrawMemory::Read32(shape + 8)) >= 0)
+        if (int32_t(Memory::Read32(shape + 8)) >= 0)
             (void)ReadNativeModelPose(binding.address, owner.model_address);
     }
     Checked(mh3_matrix_runtime_indirect(&MH3NativeResourceMemory(), &locations, material_reference, node_reference, shape_reference, &current_operator));
@@ -810,8 +717,8 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
     if (d.flags & 4) {
         // The original republishes the whole material with front culling.
         OverlayNativeMaterialTop(MH3_MATERIAL_TOP_CULL, 0, 0, 0, 0, 1);
-        std::memset(DrawMemory::Mutable(0x80685504, 12), 0, 12);
-        DrawMemory::Write8(sync_address, 1);
+        std::memset(Memory::GetPointer(0x80685504, 12), 0, 12);
+        Memory::Write8(sync_address, 1);
     }
     SubmitShape(shape, d.position, d.normal);
 }

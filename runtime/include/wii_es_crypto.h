@@ -144,7 +144,7 @@ inline EcSignature SignMessage(const uint8_t* key, const uint8_t* data, size_t s
         throw std::runtime_error("Crypto++ returned an unexpected sect233r1 signature size");
     }
 
-    thread_local CryptoPP::AutoSeededRandomPool random;
+    static CryptoPP::AutoSeededRandomPool random;
     EcSignature signature{};
     const size_t written = signer.SignMessage(random, data, size, signature.data());
     if (written != signature.size()) {

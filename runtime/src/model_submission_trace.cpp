@@ -104,7 +104,7 @@ struct TraceScope {
     uint32_t frame, actual = 0, mismatches = 0;
     uint64_t call;
 };
-thread_local TraceScope* activeTrace = nullptr;
+TraceScope* activeTrace = nullptr; // game thread
 
 mh3_res_status Predict(void* opaque, const mh3_model_draw_item* item) {
     auto& trace = *static_cast<TraceScope*>(opaque);

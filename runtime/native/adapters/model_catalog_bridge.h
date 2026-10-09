@@ -10,18 +10,13 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceCopy, uint32_t diagnostic_frame = UINT32_MAX);
 void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
     NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceRetire, uint32_t diagnostic_frame = UINT32_MAX);
-/* This replica's structural producer token. Changes on source/pack lifetime
+/* The structural producer token. Changes on source/pack lifetime
  * events, never a draw or a typed material-field update. */
 uint64_t ReadNativeModelStructureRevision();
 /* A vertex producer installs this before retaining any sources/revisions.
  * Generic overwrites notify it even when no disc interval is tracked. */
 using NativeModelVertexRetireHook = void (*)(uint32_t address, uint32_t bytes);
 void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook);
-/* Copies the game replica of the host draw state into the render replica
- * (draw_replica.h), before game mutations start being mirrored. */
-void SeedNativeCatalogReplica();
-void SeedNativeTextureObjectReplica();
-void SeedNativeVertexReplica();
 /* Only a verified native material producer may use these. Exact block bounds
  * preserve the certified allocation/model identity while content revisions
  * change. Generic memcpy/DI/free/unknown overwrite always retires overlapping

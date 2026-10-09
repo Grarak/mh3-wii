@@ -18,6 +18,7 @@
 #if defined(__aarch64__)
 #include <asm/sigcontext.h>
 #endif
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -59,7 +60,8 @@ uint32_t nextRegion = 0;
 uint64_t frame = 0, copies = 0, touched = 0;
 const long pageSize = sysconf(_SC_PAGESIZE);
 struct sigaction previous {};
-thread_local bool gameThread = false;
+// The installing (game) thread; the handler runs on the faulting thread.
+long gameThread = -1;
 
 struct FaultContext {
     uintptr_t pc, lr;
@@ -103,7 +105,7 @@ void Handler(int signal, siginfo_t* info, void* context) {
                           cpu ? cpu->lr : 0,
                           fault.write,
                           address >= region.start && address < region.end,
-                          gameThread,
+                          syscall(SYS_gettid) == gameThread,
                           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - region.armed).count(),
                           region.frame};
         }
@@ -118,7 +120,7 @@ void Install() {
     if (installed)
         return;
     installed = true;
-    gameThread = true;
+    gameThread = syscall(SYS_gettid);
     struct sigaction action {};
     action.sa_sigaction = Handler;
     action.sa_flags = SA_SIGINFO | SA_NODEFER;

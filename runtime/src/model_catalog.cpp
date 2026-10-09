@@ -2,11 +2,9 @@
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
 #include "memory.h"
-#include "draw_memory.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
-#include "draw_replica.h"
 #include <algorithm>
 #include <array>
 #include <memory>
@@ -52,8 +50,7 @@ struct CachedBlock {
     uint64_t resident_generation;
     uint32_t material_index;
 };
-// One replica of the provenance state (draw_replica.h). Admitted packs are
-// immutable and shared by both replicas.
+// The provenance state (game thread). Admitted packs are immutable.
 struct Catalog {
     std::array<mh3_source_range, capacity> ranges{}, work{}, transfer{};
     mh3_source_tracker tracker{};
@@ -71,8 +68,8 @@ struct Catalog {
     NativeModelPreparationDiagnostics* diagnostics = nullptr;
     bool diagnostics_initialized = false;
 };
-std::array<Catalog, DrawReplica::Count> replicas;
-std::array<NativeModelPreparationDiagnostics, DrawReplica::Count> diagnostics;
+Catalog catalog;
+NativeModelPreparationDiagnostics diagnostics;
 struct DiagnosticConfig {
     bool enabled = false;
     uint32_t first = 0, last = UINT32_MAX;
@@ -96,7 +93,7 @@ struct DiagnosticConfig {
 };
 void InitializeDiagnostics(Catalog& c) {
     if (!c.diagnostics_initialized) {
-        c.diagnostics = NativeModelPreparationDiagnosticsForOwner(DrawReplica::Current());
+        c.diagnostics = ActiveNativeModelPreparationDiagnostics();
         c.diagnostics_initialized = true;
     }
 }
@@ -121,9 +118,9 @@ void EpochDiagnostic(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpo
         d.events[d.stored_events++] = {c.source_epoch, offset, frame, destination, source, bytes, conditions, reason, producer};
 }
 Catalog& C() {
-    return replicas[DrawReplica::Current()];
+    return catalog;
 }
-// The current replica's admitted packs, by reference.
+// The admitted packs, by reference.
 struct PackIterator {
     std::vector<std::shared_ptr<const Pack>>::const_iterator it;
     const Pack& operator*() const { return **it; }
@@ -253,16 +250,14 @@ void InstallPack(const std::shared_ptr<const Pack>& pack, uint32_t diagnostic_fr
     auto& c = C();
     InitializeDiagnostics(c);
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
-    const DrawReplica::Mutation mutation([=] { InstallPack(pack, frame); });
     c.packs.push_back(pack);
     c.resources.clear();
     c.blocks.clear();
     InvalidateSourceCache(c, NativeSourceEpochReason::PackInstall, NativeSourceEpochProducer::PackManager, 0, 0, 0, 0, 0, frame);
 }
 // Certificates carry state the tracker alone cannot rebuild once typed writes
-// retire content provenance, so both replicas hold every game certificate.
+// retire content provenance.
 void Certify(const std::vector<CachedOwner>& certified) {
-    const DrawReplica::Mutation mutation([=] { Certify(certified); });
     for (const auto& item : certified)
         C().owners.insert_or_assign(item.owner.model_address, item);
 }
@@ -280,18 +275,18 @@ void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
 }
 } // namespace
 
-NativeModelPreparationDiagnostics* NativeModelPreparationDiagnosticsForOwner(unsigned replica) {
+NativeModelPreparationDiagnostics* ActiveNativeModelPreparationDiagnostics() {
     static const DiagnosticConfig config;
     if (!config.enabled)
         return nullptr;
-    auto& d = diagnostics.at(replica);
+    auto& d = diagnostics;
     d.sample_first = config.first;
     d.sample_last = config.last;
     return &d;
 }
 
 void ReportNativeModelPreparationDiagnostics() {
-    auto* d = NativeModelPreparationDiagnosticsForOwner(DrawReplica::Game);
+    auto* d = ActiveNativeModelPreparationDiagnostics();
     if (!d)
         return;
     struct Previous {
@@ -312,8 +307,8 @@ void ReportNativeModelPreparationDiagnostics() {
         n(m.discarded_entries - previous.material.discarded_entries), n(s.discarded_entries - previous.shape.discarded_entries),
         n(d->epoch_advances - previous.advances), n(d->frames_with_epoch_advance - previous.frames), Memory::Read32(0x80796d28),
         d->stored_events, n(d->matching_events), d->sample_first, d->sample_last);
-    constexpr const char* reasons[]{"DI", "copy", "retire", "install", "unregister", "seed"};
-    constexpr const char* producers[]{"DI", "resource-copy", "resource-retire", "memcpy", "memmove", "copy32", "copy32-unknown", "fill", "heap-create", "heap-destroy", "heap-allocate", "heap-free", "view-DMA", "view-LC", "locked-cache-DMA", "pack-manager", "seed"};
+    constexpr const char* reasons[]{"DI", "copy", "retire", "install", "unregister"};
+    constexpr const char* producers[]{"DI", "resource-copy", "resource-retire", "memcpy", "memmove", "copy32", "copy32-unknown", "fill", "heap-create", "heap-destroy", "heap-allocate", "heap-free", "view-DMA", "view-LC", "locked-cache-DMA", "pack-manager"};
     std::fprintf(stderr, "MH3 source epoch reasons:");
     for (unsigned i = 0; i < static_cast<unsigned>(NativeSourceEpochReason::Count); ++i) {
         std::fprintf(stderr, " %s %llu", reasons[i], n(d->epoch_reasons[i] - previous.reasons[i]));
@@ -344,7 +339,6 @@ void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes
         return;
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
-    const DrawReplica::Mutation mutation([=] { RecordNativeDiscWrite(destination, offset, bytes, frame); });
     destination = Canonical(destination, bytes);
     Checked(mh3_source_record_disc(&C().tracker, destination, bytes, offset, NextGeneration()));
     RetireNativeModelPose(destination, bytes);
@@ -359,7 +353,6 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
         return;
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
-    const DrawReplica::Mutation mutation([=] { RecordNativeResourceCopy(destination, source, bytes, producer, frame); });
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
     if (destination == source)
@@ -400,7 +393,6 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
         return;
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
-    const DrawReplica::Mutation mutation([=] { RetireNativeResourceOwner(address, bytes, producer, frame); });
     address = Canonical(address, bytes);
     const bool tracked = mh3_source_intersects(&C().tracker, address, bytes);
     if (tracked)
@@ -421,7 +413,6 @@ void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook) {
 void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_material_block kind) {
     if (!bytes)
         return;
-    const DrawReplica::Mutation mutation([=] { RecordNativeTypedMaterialWrite(address, bytes, kind); });
     Initialize();
     address = Canonical(address, bytes);
     CheckTypedMaterialWrite(address, bytes, kind);
@@ -435,7 +426,6 @@ void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_
 void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32_t bytes, mh3_model_material_block kind) {
     if (!bytes || destination == source)
         return;
-    const DrawReplica::Mutation mutation([=] { RecordNativeTypedMaterialCopy(destination, source, bytes, kind); });
     Initialize();
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
@@ -550,11 +540,9 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
     trace("publish", 0);
 }
 void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
-    // Frames already recorded may still draw the pack on the render replica.
     auto& c = C();
     InitializeDiagnostics(c);
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
-    const DrawReplica::Mutation mutation([=] { UnregisterNativeModelPack(handle, frame); }, true);
     for (auto it = C().packs.begin(); it != C().packs.end(); ++it)
         if ((*it)->handle == handle) {
             C().packs.erase(it);
@@ -600,8 +588,7 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
         return cached->second.owner;
     mh3_source_identity identity{};
     const auto source_status = mh3_source_resolve(&C().tracker, model_address, 16, &identity);
-    // Only the game thread admits packs; the render replica sees them mirrored.
-    if (source_status == MH3_RES_OK && DrawReplica::Current() == DrawReplica::Game)
+    if (source_status == MH3_RES_OK)
         EnsureNativeModelAssets(identity.partition_offset, 16);
     else if (source_status != MH3_RES_ABSENT)
         Checked(source_status);
@@ -627,8 +614,8 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
             const uint32_t address = sibling.model_address;
             // Provenance selected the owner; header fields validate layout,
             // rather than identifying bytes by a magic/name/content match.
-            if (DrawMemory::Read32(address) != 0x4d444c30 || DrawMemory::Read32(address + 4) != model.model_bytes || DrawMemory::Read32(address + 8) != model.revision ||
-                Canonical(address + DrawMemory::Read32(address + 12), 1) != container)
+            if (Memory::Read32(address) != 0x4d444c30 || Memory::Read32(address + 4) != model.model_bytes || Memory::Read32(address + 8) != model.revision ||
+                Canonical(address + Memory::Read32(address + 12), 1) != container)
                 throw std::runtime_error("Loaded native MDL0 header differs from registered source identity");
             NativeModelOwner related{p.pack, p.catalog, j, container, address, p.handle, p.generation, generation};
             siblings.push_back({related, sibling});
@@ -654,10 +641,10 @@ mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, u
     }
     if (resource < owner.container_address)
         throw std::runtime_error("Native model resource precedes its container");
-    const uint32_t id = DrawMemory::Read32(resource + (material ? 12 : 60));
+    const uint32_t id = Memory::Read32(resource + (material ? 12 : 60));
     mh3_catalog_resource r{};
     if (mh3_model_catalog_find_resource(owner.catalog, owner.catalog_model_index, material, id, &r) != MH3_PACK_OK || resource - owner.container_address != r.source_offset ||
-        DrawMemory::Read32(resource) != r.source_bytes || Canonical(resource + DrawMemory::Read32(resource + 4), 1) != owner.model_address)
+        Memory::Read32(resource) != r.source_bytes || Canonical(resource + Memory::Read32(resource + 4), 1) != owner.model_address)
         throw std::runtime_error("Native model subresource identity differs from registered source");
     C().resources.insert_or_assign(key, CachedResource{C().source_epoch, owner.source_generation, r});
     return r;
@@ -719,8 +706,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
         return cached->second;
     mh3_source_identity identity{};
     Checked(mh3_source_resolve(&C().tracker, address, 1, &identity));
-    if (DrawReplica::Current() == DrawReplica::Game)
-        EnsureNativeModelAssets(identity.partition_offset, 1);
+    EnsureNativeModelAssets(identity.partition_offset, 1);
     for (const auto& pack : Packs()) {
         const auto origin = pack.origins.find(std::make_pair(identity.partition_offset, uint32_t(kind)));
         if (origin == pack.origins.end())
@@ -758,7 +744,6 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_
     return ReadNativeLiveMaterialBlockView(address, kind);
 }
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
-    const DrawReplica::Mutation mutation([=] { PublishNativeLiveMaterialBlock(block); });
     if (!block.fields.generation || block.fields.generation > C().material_revision || Canonical(block.address, block.bytes) != block.address)
         throw std::runtime_error("Invalid typed native material publication");
     for (const auto& pack : Packs())
@@ -810,22 +795,3 @@ extern "C" void MH3_ModelMemmove(CpuContext* cpu) {
     Copy(cpu, NativeSourceEpochProducer::Memmove);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8045BC18, MH3_ModelMemmove, "NativeResourceMemmove");
-void SeedNativeCatalogReplica() {
-    auto& render = replicas[DrawReplica::Render];
-    const uint64_t previous = render.source_epoch;
-    const uint64_t next = std::max(previous, replicas[DrawReplica::Game].source_epoch);
-    if (next == UINT64_MAX)
-        throw std::runtime_error("Native model source cache epoch overflow");
-    render = replicas[DrawReplica::Game];
-    // A reseed retires render-side structural recipes even if the game token
-    // equals an earlier render token. Tokens are local to each replica.
-    render.source_epoch = next + 1;
-    render.diagnostics = NativeModelPreparationDiagnosticsForOwner(DrawReplica::Render);
-    render.diagnostics_initialized = true;
-    EpochDiagnostic(render, NativeSourceEpochReason::ReplicaSeed, NativeSourceEpochProducer::ReplicaSeed, 0, 0, 0, 0, 0, DiagnosticFrame(render));
-    render.tracker.ranges = render.ranges.data();
-    render.tracker.work = render.work.data();
-    render.tracker.transfer = render.transfer.data();
-    // Render-side revisions (its own cache fills) never equal a game revision.
-    render.material_revision = uint64_t(1) << 62;
-}

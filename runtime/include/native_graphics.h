@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include "../native/mh3_draw_state.h"
+#include "native_owner.h"
 
 struct mh3_native_texture_binding;
 struct mh3_native_palette_source;
@@ -10,11 +11,13 @@ struct mh3_native_material_state;
 struct mh3_model_matrix_selectors;
 struct mh3_resolved_mesh_submit;
 
-const mh3_draw_state& GetNativeDrawState();
+// Game unless named: the render thread passes NativeOwner::Render.
+const mh3_draw_state& GetNativeDrawState(NativeOwner owner = NativeOwner::Game);
+// Render thread: the restored viewport in target pixels.
 void GetNativeRenderViewportSize(float out[2]);
 void SetNativeProjection(const float row_major[16], bool perspective);
-void SetNativePositionMatrix(const float row_major[12]);
-void SetNativeNormalMatrix(uint32_t selector, const float row_major[9]);
+void SetNativePositionMatrix(const float row_major[12], NativeOwner owner = NativeOwner::Game);
+void SetNativeNormalMatrix(uint32_t selector, const float row_major[9], NativeOwner owner = NativeOwner::Game);
 bool GetNativeNormalMatrix(uint32_t selector, float row_major[9]);
 void SetNativeViewport(float x, float y, float width, float height, float near_z, float far_z);
 void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height);
@@ -24,19 +27,19 @@ bool GetNativeScissor(int32_t out[4]);
 void SetNativeRaster(const mh3_raster_state& raster);
 using NativeRasterObserver = void (*)(const mh3_raster_state&);
 void SetNativeRasterObserver(NativeRasterObserver observer);
-void RestoreNativeRenderState();
 // Clear only far depth on the current admitted target. Covers the whole target
 // while preserving logical state and backend raster/scissor/draw bindings.
 // Skipped frames perform no GPU work, allocation, scene switch or wait.
 void ClearNativeDepthTarget();
+// Game: records a binding; the render thread binds the backend on restore.
 void BindNativeTexture(const mh3_native_texture_binding& binding);
-const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit);
+const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit, NativeOwner owner = NativeOwner::Game);
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);
 void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette);
 void SetNativeFog(const mh3_native_fog& fog);
 void SetNativeModelLights(const mh3_native_light_slots& lights);
-void SetNativeTextureMatrix(uint32_t selector, const float row_major[12], bool matrix3x4);
-bool GetNativeTextureMatrix(uint32_t selector, float row_major[12], bool* matrix3x4 = nullptr);
+void SetNativeTextureMatrix(uint32_t selector, const float row_major[12], bool matrix3x4, NativeOwner owner = NativeOwner::Game);
+bool GetNativeTextureMatrix(uint32_t selector, float row_major[12], bool* matrix3x4 = nullptr, NativeOwner owner = NativeOwner::Game);
 void SetNativeDepthCompareBeforeTexture(bool before);
 void SetNativeMaterial(const mh3_native_material_state& material);
 // Internal sparse publication from typed renderer producers; only declared
@@ -44,16 +47,20 @@ void SetNativeMaterial(const mh3_native_material_state& material);
 // dependencies; external assets retain checked admission. Raster capability
 // failures leave the material unchanged. Runs on skipped logical frames too.
 void OverlayNativeMaterial(const mh3_native_material_state& patch, uint32_t top_known = 0);
-const mh3_native_material_state& GetNativeMaterialState();
+const mh3_native_material_state& GetNativeMaterialState(NativeOwner owner = NativeOwner::Game);
 // Explicit current-matrix producer: updates row/dual fields directly and marks
 // consumed shader fields dirty only when those fields actually change.
 void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors);
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) {
     SetNativeMaterial(material);
 }
+// Game: records the geometry into the frame packet.
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
-// Direct compact resident mesh boundary. Caller supplies typed live uniforms;
-// immutable vertex/index payloads remain in their admitted GPU allocation.
+// Render thread: draws recorded geometry with the restored Render state.
+void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
+// Render thread: direct compact resident mesh boundary. The caller supplies
+// the Render owner's material; immutable vertex/index payloads remain in their
+// admitted GPU allocation.
 void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh);
 // Called before destroying the graphics context; preserves no borrowed GPU data.
 void ClearNativeMaterialPrograms();

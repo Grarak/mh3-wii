@@ -24,7 +24,7 @@
 
 namespace aurora::gx::fifo {
 static Module Log("aurora::gx::fifo");
-static thread_local gfx::port_capture::DrawState s_captureSource;
+static gfx::port_capture::DrawState s_captureSource;
 void set_capture_callers(const uint32_t* callers) {
   std::copy_n(callers, s_captureSource.callers.size(), s_captureSource.callers.begin());
 }

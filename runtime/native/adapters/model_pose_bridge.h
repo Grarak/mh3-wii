@@ -1,14 +1,12 @@
 #pragma once
 #include "runtime/native/mh3_model_pose.h"
+#include "runtime/include/native_owner.h"
 /* Typed producer/publication boundary. Getters declare allocation extents;
  * completed CPU writes establish pose revisions. A bind alone does neither. */
 bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environment, uint32_t count, uint32_t model_reference);
 void RetireNativeModelPose(uint32_t address, uint32_t bytes);
 void ClearNativeModelPose();
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model_address = 0);
-/* While set, this thread draws a model instance whose view arrays (addresses)
- * were captured as pose: ReadNativeModelPose returns it. Null clears it. */
-void SetNativeModelInstancePose(const uint32_t addresses[3], const mh3_matrix_sources* pose);
 /* 80080BC0/80080C0C/80080C68: the scene's current view array (0 position,
  * 1 normal, 2 environment), declaring its allocation owner. */
 uint32_t NativeModelViewArray(uint32_t scene, unsigned kind);
@@ -16,8 +14,7 @@ void PublishNativeModelDualTexture(bool enabled);
 /* Reapply independent live selector state after an immutable material overlay.
  * Unknown remains unknown; this is never an identity/dual fallback. */
 void ApplyNativeModelSelectors();
-/* This thread's selector state. Model instances carry the game thread's state
- * at capture to the render thread, which applies it before drawing them. */
+/* The game thread's selector state. */
 mh3_model_matrix_selectors ReadNativeModelSelectors();
 void SetNativeModelSelectors(const mh3_model_matrix_selectors& state);
 void PublishNativeModelMatrixRows(const uint32_t rows[8]);
@@ -25,11 +22,11 @@ void PublishNativeModelMatrixRows(const uint32_t rows[8]);
  * are PN rows0..27 and main texture rows30..57, step3; post rows64+ do not
  * change these palette slots. Values are copied and retained across frames,
  * source retirement and model changes until another actual load replaces them. */
-void PublishNativeModelPositionMatrix(uint32_t selector, const float matrix[12]);
-void PublishNativeModelNormalMatrix(uint32_t selector, const float matrix[9]);
+void PublishNativeModelPositionMatrix(uint32_t selector, const float matrix[12], NativeOwner owner = NativeOwner::Game);
+void PublishNativeModelNormalMatrix(uint32_t selector, const float matrix[9], NativeOwner owner = NativeOwner::Game);
 /* 2x4 loads replace only the first two rows. They preserve an actually known
  * third row; a new partial slot remains incomplete for 3x4 model consumption. */
-void PublishNativeModelTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4 = true);
-const mh3_model_palette& ReadNativeModelPalette();
-uint64_t ReadNativeModelPaletteRevision();
-void PublishNativeModelPalette(const mh3_model_palette& palette);
+void PublishNativeModelTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4 = true, NativeOwner owner = NativeOwner::Game);
+const mh3_model_palette& ReadNativeModelPalette(NativeOwner owner = NativeOwner::Game);
+uint64_t ReadNativeModelPaletteRevision(NativeOwner owner = NativeOwner::Game);
+void PublishNativeModelPalette(const mh3_model_palette& palette, NativeOwner owner = NativeOwner::Game);

@@ -128,11 +128,6 @@ internal static class TranslatorCppTestHarness
             #include <string_view>
 
             bool g_suppressSehReporting = false;
-            thread_local jmp_buf* g_sehJumpTarget = nullptr;
-            thread_local uint32_t g_sehLastExceptionCode = 0;
-            thread_local uintptr_t g_sehLastExceptionAddress = 0;
-            thread_local uintptr_t g_sehLastAccessedAddress = 0;
-            thread_local uint32_t g_sehLastAccessType = 0;
 
             void DebugTrackPcImpl(uint32_t) {}
             void DebugPumpAurora() {}

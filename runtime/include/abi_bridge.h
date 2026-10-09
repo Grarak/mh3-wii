@@ -337,7 +337,8 @@ constexpr bool KnownRegArgsCpuCall(void (*baseEntry)(CpuContext*)) {
     }
 }
 
-// Direct-mapped thread-local memo in front of the sorted registry lookup every bctrl performs;
+// Direct-mapped memo in front of the sorted registry lookup every bctrl performs (only the
+// game thread runs guest code, so one table serves it);
 // a miss just re-runs the sorted lookup. 2048 raw entries (16 KiB) cover the per-frame
 // indirect working set while staying L1/L2 resident. Must stay a power of two, the index
 // masks with (size - 1).
@@ -349,14 +350,12 @@ inline constexpr uint32_t IndirectDispatchMemoSlot(uint32_t address) {
     return ((address >> 2) * 2654435761u) >> (32 - std::bit_width(kIndirectDispatchCacheEntries - 1));
 }
 
-// Namespace-scope `inline thread_local`, not function-local `static thread_local`, to avoid a
-// thread-static init epoch check on every bctrl (same as g_currentCpuContext in ppc_runtime.h).
 struct IndirectResolvedDispatchMemoEntry {
     bool valid;
     uint32_t address;
     const TranslatedFunctionInfo* info;
 };
-inline thread_local IndirectResolvedDispatchMemoEntry g_indirectResolvedDispatchMemo[kIndirectDispatchCacheEntries]{};
+inline IndirectResolvedDispatchMemoEntry g_indirectResolvedDispatchMemo[kIndirectDispatchCacheEntries]{};
 
 // Address 0 marks an empty slot: no function lives there, so a probe for 0
 // finds no record either way. Two ways per set (the same 2048 entries): a
@@ -373,7 +372,7 @@ inline constexpr size_t kIndirectRawDispatchMemoSets = kIndirectDispatchCacheEnt
 inline constexpr uint32_t IndirectRawDispatchMemoSetIndex(uint32_t address) {
     return ((address >> 2) * 2654435761u) >> (32 - std::bit_width(kIndirectRawDispatchMemoSets - 1));
 }
-inline thread_local IndirectRawDispatchMemoSet g_indirectRawDispatchMemo[kIndirectRawDispatchMemoSets]{};
+inline IndirectRawDispatchMemoSet g_indirectRawDispatchMemo[kIndirectRawDispatchMemoSets]{};
 
 class TranslatedFunctionRegistry {
   public:
@@ -400,7 +399,7 @@ class TranslatedFunctionRegistry {
     // generated-table binary search alongside it pushed the whole function past
     // the inliner's budget and out-of-lined the probe itself, which is the part
     // every bctrl executes.
-    // A memo slot is only ever filled after this thread saw the lookup
+    // A memo slot is only ever filled after the game thread saw the lookup
     // published (the acquire in the miss path), so a hit needs no barrier - on
     // arm32 the acquire is a dmb on every bctrl.
     static MKW_PPC_FORCE_INLINE const RawDispatchRecord* FindRawByAddressPtr(uint32_t address) {

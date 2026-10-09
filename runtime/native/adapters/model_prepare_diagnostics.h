@@ -1,15 +1,15 @@
 #pragma once
 #include <cstdint>
 
-/* Opt-in CPU metadata only. Each replica's drawing owner writes and reports
- * its own state. No renderer/game cross-thread read is permitted. */
+/* Opt-in CPU metadata only. The game thread writes and reports it; the
+ * renderer never reads it. */
 enum class NativeSourceEpochReason : uint32_t {
-    DiscWrite, ResourceCopy, ResourceRetire, PackInstall, PackUnregister, ReplicaSeed, Count
+    DiscWrite, ResourceCopy, ResourceRetire, PackInstall, PackUnregister, Count
 };
 enum class NativeSourceEpochProducer : uint32_t {
     Disc, ResourceCopy, ResourceRetire, Memcpy, Memmove, Copy32, Copy32Unknown,
     Fill, HeapCreate, HeapDestroy, HeapAllocate, HeapFree, ViewDma, ViewLc,
-    LockedCacheDma, PackManager, ReplicaSeed, Count
+    LockedCacheDma, PackManager, Count
 };
 enum NativeSourceEpochCondition : uint32_t {
     NATIVE_EPOCH_TRACKED_SOURCE = 1u << 0,
@@ -41,8 +41,8 @@ struct NativeModelPreparationDiagnostics {
 };
 /* Resolves getenv once, after runtime settings are loaded. Disabled builds or
  * an absent setting return null. Cache owners retain this pointer, so a hit
- * performs no getenv, allocation, clock read or extra replica/TLS lookup. */
-NativeModelPreparationDiagnostics* NativeModelPreparationDiagnosticsForOwner(unsigned replica);
-/* Called only by the current Game owner at the existing statistics interval.
+ * performs no getenv, allocation or clock read. */
+NativeModelPreparationDiagnostics* ActiveNativeModelPreparationDiagnostics();
+/* Called by the game thread at the existing statistics interval.
  * Reports counter deltas and at most 64 total sampled writer records. */
 void ReportNativeModelPreparationDiagnostics();

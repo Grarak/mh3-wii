@@ -26,13 +26,6 @@ using MkwJmpBuf = sigjmp_buf;
 
 // Global flag to suppress SEH reporting (caught by system_bridge)
 extern bool g_suppressSehReporting;
-// Jump buffer for SEH recovery
-extern thread_local MkwJmpBuf* g_sehJumpTarget;
-// SEH details for the most recent trapped exception (used during ctor execution).
-extern thread_local uint32_t g_sehLastExceptionCode;
-extern thread_local uintptr_t g_sehLastExceptionAddress;
-extern thread_local uintptr_t g_sehLastAccessedAddress;
-extern thread_local uint32_t g_sehLastAccessType;
 
 void WriteFatalLog(std::string_view reason);
 void SetRuntimeExitCode(int code);

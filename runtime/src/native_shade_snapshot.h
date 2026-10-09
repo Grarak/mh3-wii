@@ -1,15 +1,16 @@
 // Immutable copies of the native state a draw consumes, split by component so
 // a frame packet stores each one only when it changed. The game thread records
-// draws against its logical state; the render thread restores each changed
-// component into its own (thread-local) logical state before drawing.
+// draws against the Game owner's logical state; the render thread restores
+// each changed component into the Render owner's state before drawing.
 #pragma once
 #include "../native/mh3_draw_state.h"
 #include "../native/mh3_material_state.h"
 #include "../native/mh3_model_state.h"
+#include "native_owner.h"
 #include <array>
 #include <cstdint>
 
-// Per-thread change counters. A setter bumps its component whenever it may
+// Change counters per owner. A setter bumps its component whenever it may
 // have changed; captures compare contents before storing a new copy.
 enum NativeStateComponent : unsigned {
     NATIVE_STATE_DRAW,
@@ -19,7 +20,7 @@ enum NativeStateComponent : unsigned {
     NATIVE_STATE_TEXTURES,
     NATIVE_STATE_COMPONENTS
 };
-extern thread_local constinit uint32_t nativeStateRevision[NATIVE_STATE_COMPONENTS];
+extern constinit uint32_t nativeStateRevision[2][NATIVE_STATE_COMPONENTS];
 
 // native_render_state.cpp: projection, position, viewport, raster, scissor.
 struct NativeDrawSnapshot {

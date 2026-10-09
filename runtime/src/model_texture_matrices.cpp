@@ -2,7 +2,6 @@
 // Pure resource/math logic is C11; no GX, FIFO or guest callback is invoked.
 #include "abi_bridge.h"
 #include "memory.h"
-#include "draw_memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_texture_matrices.h"
@@ -16,10 +15,10 @@ void Checked(mh3_res_status status) {
         throw std::runtime_error("Native texture matrix input failed: " + std::to_string(status));
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {DrawMemory::Pointer(address, size), size};
+    return {Memory::GetPointer(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {DrawMemory::Mutable(address, size), size};
+    return {Memory::GetPointer(address, size), size};
 }
 uint32_t Resource(uint32_t reference) {
     uint32_t resource = 0;
@@ -34,16 +33,16 @@ mh3_matrix34 Matrix(uint32_t address) {
 void StoreMatrix(uint32_t destination, const mh3_matrix34& m) {
     for (uint32_t r = 0; r < 3; r++)
         for (uint32_t c = 0; c < 4; c++)
-            DrawMemory::WriteFloat32(destination + (r * 4 + c) * 4, m.v[r][c]);
+            Memory::WriteFloat32(destination + (r * 4 + c) * 4, m.v[r][c]);
 }
 mh3_pack_texture_srt Srt(uint32_t address, uint32_t flags) {
     mh3_pack_texture_srt s{};
     s.flags = flags;
-    s.scale[0] = DrawMemory::ReadFloat32(address);
-    s.scale[1] = DrawMemory::ReadFloat32(address + 4);
-    s.rotation_degrees = DrawMemory::ReadFloat32(address + 8);
-    s.translation[0] = DrawMemory::ReadFloat32(address + 12);
-    s.translation[1] = DrawMemory::ReadFloat32(address + 16);
+    s.scale[0] = Memory::ReadFloat32(address);
+    s.scale[1] = Memory::ReadFloat32(address + 4);
+    s.rotation_degrees = Memory::ReadFloat32(address + 8);
+    s.translation[0] = Memory::ReadFloat32(address + 12);
+    s.translation[1] = Memory::ReadFloat32(address + 16);
     return s;
 }
 } // namespace
@@ -91,7 +90,7 @@ void LoadNativeModelTextureSrt(uint32_t resource) {
             continue;
         const uint32_t mode = slot.map_mode, entry = 0x80685560 + mode * 8;
         const uint32_t builtin = mode < 5 ? mode : 0;
-        if (DrawMemory::Read32(entry) != functions[builtin] || DrawMemory::Read32(entry + 4) != kinds[builtin])
+        if (Memory::Read32(entry) != functions[builtin] || Memory::Read32(entry + 4) != kinds[builtin])
             throw std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode));
         if (builtin) {
             mh3_texture_mapping_input input{};
@@ -103,13 +102,13 @@ void LoadNativeModelTextureSrt(uint32_t resource) {
     }
     mh3_texture_matrices matrices{};
     uint32_t next = 0;
-    Checked(mh3_texture_matrices_prepare(&srt, maps, sources, DrawMemory::Read32(0x80796db8), &matrices, &next));
+    Checked(mh3_texture_matrices_prepare(&srt, maps, sources, Memory::Read32(0x80796db8), &matrices, &next));
     for (uint32_t i = 0; i < 8; i++) {
-        DrawMemory::Write32(0x80685510 + i * 4, matrices.source[i]);
+        Memory::Write32(0x80685510 + i * 4, matrices.source[i]);
         if (matrices.apply & (1u << i))
             SetNativeTextureMatrix(64 + i * 3, &matrices.matrix[i].v[0][0], true);
     }
-    DrawMemory::Write32(0x80796db8, next);
+    Memory::Write32(0x80796db8, next);
 }
 
 extern "C" void MH3_NormalTextureMatrix(CpuContext* cpu) {

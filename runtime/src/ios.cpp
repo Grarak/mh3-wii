@@ -968,7 +968,7 @@ REGISTER_NATIVE_FUNCTION(0x804BD220, MH3_IOSIoctlvAsync);
 // starts. Preserve the polling caller's full CPU state around each callback.
 // Process a bounded batch so callbacks that resubmit cannot starve the caller.
 void PumpIosCompletions(CpuContext* ctx) {
-    static thread_local bool pumping = false;
+    static bool pumping = false;
     if (pumping)
         return;
     pumping = true;

@@ -118,8 +118,6 @@ class GuestFiberManager {
     static void* s_schedulerFiber;
     static uint32_t s_currentGuestThread;
     static bool s_initialized;
-    // Stored CPU context pointer for fiber switches
-    static thread_local CpuContext* s_cpuContext;
 
     static void PurgePendingFibers();
 };
