@@ -13,6 +13,13 @@
 // bit for bit; the ports save the per-instruction register traffic of the
 // translated code and let callers keep a precise call boundary (the
 // registered bodies only read r1, r3-r6 and r13).
+//
+// On ARM, Concat and ConcatArray instead multiply whole rows with NEON's
+// unfused multiply-accumulate (vmla): the same products and sums in the same
+// order as the paired-single lanes, each rounded, which the arm32 runtime
+// also does (it has no fused madd), so arm32 results still match bit for bit.
+// AArch64's paired madd is fused, so there they can differ in the last bit.
+// NaN payloads and quiet/signalling rules are not reproduced.
 #include "abi_bridge.h"
 #include "g3d_native.h"
 #include "memory.h"
@@ -22,6 +29,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#if defined(__ARM_NEON) && !defined(MH3_WRITE_WATCH)
+#include <arm_neon.h>
+#define MH3_MTX_NEON 1
+#endif
 
 namespace {
 
@@ -94,7 +105,43 @@ void Copy(uint32_t src, uint32_t dst) {
         MemoryInline::FlatWrite32(dst + 4 * i, MemoryInline::FlatRead32(src + 4 * i));
 }
 
+#ifdef MH3_MTX_NEON
+// A guest matrix row: four big-endian floats.
+float32x4_t LoadRow(uint32_t address) {
+    return vreinterpretq_f32_u8(vrev32q_u8(vld1q_u8(GuestFlat::Host(address))));
+}
+void StoreRow(uint32_t address, float32x4_t row) {
+    vst1q_u8(GuestFlat::Host(address), vrev32q_u8(vreinterpretq_u8_f32(row)));
+}
+// Row r of a * b: a's row times b's rows, plus a's translation through b's
+// implied (0 0 0 1) row, which the paired code adds as unit * w per lane of
+// columns 2 and 3 (ConcatArray: w = a's columns 2 and 3; Concat: a's column 3
+// in both lanes).
+template <bool PerLane>
+float32x4_t ConcatRow(float32x4_t row, const float32x4_t b[3], float32x2_t unit) {
+    float32x4_t ab = vmulq_n_f32(b[0], vgetq_lane_f32(row, 0));
+    ab = vmlaq_n_f32(ab, b[1], vgetq_lane_f32(row, 1));
+    ab = vmlaq_n_f32(ab, b[2], vgetq_lane_f32(row, 2));
+    const float32x2_t w = PerLane ? vget_high_f32(row) : vdup_lane_f32(vget_high_f32(row), 1);
+    return vcombine_f32(vget_low_f32(ab), vmla_f32(vget_high_f32(ab), unit, w));
+}
+// The pair {ps0, ps1} at address as columns 2 and 3.
+float32x2_t LoadUnit(uint32_t address) {
+    return vreinterpret_f32_u8(vrev32_u8(vld1_u8(GuestFlat::Host(address))));
+}
+#endif
+
 void Concat(uint32_t a, uint32_t b, uint32_t ab) {
+#ifdef MH3_MTX_NEON
+    {
+        const float32x4_t m[3]{LoadRow(a), LoadRow(a + 16), LoadRow(a + 32)};
+        const float32x4_t n[3]{LoadRow(b), LoadRow(b + 16), LoadRow(b + 32)};
+        const float32x2_t unit = LoadUnit(0x807963C8u);
+        for (unsigned r = 0; r < 3; ++r)
+            StoreRow(ab + 16 * r, ConcatRow<false>(m[r], n, unit));
+        return;
+    }
+#endif
     const Matrix m(a), n(b);
     const PpcPairVec unit = LoadPair(0x807963C8u);
     for (unsigned r = 0; r < 3; ++r) {
@@ -107,6 +154,19 @@ void Concat(uint32_t a, uint32_t b, uint32_t ab) {
 }
 
 void ConcatArray(uint32_t a, uint32_t srcBase, uint32_t dstBase, uint32_t count, uint32_t r13) {
+#ifdef MH3_MTX_NEON
+    {
+        const float32x4_t m[3]{LoadRow(a), LoadRow(a + 16), LoadRow(a + 32)};
+        const float32x2_t unit = LoadUnit(r13 - 0x4F18);
+        for (uint32_t i = 0, n = count ? count : 1; i < n; ++i) {
+            const uint32_t src = srcBase + 0x30 * i, dst = dstBase + 0x30 * i;
+            const float32x4_t b[3]{LoadRow(src), LoadRow(src + 16), LoadRow(src + 32)};
+            for (unsigned r = 0; r < 3; ++r)
+                StoreRow(dst + 16 * r, ConcatRow<true>(m[r], b, unit));
+        }
+        return;
+    }
+#endif
     const Matrix m(a);
     const PpcPairVec unit = LoadPair(r13 - 0x4F18);
     // The loop counts count - 1 in CTR after the first product: 0 would run

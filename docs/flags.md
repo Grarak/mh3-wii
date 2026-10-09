@@ -1,19 +1,19 @@
 # Runtime flags
 
-Every environment variable the runtime reads (2026-10-03). The Vita reads
-them from `host0:/game/runtime.env` (one `NAME=value` per line) in
-development builds launched over host0. Development builds report a variable
-listed under [Renamed and removed](#renamed-and-removed) that is still set.
+Every environment variable the runtime reads. On the Vita, development builds
+launched over host0 read `MH3_*`, `AURORA_*` and `SDL_*` lines (`NAME=value`)
+from `host0:/game/runtime.env`. Development builds report a variable listed
+under [Renamed and removed](#renamed-and-removed) that is still set.
 
 ## Settings
 
 | Variable | Effect | Builds |
 | --- | --- | --- |
-| `MH3_DISC_DIR` | prepared game data (default `disc/` next to the executable; Vita `ux0:/data/mh3-wii`) | all |
-| `MH3_USER_DIR` | save/NAND root (default `saves`; Vita `ux0:/data/mh3-wii/saves`) | all |
-| `MH3_NATIVE_ASSET_DIR` | a complete native texture/model set to use instead of the one in `MH3_DISC_DIR` | all |
+| `MH3_DISC_DIR` | game data directory (default `disc/` next to the executable, written by `--rom`; Vita `ux0:/data/mh3-wii`, whose `disc/` the launcher prepares and then uses) | all |
+| `MH3_USER_DIR` | save/NAND root (default `saves` in the working directory; Vita `ux0:/data/mh3-wii/saves`) | all |
+| `MH3_NATIVE_ASSET_DIR` | a whole-disc converted texture/model set (`native-textures.bin`, `native-texture-map.bin`, `native-models/`) to use instead of the load-time cache | all |
 | `MH3_WIDESCREEN` | `0`: the console's 4:3 setting; default 16:9 ([widescreen](vita-widescreen.md)) | all |
-| `MH3_STATS` | `0` turns off the once-per-second `MH3 stats` lines (default on) | development |
+| `MH3_STATS` | `0` turns off the once-per-second statistics lines (default on; [profiling](profiling.md#statistics-lines)); set to anything, it also prints the material-GPU counters | development |
 | `MH3_FRAMESKIP` | `0` turns off frameskip | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution | development |
@@ -39,8 +39,9 @@ reported at startup (`MH3: MH3_X: unknown option`).
 | `frame=N` | without `interval`: the one frame N (default 30) |
 | `audio=FILE` | the audio output as raw s16le stereo (32 kHz from the native mixer) |
 
-`scripts/dev/run-heartbeat.sh` sets `MH3_CAPTURE=logs/runs/frames/NAME.bmp,interval=150`
-(`CAPTURE_INTERVAL` changes the interval).
+Frames count frame packets. `scripts/dev/run-heartbeat.sh` sets
+`MH3_CAPTURE=logs/runs/frames/NAME.bmp,interval=150` (`CAPTURE_INTERVAL`
+changes the interval).
 
 ### `MH3_PORT_CHECK`: native ports against their originals
 
@@ -53,7 +54,7 @@ reported at startup (`MH3: MH3_X: unknown option`).
 | `every` | check every call (default: one check per 500 ms, per port one per 2 s) |
 | `dump=DIR` | the first differing GX streams, as `NAME-N-{original,port}.gx` |
 | `originals` | sound engine entry points not named run their translated originals ([native audio](native-audio.md#checking-the-engine-port)) |
-| `P:0xADDR`, `E:0xADDR`, `C:0xADDR` | fuzz: player and enemy functions called from made-up states; `C:` starts something once |
+| `P:0xADDR`, `E:0xADDR`, `C:0xADDR` | fuzz: player and enemy functions called from made-up states (name their ports too); `C:` starts something once |
 | `fuzz-after=N` | the fuzz hooks fire on their Nth call (default 900) |
 | `fuzz-samples=N` | player fuzz samples per function (default 64) |
 
@@ -84,7 +85,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | Item | Effect |
 | --- | --- |
 | `frames=N` | the legacy frame profile (`MH3 profile:` line) every N frames; only the GLES self-check reaches it now, so game runs print nothing |
-| `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw: ~1.5 ms/frame on the Vita) |
+| `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw) |
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 
 ## Build-option tools
@@ -119,10 +120,17 @@ PATH; with `gate`, only once the file MARKER exists. Instrument with
 The model tests and the asset scripts (`vita-active-play.py`,
 `profile_native_host.py`, `capture_native_material_keys.py`) use them.
 
+## Aurora
+
+| Variable | Effect | Builds |
+| --- | --- | --- |
+| `AURORA_PORT_CAPTURE` | `DIR`: a per-draw state log (`DIR/events.tsv`) and the shader sources (`DIR/shaders/`) | all |
+| `AURORA_PORT_CAPTURE_DRAW_INTERVAL` | `N`: log every Nth draw (default 30) | all |
+| `AURORA_GROUP_CUTOUTS` | `1`: within each run of depth-tested, depth-writing, unblended draws, draw the opaque ones before the discard (cutout) ones, to cut discard-to-opaque transitions (experimental; coplanar order not validated) | all |
+
 ## Not yet merged
 
-These are read in files that other work is changing at the moment; they are
-merged or removed in a second pass.
+A second cleanup pass merges or removes these; the last column says how.
 
 | Variable | Effect | Builds | Plan |
 | --- | --- | --- | --- |
@@ -138,12 +146,12 @@ merged or removed in a second pass.
 | `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file | all | keep or remove after its A/B |
 | `MH3_DRAW_TABLE_DISCOVER` | `0`: draw tables only for models already drawn | all | remove |
 | `MH3_DRAW_TABLE_TRACE` | draw-table statistics | development | remove |
-| `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory | all | remove |
+| `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory | all | remove (on in the devkit A/B) |
 | `MH3_MATERIAL_GPU_RING` | route the render thread's Animated sections through the producer ring (self-test) | development | remove |
 | `MH3_MATERIAL_GPU_VERIFY` | compare the material programs' coefficients with `mh3_shade_fill` | development | into `MH3_VERIFY` |
-| `MH3_MODEL_CULL` | `0`: draw models whose mesh box is off screen | all | remove after its A/B |
-| `MH3_MODEL_CULL_GAME` | `0`: no game-side culling of off-screen scene models; `2` (development): draw everything and check every rejected model | all | remove after its A/B |
-| `MH3_RENDER_WIDEN` | `f` (development): draw every perspective projection `f` times wider than the camera the game culls with (edge check) | dev | keep for culling checks |
+| `MH3_MODEL_CULL` | `0`: draw models whose mesh box is off screen | all | remove (on in the devkit A/B) |
+| `MH3_MODEL_CULL_GAME` | `0`: no game-side culling of off-screen scene models; `2` (development): draw everything and check every rejected model | all | `2` into `MH3_VERIFY`, remove `0` |
+| `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (edge check) | development | keep for culling checks |
 | `MH3_DRAW_CENSUS` | `N`: the model draw pass's owners every N frames | development | remove |
 | `MH3_PREPARE_DIAGNOSTICS` | model preparation diagnostics for a frame range | development | remove |
 | `MH3_NATIVE_ASSET_TRACE` | model catalog registration log (`model_catalog.cpp`) | development | remove |
@@ -155,6 +163,20 @@ merged or removed in a second pass.
 | `MH3_GXM_SHADER_ABI_TRACE` | log runtime program reflection | Vita | remove |
 | `MH3_GXM_WAIT_TRACE` | log the first `sceGxmFinish` waits | Vita | remove |
 | `MH3_GXM_SHADER_DUMP` | mirror runtime-compiled GXPs to a directory (set by the selector preflight) | Vita | keep for the preflight |
+
+## Read by tools, not the runtime
+
+- `MH3_NV_DEBUG=FUNCTION`: the translator prints which instruction rejects
+  each register in its nonvolatile-GPR analysis of that function.
+- `MH3_CATALOG_BENCH`: `tests/native/test_mh3_model_catalog.c` also times
+  mesh preparation.
+- `MH3_FSQRT_TRACE`, `MH3_FSQRT_WARNINGS`, `MH3_FSQRT_END_FRAME`,
+  `MH3_LC_CHECK_*`, `MH3_GPU_VERTEX_CAPTURE`, `MH3_GPU_MODELS`,
+  `MH3_GPU_CAPTURE_*`: the gdb scripts in `tools/gdb/` (see their headers).
+- The scripts' own variables (`MH3_BIN`, `MH3_ARGS`, `MH3_RUN_DIR`,
+  `CAPTURE_INTERVAL`, `WATCH_*`, `SETTLE`, `MH3_ARCH`, `MH3_EXTRA_CMAKE_ARGS`,
+  `BUILD_JOBS`, `OVERLAY_JOBS`, `MH3_VITA_BUILD_DIR`, `MH3_VITA_ELF_CREATE`)
+  are described at the top of each script.
 
 ## Renamed and removed
 
@@ -174,7 +196,7 @@ merged or removed in a second pass.
 | `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |
 | `MH3_PROFILE_FRAMES=N`, `MH3_MODEL_SPLIT=1`, `MH3_RENDER_SYNC=1` | `MH3_PROFILE=frames=N,split,sync` |
 
-Removed on 2026-10-03 with the code behind them (git history keeps them):
+Removed with the code behind them (git history keeps them):
 
 - A/B switches of finished work: `MH3_ANIM_WHOLE_FRAMES` (animation at whole
   frames), `MH3_EFFECT_TICK_CURVES` (effect curves at whole ticks),
@@ -192,3 +214,5 @@ Removed on 2026-10-03 with the code behind them (git history keeps them):
   `MH3_STEP_LOG_WORDS`.
 - System traces: `MH3_SLOW_PATH_TRACE`, `MH3_AUDIO_TRACE`, and
   `MH3_TRACE_ERRORS` in the IOS, memory and locked-cache code.
+- Earlier: `MH3_MODEL_INSTANCES` (the model-instance path), `MH3_AX_MIX_WORKER`
+  and the other AX switches (AX is gone), `MH3_GX_WORKER`, `AURORA_GL_VSYNC`.

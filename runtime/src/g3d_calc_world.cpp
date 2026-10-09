@@ -330,6 +330,11 @@ void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
     RetireNativeResourceOwner(destination, size, NativeSourceEpochProducer::ViewLc);
     std::memcpy(output, input, size);
 }
+// The bytes LcStore would overwrite, retired before the results are written
+// there directly.
+void LcRetire(uint32_t dst, uint32_t blocks) {
+    RetireNativeResourceOwner(dst & 0x1FFFFFE0u, (blocks ? blocks : 128) * 32, NativeSourceEpochProducer::ViewLc);
+}
 
 // The node of matrix id: the model info's matrix-to-node table (-1 when none).
 int32_t MatrixNode(uint32_t info, uint32_t id) {
@@ -346,6 +351,12 @@ void CalcViewLc(CpuContext* ctx) {
         return;
     uint32_t a = kLockedCache + 0x800, b = kLockedCache + 0x1000, c = kLockedCache + 0x1800;
     uint32_t a1 = kLockedCache + 0x2800, b1 = kLockedCache + 0x3000, c1 = kLockedCache + 0x3800;
+    // The original builds each batch of 40 in the locked cache and DMAs it out
+    // in 32-byte blocks. With 32-byte aligned outputs (as the DMA needs; the
+    // batches stay aligned) the results go straight to them instead; only the
+    // bytes past the last matrix of a batch, which the DMA fills with stale
+    // cache contents, keep their old values.
+    const bool direct = ((viewPos | nrm | tex) & 31) == 0;
     const uint32_t info = Read32(mdl) + 0x4C;
     const float zero = ReadFloat(0x80798268u);
     const uint32_t inverse = frame[0x58];
@@ -354,6 +365,17 @@ void CalcViewLc(CpuContext* ctx) {
     for (uint32_t first = 0; first < count; first += 40) {
         const uint32_t n = count - first > 40 ? 40 : count - first;
         const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
+        if (direct) {
+            a = viewPos + 0x30 * first;
+            b = nrm + 0x24 * first;
+            c = tex + 0x30 * first;
+            LcRetire(a, blocksA);
+            if (nrm) {
+                LcRetire(b, blocksB);
+                if (tex)
+                    LcRetire(c, blocksA);
+            }
+        }
         if (n > 1)
             G3dNative::MtxConcatArray(view, model + 0x30 * first, a, n, r13);
         else
@@ -390,7 +412,8 @@ void CalcViewLc(CpuContext* ctx) {
             const uint32_t parentId = parent ? Read32(parent + 0x10) : 0;
             G3dNative::MtxConcat(kWorkMatrices + 0x30 * parentId, model + 0x30 * id, mtx);
         }
-        LcStore(viewPos + 0x30 * first, a, blocksA);
+        if (!direct)
+            LcStore(viewPos + 0x30 * first, a, blocksA);
 
         if (nrm) {
             for (uint32_t k = 0; k < n; ++k) {
@@ -409,9 +432,11 @@ void CalcViewLc(CpuContext* ctx) {
                     G3dNative::MtxInvTranspose33(n33, mtx);
                 }
             }
-            LcStore(nrm + 0x24 * first, b, blocksB);
-            if (tex)
-                LcStore(tex + 0x30 * first, c, blocksA);
+            if (!direct) {
+                LcStore(nrm + 0x24 * first, b, blocksB);
+                if (tex)
+                    LcStore(tex + 0x30 * first, c, blocksA);
+            }
         }
         std::swap(a, a1);
         std::swap(b, b1);

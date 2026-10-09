@@ -6,10 +6,11 @@
 // produces 3 ms frames ("ticks") until it is `lead` ticks ahead of the mixer,
 // where `lead` follows the largest number of ticks the mixer advanced between
 // two services in the last second, plus a margin. For each tick:
-//   1. the voices (native_audio_api.cpp): every voice's changed fields go to
-//      the mixer, tagged with the tick; fields the game did not set get the
-//      mixer's state, envelope volume and current address back; freed voices
-//      are stopped;
+//   1. the voices (native_audio_api.cpp): the changed fields of the voices
+//      set since the last tick go to the mixer, tagged with the tick; those
+//      voices' fields the game did not set get the mixer's state, envelope
+//      volume and current address back (other voices read them when asked);
+//      freed voices are stopped;
 //   2. the frame callback the game registered with AXRegisterCallback: the
 //      sound engine's frame (native), or a guest callback.
 // The aux callbacks are not called: the mixer runs the reverb natively.

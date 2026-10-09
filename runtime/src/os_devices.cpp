@@ -147,17 +147,17 @@ REGISTER_NATIVE_FUNCTION(0x804D3550, MH3_UnlockSram);
 
 // __OSInitAudioSystem uploads a temporary DSP bootstrap and waits for the
 // physical DSP to acknowledge it, restoring its scratch RAM before returning.
-// Native execution has no DSP to reset. This only replaces hardware bring-up;
-// AX mixing and audio output still require their own host implementation.
+// Native execution has no DSP to reset: the native mixer (runtime/src/audio)
+// produces the audio.
 extern "C" void MH3_OSInitAudioSystem(CpuContext*) {}
 REGISTER_NATIVE_FUNCTION(0x804CC9D0, MH3_OSInitAudioSystem);
 
 // __write_console(handle, buffer, byteCount*, refCon): leave formatting to
 // MH3's translated C library and route its final byte stream to the host.
 // The game repeats some diagnostics every frame (nw4r's FSqrt domain warning
-// from the sway chains). Each write is a synchronous device write (host0 over
-// DECI on the Vita), so an identical consecutive write is only counted, and
-// the count is reported once per second or before the next different write.
+// from the sway chains). Each write goes to the log (stderr; the TTY on the
+// Vita), so an identical consecutive write is only counted, and the count is
+// reported once per second or before the next different write.
 namespace {
 std::string lastConsoleWrite;
 uint64_t consoleRepeats = 0;
