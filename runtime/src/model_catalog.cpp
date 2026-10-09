@@ -1724,17 +1724,25 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     // Instance materials re-copy their groups every frame (8007E4FC). Onto a
     // writable block of the same size the copy replaces its fields in place;
     // the destination keeps no byte provenance, as after a typed write. An
-    // unchanged group keeps its generation (frozen copies stay current).
+    // unchanged group keeps its generation (frozen copies stay current), and
+    // a re-copy of the same unchanged source skips the 1.3 KiB fields copy.
     if (auto* to = WritableLiveBlock(destination, kind); to && to->bytes == bytes && to->address == destination &&
         (uint64_t(destination) + bytes <= source || uint64_t(source) + bytes <= destination)) {
         mh3_model_copy_bytes(output, input, bytes);
+        const bool current = to->copied_from == source && to->copied_generation == from.fields.generation && to->copy_result == to->fields.generation;
         const uint64_t generation = SameGroup(to->fields, from.fields, kind) ? to->fields.generation : NextRevision();
-        to->fields = from.fields;
+
+        if (!current)
+            to->fields = from.fields;
+
         to->fields.generation = generation;
         to->resident_handle = from.resident_handle;
         to->resident_generation = from.resident_generation;
         to->origin_offset = from.origin_offset;
         to->source_generation = from.source_generation;
+        to->copied_from = source;
+        to->copied_generation = from.fields.generation;
+        to->copy_result = generation;
         return;
     }
 

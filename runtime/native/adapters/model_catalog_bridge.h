@@ -183,6 +183,12 @@ struct NativeLiveMaterialBlock {
     // Typed writes may update this node in place (any publication, and a new
     // block or owner over its bytes, clears it).
     bool writable = false;
+
+    // The last in-place copy onto this block: its source address and source
+    // generation, and the generation it left. While all three hold, fields
+    // still equal that source's fields (every writer stamps a generation).
+    uint32_t copied_from = 0;
+    uint64_t copied_generation = 0, copy_result = 0;
 };
 
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
