@@ -6,9 +6,12 @@
 // reads wait for (asset_cache.h).
 //
 // Progress counts bytes read from the disc (delivered to guest memory) and
-// converted, the latter weighted by kConversionWeight since converting a byte
-// takes far longer than reading it. Left are the queued files (their FST
-// sizes), the rest of the DVD request being read and the conversions queued.
+// source bytes converted (each texture and model job counts its file), alike:
+// the Pi 5 converts a load's files faster than it decodes them from the
+// image, and an early 32-fold weight made the bar of a converting load jump
+// most of the way once its conversions drained. Left are the queued files
+// (their FST sizes), the rest of the DVD request being read and the
+// conversions queued.
 // The game queues a load's files in batches (Alatreon's quest: 34 files, then
 // 23 more once the first are in, ...), so the bytes a screen reads in all are
 // learned: a screen is known by the files it queues, in their order, and its
@@ -43,10 +46,6 @@ enum : uint32_t {
 };
 
 constexpr uint32_t kEntryBytes = 340, kEntryCapacity = 0x00, kEntryPath = 0x08, kPathBytes = 256, kMaxEntries = 99;
-
-// A converted byte against a read one: the Pi 5 reads the disc image at
-// 10-25 MiB/s and converts textures and models at about 0.2-1 MiB/s.
-constexpr uint64_t kConversionWeight = 32;
 
 // A learned screen: its disc bytes and the first files it queued (FNV-1a of
 // each path; a list shorter than kScreenFiles is all it queued).
@@ -287,8 +286,8 @@ float Frame() {
 
     uint32_t files = 0;
     const uint64_t waiting = QueuedLoads(files);
-    const uint64_t read = delivered - screen.delivered, conversion = (converted - screen.converted) * kConversionWeight;
-    const uint64_t converting = (queued > converted ? queued - converted : 0) * kConversionWeight;
+    const uint64_t read = delivered - screen.delivered, conversion = converted - screen.converted;
+    const uint64_t converting = queued > converted ? queued - converted : 0;
 
     // The disc bytes still to come: what the loader has queued or is reading,
     // or what the screen read when last shown, whichever is more. A screen
@@ -304,8 +303,8 @@ float Frame() {
     if (trace)
         std::fprintf(stderr, "MH3 loading: %.3f state %u queue %u files %.2f MiB, disc %.2f MiB read %.2f in flight, learned %.2f, conversion %.2f MiB done %.2f queued -> %.3f shown %.3f\n",
                      std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(), Memory::Read32(kLoader + kState), files, waiting / 1048576.0,
-                     read / 1048576.0, request.Left() / 1048576.0, screen.match ? screen.match->bytes / 1048576.0 : 0.0, conversion / (1048576.0 * kConversionWeight),
-                     converting / (1048576.0 * kConversionWeight), share, screen.shown);
+                     read / 1048576.0, request.Left() / 1048576.0, screen.match ? screen.match->bytes / 1048576.0 : 0.0, conversion / 1048576.0,
+                     converting / 1048576.0, share, screen.shown);
 #endif
     return screen.shown;
 }
