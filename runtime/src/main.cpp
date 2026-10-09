@@ -12,6 +12,7 @@ extern "C" void InitializeDataSections();
 extern "C" void MH3_OSExceptionInit(CpuContext*);
 extern "C" void MH3_OSInterruptInit(CpuContext*);
 void RunDeviceSelfTests(CpuContext*);
+void RunAudioSelfTests(CpuContext*);
 
 void SystemBridge::DumpCpuState(std::ostream& out, const CpuContext* cpu) {
     if (!cpu) return;
@@ -102,6 +103,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         InitializeDataSections();
+        if (argc == 2 && std::string_view(argv[1]) == "--audio-self-test") {
+            RunAudioSelfTests(&cpu);
+            return 0;
+        }
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
         // The apploader normally installs the FST in reserved high MEM1.

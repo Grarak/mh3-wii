@@ -95,7 +95,7 @@ void Memory::Init(size_t size) {
     ResetAudioInterface();
     ResetGxRegisters();
     mem1.assign(size, 0);
-    mem2.assign(64 * 1024 * 1024, 0);
+    mem2.assign(Memory::kMem2Size, 0);
     lockedCache.fill(0);
     sensorBarOutput = 0;
     for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
