@@ -46,7 +46,7 @@ game (`StartNativeAudio`); the launcher does not touch it.
 
 The launcher first initializes native GXM without opening game texture packs.
 It checks the installed kernel modules named `kubridge` and `CapUnlocker`
-(core 3 for the draw thread and the disc read-ahead) with
+(core 3 for the workers: audio, disc reader, guest worker) with
 `_vshKernelSearchModuleByName`. A missing module produces a native
 `SceMsgDialog` saying how to install it (kubridge 0.3.1 or newer, which the
 guest memory aliases need), with its GUI rendered through
@@ -114,7 +114,7 @@ waits for the workers. The disc's audio streams are copied to plain files in
 
 The game thread does not do this work. The DVD library reads through
 `IOS_IoctlAsync` (DI 0x71); those reads run on a disc reader thread
-(`DiscReader`, `runtime/src/ios.cpp`, core 0 on the Vita), as a Wii drive
+(`DiscReader`, `runtime/src/ios.cpp`, core 3 on the Vita), as a Wii drive
 reads while the game runs, and their replies reach the library's callback at
 a later pump. A read is answered only once the files it touches are
 converted (`AssetCache::Converted`), so nothing that looks their packs up

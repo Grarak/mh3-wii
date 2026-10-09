@@ -17,6 +17,7 @@
 #include "port_check.h"
 #endif
 #include <aurora/aurora.h>
+#include <aurora/thread_role.hpp>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
 #ifdef AURORA_GXM
@@ -311,11 +312,12 @@ std::atomic<unsigned> renderPart{NativeRenderSplit::Waiting};
 std::array<std::atomic<uint64_t>, NativeRenderSplit::Parts> renderPartSamples{};
 std::atomic<uint64_t> renderSplitPackets{0};
 
-// Detached for the process's life; on core 0 on the Vita, beside the audio
-// mixer and the display callback, off the game and render threads' cores.
+// Detached for the process's life; on the workers' core on the Vita, beside
+// the audio mixer and the display callback, off the game, render and draw
+// threads' cores.
 void SampleRenderParts() {
 #ifdef __vita__
-    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
+    aurora::pin_current_thread(aurora::ThreadRole::Worker);
 #endif
     for (;;) {
         renderPartSamples[renderPart.load(std::memory_order_relaxed)].fetch_add(1, std::memory_order_relaxed);

@@ -228,9 +228,9 @@ std::atomic<bool> nativeStop{false};
 alignas(64) int16_t nativeBuffers[2][kNativeFrames * 2];
 
 void RunNative() noexcept {
-    aurora::pin_current_thread(aurora::ThreadRole::Worker);  // core 0, mask 0x10000
+    aurora::pin_current_thread(aurora::ThreadRole::Worker);  // core 3
 
-    // Above the default priority of every other thread: core 0 also runs the
+    // Above the default priority of every other thread: its core also runs the
     // guest worker's effect jobs, and the Vita does not share a core between
     // threads of equal priority, so a buffer waited out a job and played
     // late about once a second (mixes ending 13-22 ms after the previous

@@ -382,9 +382,9 @@ class DiscReader {
     }
 
     void Run() {
-        // Core 0 (Vita): the game and render threads keep cores 2 and 1. On
-        // core 3 (ThreadRole::Spare) the village load took 4.28 s instead
-        // of 3.82 s on the devkit.
+        // The workers' core (Vita): the game, render and draw threads keep
+        // cores 2, 1 and 0. Here (core 3) the village load once took 4.28 s
+        // instead of 3.82 s on core 0 on the devkit.
         aurora::pin_current_thread(aurora::ThreadRole::Worker);
         std::unique_lock guard(lock);
 

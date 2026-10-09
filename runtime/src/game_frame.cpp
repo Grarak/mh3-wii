@@ -551,8 +551,8 @@ bool overlapRender = false;
 // handoff the game thread waits for the previous scene (which published its
 // packet), begins this frame's packet, records the game side, launches the
 // effect calculation and hands the scene over to the draw thread; the next
-// logic step runs beside it. The draw thread runs on core 3, the guest worker
-// on core 0. Started before the first frame begins (native_frame.cpp), so
+// logic step runs beside it. The draw thread runs on core 0, the guest worker
+// on core 3. Started before the first frame begins (native_frame.cpp), so
 // every frame's packet begins the same way.
 void MH3StartDrawOverlap() {
     static bool started = false;

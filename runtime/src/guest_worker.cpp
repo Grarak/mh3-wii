@@ -202,9 +202,9 @@ GuestThread::Statistics GuestThread::TakeStatistics() {
 
 namespace GuestWorker {
 GuestThread& Thread() {
-    // Core 0, beside the audio mixer: core 2 is the game thread's alone and
-    // core 3 the draw thread's.
-    static GuestThread worker("guest worker", PpcThread::Worker, 0);
+    // Core 3, beside the audio mixer: core 2 is the game thread's alone and
+    // core 0 the draw thread's.
+    static GuestThread worker("guest worker", PpcThread::Worker, 3);
     return worker;
 }
 
@@ -230,8 +230,10 @@ void NoteShared(const char* what) {
 
 namespace DrawThread {
 GuestThread& Thread() {
-    // Core 3 (the devkit's cap unlocker opens it); core 0 otherwise.
-    static GuestThread draw("draw thread", PpcThread::Draw, 3);
+    // Core 0: busy most of a frame, it starved the system's work on core 3,
+    // the network stack's among it (the devkit answered pings after
+    // seconds and the online login stalled, 2026-10-08).
+    static GuestThread draw("draw thread", PpcThread::Draw, 0);
     return draw;
 }
 } // namespace DrawThread
