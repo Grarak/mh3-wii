@@ -21,7 +21,7 @@
 #include <webgpu/webgpu_cpp.h>
 bool mh3_aurora_flush_draws();
 namespace aurora::webgpu { extern wgpu::Queue g_queue; extern wgpu::Instance g_instance; }
-namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); }
+namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); }
 
 namespace aurora::gx::fifo {
 void init();
@@ -115,8 +115,18 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         if (!frameActive) throw std::runtime_error("Aurora could not begin the guest GX frame");
     }
     guestStream.Write(std::span<const uint8_t>(data, size), [](auto packet) {
-        const auto consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
-        if (consumed != packet.size()) throw std::runtime_error("Aurora did not consume the complete GX command");
+        auto consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
+        if (consumed != packet.size()) {
+            // Each stream packet contains one complete command. Aurora yields
+            // before a draw when the current staging batch has no room for it.
+            // Split only after process releases its renderer lock; this keeps
+            // the EFB, viewport and pending presentation within the same frame.
+            if (consumed != 0) throw std::runtime_error("Aurora partially consumed a GX command");
+            aurora::gfx::split_staging_batch();
+            consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
+            if (consumed != packet.size())
+                throw std::runtime_error("Guest GX command does not fit after staging capacity submission");
+        }
         ++guestCommands;
         if (packet[0] >= 0x80 && packet[0] <= 0xBF) ++guestDraws;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
@@ -328,6 +338,9 @@ int RunEfbCheck(int argc, char** argv) {
     if (!frameActive) throw std::runtime_error("EFB preservation check could not begin a frame");
     gpuSynchronized = false;
     const auto beforeFence = aurora::gfx::current_frame();
+    aurora::gfx::split_staging_batch();
+    if (aurora::gfx::current_frame() != beforeFence)
+        throw std::runtime_error("Staging capacity split incorrectly advanced the display frame");
     CompleteHostGraphics();
     if (!frameActive || aurora::gfx::current_frame() != beforeFence)
         throw std::runtime_error("GXDrawDone incorrectly presented an intermediate pass");
