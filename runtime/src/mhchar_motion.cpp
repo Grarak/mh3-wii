@@ -465,15 +465,21 @@ namespace {
 // so at a step shorter than a tick a mode-0 event (an effect, a sound) met its
 // frame on several steps in a row: four times at 120 fps. At the stock 1/30 s
 // step this is the original.
+//
+// A looping motion's whole-tick frames land on its end frame for a step
+// before they wrap, and the reaching modes (1, 3-7) see the end there: the
+// underwater current pose (0x80257BE0) counts its loops by mode 1 at frame 88,
+// its end. A variable step's advance passes the end and wraps at once, so
+// here the step that passes it (from before the end) is checked at the end.
 uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, double end) {
     const float zero = F32(kZero);
     const bool blending = F32(self + kBlendLeft) > zero;
     const bool flagged = (Memory::Read32(self + kFlags) & 1) != 0;
-    double from = 0, to = 0;
-    bool wrapped = false;
+    double from = 0, to = 0, reached = 0;
+    bool wrapped = false, passedEnd = false;
 
     if (blending && !flagged && (mode - 6 <= 1 || mode == 2)) {
-        from = to = F32(self + kFrame);
+        from = to = reached = F32(self + kFrame);
     } else if (blending && !flagged) {
         return 0;
     } else if (ahead) {
@@ -484,13 +490,15 @@ uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, doub
         if (next > last) {
             const float loop = F32(self + kLoopFrame);
             wrapped = !(loop < zero);
+            passedEnd = wrapped && from < last;
             next = wrapped ? loop : last;
         }
 
         to = next;
+        reached = passedEnd ? double(last) : to;
     } else {
         from = F32(self + kPrevFrame);
-        to = F32(self + kFrame);
+        to = reached = F32(self + kFrame);
         wrapped = to < from;
     }
 
@@ -502,16 +510,16 @@ uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, doub
         return frame > from && frame <= to;
     case 1:
     case 6:
-        return to >= frame;
+        return reached >= frame;
     case 2:
         return to < frame;
     case 3:
     case 7:
-        return to >= frame && to <= end;
+        return reached >= frame && reached <= end;
     case 4:
-        return to > frame && to <= end;
+        return reached > frame && reached <= end;
     case 5:
-        return to >= frame && to < end;
+        return reached >= frame && reached < end;
     default:
         return 0;
     }
