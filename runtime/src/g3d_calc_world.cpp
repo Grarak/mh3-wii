@@ -424,10 +424,12 @@ void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
     std::memcpy(output, input, size);
 }
 
-// The bytes LcStore would overwrite, retired before the results are written
-// there directly.
-void LcRetire(uint32_t dst, uint32_t blocks) {
-    RetireNativeResourceOwner(dst & 0x1FFFFFE0u, (blocks ? blocks : 128) * 32, NativeSourceEpochProducer::ViewLc);
+// The blocks LcStore would overwrite for an output array of `bytes`, retired
+// at once before the results are written there directly (the chunks' blocks
+// together, one catalog call instead of one per chunk).
+void LcRetire(uint32_t dst, uint32_t bytes) {
+    const uint32_t start = dst & 0x1FFFFFE0u, end = ((dst & 0x1FFFFFFFu) + bytes + 31) & ~31u;
+    RetireNativeResourceOwner(start, end - start, NativeSourceEpochProducer::ViewLc);
 }
 
 // The node of matrix id: the model info's matrix-to-node table (-1 when none).
@@ -466,17 +468,17 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
     // envelopes per vertex gets only the views its draws read. Its outputs
     // retire as a whole pass's would.
     const auto views = direct ? FindNativeModelNodeViews(Read32(mdl)) : nullptr;
-    const auto retire = [&](uint32_t first, uint32_t n) {
-        const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
-        LcRetire(viewPos + 0x30 * first, blocksA);
+
+    if (direct) {
+        LcRetire(viewPos, count * 0x30);
 
         if (nrm) {
-            LcRetire(nrm + 0x24 * first, blocksB);
+            LcRetire(nrm, count * 0x24);
 
             if (tex)
-                LcRetire(tex + 0x30 * first, blocksA);
+                LcRetire(tex, count * 0x30);
         }
-    };
+    }
 
     const auto chunk = [&](uint32_t first, uint32_t n) {
         const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
@@ -485,9 +487,6 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
             a = viewPos + 0x30 * first;
             b = nrm + 0x24 * first;
             c = tex + 0x30 * first;
-
-            if (!views)
-                retire(first, n);
         }
 
         if (n > 1)
@@ -580,9 +579,6 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
 
         return;
     }
-
-    for (uint32_t first = 0; first < count; first += 40)
-        retire(first, count - first > 40 ? 40 : count - first);
 
     for (const auto& [begin, end] : views->runs) {
         const uint32_t last = end < count ? end : count;
