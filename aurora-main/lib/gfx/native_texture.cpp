@@ -98,8 +98,18 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   if(!aurora_native_frame_should_render()) return;
   const auto publish=[&](const gl::TexturePtr& texture) {
     auto nativeDescriptor=descriptor;
+    // With one stored mip, equal point/linear minification and magnification
+    // filters, and no anisotropy, a bias cannot change the sampled texels.
+    // Use the admitted backing's mip count, including generated textures.
+    // A single mip alone is insufficient: bias can select a different mag
+    // filter, and anisotropic footprints need their authored bias retained.
+    const bool ineffectiveBias=texture->mips==1 && sampling.anisotropy==0 &&
+        (sampling.min_filter==0 || sampling.min_filter==2 || sampling.min_filter==4 ?
+          sampling.mag_filter==0 : sampling.mag_filter==1);
+    if(ineffectiveBias) shaderLodBias[unit]=0;
 #ifdef AURORA_GXM
-    if(texture->format!=gl::Format::Depth32F && gxm::sampler_bias_encoding(sampling.lod_bias)>=0) {
+    if(!ineffectiveBias && texture->format!=gl::Format::Depth32F &&
+       gxm::sampler_bias_encoding(sampling.lod_bias)>=0) {
       nativeDescriptor.lodBias=sampling.lod_bias;
       shaderLodBias[unit]=0;
     }

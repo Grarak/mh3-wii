@@ -20,6 +20,7 @@ void PublishNativeModelNormalMatrix(uint32_t,const float[9]) {}
 #include <cstring>
 #include <filesystem>
 #include <stdexcept>
+#include <vector>
 
 // This probe links the real runtime state publisher without the game/ROM.
 // Suppression models a logical frame which was not admitted for rendering.
@@ -31,6 +32,85 @@ bool NativeGraphicsFrameShouldRender() {
 namespace {
 void require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
+}
+// Compare the admitted no-bias path with the authored biased lookup over a
+// complete framebuffer. Derivatives vary from magnification to minification;
+// point and linear filters must each agree before bias may be omitted.
+void single_mip_bias_probe() {
+  namespace gl=aurora::gl;
+  std::array<uint8_t,256> tiled{};
+  for(unsigned y=0;y<8;++y) for(unsigned x=0;x<8;++x) {
+    const unsigned tile=(y/4)*2+x/4,index=(y%4)*4+x%4,at=tile*64;
+    tiled[at+index*2]=255;tiled[at+index*2+1]=uint8_t(x*31);
+    tiled[at+32+index*2]=uint8_t(y*31);
+    tiled[at+33+index*2]=((x^y)&1)?255:0;
+  }
+  aurora::NativeTextureSource source;
+  source.bytes=tiled;source.width=source.height=8;source.format=6;
+  auto target=gl::create_texture(64,64,1,gl::Format::RGBA8,"single-mip bias comparison");
+  gl::bind_framebuffer(target->gl(),0);gl::set_viewport(0,0,64,64,0,1);
+  gl::set_scissor_enabled(false);gl::RasterState raster{};
+  raster.cull=false;raster.depthTest=false;raster.blend=false;gl::apply_raster_state(raster);
+  gl::ProgramDesc desc;
+  desc.label="single-mip authored bias comparison";
+  desc.origin="aurora-main/tests/native_geometry_check.cpp:single_mip_bias_probe";
+  desc.vertex=gl::vertex_source(R"(
+out vec2 fixture_uv;
+uniform vec4 fixture_options;
+void main() {
+  vec2 xy=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));
+  fixture_uv=xy*fixture_options.x+vec2(0.0625,0.09375);
+  gl_Position=vec4(xy*2.0-1.0,0.0,1.0);
+})");
+  desc.fragment=gl::fragment_source(R"(
+in vec2 fixture_uv;
+uniform sampler2D tex0;
+uniform vec4 fixture_bias;
+layout(location=0) out vec4 fixture_color;
+void main() { fixture_color=texture(tex0,fixture_uv,fixture_bias.x); }
+)");
+  desc.samplers={{"tex0",0}};gl::Program authored(desc);
+  desc.label="single-mip admitted independent comparison";
+  desc.fragment=gl::fragment_source(R"(
+in vec2 fixture_uv;
+uniform sampler2D tex0;
+layout(location=0) out vec4 fixture_color;
+void main() { fixture_color=texture(tex0,fixture_uv); }
+)");
+  gl::Program independent(desc);
+  std::vector<uint8_t> reference(64*64*4),actual(reference.size());
+  unsigned comparisons=0;
+  for(unsigned filter=0;filter<6;++filter) for(float bias:{-4.f,-.0625f,.03125f,2.f,4.125f}) {
+    aurora::NativeTextureSampler sampler;
+    sampler.min_filter=filter;sampler.mag_filter=filter&1;sampler.lod_bias=bias;
+    aurora::bind_native_texture(0,source,sampler);
+    require(aurora::native_texture_shader_lod_bias(0)==0,"ineffective single-mip bias was retained");
+    for(float scale:{.25f,1.f,16.f,256.f}) {
+      gl::uniform4(authored.get(),"fixture_options",scale,0,0,0);
+      gl::uniform4(authored.get(),"fixture_bias",bias,0,0,0);gl::draw_fullscreen(authored.get());
+      gl::read_pixels(target->gl(),0,0,64,64,reference.data());
+      gl::uniform4(independent.get(),"fixture_options",scale,0,0,0);gl::draw_fullscreen(independent.get());
+      gl::read_pixels(target->gl(),0,0,64,64,actual.data());
+      require(actual==reference,"single-mip independent pixels differ from authored bias");++comparisons;
+    }
+    sampler.mag_filter^=1;aurora::bind_native_texture(0,source,sampler);
+    require(aurora::native_texture_shader_lod_bias(0)==bias,"unequal min/mag filters lost authored bias");
+    sampler.mag_filter^=1;sampler.anisotropy=1;aurora::bind_native_texture(0,source,sampler);
+    require(aurora::native_texture_shader_lod_bias(0)==bias,"anisotropic filtering lost authored bias");
+  }
+  // A biased LOD can cross the min/mag boundary even with only one mip. This
+  // negative pixel control would fail if the admission tested only mip count.
+  aurora::NativeTextureSampler unequal;
+  unequal.mag_filter=1;unequal.lod_bias=4.125f;
+  aurora::bind_native_texture(0,source,unequal);
+  gl::uniform4(authored.get(),"fixture_options",1,0,0,0);
+  gl::uniform4(authored.get(),"fixture_bias",unequal.lod_bias,0,0,0);gl::draw_fullscreen(authored.get());
+  gl::read_pixels(target->gl(),0,0,64,64,reference.data());
+  gl::uniform4(independent.get(),"fixture_options",1,0,0,0);gl::draw_fullscreen(independent.get());
+  gl::read_pixels(target->gl(),0,0,64,64,actual.data());
+  require(actual!=reference,"unequal-filter fixture did not exercise bias-sensitive pixels");
+  require(glGetError()==GL_NO_ERROR,"single-mip bias probe emitted a GLES error");
+  std::printf("Single-mip bias passed: %u identical complete framebuffers; unequal filters and anisotropy retain bias\n",comparisons);
 }
 void check_state_restore(unsigned frame) {
   GLint oldViewport[4]{},oldScissor[4]{};
@@ -235,6 +315,9 @@ int main(int argc,char** argv) {
         const float clear[]{20.f/255,40.f/255,80.f/255,1};
         aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
         if(frame==0) {
+          single_mip_bias_probe();
+          aurora::gl::bind_framebuffer(target.texture->gl(),aurora::gpu::g_depthBuffer.texture->gl());
+          aurora::gl::set_viewport(0,0,64,64,0,1);aurora::gl::apply_raster_state(raster);
           std::array<uint8_t,192> mipBytes{};
           for(unsigned mip=0;mip<3;++mip) for(unsigned texel=0;texel<16;++texel) {
             auto* p=mipBytes.data()+64*mip;

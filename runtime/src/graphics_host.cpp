@@ -63,6 +63,9 @@ void BeginHostGraphicsFrame();
 bool initialized = false;
 bool frameActive = false;
 bool gpuSynchronized = true, displayCopyPending = false, hasBegunFrame = false;
+#ifdef __vita__
+uint64_t razorNativeFrameStarted = 0;
+#endif
 uint32_t captureInterval = 0;
 uint32_t captureStart = 0;
 std::filesystem::path capturePath;
@@ -324,6 +327,11 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height,bool load_native_a
 bool BeginNativeGraphicsFrame() {
     if (!initialized) throw std::runtime_error("Native frame began before graphics startup");
     MH3_STAT(BeginNativeFrameStatistics();)
+#ifdef __vita__
+    // Include admission and logical work on skipped frames. Razor is opt-in;
+    // this returns zero without a clock read when live CPU tracing is inactive.
+    razorNativeFrameStarted = aurora::gxm::razor_begin_cpu_work();
+#endif
     const auto frame = aurora::gfx::current_frame() + 1;
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
         const auto path = capturePath.parent_path() /
@@ -355,6 +363,12 @@ void CancelNativeGraphicsFrame() {
 
 void EndNativeGraphicsFrame() {
     MH3_STAT(const bool rendered = aurora_native_frame_should_render();)
+#ifdef __vita__
+    // Close before presentation's heartbeat flushes/stops live collection.
+    // This span excludes presentation and the subsequent frame-pacer sleep.
+    aurora::gxm::razor_end_cpu_work(razorNativeFrameStarted);
+    razorNativeFrameStarted = 0;
+#endif
     aurora_end_native_frame();
     MH3_STAT(EndNativeFrameStatistics(rendered);)
     ++guestCopies;
