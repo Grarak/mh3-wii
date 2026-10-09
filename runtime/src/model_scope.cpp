@@ -5,6 +5,7 @@
 #include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
+#include "guest_worker.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
@@ -497,6 +498,9 @@ struct NativeModelDrawTable {
     // the MDL0, UINT32_MAX unknown) and the walk's view of them.
     std::vector<uint32_t> material_entries, shape_entries, node_entries;
     mh3_model_draw_entries entries{};
+
+    // Null when a shape reads an envelope matrix (FindNativeModelNodeViews).
+    std::shared_ptr<const NativeModelNodeViews> node_views;
     void ViewEntries() {
         entries = {material_entries.data(), shape_entries.data(), node_entries.data(), uint32_t(material_entries.size()), uint32_t(shape_entries.size()),
                    uint32_t(node_entries.size())};
@@ -948,6 +952,66 @@ void FlushTables() {
     tableStats.cache_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
+// The matrix IDs below a model's view count that its draws read, when no
+// shape reads envelopes per vertex: every shape resolved, without palette
+// batches, and skinned or rigid. Node matrices and the envelopes of rigid
+// shapes (the matrix-to-node map at MDL0 info + 0x24, -1 for an envelope; the
+// view count at MDL0 + 0x68). Null otherwise.
+#ifdef MH3_DEVELOPMENT
+// MH3 node views line (split detail): FindNativeModelNodeViews results by
+// reason: found, off the game thread, beside a draw, no table, envelopes read.
+uint32_t nodeViewLookups[5];
+#endif
+
+std::shared_ptr<const NativeModelNodeViews> NodeViews(uint32_t model, const std::vector<ShapeSources>& shapes) {
+    const uint32_t info = model + 0x4c;
+    uint32_t map = 0, count = 0, views = 0;
+
+    if (!ReadGuest32(info + 0x24, map).ok() || !ReadGuest32(info + map, count).ok() || !ReadGuest32(model + 0x68, views).ok() || views > count || views > 65535)
+        return nullptr;
+
+    const auto node = [&](uint32_t id) {
+        uint32_t word = UINT32_MAX;
+        return id < count && ReadGuest32(info + map + 4 + 4 * id, word).ok() && int32_t(word) >= 0;
+    };
+
+    for (size_t i = 0; i < shapes.size(); i++) {
+        const auto* prepared = shapes[i].prepared;
+        const int32_t matrix = shapes[i].matrix_id;
+
+        if (!prepared || prepared->palette_batch_count || (!prepared->skin_row_count && (matrix < 0 || uint32_t(matrix) >= views))) {
+#ifdef MH3_DEVELOPMENT
+            if (mh3SplitDetail)
+                std::printf("MH3 node views: model %08x reads envelopes: shape %zu %s\n", model, i,
+                            !prepared ? "unresolved" : prepared->palette_batch_count ? "has palette batches" : "rigid without a view matrix");
+#endif
+            return nullptr;
+        }
+    }
+
+    auto result = std::make_shared<NativeModelNodeViews>();
+
+    for (const auto& shape : shapes) {
+        if (shape.prepared->skin_row_count || node(uint32_t(shape.matrix_id)))
+            continue;
+
+        result->envelopes.resize(count);
+        result->envelopes[uint32_t(shape.matrix_id)] = 1;
+    }
+
+    for (uint32_t id = 0; id < views; id++) {
+        if (!node(id) && (result->envelopes.empty() || !result->envelopes[id]))
+            continue;
+
+        if (!result->runs.empty() && result->runs.back().second == id)
+            result->runs.back().second = uint16_t(id + 1);
+        else
+            result->runs.emplace_back(uint16_t(id), uint16_t(id + 1));
+    }
+
+    return result;
+}
+
 // Resolves every material and shape of the certified model at `model`, or
 // takes them from its pack's table cache. A record that does not resolve
 // stays empty: its draws take the address path, which fails as before if it
@@ -1074,6 +1138,7 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
     }
 
     table->ViewEntries();
+    table->node_views = NodeViews(model, table->shapes);
     MH3_RETURN_IF_ERROR(AttachNativeModelDrawTable(owner, table));
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     ++(cached ? tableStats.cached : tableStats.built);
@@ -1101,6 +1166,33 @@ bool SameOwnerRecord(const NativeModelOwner& a, const NativeModelOwner& b) {
 }
 #endif
 } // namespace
+
+std::shared_ptr<const NativeModelNodeViews> FindNativeModelNodeViews(uint32_t model) {
+    // The game thread's passes while no draw runs beside them (the overlapped
+    // draw's traverse follows its wait, game_frame.cpp), which may attach
+    // tables; the guest worker's run beside the game thread's catalog changes.
+    const bool game = PpcThread::CurrentThread() == PpcThread::Game;
+
+    if (!game || DrawThread::Thread().Pending()) {
+#ifdef MH3_DEVELOPMENT
+        ++nodeViewLookups[game ? 2 : 1];
+#endif
+        return nullptr;
+    }
+
+    const auto table = FindNativeModelDrawTable(model);
+#ifdef MH3_DEVELOPMENT
+    ++nodeViewLookups[!table ? 3 : !table->node_views ? 4 : 0];
+#endif
+    return table ? table->node_views : nullptr;
+}
+#ifdef MH3_DEVELOPMENT
+void MH3PrintNodeViewSplit(unsigned frames) {
+    const auto f = [frames](unsigned i) { return frames ? double(nodeViewLookups[i]) / frames : 0.0; };
+    std::printf("MH3 node views: lookups/frame found %.1f, off the game thread %.1f, beside a draw %.1f, no table %.1f, envelopes read %.1f\n", f(0), f(1), f(2), f(3), f(4));
+    std::memset(nodeViewLookups, 0, sizeof nodeViewLookups);
+}
+#endif
 
 NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<NativeModelDrawTable>& hold) {
     hold.reset();

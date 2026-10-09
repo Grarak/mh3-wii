@@ -45,6 +45,7 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <vector>
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
 #endif
@@ -96,13 +97,21 @@ uint32_t NodeDic(uint32_t mdl) {
     return offset ? data + offset : 0;
 }
 
-void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
+// envelopes (GPU skinning, FindNativeModelNodeViews): when not null, only the
+// envelopes it flags by matrix ID.
+void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code, const std::vector<uint8_t>* envelopes) {
     const uint32_t work = WorkArea();
 
     for (uint8_t op; (op = Read8(code)) != 1;) {
         if (op == 3) {
             const uint32_t dst = Read16(code + 1), count = Read8(code + 3);
             code += 4;
+
+            if (envelopes && (dst >= envelopes->size() || !(*envelopes)[dst])) {
+                code += 6 * count;
+                continue;
+            }
+
             const uint32_t flagsAt = flags + 4 * dst;
             uint32_t combined = 0xF0000000u;
 #if defined(__ARM_NEON)
@@ -177,7 +186,7 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
 extern "C" void func_80074180(CpuContext* ctx);
 extern "C" void func_80097DA4(CpuContext* ctx);
 
-static void SkinningPort(CpuContext* ctx) {
+static void SkinningFor(CpuContext* ctx, const std::vector<uint8_t>* envelopes) {
     uint32_t code = ctx->gpr[6];
 
     if (code == 0) {
@@ -198,10 +207,22 @@ static void SkinningPort(CpuContext* ctx) {
             return;
     }
 
-    Skinning(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], code);
+    Skinning(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], code, envelopes);
+}
+
+static void SkinningPort(CpuContext* ctx) {
+    SkinningFor(ctx, nullptr);
 }
 
 extern "C" void MH3_G3dCalcSkinning(CpuContext* ctx) {
+    // GPU skinning (docs/gpu-skinning.md): a model whose shapes read no
+    // envelopes per vertex needs only those its rigid shapes are drawn with.
+    if (const auto views = FindNativeModelNodeViews(Read32(ctx->gpr[5]))) {
+        if (!views->envelopes.empty())
+            SkinningFor(ctx, &views->envelopes);
+
+        return;
+    }
 #ifdef MH3_DEVELOPMENT
     const bool check = PortCheck::Enabled("G3dCalcSkinning");
 
@@ -441,22 +462,32 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
     const uint32_t work = WorkArea();
     GuestCall game{ctx};
 
-    for (uint32_t first = 0; first < count; first += 40) {
-        const uint32_t n = count - first > 40 ? 40 : count - first;
+    // GPU skinning (docs/gpu-skinning.md): a model whose shapes read no
+    // envelopes per vertex gets only the views its draws read. Its outputs
+    // retire as a whole pass's would.
+    const auto views = direct ? FindNativeModelNodeViews(Read32(mdl)) : nullptr;
+    const auto retire = [&](uint32_t first, uint32_t n) {
+        const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
+        LcRetire(viewPos + 0x30 * first, blocksA);
+
+        if (nrm) {
+            LcRetire(nrm + 0x24 * first, blocksB);
+
+            if (tex)
+                LcRetire(tex + 0x30 * first, blocksA);
+        }
+    };
+
+    const auto chunk = [&](uint32_t first, uint32_t n) {
         const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
 
         if (direct) {
             a = viewPos + 0x30 * first;
             b = nrm + 0x24 * first;
             c = tex + 0x30 * first;
-            LcRetire(a, blocksA);
 
-            if (nrm) {
-                LcRetire(b, blocksB);
-
-                if (tex)
-                    LcRetire(c, blocksA);
-            }
+            if (!views)
+                retire(first, n);
         }
 
         if (n > 1)
@@ -541,6 +572,23 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
         std::swap(a, a1);
         std::swap(b, b1);
         std::swap(c, c1);
+    };
+
+    if (!views) {
+        for (uint32_t first = 0; first < count; first += 40)
+            chunk(first, count - first > 40 ? 40 : count - first);
+
+        return;
+    }
+
+    for (uint32_t first = 0; first < count; first += 40)
+        retire(first, count - first > 40 ? 40 : count - first);
+
+    for (const auto& [begin, end] : views->runs) {
+        const uint32_t last = end < count ? end : count;
+
+        for (uint32_t first = begin; first < last; first += 40)
+            chunk(first, last - first > 40 ? 40 : last - first);
     }
 }
 

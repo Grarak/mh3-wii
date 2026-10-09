@@ -1,7 +1,6 @@
 // Thin ABI/callback boundary for 80071CAC. The portable C producer performs
 // typed CPU preparation; no GX, rendering fallback or anonymous pose marking.
 #include "abi_bridge.h"
-#include <aurora/fast_map.h>
 #include "fatal.h"
 #include "guest_span.h"
 #include "guest_call.h"
@@ -70,18 +69,16 @@ void PublishSkinView(uint32_t position, uint32_t world, uint32_t camera, uint32_
     if (mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &resource) != MH3_RES_OK)
         return;
 
-    static FastMap<uint32_t, uint32_t> totals;
-    auto [it, added] = totals.try_emplace(resource, 0u);
+    // Read each time: another model may later load at the same address.
+    mh3_res_memory_view bank{};
+    mh3_res_model model{};
 
-    if (added) {
-        mh3_res_memory_view bank{};
-        mh3_res_model model{};
+    if (mh3_res_runtime_map(&MH3NativeResourceMemory(), resource, 0x70, &bank) != MH3_RES_OK || mh3_res_model_open(bank.span, bank.offset, &model) != MH3_RES_OK)
+        return;
 
-        if (mh3_res_runtime_map(&MH3NativeResourceMemory(), resource, 0x70, &bank) == MH3_RES_OK && mh3_res_model_open(bank.span, bank.offset, &model) == MH3_RES_OK)
-            it->second = MatrixCount(model);
-    }
+    const uint32_t total = MatrixCount(model);
 
-    if (it->second <= count)
+    if (total <= count)
         return;
 
     float view[12];
@@ -90,7 +87,7 @@ void PublishSkinView(uint32_t position, uint32_t world, uint32_t camera, uint32_
         for (size_t c = 0; c < 4; c++)
             view[r * 4 + c] = Memory::ReadFloat32(camera + uint32_t(16 * r + 4 * c));
 
-    PublishNativeModelSkinView(position, view, world, count, it->second);
+    PublishNativeModelSkinView(position, view, world, count, total);
 }
 
 namespace {

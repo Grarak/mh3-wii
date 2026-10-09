@@ -276,6 +276,7 @@ struct FrameSplit {
             MH3PrintSceneChanges(frames);
             MH3PrintLayerSplit(frames);
             MH3PrintHudSplit(frames);
+            MH3PrintNodeViewSplit(frames);
         }
 
         uint32_t snapshots[3][6];

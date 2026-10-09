@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <utility>
 #include <vector>
 #include "runtime/include/status.h"
 #include "runtime/native/mh3_model_submission.h"
@@ -67,6 +68,20 @@ std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_ad
 Status AttachNativeModelDrawTable(const NativeModelOwner& owner, std::shared_ptr<NativeModelDrawTable> table);
 /* Certified owners that have no table yet. */
 void ListNativeModelOwnersWithoutDrawTable(std::vector<NativeModelOwner>& out);
+/* GPU skinning (docs/gpu-skinning.md): a model none of whose shapes reads
+ * envelope matrices per vertex (each skinned or rigid) needs only its node
+ * matrices and the envelopes its rigid shapes are drawn with: its NodeMix pass
+ * makes only those envelopes, its view pass only those views. Its draw table
+ * keeps their IDs below the view count as runs [first, end), and flags the
+ * envelopes by matrix ID (empty when there are none). Null for other models,
+ * before the model's table exists, and off the game thread or while the draw
+ * thread draws. */
+struct NativeModelNodeViews {
+    std::vector<std::pair<uint16_t, uint16_t>> runs;
+    std::vector<uint8_t> envelopes;
+};
+
+std::shared_ptr<const NativeModelNodeViews> FindNativeModelNodeViews(uint32_t model_address);
 /* Certifies the models of every complete model file the provenance tracker
  * holds (admitting their packs), as a first draw would; for loading screens.
  * Returns the number of models certified. */
