@@ -1,7 +1,8 @@
 // Development-only game-thread frame split (game_frame.cpp). MH3_SPLIT_SCOPE
 // adds the scope's wall time to one draw-pass family; nested scopes of the
 // same family count once. Scopes on the guest worker count nothing: its jobs
-// have their own line. Release builds compile both away.
+// have their own line. Release builds compile both away; the split draw's
+// declarations at the end are in every build.
 #pragma once
 #ifdef MH3_DEVELOPMENT
 #include "isa/ppc_isa_thread_state.h"
@@ -80,23 +81,6 @@ void MH3PrintSceneChanges(unsigned frames);
 // The MH3 world split line (scene_world.cpp), which it then resets.
 void MH3PrintWorldSplit(unsigned frames);
 
-// The split draw (frame_draw.cpp): with a handoff set, the frame draw calls it
-// at the scene's place and leaves the scene to RunDeferredScene (false when
-// none was left).
-namespace FrameDraw {
-void SetSceneHandoff(void (*handoff)());
-bool RunDeferredScene(CpuContext* cpu);
-} // namespace FrameDraw
-
-// The single view's scene draw split at the bucket draw (native_scene_queue.cpp):
-// Prepare walks the scene graph (the effect launch, the buckets' reset, the
-// root's camera, the traverse, the root's view matrices), DrawPrepared draws
-// the buckets and finishes.
-namespace SceneQueue {
-void Prepare(CpuContext* cpu);
-void DrawPrepared(CpuContext* cpu);
-} // namespace SceneQueue
-
 // The MH3 layer split line (frame_draw.cpp), which it then resets.
 void MH3PrintLayerSplit(unsigned frames);
 
@@ -149,3 +133,23 @@ struct MH3FrameSplitDetailScope {
 #define MH3_SPLIT_SCOPE(family)
 #define MH3_SPLIT_DETAIL_SCOPE(family)
 #endif
+
+// The pipelined draw's entry points (docs/pipelined-draw.md), in every build.
+struct CpuContext;
+
+// The split draw (frame_draw.cpp): with a handoff set, the frame draw calls it
+// at the scene's place and leaves the scene to RunDeferredScene (false when
+// none was left).
+namespace FrameDraw {
+void SetSceneHandoff(void (*handoff)());
+bool RunDeferredScene(CpuContext* cpu);
+} // namespace FrameDraw
+
+// The single view's scene draw split at the bucket draw (native_scene_queue.cpp):
+// Prepare walks the scene graph (the effect launch, the buckets' reset, the
+// root's camera, the traverse, the root's view matrices), DrawPrepared draws
+// the buckets and finishes.
+namespace SceneQueue {
+void Prepare(CpuContext* cpu);
+void DrawPrepared(CpuContext* cpu);
+} // namespace SceneQueue

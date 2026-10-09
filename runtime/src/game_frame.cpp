@@ -449,16 +449,21 @@ void RunDrawJob(CpuContext* cpu, void* data) {
         EndNativeGraphicsFrame();
 }
 
-// MH3_PROFILE=draw-overlap (development, experimental; docs/pipelined-draw.md
-// stage 3): as draw-thread, but the game thread does not wait for the scene.
-// At the handoff it waits for the previous scene (which published its packet),
-// begins this frame's packet, records the game side, launches the effect
-// calculation and hands the scene over; the next logic step runs beside it.
-// The draw thread runs on core 3, the guest worker on core 0.
+// The overlapped draw (docs/pipelined-draw.md stage 3), in every build where
+// the draw thread can run: as draw-thread, but the game thread does not wait
+// for the scene. At the handoff it waits for the previous scene (which
+// published its packet), begins this frame's packet, records the game side,
+// launches the effect calculation and hands the scene over; the next logic
+// step runs beside it. The draw thread runs on core 3, the guest worker on
+// core 0. MH3_PROFILE=draw-inline (development) draws on the game thread
+// instead, draw-thread with the game thread waiting.
 bool DrawOverlap() {
-#ifdef MH3_DEVELOPMENT
     static const bool enabled = [] {
-        if (!ProfileOptions().Has("draw-overlap") || !DrawThread::Thread().Available())
+#ifdef MH3_DEVELOPMENT
+        if (ProfileOptions().Has("draw-inline") || ProfileOptions().Has("draw-thread"))
+            return false;
+#endif
+        if (!DrawThread::Thread().Available())
             return false;
 
         DrawThread::Thread().SetCore(3);
@@ -469,9 +474,6 @@ bool DrawOverlap() {
         return true;
     }();
     return enabled;
-#else
-    return false;
-#endif
 }
 
 DrawJob overlapJob{};

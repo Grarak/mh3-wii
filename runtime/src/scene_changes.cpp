@@ -1,9 +1,9 @@
 // Development statistics for the overlapped draw (docs/pipelined-draw.md):
 // how often logic steps change the scene graph the draw thread walks.
 // ScnGroup insert (0x8008228C: group, index, object) and remove (0x80082438:
-// group, index) shift a group's child array; MH3_PROFILE=draw-overlap or
-// draw-thread counts them per caller (the MH3 scene changes line, each second
-// with the frame split).
+// group, index) shift a group's child array; the overlapped draw and
+// MH3_PROFILE=draw-thread count them per caller (the MH3 scene changes line,
+// each second with the frame split).
 #include "abi_bridge.h"
 
 #ifdef MH3_DEVELOPMENT
