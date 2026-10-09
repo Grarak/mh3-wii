@@ -305,3 +305,16 @@
 803a9014 QuestClockTick
 803a880c GetQuestWork
 803b0228 QuestStep
+# Reached only through data pointers, placed right after a neighbour's tail
+# call (so the return-boundary seeds miss them). The first is an enemy action
+# handler from get_enemy_data(work)+0x10 (called by 0x801255C0; online quest
+# 10011 needs it).
+802fbea8 EnemyActionClearFlags
+801b432c func_801B432C
+802f8b88 func_802F8B88
+802f8b8c func_802F8B8C
+802feeb4 func_802FEEB4
+80456d88 func_80456D88
+805556ec func_805556EC
+805561f0 func_805561F0
+8056a380 func_8056A380
