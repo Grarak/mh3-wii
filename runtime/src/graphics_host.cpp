@@ -10,6 +10,9 @@
 #include <filesystem>
 #include <stdexcept>
 #include <thread>
+#include <memory>
+#include <webgpu/webgpu_cpp.h>
+namespace aurora::webgpu { extern wgpu::Queue g_queue; extern wgpu::Instance g_instance; }
 
 namespace aurora::gx::fifo {
 void init();
@@ -19,11 +22,11 @@ namespace {
 bool initialized = false;
 bool frameActive = false;
 GuestGxStream guestStream;
-uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0;
+uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0;
 void ShutdownGraphics() {
     if (initialized) {
-        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings\n",
-            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures));
+        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies\n",
+            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies));
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
@@ -73,7 +76,27 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         else if (physical >= 0x10000000 && physical < 0x14000000) size = 0x14000000 - physical;
         else throw std::runtime_error("GX vertex array does not point into guest RAM");
         return {reinterpret_cast<uintptr_t>(Memory::GetPointer(address, size)), size};
+    }, [](const GuestGxStream::DisplayCopy& copy) {
+        GXSetDispCopyDst(copy.width, copy.height);
+        GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
+        ++guestCopies;
     });
+}
+
+void CompleteHostGraphics() {
+    if (!initialized) return;
+    if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
+    if (frameActive) { aurora_end_frame(); frameActive = false; }
+    aurora_wait_for_frame_worker();
+    // Wait for actual submitted GPU work, not just the renderer worker's CPU
+    // submission. Shared state remains valid even if WaitAny times out.
+    auto result = std::make_shared<wgpu::QueueWorkDoneStatus>(wgpu::QueueWorkDoneStatus::Error);
+    auto future = aurora::webgpu::g_queue.OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly,
+        [result](wgpu::QueueWorkDoneStatus status, wgpu::StringView) { *result = status; });
+    const auto wait = aurora::webgpu::g_instance.WaitAny(future, 10000000000ULL);
+    if (wait != wgpu::WaitStatus::Success || *result != wgpu::QueueWorkDoneStatus::Success)
+        throw std::runtime_error("GXDrawDone failed while waiting for Metal completion");
+    std::fprintf(stderr, "MH3 GX draw completion: Metal work finished\n");
 }
 
 int RunGraphicsCheck(int argc, char** argv) {

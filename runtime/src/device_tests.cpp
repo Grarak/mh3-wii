@@ -128,6 +128,36 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     textureCase(6, 4, 4, true, 191, false);
     textureCase(6, 4, 4, true, 192, true);
     textureCase(8, 4, 4, false, 1024, false);
+    auto copyCase = [&](uint32_t room, uint32_t scale, uint32_t trigger, bool shouldPass) {
+        GuestGxStream copyStream;
+        unsigned copies = 0;
+        auto resolveCopy = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address != 0x200000) throw std::runtime_error("GX copy address scaling failed");
+            return {0x12345678, room};
+        };
+        auto copied = [&](const GuestGxStream::DisplayCopy& copy) {
+            if (copy.destination != 0x12345678 || copy.width != 640 || copy.height != 528 || !copy.clear)
+                throw std::runtime_error("GX copy metadata incorrect");
+            ++copies;
+        };
+        auto writeBp = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            copyStream.Write(command, [](auto) {}, resolveCopy, copied);
+        };
+        bool passed = true;
+        try {
+            writeBp(0x4A, (527 << 10) | 639);
+            writeBp(0x4B, 0x200000 >> 5);
+            writeBp(0x4D, 40);
+            writeBp(0x4E, scale);
+            writeBp(0x52, trigger);
+        } catch (const std::runtime_error&) { passed = false; }
+        if (passed != shouldPass || copies != unsigned(shouldPass)) throw std::runtime_error("GX display-copy bounds/dispatch failed");
+    };
+    copyCase(640 * 528 * 2, 256, 0x4800, true);
+    copyCase(640 * 528 * 2 - 1, 256, 0x4800, false);
+    copyCase(640 * 528 * 2, 128, 0x4800, false);
+    copyCase(640 * 528 * 2, 256, 0x0800, false);
     MH3_OSGetResetCode(cpu);
     if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
     Memory::Write32(0x8074F740, 1);
