@@ -166,10 +166,8 @@ void __aeabi_memcpy4(void *dest, const void *src, size_t n)
     __aeabi_memcpy(d, s, n);
 }
 
-void __aeabi_memcpy8(void *dest, const void *src, size_t n)
-{
-    __aeabi_memcpy4(dest, src, n);
-}
+/* The 8-byte forms share their 4-byte form's code, as in compiler-builtins. */
+void __aeabi_memcpy8(void *dest, const void *src, size_t n) __attribute__((alias("__aeabi_memcpy4")));
 
 void __aeabi_memmove(void *dest, const void *src, size_t n)
 {
@@ -180,15 +178,8 @@ void __aeabi_memmove(void *dest, const void *src, size_t n)
         copy_backward(dest, src, n);
 }
 
-void __aeabi_memmove4(void *dest, const void *src, size_t n)
-{
-    __aeabi_memmove(dest, src, n);
-}
-
-void __aeabi_memmove8(void *dest, const void *src, size_t n)
-{
-    __aeabi_memmove(dest, src, n);
-}
+void __aeabi_memmove4(void *dest, const void *src, size_t n) __attribute__((alias("__aeabi_memmove")));
+void __aeabi_memmove8(void *dest, const void *src, size_t n) __attribute__((alias("__aeabi_memmove")));
 
 void __aeabi_memset(void *dest, size_t n, int c)
 {
@@ -204,10 +195,7 @@ void __aeabi_memset4(void *dest, size_t n, int c)
     __aeabi_memset(d, n, (uint8_t)c);
 }
 
-void __aeabi_memset8(void *dest, size_t n, int c)
-{
-    __aeabi_memset4(dest, n, c);
-}
+void __aeabi_memset8(void *dest, size_t n, int c) __attribute__((alias("__aeabi_memset4")));
 
 void __aeabi_memclr(void *dest, size_t n)
 {
@@ -219,7 +207,4 @@ void __aeabi_memclr4(void *dest, size_t n)
     __aeabi_memset4(dest, n, 0);
 }
 
-void __aeabi_memclr8(void *dest, size_t n)
-{
-    __aeabi_memset4(dest, n, 0);
-}
+void __aeabi_memclr8(void *dest, size_t n) __attribute__((alias("__aeabi_memclr4")));

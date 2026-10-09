@@ -55,13 +55,13 @@ Put exactly one European `RMHP08` disc image in `ux0:/data/mh3-wii/`:
 
 * ISO, including a normal encrypted Wii ISO;
 * RVZ, including Zstandard, Bzip2, LZMA or LZMA2 compression;
-* WIA within the same decoder's format support and memory limits.
+* WIA with the same compressions (not Purge).
 
 The input stays read-only and stays where it is: the game reads its partition
 in place for the whole session (`RomImage`, `runtime/src/rom_image.cpp`).
-The native file callback uses positioned **64-bit** reads; Rust/newlib's
-32-bit file offsets are not used for the source image. Reads are serialized,
-so any thread may read.
+The native file callback uses positioned **64-bit** reads; newlib's 32-bit
+file offsets are not used for the source image. Reads are serialized, so any
+thread may read.
 
 Without an image or prepared game data the launcher shows `Game data is
 missing. Copy your European Monster Hunter Tri (RMHP08) disc image (ISO, RVZ
@@ -70,12 +70,12 @@ exits after OK. Two images give `There is more than one disc image in ...`,
 and an image that cannot be decoded `The disc image could not be read:
 <reason>`.
 
-The `nod` 1.4.4 library handles compression and Wii AES/title-key decoding.
-Hash reconstruction and hash validation are disabled; those paths would
-create a Rayon pool. For nodtool-decrypted ISOs, the outer header's
-`no_partition_encryption` byte selects the native sector reader instead,
-because nod 1.4.4 assumes plain ISO sectors are encrypted. RVZ/WIA chunks
-above 2 MiB are rejected before decoding.
+The native decoder ([disc image decoder](rom-decoder.md),
+`runtime/src/rom_decoder.cpp`) handles compression and Wii AES/title-key
+decoding; partition hashes are neither rebuilt nor validated. For
+nodtool-decrypted ISOs, the outer header's `no_partition_encryption` byte
+selects `RomImage`'s own sector reader. RVZ/WIA chunks above 2 MiB are
+rejected before decoding.
 
 At first start the launcher writes `ux0:/data/mh3-wii/disc/` (about 7 MB):
 the boot/FST/DOL/IOS metadata and `rom.txt`, which names the image and its
@@ -149,8 +149,7 @@ about 18 s for converting the whole disc. First start went from 8 min 42 s
 (decoding the 4.1 GiB partition to the SD card) to 0.25 s.
 
 Linux uses the same code: `MH3 --rom IMAGE` writes `disc/` next to the
-executable (see the README), with the ROM decoder built for the host target
-by cargo.
+executable (see the README), with the same decoder.
 
 ## Navigation and menus
 
@@ -280,15 +279,13 @@ untracked `cheats.txt` and `cheats/` are untouched.
 
 ## Build and verification
 
-The Vita build adds a Rust static library from
-`runtime/vita/rom_decoder/Cargo.toml`, with its dependency versions pinned in
-`Cargo.lock`. Setup needs `nightly-2025-09-28` with `rust-src` and the locked
-Cargo dependencies cached. `cargo fetch --locked --manifest-path
-runtime/vita/rom_decoder/Cargo.toml` can populate that cache. The build helper
-uses offline Cargo, all available CPUs, and clang-21/llvm-ar-21 for codec C
-sources. The C++ sources and GXM shaders use the port's clang build and the
-offline [shader bank](vita-shader-bank.md). The launcher does not compile
-shaders at runtime.
+The disc image decoder is C++ with vendored C codecs, built like the rest of
+the game; no Rust toolchain is needed. `-DMH3_ROM_DECODER_NOD=ON` still builds
+the earlier nod Rust library (`runtime/vita/rom_decoder`, `nightly-2025-09-28`
+with `rust-src` and the locked Cargo dependencies cached, through
+`scripts/build-vita-rom-decoder.sh`). The C++ sources and GXM shaders use the
+port's clang build and the offline [shader bank](vita-shader-bank.md). The
+launcher does not compile shaders at runtime.
 
 Focused host verification:
 

@@ -16,9 +16,8 @@ with fixed hand-written shaders instead of TEV.
 ## Build
 
 Requirements: an arm64 Linux host with Python 3, CMake, Ninja, Clang 21,
-Rust (`cargo`, for the disc image decoder), OpenGL ES/EGL development files and
-Docker (for arm32), plus a .NET 8 SDK unpacked in `tools/dotnet` and nodtool
-`v2.0.0-alpha.10`
+OpenGL ES/EGL development files and Docker (for arm32), plus a .NET 8 SDK
+unpacked in `tools/dotnet` and nodtool `v2.0.0-alpha.10`
 ([release](https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10);
 the `linux-aarch64` build) in `tools/nodtool`. You need your own copy of the
 European disc (`RMHP08`) as an RVZ, WIA or ISO. ROMs, extracted assets,
@@ -70,8 +69,11 @@ and port checks; leave it OFF for a plain build (without `MH3_BUILD_DIR` the
 build goes to `build/linux-<arch>`). Assertions follow Release/NDEBUG
 independently. Configure and build logs go to `logs/aurora-*.log`.
 
-Build options: `-DMH3_ROM_DECODER=OFF` builds without Rust (only a decrypted
-ISO from `nodtool convert --decrypt` can then be read).
+Build options: disc images decode with the native decoder
+([docs/rom-decoder.md](docs/rom-decoder.md)); `-DMH3_ROM_DECODER=OFF` leaves
+it out (only a decrypted ISO from `nodtool convert --decrypt` can then be
+read), and `-DMH3_ROM_DECODER_NOD=ON` uses the earlier nod Rust library
+instead (needs `cargo`).
 `MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
 packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
 `../Vita3K/external/stb` or `STB_INCLUDE_DIR`).

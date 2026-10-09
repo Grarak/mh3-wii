@@ -105,7 +105,9 @@ vprof-cli functions RUN/analysis/snapshot-cfi.vprof --elf RUN/game.elf --inclusi
 The unwinder checks the recorded hashes, the exact ELF and the interrupted
 context, reads only the captured stack bytes and uses DWARF CFI; it never
 scans for return addresses. `--rust-memory-cfi` adds audited frame rules for
-the Rust memory helpers ([details](vita-rust-async-cfi.md)). Every chain is a
+the Rust memory helpers of `MH3_ROM_DECODER_NOD` builds
+([details](vita-rust-async-cfi.md)); other builds' C helpers have their own
+CFI, and the option is skipped. Every chain is a
 prefix that stops at the captured stack's end, a missing CFI frame or an
 unverified mapping; 8 KiB stacks favour shallow draw-phase stacks. Snapshot
 events are a separate stream: never pair them with primary samples or use
