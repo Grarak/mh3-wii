@@ -236,15 +236,8 @@ extern "C" void MH3_G3dCalcSkinning(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80074180, MH3_G3dCalcSkinning, "G3dCalcSkinning");
 
 extern "C" void func_80073830(CpuContext* ctx);
-extern "C" void func_80098FD0(CpuContext* ctx);
 extern "C" void func_800D7D88(CpuContext* ctx);
-extern "C" void func_80073F64(CpuContext* ctx);
-extern "C" void func_80073D98(CpuContext* ctx);
 extern "C" void func_80073D44(CpuContext* ctx);
-extern "C" void func_8008E224(CpuContext* ctx);
-extern "C" void func_80098DC0(CpuContext* ctx);
-extern "C" void func_80073FCC(CpuContext* ctx);
-extern "C" void func_8008F1AC(CpuContext* ctx);
 
 namespace {
 
@@ -252,6 +245,19 @@ namespace {
 constexpr uint32_t kFrame = 0xF0;
 constexpr uint32_t kTemp8 = 0x08, kTempC = 0x0C, kTemp10 = 0x10, kNode = 0x1C;
 constexpr uint32_t kVecA = 0x20, kVecB = 0x2C, kResult = 0x38, kResultBytes = 0x4C;
+constexpr uint32_t kCalcArgs = 0x90; // the CalcWorldCallbackArgs of the 0x2 callback
+
+// PSVECAdd (0x80073FCC's): a += b, float lanes.
+void AddVec3(uint32_t a, uint32_t b) {
+    for (uint32_t k = 0; k < 12; k += 4)
+        WriteFloat(a + k, ReadFloat(a + k) + ReadFloat(b + k));
+}
+
+// The per-node virtual calls' memos (GuestCall::VirtualAt): other sites of
+// these slots call other classes.
+const RawDispatchRecord* anmResultMemo = nullptr;
+const RawDispatchRecord* callbackAMemo = nullptr;
+const RawDispatchRecord* callbackBMemo = nullptr;
 
 void CalcWorld(CpuContext* ctx) {
     GuestFrame frame(ctx, kFrame);
@@ -315,11 +321,11 @@ void CalcWorld(CpuContext* ctx) {
         if (anmObj) {
             const uint32_t nodeId = node ? Read32(node + 0xC) : 0;
             GuestCall game{ctx};
-            chr = game.Virtual<0x38>(anmObj, {result, nodeId});
+            chr = game.VirtualAt(anmResultMemo, anmObj, 0x38, {result, nodeId});
         }
 
         if (!anmObj || Read32(chr) == 0) {
-            call(func_80098FD0, {frame[kNode], result});
+            G3dNative::ResNodeChrAnmResult(frame[kNode], result);
             chr = result;
             own = true;
         }
@@ -335,21 +341,26 @@ void CalcWorld(CpuContext* ctx) {
         };
 
         if (nodeIndex != 0 && segmentScale && !own) {
+            // The animated translation plus the node's own (0x200 asks
+            // ResNodePatchChrAnmResult for it).
             toResult();
-            call(func_8008E224, {result, frame[kVecB]});
+            G3dNative::ChrAnmResultGetTranslation(result, frame[kVecB]);
             MemoryInline::FlatWrite32(result, Read32(result) | 0x200);
-            call(func_80098DC0, {frame[kNode], result});
-            call(func_8008E224, {result, frame[kVecA]});
-            call(func_80073FCC, {frame[kVecA], frame[kVecB]});
-            call(func_8008F1AC, {result, frame[kVecA]});
+            G3dNative::ResNodePatchChrAnmResult(frame[kNode], result);
+            G3dNative::ChrAnmResultGetTranslation(result, frame[kVecA]);
+            AddVec3(frame[kVecA], frame[kVecB]);
+            G3dNative::ChrAnmResultSetTranslation(result, frame[kVecA]);
         }
 
         if (callback) {
             toResult();
 
+            // 0x80073F64: the callback's ExecCallbackA (vtable +0xC) with the
+            // node's ChrAnmResult before its world matrix.
             if (Read16(callback + 6) == nodeIndex && (Read8(callback + 4) & 1) != 0) {
                 MemoryInline::FlatWrite32(frame[kTemp10], Read32(mdl));
-                call(func_80073F64, {callback, nodeIndex, result, frame[kTemp10]});
+                GuestCall game{ctx};
+                game.VirtualAt(callbackAMemo, Read32(callback), 0xC, {result, frame[kTemp10], callback});
             }
         }
 
@@ -358,9 +369,15 @@ void CalcWorld(CpuContext* ctx) {
                                       : call(func_800D7D88, {nodeWorld, nodeScale, world + 0x30 * parent, scales + 12 * parent, parentFlags, chr});
         MemoryInline::FlatWrite32(flagsAt, (stepped & 0xFFFFFF00u) | (node ? Read32(node + 0x18) : 0));
 
+        // 0x80073D98: ExecCallbackB (vtable +0x10) with {world, scale,
+        // flags} of the node's matrix after it.
         if (callback && Read16(callback + 6) == nodeIndex && (Read8(callback + 4) & 2) != 0) {
             MemoryInline::FlatWrite32(frame[kTempC], Read32(mdl));
-            call(func_80073D98, {callback, nodeIndex, nodeWorld, nodeScale, flagsAt, frame[kTempC]});
+            MemoryInline::FlatWrite32(frame[kCalcArgs], nodeWorld);
+            MemoryInline::FlatWrite32(frame[kCalcArgs + 4], nodeScale);
+            MemoryInline::FlatWrite32(frame[kCalcArgs + 8], flagsAt);
+            GuestCall game{ctx};
+            game.VirtualAt(callbackBMemo, Read32(callback), 0x10, {frame[kCalcArgs], frame[kTempC], callback});
         }
     }
 
