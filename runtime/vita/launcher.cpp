@@ -731,6 +731,12 @@ void LoadSettings(const std::filesystem::path& base) {
             continue;
         }
 
+        // Saved as off, 2x or 4x (on from before the 2x mode: 4x).
+        if (key == "msaa") {
+            SetMsaaSetting(value == "2x" ? 2 : value == "4x" || value == "on" ? 4 : 1);
+            continue;
+        }
+
         if (value != "on" && value != "off")
             continue;
 
@@ -742,8 +748,6 @@ void LoadSettings(const std::filesystem::path& base) {
             SetUpscalingSetting(on);
         else if (key == "framelimit")
             SetFrameLimitSetting(on);
-        else if (key == "msaa")
-            SetMsaaSetting(value == "2x" ? 2 : value == "4x" || on ? 4 : 1);
         else if (key == "online_skip_tls")
             SetSkipTlsSetting(on);
     }
