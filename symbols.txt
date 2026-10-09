@@ -1281,3 +1281,8 @@
 800ee9dc StreamSamplesToAddress
 800e5738 SeVoiceCallback
 800e9eb8 StreamVoiceCallback
+# Name-entry software keyboard: layout loader, its font setup (one I4 sheet,
+# the UI font atlas) and the font's glyph lookup.
+80448708 KeyboardLayoutLoad
+80506d30 KeyboardFontSetup
+80507450 KeyboardFontGetGlyph

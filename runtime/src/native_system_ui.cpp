@@ -26,9 +26,9 @@ uint64_t producer_generation = 0;
 mh3_system_ui_layout layout{};
 float layout_matrices[10][12]{};
 bool layout_coordinates = false;
-void Checked(mh3_res_status status) {
+void Checked(mh3_res_status status, int line = __builtin_LINE()) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native system UI input: " + std::to_string(status));
+        throw std::runtime_error("Native system UI input: " + std::to_string(status) + " line " + std::to_string(line));
 }
 mh3_res_span Bytes(uint32_t address, size_t count) {
     return {Memory::GetPointer(address, count), count};
@@ -268,6 +268,31 @@ extern "C" void MH3_SystemUIFontResource(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80503024, MH3_SystemUIFontResource, "SystemUIFontResource");
 REGISTER_NATIVE_FUNCTION_AS(0x8083A1D0, MH3_SystemUIFontResource, "HBMFontResource");
+// The name-entry keyboard's font (0x80506D30, called by the keyboard layout
+// loader 0x80448708) builds its glyph information around one I4 sheet it is
+// given: the UI font atlas (system work +0x9C8, produced by FontAtlasDecode).
+// Its glyphs name that sheet, so publish it, at its current producer
+// generation, after the original setup. A repeated setup keeps the font's
+// first sheet (r13-0x369C) and returns 0.
+extern "C" void func_80506D30(CpuContext*);
+extern "C" void MH3_KeyboardFontSetup(CpuContext* cpu) {
+    const uint32_t font = cpu->gpr[3], sheetGlobal = cpu->gpr[13] - 0x369C;
+    func_80506D30(cpu);
+    const uint32_t sheet = Memory::Read32(sheetGlobal), information = Memory::Read32(font + 16);
+    if (!sheet || !information)
+        return;
+    mh3_native_texture_source source{};
+    source.resource_address = source.payload_address = sheet;
+    source.width = Memory::Read16(information + 30); // what GetGlyph (0x80507450) reports
+    source.height = Memory::Read16(information + 32);
+    source.format = 0; // GX_TF_I4, as the font's glyphs report
+    source.levels = 1;
+    source.generation = ReadNativeTextureGeneration(sheet);
+    if (!source.generation)
+        throw std::runtime_error("Keyboard font sheet has no producer");
+    font_sheets.insert_or_assign(sheet, source);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80506D30, MH3_KeyboardFontSetup, "KeyboardFontSetup");
 extern "C" void MH3_SystemUIFontSetup(CpuContext* cpu) {
     FontSetup(cpu, false);
 }

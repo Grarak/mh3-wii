@@ -856,11 +856,17 @@ mh3_res_status mh3_system_ui_text_lines(const mh3_system_ui_text_callbacks* io, 
         float measured;
         uint8_t line_break;
         uint32_t consumed = io->measure(io->user, cursor, count, wrap_width, &measured, &line_break);
-        if (!consumed || consumed > count || consumed > UINT32_MAX / 2 || !isfinite(measured) || cursor > UINT32_MAX - consumed * 2)
+        /* When the rest of the text fits, the measure (0x8052DC20) stops after
+         * reading the character past it and reports one more than remains.
+         * The original (0x8052D674) prints that many characters and its signed
+         * remainder ends the loop. A measure of none would never end. */
+        if (!consumed || consumed > count + 1u || consumed > UINT32_MAX / 2 || !isfinite(measured) || cursor > UINT32_MAX - consumed * 2)
             return MH3_RES_RANGE;
         io->draw(io->user, cursor, consumed, left + alignment * (width - measured));
         if (line_break)
             io->newline(io->user);
+        if (consumed >= count)
+            break;
         cursor += consumed * 2;
         count -= consumed;
     }
