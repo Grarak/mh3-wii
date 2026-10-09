@@ -20,6 +20,9 @@
 //   trace [ITEM on|off]       the MH3_TRACE items and which are on, or turn
 //                             one on or off
 //   movie skip                end the open movie (as at its last frame)
+//   online [state|circles|post QUEST [MEMBERS]|join N|accept [QUEST]|ready|unready|depart|auto SPEC]
+//                             the online screens' state, or a quest circle
+//                             command (online_auto.cpp)
 // Development builds on the hosts only (CMakeLists.txt adds this file to
 // those).
 #include "debug_port.h"
@@ -32,6 +35,7 @@
 #include "launcher_cheats.h"
 #include "memory.h"
 #include "movie_draw.h"
+#include "net/online_auto.h"
 #include "ppc_runtime.h"
 
 #include <arpa/inet.h>
@@ -266,7 +270,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat trace movie (docs/debug-port.md)";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat trace movie online (docs/debug-port.md)";
 
     if (word == "state")
         return State(s);
@@ -430,6 +434,9 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
 
         return SkipMovie() ? "ok" : "error: no movie is open";
     }
+
+    if (word == "online")
+        return OnlineAuto::Command(ctx, in);
 
     return "error: unknown command " + word;
 }

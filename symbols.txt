@@ -2069,3 +2069,24 @@
 # Online session close and its connection poll (net/online_close.cpp).
 803d6ffc OnlineClose
 8041c7f4 ConnectionBusy
+# Online quests (net/net_ctrl.cpp, net/online_auto.cpp): net_ctrl's circle
+# commands, the quest counter's accept, the online field task's modes and the
+# quest session's state machines.
+8042a43c NetCtrlPost
+8042ad0c NetCtrlJoin
+8042ae7c NetCtrlReady
+8042af5c NetCtrlUnready
+8042b2fc NetCtrlDepart
+8042b1e4 NetCtrlSessionStart
+8042a690 NetCtrlLost
+80321894 QuestAccept
+8032092c OnlineQuestCounter
+80394264 OnlineJoinMenu
+8028c1cc FieldOnlineStart
+8028c730 FieldOnlineLoad
+8028ce14 FieldOnlinePlay
+803afeb0 QuestFail
+80338d64 QuestEndMessage
+803d99b0 SessionStartPhases
+803da0cc SessionEndPhases
+803dc5ac SessionEvent
