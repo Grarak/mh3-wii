@@ -157,8 +157,8 @@ static void sticks(void) {
             }
         }
 
-        CHECK(first >= 12 && first <= 14, "movement starts at r %d%% (%d degrees)", first, degrees);
-        CHECK(full >= 70 && full <= 78, "full length at r %d%% (%d degrees)", full, degrees);
+        CHECK(first >= 30 && first <= 32, "movement starts at r %d%% (%d degrees)", first, degrees);
+        CHECK(full >= 76 && full <= 82, "full length at r %d%% (%d degrees)", full, degrees);
         /* Just past the dead zone: the game's threshold, not below it. */
         const float edge = mh3_vita_stick_curve.dead_zone + 1e-4f;
         int16_t x, y;

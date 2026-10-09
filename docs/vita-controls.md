@@ -114,9 +114,10 @@ window into 18–37 % of the Vita stick's travel: the rest was dead or
 saturated, so slight tilts jumped from standing to running. The mapping now
 spreads the window over the travel:
 
-- radial dead zone of 12 % (Vita sticks rest within about ±10 of centre);
+- radial dead zone of 30 % (the sticks rest within about ±10 of centre; 12 %
+  made them too sensitive, user 2026-10-06);
 - just past it the length is the game's threshold (31), growing linearly to
-  127 at 76 % of the travel (80 % of the travel past the dead zone up to the
+  127 at 78 % of the travel (80 % of the travel past the dead zone up to the
   90 % taken as full);
 - from there to the edge the report goes on to the full −512..511 range, so
   full tilt reports what it always did (511 along an axis; KPAD readers

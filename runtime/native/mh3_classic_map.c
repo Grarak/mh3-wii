@@ -3,7 +3,7 @@
 #include <math.h>
 
 /* Vita sticks rest within about 10 of 128 and reach 0/255 along the axes. */
-const mh3_stick_curve mh3_vita_stick_curve = {0.12f, 0.90f, 0.80f};
+const mh3_stick_curve mh3_vita_stick_curve = {0.30f, 0.90f, 0.80f};
 /* SDL gamepads (Xbox, DualShock/DualSense, Switch Pro): larger sticks, more
  * centre drift on worn ones. */
 const mh3_stick_curve mh3_gamepad_stick_curve = {0.15f, 0.95f, 0.80f};
