@@ -7,6 +7,8 @@
 #include "runtime/native/adapters/model_state_bridge.h"
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -25,6 +27,39 @@ uint64_t pose_revision=0;
 mh3_model_matrix_selectors selectors{};
 mh3_model_palette matrix_palette{};
 uint64_t matrix_palette_revision=0;
+#ifdef MH3_DEVELOPMENT
+struct PoseTrace {
+    FILE* file=nullptr;
+    uint64_t event=0;
+    PoseTrace() {
+        const char* path=std::getenv("MH3_MODEL_POSE_TRACE");
+        if(!path || !*path) return;
+        file=std::fopen(path,"w");
+        if(!file) throw std::runtime_error("Could not open MH3_MODEL_POSE_TRACE");
+        std::fprintf(file,"# MH3 pose provenance v1; ordered CPU events; no pose inference\n");
+    }
+    ~PoseTrace() {if(file) std::fclose(file);}
+};
+PoseTrace& Trace() {static PoseTrace trace;return trace;}
+void TraceInput(const char* event,uint32_t model,const uint32_t addresses[3],uint32_t count) {
+    auto& trace=Trace();if(!trace.file) return;
+    std::fprintf(trace.file,"input\t%llu\t%s\t%08x\t%08x\t%08x\t%08x\t%u\n",
+        static_cast<unsigned long long>(++trace.event),event,model,addresses[0],addresses[1],addresses[2],count);
+    std::fflush(trace.file);
+}
+void TraceOwner(const char* event,const mh3_model_pose_owner& owner,mh3_res_status status=MH3_RES_OK) {
+    auto& trace=Trace();if(!trace.file) return;
+    std::fprintf(trace.file,"owner\t%llu\t%s\t%d\t%08x\t%08x\t%u\t%u\t%u\t%08x\t%08x\t%08x",
+        static_cast<unsigned long long>(++trace.event),event,int(status),owner.scene_address,owner.model_address,
+        owner.views,owner.current_view,owner.count,owner.base[0],owner.base[1],owner.base[2]);
+    for(unsigned view=0;view<owner.views;view++)
+        std::fprintf(trace.file,"\t%llu",static_cast<unsigned long long>(owner.revision[view]));
+    std::fprintf(trace.file,"\n");std::fflush(trace.file);
+}
+#else
+void TraceInput(const char*,uint32_t,const uint32_t[3],uint32_t) {}
+void TraceOwner(const char*,const mh3_model_pose_owner&,mh3_res_status=MH3_RES_OK) {}
+#endif
 void AdvancePalette() {
     if(matrix_palette_revision==UINT64_MAX) throw std::runtime_error("Native matrix palette revision overflow");
     ++matrix_palette_revision;
@@ -62,13 +97,13 @@ mh3_model_pose_owner& Declare(uint32_t scene) {
         const auto& before=found->second;
         if(before.model_address==next.model_address && before.count==next.count && before.views==next.views &&
            std::equal(std::begin(before.base),std::end(before.base),std::begin(next.base))) {
-            found->second.current_view=next.current_view;return found->second;
+            found->second.current_view=next.current_view;TraceOwner("declare-existing",found->second);return found->second;
         }
     }
     // Admission/owner replacement pays index construction once. Steady state
     // getters, producer completion and draws do not scan every scene.
     auto prospective=owners;prospective.insert_or_assign(next.scene_address,next);Reindex(prospective);
-    owners=std::move(prospective);return owners.at(next.scene_address);
+    owners=std::move(prospective);TraceOwner("declare-new",owners.at(next.scene_address));return owners.at(next.scene_address);
 }
 void Array(CpuContext* cpu,uint32_t kind) {
     const auto& owner=Declare(cpu->gpr[3]);
@@ -92,6 +127,7 @@ bool PublishNativeModelPose(uint32_t position,uint32_t normal,uint32_t environme
                             uint32_t count,uint32_t reference) {
     if(!count) return false;
     uint32_t model=0;Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(),reference,1,&model));
+    const uint32_t addresses[3]{position,normal,environment};TraceInput("completed-publish",model,addresses,count);
     if(pose_revision==UINT64_MAX) throw std::runtime_error("Native model pose revision overflow");
     const uint64_t revision=pose_revision+1;
     std::vector<mh3_model_pose_owner> updates;
@@ -99,6 +135,7 @@ bool PublishNativeModelPose(uint32_t position,uint32_t normal,uint32_t environme
     for(const uint32_t scene:found->second) {
         auto next=owners.at(scene);
         const auto status=mh3_model_pose_publish(&next,position,normal,environment,count,model,revision);
+        TraceOwner("publish-candidate",next,status);
         if(status==MH3_RES_ABSENT) continue;
         Checked(status);updates.push_back(next);
     }
@@ -116,7 +153,10 @@ void RetireNativeModelPose(uint32_t address,uint32_t bytes) {
     bool erased=false;
     for(const uint32_t scene:affected) {
         const auto found=owners.find(scene);if(found==owners.end()) continue;
+        const uint32_t retired[3]{address,0,0};TraceInput("retire",found->second.model_address,retired,bytes);
+        TraceOwner("retire-before",found->second);
         mh3_model_pose_retire(&found->second,address,bytes);
+        TraceOwner("retire-after",found->second);
         if(!found->second.scene_address) {owners.erase(found);erased=true;}
     }
     if(erased) Reindex(owners);
@@ -124,6 +164,7 @@ void RetireNativeModelPose(uint32_t address,uint32_t bytes) {
 void ClearNativeModelPose() {owners.clear();regions.clear();positions.clear();selectors={};}
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3],uint32_t model) {
     if(!addresses) throw std::runtime_error("Native model pose requires explicit source addresses");
+    TraceInput("read",model,addresses,0);
     mh3_matrix_sources result{};bool found=false;
     const auto matching=positions.find(Canonical(addresses[0]));
     if(matching==positions.end()) throw std::runtime_error("Native model matrices have no allocation owner");
@@ -132,6 +173,7 @@ mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3],uint32_t mode
         mh3_matrix_sources candidate{};
         const auto status=mh3_model_pose_sources(&MH3NativeResourceMemory(),&owner,addresses,
                                                 model?model:owner.model_address,&candidate);
+        TraceOwner("read-candidate",owner,status);
         if(status==MH3_RES_ABSENT) continue;
         Checked(status);
         if(found) throw std::runtime_error("Native model pose has ambiguous live allocation owners");
