@@ -1,6 +1,6 @@
 // Enemy turning and awareness, RMHP08. Monsters turn toward a target angle a
 // step at a time through three helpers (decompiled from the disassembly), and
-// spin by an angle over a motion's frames (0x80133FB0, below):
+// spin by an angle over a motion's frames (0x80133FB0, 0x80133EA0, below):
 //   0x80133E14 (target, current, max): current moved toward target by at most
 //     max (u16 angles, the short way round); the enemy AI calls it once a step
 //     from 41 places (0x80133CB4 turning to face the player, ...);
@@ -66,7 +66,45 @@ void TurnOverMotionPort(CpuContext* ctx) {
     const int32_t perTick = int32_t(2.0f * (float(angle) / (last - first)));
     Memory::Write32(enemy + 0x1C0, uint32_t(int32_t(Memory::Read32(enemy + 0x1C0)) + GameStep::Share(perTick)));
 }
+
+// 0x80133EA0 (enemy, s32 angle; f1 first, f2 last frame), decompiled with
+// Ghidra: while the motion is in [first, last + rate], the yaw turns by the
+// angle times the frames the motion advanced this step inside [first, last],
+// over last - first (truncated). The original takes the advance as the
+// motion's rate (0x8012F948, frames a tick), so at 60 or 120 steps a second
+// every turn of its 75 callers (spins and turns within an attack's frames,
+// most monsters) was two or four times as fast; the advance is the rate
+// times the step's length (GameStep::Scale) here. At the stock step this is
+// the original (MH3_PORT_CHECK=EnemyTurnWhile).
+void TurnWhilePort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const uint32_t enemy = ctx->gpr[3];
+    const int32_t angle = int32_t(ctx->gpr[4]);
+    const float first = float(ctx->fpr[1].d), last = float(ctx->fpr[2].d);
+    game.Call<0x8012F948>({enemy});
+    float advance = game.F1() * float(GameStep::Scale());
+
+    if (game.Call<0x8012F980>({enemy, 4}, {first, last + advance}) != 1) // em_frame_check
+        return;
+
+    game.Call<0x8012F950>({enemy});
+    const float frame = game.F1(), past = frame - first;
+
+    if (past < 0.0f)
+        advance += past;
+    else if (const float over = frame + advance - last; over > 0.0f)
+        advance -= over;
+
+    const int32_t turn = int32_t(advance * (float(angle) / (last - first)));
+    Memory::Write32(enemy + 0x1C0, uint32_t(int32_t(Memory::Read32(enemy + 0x1C0)) + turn));
+}
 } // namespace
+
+extern "C" void func_80133EA0(CpuContext* ctx);
+extern "C" void MH3_EnemyTurnWhile(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EnemyTurnWhile", func_80133EA0, TurnWhilePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80133EA0, MH3_EnemyTurnWhile, "EnemyTurnWhile");
 
 extern "C" void func_80133FB0(CpuContext* ctx);
 extern "C" void MH3_EnemyTurnOverMotion(CpuContext* ctx) {

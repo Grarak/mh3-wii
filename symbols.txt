@@ -998,6 +998,7 @@
 8012b9ec EnemyGaugeAdd3A0
 8012ba20 EnemyGaugeAdd3A4
 80133fb0 EnemyTurnOverMotion
+80133ea0 EnemyTurnWhile
 801d8f00 Em007TailSpin
 801d91b4 Em007Charge
 801482ac Em001Wait
