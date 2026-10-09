@@ -76,8 +76,13 @@ DiscImage& Disc() {
 struct DiscRequest {
     uint32_t block = 0; // the executing DVDCommandBlock; 0: none or not a read
     uint64_t end = 0;   // where the request ends on the disc
-    uint32_t caller = 0; // development: its callback, for the disc statistics
+    uint32_t caller = 0; // its callback: sound streams, and the disc statistics (development)
 };
+
+// The sound stream reader's callbacks (BGM, 2-4 reads a second in a fight).
+bool SoundStream(uint32_t caller) {
+    return caller == 0x800EA6E4 || caller == 0x800EA848 || caller == 0x800EA9C8;
+}
 
 // Disc reads the DVD library sends with IOS_IoctlAsync (DI 0x71) run on a
 // reader thread, as a Wii drive reads while the game runs, and their replies
@@ -177,7 +182,12 @@ class DiscReader {
 
             if (reply.length) {
                 std::memcpy(Memory::GetPointer(reply.output, reply.length), reply.data.data(), reply.length);
-                RecordNativeDiscWrite(reply.output, reply.offset, reply.length);
+
+                if (SoundStream(reply.request.caller))
+                    RecordNativeSoundStreamWrite(reply.output, reply.offset, reply.length);
+                else
+                    RecordNativeDiscWrite(reply.output, reply.offset, reply.length);
+
                 LoadProgress::DiscDelivered(reply.offset, reply.length);
             }
 
@@ -464,15 +474,14 @@ class DiscReader {
 
     using Callers = std::map<uint32_t, CallerReads>;
     static std::string CallerName(uint32_t caller) {
+        if (SoundStream(caller))
+            return "stream";
+
         switch (caller) {
         case 0x80434CDC:
             return "movie";
         case 0x800CE6E4:
             return "loader task";
-        case 0x800EA6E4:
-        case 0x800EA848:
-        case 0x800EA9C8:
-            return "stream";
         }
 
         char name[16];
@@ -549,11 +558,10 @@ DiscRequest DiscRequestOf(const CpuContext* ctx, uint64_t offset, uint32_t lengt
 
     if (start + Memory::Read32(block + 0x20) == offset && offset + length <= end)
         request = {block, end};
-#ifdef MH3_DEVELOPMENT
+
     constexpr uint32_t kReadAsyncCallback = 0x804A6A70;
     const uint32_t callback = Memory::Read32(block + 0x28);
     request.caller = callback == kReadAsyncCallback ? Memory::Read32(block + 0x38) : callback;
-#endif
     return request;
 }
 

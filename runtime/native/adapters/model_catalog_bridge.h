@@ -10,6 +10,9 @@
 /* Explicit loader events. Tracking disc reads alone does not certify copied,
  * recycled or decompressed owners. No bind-time revision bumps or hashing. */
 void RecordNativeDiscWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes, uint32_t diagnostic_frame = UINT32_MAX);
+/* A sound stream's read: as a disc write, but the overlapped draw never reads
+ * a sound stream's buffer, so it does not wait for the draw. */
+void RecordNativeSoundStreamWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes);
 void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes,
     NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceCopy, uint32_t diagnostic_frame = UINT32_MAX);
 void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,

@@ -770,11 +770,8 @@ void ApplyDeferredDrawCacheRetirements() {
     deferredRetirements.clear();
 }
 
-void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
-    if (!bytes)
-        return;
-
-    QuiesceDraw([] { return true; });
+namespace {
+void RecordDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
     std::lock_guard guard(catalogLock);
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
@@ -785,6 +782,25 @@ void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes
     const bool retired_owner = RetireCertificates(destination, bytes), retired_block = RetireLiveBlocks(destination, bytes);
     InvalidateSourceCache(c, NativeSourceEpochReason::DiscWrite, NativeSourceEpochProducer::Disc, destination, 0, bytes, offset,
         (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u), frame);
+}
+} // namespace
+
+void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
+    if (!bytes)
+        return;
+
+    QuiesceDraw([] { return true; });
+    RecordDiscWrite(destination, offset, bytes, diagnostic_frame);
+}
+
+// The BGM's reads come 2-4 times a second in a fight, and each waited for the
+// whole in-flight draw (about 8 ms on the devkit, Jhen Mohran). The draw never
+// reads a sound stream's buffer, and allocating the heap block it is in
+// waited for the draw if the block held tracked resource data
+// (RetireNativeResourceOwner).
+void RecordNativeSoundStreamWrite(uint32_t destination, uint64_t offset, uint32_t bytes) {
+    if (bytes)
+        RecordDiscWrite(destination, offset, bytes, UINT32_MAX);
 }
 
 void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes, NativeSourceEpochProducer producer, uint32_t diagnostic_frame) {
