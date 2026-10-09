@@ -166,6 +166,20 @@ bool ResolveAramWindow(uint32_t addr, AramWindow& window) {
     return false;
 }
 
+const uint8_t* ResolveAramRange(uint32_t addr, uint32_t bytes) {
+    if (bytes == 0) {
+        return nullptr;
+    }
+    const AramAliases first = AramAliasesFor(addr), last = AramAliasesFor(addr + bytes - 1);
+    if (last.physical - first.physical != bytes - 1) {
+        return nullptr; // wraps
+    }
+    if (const uint8_t* host = MixResolveRange(first.physical, bytes)) {
+        return host;
+    }
+    return MixResolveRange(first.cached, bytes);
+}
+
 uint8_t ReadAramByteSlow(uint32_t addr) {
     // These single-byte probes are not redundant with ResolveAramWindow's:
     // that one asks for a whole kAramWindowSize page, so it fails for the last

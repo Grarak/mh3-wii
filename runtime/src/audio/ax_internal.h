@@ -194,6 +194,9 @@ struct AramWindow {
 extern std::atomic<uint32_t> g_aramWindowGeneration;
 
 uint8_t ReadAramByteSlow(uint32_t addr);
+// The host bytes of the DSP ARAM range [addr, addr + bytes), when it maps
+// contiguously (as ReadAramByte would read each byte); null otherwise.
+const uint8_t* ResolveAramRange(uint32_t addr, uint32_t bytes);
 
 bool ResolveAramWindow(uint32_t addr, AramWindow& window);
 
@@ -530,6 +533,21 @@ public:
         m_yn1 = pb->adpcm.yn1;
         m_yn2 = pb->adpcm.yn2;
         m_reads_stopped = false;
+        m_read = false;
+        // The sample bytes the voice can read (from the loop start or the
+        // current position through the end), resolved once instead of per byte.
+        m_host = nullptr;
+        const uint32_t size = m_format & 3u;
+        const uint32_t first = std::min(m_start, m_current);
+        if ((m_current & 0x80000000u) == 0 && size <= 2 && m_end >= first && m_end - first < 0x01000000u) {
+            const uint32_t begin = size == 0 ? first >> 1 : size == 1 ? first : first * 2;
+            const uint32_t end = size == 0 ? (m_end >> 1) + 2 : size == 1 ? m_end + 2 : m_end * 2 + 4;
+            if (const uint8_t* host = ResolveAramRange(begin, end - begin)) {
+                m_host = host;
+                m_hostBegin = begin;
+                m_hostSize = end - begin;
+            }
+        }
     }
 
     int16_t ReadSample() {
@@ -599,16 +617,29 @@ public:
         // Mirrors DSPAccelerator::SetCurrentAddress's CURRENT_ADDRESS_MASK: keep only the
         // 30-bit ARAM address plus the 0x80000000 write flag.
         m_current &= 0xbfffffffu;
+        m_read = true;
+        return value;
+    }
 
+    // Stores the read position and decoder state into the PB, as every read
+    // did on the DSP; nothing reads them back while the voice resamples, so
+    // this happens once after the reads.
+    void Flush() {
+        if (!m_read) {
+            return;
+        }
         m_pb->audio_addr.cur_addr_hi = static_cast<uint16_t>(m_current >> 16);
         m_pb->audio_addr.cur_addr_lo = static_cast<uint16_t>(m_current);
         m_pb->adpcm.yn1 = m_yn1;
         m_pb->adpcm.yn2 = m_yn2;
         m_pb->adpcm.pred_scale = m_pred_scale;
-        return value;
     }
 
-    static uint8_t ReadAram8(uint32_t addr) {
+    uint8_t ReadAram8(uint32_t addr) const {
+        const uint32_t offset = addr - m_hostBegin;
+        if (m_host && offset < m_hostSize) [[likely]] {
+            return m_host[offset];
+        }
         return ReadAramByte(addr);
     }
 
@@ -618,7 +649,7 @@ private:
         m_reads_stopped = false;
     }
 
-    uint16_t CurrentRawSample() const {
+    [[gnu::always_inline]] uint16_t CurrentRawSample() const {
         const uint16_t size = m_format & 3u;
         if (size == 0) {
             uint8_t byte = ReadAram8(m_current >> 1);
@@ -643,6 +674,10 @@ private:
     int16_t m_yn2 = 0;
     uint16_t m_pred_scale = 0;
     bool m_reads_stopped = false;
+    bool m_read = false;
+    const uint8_t* m_host = nullptr;
+    uint32_t m_hostBegin = 0;
+    uint32_t m_hostSize = 0;
 };
 
 }

@@ -999,6 +999,7 @@ private:
         accel.Setup(&pb);
         std::array<int16_t, kAxSamplesPerFrame> samples{};
         Resample(accel, pb, samples.data(), count, coeffs);
+        accel.Flush();
         // Same wrapping 16-bit ramp as MixAdd, minus the accumulate. The two's
         // complement wrap of the int16 envelope is bit-identical to the uint16
         // wrap the kernel performs, so the value stored back is unchanged.
