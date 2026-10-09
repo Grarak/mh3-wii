@@ -35,6 +35,8 @@ std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
 std::atomic<uint64_t> g_displayWaitMicros{0};
 std::atomic<uint64_t> g_pacedFlips{0}, g_pacingErrorMicros{0}, g_flipVblanks[4]{};
 std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
+// Flips wait for VBlank (set_vsync).
+std::atomic<bool> g_vsync{true};
 std::atomic<uint64_t> g_latencyFlips{0}, g_latencyMicros[4]{};
 std::atomic<uint32_t> g_latencyMaxMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
@@ -109,11 +111,14 @@ void display_callback(const void* data) {
 
   // VSync: flip at the next VBlank and wait for it, so the old buffer's sync
   // is released only after scanout has moved on. This wait belongs to the
-  // display callback on core 0, never the game or render thread.
-  const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
+  // display callback on core 0, never the game or render thread. Without
+  // VSync (the game thread limit off, set_vsync) the flip takes effect at
+  // once, tearing, and the displayed rate is no longer the VBlank's.
+  const bool vsync = g_vsync.load(std::memory_order_relaxed);
+  const int setResult = sceDisplaySetFrameBuf(&frame, vsync ? SCE_DISPLAY_SETBUF_NEXTFRAME : SCE_DISPLAY_SETBUF_IMMEDIATE);
   int waitResult = 0;
 
-  if (setResult >= 0) {
+  if (setResult >= 0 && vsync) {
     const auto started = std::chrono::steady_clock::now();
     waitResult = sceDisplayWaitSetFrameBuf();
     g_displayWaitMicros.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
@@ -288,7 +293,6 @@ Device::Device() {
     check(sceGxmSyncObjectCreate(&m_sync[i]), "create display sync");
   }
 
-  std::fprintf(stderr, "Aurora GXM: VSync on (flips at VBlank)\n");
 }
 
 Device::~Device() {
@@ -419,6 +423,11 @@ void Device::begin_display() {
 
 bool Device::frame_pending() const noexcept {
   return m_frames.pending() || aurora::gpu_display_queue_full(g_displayQueued.load(std::memory_order_acquire), g_displayCompleted.load(std::memory_order_acquire));
+}
+
+void set_vsync(bool enabled) noexcept {
+  g_vsync.store(enabled, std::memory_order_relaxed);
+  std::fprintf(stderr, "Aurora GXM: VSync %s\n", enabled ? "on (flips at VBlank)" : "off (immediate flips)");
 }
 
 bool gpu_frame_pending() noexcept {

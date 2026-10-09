@@ -45,6 +45,10 @@ struct DisplayStatistics {
 
 DisplayStatistics display_statistics() noexcept;
 
+// VSync on (the default): flips at VBlank; off: immediate flips (tearing),
+// for the game thread limit off.
+void set_vsync(bool enabled) noexcept;
+
 // Owns native libgxm objects and bounded backing allocations. All calls belong
 // to the render owner. The display callback is pinned to worker core 0.
 // How a scene uses its depth surface's memory. Without a load each tile starts

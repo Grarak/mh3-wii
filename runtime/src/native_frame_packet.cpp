@@ -18,6 +18,9 @@
 #include <aurora/aurora.h>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
+#ifdef AURORA_GXM
+#include "gxm/device.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -1569,6 +1572,10 @@ void StartNativeRenderThread() {
         packets[i].slot = i;
 
     paced = frameLimit;
+#ifdef AURORA_GXM
+    // The limit off lets the displayed rate go past the VBlank's too.
+    aurora::gxm::set_vsync(frameLimit);
+#endif
 #ifdef MH3_DEVELOPMENT
     renderCounters.thread.store(-1, std::memory_order_relaxed);
     renderCounters.revision.store(0, std::memory_order_relaxed);
