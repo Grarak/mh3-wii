@@ -15,6 +15,7 @@ std::vector<uint8_t> mem1, mem2;
 // MH3's LCEnable allocates all 512 32-byte locked L1 lines here.
 // Keep this separate from MEM1/MEM2: masking this address as a RAM alias is wrong.
 std::array<uint8_t, 0x4000> lockedCache{};
+uint32_t sensorBarOutput = 0;
 std::string accessMessage(uint32_t address, std::string_view reason) {
     std::ostringstream message;
     message << reason << " at guest 0x" << std::hex << address
@@ -38,6 +39,10 @@ uint8_t* resolve(uint32_t address, size_t length) {
     return region->data() + physical;
 }
 template<class T> T read(uint32_t address) {
+    if constexpr (std::is_same_v<T, uint32_t>) {
+        if ((address >> 30) != 1 && (address & 0x3FFFFFFF) == 0x0D0000C0)
+            return sensorBarOutput;
+    }
     if constexpr (std::is_same_v<T, uint16_t>) {
         uint16_t value;
         if (ReadVideoRegister16(address, value)) return value;
@@ -49,6 +54,15 @@ template<class T> T read(uint32_t address) {
     return MemoryInline::MaybeByteSwap(value);
 }
 template<class T> void write(uint32_t address, T value) {
+    if constexpr (std::is_same_v<T, uint32_t>) {
+        if ((address >> 30) != 1 && (address & 0x3FFFFFFF) == 0x0D0000C0) {
+            // GPIOB_OUT bit 8 controls the sensor bar. Other output devices
+            // require their own implementation; do not silently acknowledge them.
+            if (value & ~0x100u) throw std::runtime_error("Unsupported GPIOB output device");
+            sensorBarOutput = value;
+            return;
+        }
+    }
     if ((address >> 30) != 1 && (address & 0x3FFFFF00) == 0x0C008000) {
         const auto encoded = MemoryInline::MaybeByteSwap(value);
         SubmitGuestGxBytes(reinterpret_cast<const uint8_t*>(&encoded), sizeof(T));
@@ -78,6 +92,7 @@ void Memory::Init(size_t size) {
     mem1.assign(size, 0);
     mem2.assign(64 * 1024 * 1024, 0);
     lockedCache.fill(0);
+    sensorBarOutput = 0;
     for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
         auto* pointer = resolve(i << MemoryInline::kPageShift, MemoryInline::kPageSize);
         MemoryInline::g_pageTable[i] = {pointer, pointer ? MemoryInline::kPageSize : 0};

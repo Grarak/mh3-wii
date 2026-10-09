@@ -17,6 +17,7 @@ extern "C" void MH3_EXIGetID(CpuContext*);
 extern "C" void MH3_SIInit(CpuContext*);
 extern "C" void MH3_SISetXY(CpuContext*);
 extern "C" void MH3_SIGetType(CpuContext*);
+extern "C" void MH3_WUDInit(CpuContext*);
 extern "C" void MH3_OSInitSram(CpuContext*);
 extern "C" void MH3_UnlockSram(CpuContext*);
 extern "C" void MH3_OSGetResetCode(CpuContext*);
@@ -46,6 +47,25 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    {
+        const auto saved = *cpu;
+        cpu->gpr[13] = 0x8079B2E0;
+        Memory::Write32(cpu->gpr[13] - 0x3700, 0);
+        MH3_WUDInit(cpu);
+        if (cpu->gpr[3] != 1 || Memory::Read8(0x80761668) != 3)
+            throw std::runtime_error("WUD host startup state failed");
+        MH3_WUDInit(cpu);
+        if (cpu->gpr[3] != 0) throw std::runtime_error("WUD startup is not idempotent");
+        *cpu = saved;
+        Memory::Write32(0xCD0000C0, 0x100);
+        if (Memory::Read32(0x0D0000C0) != 0x100)
+            throw std::runtime_error("Sensor-bar GPIO alias failed");
+        Memory::Write32(0xCD0000C0, 0);
+        bool rejected = false;
+        try { Memory::Write32(0xCD0000C0, 2); }
+        catch (const std::runtime_error&) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Unknown GPIO output was accepted");
+    }
     for (uint32_t channel = 0; channel < 4; ++channel) {
         cpu->gpr[3] = channel;
         Memory::Write32(0x8062A8B8 + channel * 4, 0x80);
