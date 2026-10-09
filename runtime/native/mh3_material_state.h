@@ -54,6 +54,12 @@ typedef struct mh3_material_requirements {
  * finish before destination mutation. Clip is copied only when src knows it. */
 mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination,
     const mh3_native_material_state *source,uint32_t top_known);
+/* Prepare a candidate for a later material/raster commit. Distinct output uses
+ * one complete-state copy and may change on failure; current/source remain
+ * unchanged. Inputs may alias each other. Output overlapping either input uses
+ * an atomic temporary fallback, including destination==source self overlays. */
+mh3_res_status mh3_material_state_overlay_candidate(mh3_native_material_state *candidate,
+    const mh3_native_material_state *current,const mh3_native_material_state *source,uint32_t top_known);
 /* Null requirements checks known value domains only. ABSENT identifies missing
  * consumed fields; UNSUPPORTED identifies an unpromised backend capability. */
 mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state,

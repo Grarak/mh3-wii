@@ -274,6 +274,12 @@ void Probe() {
     Require(std::memcmp(&published,&GetNativeMaterialState(),sizeof published)==0 &&
         std::memcmp(&rasterBeforeFailure,&GetNativeDrawState().raster,sizeof rasterBeforeFailure)==0,
         "invalid skipped material publication changed owned state or raster");
+    // Source and current may be the same owned object. The candidate must
+    // finish reading it before the material/raster publication commits.
+    OverlayNativeMaterial(GetNativeMaterialState(),MH3_MATERIAL_TOP_ALL);
+    Require(std::memcmp(&published,&GetNativeMaterialState(),sizeof published)==0 &&
+        std::memcmp(&rasterBeforeFailure,&GetNativeDrawState().raster,sizeof rasterBeforeFailure)==0,
+        "self-aliased skipped publication changed material or raster bytes");
     suppressed=false;SetNativeMaterial(beforeSkip);
 }
 }

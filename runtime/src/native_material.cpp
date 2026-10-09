@@ -489,7 +489,8 @@ void SetNativeMaterial(const mh3_native_material_state& source) {
 }
 void OverlayNativeMaterial(const mh3_native_material_state& source,uint32_t top_known) {
     Owner();ObserveRasterPublications();
-    auto next=material;Check(mh3_material_state_overlay(&next,&source,top_known),"Native material overlay");
+    mh3_native_material_state next;
+    Check(mh3_material_state_overlay_candidate(&next,&material,&source,top_known),"Native material overlay");
     auto raster=GetNativeDrawState().raster;Check(mh3_material_pixel_raster(&next.pixel,&raster),"Native material pixel raster");
     raster.cull_mode=next.cull_mode;
     struct Export {Export(){publishingMaterialRaster=true;}~Export(){publishingMaterialRaster=false;}};

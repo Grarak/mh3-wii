@@ -8,6 +8,15 @@ option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinatio
 # speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE_* frame
 # dumps, MH3_FRAMESKIP, and scripted input (MH3_INPUT_FILE / _RECORD / _PLAYBACK).
 option(MH3_DEVELOPMENT "Build development/debug features (stats, captures, scripted input)" OFF)
+option(MH3_PROFILE_FRAME_POINTERS "Emit frame pointers and unwind tables for CPU caller profiling" ${MH3_DEVELOPMENT})
+if(MH3_PROFILE_FRAME_POINTERS)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fno-omit-frame-pointer;-mno-omit-leaf-frame-pointer;-funwind-tables>")
+  if(VITA OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv[78].*|arm)$")
+    # Keep one documented ARM32 frame convention even in Thumb code. This is
+    # AAPCS (previous FP and LR at r11), not Linux's legacy APCS perf walker.
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-mframe-chain=aapcs+leaf>)
+  endif()
+endif()
 option(MH3_ENABLE_GX_DIAGNOSTICS "Enable controlled renderer isolation and state logging" OFF)
 # Supported targets: arm32/arm64 Linux with GLES, and Vita with native GXM.
 # MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
@@ -194,6 +203,7 @@ if(VITA)
   set(rom_decoder_archive "${CMAKE_BINARY_DIR}/rom-decoder/armv7-sony-vita-newlibeabihf/release/libmh3_rom_decoder.a")
   add_custom_command(OUTPUT "${rom_decoder_archive}"
     COMMAND "${CMAKE_COMMAND}" -E env "VITASDK=${VITASDK}"
+      "MH3_ROM_DECODER_UNWIND=${MH3_PROFILE_FRAME_POINTERS}"
       bash "${rom_decoder_script}" "${CMAKE_BINARY_DIR}/rom-decoder"
     DEPENDS "${rom_decoder_script}" "${rom_decoder_dir}/Cargo.toml"
       "${rom_decoder_dir}/Cargo.lock" "${rom_decoder_dir}/src/lib.rs"

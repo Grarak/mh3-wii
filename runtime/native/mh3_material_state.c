@@ -151,10 +151,11 @@ static void merge_bytes(void *destination,const void *source,uint64_t known,size
     for(size_t field=0;field<count;++field) if(known&BIT(field))
         memcpy((uint8_t*)destination+field*stride,(const uint8_t*)source+field*stride,stride);
 }
-mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination,const mh3_native_material_state *source,uint32_t top_known) {
-    if(!destination || !source || top_known&~MH3_MATERIAL_TOP_ALL) return MH3_RES_INVALID;
-    mh3_native_material_state next;memcpy(&next,destination,sizeof next);
-#define COPY_TOP(flag,field) if(top_known&(flag)) next.field=source->field
+/* The caller owns a disposable candidate. Source bytes stay unchanged while
+ * the sparse merge and the same complete domain validation run. */
+static mh3_res_status overlay_fields(mh3_native_material_state *next,
+    const mh3_native_material_state *source,uint32_t top_known) {
+#define COPY_TOP(flag,field) if(top_known&(flag)) next->field=source->field
     COPY_TOP(MH3_MATERIAL_TOP_TEXGEN_COUNT,texgen_count);COPY_TOP(MH3_MATERIAL_TOP_CHANNEL_COUNT,channel_count);
     COPY_TOP(MH3_MATERIAL_TOP_TEV_COUNT,tev_count);COPY_TOP(MH3_MATERIAL_TOP_INDIRECT_COUNT,indirect_count);
     COPY_TOP(MH3_MATERIAL_TOP_CULL,cull_mode);COPY_TOP(MH3_MATERIAL_TOP_LIGHT_REFERENCE,light_set_reference);
@@ -163,16 +164,16 @@ mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination
 #undef COPY_TOP
     for(unsigned index=0;index<16;++index) {
         if(source->tev[index].known&~MH3_MATERIAL_TEV_MASK) return MH3_RES_INVALID;
-        merge_bytes(&next.tev[index].color,&source->tev[index].color,source->tev[index].known,34,1);
-        next.tev[index].known|=source->tev[index].known;
+        merge_bytes(&next->tev[index].color,&source->tev[index].color,source->tev[index].known,34,1);
+        next->tev[index].known|=source->tev[index].known;
     }
     for(unsigned index=0;index<8;++index) {
         if(source->texgen[index].known&~MH3_MATERIAL_TEXGEN_MASK) return MH3_RES_INVALID;
-        merge_bytes(next.texgen[index].values,source->texgen[index].values,source->texgen[index].known,10,1);
-        next.texgen[index].known|=source->texgen[index].known;
+        merge_bytes(next->texgen[index].values,source->texgen[index].values,source->texgen[index].known,10,1);
+        next->texgen[index].known|=source->texgen[index].known;
     }
     for(unsigned index=0;index<2;++index) {
-        const mh3_pack_channel *from=&source->channel[index];mh3_pack_channel *to=&next.channel[index];
+        const mh3_pack_channel *from=&source->channel[index];mh3_pack_channel *to=&next->channel[index];
         if(from->flags&~63u) return MH3_RES_INVALID;
         if(from->flags&MH3_CHANNEL_MATERIAL_COLOR) memcpy(to->material_color,from->material_color,3);
         if(from->flags&MH3_CHANNEL_MATERIAL_ALPHA) to->material_color[3]=from->material_color[3];
@@ -184,23 +185,41 @@ mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination
     }
     for(unsigned index=0;index<4;++index) {
         if((source->color[index].known|source->konst[index].known|source->swaps[index].known|source->indirect[index].known)&~15u) return MH3_RES_INVALID;
-        merge_bytes(next.color[index].rgba,source->color[index].rgba,source->color[index].known,4,2);next.color[index].known|=source->color[index].known;
-        merge_bytes(next.konst[index].rgba,source->konst[index].rgba,source->konst[index].known,4,2);next.konst[index].known|=source->konst[index].known;
-        merge_bytes(next.swaps[index].rgba,source->swaps[index].rgba,source->swaps[index].known,4,1);next.swaps[index].known|=source->swaps[index].known;
-        merge_bytes(&next.indirect[index].coordinate,&source->indirect[index].coordinate,source->indirect[index].known,4,1);next.indirect[index].known|=source->indirect[index].known;
+        merge_bytes(next->color[index].rgba,source->color[index].rgba,source->color[index].known,4,2);next->color[index].known|=source->color[index].known;
+        merge_bytes(next->konst[index].rgba,source->konst[index].rgba,source->konst[index].known,4,2);next->konst[index].known|=source->konst[index].known;
+        merge_bytes(next->swaps[index].rgba,source->swaps[index].rgba,source->swaps[index].known,4,1);next->swaps[index].known|=source->swaps[index].known;
+        merge_bytes(&next->indirect[index].coordinate,&source->indirect[index].coordinate,source->indirect[index].known,4,1);next->indirect[index].known|=source->indirect[index].known;
     }
     for(unsigned index=0;index<3;++index) {
         if(source->indirect_matrix[index].known&~127u) return MH3_RES_INVALID;
-        merge_bytes(next.indirect_matrix[index].coefficients,source->indirect_matrix[index].coefficients,source->indirect_matrix[index].known,6,2);
-        if(source->indirect_matrix[index].known&64) next.indirect_matrix[index].scale_exponent=source->indirect_matrix[index].scale_exponent;
-        next.indirect_matrix[index].known|=source->indirect_matrix[index].known;
+        merge_bytes(next->indirect_matrix[index].coefficients,source->indirect_matrix[index].coefficients,source->indirect_matrix[index].known,6,2);
+        if(source->indirect_matrix[index].known&64) next->indirect_matrix[index].scale_exponent=source->indirect_matrix[index].scale_exponent;
+        next->indirect_matrix[index].known|=source->indirect_matrix[index].known;
     }
     if(source->pixel.known&~MH3_MATERIAL_PIXEL_MASK || source->clip_mode_known>1) return MH3_RES_INVALID;
-    merge_bytes(next.pixel.values,source->pixel.values,source->pixel.known,22,4);next.pixel.known|=source->pixel.known;
-    if(source->clip_mode_known) {next.clip_mode_known=1;next.clip_disabled=source->clip_disabled;}
-    const mh3_res_status status=mh3_material_state_validate(&next,NULL,NULL);
-    if(status) return status;
-    memcpy(destination,&next,sizeof next);return MH3_RES_OK;
+    merge_bytes(next->pixel.values,source->pixel.values,source->pixel.known,22,4);next->pixel.known|=source->pixel.known;
+    if(source->clip_mode_known) {next->clip_mode_known=1;next->clip_disabled=source->clip_disabled;}
+    return mh3_material_state_validate(next,NULL,NULL);
+}
+static int state_overlaps(const mh3_native_material_state *a,const mh3_native_material_state *b) {
+    const uintptr_t first=(uintptr_t)a,second=(uintptr_t)b;
+    return first<=second ? second-first<sizeof *a : first-second<sizeof *a;
+}
+mh3_res_status mh3_material_state_overlay_candidate(mh3_native_material_state *candidate,
+    const mh3_native_material_state *current,const mh3_native_material_state *source,uint32_t top_known) {
+    if(!candidate || !current || !source || top_known&~MH3_MATERIAL_TOP_ALL) return MH3_RES_INVALID;
+    if(state_overlaps(candidate,current) || state_overlaps(candidate,source)) {
+        mh3_native_material_state next;memcpy(&next,current,sizeof next);
+        const mh3_res_status status=overlay_fields(&next,source,top_known);
+        if(!status) memcpy(candidate,&next,sizeof next);
+        return status;
+    }
+    memcpy(candidate,current,sizeof *candidate);
+    return overlay_fields(candidate,source,top_known);
+}
+mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination,
+    const mh3_native_material_state *source,uint32_t top_known) {
+    return mh3_material_state_overlay_candidate(destination,destination,source,top_known);
 }
 mh3_res_status mh3_material_pixel_raster(const mh3_pack_pixel_inputs *pixel,mh3_raster_state *raster) {
     if(!pixel || !raster) return MH3_RES_INVALID;
