@@ -805,14 +805,15 @@ static void upload_batch(StagingSet& set) {
   if (!set.uniforms.empty()) {
     glBindBuffer(GL_UNIFORM_BUFFER, gpu.uniform);
     // Orphan the store so draws still queued on the previous contents keep them.
-    glBufferData(GL_UNIFORM_BUFFER, static_cast<GLsizeiptr>(UniformBufferSize + gx::MaxUniformSize), nullptr,
+    // Size it to this batch (already padded by MaxUniformSize): orphaning the full
+    // 24 MB made drivers such as llvmpipe allocate and zero-fault it every batch.
+    glBufferData(GL_UNIFORM_BUFFER, static_cast<GLsizeiptr>(set.uniforms.size()), set.uniforms.data(),
                  GL_STREAM_DRAW);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, static_cast<GLsizeiptr>(set.uniforms.size()), set.uniforms.data());
   }
   if (!set.indices.empty()) {
     gl::bind_draw_vao(gpu.index);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(IndexBufferSize), nullptr, GL_STREAM_DRAW);
-    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(set.indices.size()), set.indices.data());
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(set.indices.size()), set.indices.data(),
+                 GL_STREAM_DRAW);
   }
   const auto uploadWords = [](const gl::TexturePtr& texture, ByteBuffer& buffer) {
     if (buffer.empty()) {

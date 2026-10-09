@@ -589,9 +589,9 @@ bool is_presentable() noexcept {
 }
 
 void pump_events() noexcept {
-  if (g_window != nullptr) {
-    SDL_SyncWindow(g_window);
-  }
+  // No SDL_SyncWindow here: on X11 it sleeps in 1 ms steps until pending window
+  // operations settle, which cost the game thread about a third of its time when
+  // pumped twice per frame. Events arrive through SDL_PumpEvents regardless.
   SDL_PumpEvents();
 }
 
