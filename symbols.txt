@@ -302,3 +302,6 @@
 8097ebe4 TitleTask
 800408b8 RunExitHook
 8097e3a0 TitleConfirmPressed
+803a9014 QuestClockTick
+803a880c GetQuestWork
+803b0228 QuestStep

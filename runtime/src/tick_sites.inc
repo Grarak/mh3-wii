@@ -98,6 +98,7 @@
 {0x802E4C90u, TickSite::Countup},           // 802E4C88: steps in the area (806C04E8)
 {0x802E4CA4u, TickSite::Countup},           // 802E4C88: steps (806C02D8)
 {0x802E4CB0u, TickSite::Countup},           // 802E4C88: steps (806C046C)
+{0x802EF2ACu, TickSite::Countdown},         // player-side timer (802EF294): +0x5C, set from seconds * fps by 802EF3A4
 {0x8031F728u, TickSite::Advance, 512},      // marker effect (8031F574): bob phase (u16), +512 per step
 {0x8031F734u, TickSite::Advance, 255},      // marker effect: spin angle (+0x28), +255 per step
 {0x803327A4u, TickSite::CountdownPastZero}, // actor action countdown (+0x28), fires at <= 0
@@ -107,6 +108,21 @@
 {0x80344EE4u, TickSite::Countup, 32766},
 {0x8034E5ECu, TickSite::Countup},           // actor action step counter (+0x28)
 {0x8034EC68u, TickSite::Countup},
+{0x80383AB0u, TickSite::Countdown},         // 0x806C4898 countdown (80383A50), set from seconds * fps by 80383C0C / 80384388
+{0x80398008u, TickSite::Countup},           // quest result screen (803975D0): +0x2FF4 step counter
+{0x80398080u, TickSite::Countdown},         // quest result screen: +0x2FF4 countdown, set from seconds * fps by 803973A8
+{0x8039E568u, TickSite::Countup},           // quest result screen (8039E3AC): +0x2FF4 step counter
+{0x8039E5E0u, TickSite::Countdown},         // quest result screen: +0x2FF4 countdown, set from seconds * fps by 8039D174
+{0x803B0C00u, TickSite::Countup},           // quest clock (803B0228): steps of quest time (quest work+0x28)
+{0x803B0CE4u, TickSite::Countup},
+{0x803B0E84u, TickSite::Countup},           // quest (803B0E28): quest work +0x697C steps, against seconds * fps
+{0x803B1098u, TickSite::Countup},           // quest (803B107C): quest work +0x697C steps
+{0x803B1144u, TickSite::Countup},
+{0x803B11F8u, TickSite::Countup},
+{0x803B12ECu, TickSite::Countup},
+{0x803B7DCCu, TickSite::Countup},           // quest (803B7D4C): +0x65D4 steps, against seconds * fps
+{0x803B8734u, TickSite::Countup},           // quest (803B8718): +0x10 steps, counted while below seconds * fps
+{0x803B8780u, TickSite::Countup},           // (803B8718): +0x14
 {0x803C37D4u, TickSite::Advance, 255},      // online marker effect (803C3574): spin angle (+0x28)
 {0x803C37E0u, TickSite::Advance, 512},      // online marker effect: bob phase (u16)
 {0x803C3A28u, TickSite::Advance, 255},

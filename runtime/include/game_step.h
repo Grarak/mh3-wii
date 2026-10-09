@@ -8,6 +8,10 @@
 
 namespace GameStep {
 
+// Variable-length steps (the frame pacer's mode): the fps float stays at the
+// tick rate instead of following the step length.
+void SetVariable(bool enabled);
+bool Variable();
 // Starts a logic step of `scale` ticks: sets NW4R's animation base rate and the
 // game's steps-per-second float, and advances the tick clock.
 void Begin(double scale);

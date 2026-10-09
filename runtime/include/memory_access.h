@@ -105,9 +105,14 @@ constexpr bool IsGpuFifoAddress(uint32_t addr) {
 #ifdef MH3_WRITE_WATCH
 // Debug build (MH3_WRITE_WATCH): guest stores into [start, start + length)
 // also take the slow path, which reports the translated function doing them.
+// With MH3_WRITE_WATCH_LIST, only the listed words of the range: one bit per
+// word from `start` in g_writeWatchWords.
 inline uint32_t g_writeWatchStart = 0, g_writeWatchLength = 0;
+inline const uint8_t* g_writeWatchWords = nullptr;
 MKW_MEMORY_FORCE_INLINE bool WriteWatched(uint32_t address) {
-    return address - g_writeWatchStart < g_writeWatchLength;
+    const uint32_t offset = address - g_writeWatchStart;
+    if (offset >= g_writeWatchLength) return false;
+    return !g_writeWatchWords || (g_writeWatchWords[offset >> 5] >> ((offset >> 2) & 7) & 1);
 }
 void RecordWatchedWrite(uint32_t address, uint32_t size, uint64_t value, const void* hostCaller);
 #endif

@@ -136,6 +136,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     const auto now = Clock::now();
     if (!started) frameEnd = now - budget * period;
     started = true;
+    GameStep::SetVariable(variableStep);
     double stepTicks; // game time of the step that just ran, in retraces
     if (variableStep) {
         const auto step = std::min<Clock::duration>(now - frameEnd, kMaxStep);

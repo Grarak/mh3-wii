@@ -23,9 +23,17 @@ COUNTERS = {
     0x806C04E8,  # steps in the area (0x802E4C88, a tick site)
     0x806C02D8,  # (0x802E4C88)
     0x806C046C,  # (0x802E4C88)
+    0x806C7D00,  # quest work+0x28: quest clock steps (0x803B0228, tick sites)
+}
+# Reads of the counters above through a base register (a work pointer), which
+# the lis/addi tracking cannot see: pc -> counter.
+POINTER_READS = {
+    0x803B0C0C: 0x806C7D00,  # quest clock, right after its increment (0x803B0C00)
+    0x803B0CF0: 0x806C7D00,  # (0x803B0CE4)
 }
 # Their own increments (lwz; addi 1; stw), not reads.
-INCREMENTS = {0x80041754, 0x800D2F88, 0x80212730, 0x8021DD04, 0x802E4C90, 0x802E4CA4, 0x802E4CB0}
+INCREMENTS = {0x80041754, 0x800D2F88, 0x80212730, 0x8021DD04, 0x802E4C90, 0x802E4CA4, 0x802E4CB0,
+              0x803B0C00, 0x803B0CE4}
 
 def parse(path):
     lines = []
@@ -90,8 +98,8 @@ def main():
             reg[ops[0]] = (reg[ops[1]] + int(ops[2])) & 0xFFFFFFFF
             continue
         m = re.match(r'(-?\d+)\((\d+)\)$', ops[-1]) if ops else None
-        if op == 'lwz' and m and m[2] in reg and pc not in INCREMENTS:
-            if (reg[m[2]] + int(m[1])) & 0xFFFFFFFF in COUNTERS:
+        if op == 'lwz' and m and (m[2] in reg or pc in POINTER_READS) and pc not in INCREMENTS:
+            if pc in POINTER_READS or (reg[m[2]] + int(m[1])) & 0xFFFFFFFF in COUNTERS:
                 got = site_kind(lines, i, ops[0])
                 if got and (got[0] or (got[0] == 0 and got[1] == 0 and got[2])):
                     sites.append((pc, got[0], got[1], 1 if got[2] else 0))

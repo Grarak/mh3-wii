@@ -13,15 +13,22 @@ double scale = 1.0;
 double clock = 0.0; // fraction of a tick carried to the next step
 uint32_t ticks = 1;
 double elapsed = 0.0;
+bool variable = false;
 
 } // namespace
 
 // NW4R advances every g3d animation by rate * FrameCtrl::smBaseUpdateRate per
-// step, and the game converts seconds to step counts with the fps float.
+// step. The game converts seconds to frame counts with the fps float (every
+// use multiplies by it), and its counters then advance once per frame: at
+// variable step they advance by whole ticks, so the float stays at the tick
+// rate, 30.
+void SetVariable(bool enabled) { variable = enabled; }
+bool Variable() { return variable; }
+
 void Begin(double s) {
     scale = s;
     Memory::WriteFloat32(kAnimationBaseRate, float(s));
-    Memory::WriteFloat32(kFrameRate, float(30.0 / s));
+    Memory::WriteFloat32(kFrameRate, float(variable ? 30.0 : 30.0 / s));
     elapsed += s;
     clock += s;
     const double whole = std::floor(clock);

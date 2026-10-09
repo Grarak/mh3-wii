@@ -9,6 +9,7 @@
 // Float math follows the PPC code exactly: each fmuls rounds to single in the
 // order the game multiplies, and fctiwz truncates toward zero.
 #include "abi_bridge.h"
+#include "game_step.h"
 #include "memory.h"
 #include <initializer_list>
 
@@ -105,22 +106,26 @@ extern "C" void MH3_PlayerSkillTimers(CpuContext* ctx) {
             flags = 4;
         } else if (game(Pl_Skill_ck, {player, 0x96}) == 1) {
             flags = 2;
-            const int32_t window = int32_t(Memory::Read32(self + 0x188));
-            if (window > 0) Memory::Write32(self + 0x188, uint32_t(window - 1));
-            const int32_t timer = int32_t(Memory::Read32(self + 0x184));
-            if (timer <= 0) {
-                Memory::Write32(self + 0x184, uint32_t(period()));
-            } else if (timer - 1 > 0) {
-                Memory::Write32(self + 0x184, uint32_t(timer - 1));
-            } else {
-                Memory::Write32(self + 0x184, uint32_t(period()));
-                // 0x8045E620, inlined: the game's LCG rand.
-                const uint32_t seedAddress = saved.gpr[13] - 0x5138;
-                const uint32_t seed = Memory::Read32(seedAddress) * 0x41C64E6Du + 12345u;
-                Memory::Write32(seedAddress, seed);
-                const int32_t roll = int32_t((seed >> 16) & 0x7FFF);
-                if (roll % 3 != 0)
-                    Memory::Write32(self + 0x188, uint32_t(int32_t(F32(kWindowSeconds) * FrameRate())));
+            // Both countdowns run once per tick of game time (none on a short
+            // step, several on a long one): once per call at the stock step.
+            for (uint32_t tick = 0, ticks = GameStep::Ticks(); tick < ticks; ++tick) {
+                const int32_t window = int32_t(Memory::Read32(self + 0x188));
+                if (window > 0) Memory::Write32(self + 0x188, uint32_t(window - 1));
+                const int32_t timer = int32_t(Memory::Read32(self + 0x184));
+                if (timer <= 0) {
+                    Memory::Write32(self + 0x184, uint32_t(period()));
+                } else if (timer - 1 > 0) {
+                    Memory::Write32(self + 0x184, uint32_t(timer - 1));
+                } else {
+                    Memory::Write32(self + 0x184, uint32_t(period()));
+                    // 0x8045E620, inlined: the game's LCG rand.
+                    const uint32_t seedAddress = saved.gpr[13] - 0x5138;
+                    const uint32_t seed = Memory::Read32(seedAddress) * 0x41C64E6Du + 12345u;
+                    Memory::Write32(seedAddress, seed);
+                    const int32_t roll = int32_t((seed >> 16) & 0x7FFF);
+                    if (roll % 3 != 0)
+                        Memory::Write32(self + 0x188, uint32_t(int32_t(F32(kWindowSeconds) * FrameRate())));
+                }
             }
         }
     }

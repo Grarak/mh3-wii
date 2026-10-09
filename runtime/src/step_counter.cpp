@@ -40,9 +40,12 @@ constexpr uint32_t kVillageTalk = 0x806ACD48;   // village talk work
 constexpr uint32_t kVillageTalkSteps = kVillageTalk + 0x150; // u32
 // Steps in the area, advanced by 0x802E4C88 (tick sites).
 constexpr uint32_t kAreaSteps[] = {0x806C04E8, 0x806C02D8, 0x806C046C};
+// Quest clock steps (quest work+0x28), advanced by 0x803B0228 (tick sites).
+constexpr uint32_t kQuestSteps = 0x806C7D00;
 
 bool IsCounter(uint32_t address) {
     return address == kCounter || address == kPlaySteps || address == kVillageSteps || address == kVillageTalkSteps ||
+           address == kQuestSteps ||
            std::find(std::begin(kAreaSteps), std::end(kAreaSteps), address) != std::end(kAreaSteps);
 }
 
