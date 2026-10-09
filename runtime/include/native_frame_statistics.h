@@ -4,8 +4,9 @@
 
 namespace mh3::statistics {
 
-// One kernel thread-info observation, not process elapsed time or a sample
-// estimate. Sony documents runClocks as execution time in microseconds.
+// Execution time of this owner thread, not process elapsed time. Vita uses
+// kernel runClocks (microseconds); Linux uses CLOCK_THREAD_CPUTIME_ID. Affinity
+// is Vita's encoded mask or Linux CPU-index bits (low 32 CPUs), respectively.
 struct OwnerCpuSample {
     uint64_t running_us = 0;
     int32_t thread = -1;

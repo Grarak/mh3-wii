@@ -4,6 +4,11 @@
 #include <chrono>
 #ifdef __vita__
 #include <psp2/kernel/threadmgr.h>
+#elif defined(__linux__)
+#include <sched.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
 #endif
 
 namespace mh3::statistics {
@@ -84,6 +89,22 @@ mh3::statistics::OwnerCpuSample owner_cpu() noexcept {
         result.thread = thread;
         result.core = info.currentCpuId;
         result.affinity = info.currentCpuAffinityMask;
+        result.available = true;
+    }
+#elif defined(__linux__)
+    timespec time{};
+    const auto thread = syscall(SYS_gettid);
+    if (thread > 0 && clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time) == 0) {
+        result.running_us = uint64_t(time.tv_sec) * 1000000 + uint64_t(time.tv_nsec) / 1000;
+        result.thread = int32_t(thread);
+        result.core = sched_getcpu();
+        cpu_set_t affinity;
+        if (sched_getaffinity(0, sizeof(affinity), &affinity) == 0) {
+            uint32_t mask = 0;
+            for (unsigned core = 0; core < 32; ++core)
+                if (CPU_ISSET(core, &affinity)) mask |= uint32_t(1) << core;
+            result.affinity = int32_t(mask);
+        }
         result.available = true;
     }
 #endif

@@ -2,6 +2,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#ifdef __linux__
+#include <chrono>
+#include <thread>
+#endif
 
 #define CHECK(expression) do { \
     if (!(expression)) { \
@@ -53,5 +57,18 @@ int main() {
     stats.End(40000, true);
     const auto invalid = stats.Take(43000, {});
     CHECK(invalid.logical_frames == 2 && invalid.measured_frames == 0 && invalid.frame_wall_ns == 0);
+#ifdef __linux__
+    // The real owner clock excludes a sleeping thread's wall time. This gate
+    // catches accidentally sampling elapsed/process time instead of this CPU.
+    BeginNativeFrameStatistics();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+    while (std::chrono::steady_clock::now() < deadline) {}
+    EndNativeFrameStatistics(true);
+    const auto owner = TakeNativeFrameStatistics();
+    CHECK(owner.owner_running_available && owner.owner_thread > 0 && owner.owner_running_us > 0);
+    CHECK(owner.owner_running_us * 1000 < owner.window_ns / 2);
+    CHECK(owner.measured_frames == 1 && owner.logical_frames == 1);
+#endif
     std::puts("Native frame statistics: logical/rendered/skipped, frame wall and owner CPU scope PASS");
 }
