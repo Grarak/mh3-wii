@@ -80,9 +80,9 @@ struct Catalog {
 
     // source_epoch: what resolved resources, recipes, cull records and failed
     // draw tables depend on: the owner set (certified, retired or copied),
-    // the live blocks (retired or copied), disc loads and packs. Provenance
-    // that moves elsewhere (a string copied out of a loaded file, a buffer
-    // cleared) leaves it.
+    // disc loads and packs. Live blocks have their own version (live_version),
+    // and provenance that moves elsewhere (a string copied out of a loaded
+    // file, a buffer cleared) leaves both.
     uint64_t source_epoch = 0;
     FastMap<uint32_t, CachedOwner> owners;
     FastMap<uint64_t, CachedResource> resources;
@@ -867,10 +867,11 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     if (!copies.empty())
         ++live_version;
 
-    // Provenance copied elsewhere (sprintf's copies of disc strings, once a
-    // frame at the Deserted Island beach) changes no owner or live block: the
-    // draw thread's resolved resources and cull records stay valid.
-    if (retired_owner || retired_block || !copies.empty() || !owner_copies.empty())
+    // Only an owner change invalidates the draw thread's resolved resources
+    // and cull records: not provenance copied elsewhere (sprintf's copies of
+    // disc strings, once a frame at the Deserted Island beach) nor live
+    // blocks, which live_version covers.
+    if (retired_owner || !owner_copies.empty())
         InvalidateSourceCache(c, NativeSourceEpochReason::ResourceCopy, producer, destination, source, bytes, 0,
             (tracked_source ? NATIVE_EPOCH_TRACKED_SOURCE : 0u) | (tracked_destination ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) |
             (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u) |
@@ -898,7 +899,9 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 
     const bool retired_owner = RetireCertificates(address, bytes), retired_block = RetireLiveBlocks(address, bytes);
 
-    if (retired_owner || retired_block)
+    // A freed model buffer's copied materials (live blocks, a few frees a
+    // second at the Deserted Island beach) change only live_version.
+    if (retired_owner)
         InvalidateSourceCache(c, NativeSourceEpochReason::ResourceRetire, producer, address, 0, bytes, 0,
             (tracked ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) | (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u), frame);
 }

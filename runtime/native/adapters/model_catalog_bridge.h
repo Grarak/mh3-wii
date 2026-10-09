@@ -21,9 +21,9 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
  * a game-thread retirement of it waits for that draw. */
 bool NativeResourceReadByDraw(uint32_t address, uint32_t bytes);
 /* The structural producer token. Changes when an owner is certified, retired
- * or copied, a live block retired or copied, on disc loads and pack lifetime
- * events; never on a draw, a typed material-field update or provenance moving
- * outside owners and live blocks. */
+ * or copied, on disc loads and pack lifetime events; never on a draw, a typed
+ * material-field update, a live block change (ReadNativeLiveMaterialRevision)
+ * or provenance moving outside owners. */
 uint64_t ReadNativeModelStructureRevision();
 /* Advances whenever a live material block node is erased or fully
  * (re)published. While it is unchanged every live block keeps its node; an
