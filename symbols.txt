@@ -21,3 +21,42 @@
 # 0x80296BA4 compares the query against all three directed triangle edges,
 # preserving the triangle winding and returning an inside/outside class.
 80296ba4 TriangleWindingClassifyPoint
+# Dynamic village-movement call graph (trace-gated/trace-sweep). Names describe
+# observed data flow; the horizontal sweep's exact polygon semantics need PPC
+# comparison before replacing translated code. Existing export names for
+# GetGroundHit, hit_ground_comon, findInterSection[2/3], and player_control_move
+# are retained in the generated symbol table.
+# player_control_move -> 0x80208590 -> 0x802094EC; the latter invokes both
+# 0x8029513C (sweep setup) and 0x80291A60 (ground query) during movement.
+80208590 PlayerControlMovementDispatch
+802094ec PlayerMovementCollisionUpdate
+# Reads the land object's selector at +22 and forwards to hit_ground_comon.
+80291a60 GroundHitLandObjectQuery
+# Writes the hit surface ID through an output pointer and returns a hit flag.
+80291c20 GroundHitWithSurfaceId
+# Builds repeated swept positions and clears/accumulates collision flags at
+# player +868, then invokes 0x802952F4 -> 0x802920F0.
+8029513c PlayerSweepCollisionSetup
+802952f4 PlayerSweepCollisionAccumulate
+802920f0 LandSweepCandidateTest
+# LandSweepCandidateTest calls the long candidate/triangle traversal at
+# 0x80292A40, which calls 0x80293568. The latter can call 0x80293AE0 to
+# normalize a three-component vector (f0/f1, then scale through 0x80051454).
+80292a40 LandSweepTriangleTraversal
+80293568 LandSweepTriangleContact
+80293ae0 LandSweepNormalizeVector
+# The PAL Walk through Walls Gecko patch changes the lfs at 0x802951CC
+# inside PlayerSweepCollisionSetup and at 0x80293AE0 inside the normalizer.
+# These are instruction locations, not separate function entries.
+# This function reads the PAL float 6000.0 at 0x8079D8D4 through r2 - 9868;
+# the published PAL cheat overwrites that unrelated constant.
+80350114 ActorLargeDistanceThresholdCheck
+# Calls an inlined one-instruction leaf and returns the original r3 pointer.
+802955a8 SweepCollisionIdentityLeaf
+# A second active ground probe stores a surface ID at actor +1268.
+802b59e4 ActorGroundSurfaceProbe
+# The following overlay dispatcher/callees were inspected but were absent
+# from the Moga village movement trace; keep them labeled for field-map work.
+809f19cc OverlayKindDispatch
+809f1b48 OverlayKindZeroHandler
+809f25b4 OverlayKindOneIntersectionHandler
