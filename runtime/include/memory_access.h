@@ -166,6 +166,7 @@ MKW_MEMORY_NO_INLINE MKW_MEMORY_COLD void NoteWatchedWrite(uint32_t address, uin
 
 template <typename T>
 MKW_MEMORY_FORCE_INLINE T FlatLoad(uint32_t address) {
+    MH3_NOTE_GUEST_ALIAS(address);
     T value{};
     std::memcpy(&value, GuestFlat::Host(address), sizeof(T));
     return MaybeByteSwap(value);
@@ -173,6 +174,7 @@ MKW_MEMORY_FORCE_INLINE T FlatLoad(uint32_t address) {
 
 template <typename T>
 MKW_MEMORY_FORCE_INLINE void FlatStore(uint32_t address, T value) {
+    MH3_NOTE_GUEST_ALIAS(address);
 #ifdef MH3_WRITE_WATCH
     if (WriteWatched(address) || WriteWatched(address + sizeof(T) - 1)) [[unlikely]]
         NoteWatchedWrite(address, sizeof(T), static_cast<uint64_t>(value));
@@ -309,6 +311,7 @@ MKW_MEMORY_FORCE_INLINE uint8_t* ResolveRangeHost(uint32_t base, int32_t minOffs
 
     if (length == 0 || guestStart > UINT32_MAX - (length - 1)) [[unlikely]]
         return nullptr;
+    MH3_NOTE_GUEST_ALIAS(guestStart);
     return GuestFlat::Host(guestStart);
 }
 
@@ -691,26 +694,68 @@ MKW_MEMORY_FORCE_INLINE void PsqStore(uint32_t address, T value) {
 // Host API: hardware, RAM through any alias (physical included), or an
 // AccessViolation.
 namespace MemoryHost {
+// Host code reads and writes guest RAM straight through the flat window, with
+// no region checks (they took 12-16% of the devkit's game thread, inlined
+// into the native ports' Memory::Read and Write calls), at cached MEM1 and
+// MEM2 addresses only (GuestFlat::HostCached): the audit below found no other
+// kind in boot, the title, the village or the Alatreon quest. Hardware
+// registers have their own entry points (Memory::ReadHardware,
+// WriteHardware).
+//
+// MH3_AUDIT_HOST_ACCESS keeps the checked path and reports each place that
+// passes anything but a cached MEM1 or MEM2 address (memory.cpp), the way to
+// find a caller that still needs its own path.
+#ifdef MH3_AUDIT_HOST_ACCESS
+MKW_MEMORY_NO_INLINE void AuditHostAccess(uint32_t address, size_t length);
+
+template <typename T>
+bool CachedRam(uint32_t address) {
+    return address - 0x80000000u <= (24u << 20) - sizeof(T) || address - 0x90000000u <= (64u << 20) - sizeof(T);
+}
+#endif
+
 template <typename T>
 inline T Load(uint32_t address) {
-    if (const uint8_t* host = GuestFlat::HostPointer(address, sizeof(T))) {
-        T value{};
-        std::memcpy(&value, host, sizeof(T));
-        return MemoryInline::MaybeByteSwap(value);
-    }
+#ifdef MH3_AUDIT_HOST_ACCESS
+    if (!CachedRam<T>(address)) {
+        AuditHostAccess(address, sizeof(T));
 
-    return HardwareRead<T>(address);
+        if (const uint8_t* host = GuestFlat::HostPointer(address, sizeof(T))) {
+            T value;
+            std::memcpy(&value, host, sizeof(T));
+            return MemoryInline::MaybeByteSwap(value);
+        }
+
+        return HardwareRead<T>(address);
+    }
+#endif
+    T value;
+    std::memcpy(&value, GuestFlat::HostCached(address), sizeof(T));
+    return MemoryInline::MaybeByteSwap(value);
 }
 
 template <typename T>
 inline void Store(uint32_t address, T value) {
-    if (uint8_t* host = GuestFlat::HostPointer(address, sizeof(T))) {
-        const T swapped = MemoryInline::MaybeByteSwap(value);
-        std::memcpy(host, &swapped, sizeof(T));
+#ifdef MH3_AUDIT_HOST_ACCESS
+    if (!CachedRam<T>(address)) {
+        AuditHostAccess(address, sizeof(T));
+
+        if (uint8_t* host = GuestFlat::HostPointer(address, sizeof(T))) {
+            const T swapped = MemoryInline::MaybeByteSwap(value);
+            std::memcpy(host, &swapped, sizeof(T));
+            return;
+        }
+
+        HardwareWrite<T>(address, value);
         return;
     }
-
-    HardwareWrite<T>(address, value);
+#endif
+#ifdef MH3_WRITE_WATCH
+    MemoryInline::FlatStore<T>(address, value);
+#else
+    const T swapped = MemoryInline::MaybeByteSwap(value);
+    std::memcpy(GuestFlat::HostCached(address), &swapped, sizeof(T));
+#endif
 }
 } // namespace MemoryHost
 

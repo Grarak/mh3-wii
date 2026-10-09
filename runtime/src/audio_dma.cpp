@@ -32,7 +32,7 @@ NativeAudioDmaStatistics statistics;
 Clock::time_point previousEnabledService;
 bool previousEnabledServiceValid = false;
 uint32_t Rate() {
-    return (Memory::Read32(0xCD006C00) & 0x40) ? 32000 : 48000;
+    return (Memory::ReadHardware32(0xCD006C00) & 0x40) ? 32000 : 48000;
 }
 } // namespace
 

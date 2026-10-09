@@ -12,6 +12,18 @@ endif()
 
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
 option(MH3_WRITE_WATCH "Debug: report the guest code storing to MH3_WRITE_WATCH=START,LENGTH (rebuilds all generated code)" OFF)
+option(MH3_AUDIT_HOST_ACCESS "Debug: keep the checked host memory path and report each place passing anything but cached RAM" OFF)
+
+if(MH3_AUDIT_HOST_ACCESS)
+  add_compile_definitions(MH3_AUDIT_HOST_ACCESS=1)
+endif()
+
+option(MH3_AUDIT_GUEST_ALIAS "Debug: report each place (translated or native) touching guest memory outside cached MEM1/MEM2 (rebuilds all generated code)" OFF)
+
+if(MH3_AUDIT_GUEST_ALIAS)
+  add_compile_definitions(MH3_AUDIT_GUEST_ALIAS=1)
+endif()
+
 option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinations and log host accesses" OFF)
 
 # Development-only runtime features, compiled out of release builds: MH3_STATS

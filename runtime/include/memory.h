@@ -53,6 +53,13 @@ class Memory {
     static void WriteFloat32(uint32_t addr, double val);
     static void WriteFloat64(uint32_t addr, double val);
 
+    // Guest RAM through the flat window, unchecked (memory_access.h); the
+    // hardware registers (MMIO, the GX FIFO, the EFB) only through these.
+    static uint16_t ReadHardware16(uint32_t addr);
+    static uint32_t ReadHardware32(uint32_t addr);
+    static void WriteHardware16(uint32_t addr, uint16_t val);
+    static void WriteHardware32(uint32_t addr, uint32_t val);
+
     // Read32 for a caller that recovers from an address no RAM or device
     // handles: false where Read32 raises an access violation.
     static bool TryRead32(uint32_t addr, uint32_t& value);

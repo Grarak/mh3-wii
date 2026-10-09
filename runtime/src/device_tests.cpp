@@ -243,9 +243,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         if (ai.Read(8, 10000000) != 0x20 || !(ai.Read(0, 10000000) & 8))
             MH3_THROW(std::runtime_error("AI counter wrap failed"));
 
-        Memory::Write32(0xCD006C04, 0x1234);
+        Memory::WriteHardware32(0xCD006C04, 0x1234);
 
-        if (Memory::Read32(0xCC006C04) != 0x1234 || Memory::Read32(0x0D006C04) != 0x1234)
+        if (Memory::ReadHardware32(0xCC006C04) != 0x1234 || Memory::ReadHardware32(0x0D006C04) != 0x1234)
             MH3_THROW(std::runtime_error("AI register aliases failed"));
 
         uint32_t value;
@@ -269,14 +269,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             MH3_THROW(std::runtime_error("WUD startup is not idempotent"));
 
         *cpu = saved;
-        Memory::Write32(0xCD0000C0, 0x100);
+        Memory::WriteHardware32(0xCD0000C0, 0x100);
 
-        if (Memory::Read32(0x0D0000C0) != 0x100)
+        if (Memory::ReadHardware32(0x0D0000C0) != 0x100)
             MH3_THROW(std::runtime_error("Sensor-bar GPIO alias failed"));
 
-        Memory::Write32(0xCD0000C0, 0);
+        Memory::WriteHardware32(0xCD0000C0, 0);
 
-        if (CheckRejections && !Rejects([] { Memory::Write32(0xCD0000C0, 2); }))
+        if (CheckRejections && !Rejects([] { Memory::WriteHardware32(0xCD0000C0, 2); }))
             MH3_THROW(std::runtime_error("Unknown GPIO output was accepted"));
     }
 
@@ -342,39 +342,39 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         *cpu = saved;
     }
 
-    if (Memory::Read16(0xCC002002) != 0x0101)
+    if (Memory::ReadHardware16(0xCC002002) != 0x0101)
         MH3_THROW(std::runtime_error("VI initial PAL mode failed"));
 
-    Memory::Write16(0xCC002048, 0x2828);
+    Memory::WriteHardware16(0xCC002048, 0x2828);
 
-    if (Memory::Read16(0x0C002048) != 0x2828)
+    if (Memory::ReadHardware16(0x0C002048) != 0x2828)
         MH3_THROW(std::runtime_error("VI register alias/storage failed"));
 
-    const uint16_t line = Memory::Read16(0xCC00202C);
-    const uint16_t sample = Memory::Read16(0xCC00202E);
+    const uint16_t line = Memory::ReadHardware16(0xCC00202C);
+    const uint16_t sample = Memory::ReadHardware16(0xCC00202E);
 
     if (line < 1 || line > 625 || sample < 1 || sample > 864)
         MH3_THROW(std::runtime_error("VI beam position out of PAL bounds"));
 
     BeginVideoRetrace();
 
-    if (Memory::Read16(0xCC00202C) != 1 || !(Memory::Read16(0xCC002030) & 0x8000) || VideoRetracePeriodNs() != 20000000)
+    if (Memory::ReadHardware16(0xCC00202C) != 1 || !(Memory::ReadHardware16(0xCC002030) & 0x8000) || VideoRetracePeriodNs() != 20000000)
         MH3_THROW(std::runtime_error("VI first PAL retrace latch failed"));
 
-    Memory::Write16(0xCC002030, Memory::Read16(0xCC002030) & 0x7FFF);
+    Memory::WriteHardware16(0xCC002030, Memory::ReadHardware16(0xCC002030) & 0x7FFF);
     EndVideoRetrace();
     BeginVideoRetrace();
 
-    if (Memory::Read16(0xCC00202C) != 313 || !(Memory::Read16(0xCC002034) & 0x8000) || (Memory::Read16(0xCC002030) & 0x8000))
+    if (Memory::ReadHardware16(0xCC00202C) != 313 || !(Memory::ReadHardware16(0xCC002034) & 0x8000) || (Memory::ReadHardware16(0xCC002030) & 0x8000))
         MH3_THROW(std::runtime_error("VI second-field/acknowledgement failed"));
 
     EndVideoRetrace();
-    Memory::Write16(0xCC002002, 5); // enabled, non-interlaced NTSC
+    Memory::WriteHardware16(0xCC002002, 5); // enabled, non-interlaced NTSC
     BeginVideoRetrace();
     EndVideoRetrace();
     BeginVideoRetrace();
 
-    if (Memory::Read16(0xCC00202C) != 1 || VideoRetracePeriodNs() != 16683333)
+    if (Memory::ReadHardware16(0xCC00202C) != 1 || VideoRetracePeriodNs() != 16683333)
         MH3_THROW(std::runtime_error("VI non-interlaced retrace failed"));
 
     EndVideoRetrace();

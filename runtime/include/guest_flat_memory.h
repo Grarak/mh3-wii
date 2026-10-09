@@ -60,6 +60,31 @@ inline uint8_t* Host(uint32_t guestAddress) noexcept {
 #endif
 }
 
+#ifdef MH3_AUDIT_GUEST_ALIAS
+// MH3_AUDIT_GUEST_ALIAS: each place that reads or writes guest memory at an
+// address other than cached MEM1 or MEM2 (uncached, physical, locked cache),
+// once (memory.cpp): the functions that need Host's alias folding.
+[[gnu::noinline, gnu::cold]] void NoteGuestAlias(uint32_t address);
+#define MH3_NOTE_GUEST_ALIAS(address)                                       \
+    if (((address) >> 28) != 0x8 && ((address) >> 28) != 0x9) [[unlikely]] \
+    GuestFlat::NoteGuestAlias(address)
+#else
+#define MH3_NOTE_GUEST_ALIAS(address)
+#endif
+
+// Host for a cached MEM1 or MEM2 address (0x80000000-0x817FFFFF,
+// 0x90000000-0x93FFFFFF), the only kind host code passes: one add. On the
+// Vita, Host folds the uncached, physical and locked-cache aliases into one
+// window (a mask, a shift and an or more per access); the cached addresses
+// sit at their offset from 0x80000000 there anyway.
+inline uint8_t* HostCached(uint32_t guestAddress) noexcept {
+#if defined(__vita__) || defined(__EMSCRIPTEN__)
+    return reinterpret_cast<uint8_t*>(uintptr_t(uint32_t(kGuestBase - 0x80000000u + guestAddress)));
+#else
+    return Host(guestAddress);
+#endif
+}
+
 // Reserves the window and maps MEM1, MEM2 and the locked cache into it from a
 // fresh shared-memory object (zero filled), then installs the fault reporter.
 // Throws std::runtime_error when the window is already occupied. Calling it

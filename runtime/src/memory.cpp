@@ -12,6 +12,12 @@
 #include <cstdlib>
 #include <sstream>
 #include <type_traits>
+#if defined(MH3_AUDIT_HOST_ACCESS) || defined(MH3_AUDIT_GUEST_ALIAS)
+#include <cstdio>
+#include <mutex>
+#include <set>
+#include <utility>
+#endif
 
 namespace {
 uint32_t sensorBarOutput = 0;
@@ -84,6 +90,46 @@ T HardwareRead(uint32_t address) {
 
     Unmapped(address, sizeof(T));
 }
+
+uint16_t Memory::ReadHardware16(uint32_t address) {
+    return HardwareRead<uint16_t>(address);
+}
+
+uint32_t Memory::ReadHardware32(uint32_t address) {
+    return HardwareRead<uint32_t>(address);
+}
+
+void Memory::WriteHardware16(uint32_t address, uint16_t value) {
+    HardwareWrite<uint16_t>(address, value);
+}
+
+void Memory::WriteHardware32(uint32_t address, uint32_t value) {
+    HardwareWrite<uint32_t>(address, value);
+}
+#ifdef MH3_AUDIT_GUEST_ALIAS
+// Once per calling place: the address and the caller, for llvm-symbolizer.
+void GuestFlat::NoteGuestAlias(uint32_t address) {
+    static std::mutex lock;
+    static std::set<std::pair<const void*, uint32_t>> reported;
+    const void* caller = __builtin_return_address(0);
+    std::lock_guard guard(lock);
+
+    if (reported.insert({caller, address >> 24}).second)
+        std::fprintf(stderr, "MH3 alias: %08x from %p\n", unsigned(address), caller);
+}
+#endif
+#ifdef MH3_AUDIT_HOST_ACCESS
+// Once per calling place: the address and the caller, for llvm-symbolizer.
+void MemoryHost::AuditHostAccess(uint32_t address, size_t length) {
+    static std::mutex lock;
+    static std::set<const void*> reported;
+    const void* caller = __builtin_return_address(0);
+    std::lock_guard guard(lock);
+
+    if (reported.insert(caller).second)
+        std::fprintf(stderr, "MH3 audit: host access to %08x (%zu bytes) from %p\n", unsigned(address), length, caller);
+}
+#endif
 
 bool Memory::TryRead32(uint32_t address, uint32_t& value) {
     if (const uint8_t* host = GuestFlat::HostPointer(address, sizeof(value))) {

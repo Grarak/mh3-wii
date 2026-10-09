@@ -105,7 +105,10 @@ inline void PpcWritePairPsqInline(uint32_t addr, T first, T second)
 inline double PpcLoadPairPsqFloatFastInline(uint32_t addr)
 {
     if (!MKW_PSQ_MEM::PsqHardware(addr)) [[likely]]
+    {
+        MH3_NOTE_GUEST_ALIAS(addr);
         return PpcLoadPairPsqFloatFromHostInline(GuestFlat::Host(addr));
+    }
     return PpcBitCastToDoubleInline(
         PpcLoadPairPsqFloatBitsPackedInline(MKW_PSQ_MEM::PsqLoad<uint64_t>(addr)));
 }
@@ -158,6 +161,7 @@ inline void PpcStorePairPsqFloatFastInline(uint32_t addr, double value)
 {
     if (!MKW_PSQ_MEM::PsqHardware(addr)) [[likely]]
     {
+        MH3_NOTE_GUEST_ALIAS(addr);
         PpcStorePairPsqFloatToHostInline(GuestFlat::Host(addr), value);
         return;
     }
@@ -238,6 +242,7 @@ MKW_PPC_FORCE_INLINE void PpcStorePairPsqU8Scale61FastInline(
     }
 
     const uint16_t packed = PpcQuantizePairPsqU8Scale61PackedInline(value);
+    MH3_NOTE_GUEST_ALIAS(addr);
     BigEndian::Write16(GuestFlat::Host(addr), packed);
 }
 
