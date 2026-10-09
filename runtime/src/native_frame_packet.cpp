@@ -382,18 +382,18 @@ void RethrowFailure() {
 // Whether packet `next` may be recorded: the packet before it in its slot is
 // one the render thread finished, or skipped (it took a newer one and never
 // goes back).
-bool SlotFree(uint64_t next) {
+bool SlotReleased(uint64_t next) {
     if (next <= kNativeFramePacketSlots || !running.load(std::memory_order_relaxed))
         return true;
 
     const uint64_t previous = next - kNativeFramePacketSlots;
+    return completed.load(std::memory_order_acquire) >= previous || taken.load(std::memory_order_acquire) > previous;
+}
 
-    if (!(completed.load(std::memory_order_acquire) >= previous || taken.load(std::memory_order_acquire) > previous))
-        return false;
-
-    // Its quads were drawn in place: the GPU must be done with them too (set
-    // by the render thread before it advanced `completed`).
-    return aurora::gl::gpu_fence_done(packets[next % kNativeFramePacketSlots].gpuDone);
+// Released, and its quads, drawn in place, are no longer read by the GPU (the
+// fence is set by the render thread before it advanced `completed`).
+bool SlotFree(uint64_t next) {
+    return SlotReleased(next) && (!running.load(std::memory_order_relaxed) || aurora::gl::gpu_fence_done(packets[next % kNativeFramePacketSlots].gpuDone));
 }
 
 #ifdef MH3_DEVELOPMENT
@@ -1651,7 +1651,8 @@ void PaceNativeFramePacket() {
         return;
 
     const uint64_t next = sequence + 1;
-    const auto ready = [next] { return paced ? taken.load(std::memory_order_acquire) + 1 >= next : SlotFree(next); };
+    const auto released = [next] { return paced ? taken.load(std::memory_order_acquire) + 1 >= next : SlotReleased(next); };
+    const auto ready = [&] { return released() && SlotFree(next); };
 
     // Loaded before the check: a take after the check moves the signal on.
     uint32_t seen = takenSignal.Load();
@@ -1663,7 +1664,9 @@ void PaceNativeFramePacket() {
     uint64_t report = start + 2'000'000'000;
 #endif
     while (!ready() && !failed.load(std::memory_order_acquire)) {
-        seen = takenSignal.AwaitChangeFor(seen, 50, 100000);
+        // Released but still read by the GPU: no signal marks its fence, so
+        // poll it.
+        seen = takenSignal.AwaitChangeFor(seen, 50, released() ? 250 : 100000);
 #ifdef MH3_DEVELOPMENT
         // The statistics come from this thread, so a stall reports itself.
         if (const uint64_t now = RenderMonotonicNs(); now >= report) {
