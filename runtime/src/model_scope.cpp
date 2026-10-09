@@ -659,7 +659,11 @@ uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_
     current_operator = {};
     operator_address = 0;
     const uint32_t material = Resource(material_reference), shape = Resource(shape_reference);
-    if (material && shape && (Memory::Read8(material + 0x20) || Memory::Read8(material + 0x21) || Memory::Read8(material + 0x22))) {
+    // Without a material, a shape or an indirect method the operator stays
+    // inactive (mh3_matrix_runtime_indirect would only clear its records).
+    if (!material || !shape || !(Memory::Read8(material + 0x20) || Memory::Read8(material + 0x21) || Memory::Read8(material + 0x22)))
+        return 0;
+    {
         uint32_t parent = 0;
         Checked(mh3_res_runtime_shape_parent(&MH3NativeResourceMemory(), shape_reference, &parent));
         const auto owner = ResolveNativeModelOwner(parent);

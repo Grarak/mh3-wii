@@ -112,7 +112,6 @@ struct Model {
     }
 };
 struct Submit {
-    CpuContext* cpu; // null on the render thread: the natives are called directly
     const Model& model;
     uint32_t replacement;
     References refs;
@@ -134,14 +133,11 @@ struct Submit {
                 Memory::Write32(r.bindings + (i + 11) * 4, bindings.vertex_tables[i]);
         }
         const uint32_t bindings = s.replacement ? r.bindings : 0;
-        if (!s.cpu) {
-            const uint32_t descriptor = NativeModelIndirectMatrices(r.material, r.node, r.shape);
-            DispatchNativeModel({r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor});
-            return MH3_RES_OK;
-        }
-        GuestCall call{s.cpu};
-        const uint32_t descriptor = call.Call<0x80077814>({r.material, r.node, r.shape});
-        call.Call<0x80076A58>({r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor});
+        // 80077814 and 80076A58 are the native ModelIndirectMatrices and
+        // ModelDisplayListDispatch; neither reads guest registers or the
+        // stack, so call them directly instead of through a guarded guest call.
+        const uint32_t descriptor = NativeModelIndirectMatrices(r.material, r.node, r.shape);
+        DispatchNativeModel({r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor});
         return MH3_RES_OK;
     }
 };
@@ -155,7 +151,7 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
     const Model model(resource);
     GuestFrame frame(cpu, 0x80);
     const References refs{frame[0x10], frame[0x14], frame[0x18], frame[0x20]};
-    Submit submit{cpu, model, replacement, refs};
+    Submit submit{model, replacement, refs};
     BeginNativeModelDraw();
     if (sorted)
         Checked(mh3_model_draw_sorted_read(&model.value, count, options, ReadRecord, &stream, Submit::Emit, &submit, nullptr));
