@@ -45,6 +45,10 @@ enum MH3SplitFamily : unsigned {
     MH3_SPLIT_G3D_VIEW,
     MH3_SPLIT_G3D_UPDATE,
     MH3_SPLIT_G3D_OTHER,
+    // The frame's draw around the scene (frame_draw.cpp): the 2D layers and
+    // the UI sprites.
+    MH3_SPLIT_LAYERS,
+    MH3_SPLIT_UI,
     MH3_SPLIT_FAMILIES
 };
 

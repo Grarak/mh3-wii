@@ -25,7 +25,7 @@ harness records as `[TTY0]` lines in `RUN/console.txt`.
 | `MH3 native work: render CPU` | the render thread's scheduled CPU, thread ID, core |
 | `MH3 native work: displayed ... backlog ... callback wait` | completed display flips, queued display entries, pending GXM scenes, display errors and the core-0 display callback's wait |
 | `MH3 frame split:` | the game frame timed as logic (input, scene update, tasks, timers) and draw (DrawScene, fonts, fade, HUD, movie) |
-| `MH3 draw split:`, `MH3 scene split:` | the draw pass by family (traverse, model, effect, ...) and DrawScene's setup, buckets and post effects |
+| `MH3 draw split:`, `MH3 scene split:` | the draw pass by family (traverse, model, effect, ..., the 2D layers and UI sprites around the scene) and DrawScene's setup, buckets and post effects |
 | `MH3 packet snapshots:` | records per frame and state snapshots captured/stored per component |
 | `MH3 scene cull:`, `MH3 model cull:` | scene models culled on the game thread, mesh draws culled on the render thread |
 | `MH3 native draw memory:`, `MH3 native CDRAM:`, `MH3 Vita free:` / `MH3 Vita budget:` | per-frame GPU memory peaks, texture/model residency, free memory partitions |
