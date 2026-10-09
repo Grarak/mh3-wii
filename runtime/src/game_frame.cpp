@@ -561,11 +561,12 @@ bool DrawOverlap() {
         DrawThread::Thread().SetCore(3);
         GuestWorker::Thread().SetCore(0);
 
-        // Alone on its core, the draw thread spins between its jobs (the
-        // scene walk, then the draw, each frame) instead of parking: a
-        // parked wake took 0.1-1.9 ms on the devkit, which the game thread
-        // waited out at the walk's join.
-        DrawThread::Thread().SetIdleSpin(20000);
+        // The draw thread spins 1 ms after a job, which catches the next of
+        // a burst (the scene draw shortly after the walk), then parks:
+        // spinning through all its idle time kept its core busy for nothing
+        // and starved other threads (a parked wake costs 0.1-1.9 ms on the
+        // devkit).
+        DrawThread::Thread().SetIdleSpin(1000);
         EffectStep::SetOverlap(true);
         SetNativeFrameOverlap(true);
         SetModelInvalidateDeferral(true);
