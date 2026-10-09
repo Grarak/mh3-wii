@@ -1,6 +1,7 @@
 // Thin resource/material ABI boundary. Plain CPU records are decoded in C;
 // certified list groups come from predecoded M3MP/live producers, never FIFO.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -17,7 +18,7 @@ const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 constexpr uint32_t genmode = 0x80685300, sync_address = 0x80796db0;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native material preparation failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native material preparation failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {

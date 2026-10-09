@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI adapters for typed texture matrices and view-array ownership.
 // Pure resource/math logic is C11; no GX, FIFO or guest callback is invoked.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -12,7 +13,7 @@
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native texture matrix input failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native texture matrix input failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -70,7 +71,7 @@ extern "C" void MH3_CalcTextureSrtXsi(CpuContext* cpu) {
     const auto srt = Srt(cpu->gpr[5], cpu->gpr[6]);
 
     if (!(srt.flags & 1))
-        throw std::runtime_error("XSI texture SRT lacks the existence flag");
+        MH3_THROW(std::runtime_error("XSI texture SRT lacks the existence flag"));
 
     if (((srt.flags >> 1) & 7) == 7) {
         cpu->gpr[3] = 0;
@@ -110,7 +111,7 @@ void LoadNativeModelTextureSrt(uint32_t resource) {
         const uint32_t builtin = mode < 5 ? mode : 0;
 
         if (Memory::Read32(entry) != functions[builtin] || Memory::Read32(entry + 4) != kinds[builtin])
-            throw std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode));
+            MH3_THROW(std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode)));
 
         if (builtin) {
             mh3_texture_mapping_input input{};

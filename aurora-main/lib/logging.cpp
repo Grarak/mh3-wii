@@ -19,26 +19,22 @@ namespace aurora {
 extern AuroraConfig g_config;
 
 void Module::show_fatal_dialog(const char* module, std::string_view message) noexcept {
-  try {
-    std::string body = "Aurora stopped because of a fatal renderer error";
+  std::string body = "Aurora stopped because of a fatal renderer error";
 
-    if (module != nullptr && module[0] != '\0') {
-      body += " in ";
-      body += module;
-    }
-
-    body += ":\n\n";
-    body.append(message.data(), message.size());
-    body += "\n\nSee the console and log files for more details.";
-#if defined(_WIN32)
-    ::MessageBoxA(nullptr, body.c_str(), "Aurora fatal error",
-                  MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
-#else
-    std::fprintf(stderr, "[aurora] fatal dialog: %s\n", body.c_str());
-#endif
-  } catch (...) {
-    // Fatal reporting must never hide the original abort.
+  if (module != nullptr && module[0] != '\0') {
+    body += " in ";
+    body += module;
   }
+
+  body += ":\n\n";
+  body.append(message.data(), message.size());
+  body += "\n\nSee the console and log files for more details.";
+#if defined(_WIN32)
+  ::MessageBoxA(nullptr, body.c_str(), "Aurora fatal error",
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
+#else
+  std::fprintf(stderr, "[aurora] fatal dialog: %s\n", body.c_str());
+#endif
 }
 
 void log_internal(const AuroraLogLevel level, const char* module, const char* message,

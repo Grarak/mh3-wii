@@ -23,6 +23,7 @@
 //     0x42), 0x54 last particle calced.
 //   Particle: 0x0C life status, 0xD8 evaluation state, 0xE2 pending children.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -46,7 +47,7 @@ using MemoryInline::FlatWrite32;
 [[noreturn]] void Panic(const char* what, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic: %s (%u)", what, value);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 // nw4r::ut::List_GetNext (0x805022E0): the head for 0, else the link's next.

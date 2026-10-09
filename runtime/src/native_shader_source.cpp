@@ -25,6 +25,7 @@
 // block (binding 5 / fragment BUFFER[3], mesh vertex BUFFER[3]); coefficients
 // are static * picked animated palette entries, evaluated from uniforms only.
 #include "native_shader_source.h"
+#include "fatal.h"
 #include <cstdlib>
 #include <set>
 #include <stdexcept>
@@ -940,7 +941,7 @@ std::string GlslFragmentSource(const NativeShaderFragmentKey& key) {
 }
 
 [[noreturn]] void Invalid(const char* message) {
-    throw std::invalid_argument(std::string("Native shader variant outside the bank domain: ") + message);
+    MH3_THROW(std::invalid_argument(std::string("Native shader variant outside the bank domain: ") + message));
 }
 } // namespace
 

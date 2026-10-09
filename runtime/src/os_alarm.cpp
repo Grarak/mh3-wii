@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "os_alarm.h"
 #include "scope_exit.h"
 #include <cstdio>
@@ -28,7 +29,7 @@ void ServiceOsAlarms(CpuContext* cpu) {
             break;
 
         if (!Memory::Contains(alarm, 0x30))
-            throw std::runtime_error("Invalid OS alarm queue entry");
+            MH3_THROW(std::runtime_error("Invalid OS alarm queue entry"));
 
         InvokeIndirectCpu(0x804D5400, cpu); // __OSGetSystemTime, same clock as InsertAlarm
         const uint64_t now = (uint64_t(cpu->gpr[3]) << 32) | cpu->gpr[4];
@@ -42,7 +43,7 @@ void ServiceOsAlarms(CpuContext* cpu) {
         const auto callback = Memory::Read32(alarm);
 
         if (!callback)
-            throw std::runtime_error("Queued OS alarm has no callback");
+            MH3_THROW(std::runtime_error("Queued OS alarm has no callback"));
 
         Memory::Write32(queue, next);
 

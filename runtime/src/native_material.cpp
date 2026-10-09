@@ -1,6 +1,7 @@
 // Typed native material state, pure equation generation, and direct frame-slot
 // uniforms. No GX state, command-list decoder, FIFO, or GPU wait participates.
 #include "frame_split.h"
+#include "fatal.h"
 #include "bytes_equal.h"
 #include "native_graphics.h"
 #include "model_assets.h"
@@ -107,7 +108,7 @@ void Changed(NativeStateComponent component, NativeOwner owner = NativeOwner::Ga
 
 void Check(mh3_res_status status, const char* operation) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error(std::string(operation) + ": status " + std::to_string(status));
+        MH3_THROW(std::runtime_error(std::string(operation) + ": status " + std::to_string(status)));
 }
 
 void ImportRaster(const mh3_raster_state& raster) {
@@ -148,7 +149,7 @@ const mh3_native_texture_binding& Texture(unsigned unit) {
     const auto* binding = GetNativeTextureBinding(unit, NativeOwner::Render);
 
     if (!binding)
-        throw std::runtime_error("Native material texture " + std::to_string(unit) + " has no typed producer");
+        MH3_THROW(std::runtime_error("Native material texture " + std::to_string(unit) + " has no typed producer"));
 
     return *binding;
 }
@@ -409,7 +410,7 @@ void RequireEarlyDepth(const mh3_shade_material& shading) {
     const auto& raster = GetNativeDrawState(NativeOwner::Render).raster;
 
     if (render.depthBeforeTexture && raster.depth_test && raster.depth_write && shading.alpha_test)
-        throw std::runtime_error("Native early depth write with alpha discard is unsupported");
+        MH3_THROW(std::runtime_error("Native early depth write with alpha discard is unsupported"));
 }
 
 // Copies the scene block into the frame's uniform memory once per frame and
@@ -793,7 +794,7 @@ aurora::gl::UniformBlock RingBlock(uint32_t offset) {
     uint8_t* data = ringState.data.load(std::memory_order_acquire);
 
     if (!data || offset > RingSegments * RingSegmentBytes - AnimatedBytes)
-        throw std::runtime_error("Animated ring reference without a ring section");
+        MH3_THROW(std::runtime_error("Animated ring reference without a ring section"));
 
     return {data + offset, 0, 0, AnimatedBytes};
 }
@@ -843,7 +844,7 @@ std::optional<aurora::gl::UniformBlock> PersistentAnimatedBlock(uint32_t index) 
     auto& p = persistentAnimated;
 
     if (!p.slots || index >= MaxPersistentAnimated)
-        throw std::runtime_error("Persistent Animated reference out of range");
+        MH3_THROW(std::runtime_error("Persistent Animated reference out of range"));
 
     auto& slot = p.slots[index];
 
@@ -1197,7 +1198,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     const ShadeEntry* externalEntry = external.set ? RecordOf(external.material) : nullptr;
 
     if (external.set && !externalEntry)
-        throw std::runtime_error("Material GPU draw references no material record");
+        MH3_THROW(std::runtime_error("Material GPU draw references no material record"));
 
     const auto& entry = externalEntry ? *externalEntry : ShadeMaterial();
     const auto& shading = entry.shading;
@@ -1205,7 +1206,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     const auto* baked = MaterialGpu() || external.set ? RecordBlock(entry) : nullptr;
 
     if (external.set && !baked)
-        throw std::runtime_error("Material GPU draw references a material without a GPU block");
+        MH3_THROW(std::runtime_error("Material GPU draw references a material without a GPU block"));
 
     const bool gpu = baked != nullptr;
     AuroraNativeUniforms memory{};
@@ -2146,7 +2147,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     const auto resident = ResolveNativeModelGPU(mesh);
 
     if (mesh.material != &render.material)
-        throw std::runtime_error("Model draw material is not the render owner's");
+        MH3_THROW(std::runtime_error("Model draw material is not the render owner's"));
     // Residency and demand above stay counted: a culled mesh keeps its assets.
     if (CullNativeModelMesh(mesh))
         return;

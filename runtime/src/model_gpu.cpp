@@ -1,5 +1,6 @@
 // Own immutable GPU payloads independently of changing material/pose state.
 #include "../native/adapters/model_gpu_bridge.h"
+#include "fatal.h"
 #include "gl/gl.hpp"
 #include "gfx/native_mesh_layout.hpp"
 #include <map>
@@ -30,14 +31,14 @@ uintptr_t lastHandle = 0;
 const Resident* lastResident = nullptr;
 void Owner() {
     if (!aurora::gl::on_render_thread())
-        throw std::runtime_error("Model GPU ownership outside graphics owner");
+        MH3_THROW(std::runtime_error("Model GPU ownership outside graphics owner"));
 }
 
 aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
     using F = aurora::gl::MeshAttributeFormat;
 
     if (!source.stride || source.stride > UINT16_MAX)
-        throw std::runtime_error("Compact model stride exceeds hardware limits");
+        MH3_THROW(std::runtime_error("Compact model stride exceeds hardware limits"));
 
     aurora::gl::MeshLayout out;
     out.stride = uint16_t(source.stride);
@@ -64,11 +65,11 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
             format = F::U8;
             break;
         default:
-            throw std::runtime_error("Unsupported compact model attribute format");
+            MH3_THROW(std::runtime_error("Unsupported compact model attribute format"));
         }
 
         if (a.semantic > 14)
-            throw std::runtime_error("Compact model needs an unsupported attribute producer");
+            MH3_THROW(std::runtime_error("Compact model needs an unsupported attribute producer"));
 
         out.attributes.push_back({a.offset, uint8_t(a.semantic), a.components, format});
     }
@@ -82,19 +83,19 @@ void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t han
     Owner();
 
     if (!handle || !generation || !path || residents.contains(handle))
-        throw std::runtime_error("Invalid or duplicate model GPU registration");
+        MH3_THROW(std::runtime_error("Invalid or duplicate model GPU registration"));
 
     Resident next{&pack, generation, std::make_unique<aurora::gl::NativeMeshBuffer>(path, pack.gpu_file_offset, pack.gpu_bytes), {}, {}};
     auto bound = pack;
     const auto bindStatus = mh3_mesh_pack_bind_gpu(&bound, {next.buffer->data(), next.buffer->size()});
 
     if (bindStatus != MH3_PACK_OK)
-        throw std::runtime_error("Compact model GPU binding failed (status " + std::to_string(bindStatus) + "): " + path);
+        MH3_THROW(std::runtime_error("Compact model GPU binding failed (status " + std::to_string(bindStatus) + "): " + path));
 
     const auto indexStatus = mh3_mesh_pack_validate_indices(&bound);
 
     if (indexStatus != MH3_PACK_OK)
-        throw std::runtime_error("Compact model GPU index validation failed (status " + std::to_string(indexStatus) + "): " + path);
+        MH3_THROW(std::runtime_error("Compact model GPU index validation failed (status " + std::to_string(indexStatus) + "): " + path));
 
     next.layouts.reserve(pack.counts[MH3_PACK_LAYOUTS]);
 
@@ -102,7 +103,7 @@ void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t han
         mh3_pack_layout layout{};
 
         if (mh3_mesh_pack_layout(&bound, i, &layout) != MH3_PACK_OK)
-            throw std::runtime_error("Invalid model vertex layout");
+            MH3_THROW(std::runtime_error("Invalid model vertex layout"));
 
         next.layouts.push_back(Layout(layout));
     }
@@ -111,7 +112,7 @@ void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t han
 
     for (unsigned i = 0; i < next.meshes.size(); ++i)
         if (mh3_mesh_pack_mesh(&bound, i, &next.meshes[i]) != MH3_PACK_OK)
-            throw std::runtime_error("Invalid resident model mesh");
+            MH3_THROW(std::runtime_error("Invalid resident model mesh"));
     residents.emplace(handle, std::move(next));
     ++residentsRevision;
 
@@ -124,7 +125,7 @@ void UnregisterNativeModelGPU(uintptr_t handle, uint64_t generation) {
     const auto found = residents.find(handle);
 
     if (found == residents.end() || found->second.generation != generation)
-        throw std::runtime_error("Stale model GPU retirement");
+        MH3_THROW(std::runtime_error("Stale model GPU retirement"));
 
     found->second.pack->gpu = {};
 
@@ -173,7 +174,7 @@ NativeModelGPUView ResolveNativeModelGPU(const mh3_resolved_mesh_submit& mesh) {
         const auto found = residents.find(mesh.resident_handle);
 
         if (found == residents.end())
-            throw std::runtime_error("Stale or unregistered model GPU submission");
+            MH3_THROW(std::runtime_error("Stale or unregistered model GPU submission"));
 
         lastHandle = mesh.resident_handle;
         lastResident = &found->second;
@@ -182,12 +183,12 @@ NativeModelGPUView ResolveNativeModelGPU(const mh3_resolved_mesh_submit& mesh) {
     const auto& resident = *lastResident;
 
     if (resident.generation != mesh.resident_generation || resident.pack != mesh.pack || !mesh.source_generation || !mesh.pose_generation || mesh.mesh_index >= resident.meshes.size())
-        throw std::runtime_error("Stale or unregistered model GPU submission");
+        MH3_THROW(std::runtime_error("Stale or unregistered model GPU submission"));
 
     const auto& immutable = resident.meshes[mesh.mesh_index];
 
     if (immutable.asset_id != mesh.asset_id || immutable.model_id != mesh.model_id || immutable.source_id != mesh.shape_id || uint64_t(mesh.first_index) + mesh.index_count > immutable.index_count)
-        throw std::runtime_error("Resident model identity or draw range mismatch");
+        MH3_THROW(std::runtime_error("Resident model identity or draw range mismatch"));
 
     return {resident.buffer.get(), &resident.layouts.at(immutable.layout_index), &immutable};
 }

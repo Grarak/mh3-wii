@@ -1,6 +1,7 @@
 // Thin ABI/callback boundary for 80071CAC. The portable C producer performs
 // typed CPU preparation; no GX, rendering fallback or anonymous pose marking.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_span.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -18,7 +19,7 @@ void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
 #endif
 namespace {
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native DMA view producer failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native DMA view producer failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -79,13 +80,13 @@ void Produce(CpuContext* cpu) {
         return;
 
     if (count > 65535u)
-        throw std::runtime_error("Native DMA view count is outside scene allocation domain");
+        MH3_THROW(std::runtime_error("Native DMA view count is outside scene allocation domain"));
 
     const uint32_t position = cpu->gpr[3], normal = cpu->gpr[4], models = cpu->gpr[5], attributes = cpu->gpr[6];
     const uint32_t camera = cpu->gpr[8], reference = cpu->gpr[9], environment = cpu->gpr[10];
 
     if ((position | models | normal | environment) & 31u)
-        throw std::runtime_error("Native DMA view arrays require authored 32-byte alignment");
+        MH3_THROW(std::runtime_error("Native DMA view arrays require authored 32-byte alignment"));
 
     uint32_t resource = 0;
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &resource));
@@ -95,7 +96,7 @@ void Produce(CpuContext* cpu) {
     Checked(mh3_res_model_open(bank.span, bank.offset, &input.model));
 
     if (Memory::Read32(resource + 0x68) != count)
-        throw std::runtime_error("Native DMA count differs from declared model views");
+        MH3_THROW(std::runtime_error("Native DMA count differs from declared model views"));
 
     input.count = count;
     input.models = Bytes(models, Aligned(size_t(count) * 48));

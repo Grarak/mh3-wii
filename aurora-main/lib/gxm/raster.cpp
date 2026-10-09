@@ -1,4 +1,5 @@
 #include "raster.hpp"
+#include <aurora/fatal.hpp>
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -14,7 +15,7 @@ SceGxmBlendFunc blend_equation(GLenum value) {
   case GL_MAX:
     return SCE_GXM_BLEND_FUNC_MAX;
   default:
-    throw std::runtime_error("Unsupported native blend equation");
+    AURORA_THROW(std::runtime_error("Unsupported native blend equation"));
   }
 }
 
@@ -47,9 +48,9 @@ SceGxmBlendFactor blend_factor(GLenum value, float constantAlpha) {
     if (constantAlpha == 1.f)
       return SCE_GXM_BLEND_FACTOR_ONE;
 
-    throw std::runtime_error("Fractional constant alpha requires offline programmable blending");
+    AURORA_THROW(std::runtime_error("Fractional constant alpha requires offline programmable blending"));
   default:
-    throw std::runtime_error("Unsupported native blend factor");
+    AURORA_THROW(std::runtime_error("Unsupported native blend factor"));
   }
 }
 
@@ -72,7 +73,7 @@ SceGxmDepthFunc depth_function(GLenum value) {
   case GL_ALWAYS:
     return SCE_GXM_DEPTH_FUNC_ALWAYS;
   default:
-    throw std::runtime_error("Unsupported native depth function");
+    AURORA_THROW(std::runtime_error("Unsupported native depth function"));
   }
 }
 } // namespace
@@ -108,7 +109,7 @@ void apply_raster(const gl::RasterState& state, SceGxmContext* context) {
   // The GLES prelude flips Y and uses CCW fronts; native programs retain Y
   // and use GXM's CW fronts. Both expose the same guest-facing cull state.
   if (state.cull && state.cullFace != GL_BACK && state.cullFace != GL_FRONT)
-    throw std::runtime_error("Unsupported native cull face");
+    AURORA_THROW(std::runtime_error("Unsupported native cull face"));
 
   sceGxmSetCullMode(context, !state.cull ? SCE_GXM_CULL_NONE : state.cullFace == GL_BACK ? SCE_GXM_CULL_CCW : SCE_GXM_CULL_CW);
   sceGxmSetTwoSidedEnable(context, SCE_GXM_TWO_SIDED_DISABLED);
@@ -122,7 +123,7 @@ void apply_raster(const gl::RasterState& state, SceGxmContext* context) {
 
 void apply_viewport(SceGxmContext* context, int32_t x, int32_t y, int32_t width, int32_t height, float minDepth, float maxDepth) {
   if (width < 0 || height < 0)
-    throw std::runtime_error("Negative native viewport dimensions");
+    AURORA_THROW(std::runtime_error("Negative native viewport dimensions"));
 
   sceGxmSetViewport(context, x + width * 0.5f, width * 0.5f, y + height * 0.5f, -height * 0.5f, (minDepth + maxDepth) * 0.5f, (maxDepth - minDepth) * 0.5f);
 }
@@ -163,7 +164,7 @@ void PixelClip::rectangle(uint32_t targetWidth, uint32_t targetHeight, int32_t x
 
 void PixelClip::apply(uint32_t targetWidth, uint32_t targetHeight, bool enabled, int32_t x, int32_t y, int32_t width, int32_t height) {
   if (!targetWidth || !targetHeight)
-    throw std::runtime_error("Empty native pixel clip target");
+    AURORA_THROW(std::runtime_error("Empty native pixel clip target"));
 
   auto* context = m_device.context();
   sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);

@@ -1,4 +1,5 @@
 #include "vita_launcher.h"
+#include "fatal.h"
 #include "disc_image.h"
 #include "fs_status.h"
 #include <algorithm>
@@ -11,7 +12,7 @@ namespace VitaLauncher {
 namespace {
 uint32_t Word(std::span<const uint8_t> data, size_t at) {
     if (at > data.size() || data.size() - at < 4)
-        throw std::runtime_error("Truncated quest data");
+        MH3_THROW(std::runtime_error("Truncated quest data"));
 
     return uint32_t(data[at]) << 24 | uint32_t(data[at + 1]) << 16 | uint32_t(data[at + 2]) << 8 | data[at + 3];
 }
@@ -36,7 +37,7 @@ const char* QuestPath(QuestCatalog::Set set) {
         return "05/quest03_eng.bin";
     }
 
-    throw std::runtime_error("Invalid quest category");
+    MH3_THROW(std::runtime_error("Invalid quest category"));
 }
 
 std::filesystem::path Directory(const std::filesystem::path& user) {

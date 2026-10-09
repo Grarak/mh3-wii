@@ -15,6 +15,7 @@
 // manager's buffer from the host (after the game's read request), loads its
 // first character and chooses Village as the mode menu does.
 #include "village_boot.h"
+#include "fatal.h"
 
 #include "guest_call.h"
 #include "memory.h"
@@ -92,21 +93,21 @@ bool InMainMemory(uint32_t address) {
 
 void StartVillageBoot(unsigned fileIndex, unsigned character) {
     if (fileIndex >= 6 || character >= 3)
-        throw std::runtime_error("Invalid save selection");
+        MH3_THROW(std::runtime_error("Invalid save selection"));
 
     const char* override = std::getenv("MH3_USER_DIR");
     const auto path = std::filesystem::path(override ? override : "saves") / ("nand/title/00010000/524d4850/data/nocopy/data0" + std::to_string(fileIndex));
     std::ifstream input(path, std::ios::binary | std::ios::ate);
 
     if (!input || input.tellg() != SaveData::kFileSize)
-        throw std::runtime_error("Quest launch requires the selected existing save: " + path.string());
+        MH3_THROW(std::runtime_error("Quest launch requires the selected existing save: " + path.string()));
 
     file.resize(SaveData::kFileSize);
     input.seekg(0);
     input.read(reinterpret_cast<char*>(file.data()), file.size());
 
     if (!input || !VitaLauncher::ValidSave(file, character))
-        throw std::runtime_error("The selected save character is invalid; create one through normal startup first");
+        MH3_THROW(std::runtime_error("The selected save character is invalid; create one through normal startup first"));
 
     state = State::Waiting;
     selectedFile = fileIndex;
@@ -126,19 +127,19 @@ void StepVillageBoot(CpuContext* ctx) {
     const uint32_t buffer = Memory::Read32(kSystem + kSystemSaveBuffer);
 
     if (!buffer)
-        throw std::runtime_error("--village: the game has no save buffer at the title");
+        MH3_THROW(std::runtime_error("--village: the game has no save buffer at the title"));
 
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
 
     // File 1's read, as the title's (state 12): the request, then the file.
     if (!game.Call<SaveReadRequest>({selectedFile, uint32_t(-1)}))
-        throw std::runtime_error("Quest launch: the save read request failed");
+        MH3_THROW(std::runtime_error("Quest launch: the save read request failed"));
 
     std::copy(file.begin(), file.end(), Memory::GetPointer(buffer, SaveData::kFileSize));
 
     if (!game.Call<LoadCharacter>({selectedCharacter}))
-        throw std::runtime_error("Quest launch: the selected character did not load");
+        MH3_THROW(std::runtime_error("Quest launch: the selected character did not load"));
 
     Memory::Write8(kSystem + kSelectedFile, selectedFile);
     Memory::Write8(kSystem + kSelectedCharacter, selectedCharacter);
@@ -181,7 +182,7 @@ ClassicControllerSample ReadGameController() {
 void RunVillageBootSelfTests() {
     auto check = [](bool valid) {
         if (!valid)
-            throw std::runtime_error("Village boot regression failed");
+            MH3_THROW(std::runtime_error("Village boot regression failed"));
     };
 
     std::vector<uint8_t> data(SaveData::kFileSize);

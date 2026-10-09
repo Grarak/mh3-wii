@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "audio_dma.h"
 #include "audio_dma_statistics.h"
 #include "scope_exit.h"
@@ -9,7 +10,7 @@
 
 std::vector<int16_t> DecodeWiiPcm(const uint8_t* data, uint32_t bytes) {
     if (bytes % 4)
-        throw std::runtime_error("Partial Wii stereo PCM frame");
+        MH3_THROW(std::runtime_error("Partial Wii stereo PCM frame"));
 
     std::vector<int16_t> samples(bytes / 2);
 
@@ -49,7 +50,7 @@ extern "C" void MH3_AIInitDMA(CpuContext* cpu) {
     const auto length = cpu->gpr[4] & 0xFFFE0u;
 
     if (!length || !Memory::Contains(address, length))
-        throw std::runtime_error("AI DMA buffer is empty or outside RAM");
+        MH3_THROW(std::runtime_error("AI DMA buffer is empty or outside RAM"));
 
     dma.address = address;
     dma.length = length;
@@ -136,7 +137,7 @@ void ServiceAudioDma(CpuContext* cpu) {
 #ifdef MH3_HAS_AURORA
         QueueHostPcm(Memory::GetPointer(dma.address, dma.length), dma.length, rate);
 #else
-        throw std::runtime_error("Audio DMA output requires the Aurora/SDL build");
+        MH3_THROW(std::runtime_error("Audio DMA output requires the Aurora/SDL build"));
 #endif
         cpu->msr &= ~0x8000u;
         const auto busy = saved.gpr[13] - 0x3F94;

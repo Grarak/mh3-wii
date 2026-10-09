@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "memory.h"
 #include <stdexcept>
 
@@ -18,7 +19,7 @@ extern "C" void MH3_OSExceptionInit(CpuContext*) {
 REGISTER_NATIVE_FUNCTION(0x804CB5A0, MH3_OSExceptionInit);
 
 extern "C" void MH3_OSDefaultExceptionHandler(CpuContext*) {
-    throw std::runtime_error("MH3 invoked its default PowerPC exception handler");
+    MH3_THROW(std::runtime_error("MH3 invoked its default PowerPC exception handler"));
 }
 REGISTER_NATIVE_FUNCTION(0x804CB930, MH3_OSDefaultExceptionHandler);
 

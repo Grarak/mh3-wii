@@ -2,6 +2,7 @@
 // serialized updates live in portable C. Backend receives ordinary records;
 // no guest rendering functions, GX calls or source command lists are used.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -16,7 +17,7 @@
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native scene input failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native scene input failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -207,7 +208,7 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
     const uint16_t count = Memory::Read16(setting), sets = Memory::Read16(setting + 2);
 
     if (count > 128 || sets > 128)
-        throw std::runtime_error("Native LightSetting capacity exceeds128");
+        MH3_THROW(std::runtime_error("Native LightSetting capacity exceeds128"));
 
     mh3_matrix34 view{};
     Checked(mh3_scene_view_matrix(Bytes(0x80688d94, 52 + 32 * 48), &view));
@@ -225,7 +226,7 @@ const mh3_native_light_slots& SelectNativeModelLightSet(uint32_t state, uint32_t
     const auto found = light_slots.find(state);
 
     if (found == light_slots.end())
-        throw std::runtime_error("LightState selection has no typed import producer");
+        MH3_THROW(std::runtime_error("LightState selection has no typed import producer"));
 
     auto& entry = found->second;
     const auto bytes = Mutable(state, MH3_LIGHT_STATE_BYTES);
@@ -295,7 +296,7 @@ extern "C" void MH3_ModelPaletteObject(CpuContext* cpu) {
     const uint32_t info = Resource(cpu->gpr[3]), objects = Resource(cpu->gpr[5]), slot = Memory::Read32(info + 16);
 
     if (slot >= 8)
-        throw std::runtime_error("Native material palette slot outside0..7");
+        MH3_THROW(std::runtime_error("Native material palette slot outside0..7"));
 
     const auto palette = ReadNativeResPalette(cpu->gpr[4]);
     StoreNativePaletteObject(objects + 4 + slot * 12, palette);
@@ -347,7 +348,7 @@ void SelectNativeModelTextureObjects(uint32_t state, uint32_t objects) {
 
         if (changed & (1u << i)) {
             if (binding.source.width > UINT16_MAX || binding.source.height > UINT16_MAX)
-                throw std::runtime_error("Native G3D texture dimensions exceed coordinate cache");
+                MH3_THROW(std::runtime_error("Native G3D texture dimensions exceed coordinate cache"));
 
             Checked(mh3_texture_scale_size(Mutable(0x8068530c, 36), i, uint16_t(binding.source.width), uint16_t(binding.source.height)));
             PublishNativeModelMapSize(i, uint16_t(binding.source.width), uint16_t(binding.source.height));

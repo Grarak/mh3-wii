@@ -1,4 +1,5 @@
 #include "cg_shader.hpp"
+#include <aurora/fatal.hpp>
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -955,7 +956,7 @@ std::string convert(std::string_view input, Stage stage) {
   std::string cg, error;
 
   if (!try_convert(input, stage, cg, error))
-    throw std::runtime_error(error);
+    AURORA_THROW(std::runtime_error(error));
 
   return cg;
 }
@@ -1036,7 +1037,7 @@ std::string scalar_fragment(std::string_view input) {
   std::string cg, error;
 
   if (!try_scalar_fragment(input, cg, error))
-    throw std::runtime_error(error);
+    AURORA_THROW(std::runtime_error(error));
 
   return cg;
 }

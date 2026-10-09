@@ -1,4 +1,5 @@
 #include "model_assets.h"
+#include "fatal.h"
 #include "asset_cache.h"
 #include "../native/adapters/model_catalog_bridge.h"
 #include "../native/adapters/model_gpu_bridge.h"
@@ -68,7 +69,7 @@ Status Failure(const std::filesystem::path& path, const char* reason) {
 }
 
 [[noreturn]] void Error(const std::filesystem::path& path, const char* reason) {
-    throw std::runtime_error(Failure(path, reason).message());
+    MH3_THROW(std::runtime_error(Failure(path, reason).message()));
 }
 
 Status FileSize(std::ifstream& file, const std::filesystem::path& path, size_t limit, size_t& size) {
@@ -291,7 +292,7 @@ Assets& Find(Manager& m, uintptr_t handle, uint64_t epoch) {
     const auto found = m.handles.find(handle);
 
     if (found == m.handles.end() || found->second->generation != epoch)
-        throw std::runtime_error("Native model GPU demand refers to a stale resident owner");
+        MH3_THROW(std::runtime_error("Native model GPU demand refers to a stale resident owner"));
 
     return *found->second;
 }
@@ -421,13 +422,13 @@ Status Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eage
 
 void LoadNativeModelAssets(const char* discRoot) {
     if (manager)
-        throw std::runtime_error("Native model assets already admitted");
+        MH3_THROW(std::runtime_error("Native model assets already admitted"));
 
     const char* overridePack = std::getenv("MH3_NATIVE_MODEL_PACK");
     const char* overrideIndex = std::getenv("MH3_NATIVE_MODEL_INDEX");
 
     if (overridePack && overrideIndex)
-        throw std::runtime_error("Select only one native model pack or index override");
+        MH3_THROW(std::runtime_error("Select only one native model pack or index override"));
 
     const auto root = std::filesystem::path(discRoot ? discRoot : "ux0:/data/mh3-wii") / "native-models";
     const auto indexPath = overrideIndex ? std::filesystem::path(overrideIndex) : root / "models.index.bin";

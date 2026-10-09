@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "ios_host.h"
 #include "disc_image.h"
 #include "asset_cache.h"
@@ -116,7 +117,7 @@ class DiscReader {
             pthread_attr_destroy(&attributes);
 
             if (failed)
-                throw std::runtime_error("Cannot start the disc reader");
+                MH3_THROW(std::runtime_error("Cannot start the disc reader"));
         }
 
         changed.notify_all();
@@ -136,7 +137,7 @@ class DiscReader {
             guard.unlock();
 
             if (!reply.failure.empty())
-                throw std::runtime_error(reply.failure);
+                MH3_THROW(std::runtime_error(reply.failure));
 
             if (reply.length) {
                 std::memcpy(Memory::GetPointer(reply.output, reply.length), reply.data.data(), reply.length);
@@ -972,7 +973,7 @@ void TriggerStmEvent(uint32_t event) {
 // Actual requests are delivered through the IOS HLE entry points below.
 extern "C" void MH3_IPCWriteReg(CpuContext* ctx) {
     if (ctx->gpr[3] != 1 || ctx->gpr[4] != 0x38)
-        throw std::runtime_error("Unimplemented direct IPC register operation");
+        MH3_THROW(std::runtime_error("Unimplemented direct IPC register operation"));
 }
 REGISTER_NATIVE_FUNCTION(0x804BB950, MH3_IPCWriteReg);
 
@@ -1011,7 +1012,7 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
     }
 
     if (path.starts_with("/dev/"))
-        throw std::runtime_error("IOS device needs a host implementation: " + path);
+        MH3_THROW(std::runtime_error("IOS device needs a host implementation: " + path));
 
     ctx->gpr[3] = OpenFile(path, ctx->gpr[4]);
 }
@@ -1226,14 +1227,14 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
         return;
     }
 
-    throw std::runtime_error("IOS async ioctl needs a host implementation: " + (it == devices.end() ? std::string("invalid descriptor") : it->second) + " command " + std::to_string(ctx->gpr[4]));
+    MH3_THROW(std::runtime_error("IOS async ioctl needs a host implementation: " + (it == devices.end() ? std::string("invalid descriptor") : it->second) + " command " + std::to_string(ctx->gpr[4])));
 }
 REGISTER_NATIVE_FUNCTION(0x804BCE70, MH3_IOSIoctlAsync);
 
 extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
     if (const auto file = files.find(ctx->gpr[3]); file != files.end()) {
         if (ctx->gpr[4] != 11)
-            throw std::runtime_error("IOS file ioctl not implemented: " + std::to_string(ctx->gpr[4]));
+            MH3_THROW(std::runtime_error("IOS file ioctl not implemented: " + std::to_string(ctx->gpr[4])));
 
         if (ctx->gpr[8] < 8 || !Memory::Contains(ctx->gpr[7], 8)) {
             ctx->gpr[3] = -101;
@@ -1296,7 +1297,7 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
             return; // No attached device matches any IOS ID.
         }
 
-        throw std::runtime_error("USB HID ioctl needs a host implementation: " + std::to_string(command));
+        MH3_THROW(std::runtime_error("USB HID ioctl needs a host implementation: " + std::to_string(command)));
     }
 
     if (device->second == "/dev/fs") {
@@ -1491,7 +1492,7 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
         }
     }
 
-    throw std::runtime_error("IOS ioctl needs a host implementation: " + device->second + " command " + std::to_string(command));
+    MH3_THROW(std::runtime_error("IOS ioctl needs a host implementation: " + device->second + " command " + std::to_string(command)));
 }
 REGISTER_NATIVE_FUNCTION(0x804BCFB0, MH3_IOSIoctl);
 
@@ -1586,7 +1587,7 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
             file.read(reinterpret_cast<char*>(ticket.data()), ticket.size());
 
             if (!file)
-                throw std::runtime_error("Unable to read disc ticket for ES view");
+                MH3_THROW(std::runtime_error("Unable to read disc ticket for ES view"));
         } else {
             if (inputSize != ticket.size() || !Memory::Contains(input, inputSize)) {
                 ctx->gpr[3] = -4;
@@ -1648,7 +1649,7 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
         return;
     }
 
-    throw std::runtime_error("IOS ioctlv needs a host implementation: " + device->second + " command " + std::to_string(command));
+    MH3_THROW(std::runtime_error("IOS ioctlv needs a host implementation: " + device->second + " command " + std::to_string(command)));
 }
 REGISTER_NATIVE_FUNCTION(0x804BD310, MH3_IOSIoctlv);
 

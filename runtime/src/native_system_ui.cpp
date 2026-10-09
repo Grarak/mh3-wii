@@ -1,5 +1,6 @@
 // Typed layout and character writer ABI adapters for NW4R and NW4HBM.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "native_frame_packet.h"
@@ -29,7 +30,7 @@ float layout_matrices[10][12]{};
 bool layout_coordinates = false;
 void Checked(mh3_res_status status, int line = __builtin_LINE()) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native system UI input: " + std::to_string(status) + " line " + std::to_string(line));
+        MH3_THROW(std::runtime_error("Native system UI input: " + std::to_string(status) + " line " + std::to_string(line)));
 }
 
 mh3_res_span Bytes(uint32_t address, size_t count) {
@@ -55,7 +56,7 @@ uint64_t Produced(uint32_t payload) {
     producer_generation = std::max(producer_generation, ReadNativeTextureGeneration(payload)) + 1;
 
     if (!producer_generation)
-        throw std::runtime_error("System UI producer revision overflow");
+        MH3_THROW(std::runtime_error("System UI producer revision overflow"));
 
     MarkNativeTextureProduced(payload, producer_generation);
     return producer_generation;
@@ -137,12 +138,12 @@ mh3_native_texture_binding GlyphBinding(uint32_t writer, uint32_t glyph, uint32_
     const auto found = font_sheets.find(Memory::Read32(glyph));
 
     if (found == font_sheets.end())
-        throw std::runtime_error("System UI font atlas has no explicit font resource producer");
+        MH3_THROW(std::runtime_error("System UI font atlas has no explicit font resource producer"));
 
     binding.source = found->second;
 
     if (binding.source.width != Memory::Read16(glyph + 12) || binding.source.height != Memory::Read16(glyph + 14) || binding.source.format != Memory::Read32(glyph + 8))
-        throw std::runtime_error("System UI glyph disagrees with its font sheet producer");
+        MH3_THROW(std::runtime_error("System UI glyph disagrees with its font sheet producer"));
 
     binding.sampler.min_filter = Memory::Read32(writer + 0x38);
     binding.sampler.mag_filter = Memory::Read32(writer + 0x3c);
@@ -178,7 +179,7 @@ void Glyph(CpuContext* cpu, bool hbm) {
 
     if (!mh3_system_ui_glyph(vertices, origin, Memory::Read8(glyph + 5), Memory::Read8(glyph + 7), Memory::ReadFloat32(writer + 0x24), Memory::ReadFloat32(writer + 0x28), Memory::Read16(glyph + 12),
                              Memory::Read16(glyph + 14), Memory::Read16(glyph + 16), Memory::Read16(glyph + 18), colors))
-        throw std::runtime_error("System UI glyph atlas has zero dimensions");
+        MH3_THROW(std::runtime_error("System UI glyph atlas has zero dimensions"));
     Submit(vertices, 4);
 }
 
@@ -202,7 +203,7 @@ void Quad(CpuContext* cpu, int y_sign) {
     const uint32_t origin_address = cpu->gpr[3], size_address = cpu->gpr[4], count = uint8_t(cpu->gpr[5]), coords = cpu->gpr[6], colors_address = cpu->gpr[7];
 
     if (count > 8 || count != format.coordinates || bool(colors_address) != format.colors)
-        throw std::runtime_error("Layout quad disagrees with authored vertex format");
+        MH3_THROW(std::runtime_error("Layout quad disagrees with authored vertex format"));
 
     if (!NativeGraphicsFrameShouldRender())
         return;
@@ -306,7 +307,7 @@ void PublishFont(uint32_t font, uint32_t resource, uint32_t information) {
     const uint64_t resource_end = uint64_t(resource) + Memory::Read32(resource + 8);
 
     if (!stride || !count || payload < resource || uint64_t(payload) + uint64_t(stride) * count > resource_end)
-        throw std::runtime_error("System UI font sheets exceed their resource allocation");
+        MH3_THROW(std::runtime_error("System UI font sheets exceed their resource allocation"));
 
     for (uint32_t i = 0; i < count; ++i) {
         mh3_native_texture_source source{};
@@ -352,7 +353,7 @@ extern "C" void MH3_KeyboardFontSetup(CpuContext* cpu) {
     source.generation = ReadNativeTextureGeneration(sheet);
 
     if (!source.generation)
-        throw std::runtime_error("Keyboard font sheet has no producer");
+        MH3_THROW(std::runtime_error("Keyboard font sheet has no producer"));
 
     font_sheets.insert_or_assign(sheet, source);
 }
@@ -417,7 +418,7 @@ extern "C" void MH3_HBMFontTexture(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80838C00, MH3_HBMFontTexture, "HBMFontTexture");
 extern "C" void MH3_SystemUIVertexFormat(CpuContext* cpu) {
     if (uint8_t(cpu->gpr[4]) > 8)
-        throw std::runtime_error("Layout vertex format has too many coordinates");
+        MH3_THROW(std::runtime_error("Layout vertex format has too many coordinates"));
 
     format = {cpu->gpr[3] != 0, uint8_t(cpu->gpr[4])};
 }
@@ -451,14 +452,14 @@ extern "C" void MH3_SystemUIIndirectMatrix(CpuContext* cpu) {
     const unsigned index = cpu->gpr[3];
 
     if (index < 1 || index > 3)
-        throw std::runtime_error("Layout indirect matrix selector unsupported");
+        MH3_THROW(std::runtime_error("Layout indirect matrix selector unsupported"));
 
     float values[6];
     Floats(cpu->gpr[4], values, 6);
     auto material = GetNativeMaterialState();
 
     if (!mh3_system_ui_indirect_matrix(values, &material.indirect_matrix[index - 1]))
-        throw std::runtime_error("Layout indirect matrix is unrepresentable");
+        MH3_THROW(std::runtime_error("Layout indirect matrix is unrepresentable"));
 
     SetNativeMaterial(material);
 }
@@ -576,7 +577,7 @@ uint32_t LayoutMaterial(CpuContext* cpu, bool hbm) {
         } else if (!GetNativeTextureMatrix(selector, layout_matrices[i])) {
             for (unsigned j = 0; j < next.texgen_count; ++j)
                 if (next.texgen_selector[j] == selector)
-                    throw std::runtime_error("Layout references an unpublished texture matrix");
+                    MH3_THROW(std::runtime_error("Layout references an unpublished texture matrix"));
         }
     }
 
@@ -592,7 +593,7 @@ uint32_t LayoutMaterial(CpuContext* cpu, bool hbm) {
             const float values[6] = {float(cosine * sx), float(-sine * sy), Memory::ReadFloat32(record), float(sine * sx), float(cosine * sy), Memory::ReadFloat32(record + 4)};
 
             if (!mh3_system_ui_indirect_matrix(values, &material.indirect_matrix[i]))
-                throw std::runtime_error("Layout indirect SRT exceeds coefficient domain");
+                MH3_THROW(std::runtime_error("Layout indirect SRT exceeds coefficient domain"));
         }
     uint32_t small_palette = 0, large_palette = 16;
 
@@ -608,7 +609,7 @@ uint32_t LayoutMaterial(CpuContext* cpu, bool hbm) {
             binding.source.resource_address = object;
 
             if (!binding.source.generation)
-                throw std::runtime_error("Layout texture has no explicit resource producer");
+                MH3_THROW(std::runtime_error("Layout texture has no explicit resource producer"));
         }
 
         binding.map_id = i;
@@ -620,7 +621,7 @@ uint32_t LayoutMaterial(CpuContext* cpu, bool hbm) {
                 const auto header = Memory::Read32(object + 16);
 
                 if (!header)
-                    throw std::runtime_error("HBM indexed texture lacks authored palette user data");
+                    MH3_THROW(std::runtime_error("HBM indexed texture lacks authored palette user data"));
 
                 palette.resource_address = header;
                 palette.entries = Memory::Read16(header);
@@ -636,7 +637,7 @@ uint32_t LayoutMaterial(CpuContext* cpu, bool hbm) {
             palette.generation = ReadNativeTextureGeneration(palette.payload_address);
 
             if (!palette.generation)
-                throw std::runtime_error("Layout palette has no explicit resource producer");
+                MH3_THROW(std::runtime_error("Layout palette has no explicit resource producer"));
 
             binding.tlut_id = binding.source.format == 10 ? large_palette++ : small_palette++;
             BindNativePalette(binding.tlut_id, palette);
@@ -662,7 +663,7 @@ extern "C" void MH3_HBMLayoutMaterial(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x8082F0B0, MH3_HBMLayoutMaterial, "HBMLayoutMaterial");
 extern "C" void MH3_HBMSimpleQuad(CpuContext* cpu) {
     if (format.coordinates != 1 || format.colors != (cpu->gpr[7] != 0))
-        throw std::runtime_error("HBM simple quad format disagrees with emitted attributes");
+        MH3_THROW(std::runtime_error("HBM simple quad format disagrees with emitted attributes"));
 
     if (!NativeGraphicsFrameShouldRender())
         return;
@@ -697,7 +698,7 @@ void Ortho(float top, float bottom, float left, float right, float near_z, float
     float m[16];
 
     if (!mh3_draw_ortho(m, top, bottom, left, right, near_z, far_z))
-        throw std::runtime_error("System UI orthographic volume is empty");
+        MH3_THROW(std::runtime_error("System UI orthographic volume is empty"));
 
     SetNativeProjection(m, false);
 }
@@ -729,7 +730,7 @@ void Fade(uint32_t self, unsigned timer, unsigned duration, unsigned color) {
     const int32_t divisor = Memory::Read32(self + duration);
 
     if (!divisor)
-        throw std::runtime_error("HBM fade has zero duration");
+        MH3_THROW(std::runtime_error("HBM fade has zero duration"));
 
     const uint8_t alpha = (int64_t(int32_t(Memory::Read32(self + timer))) * 255) / divisor;
     auto m = GetNativeMaterialState();
@@ -1058,7 +1059,7 @@ extern "C" void MH3_SystemUIPanelBegin(CpuContext* cpu) {
         Memory::WriteFloat32(self + 0x6c + i * 4, record[i]);
 
     if (!mh3_system_ui_panel_view(bounds, panel, Memory::ReadFloat32(self + 0x98), saved.viewport, projection, viewport, scissor))
-        throw std::runtime_error("Save UI panel has invalid crop volume");
+        MH3_THROW(std::runtime_error("Save UI panel has invalid crop volume"));
 
     SetNativeProjection(projection, false);
     SetNativeViewport(viewport[0], viewport[1], viewport[2], viewport[3], viewport[4], viewport[5]);
@@ -1085,7 +1086,7 @@ extern "C" void MH3_SystemUIPanelEnd(CpuContext* cpu) {
 
     for (unsigned i = 0; i < 4; ++i) {
         if (viewport[i] < 0 || viewport[i] > 2147483647.0)
-            throw std::runtime_error("Save panel restored scissor exceeds logical coordinates");
+            MH3_THROW(std::runtime_error("Save panel restored scissor exceeds logical coordinates"));
 
         scissor[i] = uint32_t(viewport[i]);
     }
@@ -1142,7 +1143,7 @@ extern "C" void MH3_SystemUIPanelDraw(CpuContext* cpu) {
     int32_t saved[4];
 
     if (!GetNativeScissor(saved))
-        throw std::runtime_error("Panel crop has no published scissor to restore");
+        MH3_THROW(std::runtime_error("Panel crop has no published scissor to restore"));
 
     const float width = Memory::ReadFloat32(self + 500), scale = Memory::ReadFloat32(0x8079fb64) / width;
     float x = left[0] + width * Memory::ReadFloat32(0x8079fb74);
@@ -1150,7 +1151,7 @@ extern "C" void MH3_SystemUIPanelDraw(CpuContext* cpu) {
     const float crop_width = scale * (right[0] - left[0]);
 
     if (!std::isfinite(x) || !std::isfinite(crop_width) || x < 0 || crop_width < 0 || x > 2147483647.0 || crop_width > 2147483647.0)
-        throw std::runtime_error("Panel crop is outside supported logical coordinates");
+        MH3_THROW(std::runtime_error("Panel crop is outside supported logical coordinates"));
 
     SetNativeScissor(int32_t(x), saved[1], int32_t(crop_width), saved[3]);
     call.Virtual(Memory::Read32(Memory::Read32(self + 0xdc) + 0x9c), 0x14, {draw_info});
@@ -1159,7 +1160,7 @@ extern "C" void MH3_SystemUIPanelDraw(CpuContext* cpu) {
         const float width2 = crop_width + x - saved[0];
 
         if (width2 < 0 || width2 > 2147483647.0)
-            throw std::runtime_error("Panel second crop is outside logical coordinates");
+            MH3_THROW(std::runtime_error("Panel second crop is outside logical coordinates"));
 
         SetNativeScissor(saved[0], saved[1], int32_t(width2), saved[3]);
 
@@ -1371,7 +1372,7 @@ extern "C" void MH3_HUDTexgen(CpuContext* cpu) {
     const unsigned slot = cpu->gpr[3];
 
     if (slot >= 8 || cpu->gpr[4] != 1 || cpu->gpr[5] < 4 || cpu->gpr[5] > 11 || cpu->gpr[6] != 60)
-        throw std::runtime_error("HUD texgen requires a verified direct UV input");
+        MH3_THROW(std::runtime_error("HUD texgen requires a verified direct UV input"));
 
     auto m = GetNativeMaterialState();
     m.texgen[slot].known |= 1u << MH3_TEXGEN_PROJECTION;
@@ -1388,7 +1389,7 @@ extern "C" void MH3_HUDIcon(CpuContext* cpu) {
     const float width = Memory::Read16(0x806978a0), height = Memory::Read16(0x806978a2);
 
     if (!width || !height)
-        throw std::runtime_error("HUD icon atlas has zero dimensions");
+        MH3_THROW(std::runtime_error("HUD icon atlas has zero dimensions"));
 
     const uint32_t tile = 0x80595b10 + Memory::Read8(0x8065b23c + index) * 8;
     float uv[4];
@@ -1401,7 +1402,7 @@ extern "C" void MH3_HUDIcon(CpuContext* cpu) {
 
     if (NativeGraphicsFrameShouldRender()) {
         if (!mh3_system_ui_hud_rectangle(vertices, call(0x80040424) == 1 ? 770 : 577, index == 1 ? 95 : 47, 32, 32, white, uv[0], uv[1], uv[2], uv[3]))
-            throw std::runtime_error("HUD icon position is unrepresentable");
+            MH3_THROW(std::runtime_error("HUD icon position is unrepresentable"));
 
         Submit(vertices, 4);
     }
@@ -1489,7 +1490,7 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
     }
 
     if (!atlas_width || !atlas_height)
-        throw std::runtime_error("HUD sprite atlas has zero dimensions");
+        MH3_THROW(std::runtime_error("HUD sprite atlas has zero dimensions"));
 
     const uint32_t language = Memory::Read8(0x8065aa69), count = Memory::Read8(0x80793820 + language), atlas = Memory::Read32(0x805959e8 + language * 4);
 

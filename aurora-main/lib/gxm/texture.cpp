@@ -1,4 +1,5 @@
 #include "texture.hpp"
+#include <aurora/fatal.hpp>
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
 #include <bit>
@@ -56,17 +57,17 @@ NativeFormat native_format(gl::Format format) {
   case gl::Format::BC5_GRRR:
     return {0, SCE_GXM_TEXTURE_FORMAT_UBC5_GRRR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
   case gl::Format::R32UI:
-    throw std::runtime_error("Native raw word buffers must use mapped BUFFER bindings");
+    AURORA_THROW(std::runtime_error("Native raw word buffers must use mapped BUFFER bindings"));
   }
 
-  throw std::runtime_error("Unknown native texture format");
+  AURORA_THROW(std::runtime_error("Unknown native texture format"));
 }
 } // namespace
 
 TexturePool::TexturePool(Device& device, size_t mainBudget, size_t phycontBudget)
 : m_device(device), m_mainBudget(mainBudget & ~size_t(4095)), m_phycontBudget(std::min(phycontBudget, size_t(24u << 20)) & ~size_t((1u << 20) - 1)) {
   if (m_mainBudget > 32u << 20)
-    throw std::runtime_error("Native texture main-RAM spill exceeds 32 MiB budget");
+    AURORA_THROW(std::runtime_error("Native texture main-RAM spill exceeds 32 MiB budget"));
 }
 
 TexturePool::~TexturePool() {
@@ -149,7 +150,7 @@ void TexturePool::move(TextureStorage& texture, void* data, MappedArena& arena) 
   // Only CPU-produced images may migrate. GPU targets have no CPU readback
   // path, and earlier PDS states retain their original backing notification.
   if (texture.m_gpuWritten)
-    throw std::runtime_error("GPU-written texture cannot migrate through CPU memory");
+    AURORA_THROW(std::runtime_error("GPU-written texture cannot migrate through CPU memory"));
 
   std::memcpy(data, texture.m_data, texture.m_bytes);
 
@@ -211,7 +212,7 @@ void TexturePool::allocate(TextureStorage& texture) {
                    entry.m_pinned);
     }
 
-    throw std::runtime_error("Native texture residency exhausted CDRAM and bounded spill arenas");
+    AURORA_THROW(std::runtime_error("Native texture residency exhausted CDRAM and bounded spill arenas"));
   }
 
   m_lru.push_back(&texture);
@@ -254,21 +255,16 @@ TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t heig
   m_paletteBytes = layout.palette_bytes;
   m_bytes = layout.total_bytes;
 
-  try {
-    m_pool.allocate(*this);
+  m_pool.allocate(*this);
 
-    if (format == gl::Format::Depth32F) {
-      // DF32M stores the coverage mask in bit 31. Force-load surfaces must
-      // start with mask=1, otherwise every initial draw is rejected.
-      std::fill_n(static_cast<uint32_t*>(m_data), m_bytes / 4, 0xbf800000u);
-    } else
-      std::memset(m_data, 0, m_bytes);
+  if (format == gl::Format::Depth32F) {
+    // DF32M stores the coverage mask in bit 31. Force-load surfaces must
+    // start with mask=1, otherwise every initial draw is rejected.
+    std::fill_n(static_cast<uint32_t*>(m_data), m_bytes / 4, 0xbf800000u);
+  } else
+    std::memset(m_data, 0, m_bytes);
 
-    refresh_views();
-  } catch (...) {
-    m_pool.release(*this);
-    throw;
-  }
+  refresh_views();
 }
 
 TextureStorage::~TextureStorage() {
@@ -310,14 +306,14 @@ void TextureStorage::refresh_views() {
 
 const SceGxmColorSurface* TextureStorage::color_surface() const {
   if (format == gl::Format::Depth32F || gfx::native_swizzled(format) || format >= gl::Format::U8_RRRR)
-    throw std::runtime_error("Sample-only texture used as color target");
+    AURORA_THROW(std::runtime_error("Sample-only texture used as color target"));
 
   return &m_color;
 }
 
 const SceGxmDepthStencilSurface* TextureStorage::depth_surface() const {
   if (format != gl::Format::Depth32F)
-    throw std::runtime_error("Color texture used as depth target");
+    AURORA_THROW(std::runtime_error("Color texture used as depth target"));
 
   return &m_depth;
 }
@@ -331,13 +327,13 @@ void TextureStorage::upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t w, ui
     return;
 
   if (gfx::native_swizzled(format))
-    throw std::runtime_error("Swizzled assets require native packed uploads");
+    AURORA_THROW(std::runtime_error("Swizzled assets require native packed uploads"));
 
   const auto& level = m_levels.at(mip);
   const uint32_t sourcePixelBytes = format == gl::Format::R16I ? 2 : m_pixelBytes;
 
   if (!source || uint64_t(x) + w > level.width || uint64_t(y) + h > level.height || uint64_t(w) * sourcePixelBytes > sourcePitch)
-    throw std::runtime_error("Native texture upload exceeds level bounds");
+    AURORA_THROW(std::runtime_error("Native texture upload exceeds level bounds"));
 
   if (m_lastUse.address && int32_t(*m_lastUse.address - m_lastUse.value) < 0) {
     m_pool.m_device.end();

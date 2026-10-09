@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -41,7 +42,7 @@ void SaveSram() {
         file.close();
 
         if (!file)
-            throw std::runtime_error("Unable to persist host SRAM");
+            MH3_THROW(std::runtime_error("Unable to persist host SRAM"));
     }
 
     std::filesystem::rename(staging, path);
@@ -101,7 +102,7 @@ extern "C" void MH3_SIGetType(CpuContext* cpu) {
     const auto channel = cpu->gpr[3];
 
     if (channel >= 4)
-        throw std::runtime_error("SIGetType channel outside 0..3");
+        MH3_THROW(std::runtime_error("SIGetType channel outside 0..3"));
 
     Memory::Write32(0x8062A8B8 + channel * 4, 8); // SI_ERROR_NO_RESPONSE
     cpu->gpr[3] = 8;
@@ -117,13 +118,13 @@ extern "C" void MH3_OSInitSram(CpuContext*) {
 
     if (std::filesystem::exists(path)) {
         if (std::filesystem::file_size(path) != 0x40)
-            throw std::runtime_error("Host SRAM file must contain exactly 64 bytes");
+            MH3_THROW(std::runtime_error("Host SRAM file must contain exactly 64 bytes"));
 
         std::ifstream file(path, std::ios::binary);
         file.read(reinterpret_cast<char*>(Memory::GetPointer(kSram, 0x40)), 0x40);
 
         if (!file)
-            throw std::runtime_error("Unable to read host SRAM");
+            MH3_THROW(std::runtime_error("Unable to read host SRAM"));
     } else {
         Memory::Write8(kSram + 0x12, 0);    // English
         Memory::Write8(kSram + 0x13, 0x0C); // stereo, setup complete

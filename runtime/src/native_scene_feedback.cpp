@@ -1,6 +1,7 @@
 // Thin guest ABI adapters for typed scene feedback plans. GPU targets retain
 // snapshots; guest texture addresses are identities, never readback buffers.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
@@ -25,7 +26,7 @@ const void *Identity(uint32_t address) {
 
 void Require(int success, const char *reason) {
     if (!success)
-        throw std::runtime_error(reason);
+        MH3_THROW(std::runtime_error(reason));
 }
 
 bool Capture(const mh3_scene_capture_plan &plan) {
@@ -62,7 +63,7 @@ void State(const mh3_scene_quad_plan &plan, bool bind = true) {
         return;
 
     if (!binding.source.generation)
-        throw std::runtime_error("Scene feedback sampled before GPU publication");
+        MH3_THROW(std::runtime_error("Scene feedback sampled before GPU publication"));
 
     BindNativeTexture(binding);
 }
@@ -161,7 +162,7 @@ void SceneCapture(uint32_t self, uint32_t conditional) {
     float w = FlatReadFloat32(self + 0x120), h = FlatReadFloat32(self + 0x124);
 
     if (!std::isfinite(w) || !std::isfinite(h) || w < 1 || h < 1 || w > 65535 || h > 65535)
-        throw std::runtime_error("Invalid scene capture dimensions");
+        MH3_THROW(std::runtime_error("Invalid scene capture dimensions"));
 
     mh3_scene_capture_plan plan{id, uint16_t(int32_t(w)), uint16_t(int32_t(h)), 6, {0, 0, w, h}, 0};
     Capture(plan);
@@ -232,7 +233,7 @@ uint32_t CpuCall(void *context, uint32_t fn, const uint32_t *args, unsigned coun
     auto cpu = static_cast<CpuContext *>(context);
 
     if (count > 8)
-        throw std::runtime_error("Scene CPU call exceeds guest integer ABI");
+        MH3_THROW(std::runtime_error("Scene CPU call exceeds guest integer ABI"));
 
     for (unsigned i = 0; i < count; i++)
         cpu->gpr[3 + i] = args[i];
@@ -248,7 +249,7 @@ float CpuFloatCall(void *context, uint32_t fn, const uint32_t *args, unsigned co
     auto cpu = static_cast<CpuContext *>(context);
 
     if (count > 8 || floats > 8)
-        throw std::runtime_error("Scene CPU float call exceeds guest ABI");
+        MH3_THROW(std::runtime_error("Scene CPU float call exceeds guest ABI"));
 
     for (unsigned i = 0; i < count; i++)
         cpu->gpr[3 + i] = args[i];
@@ -275,7 +276,7 @@ void CpuStringCopy(void *, uint32_t destination, uint32_t source) {
         length++;
 
     if (length == 320)
-        throw std::runtime_error("Equipment resource name exceeds authored scratch buffer");
+        MH3_THROW(std::runtime_error("Equipment resource name exceeds authored scratch buffer"));
 
     CpuCopy(nullptr, destination, source, length + 1);
 }
@@ -288,7 +289,7 @@ int CpuStringCompare(void *, uint32_t first, uint32_t second) {
             return int(a) - int(b);
     }
 
-    throw std::runtime_error("Equipment material name lacks terminator");
+    MH3_THROW(std::runtime_error("Equipment material name lacks terminator"));
 }
 
 void CpuTextureObject(void *, uint32_t object, uint32_t payload) {
@@ -314,10 +315,10 @@ void ObserveVertices(const AuroraNativeVertex *vertices, uint32_t count, const m
         return;
 
     if (count % 4 || count > 64)
-        throw std::runtime_error("Color selector requires ordinary sprite quads");
+        MH3_THROW(std::runtime_error("Color selector requires ordinary sprite quads"));
 
     if (binding.sampler.lod_bias != 0 || binding.source.levels > 1)
-        throw std::runtime_error("Color selector source requires an explicit mip sampling rule");
+        MH3_THROW(std::runtime_error("Color selector source requires an explicit mip sampling rule"));
 
     const size_t bytes = aurora::native_texture_source_size(binding.source.format, binding.source.width, binding.source.height, 1);
     mh3_res_span pixels{Memory::GetPointer(binding.source.payload_address, bytes), bytes}, colors{};
@@ -330,7 +331,7 @@ void ObserveVertices(const AuroraNativeVertex *vertices, uint32_t count, const m
         const int result = mh3_scene_source_quad(pixels, colors, palette ? palette->format : 0, &binding, vertices + i, &state, sourceSample.point, sampled);
 
         if (result < 0)
-            throw std::runtime_error("Invalid color selector authored texture sample");
+            MH3_THROW(std::runtime_error("Invalid color selector authored texture sample"));
 
         if (!result)
             continue;
@@ -343,7 +344,7 @@ void ObserveVertices(const AuroraNativeVertex *vertices, uint32_t count, const m
         } else if ((state.raster.blend_mode == 0) || (state.raster.blend_mode == 1 && state.raster.src_factor == 1 && state.raster.dst_factor == 0)) {
             std::memcpy(sourceSample.rgba, sampled, 16);
         } else
-            throw std::runtime_error("Color selector source uses an unsupported composition blend");
+            MH3_THROW(std::runtime_error("Color selector source uses an unsupported composition blend"));
 
         sourceSample.covered = true;
     }
@@ -354,7 +355,7 @@ void ObserveSource(const mh3_ui_stream &stream, const mh3_draw_state &state, con
         return;
 
     if (stream.count % 4 || stream.count > 64)
-        throw std::runtime_error("Color selector requires ordinary sprite quads");
+        MH3_THROW(std::runtime_error("Color selector requires ordinary sprite quads"));
 
     std::array<AuroraNativeVertex, 64> vertices{};
     std::array<uint16_t, 96> indices{};
@@ -378,7 +379,7 @@ int CpuSample(void *, int16_t, int16_t, uint8_t rgba[4]) {
     sourceSample.active = false;
 
     if (!sourceSample.covered || sourceSample.rgba[3] < .999f)
-        throw std::runtime_error("Color selector point lacks an opaque authored sprite source");
+        MH3_THROW(std::runtime_error("Color selector point lacks an opaque authored sprite source"));
 
     for (unsigned k = 0; k < 4; k++)
         rgba[k] = uint8_t(std::lround(std::fmin(std::fmax(sourceSample.rgba[k], 0), 1) * 255));
@@ -528,7 +529,7 @@ extern "C" void MH3_NativeSavedSceneCapture(CpuContext *) {
     const float w = FlatReadFloat32(0x8066d298), h = FlatReadFloat32(0x8066d29c);
 
     if (!std::isfinite(w) || !std::isfinite(h) || w < 1 || h < 1 || w > 65535 || h > 65535)
-        throw std::runtime_error("Invalid saved capture dimensions");
+        MH3_THROW(std::runtime_error("Invalid saved capture dimensions"));
 
     Capture({id, uint16_t(int32_t(w)), uint16_t(int32_t(h)), 6, {0, 0, w, h}, 0});
 }

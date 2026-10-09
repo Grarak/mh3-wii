@@ -3,6 +3,7 @@
 // SIGBUS reporter that names the guest address and translated function of any
 // access that lands on an unmapped part of it.
 #include "guest_flat_memory.h"
+#include "fatal.h"
 #include "recomp_mod_loader.h"
 #include "gx_panic.h"
 
@@ -172,7 +173,7 @@ void Map(uint32_t guest, size_t size, off_t offset) {
     void* at = Host(guest);
 
     if (mmap(at, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, memoryFd, offset) != at)
-        throw std::runtime_error("Cannot map guest memory at 0x" + std::to_string(guest) + ": " + std::strerror(errno));
+        MH3_THROW(std::runtime_error("Cannot map guest memory at 0x" + std::to_string(guest) + ": " + std::strerror(errno)));
 }
 
 } // namespace
@@ -189,7 +190,7 @@ void Initialize() {
             char text[160];
             std::snprintf(text, sizeof(text), "Cannot reserve the guest window at host %p (+0x%llx): %s", start, (unsigned long long)kWindowSize,
                           got == MAP_FAILED ? std::strerror(errno) : "address taken");
-            throw std::runtime_error(text);
+            MH3_THROW(std::runtime_error(text));
         }
 
         reserved = true;
@@ -200,13 +201,13 @@ void Initialize() {
     const int fd = memfd_create("mh3-guest-memory", MFD_CLOEXEC);
 
     if (fd < 0)
-        throw std::runtime_error(std::string("memfd_create failed: ") + std::strerror(errno));
+        MH3_THROW(std::runtime_error(std::string("memfd_create failed: ") + std::strerror(errno)));
 
     const size_t lockedCache = RoundUp(kLockedCacheSize);
 
     if (ftruncate(fd, off_t(kMem1Size) + kMem2Size + lockedCache) != 0) {
         close(fd);
-        throw std::runtime_error(std::string("Cannot size guest memory: ") + std::strerror(errno));
+        MH3_THROW(std::runtime_error(std::string("Cannot size guest memory: ") + std::strerror(errno)));
     }
 
     if (memoryFd >= 0)

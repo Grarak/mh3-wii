@@ -1,6 +1,7 @@
 #pragma once
 // Shared offline/GXM layout contract. Format tags preserve sampled RGBA, not
 // just channel count. No texture bytes, palette lookup or compression occurs here.
+#include <aurora/fatal.hpp>
 #include "format.hpp"
 #include <algorithm>
 #include <bit>
@@ -61,15 +62,15 @@ constexpr bool native_swizzled(gl::Format f) {
 
 inline NativeTextureLayout native_texture_layout(uint32_t width, uint32_t height, uint32_t mips, gl::Format f) {
   if (!width || !height || width > 4096 || height > 4096 || !mips || mips > uint32_t(std::bit_width(std::max(width, height))) || (f == gl::Format::Depth32F && mips != 1))
-    throw std::runtime_error("Invalid native texture dimensions/mips");
+    AURORA_THROW(std::runtime_error("Invalid native texture dimensions/mips"));
 
   const uint32_t block = native_block_bytes(f), palette = native_palette_entries(f), pixel = native_pixel_bytes(f);
 
   if (!block && !palette && !pixel)
-    throw std::runtime_error("Unknown native texture layout");
+    AURORA_THROW(std::runtime_error("Unknown native texture layout"));
 
   if (native_swizzled(f) && (!std::has_single_bit(width) || !std::has_single_bit(height)))
-    throw std::runtime_error("Native swizzled assets require power-of-two dimensions");
+    AURORA_THROW(std::runtime_error("Native swizzled assets require power-of-two dimensions"));
 
   NativeTextureLayout out;
 
@@ -132,7 +133,7 @@ inline gl::Format native_texture_format(uint32_t tag) {
   case 13:
     return gl::Format::BC5_GRRR;
   default:
-    throw std::runtime_error("Unsupported offline native texture tag");
+    AURORA_THROW(std::runtime_error("Unsupported offline native texture tag"));
   }
 }
 } // namespace aurora::gfx

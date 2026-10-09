@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "fatal.h"
 #include "recomp_mod_loader.h"
 #include <sstream>
 #include <stdexcept>
@@ -43,7 +44,7 @@ void RegisterExecutableRange(uint32_t start, uint32_t end, std::string) {
     end &= 0x3FFFFFFF;
 
     if (start >= end)
-        throw std::runtime_error("Invalid executable range");
+        MH3_THROW(std::runtime_error("Invalid executable range"));
 
     if (std::none_of(ranges.begin(), ranges.end(), [&](const Range& r) { return r.start == start && r.end == end; }))
         ranges.push_back({start, end});
@@ -55,7 +56,7 @@ void UnregisterExecutableRange(uint32_t start, uint32_t end) {
     const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const Range& r) { return r.start == start && r.end == end; });
 
     if (found == ranges.end())
-        throw std::runtime_error("Executable range is not registered");
+        MH3_THROW(std::runtime_error("Executable range is not registered"));
 
     ranges.erase(found);
 }
@@ -78,7 +79,7 @@ void CheckExecutableWrite(uint32_t address, size_t length, uint64_t value) {
 
         std::ostringstream message;
         message << "Untranslated executable modification at 0x" << std::hex << address << " by 0x" << CurrentTranslatedExecutionAddress();
-        throw std::runtime_error(message.str());
+        MH3_THROW(std::runtime_error(message.str()));
     }
 }
 
@@ -92,7 +93,7 @@ void VerifyExecutableRanges() {
         } else if (checksum != range.checksum) {
             std::ostringstream message;
             message << "Translated code at 0x" << std::hex << (range.start | 0x80000000u) << "..0x" << (range.end | 0x80000000u) << " was modified by a guest store";
-            throw std::runtime_error(message.str());
+            MH3_THROW(std::runtime_error(message.str()));
         }
     }
 }

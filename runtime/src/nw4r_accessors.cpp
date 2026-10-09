@@ -25,6 +25,7 @@
 // keep a precise call boundary; MH3_PORT_CHECK=Name checks a port on every
 // call (the return register, or the written memory).
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "g3d_native.h"
 #include "memory.h"
 #include "port_check.h"
@@ -40,7 +41,7 @@ namespace {
 [[noreturn]] void Panic(const char* what, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic: %s (%08x)", what, value);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 uint32_t Read32(uint32_t a) {

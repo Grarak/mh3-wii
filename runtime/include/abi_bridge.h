@@ -1,4 +1,5 @@
 #pragma once
+#include "fatal.h"
 #include "memory.h"
 #include "ppc_runtime.h"
 #include "system_bridge.h"
@@ -852,7 +853,7 @@ class AbiTrampoline<Ret(Args...)> {
 
         if constexpr (std::is_floating_point_v<CleanT>) {
             if (fprIndex >= 13) {
-                throw std::out_of_range("FPR argument overflow");
+                MH3_THROW(std::out_of_range("FPR argument overflow"));
             }
 
             return static_cast<CleanT>(cpu->fpr[1 + fprIndex++].d);

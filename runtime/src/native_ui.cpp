@@ -1,6 +1,7 @@
 // RMHP08 application UI paths, reconstructed from their Ghidra C listings.
 // This is the guest ABI boundary; typed C writes native attributes directly.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "native_frame_packet.h"
@@ -30,7 +31,7 @@ uint64_t NextGeneration(uint32_t payload) {
     textureProducerGeneration = std::max(textureProducerGeneration, ReadNativeTextureGeneration(payload)) + 1;
 
     if (!textureProducerGeneration)
-        throw std::runtime_error("Native UI producer generation overflow");
+        MH3_THROW(std::runtime_error("Native UI producer generation overflow"));
 
     return textureProducerGeneration;
 }
@@ -46,7 +47,7 @@ mh3_native_texture_binding ResourceBinding(uint32_t reference) {
 
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native UI input failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native UI input failed: " + std::to_string(status)));
 }
 
 mh3_res_span Span(uint32_t address, size_t size) {
@@ -73,7 +74,7 @@ void Ortho(float top, float bottom, float left, float right, float nearPlane, fl
     float matrix[16];
 
     if (!mh3_draw_ortho(matrix, top, bottom, left, right, nearPlane, farPlane))
-        throw std::runtime_error("Native UI has a degenerate orthographic projection");
+        MH3_THROW(std::runtime_error("Native UI has a degenerate orthographic projection"));
 
     SetNativeProjection(matrix, false);
 }
@@ -122,10 +123,10 @@ void DrawVertices(mh3_ui_primitive primitive, const mh3_ui_vertex* vertices, uin
         return;
 
     if (uiStages != 1)
-        throw std::runtime_error("Native UI draw requires exactly one color stage");
+        MH3_THROW(std::runtime_error("Native UI draw requires exactly one color stage"));
 
     if (textured != uiTextured)
-        throw std::runtime_error("Native UI draw disagrees with its color pipeline");
+        MH3_THROW(std::runtime_error("Native UI draw disagrees with its color pipeline"));
 
     AuroraNativeGeometry geometry{};
 
@@ -201,7 +202,7 @@ void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t 
 
 void ConfigureDirectCoordinates(uint32_t id, uint32_t type, uint32_t source, uint32_t matrix) {
     if (id != 0 || source != 4 || (type != 0 && type != 1) || (matrix != 60 && matrix != 54))
-        throw std::runtime_error("Native UI texture coordinates require an unsupported generator");
+        MH3_THROW(std::runtime_error("Native UI texture coordinates require an unsupported generator"));
 
     uiCoordinates = {type, source, matrix};
     auto material = GetNativeMaterialState();
@@ -227,7 +228,7 @@ mh3_ui_stream ShapeStream(uint32_t flags, uint32_t count) {
             const auto binding = ResourceBinding(0x8066CE80);
 
             if (!binding.source.width || !binding.source.height)
-                throw std::runtime_error("Native shape texture has zero dimensions");
+                MH3_THROW(std::runtime_error("Native shape texture has zero dimensions"));
 
             stream.uv_scale[0] = 1.f / binding.source.width;
             stream.uv_scale[1] = 1.f / binding.source.height;
@@ -249,13 +250,13 @@ void ObserveShape(uint32_t flags, uint32_t count) {
         return;
 
     if ((flags & 1) || Memory::Read8(Shape + 4) != MH3_UI_QUADS)
-        throw std::runtime_error("Native source observer requires application 2D quads");
+        MH3_THROW(std::runtime_error("Native source observer requires application 2D quads"));
 
     const auto stream = ShapeStream(flags, count);
     auto state = GetNativeDrawState();
 
     if (!mh3_draw_ortho(state.projection, 0, Memory::ReadFloat32(ScreenHeight), 0, Memory::ReadFloat32(ScreenWidth), -10000, 10000))
-        throw std::runtime_error("Native source observer has invalid screen dimensions");
+        MH3_THROW(std::runtime_error("Native source observer has invalid screen dimensions"));
 
     state.perspective = 0;
 
@@ -370,7 +371,7 @@ extern "C" void MH3_UITextureBind(CpuContext* cpu) {
     binding.tlut_id = cpu->gpr[5];
 
     if (binding.map_id >= 8)
-        throw std::runtime_error("Native UI texture slot is out of range");
+        MH3_THROW(std::runtime_error("Native UI texture slot is out of range"));
 
     binding.sampler.wrap_s = cpu->gpr[6];
     binding.sampler.wrap_t = cpu->gpr[7];
@@ -419,7 +420,7 @@ extern "C" void MH3_UIStageCount(CpuContext* cpu) {
     const uint32_t count = cpu->gpr[3] & 255;
 
     if (!count || count > 16)
-        throw std::runtime_error("Native UI stage count is outside material storage");
+        MH3_THROW(std::runtime_error("Native UI stage count is outside material storage"));
 
     uint32_t stages[16];
 
@@ -427,7 +428,7 @@ extern "C" void MH3_UIStageCount(CpuContext* cpu) {
         stages[i] = Memory::Read32(0x8056fc80 + i * 4);
 
         if (stages[i] >= 16)
-            throw std::runtime_error("Native UI direct stage table index invalid");
+            MH3_THROW(std::runtime_error("Native UI direct stage table index invalid"));
     }
 
     uiStages = count;
@@ -500,7 +501,7 @@ extern "C" void MH3_DrawRect2DTexture(CpuContext* cpu) {
         const auto binding = ResourceBinding(texture);
 
         if (!binding.source.width || !binding.source.height)
-            throw std::runtime_error("Native UI texture has zero dimensions");
+            MH3_THROW(std::runtime_error("Native UI texture has zero dimensions"));
 
         const float du = 1.f / binding.source.width, dv = 1.f / binding.source.height;
         uint8_t rgba[4];
@@ -571,7 +572,7 @@ extern "C" void MH3_DrawShape(CpuContext* cpu) {
     const auto primitive = mh3_ui_primitive(primitiveValue);
 
     if ((flags & 2) && (primitive == MH3_UI_POINTS || primitive == MH3_UI_LINES || primitive == MH3_UI_LINE_STRIP) && Memory::Read8(0x8066CE7C) != 0)
-        throw std::runtime_error("Native UI textured line/point offset requires a pixel offset implementation");
+        MH3_THROW(std::runtime_error("Native UI textured line/point offset requires a pixel offset implementation"));
 
     const auto stream = ShapeStream(flags, count);
     AuroraNativeGeometry geometry{};
@@ -667,7 +668,7 @@ extern "C" void MH3_DrawUISprites(CpuContext* cpu) {
             continue;
 
         if (count > 16)
-            throw std::runtime_error("Native sprite batch exceeds its CPU quad slots");
+            MH3_THROW(std::runtime_error("Native sprite batch exceeds its CPU quad slots"));
 
         const auto texture = call(0x800D05CC, {uint32_t(textureId)});
         BindNativeTexture(ReadNativeTextureObject(texture));
@@ -783,22 +784,22 @@ static uint32_t ProduceFontAtlas(CpuContext* cpu) {
     const auto destination = frame.Arg(3);
     const auto bytes = call(0x80041050, {0x8057D690, destination}); // verified pure CPU word-stream decoder
     if (bytes < 64 || Memory::Read32(destination) != 0x0020AF30 || Memory::Read32(destination + 4) != 1)
-        throw std::runtime_error("Native font producer did not decode its single-image TPL");
+        MH3_THROW(std::runtime_error("Native font producer did not decode its single-image TPL"));
 
     const auto table = Memory::Read32(destination + 8);
 
     if (table > bytes - 8)
-        throw std::runtime_error("Native font producer table exceeds its decoded bytes");
+        MH3_THROW(std::runtime_error("Native font producer table exceeds its decoded bytes"));
 
     const auto header = Memory::Read32(destination + table);
 
     if (header > bytes - 36)
-        throw std::runtime_error("Native font producer header exceeds its decoded bytes");
+        MH3_THROW(std::runtime_error("Native font producer header exceeds its decoded bytes"));
 
     const auto payload = Memory::Read32(destination + header + 8);
 
     if (payload >= bytes)
-        throw std::runtime_error("Native font producer image exceeds its decoded bytes");
+        MH3_THROW(std::runtime_error("Native font producer image exceeds its decoded bytes"));
 
     NativeUIFontAtlasProduced(destination + payload);
     return bytes;
@@ -815,7 +816,7 @@ extern "C" void MH3_UIShapeTextureObject(CpuContext* cpu) {
     const auto id = frame.Arg(3) & 0xFFFF;
 
     if (id >= 33)
-        throw std::runtime_error("Native shape texture resource id is out of range");
+        MH3_THROW(std::runtime_error("Native shape texture resource id is out of range"));
 
     call(0x80053A18, {id});
     Memory::Write32(frame[0x10], Memory::Read32(0x8066CFF8 + id * 4));
@@ -883,7 +884,7 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
                 continue;
 
             if (begin[layer] < 0 || end[layer] > 1024)
-                throw std::runtime_error("Native font glyph batch exceeds its CPU index array");
+                MH3_THROW(std::runtime_error("Native font glyph batch exceeds its CPU index array"));
 
             const uint32_t count = uint32_t(end[layer] - begin[layer]);
             const auto indexAddress = font + 0x15098 + layer * 0x800 + uint32_t(begin[layer]) * 2;
@@ -893,7 +894,7 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
                 largest = std::max(largest, uint32_t(Memory::Read16(indexAddress + index * 2)));
 
             if (largest >= Memory::Read32(font + 0x15058))
-                throw std::runtime_error("Native font glyph index exceeds its CPU records");
+                MH3_THROW(std::runtime_error("Native font glyph index exceeds its CPU records"));
 
             AuroraNativeGeometry geometry{};
 

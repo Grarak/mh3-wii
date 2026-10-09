@@ -1,4 +1,5 @@
 #include "command_processor.hpp"
+#include <aurora/fatal.hpp>
 
 #include "../gfx/common.hpp"
 #include "../dolphin/gx/__gx.h"
@@ -2399,7 +2400,7 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
     gpuLock.lock();
 
     if (!admit_draw(prim, fmt, vtxCount, vertexBytes))
-      throw gfx::StagingCapacityError("Raw draw does not fit after capacity submission");
+      AURORA_THROW(gfx::StagingCapacityError("Raw draw does not fit after capacity submission"));
   }
 
   const gfx::Range vertRange = gfx::push_verts(vertices, vertexBytes);

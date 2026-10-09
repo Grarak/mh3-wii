@@ -1,4 +1,5 @@
 #include "device.hpp"
+#include <aurora/fatal.hpp>
 #include "razor.hpp"
 #include "shader_bank.hpp"
 #ifdef MH3_DEVELOPMENT
@@ -107,7 +108,7 @@ const SceGxmProgram* find_binary(uint64_t hash, ShaderStage stage) {
 #else
   char message[96];
   std::snprintf(message, sizeof(message), "GXM shader bank has no program %016llx_%c", static_cast<unsigned long long>(hash), "vfr"[unsigned(stage)]);
-  throw std::runtime_error(message);
+  AURORA_THROW(std::runtime_error(message));
 #endif
 }
 } // namespace
@@ -118,7 +119,7 @@ void check(int result, const char* operation) {
 
   char message[160];
   std::snprintf(message, sizeof(message), "GXM %s failed: %08x", operation, unsigned(result));
-  throw std::runtime_error(message);
+  AURORA_THROW(std::runtime_error(message));
 }
 
 const SceGxmProgram* vertex_binary(uint64_t hash) {
@@ -134,129 +135,124 @@ const SceGxmProgram* fragment_scalar_binary(uint64_t hash) {
 }
 
 Device::Device() {
-  try {
-    // Our vertices read CPU-owned streams/uniforms, never a fragment result.
-    // Keep the previous serialization as a diagnostic comparison option.
-    const char* serialScenes = std::getenv("MH3_GXM_SERIAL_SCENES");
+  // Our vertices read CPU-owned streams/uniforms, never a fragment result.
+  // Keep the previous serialization as a diagnostic comparison option.
+  const char* serialScenes = std::getenv("MH3_GXM_SERIAL_SCENES");
 
-    if (serialScenes && serialScenes[0] == '1')
-      m_sceneFlags = SCE_GXM_SCENE_VERTEX_WAIT_FOR_DEPENDENCY | SCE_GXM_SCENE_FRAGMENT_SET_DEPENDENCY;
+  if (serialScenes && serialScenes[0] == '1')
+    m_sceneFlags = SCE_GXM_SCENE_VERTEX_WAIT_FOR_DEPENDENCY | SCE_GXM_SCENE_FRAGMENT_SET_DEPENDENCY;
 
-    SceGxmInitializeParams init{};
+  SceGxmInitializeParams init{};
 
-    // Stock sceGxmInitialize accepts only the affinity flags on firmware 3.65.
-    // Query remaining CDRAM after its parameter-buffer allocation below.
-    init.flags = SCE_GXM_INITIALIZE_FLAG_DEFAULT;
+  // Stock sceGxmInitialize accepts only the affinity flags on firmware 3.65.
+  // Query remaining CDRAM after its parameter-buffer allocation below.
+  init.flags = SCE_GXM_INITIALIZE_FLAG_DEFAULT;
 
-    // Admission allows two pending flips. Keep one extra internal queue entry:
-    // the callback publishes completion just before libgxm retires its entry,
-    // so this headroom prevents even that bookkeeping race from blocking AddEntry.
-    init.displayQueueMaxPendingCount = aurora::GpuFrameRing::BufferCount;
-    init.displayQueueCallback = display_callback;
-    init.displayQueueCallbackDataSize = sizeof(DisplayData);
-    init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;
-    razor_initialize();
-    check(sceGxmInitialize(&init), "initialize");
-    m_initialized = true;
-    m_notification = sceGxmGetNotificationRegion();
+  // Admission allows two pending flips. Keep one extra internal queue entry:
+  // the callback publishes completion just before libgxm retires its entry,
+  // so this headroom prevents even that bookkeeping race from blocking AddEntry.
+  init.displayQueueMaxPendingCount = aurora::GpuFrameRing::BufferCount;
+  init.displayQueueCallback = display_callback;
+  init.displayQueueCallbackDataSize = sizeof(DisplayData);
+  init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;
+  razor_initialize();
+  check(sceGxmInitialize(&init), "initialize");
+  m_initialized = true;
+  m_notification = sceGxmGetNotificationRegion();
 
-    if (!m_notification)
-      throw std::runtime_error("GXM notification region unavailable");
-    // No scene has been submitted yet. Initialize our owned retirement word
-    // even if the GXM notification region was retained from an earlier device.
-    *m_notification = m_sceneSerial;
-    g_displayQueued.store(0, std::memory_order_relaxed);
-    g_displayCompleted.store(0, std::memory_order_relaxed);
-    g_displayPresented.store(0, std::memory_order_relaxed);
-    g_displayFailures.store(0, std::memory_order_relaxed);
-    g_displayWaitMicros.store(0, std::memory_order_relaxed);
-    g_frameDevice.store(this, std::memory_order_release);
-    m_memory.reserve(7);
-    auto allocate = [&](unsigned bytes, MappedMemory::Kind kind, const char* name) -> MappedMemory& {
-      m_memory.emplace_back(bytes, kind, name);
-      return m_memory.back();
-    };
+  if (!m_notification)
+    AURORA_THROW(std::runtime_error("GXM notification region unavailable"));
+  // No scene has been submitted yet. Initialize our owned retirement word
+  // even if the GXM notification region was retained from an earlier device.
+  *m_notification = m_sceneSerial;
+  g_displayQueued.store(0, std::memory_order_relaxed);
+  g_displayCompleted.store(0, std::memory_order_relaxed);
+  g_displayPresented.store(0, std::memory_order_relaxed);
+  g_displayFailures.store(0, std::memory_order_relaxed);
+  g_displayWaitMicros.store(0, std::memory_order_relaxed);
+  g_frameDevice.store(this, std::memory_order_release);
+  m_memory.reserve(7);
+  auto allocate = [&](unsigned bytes, MappedMemory::Kind kind, const char* name) -> MappedMemory& {
+    m_memory.emplace_back(bytes, kind, name);
+    return m_memory.back();
+  };
 
-    auto& vdm = allocate(SCE_GXM_DEFAULT_VDM_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora VDM ring");
-    auto& vertex = allocate(SCE_GXM_DEFAULT_VERTEX_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora vertex ring");
-    auto& fragment = allocate(SCE_GXM_DEFAULT_FRAGMENT_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora fragment ring");
-    auto& usse = allocate(SCE_GXM_DEFAULT_FRAGMENT_USSE_RING_BUFFER_SIZE, MappedMemory::Kind::FragmentUsse, "Aurora fragment USSE ring");
-    m_host = std::malloc(SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE);
+  auto& vdm = allocate(SCE_GXM_DEFAULT_VDM_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora VDM ring");
+  auto& vertex = allocate(SCE_GXM_DEFAULT_VERTEX_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora vertex ring");
+  auto& fragment = allocate(SCE_GXM_DEFAULT_FRAGMENT_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora fragment ring");
+  auto& usse = allocate(SCE_GXM_DEFAULT_FRAGMENT_USSE_RING_BUFFER_SIZE, MappedMemory::Kind::FragmentUsse, "Aurora fragment USSE ring");
+  m_host = std::malloc(SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE);
 
-    if (!m_host)
-      throw std::bad_alloc();
+  if (!m_host)
+    AURORA_THROW(std::bad_alloc());
 
-    SceGxmContextParams context{};
-    context.hostMem = m_host;
-    context.hostMemSize = SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE;
-    context.vdmRingBufferMem = vdm.data();
-    context.vdmRingBufferMemSize = vdm.size();
-    context.vertexRingBufferMem = vertex.data();
-    context.vertexRingBufferMemSize = vertex.size();
-    context.fragmentRingBufferMem = fragment.data();
-    context.fragmentRingBufferMemSize = fragment.size();
-    context.fragmentUsseRingBufferMem = usse.data();
-    context.fragmentUsseRingBufferMemSize = usse.size();
-    context.fragmentUsseRingBufferOffset = usse.usse_offset();
-    check(sceGxmCreateContext(&context, &m_context), "create context");
+  SceGxmContextParams context{};
+  context.hostMem = m_host;
+  context.hostMemSize = SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE;
+  context.vdmRingBufferMem = vdm.data();
+  context.vdmRingBufferMemSize = vdm.size();
+  context.vertexRingBufferMem = vertex.data();
+  context.vertexRingBufferMemSize = vertex.size();
+  context.fragmentRingBufferMem = fragment.data();
+  context.fragmentRingBufferMemSize = fragment.size();
+  context.fragmentUsseRingBufferMem = usse.data();
+  context.fragmentUsseRingBufferMemSize = usse.size();
+  context.fragmentUsseRingBufferOffset = usse.usse_offset();
+  check(sceGxmCreateContext(&context, &m_context), "create context");
 
-    auto& buffer = allocate(4u << 20, MappedMemory::Kind::Draw, "Aurora shader patcher data");
-    auto& vertexUsse = allocate(2u << 20, MappedMemory::Kind::VertexUsse, "Aurora vertex programs");
-    auto& fragmentUsse = allocate(4u << 20, MappedMemory::Kind::FragmentUsse, "Aurora fragment programs");
-    SceGxmShaderPatcherParams patcher{};
-    patcher.hostAllocCallback = host_alloc;
-    patcher.hostFreeCallback = host_free;
-    patcher.bufferMem = buffer.data();
-    patcher.bufferMemSize = buffer.size();
-    patcher.vertexUsseMem = vertexUsse.data();
-    patcher.vertexUsseMemSize = vertexUsse.size();
-    patcher.vertexUsseOffset = vertexUsse.usse_offset();
-    patcher.fragmentUsseMem = fragmentUsse.data();
-    patcher.fragmentUsseMemSize = fragmentUsse.size();
-    patcher.fragmentUsseOffset = fragmentUsse.usse_offset();
-    check(sceGxmShaderPatcherCreate(&patcher, &m_patcher), "create shader patcher");
+  auto& buffer = allocate(4u << 20, MappedMemory::Kind::Draw, "Aurora shader patcher data");
+  auto& vertexUsse = allocate(2u << 20, MappedMemory::Kind::VertexUsse, "Aurora vertex programs");
+  auto& fragmentUsse = allocate(4u << 20, MappedMemory::Kind::FragmentUsse, "Aurora fragment programs");
+  SceGxmShaderPatcherParams patcher{};
+  patcher.hostAllocCallback = host_alloc;
+  patcher.hostFreeCallback = host_free;
+  patcher.bufferMem = buffer.data();
+  patcher.bufferMemSize = buffer.size();
+  patcher.vertexUsseMem = vertexUsse.data();
+  patcher.vertexUsseMemSize = vertexUsse.size();
+  patcher.vertexUsseOffset = vertexUsse.usse_offset();
+  patcher.fragmentUsseMem = fragmentUsse.data();
+  patcher.fragmentUsseMemSize = fragmentUsse.size();
+  patcher.fragmentUsseOffset = fragmentUsse.usse_offset();
+  check(sceGxmShaderPatcherCreate(&patcher, &m_patcher), "create shader patcher");
 
-    SceKernelFreeMemorySizeInfo available{};
-    available.size = sizeof(available);
-    check(sceKernelGetFreeMemorySize(&available), "query memory partitions");
+  SceKernelFreeMemorySizeInfo available{};
+  available.size = sizeof(available);
+  check(sceKernelGetFreeMemorySize(&available), "query memory partitions");
 
-    // Three native draw slots: 10.5 MiB with unchanged live capacities, plus
-    // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
-    // committing the texture/display arena. Compact models own separately
-    // allocated CDRAM blocks: they peaked at 5.25 MiB (Alatreon, Moga Woods),
-    // so keep 16 MiB for them, not the 32 MiB a prepared map may reach (a
-    // pack that finds no CDRAM is fatal), and leave 8 MiB for the driver.
-    // Textures have no spill, and the old 32 MiB left them 31 MiB, which the
-    // opening movie after character creation filled.
-    constexpr unsigned producerReserve = NativeProducerReserve;
-    constexpr unsigned modelReserve = 16u << 20;
-    constexpr unsigned driverReserve = 8u << 20;
+  // Three native draw slots: 10.5 MiB with unchanged live capacities, plus
+  // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
+  // committing the texture/display arena. Compact models own separately
+  // allocated CDRAM blocks: they peaked at 5.25 MiB (Alatreon, Moga Woods),
+  // so keep 16 MiB for them, not the 32 MiB a prepared map may reach (a
+  // pack that finds no CDRAM is fatal), and leave 8 MiB for the driver.
+  // Textures have no spill, and the old 32 MiB left them 31 MiB, which the
+  // opening movie after character creation filled.
+  constexpr unsigned producerReserve = NativeProducerReserve;
+  constexpr unsigned modelReserve = 16u << 20;
+  constexpr unsigned driverReserve = 8u << 20;
 
-    if (available.size_cdram <= producerReserve + modelReserve + driverReserve)
-      throw std::runtime_error("Insufficient CDRAM for Aurora, producer slots and resident models");
+  if (available.size_cdram <= producerReserve + modelReserve + driverReserve)
+    AURORA_THROW(std::runtime_error("Insufficient CDRAM for Aurora, producer slots and resident models"));
 
-    const unsigned budget = (unsigned(available.size_cdram) - producerReserve - modelReserve - driverReserve) & ~0x3ffffu;
-    m_arena = std::make_unique<CdramArena>(budget);
-    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation %.2f MiB, model reservation %u MiB\n", budget / 1048576.0, producerReserve / 1048576.0, modelReserve >> 20);
+  const unsigned budget = (unsigned(available.size_cdram) - producerReserve - modelReserve - driverReserve) & ~0x3ffffu;
+  m_arena = std::make_unique<CdramArena>(budget);
+  std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation %.2f MiB, model reservation %u MiB\n", budget / 1048576.0, producerReserve / 1048576.0, modelReserve >> 20);
 
-    for (unsigned i = 0; i < aurora::GpuFrameRing::BufferCount; ++i) {
-      m_displayData[i] = m_arena->allocate(Stride * Height * 4);
+  for (unsigned i = 0; i < aurora::GpuFrameRing::BufferCount; ++i) {
+    m_displayData[i] = m_arena->allocate(Stride * Height * 4);
 
-      if (!m_displayData[i])
-        throw std::bad_alloc();
+    if (!m_displayData[i])
+      AURORA_THROW(std::bad_alloc());
 
-      std::memset(m_displayData[i], 0, Stride * Height * 4);
-      check(sceGxmColorSurfaceInit(&m_display[i], SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, Width, Height,
-                                   Stride, m_displayData[i]),
-            "initialize display surface");
-      check(sceGxmSyncObjectCreate(&m_sync[i]), "create display sync");
-    }
-
-    std::fprintf(stderr, "Aurora GXM: VSync on (flips at VBlank)\n");
-  } catch (...) {
-    release();
-    throw;
+    std::memset(m_displayData[i], 0, Stride * Height * 4);
+    check(sceGxmColorSurfaceInit(&m_display[i], SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, Width, Height,
+                                 Stride, m_displayData[i]),
+          "initialize display surface");
+    check(sceGxmSyncObjectCreate(&m_sync[i]), "create display sync");
   }
+
+  std::fprintf(stderr, "Aurora GXM: VSync on (flips at VBlank)\n");
 }
 
 Device::~Device() {
@@ -443,111 +439,106 @@ void set_common_dialog_active(bool active) noexcept {
 
 PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash, SceGxmIndexFormat indices, std::span<const VertexInput> inputs)
 : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)), m_fragmentHash(fragmentHash) {
-  try {
-    check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
-    check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
-    trace_shader_abi(m_vertexBinary, vertexHash, 'v');
-    trace_shader_abi(m_fragmentBinary, fragmentHash, 'f');
-    check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
-    check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
-    SceGxmVertexAttribute attributes[16]{};
-    SceGxmVertexStream streams[16]{{4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT)},
-                                   {4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)}};
-    unsigned count = 0;
-    unsigned streamCount = 2;
+  check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
+  check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
+  trace_shader_abi(m_vertexBinary, vertexHash, 'v');
+  trace_shader_abi(m_fragmentBinary, fragmentHash, 'f');
+  check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
+  check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
+  SceGxmVertexAttribute attributes[16]{};
+  SceGxmVertexStream streams[16]{{4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT)},
+                                 {4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)}};
+  unsigned count = 0;
+  unsigned streamCount = 2;
 
-    if (!inputs.empty()) {
-      streamCount = 0;
-      std::fill(std::begin(streams), std::end(streams), SceGxmVertexStream{});
+  if (!inputs.empty()) {
+    streamCount = 0;
+    std::fill(std::begin(streams), std::end(streams), SceGxmVertexStream{});
 
-      for (const auto& input : inputs) {
-        if (input.stream >= 16 || !input.stride || input.offset >= input.stride || !input.components || input.components > 4 || count == 16)
-          throw std::runtime_error("Native vertex input exceeds hardware layout limits");
+    for (const auto& input : inputs) {
+      if (input.stream >= 16 || !input.stride || input.offset >= input.stride || !input.components || input.components > 4 || count == 16)
+        AURORA_THROW(std::runtime_error("Native vertex input exceeds hardware layout limits"));
 
-        const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, input.name);
+      const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, input.name);
 
-        if (!parameter)
-          continue; // Compiler removed an unused attribute.
-        if (sceGxmProgramParameterGetCategory(parameter) != SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE)
-          throw std::runtime_error("Native vertex input is not an attribute");
+      if (!parameter)
+        continue; // Compiler removed an unused attribute.
+      if (sceGxmProgramParameterGetCategory(parameter) != SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE)
+        AURORA_THROW(std::runtime_error("Native vertex input is not an attribute"));
 
-        auto& stream = streams[input.stream];
+      auto& stream = streams[input.stream];
 
-        if (stream.stride && stream.stride != input.stride)
-          throw std::runtime_error("Native vertex stream has conflicting strides");
+      if (stream.stride && stream.stride != input.stride)
+        AURORA_THROW(std::runtime_error("Native vertex stream has conflicting strides"));
 
-        stream.stride = input.stride;
-        stream.indexSource = indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT;
-        streamCount = std::max(streamCount, unsigned(input.stream) + 1);
-        auto& attribute = attributes[count++];
-        attribute.streamIndex = input.stream;
-        attribute.offset = input.offset;
-        attribute.format = input.format;
-        attribute.componentCount = input.components;
-        attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
-      }
-
-      // GXM requires every attribute the program reads to be bound; GL feeds
-      // absent ones the constant (0, 0, 0, 1). Instance-indexed, a plain draw
-      // reads element 0 of the defaults stream for every vertex.
-      for (unsigned i = 0, total = sceGxmProgramGetParameterCount(m_vertexBinary); i < total; ++i) {
-        const auto* parameter = sceGxmProgramGetParameter(m_vertexBinary, i);
-
-        if (sceGxmProgramParameterGetCategory(parameter) != SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE)
-          continue;
-
-        const unsigned reg = sceGxmProgramParameterGetResourceIndex(parameter);
-
-        if (std::any_of(attributes, attributes + count, [&](const SceGxmVertexAttribute& bound) { return bound.regIndex == reg; }))
-          continue;
-
-        if (count == 16 || streamCount == 16)
-          throw std::runtime_error("Native vertex defaults exceed hardware layout limits");
-
-        if (m_defaultStream < 0) {
-          m_defaultStream = int(streamCount++);
-          streams[m_defaultStream] = {16, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)};
-        }
-
-        auto& attribute = attributes[count++];
-        attribute.streamIndex = uint16_t(m_defaultStream);
-        attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
-        attribute.componentCount = uint8_t(std::clamp(sceGxmProgramParameterGetComponentCount(parameter), 1u, 4u));
-        attribute.regIndex = uint16_t(reg);
-      }
-    } else
-      for (unsigned stream = 0; stream < 2; ++stream) {
-        const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, stream ? "instance_id" : "vertex_id");
-
-        if (!parameter)
-          continue;
-
-        auto& attribute = attributes[count++];
-        attribute.streamIndex = stream;
-        attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
-
-        // Sony reflects a whole PA register (four components) for this scalar
-        // input. The actual producer stream contains one float ID per vertex.
-        attribute.componentCount = 1;
-        attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
-      }
-    if (const int error = sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, streamCount, &m_vertex); error < 0) {
-      char text[96];
-      std::snprintf(text, sizeof(text), "GXM patch vertex program %016llx failed: %08x;", static_cast<unsigned long long>(vertexHash), unsigned(error));
-      std::string layout = text;
-
-      for (unsigned i = 0; i < count; ++i) {
-        const auto& a = attributes[i];
-        std::snprintf(text, sizeof(text), " [stream %u offset %u format %u x%u reg %u stride %u]", a.streamIndex, a.offset, unsigned(a.format), a.componentCount, a.regIndex,
-                      streams[a.streamIndex].stride);
-        layout += text;
-      }
-
-      throw std::runtime_error(layout);
+      stream.stride = input.stride;
+      stream.indexSource = indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT;
+      streamCount = std::max(streamCount, unsigned(input.stream) + 1);
+      auto& attribute = attributes[count++];
+      attribute.streamIndex = input.stream;
+      attribute.offset = input.offset;
+      attribute.format = input.format;
+      attribute.componentCount = input.components;
+      attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
     }
-  } catch (...) {
-    release();
-    throw;
+
+    // GXM requires every attribute the program reads to be bound; GL feeds
+    // absent ones the constant (0, 0, 0, 1). Instance-indexed, a plain draw
+    // reads element 0 of the defaults stream for every vertex.
+    for (unsigned i = 0, total = sceGxmProgramGetParameterCount(m_vertexBinary); i < total; ++i) {
+      const auto* parameter = sceGxmProgramGetParameter(m_vertexBinary, i);
+
+      if (sceGxmProgramParameterGetCategory(parameter) != SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE)
+        continue;
+
+      const unsigned reg = sceGxmProgramParameterGetResourceIndex(parameter);
+
+      if (std::any_of(attributes, attributes + count, [&](const SceGxmVertexAttribute& bound) { return bound.regIndex == reg; }))
+        continue;
+
+      if (count == 16 || streamCount == 16)
+        AURORA_THROW(std::runtime_error("Native vertex defaults exceed hardware layout limits"));
+
+      if (m_defaultStream < 0) {
+        m_defaultStream = int(streamCount++);
+        streams[m_defaultStream] = {16, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)};
+      }
+
+      auto& attribute = attributes[count++];
+      attribute.streamIndex = uint16_t(m_defaultStream);
+      attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+      attribute.componentCount = uint8_t(std::clamp(sceGxmProgramParameterGetComponentCount(parameter), 1u, 4u));
+      attribute.regIndex = uint16_t(reg);
+    }
+  } else
+    for (unsigned stream = 0; stream < 2; ++stream) {
+      const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, stream ? "instance_id" : "vertex_id");
+
+      if (!parameter)
+        continue;
+
+      auto& attribute = attributes[count++];
+      attribute.streamIndex = stream;
+      attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+
+      // Sony reflects a whole PA register (four components) for this scalar
+      // input. The actual producer stream contains one float ID per vertex.
+      attribute.componentCount = 1;
+      attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
+    }
+  if (const int error = sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, streamCount, &m_vertex); error < 0) {
+    char text[96];
+    std::snprintf(text, sizeof(text), "GXM patch vertex program %016llx failed: %08x;", static_cast<unsigned long long>(vertexHash), unsigned(error));
+    std::string layout = text;
+
+    for (unsigned i = 0; i < count; ++i) {
+      const auto& a = attributes[i];
+      std::snprintf(text, sizeof(text), " [stream %u offset %u format %u x%u reg %u stride %u]", a.streamIndex, a.offset, unsigned(a.format), a.componentCount, a.regIndex,
+                    streams[a.streamIndex].stride);
+      layout += text;
+    }
+
+    AURORA_THROW(std::runtime_error(layout));
   }
 }
 
@@ -576,7 +567,7 @@ void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterForm
   const bool scalar = output == SCE_GXM_OUTPUT_REGISTER_FORMAT_FLOAT;
 
   if (scalar && (blend.colorFunc != SCE_GXM_BLEND_FUNC_NONE || !(blend.colorMask & SCE_GXM_COLOR_MASK_R)))
-    throw std::runtime_error("Scalar F32 target requires an unblended red-channel write");
+    AURORA_THROW(std::runtime_error("Scalar F32 target requires an unblended red-channel write"));
 
   if (scalar && !m_scalarFragmentId) {
     m_scalarFragmentBinary = fragment_scalar_binary(m_fragmentHash);

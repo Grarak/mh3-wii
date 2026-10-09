@@ -1,4 +1,5 @@
 #include "efb_host.h"
+#include "fatal.h"
 #include "gx_panic.h"
 #include "recomp_mod_loader.h"
 #include "isa/ppc_isa_context.h"
@@ -42,14 +43,14 @@ uint32_t ConvertEfbArgb(uint32_t color, unsigned pixelFormat, unsigned alphaMode
     } else if (pixelFormat == 0)
         a = 255;
     else
-        throw std::runtime_error("Unsupported EFB peek pixel format");
+        MH3_THROW(std::runtime_error("Unsupported EFB peek pixel format"));
 
     if (alphaMode == 0)
         a = 0;
     else if (alphaMode == 1)
         a = 255;
     else if (alphaMode != 2)
-        throw std::runtime_error("Invalid PE alpha-read mode");
+        MH3_THROW(std::runtime_error("Invalid PE alpha-read mode"));
 
     return (a << 24) | (r << 16) | (g << 8) | b;
 }
@@ -82,10 +83,10 @@ bool WriteEfbColor32(uint32_t address, uint32_t value) {
 }
 #ifndef MH3_HAS_AURORA
 void WriteHostEfbColor(uint16_t, uint16_t, uint32_t) {
-    throw std::runtime_error("EFB color writes require the Aurora-linked build");
+    MH3_THROW(std::runtime_error("EFB color writes require the Aurora-linked build"));
 }
 
 uint32_t ReadHostEfbColor(uint16_t, uint16_t) {
-    throw std::runtime_error("EFB color reads require the Aurora-linked build");
+    MH3_THROW(std::runtime_error("EFB color reads require the Aurora-linked build"));
 }
 #endif

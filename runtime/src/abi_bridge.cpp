@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 
 #include <algorithm>
 #include <array>
@@ -379,7 +380,7 @@ void TranslatedFunctionRegistry::Finalize() {
     }
 
     if (!validationError.empty()) {
-        throw std::runtime_error("[" RT_TAG_RUNTIME "] " + validationError);
+        MH3_THROW(std::runtime_error("[" RT_TAG_RUNTIME "] " + validationError));
     }
 }
 

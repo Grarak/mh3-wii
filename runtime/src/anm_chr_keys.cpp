@@ -21,6 +21,7 @@
 // The registered bodies only move registers, so callers keep the precise call
 // boundary the translated functions had.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "g3d_native.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -61,7 +62,7 @@ bool ValidPointer(uint32_t p) {
 [[noreturn]] void Panic(const char* what, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic (g3d_resanmchr.cpp): %s (%08x)", what, value);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 uint32_t Gqr(unsigned index) {

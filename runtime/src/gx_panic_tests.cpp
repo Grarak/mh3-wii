@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "gx_host.h"
 #include "efb_host.h"
 
@@ -24,7 +25,7 @@ void ExpectPanic(const char* name, const char* message, CpuContext* cpu, const s
     int pipeFd[2];
 
     if (pipe(pipeFd))
-        throw std::runtime_error("GX panic test pipe failed");
+        MH3_THROW(std::runtime_error("GX panic test pipe failed"));
 
     std::fflush(nullptr);
     const pid_t child = fork();
@@ -32,7 +33,7 @@ void ExpectPanic(const char* name, const char* message, CpuContext* cpu, const s
     if (child < 0) {
         close(pipeFd[0]);
         close(pipeFd[1]);
-        throw std::runtime_error("GX panic test fork failed");
+        MH3_THROW(std::runtime_error("GX panic test fork failed"));
     }
 
     if (!child) {
@@ -89,7 +90,7 @@ void ExpectPanic(const char* name, const char* message, CpuContext* cpu, const s
     if (timedOut || !WIFEXITED(status) || WEXITSTATUS(status) != 1 || output.find("MH3 GX PANIC: ") == std::string::npos || output.find(message) == std::string::npos ||
         output.find("LR 0x8003f794") == std::string::npos || output.find("caller 0x8003fa48") == std::string::npos || output.find("Native backtrace") == std::string::npos ||
         output.find("#0 ") == std::string::npos)
-        throw std::runtime_error(std::string("GX panic test failed: ") + name + "\n" + output);
+        MH3_THROW(std::runtime_error(std::string("GX panic test failed: ") + name + "\n" + output));
 }
 } // namespace
 #endif

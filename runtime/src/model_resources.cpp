@@ -1,6 +1,7 @@
 // Verified NW4R resource ABI adapters, RMHP08. Parsing and resource semantics
 // live in native C; this file only maps owned RAM spans, arguments and results.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "memory.h"
 #include "port_check.h"
 #include "../native/mh3_model_runtime.h"
@@ -24,7 +25,7 @@ uint32_t Result(mh3_res_status status, uint32_t value) {
     if (status != MH3_RES_OK) {
         char message[96];
         std::snprintf(message, sizeof message, "Native model resource access failed (%d)", int(status));
-        throw std::runtime_error(message);
+        MH3_THROW(std::runtime_error(message));
     }
 
     return value;

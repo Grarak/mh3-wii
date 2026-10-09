@@ -1,4 +1,5 @@
 #include "audio_dma.h"
+#include "fatal.h"
 #include "audio_output_statistics.h"
 #include "../src/audio/native_audio_mixer.h"
 #include <aurora/thread_role.hpp>
@@ -38,7 +39,7 @@ class AudioOutput {
             std::lock_guard lock(mutex);
 
             if (failed)
-                throw std::runtime_error("Vita audio output failed");
+                MH3_THROW(std::runtime_error("Vita audio output failed"));
 
             if (rate != queueRate) {
                 // Old-rate PCM cannot be combined with the new-rate stream.
@@ -200,7 +201,7 @@ NativeAudioOutputStatistics GetNativeAudioOutputStatistics() {
 
 void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
     if (bytes % 4 || (rate != 32000 && rate != 48000))
-        throw std::runtime_error("Invalid Wii PCM block");
+        MH3_THROW(std::runtime_error("Invalid Wii PCM block"));
 
     if (!audio) {
         audio = std::make_unique<AudioOutput>();

@@ -1,6 +1,7 @@
 // Startup conversion of external disc textures. The swizzle/CMPR routines
 // mirror the verified host packer in scripts/vita_texture_pack.cpp.
 #include "vita_launcher.h"
+#include "fatal.h"
 #include "disc_image.h"
 #include "launcher_texture_inventory.h"
 #include "launcher_convert.h"
@@ -296,7 +297,7 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
         progress("Indexing game textures", processed++, names.size());
 
         if (disc.FileSize(path) > TextureInventory::MaxSourceBytes)
-            throw std::runtime_error("Oversized texture source: " + path);
+            MH3_THROW(std::runtime_error("Oversized texture source: " + path));
 
         data = disc.ReadFile(path);
         std::vector<TextureInventory::Texture> textures;
@@ -327,7 +328,7 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
             path = s.path;
 
             if (disc.FileSize(path) > TextureInventory::MaxSourceBytes)
-                throw std::runtime_error("Oversized texture source reread");
+                MH3_THROW(std::runtime_error("Oversized texture source reread"));
 
             data = disc.ReadFile(path);
         }
@@ -356,10 +357,10 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
     map.close();
 
     if (!map)
-        throw std::runtime_error("Cannot close native texture patch table");
+        MH3_THROW(std::runtime_error("Cannot close native texture patch table"));
 #ifdef __vita__
     if (sceIoSync("ux0:", 0) < 0)
-        throw std::runtime_error("Cannot sync converted textures");
+        MH3_THROW(std::runtime_error("Cannot sync converted textures"));
 #endif
     Publish(root / "native-textures.bin.preparing", root / "native-textures.bin");
     Publish(root / "native-texture-map.bin.preparing", root / "native-texture-map.bin");

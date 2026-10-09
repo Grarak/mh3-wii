@@ -1,4 +1,5 @@
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "audio_dma.h"
 #include "audio/native_audio.h"
 #include "os_alarm.h"
@@ -27,19 +28,19 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
     const auto duration = TimeBaseContract::TicksToDuration(ticks);
 
     if (ticks && duration == std::chrono::nanoseconds::zero())
-        throw std::runtime_error("OSSleepTicks duration exceeds host clock range");
+        MH3_THROW(std::runtime_error("OSSleepTicks duration exceeds host clock range"));
 
     const auto start = Clock::now();
 
     if (duration > Clock::time_point::max() - start)
-        throw std::runtime_error("OSSleepTicks deadline exceeds host clock range");
+        MH3_THROW(std::runtime_error("OSSleepTicks deadline exceeds host clock range"));
 
     const auto deadline = start + duration;
     ScopeExit restore([&] { *cpu = saved; });
 
     do {
         if (Memory::Read32(saved.gpr[13] - 14984))
-            throw std::runtime_error("OSSleepTicks requires runnable guest thread switching");
+            MH3_THROW(std::runtime_error("OSSleepTicks requires runnable guest thread switching"));
 
         pump();
         *cpu = saved;
@@ -88,22 +89,22 @@ void RunSleepSelfTests(CpuContext* cpu) {
     });
 
     if (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(5) || calls < 2 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678)
-        throw std::runtime_error("Sleep timing/pumping/CPU preservation failed");
+        MH3_THROW(std::runtime_error("Sleep timing/pumping/CPU preservation failed"));
 
     const auto failing = [&] {
         SleepTicks(cpu, [&] {
             cpu->lr = 0;
-            throw std::runtime_error("test callback failure");
+            MH3_THROW(std::runtime_error("test callback failure"));
         });
     };
 
     if (CheckRejections && (!Rejects(failing) || cpu->lr != 0x5678))
-        throw std::runtime_error("Sleep exception restoration failed");
+        MH3_THROW(std::runtime_error("Sleep exception restoration failed"));
 
     Memory::Write32(pending, 1);
 
     if (CheckRejections && !Rejects([&] { SleepTicks(cpu, [&] { ++calls; }); }))
-        throw std::runtime_error("Sleep skipped a runnable thread");
+        MH3_THROW(std::runtime_error("Sleep skipped a runnable thread"));
 
     Memory::Write32(pending, oldPending);
     *cpu = original;

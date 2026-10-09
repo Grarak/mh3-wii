@@ -1,5 +1,6 @@
 // Direct application render state. No GX calls, packets, register banks or FIFO.
 #include "native_graphics.h"
+#include "fatal.h"
 #include "native_shade_snapshot.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "gl/gl.hpp"
@@ -42,7 +43,7 @@ std::array<float, 2> TargetScale() {
     const auto size = aurora::vi::configured_fb_size();
 
     if (!size.x || !size.y)
-        throw std::runtime_error("Native target has no base dimensions");
+        MH3_THROW(std::runtime_error("Native target has no base dimensions"));
 
     return {float(aurora::gpu::g_frameBuffer.width) / size.x, float(aurora::gpu::g_frameBuffer.height) / size.y};
 }
@@ -119,9 +120,9 @@ void SetNativeViewport(float x, float y, float width, float height, float near_z
 
     for (float v : values)
         if (!std::isfinite(v))
-            throw std::runtime_error("Non-finite native viewport");
+            MH3_THROW(std::runtime_error("Non-finite native viewport"));
     if (width < 0 || height < 0)
-        throw std::runtime_error("Negative native viewport");
+        MH3_THROW(std::runtime_error("Negative native viewport"));
 
     auto& d = D();
     std::memcpy(d.drawState.viewport, values, sizeof(values));
@@ -131,7 +132,7 @@ void SetNativeViewport(float x, float y, float width, float height, float near_z
 
 bool GetNativeScissor(int32_t out[4], NativeOwner owner) {
     if (!out)
-        throw std::runtime_error("Null native scissor destination");
+        MH3_THROW(std::runtime_error("Null native scissor destination"));
 
     const auto& d = D(owner);
 
@@ -144,7 +145,7 @@ bool GetNativeScissor(int32_t out[4], NativeOwner owner) {
 
 void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height) {
     if (width < 0 || height < 0)
-        throw std::runtime_error("Negative native scissor");
+        MH3_THROW(std::runtime_error("Negative native scissor"));
 
     D().scissor = {x, y, width, height};
     D().scissorKnown = true;
@@ -154,10 +155,10 @@ void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height) {
 namespace {
 void CheckRaster(const mh3_raster_state& raster) {
     if (raster.blend_mode > 3 || raster.src_factor > 7 || raster.dst_factor > 7 || raster.depth_compare > 7 || raster.cull_mode > 3 || raster.logic_op > 15)
-        throw std::runtime_error("Native raster state is outside its typed domain");
+        MH3_THROW(std::runtime_error("Native raster state is outside its typed domain"));
 
     if (raster.blend_mode == 2 && raster.logic_op != 3 && raster.logic_op != 5)
-        throw std::runtime_error("Native bitwise logic operation requires a framebuffer material");
+        MH3_THROW(std::runtime_error("Native bitwise logic operation requires a framebuffer material"));
 }
 
 aurora::gl::RasterState BackendRaster(const mh3_raster_state& raster) {

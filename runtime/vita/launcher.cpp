@@ -2,6 +2,7 @@
 // development builds, on Linux hosts (MH3 --launcher), which have no system
 // dialogs: messages draw as a panel there and the quest name keeps its value.
 #include "vita_launcher.h"
+#include "fatal.h"
 #include "launcher_font.h"
 #include "launcher_screen.h"
 #include "launcher_cheats.h"
@@ -104,7 +105,7 @@ class Script {
         std::ifstream input(path);
 
         if (!input)
-            throw std::runtime_error(std::string("Cannot read MH3_LAUNCHER_INPUT ") + path);
+            MH3_THROW(std::runtime_error(std::string("Cannot read MH3_LAUNCHER_INPUT ") + path));
 
         for (std::string line; std::getline(input, line);) {
             std::istringstream fields(line.substr(0, line.find('#')));
@@ -115,7 +116,7 @@ class Script {
                 continue;
 
             if (!(fields >> names) || (!entries.empty() && frame < entries.back().first))
-                throw std::runtime_error("Invalid MH3_LAUNCHER_INPUT line: " + line);
+                MH3_THROW(std::runtime_error("Invalid MH3_LAUNCHER_INPUT line: " + line));
 
             entries.emplace_back(frame, Buttons(names));
         }
@@ -159,7 +160,7 @@ class Script {
             const auto found = std::find_if(std::begin(named), std::end(named), [&](const auto& n) { return name == n.first; });
 
             if (found == std::end(named))
-                throw std::runtime_error("Unknown MH3_LAUNCHER_INPUT button " + name);
+                MH3_THROW(std::runtime_error("Unknown MH3_LAUNCHER_INPUT button " + name));
 
             value |= found->second;
             at = end + 1;

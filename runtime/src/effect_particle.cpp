@@ -24,6 +24,7 @@
 // assertions on argument ranges remain as panics. MH3_PORT_CHECK=Name checks a
 // port against its original on every call.
 #include "effect_particle.h"
+#include "fatal.h"
 
 #include "abi_bridge.h"
 #include "guest_call.h"
@@ -50,7 +51,7 @@ extern "C" void func_800AB460(CpuContext* ctx);
 [[noreturn]] void Panic(const char* what, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic: %s (%08x)", what, value);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 bool Alive(uint32_t particle) {

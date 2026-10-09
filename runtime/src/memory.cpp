@@ -2,6 +2,7 @@
 // device models for hardware. An MMIO access no device claims is fatal until
 // the corresponding host service is implemented. No CPU interpretation.
 #include "memory.h"
+#include "fatal.h"
 #include "video_interface.h"
 #include "audio_interface.h"
 #include "gx_host.h"
@@ -21,7 +22,7 @@ std::string accessMessage(uint32_t address, std::string_view reason) {
 }
 
 [[noreturn]] void Unmapped(uint32_t address, size_t length) {
-    throw Memory::AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO");
+    MH3_THROW(Memory::AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO"));
 }
 
 bool IsSensorBar(uint32_t address) {
@@ -112,7 +113,7 @@ void HardwareWrite(uint32_t address, T value) {
             // GPIOB_OUT bit 8 controls the sensor bar. Other output devices
             // require their own implementation; do not silently acknowledge them.
             if (value & ~0x100u)
-                throw std::runtime_error("Unsupported GPIOB output device");
+                MH3_THROW(std::runtime_error("Unsupported GPIOB output device"));
 
             sensorBarOutput = value;
             return;
@@ -154,7 +155,7 @@ Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::stri
 
 void Memory::Init(size_t size) {
     if (size != kMem1Size)
-        throw std::runtime_error("MEM1 is 24 MiB");
+        MH3_THROW(std::runtime_error("MEM1 is 24 MiB"));
 
     ResetVideoInterface();
     ResetAudioInterface();

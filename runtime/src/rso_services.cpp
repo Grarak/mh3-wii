@@ -1,4 +1,5 @@
 #include "asset_cache.h"
+#include "fatal.h"
 #include "abi_bridge.h"
 #include "village_boot.h"
 #include "self_test.h"
@@ -93,17 +94,17 @@ void RecompMod::CheckRsoExecution(uint32_t address) {
         if (address == module.prolog)
             return;
 
-        throw std::runtime_error(std::string("Execution of unlinked ") + module.name + " at " + std::to_string(address));
+        MH3_THROW(std::runtime_error(std::string("Execution of unlinked ") + module.name + " at " + std::to_string(address)));
     }
 }
 
 // Keep the original SDK loader/relocator and verify each lifetime independently.
 static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint32_t text, uint32_t size, uint64_t expected) {
     if (cpu->gpr[3] != base)
-        throw std::runtime_error(std::string(name) + " loaded at an uncompiled address");
+        MH3_THROW(std::runtime_error(std::string(name) + " loaded at an uncompiled address"));
 
     if (TextChecksum(text, size) != expected)
-        throw std::runtime_error(std::string(name) + " linked text differs from static translation");
+        MH3_THROW(std::runtime_error(std::string(name) + " linked text differs from static translation"));
 
     Module* profile = nullptr;
 
@@ -111,11 +112,11 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint3
         if (module.base == base && module.text == text && module.size == size && module.checksum == expected)
             profile = &module;
         else if (module.active && text < module.text + module.size && module.text < text + size)
-            throw std::runtime_error("Cannot activate overlapping RSO lifetimes");
+            MH3_THROW(std::runtime_error("Cannot activate overlapping RSO lifetimes"));
     }
 
     if (!profile)
-        throw std::runtime_error("RSO binding has no lifetime profile");
+        MH3_THROW(std::runtime_error("RSO binding has no lifetime profile"));
 
     RecompMod::RegisterExecutableRange(text, text + size, name);
     profile->active = true;
@@ -183,7 +184,7 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     auto& overlay = modules[5];
 
     if (demo.active || overlay.active)
-        throw std::runtime_error("Overlay tests require an unloaded runtime");
+        MH3_THROW(std::runtime_error("Overlay tests require an unloaded runtime"));
 
     struct Restore {
         CpuContext* cpu;
@@ -200,12 +201,12 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     demo.active = true;
 
     if (RecompMod::TryDispatchRsoOverlay(Prolog, cpu))
-        throw std::runtime_error("Village overlay intercepted the active demo image");
+        MH3_THROW(std::runtime_error("Village overlay intercepted the active demo image"));
 
     demo.active = false;
 
     if (CheckRejections && (!Rejects([&] { RecompMod::TryDispatchRsoOverlay(Prolog, cpu); }) || overlay.active))
-        throw std::runtime_error("Overlay accepted an unverified image");
+        MH3_THROW(std::runtime_error("Overlay accepted an unverified image"));
     // Exercise the generated register-global-object leaf under an active overlay
     // fixture. Its address overlaps demo code; only the overlay entry may run.
     overlay.active = true;
@@ -220,7 +221,7 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     Memory::Write32(chain, oldChain);
 
     if (!dispatched || !correct)
-        throw std::runtime_error("Overlay dispatch selected the wrong compiled image");
+        MH3_THROW(std::runtime_error("Overlay dispatch selected the wrong compiled image"));
 
     overlay.active = false;
     cpu->gpr[3] = QuestFieldBinding::Base;
@@ -229,10 +230,10 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     modules[2].active = false;
 
     if (stoleLobby)
-        throw std::runtime_error("Field quest overlay intercepted active lobby code");
+        MH3_THROW(std::runtime_error("Field quest overlay intercepted active lobby code"));
 
     if (CheckRejections && (!Rejects([&] { RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu); }) || modules[6].active))
-        throw std::runtime_error("Field quest overlay accepted an unverified image");
+        MH3_THROW(std::runtime_error("Field quest overlay accepted an unverified image"));
 }
 
 extern "C" void func_804DB614(CpuContext*);
@@ -246,7 +247,7 @@ extern "C" void MH3_RSOUnlink(CpuContext* cpu) {
     // behavior without changing the verified lifetime in the host registry.
     if (unloading && (Memory::Read32(unloading->base) || Memory::Read32(unloading->base + 4))) {
         if (!unloading->active || TextChecksum(unloading->text, unloading->size) != unloading->checksum)
-            throw std::runtime_error(std::string("Cannot unlink unverified ") + unloading->name);
+            MH3_THROW(std::runtime_error(std::string("Cannot unlink unverified ") + unloading->name));
 
         unloading->active = false;
         RecompMod::UnregisterExecutableRange(unloading->text, unloading->text + unloading->size);
@@ -257,7 +258,7 @@ extern "C" void MH3_RSOUnlink(CpuContext* cpu) {
 
     if (unloading) {
         if (cpu->gpr[3] != 1)
-            throw std::runtime_error("RSO unlink did not complete");
+            MH3_THROW(std::runtime_error("RSO unlink did not complete"));
 
         std::cerr << "MH3 RSO: unlinked " << unloading->name << " static binding\n";
     }

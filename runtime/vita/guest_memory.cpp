@@ -1,6 +1,7 @@
 // Shared backing and virtual views follow DSVita's src/mmap/vita.rs pattern.
 // Requires kubridge >= 0.3.1; aliases do not commit additional physical RAM.
 #include "guest_flat_memory.h"
+#include "fatal.h"
 #include <kubridge.h>
 #include <psp2/kernel/sysmem.h>
 #include <array>
@@ -50,7 +51,7 @@ void release() noexcept {
     char message[160];
     std::snprintf(message, sizeof(message), "MH3 kubridge %s guest %08x host %08x failed: %08x", operation, address, unsigned(reinterpret_cast<uintptr_t>(Host(address))), unsigned(result));
     release();
-    throw std::runtime_error(message);
+    MH3_THROW(std::runtime_error(message));
 }
 } // namespace
 

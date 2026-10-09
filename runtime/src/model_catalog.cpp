@@ -1,6 +1,7 @@
 // Disc/guest address ownership boundary. Lookup algorithms and byte copies are
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -121,12 +122,12 @@ struct DiagnosticConfig {
             const auto a = std::from_chars(setting, end, first);
 
             if (a.ec != std::errc{} || a.ptr == end || *a.ptr != ',')
-                throw std::runtime_error("MH3_PREPARE_DIAGNOSTICS expects 1 or first,last");
+                MH3_THROW(std::runtime_error("MH3_PREPARE_DIAGNOSTICS expects 1 or first,last"));
 
             const auto b = std::from_chars(a.ptr + 1, end, last);
 
             if (b.ec != std::errc{} || b.ptr != end || last < first)
-                throw std::runtime_error("MH3_PREPARE_DIAGNOSTICS expects 1 or first,last");
+                MH3_THROW(std::runtime_error("MH3_PREPARE_DIAGNOSTICS expects 1 or first,last"));
         }
 
         enabled = true;
@@ -227,7 +228,7 @@ PackList Packs() {
 
 NativeModelVertexRetireHook vertex_retire = nullptr;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native model provenance failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model provenance failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -257,7 +258,7 @@ Catalog& Initialize() {
 
 uint64_t NextGeneration() {
     if (C().tracker.generation == UINT64_MAX)
-        throw std::runtime_error("Native model provenance generation overflow");
+        MH3_THROW(std::runtime_error("Native model provenance generation overflow"));
 
     return C().tracker.generation + 1;
 }
@@ -291,7 +292,7 @@ Status RangeCheck(size_t index, size_t size) {
 void InvalidateSourceCache(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpochProducer producer,
     uint32_t destination, uint32_t source, uint32_t bytes, uint64_t offset, uint32_t conditions, uint32_t frame) {
     if (c.source_epoch == UINT64_MAX)
-        throw std::runtime_error("Native model source cache epoch overflow");
+        MH3_THROW(std::runtime_error("Native model source cache epoch overflow"));
 
     ++c.source_epoch;
     EpochDiagnostic(c, reason, producer, destination, source, bytes, offset, conditions, frame);
@@ -340,7 +341,7 @@ bool MayHitCertificate(uint32_t address, uint32_t bytes) {
 
 void InvalidateBlockCache() {
     if (C().block_epoch == UINT64_MAX)
-        throw std::runtime_error("Native model block cache epoch overflow");
+        MH3_THROW(std::runtime_error("Native model block cache epoch overflow"));
 
     ++C().block_epoch;
 }
@@ -374,7 +375,7 @@ void CheckTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_materia
 
 uint64_t LiveKey(uint32_t address, mh3_model_material_block kind) {
     if (kind < 0 || kind >= MH3_MODEL_MATERIAL_BLOCK_COUNT)
-        throw std::runtime_error("Invalid native material group");
+        MH3_THROW(std::runtime_error("Invalid native material group"));
 
     return (uint64_t(address) << 3) | uint32_t(kind);
 }
@@ -676,7 +677,7 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 
 void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook) {
     if (vertex_retire && hook != vertex_retire)
-        throw std::runtime_error("Native vertex retirement owner already installed");
+        MH3_THROW(std::runtime_error("Native vertex retirement owner already installed"));
 
     vertex_retire = hook;
 }
@@ -882,7 +883,7 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
             InvalidateSourceCache(c, NativeSourceEpochReason::PackUnregister, NativeSourceEpochProducer::PackManager, 0, 0, 0, 0, 0, frame);
             return;
         }
-    throw std::runtime_error("Unknown native model resident handle");
+    MH3_THROW(std::runtime_error("Unknown native model resident handle"));
 }
 
 bool NativeModelPackHasLiveSources(uintptr_t handle) {
@@ -1215,21 +1216,21 @@ const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner&
     for (const auto& pack : Packs())
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
             return pack.materials.at(resource.pack_index);
-    throw std::runtime_error("Native model material resident allocation was retired");
+    MH3_THROW(std::runtime_error("Native model material resident allocation was retired"));
 }
 
 NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner, uint32_t material, mh3_model_material_block kind, uint32_t actual_block) {
     const mh3_catalog_resource resource = ResolveNativeModelResource(owner, material, true);
 
     if (kind < 0 || kind >= MH3_MODEL_MATERIAL_BLOCK_COUNT)
-        throw std::runtime_error("Invalid native material block kind");
+        MH3_THROW(std::runtime_error("Invalid native material block kind"));
 
     for (const auto& pack : Packs())
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation) {
             const auto& block = pack.material_blocks.at(resource.pack_index)[kind];
 
             if (!(block.flags & 1))
-                throw std::runtime_error("Native material block requires verified M3ID v2 ownership");
+                MH3_THROW(std::runtime_error("Native material block requires verified M3ID v2 ownership"));
 
             actual_block = Canonical(actual_block, block.source_bytes);
 
@@ -1250,12 +1251,12 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
 
             return {&pack.materials.at(resource.pack_index), actual_block, block.source_bytes, kind, generation};
         }
-    throw std::runtime_error("Native material block resident owner was retired");
+    MH3_THROW(std::runtime_error("Native material block resident owner was retired"));
 }
 
 uint64_t NextNativeMaterialRevision() {
     if (C().material_revision == UINT64_MAX)
-        throw std::runtime_error("Native material producer revision overflow");
+        MH3_THROW(std::runtime_error("Native material producer revision overflow"));
 
     return ++C().material_revision;
 }
@@ -1311,7 +1312,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
     std::ostringstream detail;
     detail << "Material block has no admitted typed source extent: address=0x" << std::hex << address << " kind=" << std::dec << uint32_t(kind) << " partition_offset=0x" << std::hex
            << identity.partition_offset;
-    throw std::runtime_error(detail.str());
+    MH3_THROW(std::runtime_error(detail.str()));
 }
 
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
@@ -1340,32 +1341,32 @@ void MarkNativeLiveMaterialBlockWritable(uint32_t address, mh3_model_material_bl
     const auto found = c.live_index.find(LiveKey(Canonical(address, 1), kind));
 
     if (found == c.live_index.end())
-        throw std::runtime_error("Writable native material block is not live");
+        MH3_THROW(std::runtime_error("Writable native material block is not live"));
 
     found->second->writable = true;
 }
 
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
     if (!block.fields.generation || block.fields.generation > C().material_revision || Canonical(block.address, block.bytes) != block.address)
-        throw std::runtime_error("Invalid typed native material publication");
+        MH3_THROW(std::runtime_error("Invalid typed native material publication"));
 
     for (const auto& pack : Packs())
         if (pack.handle == block.resident_handle && pack.generation == block.resident_generation) {
             const auto origin = pack.origins.find(std::make_pair(block.origin_offset, uint32_t(block.kind)));
 
             if (origin == pack.origins.end() || origin->second.bytes != block.bytes)
-                throw std::runtime_error("Native material publication changed source layout identity");
+                MH3_THROW(std::runtime_error("Native material publication changed source layout identity"));
 
             PutLiveBlock(LiveKey(block.address, block.kind), block);
             ++live_version;
             return;
         }
-    throw std::runtime_error("Native material publication refers to a retired resident allocation");
+    MH3_THROW(std::runtime_error("Native material publication refers to a retired resident allocation"));
 }
 
 void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t* known) {
     if (!mapping || !known)
-        throw std::runtime_error("Native coordinate mapping requires outputs");
+        MH3_THROW(std::runtime_error("Native coordinate mapping requires outputs"));
 
     const auto& block = ReadNativeLiveMaterialBlockView(pipeline, MH3_MODEL_MATERIAL_PIPELINE);
 
@@ -1381,7 +1382,7 @@ void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t
             *known = prepared.texcoord_map_known;
             return;
         }
-    throw std::runtime_error("Native coordinate mapping owner was retired");
+    MH3_THROW(std::runtime_error("Native coordinate mapping owner was retired"));
 }
 
 const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
@@ -1411,7 +1412,7 @@ const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveM
                 break;
             }
         if (!found)
-            throw std::runtime_error("Native coordinate mapping owner was retired");
+            MH3_THROW(std::runtime_error("Native coordinate mapping owner was retired"));
     }
 
     block.frozen.Reset(frozen.release());

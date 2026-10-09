@@ -19,6 +19,7 @@
 // fdlibm also stores EDOM to errno (0x807972C8) for a NaN, infinite or
 // negative sqrt argument; the port drops that store.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -131,7 +132,7 @@ uint32_t RotationYAxis(uint32_t angles, uint32_t out) {
     if (!ValidOut(out)) [[unlikely]] {
         char text[96];
         std::snprintf(text, sizeof text, "NW4R panic (ef_util.cpp:934): Pointer Error pOut(=%08x) is not valid", out);
-        throw std::runtime_error(text);
+        MH3_THROW(std::runtime_error(text));
     }
 
     const float k = MemoryInline::FlatReadFloat32(kRad2Index), period = MemoryInline::FlatReadFloat32(kIndexPeriod);

@@ -1,4 +1,5 @@
 #pragma once
+#include <aurora/fatal.hpp>
 #include <array>
 #include <stdexcept>
 #include <string>
@@ -84,7 +85,7 @@ inline bool parameterize_alpha_references(std::string& source, std::array<float,
   std::string error;
 
   if (!try_parameterize_alpha_references(source, values, parameterized, error))
-    throw std::runtime_error(error);
+    AURORA_THROW(std::runtime_error(error));
 
   return parameterized;
 }

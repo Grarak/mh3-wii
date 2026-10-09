@@ -320,7 +320,7 @@ if(TARGET aurora::core)
     # every stage, keys unique, every fixed GLSL program translatable.
     add_executable(mh3-gxm-shader-bank ../scripts/vita_shader_bank.cpp src/native_shader_source.cpp "${MH3_AURORA_ROOT}/lib/gfx/cg_shader.cpp"
       "${MH3_AURORA_ROOT}/lib/gfx/shader_source.cpp" "${MH3_AURORA_ROOT}/lib/gfx/fixed_shader_sources.cpp")
-    target_include_directories(mh3-gxm-shader-bank PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include")
+    target_include_directories(mh3-gxm-shader-bank PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include" include)
     target_compile_definitions(mh3-gxm-shader-bank PRIVATE TARGET_PC)
     target_compile_features(mh3-gxm-shader-bank PRIVATE cxx_std_20)
     target_link_libraries(mh3-gxm-shader-bank PRIVATE xxhash)
@@ -504,7 +504,7 @@ if(TARGET aurora::core)
       target_link_libraries(MH3VitaTexturePack PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
       add_executable(mh3_native_texture_pack_check EXCLUDE_FROM_ALL
         "${MH3_AURORA_ROOT}/tests/native_texture_pack_check.cpp")
-      target_include_directories(mh3_native_texture_pack_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+      target_include_directories(mh3_native_texture_pack_check PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include")
       target_compile_features(mh3_native_texture_pack_check PRIVATE cxx_std_20)
       add_executable(mh3_native_texture_format_check EXCLUDE_FROM_ALL
         "${MH3_AURORA_ROOT}/tests/native_texture_format_check.cpp")

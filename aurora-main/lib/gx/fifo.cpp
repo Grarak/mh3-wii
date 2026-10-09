@@ -1,4 +1,5 @@
 #include "fifo.hpp"
+#include <aurora/fatal.hpp>
 #include "command_processor.hpp"
 #include "../gfx/common.hpp"
 #include "../internal.hpp"
@@ -88,7 +89,7 @@ void drain() {
     const auto count = process(detail::sBufferData + consumed, detail::sBufferSize - consumed, true);
 
     if (count == 0 && retried)
-      throw gfx::StagingCapacityError("FIFO draw does not fit after capacity submission");
+      AURORA_THROW(gfx::StagingCapacityError("FIFO draw does not fit after capacity submission"));
 
     consumed += count;
 

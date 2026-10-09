@@ -35,6 +35,7 @@
 // EfFindTextureInProject checks the lookups on every call (the returned r3);
 // EfResourceLists checks the list changes against their originals.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_call.h"
 #include "guest_flat_memory.h"
 #include "memory.h"
@@ -79,7 +80,7 @@ enum : uint32_t {
 [[noreturn]] void Panic(const char* what, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic: ef_resource.cpp: %s (%08x)", what, value);
-    throw std::runtime_error(text);
+    MH3_THROW(std::runtime_error(text));
 }
 
 // NW4R_ASSERT_VALID_PTR: cached or uncached MEM1/MEM2, or the locked cache.

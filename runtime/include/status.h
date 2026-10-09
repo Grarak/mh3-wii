@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fatal.h"
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -38,5 +39,5 @@ class [[nodiscard]] Status {
 // For a caller that cannot go on: a failure stops the game with its message.
 inline void CheckStatus(const Status& status) {
     if (!status.ok())
-        throw std::runtime_error(status.message());
+        MH3_THROW(std::runtime_error(status.message()));
 }

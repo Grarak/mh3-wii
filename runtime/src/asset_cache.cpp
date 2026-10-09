@@ -1,4 +1,5 @@
 #include "asset_cache.h"
+#include "fatal.h"
 #include "fs_status.h"
 #include "disc_image.h"
 #include "launcher_convert.h"
@@ -255,7 +256,7 @@ struct AssetCache::Impl {
             pthread_attr_destroy(&attributes);
 
             if (result)
-                throw std::runtime_error("Cannot start asset conversion workers");
+                MH3_THROW(std::runtime_error("Cannot start asset conversion workers"));
         }
 #ifdef MH3_DEVELOPMENT
         pthread_create(&watchdog, nullptr, [](void* self) -> void* { static_cast<Impl*>(self)->Watch(); return nullptr; }, this);
@@ -516,7 +517,7 @@ struct AssetCache::Impl {
 
     void Queue(Source& s, Kind kind) {
         if (!s.data)
-            throw std::logic_error("Asset conversion without source data");
+            MH3_THROW(std::logic_error("Asset conversion without source data"));
 
         jobs.push_back({&s, kind});
         changed.notify_all();
@@ -1038,7 +1039,7 @@ struct Game {
             const uint32_t bytes = image.FileSize(name);
 
             if (bytes > TextureInventory::MaxSourceBytes)
-                throw std::runtime_error("Oversized texture source: " + name);
+                MH3_THROW(std::runtime_error("Oversized texture source: " + name));
 
             sources.push_back({name, image.FileOffset(name), bytes});
         }

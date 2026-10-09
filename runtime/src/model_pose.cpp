@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI and owned producer registry. C11 owns resource/selector
 // semantics; no guest function, GX, FIFO or vertex expansion is performed.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -54,7 +55,7 @@ MatrixPalette& Palette(NativeOwner owner) {
 }
 
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native model pose input failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model pose input failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -81,7 +82,7 @@ void Reindex(const FastMap<uint32_t, mh3_model_pose_owner>& next) {
         }
 
         if ((found != ranges.end() && uint64_t(start) + bytes > found->first) || (found != ranges.begin() && uint64_t(std::prev(found)->first) + std::prev(found)->second.bytes > start))
-            throw std::runtime_error("Native pose allocation has overlapping or inconsistent owners");
+            MH3_THROW(std::runtime_error("Native pose allocation has overlapping or inconsistent owners"));
 
         ranges.emplace(start, Region{bytes, {scene}});
     };
@@ -146,7 +147,7 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &model));
 
     if (pose_revision == UINT64_MAX)
-        throw std::runtime_error("Native model pose revision overflow");
+        MH3_THROW(std::runtime_error("Native model pose revision overflow"));
 
     const uint64_t revision = pose_revision + 1;
     std::vector<mh3_model_pose_owner> updates;
@@ -263,7 +264,7 @@ mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t mod
     mh3_res_status status = MH3_RES_OK;
 
     if (const char* failure = PoseSources(addresses, model, result, status)) [[unlikely]]
-        throw std::runtime_error(PoseFailure(failure, status));
+        MH3_THROW(std::runtime_error(PoseFailure(failure, status)));
 
     return result;
 }
@@ -339,7 +340,7 @@ NativePoseVersion* AcquirePose(size_t bytes) {
         ++size_class;
 
     if (size_class == PoseClasses)
-        throw std::runtime_error("Native pose arrays exceed the largest version size");
+        MH3_THROW(std::runtime_error("Native pose arrays exceed the largest version size"));
 
     if (auto& free = poseFree[size_class]; !free.empty()) {
         auto* version = free.back();

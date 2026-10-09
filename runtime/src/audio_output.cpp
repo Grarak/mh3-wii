@@ -1,4 +1,5 @@
 #include "audio_dma.h"
+#include "fatal.h"
 #include "audio_output_statistics.h"
 #include "audio/native_audio_mixer.h"
 #ifdef MH3_DEVELOPMENT
@@ -30,13 +31,13 @@ void Shutdown() {
 
 void Check(bool result) {
     if (!result)
-        throw std::runtime_error(std::string("SDL audio: ") + SDL_GetError());
+        MH3_THROW(std::runtime_error(std::string("SDL audio: ") + SDL_GetError()));
 }
 } // namespace
 
 void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
     if (bytes % 4 || (rate != 32000 && rate != 48000))
-        throw std::runtime_error("Invalid Wii PCM block");
+        MH3_THROW(std::runtime_error("Invalid Wii PCM block"));
 
     if (!stream) {
         Check(SDL_InitSubSystem(SDL_INIT_AUDIO));

@@ -1,6 +1,7 @@
 // Platform memory/ownership bridge to typed native C model inputs. No GX,
 // guest rendering helper or source command-list decoder is called here.
 #include "memory.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -34,7 +35,7 @@ FastMap<uint32_t, uint64_t> initialized_generations;
 FastMap<uint32_t, mh3_matrix_binding> matrix_sources;
 uint64_t resource_generation = 0;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native model resource input failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model resource input failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -44,12 +45,12 @@ inline void Checked(mh3_res_status status) {
 
 uint32_t Resource(uint32_t reference) {
     if (!reference)
-        throw std::runtime_error("Null native resource reference");
+        MH3_THROW(std::runtime_error("Null native resource reference"));
 
     const uint32_t resource = Memory::Read32(reference);
 
     if (!resource)
-        throw std::runtime_error("Null native resource data");
+        MH3_THROW(std::runtime_error("Null native resource data"));
 
     return resource;
 }
@@ -120,14 +121,14 @@ bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation) {
 
 void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
-        throw std::runtime_error("Native texture producer requires address and generation");
+        MH3_THROW(std::runtime_error("Native texture producer requires address and generation"));
 
     {
         std::lock_guard lock(generationLock);
         auto& previous = generations[payload];
 
         if (generation < previous)
-            throw std::runtime_error("Native texture producer generation went backwards");
+            MH3_THROW(std::runtime_error("Native texture producer generation went backwards"));
 
         previous = generation;
     }
@@ -191,7 +192,7 @@ mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
     const auto found = textures.find(object);
 
     if (found == textures.end())
-        throw std::runtime_error("Texture object has no typed native producer: " + std::to_string(object));
+        MH3_THROW(std::runtime_error("Texture object has no typed native producer: " + std::to_string(object)));
 
     return found->second;
 }
@@ -212,7 +213,7 @@ mh3_native_palette_source ReadNativePaletteObject(uint32_t object) {
     const auto found = palettes.find(object);
 
     if (found == palettes.end())
-        throw std::runtime_error("Palette object has no typed native producer: " + std::to_string(object));
+        MH3_THROW(std::runtime_error("Palette object has no typed native producer: " + std::to_string(object)));
 
     return found->second;
 }
@@ -225,7 +226,7 @@ void InitializeNativeTextureSource(uint32_t reference, bool palette) {
         resource_generation = previous;
 
     if (resource_generation == UINT64_MAX)
-        throw std::runtime_error("Native texture resource revision overflow");
+        MH3_THROW(std::runtime_error("Native texture resource revision overflow"));
 
     MarkNativeTextureProduced(payload, ++resource_generation);
     std::lock_guard lock(generationLock);
@@ -234,7 +235,7 @@ void InitializeNativeTextureSource(uint32_t reference, bool palette) {
 
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette) {
     if ((destination & 3) || (source & 3))
-        throw std::runtime_error("Unaligned native resource object copy");
+        MH3_THROW(std::runtime_error("Unaligned native resource object copy"));
 
     const uint32_t size = palette ? 100 : 260;
 
@@ -269,7 +270,7 @@ void StoreNativeModelMatrixSources(uint32_t state, const uint32_t addresses[3]) 
     auto next = matrix_sources.contains(state) ? matrix_sources.at(state) : mh3_matrix_binding{};
 
     if (next.generation == UINT64_MAX)
-        throw std::runtime_error("Native matrix source revision overflow");
+        MH3_THROW(std::runtime_error("Native matrix source revision overflow"));
 
     mh3_matrix_bind(&next, addresses);
     Checked(mh3_matrix_store_sources({GuestRange(state, 12), 12}, addresses));
@@ -280,7 +281,7 @@ mh3_matrix_binding ReadNativeModelMatrixSources(uint32_t state) {
     const auto found = matrix_sources.find(state);
 
     if (found == matrix_sources.end())
-        throw std::runtime_error("Matrix arrays have no typed bind producer");
+        MH3_THROW(std::runtime_error("Matrix arrays have no typed bind producer"));
 
     return found->second;
 }

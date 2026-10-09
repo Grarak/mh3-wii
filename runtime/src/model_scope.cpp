@@ -2,6 +2,7 @@
 // order, coordinate scales and matrix math; these adapters own CPU records and
 // forward direct material/mesh publications. No guest/GX/FIFO calls.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -42,7 +43,7 @@ constinit uint32_t pipeline_address = 0, operator_address = 0;
 constinit uint64_t pipeline_revision = 0;
 constinit mh3_indirect_output current_operator{};
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
-    throw std::runtime_error("Native model scope failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model scope failed: " + std::to_string(status)));
 }
 
 inline void Checked(mh3_res_status status) {
@@ -51,7 +52,7 @@ inline void Checked(mh3_res_status status) {
 }
 
 [[noreturn, gnu::cold, gnu::noinline]] void PackCheckedFailed(mh3_pack_status status) {
-    throw std::runtime_error("Native model resident mesh failed: " + std::to_string(status));
+    MH3_THROW(std::runtime_error("Native model resident mesh failed: " + std::to_string(status)));
 }
 
 inline void PackChecked(mh3_pack_status status) {
@@ -233,7 +234,7 @@ void OperatorKnown(uint32_t address) {
     const uint32_t table = Memory::Read32(address);
 
     if (Memory::Read32(table + 8) != 0x80088aac)
-        throw std::runtime_error("Custom indirect apply callback has no native producer");
+        MH3_THROW(std::runtime_error("Custom indirect apply callback has no native producer"));
 }
 
 void Indirect(uint32_t resource, uint32_t op) {
@@ -244,7 +245,7 @@ void Indirect(uint32_t resource, uint32_t op) {
         return;
 
     if (op != operator_address || !current_operator.active)
-        throw std::runtime_error("Indirect matrix operator has no completed native producer");
+        MH3_THROW(std::runtime_error("Indirect matrix operator has no completed native producer"));
 
     OperatorKnown(op);
     mh3_pack_indirect_matrix base[3]{}, matrices[3];
@@ -1321,14 +1322,14 @@ void Replacements(const ShapeContext& context, const mh3_model_material_scope& s
             continue;
 
         if (uint64_t(table) + uint32_t(id) * 4 > UINT32_MAX)
-            throw std::runtime_error("Model replacement vertex table overflows");
+            MH3_THROW(std::runtime_error("Model replacement vertex table overflows"));
 
         const uint32_t resource = Memory::Read32(table + uint32_t(id) * 4);
         const auto kind = i == 0 ? MH3_VERTEX_POSITION : i == 1 ? MH3_VERTEX_NORMAL : MH3_VERTEX_COLOR;
         const auto source = ReadNativeVertexResourceData(resource, kind);
 
         if (i == 0 && Canonical(source.payload_address) != Canonical(originals.source[0].payload_address))
-            throw std::runtime_error("Position replacement differs from the shape's authored array");
+            MH3_THROW(std::runtime_error("Position replacement differs from the shape's authored array"));
 
         StoreNativeVertexSource(i, source);
     }
@@ -1337,7 +1338,7 @@ void Replacements(const ShapeContext& context, const mh3_model_material_scope& s
 
 void PublishNativeModelMapSize(uint32_t map, uint16_t width, uint16_t height) {
     if (map >= 8 || !width || !height)
-        throw std::runtime_error("Native G3D map size is invalid");
+        MH3_THROW(std::runtime_error("Native G3D map size is invalid"));
 
     map_sizes.width[map] = width;
     map_sizes.height[map] = height;
@@ -1363,7 +1364,7 @@ void LoadNativeModelPipeline(uint32_t resource) {
         return;
 
     if (resource > UINT32_MAX - 32)
-        throw std::runtime_error("Model pipeline offset overflows");
+        MH3_THROW(std::runtime_error("Model pipeline offset overflows"));
 
     const auto& fields = ReadNativeLiveMaterialBlockView(resource + 32, MH3_MODEL_MATERIAL_PIPELINE).fields;
     const auto generation = fields.generation;
@@ -1511,13 +1512,13 @@ void PrepareModelItem(ModelItem& item, const ShapeContext& context, uint32_t dir
             continue;
 
         if (!BoundOriginal(originals, semantic))
-            throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
+            MH3_THROW(std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic)));
     }
 
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);
 
     if (!binding.address[0] && !direct_position)
-        throw std::runtime_error("Indexed model matrix has no completed pose producer");
+        MH3_THROW(std::runtime_error("Indexed model matrix has no completed pose producer"));
 
     CapturePose(item, binding.address);
     item.storage = {};
@@ -1533,7 +1534,7 @@ void PrepareModelItem(ModelItem& item, const ShapeContext& context, uint32_t dir
         Memory::Read8(locations.current_valid) != 0, binding.address[0] != 0,
         direct_position ? &item.storage.direct_position : nullptr, direct_position && direct_normal ? &item.storage.direct_normal : nullptr, &item.input);
     if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
-        throw std::runtime_error("Envelope model requires converted skinning palette records");
+        MH3_THROW(std::runtime_error("Envelope model requires converted skinning palette records"));
 
     PrepareNativeModelCoordinateSizes(Mode().texgens);
 
@@ -1810,7 +1811,7 @@ void DispatchGameThread(const NativeModelDispatch& d, const Resolved* r) {
         return;
 
     if (scope.fur_address)
-        throw std::runtime_error("Fur model needs native sampled-shell material preparation");
+        MH3_THROW(std::runtime_error("Fur model needs native sampled-shell material preparation"));
     // A dispatch resolves its shape's owner and sources once for the
     // primitive setup, replacements and submission. Without a shape only the
     // replacements (which require one) have an effect: they fail.
@@ -1893,7 +1894,7 @@ void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_
 
     if (in.indirect_operator) {
         if (d.descriptor != operator_address || !current_operator.active)
-            throw std::runtime_error("Indirect matrix operator has no completed native producer");
+            MH3_THROW(std::runtime_error("Indirect matrix operator has no completed native producer"));
 
         OperatorKnown(d.descriptor);
         in.op = current_operator;
@@ -1920,13 +1921,13 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
             continue;
 
         if (!BoundOriginal(originals, semantic))
-            throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
+            MH3_THROW(std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic)));
     }
 
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);
 
     if (!binding.address[0] && !direct_position)
-        throw std::runtime_error("Indexed model matrix has no completed pose producer");
+        MH3_THROW(std::runtime_error("Indexed model matrix has no completed pose producer"));
 
     CapturePose(item, binding.address);
     item.storage = {};
@@ -1941,7 +1942,7 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
     }
 
     if (originals.matrix_id < 0 && !prepared.palette_batch_count)
-        throw std::runtime_error("Envelope model requires converted skinning palette records");
+        MH3_THROW(std::runtime_error("Envelope model requires converted skinning palette records"));
 
     item.prep.matrix_id = originals.matrix_id;
     item.prep.has_normal = originals.has_normal;
@@ -1999,7 +2000,7 @@ void DispatchDeferred(const NativeModelDispatch& d, const Resolved* r) {
 
     if (draws) {
         if (scope.fur_address)
-            throw std::runtime_error("Fur model needs native sampled-shell material preparation");
+            MH3_THROW(std::runtime_error("Fur model needs native sampled-shell material preparation"));
 
         if (!r && !Resource(d.shape)) {
             if (!(d.flags & 2))

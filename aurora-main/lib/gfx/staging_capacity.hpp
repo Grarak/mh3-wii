@@ -1,4 +1,5 @@
 #pragma once
+#include <aurora/fatal.hpp>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -20,7 +21,7 @@ inline uint64_t staging_padded(uint64_t bytes, uint64_t alignment) {
   const auto padding = remainder ? alignment - remainder : 0;
 
   if (bytes > UINT64_MAX - padding)
-    throw StagingCapacityError("Staging allocation size overflow");
+    AURORA_THROW(StagingCapacityError("Staging allocation size overflow"));
 
   return bytes + padding;
 }

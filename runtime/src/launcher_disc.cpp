@@ -1,4 +1,5 @@
 #include "vita_launcher.h"
+#include "fatal.h"
 #include "disc_image.h"
 #include "fs_status.h"
 #include "rom_image.h"
@@ -14,7 +15,7 @@ namespace {
 // ProcessDisc reads words only within the bytes it has read.
 uint32_t Word(const std::vector<uint8_t>& b, size_t at) {
     if (at > b.size() || b.size() - at < 4)
-        throw std::runtime_error("ROM metadata is truncated");
+        MH3_THROW(std::runtime_error("ROM metadata is truncated"));
 
     return uint32_t(b[at]) << 24 | uint32_t(b[at + 1]) << 16 | uint32_t(b[at + 2]) << 8 | b[at + 3];
 }

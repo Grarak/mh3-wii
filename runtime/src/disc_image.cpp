@@ -1,4 +1,5 @@
 #include "disc_image.h"
+#include "fatal.h"
 #include "dev_options.h"
 #include "rom_image.h"
 #include "fs_status.h"
@@ -130,7 +131,7 @@ Status FileBytes(const std::filesystem::path& path, uint64_t& size) {
 
 uint32_t Word(const std::vector<uint8_t>& data, size_t offset) {
     if (offset > data.size() || data.size() - offset < 4)
-        throw std::runtime_error("Truncated disc metadata");
+        MH3_THROW(std::runtime_error("Truncated disc metadata"));
 
     return uint32_t(data[offset]) << 24 | uint32_t(data[offset + 1]) << 16 | uint32_t(data[offset + 2]) << 8 | data[offset + 3];
 }
@@ -441,7 +442,7 @@ std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {
     const auto it = fileEntries.find(name);
 
     if (it == fileEntries.end())
-        throw std::runtime_error("Missing FST file: " + name);
+        MH3_THROW(std::runtime_error("Missing FST file: " + name));
 
     return Read(it->second.first, it->second.second);
 }
@@ -450,10 +451,10 @@ void DiscImage::SetFileOverride(const std::string& name, std::vector<uint8_t> by
     const auto it = fileEntries.find(name);
 
     if (it == fileEntries.end() || bytes.size() != it->second.second)
-        throw std::runtime_error("Quest override must preserve the disc file length");
+        MH3_THROW(std::runtime_error("Quest override must preserve the disc file length"));
 
     if (name != "05/quest00_eng.bin" && name != "05/quest01_eng.bin" && name != "05/quest03_eng.bin")
-        throw std::runtime_error("Only quest files may be overridden");
+        MH3_THROW(std::runtime_error("Only quest files may be overridden"));
 
     fileOverrides[it->second.first] = std::move(bytes);
 }
@@ -480,7 +481,7 @@ uint64_t DiscImage::FileOffset(const std::string& name) const {
     const auto it = fileEntries.find(name);
 
     if (it == fileEntries.end())
-        throw std::runtime_error("Missing FST file: " + name);
+        MH3_THROW(std::runtime_error("Missing FST file: " + name));
 
     return it->second.first;
 }
@@ -489,7 +490,7 @@ uint32_t DiscImage::FileSize(const std::string& name) const {
     const auto it = fileEntries.find(name);
 
     if (it == fileEntries.end())
-        throw std::runtime_error("Missing FST file: " + name);
+        MH3_THROW(std::runtime_error("Missing FST file: " + name));
 
     return it->second.second;
 }

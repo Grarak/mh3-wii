@@ -5,6 +5,7 @@
 // name only the registers they use and the translator calls them directly as
 // precise natives, without the dispatch's register guard.
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -21,7 +22,7 @@ uint32_t MH3NativeResReference(uint32_t reference);
 namespace {
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
-        throw std::runtime_error("Native material producer failed: " + std::to_string(status));
+        MH3_THROW(std::runtime_error("Native material producer failed: " + std::to_string(status)));
 }
 
 uint32_t Data(uint32_t reference) {
@@ -36,7 +37,7 @@ void Submit(uint32_t reference, mh3_model_material_block kind, uint32_t count = 
 
     if (kind == MH3_MODEL_MATERIAL_PIPELINE) {
         if (address > UINT32_MAX - 32)
-            throw std::runtime_error("Material pipeline address overflows");
+            MH3_THROW(std::runtime_error("Material pipeline address overflows"));
 
         address += 32;
     }
@@ -63,7 +64,7 @@ void Update(uint32_t reference, mh3_model_material_block kind, Producer producer
     std::array<uint8_t, 160> compatibility{};
 
     if (block.bytes > compatibility.size())
-        throw std::runtime_error("Invalid CPU material setter group size");
+        MH3_THROW(std::runtime_error("Invalid CPU material setter group size"));
 
     auto* output = Memory::GetPointer(block.address, block.bytes);
     std::memcpy(compatibility.data(), output, block.bytes);

@@ -1,4 +1,5 @@
 #include "gx_stream.h"
+#include "fatal.h"
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
 #include "efb_copy_trace.h"
 #endif
@@ -120,7 +121,7 @@ std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned form
         constexpr unsigned bytes[]{1, 1, 2, 2, 4};
 
         if (type >= std::size(bytes))
-            throw std::runtime_error("Invalid GX vertex component type");
+            MH3_THROW(std::runtime_error("Invalid GX vertex component type"));
 
         return {descriptor, bytes[type] * components, indices};
     };
@@ -137,7 +138,7 @@ std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned form
             const unsigned type = (a >> (14 + 4 * i)) & 7;
 
             if (type >= std::size(bytes))
-                throw std::runtime_error("Invalid GX vertex color type");
+                MH3_THROW(std::runtime_error("Invalid GX vertex color type"));
 
             result[2 + i] = {descriptor, bytes[type], 1};
         }
@@ -221,10 +222,10 @@ void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& si
         return;
 
     if (!resolver)
-        throw std::runtime_error("Indexed draw requires guest vertex-array resolution");
+        MH3_THROW(std::runtime_error("Indexed draw requires guest vertex-array resolution"));
 
     if (3 + size_t(count) * layout.size != draw.size())
-        throw std::runtime_error("GX array scan disagrees with vertex framing");
+        MH3_THROW(std::runtime_error("GX array scan disagrees with vertex framing"));
     // The largest index each array is read at: a tight pass over the index
     // fields of the cached layout (13,000 draws a frame in the field).
     std::array<uint32_t, 12> maximum{};
@@ -260,7 +261,7 @@ void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& si
         const uint64_t needed = uint64_t(maximum[slot]) * (cp[0xB0 + slot] & 255) + layout.bytes[slot];
 
         if (!view.address || needed > view.size)
-            throw std::runtime_error("GX draw index exceeds guest vertex-array RAM");
+            MH3_THROW(std::runtime_error("GX draw index exceeds guest vertex-array RAM"));
         // Rebind only for a new array or one that now needs more bytes. A draw with a
         // smaller maximum index reads a prefix of the bound range, and every rebind
         // makes Aurora upload the array again. Growth at least doubles the range
@@ -281,7 +282,7 @@ void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& si
 
 std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayResolver& resolver) {
     if (!resolver)
-        throw std::runtime_error("Guest GX texture requires host pointer conversion");
+        MH3_THROW(std::runtime_error("Guest GX texture requires host pointer conversion"));
 
     const unsigned bank = slot < 4 ? 0x80 : 0xA0;
     const unsigned index = slot & 3;
@@ -310,7 +311,7 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
         tileBytes = 64;
         break; // RGBA8
     default:
-        throw std::runtime_error("Guest GX texture format requires palette/format support: " + std::to_string(format));
+        MH3_THROW(std::runtime_error("Guest GX texture format requires palette/format support: " + std::to_string(format)));
     }
 
     const bool mips = ((bp[bank + index] >> 5) & 3) != 0;
@@ -329,7 +330,7 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     const auto view = resolver(guest);
 
     if (view.size < needed)
-        throw std::runtime_error("Guest GX texture exceeds its RAM region");
+        MH3_THROW(std::runtime_error("Guest GX texture exceeds its RAM region"));
 
     uint32_t nativeAsset = 0;
 #ifdef __vita__
@@ -394,12 +395,12 @@ void GuestGxStream::LoadPalette(const ArrayResolver& resolver) {
         return;
 
     if (!resolver)
-        throw std::runtime_error("Guest GX TLUT load requires RAM resolution");
+        MH3_THROW(std::runtime_error("Guest GX TLUT load requires RAM resolution"));
 
     const auto view = resolver(bp[0x64] << 5);
 
     if (!view.address || size > view.size)
-        throw std::runtime_error("Guest GX TLUT load exceeds RAM");
+        MH3_THROW(std::runtime_error("Guest GX TLUT load exceeds RAM"));
 
     if (!palettes)
         palettes = std::make_shared<PaletteMemory>();
@@ -417,7 +418,7 @@ void GuestGxStream::LoadPalette(const ArrayResolver& resolver) {
     std::fill_n(palettes->loadedLines.begin() + destination / 32, size / 32, true);
 
     if (++palettes->revision == 0)
-        throw std::runtime_error("Guest GX TLUT revision overflow");
+        MH3_THROW(std::runtime_error("Guest GX TLUT revision overflow"));
 }
 
 uint32_t GuestGxStream::PaletteMemory::ContentsVersion(uint32_t start, uint32_t entries, uint32_t format) {
@@ -429,7 +430,7 @@ uint32_t GuestGxStream::PaletteMemory::ContentsVersion(uint32_t start, uint32_t 
         if (cached.version && cached.digest == digest && cached.format == format && cached.bytes.size() == size && !std::memcmp(cached.bytes.data(), source, size))
             return cached.version;
     if (++contentsRevision == 0)
-        throw std::runtime_error("Guest GX palette content version overflow");
+        MH3_THROW(std::runtime_error("Guest GX palette content version overflow"));
 
     auto& cached = contents[nextContents++ % contents.size()];
     cached.digest = digest;
@@ -452,7 +453,7 @@ void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& reso
     const unsigned indirect = (bp[0] >> 16) & 7;
 
     if (indirect > 4)
-        throw std::runtime_error("Invalid GX indirect stage count");
+        MH3_THROW(std::runtime_error("Invalid GX indirect stage count"));
 
     for (unsigned stage = 0; stage < indirect; ++stage)
         used |= 1u << ((bp[0x27] >> (stage * 6)) & 7);
@@ -471,13 +472,13 @@ void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& reso
         const unsigned paletteFormat = descriptor >> 10;
 
         if (paletteFormat > 2)
-            throw std::runtime_error("Invalid GX TLUT format");
+            MH3_THROW(std::runtime_error("Invalid GX TLUT format"));
 
         const unsigned entries = format == 8 ? 16 : format == 9 ? 256 : 16384;
         const unsigned start = (descriptor & 1023) * 512;
 
         if (!palettes || !std::all_of(palettes->loadedLines.begin() + start / 32, palettes->loadedLines.begin() + (start + entries * 2) / 32, [](bool loaded) { return loaded; }))
-            throw std::runtime_error("Guest GX texture uses an incompletely loaded palette");
+            MH3_THROW(std::runtime_error("Guest GX texture uses an incompletely loaded palette"));
 
         auto& bound = paletteBindings[slot];
 
@@ -521,7 +522,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
     constexpr size_t limit = 16 * 1024 * 1024;
 
     if (bytes.size() > limit || pending.size() + bytes.size() > limit)
-        throw std::runtime_error("Guest GX command buffer exceeds 16 MiB");
+        MH3_THROW(std::runtime_error("Guest GX command buffer exceeds 16 MiB"));
     // The caller's bytes are parsed in place when nothing is pending (display
     // lists); only a command still incomplete at the end waits in `pending`.
     const bool inPlace = pending.empty();
@@ -593,7 +594,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 break;
             }
 
-            throw std::runtime_error("Guest GX opcode requires a bridge: " + std::to_string(p[0]));
+            MH3_THROW(std::runtime_error("Guest GX opcode requires a bridge: " + std::to_string(p[0])));
         }
 
         if (available < length)
@@ -604,7 +605,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
 
         if (p[0] == 0x20 || p[0] == 0x28 || p[0] == 0x30 || p[0] == 0x38) {
             if (!resolver)
-                throw std::runtime_error("Indexed XF load requires guest RAM resolution");
+                MH3_THROW(std::runtime_error("Indexed XF load requires guest RAM resolution"));
 
             const unsigned array = 12 + (p[0] - 0x20) / 8;
             const uint32_t index = (uint32_t(p[1]) << 8) | p[2];
@@ -618,14 +619,14 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 (destination >= 0x400 && destination < 0x45A && (destination - 0x400) % 9 == 0 && words == 9) ||
                 (destination >= 0x500 && destination < 0x5F0 && (destination - 0x500) % 12 == 0 && words == 12) || (destination >= 0x600 && destination < 0x680 && (destination & 15) + words <= 16);
             if (!supported)
-                throw std::runtime_error("Unsupported indexed XF destination or partial matrix write");
+                MH3_THROW(std::runtime_error("Unsupported indexed XF destination or partial matrix write"));
 
             const uint32_t stride = cp[0xB0 + array] & 255;
             const uint64_t sourceOffset = uint64_t(index) * stride;
             const auto view = resolver(cp[0xA0 + array]);
 
             if (!stride || !view.address || sourceOffset + words * 4 > view.size)
-                throw std::runtime_error("Indexed XF source exceeds guest matrix array");
+                MH3_THROW(std::runtime_error("Indexed XF source exceeds guest matrix array"));
 
             std::array<uint8_t, 69> direct{};
             direct[0] = 0x10;
@@ -646,15 +647,15 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
 
             if (size) {
                 if (!resolver)
-                    throw std::runtime_error("GX display list requires guest RAM resolution");
+                    MH3_THROW(std::runtime_error("GX display list requires guest RAM resolution"));
 
                 if (size > limit || displayListDepth >= 16)
-                    throw std::runtime_error("GX display list exceeds size or nesting limit");
+                    MH3_THROW(std::runtime_error("GX display list exceeds size or nesting limit"));
 
                 const auto view = resolver(address);
 
                 if (!view.address || size > view.size)
-                    throw std::runtime_error("GX display list exceeds guest RAM");
+                    MH3_THROW(std::runtime_error("GX display list exceeds guest RAM"));
                 // A separate framer avoids invalidating the parent's partial FIFO
                 // packet while processing nested lists. GPU state flows through
                 // the call exactly as if its commands appeared inline.
@@ -677,7 +678,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, clear);
 
                 if (child.PendingBytes())
-                    throw std::runtime_error("GX display list ends in a partial command");
+                    MH3_THROW(std::runtime_error("GX display list ends in a partial command"));
 
                 bp = child.bp;
                 cp = child.cp;
@@ -700,7 +701,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
 
         if (p[0] == 0x08 && p[1] >= 0xA0 && p[1] <= 0xAF) {
             if (!resolver)
-                throw std::runtime_error("Guest GX vertex-array address requires host pointer conversion");
+                MH3_THROW(std::runtime_error("Guest GX vertex-array address requires host pointer conversion"));
 
             const uint32_t guest = (uint32_t(p[2]) << 24) | (uint32_t(p[3]) << 16) | (uint32_t(p[4]) << 8) | p[5];
             const auto view = resolver(guest);
@@ -772,7 +773,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 }
 
                 if (!copy || !resolver)
-                    throw std::runtime_error("GX display copy requires a host surface bridge");
+                    MH3_THROW(std::runtime_error("GX display copy requires a host surface bridge"));
 
                 const uint32_t width = (bp[0x4D] & 1023) * 16;
                 const uint32_t sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1;
@@ -781,17 +782,17 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 // BP bit 10 selects reciprocal scaling, not a scaling enable.
                 // Match the hardware copy interval count (height minus one).
                 if ((trigger & 0x400) && scale == 0)
-                    throw std::runtime_error("GX reciprocal display-copy scale is zero");
+                    MH3_THROW(std::runtime_error("GX reciprocal display-copy scale is zero"));
 
                 const uint32_t destinationHeight = 1 + ((trigger & 0x400) ? (sourceHeight - 1) * 256 / scale : (sourceHeight - 1) * scale / 256);
 
                 if (width == 0 || width > 1024)
-                    throw std::runtime_error("GX display copy has invalid stride");
+                    MH3_THROW(std::runtime_error("GX display copy has invalid stride"));
 
                 const auto view = resolver(bp[0x4B] << 5);
 
                 if (uint64_t(width) * destinationHeight * 2 > view.size)
-                    throw std::runtime_error("GX display copy exceeds guest framebuffer RAM");
+                    MH3_THROW(std::runtime_error("GX display copy exceeds guest framebuffer RAM"));
 
                 run.at = offset + length;
                 run.Flush();
@@ -802,7 +803,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             }
 
             if (reg == 0x45 || reg == 0x47 || reg == 0x48)
-                throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
+                MH3_THROW(std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")"));
         }
 
         if (p[0] >= 0x80 && p[0] <= 0xBF) {
