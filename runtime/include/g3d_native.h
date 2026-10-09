@@ -27,6 +27,11 @@ void MtxRotXYZFIdx(uint32_t m, float x, float y, float z,
 void DeferViewPasses(bool enabled);
 void RunDeferredViewPasses();
 
+// g3d_calc_world.cpp: billboard kinds 1 (0x8006F79C) and 3 (0x8006FC20) on
+// mtx; false for the other kinds and in MH3_PORT_CHECK runs, which call the
+// table at 0x8056FDF8 instead. mdl holds the ResMdl.
+bool Billboard(uint32_t kind, uint32_t mtx, uint32_t model, uint32_t uniform, uint32_t mdl, uint32_t id);
+
 // g3d_anm_result.cpp
 void ResNodeChrAnmResult(uint32_t ref, uint32_t result);        // 0x80098FD0
 void ResNodePatchChrAnmResult(uint32_t ref, uint32_t result);   // 0x80098DC0

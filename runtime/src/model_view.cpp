@@ -2,6 +2,7 @@
 // typed CPU preparation; no GX, rendering fallback or anonymous pose marking.
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "g3d_native.h"
 #include "guest_span.h"
 #include "guest_call.h"
 #include "guest_worker.h"
@@ -112,8 +113,8 @@ mh3_res_status Billboard(void* opaque, uint32_t type, uint32_t id, int uniform, 
 
     // Known CPU billboard functions operate on the record in place: the
     // output's, where the original had its locked-cache copy. No draw callback
-    // or translated CalcView path is invoked. Their port remains a separate
-    // CPU math task.
+    // or translated CalcView path is invoked. Kinds 1 and 3 are native
+    // (g3d_calc_world.cpp), the others run their originals.
     if (type < 1 || type > 6 || position.size != 48)
         return MH3_RES_INVALID;
 
@@ -121,6 +122,9 @@ mh3_res_status Billboard(void* opaque, uint32_t type, uint32_t id, int uniform, 
 
     if (GuestRange(destination, 48) != position.data)
         return MH3_RES_INVALID;
+
+    if (G3dNative::Billboard(type, destination, context.models, uint32_t(uniform), context.reference, id))
+        return MH3_RES_OK;
 
     GuestCall game{context.cpu};
     game(Memory::Read32(0x8056fdf8 + type * 4), {destination, context.models, uint32_t(uniform), context.camera, context.reference, id});

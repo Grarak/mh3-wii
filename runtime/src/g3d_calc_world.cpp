@@ -37,6 +37,7 @@
 #include "guest_call.h"
 #include "guest_worker.h"
 #include "memory.h"
+#include "nw4r_math.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -44,6 +45,7 @@
 #include "runtime/native/mh3_model_view.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -459,6 +461,114 @@ int32_t MatrixNode(uint32_t info, uint32_t id) {
     return int32_t(Read32(table + 4 + 4 * id));
 }
 
+// The billboard matrices (calcview.cpp), one per billboard matrix through the
+// table at 0x8056FDF8: Billboard(mtx, model, uniform, view, &mdl, id) turns
+// mtx (view * model[id]) about the view's Z axis to an axis of the kind,
+// keeping its translation and the column scales of model[id] (all the first
+// one's when uniform). Ported, with their helpers:
+//
+//   0x8006F79C BillboardStd  the axis: mtx's Y column (rows 0-1)
+//   0x8006FC20 BillboardRot  the axis: model[id]'s Y column, in its parent
+//                            node's frame when it has a parent (0x8006F604)
+//
+// An axis along Z (both parts under the epsilon at 0x8079826C) fills mtx with
+// the constant at 0x8079F988 (0x8050199C) after the original's warning. The
+// other kinds run their originals. The arithmetic is plain float, not the
+// originals' paired singles (the normalization a float square root).
+constexpr uint32_t kBillboardZero = 0x80798268u;
+
+// 0x8006F96C: the length of column i of m's rotation part.
+float ColumnLength(uint32_t m, uint32_t i) {
+    const float x = ReadFloat(m + 4 * i), y = ReadFloat(m + 0x10 + 4 * i), z = ReadFloat(m + 0x20 + 4 * i);
+    return Nw4rMath::FSqrt(x * x + y * y + z * z);
+}
+
+// 0x8006F8FC (0x8006F938 with one scale): the rotation of mtx to the unit
+// axis (x, y), scaled per column.
+void FaceAxis(uint32_t mtx, float x, float y, float sx, float sy, float sz) {
+    const float zero = ReadFloat(kBillboardZero);
+    WriteFloat(mtx + 0x00, y * sx);
+    WriteFloat(mtx + 0x04, x * sy);
+    WriteFloat(mtx + 0x08, zero);
+    WriteFloat(mtx + 0x10, -x * sx);
+    WriteFloat(mtx + 0x14, y * sy);
+    WriteFloat(mtx + 0x18, zero);
+    WriteFloat(mtx + 0x20, zero);
+    WriteFloat(mtx + 0x24, zero);
+    WriteFloat(mtx + 0x28, sz);
+}
+
+// The kinds' common end: mtx faces the axis (x, y, 0) normalized, with the
+// column scales of world.
+void Face(uint32_t mtx, uint32_t world, uint32_t uniform, float x, float y) {
+    const float epsilon = ReadFloat(0x8079826Cu);
+
+    if (!(std::fabs(x) >= epsilon || std::fabs(y) >= epsilon)) {
+        const uint32_t fill = Read32(0x8079F988u);
+
+        for (uint32_t k = 0; k < 0x30; k += 4)
+            MemoryInline::FlatWrite32(mtx + k, fill);
+
+        return;
+    }
+
+    const float scale = 1.0f / std::sqrt(x * x + y * y);
+    x *= scale;
+    y *= scale;
+
+    if (uniform) {
+        const float s = ColumnLength(world, 0);
+        FaceAxis(mtx, x, y, s, s, s);
+        return;
+    }
+
+    FaceAxis(mtx, x, y, ColumnLength(world, 0), ColumnLength(world, 1), ColumnLength(world, 2));
+}
+
+// 0x8006F604: rows 0-1 of column 1 of node * inverse(parent), their rotation
+// parts; zero when the parent's determinant is under the epsilon at
+// 0x80798270.
+void ParentAxis(uint32_t node, uint32_t parent, float& x, float& y) {
+    float p[11];
+
+    for (uint32_t i = 0; i < 11; ++i)
+        p[i] = ReadFloat(parent + 4 * i);
+
+    // Column 1 of the adjugate, and the determinant along column 0.
+    const float a = p[9] * p[2] - p[1] * p[10], b = p[10] * p[0] - p[2] * p[8], c = p[1] * p[8] - p[0] * p[9];
+    const float det = p[8] * (p[1] * p[6] - p[5] * p[2]) + p[4] * a + p[0] * (p[5] * p[10] - p[9] * p[6]);
+
+    if (std::fabs(det) < ReadFloat(0x80798270u)) {
+        x = y = 0.0f;
+        return;
+    }
+
+    const float inverse = Nw4rMath::FastReciprocal(det);
+    const float ia = a * inverse, ib = b * inverse, ic = c * inverse;
+    x = ReadFloat(node) * ia + ReadFloat(node + 4) * ib + ReadFloat(node + 8) * ic;
+    y = ReadFloat(node + 0x10) * ia + ReadFloat(node + 0x14) * ib + ReadFloat(node + 0x18) * ic;
+}
+
+void BillboardStd(uint32_t mtx, uint32_t model, uint32_t uniform, uint32_t id) {
+    Face(mtx, model + 0x30 * id, uniform, ReadFloat(mtx + 4), ReadFloat(mtx + 0x14));
+}
+
+void BillboardRot(uint32_t mtx, uint32_t model, uint32_t uniform, uint32_t mdl, uint32_t id) {
+    const uint32_t world = model + 0x30 * id;
+    float x = ReadFloat(world + 4), y = ReadFloat(world + 0x14);
+    const int32_t nodeId = MatrixNode(Read32(mdl) + 0x4C, id);
+
+    if (nodeId >= 0) {
+        const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(nodeId));
+        const uint32_t toParent = node ? Read32(node + 0x5C) : 0;
+
+        if (toParent != 0)
+            ParentAxis(world, model + 0x30 * Read32(node + toParent + 0x10), x, y);
+    }
+
+    Face(mtx, world, uniform, x, y);
+}
+
 // CalcView_LC, or with lockedCache false the plain CalcView (0x80070884,
 // the same arguments), which writes every result in place.
 void CalcView(CpuContext* ctx, bool lockedCache) {
@@ -520,8 +630,11 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
             const uint32_t billboard = attr & 0xFF;
 
             if (billboard != 0) {
-                MemoryInline::FlatWrite32(frame[0x30], Read32(mdl));
-                game(Read32(kBillboards + 4 * billboard), {mtx, model, (attr >> 29) & 1, view, frame[0x30], id});
+                if (!G3dNative::Billboard(billboard, mtx, model, (attr >> 29) & 1, mdl, id)) {
+                    MemoryInline::FlatWrite32(frame[0x30], Read32(mdl));
+                    game(Read32(kBillboards + 4 * billboard), {mtx, model, (attr >> 29) & 1, view, frame[0x30], id});
+                }
+
                 const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(MatrixNode(info, id)));
 
                 if (node == 0 || Read32(node + 0x60) == 0)
@@ -617,7 +730,45 @@ void CalcViewPlain(CpuContext* ctx) {
     CalcView(ctx, false);
 }
 
+void BillboardStdPort(CpuContext* ctx) {
+    BillboardStd(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[8]);
+}
+
+void BillboardRotPort(CpuContext* ctx) {
+    BillboardRot(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[7], ctx->gpr[8]);
+}
+
 } // namespace
+
+bool G3dNative::Billboard(uint32_t kind, uint32_t mtx, uint32_t model, uint32_t uniform, uint32_t mdl, uint32_t id) {
+    // Checked runs take the table to the registered ports.
+    if (PortCheck::Set()) [[unlikely]]
+        return false;
+
+    if (kind == 1) {
+        BillboardStd(mtx, model, uniform, id);
+        return true;
+    }
+
+    if (kind == 3) {
+        BillboardRot(mtx, model, uniform, mdl, id);
+        return true;
+    }
+
+    return false;
+}
+
+extern "C" void func_8006F79C(CpuContext* ctx);
+extern "C" void MH3_BillboardStd(CpuContext* ctx) {
+    PortCheck::Call(ctx, "BillboardStd", func_8006F79C, BillboardStdPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006F79C, MH3_BillboardStd, "BillboardStd");
+
+extern "C" void func_8006FC20(CpuContext* ctx);
+extern "C" void MH3_BillboardRot(CpuContext* ctx) {
+    PortCheck::Call(ctx, "BillboardRot", func_8006FC20, BillboardRotPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006FC20, MH3_BillboardRot, "BillboardRot");
 
 extern "C" void func_800711FC(CpuContext* ctx);
 extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {

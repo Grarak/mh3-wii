@@ -2029,3 +2029,13 @@
 80096424 ResTevColorGetKColor
 8009c754 SinCosByPeriod
 8009b4ac MtxFromDirection
+8006f79c BillboardStd
+8006fc20 BillboardRot
+8006f998 BillboardPerspStd
+80070198 BillboardPerspRot
+80070474 BillboardY
+80070664 BillboardPerspY
+8006f604 BillboardParentAxis
+8006f8fc BillboardFaceScaled
+8006f938 BillboardFace
+8006f96c MtxColumnLength
