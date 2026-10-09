@@ -42,6 +42,11 @@ mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences,
     const mh3_render_mode defaults[3], const mh3_render_mode *custom,
     mh3_render_configuration *out);
 
+/* ApplyWidemode only changes VI width/origin, retaining the current EFB and
+ * other display fields. Unlike RenderInit it does not test component cable. */
+mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences,
+    const mh3_render_mode defaults[3], mh3_render_mode *current);
+
 #ifdef __cplusplus
 }
 #endif

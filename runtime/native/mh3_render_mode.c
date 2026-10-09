@@ -4,6 +4,19 @@
 #include "mh3_render_mode.h"
 #include <string.h>
 
+mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences,
+    const mh3_render_mode defaults[3], mh3_render_mode *current) {
+    if (!preferences || !defaults || !current) return MH3_RES_INVALID;
+    mh3_render_preferences selection = *preferences;
+    selection.component_cable = 1;
+    mh3_render_configuration selected = {0};
+    const mh3_res_status status = mh3_render_mode_select(&selection, defaults, NULL, &selected);
+    if (status != MH3_RES_OK) return status;
+    current->vi_width = selected.mode.vi_width;
+    current->vi_x_origin = selected.mode.vi_x_origin;
+    return MH3_RES_OK;
+}
+
 static uint16_t read16(const uint8_t *p) {
     return (uint16_t)((uint16_t)p[0] << 8 | p[1]);
 }

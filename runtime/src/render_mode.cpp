@@ -66,3 +66,43 @@ extern "C" void MH3_RenderInit(CpuContext* cpu) {
     Memory::Write16(sda - 0x468C, configuration.mode.vi_y_origin);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8003F794, MH3_RenderInit, "RenderInit");
+
+extern "C" void MH3_ApplyWidemode(CpuContext* cpu) {
+    GuestFrame frame(cpu, 0x60);
+    const auto wide = uint8_t(frame.Arg(3));
+    const auto sda = frame.Arg(13);
+    if (wide == Memory::Read8(sda - 0x468F)) return;
+    mh3_render_preferences preferences{};
+    preferences.progressive = Memory::Read8(sda - 0x46A0);
+    preferences.tv_format = Memory::Read8(sda - 0x469D);
+    preferences.widescreen = wide;
+    std::array<mh3_render_mode, 3> defaults{};
+    for (size_t i = 0; i < defaults.size(); ++i) defaults[i] = Read(Defaults[i]);
+    const auto address = Memory::Read32(sda + uint32_t(ModePointer));
+    auto mode = Read(address);
+    const auto status = mh3_render_mode_widescreen(&preferences, defaults.data(), &mode);
+    if (status == MH3_RES_UNSUPPORTED) return;
+    Checked(status);
+    // Publish only the two fields written by the original caller.
+    Memory::Write16(address + 14, mode.vi_width);
+    Memory::Write16(address + 10, mode.vi_x_origin);
+    GuestCall{cpu}(0x804E85E0, {address});
+    Memory::Write16(0x8065B4BC, 640);
+    Memory::Write16(0x8065B4BE, 448);
+    const float width = Memory::ReadFloat32(wide == 1 ? 0x80797F60 : 0x80797F6C);
+    const float height = Memory::ReadFloat32(0x80797F64);
+    const float left = Memory::ReadFloat32(0x80797F78);
+    const float top = Memory::ReadFloat32(0x80797F7C);
+    Memory::WriteFloat32(0x8065B4C0, width);
+    Memory::Write32(0x8065B4C8, Memory::Read32(wide == 1 ? 0x80797F68 : 0x80797F70));
+    Memory::Write16(0x8065B4F8, uint16_t(int32_t(width)));
+    Memory::Write16(0x8065B4FA, Memory::Read16(address + 6));
+    Memory::Write8(0x8065B4D5, wide == 1);
+    Memory::WriteFloat32(0x8065B4C4, height);
+    Memory::WriteFloat32(0x8065B4E8, left);
+    Memory::WriteFloat32(0x8065B4EC, top);
+    Memory::WriteFloat32(0x8065B4F0, width - left);
+    Memory::WriteFloat32(0x8065B4F4, height - top);
+    Memory::Write8(sda - 0x468F, wide);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8003FA48, MH3_ApplyWidemode, "ApplyWidemode");
