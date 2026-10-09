@@ -60,7 +60,8 @@ public sealed partial class CxxLinearCodeGenerator
             case IrBinary bin:
                 {
                     var dest = ToDestination(bin.Destination, types);
-                    var scalarFloatOperation = IsFloatRegister(bin.Destination);
+                    // words_to_f64 assembles an FPR from two integer words.
+                    var scalarFloatOperation = IsFloatRegister(bin.Destination) && bin.Op != "words_to_f64";
                     var left = scalarFloatOperation
                         ? ToScalarFloatExpression(bin.Left, types, localPaired)
                         : ToExpression(bin.Left, types);

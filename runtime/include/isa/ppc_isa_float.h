@@ -49,6 +49,13 @@ inline double PpcBitCastToDoubleInline(uint64_t value)
     return result;
 }
 
+// The double an lfd reads from two stored words (high word first, as in guest memory);
+// the translator forwards CodeWarrior's integer-to-float stack idiom through this.
+inline double PpcDoubleFromWordsInline(uint32_t high, uint32_t low)
+{
+    return PpcBitCastToDoubleInline(static_cast<uint64_t>(high) << 32 | low);
+}
+
 inline uint32_t PpcBitCastToU32Inline(float value)
 {
     uint32_t integral = 0;

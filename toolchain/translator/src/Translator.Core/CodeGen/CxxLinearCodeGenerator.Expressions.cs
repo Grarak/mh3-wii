@@ -48,6 +48,7 @@ public sealed partial class CxxLinearCodeGenerator
             "fctiw" => $"PPC_Fctiw({left})",
             "fctiwz" => $"PPC_Fctiwz({left})",
             "fpr_low_word" => $"PPC_FprLowWordInline({left})",
+            "words_to_f64" => $"PpcDoubleFromWordsInline(static_cast<uint32_t>({left}), static_cast<uint32_t>({right}))",
             "sar" => $"(static_cast<int32_t>({left}) >> {right})",
             "mul" => $"({left} * {right})",
             "mulhwu" => $"(static_cast<uint32_t>((static_cast<uint64_t>({left}) * static_cast<uint64_t>({right})) >> 32))",

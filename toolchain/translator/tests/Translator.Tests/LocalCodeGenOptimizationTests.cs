@@ -81,6 +81,89 @@ public sealed class LocalCodeGenOptimizationTests
         Assert.Contains("MemoryInline::FlatWriteRamFloat64((r1 + 40), f31.d)", code, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void IntToFloatStackIdiomIsForwardedAcrossBlocks()
+    {
+        var code = Emit(IntToFloatFunction(includeGuestCall: false), IntToFloatTypes(), 0x80008024);
+
+        Assert.Contains("f0.d = PpcDoubleFromWordsInline(static_cast<uint32_t>(stackword", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("FlatReadFloat64((r1 + 8))", code, StringComparison.Ordinal);
+        // The stores stay: the slot remains visible in guest memory.
+        Assert.Contains("FlatWriteRam32((r1 + 12)", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IntToFloatStackLoadIsKeptAfterGuestCall()
+    {
+        var code = Emit(IntToFloatFunction(includeGuestCall: true), IntToFloatTypes(), 0x80008028);
+
+        Assert.DoesNotContain("PpcDoubleFromWordsInline", code, StringComparison.Ordinal);
+        Assert.Contains("FlatReadFloat64((r1 + 8))", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IntToFloatStackLoadIsKeptWhenPathsStoreDifferentSites()
+    {
+        // The low word is stored on only one of two paths into the load.
+        var function = new IrFunction("i2f_merge", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrAssign("r0", IrValue.Imm(0x43300000)),
+                new IrStore(new IrAddress("r1", 8), IrValue.Register("r0"), 4),
+                new IrStore(new IrAddress("r1", 12), IrValue.Register("r4"), 4),
+                new IrBranch("eq", "left", "join")
+            }),
+            new IrBasicBlock("left", new IrInstruction[]
+            {
+                new IrStore(new IrAddress("r1", 12), IrValue.Register("r3"), 4),
+                new IrJump("join")
+            }),
+            new IrBasicBlock("join", new IrInstruction[]
+            {
+                new IrLoad("f0", new IrAddress("r1", 8), 8),
+                new IrReturn(null)
+            })
+        });
+        var code = Emit(function, IntToFloatTypes(), 0x8000802C);
+
+        Assert.DoesNotContain("PpcDoubleFromWordsInline", code, StringComparison.Ordinal);
+    }
+
+    private static IrFunction IntToFloatFunction(bool includeGuestCall)
+    {
+        var loop = new List<IrInstruction>
+        {
+            new IrStore(new IrAddress("r1", 12), IrValue.Register("r3"), 4)
+        };
+        if (includeGuestCall)
+            loop.Add(new IrCall(string.Empty, "func_80001234", Array.Empty<IrValue>()));
+        loop.Add(new IrLoad("f0", new IrAddress("r1", 8), 8));
+        loop.Add(new IrStore(new IrAddress("r3", 0), IrValue.Register("f0"), 8));
+        loop.Add(new IrBranch("eq", "loop", "exit"));
+        return new IrFunction("i2f_stack", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrAssign("r0", IrValue.Imm(0x43300000)),
+                new IrStore(new IrAddress("r1", 8), IrValue.Register("r0"), 4),
+                new IrAssign("r0", IrValue.Imm(5)),
+                new IrJump("loop")
+            }),
+            new IrBasicBlock("loop", loop),
+            new IrBasicBlock("exit", new IrInstruction[] { new IrReturn(null) })
+        });
+    }
+
+    private static RepresentationEnvironment IntToFloatTypes() => new(new Dictionary<string, ValueRepresentation>
+    {
+        ["r0"] = ValueRepresentation.UInt32,
+        ["r1"] = ValueRepresentation.UInt32,
+        ["r3"] = ValueRepresentation.UInt32,
+        ["r4"] = ValueRepresentation.UInt32,
+        ["f0"] = ValueRepresentation.Float64
+    });
+
     private static IrFunction FctiwFunction(bool includeGuestCallAfterLoad)
     {
         var instructions = new List<IrInstruction>
