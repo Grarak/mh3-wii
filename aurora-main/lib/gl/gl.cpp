@@ -1,6 +1,7 @@
 #include "gl.hpp"
 
 #include "../internal.hpp"
+#include "../gfx/port_capture.hpp"
 
 #include <SDL3/SDL.h>
 #include <absl/container/flat_hash_map.h>
@@ -341,7 +342,7 @@ const FormatInfo& format_info(Format format) noexcept { return FormatInfos[stati
 
 Texture::Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept
 : width(width), height(height), mips(mips), format(format), m_name(new Name) {
-  (void)label;
+  gfx::port_capture::texture(this, true, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel, label);
   auto create = [name = m_name, width, height, mips, format] {
     const auto& info = format_info(format);
     glGenTextures(1, &name->value);
@@ -366,6 +367,7 @@ Texture::Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, 
 }
 
 Texture::~Texture() {
+  gfx::port_capture::texture(this, false, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel);
   post([name = m_name] {
     if (name->value != 0) {
       forget_texture(name->value);
@@ -392,6 +394,7 @@ void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t
 
 void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                     const void* data, uint32_t bytesPerRow) noexcept {
+  gfx::port_capture::upload(&texture, mip, uint64_t(bytesPerRow) * height);
   const auto& info = format_info(texture.format);
   if (g_state.activeUnit != 0) {
     glActiveTexture(GL_TEXTURE0);
@@ -490,7 +493,9 @@ std::string fragment_source(std::string_view body) {
   return out;
 }
 
-Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {}
+Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
+  gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment);
+}
 
 Program::~Program() {
   if (const GLuint program = m_program; program != 0) {

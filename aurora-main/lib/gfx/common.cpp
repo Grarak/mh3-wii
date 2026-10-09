@@ -11,6 +11,7 @@
 #include "tex_palette_conv.hpp"
 #include "texture_replacement.hpp"
 #include "texture.hpp"
+#include "port_capture.hpp"
 #include "../window.hpp"
 
 #include <algorithm>
@@ -1015,6 +1016,9 @@ static void end_batch_impl(bool advanceFrame) {
     g_stats.lastUniformSize = g_uniforms().size();
     g_stats.lastIndexSize = g_indices().size();
     g_stats.lastStorageSize = g_storage().size();
+    port_capture::frame(g_frameIndex, g_drawCallCount, g_mergedDrawCallCount,
+                        static_cast<uint32_t>(g_renderPasses.size()), g_verts().size(), g_uniforms().size(),
+                        g_indices().size(), g_storage().size());
     gl::post([set = std::move(g_staging)]() mutable {
       upload_batch(*set);
       release_staging_set(std::move(set));
