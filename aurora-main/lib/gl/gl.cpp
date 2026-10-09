@@ -15,6 +15,8 @@
 #include <aurora/fast_map.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <vector>
 #include <map>
 #include <cstring>
@@ -175,6 +177,24 @@ void capture_native_draw(std::string_view kind, uint32_t vertices, uint32_t indi
   s.display = s.target == 0;
   s.rasterKnown = g_state.rasterValid;
   std::copy_n(g_state.textures.begin(), s.textures.size(), s.textures.begin());
+
+  // Each draw's time to finish since the previous one's, on the frames the
+  // capture records: on llvmpipe the draw's rasterization and fragment work.
+  static const bool timed = std::getenv("AURORA_PORT_CAPTURE_DRAW_TIMING") != nullptr;
+
+  if (timed) {
+    static uint32_t lastFrame = UINT32_MAX;
+    static std::chrono::steady_clock::time_point last;
+    glFinish();
+    const auto now = std::chrono::steady_clock::now();
+
+    if (lastFrame == s.frame)
+      s.finishNs = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now - last).count());
+
+    lastFrame = s.frame;
+    last = now;
+  }
+
   native_draw(kind, s);
 }
 

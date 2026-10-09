@@ -46,6 +46,9 @@ struct NativeDraw {
   uint32_t flags = 0, depthFunction = 0, target = 0, depthTarget = 0;
   bool rasterKnown = true, display = false;
   std::array<uint32_t, 8> textures{};
+  // AURORA_PORT_CAPTURE_DRAW_TIMING (GL): the draw's time to finish, its
+  // fragment work on a software rasterizer (0: not timed).
+  uint64_t finishNs = 0;
 };
 
 void native_program(uint32_t id, uint64_t vertexHash, uint64_t fragmentHash, bool discard, bool depthReplace, std::string_view label, const std::array<uint64_t, 2>& portableHashes = {},

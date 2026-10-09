@@ -187,7 +187,7 @@ void native_draw(std::string_view kind, const NativeDraw& s) noexcept {
   for (const auto texture : s.textures)
     std::fprintf(c.events, "\t%u", texture);
 
-  std::fputc('\n', c.events);
+  std::fprintf(c.events, "\t%llu\n", static_cast<unsigned long long>(s.finishNs));
   std::fflush(c.events);
 }
 
