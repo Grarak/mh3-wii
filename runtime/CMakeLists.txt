@@ -143,7 +143,7 @@ target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/
   src/native_effect_draw.cpp native/mh3_effect_draw.c native/mh3_particle_draw_state.c
   src/native_scene_feedback.cpp native/mh3_scene_feedback.c
   native/mh3_demo_menu.c
-  src/native_scene_queue.cpp native/mh3_scene_queue.c
+  src/native_scene_queue.cpp native/mh3_scene_queue.c src/scene_cull.cpp native/mh3_scene_cull.c
   src/launcher_support.cpp)
 # Clang's precise float pragma is unsupported for the Vita target. Keep the
 # CPU fog/light producer's range/finite checks and operation order intact.

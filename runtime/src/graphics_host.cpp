@@ -2,6 +2,7 @@
 #include "gx_panic.h"
 #include "native_graphics.h"
 #include "model_cull.h"
+#include "scene_cull.h"
 #include "native_frame_packet.h"
 #include "asset_cache.h"
 #include "model_assets.h"
@@ -494,6 +495,11 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      work.owner_thread, work.owner_core, unsigned(work.owner_affinity), double(work.window_ns) / 1e9);
     else
         std::fprintf(stderr, "MH3 native work: owner CPU unavailable\n");
+    if (const auto scene = TakeNativeSceneCullStatistics(); scene.models)
+        std::fprintf(stderr, "MH3 scene cull: %llu of %llu scene models culled, %llu tested (untested: %llu class, %llu callback, %llu no table, %llu unbounded), check %llu/%llu mismatches\n",
+                     static_cast<unsigned long long>(scene.culled), static_cast<unsigned long long>(scene.models), static_cast<unsigned long long>(scene.tested),
+                     static_cast<unsigned long long>(scene.other_class), static_cast<unsigned long long>(scene.callback), static_cast<unsigned long long>(scene.no_table),
+                     static_cast<unsigned long long>(scene.unbounded), static_cast<unsigned long long>(scene.mismatches), static_cast<unsigned long long>(scene.checked));
     if (const auto cull = TakeNativeModelCullStatistics(); cull.draws)
         std::fprintf(stderr, "MH3 model cull: %llu of %llu mesh draws culled (%.1f%%)\n", static_cast<unsigned long long>(cull.culled),
                      static_cast<unsigned long long>(cull.draws), 100.0 * double(cull.culled) / double(cull.draws));

@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "frame_split.h"
 #include "native_graphics.h"
+#include "scene_cull.h"
 #include "../native/mh3_scene_queue.h"
 #include "../native/mh3_model_state.h"
 #include <stdexcept>
@@ -167,7 +168,9 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
         ReadNode(nullptr, identity, &node);
         if (node.type < 2) {
             MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL);
-            call(0x8004978C, {node.object, pass == 1 ? 4u : 0xffffffffu});
+            // Native lateral visibility (scene_cull.h); the original tests depth only.
+            if (!SkipNativeSceneModel(node.object))
+                call(0x8004978C, {node.object, pass == 1 ? 4u : 0xffffffffu});
         } else if (node.type == 2) {
             MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT);
             const auto target = Memory::Read32(Memory::Read32(node.object + 28) + 28);

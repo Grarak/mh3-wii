@@ -141,6 +141,8 @@ merged or removed in a second pass.
 | `MH3_MATERIAL_GPU_RING` | route the render thread's Animated sections through the producer ring (self-test) | development | remove |
 | `MH3_MATERIAL_GPU_VERIFY` | compare the material programs' coefficients with `mh3_shade_fill` | development | into `MH3_VERIFY` |
 | `MH3_MODEL_CULL` | `0`: draw models whose mesh box is off screen | all | remove after its A/B |
+| `MH3_MODEL_CULL_GAME` | `0`: no game-side culling of off-screen scene models; `2` (development): draw everything and check every rejected model | all | remove after its A/B |
+| `MH3_RENDER_WIDEN` | `f` (development): draw every perspective projection `f` times wider than the camera the game culls with (edge check) | dev | keep for culling checks |
 | `MH3_DRAW_CENSUS` | `N`: the model draw pass's owners every N frames | development | remove |
 | `MH3_PREPARE_DIAGNOSTICS` | model preparation diagnostics for a frame range | development | remove |
 | `MH3_NATIVE_ASSET_TRACE` | model catalog registration log (`model_catalog.cpp`) | development | remove |
