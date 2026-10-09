@@ -38,6 +38,9 @@
 #include <type_traits>
 #include <string>
 
+#ifdef MH3_DEVELOPMENT
+void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
+#endif
 namespace {
 
 enum : uint32_t {
@@ -726,6 +729,9 @@ void GetAnmResultPort(CpuContext* ctx) {
 // the original (whose key evaluation is the key ports above too).
 extern "C" void func_8008D660(CpuContext* ctx);
 extern "C" void MH3_AnmChrGetAnmResult(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    MH3FrameSplitCall(1);
+#endif
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnmChrGetAnmResult");
     if (check) [[unlikely]] {

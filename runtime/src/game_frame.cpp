@@ -20,6 +20,7 @@
 #include "village_boot.h"
 #include <initializer_list>
 #ifdef MH3_DEVELOPMENT
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -146,6 +147,57 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
 }
 #endif
 
+#ifdef MH3_DEVELOPMENT
+// Calls per frame phase (2 logic, 3 draw) of calc entry points: world matrices,
+// animation results, effect calc, view matrices.
+uint32_t splitCalls[4][5];
+#endif
+} // namespace
+#ifdef MH3_DEVELOPMENT
+void MH3FrameSplitCall(unsigned kind) {
+    const unsigned phase = Memory::Read8(kSystem + kFramePhase);
+    ++splitCalls[kind][phase < 5 ? phase : 0];
+}
+#endif
+namespace {
+#ifdef MH3_DEVELOPMENT
+// Game-thread split of one frame body: logic (input, scene update, tasks,
+// timers), draw (scene, fonts, fade, HUD, movie: what the render thread is to
+// take over, including the G3D calc passes it runs today) and the rest.
+// Printed once per second with MH3 stats (MH3_STATS=0 disables it).
+struct FrameSplit {
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point start, mark;
+    double logic = 0, draw = 0, other = 0;
+    uint32_t frames = 0;
+    Clock::time_point reported = Clock::now();
+    static double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
+    void Begin() { start = mark = Clock::now(); }
+    void Lap(double& bucket) {
+        const auto now = Clock::now();
+        bucket += Ms(now - mark);
+        mark = now;
+    }
+    void End() {
+        Lap(other);
+        ++frames;
+        static const bool enabled = [] {
+            const char* value = std::getenv("MH3_STATS");
+            return !value || std::strcmp(value, "0") != 0;
+        }();
+        if (!enabled || mark - reported < std::chrono::seconds(1))
+            return;
+        std::printf("MH3 frame split: logic %.2f draw %.2f other %.2f ms/frame (%u frames); calls logic/draw: world %u/%u anim %u/%u effect %u/%u view %u/%u\n", logic / frames, draw / frames,
+                    other / frames, frames, splitCalls[0][2], splitCalls[0][3], splitCalls[1][2], splitCalls[1][3], splitCalls[2][2], splitCalls[2][3], splitCalls[3][2], splitCalls[3][3]);
+        std::memset(splitCalls, 0, sizeof splitCalls);
+        std::fflush(stdout);
+        logic = draw = other = 0;
+        frames = 0;
+        reported = mark;
+    }
+} split;
+#endif
+
 } // namespace
 
 extern "C" void MH3_GameFrame(CpuContext* ctx) {
@@ -160,6 +212,12 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         return ctx->gpr[3];
     };
 
+#ifdef MH3_DEVELOPMENT
+    split.Begin();
+#define MH3_SPLIT(bucket) split.Lap(split.bucket)
+#else
+#define MH3_SPLIT(bucket)
+#endif
     call(WPADDisconnect, {2});
     call(WPADDisconnect, {3});
     call(PollControllers);
@@ -240,20 +298,24 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         call(ResetFade);
         call(TickSystemTimers);
         Memory::Write8(kSystem + kFramePhase, 3);
+        MH3_SPLIT(logic);
         if (render) {
             call(DrawScene);
             call(flfntFlush);
             call(DrawFadeOverlay);
         }
+        MH3_SPLIT(draw);
         call(TickFades);
         if (render && Memory::Read8(kSystem + kScreenGrab)) {
             Memory::Write8(kSystem + kScreenGrab, 0);
             call(RestoreGrabbedScreen);
         }
+        MH3_SPLIT(logic);
         if (render) {
             call(DrawHud);
             call(MovieDraw);
         }
+        MH3_SPLIT(draw);
         call(PauseHook);
         call(OverlayHook);
     } else if (boot == 0) {
@@ -261,6 +323,10 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         Memory::Write8(kSystem + kBootState, 1);
     }
     Memory::Write8(kSystem + kFramePhase, 4);
+#ifdef MH3_DEVELOPMENT
+    split.End();
+#endif
+#undef MH3_SPLIT
     *ctx = saved;
     ctx->gpr[3] = 1;
 }

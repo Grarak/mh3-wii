@@ -12,6 +12,9 @@
 #include <string>
 
 const mh3_res_memory& MH3NativeResourceMemory();
+#ifdef MH3_DEVELOPMENT
+void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
+#endif
 namespace {
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
@@ -97,6 +100,9 @@ void Produce(CpuContext* cpu) {
 } // namespace
 extern "C" void func_80071CAC(CpuContext*);
 extern "C" void MH3_G3dCalcViewDma(CpuContext* cpu) {
+#ifdef MH3_DEVELOPMENT
+    MH3FrameSplitCall(3);
+#endif
     const uint32_t position = cpu->gpr[3], normal = cpu->gpr[4], environment = cpu->gpr[10];
     const uint32_t count = cpu->gpr[7], reference = cpu->gpr[9];
 #ifdef MH3_DEVELOPMENT

@@ -44,6 +44,9 @@
 #include <cstring>
 #include <utility>
 
+#ifdef MH3_DEVELOPMENT
+void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
+#endif
 namespace {
 
 constexpr uint32_t kWorkMatrices = 0x8066D300u;
@@ -287,6 +290,9 @@ void CalcWorld(CpuContext* ctx) {
 
 extern "C" void MH3_G3dCalcWorld(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
+    MH3FrameSplitCall(0);
+#endif
+#ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("G3dCalcWorld");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "G3dCalcWorld", func_80073830, CalcWorld);
@@ -417,6 +423,9 @@ void CalcViewLc(CpuContext* ctx) {
 
 extern "C" void func_800711FC(CpuContext* ctx);
 extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    MH3FrameSplitCall(3);
+#endif
     const uint32_t position = ctx->gpr[3], normal = ctx->gpr[4], environment = ctx->gpr[10];
     const uint32_t count = ctx->gpr[7], model_reference = ctx->gpr[9];
 #ifdef MH3_DEVELOPMENT

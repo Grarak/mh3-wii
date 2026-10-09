@@ -56,6 +56,9 @@ extern "C" void MH3_AnimCurveExecuteU8(CpuContext*);
 extern "C" void MH3_AnimCurveExecuteF32(CpuContext*);
 extern "C" void MH3_AnimCurveExecuteRotate(CpuContext*);
 
+#ifdef MH3_DEVELOPMENT
+void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
+#endif
 namespace {
 
 // ut::List: head, tail, u16 count, u16 offset of the link {prev, next} in each object.
@@ -497,6 +500,9 @@ static void EffectCalcPort(CpuContext* ctx) {
 }
 extern "C" void func_800A4C20(CpuContext* ctx);
 extern "C" void MH3_EffectCalc(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    MH3FrameSplitCall(2);
+#endif
     PortCheck::Call(ctx, "EffectCalc", func_800A4C20, EffectCalcPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A4C20, MH3_EffectCalc, "EffectCalc");
