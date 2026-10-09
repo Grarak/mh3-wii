@@ -15,6 +15,7 @@
 #include <aurora/native_texture.hpp>
 #include "gl/gl.hpp"
 #include "native_shader_source.h"
+#include "native_shade_snapshot.h"
 #include "../native/mh3_shade.h"
 #ifdef MH3_DEVELOPMENT
 #include "gfx/port_capture.hpp"
@@ -510,6 +511,56 @@ bool GetNativeTextureMatrix(uint32_t selector, float matrix[12], bool* matrix3x4
     if (matrix3x4)
         *matrix3x4 = source->matrix3x4;
     return true;
+}
+void CaptureNativeShadeSnapshot(NativeShadeSnapshot& out) {
+    Owner();
+    ObserveRasterPublications();
+    out.material = material;
+    out.raster = GetNativeDrawState().raster;
+    out.lights = lightSlots;
+    out.preparedLights = preparedLights;
+    out.fog = fogSource;
+    out.preparedFog = preparedFog;
+    out.fogKnown = fogKnown;
+    out.depthBeforeTexture = depthBeforeTexture;
+    out.postKnown = out.post3x4 = 0;
+    for (unsigned i = 0; i < 8; ++i) {
+        const auto& post = postTextureMatrices[i];
+        out.post[i] = post.values;
+        if (post.known)
+            out.postKnown |= uint8_t(1u << i);
+        if (post.matrix3x4)
+            out.post3x4 |= uint8_t(1u << i);
+    }
+    CaptureNativeTextureBindings(out);
+}
+void RestoreNativeShadeSnapshot(const NativeShadeSnapshot& snapshot) {
+    Owner();
+    ObserveRasterPublications();
+    material = snapshot.material;
+    {
+        // The snapshot's material already holds its raster fields.
+        publishingMaterialRaster = true;
+        SetNativeRaster(snapshot.raster);
+        publishingMaterialRaster = false;
+    }
+    if (lightSlots.valid_mask != snapshot.lights.valid_mask || std::memcmp(&preparedLights, &snapshot.preparedLights, sizeof preparedLights))
+        ++shade.revision;
+    lightSlots = snapshot.lights;
+    preparedLights = snapshot.preparedLights;
+    if (fogKnown != snapshot.fogKnown || std::memcmp(&fogSource, &snapshot.fog, sizeof fogSource) || std::memcmp(&preparedFog, &snapshot.preparedFog, sizeof preparedFog))
+        ++shade.revision;
+    fogSource = snapshot.fog;
+    preparedFog = snapshot.preparedFog;
+    fogKnown = snapshot.fogKnown;
+    depthBeforeTexture = snapshot.depthBeforeTexture;
+    for (unsigned i = 0; i < 8; ++i) {
+        auto& post = postTextureMatrices[i];
+        post.values = snapshot.post[i];
+        post.known = (snapshot.postKnown >> i) & 1;
+        post.matrix3x4 = (snapshot.post3x4 >> i) & 1;
+    }
+    RestoreNativeTextureBindings(snapshot);
 }
 void SetNativeDepthCompareBeforeTexture(bool before) {
     Owner();

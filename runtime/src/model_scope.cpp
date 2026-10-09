@@ -10,11 +10,14 @@
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_material_prep.h"
+#include "frame_split.h"
+#include "native_shade_snapshot.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
@@ -310,13 +313,72 @@ void PrepareNativeModelMaterial(uint32_t reference, uint32_t control, uint32_t s
     PrepareContext context{};
     Checked(mh3_model_material_prepare_scope(&scope, control, op, ignore, PrepareStep, &context));
 }
-void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
+namespace {
+// One model mesh draw split at the shading boundary. Prepare (material scope,
+// shape matrix selection, row selectors) leaves the typed shading inputs in a
+// snapshot; execute rebuilds the matrix palette from the pose and submits.
+struct ModelItem {
+    NativeModelOwner owner;
+    const mh3_prepared_mesh* prepared;
+    mh3_matrix_runtime_storage storage;
+    mh3_shape_matrix_input input;
+    uint32_t pose;
+    NativeShadeSnapshot shade;
+    mh3_model_texcoord_sizes coordinate_sizes;
+};
+// Pose arrays as the draw found them: copied once per binding and pass.
+struct ModelPose {
+    uint32_t address[3];
+    std::vector<uint8_t> bytes;
+    size_t offset[3];
+    mh3_matrix_sources layout;
+};
+struct ModelCapture {
+    bool active = false;
+    std::vector<ModelItem> items;
+    std::vector<ModelPose> poses;
+    size_t itemCount = 0, poseCount = 0;
+} capture;
+uint32_t CapturePose(const uint32_t addresses[3], const mh3_matrix_sources& sources) {
+    for (size_t i = capture.poseCount; i-- > 0;)
+        if (!std::memcmp(capture.poses[i].address, addresses, sizeof capture.poses[i].address))
+            return uint32_t(i);
+    if (capture.poseCount == capture.poses.size())
+        capture.poses.emplace_back();
+    auto& pose = capture.poses[capture.poseCount];
+    std::memcpy(pose.address, addresses, sizeof pose.address);
+    pose.layout = sources;
+    const mh3_matrix_table* tables[3]{&sources.positions, &sources.normals, &sources.environment};
+    size_t total = 0;
+    for (unsigned i = 0; i < 3; ++i)
+        total += tables[i]->bytes.data ? tables[i]->bytes.size : 0;
+    pose.bytes.resize(total);
+    size_t offset = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        pose.offset[i] = offset;
+        if (!tables[i]->bytes.data)
+            continue;
+        std::memcpy(pose.bytes.data() + offset, tables[i]->bytes.data, tables[i]->bytes.size);
+        offset += tables[i]->bytes.size;
+    }
+    return uint32_t(capture.poseCount++);
+}
+mh3_matrix_sources PoseSources(const ModelPose& pose) {
+    auto sources = pose.layout;
+    mh3_matrix_table* tables[3]{&sources.positions, &sources.normals, &sources.environment};
+    for (unsigned i = 0; i < 3; ++i)
+        if (tables[i]->bytes.data)
+            tables[i]->bytes.data = pose.bytes.data() + pose.offset[i];
+    return sources;
+}
+bool PrepareModelItem(ModelItem& item, uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
     if (!Resource(reference))
-        return;
+        return false;
     uint32_t shape = 0;
-    const auto owner = ShapeOwner(reference, &shape);
-    const auto& prepared = ReadNativePreparedMesh(owner, shape);
-    const auto& originals = Sources(owner, reference, shape);
+    item.owner = ShapeOwner(reference, &shape);
+    const auto& prepared = ReadNativePreparedMesh(item.owner, shape);
+    item.prepared = &prepared;
+    const auto& originals = Sources(item.owner, reference, shape);
     for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
         mh3_native_vertex_source selected{};
@@ -331,22 +393,19 @@ void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);
     mh3_matrix_sources sources{};
     if (binding.address[0])
-        sources = ReadNativeModelPose(binding.address, owner.model_address);
+        sources = ReadNativeModelPose(binding.address, item.owner.model_address);
     else if (!direct_position)
         throw std::runtime_error("Indexed model matrix has no completed pose producer");
-    mh3_matrix_runtime_storage storage{};
-    mh3_shape_matrix_input input{};
     mh3_matrix_sources ignored{};
-    Checked(mh3_matrix_runtime_shape(&MH3NativeResourceMemory(), &locations, reference, direct_position, direct_normal, &storage, &input, &ignored));
-    if (input.matrix_id < 0 && !prepared.palette_batch_count)
+    Checked(mh3_matrix_runtime_shape(&MH3NativeResourceMemory(), &locations, reference, direct_position, direct_normal, &item.storage, &item.input, &ignored));
+    if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
-    mh3_model_palette palette = ReadNativeModelPalette();
+    item.pose = CapturePose(binding.address, sources);
     PrepareNativeModelCoordinateSizes(Mode().texgens);
-    if (input.matrix_id >= 0) {
+    if (item.input.matrix_id >= 0) {
+        // Row selectors depend on the shape's matrix sources, not pose values.
         mh3_model_palette produced{};
-        Checked(mh3_model_palette_rigid(&input, &sources, &produced));
-        Checked(mh3_model_palette_overlay(&palette, &produced, &palette));
-        PublishNativeModelPalette(palette);
+        Checked(mh3_model_palette_rigid(&item.input, &sources, &produced));
         bool identity = true;
         for (uint32_t row : produced.texture_ids)
             if (row != 60)
@@ -354,40 +413,54 @@ void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32
         if (!identity || !Memory::Read8(locations.current_valid))
             PublishNativeModelMatrixRows(produced.texture_ids);
         Memory::Write8(locations.current_valid, identity ? 1 : 0);
-        SetNativePositionMatrix(&produced.position[0].v[0][0]);
-        if (produced.normal_valid & 1)
-            SetNativeNormalMatrix(0, &produced.normal[0].v[0][0]);
-        for (uint32_t i = 0; i < 10; i++)
-            if (produced.texture_valid & (1u << i))
-                SetNativeTextureMatrix(30 + i * 3, &produced.texture[i].v[0][0], true);
-    } else {
+    } else if (!Memory::Read8(locations.current_valid)) {
         // Envelope setup selects identity CURRENT tex-matrix rows; it does not
         // load identity position/normal slots. Per-vertex indices select the
         // actual ordered loads/inherited values in the converted primitives.
-        if (!Memory::Read8(locations.current_valid)) {
-            uint32_t rows[8];
-            for (auto& row : rows)
-                row = 60;
-            PublishNativeModelMatrixRows(rows);
-            Memory::Write8(locations.current_valid, 1);
-        }
+        uint32_t rows[8];
+        for (auto& row : rows)
+            row = 60;
+        PublishNativeModelMatrixRows(rows);
+        Memory::Write8(locations.current_valid, 1);
     }
     Genmode(true);
     Memory::GetPointer(sync_address, 1)[0] = 0;
     // Publish the producer's row/dual fields once. Palette batches consume the
     // owner's material directly; they do not submit a full material copy.
     ApplyNativeModelSelectors();
+    CaptureNativeShadeSnapshot(item.shade);
+    if (item.input.matrix_id < 0)
+        Memory::Write8(locations.current_valid, 0);
+    return true;
+}
+void ExecuteModelItem(const ModelItem& item) {
+    RestoreNativeShadeSnapshot(item.shade);
+    const auto& prepared = *item.prepared;
+    const auto& owner = item.owner;
+    const auto sources = PoseSources(capture.poses[item.pose]);
+    auto input = item.input;
+    if (input.direct_position)
+        input.direct_position = &item.storage.direct_position;
+    if (input.direct_normal)
+        input.direct_normal = &item.storage.direct_normal;
+    mh3_model_palette palette = ReadNativeModelPalette();
+    if (input.matrix_id >= 0) {
+        mh3_model_palette produced{};
+        Checked(mh3_model_palette_rigid(&input, &sources, &produced));
+        Checked(mh3_model_palette_overlay(&palette, &produced, &palette));
+        PublishNativeModelPalette(palette);
+        SetNativePositionMatrix(&produced.position[0].v[0][0]);
+        if (produced.normal_valid & 1)
+            SetNativeNormalMatrix(0, &produced.normal[0].v[0][0]);
+        for (uint32_t i = 0; i < 10; i++)
+            if (produced.texture_valid & (1u << i))
+                SetNativeTextureMatrix(30 + i * 3, &produced.texture[i].v[0][0], true);
+    }
     const auto& material = GetNativeMaterialState();
     float post[8][12]{};
-    uint8_t known = 0, format = 0;
-    for (uint32_t i = 0; i < 8; i++) {
-        bool matrix3x4 = false;
-        if (GetNativeTextureMatrix(64 + i * 3, post[i], &matrix3x4)) {
-            known |= uint8_t(1u << i);
-            if (matrix3x4)
-                format |= uint8_t(1u << i);
-        }
-    }
+    for (uint32_t i = 0; i < 8; i++)
+        if (item.shade.postKnown & (1u << i))
+            std::memcpy(post[i], item.shade.post[i].data(), sizeof post[i]);
     auto submit_one = [&](uint32_t batch_index) {
         mh3_resolved_mesh_submit submit{};
         if (prepared.palette_batch_count) {
@@ -408,9 +481,9 @@ void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32
         submit.material = &material;
         submit.projection = GetNativeDrawState().projection;
         submit.texture_matrices = post;
-        submit.texture_matrix_known = known;
-        submit.texture_matrix_3x4 = format;
-        submit.texcoord_sizes = &coordinate_sizes;
+        submit.texture_matrix_known = item.shade.postKnown;
+        submit.texture_matrix_3x4 = item.shade.post3x4;
+        submit.texcoord_sizes = &item.coordinate_sizes;
         SubmitNativeModelMesh(submit);
     };
     if (prepared.palette_batch_count)
@@ -418,8 +491,40 @@ void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32
             submit_one(i);
     else
         submit_one(0);
-    if (input.matrix_id < 0)
-        Memory::Write8(locations.current_valid, 0);
+}
+ModelItem& NextModelItem() {
+    if (capture.itemCount == capture.items.size())
+        capture.items.emplace_back();
+    return capture.items[capture.itemCount];
+}
+} // namespace
+
+void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
+    const bool deferred = capture.active;
+    if (!deferred)
+        capture.itemCount = capture.poseCount = 0;
+    auto& item = NextModelItem();
+    if (!PrepareModelItem(item, reference, direct_position, direct_normal))
+        return;
+    item.coordinate_sizes = coordinate_sizes;
+    ++capture.itemCount;
+    if (!deferred) {
+        ExecuteModelItem(item);
+        capture.itemCount = capture.poseCount = 0;
+    }
+}
+void BeginNativeModelCapture() {
+    if (capture.active)
+        throw std::runtime_error("Nested native model capture");
+    capture.active = true;
+    capture.itemCount = capture.poseCount = 0;
+}
+void EndNativeModelCapture() {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_EXECUTE);
+    capture.active = false;
+    for (size_t i = 0; i < capture.itemCount; ++i)
+        ExecuteModelItem(capture.items[i]);
+    capture.itemCount = capture.poseCount = 0;
 }
 
 extern "C" void MH3_ModelMaterialScope(CpuContext* cpu) {

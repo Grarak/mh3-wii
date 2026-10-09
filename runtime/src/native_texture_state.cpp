@@ -1,10 +1,12 @@
 #include "native_graphics.h"
+#include "native_shade_snapshot.h"
 #include "memory.h"
 #include "../native/mh3_model_state.h"
 #include "../native/adapters/model_state_bridge.h"
 #include <aurora/native_texture.hpp>
 #include "gl/gl.hpp"
 #include <array>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -69,4 +71,27 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
     const auto& sampler = binding.sampler;
     aurora::bind_native_texture(binding.map_id, source, {sampler.wrap_s, sampler.wrap_t, sampler.min_filter, sampler.mag_filter, sampler.anisotropy, input.min_lod, input.max_lod, sampler.lod_bias});
     textures[binding.map_id] = {binding, true};
+}
+void CaptureNativeTextureBindings(NativeShadeSnapshot& out) {
+    out.textureValid = 0;
+    for (unsigned unit = 0; unit < textures.size(); ++unit) {
+        out.textures[unit] = textures[unit].value;
+        if (textures[unit].valid)
+            out.textureValid |= uint8_t(1u << unit);
+    }
+    out.palettes = palettes;
+}
+void RestoreNativeTextureBindings(const NativeShadeSnapshot& snapshot) {
+    // Rebind only what differs; a palette change re-resolves indexed images.
+    const bool paletteChanged = std::memcmp(palettes.data(), snapshot.palettes.data(), sizeof palettes) != 0;
+    if (paletteChanged)
+        palettes = snapshot.palettes;
+    for (unsigned unit = 0; unit < textures.size(); ++unit) {
+        if (!(snapshot.textureValid & (1u << unit)))
+            continue;
+        const auto& binding = snapshot.textures[unit];
+        if (textures[unit].valid && !(paletteChanged && binding.source.indexed) && !std::memcmp(&textures[unit].value, &binding, sizeof binding))
+            continue;
+        BindNativeTexture(binding);
+    }
 }
