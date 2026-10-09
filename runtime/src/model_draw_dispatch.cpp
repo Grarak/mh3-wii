@@ -62,7 +62,7 @@ struct Census {
 // Census keys are built only while the census runs.
 #define MH3_CENSUS(...)                                                                                                                                                                                \
     do {                                                                                                                                                                                               \
-        if (census.every && DrawReplica::current == DrawReplica::Game)                                                                                                                                                                              \
+        if (census.every && DrawReplica::Current() == DrawReplica::Game)                                                                                                                                                                             \
             __VA_ARGS__;                                                                                                                                                                               \
     } while (0)
 #else
@@ -270,7 +270,7 @@ struct Pipeline {
 };
 void PipelineRun(CpuContext* cpu, const References* scratch, uint32_t reference, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
 #ifdef MH3_DEVELOPMENT
-    if (census.every && DrawReplica::current == DrawReplica::Game) {
+    if (census.every && DrawReplica::Current() == DrawReplica::Game) {
         census.models.insert(Memory::Read32(reference));
         census.Add(std::string("pipeline ") + (opaque ? "O" : "-") + (xlu ? "X" : "-") + " sources " + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " options " +
                    Census::Hex(options) + (replacement ? " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" + Census::Hex(Memory::Read32(replacement + 4)) : ""));
@@ -288,7 +288,7 @@ struct Scene {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
         census.Frame();
-        if (census.every && DrawReplica::current == DrawReplica::Game) {
+        if (census.every && DrawReplica::Current() == DrawReplica::Game) {
             census.owners.insert(owner);
             census.Add("task " + std::to_string(task) + " class " + Census::Hex(Memory::Read32(owner)) + " options " + Census::Hex(*options));
         }
@@ -365,7 +365,7 @@ struct Scene {
     static mh3_res_status DrawPass(void* user, uint32_t resource, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
-        if (census.every && DrawReplica::current == DrawReplica::Game) {
+        if (census.every && DrawReplica::Current() == DrawReplica::Game) {
             census.models.insert(resource);
             census.Add(std::string(opaque ? "opa" : "xlu") + " sources " + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" +
                        Census::Hex(Memory::Read32(replacement + 4)));

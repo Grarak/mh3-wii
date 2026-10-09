@@ -411,7 +411,7 @@ void Execute(const Packet& p) {
 }
 void RenderLoop() {
     aurora::gl::acquire_context();
-    DrawReplica::current = DrawReplica::Render;
+    DrawReplica::SetCurrent(DrawReplica::Render);
 #ifdef MH3_DEVELOPMENT
     mh3SplitOff = true;
 #endif

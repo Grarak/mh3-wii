@@ -11,10 +11,15 @@
 
 namespace DrawReplica {
 enum Replica : unsigned { Game, Render, Count };
-// The replica this thread reads and writes.
-inline thread_local unsigned current = Game;
-// Nesting of mutations on this thread: only the outermost one is mirrored.
-inline thread_local unsigned depth = 0;
+// Replica selection and mutation nesting share one compiler TLS lookup.
+// Only the outermost mutation on this thread is mirrored.
+struct State {
+    unsigned current = Game;
+    unsigned depth = 0;
+};
+inline thread_local constinit State state{};
+inline unsigned Current() { return state.current; }
+inline void SetCurrent(unsigned replica) { state.current = replica; }
 // Queues a mirrored mutation (after: once the frame's draws are done). Set
 // by the game thread while the render replica is live, otherwise null.
 using Sink = void (*)(std::function<void()> apply, bool after);
@@ -22,8 +27,12 @@ inline Sink sink = nullptr;
 
 struct Scope {
     unsigned previous;
-    explicit Scope(unsigned replica) : previous(current) { current = replica; }
-    ~Scope() { current = previous; }
+    explicit Scope(unsigned replica) {
+        auto& local = state;
+        previous = local.current;
+        local.current = replica;
+    }
+    ~Scope() { state.current = previous; }
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 };
@@ -33,16 +42,17 @@ class Mutation {
 public:
     template <class Apply>
     explicit Mutation(Apply&& apply, bool after = false) {
-        if (current == Game && !depth && sink)
+        auto& local = state;
+        if (local.current == Game && !local.depth && sink)
             sink(
                 [apply = std::forward<Apply>(apply)] {
                     Scope scope(Render);
                     apply();
                 },
                 after);
-        ++depth;
+        ++local.depth;
     }
-    ~Mutation() { --depth; }
+    ~Mutation() { --state.depth; }
     Mutation(const Mutation&) = delete;
     Mutation& operator=(const Mutation&) = delete;
 };

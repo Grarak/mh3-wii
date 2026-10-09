@@ -94,7 +94,7 @@ template <class T> struct RecipeCache {
 };
 template <class T> RecipeCache<T>& Recipes() {
     static std::array<RecipeCache<T>, DrawReplica::Count> replicas;
-    const unsigned replica = DrawReplica::current;
+    const unsigned replica = DrawReplica::Current();
     auto& cache = replicas[replica];
     const uint64_t revision = ReadNativeModelStructureRevision();
     if (cache.revision != revision) {
@@ -489,7 +489,7 @@ void Defer() {
     d.state.push_back(state);
 }
 ModelStore& Store() {
-    if (DrawReplica::current == DrawReplica::Render)
+    if (DrawReplica::Current() == DrawReplica::Render)
         return instance;
     if (!NativeGraphicsFrameShouldRender()) {
         scratch.itemCount = scratch.poseCount = scratch.poseShared = 0;

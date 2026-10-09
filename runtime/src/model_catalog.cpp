@@ -96,7 +96,7 @@ struct DiagnosticConfig {
 };
 void InitializeDiagnostics(Catalog& c) {
     if (!c.diagnostics_initialized) {
-        c.diagnostics = NativeModelPreparationDiagnosticsForOwner(DrawReplica::current);
+        c.diagnostics = NativeModelPreparationDiagnosticsForOwner(DrawReplica::Current());
         c.diagnostics_initialized = true;
     }
 }
@@ -121,7 +121,7 @@ void EpochDiagnostic(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpo
         d.events[d.stored_events++] = {c.source_epoch, offset, frame, destination, source, bytes, conditions, reason, producer};
 }
 Catalog& C() {
-    return replicas[DrawReplica::current];
+    return replicas[DrawReplica::Current()];
 }
 // The current replica's admitted packs, by reference.
 struct PackIterator {
@@ -601,7 +601,7 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
     mh3_source_identity identity{};
     const auto source_status = mh3_source_resolve(&C().tracker, model_address, 16, &identity);
     // Only the game thread admits packs; the render replica sees them mirrored.
-    if (source_status == MH3_RES_OK && DrawReplica::current == DrawReplica::Game)
+    if (source_status == MH3_RES_OK && DrawReplica::Current() == DrawReplica::Game)
         EnsureNativeModelAssets(identity.partition_offset, 16);
     else if (source_status != MH3_RES_ABSENT)
         Checked(source_status);
@@ -719,7 +719,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
         return cached->second;
     mh3_source_identity identity{};
     Checked(mh3_source_resolve(&C().tracker, address, 1, &identity));
-    if (DrawReplica::current == DrawReplica::Game)
+    if (DrawReplica::Current() == DrawReplica::Game)
         EnsureNativeModelAssets(identity.partition_offset, 1);
     for (const auto& pack : Packs()) {
         const auto origin = pack.origins.find(std::make_pair(identity.partition_offset, uint32_t(kind)));

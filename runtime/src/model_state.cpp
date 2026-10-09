@@ -19,7 +19,7 @@ struct Objects {
 };
 std::array<Objects, DrawReplica::Count> replicas;
 Objects& O() {
-    return replicas[DrawReplica::current];
+    return replicas[DrawReplica::Current()];
 }
 // The render thread reads texture revisions while binding; the game thread
 // produces them. Only these two maps are shared.
@@ -88,7 +88,7 @@ bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation) {
 void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
         throw std::runtime_error("Native texture producer requires address and generation");
-    if (DrawReplica::current == DrawReplica::Game) {
+    if (DrawReplica::Current() == DrawReplica::Game) {
         std::lock_guard lock(generationLock);
         auto& previous = generations[payload];
         if (generation < previous)

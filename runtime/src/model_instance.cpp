@@ -431,7 +431,7 @@ void FinishNativeModelInstance() {
     noting = nullptr;
 }
 bool NoteNativeModelInstanceItem(const void* prepared) {
-    if (DrawReplica::current == DrawReplica::Game) {
+    if (DrawReplica::Current() == DrawReplica::Game) {
         if (noting)
             Note(noting->items.emplace_back(), prepared);
         return false;

@@ -23,7 +23,7 @@ struct Revision {
 // Producer revisions, one replica per drawing thread (draw_replica.h).
 std::array<std::unordered_map<uint32_t, Revision>, DrawReplica::Count> replicas;
 std::unordered_map<uint32_t, Revision>& Generations() {
-    return replicas[DrawReplica::current];
+    return replicas[DrawReplica::Current()];
 }
 uint32_t Canonical(uint32_t address, uint32_t bytes = 1) {
     uint32_t canonical = 0;
@@ -52,7 +52,7 @@ void Retire(uint32_t address, uint32_t bytes) {
 }
 void Observe() {
     // Installed from the game thread (SeedNativeVertexReplica runs first).
-    if (DrawReplica::current == DrawReplica::Game)
+    if (DrawReplica::Current() == DrawReplica::Game)
         SetNativeModelVertexRetireHook(Retire);
 }
 void Bind(CpuContext* cpu, mh3_vertex_kind kind, uint32_t semantic) {

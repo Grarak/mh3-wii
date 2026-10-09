@@ -127,7 +127,7 @@ void Reindex(const std::unordered_map<uint32_t, mh3_model_pose_owner>& next) {
 // The pose owner index belongs to the game thread; a model instance carries
 // its pose (SetNativeModelInstancePose).
 void RequireGame() {
-    if (DrawReplica::current != DrawReplica::Game)
+    if (DrawReplica::Current() != DrawReplica::Game)
         throw std::runtime_error("Native model pose producer outside the game thread");
 }
 mh3_model_pose_owner& Declare(uint32_t scene) {
@@ -193,7 +193,7 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
     return !updates.empty();
 }
 void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
-    if (!bytes || DrawReplica::current != DrawReplica::Game)
+    if (!bytes || DrawReplica::Current() != DrawReplica::Game)
         return;
     address = Canonical(address);
     const uint64_t end = uint64_t(address) + bytes;
