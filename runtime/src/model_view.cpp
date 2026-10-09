@@ -58,7 +58,7 @@ static uint32_t MatrixCount(const mh3_res_model& model) {
     return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
 }
 
-// GPU skinning (docs/gpu-skinning.md): skin bones past a view pass's `count`
+// GPU skinning (docs/optimizations/rendering/gpu-skinning.md): skin bones past a view pass's `count`
 // view matrices (the model's other matrix IDs) have only world matrices; the
 // pose version of these arrays keeps them with the camera. Every view pass
 // (DMA, plain, locked cache) calls this with its registers r3, r5, r8, r7, r9.
@@ -104,7 +104,7 @@ mh3_res_status BeforeStore(void* opaque, uint32_t kind, uint32_t first, size_t b
     if (kind >= 3 || bytes > UINT32_MAX)
         return MH3_RES_INVALID;
 
-    RetireNativeResourceOwner(context.output[kind] + first * (kind == 1 ? 36u : 48u), uint32_t(bytes), NativeSourceEpochProducer::ViewDma);
+    RetireNativeResourceOwner(context.output[kind] + first * (kind == 1 ? 36u : 48u), uint32_t(bytes));
     return MH3_RES_OK;
 }
 

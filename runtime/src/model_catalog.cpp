@@ -112,8 +112,6 @@ struct Catalog {
     };
 
     std::vector<PendingModelFile> pending_model_files;
-    NativeModelPreparationDiagnostics* diagnostics = nullptr;
-    bool diagnostics_initialized = false;
 };
 
 Catalog catalog;
@@ -121,70 +119,6 @@ Catalog catalog;
 // Advanced by every live block erase or full (re)publication; not by an
 // in-place producer update (WritableNativeLiveMaterialBlock).
 uint64_t live_version = 1;
-NativeModelPreparationDiagnostics diagnostics;
-struct DiagnosticConfig {
-    bool enabled = false;
-    uint32_t first = 0, last = UINT32_MAX;
-
-    // MH3_PROFILE=prepare[,prepare-frames=FIRST-LAST]: the preparation
-    // counters, with the source-epoch writers sampled in that frame range.
-    DiagnosticConfig() {
-#ifdef MH3_DEVELOPMENT
-        if (!ProfileOptions().Has("prepare"))
-            return;
-
-        if (const char* frames = ProfileOptions().Value("prepare-frames")) {
-            const char* end = frames + std::strlen(frames);
-            const auto a = std::from_chars(frames, end, first);
-
-            if (a.ec != std::errc{} || a.ptr == end || *a.ptr != '-')
-                MH3_THROW(std::runtime_error("MH3_PROFILE prepare-frames expects FIRST-LAST"));
-
-            const auto b = std::from_chars(a.ptr + 1, end, last);
-
-            if (b.ec != std::errc{} || b.ptr != end || last < first)
-                MH3_THROW(std::runtime_error("MH3_PROFILE prepare-frames expects FIRST-LAST"));
-        }
-
-        enabled = true;
-#endif
-    }
-};
-
-void InitializeDiagnostics(Catalog& c) {
-    if (!c.diagnostics_initialized) {
-        c.diagnostics = ActiveNativeModelPreparationDiagnostics();
-        c.diagnostics_initialized = true;
-    }
-}
-
-uint32_t DiagnosticFrame(const Catalog& c, uint32_t captured = UINT32_MAX) {
-    return c.diagnostics ? (captured == UINT32_MAX ? Memory::Read32(0x80796d28) : captured) : UINT32_MAX;
-}
-
-void EpochDiagnostic(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpochProducer producer,
-    uint32_t destination, uint32_t source, uint32_t bytes, uint64_t offset, uint32_t conditions, uint32_t frame) {
-    if (!c.diagnostics)
-        return;
-
-    auto& d = *c.diagnostics;
-    ++d.epoch_advances;
-    ++d.epoch_reasons[static_cast<unsigned>(reason)];
-
-    if (d.last_epoch_frame != frame) {
-        ++d.frames_with_epoch_advance;
-        d.last_epoch_frame = frame;
-    }
-
-    if (frame < d.sample_first || frame > d.sample_last)
-        return;
-
-    ++d.matching_events;
-
-    if (d.stored_events < 64)
-        d.events[d.stored_events++] = {c.source_epoch, offset, frame, destination, source, bytes, conditions, reason, producer};
-}
-
 Catalog& C() {
     return catalog;
 }
@@ -266,7 +200,6 @@ Catalog& Initialize() {
     if (!c.initialized) {
         Checked(mh3_source_tracker_init(&c.tracker, c.ranges.data(), c.work.data(), c.transfer.data(), capacity));
         c.initialized = true;
-        InitializeDiagnostics(c);
     }
 
     return c;
@@ -310,15 +243,6 @@ Status RangeCheck(size_t index, size_t size) {
         return Status::Error("vector::_M_range_check: __n (which is " + std::to_string(index) + ") >= this->size() (which is " + std::to_string(size) + ")");
 
     return {};
-}
-
-void InvalidateSourceCache(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpochProducer producer,
-    uint32_t destination, uint32_t source, uint32_t bytes, uint64_t offset, uint32_t conditions, uint32_t frame) {
-    if (c.source_epoch == UINT64_MAX)
-        MH3_THROW(std::runtime_error("Native model source cache epoch overflow"));
-
-    ++c.source_epoch;
-    EpochDiagnostic(c, reason, producer, destination, source, bytes, offset, conditions, frame);
 }
 
 void OwnersChanged() {
@@ -396,10 +320,8 @@ uint64_t LiveKey(uint32_t address, mh3_model_material_block kind) {
     return (uint64_t(address) << 3) | uint32_t(kind);
 }
 
-bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
-    bool retired = false;
-
-    // Every admitted group is at most480 bytes. Avoid walking all records for
+void RetireLiveBlocks(uint32_t address, uint32_t bytes) {
+    // Every admitted group is at most 480 bytes. Avoid walking all records for
     // unrelated generic copies, while still finding a partially hit record.
     const uint32_t start = address > 480 ? address - 480 : 0;
     auto it = C().live_blocks.lower_bound(uint64_t(start) << 3);
@@ -411,12 +333,9 @@ bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
         if ((uint64_t)block.address + block.bytes > address) {
             it = EraseLiveBlock(it);
             ++live_version;
-            retired = true;
         } else
             ++it;
     }
-
-    return retired;
 }
 
 bool LiveBlocksOver(uint32_t address, uint32_t bytes) {
@@ -478,13 +397,11 @@ std::vector<CachedOwner> SnapshotOwnerCopy(uint32_t source, uint32_t destination
     return result;
 }
 
-void InstallPack(const std::shared_ptr<const Pack>& pack, uint32_t diagnostic_frame = UINT32_MAX) {
+void InstallPack(const std::shared_ptr<const Pack>& pack) {
     auto& c = C();
-    InitializeDiagnostics(c);
-    const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
     c.packs.push_back(pack);
     c.resources.clear();
-    InvalidateSourceCache(c, NativeSourceEpochReason::PackInstall, NativeSourceEpochProducer::PackManager, 0, 0, 0, 0, 0, frame);
+    ++c.source_epoch;
 }
 
 // Certificates carry state the tracker alone cannot rebuild once typed writes
@@ -518,88 +435,23 @@ void Certify(const std::vector<CachedOwner>& certified) {
 
     // A new owner: a model whose draw table failed before it may build one.
     if (added)
-        InvalidateSourceCache(C(), NativeSourceEpochReason::OwnerCertify, NativeSourceEpochProducer::Certify, 0, 0, 0, 0, 0, DiagnosticFrame(C()));
+        ++C().source_epoch;
 }
 
-uint32_t Copy(uint32_t destination, uint32_t source, uint32_t bytes, NativeSourceEpochProducer producer) {
+uint32_t Copy(uint32_t destination, uint32_t source, uint32_t bytes) {
     if (bytes) {
         void* dst = GuestRange(destination, bytes);
         const void* src = GuestRange(source, bytes);
 
         // Resolve provenance transaction first; capacity failure leaves guest
         // bytes untouched. Tracking does not inspect either byte payload.
-        RecordNativeResourceCopy(destination, source, bytes, producer);
+        RecordNativeResourceCopy(destination, source, bytes);
         mh3_model_copy_bytes(dst, src, bytes);
     }
 
     return destination;
 }
 } // namespace
-
-NativeModelPreparationDiagnostics* ActiveNativeModelPreparationDiagnostics() {
-    static const DiagnosticConfig config;
-
-    if (!config.enabled)
-        return nullptr;
-
-    auto& d = diagnostics;
-    d.sample_first = config.first;
-    d.sample_last = config.last;
-    return &d;
-}
-
-void ReportNativeModelPreparationDiagnostics() {
-    ReportNativeModelDrawTables();
-    auto* d = ActiveNativeModelPreparationDiagnostics();
-
-    if (!d)
-        return;
-
-    struct Previous {
-        NativePrepareCacheCounters material, shape;
-        uint64_t reasons[static_cast<unsigned>(NativeSourceEpochReason::Count)]{};
-        uint64_t advances = 0, frames = 0;
-        uint32_t printed_events = 0;
-    };
-
-    static Previous previous;
-    const auto n = [](uint64_t value) { return static_cast<unsigned long long>(value); };
-    const auto& m = d->material;
-    const auto& s = d->shape;
-    std::fprintf(stderr, "MH3 prepare diagnostics: Game material hit %llu miss %llu replacement %llu; shape hit %llu miss %llu; token clears %llu/%llu capacity clears %llu/%llu discarded %llu/%llu; epoch advances %llu across %llu writer frames; native_frame=%u; writer sample %u/64 of %llu matching (frames %u..%u)\n",
-        n(m.hits - previous.material.hits), n(m.misses - previous.material.misses), n(m.replacement_misses - previous.material.replacement_misses),
-        n(s.hits - previous.shape.hits), n(s.misses - previous.shape.misses),
-        n(m.token_clears - previous.material.token_clears), n(s.token_clears - previous.shape.token_clears),
-        n(m.capacity_clears - previous.material.capacity_clears), n(s.capacity_clears - previous.shape.capacity_clears),
-        n(m.discarded_entries - previous.material.discarded_entries), n(s.discarded_entries - previous.shape.discarded_entries),
-        n(d->epoch_advances - previous.advances), n(d->frames_with_epoch_advance - previous.frames), Memory::Read32(0x80796d28),
-        d->stored_events, n(d->matching_events), d->sample_first, d->sample_last);
-    constexpr const char* reasons[]{"DI", "copy", "retire", "install", "unregister", "certify"};
-    constexpr const char* producers[]{"DI", "resource-copy", "resource-retire", "memcpy", "memmove", "copy32", "copy32-unknown", "fill", "heap-create", "heap-destroy", "heap-allocate", "heap-free", "view-DMA", "view-LC", "locked-cache-DMA", "pack-manager", "certify"};
-    std::fprintf(stderr, "MH3 source epoch reasons:");
-
-    for (unsigned i = 0; i < static_cast<unsigned>(NativeSourceEpochReason::Count); ++i) {
-        std::fprintf(stderr, " %s %llu", reasons[i], n(d->epoch_reasons[i] - previous.reasons[i]));
-        previous.reasons[i] = d->epoch_reasons[i];
-    }
-
-    std::fprintf(stderr, "\n");
-
-    for (uint32_t i = previous.printed_events; i < d->stored_events; ++i) {
-        const auto& e = d->events[i];
-        const unsigned reason = static_cast<unsigned>(e.reason), producer = static_cast<unsigned>(e.producer);
-        std::fprintf(stderr, "MH3 source epoch writer: frame %u epoch %llu reason %s producer %s dst %08x src %08x bytes %u conditions %02x DI-offset %llu\n",
-            e.frame, n(e.epoch), reason < static_cast<unsigned>(NativeSourceEpochReason::Count) ? reasons[reason] : "unknown",
-            producer < static_cast<unsigned>(NativeSourceEpochProducer::Count) ? producers[producer] : "unknown",
-            e.destination, e.source, e.bytes, e.conditions, n(e.partition_offset));
-    }
-
-    previous.material = m;
-    previous.shape = s;
-    previous.advances = d->epoch_advances;
-    previous.frames = d->frames_with_epoch_advance;
-    previous.printed_events = d->stored_events;
-}
 
 uint64_t ReadNativeModelStructureRevision() {
     return C().source_epoch;
@@ -615,7 +467,7 @@ uintptr_t mh3GameStackProbe = 0;
 #endif
 
 namespace {
-// The overlapped draw (docs/pipelined-draw.md): the draw thread and the game
+// The overlapped draw (docs/optimizations/threading/pipelined-draw.md): the draw thread and the game
 // thread both record copies, disc writes and retirements, and both look up
 // (and on a miss insert) owners, resources and live material blocks, so each
 // entry point holds catalogLock. None holds it into QuiesceDraw: the draw
@@ -779,26 +631,25 @@ void ApplyDeferredDrawCacheRetirements() {
 }
 
 namespace {
-void RecordDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
+void RecordDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes) {
     std::lock_guard guard(catalogLock);
     auto& c = Initialize();
-    const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
     destination = Canonical(destination, bytes);
     Checked(mh3_source_record_disc(&C().tracker, destination, bytes, offset, NextGeneration()));
     RetireDrawCaches(destination, bytes);
 
-    const bool retired_owner = RetireCertificates(destination, bytes), retired_block = RetireLiveBlocks(destination, bytes);
-    InvalidateSourceCache(c, NativeSourceEpochReason::DiscWrite, NativeSourceEpochProducer::Disc, destination, 0, bytes, offset,
-        (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u), frame);
+    RetireCertificates(destination, bytes);
+    RetireLiveBlocks(destination, bytes);
+    ++c.source_epoch;
 }
 } // namespace
 
-void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
+void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes) {
     if (!bytes)
         return;
 
     QuiesceDraw([] { return true; });
-    RecordDiscWrite(destination, offset, bytes, diagnostic_frame);
+    RecordDiscWrite(destination, offset, bytes);
 }
 
 // The BGM's reads come 2-4 times a second in a fight, and each waited for the
@@ -808,10 +659,10 @@ void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes
 // (RetireNativeResourceOwner).
 void RecordNativeSoundStreamWrite(uint32_t destination, uint64_t offset, uint32_t bytes) {
     if (bytes)
-        RecordDiscWrite(destination, offset, bytes, UINT32_MAX);
+        RecordDiscWrite(destination, offset, bytes);
 }
 
-void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes, NativeSourceEpochProducer producer, uint32_t diagnostic_frame) {
+void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes) {
     if (!bytes || destination == source)
         return;
 #ifdef MH3_DEVELOPMENT
@@ -826,7 +677,6 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
-    const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
 
@@ -834,12 +684,7 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
         return;
     // Most runtime copies have no disc ownership. Avoid walking all intervals
     // unless a source or overwritten destination intersects tracked bytes.
-    const bool tracked_source = mh3_source_intersects(&c.tracker, source, bytes);
-
-    // Keep the old short circuit when diagnostics are disabled. An enabled
-    // sample distinguishes a source-only copy from overwritten provenance.
-    const bool tracked_destination = (!tracked_source || c.diagnostics) && mh3_source_intersects(&c.tracker, destination, bytes);
-    const bool tracked = tracked_source || tracked_destination;
+    const bool tracked = mh3_source_intersects(&c.tracker, source, bytes) || mh3_source_intersects(&c.tracker, destination, bytes);
     const auto copies = SnapshotLiveCopy(source, destination, bytes);
     const uint64_t generation = NextGeneration();
     const auto owner_copies = SnapshotOwnerCopy(source, destination, bytes, generation);
@@ -851,7 +696,8 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
 
     // A typed mutation may already have retired the byte provenance. Unknown
     // writes must still retire the independent allocation certificate.
-    const bool retired_owner = RetireCertificates(destination, bytes), retired_block = RetireLiveBlocks(destination, bytes);
+    const bool retired_owner = RetireCertificates(destination, bytes);
+    RetireLiveBlocks(destination, bytes);
 
     // A complete memmove/memcpy of a certified container preserves its proven
     // structure, including typed material holes. Partial copies never certify
@@ -872,13 +718,10 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     // disc strings, once a frame at the Deserted Island beach) nor live
     // blocks, which live_version covers.
     if (retired_owner || !owner_copies.empty())
-        InvalidateSourceCache(c, NativeSourceEpochReason::ResourceCopy, producer, destination, source, bytes, 0,
-            (tracked_source ? NATIVE_EPOCH_TRACKED_SOURCE : 0u) | (tracked_destination ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) |
-            (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u) |
-            (!owner_copies.empty() ? NATIVE_EPOCH_COPIED_OWNER : 0u) | (!copies.empty() ? NATIVE_EPOCH_COPIED_BLOCK : 0u), frame);
+        ++c.source_epoch;
 }
 
-void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer, uint32_t diagnostic_frame) {
+void RetireNativeResourceOwner(uint32_t address, uint32_t bytes) {
     if (!bytes)
         return;
 #ifdef MH3_DEVELOPMENT
@@ -888,7 +731,6 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
     std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
-    const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
     address = Canonical(address, bytes);
     const bool tracked = mh3_source_intersects(&C().tracker, address, bytes);
 
@@ -897,13 +739,13 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 
     RetireDrawCaches(address, bytes);
 
-    const bool retired_owner = RetireCertificates(address, bytes), retired_block = RetireLiveBlocks(address, bytes);
+    const bool retired_owner = RetireCertificates(address, bytes);
+    RetireLiveBlocks(address, bytes);
 
     // A freed model buffer's copied materials (live blocks, a few frees a
     // second at the Deserted Island beach) change only live_version.
     if (retired_owner)
-        InvalidateSourceCache(c, NativeSourceEpochReason::ResourceRetire, producer, address, 0, bytes, 0,
-            (tracked ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) | (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u), frame);
+        ++c.source_epoch;
 }
 
 void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook) {
@@ -1088,10 +930,8 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
     return {};
 }
 
-void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
+void UnregisterNativeModelPack(uintptr_t handle) {
     auto& c = C();
-    InitializeDiagnostics(c);
-    const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
 
     for (auto it = C().packs.begin(); it != C().packs.end(); ++it)
         if ((*it)->handle == handle) {
@@ -1114,7 +954,7 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
                     ++block;
             }
 
-            InvalidateSourceCache(c, NativeSourceEpochReason::PackUnregister, NativeSourceEpochProducer::PackManager, 0, 0, 0, 0, 0, frame);
+            ++c.source_epoch;
             return;
         }
     MH3_THROW(std::runtime_error("Unknown native model resident handle"));
@@ -1835,10 +1675,10 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
 }
 
 extern "C" void MH3_ModelMemcpy(CpuContext* cpu) {
-    cpu->gpr[3] = Copy(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], NativeSourceEpochProducer::Memcpy);
+    cpu->gpr[3] = Copy(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80004000, MH3_ModelMemcpy, "NativeResourceMemcpy");
 extern "C" void MH3_ModelMemmove(CpuContext* cpu) {
-    cpu->gpr[3] = Copy(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], NativeSourceEpochProducer::Memmove);
+    cpu->gpr[3] = Copy(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8045BC18, MH3_ModelMemmove, "NativeResourceMemmove");

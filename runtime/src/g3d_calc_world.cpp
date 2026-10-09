@@ -221,7 +221,7 @@ static void SkinningPort(CpuContext* ctx) {
 }
 
 extern "C" void MH3_G3dCalcSkinning(CpuContext* ctx) {
-    // GPU skinning (docs/gpu-skinning.md): a model whose shapes read no
+    // GPU skinning (docs/optimizations/rendering/gpu-skinning.md): a model whose shapes read no
     // envelopes per vertex needs only those its rigid shapes are drawn with.
     if (const auto views = FindNativeModelNodeViews(Read32(ctx->gpr[5]))) {
         if (!views->envelopes.empty())
@@ -445,7 +445,7 @@ void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
     const uint32_t destination = dst & 0x1FFFFFE0u;
     void* output = Memory::GetPointer(destination, size);
     const void* input = Memory::GetPointer(cache & ~31u, size);
-    RetireNativeResourceOwner(destination, size, NativeSourceEpochProducer::ViewLc);
+    RetireNativeResourceOwner(destination, size);
     std::memcpy(output, input, size);
 }
 
@@ -454,7 +454,7 @@ void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
 // together, one catalog call instead of one per chunk).
 void LcRetire(uint32_t dst, uint32_t bytes) {
     const uint32_t start = dst & 0x1FFFFFE0u, end = ((dst & 0x1FFFFFFFu) + bytes + 31) & ~31u;
-    RetireNativeResourceOwner(start, end - start, NativeSourceEpochProducer::ViewLc);
+    RetireNativeResourceOwner(start, end - start);
 }
 
 // The node of matrix id: the model info's matrix-to-node table (-1 when none).
@@ -654,7 +654,7 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
     mh3_matrix34 positions[40];
     GuestCall game{ctx};
 
-    // GPU skinning (docs/gpu-skinning.md): a model whose shapes read no
+    // GPU skinning (docs/optimizations/rendering/gpu-skinning.md): a model whose shapes read no
     // envelopes per vertex gets only the views its draws read. Its outputs
     // retire as a whole pass's would.
     const auto views = direct ? FindNativeModelNodeViews(Read32(mdl)) : nullptr;

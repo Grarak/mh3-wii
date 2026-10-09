@@ -2,9 +2,6 @@
 // original 80076220 step order and the 800879DC/80087B34 shape setup exactly,
 // against a host mirror of the G3DState caches and the given owner's state.
 #include "model_render_prep.h"
-#ifdef MH3_DEVELOPMENT
-#include "dev_options.h"
-#endif
 #include "fatal.h"
 #include <aurora/fast_map.h>
 #include "memory.h"
@@ -30,7 +27,6 @@
 #include <stdexcept>
 #include <string>
 #include <mutex>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <cstdio>
@@ -166,7 +162,7 @@ static_assert(offsetof(ModelPrepLive, op) % 4 == 0 && offsetof(ModelPrepLive, ch
 // prepared fields, the pixel and the colour group versions) over an all-zero
 // material, the image. With a dispatch's own live inputs, matrix selectors
 // and shape step, a draw reads the same from the image as from the Render
-// material the draws before it left (MH3_VERIFY=prep-image), so the Render
+// material the draws before it left, so the Render
 // owner's material is redirected to the record's draw material instead of
 // merged into.
 struct ModelPrepDispatch {
@@ -234,177 +230,6 @@ void CountDispatch(uint64_t& counter) {
 // One dispatch's execution context.
 // Group publication sources of the Render and Shadow owners.
 mh3_native_material_state groupStates[2];
-#ifdef MH3_DEVELOPMENT
-// A ResMat's name (+8, relative to the material).
-std::array<char, 32> MaterialName(uint32_t material) {
-    std::array<char, 32> name{};
-
-    for (uint32_t i = 0, at = material + Memory::Read32(material + 8); i + 1 < name.size() && Memory::Read8(at + i); i++)
-        name[i] = char(Memory::Read8(at + i));
-
-    return name;
-}
-
-// MH3_TRACE=materials: each model material once, the first time it is
-// prepared: its name, its TEV stages (colour and alpha a b c d op bias scale
-// clamp out; texture map/coordinate, raster channel, konst selectors,
-// indirect stage/format/bias/alpha/matrix), swap tables, colour and konst
-// registers, indirect stages, the pixel block (alpha compare, depth, blend)
-// and what the shader classifier makes of it (model, textures, quality:
-// 1 exact, 2 swap, 4 folded, 8 fallback, 16 compare, 32 indirect ignored,
-// 64 channel 1).
-void TraceMaterial(uint32_t material, const NativeLiveMaterialBlock* const* blocks, const uint32_t* slots) {
-    static std::mutex lock;
-    static std::unordered_map<uint32_t, bool> seen;
-    const std::lock_guard guard(lock);
-
-    if (!seen.try_emplace(material, true).second)
-        return;
-
-    const auto* pipeline = blocks[MH3_MODEL_MATERIAL_PIPELINE];
-    const auto* pixel = blocks[MH3_MODEL_MATERIAL_PIXEL];
-    const auto* colors = blocks[MH3_MODEL_MATERIAL_COLORS];
-    const auto* indirect = blocks[MH3_MODEL_MATERIAL_INDIRECT];
-
-    if (!pipeline)
-        return;
-
-    mh3_native_material_state state = pipeline->fields;
-
-    if (pixel)
-        state.pixel = pixel->fields.pixel;
-
-    if (colors) {
-        std::memcpy(state.color, colors->fields.color, sizeof state.color);
-        std::memcpy(state.konst, colors->fields.konst, sizeof state.konst);
-    }
-
-    if (indirect) {
-        std::memcpy(state.indirect, indirect->fields.indirect, sizeof state.indirect);
-        std::memcpy(state.indirect_matrix, indirect->fields.indirect_matrix, sizeof state.indirect_matrix);
-    }
-
-    mh3_shade_material shading{};
-    const uint8_t quality = mh3_shade_classify(&state, &shading);
-    std::fprintf(stderr, "MH3 material: %08x (%s) stages %u indirect %u textures %u model %u quality %02x alpha-test %u\n", material, MaterialName(material).data(),
-                 state.tev_count, indirect ? indirect->fields.indirect_count : 0, shading.textures, shading.model, quality, shading.alpha_test);
-
-    // What takes a light or camera: the light set, the indirect methods (NW4R:
-    // 0 warp, 1 normal map, 2 normal map + specular, 3 fur) with their lights,
-    // and each texture SRT slot's mapping mode with its camera and light.
-    if (slots[MH3_MAT_MISC]) {
-        mh3_model_material_misc misc{};
-        Checked(mh3_model_material_misc_read({static_cast<const uint8_t*>(Memory::GetPointer(slots[MH3_MAT_MISC], 12)), 12}, &misc));
-        std::fprintf(stderr, "MH3 material:   misc light set %d fog %d indirect methods %u %u %u normal-map lights %d %d %d\n", misc.light_reference, misc.fog_reference,
-                     misc.indirect_method[0], misc.indirect_method[1], misc.indirect_method[2], misc.normal_map_light[0], misc.normal_map_light[1], misc.normal_map_light[2]);
-    }
-
-    if (slots[MH3_MAT_TEXTURE_SRT]) {
-        mh3_native_texture_srt srt{};
-        Checked(mh3_texture_srt_read_for_prepare({static_cast<const uint8_t*>(Memory::GetPointer(slots[MH3_MAT_TEXTURE_SRT], 0x248)), 0x248}, &srt));
-
-        for (uint32_t i = 0; i < 8; i++)
-            if (srt.slot[i].flags & 1)
-                std::fprintf(stderr, "MH3 material:   srt slot %u map mode %u camera %d light %d\n", i, srt.slot[i].map_mode, srt.slot[i].camera_reference, srt.slot[i].light_reference);
-    }
-
-    for (uint32_t i = 0; i < state.tev_count && i < 16; i++) {
-        const auto& t = state.tev[i];
-        std::fprintf(stderr,
-                     "MH3 material:   stage %u colour %u %u %u %u op %u bias %u scale %u clamp %u out %u | alpha %u %u %u %u op %u bias %u scale %u clamp %u out %u | map %u coord %u ras %u "
-                     "swap %u/%u konst %u/%u | ind stage %u format %u bias %u alpha %u matrix %u wrap %u/%u add %u\n",
-                     i, t.color.a, t.color.b, t.color.c, t.color.d, t.color.operation, t.color.bias, t.color.scale, t.color.clamp, t.color.output, t.alpha.a, t.alpha.b, t.alpha.c,
-                     t.alpha.d, t.alpha.operation, t.alpha.bias, t.alpha.scale, t.alpha.clamp, t.alpha.output, t.texture_map, t.texture_coordinate, t.raster_channel, t.raster_swap,
-                     t.texture_swap, t.konst_color, t.konst_alpha, t.indirect_stage, t.indirect_format, t.indirect_bias, t.indirect_alpha, t.indirect_matrix, t.indirect_wrap_s,
-                     t.indirect_wrap_t, t.indirect_add_previous);
-    }
-
-    for (uint32_t i = 0; i < 4; i++)
-        std::fprintf(stderr, "MH3 material:   swap %u %u%u%u%u colour %d %d %d %d konst %d %d %d %d indirect %u/%u scale %u/%u\n", i, state.swaps[i].rgba[0], state.swaps[i].rgba[1],
-                     state.swaps[i].rgba[2], state.swaps[i].rgba[3], state.color[i].rgba[0], state.color[i].rgba[1], state.color[i].rgba[2], state.color[i].rgba[3], state.konst[i].rgba[0],
-                     state.konst[i].rgba[1], state.konst[i].rgba[2], state.konst[i].rgba[3], state.indirect[i].coordinate, state.indirect[i].map, state.indirect[i].scale_s,
-                     state.indirect[i].scale_t);
-
-    for (uint32_t i = 0; i < 3; i++) {
-        const auto& m = state.indirect_matrix[i];
-
-        if (m.known)
-            std::fprintf(stderr, "MH3 material:   indirect matrix %u %d %d %d / %d %d %d exponent %d\n", i, m.coefficients[0], m.coefficients[1], m.coefficients[2], m.coefficients[3],
-                         m.coefficients[4], m.coefficients[5], m.scale_exponent);
-    }
-
-    // The raw colour channels (40 bytes) and the texture objects (GXTexObj:
-    // the format in bits 20-23 of the third word).
-    if (const uint32_t channels = slots[MH3_MAT_CHANNELS]) {
-        std::fprintf(stderr, "MH3 material:   channels");
-
-        for (uint32_t i = 0; i < 40; i += 4)
-            std::fprintf(stderr, " %08x", Memory::Read32(channels + i));
-
-        std::fprintf(stderr, "\n");
-    }
-
-    if (const uint32_t objects = slots[MH3_MAT_TEXTURE_OBJECTS])
-        for (uint32_t i = 0; i < 8; i++)
-            if (Memory::Read32(objects) & (1u << i)) {
-                const uint32_t at = objects + 4 + i * 32;
-                std::fprintf(stderr, "MH3 material:   texture %u format %u size %ux%u words", i, (Memory::Read32(at + 8) >> 20) & 15, (Memory::Read32(at + 8) & 1023) + 1,
-                             ((Memory::Read32(at + 8) >> 10) & 1023) + 1);
-
-                for (uint32_t k = 0; k < 32; k += 4)
-                    std::fprintf(stderr, " %08x", Memory::Read32(at + k));
-
-                std::fprintf(stderr, "\n");
-            }
-
-    std::fprintf(stderr, "MH3 material:   pixel");
-
-    for (uint32_t i = 0; i < MH3_PIXEL_FIELD_COUNT; i++)
-        std::fprintf(stderr, " %u", state.pixel.values[i]);
-
-    std::fprintf(stderr, " (alpha compare %u %u %u %u op %u, depth %u %u write %u, blend %u logic %u subtract %u src %u dst %u, dst alpha %u %u)\n",
-                 state.pixel.values[MH3_PIXEL_ALPHA_COMPARE0], state.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0], state.pixel.values[MH3_PIXEL_ALPHA_COMPARE1],
-                 state.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1], state.pixel.values[MH3_PIXEL_ALPHA_OPERATION], state.pixel.values[MH3_PIXEL_DEPTH_TEST],
-                 state.pixel.values[MH3_PIXEL_DEPTH_COMPARE], state.pixel.values[MH3_PIXEL_DEPTH_WRITE], state.pixel.values[MH3_PIXEL_BLEND_ENABLE],
-                 state.pixel.values[MH3_PIXEL_LOGIC_ENABLE], state.pixel.values[MH3_PIXEL_BLEND_SUBTRACT], state.pixel.values[MH3_PIXEL_BLEND_SOURCE],
-                 state.pixel.values[MH3_PIXEL_BLEND_DESTINATION], state.pixel.values[MH3_PIXEL_DESTINATION_ALPHA_ENABLE], state.pixel.values[MH3_PIXEL_DESTINATION_ALPHA]);
-}
-
-// MH3_TRACE=srt: a texture SRT resource (guest address) whose slots'
-// translations or effect-matrix translations moved, the first time and every
-// 60th move, with the step counter (system_w+0xC, in ticks): how fast each
-// material's texture scrolls. The model prep may run off the game thread.
-void TraceTextureSrt(uint32_t resource, uint32_t material, const mh3_native_texture_srt& srt) {
-    struct Seen {
-        float t[8][4];
-        uint32_t moves;
-    };
-
-    static std::mutex lock;
-    static std::unordered_map<uint32_t, Seen> seen;
-    const std::lock_guard guard(lock);
-    auto [it, fresh] = seen.try_emplace(resource);
-    Seen& s = it->second;
-    bool moved = false;
-
-    for (uint32_t i = 0; i < 8; i++) {
-        const auto& slot = srt.slot[i];
-        const float now[4]{slot.translation[0], slot.translation[1], slot.effect_matrix[3], slot.effect_matrix[7]};
-        moved |= !fresh && std::memcmp(now, s.t[i], sizeof now) != 0;
-        std::memcpy(s.t[i], now, sizeof now);
-    }
-
-    if (!moved || s.moves++ % 60)
-        return;
-
-    const auto name = MaterialName(material);
-
-    for (uint32_t i = 0; i < 8; i++)
-        if (srt.slot[i].flags & 1)
-            std::fprintf(stderr, "MH3 srt: resource %08x material %08x (%s) slot %u move %u translation %.5f %.5f effect %.5f %.5f tick %u\n", resource, material, name.data(), i,
-                         s.moves - 1, s.t[i][0], s.t[i][1], s.t[i][2], s.t[i][3], Memory::Read32(0x8065AA6C));
-}
-#endif
 
 void LiveOf(const ModelPrepInputs& in, ModelPrepLive& live) {
     std::memset(&live, 0, sizeof live);
@@ -961,50 +786,6 @@ ModelPrepDispatch& CompiledDispatch(const ModelPrepInputs& in) {
     Compile(in, key, *d);
     return *d;
 }
-#ifdef MH3_DEVELOPMENT
-
-// MH3_VERIFY=prep-image: a compiled dispatch's draw material (the record's,
-// kept across its dispatches) against one built for this dispatch alone: the
-// image with the dispatch's own colours, channels, indirect operator and
-// matrix selectors on the Shadow owner, compared after the shape step by
-// what a draw derives from each (the raster from the one before the
-// dispatch); a line every 20000 dispatches.
-struct ImageCheck {
-    uint64_t checked = 0, equal = 0;
-    std::unordered_map<std::string, uint64_t> diffs;
-} imageCheck;
-
-bool ImageCheckEnabled() {
-    static const bool enabled = VerifyOptions().Has("prep-image");
-    return enabled;
-}
-
-void CheckImage(const Prep& rendered, const ModelPrepDispatch& d, const mh3_raster_state& raster) {
-    auto& c = imageCheck;
-    SetNativeMaterialOwnerState(d.image, NativeOwner::Shadow);
-    Prep image{NativeOwner::Shadow, rendered.m, rendered.in, rendered.srt};
-    image.Live(d);
-    SetNativeModelMatrixSelectors(rendered.m.selectors, NativeOwner::Shadow);
-    const std::string diff = CompareNativeShadeInputs(GetNativeMaterialState(NativeOwner::Render), GetNativeMaterialState(NativeOwner::Shadow), raster);
-    ++c.checked;
-
-    if (diff.empty())
-        ++c.equal;
-    else if (c.diffs[diff]++ < 3)
-        std::fprintf(stderr, "MH3 prep image check: material %08x present %x:%s\n", rendered.in.record->pipeline_address, rendered.in.present, diff.c_str());
-
-    if (c.checked % 20000)
-        return;
-
-    std::string top;
-
-    for (const auto& [text, count] : c.diffs)
-        top += " [" + std::to_string(count) + ":" + text + " ]";
-
-    std::fprintf(stderr, "MH3 prep image check: %llu compiled dispatches, %llu draw the same as from their image alone;%s\n", static_cast<unsigned long long>(c.checked),
-                 static_cast<unsigned long long>(c.equal), top.c_str());
-}
-#endif
 } // namespace
 
 void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block) {
@@ -1279,13 +1060,6 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
         entry.objects = ReadNativeTextureObjectRevision();
     }
 
-#ifdef MH3_DEVELOPMENT
-    static const TraceFlag tracedMaterials("materials");
-
-    if (tracedMaterials) [[unlikely]]
-        TraceMaterial(scope.material_address, entry.blocks, slots);
-#endif
-
     in.record = entry.record;
     in.indirect = entry.record->indirect;
 
@@ -1300,12 +1074,6 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
     if (const uint32_t resource = slots[MH3_MAT_TEXTURE_SRT]) {
         auto& out = srts.Next(&in.srt);
         Checked(mh3_texture_srt_read_for_prepare({Bytes(resource, 0x248), 0x248}, &out.srt));
-#ifdef MH3_DEVELOPMENT
-        static const TraceFlag tracedSrt("srt");
-
-        if (tracedSrt) [[unlikely]]
-            TraceTextureSrt(resource, entry.material, out.srt);
-#endif
 
         // The constructor defines these exact built-in mapping functions. Custom
         // slots may change their callback and type at runtime; reject those until
@@ -1353,9 +1121,7 @@ void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPre
     Prep prep{owner, mirror, in, srt};
 
     ModelPrepDispatch* compiled = Compilable(owner, in) ? &CompiledDispatch(in) : nullptr;
-#ifdef MH3_DEVELOPMENT
-    const mh3_raster_state raster = GetNativeDrawState(NativeOwner::Render).raster;
-#endif
+
     if (compiled) {
 #ifdef MH3_DEVELOPMENT
         CountDispatch(dispatchCounts.applied);
@@ -1385,9 +1151,5 @@ void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPre
 
     if (in.visible && shape)
         prep.Shape(direct_position, direct_normal, *shape);
-#ifdef MH3_DEVELOPMENT
-    if (compiled && ImageCheckEnabled()) [[unlikely]]
-        CheckImage(prep, *compiled, raster);
-#endif
 }
 

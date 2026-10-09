@@ -6,17 +6,14 @@
 #include "runtime/native/mh3_model_submission.h"
 #include "runtime/native/mh3_vertex_sources.h"
 #include "runtime/native/mh3_texture_matrices.h"
-#include "runtime/native/adapters/model_prepare_diagnostics.h"
 /* Explicit loader events. Tracking disc reads alone does not certify copied,
  * recycled or decompressed owners. No bind-time revision bumps or hashing. */
-void RecordNativeDiscWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes, uint32_t diagnostic_frame = UINT32_MAX);
+void RecordNativeDiscWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes);
 /* A sound stream's read: as a disc write, but the overlapped draw never reads
  * a sound stream's buffer, so it does not wait for the draw. */
 void RecordNativeSoundStreamWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes);
-void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes,
-    NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceCopy, uint32_t diagnostic_frame = UINT32_MAX);
-void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
-    NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceRetire, uint32_t diagnostic_frame = UINT32_MAX);
+void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes);
+void RetireNativeResourceOwner(uint32_t address, uint32_t bytes);
 /* Whether the in-flight overlapped draw may read [address, address + bytes):
  * a game-thread retirement of it waits for that draw. */
 bool NativeResourceReadByDraw(uint32_t address, uint32_t bytes);
@@ -43,7 +40,7 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
 /* Caller owns validated metadata/catalog and resident allocation until explicit
  * unregistration. Backend's asynchronous fence lifetime is a separate owner. */
 Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t resident_handle, uint64_t resident_generation);
-void UnregisterNativeModelPack(uintptr_t resident_handle, uint32_t diagnostic_frame = UINT32_MAX);
+void UnregisterNativeModelPack(uintptr_t resident_handle);
 /* Conservative demand-loader pin: certified owners, copied typed material
  * groups, or any tracked partial source receipt keep metadata alive. */
 bool NativeModelPackHasLiveSources(uintptr_t resident_handle);
@@ -73,7 +70,7 @@ std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_ad
 Status AttachNativeModelDrawTable(const NativeModelOwner& owner, std::shared_ptr<NativeModelDrawTable> table);
 /* Certified owners that have no table yet. */
 void ListNativeModelOwnersWithoutDrawTable(std::vector<NativeModelOwner>& out);
-/* GPU skinning (docs/gpu-skinning.md): a model none of whose shapes reads
+/* GPU skinning (docs/optimizations/rendering/gpu-skinning.md): a model none of whose shapes reads
  * envelope matrices per vertex (each skinned or rigid) needs only its node
  * matrices and the envelopes its rigid shapes are drawn with: its NodeMix pass
  * makes only those envelopes, its view pass only those views. Its draw table

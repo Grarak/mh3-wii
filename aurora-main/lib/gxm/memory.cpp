@@ -1,6 +1,5 @@
 #include "memory.hpp"
 #include <aurora/fatal.hpp>
-#include "razor.hpp"
 #include <psp2/gxm.h>
 #include <psp2/kernel/error.h>
 #include <psp2/kernel/processmgr.h>
@@ -87,7 +86,6 @@ int MappedMemory::allocate(size_t bytes, Kind kind, const char* name) noexcept {
     return SCE_KERNEL_ERROR_ERROR;
   }
 
-  razor_register_buffer(m_data, m_size);
   std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0, kind == Kind::Phycont ? "phycont" : kind == Kind::Main ? "main" : "CDRAM",
                unsigned(reinterpret_cast<uintptr_t>(m_data)));
   return 0;
@@ -118,7 +116,6 @@ void MappedMemory::release() noexcept {
   if (m_block < 0)
     return;
 
-  razor_unregister_buffer(m_data);
 
   if (m_kind == Kind::VertexUsse)
     sceGxmUnmapVertexUsseMemory(m_data);
@@ -216,95 +213,4 @@ size_t MappedArena::high_water() const noexcept {
   return m_highWater;
 }
 
-namespace {
-// MB/s (bytes per microsecond) of the best of five rounds of `pattern`.
-template <class Pattern>
-double WriteSpeed(uint8_t* base, size_t bytes, Pattern&& pattern) {
-  uint64_t best = UINT64_MAX;
-
-  for (int round = 0; round < 5; ++round) {
-    const SceUInt64 start = sceKernelGetProcessTimeWide();
-    pattern(base, bytes);
-    best = std::min<uint64_t>(best, sceKernelGetProcessTimeWide() - start);
-  }
-
-  return best ? double(bytes) / double(best) : 0;
-}
-} // namespace
-
-void benchmark_cpu_writes() noexcept {
-  // 1 MiB, past the 512 KiB L2, so the cached row shows memory speed too.
-  constexpr size_t Bytes = 1u << 20;
-
-  struct Kind {
-    const char* name;
-    SceKernelMemBlockType type;
-  };
-
-  static constexpr Kind kinds[] = {{"CDRAM", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW},
-                                   {"uncached main", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE},
-                                   {"phycont", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW},
-                                   {"cached main", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW}};
-
-  // A resolved material block's size (784 bytes).
-  alignas(16) static float source[196];
-
-  for (unsigned i = 0; i < 196; ++i)
-    source[i] = float(i) * 0.25f;
-
-  volatile float scale = 1.5f;
-  volatile float sink = 0;
-
-  for (const auto& kind : kinds) {
-    const SceUID block = sceKernelAllocMemBlock("Aurora membench", kind.type, Bytes, nullptr);
-    void* data = nullptr;
-
-    if (block < 0 || sceKernelGetMemBlockBase(block, &data) < 0) {
-      std::fprintf(stderr, "Aurora membench %s: no block (%08x)\n", kind.name, unsigned(block));
-
-      if (block >= 0)
-        sceKernelFreeMemBlock(block);
-
-      continue;
-    }
-
-    auto* base = static_cast<uint8_t*>(data);
-
-    const double copy = WriteSpeed(base, Bytes, [](uint8_t* p, size_t n) {
-      for (size_t at = 0; at + sizeof source <= n; at += sizeof source)
-        std::memcpy(p + at, source, sizeof source);
-    });
-
-    // One float at a time, as field-by-field uniform writes go.
-    const double stores = WriteSpeed(base, Bytes, [&](uint8_t* p, size_t n) {
-      const float s = scale;
-      auto* out = reinterpret_cast<volatile float*>(p);
-
-      for (size_t i = 0; i + 4 <= n / 4; i += 4) {
-        out[i] = s;
-        out[i + 1] = s * 2;
-        out[i + 2] = s * 3;
-        out[i + 3] = s * 4;
-      }
-    });
-
-    const double clear = WriteSpeed(base, Bytes, [](uint8_t* p, size_t n) { std::memset(p, 0, n); });
-
-    const double read = WriteSpeed(base, Bytes, [&](uint8_t* p, size_t n) {
-      const auto* in = reinterpret_cast<const uint32_t*>(p);
-      uint32_t sum = 0;
-
-      for (size_t i = 0; i < n / 4; i += 8)
-        sum += in[i];
-
-      sink = float(sum);
-    });
-
-    std::fprintf(stderr, "Aurora membench %s: memcpy 784 B %.0f MB/s, float stores %.0f MB/s, memset %.0f MB/s, reads %.0f MB/s\n", kind.name, copy, stores, clear,
-                 read);
-    sceKernelFreeMemBlock(block);
-  }
-
-  (void)sink;
-}
 } // namespace aurora::gxm

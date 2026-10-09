@@ -20,12 +20,9 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution (448·n rows); overrides the launcher's `Upscaling` ([launcher](vita-launcher.md)) | development |
 | `MH3_THP_JPEG` | `off`: the Vita decodes the movies in software instead of on its hardware JPEG decoder, frames ahead ([movies](vita-movies.md)) | development |
-| `MH3_THP_CHECK` | `1`: the Vita also decodes the first 120 movie frames in software and reports the samples that differ from the hardware's by more than 8 ([movies](vita-movies.md)) | development |
 | `MH3_AUDIO_NULL` | `1`: no playback device; the mix is consumed at 32 kHz | development |
 | `MH3_LAUNCHER_INPUT` | launcher input script, on the Vita and with `MH3 --launcher` on a host ([launcher](vita-launcher.md)) | development |
 | `MH3_VARIABLE_STEP` | `0`: the game's fixed 1/30 s steps instead of the variable step | development |
-| `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (culling edge checks) | development |
-| `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file (`draw-tables.bin`) | all |
 | `MH3_GXM_SHADER_DUMP` | a directory: mirror runtime-compiled GXPs (development bank misses, preflights) there; set by the selector preflight | Vita |
 | `MH3_LANGUAGE` | `en`, `fr`, `de`, `it` or `es`: the game's language (the console's `IPL.LNG`), as the launcher's `Language` row does, for runs started without the launcher | all |
 | `MH3_ONLINE_SERVER` | `DOMAIN[:PORT]` or `IP[:PORT]`: the online server (default `mh3sp.com`), as the launcher's online server setting does ([online](online.md)) | all |
@@ -108,7 +105,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,prepare[,prepare-frames=FIRST-LAST]][,census]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,census]`
 
 | Item | Effect |
 | --- | --- |
@@ -119,7 +116,6 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry), or meshes of model draws: skinned ones (`skinned`), those whose material blends (`blended`) or alpha tests (`discard`); for attributing GPU time with Razor |
 | `fill` | every 300 frames, the `MH3 material fill` lines: screen area (in screens) that material geometry covers per fragment program and blend, clipped to the viewport |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
-| `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
 | `census` | every 240 frames, the `MH3 draw census` lines: per frame, the model draws, the skinned palette-batch draws, the distinct index ranges and meshes (a mesh split into palette batches draws once per batch), runs of draws sharing program, material and asset, the ten assets with the most draws, and the sixteen programs (vertex+fragment stage names) with the most triangles, with their draws |
 
 Every item measures or reports (`sync` and `skip` change the timing or the
@@ -131,23 +127,6 @@ scene graph walk on the game thread), `serial-world` (the world matrix pass on
 the game thread alone; `MH3_PORT_CHECK` other than `ScnGroupCalcWorld` still
 keeps it there), `queue=N` (two packets waiting for the render thread) and
 `unpaced` (the launcher's `Framelimit: OFF` does the same; `MH3_FRAME_LIMIT=off` for runs started without the launcher).
-
-### `MH3_VERIFY`: native paths against what they replace
-
-`MH3_VERIFY=prep-image`
-
-| Item | Effect |
-| --- | --- |
-| `prep-image` | every model material dispatch drawn from its record's compiled draw material (kept across the record's dispatches) is compared after its shape step with one built from the record's image for this dispatch alone (its own colours, channels, indirect operator and matrix selectors), by what a draw derives from each: structure, classification, fill, palette and alpha range, texgens, the lit channel and the raster (`MH3 prep image check` lines name the differing parts, with the counts every 20,000 dispatches) |
-
-The checks of settled ports were removed on 2026-10-08 (a stale one prints
-`MH3: MH3_VERIFY: '...' is ignored; it was removed`): `pose` (reused pose
-versions against the live view arrays), `material` (the material programs'
-coefficients against `mh3_shade_fill`), `cull` (every model the scene cull
-rejects drawn and checked), `prep` (game-thread model preparation against the
-render thread's), `draw-table` (indexed draw items resolved by address too)
-and `replay` (the render thread's material and colour registers at material
-geometry draws against the game thread's snapshots).
 
 ### `MH3_INPUT`: scripted controller input
 
@@ -285,7 +264,6 @@ The model tests and the asset scripts (`vita-active-play.py`,
 | `MH3_RAM_DUMP=FIRST,COUNT` | `MH3_CAPTURE=ram=FIRST,ram-frames=COUNT` |
 | `MH3_TRACE_INPUT=1` | `MH3_TRACE=input` |
 | `MH3_NET_TRACE=1`, `MH3_THREAD_TRACE=1` | `MH3_TRACE=net,threads` |
-| `MH3_PREPARE_DIAGNOSTICS=1`, `=FIRST,LAST` | `MH3_PROFILE=prepare`, `MH3_PROFILE=prepare,prepare-frames=FIRST-LAST` |
 | `MH3_INPUT_FILE=PATH`, `MH3_INPUT_RECORD=PATH`, `MH3_INPUT_PLAYBACK=PATH` | `MH3_INPUT=file=PATH,record=PATH,playback=PATH` |
 
 Removed with the code behind them (git history keeps them):
@@ -304,6 +282,22 @@ Removed with the code behind them (git history keeps them):
   `MH3_ANM_KEYS_CHECK`, `MH3_ANM_BAKED_CHECK`, `MH3_EFFECT_CURVE_CHECK`,
   `MH3_TICK_SURVEY` (with the `Survey` tick-site kind), `MH3_STEP_LOG`,
   `MH3_STEP_LOG_WORDS`.
+- Checks and tools retired on 2026-10-08: `MH3_VERIFY` with all its items
+  (`pose`: reused pose versions against the live view arrays; `material`: the
+  material programs' coefficients against `mh3_shade_fill`; `cull`: every model
+  the scene cull rejects drawn and checked; `prep`: game-thread model
+  preparation against the render thread's; `prep-image`: compiled draw
+  materials and texture rebind memos against ones built for the dispatch
+  alone; `draw-table`: indexed draw items resolved by address too; `replay`:
+  the render thread's material and colour registers at material geometry
+  draws against the game thread's snapshots), the `MH3_PROFILE` items
+  `prepare` and `prepare-frames` (model preparation counters and source-epoch
+  writers, earlier `MH3_PREPARE_DIAGNOSTICS`; [findings](native-model-preparation-diagnostics.md)),
+  `MH3_THP_CHECK` (hardware movie frames against the software decoder),
+  `MH3_RENDER_WIDEN` (projections widened past the game's cull),
+  `MH3_DRAW_TABLE_CACHE=0` (draw tables without their file) and
+  `AURORA_MEMBENCH` (the CPU's speed into each GPU memory kind; results in
+  [CDRAM capacity](vita-native-cdram-capacity.md#cpu-access)).
 - Checks of settled effect paths (2026-10-08): the `MH3_PORT_CHECK` items
   `EffectBatch` (replayed material geometry state) and `CurvesAt` (the owned
   curve words' blend), and `MH3_EFFECT_SETUP_CHECK` (skipped effect Setups);
@@ -316,8 +310,7 @@ Removed with the code behind them (git history keeps them):
   `MH3_MODEL_CULL=0`, `MH3_MODEL_CULL_GAME=0`, `MH3_RENDER_PREP=0`,
   `MH3_DRAW_TABLE=0`, `MH3_DRAW_TABLE_DISCOVER=0`, `MH3_DRAW_TABLE_TRACE`,
   the checks `MH3_MATERIAL_GPU_VERIFY=1`, `MH3_MODEL_CULL_GAME=2`,
-  `MH3_RENDER_PREP=2` and `MH3_DRAW_TABLE=2` (later `MH3_VERIFY` items, removed
-  2026-10-08),
+  `MH3_RENDER_PREP=2` and `MH3_DRAW_TABLE=2` (later `MH3_VERIFY` items),
   `MH3_GXM_ALPHA_ONE=0`, `MH3_GXM_SERIAL_SCENES=1`; and the `MH3_PROFILE`
   items `draw-inline`, `draw-thread`, `serial-prepare`, `serial-world`,
   `queue=N` and `unpaced` (2026-10-05, [above](#mh3_profile-frame-profile-split-timers-serial-frames)).

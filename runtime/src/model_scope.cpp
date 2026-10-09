@@ -144,7 +144,6 @@ void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
 template <class T> struct RecipeCache {
     uint64_t revision = UINT64_MAX;
     FastMap<uint32_t, T> entries;
-    NativePrepareCacheCounters* counters = nullptr;
 };
 
 template <class T> RecipeCache<T>& Recipes() {
@@ -152,18 +151,6 @@ template <class T> RecipeCache<T>& Recipes() {
     const uint64_t revision = ReadNativeModelStructureRevision();
 
     if (cache.revision != revision) {
-        if (cache.revision == UINT64_MAX) {
-            if (auto* d = ActiveNativeModelPreparationDiagnostics()) {
-                if constexpr (std::is_same_v<T, mh3_model_scope_recipe>)
-                    cache.counters = &d->material;
-                else
-                    cache.counters = &d->shape;
-            }
-        } else if (cache.counters) {
-            ++cache.counters->token_clears;
-            cache.counters->discarded_entries += cache.entries.size();
-        }
-
         cache.entries.clear();
         cache.revision = revision;
     }
@@ -181,19 +168,8 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     auto& recipes = Recipes<mh3_model_scope_recipe>();
     const auto cached = recipes.entries.find(material);
 
-    if (cached != recipes.entries.end() && mh3_model_scope_recipe_matches(&cached->second, recipes.revision, material, &replacements)) {
-        if (recipes.counters)
-            ++recipes.counters->hits;
-
+    if (cached != recipes.entries.end() && mh3_model_scope_recipe_matches(&cached->second, recipes.revision, material, &replacements))
         return cached->second.scope;
-    }
-
-    if (recipes.counters) {
-        ++recipes.counters->misses;
-
-        if (cached != recipes.entries.end())
-            ++recipes.counters->replacement_misses;
-    }
 
     uint32_t version = 0;
 
@@ -213,14 +189,8 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     // Admission may demand-load a pack and advance the structural token.
     auto& admitted = Recipes<mh3_model_scope_recipe>();
 
-    if (admitted.entries.size() >= 8192) {
-        if (admitted.counters) {
-            ++admitted.counters->capacity_clears;
-            admitted.counters->discarded_entries += admitted.entries.size();
-        }
-
+    if (admitted.entries.size() >= 8192)
         admitted.entries.clear();
-    }
 
     admitted.entries.insert_or_assign(material, mh3_model_scope_recipe{admitted.revision, replacements, scope});
     return scope;
@@ -420,14 +390,8 @@ const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t shape) {
 
     // Owned scalar metadata only. Bound the cache across recycled scene heaps;
     // evicting it requires fresh CPU header resolution, never GPU repacking.
-    if (shape_sources.size() >= 8192) {
-        if (recipes.counters) {
-            ++recipes.counters->capacity_clears;
-            recipes.counters->discarded_entries += shape_sources.size();
-        }
-
+    if (shape_sources.size() >= 8192)
         shape_sources.clear();
-    }
 
     shape_sources.insert_or_assign(key, result);
     return shape_sources.at(key);
@@ -457,16 +421,10 @@ ShapeContext ResolveShape(uint32_t reference) {
     const auto cached = entries.find(context.shape);
 
     if (cached != entries.end()) {
-        if (recipes.counters)
-            ++recipes.counters->hits;
-
         context.owner = cached->second.owner;
         context.sources = &cached->second;
         return context;
     }
-
-    if (recipes.counters)
-        ++recipes.counters->misses;
 
     context.owner = ShapeOwner(reference, &context.shape);
     context.sources = &Sources(context.owner, context.shape);
@@ -516,14 +474,8 @@ struct NativeModelDrawTable {
 namespace {
 // Draw items resolve through their model's draw table (by address when it has
 // none).
-struct TableStats {
-    uint64_t built = 0, cached = 0, materials = 0, shapes = 0, missing_materials = 0, missing_shapes = 0, failed = 0, eager = 0;
-    uint64_t indexed = 0, unindexed = 0, aliases = 0, in_place = 0;
-    uint64_t files_written = 0, bytes_written = 0;
-
-    // Table construction (resolved, from the cache) and cache file reads/writes.
-    double build_ms = 0, cached_ms = 0, cache_ms = 0;
-} tableStats;
+// Tables read from the cache file (the loading screen line).
+uint64_t tablesCached = 0;
 
 // Models whose table could not be built, with the structure revision then.
 FastMap<uint32_t, uint64_t> tableFailures;
@@ -569,15 +521,6 @@ struct PackTables {
 };
 
 std::vector<PackTables> packTables;
-bool TableCacheEnabled() {
-    // MH3_DRAW_TABLE_CACHE=0: neither read nor write the table file.
-    static const bool enabled = [] {
-        const char* value = std::getenv("MH3_DRAW_TABLE_CACHE");
-        return !value || std::strcmp(value, "0");
-    }();
-    return enabled;
-}
-
 uint32_t Le32(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
@@ -670,15 +613,11 @@ void LoadTableCache() {
 }
 
 // The cache of the owner's pack, the file read at the first use; null when
-// the cache is off or the pack has no file.
+// the pack has no file.
 CachedPack* TablesOf(const NativeModelOwner& owner) {
-    if (!TableCacheEnabled())
-        return nullptr;
-
     for (const auto& tables : packTables)
         if (tables.handle == owner.resident_handle && tables.generation == owner.resident_generation)
             return tables.pack;
-    const auto start = std::chrono::steady_clock::now();
     NativeModelPackFile file;
     CachedPack* pack = nullptr;
 
@@ -708,7 +647,6 @@ CachedPack* TablesOf(const NativeModelOwner& owner) {
         packTables.erase(packTables.begin());
 
     packTables.push_back({owner.resident_handle, owner.resident_generation, pack});
-    tableStats.cache_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     return pack;
 }
 
@@ -895,7 +833,6 @@ void FlushTables() {
         return;
 
     tableCache.dirty = false;
-    const auto start = std::chrono::steady_clock::now();
     std::vector<uint8_t> out;
     Put32(out, TableMagic);
     Put32(out, TableVersion);
@@ -936,10 +873,6 @@ void FlushTables() {
 #endif
         return;
     }
-
-    ++tableStats.files_written;
-    tableStats.bytes_written += out.size();
-    tableStats.cache_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
 // The matrix IDs below a model's view count that its draws read, when no
@@ -1007,7 +940,6 @@ std::shared_ptr<const NativeModelNodeViews> NodeViews(uint32_t model, const std:
 // stays empty: its draws take the address path, which fails as before if it
 // is ever drawn.
 Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& result) {
-    const auto start = std::chrono::steady_clock::now();
     const auto& memory = MH3NativeResourceMemory();
     auto table = std::make_shared<NativeModelDrawTable>();
     table->model = model;
@@ -1087,7 +1019,6 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
             }
 
             table->materials[id] = {};
-            ++tableStats.missing_materials;
         }
 
         table->shapes.resize(shapes);
@@ -1118,7 +1049,6 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
                 continue;
 
             table->shapes[id] = {};
-            ++tableStats.missing_shapes;
         }
 
         if (cache && index < cache->records.size()) {
@@ -1130,11 +1060,7 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
     table->ViewEntries();
     table->node_views = NodeViews(model, table->shapes);
     MH3_RETURN_IF_ERROR(AttachNativeModelDrawTable(owner, table));
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    ++(cached ? tableStats.cached : tableStats.built);
-    tableStats.materials += table->materials.size();
-    tableStats.shapes += table->shapes.size();
-    (cached ? tableStats.cached_ms : tableStats.build_ms) += ms;
+    tablesCached += cached;
     result = std::move(table);
     return {};
 }
@@ -1187,8 +1113,6 @@ NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<Na
 
         if (const Status built = BuildDrawTable(model, hold); !built.ok()) {
             // The address path resolves (and reports) whatever this model draws.
-            ++tableStats.failed;
-
             if (tableFailures.size() >= 4096)
                 tableFailures.clear();
 
@@ -1197,10 +1121,8 @@ NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<Na
         }
     }
 
-    if (hold->model != model) {
-        ++tableStats.aliases;
+    if (hold->model != model)
         return nullptr;
-    }
 
     return hold.get();
 }
@@ -1255,7 +1177,7 @@ void PrepareNativeModelDrawTables() {
     } else
         loading.longest_ms = std::max(loading.longest_ms, std::chrono::duration<double, std::milli>(start - loading.last).count());
 
-    const uint64_t cachedBefore = tableStats.cached;
+    const uint64_t cachedBefore = tablesCached;
 #ifdef MH3_DEVELOPMENT
     const NativeModelPackOpenings before = ReadNativeModelPackOpenings();
 #endif
@@ -1281,13 +1203,9 @@ void PrepareNativeModelDrawTables() {
             continue; // a sibling's certification may have replaced the list
         std::shared_ptr<NativeModelDrawTable> table;
 
-        if (const Status status = BuildDrawTable(owner.model_address, table); !status.ok()) {
-            ++tableStats.failed;
-
+        if (const Status status = BuildDrawTable(owner.model_address, table); !status.ok())
             continue;
-        }
 
-        ++tableStats.eager;
         ++built;
     }
 
@@ -1304,24 +1222,13 @@ void PrepareNativeModelDrawTables() {
     ++loading.frames;
     loading.certified += certified;
     loading.tables += built;
-    loading.cached += tableStats.cached - cachedBefore;
+    loading.cached += tablesCached - cachedBefore;
     loading.prepare_ms += ms;
 }
 
 void ReportNativeModelDrawTables() {
     if (loading.open && std::chrono::steady_clock::now() - loading.last > std::chrono::seconds(1))
         ReportLoadingScreen();
-
-    if (!ActiveNativeModelPreparationDiagnostics())
-        return;
-
-    const auto& s = tableStats;
-    const auto n = [](uint64_t value) { return static_cast<unsigned long long>(value); };
-    std::fprintf(stderr,
-                 "MH3 draw tables: %lu owners; %llu built in %.2f ms, %llu from the cache in %.2f ms (%llu eager, %llu failed); %llu materials (%llu missing) %llu shapes (%llu missing); "
-                 "cache files %.2f ms, %llu written (%llu bytes); items %llu indexed %llu by address (%llu sources in place); %llu alias misses\n",
-                 static_cast<unsigned long>(CountNativeModelOwners()), n(s.built), s.build_ms, n(s.cached), s.cached_ms, n(s.eager), n(s.failed), n(s.materials), n(s.missing_materials), n(s.shapes),
-                 n(s.missing_shapes), s.cache_ms, n(s.files_written), n(s.bytes_written), n(s.indexed), n(s.unindexed), n(s.in_place), n(s.aliases));
 }
 
 namespace {
@@ -1614,7 +1521,7 @@ void Concat34(const float* a, const float* b, float* out) {
     }
 }
 
-// A skinned mesh's palette (docs/gpu-skinning.md) from its pose version: a
+// A skinned mesh's palette (docs/optimizations/rendering/gpu-skinning.md) from its pose version: a
 // rigid row is the view-space draw matrix itself, a skin bone row its view
 // matrix (the camera times its world matrix past the view matrices) times the
 // bone's inverse bind matrix. Render thread only.
@@ -1943,7 +1850,6 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
     // Sources bound in place since are the shape's own, unproduced ones: the
     // check holds when they cover the converted layout.
     const bool bound = originals.covers_layout && NativeVertexSourcesBoundInPlace(originals.source.data()) && NativeVertexSourcesUnproduced();
-    tableStats.in_place += bound;
 
     for (uint32_t i = 0; i < (bound ? 0 : prepared.immutable.layout.count); i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
@@ -2077,7 +1983,6 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
 
 bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t material_id, uint32_t shape_id, const mh3_model_material_bindings* replacements, const NativeModelDispatch& d) {
     if (material_id >= table.materials.size() || shape_id >= table.shapes.size()) {
-        ++tableStats.unindexed;
         return false;
     }
 
@@ -2085,7 +1990,6 @@ bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t mate
     const auto& sources = table.shapes[shape_id];
 
     if (!material.material_address || !sources.prepared) {
-        ++tableStats.unindexed;
         return false;
     }
 
@@ -2097,7 +2001,6 @@ bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t mate
         r.scope = material;
 
     r.shape = {d.shape, sources.address, sources.owner, &sources};
-    ++tableStats.indexed;
     Dispatch(d, &r);
     return true;
 }

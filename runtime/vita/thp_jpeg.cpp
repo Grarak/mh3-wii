@@ -13,7 +13,7 @@
 // output buffer after the decode mode.
 //
 // The media engine reads the stream and writes the planes by DMA. The
-// kernel side (avcodec.skprx, decompiled in psp2-lle's decomp/avcodec.c)
+// kernel side (avcodec.skprx)
 // takes buffers that are one physical range in CDRAM, or in main memory when
 // the decoder was initialized with option 1; any other buffer gives
 // SCE_JPEG_ERROR_NOT_PHY_CONTINUOUS_MEMORY (0x80650053). In main memory it
@@ -37,9 +37,7 @@
 // copying their tiles over; 4-byte loads from the uncached planes took
 // 9.3 ms for the Y plane alone).
 //
-// MH3_THP_JPEG=off (development) decodes in software. MH3_THP_CHECK=1
-// decodes the first 120 frames in software too and reports the differing
-// samples (later frames run unchecked, for profiles).
+// MH3_THP_JPEG=off (development) decodes in software.
 #include "thp_jpeg.h"
 
 #include "../native/mh3_thp_video.h"
@@ -93,7 +91,6 @@ constexpr size_t kStreamBytes = 512 << 10; // a frame below 256 KiB, stuffed at 
 constexpr size_t kBlockBytes = 1 << 20;    // stream, then the planes
 constexpr int kSlots = 2;                  // decoders, each with its worker thread
 constexpr int kWorkerPriority = 0x10000100; // SCE_KERNEL_DEFAULT_PRIORITY_USER
-constexpr uint32_t kCheckedFrames = 120;   // MH3_THP_CHECK
 
 // A frame handed to a worker: its buffers, the THP frame it holds and the
 // worker's result.
@@ -119,12 +116,10 @@ struct Slot {
 };
 
 struct Decoder {
-    bool tried = false, ready = false, check = false;
+    bool tried = false, ready = false;
     Slot slots[kSlots];
     uint32_t frames = 0, ahead = 0, failures = 0;
     uint64_t waitUs = 0, stuffUs = 0, tileUs = 0, decodeUs = 0;
-    uint32_t checkedFrames = 0, differingFrames = 0;
-    uint32_t maxDifference = 0;
 };
 
 Decoder decoder;
@@ -241,11 +236,8 @@ bool Initialize() {
         if (!Open(slot))
             return false;
     }
-#ifdef MH3_DEVELOPMENT
-    const char* check = std::getenv("MH3_THP_CHECK");
-    decoder.check = check && std::strcmp(check, "1") == 0;
-#endif
-    std::printf("MH3 movie: hardware JPEG decoder on (%d frames ahead%s)\n", kSlots, decoder.check ? ", checked in software" : "");
+
+    std::printf("MH3 movie: hardware JPEG decoder on (%d frames ahead)\n", kSlots);
     return true;
 }
 
@@ -376,65 +368,7 @@ void Report() {
     std::printf("MH3 movie: hardware JPEG %u frames (%u decoded ahead): waited %.2f ms, stuffing %.2f ms, tiling %.2f ms per frame; decode %.2f ms",
                 decoder.frames, decoder.ahead, decoder.waitUs / 1000.0 / frames, decoder.stuffUs / 1000.0 / frames, decoder.tileUs / 1000.0 / frames,
                 decoder.decodeUs / 1000.0 / frames);
-
-    if (decoder.check)
-        std::printf("; checked %u, %u differ (max %u)", decoder.checkedFrames, decoder.differingFrames, decoder.maxDifference);
-
     std::printf("\n");
-}
-
-// MH3_THP_CHECK: the software decoder's planes against the hardware's. The
-// IDCTs differ (AAN integer against the media engine's), so samples may
-// differ by a few units; stale or misplaced planes differ by far more. Over
-// 1% of the samples off by more than 8: the frame keeps the software planes
-// and the movies decode in software from now on.
-void Check(const uint8_t* data, size_t bytes, uint8_t* y, uint8_t* u, uint8_t* v) {
-    mh3_thp_frame frame;
-
-    if (mh3_thp_parse(data, bytes, &frame) != MH3_THP_OK)
-        return;
-
-    const size_t luma = size_t(frame.width) * frame.height;
-    static std::unique_ptr<uint8_t[]> software;
-
-    if (!software)
-        software.reset(new uint8_t[luma * 3 / 2]);
-
-    if (mh3_thp_decode(&frame, software.get(), software.get() + luma, software.get() + luma * 5 / 4) != MH3_THP_OK)
-        return;
-
-    uint32_t worst = 0, over = 0;
-    uint8_t* planes[3] = {y, u, v};
-    const size_t sizes[3] = {luma, luma / 4, luma / 4};
-    const uint8_t* expected = software.get();
-
-    for (int p = 0; p < 3; expected += sizes[p], ++p) {
-        for (size_t i = 0; i < sizes[p]; ++i) {
-            const uint32_t d = uint32_t(std::abs(int(planes[p][i]) - int(expected[i])));
-            worst = d > worst ? d : worst;
-            over += d > 8;
-        }
-    }
-
-    ++decoder.checkedFrames;
-    decoder.maxDifference = worst > decoder.maxDifference ? worst : decoder.maxDifference;
-
-    if (over) {
-        ++decoder.differingFrames;
-
-        if (decoder.differingFrames <= 4)
-            std::printf("MH3 movie: hardware frame %u differs from software in %u samples by more than 8 (max %u)\n", decoder.frames, over, worst);
-    }
-
-    if (over > luma * 3 / 2 / 100) {
-        expected = software.get();
-
-        for (int p = 0; p < 3; expected += sizes[p], ++p)
-            std::memcpy(planes[p], expected, sizes[p]);
-
-        std::printf("MH3 movie: hardware JPEG planes differ from software; decoding in software\n");
-        decoder.ready = false;
-    }
 }
 
 } // namespace
@@ -500,9 +434,6 @@ bool VitaThpDecode(const uint8_t* data, size_t bytes, uint32_t width, uint32_t h
     Release(*slot);
     decoder.tileUs += sceKernelGetProcessTimeWide() - collected;
     DecodeAhead(ahead, aheadCount, width, height);
-
-    if (decoder.check && decoder.checkedFrames < kCheckedFrames)
-        Check(data, bytes, y, u, v);
 
     Report();
     return true;

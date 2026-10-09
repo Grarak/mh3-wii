@@ -10,7 +10,7 @@
 #include "guest_worker.h"
 #include "asset_cache.h"
 #include "model_assets.h"
-#include "runtime/native/adapters/model_prepare_diagnostics.h"
+#include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "native_frame_statistics.h"
 #include "audio/native_audio.h"
@@ -722,7 +722,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  100.0 * tickHz / nominalHz, tickHz, nominalHz, (guestCopies - lastCopies) / seconds, (presents - lastPresents) / seconds, (skipped - lastSkipped) / seconds,
                  static_cast<unsigned long long>(guestCopies.load()), g_mkwHostNiActive ? "set" : "clear");
     const auto work = TakeNativeFrameStatistics();
-    ReportNativeModelPreparationDiagnostics();
+    ReportNativeModelDrawTables();
     std::fprintf(stderr, "MH3 native work: admitted render %.1f fps, frame %.3f ms avg/%.3f max, rendered %.3f ms avg/%.3f max (%llu/%llu frames)\n",
                  work.window_ns ? 1e9 * double(work.rendered_frames) / double(work.window_ns) : 0.0, work.measured_frames ? work.frame_wall_ns / (1e6 * work.measured_frames) : 0.0,
                  work.frame_wall_max_ns / 1e6, work.rendered_measured_frames ? work.rendered_wall_ns / (1e6 * work.rendered_measured_frames) : 0.0, work.rendered_wall_max_ns / 1e6,

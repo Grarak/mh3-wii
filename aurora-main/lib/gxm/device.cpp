@@ -239,9 +239,6 @@ Device::Device() {
   // profiles overstate the library's share against a retail Vita.
   std::printf("Aurora GXM: %s libgxm\n", sceGxmIsDebugVersion() ? "debug" : "release");
 
-  if (std::getenv("AURORA_MEMBENCH"))
-    benchmark_cpu_writes();
-
   m_notification = sceGxmGetNotificationRegion();
 
   if (!m_notification)

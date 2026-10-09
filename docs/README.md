@@ -23,7 +23,7 @@ how to build, run (including the Vita devkit) and debug.
 ## Models and textures
 
 - [native-model-preparation-recipes.md](native-model-preparation-recipes.md): structural recipes and per-model draw tables.
-- [native-model-preparation-diagnostics.md](native-model-preparation-diagnostics.md): opt-in recipe and source epoch counters.
+- [native-model-preparation-diagnostics.md](native-model-preparation-diagnostics.md): findings of the removed recipe and source epoch counters.
 - [native-model-draw-dispatch.md](native-model-draw-dispatch.md): the scene draw passes and the authored sort in C.
 - [native-resident-model-rendering.md](native-resident-model-rendering.md): resident mesh storage and the mesh draw path.
 - [native-gpu-palette-preparation.md](native-gpu-palette-preparation.md), [native-texture-srt-preparation.md](native-texture-srt-preparation.md): palettes written straight into GPU memory; reading only the consumed texture SRT fields.

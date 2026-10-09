@@ -7,7 +7,6 @@
 //
 // `known` names the tool's flags and options; an unknown name=value item is
 // reported, and so is an unknown bare word when the tool takes no list.
-// `retired` names removed items, reported as removed and otherwise ignored.
 #pragma once
 
 #include <array>
@@ -28,15 +27,15 @@ public:
         Allowed // other bare words form the tool's list (Words())
     };
 
-    DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None, std::initializer_list<std::string_view> retired = {})
+    DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None)
         : variable_(variable) {
-        Parse(known, words, retired);
+        Parse(known, words);
     }
 
     // `known` kept in an array that other code reads too.
     template <size_t N>
     DevOptions(const char* variable, const std::array<std::string_view, N>& known) : variable_(variable) {
-        Parse(known, Words::None, {});
+        Parse(known, Words::None);
     }
 
     // The variable is set and not empty.
@@ -86,7 +85,7 @@ public:
 
 private:
     template <typename Known>
-    void Parse(const Known& known, Words words, std::initializer_list<std::string_view> retired) {
+    void Parse(const Known& known, Words words) {
         const char* text = std::getenv(variable_);
 
         if (!text)
@@ -114,9 +113,6 @@ private:
             for (const std::string_view k : known)
                 listed |= k == name;
 
-            if (!listed && Retired(retired, name))
-                continue;
-
             if (equals != std::string_view::npos) {
                 if (!listed)
                     Unknown(item);
@@ -133,18 +129,6 @@ private:
         }
     }
 
-    bool Retired(std::initializer_list<std::string_view> retired, std::string_view name) const {
-        for (const std::string_view r : retired) {
-            if (r != name)
-                continue;
-
-            std::fprintf(stderr, "MH3: %s: '%.*s' is ignored; it was removed (docs/flags.md)\n", variable_, int(name.size()), name.data());
-            return true;
-        }
-
-        return false;
-    }
-
     void Unknown(std::string_view item) const {
         std::fprintf(stderr, "MH3: %s: unknown option '%.*s' (docs/flags.md)\n", variable_, int(item.size()), item.data());
     }
@@ -154,108 +138,6 @@ private:
     std::vector<std::string> flags_, words_;
     std::vector<std::pair<std::string, std::string>> options_;
 };
-
-// Variables that a family replaced or that were removed: reported at startup,
-// so that a stale script or runtime.env does not silently lose its effect.
-inline void ReportRetiredVariables() {
-    static constexpr struct {
-        const char* name;
-        const char* family; // nullptr: removed
-    } kRetired[] = {
-        {"MH3_CAPTURE_PATH", "MH3_CAPTURE"},
-        {"MH3_CAPTURE_INTERVAL", "MH3_CAPTURE"},
-        {"MH3_CAPTURE_START", "MH3_CAPTURE"},
-        {"MH3_CAPTURE_FRAME", "MH3_CAPTURE"},
-        {"MH3_AUDIO_DUMP", "MH3_CAPTURE"},
-        {"MH3_PORT_CHECK_EVERY", "MH3_PORT_CHECK"},
-        {"MH3_PORT_CHECK_DUMP", "MH3_PORT_CHECK"},
-        {"MH3_PORT_FUZZ", "MH3_PORT_CHECK"},
-        {"MH3_PORT_FUZZ_AFTER", "MH3_PORT_CHECK"},
-        {"MH3_PORT_FUZZ_SAMPLES", "MH3_PORT_CHECK"},
-        {"MH3_SOUND_ORIGINALS", "MH3_PORT_CHECK"},
-        {"MH3_RAZOR_LIVE", "MH3_RAZOR"},
-        {"MH3_RAZOR_LIVE_START_FRAME", "MH3_RAZOR"},
-        {"MH3_RAZOR_LIVE_FRAMES", "MH3_RAZOR"},
-        {"MH3_RAZOR_GROUP", "MH3_RAZOR"},
-        {"MH3_RAZOR_HIDE_HUD", "MH3_RAZOR"},
-        {"MH3_RAZOR_SCENE_TRACE", "MH3_RAZOR"},
-        {"MH3_RAZOR_CPU_TRACE", "MH3_RAZOR"},
-        {"MH3_RAZOR_CAPTURE", "MH3_RAZOR"},
-        {"MH3_RAZOR_CAPTURE_FRAME", "MH3_RAZOR"},
-        {"MH3_RAZOR_SALVAGE", "MH3_RAZOR"},
-        {"MH3_STEP_PROBE_TICK", "MH3_STEP_PROBE"},
-        {"MH3_STEP_PROBE_SETTLE", "MH3_STEP_PROBE"},
-        {"MH3_STEP_PROBE_ALL", "MH3_STEP_PROBE"},
-        {"MH3_WRITE_WATCH_LIST", "MH3_WRITE_WATCH"},
-        {"MH3_WRITE_WATCH_MS", "MH3_WRITE_WATCH"},
-        {"MH3_CALL_TRACE_GATE", "MH3_CALL_TRACE"},
-        {"MH3_PROFILE_FRAMES", "MH3_PROFILE"},
-        {"MH3_MODEL_SPLIT", "MH3_PROFILE"},
-        {"MH3_RENDER_SYNC", "MH3_PROFILE"},
-        {"MH3_RAM_DUMP", "MH3_CAPTURE"},
-        {"MH3_TRACE_INPUT", "MH3_TRACE"},
-        {"MH3_NET_TRACE", "MH3_TRACE"},
-        {"MH3_THREAD_TRACE", "MH3_TRACE"},
-        {"MH3_PREPARE_DIAGNOSTICS", "MH3_PROFILE"},
-        {"MH3_INPUT_FILE", "MH3_INPUT"},
-        {"MH3_INPUT_RECORD", "MH3_INPUT"},
-        {"MH3_INPUT_PLAYBACK", "MH3_INPUT"},
-        {"MH3_ANIM_WHOLE_FRAMES", nullptr},
-        {"MH3_EFFECT_TICK_CURVES", nullptr},
-        {"MH3_STEP_COUNTER_RAW", nullptr},
-        {"MH3_FIELD_WAIT", nullptr},
-        {"MH3_NATIVE_MODEL_DRAW", nullptr},
-        {"MH3_MODEL_TRACE", nullptr},
-        {"MH3_MODEL_POSE_TRACE", nullptr},
-        {"MH3_GX_DRAW_LOG", nullptr},
-        {"MH3_GX_SOURCE_CAPTURE", nullptr},
-        {"MH3_MATERIAL_GPU_VERIFY", nullptr},
-        {"MH3_MODEL_CULL_GAME", nullptr},
-        {"MH3_RENDER_PREP", nullptr},
-        {"MH3_DRAW_TABLE", nullptr},
-        {"MH3_GX_DEBUG_CONTROL", nullptr},
-        {"MH3_TRACE_EFB", nullptr},
-        {"MH3_MISSING_TARGET_MEM1_DUMP", nullptr},
-        {"MH3_MOTION_LOG", nullptr},
-        {"MH3_ROOT_CACHE_CHECK", nullptr},
-        {"MH3_ANM_KEYS_CHECK", nullptr},
-        {"MH3_ANM_BAKED_CHECK", nullptr},
-        {"MH3_EFFECT_CURVE_CHECK", nullptr},
-        {"MH3_TICK_SURVEY", nullptr},
-        {"MH3_STEP_LOG", nullptr},
-        {"MH3_STEP_LOG_WORDS", nullptr},
-        {"MH3_SLOW_PATH_TRACE", nullptr},
-        {"MH3_AUDIO_TRACE", nullptr},
-        {"MH3_FRAMESKIP", nullptr},
-        {"MH3_MATERIAL_GPU", nullptr},
-        {"MH3_MATERIAL_GPU_RING", nullptr},
-        {"MH3_MODEL_CULL", nullptr},
-        {"MH3_DRAW_TABLE_DISCOVER", nullptr},
-        {"MH3_DRAW_TABLE_TRACE", nullptr},
-        {"MH3_GXM_ALPHA_ONE", nullptr},
-        {"MH3_GXM_SERIAL_SCENES", nullptr},
-        {"MH3_GXM_SHADE_PROBE", nullptr},
-        {"MH3_GXM_SHADE_DATA_DUMP", nullptr},
-        {"MH3_GXM_SHADER_ABI_TRACE", nullptr},
-        {"MH3_GXM_WAIT_TRACE", nullptr},
-        {"MH3_DRAW_CENSUS", nullptr},
-        {"MH3_NATIVE_ASSET_TRACE", nullptr},
-        {"MH3_TRACE_ERRORS", nullptr},
-        {"MH3_VCNT", nullptr},
-        {"MH3_STEP_SCALE", nullptr},
-        {"MH3_TRACE_PLAYER", nullptr},
-    };
-
-    for (const auto& retired : kRetired) {
-        if (!std::getenv(retired.name))
-            continue;
-
-        if (retired.family)
-            std::fprintf(stderr, "MH3: %s is ignored; it is now part of %s (docs/flags.md)\n", retired.name, retired.family);
-        else
-            std::fprintf(stderr, "MH3: %s is ignored; it was removed (docs/flags.md)\n", retired.name);
-    }
-}
 
 // Families read in more than one place; each is parsed (and reported) once.
 
@@ -267,43 +149,27 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,prepare[,prepare-frames=FIRST-LAST]][,census]:
+// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,census]:
 // the frame profile and GX counters every N frames (graphics_host.cpp), the
 // per-draw split timers (game_frame.cpp), the render thread's sampled split,
 // serial frames and dropped draw kinds (native_frame_packet.cpp), material
 // geometry screen area (native_material.cpp), the disc image's read speed
-// (disc_image.cpp), the model preparation counters (model_catalog.cpp), and the
-// census of the model draws (native_material.cpp). The removed A/B items of
-// paths now taken in every build are reported as removed.
+// (disc_image.cpp) and the census of the model draws (native_material.cpp).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "disc", "prepare", "prepare-frames", "census"}, DevOptions::Words::None,
-                                    {"unpaced", "queue", "serial-world", "draw-thread", "draw-inline", "serial-prepare"});
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "disc", "census"});
     return options;
 }
 
-// MH3_TRACE=[input][,draw-pages[=N]][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles][,loading][,effect-objects][,bind-camera][,camera-blends]:
+// MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads]:
 // the input as the game read it once per tick of game time (frame_pacer.cpp),
-// the guest RAM pages each frame's draw touches against those the next frame's
-// logic writes (draw_pages.cpp: what a draw running beside the next logic step
-// would conflict with), each monster's work and position once a second, monster
-// N's position, MHchar and models' world translation every logic step, the
-// monsters turning fast (field_camera.cpp), the monsters' hit parts
-// (enemy_hit_shapes.cpp) and the actions they start (monster_control.cpp),
-// and the heap frees and memory fills of a logic step
-// beside the overlapped draw, reported when the draw meets a dead model
-// (native_resource_lifetime.cpp, model_draw_dispatch.cpp), and every third
-// tick of game time the live particles of each emitter resource
-// (effect_step.cpp), each loading-screen frame's progress counters
-// (load_progress.cpp), each effect object update callback and kind the
-// first time it runs and, with effect-states, each object's state changes
-// (field_lists.cpp), each monster hold's camera
-// length and count, how long each camera blend ran and, while the camera
-// turns, its yaw, pitch, eye and target each step (field_camera.cpp), and each
-// second's flips with their frames' game time (graphics_host.cpp, GXM), and
-// each disc read's request and delivery (ios.cpp), the network devices'
-// requests, sockets, lookups and TLS sessions (net, ios_net.cpp) and every
-// guest thread switch (threads, guest_threads.cpp).
-inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects", "effect-states", "bind-camera", "camera-blends", "camera-path", "flips", "disc-reads", "net", "threads"});
+// each monster's work and position once a second (field_camera.cpp), the
+// actions monsters start (monster_control.cpp), every third tick of game
+// time the live particles of each emitter resource (effect_step.cpp), each
+// loading-screen frame's progress counters (load_progress.cpp), each effect
+// object update callback and kind the first time it runs (field_lists.cpp),
+// the network devices' requests, sockets, lookups and TLS sessions
+// (ios_net.cpp) and every guest thread switch (guest_threads.cpp).
+inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads"});
 
 inline const DevOptions& TraceOptions() {
     static const DevOptions options("MH3_TRACE", kTraceItems);
@@ -312,8 +178,6 @@ inline const DevOptions& TraceOptions() {
 
 // A MH3_TRACE item as a switch that the debug port turns on and off while the
 // game runs (`trace ITEM on|off`): a site keeps one and tests it each time.
-// The items that set something up when the run starts (draw-pages, flips)
-// and the numbers (monster-steps) are read from TraceOptions instead.
 class TraceFlag {
 public:
     explicit TraceFlag(std::string_view item) : on_(Switch(item)) {}
@@ -323,9 +187,6 @@ public:
     // The switch of an item, nullptr for an unknown one; each starts as
     // MH3_TRACE has it.
     static std::atomic<bool>* Switch(std::string_view item) {
-        if (item == "draw-pages" || item == "flips" || item == "monster-steps")
-            return nullptr;
-
         static std::atomic<bool> switches[kTraceItems.size()];
         [[maybe_unused]] static const bool loaded = [] {
             for (size_t i = 0; i < kTraceItems.size(); ++i)
@@ -345,11 +206,3 @@ private:
     std::atomic<bool>* on_;
 };
 
-// MH3_VERIFY=prep-image: in-run check of a native path against what it
-// replaces: each compiled model dispatch's draw material against one built
-// from its record's image for it alone (model_render_prep.cpp). The removed
-// checks of settled ports are reported as removed.
-inline const DevOptions& VerifyOptions() {
-    static const DevOptions options("MH3_VERIFY", {"prep-image"}, DevOptions::Words::None, {"pose", "material", "cull", "prep", "draw-table", "replay"});
-    return options;
-}

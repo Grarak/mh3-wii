@@ -56,5 +56,5 @@ const mh3_model_draw_entries* NativeModelDrawEntries(const NativeModelDrawTable&
 // Builds the tables of every certified model that has none (loading screens).
 void PrepareNativeModelDrawTables();
 
-// Development statistics (MH3_PROFILE=prepare, MH3_VERIFY=draw-table).
+// Development statistics: the loading screen line once a loading screen ends.
 void ReportNativeModelDrawTables();

@@ -169,7 +169,7 @@ const mh3_native_texture_binding& Texture(unsigned unit) {
 // ---- Fixed native shading: classified materials, hand-written programs ----
 // One classified structure (a NativeMaterialGpuRef record): immutable once
 // published, shared by the game and render threads. Material uniforms in GPU
-// memory (docs/native-material-gpu.md): its Material block is baked at
+// memory (docs/optimizations/rendering/material-uniform-blocks.md): its Material block is baked at
 // classification and uploaded into persistent GPU memory by the render thread
 // at its first draw; supported is false when a constant has two animated
 // factors (per-draw Shade uniforms, the old path). index 0: no reference
@@ -287,59 +287,6 @@ const ShadeEntry& ShadeMaterial() {
     return *entry;
 }
 
-#ifdef MH3_DEVELOPMENT
-// MH3_TRACE=fog: the scene block's fog values (colour, range, curve, shape),
-// each distinct set when it first appears and how often each was built, every
-// 600 frames (the underwater blue flashes, todo 3.5).
-void TraceSceneFog(uint32_t type, float width) {
-    static const TraceFlag enabled("fog");
-
-    if (!enabled)
-        return;
-
-    struct Seen {
-        float values[16];
-        uint32_t type, builds;
-    };
-
-    static std::vector<Seen> seen;
-    static uint32_t lastFrame = 0;
-    const auto& scene = shade.scene;
-    static_assert(offsetof(mh3_shade_scene, fog_shape) == offsetof(mh3_shade_scene, fog_color) + 48);
-    auto found = std::find_if(seen.begin(), seen.end(), [&](const Seen& s) { return s.type == type && !std::memcmp(s.values, scene.fog_color, sizeof s.values); });
-    const uint32_t frame = aurora::gfx::current_frame();
-
-    if (found == seen.end() && seen.size() < 64) {
-        Seen next{};
-        std::memcpy(next.values, scene.fog_color, sizeof next.values);
-        next.type = type;
-        seen.push_back(next);
-        found = seen.end() - 1;
-        const float* v = next.values;
-        std::fprintf(stderr,
-                     "MH3 fog: new set %u at frame %u: type %u width %.0f color %.3f %.3f %.3f %.3f fog %g %g %g %g curve %g %g %g %g shape %g %g %g %g\n",
-                     unsigned(found - seen.begin()), frame, type, width, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]);
-    }
-
-    if (found != seen.end())
-        ++found->builds;
-
-    if (frame - lastFrame >= 600) {
-        lastFrame = frame;
-        std::string line = "MH3 fog: builds by set since the last line:";
-
-        for (auto& s : seen) {
-            if (s.builds)
-                line += " " + std::to_string(&s - seen.data()) + ":" + std::to_string(s.builds);
-
-            s.builds = 0;
-        }
-
-        std::fprintf(stderr, "%s (frame %u)\n", line.c_str(), frame);
-    }
-}
-#endif
-
 const mh3_shade_scene& ShadeScene(uint64_t& upload) {
     const float width = GetNativeDrawState(NativeOwner::Render).viewport[2];
     const uint32_t revision = nativeStateRevision[unsigned(NativeOwner::Render)][NATIVE_STATE_LIGHTING];
@@ -361,9 +308,6 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
         shade.built = revision;
         shade.width = width;
         ++shade.upload;
-#ifdef MH3_DEVELOPMENT
-        TraceSceneFog(type, width);
-#endif
     }
 
     upload = shade.upload;
@@ -387,7 +331,7 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
 #endif
         auto sources = NativeShaderSource(variant);
 #ifdef MH3_DEVELOPMENT
-        // The GXM bank keys of this variant (docs/vita-shader-bank.md), for
+        // The GXM bank keys of this variant (docs/optimizations/rendering/offline-shader-bank.md), for
         // scripts/vita-shader-bank-audit.py. Hosts have no target-alpha
         // certificate, so a1 names the Vita fragment with it flipped.
         auto flipped = variant;
@@ -570,7 +514,7 @@ constexpr uint32_t ShadePaletteOffset(uint8_t model) {
 constexpr uint32_t ShadeGpuPaletteOffset = MH3_SHADE_FRAGMENT_OFFSET;
 static_assert(sizeof(mh3_shade_vertex) <= MH3_SHADE_FRAGMENT_OFFSET);
 
-// A skinned mesh's palette block (docs/gpu-skinning.md): its rows, 48 bytes
+// A skinned mesh's palette block (docs/optimizations/rendering/gpu-skinning.md): its rows, 48 bytes
 // each. GLES requires the bound range to cover the declared block (255 rows),
 // GXM reads only the rows the vertices index.
 uint32_t SkinPaletteBytes(uint32_t rows) {
@@ -658,7 +602,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
 // (NativeShaderFoldsFog).
 constexpr int32_t kFoldFog = 0x20000;
 
-// ---- Material uniforms in GPU memory (docs/native-material-gpu.md) ----
+// ---- Material uniforms in GPU memory (docs/optimizations/rendering/material-uniform-blocks.md) ----
 // Every draw whose material has a GPU block uses it; the rest take the
 // per-draw Shade uniforms (mh3_shade_fill).
 
@@ -2245,64 +2189,7 @@ void SetNativeMaterialOwnerState(const mh3_native_material_state& state, NativeO
     m.shadeStructureDirty = true;
     Changed(NATIVE_STATE_MATERIAL, owner);
 }
-#ifdef MH3_DEVELOPMENT
-std::string CompareNativeShadeInputs(const mh3_native_material_state& a, const mh3_native_material_state& b, const mh3_raster_state& raster) {
-    std::string diff;
-    const auto note = [&](bool differs, const char* name) {
-        if (differs)
-            diff += std::string(" ") + name;
-    };
 
-    note(mh3_shade_structure_key(&a) != mh3_shade_structure_key(&b) || !mh3_shade_structure_equal(&a, &b), "structure");
-    mh3_shade_material x, y;
-    std::memset(&x, 0, sizeof x);
-    std::memset(&y, 0, sizeof y);
-    const uint8_t qx = mh3_shade_classify(&a, &x), qy = mh3_shade_classify(&b, &y);
-    note(qx != qy || std::memcmp(&x, &y, sizeof x), "classify");
-    mh3_shade_draw fx, fy;
-    std::memset(&fx, 0, sizeof fx);
-    std::memset(&fy, 0, sizeof fy);
-    mh3_shade_fill(&x, &a, &fx);
-    mh3_shade_fill(&x, &b, &fy);
-    note(std::memcmp(&fx, &fy, sizeof fx), "fill");
-    mh3_shade_gpu_animated px, py;
-    std::memset(&px, 0, sizeof px);
-    std::memset(&py, 0, sizeof py);
-    mh3_shade_gpu_palette(&a, &px);
-    mh3_shade_gpu_palette(&b, &py);
-    mh3_shade_gpu_alpha_range(a.pixel.values, px.alpha_range);
-    mh3_shade_gpu_alpha_range(b.pixel.values, py.alpha_range);
-    note(std::memcmp(&px, &py, sizeof px), "palette");
-    note(a.texgen_count != b.texgen_count, "texgen-count");
-    uint32_t known = 0, values = 0;
-
-    for (unsigned i = 0; i < a.texgen_count && i < 8; ++i) {
-        known |= a.texgen[i].known ^ b.texgen[i].known;
-
-        for (unsigned field = 0; field < MH3_TEXGEN_FIELD_COUNT; ++field)
-            if (a.texgen[i].values[field] != b.texgen[i].values[field])
-                values |= 1u << field;
-    }
-
-    if (known || values) {
-        char text[48];
-        std::snprintf(text, sizeof text, "texgen(known %x values %x)", unsigned(known), unsigned(values));
-        note(true, text);
-    }
-
-    const unsigned channel = (x.quality & MH3_SHADE_CHANNEL1) ? 1 : 0;
-    note(a.channel_count != b.channel_count || std::memcmp(&a.channel[channel], &b.channel[channel], sizeof a.channel[channel]), "channel");
-
-    // The clip fields are not read by model draws (only material validation).
-    mh3_raster_state rx = raster, ry = raster;
-    const auto sx = mh3_material_pixel_raster(&a.pixel, &rx), sy = mh3_material_pixel_raster(&b.pixel, &ry);
-    rx.cull_mode = a.cull_mode;
-    ry.cull_mode = b.cull_mode;
-    note(sx != sy || std::memcmp(&rx, &ry, sizeof rx), "raster");
-    return diff;
-}
-
-#endif
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     if (NativeGraphicsFrameShouldRender())
         RecordNativeMaterialGeometry(geometry);

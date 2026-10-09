@@ -63,30 +63,10 @@ void GetNativeRenderViewportSize(float out[2]) {
 void SetNativeRasterObserver(NativeRasterObserver observer) {
     rasterObserver = observer;
 }
-#ifdef MH3_DEVELOPMENT
-namespace {
-// MH3_RENDER_WIDEN=f (development): draw every perspective projection with an
-// f times wider and taller view than the game's camera, which its own
-// visibility tests use. Objects the game leaves out show as gaps in the outer
-// strip of the picture.
-float RenderWiden() {
-    static const float widen = [] {
-        const char* value = std::getenv("MH3_RENDER_WIDEN");
-        const float f = value ? std::strtof(value, nullptr) : 1.f;
-        return std::isfinite(f) && f > 0 ? f : 1.f;
-    }();
-    return widen;
-}
-} // namespace
-#endif
+
 void SetNativeProjection(const float matrix[16], bool perspective) {
     auto& state = D().drawState;
     std::memcpy(state.projection, matrix, sizeof(state.projection));
-#ifdef MH3_DEVELOPMENT
-    if (perspective && RenderWiden() != 1.f)
-        for (unsigned i = 0; i < 8; ++i)
-            state.projection[i] /= RenderWiden();
-#endif
     state.perspective = perspective;
     Changed();
 }

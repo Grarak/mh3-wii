@@ -136,12 +136,3 @@ bool NativeRenderMaterialRedirected(const mh3_native_material_state* draw);
 // Republishes the owner's raster from its material's pixel fields and cull
 // mode (as a skipped pixel or genmode publication would have).
 void PublishNativeMaterialRaster(NativeOwner owner);
-#ifdef MH3_DEVELOPMENT
-#include <string>
-// What a model draw derives from a material state (structure, classification,
-// fill, palette and alpha range, the texgens below the count, the channel the
-// shading lights with, the raster its publication makes from `raster`):
-// empty when a draw from `a` and one from `b` are the same; otherwise the
-// differing parts (texgen with the fields whose known bits and values differ).
-std::string CompareNativeShadeInputs(const mh3_native_material_state& a, const mh3_native_material_state& b, const mh3_raster_state& raster);
-#endif

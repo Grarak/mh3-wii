@@ -96,36 +96,6 @@ aurora::NativeTextureSampler SamplingOf(const mh3_native_texture_binding& bindin
     const auto& sampler = binding.sampler;
     return {sampler.wrap_s, sampler.wrap_t, sampler.min_filter, sampler.mag_filter, sampler.anisotropy, binding.source.min_lod, binding.source.max_lod, sampler.lod_bias};
 }
-#ifdef MH3_DEVELOPMENT
-
-// MH3_VERIFY=prep-image: a memo's rebind against the binding's source and
-// sampling resolved in full; a line every 100000 rebinds.
-void CheckRebind(const mh3_native_texture_binding& binding, const NativeTextureBindMemo& memo) {
-    static const bool enabled = VerifyOptions().Has("prep-image");
-
-    if (!enabled)
-        return;
-
-    static uint64_t checked = 0, differed = 0;
-    const auto a = SourceOf(binding);
-    const auto& b = memo.backend.source;
-    const auto x = SamplingOf(binding);
-    const auto& y = memo.backend.sampling;
-    const bool same = a.bytes.data() == b.bytes.data() && a.bytes.size() == b.bytes.size() && a.palette.data() == b.palette.data() && a.palette.size() == b.palette.size() &&
-                      a.width == b.width && a.height == b.height && a.levels == b.levels && a.format == b.format && a.asset == b.asset && a.palette_format == b.palette_format &&
-                      a.palette_entries == b.palette_entries && a.generation == b.generation && a.palette_generation == b.palette_generation && a.mutable_source == b.mutable_source &&
-                      a.original_image == b.original_image && a.original_palette == b.original_palette && a.identity == b.identity && a.owner == b.owner &&
-                      a.owner_bytes == b.owner_bytes && x.wrap_s == y.wrap_s && x.wrap_t == y.wrap_t && x.min_filter == y.min_filter && x.mag_filter == y.mag_filter &&
-                      x.anisotropy == y.anisotropy && x.min_lod == y.min_lod && x.max_lod == y.max_lod && x.lod_bias == y.lod_bias;
-    ++checked;
-
-    if (!same && differed++ < 10)
-        std::fprintf(stderr, "MH3 texture rebind check: unit %u payload %08x rebinds another source\n", binding.map_id, binding.source.payload_address);
-
-    if (checked % 100000 == 0)
-        std::fprintf(stderr, "MH3 texture rebind check: %llu rebinds, %llu with another source\n", static_cast<unsigned long long>(checked), static_cast<unsigned long long>(differed));
-}
-#endif
 
 // Render thread: bind one recorded texture to its backend unit; through
 // `memo` without resolving the source again while what it read is unchanged.
@@ -137,9 +107,6 @@ void BindBackend(const mh3_native_texture_binding& binding, NativeTextureBindMem
 
     if (memo && memo->revision == revision && (!input.indexed || (binding.tlut_id < palettes.size() && BytesEqual(&memo->palette, &palettes[binding.tlut_id], sizeof memo->palette))) &&
         aurora::rebind_native_texture(binding.map_id, memo->backend)) {
-#ifdef MH3_DEVELOPMENT
-        CheckRebind(binding, *memo);
-#endif
         textures[binding.map_id] = {binding, true};
         return;
     }

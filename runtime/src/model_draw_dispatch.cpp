@@ -19,11 +19,6 @@
 #endif
 
 const mh3_res_memory& MH3NativeResourceMemory();
-#ifdef MH3_DEVELOPMENT
-// native_resource_lifetime.cpp: the logic's frees and fills over [begin, end)
-// beside the overlapped draw (MH3_TRACE=draw-writes).
-void ReportDrawSideWrites(uint32_t begin, uint32_t end);
-#endif
 namespace {
 constexpr uint32_t Phase = 0x807936b8;
 std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
@@ -314,7 +309,7 @@ struct Scene {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
         // A model whose draw virtual is gone was destroyed after the scene
-        // was prepared: what wrote over it (MH3_TRACE=draw-writes).
+        // was prepared.
         if (!Memory::Read32(Memory::Read32(owner) + 0x0c)) {
             std::fprintf(stderr, "MH3 draw of a dead model %08x (task %u):", owner, task);
 
@@ -322,7 +317,6 @@ struct Scene {
                 std::fprintf(stderr, " %08x", Memory::Read32(owner + 4 * i));
 
             std::fprintf(stderr, "\n");
-            ReportDrawSideWrites(owner, owner + 0x148);
         }
 #endif
         MH3_SCENE_PART(s, 0);

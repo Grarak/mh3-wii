@@ -113,21 +113,21 @@ class HeapLock {
     bool locked_;
 };
 
-void RetireWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
+void RetireWrite(uint32_t address, uint32_t bytes) {
     if (!bytes)
         return;
 
     uint32_t canonical;
 
     if (Canonical(address, bytes, &canonical))
-        RetireNativeResourceOwner(canonical, bytes, producer);
+        RetireNativeResourceOwner(canonical, bytes);
     else if (address < 0xe0000000u || uint64_t(address) + bytes > 0xe0004000ull)
         MH3_THROW(std::runtime_error("Native write is outside RAM/locked cache"));
 }
 
-void PrepareWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
+void PrepareWrite(uint32_t address, uint32_t bytes) {
     RecompMod::CheckExecutableWrite(address, bytes, 0);
-    RetireWrite(address, bytes, producer);
+    RetireWrite(address, bytes);
 }
 
 // A heap's memory changing owner (created, destroyed, a block freed or handed
@@ -154,11 +154,11 @@ void CopyBlocks(uint32_t destination, uint32_t source, uint32_t bytes) {
         Checked(mh3_lifetime_forward_copy_kind(canonical_dst, canonical_src, bytes, &kind));
 
         if (kind == MH3_LIFETIME_COPY_SOURCE)
-            RecordNativeResourceCopy(canonical_dst, canonical_src, bytes, NativeSourceEpochProducer::Copy32);
+            RecordNativeResourceCopy(canonical_dst, canonical_src, bytes);
         else if (kind == MH3_LIFETIME_COPY_UNKNOWN)
-            RetireNativeResourceOwner(canonical_dst, bytes, NativeSourceEpochProducer::Copy32Unknown);
+            RetireNativeResourceOwner(canonical_dst, bytes);
     } else
-        RetireWrite(destination, bytes, NativeSourceEpochProducer::Copy32Unknown);
+        RetireWrite(destination, bytes);
 
     Checked(mh3_lifetime_copy32(dst, bytes, src, bytes, bytes));
 }
@@ -168,7 +168,7 @@ void Fill(uint32_t destination, uint8_t value, uint32_t bytes) {
         return;
 
     void* pointer = Memory::GetPointer(destination, bytes);
-    PrepareWrite(destination, bytes, NativeSourceEpochProducer::Fill);
+    PrepareWrite(destination, bytes);
     Checked(mh3_lifetime_fill(pointer, bytes, value, bytes));
 }
 
@@ -184,7 +184,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
     Memory::GetPointer(region.address, region.bytes);
     RamAddress(region.address, region.bytes);
     DropDeferredFrees(region.address, uint64_t(region.address) + region.bytes);
-    PrepareWrite(region.address, region.bytes, NativeSourceEpochProducer::HeapCreate);
+    PrepareWrite(region.address, region.bytes);
     RetireHeapRange(region.address, region.bytes);
     RetireNativeModelPrepMaterials(region.address, region.bytes);
     GuestFrame frame(cpu, 0x40);
@@ -198,7 +198,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
 uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     const auto heap = ReadHeap(address);
     DropDeferredFrees(heap.address, heap.end);
-    PrepareWrite(heap.address, heap.end - heap.address, NativeSourceEpochProducer::HeapDestroy);
+    PrepareWrite(heap.address, heap.end - heap.address);
     RetireHeapRange(heap.address, heap.end - heap.address);
     RetireNativeModelPrepMaterials(heap.address, heap.end - heap.address);
     GuestFrame frame(cpu, 0x40);
@@ -224,7 +224,7 @@ uint32_t TryAllocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t 
 
         // The allocator may absorb a short fragment: retire its actual extent,
         // including the header/alignment padding, rather than the request size.
-        RetireNativeResourceOwner(region.address, region.bytes, NativeSourceEpochProducer::HeapAllocate);
+        RetireNativeResourceOwner(region.address, region.bytes);
         RetireHeapRange(region.address, region.bytes);
     }
 
@@ -237,34 +237,6 @@ uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t ali
     // A block a free left to the draw (DeferFree) may be the room it needs.
     return result || !FlushDeferredFrees(cpu) ? result : TryAllocate(cpu, address, bytes, alignment);
 }
-
-#ifdef MH3_DEVELOPMENT
-// MH3_TRACE=draw-writes: the game thread's heap frees and memory fills while
-// the overlapped draw runs beside it, kept for ReportDrawSideWrites.
-struct DrawSideWrite {
-    char kind = 0; // 'f' free, 's' fill
-    uint32_t begin = 0, bytes = 0, lr = 0, caller = 0;
-    uint64_t packet = 0;
-};
-
-std::mutex drawSideMutex;
-std::array<DrawSideWrite, 4096> drawSideWrites;
-size_t drawSideCount = 0;
-
-void RecordDrawSideWrite(CpuContext* cpu, char kind, uint32_t begin, uint32_t bytes) {
-    static const TraceFlag enabled("draw-writes");
-
-    if (!enabled || PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending())
-        return;
-
-    const uint32_t sp = Memory::Read32(cpu->gpr[1]);
-    const uint32_t caller = sp >= 0x80000000u && sp < 0x94000000u ? Memory::Read32(sp + 4) : 0;
-    std::lock_guard lock(drawSideMutex);
-    drawSideWrites[drawSideCount++ % drawSideWrites.size()] = {kind, begin, bytes, cpu->lr, caller, NativeFramePacketSequence()};
-}
-#else
-void RecordDrawSideWrite(CpuContext*, char, uint32_t, uint32_t) {}
-#endif
 
 // A logic step that runs beside the overlapped draw (game_frame.cpp) must not
 // free what the draw still reads or calls into: a model the next step
@@ -353,7 +325,6 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     // The caller's block: its size is its own; the links are read under the
     // lock below.
     const uint32_t bytes = ReadBlock(canonical_payload - 16).size;
-    RecordDrawSideWrite(cpu, 'f', payload, bytes);
 
     if (DeferFree(address, payload, canonical_payload, bytes))
         return;
@@ -371,7 +342,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     const uint32_t previous = Memory::Read32(payload - 8), next = Memory::Read32(payload - 4);
     Memory::GetPointer(plan.links[0].address, 4);
     Memory::GetPointer(plan.links[1].address, 4);
-    PrepareWrite(plan.retired.address, plan.retired.bytes, NativeSourceEpochProducer::HeapFree);
+    PrepareWrite(plan.retired.address, plan.retired.bytes);
     RetireHeapRange(plan.retired.address, plan.retired.bytes);
     DropDeferredFrees(plan.retired.address, uint64_t(plan.retired.address) + plan.retired.bytes);
     Memory::Write32(plan.links[0].address, next);
@@ -427,25 +398,6 @@ void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes) 
     Fill(destination, value, bytes);
 }
 
-#ifdef MH3_DEVELOPMENT
-// The recorded draw-side frees and fills that cover [begin, end), and the
-// last few of all (MH3_TRACE=draw-writes).
-void ReportDrawSideWrites(uint32_t begin, uint32_t end) {
-    std::lock_guard lock(drawSideMutex);
-    const size_t kept = std::min(drawSideCount, drawSideWrites.size());
-    std::fprintf(stderr, "MH3 draw-side writes: %lu recorded, packet now %llu\n", static_cast<unsigned long>(drawSideCount), static_cast<unsigned long long>(NativeFramePacketSequence()));
-
-    for (size_t i = drawSideCount - kept; i < drawSideCount; ++i) {
-        const auto& w = drawSideWrites[i % drawSideWrites.size()];
-        const bool covers = w.begin < end && begin < w.begin + w.bytes;
-
-        if (covers || i + 8 >= drawSideCount)
-            std::fprintf(stderr, "MH3 draw-side %s: %c %08x+%x from %08x <- %08x packet %llu\n", covers ? "HIT" : "last", w.kind, w.begin, w.bytes, w.lr, w.caller,
-                         static_cast<unsigned long long>(w.packet));
-    }
-}
-#endif
-
 extern "C" void MH3_Copy32Blocks(CpuContext* cpu) {
     CopyBlocks(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
@@ -457,18 +409,15 @@ extern "C" void MH3_Zero32Blocks(CpuContext* cpu) {
     if (bytes && (cpu->gqr[0] & 7))
         MH3_THROW(std::runtime_error("ZeroMemory32ByteBlocks requires GQR0 float store format"));
 
-    RecordDrawSideWrite(cpu, 's', destination, bytes);
     Fill(destination, 0, bytes);
 }
 
 extern "C" void MH3_FillMemory(CpuContext* cpu) {
-    RecordDrawSideWrite(cpu, 's', cpu->gpr[3], cpu->gpr[5]);
     Fill(cpu->gpr[3], uint8_t(cpu->gpr[4]), cpu->gpr[5]);
 }
 
 extern "C" void MH3_Memset(CpuContext* cpu) {
     const uint32_t destination = cpu->gpr[3];
-    RecordDrawSideWrite(cpu, 's', destination, cpu->gpr[5]);
     Fill(destination, uint8_t(cpu->gpr[4]), cpu->gpr[5]);
     cpu->gpr[3] = destination;
 }
