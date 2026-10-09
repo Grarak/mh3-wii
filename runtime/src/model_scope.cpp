@@ -15,6 +15,9 @@
 #include "runtime/native/mh3_model_material_prep.h"
 #include "runtime/native/mh3_model_prepare_cache.h"
 #include "frame_split.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include "native_frame_packet.h"
 #include "native_shade_snapshot.h"
 #include "model_render_prep.h"
@@ -507,24 +510,16 @@ struct NativeModelDrawTable {
 };
 
 namespace {
-// MH3_DRAW_TABLE: 1 (default) resolves draw items through their model's draw
-// table, 0 resolves every item by address; 2 (development) does both and
-// compares them for every indexed item.
-uint8_t DrawTableMode() {
-    static const uint8_t mode = [] {
-        const char* value = std::getenv("MH3_DRAW_TABLE");
-
-        if (!value || !*value)
-            return uint8_t(1);
-
-        const uint8_t requested = uint8_t(std::strtoul(value, nullptr, 10));
+// Draw items resolve through their model's draw table (by address when it has
+// none); MH3_VERIFY=draw-table (development) resolves indexed items both ways
+// and compares them.
+bool CompareDrawTables() {
 #ifdef MH3_DEVELOPMENT
-        return requested > 2 ? uint8_t(1) : requested;
+    static const bool compare = VerifyOptions().Has("draw-table");
+    return compare;
 #else
-        return requested ? uint8_t(1) : uint8_t(0);
+    return false;
 #endif
-    }();
-    return mode;
 }
 
 struct TableStats {
@@ -538,17 +533,6 @@ struct TableStats {
 
 // Models whose table could not be built, with the structure revision then.
 FastMap<uint32_t, uint64_t> tableFailures;
-bool TableTrace() {
-#ifdef MH3_DEVELOPMENT
-    static const bool enabled = [] {
-        const char* value = std::getenv("MH3_DRAW_TABLE_TRACE");
-        return value && *value && std::strcmp(value, "0");
-    }();
-    return enabled;
-#else
-    return false;
-#endif
-}
 
 // ---- Draw table cache ----
 // The address-independent part of the draw tables, in one file next to the
@@ -1050,9 +1034,6 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
 
             table->materials[id] = {};
             ++tableStats.missing_materials;
-
-            if (TableTrace())
-                std::fprintf(stderr, "MH3 draw table: model %08x material %u has no record: %s\n", model, id, read.message().c_str());
         }
 
         table->shapes.resize(shapes);
@@ -1084,9 +1065,6 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
 
             table->shapes[id] = {};
             ++tableStats.missing_shapes;
-
-            if (TableTrace())
-                std::fprintf(stderr, "MH3 draw table: model %08x shape %u has no record: %s\n", model, id, read.message().c_str());
         }
 
         if (cache && index < cache->records.size()) {
@@ -1102,11 +1080,6 @@ Status BuildDrawTable(uint32_t model, std::shared_ptr<NativeModelDrawTable>& res
     tableStats.materials += table->materials.size();
     tableStats.shapes += table->shapes.size();
     (cached ? tableStats.cached_ms : tableStats.build_ms) += ms;
-
-    if (TableTrace())
-        std::fprintf(stderr, "MH3 draw table: model %08x (file %llx model %u) %zu materials %zu shapes %s in %.3f ms, frame %u\n", model,
-                     static_cast<unsigned long long>(catalog.partition_offset), index, table->materials.size(), table->shapes.size(), cached ? "cached" : "built", ms,
-                     Memory::Read32(0x80796d28));
     result = std::move(table);
     return {};
 }
@@ -1132,7 +1105,7 @@ bool SameOwnerRecord(const NativeModelOwner& a, const NativeModelOwner& b) {
 NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<NativeModelDrawTable>& hold) {
     hold.reset();
 
-    if (!DrawTableMode() || !model)
+    if (!model)
         return nullptr;
 
     hold = FindNativeModelDrawTable(model);
@@ -1147,9 +1120,6 @@ NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<Na
         if (const Status built = BuildDrawTable(model, hold); !built.ok()) {
             // The address path resolves (and reports) whatever this model draws.
             ++tableStats.failed;
-
-            if (TableTrace())
-                std::fprintf(stderr, "MH3 draw table: model %08x has no table: %s\n", model, built.message().c_str());
 
             if (tableFailures.size() >= 4096)
                 tableFailures.clear();
@@ -1196,7 +1166,7 @@ const mh3_model_draw_entries* NativeModelDrawEntries(const NativeModelDrawTable&
 }
 
 bool NativeModelDrawTableCompare() {
-    return DrawTableMode() == 2;
+    return CompareDrawTables();
 }
 
 void ReportNativeModelDrawTableMismatch(const char* what) {
@@ -1207,13 +1177,6 @@ void ReportNativeModelDrawTableMismatch(const char* what) {
 }
 
 void PrepareNativeModelDrawTables() {
-    if (!DrawTableMode())
-        return;
-    // MH3_DRAW_TABLE_DISCOVER=0: only models already certified (drawn).
-    static const bool discover = [] {
-        const char* value = std::getenv("MH3_DRAW_TABLE_DISCOVER");
-        return !value || std::strcmp(value, "0");
-    }();
     const auto start = std::chrono::steady_clock::now();
 
     if (loading.open && start - loading.last > std::chrono::seconds(1))
@@ -1227,7 +1190,7 @@ void PrepareNativeModelDrawTables() {
         loading.longest_ms = std::max(loading.longest_ms, std::chrono::duration<double, std::milli>(start - loading.last).count());
 
     const uint64_t cachedBefore = tableStats.cached;
-    const size_t certified = discover ? CertifyLoadedNativeModels() : 0;
+    const size_t certified = CertifyLoadedNativeModels();
     std::vector<NativeModelOwner> owners;
     ListNativeModelOwnersWithoutDrawTable(owners);
     size_t built = 0;
@@ -1239,9 +1202,6 @@ void PrepareNativeModelDrawTables() {
 
         if (const Status status = BuildDrawTable(owner.model_address, table); !status.ok()) {
             ++tableStats.failed;
-
-            if (TableTrace())
-                std::fprintf(stderr, "MH3 draw table: model %08x has no table: %s\n", owner.model_address, status.message().c_str());
 
             continue;
         }
@@ -1265,17 +1225,13 @@ void PrepareNativeModelDrawTables() {
     loading.tables += built;
     loading.cached += tableStats.cached - cachedBefore;
     loading.prepare_ms += ms;
-
-    if (TableTrace() && (certified || built))
-        std::fprintf(stderr, "MH3 draw table: loading screen certified %zu models, made %zu tables (%zu owners) in %.3f ms, frame %u\n", certified, built, CountNativeModelOwners(), ms,
-                     Memory::Read32(0x80796d28));
 }
 
 void ReportNativeModelDrawTables() {
     if (loading.open && std::chrono::steady_clock::now() - loading.last > std::chrono::seconds(1))
         ReportLoadingScreen();
 
-    if (!TableTrace() && !ActiveNativeModelPreparationDiagnostics())
+    if (!CompareDrawTables() && !ActiveNativeModelPreparationDiagnostics())
         return;
 
     const auto& s = tableStats;
@@ -2153,9 +2109,6 @@ void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
 #endif
 void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
     switch (NativeModelPrepMode()) {
-    case ModelPrepMode::GameThread:
-        DispatchGameThread(d, r);
-        break;
     case ModelPrepMode::Deferred:
         DispatchDeferred(d, r);
         break;
@@ -2236,7 +2189,7 @@ bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t mate
     r.shape = {d.shape, sources.address, sources.owner, &sources};
     ++tableStats.indexed;
 #ifdef MH3_DEVELOPMENT
-    if (DrawTableMode() == 2)
+    if (CompareDrawTables())
         CompareIndexed(d, r);
 #endif
     Dispatch(d, &r);

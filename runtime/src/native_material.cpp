@@ -510,23 +510,8 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
 }
 
 // ---- Material uniforms in GPU memory (docs/native-material-gpu.md) ----
-// MH3_MATERIAL_GPU=0 keeps the per-draw Shade uniforms (mh3_shade_fill).
-// MH3_MATERIAL_GPU: unset or 1 for every draw, 0 for none, "models" for
-// model meshes only (pre-transformed geometry takes the per-draw Shade path).
-const char* MaterialGpuValue() {
-    static const char* value = std::getenv("MH3_MATERIAL_GPU");
-    return value ? value : "1";
-}
-
-bool MaterialGpu() {
-    static const bool enabled = MaterialGpuValue()[0] != '0';
-    return enabled;
-}
-
-bool MaterialGpuGeometry() {
-    static const bool enabled = MaterialGpu() && std::strcmp(MaterialGpuValue(), "models") != 0;
-    return enabled;
-}
+// Every draw whose material has a GPU block uses it; the rest take the
+// per-draw Shade uniforms (mh3_shade_fill).
 
 // Frame uniform memory for Animated blocks and resolved Material copies,
 // carved in 16-byte units from 4 KiB frame allocations (GXM's uniform
@@ -861,20 +846,7 @@ struct ExternalDraw {
     uint32_t material = 0, animated = UINT32_MAX;
     uint8_t srtRoles = 0;
 } externalDraw;
-#ifdef MH3_DEVELOPMENT
-// MH3_MATERIAL_GPU_RING=1: the render thread routes its model draws'
-// Animated sections through the producer ring (a self-test of the game
-// thread's write path: one packet per rendered frame).
-bool MaterialGpuRingSelfTest() {
-    static const bool enabled = std::getenv("MH3_MATERIAL_GPU_RING") != nullptr;
-    return enabled;
-}
 
-struct RingSelfTest {
-    uint32_t frame = UINT32_MAX;
-    uint64_t sequence = 0;
-} ringSelfTest;
-#endif
 std::optional<aurora::gl::ShadedBlocks> ShadeGpuBlocks(const AuroraNativeUniforms& draw, bool palette, const aurora::gl::UniformBlock& material, const aurora::gl::UniformBlock& animatedBlock) {
     aurora::gl::ShadedBlocks blocks;
 
@@ -898,11 +870,11 @@ std::optional<aurora::gl::ShadedBlocks> ShadeGpuBlocks(const AuroraNativeUniform
     return blocks;
 }
 #ifdef MH3_DEVELOPMENT
-// MH3_MATERIAL_GPU_VERIFY=1: compare the coefficients the programs derive
-// from the Material and Animated blocks with mh3_shade_fill, and the SRT rows
-// with the post matrices, for every material-GPU draw.
+// MH3_VERIFY=material: compare the coefficients the programs derive from the
+// Material and Animated blocks with mh3_shade_fill, and the SRT rows with the
+// post matrices, for every material-GPU draw.
 bool MaterialGpuVerify() {
-    static const bool enabled = std::getenv("MH3_MATERIAL_GPU_VERIFY") != nullptr;
+    static const bool enabled = VerifyOptions().Has("material");
     return enabled;
 }
 
@@ -1200,7 +1172,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     const auto& entry = externalEntry ? *externalEntry : ShadeMaterial();
     const auto& shading = entry.shading;
     RequireEarlyDepth(shading);
-    const auto* baked = MaterialGpu() || external.set ? RecordBlock(entry) : nullptr;
+    const auto* baked = RecordBlock(entry);
 
     if (external.set && !baked)
         MH3_THROW(std::runtime_error("Material GPU draw references a material without a GPU block"));
@@ -1361,27 +1333,6 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 #ifdef MH3_DEVELOPMENT
         if (MaterialGpuVerify())
             VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? resolved.values : entry.material, animated.values, &draw);
-
-        if (MaterialGpuRingSelfTest()) {
-            // One producer packet per rendered frame; ended at the next frame.
-            auto& t = ringSelfTest;
-
-            if (t.frame != aurora::gfx::current_frame()) {
-                if (t.frame != UINT32_MAX)
-                    EndNativeMaterialGpuPacket(t.sequence);
-
-                EnsureMaterialGpuRing();
-                BeginNativeMaterialGpuPacket(++t.sequence);
-                t.frame = aurora::gfx::current_frame();
-            }
-
-            NativeMaterialGpuAnimatedRef ref;
-
-            if (auto* section = WriteNativeMaterialGpuAnimated(&ref)) {
-                std::memcpy(section, &animated.values, sizeof animated.values);
-                animatedBlock = RingBlock(ref.value);
-            }
-        }
 #endif
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
@@ -1412,7 +1363,7 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     const auto& entry = ShadeMaterial();
     const auto& shading = entry.shading;
     RequireEarlyDepth(shading);
-    const auto* baked = MaterialGpuGeometry() ? RecordBlock(entry) : nullptr;
+    const auto* baked = RecordBlock(entry);
     const bool gpu = baked != nullptr;
     AuroraNativeUniforms memory{};
     mh3_shade_draw* block = nullptr;

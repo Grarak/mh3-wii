@@ -289,10 +289,6 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     // Frameskip polls GPU completion before native draw preparation.
     aurora_set_frameskip(true);
 #ifdef MH3_DEVELOPMENT
-    const char* frameskip = std::getenv("MH3_FRAMESKIP");
-
-    if (frameskip && frameskip[0] == '0')
-        aurora_set_frameskip(false);
     // MH3_CAPTURE=PATH[,interval=N[,start=N]|,frame=N]: frame dumps (BMP).
     // With interval, every Nth frame (from frame `start`) as PATH-<frame>.bmp;
     // otherwise frame `frame` (default 30) as PATH.

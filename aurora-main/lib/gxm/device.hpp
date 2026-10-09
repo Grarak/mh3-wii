@@ -87,7 +87,6 @@ private:
   // Slot 0 is owned by this application context for ordered scene retirement.
   volatile unsigned* m_notification = nullptr;
   uint32_t m_sceneSerial = 0;
-  uint32_t m_sceneFlags = 0;
   aurora::GpuFrameRing m_frames;
   SceGxmContext* m_context = nullptr;
   SceGxmShaderPatcher* m_patcher = nullptr;

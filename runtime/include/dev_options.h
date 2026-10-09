@@ -162,6 +162,10 @@ inline void ReportRetiredVariables() {
         {"MH3_PROFILE_FRAMES", "MH3_PROFILE"},
         {"MH3_MODEL_SPLIT", "MH3_PROFILE"},
         {"MH3_RENDER_SYNC", "MH3_PROFILE"},
+        {"MH3_MATERIAL_GPU_VERIFY", "MH3_VERIFY"},
+        {"MH3_MODEL_CULL_GAME", "MH3_VERIFY"},
+        {"MH3_RENDER_PREP", "MH3_VERIFY"},
+        {"MH3_DRAW_TABLE", "MH3_VERIFY"},
         {"MH3_ANIM_WHOLE_FRAMES", nullptr},
         {"MH3_EFFECT_TICK_CURVES", nullptr},
         {"MH3_STEP_COUNTER_RAW", nullptr},
@@ -184,6 +188,14 @@ inline void ReportRetiredVariables() {
         {"MH3_STEP_LOG_WORDS", nullptr},
         {"MH3_SLOW_PATH_TRACE", nullptr},
         {"MH3_AUDIO_TRACE", nullptr},
+        {"MH3_FRAMESKIP", nullptr},
+        {"MH3_MATERIAL_GPU", nullptr},
+        {"MH3_MATERIAL_GPU_RING", nullptr},
+        {"MH3_MODEL_CULL", nullptr},
+        {"MH3_DRAW_TABLE_DISCOVER", nullptr},
+        {"MH3_DRAW_TABLE_TRACE", nullptr},
+        {"MH3_GXM_ALPHA_ONE", nullptr},
+        {"MH3_GXM_SERIAL_SCENES", nullptr},
     };
 
     for (const auto& retired : kRetired) {
@@ -218,10 +230,15 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_VERIFY=[pose]: in-run checks that state reused instead of copied equals
-// a fresh copy: `pose` compares every reused pose version with the live view
-// arrays (model_pose.cpp).
+// MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table]: in-run checks of
+// a native path against what it replaces: `pose` compares every reused pose
+// version with the live view arrays (model_pose.cpp), `material` the material
+// programs' coefficients with mh3_shade_fill (native_material.cpp), `cull`
+// draws every model and checks each the scene cull would reject
+// (scene_cull.cpp), `prep` prepares models on the game thread and checks the
+// render thread's preparation against it, and `draw-table` resolves indexed
+// draw items by address too and compares them (model_scope.cpp).
 inline const DevOptions& VerifyOptions() {
-    static const DevOptions options("MH3_VERIFY", {"pose"});
+    static const DevOptions options("MH3_VERIFY", {"pose", "material", "cull", "prep", "draw-table"});
     return options;
 }

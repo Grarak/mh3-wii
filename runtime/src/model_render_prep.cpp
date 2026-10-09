@@ -2,6 +2,9 @@
 // original 80076220 step order and the 800879DC/80087B34 shape setup exactly,
 // against a host mirror of the G3DState caches and the given owner's state.
 #include "model_render_prep.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include "fatal.h"
 #include <aurora/fast_map.h>
 #include "memory.h"
@@ -406,18 +409,12 @@ void ReleaseNativeMaterialGroupVersion(const NativeMaterialGroupVersion* version
 }
 
 ModelPrepMode NativeModelPrepMode() {
-    static const ModelPrepMode mode = [] {
-        const char* value = std::getenv("MH3_RENDER_PREP");
-
-        if (value && value[0] == '0')
-            return ModelPrepMode::GameThread;
 #ifdef MH3_DEVELOPMENT
-        if (value && value[0] == '2')
-            return ModelPrepMode::Verify;
-#endif
-        return ModelPrepMode::Deferred;
-    }();
+    static const ModelPrepMode mode = VerifyOptions().Has("prep") ? ModelPrepMode::Verify : ModelPrepMode::Deferred;
     return mode;
+#else
+    return ModelPrepMode::Deferred;
+#endif
 }
 
 mh3_res_mut_span ModelPrepMirror::At(uint32_t address, size_t size) {

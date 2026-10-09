@@ -22,11 +22,10 @@
 #include <memory>
 #include <vector>
 
-// MH3_RENDER_PREP: 0 prepares on the game thread (the original path),
-// 1 (default) defers preparation to the render thread, 2 (development) runs
-// the original path and checks a Shadow execution of the captured inputs
-// against it for every dispatch.
-enum class ModelPrepMode : uint8_t { GameThread, Deferred, Verify };
+// Model preparation runs on the render thread (Deferred); MH3_VERIFY=prep
+// (development) prepares on the game thread (the original path) and checks a
+// Shadow execution of the captured inputs against it for every dispatch.
+enum class ModelPrepMode : uint8_t { Deferred, Verify };
 ModelPrepMode NativeModelPrepMode();
 
 // A material's static dispatch inputs, immutable once captured and shared

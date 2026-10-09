@@ -8,14 +8,6 @@
 #include <cstring>
 
 namespace {
-bool Enabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("MH3_MODEL_CULL");
-        return !value || value[0] != '0';
-    }();
-    return enabled;
-}
-
 // Widens the drawable rectangle by 1% of its NDC extent: covers rounding and
 // the GXM rasterizer's sub-pixel offset.
 constexpr float Margin = 0.02f;
@@ -36,7 +28,7 @@ struct {
 } // namespace
 
 bool CullNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
-    if (!Enabled() || !mesh.palette || !mesh.projection)
+    if (!mesh.palette || !mesh.projection)
         return false;
 
     draws.fetch_add(1, std::memory_order_relaxed);

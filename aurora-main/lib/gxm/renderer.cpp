@@ -292,9 +292,7 @@ public:
 
   SceGxmOutputRegisterFormat output_format() { return state.color ? texture(state.color).output_format() : SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4; }
   bool shaded_alpha_one() {
-    static const char* option = std::getenv("MH3_GXM_ALPHA_ONE");
-
-    if (!state.color || (option && option[0] == '0'))
+    if (!state.color)
       return false;
 
     const auto& target = entry(state.color);

@@ -14,7 +14,6 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_NATIVE_ASSET_DIR` | a whole-disc converted texture/model set (`native-textures.bin`, `native-texture-map.bin`, `native-models/`) to use instead of the load-time cache | all |
 | `MH3_WIDESCREEN` | `0`: the console's 4:3 setting; default 16:9 ([widescreen](vita-widescreen.md)) | all |
 | `MH3_STATS` | `0` turns off the once-per-second statistics lines (default on; [profiling](profiling.md#statistics-lines)); set to anything, it also prints the material-GPU counters | development |
-| `MH3_FRAMESKIP` | `0` turns off frameskip | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution | development |
 | `MH3_AUDIO_NULL` | `1`: no playback device; the mix is consumed at 32 kHz | development |
@@ -96,13 +95,17 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
 | `serial-world` | the scene's world matrix pass runs on the game thread alone instead of split with the guest worker ([guest worker](guest-worker.md); for A/B runs) |
 
-### `MH3_VERIFY`: reused state against a fresh copy
+### `MH3_VERIFY`: native paths against what they replace
 
-`MH3_VERIFY=pose` ([game-thread copies](game-thread-copies.md))
+`MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table]`
 
 | Item | Effect |
 | --- | --- |
-| `pose` | every model draw that reuses a pose version compares it with the live view arrays; the render thread checks that each item's version was not reused before it rendered. The `MH3 pose versions` stats line counts the checks and the mismatches |
+| `pose` | every model draw that reuses a pose version compares it with the live view arrays; the render thread checks that each item's version was not reused before it rendered. The `MH3 pose versions` stats line counts the checks and the mismatches ([game-thread copies](game-thread-copies.md)) |
+| `material` | every material-GPU draw compares the coefficients its program derives from the Material and Animated blocks with `mh3_shade_fill`, and the SRT rows with the post matrices |
+| `cull` | the game-side scene cull draws every model and checks each it would have rejected (`MH3 scene cull` line) |
+| `prep` | models are prepared on the game thread (the original path) and the render thread's preparation of the captured inputs is checked against it for every dispatch |
+| `draw-table` | indexed draw items resolve by address too, compared with their draw table (`MH3 draw tables` line) |
 
 ## Build-option tools
 
@@ -165,23 +168,12 @@ A second cleanup pass merges or removes these; the last column says how.
 | `MH3_RAM_DUMP` | `FIRST,COUNT`: MEM1+MEM2 to `mh3-ram-<frame>.bin` after COUNT frames from FIRST | development | into `MH3_CAPTURE` |
 | `MH3_TRACE_PLAYER` | player 0's position and motion by game time | development | remove |
 | `MH3_TRACE_INPUT` | once per tick of game time: the sticks and game keys as the game read them, the field camera's yaw and pitch, player 0's position and facing, steps and key repeats since the last line ([variable step](variable-step.md#7-input-from-the-host-to-the-game)) | development | with `MH3_TRACE_PLAYER` into one trace tool |
-| `MH3_RENDER_PREP` | model preparation: `0` game thread, `1` (default) render thread, `2` both, checked | all (`2`: development) | `2` into `MH3_VERIFY` |
-| `MH3_DRAW_TABLE` | draw items: `1` (default) through the model's draw table, `0` by address, `2` both, compared | all (`2`: development) | `2` into `MH3_VERIFY` |
 | `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file | all | keep or remove after its A/B |
-| `MH3_DRAW_TABLE_DISCOVER` | `0`: draw tables only for models already drawn | all | remove |
-| `MH3_DRAW_TABLE_TRACE` | draw-table statistics | development | remove |
-| `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory; `models`: material blocks for model meshes only | all | remove (on in the devkit A/B) |
-| `MH3_MATERIAL_GPU_RING` | route the render thread's Animated sections through the producer ring (self-test) | development | remove |
-| `MH3_MATERIAL_GPU_VERIFY` | compare the material programs' coefficients with `mh3_shade_fill` | development | into `MH3_VERIFY` |
-| `MH3_MODEL_CULL` | `0`: draw models whose mesh box is off screen | all | remove (on in the devkit A/B) |
-| `MH3_MODEL_CULL_GAME` | `0`: no game-side culling of off-screen scene models; `2` (development): draw everything and check every rejected model | all | `2` into `MH3_VERIFY`, remove `0` |
 | `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (edge check) | development | keep for culling checks |
 | `MH3_DRAW_CENSUS` | `N`: the model draw pass's owners every N frames | development | remove |
 | `MH3_PREPARE_DIAGNOSTICS` | model preparation diagnostics for a frame range | development | remove |
 | `MH3_NATIVE_ASSET_TRACE` | model catalog registration log (`model_catalog.cpp`) | development | remove |
 | `MH3_TRACE_ERRORS` | WPAD data-format log (`wpad_services.cpp`) | all | remove |
-| `MH3_GXM_ALPHA_ONE` | `0`: no alpha-one shortcut for shaded draws | Vita | remove |
-| `MH3_GXM_SERIAL_SCENES` | `1`: serialize GXM scenes | Vita | remove |
 | `MH3_GXM_SHADE_PROBE` | replace a shaded program's output stage (`blue`, ...) | Vita | remove |
 | `MH3_GXM_SHADE_DATA_DUMP` | dump shaded programs' uniform blocks | Vita | remove |
 | `MH3_GXM_SHADER_ABI_TRACE` | log each GXM program's reflection once | Vita | remove |
@@ -219,6 +211,7 @@ A second cleanup pass merges or removes these; the last column says how.
 | `MH3_WRITE_WATCH_LIST=FILE`, `MH3_WRITE_WATCH_MS=N` | `MH3_WRITE_WATCH=list=FILE,ms=N` |
 | `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |
 | `MH3_PROFILE_FRAMES=N`, `MH3_MODEL_SPLIT=1`, `MH3_RENDER_SYNC=1` | `MH3_PROFILE=frames=N,split,sync` |
+| `MH3_MATERIAL_GPU_VERIFY=1`, `MH3_MODEL_CULL_GAME=2`, `MH3_RENDER_PREP=2`, `MH3_DRAW_TABLE=2` | `MH3_VERIFY=material,cull,prep,draw-table` |
 
 Removed with the code behind them (git history keeps them):
 
@@ -238,5 +231,11 @@ Removed with the code behind them (git history keeps them):
   `MH3_STEP_LOG_WORDS`.
 - System traces: `MH3_SLOW_PATH_TRACE`, `MH3_AUDIO_TRACE`, and
   `MH3_TRACE_ERRORS` in the IOS, memory and locked-cache code.
+- Settings that are now always on, with their alternative paths:
+  `MH3_FRAMESKIP=0`, `MH3_MATERIAL_GPU=0`/`models` (the per-draw Shade
+  uniforms remain for materials without a GPU block), `MH3_MATERIAL_GPU_RING`,
+  `MH3_MODEL_CULL=0`, `MH3_MODEL_CULL_GAME=0`, `MH3_RENDER_PREP=0`,
+  `MH3_DRAW_TABLE=0`, `MH3_DRAW_TABLE_DISCOVER=0`, `MH3_DRAW_TABLE_TRACE`,
+  `MH3_GXM_ALPHA_ONE=0`, `MH3_GXM_SERIAL_SCENES=1`.
 - Earlier: `MH3_MODEL_INSTANCES` (the model-instance path), `MH3_AX_MIX_WORKER`
   and the other AX switches (AX is gone), `MH3_GX_WORKER`, `AURORA_GL_VSYNC`.

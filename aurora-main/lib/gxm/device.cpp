@@ -168,13 +168,8 @@ const SceGxmProgram* fragment_scalar_binary(uint64_t hash) {
 }
 
 Device::Device() {
-  // Our vertices read CPU-owned streams/uniforms, never a fragment result.
-  // Keep the previous serialization as a diagnostic comparison option.
-  const char* serialScenes = std::getenv("MH3_GXM_SERIAL_SCENES");
-
-  if (serialScenes && serialScenes[0] == '1')
-    m_sceneFlags = SCE_GXM_SCENE_VERTEX_WAIT_FOR_DEPENDENCY | SCE_GXM_SCENE_FRAGMENT_SET_DEPENDENCY;
-
+  // Our vertices read CPU-owned streams/uniforms, never a fragment result, so
+  // scenes need no vertex/fragment serialization.
   SceGxmInitializeParams init{};
 
   // Stock sceGxmInitialize accepts only the affinity flags on firmware 3.65.
@@ -377,7 +372,7 @@ void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* co
 
   // Firmware retains fragment ordering, including render-to-fragment-texture.
   // No fragment-to-vertex resource edge requires an explicit dependency.
-  check(sceGxmBeginScene(m_context, m_sceneFlags, found->second, nullptr, nullptr, sync, color, depth), "begin scene");
+  check(sceGxmBeginScene(m_context, 0, found->second, nullptr, nullptr, sync, color, depth), "begin scene");
   m_inScene = true;
 }
 

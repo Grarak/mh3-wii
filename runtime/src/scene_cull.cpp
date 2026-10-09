@@ -1,5 +1,8 @@
 // Game-side visibility of scene-queue models (scene_cull.h).
 #include "scene_cull.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
@@ -19,20 +22,16 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
-enum class Mode : uint8_t { Off, Cull, Check };
+// MH3_VERIFY=cull (development): draw every model and check each the cull
+// would reject.
+enum class Mode : uint8_t { Cull, Check };
 Mode ReadMode() {
-    static const Mode mode = [] {
-        const char* value = std::getenv("MH3_MODEL_CULL_GAME");
-
-        if (value && value[0] == '0')
-            return Mode::Off;
 #ifdef MH3_DEVELOPMENT
-        if (value && value[0] == '2')
-            return Mode::Check;
-#endif
-        return Mode::Cull;
-    }();
+    static const Mode mode = VerifyOptions().Has("cull") ? Mode::Check : Mode::Cull;
     return mode;
+#else
+    return Mode::Cull;
+#endif
 }
 
 // The render path's margin (model_cull.cpp): 1% of the rectangle's NDC extent
@@ -275,7 +274,7 @@ bool CheckCulled(const Record& r, uint32_t object, uint32_t model, const mh3_cul
 bool SkipNativeSceneModel(uint32_t object) {
     const Mode mode = ReadMode();
 
-    if (mode == Mode::Off || !object)
+    if (!object)
         return false;
 
     ++stats.models;
