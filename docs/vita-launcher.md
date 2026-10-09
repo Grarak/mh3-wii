@@ -20,78 +20,73 @@ Put exactly one European `RMHP08` disc image in `ux0:/data/mh3-wii/`:
 * RVZ, including Zstandard, Bzip2, LZMA or LZMA2 compression;
 * WIA within the same decoder's format support and memory limits.
 
-The input stays read-only. Processing runs automatically when a complete
-prepared disc is absent. A core 0 worker decodes the partition with a bounded
-sector buffer while the core 2 UI draws the current stage and percentage.
+The input stays read-only and stays where it is: the game reads its partition
+in place for the whole session (`RomImage`, `runtime/src/rom_image.cpp`).
 The native file callback uses positioned **64-bit** reads; Rust/newlib's
-32-bit file offsets are not used for the source image.
+32-bit file offsets are not used for the source image. Reads are serialized,
+so any thread may read.
 
 The `nod` 1.4.4 library handles compression and Wii AES/title-key decoding.
 Hash reconstruction and hash validation are disabled; those paths would
 create a Rayon pool. For nodtool-decrypted ISOs, the outer header's
 `no_partition_encryption` byte selects the native sector reader instead,
-because nod 1.4.4 assumes plain ISO sectors are encrypted.
+because nod 1.4.4 assumes plain ISO sectors are encrypted. RVZ/WIA chunks
+above 2 MiB are rejected before decoding.
 
-The output is `ux0:/data/mh3-wii/disc/`. A `.processing` sibling holds work in
-progress. The processor preserves all partition bytes, including padding,
-extracts boot/FST/DOL/IOS metadata, inventories BRRES resources, and converts
-all static texture assets. It retains authored mipmaps, resolves palettes,
-and uses the host packer's verified CMPR-to-BC1/BC3 and SGX Morton layout.
-No game artwork, fonts, ROM bytes, or extracted resources are embedded in the
-program or committed to the repository.
+At first start the launcher writes `ux0:/data/mh3-wii/disc/` (about 7 MB):
+the boot/FST/DOL/IOS metadata and `rom.txt`, which names the image and its
+size. Every start checks the metadata against the image; a moved or changed
+image is processed again (the converted-asset cache is kept). A `.processing`
+sibling holds work in progress, and the directory is published only after
+`DiscImage` validation. A development install of a prepared disc directly in
+`ux0:/data/mh3-wii/` (with `partition.bin`) is still used as is. No game
+artwork, fonts, ROM bytes, or extracted resources are embedded in the program
+or committed to the repository.
 
-Texture discovery follows bounded BRRES dictionaries and the declared LE
-directories in the two common and ten map effect archives. The 8,394 standalone
-IDs stay fixed, the common effects retain IDs 8,395–8,467, and map effects append
-IDs 8,468–8,562. Palettes resolve within the same embedded BRRES. Source size is
-checked before allocation; rereads verify the exact member and texture metadata
-before conversion. Payload bytes are not searched for resource magic or hashed.
+### Load-time texture and model conversion
 
-The final directory is published only after `DiscImage` validation and native
-pack/table extent validation succeed. Both existing M3VT v1 and v2 packs are
-accepted after layout validation and exact effect texture tag/ID checks.
-Older packs that omit effect resources are incomplete. A truncated partition, pack or table is
-not ready. Interrupted staging is regenerated on the next attempt; an
-incomplete previously published output is preserved as an `.incomplete`
-sibling. Existing prepared data directly under `ux0:/data/mh3-wii/` remains
-supported. Missing/broken native packs there can be regenerated from their
-original partition; old generated packs are preserved as `.previous` files.
+Textures and models are converted while the game loads them
+(`AssetCache`, `runtime/src/asset_cache.cpp`). The first game read of a
+texture/model source file (every standalone BRRES, the two common and ten map
+effect archives) reads the whole file, parses its textures and models, and
+assigns their IDs: the next free texture and model IDs, recorded for good in
+`disc/cache/index.log` with each texture's tag offset. The read returns at once
+with the native texture tags patched in; the file's textures and models are
+queued for three conversion workers whose affinity covers all user cores.
+While a file awaits conversion its bytes stay in memory and the game's further
+reads of it are served from there; past 48 MiB of pending files the game
+thread waits for the workers.
 
-For this disc the converted partition is 4,286,328,832 bytes and the launcher's
-full native texture payload is 806,738,128 bytes (807,109,568 bytes with its
-records and alignment). Leave room for both outputs in addition
-to the original ROM. Recovery copies from interrupted older preparations may
-require additional space.
+Results go to `disc/cache/textures/` (one M3VT v2 pack per file; header word 4
+holds the ID before its first record) and `disc/cache/models/` (M3MP/M3ID pair,
+or `.skip` when the file's models cannot be converted). Files are named by the
+source file's partition offset and first ID and written under a temporary name
+first, so a file under its final name is complete. A texture or model consumer
+that arrives before its file is converted waits for it; the loading screens
+absorb that. Later launches reuse every converted file and only parse what is
+new. `version.txt` names the cache format; a mismatch rebuilds the cache.
 
-RVZ/WIA chunks above 2 MiB are rejected before decoding. BRRES source files
-are limited to 8 MiB and textures to 2048 pixels per dimension. RMHP08's
-largest BRRES is approximately 5.4 MiB. Decoder buffers are released before
-texture conversion. These are processing limits, not claims about measured
-Vita memory use or throughput.
+The conversions are the ones the whole-disc stages (`PrepareTextures`,
+`PrepareModels`, kept for development tools) use per file: authored mipmaps
+are retained, palettes resolved, CMPR converted to BC1/BC3 in the SGX Morton
+layout, and model packs assembled by the bounded C assembler
+(`mh3_prepare_model.c`) with validated GPU indices and palettes. Materials
+bind textures of their own container only, so each file converts on its own.
+BRRES source files are limited to 8 MiB and textures to 2048 pixels per
+dimension; RMHP08's largest BRRES is approximately 5.4 MiB. A model
+conversion workspace is about 30 MiB per worker and is released when the
+queue is empty.
 
-### Native model preparation
-
-After the textures, `PrepareModels` (`runtime/src/launcher_models.cpp`)
-converts every model source of the disc with the bounded C assembler
-(`mh3_prepare_model.c`): one M3MP/M3ID pair per FST file in
-`disc/native-models/packs/`, named by the file's partition offset, plus the
-`models.index.bin` source index. Model IDs follow the canonical recipe
-(standalone BRRES by file and model name, then the common and map effect
-archives by file, member offset and name), which reproduces all 1,445 registry
-IDs; texture IDs are the texture stage's. Emitted GPU indices and palettes
-are validated before a pack is written. `native-models/ready.txt`, written
-last, lists every file with its size; `DiscReady` requires the texture checks
-and every listed file. A prepared partition and texture pack without models
-only runs this stage.
-
-On RMHP08 it writes 1,333 source packs (283 MiB) in a few seconds on the arm64
-host. All 45 packs of the earlier offline Alatreon generation are byte
-identical. One source is left out and reported:
 `10/em001/em001_shadow.brres` binds two textures (`em001_BM_01`,
-`light016_SM`) that its own file does not contain; drawing it fails at
-admission.
+`light016_SM`) that its own file does not contain; it is left out
+(`.skip`), and drawing it fails at admission.
 
-Linux uses the same stages: `MH3 --rom IMAGE` prepares `disc/` next to the
+Measured on the Pi 5 (arm32 build), booting into the Alatreon quest reads
+146 files (60 MiB): converting them costs about 0.35 s of CPU in total, against
+about 18 s for converting the whole disc. First start went from 8 min 42 s
+(decoding the 4.1 GiB partition to the SD card) to 0.25 s.
+
+Linux uses the same code: `MH3 --rom IMAGE` writes `disc/` next to the
 executable (see the README), with the ROM decoder built for the host target
 by cargo.
 

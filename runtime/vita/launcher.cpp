@@ -197,85 +197,76 @@ void Draw(Font& font, const std::string& title, const std::vector<std::string>& 
     EndNativeGraphicsFrame();
     sceKernelDelayThread(8000);
 }
+// The disc image stays in base; its metadata and the converted-asset cache live
+// in base/disc. A development install of a prepared disc directly in base is used as is.
 bool EnsureDisc(Font& font, const std::filesystem::path& base) {
     auto output = base;
-    if (DiscReady(output)) {
-        aurora::gl::open_native_texture_pack((output / "native-textures.bin").string().c_str());
-        return true;
-    }
-    if (!std::filesystem::exists(base / "sys/boot.bin"))
-        output = base / "disc";
-    if (DiscReady(output)) {
-        setenv("MH3_DISC_DIR", output.string().c_str(), 1);
-        aurora::gl::open_native_texture_pack((output / "native-textures.bin").string().c_str());
-        return true;
-    }
-    std::filesystem::path iso;
-    if (!std::filesystem::exists(base / "sys/boot.bin")) {
-        for (const auto& entry : std::filesystem::directory_iterator(base))
-            if (entry.is_regular_file() && (entry.path().extension() == ".iso" || entry.path().extension() == ".rvz" || entry.path().extension() == ".wia")) {
-                if (!iso.empty())
-                    throw std::runtime_error("Place exactly one RMHP08 disc image in " + base.string());
-                iso = entry.path();
-            }
-        if (iso.empty())
-            throw std::runtime_error("Game data is missing. Place your European RMHP08 ISO or RVZ in " + base.string() + ". It will be processed automatically on the next launch.");
-    }
-    std::mutex mutex;
-    std::string status = "Checking game data", error;
-    uint64_t done = 0, total = 1;
-    std::atomic<bool> finished = false;
-    std::jthread worker([&] {
-        aurora::pin_current_thread(aurora::ThreadRole::Worker);
-        const Progress progress = [&](const std::string& s, uint64_t d, uint64_t t) {
-            std::lock_guard guard(mutex);
-            status = s;
-            done = d;
-            total = std::max<uint64_t>(t, 1);
-        };
-        try {
-            if (iso.empty())
-                PrepareTextures(base, progress);
-            else
-                ProcessDisc(iso, output, progress);
-        } catch (const std::exception& e) {
-            std::lock_guard guard(mutex);
-            error = e.what();
-        }
-        finished.store(true, std::memory_order_release);
-    });
-    while (!finished.load(std::memory_order_acquire)) {
-        std::string label;
-        uint64_t completed, maximum;
-        {
-            std::lock_guard guard(mutex);
-            label = status;
-            completed = done;
-            maximum = total;
-        }
-        const unsigned percent = std::min<uint64_t>(100, completed * 100 / maximum);
-        if (BeginNativeGraphicsFrame()) {
-            std::vector<Rectangle> rects;
-            Rect(rects, 0, 0, 960, 544, ink);
-            Rect(rects, 120, 178, 720, 184, paper);
-            font.Text(rects, 150, 203, "Preparing your game", ink);
-            font.Text(rects, 150, 243, label, ink, 650);
-            Rect(rects, 150, 288, 660, 25, ink);
-            Rect(rects, 153, 291, 654 * percent / 100.f, 19, gold);
-            font.Text(rects, 150, 327, std::to_string(percent) + "%  Keep the application open", ink);
-            Submit(rects);
-        }
-        EndNativeGraphicsFrame();
-        Pump();
-        sceKernelDelayThread(12000);
-    }
-    worker.join();
-    if (!error.empty())
-        throw std::runtime_error(error);
     if (!DiscReady(output))
-        throw std::runtime_error("Prepared game data did not pass validation");
+        output = base / "disc";
+    std::filesystem::path iso;
+    for (const auto& entry : std::filesystem::directory_iterator(base))
+        if (entry.is_regular_file() && (entry.path().extension() == ".iso" || entry.path().extension() == ".rvz" || entry.path().extension() == ".wia")) {
+            if (!iso.empty())
+                throw std::runtime_error("Place exactly one RMHP08 disc image in " + base.string());
+            iso = entry.path();
+        }
+    if (!DiscReady(output) || (!iso.empty() && output != base)) {
+        if (iso.empty())
+            throw std::runtime_error("Game data is missing. Place your European RMHP08 ISO or RVZ in " + base.string() + ".");
+        std::mutex mutex;
+        std::string status = "Checking game data", error;
+        uint64_t done = 0, total = 1;
+        std::atomic<bool> finished = false;
+        std::jthread worker([&] {
+            aurora::pin_current_thread(aurora::ThreadRole::Worker);
+            const Progress progress = [&](const std::string& s, uint64_t d, uint64_t t) {
+                std::lock_guard guard(mutex);
+                status = s;
+                done = d;
+                total = std::max<uint64_t>(t, 1);
+            };
+            try {
+                ProcessDisc(iso, output, progress);
+            } catch (const std::exception& e) {
+                std::lock_guard guard(mutex);
+                error = e.what();
+            }
+            finished.store(true, std::memory_order_release);
+        });
+        while (!finished.load(std::memory_order_acquire)) {
+            std::string label;
+            uint64_t completed, maximum;
+            {
+                std::lock_guard guard(mutex);
+                label = status;
+                completed = done;
+                maximum = total;
+            }
+            const unsigned percent = std::min<uint64_t>(100, completed * 100 / maximum);
+            if (BeginNativeGraphicsFrame()) {
+                std::vector<Rectangle> rects;
+                Rect(rects, 0, 0, 960, 544, ink);
+                Rect(rects, 120, 178, 720, 184, paper);
+                font.Text(rects, 150, 203, "Preparing your game", ink);
+                font.Text(rects, 150, 243, label, ink, 650);
+                Rect(rects, 150, 288, 660, 25, ink);
+                Rect(rects, 153, 291, 654 * percent / 100.f, 19, gold);
+                font.Text(rects, 150, 327, std::to_string(percent) + "%  Keep the application open", ink);
+                Submit(rects);
+            }
+            EndNativeGraphicsFrame();
+            Pump();
+            sceKernelDelayThread(12000);
+        }
+        worker.join();
+        if (!error.empty())
+            throw std::runtime_error(error);
+        if (!DiscReady(output))
+            throw std::runtime_error("Prepared game data did not pass validation");
+    }
     setenv("MH3_DISC_DIR", output.string().c_str(), 1);
-    aurora::gl::open_native_texture_pack((output / "native-textures.bin").string().c_str());
+    // Textures and models convert as the game loads them (disc/cache/).
+    OpenNativeAssets();
     return true;
 }
 enum class Page {

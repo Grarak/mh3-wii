@@ -277,7 +277,7 @@ if(VITA)
   # reachable from the positioned-read ROM bridge; discard unused sections
   # rather than retaining the complete static library's filesystem surface.
   target_link_options(MH3 PRIVATE "-Wl,--gc-sections")
-  set_property(SOURCE src/launcher_disc.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
+  set_property(SOURCE src/rom_image.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   if(MH3_DEVELOPMENT)
@@ -295,8 +295,10 @@ endif()
 
 # Game data preparation: the native model stage on every platform; on Linux,
 # --rom runs the same disc, texture and model stages as the Vita launcher.
-target_sources(MH3 PRIVATE src/launcher_models.cpp
+target_sources(MH3 PRIVATE src/launcher_models.cpp src/rom_image.cpp src/asset_cache.cpp
   native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_writer.c)
+set_source_files_properties(src/launcher_models.cpp src/asset_cache.cpp src/disc_image.cpp src/graphics_host.cpp PROPERTIES
+  INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
 if(NOT VITA)
   target_sources(MH3 PRIVATE src/launcher_disc.cpp src/launcher_textures.cpp)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp PROPERTIES
@@ -334,7 +336,7 @@ if(NOT VITA)
     set_target_properties(MH3RomDecoder PROPERTIES IMPORTED_LOCATION "${rom_decoder_archive}")
     add_dependencies(MH3RomDecoder MH3RomDecoderBuild)
     target_link_libraries(MH3 PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
-    set_property(SOURCE src/launcher_disc.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
+    set_property(SOURCE src/rom_image.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
   endif()
 endif()
 
@@ -383,6 +385,7 @@ if(TARGET aurora::core)
     endif()
     add_executable(MH3LauncherTests EXCLUDE_FROM_ALL src/launcher_tests.cpp
       src/launcher_support.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/launcher_models.cpp src/disc_image.cpp
+      src/rom_image.cpp src/asset_cache.cpp
       native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_writer.c native/mh3_model_resources.c
       native/mh3_vertex_sources.c native/mh3_mesh_pack.c native/mh3_material_pack.c native/mh3_model_catalog.c)
     target_include_directories(MH3LauncherTests PRIVATE include .. "${MH3_AURORA_ROOT}/lib")

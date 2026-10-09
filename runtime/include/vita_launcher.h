@@ -32,13 +32,16 @@ std::vector<CustomQuest> LoadCustomQuests(const std::filesystem::path& user);
 bool SupportsCapture(const CustomQuest& quest);
 void ActivateCustomQuest(const CustomQuest& quest);
 using Progress = std::function<void(const std::string&, uint64_t, uint64_t)>;
-// Converts ISO/RVZ with the native nod decoder, preserving partition padding.
+// Extracts the disc metadata (sys/, ticket, TMD, certificates) of an ISO/RVZ
+// and records the image in rom.txt; the game partition is read from the image
+// in place, and textures and models are converted when the game loads them.
 // The input is always read-only. Publication happens only after validation.
 void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress);
-// Partition, texture pack and native model archive are all present.
+// The metadata is present and matches partition.bin or the recorded image.
 bool DiscReady(const std::filesystem::path& output);
+// Whole-disc conversion (development tools): native-textures.bin and its tag map.
 void PrepareTextures(const std::filesystem::path& root, const Progress& progress);
-// Native model source packs and their index (native-models/).
+// Whole-disc conversion (development tools): native-models/ packs and index.
 bool ModelsReady(const std::filesystem::path& root);
 void PrepareModels(const std::filesystem::path& root, const Progress& progress);
 #ifdef __vita__

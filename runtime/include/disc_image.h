@@ -2,14 +2,18 @@
 #include <cstdint>
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 class DiscFile;
+class RomImage;
 // Read-only decrypted partition view. Extracted mode preserves the original
-// file checks; disc-layout.txt selects a single exact partition with sys metadata.
+// file checks; disc-layout.txt selects a single exact partition with sys
+// metadata, read from partition.bin or in place from the disc image named by
+// rom.txt.
 class DiscImage {
   public:
     explicit DiscImage(const std::filesystem::path& root, bool applyNativeTextures = true);
@@ -21,6 +25,14 @@ class DiscImage {
     std::vector<std::string> FileNames() const;
     uint64_t FileOffset(const std::string& name) const;
     uint32_t FileSize(const std::string& name) const;
+    // Without a prepared native texture map, the game's image hands reads to
+    // the load-time asset cache (asset_cache.h), which patches its own tags.
+    bool HasNativeTextureMap() const { return hasTextureMap; }
+    bool Packed() const { return packed; }
+    using Reader = std::function<void(uint64_t offset, uint8_t* output, size_t length)>;
+    void SetReader(Reader reader) { this->reader = std::move(reader); }
+    // Partition bytes without native texture tags or quest overrides.
+    void ReadRaw(uint64_t offset, uint8_t* output, size_t length) const;
 
   private:
     struct Extent {
@@ -30,6 +42,10 @@ class DiscImage {
     std::vector<Extent> extents;
     std::map<std::string, std::pair<uint64_t, uint32_t>> fileEntries;
     std::unique_ptr<DiscFile> partition;
+    std::unique_ptr<RomImage> rom;
+    Reader reader;
+    bool hasTextureMap = false;
+    void ReadPartition(uint64_t offset, uint8_t* output, size_t length) const;
     uint64_t partitionSize = 0;
     bool packed = false;
     std::map<uint64_t, std::vector<uint8_t>> fileOverrides;

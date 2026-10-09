@@ -2,6 +2,7 @@
 #include "gx_panic.h"
 #include "native_graphics.h"
 #include "native_frame_packet.h"
+#include "asset_cache.h"
 #include "model_assets.h"
 #include "native_frame_statistics.h"
 #include "audio/ax_dsp.h"
@@ -158,6 +159,35 @@ void ShutdownGraphics() {
         frameActive = false;
     }
 }
+} // namespace
+void OpenNativeAssets() {
+    const char* discRoot = std::getenv("MH3_DISC_DIR");
+    const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
+    const auto nativePack = std::filesystem::path(nativeRoot ? nativeRoot
+                                                  : discRoot ? discRoot
+                                                             :
+#ifdef __vita__
+                                                             "ux0:/data/mh3-wii"
+#else
+                                                             "Assets/DATA"
+#endif
+                                                  ) /
+                            "native-textures.bin";
+    if (std::filesystem::exists(nativePack))
+        aurora::gl::open_native_texture_pack(nativePack.string().c_str());
+    else if (GameAssetCache())
+        // Load-time conversion: a texture's pack is opened at its first use.
+        aurora::gl::set_native_texture_resolver([](uint32_t asset) {
+            try {
+                aurora::gl::open_native_texture_pack(GameAssetCache()->TexturePack(asset).c_str());
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "MH3: %s\n", e.what());
+                std::abort();
+            }
+        });
+    LoadNativeModelAssets(nativeRoot ? nativeRoot : discRoot);
+}
+namespace {
 void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     if (initialized)
         return;
@@ -201,22 +231,8 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
     initialized = true;
     std::atexit(ShutdownGraphics);
-    const char* discRoot = std::getenv("MH3_DISC_DIR");
-    const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
-    const auto nativePack = std::filesystem::path(nativeRoot ? nativeRoot
-                                                  : discRoot ? discRoot
-                                                             :
-#ifdef __vita__
-                                                             "ux0:/data/mh3-wii"
-#else
-                                                             "Assets/DATA"
-#endif
-                                                  ) /
-                            "native-textures.bin";
-    if (loadNativeAssets && std::filesystem::exists(nativePack))
-        aurora::gl::open_native_texture_pack(nativePack.string().c_str());
     if (loadNativeAssets)
-        LoadNativeModelAssets(nativeRoot ? nativeRoot : discRoot);
+        OpenNativeAssets();
 #ifdef MH3_DEVELOPMENT
     // MH3_RENDER_SCALE=n: render the EFB at n times the native resolution,
     // whatever the window size (captures are at that size).

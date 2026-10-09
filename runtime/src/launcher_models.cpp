@@ -10,6 +10,7 @@
 #include "vita_launcher.h"
 #include "disc_image.h"
 #include "launcher_texture_inventory.h"
+#include "launcher_convert.h"
 #include "runtime/native/mh3_prepare_model.h"
 #include <algorithm>
 #include <cstdio>
@@ -55,22 +56,14 @@ struct Memory {
     mh3_prepare_sink Sink() { return {this, Write, Truncate}; }
     mh3_prepare_input Input() { return {this, Read}; }
 };
-struct Model {
-    uint32_t container, bytes, offset, id;
-    std::string name;
-};
 struct File {
     std::string path;
     uint64_t offset;
-    std::vector<Model> models;
+    std::vector<ModelSource> models;
 };
-struct TextureRow {
-    uint64_t partition;
-    std::string name;
-    uint32_t container, offset, bytes, id, width, height;
-};
+} // namespace
 // Workspace sized like the parity harness: per-source caps, one conversion at a time.
-struct Workspace {
+struct ModelConverter::Workspace {
     std::vector<uint8_t> metadata = std::vector<uint8_t>(MH3_PREPARE_MAX_METADATA), identities = std::vector<uint8_t>(MH3_PREPARE_MAX_IDENTITY);
     std::vector<uint32_t> scratch = std::vector<uint32_t>((8u << 20) / 4);
     std::vector<mh3_pack_layout> layouts = std::vector<mh3_pack_layout>(256);
@@ -103,6 +96,7 @@ struct Workspace {
         return w;
     }
 };
+namespace {
 std::string Hex16(uint64_t value) {
     char text[17];
     std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(value));
@@ -127,16 +121,9 @@ void Inventory(const DiscImage& disc, std::vector<File>& files, std::vector<Text
         const auto data = disc.ReadFile(path);
         const uint64_t offset = disc.FileOffset(path);
         for (const auto& t : TextureInventory::Parse(data, offset, nextTexture))
-            textures.push_back({offset + t.containerOffset, t.name, t.containerBytes, t.header - t.containerOffset, t.bytes + 64, t.id, t.width, t.height});
+            textures.push_back(TextureRow(offset, t));
         nextTexture = textures.empty() ? 1 : textures.back().id + 1;
-        File file{path, offset, {}};
-        for (const auto& container : TextureInventory::Containers(data)) {
-            const TextureInventory::detail::Reader r{data, container.offset, size_t(container.offset) + container.bytes};
-            for (const auto& resource : TextureInventory::detail::Resources(r))
-                if (resource.magic == Mdl0)
-                    file.models.push_back({container.offset, container.bytes, uint32_t(resource.offset - container.offset), 0, resource.name});
-        }
-        std::sort(file.models.begin(), file.models.end(), [](const Model& a, const Model& b) { return a.container != b.container ? a.container < b.container : a.name < b.name; });
+        File file{path, offset, ListModels(data)};
         for (auto& model : file.models)
             model.id = nextModel++;
         if (!file.models.empty())
@@ -162,84 +149,114 @@ bool ModelsReady(const std::filesystem::path& root) {
     }
     return list.eof(); // a disc without models has an empty list
 }
+std::vector<ModelSource> ListModels(std::span<const uint8_t> data) {
+    std::vector<ModelSource> models;
+    for (const auto& container : TextureInventory::Containers(data)) {
+        const TextureInventory::detail::Reader r{data, container.offset, size_t(container.offset) + container.bytes};
+        for (const auto& resource : TextureInventory::detail::Resources(r))
+            if (resource.magic == Mdl0)
+                models.push_back({container.offset, container.bytes, uint32_t(resource.offset - container.offset), 0, resource.name});
+    }
+    std::sort(models.begin(), models.end(), [](const ModelSource& a, const ModelSource& b) { return a.container != b.container ? a.container < b.container : a.name < b.name; });
+    return models;
+}
+TextureRow::TextureRow(uint64_t fileOffset, const TextureInventory::Texture& t)
+    : partition(fileOffset + t.containerOffset), name(t.name), container(t.containerBytes), offset(t.header - t.containerOffset), bytes(t.bytes + 64), id(t.id), width(t.width), height(t.height) {}
+ModelConverter::ModelConverter() : work(std::make_unique<Workspace>()) {}
+ModelConverter::~ModelConverter() = default;
+bool ModelConverter::Convert(const std::string& path, uint64_t fileOffset, std::span<const uint8_t> data, const std::vector<ModelSource>& models, std::vector<TextureRow> textures,
+                             ModelConversion& out) {
+    // Materials bind textures of their own container, by (container, name).
+    std::sort(textures.begin(), textures.end(), [](const TextureRow& a, const TextureRow& b) { return a.partition != b.partition ? a.partition < b.partition : a.name < b.name; });
+    std::vector<mh3_prepare_texture> table;
+    table.reserve(textures.size());
+    for (const auto& t : textures)
+        table.push_back({t.partition, t.name.c_str(), t.container, t.offset, t.bytes, t.id, t.width, t.height});
+    std::vector<mh3_prepare_model_source> sources;
+    for (const auto& m : models) {
+        mh3_prepare_model_source s{};
+        if (m.container > data.size() || m.bytes > data.size() - m.container || mh3_res_model_open({data.data() + m.container, m.bytes}, m.offset, &s.model)) {
+            std::fprintf(stderr, "MH3 prepare: %s left out (model %s does not open)\n", path.c_str(), m.name.c_str());
+            return false;
+        }
+        s.file = path.c_str();
+        s.partition_offset = fileOffset + m.container;
+        s.container_offset = m.container;
+        s.asset_id = m.id;
+        for (const auto& selector : Selectors)
+            if (path == selector.file && m.name == selector.model) {
+                s.component_shapes = selector.shapes.data();
+                s.component_shape_count = uint32_t(selector.shapes.size());
+            }
+        sources.push_back(s);
+    }
+    auto workspace = work->Get();
+    mh3_prepared_model_pack result{};
+    mh3_prepare_model_diagnostic diagnostic{};
+    const auto status = mh3_prepare_model_pack(sources.data(), uint32_t(sources.size()), table.data(), uint32_t(table.size()), &workspace, &result, &diagnostic);
+    Memory pack;
+    if (status == MH3_PREPARE_OK && mh3_prepare_emit(&result.mesh, work->gpu.Input(), pack.Sink(), scratch.data(), scratch.size()) == MH3_PREPARE_OK) {
+        // Validate the emitted GPU indices and palettes before publication.
+        payload.assign(work->gpu.data.size() + 16, 0);
+        auto* gpu = reinterpret_cast<uint8_t*>((reinterpret_cast<uintptr_t>(payload.data()) + 15) & ~uintptr_t(15));
+        std::memcpy(gpu, work->gpu.data.data(), work->gpu.data.size());
+        if (mh3_mesh_pack_bind_gpu(&result.pack, {gpu, work->gpu.data.size()}) == MH3_PACK_OK && mh3_mesh_pack_validate_indices(&result.pack) == MH3_PACK_OK) {
+            out.pack = std::move(pack.data);
+            out.identity.assign(work->identities.data(), work->identities.data() + result.identity.size);
+            out.metadataBytes = result.mesh.size;
+            out.gpuBytes = result.mesh.gpu_bytes;
+            return true;
+        }
+    }
+    std::fprintf(stderr, "MH3 prepare: %s left out (status %d, model %u kind %u resource %u at %zx)\n", path.c_str(), int(status), diagnostic.model_id, diagnostic.kind, diagnostic.resource_id,
+                 diagnostic.offset);
+    return false;
+}
 void PrepareModels(const std::filesystem::path& root, const Progress& progress) {
     DiscImage disc(root, false);
     std::vector<File> files;
     std::vector<TextureRow> textures;
     Inventory(disc, files, textures, progress);
-    std::vector<mh3_prepare_texture> table;
-    table.reserve(textures.size());
-    for (const auto& t : textures)
-        table.push_back({t.partition, t.name.c_str(), t.container, t.offset, t.bytes, t.id, t.width, t.height});
     std::sort(files.begin(), files.end(), [](const File& a, const File& b) { return a.offset < b.offset; });
 
     const auto output = root / "native-models", staging = root / "native-models.preparing";
     std::filesystem::remove_all(staging);
     std::filesystem::create_directories(staging / "packs");
-    auto work = std::make_unique<Workspace>();
+    ModelConverter converter;
     std::vector<std::string> paths;
     std::vector<mh3_prepare_index_pack> packs;
     std::vector<mh3_prepare_index_source> sources;
     std::vector<std::pair<std::string, uint64_t>> published;
-    std::vector<uint8_t> data, payload, scratch(4096);
+    std::vector<uint8_t> data;
     paths.reserve(files.size());
     unsigned skipped = 0;
     for (size_t f = 0; f < files.size(); ++f) {
         const auto& file = files[f];
         progress("Converting game models", f, files.size());
         data = disc.ReadFile(file.path);
-        std::vector<mh3_prepare_model_source> models;
-        bool opened = true;
-        for (const auto& m : file.models) {
-            mh3_prepare_model_source s{};
-            if (mh3_res_model_open({data.data() + m.container, m.bytes}, m.offset, &s.model)) {
-                opened = false;
-                break;
-            }
-            s.file = file.path.c_str();
-            s.partition_offset = file.offset + m.container;
-            s.container_offset = m.container;
-            s.asset_id = m.id;
-            for (const auto& selector : Selectors)
-                if (file.path == selector.file && m.name == selector.model) {
-                    s.component_shapes = selector.shapes.data();
-                    s.component_shape_count = uint32_t(selector.shapes.size());
-                }
-            models.push_back(s);
+        // Texture rows are sorted by partition offset: this file's containers form one run.
+        const auto first = std::lower_bound(textures.begin(), textures.end(), file.offset, [](const TextureRow& t, uint64_t at) { return t.partition < at; });
+        const auto last = std::lower_bound(first, textures.end(), file.offset + data.size(), [](const TextureRow& t, uint64_t at) { return t.partition < at; });
+        ModelConversion result;
+        if (!converter.Convert(file.path, file.offset, data, file.models, {first, last}, result)) {
+            ++skipped;
+            continue;
         }
-        auto workspace = work->Get();
-        mh3_prepared_model_pack result{};
-        mh3_prepare_model_diagnostic diagnostic{};
-        const auto status = opened ? mh3_prepare_model_pack(models.data(), uint32_t(models.size()), table.data(), uint32_t(table.size()), &workspace, &result, &diagnostic) : MH3_PREPARE_INVALID;
-        Memory pack;
-        if (status == MH3_PREPARE_OK && mh3_prepare_emit(&result.mesh, work->gpu.Input(), pack.Sink(), scratch.data(), scratch.size()) == MH3_PREPARE_OK) {
-            // Validate the emitted GPU indices and palettes before publication.
-            payload.assign(work->gpu.data.size() + 16, 0);
-            auto* gpu = reinterpret_cast<uint8_t*>((reinterpret_cast<uintptr_t>(payload.data()) + 15) & ~uintptr_t(15));
-            std::memcpy(gpu, work->gpu.data.data(), work->gpu.data.size());
-            if (mh3_mesh_pack_bind_gpu(&result.pack, {gpu, work->gpu.data.size()}) == MH3_PACK_OK && mh3_mesh_pack_validate_indices(&result.pack) == MH3_PACK_OK) {
-                const auto name = "packs/" + Hex16(file.offset);
-                Save(staging / (name + ".bin"), pack.data.data(), pack.data.size());
-                Save(staging / (name + ".identity.bin"), work->identities.data(), result.identity.size);
-                published.emplace_back(name + ".bin", pack.data.size());
-                published.emplace_back(name + ".identity.bin", result.identity.size);
-                paths.push_back(name + ".bin");
-                packs.push_back({paths.back().c_str(), result.mesh.size, result.identity.size, result.mesh.gpu_bytes, uint32_t(pack.data.size())});
-                std::vector<std::pair<uint64_t, uint32_t>> members;
-                for (const auto& m : file.models)
-                    members.emplace_back(file.offset + m.container, m.bytes);
-                std::sort(members.begin(), members.end());
-                members.erase(std::unique(members.begin(), members.end()), members.end());
-                for (const auto& [at, bytes] : members)
-                    sources.push_back({at, bytes, uint32_t(packs.size() - 1)});
-                continue;
-            }
-        }
-        ++skipped;
-        std::fprintf(stderr, "MH3 prepare: %s left out (status %d, model %u kind %u resource %u at %zx)\n", file.path.c_str(), int(status), diagnostic.model_id, diagnostic.kind,
-                     diagnostic.resource_id, diagnostic.offset);
+        const auto name = "packs/" + Hex16(file.offset);
+        Save(staging / (name + ".bin"), result.pack.data(), result.pack.size());
+        Save(staging / (name + ".identity.bin"), result.identity.data(), result.identity.size());
+        published.emplace_back(name + ".bin", result.pack.size());
+        published.emplace_back(name + ".identity.bin", result.identity.size());
+        paths.push_back(name + ".bin");
+        packs.push_back({paths.back().c_str(), result.metadataBytes, uint32_t(result.identity.size()), result.gpuBytes, uint32_t(result.pack.size())});
+        std::vector<std::pair<uint64_t, uint32_t>> members;
+        for (const auto& m : file.models)
+            members.emplace_back(file.offset + m.container, m.bytes);
+        std::sort(members.begin(), members.end());
+        members.erase(std::unique(members.begin(), members.end()), members.end());
+        for (const auto& [at, bytes] : members)
+            sources.push_back({at, bytes, uint32_t(packs.size() - 1)});
     }
-    work.reset();
     if (!packs.empty()) {
         std::vector<uint8_t> index(MH3_PREPARE_MAX_INDEX);
         size_t indexBytes = 0;

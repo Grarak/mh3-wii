@@ -213,10 +213,15 @@ void DiscTests(const std::filesystem::path& root) {
     VitaLauncher::ProcessDisc(root / "game.iso", root / "processed", [&](const auto&, uint64_t, uint64_t) { ++updates; });
     Check(updates > 1 && VitaLauncher::DiscReady(root / "processed"), "processing publishes validated game data");
     Check(std::filesystem::file_size(root / "game.iso") == iso.size(), "ROM remains untouched");
-    DiscImage processed(root / "processed");
-    Check(processed.ReadFile("05/quest00_eng.bin") == quest, "processed partition exact bytes");
-    std::filesystem::resize_file(root / "processed/native-textures.bin", 12);
-    Check(!VitaLauncher::DiscReady(root / "processed"), "partial pack must not be ready");
+    Check(!std::filesystem::exists(root / "processed/partition.bin") && std::filesystem::exists(root / "processed/rom.txt"), "the partition stays in the disc image");
+    {
+        DiscImage processed(root / "processed");
+        Check(processed.ReadFile("05/quest00_eng.bin") == quest, "processed partition exact bytes");
+    }
+    std::filesystem::resize_file(root / "game.iso", iso.size() + 0x8000);
+    Check(!VitaLauncher::DiscReady(root / "processed"), "a changed disc image must not be ready");
+    std::filesystem::resize_file(root / "game.iso", iso.size());
+    Check(VitaLauncher::DiscReady(root / "processed"), "the restored disc image is ready again");
 }
 } // namespace
 int main(int argc, char** argv) {

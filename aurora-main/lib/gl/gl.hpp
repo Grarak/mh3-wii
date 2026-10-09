@@ -110,7 +110,10 @@ struct NativeTextureInfo {
   uint32_t sourcePaletteEntries = 0, sourcePaletteFormat = 0, sourceFormat = 0;
   bool sourceProvenance = false;
 };
+// Adds a native texture pack; any thread. Packs hold disjoint asset ID ranges.
 void open_native_texture_pack(const char* path) noexcept;
+// Called for an asset no open pack holds; it opens the pack that holds it.
+void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept;
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
 // Reads an immutable offline payload directly into a fresh CDRAM allocation.
 // The queued read precedes every draw using the returned texture.

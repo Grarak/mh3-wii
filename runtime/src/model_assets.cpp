@@ -1,4 +1,5 @@
 #include "model_assets.h"
+#include "asset_cache.h"
 #include "../native/adapters/model_catalog_bridge.h"
 #include "../native/adapters/model_gpu_bridge.h"
 #include "native_frame_packet.h"
@@ -46,6 +47,8 @@ struct Manager {
     uint64_t clock = 0;
     uint32_t demandFrame = 0;
     bool frameKnown = false;
+    // Packs come from the disc image's load-time asset cache, by source file.
+    bool converted = false;
 };
 std::unique_ptr<Manager> manager;
 uint64_t generation = 0;
@@ -254,7 +257,7 @@ std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, 
     identityPath.replace_extension(".identity.bin");
     std::ifstream identity(identityPath, std::ios::binary | std::ios::ate);
     const size_t identityBytes = FileSize(identity, identityPath, MaxIdentityBytes);
-    if (index != LegacyPack) {
+    if (index != LegacyPack && !m.converted) {
         const auto* expected = PackRecord(m, index);
         if (metadataBytes != Word(expected + 8) || identityBytes != Word(expected + 12) || gpuBytes != Word(expected + 16) || bytes != Word(expected + 20))
             Error(path, "pack sizes differ from M3IX descriptor");
@@ -269,7 +272,7 @@ std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, 
         Error(path, "invalid compact metadata");
     if (mh3_model_catalog_open({next->identity.data(), next->identity.size()}, &next->catalog) != MH3_PACK_OK || mh3_model_catalog_validate_pack(&next->catalog, &next->pack) != MH3_PACK_OK)
         Error(identityPath, "invalid or mismatched source identities");
-    if (index != LegacyPack) {
+    if (index != LegacyPack && !m.converted) {
         std::set<uint32_t> seen;
         for (uint32_t i = 0; i < next->catalog.model_count; ++i) {
             mh3_catalog_model model{};
@@ -344,17 +347,44 @@ void LoadNativeModelAssets(const char* discRoot) {
                      static_cast<unsigned long long>(next->index.size()));
     } else {
         const auto path = overridePack ? std::filesystem::path(overridePack) : root / "models.bin";
-        if (!overridePack && !std::filesystem::exists(path))
+        if (!overridePack && !std::filesystem::exists(path)) {
+            if (GameAssetCache()) {
+                next->converted = true;
+                std::fprintf(stderr, "MH3 native models: converted at load time\n");
+                manager = std::move(next);
+            }
             return;
+        }
         auto asset = OpenPack(*next, path, LegacyPack);
         Admit(*next, LegacyPack, std::move(asset), true);
     }
     manager = std::move(next);
 }
 void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
-    if (!manager || manager->index.empty())
+    if (!manager)
         return;
     auto& m = *manager;
+    if (m.converted) {
+        uint32_t key = 0;
+        const auto path = GameAssetCache()->ModelPack(offset, key);
+        if (path.empty()) {
+            std::ostringstream reason;
+            reason << "No converted native models at partition offset 0x" << std::hex << offset;
+            throw std::runtime_error(reason.str());
+        }
+        {
+            std::lock_guard lock(m.lock);
+            const auto found = m.loaded.find(key);
+            if (found != m.loaded.end()) {
+                found->second->lastUse = ++m.clock;
+                return;
+            }
+        }
+        Admit(m, key, OpenPack(m, path, key), false);
+        return;
+    }
+    if (m.index.empty())
+        return;
     const uint32_t source = SourceIndex(m, offset, bytes);
     if (source == UINT32_MAX) {
         std::ostringstream reason;

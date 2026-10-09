@@ -97,12 +97,13 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 Moga Woods free roam from the village; --spawn\n"
                                "                                 moves the hunter there (arena pit: 0,300,0)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
-                               "  --rom <image>                  (with any of the above) prepare the game data from the\n"
-                               "                                 European disc (RVZ, WIA or ISO) next to the executable\n";
+                               "  --rom <image>                  (with any of the above) play from the European disc\n"
+                               "                                 (RVZ, WIA or ISO); remembered in disc/ next to the executable\n";
 
 #ifndef __vita__
-// The game data lives in disc/ next to the executable (MH3_DISC_DIR overrides
-// it). Every launch checks that it is complete; --rom prepares what is missing.
+// The disc metadata and converted-asset cache live in disc/ next to the
+// executable (MH3_DISC_DIR overrides it); the disc image is read in place.
+// Every launch checks the image recorded there; --rom records a new one.
 void PrepareGameData(const char* rom) {
     if (std::getenv("MH3_DISC_DIR")) {
         if (rom)
@@ -110,9 +111,9 @@ void PrepareGameData(const char* rom) {
         return;
     }
     const auto data = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "disc";
-    if (!VitaLauncher::DiscReady(data)) {
+    if (rom || !VitaLauncher::DiscReady(data)) {
         if (!rom)
-            throw std::runtime_error("Game data in " + data.string() + " is missing or incomplete: pass --rom <path to the European Monster Hunter Tri RVZ/WIA/ISO>");
+            throw std::runtime_error("Game data in " + data.string() + " is missing, or its disc image moved: pass --rom <path to the European Monster Hunter Tri RVZ/WIA/ISO>");
         std::string phase;
         unsigned shown = 101;
         VitaLauncher::ProcessDisc(rom, data, [&](const std::string& stage, uint64_t done, uint64_t total) {

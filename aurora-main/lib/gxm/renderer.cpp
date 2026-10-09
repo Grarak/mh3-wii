@@ -3,7 +3,7 @@
 #include "../gfx/native_mesh_io.hpp"
 #include "../gfx/native_mesh_layout.hpp"
 #include "alpha_compare.hpp"
-#include "native_assets.hpp"
+#include "../gfx/native_texture_set.hpp"
 #include "device.hpp"
 #include "runtime_shader.hpp"
 #include <aurora/native_frame_gate.hpp>
@@ -411,7 +411,6 @@ public:
   }
   Device device;
   TexturePool pool;
-  NativeAssets assets;
   DrawMemory draws;
   PixelClip clip;
   PatchedProgram clearProgram, presentProgram;
@@ -434,9 +433,9 @@ struct RenderContext {
   std::unique_ptr<Renderer> renderer;
 };
 RenderContext* g_context = nullptr;
-// Published once after opening the pack. Only immutable metadata is read by
-// the GX producer; file reads and texture allocation remain on the render thread.
-std::atomic<const NativeAssets*> g_nativeAssets{nullptr};
+// Packs are immutable once added. Only metadata is read by the GX producer;
+// file reads and texture allocation remain on the render thread.
+gfx::NativeTextureSet g_nativeTextures;
 Caps g_caps;
 Renderer& renderer() {
   if (!g_context || !on_render_thread() || !g_context->renderer)
@@ -516,7 +515,6 @@ void shutdown() noexcept {
   if (!on_render_thread())
     fail("GXM shutdown called outside the context owner");
   auto* thread = g_context;
-  g_nativeAssets.store(nullptr, std::memory_order_release);
   thread->renderer.reset();
   g_context = nullptr;
   delete thread;
@@ -620,26 +618,43 @@ bool render_target_allocation_available(size_t bytes) noexcept {
   });
 }
 void open_native_texture_pack(const char* path) noexcept {
-  call([path = std::string(path)] {
-    auto& assets = renderer().assets;
-    assets.open(path.c_str());
-    g_nativeAssets.store(&assets, std::memory_order_release);
-  });
+  guarded([&] { g_nativeTextures.add(path); });
 }
+void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept { g_nativeTextures.set_resolver(resolver); }
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
   return guarded([&] {
-    const auto* assets = g_nativeAssets.load(std::memory_order_acquire);
-    if (!assets)
-      throw std::runtime_error("Native texture pack is not open");
-    return assets->info(asset);
+    const auto entry = g_nativeTextures.find(asset);
+    const auto& r = *entry.record;
+    return NativeTextureInfo{gfx::native_texture_format(r.format),
+                             r.width,
+                             r.height,
+                             r.mips,
+                             r.bytes,
+                             bool(r.flags & 1),
+                             r.image_bytes,
+                             r.palette_offset,
+                             r.palette_bytes,
+                             r.source_palette_delta,
+                             r.source_palette_entries,
+                             r.source_palette_format,
+                             r.source_format,
+                             entry.version == 2};
   });
 }
 TexturePtr native_texture_asset(uint32_t asset) noexcept {
   const auto info = native_texture_info(asset);
   auto texture = create_texture(info.width, info.height, info.mips, info.format, "Offline native texture");
   post([texture, asset] {
-    auto& r = renderer();
-    r.assets.load(asset, r.texture(texture->gl()));
+    auto& storage = renderer().texture(texture->gl());
+    const auto entry = g_nativeTextures.find(asset);
+    const auto& r = *entry.record;
+    if (storage.width != r.width || storage.height != r.height || storage.mips != r.mips || storage.format != gfx::native_texture_format(r.format) || storage.size() != r.bytes ||
+        !storage.in_cdram() || storage.has_gpu_use() ||
+        (entry.version == 2 && (storage.image_bytes() != r.image_bytes || storage.palette_offset() != r.palette_offset || storage.palette_bytes() != r.palette_bytes)))
+      throw std::runtime_error("Native texture payload does not match CDRAM layout");
+    // New allocation: no preceding scene refers to these bytes. The queued
+    // upload runs before any draw consumes them, with no finish or staging copy.
+    gfx::NativeTextureSet::read(entry, storage.pixels());
   });
   return texture;
 }

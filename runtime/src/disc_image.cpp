@@ -1,7 +1,9 @@
 #include "disc_image.h"
+#include "rom_image.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdlib>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -176,14 +178,32 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
         };
         verify(0, boot);
         verify(uint64_t(Word(boot, 0x424)) * 4, fst);
+    } else if (packed && Exists(root / "rom.txt")) {
+        // The game partition is read in place from the disc image.
+        std::ifstream list((root / "rom.txt").string());
+        std::string path;
+        uint64_t bytes = 0;
+        if (!std::getline(list, path) || !(list >> bytes))
+            throw std::runtime_error("Invalid rom.txt in " + root.string());
+        rom = std::make_unique<RomImage>(path);
+        if (rom->FileBytes() != bytes)
+            throw std::runtime_error("The disc image changed since its game data was prepared: " + path);
+        partitionSize = rom->PartitionBytes();
+        if (partitionSize < extents.back().offset + extents.back().size)
+            throw std::runtime_error("Disc image partition is shorter than its file table");
+        std::vector<uint8_t> actual(fst.size());
+        rom->ReadPartition(uint64_t(Word(boot, 0x424)) * 4, actual.data(), actual.size());
+        if (actual != fst)
+            throw std::runtime_error("Disc image differs from the prepared disc metadata");
     } else if (packed)
-        throw std::runtime_error("Packed disc requires partition.bin");
+        throw std::runtime_error("Packed disc requires partition.bin or rom.txt");
     // A development deployment can select a complete versioned native asset
     // set without replacing the preserved disc or another processed generation.
     const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
     const auto assetRoot = nativeRoot ? std::filesystem::path(nativeRoot) : root;
     const auto mapPath = assetRoot / "native-texture-map.bin";
     if (applyNativeTextures && Exists(mapPath)) {
+        hasTextureMap = true;
         if (!Exists(assetRoot / "native-textures.bin"))
             throw std::runtime_error("Native texture map requires its payload pack");
         const auto map = Load(mapPath);
@@ -202,6 +222,14 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
         }
     }
 }
+void DiscImage::ReadPartition(uint64_t offset, uint8_t* output, size_t length) const {
+    if (partition)
+        partition->Read(offset, output, length);
+    else if (rom)
+        rom->ReadPartition(offset, output, length);
+    else
+        throw std::runtime_error("Disc has no partition data");
+}
 void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const {
     const uint64_t end = offset + data.size();
     auto it = std::lower_bound(nativeTexturePatches.begin(), nativeTexturePatches.end(), offset, [](const NativeTexturePatch& patch, uint64_t start) { return patch.offset + 4 <= start; });
@@ -210,16 +238,10 @@ void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>&
             if (it->offset + byte >= offset && it->offset + byte < end)
                 data[it->offset + byte - offset] = it->bytes[byte];
 }
-std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
-    if (length > 64 * 1024 * 1024 || offset > std::numeric_limits<uint64_t>::max() - length)
-        throw std::runtime_error("Disc read exceeds supported request size");
-    std::vector<uint8_t> result(length);
-    const uint64_t initialOffset = offset;
+void DiscImage::ReadRaw(uint64_t offset, uint8_t* output, size_t length) const {
     if (packed) {
-        partition->Read(offset, result.data(), length);
-        ApplyNativeTexturePatches(initialOffset, result);
-        ApplyFileOverrides(initialOffset, result);
-        return result;
+        ReadPartition(offset, output, length);
+        return;
     }
     size_t done = 0;
     while (done < length) {
@@ -233,18 +255,28 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
             auto next = it + 1;
             const uint64_t end = next == extents.end() ? partitionSize : std::min(partitionSize, next->offset);
             const size_t count = std::min<uint64_t>(length - done, end - offset);
-            partition->Read(offset, result.data() + done, count);
+            ReadPartition(offset, output + done, count);
             offset += count;
             done += count;
             continue;
         }
         const size_t count = std::min<uint64_t>(length - done, it->offset + it->size - offset);
-        DiscFile(it->path).Read(offset - it->offset, result.data() + done, count);
+        DiscFile(it->path).Read(offset - it->offset, output + done, count);
         offset += count;
         done += count;
     }
-    ApplyNativeTexturePatches(initialOffset, result);
-    ApplyFileOverrides(initialOffset, result);
+}
+std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
+    if (length > 64 * 1024 * 1024 || offset > std::numeric_limits<uint64_t>::max() - length)
+        throw std::runtime_error("Disc read exceeds supported request size");
+    std::vector<uint8_t> result(length);
+    if (reader)
+        reader(offset, result.data(), length);
+    else {
+        ReadRaw(offset, result.data(), length);
+        ApplyNativeTexturePatches(offset, result);
+    }
+    ApplyFileOverrides(offset, result);
     return result;
 }
 std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {
@@ -252,12 +284,6 @@ std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {
     if (it == fileEntries.end())
         throw std::runtime_error("Missing FST file: " + name);
     return Read(it->second.first, it->second.second);
-}
-DiscImage& GameDiscImage() {
-    // The launcher's disc preparation completes before this lazy instance.
-    const char* path = std::getenv("MH3_DISC_DIR");
-    static DiscImage image(path ? path : "Assets/DATA");
-    return image;
 }
 void DiscImage::SetFileOverride(const std::string& name, std::vector<uint8_t> bytes) {
     const auto it = fileEntries.find(name);

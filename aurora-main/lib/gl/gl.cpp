@@ -4,7 +4,7 @@
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
 #include "../gfx/native_mesh_layout.hpp"
-#include "../gfx/native_texture_archive.hpp"
+#include "../gfx/native_texture_set.hpp"
 #include "../gfx/native_texture_decode.hpp"
 #include <aurora/gpu_completion.hpp>
 #include <aurora/native_frame_gate.hpp>
@@ -108,7 +108,7 @@ struct RenderContext {
 
 RenderContext* g_context = nullptr;
 Caps g_caps;
-std::unique_ptr<gfx::NativeTextureArchive> g_nativeTextureArchive;
+gfx::NativeTextureSet g_nativeTextures;
 std::array<GLsync, aurora::GpuFrameRing::BufferCount> g_frameFences{};
 unsigned g_frameSlot = 0;
 
@@ -320,7 +320,6 @@ void shutdown() noexcept {
   if (!on_render_thread())
     Log.fatal("GL shutdown called outside the game thread");
   post([] {
-    g_nativeTextureArchive.reset();
     g_nativePrograms[0].reset();
     g_nativePrograms[1].reset();
     if (g_nativeVao)
@@ -564,18 +563,23 @@ bool render_target_allocation_available(size_t bytes) noexcept {
 }
 
 void open_native_texture_pack(const char* path) noexcept {
-  call([path = std::string(path)] {
-    if (g_nativeTextureArchive)
-      throw std::runtime_error("Host native texture pack already open");
-    auto archive = std::make_unique<gfx::NativeTextureArchive>();
-    archive->open(path.c_str());
-    g_nativeTextureArchive = std::move(archive);
-  });
+  try {
+    g_nativeTextures.add(path);
+  } catch (const std::exception& e) {
+    Log.fatal("{}", e.what());
+  }
+}
+void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept { g_nativeTextures.set_resolver(resolver); }
+static gfx::NativeTextureSet::Entry native_texture_entry(uint32_t asset) noexcept {
+  try {
+    return g_nativeTextures.find(asset);
+  } catch (const std::exception& e) {
+    Log.fatal("{}", e.what());
+  }
 }
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
-  if (!g_nativeTextureArchive)
-    Log.fatal("Host native texture pack is not open");
-  const auto& r = g_nativeTextureArchive->record(asset);
+  const auto entry = native_texture_entry(asset);
+  const auto& r = *entry.record;
   return {gfx::native_texture_format(r.format),
           r.width,
           r.height,
@@ -589,14 +593,20 @@ NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
           r.source_palette_entries,
           r.source_palette_format,
           r.source_format,
-          g_nativeTextureArchive->pack_version() == 2};
+          entry.version == 2};
 }
 TexturePtr native_texture_asset(uint32_t asset) noexcept {
   if (!on_render_thread())
     Log.fatal("Host native texture asset load outside graphics owner");
   const auto info = native_texture_info(asset);
-  const auto& r = g_nativeTextureArchive->record(asset);
-  auto payload = g_nativeTextureArchive->payload(asset);
+  const auto entry = native_texture_entry(asset);
+  const auto& r = *entry.record;
+  std::vector<uint8_t> payload(r.bytes);
+  try {
+    gfx::NativeTextureSet::read(entry, payload.data());
+  } catch (const std::exception& e) {
+    Log.fatal("{}", e.what());
+  }
   const auto layout = gfx::native_texture_layout(info.width, info.height, info.mips, info.format);
   const bool expand = gfx::native_swizzled(info.format);
   auto texture = create_texture(info.width, info.height, info.mips, expand ? Format::RGBA8 : info.format, "Offline native texture host probe");

@@ -70,18 +70,20 @@ and port checks; leave it OFF for a plain build. Assertions follow
 Release/NDEBUG independently. Configure and build logs go to `logs/aurora-*.log`.
 
 Build options: `-DMH3_ROM_DECODER=OFF` builds without Rust (only a decrypted
-ISO from `nodtool convert --decrypt` can then be prepared).
+ISO from `nodtool convert --decrypt` can then be read).
 `MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
 packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
 `../Vita3K/external/stb` or `STB_INCLUDE_DIR`).
 
 ## Run
 
-Pass the disc image once. The first launch prepares the game data in `disc/`
-next to the executable: the decoded game partition (4.1 GiB), the converted
-texture pack (0.8 GiB) and the native model packs (0.3 GiB). That takes about
-20 s on a fast arm64 host. Every launch checks that all of it is present and
-complete, and prepares whatever is missing again:
+Pass the disc image once. The game reads it in place: the first launch only
+writes the disc metadata (about 7 MB) to `disc/` next to the executable and
+records where the image is, which takes well under a second. Textures and
+models are converted while the game loads them, on three worker threads, and
+kept in `disc/cache/`, so each one is converted only once. Every launch checks
+that the image is still there and unchanged; pass `--rom` again after moving
+it:
 
 ```sh
 build/linux-arm64/MH3 --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --village
@@ -97,8 +99,9 @@ prints game speed and fps periodically. On a VM without a working GPU driver
 use `DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe; virgl draws the geometry
 wrong).
 
-On the Vita, put the disc image in `ux0:/data/mh3-wii/`; the launcher
-prepares the same data in `ux0:/data/mh3-wii/disc/` at its first start.
+On the Vita, put the disc image in `ux0:/data/mh3-wii/`; the launcher writes
+the same metadata and cache to `ux0:/data/mh3-wii/disc/`
+([details](docs/vita-launcher.md#load-time-texture-and-model-conversion)).
 
 For development runs, `scripts/dev/run-heartbeat.sh` launches with an isolated
 copy of the post-Chief save fixture, dumps a frame every 150 game frames and

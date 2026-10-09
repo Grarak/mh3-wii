@@ -61,6 +61,9 @@ void ClearNativeMaterialPrograms();
 // Create the renderer on the game thread. Native targets use only the selected
 // visible dimensions, with no guest FIFO or XFB allocation/initialization.
 void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets = true);
+// Opens the native texture and model assets of MH3_DISC_DIR: prepared packs,
+// or the load-time asset cache. Done by InitializeNativeGraphics unless told not to.
+void OpenNativeAssets();
 
 // The game thread records each frame into a packet; the render thread draws
 // and presents it (native_frame_packet.h). Begin admits recording unless the
