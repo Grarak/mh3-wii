@@ -1,0 +1,29 @@
+#pragma once
+#include "runtime/native/mh3_model_submission.h"
+#include "runtime/native/mh3_vertex_sources.h"
+/* Explicit loader events. Tracking disc reads alone does not certify copied,
+ * recycled or decompressed owners. No bind-time revision bumps or hashing. */
+void RecordNativeDiscWrite(uint32_t destination,uint64_t partition_offset,uint32_t bytes);
+void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t bytes);
+void RetireNativeResourceOwner(uint32_t address,uint32_t bytes);
+/* Caller owns validated metadata/catalog and resident allocation until explicit
+ * unregistration. Backend's asynchronous fence lifetime is a separate owner. */
+void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* catalog,
+                             uintptr_t resident_handle,uint64_t resident_generation);
+void UnregisterNativeModelPack(uintptr_t resident_handle);
+struct NativeModelOwner {
+    const mh3_mesh_pack* pack;
+    const mh3_model_catalog* catalog;
+    uint32_t catalog_model_index,container_address,model_address;
+    uintptr_t resident_handle;
+    uint64_t resident_generation,source_generation;
+};
+NativeModelOwner ResolveNativeModelOwner(uint32_t model_address);
+mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner,
+                                                uint32_t resource_address,bool material);
+/* Explicit mutable vertex producers must advance source revisions when arrays
+ * change in place. A bind event only advances binding_generation. */
+void MarkNativeVertexProduced(uint32_t payload,uint64_t generation);
+mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference,mh3_vertex_kind kind);
+void StoreNativeVertexSource(uint32_t semantic,const mh3_native_vertex_source& source);
+bool ReadNativeVertexSource(uint32_t semantic,mh3_native_vertex_source* out);

@@ -1,0 +1,277 @@
+#include "mh3_model_catalog.h"
+#include <limits.h>
+#include <string.h>
+
+static uint32_t u32(const uint8_t *p) {
+    return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
+}
+static uint64_t u64(const uint8_t *p) {return (uint64_t)u32(p)|(uint64_t)u32(p+4)<<32;}
+static int extent(size_t size,size_t offset,size_t bytes) {return offset<=size && bytes<=size-offset;}
+static int table(mh3_pack_span bytes,uint32_t offset,uint32_t count,uint32_t stride) {
+    return offset>=64 && !(offset&7) && offset<=bytes.size && count<=(bytes.size-offset)/stride;
+}
+mh3_pack_status mh3_model_catalog_model(const mh3_model_catalog *c,uint32_t index,
+                                        mh3_catalog_model *out) {
+    if (!c || !out || index>=c->model_count) return MH3_PACK_RANGE;
+    const uint8_t *p=c->bytes.data+c->model_offset+(size_t)index*64;
+    mh3_catalog_model r;
+    r.partition_offset=u64(p);r.file_bytes=u32(p+8);r.model_offset=u32(p+12);
+    r.model_bytes=u32(p+16);r.model_id=u32(p+20);r.pack_index=u32(p+24);
+    r.revision=u32(p+28);r.parent_offset=u32(p+32);r.shape_first=u32(p+36);
+    r.shape_count=u32(p+40);r.material_first=u32(p+44);r.material_count=u32(p+48);
+    *out=r;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_catalog_resource(const mh3_model_catalog *c,int material,
+                                           uint32_t index,mh3_catalog_resource *out) {
+    if (!c || !out || (material!=0 && material!=1) ||
+        index>=(material?c->material_count:c->shape_count)) return MH3_PACK_RANGE;
+    const uint8_t *p=c->bytes.data+(material?c->material_offset:c->shape_offset)+(size_t)index*24;
+    mh3_catalog_resource r={u32(p),u32(p+4),u32(p+8),u32(p+12),u32(p+16),u32(p+20)};
+    *out=r;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_catalog_open(mh3_pack_span bytes,mh3_model_catalog *out) {
+    if (!out || !bytes.data || bytes.size<64 || bytes.size>UINT32_MAX) return MH3_PACK_RANGE;
+    const uint8_t *p=bytes.data;
+    if (memcmp(p,"M3ID",4)) return MH3_PACK_INVALID;
+    if (u32(p+4)!=1) return MH3_PACK_UNSUPPORTED;
+    if (u32(p+8)!=bytes.size) return MH3_PACK_RANGE;
+    mh3_model_catalog c={bytes,u32(p+12),u32(p+16),u32(p+20),u32(p+24),u32(p+28),u32(p+32)};
+    for (uint32_t i=36;i<64;i+=4) if (u32(p+i)) return MH3_PACK_INVALID;
+    if (!table(bytes,c.model_offset,c.model_count,64) ||
+        !table(bytes,c.shape_offset,c.shape_count,24) ||
+        !table(bytes,c.material_offset,c.material_count,24)) return MH3_PACK_RANGE;
+    /* Canonical tightly packed tables prohibit aliasing, orphan tails and
+     * inconsistent sizes without overflowing a 32-bit host's multiplication. */
+    if (c.model_offset!=64 || (uint64_t)c.shape_offset!=64+(uint64_t)c.model_count*64 ||
+        (uint64_t)c.material_offset!=(uint64_t)c.shape_offset+(uint64_t)c.shape_count*24 ||
+        bytes.size!=(uint64_t)c.material_offset+(uint64_t)c.material_count*24) return MH3_PACK_INVALID;
+    uint32_t shape_first=0,material_first=0;
+    mh3_catalog_model previous={0};
+    for (uint32_t i=0;i<c.model_count;i++) {
+        mh3_catalog_model m;mh3_model_catalog_model(&c,i,&m);
+        if (!m.file_bytes || !m.model_bytes || !m.model_id || m.revision!=11 || m.parent_offset!=0 ||
+            m.partition_offset>UINT64_MAX-m.file_bytes ||
+            !extent(m.file_bytes,m.model_offset,m.model_bytes) ||
+            m.shape_first!=shape_first || m.material_first!=material_first ||
+            !extent(c.shape_count,m.shape_first,m.shape_count) ||
+            !extent(c.material_count,m.material_first,m.material_count)) return MH3_PACK_INVALID;
+        if (i && (m.partition_offset<previous.partition_offset ||
+            (m.partition_offset==previous.partition_offset &&
+             (m.model_offset<=previous.model_offset || m.file_bytes!=previous.file_bytes)) ||
+            (m.partition_offset!=previous.partition_offset &&
+             m.partition_offset<previous.partition_offset+previous.file_bytes))) return MH3_PACK_INVALID;
+        p=bytes.data+c.model_offset+(size_t)i*64;
+        if (u32(p+52)||u32(p+56)||u32(p+60)) return MH3_PACK_INVALID;
+        for (int material=0;material<2;material++) {
+            const uint32_t first=material?m.material_first:m.shape_first;
+            const uint32_t count=material?m.material_count:m.shape_count;
+            uint32_t last=0;
+            for (uint32_t j=0;j<count;j++) {
+                mh3_catalog_resource r;mh3_model_catalog_resource(&c,material,first+j,&r);
+                if (r.model_index!=i || !r.source_bytes || !r.asset_id ||
+                    (j && r.source_id<=last) || r.source_offset<m.model_offset ||
+                    !extent(m.model_bytes,(size_t)r.source_offset-m.model_offset,r.source_bytes)) return MH3_PACK_INVALID;
+                last=r.source_id;
+            }
+        }
+        shape_first+=m.shape_count;material_first+=m.material_count;previous=m;
+    }
+    if (shape_first!=c.shape_count || material_first!=c.material_count) return MH3_PACK_INVALID;
+    *out=c;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_catalog_find(const mh3_model_catalog *c,uint64_t offset,uint32_t model_offset,
+                                       uint32_t *out) {
+    if (!c || !out) return MH3_PACK_INVALID;
+    uint32_t lo=0,hi=c->model_count;
+    while(lo<hi) {
+        uint32_t mid=lo+(hi-lo)/2;mh3_catalog_model m;mh3_model_catalog_model(c,mid,&m);
+        if (m.partition_offset<offset || (m.partition_offset==offset && m.model_offset<model_offset)) lo=mid+1;
+        else hi=mid;
+    }
+    if (lo==c->model_count) return MH3_PACK_RANGE;
+    mh3_catalog_model m;mh3_model_catalog_model(c,lo,&m);
+    if (m.partition_offset!=offset || m.model_offset!=model_offset) return MH3_PACK_RANGE;
+    *out=lo;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_catalog_find_resource(const mh3_model_catalog *c,uint32_t model_index,
+                                                int material,uint32_t source_id,mh3_catalog_resource *out) {
+    mh3_catalog_model m;
+    if (!out || (material!=0 && material!=1)) return MH3_PACK_INVALID;
+    mh3_pack_status status=mh3_model_catalog_model(c,model_index,&m);
+    if (status!=MH3_PACK_OK) return status;
+    uint32_t first=material?m.material_first:m.shape_first,lo=0,hi=material?m.material_count:m.shape_count;
+    const uint32_t count=hi;
+    while(lo<hi) {
+        uint32_t mid=lo+(hi-lo)/2;mh3_catalog_resource r;mh3_model_catalog_resource(c,material,first+mid,&r);
+        if (r.source_id<source_id) lo=mid+1;else hi=mid;
+    }
+    if (lo==count) return MH3_PACK_RANGE;
+    mh3_catalog_resource r;mh3_model_catalog_resource(c,material,first+lo,&r);
+    if (r.source_id!=source_id) return MH3_PACK_RANGE;
+    *out=r;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_catalog_validate_pack(const mh3_model_catalog *c,const mh3_mesh_pack *pack) {
+    if (!c || !pack || c->model_count!=pack->counts[MH3_PACK_MODELS]) return MH3_PACK_INVALID;
+    for (uint32_t i=0;i<c->model_count;i++) {
+        mh3_catalog_model m;mh3_pack_model p;
+        mh3_model_catalog_model(c,i,&m);
+        if (mh3_mesh_pack_model(pack,m.pack_index,&p)!=MH3_PACK_OK || p.id!=m.model_id ||
+            p.source_offset!=m.model_offset || p.revision!=m.revision || p.material_count!=m.material_count)
+            return MH3_PACK_INVALID;
+        for (uint32_t j=0;j<i;j++) {
+            mh3_catalog_model other;mh3_model_catalog_model(c,j,&other);
+            if (other.pack_index==m.pack_index || other.model_id==m.model_id) return MH3_PACK_INVALID;
+        }
+        uint32_t converted=0;
+        for (int material=0;material<2;material++) {
+            uint32_t first=material?m.material_first:m.shape_first,count=material?m.material_count:m.shape_count;
+            for (uint32_t j=0;j<count;j++) {
+                mh3_catalog_resource r;mh3_model_catalog_resource(c,material,first+j,&r);
+                if (material) {
+                    mh3_pack_material mat;
+                    if (r.pack_index<p.material_first || r.pack_index-p.material_first>=p.material_count ||
+                        mh3_mesh_pack_material(pack,r.pack_index,&mat)!=MH3_PACK_OK || mat.model_id!=m.model_id ||
+                        mat.source_id!=r.source_id || mat.asset_id!=r.asset_id) return MH3_PACK_INVALID;
+                } else if (r.pack_index!=UINT32_MAX) {
+                    mh3_pack_mesh mesh;
+                    if (r.pack_index<p.mesh_first || r.pack_index-p.mesh_first>=p.mesh_count ||
+                        mh3_mesh_pack_mesh(pack,r.pack_index,&mesh)!=MH3_PACK_OK || mesh.model_id!=m.model_id ||
+                        mesh.source_id!=r.source_id || mesh.asset_id!=r.asset_id) return MH3_PACK_INVALID;
+                    converted++;
+                }
+            }
+        }
+        if (converted!=p.mesh_count) return MH3_PACK_INVALID;
+    }
+    return MH3_PACK_OK;
+}
+
+static int memory_range(uint32_t address,uint32_t bytes) {
+    return bytes && (uint64_t)address+bytes<=UINT64_C(0x100000000);
+}
+mh3_res_status mh3_source_tracker_init(mh3_source_tracker *out,mh3_source_range *ranges,
+                                      mh3_source_range *work,mh3_source_range *transfer,size_t capacity) {
+    if (!out || !ranges || !work || !transfer || !capacity || capacity>SIZE_MAX/sizeof(*ranges) ||
+        ranges==work || ranges==transfer || work==transfer) return MH3_RES_INVALID;
+    mh3_source_tracker t={ranges,work,transfer,0,capacity,0};*out=t;return MH3_RES_OK;
+}
+static mh3_res_status append(mh3_source_tracker *t,size_t *count,mh3_source_range r) {
+    if (*count>=t->capacity) return MH3_RES_RANGE;
+    t->work[(*count)++]=r;return MH3_RES_OK;
+}
+static mh3_res_status remove_range(mh3_source_tracker *t,uint32_t address,uint32_t bytes,size_t *count) {
+    uint64_t end=(uint64_t)address+bytes;*count=0;
+    for (size_t i=0;i<t->count;i++) {
+        mh3_source_range r=t->ranges[i];uint64_t re=(uint64_t)r.address+r.bytes;
+        if (re<=address || r.address>=end) {
+            if (append(t,count,r)!=MH3_RES_OK) return MH3_RES_RANGE;
+            continue;
+        }
+        if (r.address<address) {
+            mh3_source_range left=r;left.bytes=address-r.address;
+            if (append(t,count,left)!=MH3_RES_OK) return MH3_RES_RANGE;
+        }
+        if (re>end) {
+            mh3_source_range right=r;right.address=(uint32_t)end;right.bytes=(uint32_t)(re-end);
+            right.partition_offset+=end-r.address;
+            if (append(t,count,right)!=MH3_RES_OK) return MH3_RES_RANGE;
+        }
+    }
+    return MH3_RES_OK;
+}
+static void commit(mh3_source_tracker *t,size_t count) {
+    /* Ordered nonoverlapping ranges enable load-time binary address lookup. */
+    for (size_t i=1;i<count;i++) {
+        mh3_source_range r=t->work[i];size_t j=i;
+        while(j && t->work[j-1].address>r.address) {t->work[j]=t->work[j-1];j--;}
+        t->work[j]=r;
+    }
+    size_t n=0;
+    for (size_t i=0;i<count;i++) {
+        mh3_source_range r=t->work[i];
+        if (n && (uint64_t)t->ranges[n-1].address+t->ranges[n-1].bytes==r.address &&
+            t->ranges[n-1].partition_offset+t->ranges[n-1].bytes==r.partition_offset &&
+            t->ranges[n-1].generation==r.generation &&
+            (uint64_t)t->ranges[n-1].bytes+r.bytes<=UINT32_MAX) t->ranges[n-1].bytes+=r.bytes;
+        else t->ranges[n++]=r;
+    }
+    t->count=n;
+}
+mh3_res_status mh3_source_record_disc(mh3_source_tracker *t,uint32_t address,uint32_t bytes,
+                                     uint64_t offset,uint64_t generation) {
+    if (!t || !memory_range(address,bytes) || generation<=t->generation || offset>UINT64_MAX-bytes) return MH3_RES_INVALID;
+    size_t count;
+    if (remove_range(t,address,bytes,&count)!=MH3_RES_OK) return MH3_RES_RANGE;
+    mh3_source_range r={address,bytes,offset,generation};
+    if (append(t,&count,r)!=MH3_RES_OK) return MH3_RES_RANGE;
+    commit(t,count);t->generation=generation;return MH3_RES_OK;
+}
+mh3_res_status mh3_source_retire(mh3_source_tracker *t,uint32_t address,uint32_t bytes) {
+    if (!t || !memory_range(address,bytes)) return MH3_RES_INVALID;
+    size_t count;if (remove_range(t,address,bytes,&count)!=MH3_RES_OK) return MH3_RES_RANGE;
+    commit(t,count);return MH3_RES_OK;
+}
+int mh3_source_intersects(const mh3_source_tracker *t,uint32_t address,uint32_t bytes) {
+    if (!t || !memory_range(address,bytes)) return 0;
+    const uint64_t end=(uint64_t)address+bytes;size_t lo=0,hi=t->count;
+    while(lo<hi) {
+        size_t mid=lo+(hi-lo)/2;
+        if ((uint64_t)t->ranges[mid].address+t->ranges[mid].bytes<=address) lo=mid+1;
+        else hi=mid;
+    }
+    return lo<t->count && t->ranges[lo].address<end;
+}
+mh3_res_status mh3_source_record_copy(mh3_source_tracker *t,uint32_t dst,uint32_t src,
+                                     uint32_t bytes,uint64_t generation) {
+    if (!t || !memory_range(dst,bytes) || !memory_range(src,bytes) || generation<=t->generation) return MH3_RES_INVALID;
+    const uint64_t end=(uint64_t)src+bytes;size_t n=0;
+    for (size_t i=0;i<t->count;i++) {
+        const mh3_source_range r=t->ranges[i];uint64_t begin=r.address,re=(uint64_t)r.address+r.bytes;
+        if (begin<src) begin=src;
+        if (re>end) re=end;
+        if (begin>=re) continue;
+        if (n>=t->capacity) return MH3_RES_RANGE;
+        mh3_source_range copy={(uint32_t)(dst+begin-src),(uint32_t)(re-begin),r.partition_offset+begin-r.address,generation};
+        t->transfer[n++]=copy;
+    }
+    size_t count;if (remove_range(t,dst,bytes,&count)!=MH3_RES_OK) return MH3_RES_RANGE;
+    for (size_t i=0;i<n;i++) if (append(t,&count,t->transfer[i])!=MH3_RES_OK) return MH3_RES_RANGE;
+    commit(t,count);t->generation=generation;return MH3_RES_OK;
+}
+mh3_res_status mh3_source_resolve(const mh3_source_tracker *t,uint32_t address,uint32_t bytes,mh3_source_identity *out) {
+    if (!t || !out || !memory_range(address,bytes)) return MH3_RES_INVALID;
+    uint64_t cursor=address,end=(uint64_t)address+bytes,expected=0,generation=0,start=0;
+    for (size_t i=0;i<t->count && cursor<end;i++) {
+        const mh3_source_range r=t->ranges[i];const uint64_t re=(uint64_t)r.address+r.bytes;
+        if (re<=cursor) continue;
+        if (r.address>cursor) return MH3_RES_ABSENT;
+        const uint64_t offset=r.partition_offset+cursor-r.address;
+        if (!generation) start=offset;
+        else if (offset!=expected) return MH3_RES_ABSENT;
+        if (r.generation>generation) generation=r.generation;
+        uint64_t next=re<end?re:end;expected=offset+next-cursor;cursor=next;
+    }
+    if (cursor!=end) return MH3_RES_ABSENT;
+    mh3_source_identity id={start,generation};*out=id;return MH3_RES_OK;
+}
+mh3_res_status mh3_source_resolve_model(const mh3_source_tracker *t,const mh3_model_catalog *c,
+                                       uint32_t address,uint32_t *index,uint32_t *base,uint64_t *generation) {
+    if (!c || !index || !base || !generation) return MH3_RES_INVALID;
+    mh3_source_identity mdl;
+    mh3_res_status s=mh3_source_resolve(t,address,1,&mdl);if (s!=MH3_RES_OK) return s;
+    /* Model count is small per area. The catalog's disc ordering permits a
+     * future binary file-range lookup without a mutable address/name index. */
+    for (uint32_t i=0;i<c->model_count;i++) {
+        mh3_catalog_model m;mh3_model_catalog_model(c,i,&m);
+        if (mdl.partition_offset!=m.partition_offset+m.model_offset) continue;
+        if (address<m.model_offset) return MH3_RES_RANGE;
+        const uint32_t owner=address-m.model_offset;mh3_source_identity file;
+        s=mh3_source_resolve(t,owner,m.file_bytes,&file);if (s!=MH3_RES_OK) return s;
+        if (file.partition_offset!=m.partition_offset) return MH3_RES_ABSENT;
+        *index=i;*base=owner;*generation=file.generation;return MH3_RES_OK;
+    }
+    return MH3_RES_ABSENT;
+}
+void *mh3_model_copy_bytes(void *destination,const void *source,size_t bytes) {
+    return bytes?memmove(destination,source,bytes):destination;
+}
