@@ -8,7 +8,9 @@
 //
 // MH3_WRITE_WATCH=list=FILE watches the words listed instead (one hex address
 // per line, as the first field: a step probe's output works as is) and
-// reports each by its address.
+// reports each by its address. Writers are told apart by the frame phase the
+// write came in (the frame body's phase byte at 0x8065AA83: 1-2 logic, 3
+// draw, 4 after the draw) and the guest thread (game, worker or draw).
 #include "dev_options.h"
 #include "memory_access.h"
 #include "isa/ppc_isa_context.h"
@@ -22,6 +24,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -35,7 +38,8 @@ struct Writes {
     uint32_t size = 0;
 };
 
-using Key = std::tuple<const void*, uint32_t, uint32_t>; // host caller, guest lr, offset
+using Key = std::tuple<const void*, uint32_t, uint32_t, uint8_t, uint8_t>; // host caller, guest lr, offset, phase, thread
+std::mutex lock; // the draw thread, the worker and the game thread all store
 std::map<Key, Writes> writes;
 std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 std::chrono::milliseconds interval{5000};
@@ -58,14 +62,15 @@ void Report() {
     std::fprintf(stderr, "MH3 write watch: %llu writers of [%08x, +%x)\n", static_cast<unsigned long long>(sorted.size()), g_writeWatchStart, g_writeWatchLength);
 
     for (const auto& [key, w] : sorted) {
-        const auto& [caller, lr, offset] = key;
+        const auto& [caller, lr, offset, phase, thread] = key;
         float asFloat;
         const uint32_t bits = uint32_t(w.last);
         std::memcpy(&asFloat, &bits, 4);
         std::fprintf(stderr,
-                     words.empty() ? "MH3 write watch:   +%04x %s lr %08x: %llu writes of %u bytes, last %llx (%g)\n" : "MH3 write watch:   %08x %s lr %08x: %llu writes of %u bytes, last %llx (%g)\n",
-                     words.empty() ? offset : g_writeWatchStart + offset, Describe(caller).c_str(), lr, static_cast<unsigned long long>(w.count), w.size, static_cast<unsigned long long>(w.last),
-                     w.size == 4 ? asFloat : 0.0);
+                     words.empty() ? "MH3 write watch:   +%04x %s lr %08x phase %u thread %u: %llu writes of %u bytes, last %llx (%g)\n"
+                                   : "MH3 write watch:   %08x %s lr %08x phase %u thread %u: %llu writes of %u bytes, last %llx (%g)\n",
+                     words.empty() ? offset : g_writeWatchStart + offset, Describe(caller).c_str(), lr, phase, thread, static_cast<unsigned long long>(w.count), w.size,
+                     static_cast<unsigned long long>(w.last), w.size == 4 ? asFloat : 0.0);
     }
 
     writes.clear();
@@ -118,11 +123,14 @@ struct Arm {
 } // namespace
 
 void RecordWatchedWrite(uint32_t address, uint32_t size, uint64_t value, const void* hostCaller) {
+    std::lock_guard guard(lock);
+
     if (reporting)
         return;
 
     const CpuContext* cpu = TryGetCpuContext();
-    auto& w = writes[{hostCaller, cpu ? cpu->lr : 0, address - g_writeWatchStart}];
+    const uint8_t phase = FlatLoad<uint8_t>(0x8065AA83), thread = uint8_t(PpcThread::CurrentThread());
+    auto& w = writes[{hostCaller, cpu ? cpu->lr : 0, address - g_writeWatchStart, phase, thread}];
     ++w.count;
     w.last = value;
     w.size = size;
