@@ -36,6 +36,11 @@ std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
 std::atomic<uint64_t> g_displayWaitMicros{0};
 std::atomic<uint64_t> g_pacedFlips{0}, g_pacingErrorMicros{0}, g_flipVblanks[4]{};
 std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
+std::atomic<bool> g_flipTrace{false};
+FlipSample g_flips[256];
+std::atomic<uint64_t> g_flipCount{0};
+std::atomic<int64_t> g_repeatedVblanks{0};
+
 // Flips wait for VBlank (set_vsync).
 std::atomic<bool> g_vsync{true};
 std::atomic<uint64_t> g_latencyFlips{0}, g_latencyMicros[4]{};
@@ -94,6 +99,12 @@ void record_pacing(uint64_t gameUs) {
     g_flipVblanks[std::clamp<int64_t>(vblanks, 1, 4) - 1].fetch_add(1, std::memory_order_relaxed);
   }
 
+  if (g_flipTrace.load(std::memory_order_relaxed)) {
+    const uint64_t count = g_flipCount.load(std::memory_order_relaxed);
+    g_flips[count % std::size(g_flips)] = {now, gameUs};
+    g_flipCount.store(count + 1, std::memory_order_release);
+  }
+
   lastFlip = now;
   lastGame = gameUs;
 }
@@ -138,6 +149,17 @@ void display_callback(const void* data) {
   }
 
   if (setResult >= 0 && waitResult >= 0) {
+    // The VBlank count of each flip, read after its wait: a read the callback
+    // took late counts one VBlank too many there and one too few at the next.
+    static uint32_t lastVcount = 0;
+    static bool counted = false;
+    const uint32_t vcount = uint32_t(sceDisplayGetVcount());
+
+    if (vsync && counted)
+      g_repeatedVblanks.fetch_add(int64_t(int32_t(vcount - lastVcount)) - 1, std::memory_order_relaxed);
+
+    lastVcount = vcount;
+    counted = vsync;
     g_displayPresented.fetch_add(1, std::memory_order_relaxed);
     record_pacing(display.game_us);
     record_latency(display, gpuDoneUs, steady_us());
@@ -451,6 +473,27 @@ void set_vsync(bool enabled) noexcept {
 bool gpu_frame_pending() noexcept {
   const auto* device = g_frameDevice.load(std::memory_order_acquire);
   return device && device->frame_pending();
+}
+
+void set_flip_trace(bool enabled) noexcept {
+  g_flipTrace.store(enabled, std::memory_order_relaxed);
+}
+
+int64_t repeated_vblanks() noexcept {
+  return g_repeatedVblanks.load(std::memory_order_relaxed);
+}
+
+size_t take_flips(FlipSample* out, size_t capacity) noexcept {
+  static uint64_t taken = 0;
+  const uint64_t count = g_flipCount.load(std::memory_order_acquire);
+  const uint64_t first = std::max({taken, count - std::min<uint64_t>(count, std::size(g_flips)), count - std::min<uint64_t>(count, capacity)});
+  size_t n = 0;
+
+  for (uint64_t i = first; i < count; ++i)
+    out[n++] = g_flips[i % std::size(g_flips)];
+
+  taken = count;
+  return n;
 }
 
 DisplayStatistics display_statistics() noexcept {

@@ -45,6 +45,22 @@ struct DisplayStatistics {
 
 DisplayStatistics display_statistics() noexcept;
 
+// Flip trace (off by default): each paced flip's time and its frame's game
+// time, both in microseconds, kept in a ring of the last 256 flips.
+// take_flips copies those since the previous call (at most `capacity`, the
+// newest) and returns how many; one reader.
+struct FlipSample {
+  uint64_t flip_us = 0, game_us = 0;
+};
+
+void set_flip_trace(bool enabled) noexcept;
+size_t take_flips(FlipSample* out, size_t capacity) noexcept;
+
+// With VSync: the VBlanks between flips beyond one each (a frame the display
+// kept for more VBlanks because the next was late), summed since the start.
+// Any thread.
+int64_t repeated_vblanks() noexcept;
+
 // VSync on (the default): flips at VBlank and waits; off: flips at VBlank
 // without waiting (the display queue no longer paces the render thread),
 // for the game thread limit off.

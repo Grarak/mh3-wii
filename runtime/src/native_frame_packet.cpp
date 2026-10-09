@@ -346,6 +346,9 @@ bool paced = true;
 // Game thread: whether a loading screen drew the frame before the one being
 // paced, and when the next loading frame may start.
 bool loadingFrame = false;
+
+// Game thread: the last packet paced went through the limit.
+bool limitedFrame = false;
 std::chrono::steady_clock::time_point loadingNext;
 
 // Render thread: when the next loading screen frame may be drawn.
@@ -1821,6 +1824,14 @@ void NoteNativeLoadingFrame() {
         recording->loading = true;
 }
 
+std::optional<int64_t> NativeFrameRepeatedVBlanks() {
+#ifdef AURORA_GXM
+    if (limitedFrame && running.load(std::memory_order_relaxed))
+        return aurora::gxm::repeated_vblanks();
+#endif
+    return std::nullopt;
+}
+
 void PaceNativeFramePacket() {
     if (synchronous || !running.load(std::memory_order_relaxed))
         return;
@@ -1832,6 +1843,7 @@ void PaceNativeFramePacket() {
     // 60 Hz and 8.7 s at 240 Hz, but 48.8 s (32,532 frames) unbounded, where
     // the frames took the CPU from the loading.
     const bool loading = std::exchange(loadingFrame, false), unpaced = !paced || loading;
+    limitedFrame = !unpaced;
 
     if (loading) {
         constexpr auto period = std::chrono::microseconds(4167);

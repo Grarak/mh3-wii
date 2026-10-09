@@ -3,10 +3,12 @@
 // feedback) with the shading state captured per changed component; the render
 // thread alone owns the graphics API: it restores each record's state, draws,
 // and presents. Packets travel through a ring of four, rendered in order
-// (docs/frame-packet-ring.md); without the game thread limiter an unrendered
+// (docs/optimizations/threading/render-thread.md); without the game thread limiter an unrendered
 // packet may be skipped, so resource work goes through the task queues
 // instead.
 #pragma once
+
+#include <optional>
 #include <aurora/native_geometry.h>
 #include <aurora/native_scene_feedback.hpp>
 #include <cstdint>
@@ -87,6 +89,13 @@ void PaceNativeFramePacket();
 // 240 Hz without the limiter in either mode, and the render thread draws them
 // at 60 Hz, leaving the CPU to the loading.
 void NoteNativeLoadingFrame();
+
+// Game thread: the VBlanks the display kept a frame for beyond its first,
+// summed since the start (gxm::repeated_vblanks), while the frames go through
+// the limit and so are each shown, in turn, at a VBlank of their own; or
+// nothing with the limit off, on a loading screen or a display that does not
+// count them (GL).
+std::optional<int64_t> NativeFrameRepeatedVBlanks();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();
 void CancelNativeFramePacket();
@@ -96,7 +105,7 @@ void CancelNativeFramePacket();
 void PublishNativeFramePacket(std::string capture);
 
 // The draw's game-side part (the HUD and what follows the scene,
-// docs/pipelined-draw.md) is recorded before the scene but replays after it:
+// docs/optimizations/threading/pipelined-draw.md) is recorded before the scene but replays after it:
 // the records between these calls move to the packet's end at publication.
 void BeginNativeFramePacketTail();
 void EndNativeFramePacketTail();

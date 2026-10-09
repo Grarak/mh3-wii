@@ -30,6 +30,9 @@
 #include "gl/device.hpp"
 #include "gl/gl.hpp"
 #include "dolphin/vi/vi_internal.hpp"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include <algorithm>
 #include <utility>
 #include <array>
@@ -795,6 +798,35 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     }
 
     previousDisplay = display;
+
+    // MH3_TRACE=flips: each flip of the second, its frame's game time in ms
+    // (the camera-path trace's) and the time since the flip before in us, 30
+    // a line (the devkit's TTY cuts lines at about 930 characters).
+    static const bool flipTrace = [] {
+        const bool enabled = TraceOptions().Has("flips");
+        aurora::gxm::set_flip_trace(enabled);
+        return enabled;
+    }();
+
+    if (flipTrace) {
+        static aurora::gxm::FlipSample flips[256];
+        static uint64_t lastFlip = 0;
+        const size_t count = aurora::gxm::take_flips(flips, std::size(flips));
+
+        for (size_t first = 0; first < count; first += 30) {
+            std::string line = "MH3 flips:";
+
+            for (size_t i = first; i < std::min(count, first + 30); ++i) {
+                char item[40];
+                std::snprintf(item, sizeof(item), " %.2f/%lu", double(flips[i].game_us) / 1000.0, static_cast<unsigned long>(lastFlip ? flips[i].flip_us - lastFlip : 0));
+                line += item;
+                lastFlip = flips[i].flip_us;
+            }
+
+            std::fprintf(stderr, "%s\n", line.c_str());
+        }
+    }
+
     const auto residency = aurora::gxm::residency_statistics();
     std::fprintf(stderr,
                  "MH3 native CDRAM: arena %.2f/%.2f MiB, textures %.2f MiB (%u live/%u pinned/%u GPU-written), retired textures %.2f MiB, models %.2f MiB + %.2f MiB retired, spill main/phycont "

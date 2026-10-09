@@ -360,6 +360,29 @@ void ReportBlends(uint32_t cam) {
     zoom[0] = zoomNow[0];
     zoom[1] = zoomNow[1];
 }
+
+// MH3_TRACE=camera-path: each step while the camera turns and 30 steps after,
+// the step's game time in us (as the frame packet carries it to the flip
+// trace), its length in ticks, the yaw, its target and ramp, the pitch, the
+// eye and the target.
+void ReportPath(uint32_t cam) {
+    static const bool enabled = TraceOptions().Has("camera-path");
+
+    if (!enabled)
+        return;
+
+    static uint32_t lastYaw = 0, quiet = 31;
+    const uint32_t yaw = R32(cam + kYaw), target = R32(cam + kYawTarget);
+    quiet = yaw != lastYaw || target != yaw ? 0 : quiet + 1;
+    lastYaw = yaw;
+
+    if (quiet > 30)
+        return;
+
+    std::fprintf(stderr, "MH3 camera path: game %.0f us step %.4f yaw %d target %d ramp %d pitch %d eye %.3f %.3f %.3f look %.3f %.3f %.3f\n", GameStep::Elapsed() * (1e6 / 30.0),
+                 GameStep::Scale(), int32_t(yaw), int32_t(target), int8_t(Memory::Read8(cam + 0xA1)), int32_t(R32(cam + kPitch)), F(cam + kEye), F(cam + kEye + 4), F(cam + kEye + 8),
+                 F(cam + kTarget), F(cam + kTarget + 4), F(cam + kTarget + 8));
+}
 #endif
 } // namespace
 
@@ -694,6 +717,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     game.Call<VecCopy>({cam + kOldTarget, cam + kTarget});
 #ifdef MH3_DEVELOPMENT
     ReportMonsters(game);
+    ReportPath(cam);
 
     // MH3_INPUT=camera=N[:D]: the camera looks at monster N instead, from the
     // game's eye or from D units away on the line to it (raised by D/3); the
