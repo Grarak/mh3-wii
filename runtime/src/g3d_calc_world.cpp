@@ -432,7 +432,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x80073830, MH3_G3dCalcWorld, "G3dCalcWorld");
 // transpose of A (or A itself when attrib bit 29 says it has no scale), the
 // 3x3 into B for nrm and, with tex, the 3x4 with a zero translation into C for
 // tex. Buffers A-C alternate with a second set between chunks. The DMA copies
-// whole 32-byte blocks, as the runtime's locked-cache DMA does.
+// whole 32-byte blocks, as the runtime's locked-cache DMA does. The products
+// and normal matrices are computed in floats (not the paired-single
+// originals' rounding).
 namespace {
 
 constexpr uint32_t kLockedCache = 0xE0000000u;
@@ -569,13 +571,67 @@ void BillboardRot(uint32_t mtx, uint32_t model, uint32_t uniform, uint32_t mdl, 
     Face(mtx, world, uniform, x, y);
 }
 
+mh3_matrix34 ReadMatrix(uint32_t address) {
+    mh3_matrix34 m;
+
+    for (unsigned i = 0; i < 12; ++i)
+        m.v[i / 4][i % 4] = ReadFloat(address + 4 * i);
+
+    return m;
+}
+
+void StoreFloats(uint32_t address, const float* values, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        WriteFloat(address + uint32_t(4 * i), values[i]);
+}
+
+// a * b (3x4, the bottom row 0 0 0 1).
+mh3_matrix34 Concat(const mh3_matrix34& a, const mh3_matrix34& b) {
+    mh3_matrix34 out;
+
+    for (unsigned r = 0; r < 3; ++r)
+        for (unsigned c = 0; c < 4; ++c)
+            out.v[r][c] = a.v[r][0] * b.v[0][c] + a.v[r][1] * b.v[1][c] + a.v[r][2] * b.v[2][c] + (c == 3 ? a.v[r][3] : 0.0f);
+
+    return out;
+}
+
+// The normal matrix of m (MTX34InvTranspose's: the cofactors over the
+// determinant along column 0), or m's rotation when |det| is under epsilon.
+mh3_matrix33 NormalMatrix(const mh3_matrix34& m, float epsilon) {
+    mh3_matrix33 out;
+
+    for (unsigned r = 0; r < 3; ++r)
+        for (unsigned c = 0; c < 3; ++c) {
+            const unsigned r1 = (r + 1) % 3, r2 = (r + 2) % 3, c1 = (c + 1) % 3, c2 = (c + 2) % 3;
+            out.v[r][c] = m.v[r1][c1] * m.v[r2][c2] - m.v[r1][c2] * m.v[r2][c1];
+        }
+
+    const float det = m.v[0][0] * out.v[0][0] + m.v[1][0] * out.v[1][0] + m.v[2][0] * out.v[2][0];
+
+    if (std::fabs(det) < epsilon) {
+        for (unsigned r = 0; r < 3; ++r)
+            for (unsigned c = 0; c < 3; ++c)
+                out.v[r][c] = m.v[r][c];
+
+        return out;
+    }
+
+    const float inverse = 1.0f / det;
+
+    for (unsigned r = 0; r < 3; ++r)
+        for (unsigned c = 0; c < 3; ++c)
+            out.v[r][c] *= inverse;
+
+    return out;
+}
+
 // CalcView_LC, or with lockedCache false the plain CalcView (0x80070884,
 // the same arguments), which writes every result in place.
 void CalcView(CpuContext* ctx, bool lockedCache) {
     GuestFrame frame(ctx, 0x100);
     const uint32_t viewPos = frame.Arg(3), nrm = frame.Arg(4), model = frame.Arg(5), attrib = frame.Arg(6);
     const uint32_t count = frame.Arg(7), view = frame.Arg(8), mdl = frame.Arg(9), tex = frame.Arg(10);
-    const uint32_t r13 = frame.Arg(13);
 
     if (count == 0)
         return;
@@ -593,6 +649,9 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
     const float zero = ReadFloat(0x80798268u);
     const uint32_t inverse = frame[0x58];
     const uint32_t work = WorkArea();
+    const mh3_matrix34 camera = ReadMatrix(view);
+    const float epsilon = ReadFloat(0x8079D6F0u);
+    mh3_matrix34 positions[40];
     GuestCall game{ctx};
 
     // GPU skinning (docs/gpu-skinning.md): a model whose shapes read no
@@ -620,10 +679,12 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
             c = tex + 0x30 * first;
         }
 
-        if (n > 1)
-            G3dNative::MtxConcatArray(view, model + 0x30 * first, a, n, r13);
-        else
-            G3dNative::MtxConcat(view, model + 0x30 * first, a);
+        // The products in floats, kept for the normals: a billboard and a
+        // node under one rewrite theirs in place, read back after.
+        for (uint32_t k = 0; k < n; ++k) {
+            positions[k] = Concat(camera, ReadMatrix(model + 0x30 * (first + k)));
+            StoreFloats(a + 0x30 * k, &positions[k].v[0][0], 12);
+        }
 
         for (uint32_t k = 0; k < n; ++k) {
             const uint32_t id = first + k, attr = Read32(attrib + 4 * id), mtx = a + 0x30 * k;
@@ -635,6 +696,7 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
                     game(Read32(kBillboards + 4 * billboard), {mtx, model, (attr >> 29) & 1, view, frame[0x30], id});
                 }
 
+                positions[k] = ReadMatrix(mtx);
                 const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(MatrixNode(info, id)));
 
                 if (node == 0 || Read32(node + 0x60) == 0)
@@ -668,30 +730,34 @@ void CalcView(CpuContext* ctx, bool lockedCache) {
             const uint32_t parent = G3dNative::ResDicAtOffset14(mdl, Read32(node + 0x1C));
             const uint32_t parentId = parent ? Read32(parent + 0x10) : 0;
             G3dNative::MtxConcat(work + 0x30 * parentId, model + 0x30 * id, mtx);
+            positions[k] = ReadMatrix(mtx);
         }
 
         if (!direct)
             LcStore(viewPos + 0x30 * first, a, blocksA);
 
         if (nrm) {
+            // Bit 29 says the matrix has no scale: its rotation serves.
+            // tex gets the normal matrix with a zero translation.
             for (uint32_t k = 0; k < n; ++k) {
-                const uint32_t id = first + k, mtx = a + 0x30 * k, n33 = b + 0x24 * k, t34 = c + 0x30 * k;
+                const uint32_t id = first + k, n33 = b + 0x24 * k, t34 = c + 0x30 * k;
+                mh3_matrix33 normal;
 
                 if ((Read32(attrib + 4 * id) & 0x20000000u) != 0) {
-                    if (tex) {
-                        G3dNative::MtxCopy(mtx, t34);
-
-                        for (uint32_t t = 0xC; t < 0x30; t += 0x10)
-                            WriteFloat(t34 + t, zero);
-                    }
-
-                    G3dNative::MtxTo33(n33, mtx);
-                } else if (tex) {
-                    G3dNative::MtxInvTranspose34(t34, mtx);
-                    G3dNative::MtxTo33(n33, t34);
+                    for (unsigned r = 0; r < 3; ++r)
+                        for (unsigned col = 0; col < 3; ++col)
+                            normal.v[r][col] = positions[k].v[r][col];
                 } else {
-                    G3dNative::MtxInvTranspose33(n33, mtx);
+                    normal = NormalMatrix(positions[k], epsilon);
                 }
+
+                StoreFloats(n33, &normal.v[0][0], 9);
+
+                if (tex)
+                    for (unsigned r = 0; r < 3; ++r) {
+                        StoreFloats(t34 + 0x10 * r, normal.v[r], 3);
+                        WriteFloat(t34 + 0x10 * r + 0xC, zero);
+                    }
             }
 
             if (!direct) {
@@ -832,20 +898,6 @@ void ForEachViewRun(const NativeModelNodeViews* views, uint32_t count, F&& run) 
     for (const auto& [begin, end] : views->runs)
         if (begin < count)
             run(uint32_t(begin), end < count ? uint32_t(end) : count);
-}
-
-mh3_matrix34 ReadMatrix(uint32_t address) {
-    mh3_matrix34 m;
-
-    for (unsigned i = 0; i < 12; ++i)
-        m.v[i / 4][i % 4] = ReadFloat(address + 4 * i);
-
-    return m;
-}
-
-void StoreFloats(uint32_t address, const float* values, size_t count) {
-    for (size_t i = 0; i < count; ++i)
-        WriteFloat(address + uint32_t(4 * i), values[i]);
 }
 
 // The view pass's arguments (G3dCalcViewPlain's registers): recorded and true,
