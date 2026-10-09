@@ -9,8 +9,6 @@
 #include <mutex>
 #include <string>
 
-#include <tracy/Tracy.hpp>
-
 namespace aurora::gfx::depth_peek {
 namespace {
 Module Log("aurora::gfx::depth_peek");
@@ -111,7 +109,6 @@ FrameMapping capture_frame_mapping() noexcept {
 }
 
 void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t height, const FrameMapping& mapping) noexcept {
-  ZoneScoped;
   const auto now = Clock::now();
   {
     std::lock_guard lock{g_mutex};

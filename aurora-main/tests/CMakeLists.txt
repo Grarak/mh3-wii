@@ -79,7 +79,6 @@ if (AURORA_ENABLE_GX)
     xxhash
     absl::flat_hash_map
     absl::btree
-    TracyClient
     ${AURORA_SDL3_TARGET}
   )
 
@@ -92,7 +91,7 @@ if (AURORA_ENABLE_GX)
     target_include_directories(gx_readback_tests PRIVATE ../lib)
     target_link_libraries(gx_readback_tests PRIVATE
       aurora::core aurora::gx aurora::pad aurora::vi aurora::mtx aurora::si
-      absl::flat_hash_map absl::btree TracyClient)
+      absl::flat_hash_map absl::btree)
     add_test(NAME gx_readback_tests COMMAND gx_readback_tests "${CMAKE_CURRENT_BINARY_DIR}/readback-cache")
     set_tests_properties(gx_readback_tests PROPERTIES TIMEOUT 90)
   endif ()

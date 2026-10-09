@@ -14,7 +14,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
-#include <tracy/Tracy.hpp>
 
 #include <algorithm>
 #include <cfloat>
@@ -546,7 +545,6 @@ gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
 }
 
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
-  ZoneScoped;
   if (obj.format() & AURORA_GENERATED_TEXTURE_FORMAT_BIT)
     return gfx::find_generated_texture(obj.data, obj.texDataVersion);
 #ifdef AURORA_GXM
@@ -656,7 +654,6 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
 }
 
 gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GXTlutObj_& tlut) {
-  ZoneScoped;
 
   if (obj.texObjId != 0) {
     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
@@ -723,7 +720,6 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
 
 gfx::TextureHandle resolve_dynamic_palette_texture(const GXTexObj_& obj, const GXState::CopyTextureRef& source,
                                                    const GXTlutObj_& tlut) {
-  ZoneScoped;
 
   const auto tlutHandle = get_tlut_texture(tlut);
   auto& tlutCache = s_tlutObjectCaches[tlut.tlutObjId];
@@ -1290,7 +1286,6 @@ GXState::CopyTextureRef* find_copy_texture_for_texobj(const GXTexObj_& obj) noex
 }
 
 void resolve_sampled_textures(const ShaderInfo& info) noexcept {
-  ZoneScoped;
 
   for (u32 i = 0; i < MaxTextures; ++i) {
     if (!info.sampledTextures.test(i)) {
@@ -1542,7 +1537,6 @@ static inline u32 effective_dst_alpha(GXPixelFmt pixelFmt, bool alphaUpdate, u32
 }
 
 gfx::PipelinePtr build_pipeline(const PipelineConfig& config, gl::ProgramPtr program) noexcept {
-  ZoneScoped;
   gl::RasterState state;
   state.depthTest = config.depthCompare || config.depthUpdate;
   state.depthFunc = config.depthCompare ? to_compare_function(config.depthFunc) : GL_ALWAYS;
@@ -1682,7 +1676,6 @@ static u8 index_attr_size(GXAttr attr, GXCompCnt cnt, GXAttrType type) noexcept 
 }
 
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
-  ZoneScoped;
 
   const auto& vtxFmt = g_gxState.vtxFmts[fmt];
   // GX applies integer logic ops in the PE after fog.
@@ -1823,7 +1816,6 @@ static HashType hash_texture_bind_group_cache_key(const TextureBindGroupCacheKey
 }
 
 static GXBindGroups build_bind_groups_uncached(const ShaderInfo& info) noexcept {
-  ZoneScoped;
 
   if (!info.sampledTextures.any() && !info.sampledIndTextures.any()) {
     // Don't bother re-binding anything
@@ -1848,7 +1840,6 @@ static GXBindGroups build_bind_groups_uncached(const ShaderInfo& info) noexcept 
 }
 
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
-  ZoneScoped;
 
   if (!info.sampledTextures.any() && !info.sampledIndTextures.any()) {
     return {};

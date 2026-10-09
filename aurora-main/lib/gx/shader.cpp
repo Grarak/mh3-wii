@@ -15,8 +15,6 @@
 #include <string_view>
 #include <utility>
 
-#include "tracy/Tracy.hpp"
-
 namespace aurora::gx {
 using namespace fmt::literals;
 using namespace std::string_literals;
@@ -974,7 +972,6 @@ static std::string native_float_op(const TevOp& op,std::string_view a,std::strin
 
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices,
                                         u8 nativeZeroLodBiasMask,bool approximateNative,const gl::MeshLayout* nativeMeshLayout,u8 nativeNonzeroProjectiveMask,u8 nativeZeroProjectiveMask) noexcept {
-  ZoneScoped;
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
   // All native materials use float combiners. The explicit switch exists only

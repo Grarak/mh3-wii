@@ -16,8 +16,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <tracy/Tracy.hpp>
-
 namespace aurora::gx {
 // TODO: remove, just for testing
 bool enableLodBias = true;
@@ -293,7 +291,6 @@ void alpha_arg_reg_info(GXTevAlphaArg arg, const TevStage& stage,
 } // namespace
 
 ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
-  ZoneScoped;
 
   ShaderInfo info{
       // vtx_start, current_pnmtx, render/logical viewport size, array_start, pad, proj
@@ -572,7 +569,6 @@ static Mat4x4<float> effective_projection() noexcept {
 UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRanges& ranges,
                             const FrameInterpolationDrawIdentity& drawIdentity, bool perspective,
                             uint16_t usedPnMtxMask) noexcept {
-  ZoneScoped;
 
   auto [buf, range] = gfx::map_uniform(info.uniformSize);
 

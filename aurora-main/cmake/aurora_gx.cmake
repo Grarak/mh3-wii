@@ -47,7 +47,7 @@ add_library(aurora::gx ALIAS aurora_gx)
 set_target_properties(aurora_gx PROPERTIES FOLDER "aurora")
 
 target_link_libraries(aurora_gx PUBLIC aurora::core xxhash)
-target_link_libraries(aurora_gx PRIVATE absl::btree absl::flat_hash_map sqlite3 TracyClient PNG::PNG)
+target_link_libraries(aurora_gx PRIVATE absl::btree absl::flat_hash_map sqlite3 PNG::PNG)
 if(AURORA_GXM)
   # vprof needs source lines for the native GX and resource-cache bottlenecks.
   # These tables stay in the development ELF, outside the installed SELF.

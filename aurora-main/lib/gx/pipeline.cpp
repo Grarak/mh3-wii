@@ -2,7 +2,6 @@
 
 #include "gx_fmt.hpp"
 #include "shader_info.hpp"
-#include "tracy/Tracy.hpp"
 
 #include <memory>
 #include <mutex>
@@ -34,7 +33,6 @@ gl::ProgramPtr cached_program(const ShaderConfig& config) {
 } // namespace
 
 gfx::PipelinePtr create_pipeline(const PipelineConfig& config) {
-  ZoneScoped;
   return build_pipeline(config, cached_program(config.shaderConfig));
 }
 

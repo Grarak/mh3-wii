@@ -8,8 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "tracy/Tracy.hpp"
-
 namespace aurora::gx::fifo {
 static Module Log("aurora::gx::fifo");
 
@@ -71,19 +69,10 @@ uint32_t end_display_list() {
 
 bool in_display_list() { return detail::sInDisplayList; }
 
-// How much of the producer's frame is spent blocked before it may decode the next batch of GX commands.
-static void note_drain_wait(uint64_t nanos) noexcept {
-  ZoneScopedN("FIFO drain wait");
-  TracyPlot("aurora: fifoDrainWaitUs", static_cast<int64_t>(nanos / 1000));
-}
-
 void drain() {
   aurora_legacy_gx_panic("aurora::gx::fifo::drain");
   // SEALED, not DONE.
-  const auto waited = aurora::wait_for_frame_worker_sealed();
-  if (waited.count() > 0) UNLIKELY {
-    note_drain_wait(static_cast<uint64_t>(waited.count()));
-  }
+  (void)aurora::wait_for_frame_worker_sealed();
   if (detail::sBufferSize == 0) {
     return;
   }

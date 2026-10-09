@@ -28,7 +28,6 @@
 #include <magic_enum.hpp>
 
 #include "system_info.hpp"
-#include "tracy/Tracy.hpp"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -394,7 +393,6 @@ std::atomic<uint64_t> g_presentedFrames{0};
 
 // Render thread: letterbox the present source into the window and swap.
 void present_frame(const gpu::PresentSource& source) {
-  ZoneScopedN("Present");
   const auto [width, height] = gl::drawable_size();
   auto viewport = gpu::calculate_present_viewport(width, height, source.width, source.height);
   float presentAspect = 0.f;
@@ -405,17 +403,6 @@ void present_frame(const gpu::PresentSource& source) {
               static_cast<int32_t>(viewport.width), static_cast<int32_t>(viewport.height));
   record_successful_present(false, 0, {}, {}, {}, {}, {}, {}, false, 0, {});
   g_presentedFrames.fetch_add(1, std::memory_order_relaxed);
-}
-
-void record_frame_telemetry() {
-  TracyPlot("aurora: drawCallCount", static_cast<int64_t>(gfx::g_stats.drawCallCount));
-  TracyPlot("aurora: mergedDrawCallCount", static_cast<int64_t>(gfx::g_stats.mergedDrawCallCount));
-  TracyPlot("aurora: lastVertSize", static_cast<int64_t>(gfx::g_stats.lastVertSize));
-  TracyPlot("aurora: lastUniformSize", static_cast<int64_t>(gfx::g_stats.lastUniformSize));
-  TracyPlot("aurora: lastIndexSize", static_cast<int64_t>(gfx::g_stats.lastIndexSize));
-  TracyPlot("aurora: lastStorageSize", static_cast<int64_t>(gfx::g_stats.lastStorageSize));
-  TracyPlot("aurora: frameIndex", static_cast<int64_t>(gfx::current_frame()));
-  FrameMarkNamed("Aurora frame");
 }
 #endif
 
@@ -432,7 +419,6 @@ void shutdown() noexcept {
 }
 
 const AuroraEvent* update() noexcept {
-  ZoneScoped;
   if (g_initialFrame) {
     g_initialFrame = false;
     input::initialize();
@@ -441,7 +427,6 @@ const AuroraEvent* update() noexcept {
 }
 
 bool begin_frame() noexcept {
-  ZoneScoped;
 #ifdef AURORA_ENABLE_GX
   if (g_nativeFrame.active()) Log.fatal("Cannot mix native and recorded frames");
   window::pump_events();
@@ -525,7 +510,6 @@ void end_native_frame() {
   } else {
     gfx::count_skipped_frame();
   }
-  record_frame_telemetry();
 #endif
   g_nativeFrame.end();
 }
@@ -533,7 +517,6 @@ void end_native_frame() {
 // Seals the frame on the producer and hands it to the render thread, which renders,
 // resolves the frame-latent EFB readbacks, and presents.
 void end_frame() {
-  ZoneScoped;
 #ifdef AURORA_ENABLE_GX
   window::pump_events();
   std::lock_guard gpuLock(g_rendererGpuMutex);
@@ -559,7 +542,6 @@ void end_frame() {
       gfx::render(*frame, -1, true);
       gfx::after_submit();
     });
-    record_frame_telemetry();
     return;
   }
   gfx::frame_render_posted();
@@ -578,7 +560,6 @@ void end_frame() {
   });
   gfx::g_stats.presentedFrameCount = 1;
   gfx::g_stats.interpolatedFrameCount = 0;
-  record_frame_telemetry();
 #endif
 }
 

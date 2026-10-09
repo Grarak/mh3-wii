@@ -301,31 +301,3 @@ if (AURORA_ENABLE_GX)
     endif ()
   endif ()
 endif ()
-
-if (NOT TARGET TracyClient)
-  message(STATUS "aurora: Fetching Tracy")
-
-  # Default to off, users can enable the cache variable if they want to use it.
-  set(TRACY_ENABLE OFF CACHE BOOL "Enable Tracy profiling")
-
-  FetchContent_Declare(
-          tracy
-          URL https://github.com/wolfpld/tracy/archive/a64b9a20294d59421a2f57aeca3c6383d8c48169.tar.gz
-          URL_HASH SHA256=24d342b5127d7f659dc3cf94f24347b348cc736f25b17a691fd7f69541937658
-          DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-          EXCLUDE_FROM_ALL
-  )
-  FetchContent_MakeAvailable(tracy)
-
-  if(VITA)
-    if(TRACY_ENABLE)
-      message(FATAL_ERROR "Tracy's collector is not ported to Vita; use vprof for CPU profiling")
-    endif()
-    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraVitaDependencyPatches.cmake")
-    aurora_patch_vita_tracy("${tracy_SOURCE_DIR}")
-  endif()
-
-  if (NOT TARGET TracyClient)
-    message(FATAL_ERROR "Failed to make TracyClient available")
-  endif ()
-endif ()

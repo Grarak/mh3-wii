@@ -17,21 +17,6 @@ function(aurora_vita_replace file old new)
   file(WRITE "${_file}" "${_source}")
 endfunction()
 
-function(aurora_patch_vita_tracy source_dir)
-  set(_system "${source_dir}/public/common/TracySystem.cpp")
-  aurora_vita_replace("${_system}" "#include \"TracySystem.hpp\"" [=[#include "TracySystem.hpp"
-#if defined(__vita__)
-#include <psp2/kernel/threadmgr.h>
-#endif]=])
-  aurora_vita_replace("${_system}" "#elif defined __APPLE__\n    uint64_t id;" [=[#elif defined __vita__
-    return uint32_t( sceKernelGetThreadId() );
-#elif defined __APPLE__
-    uint64_t id;]=])
-  aurora_vita_replace("${_system}"
-    "#elif defined _GNU_SOURCE && !defined __EMSCRIPTEN__"
-    "#elif defined _GNU_SOURCE && !defined __EMSCRIPTEN__ && !defined __vita__")
-endfunction()
-
 function(aurora_patch_vita_sdl source_dir)
   # SDL's timer, joystick and other internal workers belong on core 0 too.
   aurora_vita_replace("${source_dir}/src/thread/vita/SDL_systhread.c"

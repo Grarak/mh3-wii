@@ -19,8 +19,6 @@
 #include <thread>
 #include <unordered_map>
 
-#include "tracy/Tracy.hpp"
-
 namespace aurora::gfx {
 uint32_t current_frame() noexcept;
 }
@@ -459,7 +457,6 @@ void discard_native_frame() noexcept {
 }
 
 void finish() noexcept {
-  ZoneScoped;
   call([] { glFinish(); });
 }
 
@@ -741,7 +738,6 @@ GLuint Program::get() noexcept {
   if (m_program != 0 || m_failed) {
     return m_program;
   }
-  ZoneScoped;
   const GLuint vs = compile_shader(GL_VERTEX_SHADER, m_desc.vertex, m_desc.label);
   const GLuint fs = vs != 0 ? compile_shader(GL_FRAGMENT_SHADER, m_desc.fragment, m_desc.label) : 0;
   if (vs == 0 || fs == 0) {
@@ -1071,7 +1067,6 @@ std::pair<uint32_t, uint32_t> drawable_size() noexcept {
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept {
   if (!aurora::native_frame_drawing_allowed())
     return;
-  ZoneScoped;
   const auto [drawableWidth, drawableHeight] = drawable_size();
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
   g_state.drawFramebuffer = 0;

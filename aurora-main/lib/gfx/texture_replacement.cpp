@@ -8,7 +8,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <fmt/format.h>
-#include <tracy/Tracy.hpp>
 
 #include <algorithm>
 #include <array>
@@ -710,7 +709,6 @@ void load_tlut(const GXTlutObj* obj, uint32_t idx) noexcept {
 }
 
 std::optional<TextureHandle> find_replacement(const GXTexObj_& obj) noexcept {
-  ZoneScoped;
 
   if (!g_config.allowTextureReplacements) {
     return std::nullopt;

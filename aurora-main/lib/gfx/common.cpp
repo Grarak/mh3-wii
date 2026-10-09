@@ -35,8 +35,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <magic_enum.hpp>
 
-#include "tracy/Tracy.hpp"
-
 namespace aurora::gfx {
 static Module Log("aurora::gfx");
 
@@ -641,7 +639,6 @@ static OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t heigh
 }
 
 void begin_offscreen(uint32_t width, uint32_t height) {
-  ZoneScoped;
   CHECK(g_currentRenderPass != UINT32_MAX, "begin_offscreen called outside of a frame");
 
   // If the current EFB pass has no resolve target, its output is unobservable.
@@ -688,7 +685,6 @@ void begin_offscreen(uint32_t width, uint32_t height) {
 }
 
 void end_offscreen() {
-  ZoneScoped;
   CHECK(g_inOffscreen, "end_offscreen called without begin_offscreen");
 
   g_inOffscreen = false;
@@ -766,7 +762,6 @@ static void acquire_staging_set() {
   if (g_staging) {
     return;
   }
-  ZoneScopedN("Wait for staging set");
   std::unique_lock lock(g_stagingPoolMutex);
 #ifdef AURORA_GXM
   reclaim_staging_sets_locked();
@@ -793,7 +788,6 @@ static void acquire_staging_set() {
 
 // Render thread: copy a finished batch into the GPU buffers the following draws read.
 static void upload_batch(StagingSet& set) {
-  ZoneScopedN("Upload staging batch");
 #ifdef AURORA_GXM
   // No upload or word textures: native Cg reads explicit uniform buffers.
   gxm::bind_draw_memory(set.uniforms.data(), set.uniforms.size(), set.indices.data(), set.indices.size(), set.verts.data(), set.verts.size(), set.storage.data(), set.storage.size());
@@ -909,7 +903,6 @@ void preserve_next_efb_frame() noexcept {
 }
 
 static bool begin_frame_impl(bool clearEfb, bool capacityResume = false) {
-  ZoneScoped;
   acquire_staging_set();
   ++g_stagingEpoch;
 
@@ -1010,7 +1003,6 @@ void abort_frame() noexcept {
 }
 
 static void end_batch_impl(bool advanceFrame) {
-  ZoneScoped;
   ASSERT(!advanceFrame || !g_inOffscreen, "end_frame called while offscreen rendering is active");
   if (advanceFrame) {
     gx::finalize_frame_interpolation();
@@ -1186,7 +1178,6 @@ void expire_bind_group_cache() noexcept {
     return;
   }
 
-  ZoneScoped;
   for (auto it = g_cachedBindGroups.begin(); it != g_cachedBindGroups.end();) {
     // Per-frame copy targets are not reusable while a cached group pins them.
     // Retire their groups promptly; sealed frames still own retired groups
@@ -1216,7 +1207,6 @@ static void render_pass_impl(const std::vector<RenderPass>& passes, u32 idx, int
 
 static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpolatedFrame, bool finalize, DebugFrameData& debugFrame, const depth_peek::FrameMapping& depthMapping,
                         bool skipDraws = false) {
-  ZoneScoped;
   // Palette conversions and EFB copies depend on sealed frame state, not on the interpolation
   // weight, so run them on the native render only.
   const bool encodeTextureBakes = interpolatedFrame < 0;
@@ -1311,7 +1301,6 @@ static void group_cutout_draws(std::vector<RenderPass>& passes, u32 frameIndex) 
   }();
   if (!enabled)
     return;
-  ZoneScopedN("CPU cutout grouping");
   const auto pipeline = [](const Command& command) -> const Pipeline* {
     if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX)
       return nullptr;
@@ -1403,7 +1392,6 @@ static void prepare_recorded_passes(SealedFrameData& data, u32 frameIndex) {
 void seal_frame(SealedFrame& out) noexcept {
   out.data().depthMapping = depth_peek::capture_frame_mapping();
   out.data().skipDraws = frame_skipped();
-  ZoneScoped;
   auto& passes = out.data().passes;
   recycle_render_passes(passes);
   passes.swap(g_renderPasses);
