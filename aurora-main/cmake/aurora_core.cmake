@@ -33,7 +33,7 @@ endif ()
 
 if (AURORA_ENABLE_GX)
     target_compile_definitions(aurora_core PUBLIC AURORA_ENABLE_GX)
-    target_sources(aurora_core PRIVATE lib/gl/device.cpp lib/gfx/port_capture.cpp lib/gfx/shader_source.cpp)
+    target_sources(aurora_core PRIVATE lib/gl/device.cpp lib/gfx/port_capture.cpp lib/gfx/cg_shader.cpp lib/gfx/shader_source.cpp)
     target_link_libraries(aurora_core PUBLIC absl::any_invocable)
     if(AURORA_GXM)
       target_compile_definitions(aurora_core PUBLIC AURORA_GXM)

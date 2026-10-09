@@ -3,7 +3,7 @@
 #include <array>
 #include <string_view>
 
-// Opt-in host measurements for preparing the offline Vita shader corpus.
+// Opt-in host measurements and automatic Cg sources for Vita compilation.
 // Safe on producer and render threads; AURORA_PORT_CAPTURE enables output.
 namespace aurora::gfx::port_capture {
 bool enabled() noexcept;
@@ -33,7 +33,10 @@ enum DrawFlags : uint32_t {
 void draw(const DrawState& state, uint64_t vertexHash, uint64_t fragmentHash,
           uint32_t vertices, uint32_t indices, uint32_t instances,
           bool discard, bool depthReplace, const std::array<const void*, 8>& textures) noexcept;
-void shader(std::string_view label, std::string_view vertex, std::string_view fragment) noexcept;
+// Actual GLSL/draw hashes are retained; Cg uses Vita-normalized alpha hashes.
+// Optional origin identifies the producer/program when supplied by a caller.
+void shader(std::string_view label, std::string_view vertex, std::string_view fragment,
+            std::string_view origin = {}) noexcept;
 void texture(const void* id, bool create, uint32_t width, uint32_t height, uint32_t mips,
              uint32_t format, uint32_t bytesPerPixel, std::string_view label = {}) noexcept;
 void upload(const void* id, uint32_t mip, uint64_t bytes) noexcept;

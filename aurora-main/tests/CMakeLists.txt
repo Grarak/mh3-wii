@@ -7,6 +7,18 @@ target_compile_features(native_frame_gate_tests PRIVATE cxx_std_20)
 target_compile_options(native_frame_gate_tests PRIVATE -UNDEBUG)
 add_test(NAME native_frame_gate_tests COMMAND native_frame_gate_tests)
 
+# Portable source/capture checks require no graphics device or Sony compiler.
+add_executable(cg_shader_tests cg_shader_check.cpp ../lib/gfx/cg_shader.cpp ../lib/gfx/port_capture.cpp)
+target_include_directories(cg_shader_tests PRIVATE ../lib)
+target_compile_features(cg_shader_tests PRIVATE cxx_std_20)
+target_link_libraries(cg_shader_tests PRIVATE xxhash)
+add_test(NAME cg_shader_tests COMMAND cg_shader_tests)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_Interpreter_FOUND)
+  add_test(NAME cg_shader_capture_tests COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test_vita_cg.py $<TARGET_FILE:cg_shader_tests>)
+endif ()
+
 if (NOT TARGET gtest)
   FetchContent_Declare(googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz
