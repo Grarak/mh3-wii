@@ -13,7 +13,8 @@
 //
 // The boot waits for the title's intro (state 1), reads File 1 into the save
 // manager's buffer from the host (after the game's read request), loads its
-// first character and chooses Village as the mode menu does.
+// first character and the file's options and chooses Village as the mode menu
+// does.
 #include "village_boot.h"
 #include "fatal.h"
 
@@ -54,11 +55,17 @@ enum : uint8_t {
     kPlayModeVillage = 5
 };
 
+// The options (controls, camera, sound): the file's at +0x28, the game's
+// copy option_w, 0x1F bytes.
+constexpr uint32_t kOptions = 0x8065B510;
+constexpr size_t kFileOptions = 0x28, kOptionBytes = 0x1F;
+
 constexpr uint32_t kTitleWork = 0x809D3568; // u32: the title's work, while demo_data.rso is loaded
 constexpr uint8_t kTitleIntro = 1;          // its state (+0) while the intro plays
 enum : uint32_t {
     SaveReadRequest = 0x80441AD8,
     LoadCharacter = 0x80442088,
+    ApplyOptions = 0x803BE89C, // set_option_mode: volumes and brightness from option_w
     RunExitHook = 0x800408B8,
     StartGameModeTask = 0x800419DC,
     SceneReset = 0x800CF000,
@@ -140,6 +147,12 @@ void StepVillageBoot(CpuContext* ctx) {
 
     if (!game.Call<LoadCharacter>({selectedCharacter}))
         MH3_THROW(std::runtime_error("Quest launch: the selected character did not load"));
+
+    // As the title's file load (0x80441B9C): the file's options, then their
+    // volumes and brightness. Without them the game kept its defaults, the
+    // Classic Controller's other control type among them.
+    std::copy_n(file.begin() + kFileOptions, kOptionBytes, Memory::GetPointer(kOptions, kOptionBytes));
+    game.Call<ApplyOptions>();
 
     Memory::Write8(kSystem + kSelectedFile, selectedFile);
     Memory::Write8(kSystem + kSelectedCharacter, selectedCharacter);
