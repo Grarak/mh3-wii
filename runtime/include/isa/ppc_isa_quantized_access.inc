@@ -200,7 +200,7 @@ inline uint16_t PpcQuantizePairPsqU8Scale61PackedInline(double value)
     // Native lane 0 is ps1 and lane 1 is ps0. Packing to the low uint16_t
     // therefore produces the guest-order numeric value (ps0 << 8) | ps1.
     return static_cast<uint16_t>(_mm_cvtsi128_si32(lanes8));
-#elif defined(__aarch64__) || defined(__arm__)
+#elif defined(__aarch64__) || defined(__arm__) || defined(__wasm__)
     // Equivalent to two calls of the already-portable scalar quantizer above
     // (its own !(scaled > 0) rule maps NaN to 0, matching what MAXPS-with-zero
     // does on the x86 path per the comment there), packed the same way the

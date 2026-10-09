@@ -26,6 +26,12 @@ namespace GuestFlat {
 // D0000000 is outside the usable reservation partition on firmware 3.65.
 // These virtual views are reserved with kubridge, without physical gap pages.
 inline constexpr uintptr_t kGuestBase = 0xB000'0000u;
+#elif defined(__EMSCRIPTEN__)
+// WebAssembly has no virtual memory, so the web build folds the aliases as
+// the Vita does, into linear memory below the static data (-sGLOBAL_BASE,
+// runtime/web/web.cmake): MEM1 at 16 MiB, the locked cache at 80 MiB, MEM2
+// at 272 MiB, ending at 336 MiB.
+inline constexpr uintptr_t kGuestBase = 0x0100'0000u;
 #elif defined(__x86_64__)
 inline constexpr uintptr_t kGuestBase = 0x0000'1000'0000'0000ull;
 #elif defined(__aarch64__)
@@ -46,7 +52,7 @@ inline constexpr uintptr_t kGuestBase = 0x9000'0000u;
 
 // The host address of a guest address.
 inline uint8_t* Host(uint32_t guestAddress) noexcept {
-#if defined(__vita__)
+#if defined(__vita__) || defined(__EMSCRIPTEN__)
     const uint32_t offset = (guestAddress & 0x1fffffffu) | ((guestAddress >> 3) & 0x04000000u);
     return reinterpret_cast<uint8_t*>(kGuestBase + offset);
 #else

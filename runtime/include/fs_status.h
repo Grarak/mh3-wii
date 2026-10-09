@@ -26,6 +26,17 @@ inline Status Exists(const std::filesystem::path& path, bool& exists) {
 inline Status Rename(const std::filesystem::path& from, const std::filesystem::path& to) {
     std::error_code error;
     std::filesystem::rename(from, to, error);
+#ifdef __EMSCRIPTEN__
+    // The web build's Origin Private File System (WasmFS) cannot move a
+    // directory: copy it, then remove the original.
+    if (error == std::errc::device_or_resource_busy && std::filesystem::is_directory(from)) {
+        error.clear();
+        std::filesystem::copy(from, to, std::filesystem::copy_options::recursive, error);
+
+        if (!error)
+            std::filesystem::remove_all(from, error);
+    }
+#endif
     return error ? Failure("cannot rename", error, from, &to) : Status{};
 }
 

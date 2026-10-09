@@ -15,7 +15,7 @@ enum class Phase : uint8_t {
     Timers,
 };
 
-#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__) && !defined(__EMSCRIPTEN__)
 bool Enabled();
 
 // Logic of the next frame starts (its draw's pages were recorded).

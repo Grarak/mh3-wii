@@ -140,6 +140,13 @@ NativeShaderSources NativeShaderSource(NativeShaderVariant variant);
 std::string NativeShaderCgVertex(const NativeShaderVertexKey& key);
 std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key);
 
+#ifdef MH3_WEB_SHADER_BANK
+// The GLSL ES stage sources; the web build's WGSL bank is keyed by XXH3 of
+// these strings (docs/web-build.md). Only its host generator compiles them.
+std::string NativeShaderGlslVertex(const NativeShaderVertexKey& key);
+std::string NativeShaderGlslFragment(const NativeShaderFragmentKey& key);
+#endif
+
 // Stage names identify the embedded GXP per stage: "mesh_spot2_ian", "modulate_t1_alpha_fog".
 std::string NativeShaderVertexName(NativeShaderVariant variant);
 std::string NativeShaderFragmentName(NativeShaderVariant variant);

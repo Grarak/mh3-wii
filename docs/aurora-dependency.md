@@ -7,9 +7,12 @@ WiiCompiled checkout on 2026-09-27 (parent commit
 
 It is now MH3's own copy and is edited in place. Commit `3cb845e` replaced
 WebGPU/Dawn with **OpenGL ES 3.0** (`aurora-main/lib/gl`); the Vita backend uses
-native **GXM** (`aurora-main/lib/gxm`). Dawn, WebGPU and Vulkan are not built.
-`runtime/src/graphics_host.cpp` selects `BACKEND_OPENGLES` on Linux and
-`BACKEND_GXM` on Vita and rejects an unexpected backend.
+native **GXM** (`aurora-main/lib/gxm`). The web build adds **WebGPU** again
+(`aurora-main/lib/webgpu`, Emscripten's emdawnwebgpu, `AURORA_WEBGPU`; see
+[web build](web-build.md)); Dawn native and Vulkan are not built.
+`runtime/src/graphics_host.cpp` selects `BACKEND_OPENGLES` on Linux,
+`BACKEND_GXM` on Vita and `BACKEND_WEBGPU` on the web and rejects an
+unexpected backend.
 
 The runtime's render thread owns the graphics context (core 1 on Vita) and
 replays frame packets recorded by the game thread; backend tasks execute on

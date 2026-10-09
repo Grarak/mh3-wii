@@ -44,6 +44,11 @@
 #include <time.h>
 #include <unistd.h>
 #endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#include <emscripten/proxying.h>
+#include <emscripten/threading.h>
+#endif
 
 namespace aurora::gfx {
 uint32_t current_frame() noexcept;
@@ -1050,6 +1055,69 @@ void RenderLoop() {
     aurora::gl::release_context();
 }
 
+#ifdef __EMSCRIPTEN__
+// The web build (docs/web-build.md): WebGPU belongs to the browser's main
+// thread, which shows a frame only once it returns to its event loop. The
+// render thread is a requestAnimationFrame loop there: each animation frame
+// replays the next published packet, as RenderPackets would, and its present
+// appears when the callback returns.
+std::atomic<bool> webLoopRunning{false};
+
+void FinishWebRenderLoop() {
+    completed.store(UINT64_MAX, std::memory_order_release);
+    completed.notify_all();
+    aurora::gl::release_context();
+    webLoopRunning.store(false, std::memory_order_release);
+    webLoopRunning.notify_all();
+}
+
+EM_BOOL RenderAnimationFrame(double, void*) {
+#if defined(__cpp_exceptions)
+    // A failure goes to the game thread, which reports it.
+    try {
+#endif
+        const uint64_t newest = lastPublished.load(std::memory_order_acquire), current = taken.load(std::memory_order_relaxed);
+
+        if (newest > current) {
+            const uint64_t next = paced || synchronous ? current + 1 : newest;
+            taken.store(next, std::memory_order_release);
+            const auto& p = packets[next % kNativeFramePacketSlots];
+
+            if (p.sequence != next)
+                MH3_THROW(std::runtime_error("Frame packet ring out of order"));
+
+            Execute(p);
+            completed.store(p.sequence, std::memory_order_release);
+            completed.notify_all();
+            return EM_TRUE;
+        }
+
+        if (!stopping.load(std::memory_order_acquire))
+            return EM_TRUE;
+
+        // Resource work queued after the last packet.
+        RunTasks(beforeTasks, UINT64_MAX);
+        RunTasks(afterTasks, UINT64_MAX);
+#if defined(__cpp_exceptions)
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "MH3 render loop: %s\n", error.what());
+        failure = std::current_exception();
+        failed.store(true, std::memory_order_release);
+    } catch (...) {
+        failure = std::current_exception();
+        failed.store(true, std::memory_order_release);
+    }
+#endif
+    FinishWebRenderLoop();
+    return EM_FALSE;
+}
+
+void StartWebRenderLoop(void*) {
+    aurora::gl::acquire_context();
+    emscripten_request_animation_frame_loop(RenderAnimationFrame, nullptr);
+}
+#endif
+
 void WaitCompleted(uint64_t target) {
     for (uint64_t seen = completed.load(std::memory_order_acquire); seen < target; seen = completed.load(std::memory_order_acquire))
         completed.wait(seen, std::memory_order_acquire);
@@ -1247,7 +1315,12 @@ void StartNativeRenderThread() {
     lastPublished.store(sequence, std::memory_order_relaxed);
     aurora::gl::release_context();
     running = true;
+#ifdef __EMSCRIPTEN__
+    webLoopRunning.store(true, std::memory_order_release);
+    emscripten_proxy_async(emscripten_proxy_get_system_queue(), emscripten_main_runtime_thread_id(), StartWebRenderLoop, nullptr);
+#else
     renderThread = std::thread(RenderLoop);
+#endif
 }
 
 void StopNativeRenderThread() {
@@ -1256,7 +1329,12 @@ void StopNativeRenderThread() {
 
     stopping.store(true, std::memory_order_release);
     published.Advance();
+#ifdef __EMSCRIPTEN__
+    for (bool loop = webLoopRunning.load(std::memory_order_acquire); loop; loop = webLoopRunning.load(std::memory_order_acquire))
+        webLoopRunning.wait(true, std::memory_order_acquire);
+#else
     renderThread.join();
+#endif
     running = false;
     recording = nullptr;
     aurora::gl::acquire_context();

@@ -23,7 +23,7 @@
 // EFAULT instead of faulting; the disc reads in place through memcpy.
 #include "draw_pages.h"
 
-#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__) && !defined(__EMSCRIPTEN__)
 #include "dev_options.h"
 #include "guest_flat_memory.h"
 #include "memory.h"

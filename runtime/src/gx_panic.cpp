@@ -24,7 +24,7 @@ void GuestLocation(const char* label, uint32_t address) {
     std::fputc('\n', stderr);
 }
 
-#ifndef MH3_NO_UNWIND_TABLES
+#if !defined(MH3_NO_UNWIND_TABLES) && !defined(__EMSCRIPTEN__)
 struct NativeTrace {
     unsigned count = 0;
 };
@@ -102,7 +102,7 @@ _Unwind_Reason_Code NativeFrame(_Unwind_Context* context, void* value) {
         std::fprintf(stderr, "  No active guest CPU context\n");
     }
 
-#ifndef MH3_NO_UNWIND_TABLES
+#if !defined(MH3_NO_UNWIND_TABLES) && !defined(__EMSCRIPTEN__)
     std::fprintf(stderr, "Native backtrace (symbolize addresses against this build's ELF):\n");
     NativeTrace trace;
     _Unwind_Backtrace(NativeFrame, &trace);

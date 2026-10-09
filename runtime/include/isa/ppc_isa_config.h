@@ -8,7 +8,7 @@
 #include <immintrin.h>
 #elif defined(__aarch64__)
 #include <arm_neon.h>
-#elif defined(__arm__)
+#elif defined(__arm__) || defined(__wasm__)
 // Paired singles use scalar VFP on AArch32 (see ppc_isa_float.h); no SIMD header needed.
 #else
 #error "ppc_isa_config.h has no SIMD intrinsics header for this architecture"

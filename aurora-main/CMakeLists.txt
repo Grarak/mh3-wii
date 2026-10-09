@@ -20,6 +20,14 @@ if(AURORA_GXM)
   enable_language(ASM)
 endif()
 
+# The WebGPU renderer (lib/webgpu) of the Emscripten web build
+# (docs/optimizations/platforms/web-build.md). The GLES and GXM builds never compile it.
+option(AURORA_WEBGPU "Use the WebGPU renderer (Emscripten)" ${EMSCRIPTEN})
+
+if(AURORA_WEBGPU AND NOT EMSCRIPTEN)
+  message(FATAL_ERROR "AURORA_WEBGPU requires the Emscripten toolchain")
+endif()
+
 option(AURORA_ENABLE_GX "Enable GX implementation and OpenGL ES renderer" ON)
 option(AURORA_ENABLE_DVD "Enable DVD implementation backed by nod" OFF)  # TODO: need to fix tests
 option(AURORA_ENABLE_CARD "Enable CARD implementation based on kabufuda" ON)

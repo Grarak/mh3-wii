@@ -7,7 +7,9 @@ and native **GXM** on Vita, driven by a render thread; materials are drawn
 with fixed hand-written shaders instead of TEV.
 
 - **Targets:** Vita (ARM32, Cortex-A9, GXM), arm32 Linux (armhf, Cortex-A9
-  build tested on a Raspberry Pi 5), and arm64 Linux for development.
+  build tested on a Raspberry Pi 5), and arm64 Linux for development; a
+  WebAssembly build renders through WebGPU in browsers
+  ([web build](docs/web-build.md)).
 - **Status:** Alatreon (`--quest 19001 --area 1`, the benchmark) plays on the
   Vita devkit at 27–34 fps; the game thread runs at 200–210 fps moving on the
   Pi 5. See [HANDOVER.md](HANDOVER.md) and
@@ -61,6 +63,9 @@ scripts/docker-build.sh cmake --build build/linux-arm32 --target MH3   # later r
 
 Vita: `BUILD_JOBS=$(nproc) scripts/build-vita.sh` (VitaSDK, clang-21 and the
 patched `vita-elf-create`; [Vita platform](docs/vita-platform.md)).
+
+Web: `scripts/build-web.sh`, then `scripts/serve-web.py build/web` (Emscripten
+SDK, glslangValidator, naga; [web build](docs/web-build.md)).
 
 The container mounts the checkout at the same absolute path because the
 translated data blobs use absolute `.incbin` paths; configure and build arm32

@@ -1209,6 +1209,16 @@ std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key) {
     return std::string(CgScene) + FragmentDefines(key) + CgShade + CgAnimated + CgFragment;
 }
 
+#ifdef MH3_WEB_SHADER_BANK
+std::string NativeShaderGlslVertex(const NativeShaderVertexKey& key) {
+    return GlslVertex(key);
+}
+
+std::string NativeShaderGlslFragment(const NativeShaderFragmentKey& key) {
+    return GlslFragmentSource(key);
+}
+#endif
+
 NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
     const auto vertex = NativeShaderVertexKeyOf(variant);
     const auto fragment = NativeShaderFragmentKeyOf(variant);

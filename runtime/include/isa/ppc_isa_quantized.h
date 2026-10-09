@@ -44,7 +44,7 @@ inline uint64_t PpcLoadPairPsqFloatBitsPackedInline(uint64_t value) {
     const __m128i nanMask = _mm_cmpgt_epi32(magnitude, _mm_set1_epi32(0x7F800000));
     const __m128i result = _mm_or_si128(lanes, _mm_and_si128(nanMask, _mm_set1_epi32(0x00400000)));
     return static_cast<uint64_t>(_mm_cvtsi128_si64(result));
-#elif defined(__aarch64__) || defined(__arm__)
+#elif defined(__aarch64__) || defined(__arm__) || defined(__wasm__)
     // Equivalent to applying PpcLoadPsqFloatBitsInline to each 32-bit lane: the
     // x86 body above only ever acts on these same two lanes (the upper 64 bits
     // _mm_cvtsi64_si128 zero-fills never survive the final truncating extract).
@@ -64,7 +64,7 @@ inline uint64_t PpcStorePairPsqFloatBitsPackedInline(uint64_t value) {
     const __m128i signedZero = _mm_and_si128(lanes, _mm_set1_epi32(std::numeric_limits<int32_t>::min()));
     const __m128i result = _mm_or_si128(_mm_and_si128(subnormalMask, signedZero), _mm_andnot_si128(subnormalMask, quieted));
     return static_cast<uint64_t>(_mm_cvtsi128_si64(result));
-#elif defined(__aarch64__) || defined(__arm__)
+#elif defined(__aarch64__) || defined(__arm__) || defined(__wasm__)
     // Equivalent to applying PpcStorePsqFloatBitsInline to each 32-bit lane;
     // same reasoning as the load-side port above.
     const uint32_t lo = PpcStorePsqFloatBitsInline(static_cast<uint32_t>(value));
@@ -105,7 +105,7 @@ inline double PpcLoadPairPsqFloatFromHostInline(const uint8_t* host) {
 #if defined(__x86_64__)
     const __m128i raw = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(host));
     return PpcM128ToPsInline(_mm_castsi128_ps(PpcLoadPairPsqFloatBitsLanesInline(PpcPsqSwapPairBytesInline(raw))));
-#elif defined(__aarch64__) || defined(__arm__)
+#elif defined(__aarch64__) || defined(__arm__) || defined(__wasm__)
     // The x86 path's full 8-byte pshufb reversal plus a same-endian load is,
     // taken together, exactly a 64-bit byteswap of a plain little-endian load:
     // it turns the on-disk [ps0 big-endian][ps1 big-endian] byte layout into a
@@ -123,7 +123,7 @@ inline void PpcStorePairPsqFloatToHostInline(uint8_t* host, double value) {
 #if defined(__x86_64__)
     const __m128i lanes = PpcStorePairPsqFloatBitsLanesInline(_mm_castps_si128(PpcPsToM128Inline(value)));
     _mm_storel_epi64(reinterpret_cast<__m128i*>(host), PpcPsqSwapPairBytesInline(lanes));
-#elif defined(__aarch64__) || defined(__arm__)
+#elif defined(__aarch64__) || defined(__arm__) || defined(__wasm__)
     // Inverse of the load path above: bswap64 is its own inverse, so applying
     // it to the quieted packed value reproduces the on-disk big-endian bytes.
     const uint64_t quieted = PpcStorePairPsqFloatBitsPackedInline(PpcBitCastToU64Inline(value));

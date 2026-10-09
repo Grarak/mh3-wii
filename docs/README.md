@@ -49,6 +49,10 @@ how to build, run (including the Vita devkit) and debug.
 - [native-field-resource-loading.md](native-field-resource-loading.md): field resource scheduling and invalid areas.
 - [native-dispatch-freshness.md](native-dispatch-freshness.md): how native registrations reach the dispatch tables.
 
+## Web build
+
+- [web-build.md](web-build.md): WebAssembly with a WebGPU renderer: building, serving (COOP/COEP), the disc image in the browser's storage, threads, the WebGPU backend and its WGSL shader bank, what is missing, and merging it with GLES later.
+
 ## Vita platform
 
 - [vita-platform.md](vita-platform.md): the Vita build, threads, clocks, memory, guest RAM views, files and device checks.

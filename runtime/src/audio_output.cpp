@@ -153,9 +153,11 @@ void RunNullSink() {
 } // namespace
 
 void NoteAudioThread() {
+#ifndef __EMSCRIPTEN__
     MixerStatistics& s = GetMixer().Statistics();
     s.thread.store(int(syscall(SYS_gettid)), std::memory_order_relaxed);
     s.core.store(sched_getcpu(), std::memory_order_relaxed);
+#endif
 }
 
 void StartAudioOutput() {
@@ -169,7 +171,10 @@ void StartAudioOutput() {
         null = v[0] == '1';
 #endif
     if (!null) {
+#ifndef __EMSCRIPTEN__
+        // Not on the web: its ScriptProcessorNode takes a power of two, SDL picks it.
         SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "384");
+#endif
 
         if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
             const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, int(kSampleRate)};

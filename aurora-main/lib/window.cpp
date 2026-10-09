@@ -9,6 +9,9 @@
 
 #include <aurora/aurora.h>
 #include <aurora/event.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten/threading.h>
+#endif
 #include <aurora/gfx.h>
 #include <aurora/render_size_limits.hpp>
 #include <SDL3/SDL_error.h>
@@ -379,6 +382,9 @@ void process_event(SDL_Event& event) {
 const AuroraEvent* poll_events() {
   g_events.clear();
   SDL_Event event;
+#ifdef __EMSCRIPTEN__
+  emscripten_current_thread_process_queued_calls();
+#endif
 
   // Clear out the previous scroll values to prevent ghost input
   input::set_mouse_scroll(0, 0);
@@ -412,7 +418,7 @@ bool create_window(AuroraBackend backend) {
   }
 #endif
   (void)backend;
-#if defined(AURORA_ENABLE_GX) && !defined(AURORA_GXM)
+#if defined(AURORA_ENABLE_GX) && !defined(AURORA_GXM) && !defined(AURORA_WEBGPU)
   // The renderer is OpenGL ES 3.0; the EFB lives in textures, so the window needs no depth/stencil.
   flags |= SDL_WINDOW_OPENGL;
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);

@@ -26,7 +26,9 @@
 #else
 #include "vita_launcher.h"
 #include "launcher_screen.h"
+#ifndef __EMSCRIPTEN__
 #include <execinfo.h>
+#endif
 #endif
 #include <iostream>
 #include <string_view>
@@ -60,7 +62,7 @@ void SystemBridge::DumpCpuState(const CpuContext* cpu) {
 }
 
 void DumpHostStackTraceForRuntimeHelper() {
-#if !defined(__vita__) && !defined(MH3_NO_UNWIND_TABLES)
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__) && !defined(MH3_NO_UNWIND_TABLES)
     void* frames[40];
     int count = backtrace(frames, 40);
     backtrace_symbols_fd(frames, count, 2);
@@ -254,7 +256,13 @@ void PrepareVitaGameData() {
 }
 #endif
 
+#ifdef __EMSCRIPTEN__
+void MountWebFiles();
+#endif
 int main(int argc, char** argv) {
+#ifdef __EMSCRIPTEN__
+    MountWebFiles();
+#endif
     // A failure that stops the game reports the guest CPU state.
     fatalReportHook = [](const char* what) {
         SystemBridge::DumpCpuState(&GetPersistentCpuContext());

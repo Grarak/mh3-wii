@@ -38,7 +38,7 @@ endif()
 # configurable for development only; they are not a supported product.
 option(MH3_ALLOW_UNSUPPORTED_HOST "Configure on a host other than arm32/arm64 Linux" OFF)
 
-if(NOT VITA AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv7l|armv7|armv8l|arm)$"))
+if(NOT VITA AND NOT EMSCRIPTEN AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv7l|armv7|armv8l|arm)$"))
   if(NOT MH3_ALLOW_UNSUPPORTED_HOST)
     message(FATAL_ERROR "MH3 targets arm32/arm64 Linux; this is ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}. "
       "Cross-compile with cmake/toolchains/linux-arm32.cmake or linux-arm64.cmake, or set MH3_ALLOW_UNSUPPORTED_HOST=ON.")
@@ -180,8 +180,20 @@ include(../generated/build_shards/shards.cmake)
 
 if(VITA)
   set(MH3_GUEST_MEMORY_SOURCE vita/guest_memory.cpp)
+elseif(EMSCRIPTEN)
+  set(MH3_GUEST_MEMORY_SOURCE web/guest_memory.cpp)
 else()
   set(MH3_GUEST_MEMORY_SOURCE src/guest_flat_memory.cpp)
+endif()
+
+# The translated data sections, assembled with .incbin. WebAssembly objects
+# take no ELF sections, so the web build embeds the same files from C++.
+set(MH3_DATA_BLOBS ../generated/data_sections_init_blobs.S)
+
+if(EMSCRIPTEN)
+  include(web/data_blobs.cmake)
+  mh3_web_data_blobs("${CMAKE_CURRENT_SOURCE_DIR}/../generated/data_sections_init_blobs.S" "${CMAKE_BINARY_DIR}/data_sections_init_blobs.cpp")
+  set(MH3_DATA_BLOBS "${CMAKE_BINARY_DIR}/data_sections_init_blobs.cpp")
 endif()
 
 add_executable(MH3
@@ -190,7 +202,7 @@ add_executable(MH3
   src/audio_tests.cpp src/audio_dma.cpp
   src/audio/native_audio_api.cpp src/audio/native_audio_frame.cpp src/audio/native_audio_mixer.cpp src/audio/native_audio_tests.cpp src/audio/sdk_mix.cpp src/audio/sdk_synseq.cpp src/audio/sound_engine.cpp src/audio/sound_stream.cpp
   src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/draw_pages.cpp src/frame_draw.cpp src/hud_draw.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/guest_worker.cpp src/effect_calc.cpp src/effect_draw_order.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/pad_input.cpp src/camera_input.cpp src/field_camera.cpp src/player_aim.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/save_data.cpp src/game_tasks.cpp src/field_frame.cpp src/draw_buckets.cpp src/player_health.cpp src/cheats.cpp src/cheat_data.cpp src/cheat_items.cpp src/cheat_monsters.cpp src/cheat_quest.cpp src/cheat_hunter.cpp src/cheat_movement.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/quest_clock.cpp src/ambient_hover.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/anm_obj_chr_res.cpp src/effect_texture.cpp src/effect_billboard.cpp src/effect_particle.cpp src/msl_math.cpp src/texture_scroll.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/scene_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp src/ef_resource.cpp src/msl_string.cpp src/prim_buffers.cpp
-  ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
+  ../generated/data_sections_init.cpp ${MH3_DATA_BLOBS}
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})
@@ -247,7 +259,7 @@ target_include_directories(MH3 PRIVATE include ..)
 
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized backtraces of fatal errors (and dladdr).
-if(NOT VITA)
+if(NOT VITA AND NOT EMSCRIPTEN)
   set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
   target_link_libraries(MH3 PRIVATE ${CMAKE_DL_LIBS})
 
@@ -319,7 +331,7 @@ if(TARGET aurora::core)
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
 
-  if(NOT VITA)
+  if(NOT VITA AND NOT EMSCRIPTEN)
     add_executable(mh3_native_frame_statistics_check
       ../tests/native/test_native_frame_statistics.cpp src/native_frame_statistics.cpp)
     target_include_directories(mh3_native_frame_statistics_check PRIVATE include)
@@ -381,6 +393,14 @@ if(TARGET aurora::core)
     target_compile_features(mh3_native_mesh_buffer_check PRIVATE cxx_std_20)
     target_link_libraries(mh3_native_mesh_buffer_check PRIVATE aurora::core aurora::gx aurora::vi)
   endif()
+endif()
+
+if(EMSCRIPTEN)
+  if(NOT TARGET aurora::core OR NOT AURORA_WEBGPU)
+    message(FATAL_ERROR "The web build requires MH3_AURORA_ROOT and AURORA_WEBGPU=ON")
+  endif()
+
+  include(web/web.cmake)
 endif()
 
 if(VITA)
@@ -497,7 +517,7 @@ if(MH3_DEVELOPMENT)
 endif()
 
 if(TARGET aurora::core)
-  if(NOT VITA)
+  if(NOT VITA AND NOT EMSCRIPTEN)
     option(MH3_BUILD_VITA_TEXTURE_PACKER "Build the offline Vita texture packer" ON)
 
     if(MH3_BUILD_VITA_TEXTURE_PACKER)

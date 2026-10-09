@@ -550,7 +550,13 @@ constexpr const char* metadataName = "org.mh3.nand";
 constexpr const char* metadataName = "user.mh3.nand";
 #endif
 int SetMetadata(int fd, const NandMetadata& metadata) {
-#ifdef __APPLE__
+#ifdef __EMSCRIPTEN__
+    // WasmFS has no extended attributes: on the web every entry keeps the
+    // title's defaults (docs/web-build.md).
+    (void)fd;
+    (void)metadata;
+    const int result = 0;
+#elif defined(__APPLE__)
     const int result = ::fsetxattr(fd, metadataName, metadata.data(), metadata.size(), 0, 0);
 #else
     const int result = ::fsetxattr(fd, metadataName, metadata.data(), metadata.size(), 0);
@@ -559,7 +565,11 @@ int SetMetadata(int fd, const NandMetadata& metadata) {
 }
 
 int GetMetadata(int fd, NandMetadata& metadata) {
-#ifdef __APPLE__
+#ifdef __EMSCRIPTEN__
+    (void)fd;
+    metadata = defaultMetadata;
+    const auto size = ssize_t(metadata.size());
+#elif defined(__APPLE__)
     const auto size = ::fgetxattr(fd, metadataName, metadata.data(), metadata.size(), 0, 0);
 
     if (size < 0 && errno == ENOATTR) {

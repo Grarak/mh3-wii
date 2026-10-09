@@ -236,6 +236,8 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     config.cachePath = cache.c_str();
 #ifdef AURORA_GXM
     config.desiredBackend = BACKEND_GXM;
+#elif defined(AURORA_WEBGPU)
+    config.desiredBackend = BACKEND_WEBGPU;
 #else
     config.desiredBackend = BACKEND_OPENGLES;
 #endif

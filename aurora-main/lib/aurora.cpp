@@ -325,6 +325,8 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
 #ifdef AURORA_ENABLE_GX
 #ifdef AURORA_GXM
   const AuroraBackend selectedBackend = BACKEND_GXM;
+#elif defined(AURORA_WEBGPU)
+  const AuroraBackend selectedBackend = BACKEND_WEBGPU;
 #else
   const AuroraBackend selectedBackend = BACKEND_OPENGLES;
 #endif
@@ -838,6 +840,8 @@ AuroraBackend aurora_get_backend() { return aurora::g_config.desiredBackend; }
 const AuroraBackend* aurora_get_available_backends(size_t* count) {
 #ifdef AURORA_GXM
   static constexpr AuroraBackend Backends[] = {BACKEND_GXM};
+#elif defined(AURORA_WEBGPU)
+  static constexpr AuroraBackend Backends[] = {BACKEND_WEBGPU};
 #else
   static constexpr AuroraBackend Backends[] = {BACKEND_OPENGLES};
 #endif

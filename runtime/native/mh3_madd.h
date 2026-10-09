@@ -7,9 +7,10 @@
  * game thread in Alatreon. On such a host this is a plain multiply and add
  * (vmla.f32, or vmul + vadd where the A9 scheduler splits it), rounding twice.
  * Hosts with a fused instruction keep the single rounding, so arm64/x86 fixture
- * results are unchanged. Mirrors MH3_FUSED_MADD in isa/ppc_isa_float.h. */
+ * results are unchanged. WebAssembly has no fused instruction either. Mirrors
+ * MH3_FUSED_MADD in isa/ppc_isa_float.h. */
 static inline float mh3_madd(float a, float b, float c) {
-#if defined(__arm__) && !defined(__ARM_FEATURE_FMA) && !defined(MH3_EXACT_FMA)
+#if (defined(__arm__) || defined(__wasm__)) && !defined(__ARM_FEATURE_FMA) && !defined(MH3_EXACT_FMA)
     return a * b + c;
 #else
     return fmaf(a, b, c);
