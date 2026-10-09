@@ -20,7 +20,8 @@ typedef struct {
 } mh3_matrix_table;
 typedef struct {
     mh3_matrix_table positions, normals, environment;
-    uint64_t generation; /* Changes on each pose-array bind, including rebinding. */
+    uint64_t generation; /* Explicit source revision. Live pose writes and
+                         * binding revisions are tracked separately. */
 } mh3_matrix_sources;
 typedef struct { uint32_t address[3]; uint64_t generation; } mh3_matrix_binding;
 void mh3_matrix_bind(mh3_matrix_binding *state,const uint32_t addresses[3]);

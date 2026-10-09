@@ -1,6 +1,6 @@
 #ifndef MH3_MESH_PACK_H
 #define MH3_MESH_PACK_H
-/* External M3MP v1/v2 CPU metadata + GPU-ready payload. Unwired prototype.
+/* External M3MP v1/v2 CPU metadata + GPU-ready payload.
  * The owner reads the GPU payload straight into mapped CDRAM, then binds it.
  * All returned pointers borrow the corresponding caller-owned byte spans. */
 #include <stddef.h>

@@ -37,6 +37,7 @@
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
+#include "runtime/native/adapters/model_pose_bridge.h"
 
 #include <cstdint>
 #include <cstring>
@@ -387,13 +388,17 @@ void CalcViewLc(CpuContext* ctx) {
 
 extern "C" void func_800711FC(CpuContext* ctx);
 extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
+    const uint32_t position=ctx->gpr[3],normal=ctx->gpr[4],environment=ctx->gpr[10];
+    const uint32_t count=ctx->gpr[7],model_reference=ctx->gpr[9];
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("G3dCalcViewLc");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "G3dCalcViewLc", func_800711FC, CalcViewLc);
+        PublishNativeModelPose(position,normal,environment,count,model_reference);
         return;
     }
 #endif
     CalcViewLc(ctx);
+    PublishNativeModelPose(position,normal,environment,count,model_reference);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800711FC, MH3_G3dCalcViewLc, "G3dCalcViewLc");

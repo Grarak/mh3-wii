@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "memory.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
+#include "runtime/native/adapters/model_pose_bridge.h"
 #include <array>
 #include <stdexcept>
 #include <string>
@@ -138,6 +139,7 @@ void RecordNativeDiscWrite(uint32_t destination,uint64_t offset,uint32_t bytes) 
     if(!bytes) return;
     Initialize();destination=Canonical(destination,bytes);
     Checked(mh3_source_record_disc(&tracker,destination,bytes,offset,NextGeneration()));
+    RetireNativeModelPose(destination,bytes);
     RetireCertificates(destination,bytes);RetireLiveBlocks(destination,bytes);InvalidateSourceCache();
 }
 void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t bytes) {
@@ -153,6 +155,7 @@ void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t byte
     const auto owner_copies=SnapshotOwnerCopy(source,destination,bytes,generation);
     if(tracked || !owner_copies.empty())
         Checked(mh3_source_record_copy(&tracker,destination,source,bytes,generation));
+    RetireNativeModelPose(destination,bytes);
     // A typed mutation may already have retired the byte provenance. Unknown
     // writes must still retire the independent allocation certificate.
     const bool retired_owner=RetireCertificates(destination,bytes),retired_block=RetireLiveBlocks(destination,bytes);
@@ -168,6 +171,7 @@ void RetireNativeResourceOwner(uint32_t address,uint32_t bytes) {
     Initialize();address=Canonical(address,bytes);
     const bool tracked=mh3_source_intersects(&tracker,address,bytes);
     if(tracked) Checked(mh3_source_retire(&tracker,address,bytes));
+    RetireNativeModelPose(address,bytes);
     const bool retired_owner=RetireCertificates(address,bytes),retired_block=RetireLiveBlocks(address,bytes);
     if(retired_owner || retired_block || tracked) InvalidateSourceCache();
 }
