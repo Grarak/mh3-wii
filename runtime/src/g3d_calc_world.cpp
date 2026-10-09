@@ -55,12 +55,13 @@ void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
 namespace {
 
 // The passes' scratch (0x18000 bytes): the game thread's at 0x8066D300, the
-// guest worker's its own (guest_worker.h), so models can calculate on both.
-// CalcWorld keeps the scales at its start and the matrix ids at +0x6000.
-constexpr uint32_t kWorkArea = 0x8066D300u, kMatrixIdsOffset = 0x6000;
+// guest worker's and the draw thread's their own (G3dScratch, guest_worker.h),
+// so models can calculate on all three. CalcWorld keeps the scales at its
+// start and the matrix ids at +0x6000.
+constexpr uint32_t kMatrixIdsOffset = 0x6000;
 
 uint32_t WorkArea() {
-    return PpcThread::CurrentThread() == PpcThread::Worker ? GuestWorker::WorkArea() : kWorkArea;
+    return G3dScratch();
 }
 
 uint32_t Read32(uint32_t a) {

@@ -5,6 +5,7 @@
 #include "guest_span.h"
 #include "frame_split.h"
 #include "guest_call.h"
+#include "guest_worker.h"
 #include "memory.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -15,7 +16,7 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
-constexpr uint32_t Scratch = 0x8066d300, Phase = 0x807936b8;
+constexpr uint32_t Phase = 0x807936b8;
 std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
     MH3_THROW(std::runtime_error("Native model draw dispatch failed: " + std::to_string(status)));
@@ -198,7 +199,7 @@ uint32_t Collect(const Model& model, uint32_t position, uint32_t stream, uint32_
 
 void Publish(uint32_t count) {
     for (uint32_t i = 0; i < count; i++)
-        Checked(mh3_model_draw_record_write(Mutable(Scratch + i * 12, 12), &work[i]));
+        Checked(mh3_model_draw_record_write(Mutable(G3dScratch() + i * 12, 12), &work[i]));
 }
 
 struct Sort {
@@ -277,14 +278,14 @@ struct Pipeline {
 
         const Model model(resource);
         const uint32_t count = Collect(model, p.position, stream, replacement);
-        Sort sort{p.cpu, Scratch, xlu ? 0x80079f78u : 0x80079fdcu, work.data()};
+        Sort sort{p.cpu, G3dScratch(), xlu ? 0x80079f78u : 0x80079fdcu, work.data()};
         auto ops = sort.Ops();
         Checked(mh3_model_draw_sort(&ops, 0, count, 0));
         Publish(count);
 
         // The original scratch is shared; callbacks must observe its exact
         // contents and later iterations must reread any nested draw mutation.
-        Draw(p.cpu, Memory::Read32(p.reference), Scratch, count, replacement, options, true);
+        Draw(p.cpu, Memory::Read32(p.reference), G3dScratch(), count, replacement, options, true);
         return MH3_RES_OK;
     }
 };
@@ -468,7 +469,7 @@ extern "C" void MH3_ModelDrawCollect(CpuContext* cpu) {
     const uint32_t count = Collect(Model(Memory::Read32(reference)), position, stream, replacement);
     Publish(count);
     Memory::Write32(output, count);
-    cpu->gpr[3] = Scratch;
+    cpu->gpr[3] = G3dScratch();
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007923C, MH3_ModelDrawCollect, "ModelDrawCollect");
 extern "C" void MH3_ModelDrawSort(CpuContext* cpu) {

@@ -7,9 +7,13 @@ extern "C" {
 
 /* 80071CAC is CalcView_LC_DMA_ModelMtx in RMHP08 (the old MAP name was
  * G3dCalcView). These CPU spans contain serialized big-endian float records.
- * Cache pairs are explicit scratch ownership, each with capacity for 40 records.
- * Original 32-byte output padding is preserved, including unproduced cache tail
- * bytes. No allocations, CpuContext, PPC instructions, GX or GPU operations. */
+ * Without cache pairs (model_cache[0] empty) the results go straight to the
+ * outputs, chunk by chunk, and the bytes past the last record of a 32-byte
+ * block are left alone. With them (explicit scratch ownership, each with
+ * capacity for 40 records) records stage through the caches as the original's
+ * locked-cache DMA did, and the output padding is preserved, including
+ * unproduced cache tail bytes. No allocations, CpuContext, PPC instructions,
+ * GX or GPU operations. */
 typedef struct mh3_model_view_dma_input {
     mh3_res_model model;
     uint32_t count;
@@ -20,9 +24,10 @@ typedef struct mh3_model_view_dma_input {
 } mh3_model_view_dma_input;
 
 /* Billboard types 1..6 invoke the existing CPU math producer. The adapter may
- * supply native math directly. It receives the actual current cache record,
- * source matrix index and authored uniform-scale flag; no rendering callback.
- * before_store publishes destination retirement before any CPU output copy. */
+ * supply native math directly. It receives the actual current record (the
+ * cache record, or the output record without caches), source matrix index and
+ * authored uniform-scale flag; no rendering callback. before_store publishes
+ * destination retirement before any CPU output write. */
 typedef struct mh3_model_view_callbacks {
     void *user;
     mh3_res_status (*billboard)(void *user, uint32_t type, uint32_t matrix_index, int uniform_scale, mh3_res_mut_span position);

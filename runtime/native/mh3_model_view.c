@@ -189,11 +189,16 @@ static mh3_res_status node(const mh3_res_model *model, int32_t id, const uint8_t
     return MH3_RES_OK;
 }
 
-static mh3_res_status store(const mh3_model_view_callbacks *callbacks, uint32_t kind, uint32_t first, mh3_res_mut_span output, const uint8_t *cache, size_t bytes) {
-    mh3_res_status status = MH3_RES_OK;
+static mh3_res_status before_store(const mh3_model_view_callbacks *callbacks, uint32_t kind, uint32_t first, size_t bytes) {
+    return callbacks && callbacks->before_store ? callbacks->before_store(callbacks->user, kind, first, bytes) : MH3_RES_OK;
+}
 
-    if (callbacks && callbacks->before_store)
-        status = callbacks->before_store(callbacks->user, kind, first, bytes);
+/* Staged: the cache records to the output. Direct: they are already there. */
+static mh3_res_status store(const mh3_model_view_callbacks *callbacks, int direct, uint32_t kind, uint32_t first, mh3_res_mut_span output, const uint8_t *cache, size_t bytes) {
+    if (direct)
+        return MH3_RES_OK;
+
+    mh3_res_status status = before_store(callbacks, kind, first, bytes);
 
     if (status)
         return status;
@@ -217,8 +222,9 @@ mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *in, const mh3_
         (in->normal.data && in->environment.data && !mutable_fits(in->environment, aligned((size_t)in->count * 48u))))
         return MH3_RES_RANGE;
     const size_t chunk = in->count < 40 ? in->count : 40;
+    const int direct = in->model_cache[0].data == NULL;
 
-    for (unsigned pair = 0; pair < 2; pair++) {
+    for (unsigned pair = 0; pair < 2 && !direct; pair++) {
         if (!mutable_fits(in->model_cache[pair], aligned(chunk * 48u)) || !mutable_fits(in->position_cache[pair], aligned(chunk * 48u)) ||
             (in->normal.data && !mutable_fits(in->normal_cache[pair], aligned(chunk * 36u))) ||
             (in->normal.data && in->environment.data && !mutable_fits(in->environment_cache[pair], aligned(chunk * 48u))))
@@ -241,23 +247,33 @@ mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *in, const mh3_
             return MH3_RES_UNSUPPORTED;
     }
 
-    memcpy(in->model_cache[0].data, in->models.data, aligned(chunk * 48u));
+    if (!direct)
+        memcpy(in->model_cache[0].data, in->models.data, aligned(chunk * 48u));
 
     for (uint32_t first = 0; first < in->count; first += 40) {
         const unsigned pair = (first / 40) & 1u;
         const size_t count = in->count - first < 40 ? in->count - first : 40;
         const size_t bytes = aligned(count * 48u), normal_bytes = aligned(count * 36u);
 
-        if (first + 40 < in->count) {
+        if (!direct && first + 40 < in->count) {
             const size_t next = in->count - first - 40 < 40 ? in->count - first - 40 : 40;
             memcpy(in->model_cache[pair ^ 1].data, in->models.data + (size_t)(first + 40) * 48u, aligned(next * 48u));
         }
 
+        /* This chunk's records: staged in the caches, or the inputs and outputs themselves. */
+        const uint8_t *models = direct ? in->models.data + (size_t)first * 48u : in->model_cache[pair].data;
+        uint8_t *positions = direct ? in->position.data + (size_t)first * 48u : in->position_cache[pair].data;
+        uint8_t *normals = !in->normal.data ? NULL : direct ? in->normal.data + (size_t)first * 36u : in->normal_cache[pair].data;
+        uint8_t *environments = !in->normal.data || !in->environment.data ? NULL : direct ? in->environment.data + (size_t)first * 48u : in->environment_cache[pair].data;
+
+        if (direct && (status = before_store(callbacks, 0, first, bytes)))
+            return status;
+
         for (size_t local = 0; local < count; local++) {
             mh3_matrix34 model, position;
-            read34(in->model_cache[pair].data + 48 * local, &model);
+            read34(models + 48 * local, &model);
             concat(&in->camera, &model, count > 1, &position);
-            store34(in->position_cache[pair].data + 48 * local, &position);
+            store34(positions + 48 * local, &position);
         }
 
         for (size_t local = 0; local < count; local++) {
@@ -270,7 +286,7 @@ mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *in, const mh3_
                 return status;
 
             mh3_matrix34 position, model;
-            uint8_t *destination = in->position_cache[pair].data + 48 * local;
+            uint8_t *destination = positions + 48 * local;
 
             if (billboard) {
                 status = callbacks->billboard(callbacks->user, billboard, id, (attr & UINT32_C(0x20000000)) != 0, (mh3_res_mut_span){destination, 48});
@@ -323,39 +339,42 @@ mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *in, const mh3_
             }
         }
 
-        status = store(callbacks, 0, first, in->position, in->position_cache[pair].data, bytes);
+        status = store(callbacks, direct, 0, first, in->position, positions, bytes);
 
         if (status)
             return status;
 
-        if (in->normal.data) {
+        if (normals) {
+            if (direct && ((status = before_store(callbacks, 1, first, normal_bytes)) || (environments && (status = before_store(callbacks, 2, first, bytes)))))
+                return status;
+
             for (size_t local = 0; local < count; local++) {
                 mh3_matrix34 position, environment = {{{0}}};
                 mh3_matrix33 normal;
-                read34(in->position_cache[pair].data + local * 48, &position);
+                read34(positions + local * 48, &position);
 
                 if (word(in->attributes.data + 4 * (first + local)) & UINT32_C(0x20000000))
                     normal = upper(&position);
                 else
                     (void)inverse_normal(&position, &normal);
 
-                store33(in->normal_cache[pair].data + local * 36, &normal);
+                store33(normals + local * 36, &normal);
 
-                if (in->environment.data) {
+                if (environments) {
                     for (size_t r = 0; r < 3; r++)
                         for (size_t c = 0; c < 3; c++)
                             environment.v[r][c] = normal.v[r][c];
-                    store34(in->environment_cache[pair].data + local * 48, &environment);
+                    store34(environments + local * 48, &environment);
                 }
             }
 
-            status = store(callbacks, 1, first, in->normal, in->normal_cache[pair].data, normal_bytes);
+            status = store(callbacks, direct, 1, first, in->normal, normals, normal_bytes);
 
             if (status)
                 return status;
 
-            if (in->environment.data) {
-                status = store(callbacks, 2, first, in->environment, in->environment_cache[pair].data, bytes);
+            if (environments) {
+                status = store(callbacks, direct, 2, first, in->environment, environments, bytes);
 
                 if (status)
                     return status;

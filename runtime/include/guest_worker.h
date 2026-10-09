@@ -159,3 +159,20 @@ inline constexpr uint32_t kGuestStackBytes = 64 * 1024;
 // The draw thread.
 GuestThread& Thread();
 } // namespace DrawThread
+
+// The g3d passes' scratch (GuestWorker::kWorkAreaBytes) of the calling guest
+// thread: the game thread's at 0x8066D300, which CalcWorld, skinning, the
+// view passes and the model draw's sort records use within each pass, and the
+// guest worker's and the draw thread's own copies.
+inline uint32_t G3dScratch() {
+    switch (PpcThread::CurrentThread()) {
+    case PpcThread::Worker:
+        return GuestWorker::WorkArea();
+
+    case PpcThread::Draw:
+        return DrawThread::Thread().WorkArea();
+
+    default:
+        return 0x8066D300u;
+    }
+}
