@@ -34,12 +34,19 @@ mh3_res_span Bytes(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
 mh3_native_camera Camera(uint32_t resource) {
-    mh3_native_camera camera{};
+    mh3_native_camera camera; // mh3_camera_read writes every field
     Checked(mh3_camera_read(Bytes(resource, 268), &camera));
     return camera;
 }
 void StoreCamera(uint32_t resource, const mh3_native_camera& camera) {
     Checked(mh3_camera_store_matrices(Mutable(resource, 116), &camera));
+}
+// The preparations compute a matrix only while its valid flag (8 view, 128
+// projection) is clear, and then set it: an unchanged flags word means the
+// record already holds what a store would write.
+void StorePreparedCamera(uint32_t resource, const mh3_native_camera& camera, uint32_t flags) {
+    if (camera.flags != flags)
+        StoreCamera(resource, camera);
 }
 void StoreFloats(uint32_t destination, const float* data, size_t count) {
     for (size_t i = 0; i < count; ++i)
@@ -71,8 +78,9 @@ void RestoreNativeModelCamera() {
     Checked(mh3_scene_camera_select({view.span.data + view.offset, view.span.size - view.offset}, scene, Memory::Read8(0x8065b4d6) != 0, int8_t(Memory::Read8(0x8065aa87)), Bytes(0x8065b50c, 4),
                                     &resource));
     auto camera = Camera(resource);
+    const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_projection(&camera));
-    StoreCamera(resource, camera);
+    StorePreparedCamera(resource, camera, flags);
     // 800E47B8 explicitly submits perspective, independent of CameraData.type.
     SetNativeProjection(camera.projection, true);
 }
@@ -86,10 +94,11 @@ extern "C" void MH3_CameraProject(CpuContext* cpu) {
         return;
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
+    const uint32_t flags = camera.flags;
     const mh3_vec3 point{{Memory::ReadFloat32(cpu->gpr[5]), Memory::ReadFloat32(cpu->gpr[5] + 4), Memory::ReadFloat32(cpu->gpr[5] + 8)}};
     mh3_vec3 result{};
     Checked(mh3_camera_project(&camera, &point, &result));
-    StoreCamera(resource, camera);
+    StorePreparedCamera(resource, camera, flags);
     StoreFloats(cpu->gpr[4], result.v, 3);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800752BC, MH3_CameraProject, "CameraProject");
@@ -97,16 +106,18 @@ REGISTER_NATIVE_FUNCTION_AS(0x800752BC, MH3_CameraProject, "CameraProject");
 extern "C" void MH3_CameraView(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
+    const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_view(&camera));
-    StoreCamera(resource, camera);
+    StorePreparedCamera(resource, camera, flags);
     StoreFloats(cpu->gpr[4], &camera.view.v[0][0], 12);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800753F8, MH3_CameraView, "CameraView");
 extern "C" void MH3_CameraProjection(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
+    const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_projection(&camera));
-    StoreCamera(resource, camera);
+    StorePreparedCamera(resource, camera, flags);
     StoreFloats(cpu->gpr[4], camera.projection, 16);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800754A4, MH3_CameraProjection, "CameraProjection");
@@ -130,8 +141,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x80075740, MH3_CameraApplyViewport, "CameraApplyVie
 extern "C" void MH3_CameraApplyProjection(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
+    const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_projection(&camera));
-    StoreCamera(resource, camera);
+    StorePreparedCamera(resource, camera, flags);
     SetNativeProjection(camera.projection, camera.projection_type == 0);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007580C, MH3_CameraApplyProjection, "CameraApplyProjection");
@@ -176,11 +188,12 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
         throw std::runtime_error("Native LightSetting capacity exceeds128");
     mh3_matrix34 view{};
     Checked(mh3_scene_view_matrix(Bytes(0x80688d94, 52 + 32 * 48), &view));
-    mh3_native_light_slots slots{};
+    // Imported straight into the state's entry (a failed import stops the run).
+    auto& entry = light_slots[state];
     Checked(mh3_light_state_import(Mutable(state, MH3_LIGHT_STATE_BYTES), count, sets, count ? Bytes(Memory::Read32(setting + 4), size_t(count) * 68) : mh3_res_span{},
                                    count ? Bytes(Memory::Read32(setting + 8), size_t(count) * 4) : mh3_res_span{}, sets ? Bytes(Memory::Read32(setting + 12), size_t(sets) * 12) : mh3_res_span{},
-                                   &view, &slots));
-    const auto& entry = light_slots.insert_or_assign(state, LightSlots{slots, ++light_revision}).first->second;
+                                   &view, &entry.slots));
+    entry.revision = ++light_revision;
     SetNativeModelLightSelection(entry.slots, &entry, entry.revision);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8008551C, MH3_ModelLightSetting, "ModelLightSetting");

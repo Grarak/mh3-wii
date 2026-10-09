@@ -305,47 +305,46 @@ mh3_res_status mh3_fog_state_select(mh3_res_mut_span state, uint32_t id, mh3_nat
     return MH3_RES_OK;
 }
 mh3_res_status mh3_camera_read(mh3_res_span record, mh3_native_camera *out) {
-    mh3_native_camera x;
     size_t i;
     const uint8_t *p = record.data;
     if (!p || !out)
         return MH3_RES_INVALID;
     if (record.size < 268)
         return MH3_RES_RANGE;
-    memset(&x, 0, sizeof x);
-    for (i = 0; i < 12; i++)
-        x.view.v[i / 4][i % 4] = real(p + i * 4);
-    for (i = 0; i < 16; i++)
-        x.projection[i] = real(p + 48 + i * 4);
-    x.flags = be32(p + 112);
-    x.projection_type = be32(p + 168);
-    for (i = 0; i < 3; i++) {
-        x.position.v[i] = real(p + 116 + i * 4);
-        x.up.v[i] = real(p + 128 + i * 4);
-        x.target.v[i] = real(p + 140 + i * 4);
-        x.rotation.v[i] = real(p + 152 + i * 4);
-    }
-    x.twist = real(p + 164);
-    x.fovy = real(p + 172);
-    x.aspect = real(p + 176);
-    x.near_plane = real(p + 180);
-    x.far_plane = real(p + 184);
-    x.top = real(p + 188);
-    x.bottom = real(p + 192);
-    x.left = real(p + 196);
-    x.right = real(p + 200);
-    for (i = 0; i < 6; i++) {
-        x.viewport[i] = real(p + 220 + i * 4);
-        if (!isfinite(x.viewport[i]))
+    /* Checked before any field is written, so the output stays untouched on
+     * failure; on success every field is written (no zeroed local copy). */
+    for (i = 0; i < 6; i++)
+        if (!isfinite(real(p + 220 + i * 4)))
             return MH3_RES_INVALID;
-    }
-    for (i = 0; i < 4; i++)
-        x.scissor[i] = be32(p + 244 + i * 4);
-    x.scissor_offset[0] = be32(p + 260);
-    x.scissor_offset[1] = be32(p + 264);
-    if (x.projection_type > 1)
+    if (be32(p + 168) > 1)
         return MH3_RES_UNSUPPORTED;
-    *out = x;
+    for (i = 0; i < 12; i++)
+        out->view.v[i / 4][i % 4] = real(p + i * 4);
+    for (i = 0; i < 16; i++)
+        out->projection[i] = real(p + 48 + i * 4);
+    out->flags = be32(p + 112);
+    out->projection_type = be32(p + 168);
+    for (i = 0; i < 3; i++) {
+        out->position.v[i] = real(p + 116 + i * 4);
+        out->up.v[i] = real(p + 128 + i * 4);
+        out->target.v[i] = real(p + 140 + i * 4);
+        out->rotation.v[i] = real(p + 152 + i * 4);
+    }
+    out->twist = real(p + 164);
+    out->fovy = real(p + 172);
+    out->aspect = real(p + 176);
+    out->near_plane = real(p + 180);
+    out->far_plane = real(p + 184);
+    out->top = real(p + 188);
+    out->bottom = real(p + 192);
+    out->left = real(p + 196);
+    out->right = real(p + 200);
+    for (i = 0; i < 6; i++)
+        out->viewport[i] = real(p + 220 + i * 4);
+    for (i = 0; i < 4; i++)
+        out->scissor[i] = be32(p + 244 + i * 4);
+    out->scissor_offset[0] = be32(p + 260);
+    out->scissor_offset[1] = be32(p + 264);
     return MH3_RES_OK;
 }
 mh3_res_status mh3_camera_prepare_projection(mh3_native_camera *c) {
@@ -718,8 +717,9 @@ static mh3_res_status light_state_read(mh3_res_span state, mh3_light lights[128]
     }
     return MH3_RES_OK;
 }
-mh3_res_status mh3_light_state_import(mh3_res_mut_span state, uint16_t count, uint16_t sets, mh3_res_span input, mh3_res_span ambient, mh3_res_span input_sets, const mh3_matrix34 *view,
-                                      mh3_native_light_slots *out) {
+/* The import through a copy of the whole LightState, for inputs inside it. */
+static mh3_res_status light_state_import_copy(mh3_res_mut_span state, uint16_t count, uint16_t sets, mh3_res_span input, mh3_res_span ambient, mh3_res_span input_sets,
+                                              const mh3_matrix34 *view, mh3_native_light_slots *out) {
     uint8_t bytes[MH3_LIGHT_STATE_BYTES];
     mh3_light lights[128];
     mh3_native_light_slots slots;
@@ -764,6 +764,66 @@ mh3_res_status mh3_light_state_import(mh3_res_mut_span state, uint16_t count, ui
     memset(bytes + 20, 0, 16);
     memcpy(bytes + 36, slots.source_ids, 8);
     memcpy(state.data, bytes, sizeof bytes);
+    *out = slots;
+    return MH3_RES_OK;
+}
+static int overlaps(const uint8_t *a, size_t a_bytes, const uint8_t *b, size_t b_bytes) {
+    return a_bytes && b_bytes && (uintptr_t)a < (uintptr_t)b + b_bytes && (uintptr_t)b < (uintptr_t)a + a_bytes;
+}
+mh3_res_status mh3_light_state_import(mh3_res_mut_span state, uint16_t count, uint16_t sets, mh3_res_span input, mh3_res_span ambient, mh3_res_span input_sets, const mh3_matrix34 *view,
+                                      mh3_native_light_slots *out) {
+    mh3_native_light_slots slots;
+    uint16_t capacity, set_capacity;
+    size_t i, slot = 0;
+    uint8_t *bytes = state.data;
+    if (!state.data || !view || !out)
+        return MH3_RES_INVALID;
+    if (state.size < MH3_LIGHT_STATE_BYTES || count > 128 || sets > 128 || input.size < (size_t)count * 68 || ambient.size < (size_t)count * 4 || input_sets.size < (size_t)sets * 12)
+        return MH3_RES_RANGE;
+    if ((count && (!input.data || !ambient.data)) || (sets && !input_sets.data))
+        return MH3_RES_INVALID;
+    capacity = be16(state.data);
+    set_capacity = be16(state.data + 2);
+    if (capacity > 128 || set_capacity > 128 || count > capacity || sets > set_capacity)
+        return MH3_RES_RANGE;
+    /* The LightSetting's arrays are apart from the LightState: update it in
+     * place, since nothing below can fail (no 10 KiB copy in and out). */
+    if (overlaps(state.data, MH3_LIGHT_STATE_BYTES, input.data, (size_t)count * 68) || overlaps(state.data, MH3_LIGHT_STATE_BYTES, ambient.data, (size_t)count * 4) ||
+        overlaps(state.data, MH3_LIGHT_STATE_BYTES, input_sets.data, (size_t)sets * 12))
+        return light_state_import_copy(state, count, sets, input, ambient, input_sets, view, out);
+    for (i = 0; i < count; i++) {
+        uint8_t *destination = bytes + 44 + i * 68;
+        if (be32(input.data + i * 68) & MH3_LIGHT_ENABLED)
+            memcpy(destination, input.data + i * 68, 68);
+        else
+            put32(destination, be32(destination) & ~(uint32_t)MH3_LIGHT_ENABLED);
+        memcpy(bytes + 0x222c + i * 4, ambient.data + i * 4, 4);
+    }
+    if (sets)
+        memcpy(bytes + 0x242c, input_sets.data, (size_t)sets * 12);
+    /* View-space lights, and mh3_light_slots_initial over them: only the
+     * enabled records are decoded. */
+    memset(&slots, 0, sizeof slots);
+    memset(slots.source_ids, -1, sizeof slots.source_ids);
+    slots.ambient = (mh3_rgba8){255, 255, 255, 255};
+    for (i = 0; i < capacity; i++) {
+        uint8_t *record = bytes + 44 + i * 68;
+        mh3_light light;
+        if (!(be32(record) & MH3_LIGHT_ENABLED))
+            continue;
+        (void)mh3_light_read((mh3_res_span){record, 68}, &light);
+        mh3_light_apply_view(&light, view);
+        (void)mh3_light_store((mh3_res_mut_span){record, 68}, &light);
+        if (slot < 8) {
+            slots.lights[slot] = light;
+            slots.source_ids[slot] = (int8_t)i;
+            slots.valid_mask |= (uint8_t)(1u << slot);
+            slot++;
+        }
+    }
+    put32(bytes + 16, UINT32_MAX);
+    memset(bytes + 20, 0, 16);
+    memcpy(bytes + 36, slots.source_ids, 8);
     *out = slots;
     return MH3_RES_OK;
 }
