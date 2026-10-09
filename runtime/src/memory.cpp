@@ -121,6 +121,11 @@ void Memory::Init(size_t size) {
             : 0;
         MemoryInline::g_fullPageBias[i] = bias;
         MemoryInline::g_fullReadablePageBias[i] = bias;
+        // Stores take the same bias on pages without code; an executable range
+        // registered later clears its pages (RecompMod::RegisterExecutableRange),
+        // sending their stores through the exact 4 KiB guard.
+        MemoryInline::g_fullWritablePageBias[i] =
+            RecompMod::g_executableWriteGuardCoarsePages[i].load(std::memory_order_relaxed) ? 0 : bias;
     }
 }
 uint8_t* Memory::GetPointer(uint32_t address) { return GetPointer(address, 1); }

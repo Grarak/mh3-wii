@@ -21,6 +21,8 @@ void RegisterExecutableRange(uint32_t start, uint32_t end, std::string) {
             g_executableWriteGuardPages[a >> kExecutableWriteGuardPageShift] = 1;
             g_executableWriteGuardCoarsePages[a >> kExecutableWriteGuardCoarsePageShift] = 1;
             g_executableWriteGuardMidPages[a >> kExecutableWriteGuardMidPageShift] = 1;
+            // The page's stores leave the unchecked bias for the exact guard.
+            MemoryInline::g_fullWritablePageBias[a >> MemoryInline::kPageShift] = 0;
         }
     }
     g_executableWriteGuardEnabled = true;
