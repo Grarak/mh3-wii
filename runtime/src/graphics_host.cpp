@@ -561,7 +561,7 @@ template void SubmitGuestGxFixed<1>(const uint8_t*);
 template void SubmitGuestGxFixed<2>(const uint8_t*);
 template void SubmitGuestGxFixed<4>(const uint8_t*);
 
-// MH3_STATS: once per second, separate game speed from rendered FPS.
+// Development stats default on; MH3_STATS=0 disables the once-per-second line.
 // Game speed is retrace periods the frame pacer stepped (frames * budget)
 // versus the nominal VI rate, since the game logic is fixed-step per frame;
 // game FPS counts display copies; host
@@ -571,7 +571,10 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     ReportVitaMemory();
 #endif
 #ifdef MH3_DEVELOPMENT
-    static const bool enabled = std::getenv("MH3_STATS") != nullptr;
+    static const bool enabled = [] {
+        const char* value = std::getenv("MH3_STATS");
+        return !value || std::strcmp(value, "0") != 0;
+    }();
     if (!enabled || !initialized) return;
     using Clock = std::chrono::steady_clock;
     static auto last = Clock::now();

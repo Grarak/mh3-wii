@@ -563,11 +563,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         catch (const std::runtime_error&) { rejected = true; }
         if (!rejected || draws != 5) throw std::runtime_error("Out-of-RAM draw was emitted");
     }
-    auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
+    auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass,
+                           uint32_t guestAddress = 0) {
         GuestGxStream textureStream;
         GuestGxStream::InvalidateTextureHashes(); // the hashes are process-wide
         std::vector<uint8_t> metadata;
-        std::vector<uint8_t> textureBytes(bytes);
+        std::vector<uint8_t> ownedBytes(bytes);
+        auto textureBytes = guestAddress ? std::span(Memory::GetPointer(guestAddress, bytes), bytes) : std::span(ownedBytes);
+        std::fill(textureBytes.begin(), textureBytes.end(), 0);
         auto textureSink = [&](std::span<const uint8_t> packet) {
             if (packet[0] == 0x50) metadata.assign(packet.begin(), packet.end());
         };
@@ -607,6 +610,11 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             draw();
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
                 throw std::runtime_error("Unchanged GX texture lost its cache identity");
+            bpWrite(0x66, 0xFFFF00);
+            textureStream.Write(repeat, textureSink, resolve);
+            draw();
+            if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
+                throw std::runtime_error("Unchanged GX texture lost its identity at TMEM invalidation");
             textureBytes[0] ^= 0xFF;
             // Unchanged until the texture cache is invalidated (TMEM keeps it).
             textureStream.Write(repeat, textureSink, resolve);
@@ -1199,6 +1207,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         Memory::Write32(queue + 4, 0x80003000);
         Memory::Write32(0x80003000, 0x81700010);
         Memory::Write64(0x80003018, period);
+        if (period) {
+            // Start three periods ago. A zero start can put the next deadline
+            // just microseconds away and logging can legitimately expire it
+            // again during ServiceOsAlarms. Keep a full period for assertions.
+            const auto saved = *cpu;
+            InvokeIndirectCpu(0x804D5400, cpu);
+            const uint64_t now = (uint64_t(cpu->gpr[3]) << 32) | cpu->gpr[4];
+            *cpu = saved;
+            Memory::Write64(0x80003020, now - 3 * period);
+        }
     };
     queueAlarm(0);
     ServiceOsAlarms(cpu);
@@ -1211,7 +1229,10 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     ServiceOsAlarms(cpu);
     if (alarmCallbacks != 2 || Memory::Read32(queue) != 0x80003000 ||
         Memory::Read32(0x80003000) != 0x81700010 || !Memory::Read64(0x80003008))
-        throw std::runtime_error("Periodic alarm was not reinserted");
+        throw std::runtime_error("Periodic alarm was not reinserted: callbacks=" + std::to_string(alarmCallbacks) +
+                                 " queue=" + std::to_string(Memory::Read32(queue)) +
+                                 " callback=" + std::to_string(Memory::Read32(0x80003000)) +
+                                 " deadline=" + std::to_string(Memory::Read64(0x80003008)));
     ServiceOsAlarms(cpu);
     if (alarmCallbacks != 2) throw std::runtime_error("Periodic alarm fired before its next deadline");
     cpu->gpr[3] = 0x80003000;
