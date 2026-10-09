@@ -30,6 +30,36 @@ public sealed class GuestAbiInterproceduralAnalyzerTests
     }
 
     [Fact]
+    public void IndirectCallsFollowTheEabiInsteadOfFencing()
+    {
+        const uint caller = 0x80001000u;
+        const uint virtualCaller = 0x80002000u;
+        var functions = new Dictionary<uint, IrFunction>
+        {
+            [caller] = Function("caller",
+                new IrAssign("r30", IrValue.Imm(1)),
+                new IrCall("lr", "0x80002000", Array.Empty<IrValue>()),
+                new IrReturn(null)),
+            [virtualCaller] = Function("virtualCaller",
+                new IrIndirectCall("lr", IrValue.Register("ctr"), Array.Empty<IrValue>()),
+                new IrIndirectJump(IrValue.Register("ctr")))
+        };
+
+        var result = GuestAbiInterproceduralAnalyzer.Analyze(functions);
+        var contract = result.Contracts[virtualCaller];
+
+        Assert.False(contract.HasFullSynchronizationFence);
+        Assert.False(result.Contracts[caller].HasFullSynchronizationFence);
+        // Argument and scratch registers are inputs, the volatile set is
+        // clobbered; r14-r31 and f14-f31 survive the call.
+        Assert.Equal(0x00003FFFu, contract.GprReadBeforeWriteMask);
+        Assert.Equal(0x00001FF9u, contract.GprPossibleWriteMask);
+        Assert.Equal(0x00003FFFu, contract.FprPossibleWriteMask);
+        Assert.Equal(0u, contract.GprPossibleWriteMask & 0xFFFFC000u);
+        Assert.NotEqual(0, (int)(contract.BoundaryFlags & GuestCallBoundaryFlags.InvokesGuestCode));
+    }
+
+    [Fact]
     public void NoReturnCalleeDoesNotSpreadItsFenceOrEffects()
     {
         const uint caller = 0x80001000u;
@@ -43,7 +73,7 @@ public sealed class GuestAbiInterproceduralAnalyzerTests
             [panic] = Function("panic",
                 new IrAssign("r4", IrValue.Register("r20")),
                 new IrAssign("r5", IrValue.Register("r3")),
-                new IrIndirectCall("lr", IrValue.Register("ctr"), Array.Empty<IrValue>()),
+                new IrUndefined(0x80002008u, 0x7C000008u, "trap"),
                 new IrReturn(null))
         };
 

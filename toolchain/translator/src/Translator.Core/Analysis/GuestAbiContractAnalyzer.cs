@@ -184,9 +184,16 @@ public static class GuestAbiContractAnalyzer
                 {
                     boundaryFlags |= GuestHelperEffectCatalog.Analyze(helperCall).BoundaryFlags;
                 }
-                if (instruction is IrIndirectCall or IrIndirectJump or IrUndefined)
+                if (instruction is IrUndefined)
                 {
                     boundaryFlags |= GuestCallBoundaryFlags.RequiresCompleteContext;
+                }
+                else if (instruction is IrIndirectCall or IrIndirectJump)
+                {
+                    // An unknown callee (or tail callee) still follows the
+                    // PowerPC EABI (see IndirectCallContract): no
+                    // complete-context fence, but it runs arbitrary guest code.
+                    boundaryFlags |= GuestCallBoundaryFlags.InvokesGuestCode;
                 }
             }
         }
@@ -381,11 +388,12 @@ public static class GuestAbiContractAnalyzer
             case IrIndirectCall value:
                 AddValue(ref result, value.Target);
                 foreach (var argument in value.Arguments) AddValue(ref result, argument);
-                result = result.Union(FullState);
+                result = result.Union(IndirectCallReads);
                 break;
             case IrIndirectJump value:
+                // A tail call: the target returns to this function's caller.
                 AddValue(ref result, value.Target);
-                result = result.Union(FullState);
+                result = result.Union(IndirectCallReads);
                 break;
             case IrSetCrField value:
                 AddValue(ref result, value.Left);
@@ -460,7 +468,10 @@ public static class GuestAbiContractAnalyzer
                 break;
             case IrIndirectCall value:
                 Add(ref shared, value.Destination);
-                shared = shared.Union(FullState);
+                possibleOnly = IndirectCallWrites;
+                break;
+            case IrIndirectJump:
+                possibleOnly = IndirectCallWrites;
                 break;
             case IrSetCrField value:
                 shared = shared with { Cr = (byte)(shared.Cr | (1 << value.FieldIndex)) };
@@ -529,6 +540,37 @@ public static class GuestAbiContractAnalyzer
             contract.DefinitelyWritesCtr, contract.DefinitelyWritesLr,
             contract.DefinitelyWritesFpscr, contract.GqrDefiniteWriteMask,
             contract.HidDefiniteWriteMask);
+
+    // The PowerPC EABI boundary of a call to an unknown target (bctrl/blrl):
+    // every function the compilers emit (and the SDK's assembly) preserves
+    // r1, r2, r13-r31, f14-f31 and CR fields 2-4, and reads its arguments
+    // from r3-r10/f1-f8 (CR1 for varargs). The reads take all of r0-r13 and
+    // f0-f13 and the special registers, so what the callee may see is always
+    // architectural; the writes are the volatile set.
+    private const uint IndirectCallGprReads = 0x00003FFFu;   // r0-r13
+    private const uint IndirectCallGprWrites = 0x00001FF9u;  // r0, r3-r12
+    private const uint IndirectCallFprMask = 0x00003FFFu;    // f0-f13
+    private const byte IndirectCallCrWrites = 0xE3;          // cr0, cr1, cr5-cr7
+
+    private static RegisterSet IndirectCallReads =>
+        new(IndirectCallGprReads, IndirectCallFprMask, byte.MaxValue, true, true, false, true, byte.MaxValue, byte.MaxValue);
+
+    private static RegisterSet IndirectCallWrites =>
+        new(IndirectCallGprWrites, IndirectCallFprMask, IndirectCallCrWrites, true, true, true, true, byte.MaxValue, 0);
+
+    /// <summary>The boundary an indirect call site syncs (see IndirectCallReads).</summary>
+    public static GuestAbiContract IndirectCallContract { get; } = new(
+        IndirectCallGprReads, IndirectCallGprWrites, (1u << 3) | (1u << 4),
+        IndirectCallFprMask, IndirectCallFprMask, 1u << 1,
+        byte.MaxValue, IndirectCallCrWrites, true, true, true, true, false, true,
+        GuestCallBoundaryFlags.InvokesGuestCode, Array.Empty<uint>())
+    {
+        ReadsFpscrBeforeWrite = true,
+        MayWriteFpscr = true,
+        GqrReadBeforeWriteMask = byte.MaxValue,
+        GqrPossibleWriteMask = byte.MaxValue,
+        HidReadBeforeWriteMask = byte.MaxValue,
+    };
 
     private static RegisterSet FullState =>
         new(uint.MaxValue, uint.MaxValue, byte.MaxValue, true, true, true, true, byte.MaxValue, byte.MaxValue);

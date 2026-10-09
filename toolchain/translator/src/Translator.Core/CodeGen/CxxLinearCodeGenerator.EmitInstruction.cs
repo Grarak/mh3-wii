@@ -507,9 +507,13 @@ public sealed partial class CxxLinearCodeGenerator
             case IrIndirectCall icall:
                 {
                     var indirectTarget = ToExpression(icall.Target, types);
-                    AppendFlush(sb, pad);
+                    // The callee is unknown but follows the EABI: sync the
+                    // argument and volatile registers, keep the preserved ones.
+                    var indirectSync = ResidencyBoundarySync.FromCalleeContract(
+                        Translator.Core.Analysis.GuestAbiContractAnalyzer.IndirectCallContract);
+                    AppendFlush(sb, pad, indirectSync);
                     sb.AppendLine($"{pad}InvokeIndirectCpu({indirectTarget}, ctx);");
-                    AppendReload(sb, pad);
+                    AppendReload(sb, pad, indirectSync);
                     // f1 is the conventional scalar floating-point return.
                     // Do not retag the other volatile FPRs: a callee that leaves
                     // one untouched also leaves its packed payload untouched.

@@ -296,7 +296,8 @@ public static class GuestStateLivenessAnalyzer
             case IrIndirectCall value:
                 AddValue(ref result, value.Target);
                 foreach (var argument in value.Arguments) AddValue(ref result, argument);
-                result = result.Union(FullState);
+                // The EABI boundary (GuestAbiContractAnalyzer.IndirectCallContract).
+                result = result.Union(IndirectCallReads);
                 break;
             case IrIndirectJump value: AddValue(ref result, value.Target); result = result.Union(FullState); break;
             case IrSetCrField value:
@@ -329,7 +330,9 @@ public static class GuestStateLivenessAnalyzer
                 Add(ref result, value.SecondDestination);
                 break;
             case IrCall value: Add(ref result, value.Destination); break;
-            case IrIndirectCall value: Add(ref result, value.Destination); result = result.Union(FullState); break;
+            // Kills only its destination: the callee's volatile writes are
+            // possible, not definite, and the preserved registers survive it.
+            case IrIndirectCall value: Add(ref result, value.Destination); break;
             case IrSetCrField value:
                 result = result with { Cr = (byte)(result.Cr | (1 << value.FieldIndex)) };
                 break;
@@ -420,6 +423,17 @@ public static class GuestStateLivenessAnalyzer
         first = string.Empty;
         second = string.Empty;
         return 0;
+    }
+
+    private static GuestStateMask IndirectCallReads
+    {
+        get
+        {
+            var c = GuestAbiContractAnalyzer.IndirectCallContract;
+            return new(c.GprReadBeforeWriteMask, c.FprReadBeforeWriteMask, c.CrReadBeforeWriteMask,
+                c.ReadsXerBeforeWrite, c.ReadsCtrBeforeWrite, c.ReadsLrBeforeWrite, c.ReadsFpscrBeforeWrite,
+                c.GqrReadBeforeWriteMask, c.HidReadBeforeWriteMask);
+        }
     }
 
     private static GuestStateMask FullState =>
