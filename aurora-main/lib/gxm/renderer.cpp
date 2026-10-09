@@ -527,6 +527,20 @@ bool initialized() noexcept {
 bool on_render_thread() noexcept {
   return g_context && g_context->id == std::this_thread::get_id();
 }
+// The libgxm context has one owner at a time: the game thread until the
+// runtime's render thread takes it over, and back at shutdown. Releasing
+// closes any open scene so the next owner starts at a scene boundary.
+void release_context() noexcept {
+  if (!on_render_thread())
+    fail("GXM context released outside its owner");
+  guarded([] { renderer().device.end(); });
+  g_context->id = {};
+}
+void acquire_context() noexcept {
+  if (!g_context || g_context->id != std::thread::id{})
+    fail("GXM context acquired while another thread owns it");
+  g_context->id = std::this_thread::get_id();
+}
 const Caps& caps() noexcept {
   return g_caps;
 }

@@ -23,6 +23,9 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#endif
 
 namespace aurora::gfx {
 uint32_t current_frame() noexcept;
@@ -308,6 +311,12 @@ void RenderLoop() {
     mh3SplitOff = true;
 #endif
     try {
+#ifdef __vita__
+        // The game thread runs on core 2; the AX mix worker and the display
+        // callback on core 0.
+        if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1) < 0)
+            throw std::runtime_error("Render thread core 1 affinity failed");
+#endif
         for (;;) {
             const uint32_t ticket = published.load(std::memory_order_acquire);
             const auto status = mh3_frame_state_acquire(&consumer);
