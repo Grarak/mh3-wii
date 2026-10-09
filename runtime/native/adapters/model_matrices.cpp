@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "memory.h"
 #include "native_graphics.h"
+#include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_matrices.h"
 
 #include <stdexcept>
@@ -17,7 +18,6 @@ void MH3NativeShapeSubmit(uint32_t shape_resource,const mh3_model_palette* palet
 namespace {
 constexpr mh3_matrix_runtime_locations locations{
     0x80685530,0x80685510,0x80796db4,0x80688d94,0x80686368};
-mh3_matrix_binding binding{};
 mh3_indirect_output indirect{};
 void Checked(mh3_res_status status) {
     if (status!=MH3_RES_OK)
@@ -28,7 +28,10 @@ void Checked(mh3_res_status status) {
 // Direct material preparation consumes these typed indirect matrices. The
 // serialized object below only preserves the old caller's opaque return token.
 const mh3_indirect_output* MH3NativeIndirectMatrices() { return &indirect; }
-const mh3_matrix_binding* MH3NativeMatrixBinding() { return &binding; }
+const mh3_matrix_binding* MH3NativeMatrixBinding() {
+    static mh3_matrix_binding binding{};
+    binding=ReadNativeModelMatrixSources(locations.arrays);return &binding;
+}
 
 extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
     Checked(mh3_matrix_runtime_indirect(&MH3NativeResourceMemory(),&locations,
@@ -44,13 +47,6 @@ extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80077814,MH3_ModelIndirectMatrices,"ModelIndirectMatrices");
 
-extern "C" void MH3_ModelMatrixSources(CpuContext* cpu) {
-    const uint32_t addresses[]{cpu->gpr[3],cpu->gpr[4],cpu->gpr[5]};
-    Checked(mh3_matrix_store_sources({Memory::GetPointer(locations.arrays,12),12},addresses));
-    mh3_matrix_bind(&binding,addresses);
-}
-REGISTER_NATIVE_FUNCTION_AS(0x80087E5C,MH3_ModelMatrixSources,"ModelMatrixSources");
-
 extern "C" void MH3_ModelShapePrimitive(CpuContext* cpu) {
     if (!NativeGraphicsFrameShouldRender()) return;
     mh3_matrix_runtime_storage storage{};
@@ -59,7 +55,7 @@ extern "C" void MH3_ModelShapePrimitive(CpuContext* cpu) {
     Checked(mh3_matrix_runtime_shape(&MH3NativeResourceMemory(),&locations,
                                    cpu->gpr[3],cpu->gpr[4],cpu->gpr[5],&storage,&input,&sources));
     if (!input.valid) return;
-    sources.generation=binding.generation;
+    sources.generation=ReadNativeModelMatrixSources(locations.arrays).generation;
     mh3_model_palette palette{};
     Checked(mh3_model_palette_rigid(&input,&sources,&palette));
     uint32_t shape=0;

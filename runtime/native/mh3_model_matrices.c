@@ -320,14 +320,20 @@ static mh3_res_status node_from_matrix(const mh3_res_model *mdl,uint32_t id,size
     if (value>INT32_MAX) return MH3_RES_RANGE;
     return mh3_res_model_data(mdl,MH3_RES_NODES,(int32_t)value,node);
 }
+mh3_res_status mh3_model_light_reference(mh3_res_span state,int32_t reference,int32_t *out) {
+    uint32_t word;int64_t set,at;
+    if(!state.data || !out)return MH3_RES_INVALID;
+    if(state.size<0x2a2c)return MH3_RES_RANGE;
+    word=be32(state.data+16);set=word&0x80000000u?(int64_t)word-INT64_C(4294967296):(int64_t)word;
+    at=0x242c+set*12+reference;
+    if(at<0 || at>=0x2a2c)return MH3_RES_RANGE;
+    *out=(int8_t)state.data[(size_t)at];return MH3_RES_OK;
+}
 static mh3_res_status light_at(const mh3_res_memory *m,uint32_t state,int32_t reference_id,mh3_indirect_slot *out) {
-    mh3_res_memory_view v;mh3_res_span light;mh3_matrix_table t;mh3_res_status s;uint32_t set,flags;int64_t map;int32_t id;size_t i;
-    s=mh3_res_runtime_map(m,state,20,&v);if (s) return s;
-    set=be32(v.span.data+v.offset+16);
-    if (set>=128) return MH3_RES_RANGE;
-    map=(int64_t)v.offset+9260+(uint64_t)set*12+reference_id;
-    if (map<0 || (uint64_t)map>=v.span.size) return MH3_RES_RANGE;
-    id=v.span.data[(size_t)map];if (id>=128) return MH3_RES_OK;
+    mh3_res_span storage,light;mh3_matrix_table t;mh3_res_status s;uint32_t flags;int32_t id;size_t i;
+    s=raw(m,state,0x2a2c,&storage);if (s) return s;
+    s=mh3_model_light_reference(storage,reference_id,&id);if (s)return s;
+    if (id<0) return MH3_RES_OK;
     s=raw(m,state+44+(uint32_t)id*68,68,&light);if (s) return s;
     flags=be32(light.data);out->light_present=1;out->light_enabled=(flags&4)!=0;
     out->light_spot=(flags&1)!=0;out->light_specular=(flags&2)!=0;

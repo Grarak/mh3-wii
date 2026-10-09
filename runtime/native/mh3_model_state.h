@@ -31,6 +31,8 @@ typedef struct mh3_native_palette_source {
 typedef struct mh3_native_material_state {
     uint32_t texgen_count,channel_count,tev_count,indirect_count,cull_mode;
     int32_t light_set_reference,fog_reference;
+    /* raster_channel is semantic0..8/255 here; immutable M3MT TEV records
+     * retain raw BP selectors. The load-time assembler normalizes them once. */
     mh3_pack_tev_stage tev[16];
     mh3_pack_tev_color color[4],konst[4];
     mh3_pack_swap_table swaps[4];

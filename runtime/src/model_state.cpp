@@ -11,6 +11,7 @@ namespace {
 std::unordered_map<uint32_t,mh3_native_texture_binding> objects;
 std::unordered_map<uint32_t,mh3_native_palette_source> palettes;
 std::unordered_map<uint32_t,uint64_t> generations;
+std::unordered_map<uint32_t,mh3_matrix_binding> matrix_sources;
 uint64_t resource_generation=0;
 void Checked(mh3_res_status status) {
     if (status!=MH3_RES_OK) throw std::runtime_error("Native model resource input failed: "+std::to_string(status));
@@ -107,4 +108,16 @@ void CopyNativeResourceObjects(uint32_t destination,uint32_t source,bool palette
             if (present[i]) objects.insert_or_assign(target,textures[i]);else objects.erase(target);
         }
     }
+}
+void StoreNativeModelMatrixSources(uint32_t state,const uint32_t addresses[3]) {
+    auto next=matrix_sources.contains(state)?matrix_sources.at(state):mh3_matrix_binding{};
+    if (next.generation==UINT64_MAX) throw std::runtime_error("Native matrix source revision overflow");
+    mh3_matrix_bind(&next,addresses);
+    Checked(mh3_matrix_store_sources({Memory::GetPointer(state,12),12},addresses));
+    matrix_sources.insert_or_assign(state,next);
+}
+mh3_matrix_binding ReadNativeModelMatrixSources(uint32_t state) {
+    const auto found=matrix_sources.find(state);
+    if (found==matrix_sources.end()) throw std::runtime_error("Matrix arrays have no typed bind producer");
+    return found->second;
 }

@@ -129,6 +129,11 @@ mh3_res_status mh3_matrix_store_indirect(mh3_res_mut_span object,const mh3_indir
 mh3_res_status mh3_matrix_store_sources(mh3_res_mut_span state,const uint32_t addresses[3]);
 mh3_res_status mh3_matrix_runtime_operator(const mh3_res_memory *memory,uint32_t object,
                                           uint32_t reset_entry,uint32_t set_entry);
+/* MH3 80085BB8/800882D4: references index relative to the CURRENT light set.
+ * Original signed references (including -1) can read preceding serialized
+ * bytes; preserve that arithmetic within the checked LightState owner span. */
+mh3_res_status mh3_model_light_reference(mh3_res_span light_state,int32_t reference,
+                                        int32_t *out);
 
 #ifdef __cplusplus
 }

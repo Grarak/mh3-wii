@@ -154,6 +154,9 @@ extern "C" void MH3_ModelInvalidate(CpuContext* cpu) {
         Mutable(0x80796db8,4),Mutable(0x80796dc8,4),Mutable(0x80685d60,4),Mutable(0x80686378,28),
         Mutable(0x80685530,12),Mutable(0x80796db0,1)};
     Checked(mh3_model_cache_invalidate(storage,cpu->gpr[3]));
+    if (cpu->gpr[3]&1024) {
+        const uint32_t absent[]{0,0,0};StoreNativeModelMatrixSources(0x80685530,absent);
+    }
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800885F4,MH3_ModelInvalidate,"ModelInvalidate");
 extern "C" void MH3_ModelRenderMode(CpuContext* cpu) {cpu->gpr[3]=0x8068a7c8;}

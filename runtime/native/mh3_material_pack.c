@@ -187,7 +187,14 @@ mh3_pack_status mh3_material_state_read(const mh3_mesh_pack *pack,uint32_t index
     s=mh3_mesh_pack_material(pack,index,&record);if (s) return s;
     memset(&x,0,sizeof x);x.texgen_count=record.texgen_count;x.channel_count=record.channel_count;x.tev_count=record.tev_count;
     x.indirect_count=record.indirect_count;x.cull_mode=record.cull_mode;x.light_set_reference=material.light_set_reference;x.fog_reference=material.fog_reference;
-    for (i=0;i<x.tev_count;i++) {s=mh3_mesh_pack_tev(&material,i,&x.tev[i]);if (s) return s;}
+    for (i=0;i<x.tev_count;i++) {
+        static const uint8_t raster_channel[8]={4,5,4,5,4,7,8,6};
+        s=mh3_mesh_pack_tev(&material,i,&x.tev[i]);if (s) return s;
+        /* The immutable payload retains the raw three-bit BP selector. Live
+         * material records use the semantic channel IDs used by shader inputs
+         * and effect producers, including semantic COLOR_ZERO6. */
+        x.tev[i].raster_channel=raster_channel[x.tev[i].raster_channel];
+    }
     for (i=0;i<4;i++) {
         s=mh3_mesh_pack_tev_color(&material,i,0,&x.color[i]);if (s) return s;
         s=mh3_mesh_pack_tev_color(&material,i,1,&x.konst[i]);if (s) return s;

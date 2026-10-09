@@ -15,3 +15,7 @@ uint64_t ReadNativeTextureGeneration(uint32_t payload);
 void InitializeNativeTextureSource(uint32_t reference,bool palette);
 void CopyNativeResourceObjects(uint32_t destination,uint32_t source,bool palette);
 void RestoreNativeModelCamera();
+/* Explicit view-array bind producer. Addresses do not establish allocation
+ * counts; the eventual pose owner must supply those for indexed mesh loads. */
+void StoreNativeModelMatrixSources(uint32_t state,const uint32_t addresses[3]);
+mh3_matrix_binding ReadNativeModelMatrixSources(uint32_t state);
