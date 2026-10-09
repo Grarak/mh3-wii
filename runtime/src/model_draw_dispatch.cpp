@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI adapters. Typed C owns draw order, resource selection and
 // the authored sort; retained handlers and renderer callbacks stay at this seam.
 #include "abi_bridge.h"
+#include "frame_split.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -8,9 +9,55 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#ifdef MH3_DEVELOPMENT
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <set>
+#endif
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
+#ifdef MH3_DEVELOPMENT
+// MH3_DRAW_CENSUS=N: every N frames print which owner classes, tasks,
+// callbacks and replacements the model draw pass uses (render-thread scope).
+struct Census {
+    const unsigned every = [] {
+        const char* value = std::getenv("MH3_DRAW_CENSUS");
+        return value ? unsigned(std::strtoul(value, nullptr, 10)) : 0u;
+    }();
+    uint32_t frame = 0, frames = 0;
+    std::map<std::string, uint32_t> counts;
+    std::set<uint32_t> owners, models;
+    void Add(const std::string& key) {
+        if (every)
+            ++counts[key];
+    }
+    void Frame() {
+        if (!every || frame == mh3SplitFrame)
+            return;
+        frame = mh3SplitFrame;
+        if (++frames < every)
+            return;
+        std::printf("MH3 draw census (%u frames): %zu owners %zu models\n", frames, owners.size(), models.size());
+        for (const auto& [key, count] : counts)
+            std::printf("  %-48s %8.1f/frame\n", key.c_str(), double(count) / frames);
+        std::fflush(stdout);
+        counts.clear();
+        owners.clear();
+        models.clear();
+        frames = 0;
+    }
+    static std::string Hex(uint32_t value) {
+        char text[16];
+        std::snprintf(text, sizeof text, "%08x", value);
+        return text;
+    }
+} census;
+#define MH3_CENSUS(...) __VA_ARGS__
+#else
+#define MH3_CENSUS(...)
+#endif
 constexpr uint32_t Scratch = 0x8066d300, Phase = 0x807936b8;
 std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
 void Checked(mh3_res_status status) {
@@ -60,6 +107,7 @@ struct Submit {
     uint32_t replacement, shape, node, material, bindings;
     static mh3_res_status Emit(void* user, const mh3_model_draw_item* item) {
         auto& s = *static_cast<Submit*>(user);
+        MH3_CENSUS(census.Add("item flags " + Census::Hex(item->dispatch_flags) + (s.replacement ? " replaced" : "")));
         Memory::Write32(s.shape, s.model.Address(item->shape.offset));
         Memory::Write32(s.node, s.model.Address(item->node.offset));
         Memory::Write32(s.material, s.model.Address(item->material.offset));
@@ -185,6 +233,13 @@ struct Pipeline {
     }
 };
 void PipelineRun(CpuContext* cpu, uint32_t reference, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
+#ifdef MH3_DEVELOPMENT
+    if (census.every) {
+        census.models.insert(Memory::Read32(reference));
+        census.Add(std::string("pipeline ") + (opaque ? "O" : "-") + (xlu ? "X" : "-") + " sources " + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " options " +
+                   Census::Hex(options) + (replacement ? " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" + Census::Hex(Memory::Read32(replacement + 4)) : ""));
+    }
+#endif
     Pipeline p{cpu, reference, sources[0]};
     const mh3_model_draw_pipeline ops{&p, Pipeline::Bind, Pipeline::Complete, Pipeline::Pass};
     Checked(mh3_model_draw_pipeline_run(&ops, sources, opaque, xlu, replacement, options));
@@ -195,12 +250,20 @@ struct Scene {
     mh3_model_scene_draw_ops Ops() { return {this, Task, Handler, Virtual, Callback, Options, Source, DrawXlu}; }
     static void Task(void* user, uint32_t owner, unsigned task, uint32_t* options) {
         auto& s = *static_cast<Scene*>(user);
+#ifdef MH3_DEVELOPMENT
+        census.Frame();
+        if (census.every) {
+            census.owners.insert(owner);
+            census.Add("task " + std::to_string(task) + " class " + Census::Hex(Memory::Read32(owner)) + " options " + Census::Hex(*options));
+        }
+#endif
         Memory::Write32(s.options_word, *options);
         s.call.Virtual<0x0c>(owner, {task, 0, s.options_word});
         *options = Memory::Read32(s.options_word);
     }
     static void Handler(void* user, uint32_t owner, uint32_t task, uint32_t argument, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
+        MH3_CENSUS(census.Add("handler task " + std::to_string(task) + " class " + Census::Hex(Memory::Read32(owner))));
         switch (task) {
         case 1:
             s.call.Call<0x8007D4E0>({owner, argument, options});
@@ -234,6 +297,7 @@ struct Scene {
         }
     }
     static void Virtual(void* user, uint32_t owner, unsigned slot, uint32_t argument) {
+        MH3_CENSUS(census.Add("virtual " + Census::Hex(slot) + " class " + Census::Hex(Memory::Read32(owner))));
         auto& call = static_cast<Scene*>(user)->call;
         if (slot == 0x24)
             call.Virtual<0x24>(owner);
@@ -243,6 +307,7 @@ struct Scene {
             throw std::runtime_error("Unexpected scene virtual slot");
     }
     static void Callback(void* user, uint32_t callback, unsigned mask, uint32_t owner, uint32_t argument, uint32_t options) {
+        MH3_CENSUS(census.Add("callback mask " + std::to_string(mask) + " class " + Census::Hex(Memory::Read32(callback)) + " fn " + Census::Hex(Memory::Read32(Memory::Read32(callback) + 0x1c))));
         static_cast<Scene*>(user)->call.Virtual<0x1c>(callback, {mask, owner, argument, options});
     }
     static uint32_t Options(void*, uint32_t pointer) { return Memory::Read32(pointer); }
@@ -261,6 +326,13 @@ struct Scene {
     }
     static mh3_res_status DrawXlu(void* user, uint32_t resource, const uint32_t sources[3], uint32_t xlu, uint32_t replacement, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
+#ifdef MH3_DEVELOPMENT
+        if (census.every) {
+            census.models.insert(resource);
+            census.Add(std::string("xlu sources ") + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" +
+                       Census::Hex(Memory::Read32(replacement + 4)));
+        }
+#endif
         GuestFrame frame(s.call.cpu, 0x20);
         Memory::Write32(frame[0x10], resource);
         PipelineRun(s.call.cpu, frame[0x10], sources, 0, xlu, replacement, options);

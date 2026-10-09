@@ -13,6 +13,7 @@
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
 #include "audio/ax_dsp.h"
+#include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
 #include "memory.h"
@@ -151,12 +152,18 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
 // Calls per frame phase (2 logic, 3 draw) of calc entry points: world matrices,
 // animation results, effect calc, view matrices.
 uint32_t splitCalls[4][5];
+double splitFamilies[MH3_SPLIT_FAMILIES];
 #endif
 } // namespace
 #ifdef MH3_DEVELOPMENT
+uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
+uint32_t mh3SplitFrame;
 void MH3FrameSplitCall(unsigned kind) {
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];
+}
+void MH3FrameSplitTime(unsigned family, std::chrono::steady_clock::duration elapsed) {
+    splitFamilies[family] += std::chrono::duration<double, std::milli>(elapsed).count();
 }
 #endif
 namespace {
@@ -172,7 +179,10 @@ struct FrameSplit {
     uint32_t frames = 0;
     Clock::time_point reported = Clock::now();
     static double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
-    void Begin() { start = mark = Clock::now(); }
+    void Begin() {
+        ++mh3SplitFrame;
+        start = mark = Clock::now();
+    }
     void Lap(double& bucket) {
         const auto now = Clock::now();
         bucket += Ms(now - mark);
@@ -189,7 +199,11 @@ struct FrameSplit {
             return;
         std::printf("MH3 frame split: logic %.2f draw %.2f other %.2f ms/frame (%u frames); calls logic/draw: world %u/%u anim %u/%u effect %u/%u view %u/%u\n", logic / frames, draw / frames,
                     other / frames, frames, splitCalls[0][2], splitCalls[0][3], splitCalls[1][2], splitCalls[1][3], splitCalls[2][2], splitCalls[2][3], splitCalls[3][2], splitCalls[3][3]);
+        const auto f = [this](unsigned family) { return splitFamilies[family] / frames; };
+        std::printf("MH3 draw split: traverse %.2f model %.2f (mesh submit %.2f) effect %.2f node callback %.2f font %.2f fade %.2f hud %.2f movie %.2f ms/frame\n", f(MH3_SPLIT_TRAVERSE),
+                    f(MH3_SPLIT_MODEL), f(MH3_SPLIT_MESH_SUBMIT), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD), f(MH3_SPLIT_MOVIE));
         std::memset(splitCalls, 0, sizeof splitCalls);
+        std::memset(splitFamilies, 0, sizeof splitFamilies);
         std::fflush(stdout);
         logic = draw = other = 0;
         frames = 0;
@@ -301,7 +315,11 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         MH3_SPLIT(logic);
         if (render) {
             call(DrawScene);
-            call(flfntFlush);
+            {
+                MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
+                call(flfntFlush);
+            }
+            MH3_SPLIT_SCOPE(MH3_SPLIT_FADE);
             call(DrawFadeOverlay);
         }
         MH3_SPLIT(draw);
@@ -312,7 +330,11 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         }
         MH3_SPLIT(logic);
         if (render) {
-            call(DrawHud);
+            {
+                MH3_SPLIT_SCOPE(MH3_SPLIT_HUD);
+                call(DrawHud);
+            }
+            MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
             call(MovieDraw);
         }
         MH3_SPLIT(draw);

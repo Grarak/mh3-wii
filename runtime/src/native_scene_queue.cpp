@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
+#include "frame_split.h"
 #include "native_graphics.h"
 #include "../native/mh3_scene_queue.h"
 #include "../native/mh3_model_state.h"
@@ -132,6 +133,7 @@ void EnqueueWalk(void* user, uint32_t node, uint8_t category, float, float) {
     Enqueue(nullptr, node, category, Memory::ReadFloat32(context + 0xb4), Memory::ReadFloat32(context + 0xb8));
 }
 void Traverse(CpuContext* cpu, uint32_t camera, uint8_t filter) {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_TRAVERSE);
     GuestFrame frame(cpu, 0xc0);
     WalkAdapter adapter{{cpu}, frame[0x40], frame[0x10], 0};
     adapter.call(0x800753F8, {camera, adapter.view_address});
@@ -157,13 +159,17 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
         ReadNode(nullptr, identity, &node);
         if (!mh3_scene_phase_selected(node.phase, pass))
             continue;
-        if (!(node.flags & 0x40) && node.callback)
+        if (!(node.flags & 0x40) && node.callback) {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_NODE_CALLBACK);
             call(node.callback, {identity});
+        }
         // Callback changes are visible to the original subsequent draw loads.
         ReadNode(nullptr, identity, &node);
-        if (node.type < 2)
+        if (node.type < 2) {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL);
             call(0x8004978C, {node.object, pass == 1 ? 4u : 0xffffffffu});
-        else if (node.type == 2) {
+        } else if (node.type == 2) {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT);
             const auto target = Memory::Read32(Memory::Read32(node.object + 28) + 28);
             call(target, {node.object, Memory::Read32(Memory::Read32(0x80796e30) + 0x29084)});
             call(0x800885F4, {0x7ff});

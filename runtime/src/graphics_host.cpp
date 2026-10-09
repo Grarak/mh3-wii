@@ -447,16 +447,6 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     static auto previousAudio = GetNativeAudioOutputStatistics();
     static auto previousDma = GetNativeAudioDmaStatistics();
     static auto previousFeedback = aurora::scene_feedback_stats();
-    static std::array<uint64_t, 12> previousMaterial = [] {
-        std::array<uint64_t, 12> counters{};
-        GetNativeMaterialPreparationStatistics(counters.data());
-        return counters;
-    }();
-    static std::array<uint64_t, 6> previousPrograms = [] {
-        std::array<uint64_t, 6> counters{};
-        GetNativeMaterialProgramStatistics(counters.data());
-        return counters;
-    }();
 #ifdef AURORA_GXM
     static auto previousDisplay = aurora::gxm::display_statistics();
 #endif
@@ -529,24 +519,6 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         double(dma.completedFrames - previousDma.completedFrames) / seconds, double(dma.completedDurationNs - previousDma.completedDurationNs) / (1e6 * seconds),
         static_cast<unsigned long long>(dma.capHits - previousDma.capHits), dma.currentDebtNs / 1e6, dma.maxDebtNs / 1e6, dma.currentPeriodNs / 1e6, dma.maxServiceGapNs / 1e6);
     previousDma = dma;
-    std::array<uint64_t, 12> material{};
-    GetNativeMaterialPreparationStatistics(material.data());
-    const auto materialRate = [&](size_t counter) {
-        return double(material[counter] - previousMaterial[counter]) / seconds;
-    };
-    std::fprintf(stderr, "MH3 material: needs %.1f/s dirty %.1f/s, base hits %.1f/s full preparations %.1f/s evictions %.1f/s; model hits %.1f/s misses %.1f/s\n", materialRate(0), materialRate(1),
-                 materialRate(2), materialRate(3), materialRate(4), materialRate(5), materialRate(6));
-    std::fprintf(stderr, "MH3 material: config hashes %.1f/s suffix hashes %.1f/s, base/model entries %llu/%llu, fixed cache %.3f MiB\n", materialRate(7), materialRate(8),
-                 static_cast<unsigned long long>(material[9]), static_cast<unsigned long long>(material[10]), material[11] / 1048576.0);
-    previousMaterial = material;
-    std::array<uint64_t, 6> programs{};
-    GetNativeMaterialProgramStatistics(programs.data());
-    const auto programRate = [&](size_t counter) {
-        return double(programs[counter] - previousPrograms[counter]) / seconds;
-    };
-    std::fprintf(stderr, "MH3 material: program memo base/model hits %.1f/%.1f/s, map lookups %.1f/%.1f/s, full config comparisons %.1f/s, suffix replacements %.1f/s\n", programRate(0),
-                 programRate(1), programRate(2), programRate(3), programRate(4), programRate(5));
-    previousPrograms = programs;
     const auto feedback = aurora::scene_feedback_stats();
     std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
                  double(feedback.allocations - previousFeedback.allocations) / seconds, double(feedback.reuses - previousFeedback.reuses) / seconds,

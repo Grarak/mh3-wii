@@ -48,15 +48,6 @@ const mh3_native_material_state& GetNativeMaterialState();
 // Explicit current-matrix producer: updates row/dual fields directly and marks
 // consumed shader fields dirty only when those fields actually change.
 void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors);
-// Owner-only cumulative preparation counters, followed by current occupancy
-// and fixed cache bytes. Read only at development reporting boundaries.
-// 0..8: needs, dirty lookups, base hits, full preparations, base evictions,
-//       model hits, model misses, configuration hashes, suffix hashes.
-// 9..11: live base entries, live model variants, fixed cache allocation bytes.
-void GetNativeMaterialPreparationStatistics(uint64_t statistics[12]);
-// Owner-only cumulative program memo hits (base/model), map lookups
-// (base/model), full config equality checks and memo-dropping suffix changes.
-void GetNativeMaterialProgramStatistics(uint64_t statistics[6]);
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) {
     SetNativeMaterial(material);
 }
