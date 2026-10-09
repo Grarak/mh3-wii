@@ -999,6 +999,8 @@
 8012ba20 EnemyGaugeAdd3A4
 80133fb0 EnemyTurnOverMotion
 801d8f00 Em007TailSpin
+801d91b4 Em007Charge
+801db788 Em007Actions
 # Enemy actions (enemy_actions.cpp, monster_control.cpp, docs/monster-control.md)
 80128624 EnemySetAction
 801283a4 EnemyStartAction

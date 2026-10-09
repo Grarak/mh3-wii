@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of thirteen enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of fourteen enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -9,6 +9,7 @@
 //     0x8019474C  em018 (Gobul)      a lunge, 180 ticks
 //     0x801ACA48  em027 (Aptonoth)   a rest, 30-93 ticks
 //     0x801B2578  em029 (Rhenoplos)  a charge, 80 ticks
+//     0x801D91B4  em007 (Deviljho)   a charge (7.3, 7.18), at most 1000 ticks
 //     0x8034FA1C  em024 (Alatreon)   a flight, 300 ticks (an effect at 20 left)
 //     0x8039E9EC  em028 (Popo)       a rest, 150 or 300 ticks
 //     0x801C7570  em006 (Diablos)    an ambush from the sand, 90 ticks
@@ -299,6 +300,76 @@ void Em029ChargePort(CpuContext* ctx) {
         if (em.At(46.0f, 2))
             Memory::Write8(work + kCharging, 1);
 
+        if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    }
+}
+
+// em007 0x801D91B4 (r4: 1 enraged, other voices): Deviljho's charge,
+// actions 7.3 and 7.18. Motion 0x16 with voices at frames 64, 108, 136 and
+// 170 and 5% more speed at frames 92 and 158 (at most 5 times); it steers
+// toward its target (0x80134178, 0x100: EnemyTurnToward's rate, by game
+// time) until it is past it, then motion 0x30 to its end. The count at
+// +0x20 (1000 ticks) ends the charge early when it never gets past.
+void Em007ChargePort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work;
+    const bool enraged = uint8_t(frame.Arg(4)) == 1;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        Memory::Write8(work + 6, 0);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0x16, 2, 0);
+        game.Call<RoarVoice>({work, 0, enraged ? 0x25u : 4u, 0x88});
+        game.Call<RoarVoice>({work, 1, 0x39, 0x18});
+        game.Call<0x80130D40>({work, uint32_t(-50)}); // stamina (+0x8A0) less 50
+        em.Count(1000);
+        game.Call<TurnSetUp>({work, 0}, {0.0});
+        break;
+    case 1: {
+        if (em.At(64.0f))
+            game.Call<RoarVoice>({work, 1, 0x20, 0x90});
+
+        if (em.At(108.0f)) {
+            game.Call<RoarVoice>({work, 0, enraged ? 0x26u : 5u, 0x88});
+            game.Call<RoarVoice>({work, 1, 0x3A, 0x18});
+        }
+
+        if (em.At(136.0f))
+            game.Call<RoarVoice>({work, 1, 0x21, 0x90});
+
+        if (em.At(170.0f)) {
+            game.Call<RoarVoice>({work, 0, enraged ? 0x27u : 6u, 0x88});
+            game.Call<RoarVoice>({work, 1, 0x3B, 0x18});
+        }
+
+        if ((em.At(92.0f) || em.At(158.0f)) && Memory::Read8(work + 6) < 5) {
+            const uint8_t faster = uint8_t(Memory::Read8(work + 6) + 1);
+            Memory::Write8(work + 6, faster);
+            game.Call<SetMotionSpeed>({work}, {1.0f + 0.05f * float(faster)});
+        }
+
+        // The count down by the step's ticks, not below 0 (the original's 1 a call).
+        if (em.Count() > 0)
+            em.Count(std::max(em.Count() - int32_t(GameStep::Ticks()), 0));
+
+        const bool past = game.Call<TurnStep>({work, 0, 0x100}) == 1;
+
+        if (em.Ended() && (past || em.Count() < 1)) {
+            em.NextState();
+            em.SetMotion(0x30, 2, 0);
+            game.Call<RoarVoice>({work, 1, 0x22, 0x90});
+        }
+
+        break;
+    }
+    case 2:
         if (em.Ended())
             game.Call<ActionDone>({work});
 
@@ -968,6 +1039,12 @@ extern "C" void MH3_Em029Charge(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em029Charge", func_801B2578, Em029ChargePort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801B2578, MH3_Em029Charge, "Em029Charge");
+
+extern "C" void func_801D91B4(CpuContext* ctx);
+extern "C" void MH3_Em007Charge(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em007Charge", func_801D91B4, Em007ChargePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801D91B4, MH3_Em007Charge, "Em007Charge");
 
 extern "C" void func_8034FA1C(CpuContext* ctx);
 extern "C" void MH3_Em024Flight(CpuContext* ctx) {
