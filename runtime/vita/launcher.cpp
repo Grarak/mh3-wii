@@ -1269,7 +1269,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 } else if (selected == 8) {
                     frameLimit = !frameLimit;
                     SetFrameLimitSetting(frameLimit);
-                    Log("game thread limit %s", frameLimit ? "on" : "off");
+                    Log("framelimit %s", frameLimit ? "on" : "off");
                 } else
                     enter(Page::Online);
 

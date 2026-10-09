@@ -595,14 +595,14 @@ runs short. Results (VM, llvmpipe, October 2026):
 | `tour-custom-quest.tsv` | Cheats toggled, the editor changed map (Flooded Forest to Sandy Plains) and monster (Barroth to Diablos), saved, edited and saved again (`0-1027-1.mh3quest`), launched: the quest loads into Sandy Plains with the HUD. |
 | `widescreen-toggle-start.tsv` | Row text OFF (4:3), then ON (16:9); the intro and the title in 16:9 on the whole display. Plus during the intro: no skip; A: skip. |
 | Upscaling off (and Widescreen off), then quest 10057 | `upscaling off` logged; `EFB render target 791x448` (640x448 with Widescreen off) after the hand-off, against 960x544 (777x544) with Upscaling on; frame dumps at those sizes; the window shows the 16:9 picture over its whole client area, filtered, and the 4:3 one between bars. |
-| Game thread limit off, then quest 10057 | `game thread limit off` logged; the game thread runs ahead of the render thread: 99 logical frames/s against 33 drawn ([packet ring](frame-packet-ring.md#the-wait)). |
+| Framelimit off, then quest 10057 | `framelimit off` logged; the game thread runs ahead of the render thread: 99 logical frames/s against 33 drawn ([packet ring](frame-packet-ring.md#the-wait)). |
 
 ## Devkit checklist
 
 Not run yet on hardware: the custom quest tour (editor, IME keyboard, save,
 saved quest launch, cheats), the missing-disc message, the launcher reading
-CTRLP, re-enabling Widescreen, Upscaling off, the game thread limit's
-semaphore wait and the limit off, and a release build of the launcher. Run
+CTRLP, re-enabling Widescreen, Upscaling off, the Framelimit's
+semaphore wait and Framelimit off, and a release build of the launcher. Run
 each through `scripts/dev/devkit-heartbeat.sh` (main session only), in a new
 directory `build/vita-devkit/RUN` staged like this:
 
