@@ -17,6 +17,9 @@ uint64_t ReadNativeModelStructureRevision();
 /* Advances on every typed material group write or copy. With the structure
  * revision unchanged, every live material block keeps its node and version. */
 uint64_t ReadNativeMaterialBlockRevision();
+/* Advances whenever a live material block node is erased or (re)published.
+ * While it is unchanged, every live block keeps its node, version and fields. */
+uint64_t ReadNativeLiveMaterialRevision();
 /* A vertex producer installs this before retaining any sources/revisions.
  * Generic overwrites notify it even when no disc interval is tracked. */
 using NativeModelVertexRetireHook = void (*)(uint32_t address, uint32_t bytes);
@@ -94,6 +97,9 @@ void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
 /* Game thread: the immutable copy of the block's current version. The copy
  * is made once per published version; callers keep it as long as they need. */
 const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
+/* Deleter of frozen copies: deletes after the render thread finished the
+ * packet being recorded (immediately while no render thread runs). */
+void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block);
 uint64_t NextNativeMaterialRevision();
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind);
 /* Explicit mutable vertex producers must advance source revisions when arrays

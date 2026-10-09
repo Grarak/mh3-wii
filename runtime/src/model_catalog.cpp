@@ -353,6 +353,9 @@ uint64_t ReadNativeModelStructureRevision() {
 uint64_t ReadNativeMaterialBlockRevision() {
     return C().block_epoch;
 }
+uint64_t ReadNativeLiveMaterialRevision() {
+    return live_version;
+}
 
 void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
     if (!bytes)
@@ -402,6 +405,8 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
         C().owners.insert_or_assign(copy.owner.model_address, copy);
     for (const auto& copy : copies)
         C().live_blocks.insert_or_assign(LiveKey(copy.address, copy.kind), copy);
+    if (!copies.empty())
+        ++live_version;
     if (retired_owner || retired_block || tracked || !copies.empty() || !owner_copies.empty())
         InvalidateSourceCache(c, NativeSourceEpochReason::ResourceCopy, producer, destination, source, bytes, 0,
             (tracked_source ? NATIVE_EPOCH_TRACKED_SOURCE : 0u) | (tracked_destination ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) |
@@ -780,6 +785,7 @@ void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
             if (origin == pack.origins.end() || origin->second.bytes != block.bytes)
                 throw std::runtime_error("Native material publication changed source layout identity");
             C().live_blocks.insert_or_assign(LiveKey(block.address, block.kind), block);
+            ++live_version;
             return;
         }
     throw std::runtime_error("Native material publication refers to a retired resident allocation");
@@ -803,7 +809,9 @@ void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t
 const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
     if (block.frozen && block.frozen->fields.generation == block.fields.generation)
         return block.frozen;
-    auto frozen = std::make_shared<NativeFrozenMaterialBlock>();
+    // Items of unrendered packets may still point at a released copy: the
+    // render thread deletes it after the current packet (model_render_prep.cpp).
+    std::shared_ptr<NativeFrozenMaterialBlock> frozen(new NativeFrozenMaterialBlock, [](NativeFrozenMaterialBlock* p) { ReleaseNativeFrozenMaterialBlock(p); });
     frozen->fields = block.fields;
     std::memset(frozen->texcoord_map, 0, sizeof frozen->texcoord_map);
     frozen->texcoord_known = 0;

@@ -43,7 +43,9 @@ struct ModelPrepInputs {
     mh3_native_palette_source palettes[8]{};
     mh3_native_texture_binding textures[8]{};
     uint32_t pipeline_address = 0;
-    std::shared_ptr<const NativeFrozenMaterialBlock> pipeline, pixel, colors, indirect, texgen;
+    // Frozen copies stay alive while the game thread holds them and are
+    // deleted only after the packets recorded meanwhile have rendered.
+    const NativeFrozenMaterialBlock *pipeline = nullptr, *pixel = nullptr, *colors = nullptr, *indirect = nullptr, *texgen = nullptr;
     uint8_t channels[40]{};
     uint32_t light_masks[4]{};
     uint8_t ambient[4]{};
