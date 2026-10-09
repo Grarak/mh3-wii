@@ -657,11 +657,15 @@ if(TARGET aurora::core)
     endif()
   endif()
 
-  add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp native/mh3_classic_map.c)
-  target_include_directories(MH3ControllerHostTest PRIVATE include)
-  target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)
-  target_link_libraries(MH3ControllerHostTest PRIVATE ${AURORA_SDL3_TARGET})
-  add_test(NAME mh3_sdl_controller_test COMMAND MH3ControllerHostTest)
+  # The SDL keyboard/gamepad mapping: the Vita reads its own pad
+  # (vita/vita_controller.cpp).
+  if(NOT VITA)
+    add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp native/mh3_classic_map.c)
+    target_include_directories(MH3ControllerHostTest PRIVATE include)
+    target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)
+    target_link_libraries(MH3ControllerHostTest PRIVATE ${AURORA_SDL3_TARGET})
+    add_test(NAME mh3_sdl_controller_test COMMAND MH3ControllerHostTest)
+  endif()
 endif()
 
 # The host tools and tests catch failures to report them, so they keep

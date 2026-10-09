@@ -86,6 +86,7 @@ struct Record {
     uint32_t thread = 0;       // OSThread
     bool game = false;         // the boot thread, on the game thread
     bool returning = false;    // its entry function returned (OSExitThread follows)
+    bool left = false;         // returning, and it handed the baton over for good
     CpuContext* cpu = nullptr; // its context, current again when it resumes
     CpuContext seed{};         // a new thread's first registers
 };
@@ -364,6 +365,7 @@ void Leave(CpuContext* cpu, Record* me, Record* target, bool idle) {
 
     if (me->returning) {
         records.erase(me->thread);
+        me->left = true;
         HandTo(target, idle);
         return;
     }
@@ -387,6 +389,11 @@ void Select(CpuContext* cpu, bool yield) {
 
     if (int32_t(Read32(kReschedule)) > 0)
         return;
+
+    // An ended thread's host thread runs no more guest code: another thread
+    // has the baton.
+    if (self && self->left)
+        MH3Fatal("A guest thread selected again after it ended");
 
     const uint32_t current = Read32(kCurrentThread);
 
@@ -595,8 +602,16 @@ extern "C" void MH3_OSExitThread(CpuContext* cpu) {
         Memory::Write16(current + kState, 0);
     }
 
+    // Switches are held until the selection below. A thread whose entry
+    // returned hands the baton over there and its host thread ends; a switch
+    // inside the wakeups (their __OSReschedule, when a joiner or a mutex
+    // waiter is woken) would return it into guest code beside the thread it
+    // handed to, and both changed the run queue (a devkit crash in Dequeue
+    // after an NHTTP request, 2026-10-08).
+    Write32(kReschedule, Read32(kReschedule) + 1);
     Call(cpu, UnlockAllMutex, {current});
     Call(cpu, OSWakeupThread, {current + kJoinQueue});
+    Write32(kReschedule, Read32(kReschedule) - 1);
     Write32(kRunQueueHint, 1);
 
     // A thread that called OSExitThread itself never resumes: its host thread
