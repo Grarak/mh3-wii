@@ -19,6 +19,7 @@
 #include "../vita/platform.h"
 #include "vita_launcher.h"
 #else
+#include "vita_launcher.h"
 #include <execinfo.h>
 #endif
 #include <iostream>
@@ -95,7 +96,37 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 start a quest (village, arena or online) or the\n"
                                "                                 Moga Woods free roam from the village; --spawn\n"
                                "                                 moves the hunter there (arena pit: 0,300,0)\n"
-                               "  --no-damage                    (with any of the above) the hunter takes no damage\n";
+                               "  --no-damage                    (with any of the above) the hunter takes no damage\n"
+                               "  --rom <image>                  (with any of the above) prepare the game data from the\n"
+                               "                                 European disc (RVZ, WIA or ISO) next to the executable\n";
+
+#ifndef __vita__
+// The game data lives in disc/ next to the executable (MH3_DISC_DIR overrides
+// it). Every launch checks that it is complete; --rom prepares what is missing.
+void PrepareGameData(const char* rom) {
+    if (std::getenv("MH3_DISC_DIR")) {
+        if (rom)
+            std::cerr << "MH3: MH3_DISC_DIR is set; --rom is ignored\n";
+        return;
+    }
+    const auto data = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "disc";
+    if (!VitaLauncher::DiscReady(data)) {
+        if (!rom)
+            throw std::runtime_error("Game data in " + data.string() + " is missing or incomplete: pass --rom <path to the European Monster Hunter Tri RVZ/WIA/ISO>");
+        std::string phase;
+        unsigned shown = 101;
+        VitaLauncher::ProcessDisc(rom, data, [&](const std::string& stage, uint64_t done, uint64_t total) {
+            const unsigned percent = total ? unsigned(done * 100 / total) : 100;
+            if (stage == phase && percent == shown)
+                return;
+            phase = stage;
+            shown = percent;
+            std::cerr << "MH3 prepare: " << stage << " " << percent << "%\n";
+        });
+    }
+    setenv("MH3_DISC_DIR", data.c_str(), 1);
+}
+#endif
 
 // --quest <id>|free [--area <n>] [--spawn <x,y,z>]. The quest sets' ids don't overlap (village
 // 1000.., arena 9000.., online 10000..): the id picks the set.
@@ -148,6 +179,17 @@ int main(int argc, char** argv) {
         if (argc == 1 && !VitaLauncher::Run())
             return 0;
 #endif
+#ifndef __vita__
+        // --rom <image> goes with any other option.
+        const char* rom = nullptr;
+        for (int i = 1; i + 1 < argc; ++i)
+            if (std::string_view(argv[i]) == "--rom") {
+                rom = argv[i + 1];
+                std::copy(argv + i + 2, argv + argc, argv + i);
+                argc -= 2;
+                break;
+            }
+#endif
         // --no-damage goes with any other option.
         const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });
         if (noDamage != argv + argc) {
@@ -173,6 +215,9 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("Disc read output failed");
             return 0;
         }
+#ifndef __vita__
+        PrepareGameData(rom);
+#endif
         if (argc == 3 && std::string_view(argv[1]) == "--list") {
             const std::string_view what = argv[2];
             if (what == "quests")

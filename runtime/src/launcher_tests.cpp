@@ -200,6 +200,7 @@ void DiscTests(const std::filesystem::path& root) {
     constexpr size_t partitionAt = 0x50000, dataAt = 0x70000;
     std::vector<uint8_t> iso(dataAt + 0x8000);
     std::copy(boot.begin(), boot.begin() + 0x100, iso.begin());
+    iso[0x61] = 1; // nodtool's decrypted-ISO marker: read without the RVZ/WIA decoder
     Word(iso, 0x40000, 1);
     Word(iso, 0x40004, 0x40020 / 4);
     Word(iso, 0x40020, partitionAt / 4);

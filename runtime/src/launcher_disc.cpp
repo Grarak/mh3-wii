@@ -173,8 +173,7 @@ void Copy(const Input& file, uint64_t at, uint64_t count, const std::filesystem:
         throw std::runtime_error("ROM metadata exceeds the memory limit");
     Write(path, file.Read(at, count));
 }
-} // namespace
-bool DiscReady(const std::filesystem::path& output) {
+bool TexturesReady(const std::filesystem::path& output) {
     try {
         File boot(output / "sys/boot.bin");
         const auto id = boot.Read(0, 6);
@@ -267,9 +266,21 @@ bool DiscReady(const std::filesystem::path& output) {
         return false;
     }
 }
+} // namespace
+bool DiscReady(const std::filesystem::path& output) {
+    return TexturesReady(output) && ModelsReady(output);
+}
 void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress) {
     if (DiscReady(output))
         return;
+    // A partition and texture pack prepared before the model stage only need their models.
+    if (TexturesReady(output)) {
+        PrepareModels(output, progress);
+        if (!DiscReady(output))
+            throw std::runtime_error("Prepared model validation failed");
+        progress("Game data ready", 1, 1);
+        return;
+    }
     if (std::filesystem::exists(output)) {
         if (!std::filesystem::exists(output / "disc-layout.txt"))
             throw std::runtime_error("Processing output contains unrelated files: " + output.string());
@@ -353,6 +364,7 @@ void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& 
         Write(staging / "disc-layout.txt", {'m', 'h', '3', '-', 'p', 'a', 'r', 't', 'i', 't', 'i', 'o', 'n', '-', 'v', '1', '\n'});
         DiscImage validation(staging);
         PrepareTextures(staging, progress);
+        PrepareModels(staging, progress);
         if (!DiscReady(staging))
             throw std::runtime_error("Prepared disc validation failed");
 #ifdef __vita__

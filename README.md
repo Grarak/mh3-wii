@@ -17,45 +17,111 @@ and native **GXM** on Vita.
   [Native renderer status](docs/native-renderer-status.md) distinguishes current
   implementation, pending gates and earlier playable evidence.
 
-**[HANDOVER.md](HANDOVER.md)** is the working guide: setup, translation, arm64
-and arm32 builds, running on the VM and the Pi, debugging tools, conventions
-and open work. The `docs/` notes are listed in [docs/README.md](docs/README.md).
+## Build
 
-## Quick start (arm64 migration build)
+Requirements: an arm64 Linux host with Python 3, CMake, Ninja, Clang 21,
+Rust (`cargo`, for the disc image decoder), OpenGL ES/EGL development files and
+Docker (for arm32), plus a .NET 8 SDK unpacked in `tools/dotnet` and nodtool
+`v2.0.0-alpha.10`
+([release](https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10);
+the `linux-aarch64` build) in `tools/nodtool`. You need your own copy of the
+European disc (`RMHP08`) as an RVZ, WIA or ISO. ROMs, extracted assets,
+generated code, builds, saves and logs are all git-ignored.
 
-```sh
-tools/dotnet/dotnet build -c Release toolchain/translator/src/Translator.Cli
-scripts/translate.sh
-MH3_ARCH=arm64 MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=OFF -DMH3_PROFILE_FRAME_POINTERS=ON' scripts/build-aurora.sh
-DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1 build/linux-arm64/MH3 --village
-```
+### 1. Translate the PowerPC code
 
-The launch is an integration probe: unported or unsupported rendering paths
-fail explicitly. For arm32 Linux, build inside the `mh3-armhf-cross` Docker image
-(`scripts/docker-build.sh scripts/build-aurora.sh`). See HANDOVER.md.
-Enable `MH3_DEVELOPMENT` for statistics, scripted replay and captures; assertions
-follow Release/NDEBUG independently. Quest selection is also available in release.
-
-Keyboard: Space = A, Left Shift = B, WASD = left stick, arrows = D-pad,
-Enter = Plus ([controls](docs/controller-bringup.md)).
-
-## Game assets
-
-Extract the European disc with nodtool `v2.0.0-alpha.10`
-([release](https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10); use
-the `linux-aarch64` build):
+The translator reads the game's executable and overlays from an extracted
+disc:
 
 ```sh
 tools/nodtool extract -q 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' Assets/DATA
-tools/nodtool convert --decrypt 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' build/disc-decrypted.iso
-python3 scripts/prepare_partition.py build/disc-decrypted.iso
+tools/dotnet/dotnet build -c Release toolchain/translator/src/Translator.Cli
+scripts/translate.sh            # about 3.5 min; regenerates generated/
 ```
 
-`Assets/DATA/partition.bin` keeps the exact padding bytes for aligned reads
-past file ends. Preparation strips the sector hash blocks from the decrypted
-ISO and checks the boot header and FST against the extraction. The
-intermediate ISO can be deleted afterwards. ROMs, extracted assets, generated
-code, builds, saves and logs are all git-ignored.
+Rebuild the translator after changes under `toolchain/`. Retranslate after
+adding or removing a native registration (`REGISTER_NATIVE_FUNCTION_AS`) or
+editing `symbols.txt`, `recomp.yml` or `runtime/src/tick_sites.inc`; editing
+the body of an existing native port only needs a rebuild.
+
+### 2. Build the executable
+
+arm64 (development host, `build/linux-arm64/MH3`):
+
+```sh
+MH3_ARCH=arm64 MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON scripts/build-aurora.sh
+cmake --build build/linux-arm64 -j$(nproc) --target MH3     # later rebuilds
+```
+
+arm32 (the target: armhf, Cortex-A9 code generation, `build/linux-arm32/MH3`),
+cross-compiled in the `mh3-armhf-cross` image, which `docker-build.sh`
+builds on first use:
+
+```sh
+MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=ON -DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' \
+  scripts/docker-build.sh scripts/build-aurora.sh
+scripts/docker-build.sh cmake --build build/linux-arm32 -j$(nproc) --target MH3   # later rebuilds
+```
+
+The container mounts the checkout at the same absolute path because the
+translated data blobs use absolute `.incbin` paths; configure and build arm32
+only inside it. `MH3_DEVELOPMENT` adds statistics, captures, scripted input
+and port checks; leave it OFF for a plain build. Assertions follow
+Release/NDEBUG independently. Configure and build logs go to `logs/aurora-*.log`.
+
+Build options: `-DMH3_ROM_DECODER=OFF` builds without Rust (only a decrypted
+ISO from `nodtool convert --decrypt` can then be prepared).
+`MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
+packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
+`../Vita3K/external/stb` or `STB_INCLUDE_DIR`).
+
+## Run
+
+Pass the disc image once. The first launch prepares the game data in `disc/`
+next to the executable: the decoded game partition (4.1 GiB), the converted
+texture pack (0.8 GiB) and the native model packs (0.3 GiB). That takes about
+20 s on a fast arm64 host. Every launch checks that all of it is present and
+complete, and prepares whatever is missing again:
+
+```sh
+build/linux-arm64/MH3 --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --village
+build/linux-arm64/MH3 --village                 # File 1, character 1, straight into the village
+build/linux-arm64/MH3 --list quests             # also online-quests, arena-quests
+build/linux-arm64/MH3 --quest 19001 --area 1 --no-damage    # Alatreon, the benchmark quest
+```
+
+`--quest <id>|free [--area <n>] [--spawn x,y,z] [--no-damage]` starts a quest
+directly. `MH3_DISC_DIR` points at another prepared data directory instead.
+Saves default to `saves/` (`MH3_USER_DIR` changes the root); `MH3_STATS=1`
+prints game speed and fps periodically. On a VM without a working GPU driver
+use `DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe; virgl draws the geometry
+wrong).
+
+On the Vita, put the disc image in `ux0:/data/mh3-wii/`; the launcher
+prepares the same data in `ux0:/data/mh3-wii/disc/` at its first start.
+
+For development runs, `scripts/dev/run-heartbeat.sh` launches with an isolated
+copy of the post-Chief save fixture, dumps a frame every 150 game frames and
+prints a heartbeat every minute:
+
+```sh
+MH3_ARGS="--quest 19001 --area 1 --no-damage" scripts/dev/run-heartbeat.sh alat 150
+```
+
+On the Raspberry Pi 5 (64-bit Raspberry Pi OS with armhf multiarch), copy
+`build/linux-arm32/MH3` over and run it the same way, with `--rom` on the
+first launch. `scripts/pi/benchmark.py` measures a quest with isolated saves
+and scripted movement (`--binary MH3 --revision R --name N --quest 19001
+--area 1`). It expects the save fixture at `/tmp/post-chief-data00.bin`
+(`cat fixtures/post-chief-data00.bin | ssh PI 'cat > /tmp/post-chief-data00.bin'`).
+
+Keyboard: Space = A, Left Shift = B, WASD = left stick, arrows = D-pad,
+Enter = Plus ([controls](docs/controller-bringup.md)). Unported or unsupported
+rendering paths fail explicitly rather than falling back.
+
+[HANDOVER.md](HANDOVER.md) covers debugging tools, environment variables,
+tests and conventions; the `docs/` notes are listed in
+[docs/README.md](docs/README.md).
 
 ## Verified facts
 

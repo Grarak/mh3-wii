@@ -293,6 +293,51 @@ if(VITA)
     FILE "${CMAKE_CURRENT_SOURCE_DIR}/../Assets/DSP/dsp_coef.bin" "dsp_coef.bin")
 endif()
 
+# Game data preparation: the native model stage on every platform; on Linux,
+# --rom runs the same disc, texture and model stages as the Vita launcher.
+target_sources(MH3 PRIVATE src/launcher_models.cpp
+  native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_writer.c)
+if(NOT VITA)
+  target_sources(MH3 PRIVATE src/launcher_disc.cpp src/launcher_textures.cpp)
+  set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp PROPERTIES
+    INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
+  # RVZ/WIA images decode with nod (runtime/vita/rom_decoder); without it only
+  # decrypted ISOs (nodtool convert --decrypt) can be prepared.
+  option(MH3_ROM_DECODER "Decode RVZ/WIA disc images with the nod Rust library (needs cargo)" ON)
+  if(MH3_ROM_DECODER)
+    find_program(MH3_CARGO cargo HINTS "$ENV{HOME}/.cargo/bin" REQUIRED)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv7|arm)")
+      set(rom_decoder_triple armv7-unknown-linux-gnueabihf)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+      set(rom_decoder_triple aarch64-unknown-linux-gnu)
+    else()
+      set(rom_decoder_triple x86_64-unknown-linux-gnu)
+    endif()
+    string(TOUPPER "${rom_decoder_triple}" rom_decoder_env)
+    string(REPLACE "-" "_" rom_decoder_env "${rom_decoder_env}")
+    string(REPLACE "-" "_" rom_decoder_cc "${rom_decoder_triple}")
+    set(rom_decoder_dir "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder")
+    set(rom_decoder_archive "${CMAKE_BINARY_DIR}/rom-decoder/${rom_decoder_triple}/release/libmh3_rom_decoder.a")
+    # The codec crates compile C with this build's compiler and target.
+    add_custom_command(OUTPUT "${rom_decoder_archive}"
+      COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rom-decoder"
+        "CC_${rom_decoder_cc}=${CMAKE_C_COMPILER}" "CFLAGS_${rom_decoder_cc}=${CMAKE_C_FLAGS} -O2"
+        "CARGO_TARGET_${rom_decoder_env}_LINKER=${CMAKE_C_COMPILER}"
+        "${MH3_CARGO}" build --manifest-path "${rom_decoder_dir}/Cargo.toml" --locked --release
+        --target ${rom_decoder_triple}
+      DEPENDS "${rom_decoder_dir}/Cargo.toml" "${rom_decoder_dir}/Cargo.lock" "${rom_decoder_dir}/src/lib.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder.h"
+      COMMENT "Building the ROM decoder (${rom_decoder_triple})"
+      VERBATIM)
+    add_custom_target(MH3RomDecoderBuild DEPENDS "${rom_decoder_archive}")
+    add_library(MH3RomDecoder STATIC IMPORTED)
+    set_target_properties(MH3RomDecoder PROPERTIES IMPORTED_LOCATION "${rom_decoder_archive}")
+    add_dependencies(MH3RomDecoder MH3RomDecoderBuild)
+    target_link_libraries(MH3 PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
+    set_property(SOURCE src/launcher_disc.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
+  endif()
+endif()
+
 if(MH3_WRITE_WATCH)
   target_sources(MH3 PRIVATE src/write_watch.cpp)
   target_compile_definitions(MH3 PRIVATE MH3_WRITE_WATCH=1)
@@ -337,9 +382,14 @@ if(TARGET aurora::core)
       target_link_libraries(mh3_native_texture_format_check PRIVATE aurora::core aurora::gx aurora::vi)
     endif()
     add_executable(MH3LauncherTests EXCLUDE_FROM_ALL src/launcher_tests.cpp
-      src/launcher_support.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/disc_image.cpp)
-    target_include_directories(MH3LauncherTests PRIVATE include "${MH3_AURORA_ROOT}/lib")
+      src/launcher_support.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/launcher_models.cpp src/disc_image.cpp
+      native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_writer.c native/mh3_model_resources.c
+      native/mh3_vertex_sources.c native/mh3_mesh_pack.c native/mh3_material_pack.c native/mh3_model_catalog.c)
+    target_include_directories(MH3LauncherTests PRIVATE include .. "${MH3_AURORA_ROOT}/lib")
     target_link_libraries(MH3LauncherTests PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
+    if(TARGET MH3RomDecoder)
+      target_link_libraries(MH3LauncherTests PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
+    endif()
   endif()
   add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp)
   target_include_directories(MH3ControllerHostTest PRIVATE include)

@@ -69,17 +69,31 @@ largest BRRES is approximately 5.4 MiB. Decoder buffers are released before
 texture conversion. These are processing limits, not claims about measured
 Vita memory use or throughput.
 
-### Pending native model preparation
+### Native model preparation
 
-Automatic processing currently prepares the partition and textures. The native
-renderer also requires `disc/native-models/models.index.bin` and its referenced
-M3MP/M3ID source packs, produced by `scripts/prepare_vita_model_archive.py`.
-`ProcessDisc` does not yet perform this model conversion, and `DiscReady` only
-certifies the partition and texture stage. A complete on-device preparation
-path still needs bounded model/material conversion, stable source identities,
-texture joins and index publication checks. The current traced source coverage
-and portable texture tests are recorded in
-[native-model-resource-archives.md](native-model-resource-archives.md).
+After the textures, `PrepareModels` (`runtime/src/launcher_models.cpp`)
+converts every model source of the disc with the bounded C assembler
+(`mh3_prepare_model.c`): one M3MP/M3ID pair per FST file in
+`disc/native-models/packs/`, named by the file's partition offset, plus the
+`models.index.bin` source index. Model IDs follow the canonical recipe
+(standalone BRRES by file and model name, then the common and map effect
+archives by file, member offset and name), which reproduces all 1,445 registry
+IDs; texture IDs are the texture stage's. Emitted GPU indices and palettes
+are validated before a pack is written. `native-models/ready.txt`, written
+last, lists every file with its size; `DiscReady` requires the texture checks
+and every listed file. A prepared partition and texture pack without models
+only runs this stage.
+
+On RMHP08 it writes 1,333 source packs (283 MiB) in a few seconds on the arm64
+host. All 45 packs of the earlier offline Alatreon generation are byte
+identical. One source is left out and reported:
+`10/em001/em001_shadow.brres` binds two textures (`em001_BM_01`,
+`light016_SM`) that its own file does not contain; drawing it fails at
+admission.
+
+Linux uses the same stages: `MH3 --rom IMAGE` prepares `disc/` next to the
+executable (see the README), with the ROM decoder built for the host target
+by cargo.
 
 ## Navigation and menus
 

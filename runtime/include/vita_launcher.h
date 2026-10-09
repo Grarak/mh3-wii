@@ -35,8 +35,12 @@ using Progress = std::function<void(const std::string&, uint64_t, uint64_t)>;
 // Converts ISO/RVZ with the native nod decoder, preserving partition padding.
 // The input is always read-only. Publication happens only after validation.
 void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress);
+// Partition, texture pack and native model archive are all present.
 bool DiscReady(const std::filesystem::path& output);
 void PrepareTextures(const std::filesystem::path& root, const Progress& progress);
+// Native model source packs and their index (native-models/).
+bool ModelsReady(const std::filesystem::path& root);
+void PrepareModels(const std::filesystem::path& root, const Progress& progress);
 #ifdef __vita__
 // Returns false when startup cannot continue or the user exits.
 bool Run();
