@@ -18,9 +18,10 @@ namespace aurora::gfx { uint32_t current_frame() noexcept; }
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <xxhash.h>
 
 namespace {
 using aurora::gx::ShaderConfig;
@@ -36,40 +37,79 @@ std::array<mh3_shader_light,8> preparedLights{};
 struct TextureMatrix {std::array<float,12> values{};bool known=false,matrix3x4=false;};
 std::array<TextureMatrix,10> textureMatrices{};
 std::array<TextureMatrix,20> postTextureMatrices{};
-struct PreparedMaterial {ShaderConfig config;ShaderInfo info;mh3_material_requirements requirements{};};
+struct PreparedMaterial {ShaderConfig config;ShaderInfo info;mh3_material_requirements requirements{};
+    uint64_t configHash=0;};
 PreparedMaterial prepared;
 bool preparedKnown=false;
 bool rasterObserverInstalled=false,publishingMaterialRaster=false;
 struct ProgramKey {ShaderConfig config;uint8_t zeroBias;uint8_t portableZeroBias=0;};
-struct ProgramOrder {
-    static int Compare(const ProgramKey& a,const ProgramKey& b) {
-        const int order=std::memcmp(&a.config,&b.config,sizeof a.config);
-        if(order) return order;
-        if(a.zeroBias!=b.zeroBias) return int(a.zeroBias)-int(b.zeroBias);
-        return int(a.portableZeroBias)-int(b.portableZeroBias);
-    }
-    bool operator()(const ProgramKey& a,const ProgramKey& b) const {
-        return Compare(a,b)<0;
-    }
-};
-// Ordered typed configuration keys avoid reading or hashing asset contents.
-std::map<ProgramKey,aurora::gl::ProgramPtr,ProgramOrder> programs;
 struct ModelProgramKey {
     ProgramKey material;
     std::array<uint32_t,17> layout{};
     uint8_t nonzeroProjection=0;
     uint8_t zeroProjection=0;
 };
-struct ModelProgramOrder {
-    bool operator()(const ModelProgramKey& a,const ModelProgramKey& b) const {
-        const int order=ProgramOrder::Compare(a.material,b.material);
-        if(order) return order<0;
-        if(a.layout!=b.layout) return a.layout<b.layout;
-        if(a.nonzeroProjection!=b.nonzeroProjection) return a.nonzeroProjection<b.nonzeroProjection;
-        return a.zeroProjection<b.zeroProjection;
+// Keep the captured key ABI. Only cached entries own a configuration copy;
+// transparent lookup views refer to the finalized preparation's live bytes.
+template<typename Key> struct HashedProgramKey {Key key;uint64_t hash;};
+struct ProgramLookup {
+    const ShaderConfig& config;uint8_t zeroBias,portableZeroBias;uint64_t hash;
+};
+struct ModelProgramLookup {
+    ProgramLookup material;const std::array<uint32_t,17>& layout;
+    uint8_t nonzeroProjection,zeroProjection;uint64_t hash;
+};
+uint64_t ConfigHash(const ShaderConfig& config) {
+    static_assert(std::has_unique_object_representations_v<ShaderConfig>);
+    return XXH3_64bits(&config,sizeof config);
+}
+ProgramLookup Lookup(const ShaderConfig& config,uint64_t configHash,uint8_t zeroBias,uint8_t portableZeroBias) {
+    const std::array<uint8_t,2> suffix{zeroBias,portableZeroBias};
+    return {config,zeroBias,portableZeroBias,XXH3_64bits_withSeed(suffix.data(),suffix.size(),configHash)};
+}
+ModelProgramLookup Lookup(const ShaderConfig& config,uint64_t configHash,uint8_t zeroBias,uint8_t portableZeroBias,
+                         const std::array<uint32_t,17>& layout,uint8_t nonzeroProjection,uint8_t zeroProjection) {
+    std::array<uint32_t,18> suffix;
+    for(unsigned i=0;i<layout.size();++i) suffix[i]=layout[i];
+    suffix[17]=uint32_t(zeroBias)|(uint32_t(portableZeroBias)<<8)|
+               (uint32_t(nonzeroProjection)<<16)|(uint32_t(zeroProjection)<<24);
+    const uint64_t hash=XXH3_64bits_withSeed(suffix.data(),sizeof suffix,configHash);
+    return {{config,zeroBias,portableZeroBias,0},layout,nonzeroProjection,zeroProjection,hash};
+}
+struct ProgramHash {
+    using is_transparent=void;
+    template<typename Key> size_t operator()(const Key& key) const noexcept {return size_t(key.hash);}
+};
+bool Equal(const ProgramKey& key,const ProgramLookup& view) {
+    return key.zeroBias==view.zeroBias && key.portableZeroBias==view.portableZeroBias &&
+        std::memcmp(&key.config,&view.config,sizeof key.config)==0;
+}
+struct ProgramEqual {
+    using is_transparent=void;
+    bool operator()(const HashedProgramKey<ProgramKey>& a,const ProgramLookup& b) const {return a.hash==b.hash && Equal(a.key,b);}
+    bool operator()(const ProgramLookup& a,const HashedProgramKey<ProgramKey>& b) const {return b.hash==a.hash && Equal(b.key,a);}
+    bool operator()(const HashedProgramKey<ProgramKey>& a,const HashedProgramKey<ProgramKey>& b) const {
+        return a.hash==b.hash && Equal(a.key,{b.key.config,b.key.zeroBias,b.key.portableZeroBias,b.hash});
     }
 };
-std::map<ModelProgramKey,aurora::gl::ProgramPtr,ModelProgramOrder> modelPrograms;
+bool Equal(const ModelProgramKey& key,const ModelProgramLookup& view) {
+    return key.layout==view.layout && key.nonzeroProjection==view.nonzeroProjection &&
+        key.zeroProjection==view.zeroProjection && Equal(key.material,view.material);
+}
+struct ModelProgramEqual {
+    using is_transparent=void;
+    bool operator()(const HashedProgramKey<ModelProgramKey>& a,const ModelProgramLookup& b) const {return a.hash==b.hash && Equal(a.key,b);}
+    bool operator()(const ModelProgramLookup& a,const HashedProgramKey<ModelProgramKey>& b) const {return b.hash==a.hash && Equal(b.key,a);}
+    bool operator()(const HashedProgramKey<ModelProgramKey>& a,const HashedProgramKey<ModelProgramKey>& b) const {
+        const auto& k=b.key;
+        return a.hash==b.hash && Equal(a.key,{{k.material.config,k.material.zeroBias,k.material.portableZeroBias,0},
+                           k.layout,k.nonzeroProjection,k.zeroProjection,b.hash});
+    }
+};
+// Hash only the typed CPU shader configuration and exact small key suffixes.
+// The digest indexes candidates; complete equality remains collision safe.
+std::unordered_map<HashedProgramKey<ProgramKey>,aurora::gl::ProgramPtr,ProgramHash,ProgramEqual> programs;
+std::unordered_map<HashedProgramKey<ModelProgramKey>,aurora::gl::ProgramPtr,ProgramHash,ModelProgramEqual> modelPrograms;
 struct PortableCapture {uint8_t zeroBias=0;bool active=false;
     std::array<aurora::NativeTexturePortableSampling,8> routes{};};
 PortableCapture PortableSampling(const ShaderInfo& info,uint8_t actualZeroBias) {
@@ -348,6 +388,7 @@ PreparedMaterial PrepareMaterial() {
         config.tcgs[i].type=material.texgen[i].values[MH3_TEXGEN_PROJECTION] ? GX_TG_MTX3x4 : GX_TG_MTX2x4;
     // Projection changes varying types, but cannot introduce matrix dependencies.
     result.info=aurora::gx::build_shader_info(config);
+    result.configHash=ConfigHash(config);
     return result;
 }
 const mh3_native_texture_binding& Texture(unsigned unit) {
@@ -539,7 +580,8 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
         if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
     const auto portable=PortableSampling(prepared.info,zeroBias);
-    ProgramKey key{prepared.config,zeroBias,portable.zeroBias};auto iterator=programs.find(key);
+    const auto lookup=Lookup(prepared.config,prepared.configHash,zeroBias,portable.zeroBias);
+    auto iterator=programs.find(lookup);
     if(iterator==programs.end()) {
         // Always use the user-selected float native equations. The generator's
         // exact mode exists only for independent reference probes.
@@ -551,7 +593,8 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
             description.portableOrigin=PortableOrigin(portable,prepared.info);
         }
         auto program=std::make_shared<aurora::gl::Program>(std::move(description));
-        iterator=programs.emplace(std::move(key),std::move(program)).first;
+        iterator=programs.emplace(HashedProgramKey<ProgramKey>{{prepared.config,zeroBias,portable.zeroBias},lookup.hash},
+                                 std::move(program)).first;
     }
     AuroraNativeUniforms uniforms{};
     if(!aurora_allocate_native_uniforms(prepared.info.uniformSize,&uniforms)) return;
@@ -604,6 +647,9 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
         if(gen.normalize || !recipe.post_identity) config.dualTexEnabled=true;
     }
     modelState.info=aurora::gx::build_shader_info(config);
+    // This model variant is still rebuilt per draw. Hash once after its final
+    // attribute/texgen edits; the base preparation's hash describes other bytes.
+    modelState.configHash=ConfigHash(config);
     const auto& raster=GetNativeDrawState().raster;
     if(depthBeforeTexture && raster.depth_test && raster.depth_write && bool(config.alphaCompare))
         throw std::runtime_error("Native early depth write with alpha discard is unsupported");
@@ -612,14 +658,16 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
         (void)Texture(i);if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
     const auto portable=PortableSampling(modelState.info,zeroBias);
-    ModelProgramKey key{{config,zeroBias,portable.zeroBias},{},inputs.nonzero_projective_mask,inputs.zero_projective_mask};
-    key.layout[0]=resident.layout->stride;
-    key.layout[1]=resident.layout->matrixIndexMask;
+    std::array<uint32_t,17> layout{};
+    layout[0]=resident.layout->stride;
+    layout[1]=resident.layout->matrixIndexMask;
     for(unsigned i=0;i<resident.layout->attributes.size();++i) {
         const auto& a=resident.layout->attributes[i];
-        key.layout[i+2]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
+        layout[i+2]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
     }
-    auto program=modelPrograms.find(key);
+    const auto lookup=Lookup(config,modelState.configHash,zeroBias,portable.zeroBias,layout,
+                             inputs.nonzero_projective_mask,inputs.zero_projective_mask);
+    auto program=modelPrograms.find(lookup);
     if(program==modelPrograms.end()) {
         auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask,inputs.zero_projective_mask);
         description.origin="runtime/src/native_material.cpp:SubmitNativeModelMesh asset="+std::to_string(mesh.asset_id)+
@@ -630,7 +678,9 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
             description.portableVertex=counterpart.vertex;description.portableFragment=counterpart.fragment;
             description.portableOrigin=PortableOrigin(portable,modelState.info);
         }
-        program=modelPrograms.emplace(key,std::make_shared<aurora::gl::Program>(std::move(description))).first;
+        program=modelPrograms.emplace(HashedProgramKey<ModelProgramKey>{{{config,zeroBias,portable.zeroBias},layout,
+            inputs.nonzero_projective_mask,inputs.zero_projective_mask},lookup.hash},
+            std::make_shared<aurora::gl::Program>(std::move(description))).first;
     }
     AuroraNativeUniforms uniforms{};
     if(!aurora_allocate_native_uniforms(modelState.info.uniformSize,&uniforms)) return;
