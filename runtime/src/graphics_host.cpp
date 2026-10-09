@@ -10,6 +10,7 @@
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "native_frame_statistics.h"
 #include "audio/native_audio.h"
+#include "ios_host.h"
 #include "audio_output_statistics.h"
 #include "audio_dma_statistics.h"
 #ifdef __vita__
@@ -613,6 +614,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  residency.main_spill_bytes / 1048576.0, residency.phycont_spill_bytes / 1048576.0);
 #endif
     NativeAudio::ReportNativeAudioStatistics(seconds);
+    ReportDiscStatistics(seconds);
     const auto feedback = ReadSceneFeedbackStats();
     std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
                  double(feedback.allocations - previousFeedback.allocations) / seconds, double(feedback.reuses - previousFeedback.reuses) / seconds,

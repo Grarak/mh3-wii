@@ -26,6 +26,11 @@ class RomImage {
     std::vector<uint8_t> ReadDisc(uint64_t at, size_t count) const;
     uint64_t PartitionOffset() const { return partition; }
     const std::vector<uint8_t>& PartitionHeader() const { return partitionHeader; }
+#ifdef MH3_DEVELOPMENT
+    // MH3_PROFILE=disc: logs the image's read speed, and the decoder's from
+    // partition offset `sample` (disc_image.cpp).
+    void Benchmark(uint64_t sample) const;
+#endif
 
   private:
     class Source;

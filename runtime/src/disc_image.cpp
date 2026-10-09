@@ -1,4 +1,5 @@
 #include "disc_image.h"
+#include "dev_options.h"
 #include "rom_image.h"
 #include <algorithm>
 #include <cerrno>
@@ -237,6 +238,19 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
 
         if (rom->FileBytes() != bytes)
             throw std::runtime_error("The disc image changed since its game data was prepared: " + path);
+
+#ifdef MH3_DEVELOPMENT
+        if (ProfileOptions().Has("disc")) {
+            // Decode game data: the largest model archive.
+            std::pair<uint64_t, uint32_t> sample{0, 0};
+
+            for (const auto& [name, entry] : fileEntries)
+                if (name.ends_with(".brres") && entry.second > sample.second)
+                    sample = entry;
+
+            rom->Benchmark(sample.first);
+        }
+#endif
 
         partitionSize = rom->PartitionBytes();
 

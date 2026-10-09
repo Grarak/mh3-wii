@@ -6,11 +6,13 @@
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <aurora/thread_role.hpp>
 #include <cstring>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <exception>
@@ -65,6 +67,13 @@ DiscImage& Disc() {
     return GameDiscImage();
 }
 
+// The DVD request a disc read belongs to (DiscRequestOf).
+struct DiscRequest {
+    uint32_t block = 0; // the executing DVDCommandBlock; 0: none or not a read
+    uint64_t end = 0;   // where the request ends on the disc
+    uint32_t caller = 0; // development: its callback, for the disc statistics
+};
+
 // Disc reads the DVD library sends with IOS_IoctlAsync (DI 0x71) run on a
 // reader thread, as a Wii drive reads while the game runs, and their replies
 // reach the library's callback at a later pump. The game's file loader issues
@@ -73,14 +82,24 @@ DiscImage& Disc() {
 // a read is answered only once the textures and models of the files it
 // touches are converted: nothing that looks them up later (draw-table
 // preparation, model and texture binding) waits for them.
+//
+// The DVD library reads a request in chunks of at most 512 KiB, each sent once
+// the last one's reply has reached its callback. A chunk tells where its
+// request ends (DiscRequest), so while no read waits the reader reads the rest
+// of the request ahead, and the next chunk is answered from memory.
 class DiscReader {
+    using Clock = std::chrono::steady_clock;
+
   public:
     // Game thread. A read (length != 0) is answered once the reader has it,
     // anything else at once; replies keep the order of their requests.
-    void Submit(uint32_t callback, uint32_t argument, int32_t result, uint32_t output = 0, uint64_t offset = 0, uint32_t length = 0) {
+    void Submit(uint32_t callback, uint32_t argument, int32_t result, uint32_t output = 0, uint64_t offset = 0, uint32_t length = 0, const DiscRequest& request = {}) {
         std::lock_guard guard(lock);
         replies.push_back({callback, argument, output, length, offset, result, length == 0});
-
+        replies.back().request = request;
+#ifdef MH3_DEVELOPMENT
+        replies.back().submitted = Clock::now();
+#endif
         if (length && !started) {
             started = true;
             pthread_attr_t attributes;
@@ -110,6 +129,9 @@ class DiscReader {
         while (!replies.empty() && replies.front().ready) {
             Reply reply = std::move(replies.front());
             replies.pop_front();
+
+            if (reply.broken)
+                continue; // answered by Break
             guard.unlock();
 
             if (reply.failure)
@@ -123,6 +145,27 @@ class DiscReader {
             completions.push_back({reply.callback, reply.result, reply.argument});
             guard.lock();
         }
+    }
+
+    // Game thread: the DVD library cancels the read in flight (DVDCancelAsync).
+    // Its reply is answered now, as the drive's at the end of the transfer,
+    // but leaves guest memory alone: the canceled block's data goes unused.
+    // The reader finishes a transfer it started and drops it.
+    void Break() {
+        Deliver();
+        std::lock_guard guard(lock);
+
+        if (replies.empty() || replies.front().ready || !replies.front().length)
+            return;
+
+        Reply& reply = replies.front();
+        reply.broken = true;
+        reply.ready = !reply.taken;
+        completions.push_back({reply.callback, reply.result, reply.argument});
+#ifdef MH3_DEVELOPMENT
+        std::fprintf(stderr, "MH3 disc: canceled read of %u bytes at 0x%llx (%s)\n", reply.length, (unsigned long long)reply.offset,
+                     reply.taken ? "in transfer" : "queued");
+#endif
     }
 
     // Game thread: waits up to `limit` for the next reply to be ready; false
@@ -156,13 +199,123 @@ class DiscReader {
         uint32_t callback, argument, output, length;
         uint64_t offset;
         int32_t result;
-        bool ready, taken = false;
+        bool ready, taken = false, broken = false;
         std::vector<uint8_t> data;
         std::exception_ptr failure;
+        DiscRequest request;
+#ifdef MH3_DEVELOPMENT
+        Clock::time_point submitted;
+        bool ahead = false; // answered from the read-ahead
+#endif
     };
 
+    // Reader thread: the rest of a DVD request read ahead. data[head...] holds
+    // the disc bytes from `start`; the request ends at `end`.
+    struct Ahead {
+        uint32_t block = 0;
+        uint64_t start = 0, end = 0, used = 0;
+        size_t head = 0;
+        std::vector<uint8_t> data;
+        size_t Size() const { return data.size() - head; }
+        void Drop(size_t bytes) {
+            head += bytes;
+            start += bytes;
+
+            if (head == data.size()) {
+                data.clear();
+                head = 0;
+            }
+        }
+    };
+
+    // One RVZ chunk: a read that comes in waits for at most one piece.
+    static constexpr size_t kAheadPiece = 128u << 10;
+
+    // Read at most this far past the last chunk answered.
+    static constexpr size_t kAheadWindow = 4u << 20;
+    std::array<Ahead, 2> aheads;
+    uint64_t aheadUses = 0;
+
+    // Reader thread: a chunk, from the read-ahead of its request as far as
+    // that has it; sets up the read-ahead of the rest of the request.
+    std::vector<uint8_t> Fetch(const Reply& reply, bool& hit) {
+        const uint64_t offset = reply.offset, stop = offset + reply.length;
+        Ahead* ahead = nullptr;
+
+        for (auto& a : aheads)
+            if (a.block && a.block == reply.request.block) {
+                if (a.start == offset)
+                    ahead = &a;
+                else
+                    a = {}; // the block's earlier request
+            }
+        std::vector<uint8_t> data;
+        hit = ahead && ahead->Size() >= reply.length;
+
+        if (ahead) {
+            const size_t have = std::min<size_t>(ahead->Size(), reply.length);
+            data.assign(ahead->data.begin() + ahead->head, ahead->data.begin() + ahead->head + have);
+            ahead->Drop(have);
+        }
+
+        if (data.size() < reply.length) {
+            const auto rest = Disc().Read(offset + data.size(), uint32_t(reply.length - data.size()));
+            data.insert(data.end(), rest.begin(), rest.end());
+
+            if (ahead)
+                ahead->start = stop; // empty: the rest was read here
+        }
+
+        if (!reply.request.block || reply.request.end <= stop) {
+            if (ahead)
+                *ahead = {};
+
+            return data;
+        }
+
+        if (!ahead) {
+            ahead = &*std::min_element(aheads.begin(), aheads.end(), [](const Ahead& a, const Ahead& b) { return a.used < b.used; });
+            *ahead = {};
+            ahead->block = reply.request.block;
+            ahead->start = stop;
+            ahead->end = reply.request.end;
+        }
+
+        ahead->used = ++aheadUses;
+        return data;
+    }
+
+    // Reader thread, unlocked: reads the next piece of a request's rest; false
+    // when there is nothing to read ahead.
+    bool ReadAhead() {
+        for (auto& a : aheads) {
+            const uint64_t at = a.start + a.Size();
+
+            if (!a.block || at >= a.end || a.Size() >= kAheadWindow)
+                continue;
+
+            const auto piece = Disc().Read(at, uint32_t(std::min<uint64_t>(kAheadPiece, a.end - at)));
+
+            if (a.head && a.head >= a.data.size() / 2) {
+                a.data.erase(a.data.begin(), a.data.begin() + a.head);
+                a.head = 0;
+            }
+
+            a.data.insert(a.data.end(), piece.begin(), piece.end());
+#ifdef MH3_DEVELOPMENT
+            std::lock_guard guard(lock);
+            aheadBytes += piece.size();
+#endif
+            return true;
+        }
+
+        return false;
+    }
+
     void Run() {
-        // Core 0 (Vita): the game and render threads keep cores 2 and 1.
+        // Core 0 (Vita): the game and render threads keep cores 2 and 1. On
+        // core 3 (ThreadRole::Spare) the village load took 4.28 s instead
+        // of 3.82 s on the devkit.
         aurora::pin_current_thread(aurora::ThreadRole::Worker);
         std::unique_lock guard(lock);
 
@@ -176,8 +329,21 @@ class DiscReader {
             };
 
             // Timed: VitaSDK's condition variable can lose a notification.
-            while (!stopping && !pending())
-                changed.wait_for(guard, std::chrono::milliseconds(20));
+            while (!stopping && !pending()) {
+                guard.unlock();
+                bool read = false;
+
+                try {
+                    read = ReadAhead();
+                } catch (...) {
+                    aheads = {}; // the chunk's own read reports the failure
+                }
+
+                guard.lock();
+
+                if (!read && !stopping && !pending())
+                    changed.wait_for(guard, std::chrono::milliseconds(20));
+            }
 
             if (stopping)
                 return;
@@ -189,9 +355,13 @@ class DiscReader {
             guard.unlock();
             std::vector<uint8_t> data;
             std::exception_ptr failure;
+            const auto start = Clock::now();
+            auto read = start;
+            bool hit = false;
 
             try {
-                data = Disc().Read(offset, length);
+                data = Fetch(*next, hit);
+                read = Clock::now();
 
                 if (auto* cache = GameAssetCache())
                     while (!cache->Converted(offset, length, std::chrono::milliseconds(20)) && !stopping) {
@@ -201,13 +371,102 @@ class DiscReader {
             }
 
             guard.lock();
+#ifdef MH3_DEVELOPMENT
+            next->ahead = hit;
+            Count(*next, start, read, Clock::now());
+#else
+            (void)hit;
+#endif
             next->data = std::move(data);
             next->failure = failure;
             next->ready = true;
             changed.notify_all();
         }
     }
+#ifdef MH3_DEVELOPMENT
+  public:
+    // Development: each second's reads per caller for the "MH3 disc" lines:
+    // the time on the disc, waiting for the asset cache's conversion, and
+    // from the request to the reply. Reads over 50 ms are listed with their
+    // file.
+    void Report(double seconds) {
+        std::vector<std::pair<uint32_t, CallerReads>> rows;
+        uint64_t ahead;
+        {
+            std::lock_guard guard(lock);
+            rows.assign(callers.begin(), callers.end());
+            callers.clear();
+            ahead = std::exchange(aheadBytes, 0);
+        }
 
+        if (ahead)
+            std::fprintf(stderr, "MH3 disc: read ahead %.2f MiB/s\n", ahead / (1048576.0 * seconds));
+
+        for (const auto& [caller, c] : rows)
+            std::fprintf(stderr, "MH3 disc: %s %.1f reads/s %.2f MiB/s (%llu from the read-ahead); disc %.2f ms avg %.2f max, conversion wait %.2f ms avg, reply %.2f ms avg %.2f max\n",
+                         CallerName(caller).c_str(), c.reads / seconds, c.bytes / (1048576.0 * seconds), static_cast<unsigned long long>(c.ahead),
+                         c.disc / (1000.0 * c.reads), c.discMax / 1000.0, c.convert / (1000.0 * c.reads), c.reply / (1000.0 * c.reads), c.replyMax / 1000.0);
+    }
+
+  private:
+    struct CallerReads {
+        uint64_t reads = 0, bytes = 0, ahead = 0, disc = 0, discMax = 0, convert = 0, reply = 0, replyMax = 0; // us
+    };
+
+    using Callers = std::map<uint32_t, CallerReads>;
+    static std::string CallerName(uint32_t caller) {
+        switch (caller) {
+        case 0x80434CDC:
+            return "movie";
+        case 0x800CE6E4:
+            return "loader task";
+        case 0x800EA6E4:
+        case 0x800EA848:
+        case 0x800EA9C8:
+            return "stream";
+        }
+
+        char name[16];
+        std::snprintf(name, sizeof name, "0x%08X", caller);
+        return name;
+    }
+
+    // Reader thread, locked.
+    void Count(const Reply& reply, Clock::time_point start, Clock::time_point read, Clock::time_point end) {
+        const auto us = [](Clock::duration d) { return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(d).count()); };
+        CallerReads& c = callers[reply.request.caller];
+        const uint64_t disc = us(read - start), total = us(end - reply.submitted);
+        ++c.reads;
+        c.ahead += reply.ahead;
+        c.bytes += reply.length;
+        c.disc += disc;
+        c.discMax = std::max(c.discMax, disc);
+        c.convert += us(end - read);
+        c.reply += total;
+        c.replyMax = std::max(c.replyMax, total);
+
+        if (total > 50'000)
+            std::fprintf(stderr, "MH3 disc: %s read of %u bytes at 0x%llx (%s) took %.1f ms (disc %.1f ms)\n", CallerName(reply.request.caller).c_str(), reply.length,
+                         static_cast<unsigned long long>(reply.offset), FileAt(reply.offset).c_str(), total / 1000.0, disc / 1000.0);
+    }
+
+    static std::string FileAt(uint64_t offset) {
+        static const auto files = [] {
+            std::vector<std::pair<uint64_t, std::string>> sorted;
+
+            for (const auto& name : Disc().FileNames())
+                sorted.emplace_back(Disc().FileOffset(name), name);
+
+            std::sort(sorted.begin(), sorted.end());
+            return sorted;
+        }();
+        auto it = std::upper_bound(files.begin(), files.end(), offset, [](uint64_t value, const auto& file) { return value < file.first; });
+        return it == files.begin() ? "?" : std::prev(it)->second;
+    }
+
+    Callers callers;
+    uint64_t aheadBytes = 0;
+#endif
     std::mutex lock;
     std::condition_variable changed;
     std::deque<Reply> replies;
@@ -221,6 +480,31 @@ DiscReader& Reader() {
     (void)Disc();
     static DiscReader reader;
     return reader;
+}
+
+// The DVD request behind the disc read of [offset, offset + length): the
+// executing command block (0x804A9B60, decompiled with Ghidra, reads its
+// word offset +0x10, length +0x14 and bytes transferred +0x20) when the read
+// is its next chunk. The caller is the block's callback, or for DVDReadAsync
+// (whose block is a DVDFileInfo) the reader's own.
+DiscRequest DiscRequestOf(const CpuContext* ctx, uint64_t offset, uint32_t length) {
+    enum : int32_t { kExecuting = -0x3CF0 }; // DVDCommandBlock* executing
+    const uint32_t block = Memory::Read32(ctx->gpr[13] + uint32_t(kExecuting));
+
+    if (!block)
+        return {};
+
+    const uint64_t start = uint64_t(Memory::Read32(block + 0x10)) * 4, end = start + Memory::Read32(block + 0x14);
+    DiscRequest request;
+
+    if (start + Memory::Read32(block + 0x20) == offset && offset + length <= end)
+        request = {block, end};
+#ifdef MH3_DEVELOPMENT
+    constexpr uint32_t kReadAsyncCallback = 0x804A6A70;
+    const uint32_t callback = Memory::Read32(block + 0x28);
+    request.caller = callback == kReadAsyncCallback ? Memory::Read32(block + 0x38) : callback;
+#endif
+    return request;
 }
 
 int32_t Error() {
@@ -657,6 +941,12 @@ int DirectoryUsage(int fd, uint64_t& clusters, uint64_t& inodes, unsigned depth 
 #endif
 } // namespace
 
+#ifdef MH3_DEVELOPMENT
+void ReportDiscStatistics(double seconds) {
+    Reader().Report(seconds);
+}
+#endif
+
 std::optional<IosCompletion> TakeIosCompletion() {
     if (completions.empty())
         return std::nullopt;
@@ -895,7 +1185,7 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
                 Reader().Submit(callback, argument, 32);
             else if (length) {
                 lastDiscPosition = position;
-                Reader().Submit(callback, argument, 1, output, uint64_t(position) * 4, length);
+                Reader().Submit(callback, argument, 1, output, uint64_t(position) * 4, length, DiscRequestOf(ctx, uint64_t(position) * 4, length));
             } else
                 Reader().Submit(callback, argument, 1);
         } else {
@@ -1454,6 +1744,43 @@ extern "C" void MH3_DVDGetCommandBlockStatus(CpuContext* ctx) {
     func_804AACC0(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804AACC0, MH3_DVDGetCommandBlockStatus, "MH3_DVDGetCommandBlockStatus");
+
+// DVDCancelAsync (0x804AAE90), decompiled with Ghidra. For the block whose
+// read is in flight it sets Canceling, the break flag and the cancel callback,
+// and the drive's reply finishes the cancel: cbForStateBusy (0x804AA110) marks
+// the block canceled, calls its callback with -3 and then the cancel callback,
+// and starts the next command. DVDCancel (0x804AB200) sleeps on the DVD thread
+// queue until then; this runtime switches no guest threads, so that sleep
+// never reaches a pump to deliver the reply (a movie skipped while its read
+// was in flight hung the Vita). The disc reader breaks the read instead, and
+// its reply arrives before DVDCancelAsync returns, as the drive's interrupt
+// could right after it.
+extern "C" void func_804AAE90(CpuContext*);
+extern "C" void MH3_DVDCancelAsync(CpuContext* ctx) {
+    enum : int32_t {
+        kBreaking = -0x3D60,  // s32: stop the read in flight
+        kExecuting = -0x3CF0, // DVDCommandBlock* executing
+    };
+
+    const uint32_t block = ctx->gpr[3], sda = ctx->gpr[13];
+#ifdef MH3_DEVELOPMENT
+    const uint32_t state = Memory::Read32(block + 0xC), executing = Memory::Read32(sda + uint32_t(kExecuting));
+#endif
+    func_804AAE90(ctx);
+#ifdef MH3_DEVELOPMENT
+    if (state == 1 || state == 2) // busy or waiting; DVDClose cancels every finished block too
+        std::fprintf(stderr, "MH3 disc: DVDCancelAsync of block 0x%08X (state %d, %s) returned %u, breaking %u\n", block, int32_t(state),
+                     executing == block ? "executing" : "not executing", ctx->gpr[3], Memory::Read32(sda + uint32_t(kBreaking)));
+#endif
+    if (!ctx->gpr[3] || !Memory::Read32(sda + uint32_t(kBreaking)) || Memory::Read32(sda + uint32_t(kExecuting)) != block)
+        return;
+
+    Reader().Break();
+    const CpuContext saved = *ctx;
+    PumpIosCompletions(ctx);
+    *ctx = saved;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804AAE90, MH3_DVDCancelAsync, "DVDCancelAsync");
 
 // DVDGetDriveStatus (0x804AAD90), decompiled with Ghidra. The frame counter's
 // retrace callbacks sample it every retrace.

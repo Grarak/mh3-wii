@@ -1,7 +1,10 @@
 #include "rom_image.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <climits>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #ifdef MH3_HAS_ROM_DECODER
@@ -10,6 +13,7 @@
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/sysmem.h>
 #else
 #include <cerrno>
 #include <fcntl.h>
@@ -40,11 +44,16 @@ class File {
     }
 
     ~File() { Close(); }
+
     File(const File&) = delete;
+
     void Read(uint64_t at, uint8_t* bytes, size_t count) const {
         if (at > size || count > size - at || at > INT64_MAX)
             throw std::runtime_error("ROM is truncated");
 
+#ifdef MH3_DEVELOPMENT
+        const auto start = std::chrono::steady_clock::now();
+#endif
         size_t done = 0;
 
         while (done < count) {
@@ -61,7 +70,16 @@ class File {
 
             done += n;
         }
+#ifdef MH3_DEVELOPMENT
+        reads.fetch_add(1, std::memory_order_relaxed);
+        readNs.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+#endif
     }
+
+#ifdef MH3_DEVELOPMENT
+    // Development: positioned reads and their time (MH3_PROFILE=disc).
+    mutable std::atomic<uint64_t> reads{0}, readNs{0};
+#endif
 
   private:
     int fd = -1;
@@ -249,3 +267,79 @@ std::vector<uint8_t> RomImage::ReadDisc(uint64_t at, size_t count) const {
     source->Read(at, b.data(), count, false);
     return b;
 }
+
+#ifdef MH3_DEVELOPMENT
+// Each case reads its own 8 MiB of the image, so no read is served from a
+// cache: plain reads by size into ordinary and (Vita) physically contiguous
+// memory, then the decoder's 512 KiB partition reads (a DVD library chunk) of
+// game data with the share of their time spent in the image's reads.
+void RomImage::Benchmark(uint64_t sample) const {
+    using Clock = std::chrono::steady_clock;
+    constexpr size_t kCase = 8u << 20, kLargest = 2u << 20;
+    const size_t sizes[] = {32u << 10, 128u << 10, 512u << 10, kLargest};
+    const auto ms = [](Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    std::lock_guard guard(lock);
+    File& file = source->file;
+    struct Buffer {
+        const char* name;
+        uint8_t* data;
+    };
+
+    std::vector<uint8_t> heap(kLargest);
+    std::vector<Buffer> buffers{{"heap", heap.data()}};
+#ifdef __vita__
+    const SceUID block = sceKernelAllocMemBlock("MH3 disc benchmark", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_RW, kLargest, nullptr);
+    void* base = nullptr;
+
+    if (block >= 0 && sceKernelGetMemBlockBase(block, &base) >= 0)
+        buffers.push_back({"phycont", static_cast<uint8_t*>(base)});
+    else
+        std::fprintf(stderr, "MH3 disc benchmark: no phycont block (%08x)\n", unsigned(block));
+#endif
+    uint64_t at = file.size / 4 & ~uint64_t(0xFFFF);
+
+    for (const auto& buffer : buffers)
+        for (const size_t size : sizes) {
+            if (at + kCase > file.size)
+                break;
+
+            const auto start = Clock::now();
+            double worst = 0;
+
+            for (size_t done = 0; done < kCase; done += size) {
+                const auto read = Clock::now();
+                file.Read(at + done, buffer.data, size);
+                worst = std::max(worst, ms(Clock::now() - read));
+            }
+
+            const double total = ms(Clock::now() - start);
+            std::fprintf(stderr, "MH3 disc benchmark: %s reads of %u KiB: %.1f MiB/s, %.2f ms avg %.2f max\n", buffer.name, unsigned(size >> 10),
+                         kCase / 1048576.0 / (total / 1000.0), total / double(kCase / size), worst);
+            at += kCase;
+        }
+#ifdef __vita__
+    if (block >= 0)
+        sceKernelFreeMemBlock(block);
+#endif
+    constexpr size_t kChunk = 512u << 10;
+    const uint64_t reads = file.reads.load(), readNs = file.readNs.load();
+    const auto start = Clock::now();
+    double worst = 0;
+
+    for (uint64_t flat = sample, end = flat + kCase; flat < end && end <= flatBytes; flat += kChunk) {
+        const auto read = Clock::now();
+
+        if (source->Decoded())
+            source->Read(flat, heap.data(), kChunk, true);
+        else
+            file.Read(dataStart + flat / 0x7c00 * 0x8000, heap.data(), kChunk);
+
+        worst = std::max(worst, ms(Clock::now() - read));
+    }
+
+    const double total = ms(Clock::now() - start), io = (file.readNs.load() - readNs) / 1e6;
+    std::fprintf(stderr, "MH3 disc benchmark: decoded 512 KiB reads: %.1f MiB/s, %.2f ms avg %.2f max; image reads %.1f ms (%.0f%%, %llu reads)\n",
+                 kCase / 1048576.0 / (total / 1000.0), total / double(kCase / kChunk), worst, io, 100.0 * io / total,
+                 static_cast<unsigned long long>(file.reads.load() - reads));
+}
+#endif

@@ -14,3 +14,6 @@ void QueueIosCompletion(IosCompletion completion);
 void TriggerStmEvent(uint32_t event);
 struct CpuContext;
 void PumpIosCompletions(CpuContext* cpu);
+
+// Development: the "MH3 disc" lines (reads per caller over `seconds`).
+void ReportDiscStatistics(double seconds);
