@@ -502,6 +502,20 @@ class PackPreparer {
         changed.notify_all();
     }
 
+    // Whether the pack of `key` is read ahead; one not queued is queued.
+    bool ReadOrQueue(uint32_t key, const std::string& path) {
+        {
+            std::lock_guard guard(lock);
+            const auto found = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.key == key; });
+
+            if (found != entries.end())
+                return found->state == Entry::Ready;
+        }
+
+        Queue(key, path);
+        return false;
+    }
+
     // An admitted pack's GPU data, read after the packs queued ahead of it.
     struct Payload {
         uintptr_t handle;
@@ -561,7 +575,7 @@ class PackPreparer {
     }
 
   private:
-    static constexpr size_t MaxEntries = 16;
+    static constexpr size_t MaxEntries = 32;
     static constexpr unsigned MaxDiscWaitMs = 100;
 
     struct Entry {
@@ -590,9 +604,9 @@ class PackPreparer {
     // The game's disc reads first: a pack read beside one slows it down (one
     // card serves both), and a loading screen lasts as long as its reads. Pi 5
     // with a cold page cache: the loader's reads took 5.7-9.6 ms instead of
-    // 3.3-5.1 ms on average.
+    // 3.3-5.1 ms on average. Not while the reader holds a reply for the packs.
     static void DeferToDisc() {
-        for (unsigned waited = 0; waited < MaxDiscWaitMs && DiscReadWaiting(); ++waited)
+        for (unsigned waited = 0; waited < MaxDiscWaitMs && DiscReadWaiting() && !DiscReadAwaitsPacks(); ++waited)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
@@ -876,6 +890,29 @@ Status TryEnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
 
 void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
     CheckStatus(TryEnsureNativeModelAssets(offset, bytes));
+}
+
+bool NativeModelPackInMemory(uint64_t offset) {
+    if (!manager || !manager->converted || !GameAssetCache())
+        return true;
+
+    uint32_t key = 0;
+    std::filesystem::path path;
+
+    if (!GameAssetCache()->ConvertedModelPack(offset, key, path))
+        return false;
+
+    if (path.empty())
+        return true;
+
+    {
+        std::lock_guard lock(manager->lock);
+
+        if (manager->loaded.contains(key))
+            return true;
+    }
+
+    return PackPreparer::Get().ReadOrQueue(key, path.string());
 }
 
 bool FindNativeModelSource(uint64_t offset, uint64_t* file_offset, uint32_t* file_bytes) {

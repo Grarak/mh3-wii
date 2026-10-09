@@ -112,6 +112,9 @@ struct Catalog {
     };
 
     std::vector<PendingModelFile> pending_model_files;
+
+    // A pending file waits for its converted pack to be read into memory.
+    bool pending_pack_reads = false;
 };
 
 Catalog catalog;
@@ -1209,8 +1212,9 @@ size_t CertifyLoadedNativeModels() {
     std::lock_guard guard(catalogLock);
     auto& c = Initialize();
 
-    // Nothing was loaded, copied or retired since the last pass.
-    if (c.tracker.generation == c.discovered_generation)
+    // Nothing was loaded, copied or retired since the last pass, and no file
+    // waits for its pack.
+    if (c.tracker.generation == c.discovered_generation && !c.pending_pack_reads)
         return 0;
 
     // Ranges no newer than the last pass were looked at then: only new ones
@@ -1277,11 +1281,22 @@ size_t CertifyLoadedNativeModels() {
         return mh3_source_resolve(&c.tracker, candidate.container, bytes, &id) == MH3_RES_OK && id.partition_offset == candidate.file;
     };
 
+    c.pending_pack_reads = false;
+
     for (size_t i = 0; i < pending.size();) {
         const auto candidate = pending[i];
 
         if (!holds(candidate, 1)) {
             pending.erase(pending.begin() + i);
+            continue;
+        }
+
+        // Its pack is certified from memory, on a later pass when the
+        // read-ahead has it: a pass that waited for the card held up the
+        // loading screen's frame (seconds on the Vita).
+        if (!NativeModelPackInMemory(candidate.file)) {
+            c.pending_pack_reads = true;
+            ++i;
             continue;
         }
 

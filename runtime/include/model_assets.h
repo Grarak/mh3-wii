@@ -22,6 +22,12 @@ Status TryEnsureNativeModelAssets(uint64_t partition_offset, uint32_t bytes);
 // Neither admits nor waits.
 bool FindNativeModelSource(uint64_t partition_offset, uint64_t* file_offset, uint32_t* file_bytes);
 
+// Whether the converted pack of the model file containing partition_offset
+// is in memory (admitted, or read ahead), so that admitting it reads nothing
+// from the card; true for files without one. A pack not read yet is queued
+// for the read-ahead. Never waits.
+bool NativeModelPackInMemory(uint64_t partition_offset);
+
 // Observe each model draw before the frame rendering gate, including skipped
 // frames. Distinct rounded payload costs establish the full working set and
 // pin this frame's demanded GPU storage. A working set over budget is an error.

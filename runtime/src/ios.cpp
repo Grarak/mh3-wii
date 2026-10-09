@@ -6,6 +6,7 @@
 #include "asset_cache.h"
 #include "guest_call.h"
 #include "load_progress.h"
+#include "model_assets.h"
 #include "net/ios_net.h"
 #include "scope_exit.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -205,6 +206,11 @@ class DiscReader {
 #endif
     }
 
+    // Any thread: whether the reader holds a reply for model packs.
+    bool AwaitingPacks() const {
+        return awaitingPacks.load(std::memory_order_relaxed);
+    }
+
     // Any thread: whether a read is not answered yet.
     bool Waiting() {
         std::lock_guard guard(lock);
@@ -329,6 +335,12 @@ class DiscReader {
         return {};
     }
 
+    // Whether the model files holding the read's first and last byte have
+    // their converted packs in memory (NativeModelPackInMemory).
+    static bool PacksInMemory(uint64_t offset, uint32_t length) {
+        return NativeModelPackInMemory(offset) && (length <= 1 || NativeModelPackInMemory(offset + length - 1));
+    }
+
     // Reader thread, unlocked: reads the next piece of a request's rest; false
     // when there is nothing to read ahead, or the read failed: the read-ahead
     // is dropped then, and the chunk's own read reports the failure.
@@ -408,6 +420,21 @@ class DiscReader {
                 if (auto* cache = GameAssetCache())
                     while (!cache->Converted(offset, length, std::chrono::milliseconds(20)) && !stopping) {
                     }
+
+                // A model file's read is answered once its converted pack is
+                // read ahead too, so the loading screen lasts until the
+                // models can be admitted without a card read. Admission at
+                // the end of a loading screen waited for the read-ahead
+                // instead, a frame of up to seconds on the Vita's card: a
+                // black screen after loading.
+                if (!PacksInMemory(offset, length)) {
+                    awaitingPacks.store(true, std::memory_order_relaxed);
+
+                    while (!PacksInMemory(offset, length) && !stopping)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+                    awaitingPacks.store(false, std::memory_order_relaxed);
+                }
             }
 
             guard.lock();
@@ -518,6 +545,7 @@ class DiscReader {
     std::condition_variable changed;
     std::deque<Reply> replies;
     std::atomic<bool> stopping{false};
+    std::atomic<bool> awaitingPacks{false};
     bool started = false;
     pthread_t thread{};
 };
@@ -1005,6 +1033,10 @@ void ReportDiscStatistics(double seconds) {
 
 bool DiscReadWaiting() {
     return Reader().Waiting();
+}
+
+bool DiscReadAwaitsPacks() {
+    return Reader().AwaitingPacks();
 }
 
 std::optional<IosCompletion> TakeIosCompletion() {

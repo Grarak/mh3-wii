@@ -1467,6 +1467,27 @@ Status AssetCache::ModelPack(uint64_t at, uint32_t& key, std::filesystem::path& 
     return {};
 }
 
+bool AssetCache::ConvertedModelPack(uint64_t at, uint32_t& key, std::filesystem::path& pack) {
+    auto& m = *impl;
+    std::lock_guard guard(m.lock);
+    const auto* s = m.Find(at);
+    pack.clear();
+
+    // A source not checked yet has nothing queued to wait for.
+    if (!s || !s->checked)
+        return true;
+
+    if (!s->modelsDone)
+        return false;
+
+    key = uint32_t(s - m.sources.data());
+
+    if (s->failure.empty() && s->modelsUsable)
+        pack = m.ModelPath(*s);
+
+    return true;
+}
+
 bool AssetCache::ModelFile(uint64_t at, uint64_t& offset, uint32_t& bytes) {
     auto& m = *impl;
     std::lock_guard guard(m.lock);

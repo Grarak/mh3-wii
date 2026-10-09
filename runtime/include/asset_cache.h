@@ -82,6 +82,11 @@ class AssetCache {
     // models; an error when its conversion failed.
     Status ModelPack(uint64_t at, uint32_t& key, std::filesystem::path& pack);
 
+    // ModelPack without waiting: false while the source file containing `at`
+    // is converting. `pack` is empty when `at` is in no source, the source is
+    // not checked yet, the file has no usable models or its conversion failed.
+    bool ConvertedModelPack(uint64_t at, uint32_t& key, std::filesystem::path& pack);
+
     // The extent of the indexed source file containing partition offset `at`
     // when it has models (converted yet or not). Never waits.
     bool ModelFile(uint64_t at, uint64_t& offset, uint32_t& bytes);

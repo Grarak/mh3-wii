@@ -46,7 +46,11 @@ game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`;
 - **Model packs read ahead.** Once a pack is written and the game reads its
   file, a worker reads and validates its metadata; the loading screen's
   certification then claims the read pack instead of reading it on the game
-  thread. A second worker reads the pack's GPU data, and the render thread
+  thread. The disc reader answers the file's read only once its pack is read,
+  and certification skips a pack not read yet until a later frame, so the
+  card reads happen during Now Loading: certification that waited for them
+  froze the loading screen's last frame (a black screen after loading, 0.6 s
+  per area on a slow card). A second worker reads the pack's GPU data, and the render thread
   only copies it into GPU memory, while the area loads, not at the model's
   first draw.
 - **On the Vita** packs land in CDRAM (models within their own reservation),

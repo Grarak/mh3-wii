@@ -21,3 +21,7 @@ void ReportDiscStatistics(double seconds);
 // Any thread: whether a game disc read waits for the reader thread. Host
 // reads of the same storage made beside it slow it down.
 bool DiscReadWaiting();
+
+// Any thread: whether the reader holds a model file's reply until the file's
+// converted pack is read ahead (that read must not defer to the reply).
+bool DiscReadAwaitsPacks();
