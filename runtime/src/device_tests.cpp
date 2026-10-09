@@ -1,6 +1,8 @@
 #include "abi_bridge.h"
+#include "ios_host.h"
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -11,6 +13,11 @@ extern "C" void MH3_SIInit(CpuContext*);
 extern "C" void MH3_OSInitSram(CpuContext*);
 extern "C" void MH3_UnlockSram(CpuContext*);
 extern "C" void MH3_OSGetResetCode(CpuContext*);
+extern "C" void MH3_IOSOpen(CpuContext*);
+extern "C" void MH3_IOSClose(CpuContext*);
+extern "C" void MH3_IOSRead(CpuContext*);
+extern "C" void MH3_IOSWrite(CpuContext*);
+extern "C" void MH3_IOSIoctlAsync(CpuContext*);
 
 void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_OSGetResetCode(cpu);
@@ -67,4 +74,60 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (Memory::Read8(0x8074FB12) != 2 || Memory::Read16(0x8074FB00) != 0x020C ||
         Memory::Read16(0x8074FB02) != 0xFDF0)
         throw std::runtime_error("SRAM persistence/checksum test failed");
+
+    const auto nand = directory.path / "nand";
+    std::filesystem::create_directories(nand / "shared2");
+    { std::ofstream file(nand / "shared2/settings"); file << "ABCD"; }
+    auto open = [&](const std::string& path, uint32_t mode) {
+        for (size_t i = 0; i <= path.size(); ++i)
+            Memory::Write8(0x80001200 + i, i == path.size() ? 0 : path[i]);
+        cpu->gpr[3] = 0x80001200; cpu->gpr[4] = mode;
+        MH3_IOSOpen(cpu);
+        return static_cast<int32_t>(cpu->gpr[3]);
+    };
+    int32_t fd = open("/shared2/settings", 3);
+    if (fd < 0) throw std::runtime_error("IOS file open failed");
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x80001300; cpu->gpr[5] = 2;
+    MH3_IOSRead(cpu);
+    if (cpu->gpr[3] != 2 || Memory::Read16(0x80001300) != 0x4142)
+        throw std::runtime_error("IOS file read failed");
+    Memory::Write16(0x80001300, 0x5859);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x80001300; cpu->gpr[5] = 2;
+    MH3_IOSWrite(cpu);
+    if (cpu->gpr[3] != 2) throw std::runtime_error("IOS file write failed");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    { std::ifstream file(nand / "shared2/settings"); std::string text; file >> text;
+      if (text != "ABXY") throw std::runtime_error("IOS file persistence failed"); }
+    fd = open("/shared2/settings", 1);
+    if (fd < 0) throw std::runtime_error("IOS read-only open failed");
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x80001300; cpu->gpr[5] = 2;
+    MH3_IOSWrite(cpu);
+    if (static_cast<int32_t>(cpu->gpr[3]) != -102)
+        throw std::runtime_error("IOS read-only mode was not enforced");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    if (open("/../escape", 1) != -4 || open("/missing", 1) != -106)
+        throw std::runtime_error("IOS path/error handling failed");
+    std::filesystem::create_directory_symlink(directory.path, nand / "link");
+    if (open("/link/sram.bin", 1) >= 0)
+        throw std::runtime_error("IOS NAND symlink isolation failed");
+    fd = open("/dev/stm/eventhook", 0);
+    if (fd < 0) throw std::runtime_error("STM event device open failed");
+    Memory::Write32(0x80001400, 0xDEADBEEF);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x1000;
+    cpu->gpr[7] = 0x80001400; cpu->gpr[8] = 0x20;
+    cpu->gpr[9] = 0x804D6320; cpu->gpr[10] = 0;
+    MH3_IOSIoctlAsync(cpu);
+    if (cpu->gpr[3] || Memory::Read32(0x80001400) != 0xDEADBEEF)
+        throw std::runtime_error("STM event subscription must remain pending");
+    cpu->gpr[3] = fd;
+    MH3_IOSIoctlAsync(cpu);
+    auto completion = TakeIosCompletion();
+    if (cpu->gpr[3] || !completion || completion->result != -8)
+        throw std::runtime_error("STM duplicate subscription completion failed");
+    TriggerStmEvent(0x20000);
+    completion = TakeIosCompletion();
+    if (!completion || completion->callback != 0x804D6320 || completion->result ||
+        Memory::Read32(0x80001400) != 0x20000 || TakeIosCompletion())
+        throw std::runtime_error("STM event delivery failed");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
 }

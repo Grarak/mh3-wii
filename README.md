@@ -2,7 +2,7 @@
 
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
 but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
-initial thread, and arena setup. It stops at IOS IPC initialization (`0xCD000004`).
+initial thread, and arena setup. It reaches system-configuration startup and stops at the unimplemented `/dev/fs` device.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -102,11 +102,18 @@ supplied disc's TMD. IOS55 metadata follows
 With `MH3_TRACE_ERRORS=1`, runtime failures emit symbolized native backtraces
 before unwinding, so routine diagnosis needs no LLDB authorization.
 
-The latest run reaches `IPCCltInit` at `0x804BBDD0` and stops on its hardware
-control-register write to `0xCD000004`. The IPC heap is initialized at
-`0x935E0000`. IOS file/device services and callback scheduling are the next
-required host integration. The original arena-clearing code executes; its
-reset-code query reports a cold host launch or the SDK's saved restart code.
+The latest run passes `IPCCltInit` and STM initialization and prints the SDK
+system-configuration banner. It stops when ISFS initialization opens `/dev/fs`.
+IOS synchronous open/close/read/write now use a private NAND root at
+`$MH3_USER_DIR/nand` (default `saves/nand`), preserving file modes and offsets.
+Opening does not create files. Path traversal and symlink following are rejected.
+Unknown devices and unimplemented direct IPC operations still fail explicitly.
+
+STM event subscriptions remain pending; host events write the guest output and
+queue callback records. Scheduler delivery of those callbacks remains to be
+connected. Tests cover file persistence, missing files, path isolation, duplicate
+subscriptions, and event completion. STM protocol behavior was checked against
+[Dolphin's STM implementation](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/STM/STM.cpp).
 
 Remaining requirements for a playable port include:
 
