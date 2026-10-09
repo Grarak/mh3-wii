@@ -6,6 +6,41 @@ namespace Translator.Tests;
 
 public class JumpTableDetectorTests
 {
+    [Theory]
+    [InlineData(false, 0x60000000u, true)] // preserved page register
+    [InlineData(false, 0x92C10008u, true)] // stw r22,8(r1) is not a definition
+    [InlineData(false, 0x4E800421u, true)] // bctrl preserves nonvolatile r22
+    [InlineData(false, 0x82C10008u, false)] // lwz r22,8(r1) clobbers the page
+    [InlineData(false, 0x3AD60001u, false)] // addi r22,r22,1 clobbers the page
+    [InlineData(false, 0x94760004u, false)] // stwu r3,4(r22) updates its base
+    [InlineData(false, 0xBA810008u, false)] // lmw r20,8(r1) also overwrites r22
+    [InlineData(true, 0x60000000u, false)] // path bypasses the defining lis
+    public void LongLivedNonvolatileTablePageRequiresReachingDefinition(bool bypass, uint intervening, bool expected)
+    {
+        const uint start = 0x80000000;
+        var words = new List<uint> {
+            bypass ? 0x41820008u : 0x60000000u, // beq +8 / nop
+            0x3EC08000, // lis r22,0x8000
+        };
+        words.AddRange(Enumerable.Repeat(0x60000000u, 256));
+        words.AddRange(new uint[] {
+            intervening,
+            0x28050002, // cmplwi r5,2
+            0x38760800, // addi r3,r22,0x800
+            0x54A0103A, // slwi r0,r5,2
+            0x7C63002E, // lwzx r3,r3,r0
+            0x7C6903A6, // mtctr r3
+            0x4E800420, // bctr
+        });
+        var ordered = words.Select((word, i) => PpcDecoder.Decode(start + (uint)i * 4, word)).ToArray();
+        var image = TranslatorCppTestHarness.CreateImage(
+            (start + 0x800, start + 0x600), (start + 0x804, start + 0x604),
+            (start + 0x808, start + 0x608));
+        Assert.Equal(expected, JumpTableDetector.TryRecognize(ordered, BuildIndex(ordered),
+            ordered[^1].Address, start, start + 0x800, image, out var targets));
+        if (expected) Assert.Equal(new uint[] { start + 0x600, start + 0x604, start + 0x608 }, targets);
+    }
+
     private static IReadOnlyDictionary<uint, int> BuildIndex(IReadOnlyList<PpcInstruction> ordered)
         => ordered.Select((ins, idx) => new { ins.Address, idx }).ToDictionary(x => x.Address, x => x.idx);
 
