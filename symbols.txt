@@ -2065,3 +2065,7 @@
 80341dac FishFlee
 8034027c FishTurnToward
 8034048c FishFindBait
+
+# Online session close and its connection poll (net/online_close.cpp).
+803d6ffc OnlineClose
+8041c7f4 ConnectionBusy
