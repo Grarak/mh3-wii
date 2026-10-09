@@ -144,3 +144,5 @@ Removed on 2026-10-03 with the code behind them (git history keeps them):
   `MH3_ANM_KEYS_CHECK`, `MH3_ANM_BAKED_CHECK`, `MH3_EFFECT_CURVE_CHECK`,
   `MH3_TICK_SURVEY` (with the `Survey` tick-site kind), `MH3_STEP_LOG`,
   `MH3_STEP_LOG_WORDS`.
+- System traces: `MH3_SLOW_PATH_TRACE`, `MH3_AUDIO_TRACE`, and
+  `MH3_TRACE_ERRORS` in the IOS, memory and locked-cache code.

@@ -242,23 +242,6 @@ void Mixer::ApplyVoice(const uint32_t* record) {
     else if (wasRunning)
         v.fading = (HeaderFlags(header) & kFlagDepop) != 0;
     v.published = true;
-#ifdef MH3_DEVELOPMENT
-    // MH3_AUDIO_TRACE=1: every voice start, as the mixer received it.
-    static const bool trace = [] {
-        const char* value = std::getenv("MH3_AUDIO_TRACE");
-        return value && value[0] == '1';
-    }();
-    if (trace && !wasRunning && v.pb[Pb::State] == 1) {
-        const uint16_t* pb = v.pb;
-        std::fprintf(stderr,
-                     "MH3 audio trace: voice %u groups %08x fmt %04x src %u/%u ratio %08x ctrl %08x type %u loop %u start %08x end %08x cur %08x ve %04x/%04x "
-                     "mix L %04x R %04x S %04x A %04x/%04x lpf %u bq %u ps %02x\n",
-                     HeaderVoice(header), record[1], pb[Pb::Format], pb[Pb::SrcSelect], pb[Pb::CoefSelect], uint32_t(pb[Pb::SrcRatioHi]) << 16 | pb[Pb::SrcRatioLo],
-                     uint32_t(pb[Pb::MixerCtrlHi]) << 16 | pb[Pb::MixerCtrlLo], pb[Pb::Type], pb[Pb::LoopFlag], uint32_t(pb[Pb::LoopHi]) << 16 | pb[Pb::LoopLo],
-                     uint32_t(pb[Pb::EndHi]) << 16 | pb[Pb::EndLo], uint32_t(pb[Pb::CurHi]) << 16 | pb[Pb::CurLo], pb[Pb::VeVolume], pb[Pb::VeDelta], pb[Pb::Mix], pb[Pb::Mix + 2],
-                     pb[Pb::Mix + 16], pb[Pb::Mix + 4], pb[Pb::Mix + 6], pb[Pb::LpfOn], pb[Pb::BiquadOn], pb[Pb::AdpcmPredScale]);
-    }
-#endif
 }
 
 void Mixer::ApplyAux(uint32_t bus, const uint32_t* record) {

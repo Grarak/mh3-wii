@@ -152,7 +152,7 @@ set_source_files_properties(native/mh3_scene_queue.c PROPERTIES COMPILE_OPTIONS 
 set_source_files_properties(native/mh3_system_ui.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
-# so export ours for symbolized MH3_TRACE_ERRORS stack traces.
+# so export ours for symbolized backtraces of fatal errors (and dladdr).
 if(NOT VITA)
   set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
   target_link_libraries(MH3 PRIVATE ${CMAKE_DL_LIBS})
@@ -360,9 +360,6 @@ if(MH3_WRITE_WATCH)
 endif()
 
 target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest, launcher
-if(MH3_DEVELOPMENT)
-  target_sources(MH3 PRIVATE src/slow_path_trace.cpp) # MH3_SLOW_PATH_TRACE
-endif()
 
 # MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it
 # does not rebuild the generated shards.

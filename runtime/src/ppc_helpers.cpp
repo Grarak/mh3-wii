@@ -66,9 +66,6 @@ void TransferLockedCache(uint32_t lower) {
         RetireNativeResourceOwner(memoryAddress, size, NativeSourceEpochProducer::LockedCacheDma);
     }
     std::memcpy(load ? cache : memory, load ? memory : cache, size);
-    static unsigned traced = 0;
-    if (std::getenv("MH3_TRACE_ERRORS") && traced++ < 3)
-        RT_LOG(RT_TAG_RUNTIME) << "Locked-cache DMA " << (load ? "load " : "store ") << size << " bytes, RAM " << std::hex << memoryAddress << ", cache " << cacheAddress << std::dec << std::endl;
 }
 
 uint64_t GetTimeBase() {

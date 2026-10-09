@@ -651,8 +651,6 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
             }
             const auto path = GuestPath(input);
             ctx->gpr[3] = DeleteNandEntry(path);
-            if (std::getenv("MH3_TRACE_ERRORS"))
-                std::cerr << "MH3 NAND delete: " << path << " -> " << int32_t(ctx->gpr[3]) << '\n';
             return;
         }
         if (command == 8) {
@@ -662,8 +660,6 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
             }
             const auto from = GuestPath(input), to = GuestPath(input + 64);
             ctx->gpr[3] = RenameNandEntry(from, to);
-            if (std::getenv("MH3_TRACE_ERRORS"))
-                std::cerr << "MH3 NAND rename: " << from << " -> " << to << ": " << int32_t(ctx->gpr[3]) << '\n';
             return;
         }
         if (command == 3 || command == 9 || command == 5) {
@@ -689,8 +685,6 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
                     CloseNandPath(fd);
             } else
                 result = CreateNandEntry(path, command == 3, metadata);
-            if (std::getenv("MH3_TRACE_ERRORS"))
-                std::cerr << "MH3 NAND command " << command << ": " << path << " -> " << result << '\n';
             ctx->gpr[3] = result;
             return;
         }

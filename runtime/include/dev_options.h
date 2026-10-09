@@ -164,6 +164,8 @@ inline void ReportRetiredVariables() {
         {"MH3_TICK_SURVEY", nullptr},
         {"MH3_STEP_LOG", nullptr},
         {"MH3_STEP_LOG_WORDS", nullptr},
+        {"MH3_SLOW_PATH_TRACE", nullptr},
+        {"MH3_AUDIO_TRACE", nullptr},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))

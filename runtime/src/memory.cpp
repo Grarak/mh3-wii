@@ -11,11 +11,6 @@
 #include <cstdlib>
 #include <sstream>
 #include <type_traits>
-#ifdef MH3_DEVELOPMENT
-#include "slow_path_trace.h"
-#endif
-
-extern "C" void DumpHostStackTraceForRuntimeHelper();
 
 namespace {
 uint32_t sensorBarOutput = 0;
@@ -25,10 +20,6 @@ std::string accessMessage(uint32_t address, std::string_view reason) {
     return message.str();
 }
 [[noreturn]] void Unmapped(uint32_t address, size_t length) {
-    // Capture before stack unwinding; this avoids requiring an interactive
-    // debugger authorization for routine hardware-service bring-up.
-    if (std::getenv("MH3_TRACE_ERRORS"))
-        DumpHostStackTraceForRuntimeHelper();
     throw Memory::AccessViolation(address, length, "Unmapped RAM or unimplemented MMIO");
 }
 bool IsSensorBar(uint32_t address) {
@@ -36,19 +27,8 @@ bool IsSensorBar(uint32_t address) {
 }
 } // namespace
 
-#ifdef MH3_DEVELOPMENT
-// MH3_SLOW_PATH_TRACE=file: every hardware access is recorded against the
-// translated function it returns to.
-#define HWTRACE(a, size, isWrite)                                                                                                                                                                      \
-    if (MemoryInline::g_slowPathTrace) [[unlikely]]                                                                                                                                                    \
-        MemoryInline::RecordSlowPathAccess(a, size, isWrite, __builtin_return_address(0));
-#else
-#define HWTRACE(a, size, isWrite)
-#endif
-
 template <typename T>
 T HardwareRead(uint32_t address) {
-    HWTRACE(address, sizeof(T), false)
     if constexpr (std::is_same_v<T, uint32_t>) {
         uint32_t efbValue;
         if (ReadEfbColor32(address, efbValue))
@@ -72,7 +52,6 @@ T HardwareRead(uint32_t address) {
 
 template <typename T>
 void HardwareWrite(uint32_t address, T value) {
-    HWTRACE(address, sizeof(T), true)
     if constexpr (std::is_same_v<T, uint32_t>) {
         if (WriteEfbColor32(address, value))
             return;
@@ -103,7 +82,6 @@ void HardwareWrite(uint32_t address, T value) {
         return;
     Unmapped(address, sizeof(T));
 }
-#undef HWTRACE
 
 template uint8_t HardwareRead<uint8_t>(uint32_t);
 template uint16_t HardwareRead<uint16_t>(uint32_t);
