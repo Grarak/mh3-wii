@@ -68,10 +68,13 @@ const RawDispatchRecord* fieldObjectMemo = nullptr;
 // per-step counters in a scene (docs/variable-step.md). Every 900 ticks of
 // game time, per callback and kind (the last an object had), how many objects
 // ended and their mean life in ticks, to compare with MH3_VARIABLE_STEP=0.
+// MH3_TRACE=effect-states: each object's start, state (+5) changes and end
+// with its age in ticks and the demo flag (+7), to see what ends a life.
 struct EffectLife {
     uint32_t callback;
     uint16_t kind;
     double born;
+    uint8_t state;
 };
 
 struct EffectLives {
@@ -80,6 +83,7 @@ struct EffectLives {
 };
 
 void TraceEffectObjects() {
+    static const bool states = TraceOptions().Has("effect-states");
     static std::unordered_set<uint64_t> seen;
     static std::unordered_map<uint32_t, EffectLife> live;
     static std::map<uint64_t, EffectLives> lives;
@@ -92,9 +96,16 @@ void TraceEffectObjects() {
         const bool on = MemoryInline::FlatRead8(entry) != 0;
         const uint32_t callback = on ? Read32(entry + 0x34) : 0;
         const uint16_t kind = uint16_t(MemoryInline::FlatRead8(entry + 2) << 8 | MemoryInline::FlatRead8(entry + 3));
+        const uint8_t state = on ? MemoryInline::FlatRead8(entry + 5) : 0;
         auto it = live.find(entry);
 
-        if (it != live.end() && it->second.callback != callback) {
+        // A slot released and taken again within one step keeps its callback:
+        // the new object starts over at state 0.
+        if (it != live.end() && (it->second.callback != callback || (state == 0 && it->second.state != 0))) {
+            if (states)
+                std::fprintf(stderr, "MH3 effect state: %08x kind %u entry %d end at %.2f ticks, age %.2f\n", it->second.callback, unsigned(it->second.kind >> 8), int(i), now,
+                             now - it->second.born);
+
             EffectLives& l = lives[uint64_t(it->second.callback) << 16 | it->second.kind];
             ++l.ended;
             l.ticks += now - it->second.born;
@@ -105,10 +116,16 @@ void TraceEffectObjects() {
         if (!on)
             continue;
 
-        if (it == live.end())
-            live.emplace(entry, EffectLife{callback, kind, now});
-        else
+        if (states && (it == live.end() || it->second.state != state))
+            std::fprintf(stderr, "MH3 effect state: %08x kind %u entry %d state %u at %.2f ticks, age %.2f, demo %u\n", callback, unsigned(kind >> 8), int(i), state, now,
+                         it == live.end() ? 0.0 : now - it->second.born, MemoryInline::FlatRead8(entry + 7));
+
+        if (it == live.end()) {
+            live.emplace(entry, EffectLife{callback, kind, now, state});
+        } else {
             it->second.kind = kind;
+            it->second.state = state;
+        }
 
         if (seen.insert(uint64_t(callback) << 16 | kind).second)
             std::fprintf(stderr, "MH3 effect object: callback %08x kind %u type %u state %u index %d tick %u\n", callback, kind >> 8, kind & 0xFF,
@@ -128,7 +145,7 @@ void TraceEffectObjects() {
 
 void EffectObjectsUpdate(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
-    static const bool traced = TraceOptions().Has("effect-objects");
+    static const bool traced = TraceOptions().Has("effect-objects") || TraceOptions().Has("effect-states");
 #endif
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};

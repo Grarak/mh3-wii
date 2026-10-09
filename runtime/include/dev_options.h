@@ -280,12 +280,13 @@ inline const DevOptions& ProfileOptions() {
 // tick of game time the live particles of each emitter resource
 // (effect_step.cpp), each loading-screen frame's progress counters
 // (load_progress.cpp), each effect object update callback and kind the
-// first time it runs (field_lists.cpp), each monster hold's camera
+// first time it runs and, with effect-states, each object's state changes
+// (field_lists.cpp), each monster hold's camera
 // length and count, how long each camera blend ran and, while the camera
 // turns, its yaw, pitch, eye and target each step (field_camera.cpp), and each
 // second's flips with their frames' game time (graphics_host.cpp, GXM).
 inline const DevOptions& TraceOptions() {
-    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects", "bind-camera", "camera-blends", "camera-path", "flips"});
+    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects", "effect-states", "bind-camera", "camera-blends", "camera-path", "flips"});
     return options;
 }
 
