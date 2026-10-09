@@ -182,10 +182,11 @@ Device::Device() {
   // Query remaining CDRAM after its parameter-buffer allocation below.
   init.flags = SCE_GXM_INITIALIZE_FLAG_DEFAULT;
 
-  // Admission allows two pending flips. Keep one extra internal queue entry:
-  // the callback publishes completion just before libgxm retires its entry,
-  // so this headroom prevents even that bookkeeping race from blocking AddEntry.
-  init.displayQueueMaxPendingCount = aurora::GpuFrameRing::BufferCount;
+  // Admission allows three pending flips (gpu_display_queue_full). Keep one
+  // extra internal queue entry: the callback publishes completion just before
+  // libgxm retires its entry, so this headroom prevents even that bookkeeping
+  // race from blocking AddEntry. It is a queue entry, not a fourth buffer.
+  init.displayQueueMaxPendingCount = aurora::GpuFrameRing::BufferCount + 1;
   init.displayQueueCallback = display_callback;
   init.displayQueueCallbackDataSize = sizeof(DisplayData);
   init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;

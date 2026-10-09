@@ -35,8 +35,11 @@ private:
 };
 
 inline bool gpu_display_queue_full(uint32_t queued, uint32_t completed) noexcept {
-  // One buffer may be scanned out while two flips are pending. Poll before
-  // draw preparation to avoid blocking in sceGxmDisplayQueueAddEntry.
-  return uint32_t(queued - completed) >= GpuFrameRing::BufferCount - 1;
+  // Full at the queue's capacity (three pending flips): polled before draw
+  // preparation, so sceGxmDisplayQueueAddEntry never blocks. A frame begun
+  // with two flips pending renders into the buffer still scanned out: its
+  // scene waits on the GPU for that buffer's sync object, not the CPU, and
+  // the CPU records it meanwhile.
+  return uint32_t(queued - completed) >= GpuFrameRing::BufferCount;
 }
 } // namespace aurora

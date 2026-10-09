@@ -139,15 +139,17 @@ int main() {
   retired = 5;
   assert(!ring.pending());
 
-  // Protect the display queue too: at two pending flips, reject before any
-  // draw or queue API call. A completed callback admits the next frame.
+  // Protect the display queue too: at three pending flips (its capacity),
+  // reject before any draw or queue API call. A completed callback admits
+  // the next frame.
   assert(!aurora::gpu_display_queue_full(0, 0));
   assert(!aurora::gpu_display_queue_full(1, 0));
-  assert(aurora::gpu_display_queue_full(2, 0));
+  assert(!aurora::gpu_display_queue_full(2, 0));
   assert(aurora::gpu_display_queue_full(3, 0));
-  assert(!aurora::gpu_display_queue_full(2, 1));
-  assert(aurora::gpu_display_queue_full(0, std::numeric_limits<uint32_t>::max() - 1));
-  assert(!aurora::gpu_display_queue_full(0, std::numeric_limits<uint32_t>::max()));
+  assert(aurora::gpu_display_queue_full(4, 0));
+  assert(!aurora::gpu_display_queue_full(3, 1));
+  assert(aurora::gpu_display_queue_full(1, std::numeric_limits<uint32_t>::max() - 1));
+  assert(!aurora::gpu_display_queue_full(0, std::numeric_limits<uint32_t>::max() - 1));
   frame.end();
   assert(frame.drawing_allowed());
   std::puts("Native frameskip: logic advances, one poll, latched skips, triple buffer leases, immutable busy payloads, queue capacity and serial wrap passed");
