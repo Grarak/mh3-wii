@@ -300,6 +300,7 @@ target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
 target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
 target_sources(MH3 PRIVATE src/native_display_utilities.cpp)
+target_sources(MH3 PRIVATE src/lens_flare.cpp)
 target_sources(MH3 PRIVATE src/native_thp.cpp native/mh3_thp_video.c)
 target_sources(MH3 PRIVATE native/mh3_draw_state.c)
 target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c

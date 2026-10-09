@@ -152,7 +152,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,materials][,draw-writes][,particles][,loading][,lights]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,materials][,draw-writes][,particles][,loading][,lights][,sun][,glare]`
 
 | Item | Effect |
 | --- | --- |
@@ -170,6 +170,8 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 | `particles` | every third tick of game time, an `MH3 particles` line per particle manager with live particles (its emitter resource, the count, their mean age and life in ticks, the summed alpha of the first colour) and one with the emitter emissions, child curves (each run or gated off between ticks) and queued child emissions since the last; and an `MH3 effect emitter` line for every emitter the game looks up by name (each effect it creates: the name, the emitter data and the return addresses of five frames up). Compares effects at fixed and variable steps (`MH3_VARIABLE_STEP=0`) |
 | `loading` | each loading screen: every file the loader queues as it is first seen, and every drawn frame an `MH3 loading` line with the loader state, the queued files and bytes, the disc bytes read, in flight and learned, the conversions done and queued, and the progress bar's share ([loading progress](loading-progress.md)) |
 | `lights` | each LightObj of a LightSetting (ModelLightSetting 0x8008551C: flags, the words at +4 and +8 (the colour), the floats from +12) and its ambient colour when they changed since the last import, the first change and every 30th per light, with the caller and the step counter (`MH3 light` lines, model_scene_state.cpp): which lights the game animates |
+| `sun` | the sun's lens flare (LensFlareUpdate 0x80102008, lens_flare.cpp): each switch between updates that run and updates that return early (the game skips them with the camera below y 0), with the camera's height, the sun's visibility, the parts' visibility and the glare fade's state; a summary every 1800 updates (`MH3 sun` lines) |
+| `glare` | the glare (bloom) settings at each draw (GlareFilter::draw 0x80056F88, native_scene_feedback.cpp): enabled, whether the scene was captured, the composite colour and blend factors, levels, shift, thresholds, darken/brighten; a value that leaves its neighbours' range for one draw prints the three draws, and every 1800 draws each value's range (`MH3 glare` lines): one-frame bloom flashes |
 
 ### `MH3_MONSTER_CONTROL`: drive a monster
 

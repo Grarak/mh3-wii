@@ -15,6 +15,11 @@
 #include <stdexcept>
 #include <array>
 #include <utility>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#include <algorithm>
+#include <cstdio>
+#endif
 
 namespace {
 using namespace MemoryInline;
@@ -408,6 +413,69 @@ mh3_scene_cpu_ops CpuOps(CpuContext *cpu) {
 } // namespace
 
 #ifdef MH3_DEVELOPMENT
+namespace {
+// MH3_TRACE=glare: the glare's settings at each draw (GlareFilter::draw), to
+// find a frame whose bloom differs from the frames around it. A value that
+// leaves its neighbours' range for one frame prints the three frames; every
+// 1800 draws the range of each value prints.
+void TraceGlare(uint32_t self, bool captures) {
+    static const bool traced = TraceOptions().Has("glare");
+
+    if (!traced)
+        return;
+
+    constexpr int kValues = 14;
+    static const char *const names[kValues] = {"enabled", "captures", "red", "green", "blue", "src", "dst", "levels", "shift", "low", "high", "darken", "brighten", "seq"};
+    static std::array<std::array<double, kValues>, 3> last{};
+    static std::array<double, kValues> low{}, high{};
+    static uint32_t draws = 0;
+    const std::array<double, kValues> now = {double(FlatRead8(self)), double(captures), double(FlatRead8(self + 2)), double(FlatRead8(self + 3)), double(FlatRead8(self + 4)),
+                                             double(FlatRead8(self + 5)), double(FlatRead8(self + 6)), double(FlatRead32(self + 0x10)), double(FlatRead32(self + 0x18)),
+                                             double(FlatRead32(self + 0x28)), double(FlatRead32(self + 0x2c)), double(FlatReadFloat32(self + 0x30)), double(FlatReadFloat32(self + 0x34)), double(draws)};
+    last = {last[1], last[2], now};
+
+    if (draws % 1800 == 0)
+        low = high = now;
+
+    for (int i = 0; i < kValues - 1; i++) {
+        low[i] = std::min(low[i], now[i]);
+        high[i] = std::max(high[i], now[i]);
+    }
+
+    ++draws;
+
+    for (int i = 0; draws >= 3 && i < kValues - 1; i++) {
+        const double before = last[0][i], spike = last[1][i], after = last[2][i];
+
+        if (spike == before || spike == after || std::fabs(spike - (before + after) / 2) <= 4 * std::fabs(after - before))
+            continue;
+
+        std::fprintf(stderr, "MH3 glare: draw %u's %s %g between %g and %g;", draws - 2, names[i], spike, before, after);
+
+        for (const auto &frame : last) {
+            std::fprintf(stderr, " [");
+
+            for (int j = 0; j < kValues - 1; j++)
+                std::fprintf(stderr, "%s%g", j ? " " : "", frame[j]);
+
+            std::fprintf(stderr, "]");
+        }
+
+        std::fprintf(stderr, "\n");
+        break;
+    }
+
+    if (draws % 1800 == 0) {
+        std::fprintf(stderr, "MH3 glare: %u draws; ranges", draws);
+
+        for (int i = 0; i < kValues - 1; i++)
+            std::fprintf(stderr, " %s %g..%g", names[i], low[i], high[i]);
+
+        std::fprintf(stderr, "\n");
+    }
+}
+} // namespace
+
 // The MH3 feedback temporal line (graphics_host.cpp): enabled calls, those
 // that drew the previous frame's image back, and the last call's settings.
 TemporalFeedbackStatistics temporalStatistics;
@@ -520,7 +588,9 @@ extern "C" void MH3_NativeGlareDraw(CpuContext *cpu) {
 
     if (captures)
         SceneCapture(0x8066d178, 0);
-
+#ifdef MH3_DEVELOPMENT
+    TraceGlare(self, captures);
+#endif
     if (!FlatRead8(self))
         return;
 
