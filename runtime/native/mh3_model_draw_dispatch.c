@@ -438,23 +438,27 @@ mh3_res_status mh3_model_scene_task(const mh3_model_scene_draw_ops *ops, mh3_res
     }
     return MH3_RES_OK;
 }
-static mh3_res_status scene_callback(const mh3_model_scene_draw_ops *ops, mh3_res_span owner, uint32_t identity, unsigned mask, uint32_t argument, uint32_t options) {
+/* 8007B9A4 (opaque: flag 0x10, slot 0x18) and 8007B948 (translucent: flag
+ * 0x20, slot 0x1c) gate the owner callback on its live flags and mask. */
+static mh3_res_status scene_callback(const mh3_model_scene_draw_ops *ops, mh3_res_span owner, uint32_t identity, int translucent, unsigned mask, uint32_t argument, uint32_t options) {
     if (!fits(owner, 0xd4, 8))
         return MH3_RES_RANGE;
     const uint32_t callback = word(owner.data + 0xd4);
-    if (callback && (half(owner.data + 0xda) & 0x20u) && (owner.data[0xd8] & mask)) {
+    if (callback && (half(owner.data + 0xda) & (translucent ? 0x20u : 0x10u)) && (owner.data[0xd8] & mask)) {
         if (!ops->callback)
             return MH3_RES_INVALID;
-        ops->callback(ops->user, callback, mask, identity, argument, options);
+        ops->callback(ops->user, callback, translucent ? 0x1c : 0x18, mask, identity, argument, options);
     }
     return MH3_RES_OK;
 }
-mh3_res_status mh3_model_scene_xlu(const mh3_model_scene_draw_ops *ops, mh3_res_span owner, uint32_t identity, uint32_t argument, uint32_t options_pointer) {
+/* 8007DC40 (opaque) and 8007DD1C (translucent) differ in their callback gate,
+ * the bytecode stream and the pipeline pass they feed. */
+static mh3_res_status scene_pass(const mh3_model_scene_draw_ops *ops, mh3_res_span owner, uint32_t identity, uint32_t argument, uint32_t options_pointer, int translucent) {
     uint32_t options, sources[3];
     mh3_res_status status;
-    if (!ops || !ops->source || !ops->draw || !fits(owner, 0x114, 8) || identity > UINT32_MAX - 0x144)
+    if (!ops || !ops->source || !ops->draw || !fits(owner, 0x110, 8) || identity > UINT32_MAX - 0x144)
         return MH3_RES_INVALID;
-    status = scene_callback(ops, owner, identity, 1, argument, options_pointer);
+    status = scene_callback(ops, owner, identity, translucent, 1, argument, options_pointer);
     if (status)
         return status;
     if (options_pointer) {
@@ -468,12 +472,18 @@ mh3_res_status mh3_model_scene_xlu(const mh3_model_scene_draw_ops *ops, mh3_res_
     }
     if (!fits(owner, 0xe8, 4))
         return MH3_RES_RANGE;
-    const uint32_t model = word(owner.data + 0xe8), stream = word(owner.data + 0x114);
+    const uint32_t model = word(owner.data + 0xe8), stream = word(owner.data + (translucent ? 0x114 : 0x110));
     sources[2] = ops->source(ops->user, identity, 2);
     sources[1] = ops->source(ops->user, identity, 1);
     sources[0] = ops->source(ops->user, identity, 0);
-    status = ops->draw(ops->user, model, sources, stream, identity + 0x144, options);
+    status = ops->draw(ops->user, model, sources, translucent ? 0 : stream, translucent ? stream : 0, identity + 0x144, options);
     if (status)
         return status;
-    return scene_callback(ops, owner, identity, 4, argument, options_pointer);
+    return scene_callback(ops, owner, identity, translucent, 4, argument, options_pointer);
+}
+mh3_res_status mh3_model_scene_opa(const mh3_model_scene_draw_ops *ops, mh3_res_span owner, uint32_t identity, uint32_t argument, uint32_t options_pointer) {
+    return scene_pass(ops, owner, identity, argument, options_pointer, 0);
+}
+mh3_res_status mh3_model_scene_xlu(const mh3_model_scene_draw_ops *ops, mh3_res_span owner, uint32_t identity, uint32_t argument, uint32_t options_pointer) {
+    return scene_pass(ops, owner, identity, argument, options_pointer, 1);
 }

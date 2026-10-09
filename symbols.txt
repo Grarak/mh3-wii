@@ -692,6 +692,10 @@
 80071cac G3dCalcView
 800711fc G3dCalcViewLc
 80078b00 G3dDrawOpaXlu
+8007dc40 ScnMdlDrawOpa
+8007dd1c ScnMdlDrawXlu
+8007b9a4 ScnMdlDrawOpaCallback
+8007b948 ScnMdlDrawXluCallback
 800d7814 WorldMtxNodeStepMayaScale
 800871c0 TexSrtMtxSetup
 # ResDic::operator[] and the ResCommon reference check (panics on a bad pointer).

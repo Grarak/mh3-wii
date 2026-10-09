@@ -254,7 +254,7 @@ void PipelineRun(CpuContext* cpu, uint32_t reference, const uint32_t sources[3],
 struct Scene {
     GuestCall call;
     uint32_t options_word;
-    mh3_model_scene_draw_ops Ops() { return {this, Task, Handler, Virtual, Callback, Options, Source, DrawXlu}; }
+    mh3_model_scene_draw_ops Ops() { return {this, Task, Handler, Virtual, Callback, Options, Source, DrawPass}; }
     static void Task(void* user, uint32_t owner, unsigned task, uint32_t* options) {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
@@ -288,11 +288,9 @@ struct Scene {
             s.call.Call<0x8007F90C>({owner, argument, options});
             break;
         case 6:
-            s.call.Call<0x8007DC40>({owner, argument, options});
-            break;
         case 7: {
             auto ops = s.Ops();
-            Checked(mh3_model_scene_xlu(&ops, Bytes(owner, 0x148), owner, argument, options));
+            Checked((task == 6 ? mh3_model_scene_opa : mh3_model_scene_xlu)(&ops, Bytes(owner, 0x148), owner, argument, options));
             break;
         }
         case 8:
@@ -313,9 +311,13 @@ struct Scene {
         else
             throw std::runtime_error("Unexpected scene virtual slot");
     }
-    static void Callback(void* user, uint32_t callback, unsigned mask, uint32_t owner, uint32_t argument, uint32_t options) {
-        MH3_CENSUS(census.Add("callback mask " + std::to_string(mask) + " class " + Census::Hex(Memory::Read32(callback)) + " fn " + Census::Hex(Memory::Read32(Memory::Read32(callback) + 0x1c))));
-        static_cast<Scene*>(user)->call.Virtual<0x1c>(callback, {mask, owner, argument, options});
+    static void Callback(void* user, uint32_t callback, unsigned slot, unsigned mask, uint32_t owner, uint32_t argument, uint32_t options) {
+        MH3_CENSUS(census.Add("callback mask " + std::to_string(mask) + " class " + Census::Hex(Memory::Read32(callback)) + " fn " + Census::Hex(Memory::Read32(Memory::Read32(callback) + slot))));
+        auto& call = static_cast<Scene*>(user)->call;
+        if (slot == 0x18)
+            call.Virtual<0x18>(callback, {mask, owner, argument, options});
+        else
+            call.Virtual<0x1c>(callback, {mask, owner, argument, options});
     }
     static uint32_t Options(void*, uint32_t pointer) { return Memory::Read32(pointer); }
     static uint32_t Source(void* user, uint32_t owner, unsigned kind) {
@@ -331,18 +333,18 @@ struct Scene {
             throw std::runtime_error("Unexpected model source kind");
         }
     }
-    static mh3_res_status DrawXlu(void* user, uint32_t resource, const uint32_t sources[3], uint32_t xlu, uint32_t replacement, uint32_t options) {
+    static mh3_res_status DrawPass(void* user, uint32_t resource, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
         if (census.every) {
             census.models.insert(resource);
-            census.Add(std::string("xlu sources ") + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" +
+            census.Add(std::string(opaque ? "opa" : "xlu") + " sources " + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" +
                        Census::Hex(Memory::Read32(replacement + 4)));
         }
 #endif
         GuestFrame frame(s.call.cpu, 0x20);
         Memory::Write32(frame[0x10], resource);
-        PipelineRun(s.call.cpu, frame[0x10], sources, 0, xlu, replacement, options);
+        PipelineRun(s.call.cpu, frame[0x10], sources, opaque, xlu, replacement, options);
         return MH3_RES_OK;
     }
 };
@@ -375,6 +377,13 @@ extern "C" void MH3_ModelSceneXlu(CpuContext* cpu) {
     Checked(mh3_model_scene_xlu(&ops, Bytes(frame.Arg(3), 0x148), frame.Arg(3), frame.Arg(4), frame.Arg(5)));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007DD1C, MH3_ModelSceneXlu, "ModelSceneXlu");
+extern "C" void MH3_ModelSceneOpa(CpuContext* cpu) {
+    GuestFrame frame(cpu, 0x20);
+    Scene s{{cpu}, frame[0x10]};
+    auto ops = s.Ops();
+    Checked(mh3_model_scene_opa(&ops, Bytes(frame.Arg(3), 0x148), frame.Arg(3), frame.Arg(4), frame.Arg(5)));
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8007DC40, MH3_ModelSceneOpa, "ModelSceneOpa");
 extern "C" void MH3_ModelDrawPipeline(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x20);
     const uint32_t sources[3] = {frame.Arg(4), frame.Arg(5), frame.Arg(6)};

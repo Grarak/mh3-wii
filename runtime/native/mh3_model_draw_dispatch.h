@@ -66,14 +66,17 @@ typedef struct {
     void (*draw_task)(void *, uint32_t, unsigned, uint32_t *);
     void (*handler)(void *, uint32_t, uint32_t, uint32_t, uint32_t);
     void (*virtual_handler)(void *, uint32_t, unsigned, uint32_t);
-    void (*callback)(void *, uint32_t, unsigned, uint32_t, uint32_t, uint32_t);
+    /* callback object, vtable slot, mask, owner, argument, options */
+    void (*callback)(void *, uint32_t, unsigned, unsigned, uint32_t, uint32_t, uint32_t);
     uint32_t (*options)(void *, uint32_t);
     uint32_t (*source)(void *, uint32_t, unsigned);
-    mh3_res_status (*draw)(void *, uint32_t, const uint32_t[3], uint32_t, uint32_t, uint32_t);
+    /* model, sources, opaque stream, translucent stream, replacement, options */
+    mh3_res_status (*draw)(void *, uint32_t, const uint32_t[3], uint32_t, uint32_t, uint32_t, uint32_t);
 } mh3_model_scene_draw_ops;
 mh3_res_status mh3_model_scene_options(mh3_res_span, uint32_t *);
 mh3_res_status mh3_model_scene_draw(const mh3_model_scene_draw_ops *, mh3_res_span, uint32_t, uint32_t);
 mh3_res_status mh3_model_scene_task(const mh3_model_scene_draw_ops *, mh3_res_span, uint32_t, uint32_t, uint32_t, uint32_t);
+mh3_res_status mh3_model_scene_opa(const mh3_model_scene_draw_ops *, mh3_res_span, uint32_t, uint32_t, uint32_t);
 mh3_res_status mh3_model_scene_xlu(const mh3_model_scene_draw_ops *, mh3_res_span, uint32_t, uint32_t, uint32_t);
 #ifdef __cplusplus
 }
