@@ -5,6 +5,9 @@
 #include <psp2/display.h>
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +18,9 @@ extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSur
 
 namespace aurora::gxm {
 namespace {
+std::atomic<volatile unsigned*> g_frameNotification{nullptr};
+std::atomic<uint32_t> g_lastDisplayScene{0};
+std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 struct DisplayData { void* address; bool vsync; };
 void display_callback(const void* data) {
   aurora::pin_current_thread(aurora::ThreadRole::Worker);
@@ -72,6 +78,13 @@ Device::Device(bool vsync) : m_vsync(vsync) {
     razor_initialize();
     check(sceGxmInitialize(&init), "initialize");
     m_initialized = true;
+    m_notification = sceGxmGetNotificationRegion();
+    if (!m_notification) throw std::runtime_error("GXM notification region unavailable");
+    // No scene has been submitted yet. Initialize our owned retirement word
+    // even if the GXM notification region was retained from an earlier device.
+    *m_notification = m_sceneSerial;
+    g_lastDisplayScene.store(0, std::memory_order_relaxed);
+    g_frameNotification.store(m_notification, std::memory_order_release);
     m_memory.reserve(7);
     auto allocate = [&](unsigned bytes, MappedMemory::Kind kind, const char* name) -> MappedMemory& {
       m_memory.emplace_back(bytes, kind, name);
@@ -146,6 +159,7 @@ void Device::release() noexcept {
   m_arena.reset();
   m_memory.clear();
   std::free(m_host); m_host = nullptr;
+  g_frameNotification.store(nullptr, std::memory_order_release);
   if (m_initialized) sceGxmTerminate();
   razor_terminate();
   m_initialized = false;
@@ -176,13 +190,32 @@ void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* co
 }
 void Device::end() {
   if (!m_inScene) return;
-  check(sceGxmEndScene(m_context, nullptr, nullptr), "end scene");
+  const SceGxmNotification completion{m_notification, m_sceneSerial + 1};
+  check(sceGxmEndScene(m_context, nullptr, &completion), "end scene");
+  ++m_sceneSerial;
   m_inScene = false;
 }
-void Device::finish() { end(); sceGxmFinish(m_context); }
+std::array<uint64_t, 2> finish_wait_counters() noexcept {
+  return {g_finishMicros.load(std::memory_order_relaxed), g_finishCalls.load(std::memory_order_relaxed)};
+}
+void Device::finish() {
+  const auto started = std::chrono::steady_clock::now();
+  end(); sceGxmFinish(m_context);
+  const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
+  g_finishMicros.fetch_add(micros, std::memory_order_relaxed);
+  const auto call = g_finishCalls.fetch_add(1, std::memory_order_relaxed);
+  if (call < 32 && std::getenv("MH3_GXM_WAIT_TRACE"))
+    std::fprintf(stderr, "MH3 GXM Finish caller %p: %lld us, scene %u\n", __builtin_return_address(0), static_cast<long long>(micros), m_sceneSerial);
+}
 void Device::begin_display() { begin(Width, Height, &m_display[m_back], nullptr, m_sync[m_back]); }
+bool gpu_frame_pending() noexcept {
+  const auto* notification = g_frameNotification.load(std::memory_order_acquire);
+  const auto serial = g_lastDisplayScene.load(std::memory_order_acquire);
+  return notification && int32_t(*notification - serial) < 0;
+}
 void Device::flip() {
   end();
+  g_lastDisplayScene.store(m_sceneSerial, std::memory_order_release);
   check(sceGxmPadHeartbeat(&m_display[m_back], m_sync[m_back]), "display heartbeat");
   razor_frame();
   const DisplayData display{m_displayData[m_back], m_vsync};

@@ -120,6 +120,23 @@ static std::mutex g_stagingPoolMutex;
 static std::condition_variable g_stagingPoolCv;
 static std::vector<std::unique_ptr<StagingSet>> g_stagingPool;
 static std::unique_ptr<StagingSet> g_staging;
+#ifdef AURORA_GXM
+struct RetiredStagingSet {
+  SceGxmNotification fence;
+  std::unique_ptr<StagingSet> set;
+};
+// Protected by the pool mutex; GPU writes its uncached notification word.
+static std::vector<RetiredStagingSet> g_retiredStaging;
+static void reclaim_staging_sets_locked() {
+  for (auto it = g_retiredStaging.begin(); it != g_retiredStaging.end();) {
+    if (it->fence.address && int32_t(*it->fence.address - it->fence.value) < 0) { ++it; continue; }
+    auto set = std::move(it->set);
+    set->verts.clear(); set->uniforms.clear(); set->indices.clear(); set->storage.clear();
+    g_stagingPool.push_back(std::move(set));
+    it = g_retiredStaging.erase(it);
+  }
+}
+#endif
 static ByteBuffer& g_verts() noexcept { return g_staging->verts; }
 static ByteBuffer& g_uniforms() noexcept { return g_staging->uniforms; }
 static ByteBuffer& g_indices() noexcept { return g_staging->indices; }
@@ -158,10 +175,8 @@ struct RenderPass {
   uint32_t msaaSamples = 1;
 
   TextureHandle resolveTarget;
-  TextureHandle resolveSourceSnapshot;
   GXTexFmt resolveFormat = GX_TF_RGBA8;
   ClipRect resolveRect;
-  ClipRect resolveSnapshotRect;
   Vec4<float> resolveSourceRect;
   Range resolveUniformRange;
   std::array<u32, 3> resolveCopyFilterCoefficients{0, 64, 0};
@@ -184,7 +199,6 @@ struct RenderPass {
   bool resolveNeedsConversion = false;
   bool resolveNeedsShaderSampling = false;
   bool resolveLinearSampling = false;
-  bool snapshotColorResolveSource = false;
   std::vector<tex_palette_conv::ConvRequest> paletteConvs;
 };
 static std::vector<RenderPass> g_renderPasses;
@@ -268,11 +282,16 @@ static StagingSizes g_stagingCapacity = PhysicalStagingCapacity;
 static uint64_t g_stagingEpoch = 0;
 static uint64_t g_stagingSplitCount = 0;
 static StagingSizes g_stagingHighWater{};
-static std::atomic<uint64_t> g_stagingWaitMicros{}, g_recycleFinishMicros{};
-static std::atomic<uint64_t> g_stagingWaitCount{}, g_recycleFinishCount{};
+static std::atomic<uint64_t> g_stagingWaitMicros{};
+static std::atomic<uint64_t> g_stagingWaitCount{};
 std::array<uint64_t, 4> staging_wait_counters() noexcept {
-  return {g_stagingWaitMicros.load(std::memory_order_relaxed), g_recycleFinishMicros.load(std::memory_order_relaxed),
-          g_stagingWaitCount.load(std::memory_order_relaxed), g_recycleFinishCount.load(std::memory_order_relaxed)};
+#ifdef AURORA_GXM
+  const auto finish = gxm::finish_wait_counters();
+#else
+  const std::array<uint64_t, 2> finish{};
+#endif
+  return {g_stagingWaitMicros.load(std::memory_order_relaxed), finish[0],
+          g_stagingWaitCount.load(std::memory_order_relaxed), finish[1]};
 }
 
 StagingSizes staging_usage() noexcept {
@@ -321,35 +340,6 @@ static bool has_current_render_pass() noexcept { return g_currentRenderPass < g_
 static gl::TexturePtr g_offscreenColor;
 static gl::TexturePtr g_offscreenDepth;
 
-struct ResolveSourceSnapshotPool {
-  TextureHandle entry;
-};
-
-// Snapshot resources live in the same safe frame slots as the mapped staging buffers, and copies
-// within a frame are ordered, so one grow-only snapshot serves every resolve in that slot.
-static std::array<ResolveSourceSnapshotPool, FrameSlotCount> g_resolveSourceSnapshotPools;
-static size_t g_recordingSnapshotSlot = 0;
-
-static TextureHandle new_resolve_source_snapshot(Extent size) noexcept {
-  return std::make_shared<TextureRef>(
-      gl::create_texture(size.width, size.height, 1, gl::Format::RGBA8, "GX Copy Source Snapshot"), size,
-      gl::Format::RGBA8, 1, GX_TF_RGBA8);
-}
-
-static TextureHandle acquire_resolve_source_snapshot(uint32_t width, uint32_t height) noexcept {
-  auto& pool = g_resolveSourceSnapshotPools[g_recordingSnapshotSlot];
-  if (pool.entry && pool.entry->size.width >= width && pool.entry->size.height >= height) {
-    return pool.entry;
-  }
-  const Extent size{
-      std::max(width, pool.entry ? pool.entry->size.width : 0u),
-      std::max(height, pool.entry ? pool.entry->size.height : 0u),
-      1,
-  };
-  pool.entry = new_resolve_source_snapshot(size);
-  return pool.entry;
-}
-
 struct ResolveSamplingPlan {
   bool needsConversion = false;
   bool needsShaderSampling = false;
@@ -377,47 +367,6 @@ static ResolveSamplingPlan make_resolve_sampling_plan(const TextureHandle& targe
       .needsConversion = tex_copy_conv::needs_conversion(format),
       .needsShaderSampling = needsShaderSampling,
       .usesLinearSampling = halfScale || (needsShaderSampling && !copyFilterActive),
-  };
-}
-
-static ClipRect calculate_resolve_snapshot_rect(const Extent& targetSize,
-                                                const Vec4<float>& sourceRect,
-                                                const ResolveSamplingPlan& samplingPlan,
-                                                bool copyFilterActive) noexcept {
-  const ClipRect fullTarget{
-      .x = 0,
-      .y = 0,
-      .width = static_cast<int32_t>(targetSize.width),
-      .height = static_cast<int32_t>(targetSize.height),
-  };
-  // Shader-sampled and converted copies can feed effects that read outside the copy rectangle
-  // (MKW's DOF chain), so keep those full-target. Exact copies have a closed, crop-safe footprint.
-  if (samplingPlan.needsConversion ||
-      samplingPlan.needsShaderSampling ||
-      targetSize.width == 0 || targetSize.height == 0 ||
-      !std::isfinite(sourceRect.x()) || !std::isfinite(sourceRect.y()) ||
-      !std::isfinite(sourceRect.z()) || !std::isfinite(sourceRect.w()) ||
-      sourceRect.z() <= 0.0f || sourceRect.w() <= 0.0f) {
-    return fullTarget;
-  }
-
-  // Linear sampling can touch one neighbor on every edge. The vertical GX
-  // copy filter explicitly samples the previous and next rows.
-  const int32_t haloX = samplingPlan.usesLinearSampling ? 1 : 0;
-  const int32_t haloY = (samplingPlan.usesLinearSampling || copyFilterActive) ? 1 : 0;
-  const int32_t targetWidth = static_cast<int32_t>(targetSize.width);
-  const int32_t targetHeight = static_cast<int32_t>(targetSize.height);
-  const int32_t left = std::clamp(static_cast<int32_t>(std::floor(sourceRect.x())) - haloX, 0, targetWidth - 1);
-  const int32_t top = std::clamp(static_cast<int32_t>(std::floor(sourceRect.y())) - haloY, 0, targetHeight - 1);
-  const int32_t right = std::clamp(static_cast<int32_t>(std::ceil(sourceRect.x() + sourceRect.z())) + haloX,
-                                   left + 1, targetWidth);
-  const int32_t bottom = std::clamp(static_cast<int32_t>(std::ceil(sourceRect.y() + sourceRect.w())) + haloY,
-                                    top + 1, targetHeight);
-  return {
-      .x = left,
-      .y = top,
-      .width = right - left,
-      .height = bottom - top,
   };
 }
 
@@ -575,24 +524,11 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
   prevPass.resolveNeedsConversion = samplingPlan.needsConversion;
   prevPass.resolveNeedsShaderSampling = samplingPlan.needsShaderSampling;
   prevPass.resolveLinearSampling = samplingPlan.usesLinearSampling;
-  prevPass.snapshotColorResolveSource =
-      !gx::is_depth_format(resolveFormat) && (clearColor || clearAlpha || clearDepth);
-  Vec4<float> uniformSourceRect = sourceRect;
-  float srcW = static_cast<float>(prevPass.targetSize.width);
-  float srcH = static_cast<float>(prevPass.targetSize.height);
-  if (prevPass.snapshotColorResolveSource) {
-    prevPass.resolveSnapshotRect = calculate_resolve_snapshot_rect(
-        prevPass.targetSize, sourceRect, samplingPlan, prevPass.resolveCopyFilterActive);
-    prevPass.resolveSourceSnapshot = acquire_resolve_source_snapshot(
-        static_cast<uint32_t>(prevPass.resolveSnapshotRect.width),
-        static_cast<uint32_t>(prevPass.resolveSnapshotRect.height));
-    uniformSourceRect = {
-        sourceRect.x() - static_cast<float>(prevPass.resolveSnapshotRect.x),
-        sourceRect.y() - static_cast<float>(prevPass.resolveSnapshotRect.y),
-        sourceRect.z(), sourceRect.w()};
-    srcW = static_cast<float>(prevPass.resolveSourceSnapshot->size.width);
-    srcH = static_cast<float>(prevPass.resolveSourceSnapshot->size.height);
-  }
+  // The resolve samples this pass's EFB before the following pass clears it.
+  // A source snapshot adds a transfer and CPU wait without changing that order.
+  const Vec4<float>& uniformSourceRect = sourceRect;
+  const float srcW = static_cast<float>(prevPass.targetSize.width);
+  const float srcH = static_cast<float>(prevPass.targetSize.height);
   // GX's copy-clamp bits pin every vertical filter tap to the first or last source texel; without
   // it a filtered copy at internal resolution samples an unrelated EFB row as a visible border.
   const float clampTopPixels = clampTop ? uniformSourceRect.y() : 0.0f;
@@ -814,16 +750,29 @@ static void release_staging_set(std::unique_ptr<StagingSet> set) noexcept {
   g_stagingPoolCv.notify_one();
 }
 
-// Blocks until the render thread has uploaded an older batch and returned its set.
+// Wait for a reusable slot. GXM releases a used slot after its last GPU scene;
+// GLES releases it after the render thread has uploaded the batch.
 static void acquire_staging_set() {
   if (g_staging) {
     return;
   }
   ZoneScopedN("Wait for staging set");
   std::unique_lock lock(g_stagingPoolMutex);
+#ifdef AURORA_GXM
+  reclaim_staging_sets_locked();
+#endif
   if (g_stagingPool.empty()) {
     const auto started = std::chrono::steady_clock::now();
+#ifdef AURORA_GXM
+    // GPU completion does not signal a CPU condition variable. Poll only when
+    // every slot is occupied, without a global context finish.
+    while (g_stagingPool.empty()) {
+      g_stagingPoolCv.wait_for(lock, std::chrono::milliseconds(1));
+      reclaim_staging_sets_locked();
+    }
+#else
     g_stagingPoolCv.wait(lock, [] { return !g_stagingPool.empty(); });
+#endif
     const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
     g_stagingWaitMicros.fetch_add(micros, std::memory_order_relaxed);
     g_stagingWaitCount.fetch_add(1, std::memory_order_relaxed);
@@ -916,6 +865,7 @@ void shutdown() {
   gl::finish();
 #ifdef AURORA_GXM
   gl::call([] { g_gpu.active.reset(); });
+  { std::lock_guard lock(g_stagingPoolMutex); g_retiredStaging.clear(); }
 #endif
   g_cachedBindGroups.clear();
   g_retiredBindGroups.clear();
@@ -923,9 +873,6 @@ void shutdown() {
   {
     std::lock_guard lock(g_stagingPoolMutex);
     g_stagingPool.clear();
-  }
-  for (auto& pool : g_resolveSourceSnapshotPools) {
-    pool.entry.reset();
   }
   discard_suspended_efb_pass();
   g_renderPasses.clear();
@@ -951,7 +898,6 @@ static bool begin_frame_impl(bool clearEfb, bool capacityResume = false) {
   ZoneScoped;
   acquire_staging_set();
   ++g_stagingEpoch;
-  g_recordingSnapshotSlot = currentStagingBuffer;
 
   g_drawCallCount = 0;
   g_mergedDrawCallCount = 0;
@@ -995,7 +941,12 @@ void set_frameskip(bool enabled) noexcept { g_frameskip = enabled; }
 void require_frame_render() noexcept { g_mustRender = true; }
 bool frame_skipped() noexcept {
   if (g_skipDecision < 0) {
-    g_skipDecision = g_frameskip && !g_mustRender && g_framesInFlight.load(std::memory_order_acquire) > 0;
+    const bool pending = g_framesInFlight.load(std::memory_order_acquire) > 0
+#ifdef AURORA_GXM
+                         || gxm::gpu_frame_pending()
+#endif
+                         ;
+    g_skipDecision = g_frameskip && !g_mustRender && pending;
   }
   return g_skipDecision == 1;
 }
@@ -1059,15 +1010,15 @@ static void end_batch_impl(bool advanceFrame) {
                         g_indices().size(), g_storage().size());
     gl::post([set = std::move(g_staging)]() mutable {
 #ifdef AURORA_GXM
-      // A queued scene still reads the previous slot. Synchronize before
-      // recycling, then retain this slot across all interpolation replays.
-      const auto finishStarted = std::chrono::steady_clock::now();
-      gl::finish();
-      const auto finishMicros = std::chrono::duration_cast<std::chrono::microseconds>(
-          std::chrono::steady_clock::now() - finishStarted).count();
-      g_recycleFinishMicros.fetch_add(finishMicros, std::memory_order_relaxed);
-      g_recycleFinishCount.fetch_add(1, std::memory_order_relaxed);
-      if (g_gpu.active) release_staging_set(std::move(g_gpu.active));
+      // End the last scene using the previous slot and retain its memory until
+      // the GPU notification completes. No sceGxmFinish on batch rotation.
+      const auto fence = gxm::draw_memory_fence();
+      if (g_gpu.active) {
+        std::lock_guard lock(g_stagingPoolMutex);
+        g_retiredStaging.push_back({fence, std::move(g_gpu.active)});
+        reclaim_staging_sets_locked();
+        g_stagingPoolCv.notify_one();
+      }
       upload_batch(*set);
       g_gpu.active = std::move(set);
 #else
@@ -1216,12 +1167,6 @@ static const char* render_pass_label(u32 index) noexcept {
 static void render_pass_impl(const std::vector<RenderPass>& passes, u32 idx, int32_t interpolatedFrame,
                              DebugFrameData& debugFrame);
 
-// Render thread: copy a rectangle of `source` (level 0) into `dest` at the given offset.
-static void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY, int32_t dstX, int32_t dstY,
-                                int32_t width, int32_t height) {
-  gl::copy_texture_region(source, dest, srcX, srcY, dstX, dstY, width, height);
-}
-
 static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpolatedFrame, bool finalize,
                         DebugFrameData& debugFrame, const depth_peek::FrameMapping& depthMapping,
                         bool skipDraws = false) {
@@ -1276,16 +1221,6 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
     if (passInfo.resolveTarget) {
       const bool isDepth = gx::is_depth_format(passInfo.resolveFormat);
       gl::TexturePtr resolveSource = isDepth ? passInfo.depth : passInfo.color;
-      int32_t sourceOffsetX = 0;
-      int32_t sourceOffsetY = 0;
-      if (passInfo.snapshotColorResolveSource && passInfo.resolveSourceSnapshot) {
-        copy_texture_region(passInfo.color->gl(), passInfo.resolveSourceSnapshot->texture->gl(),
-                            passInfo.resolveSnapshotRect.x, passInfo.resolveSnapshotRect.y, 0, 0,
-                            passInfo.resolveSnapshotRect.width, passInfo.resolveSnapshotRect.height);
-        resolveSource = passInfo.resolveSourceSnapshot->texture;
-        sourceOffsetX = passInfo.resolveSnapshotRect.x;
-        sourceOffsetY = passInfo.resolveSnapshotRect.y;
-      }
       const tex_copy_conv::ConvRequest convReq{
           .fmt = passInfo.resolveFormat,
           .src = resolveSource,
@@ -1297,12 +1232,10 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
       };
       if (passInfo.resolveNeedsConversion) {
         tex_copy_conv::run(convReq);
-      } else if (passInfo.resolveNeedsShaderSampling || isDepth) {
-        tex_copy_conv::blit(convReq);
       } else {
-        copy_texture_region(resolveSource->gl(), passInfo.resolveTarget->texture->gl(),
-                            passInfo.resolveRect.x - sourceOffsetX, passInfo.resolveRect.y - sourceOffsetY, 0, 0,
-                            passInfo.resolveRect.width, passInfo.resolveRect.height);
+        // GPU sampling also handles exact copies. Keep display resolution in
+        // the scene graph rather than synchronizing the CPU with a transfer.
+        tex_copy_conv::blit(convReq);
       }
     }
   }
@@ -1410,7 +1343,7 @@ static void prepare_recorded_passes(SealedFrameData& data, u32 frameIndex) {
           command.data.draw.gx.capture.passIndex = passIndex;
       port_capture::pass(frameIndex, passIndex, pass.color.get(), pass.depth.get(),
           pass.resolveTarget ? pass.resolveTarget->texture.get() : nullptr,
-          pass.resolveSourceSnapshot ? pass.resolveSourceSnapshot->texture.get() : nullptr,
+          nullptr,
           pass.targetSize.width, pass.targetSize.height, pass.commands.size());
     }
   }

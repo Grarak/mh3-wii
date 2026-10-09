@@ -43,7 +43,7 @@ void shutdown() noexcept;
 bool initialized() noexcept;
 const Caps& caps() noexcept;
 
-// Queue `task` behind everything already posted.
+// Queue `task` behind already posted work; runs inline on the render thread.
 void post(Task task) noexcept;
 // Post `task` and block until it has run. Runs inline on the render thread.
 void call(Task task) noexcept;

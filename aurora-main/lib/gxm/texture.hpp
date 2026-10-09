@@ -14,6 +14,7 @@ public:
   explicit TexturePool(Device& device, size_t mainBudget = 0, size_t phycontBudget = 0);
   ~TexturePool();
   void touch(TextureStorage& texture);
+  void collect();
   size_t main_used() const noexcept;
   size_t phycont_used() const noexcept;
   uint64_t generation() const noexcept { return m_generation; }
@@ -24,6 +25,13 @@ private:
   void release(TextureStorage& texture) noexcept;
   void* allocate_spill(size_t bytes, MappedArena*& arena);
   void move(TextureStorage& texture, void* data, MappedArena& arena);
+  struct RetiredAllocation {
+    SceGxmNotification fence;
+    void* data;
+    MappedArena* arena;
+    size_t bytes;
+  };
+  std::vector<RetiredAllocation> m_retired;
   Device& m_device;
   size_t m_mainBudget, m_phycontBudget;
   std::unique_ptr<MappedArena> m_main, m_phycont;
@@ -45,6 +53,10 @@ public:
   SceGxmOutputRegisterFormat output_format() const noexcept;
   bool in_cdram() const noexcept;
   void pin(bool pinned) noexcept { m_pinned = pinned; }
+  void note_gpu_use(bool writes = false) noexcept {
+    m_lastUse = m_pool.m_device.current_fence();
+    m_gpuWritten |= writes;
+  }
   void* pixels() const noexcept { return m_data; }
   uint32_t row_bytes(uint32_t mip = 0) const;
   size_t size() const noexcept { return m_bytes; }
@@ -60,7 +72,8 @@ private:
   MappedArena* m_arena = nullptr;
   size_t m_bytes = 0;
   uint32_t m_pixelBytes = 0;
-  bool m_pinned = false, m_linked = false;
+  bool m_pinned = false, m_linked = false, m_gpuWritten = false;
+  SceGxmNotification m_lastUse{};
   std::list<TextureStorage*>::iterator m_lru;
   std::vector<Level> m_levels;
   SceGxmTexture m_sampled{};

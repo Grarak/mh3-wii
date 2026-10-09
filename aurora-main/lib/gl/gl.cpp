@@ -267,6 +267,7 @@ void post(Task task) noexcept {
   if (rt == nullptr) {
     return;
   }
+  if (on_render_thread()) { std::move(task)(); return; }
   {
     std::lock_guard lock(rt->mutex);
     rt->queue.push_back(std::move(task));

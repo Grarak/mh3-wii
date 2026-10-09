@@ -29,6 +29,7 @@ void DrawMemory::bind(const void* uniforms, size_t uniformBytes, const void* ind
   require_alignment(indices, indexBytes, IndexAlignment);
   require_alignment(vertices, vertexBytes, UniformAlignment);
   require_alignment(attributes, attributeBytes, UniformAlignment);
+  m_lastUse = {};
   m_uniforms = uniforms; m_uniformBytes = uniformBytes;
   m_indices = indices; m_indexBytes = indexBytes;
   m_vertices = vertexBytes ? vertices : m_ids.data();
@@ -38,6 +39,7 @@ void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {
   if (!m_uniforms || (offset & (UniformAlignment - 1)) ||
       uint64_t(offset) + bytes > m_uniformBytes)
     throw std::runtime_error("Native uniform range exceeds active draw slot");
+  m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
   const void* uniforms = static_cast<const char*>(m_uniforms) + offset;
   // Match BUFFER[0..2] in the offline Cg. No CPU or GPU payload copy.
@@ -52,6 +54,7 @@ void DrawMemory::draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instan
       uint64_t(indexOffset) + uint64_t(indexCount) * sizeof(uint16_t) > m_indexBytes ||
       instances > 65536 || uint64_t(indexCount) * instances > std::numeric_limits<uint32_t>::max())
     throw std::runtime_error("Native indexed draw exceeds active draw slot");
+  m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
   check(sceGxmSetVertexStream(context, 0, m_ids.data()), "bind vertex IDs");
   check(sceGxmSetVertexStream(context, 1, m_ids.data()), "bind instance IDs");
@@ -62,6 +65,14 @@ void DrawMemory::draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instan
   else
     check(sceGxmDrawInstanced(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
                              indices, indexCount * instances, indexCount), "draw recorded GX instances");
+}
+SceGxmNotification DrawMemory::completion_fence() {
+  if (m_lastUse.address) m_device.end();
+  return m_lastUse;
+}
+SceGxmNotification draw_memory_fence() {
+  if (!g_draw) throw std::runtime_error("Native draw memory not initialized");
+  return g_draw->completion_fence();
 }
 void bind_draw_memory(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes,
                       const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes) {

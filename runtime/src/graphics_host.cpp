@@ -1,6 +1,7 @@
 #include "gx_host.h"
 #ifdef __vita__
 #include "../vita/platform.h"
+#include "gxm/razor.hpp"
 #endif
 #include "memory.h"
 #include "game_step.h"
@@ -13,10 +14,8 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
-#include <deque>
 #include <exception>
 #include <mutex>
-#include <pthread.h>
 #include <vector>
 #include <cstring>
 #include <aurora/aurora.h>
@@ -32,7 +31,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
-#include <thread>
 #include <memory>
 #include <string>
 #if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_DEVELOPMENT)
@@ -68,28 +66,17 @@ uint32_t efbPitch = 0, efbWidth = 0, efbHeight = 0;
 bool efbBgra = false;
 bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
-// Aurora's event polling (game thread) and frame boundaries (GX worker) take turns.
+// Aurora's event polling (game thread) and render-thread frame boundaries take turns.
 std::mutex auroraFrameMutex;
 
-// The GX worker: the guest FIFO bytes go to it in chunks, and it frames them
-// (GuestGxStream), decodes them into Aurora and begins and seals the host
-// frames, while the game thread runs on. GXDrawDone drains it, the hardware's
-// point where the CPU may reuse what the GPU was reading; EFB peeks and pokes
-// come after that. The guest RAM the commands point at (arrays, display lists,
-// textures) is read when the worker gets to them, as the GPU reads it when it
-// gets to them.
-//
-// Between Submits the filling chunk's free tail is the FIFO window
-// (gGxFifoWindow, memory_access.h) the translated FIFO writes store into; the
-// chunk's size is taken back from it before anything else touches the chunk.
-class GxWorker {
+// The game fills owned FIFO chunks and posts them to Aurora's render thread.
+// That thread frames/decodes GX, prepares batches and submits native draws.
+// GXDrawDone waits for CPU command consumption so guest arrays can be reused;
+// it does not explicitly finish the GPU. No separate decoding thread exists.
+// Between submissions, the filling chunk's tail is the translated FIFO window.
+class GxQueue {
 public:
-    explicit GxWorker(void (*process)(const uint8_t*, size_t)) : process(process), filling(kChunk) {
-        thread = std::thread([this] { Run(); });
-#ifndef __vita__
-        pthread_setname_np(thread.native_handle(), "MH3 GX");
-#endif
-    }
+    explicit GxQueue(void (*process)(const uint8_t*, size_t)) : process(process), filling(kChunk) {}
     void Submit(const uint8_t* data, size_t size) {
         CloseWindow();
         if (filling.size + size > filling.capacity) [[unlikely]] {
@@ -103,38 +90,36 @@ public:
     void SubmitTask(std::function<void()> task) {
         CloseWindow();
         if (filling.size) HandOff();
+        Chunk chunk(0);
+        chunk.task = std::move(task);
         {
             std::lock_guard lock(mutex);
             RethrowFailure();
-            queue.emplace_back(0);
-            queue.back().task = std::move(task);
+            ++pending;
         }
-        work.notify_one();
+        Post(std::move(chunk));
     }
-    // Waits until the worker processed everything submitted; rethrows its failure.
     void Drain() {
         CloseWindow();
         if (filling.size) HandOff();
         std::unique_lock lock(mutex);
-        idle.wait(lock, [&] { return queue.empty() && !busy; });
+        idle.wait(lock, [&] { return pending == 0; });
         RethrowFailure();
     }
     void CloseFifoWindow() { CloseWindow(); }
     void Stop() {
         CloseWindow();
-        {
-            std::lock_guard lock(mutex);
-            stop = true;
-            queue.clear();
-        }
-        work.notify_one();
-        thread.join();
+        std::unique_lock lock(mutex);
+        stopping = true;
+        // Already posted callbacks capture this object; keep it alive until
+        // the render queue consumes or cancels every owned chunk.
+        idle.wait(lock, [&] { return pending == 0; });
     }
 
 private:
     static constexpr size_t kChunk = 16 * 1024, kMaxQueued = 8 * 1024 * 1024;
     struct Chunk {
-        explicit Chunk(size_t capacity) : bytes(new uint8_t[capacity]), capacity(capacity) {}
+        explicit Chunk(size_t capacity) : bytes(capacity ? new uint8_t[capacity] : nullptr), capacity(capacity) {}
         std::unique_ptr<uint8_t[]> bytes;
         size_t size = 0, capacity;
         std::function<void()> task;
@@ -150,59 +135,70 @@ private:
     void HandOff() {
         std::unique_lock lock(mutex);
         RethrowFailure();
-        idle.wait(lock, [&] { return queued < kMaxQueued || failure; }); // a worker far behind stalls the game
+        idle.wait(lock, [&] { return queued < kMaxQueued || failure; });
         RethrowFailure();
         queued += filling.size;
-        queue.push_back(std::move(filling));
+        ++pending;
+        auto chunk = std::move(filling);
         if (!spare.empty()) { filling = std::move(spare.back()); spare.pop_back(); }
         else filling = Chunk(kChunk);
         lock.unlock();
-        work.notify_one();
+        Post(std::move(chunk));
     }
-    void Run() {
-        // FIFO decoding, geometry preparation and batching are rendering work.
-        aurora::pin_current_thread(aurora::ThreadRole::Render);
-#ifdef __vita__
-        std::fprintf(stderr, "MH3 GX worker: thread 0x%08x pinned to render core 1\n", unsigned(sceKernelGetThreadId()));
-#endif
-        std::unique_lock lock(mutex);
-        for (;;) {
-            work.wait(lock, [&] { return stop || !queue.empty(); });
-            if (stop) return;
-            auto chunk = std::move(queue.front());
-            queue.pop_front();
-            busy = true;
-            const bool skip = failure != nullptr; // after a failure, until the game thread sees it
-            lock.unlock();
-            std::exception_ptr error;
-            if (!skip) {
-                try { if (chunk.task) chunk.task(); else process(chunk.bytes.get(), chunk.size); }
-                catch (...) { error = std::current_exception(); }
-            }
-            lock.lock();
-            if (error) failure = error;
-            queued -= chunk.size;
-            busy = false;
-            chunk.size = 0;
-            if (chunk.capacity == kChunk) spare.push_back(std::move(chunk)); // not an outsized one
-            idle.notify_all();
+    void Post(Chunk chunk) {
+        aurora::gl::post([this, chunk = std::move(chunk)]() mutable { Consume(std::move(chunk)); });
+    }
+    void Consume(Chunk chunk) {
+        bool skip;
+        {
+            std::lock_guard lock(mutex);
+            skip = stopping || failure != nullptr;
         }
+        std::exception_ptr error;
+#ifdef __vita__
+        uint64_t cpuStarted = 0;
+#endif
+        if (!skip) {
+            try {
+                if (!aurora::gl::on_render_thread()) throw std::runtime_error("GX queue consumed outside the render thread");
+#ifdef __vita__
+                if (!reportedThread) {
+                    std::fprintf(stderr, "MH3 GX queue: decoded by GXM render thread 0x%08x on core 1\n", unsigned(sceKernelGetThreadId()));
+                    reportedThread = true;
+                }
+#endif
+#ifdef __vita__
+                cpuStarted = aurora::gxm::razor_begin_cpu_work();
+#endif
+                if (chunk.task) chunk.task(); else process(chunk.bytes.get(), chunk.size);
+            } catch (...) { error = std::current_exception(); }
+        }
+#ifdef __vita__
+        aurora::gxm::razor_end_cpu_work(cpuStarted);
+#endif
+        {
+            std::lock_guard lock(mutex);
+            if (error && !failure) failure = error;
+            queued -= chunk.size;
+            --pending;
+            chunk.size = 0;
+            if (chunk.capacity == kChunk) spare.push_back(std::move(chunk));
+        }
+        idle.notify_all();
     }
     void (*const process)(const uint8_t*, size_t);
     Chunk filling; // game thread only
     std::mutex mutex;
-    std::condition_variable work, idle;
-    std::deque<Chunk> queue;
+    std::condition_variable idle;
     std::vector<Chunk> spare;
-    size_t queued = 0;
-    bool busy = false, stop = false;
+    size_t queued = 0, pending = 0;
+    bool stopping = false, reportedThread = false;
     std::exception_ptr failure;
-    std::thread thread;
 };
 // Null until the first GX bytes, or when the GX runs on the game thread
 // (MH3_GX_WORKER=0, per-draw diagnostics).
-GxWorker* gxWorker = nullptr;
-void DrainGxWorker() { if (gxWorker) gxWorker->Drain(); }
+GxQueue* gxQueue = nullptr;
+void DrainGxQueue() { if (gxQueue) gxQueue->Drain(); }
 
 void FlushHostEfbPokes() {
     if (!efbDirty) return;
@@ -220,7 +216,7 @@ void FlushHostEfbPokes() {
     if (!frameActive) aurora::gfx::preserve_next_efb_frame();
     efbDirty = false;
 }
-std::atomic<uint64_t> guestCopies{0}; // counted on the GX worker
+std::atomic<uint64_t> guestCopies{0}; // counted on the render thread
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include "gx_diagnostics.inc"
 #endif
@@ -234,7 +230,7 @@ uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
 struct FrameProfile {
     using Clock = std::chrono::steady_clock;
     uint32_t interval = 0;
-    uint64_t workerNs = 0, gpuNs = 0, completionNs = 0;
+    uint64_t renderQueueNs = 0, tailNs = 0, completionNs = 0;
     uint64_t minCopyNs = UINT64_MAX, maxCopyNs = 0, measuredCopies = 0;
     uint64_t lastCopies = 0, lastCommands = 0, lastArrays = 0, lastTextures = 0, lastDraws = 0;
     uint64_t lastTextureCopies = 0, lastEfbSnapshots = 0, lastEfbPeeks = 0;
@@ -253,7 +249,7 @@ void ShutdownGraphics() {
         MH3_STAT(if (GuestGxStream::commandCount) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
             static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
             static_cast<unsigned long long>(GuestGxStream::drawCount), static_cast<unsigned long long>(guestTextureCopies)));
-        if (gxWorker) { gxWorker->Stop(); gxWorker = nullptr; }
+        if (gxQueue) { gxQueue->Stop(); delete gxQueue; gxQueue = nullptr; }
         aurora::clear_generated_textures();
         aurora_shutdown(); initialized = false; frameActive = false;
     }
@@ -401,8 +397,7 @@ void PollHostGraphicsEvents() {
 }
 
 namespace {
-// Frames guest FIFO bytes into Aurora: on the GX worker, or on the game thread
-// without one.
+// Decode guest FIFO bytes on the render thread (game-thread diagnostics remain opt-in).
 void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
 #ifdef MH3_DEVELOPMENT
     if (guestStream.traceDraw) {
@@ -523,7 +518,7 @@ void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
 #ifdef MH3_DEVELOPMENT
 static std::vector<uint8_t>* gxCapture = nullptr;
 void CaptureGuestGx(std::vector<uint8_t>* into) {
-    if (gxWorker) gxWorker->CloseFifoWindow();
+    if (gxQueue) gxQueue->CloseFifoWindow();
     gxCapture = into;
 }
 #endif
@@ -536,7 +531,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     }
 #endif
     if (gpuSynchronized) {
-        // The first GX since GXDrawDone (the worker is idle): the CPU's EFB
+        // The first GX since GXDrawDone (the FIFO queue is drained): the CPU's EFB
         // pixels go in ahead of it, and its draws end the EFB snapshot.
         char name[] = "MH3";
         char* argv[]{name, nullptr};
@@ -544,7 +539,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         FlushHostEfbPokes();
         efbPixels.clear();
         gpuSynchronized = false;
-        static const bool useWorker = [] {
+        static const bool useRenderQueue = [] {
 #if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_ENABLE_EFB_COPY_TRACE)
             return false;
 #else
@@ -557,9 +552,9 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
             return true;
 #endif
         }();
-        if (useWorker && !gxWorker) gxWorker = new GxWorker(ProcessGuestGxBytes);
+        if (useRenderQueue && !gxQueue) gxQueue = new GxQueue(ProcessGuestGxBytes);
     }
-    if (gxWorker) gxWorker->Submit(data, size);
+    if (gxQueue) gxQueue->Submit(data, size);
     else ProcessGuestGxBytes(data, size);
 }
 
@@ -567,7 +562,7 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
-    if (gxWorker) gxWorker->SubmitTask(std::move(task));
+    if (gxQueue) gxQueue->SubmitTask(std::move(task));
     else task();
 }
 
@@ -617,7 +612,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  static_cast<unsigned long long>(high[1] >> 10), static_cast<unsigned long long>(high[3] >> 10));
     static std::array<uint64_t, 4> lastWaits{};
     const auto waits = aurora::gfx::staging_wait_counters();
-    std::fprintf(stderr, "MH3 waits: GX staging %.2f ms/s (%llu waits), render recycle Finish %.2f ms/s (%llu calls)\n",
+    std::fprintf(stderr, "MH3 waits: GX staging %.2f ms/s (%llu waits), render total Finish %.2f ms/s (%llu calls)\n",
                  double(waits[0] - lastWaits[0]) / (1000.0 * seconds),
                  static_cast<unsigned long long>(waits[2] - lastWaits[2]),
                  double(waits[1] - lastWaits[1]) / (1000.0 * seconds),
@@ -640,37 +635,37 @@ void ServiceHostGraphicsEvents() {
 void CompleteHostGraphics() {
     if (!initialized) return;
     MH3_STAT(const auto completionStart = FrameProfile::Clock::now();)
-    DrainGxWorker();
-    MH3_STAT(const auto afterWorker = FrameProfile::Clock::now();)
+    DrainGxQueue();
+    MH3_STAT(const auto afterQueue = FrameProfile::Clock::now();)
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
-    // GXDrawDone never waits for the render thread or the GPU: nothing reads
-    // rendered results back on the CPU (no copy readback, no peeks since bloom is
-    // gone), and frameskip absorbs a slow GPU instead. Mid-frame it does not
+    // GXDrawDone consumes queued CPU commands before the guest reuses their
+    // source arrays. It does not explicitly wait for GPU completion; nothing
+    // reads rendered results back on the CPU, and frameskip handles a busy GPU. Mid-frame it does not
     // submit either; MH3's display routine calls it after the next frame's first
     // GX writes, and an early submission there would force the frameskip
     // decision while the previous frame is certainly still rendering. An EFB
     // peek submits what it needs itself (ReadHostEfbColor).
     if (frameActive && displayCopyPending) SealDisplayFrame();
 #ifdef MH3_DEVELOPMENT
-    const auto afterGpu = FrameProfile::Clock::now();
+    const auto afterTail = FrameProfile::Clock::now();
     if (profile.interval) {
         auto ns = [](auto end, auto start) { return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); };
-        profile.completionNs += ns(afterGpu, completionStart);
-        profile.workerNs += ns(afterWorker, completionStart);
-        profile.gpuNs += ns(afterGpu, afterWorker);
+        profile.completionNs += ns(afterTail, completionStart);
+        profile.renderQueueNs += ns(afterQueue, completionStart);
+        profile.tailNs += ns(afterTail, afterQueue);
         if (guestCopies > profile.measuredCopies) {
             if (profile.previousCopy != FrameProfile::Clock::time_point{}) {
-                const auto copyNs = uint64_t(ns(afterGpu, profile.previousCopy));
+                const auto copyNs = uint64_t(ns(afterTail, profile.previousCopy));
                 profile.minCopyNs = std::min(profile.minCopyNs, copyNs);
                 profile.maxCopyNs = std::max(profile.maxCopyNs, copyNs);
             }
-            profile.previousCopy = afterGpu;
+            profile.previousCopy = afterTail;
             profile.measuredCopies = guestCopies;
         }
         const auto frames = guestCopies - profile.lastCopies;
         if (frames >= profile.interval) {
-            const auto wallMs = ns(afterGpu, profile.started) / 1e6 / frames;
+            const auto wallMs = ns(afterTail, profile.started) / 1e6 / frames;
             const auto cpuMs = double(std::clock() - profile.cpuStarted) * 1000 / CLOCKS_PER_SEC / frames;
 #ifdef __vita__
             // Vita's libc clock is process elapsed time, including waits.
@@ -680,13 +675,13 @@ void CompleteHostGraphics() {
 #endif
             std::fprintf(stderr,
                 "MH3 profile: %llu display copies; %.2f ms wall/copy, %.2f ms %s/copy, "
-                "%.2f ms GX completion/copy (%.2f ms worker, %.2f ms GPU queue), "
+                "%.2f ms GX completion/copy (%.2f ms CPU decode/submit, %.2f ms graphics tail), "
                 "%.2f..%.2f ms copy interval, "
                 "%llu GX commands/copy, %llu draws/copy, %llu arrays/copy, %llu textures/copy, "
                 "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy; "
                 "last frame %u host draws + %u merged into them; %.1f texture hashes/copy, %.1f TMEM invalidations/copy\n",
                 static_cast<unsigned long long>(frames), wallMs, cpuMs, cpuClockLabel, profile.completionNs / 1e6 / frames,
-                profile.workerNs / 1e6 / frames, profile.gpuNs / 1e6 / frames,
+                profile.renderQueueNs / 1e6 / frames, profile.tailNs / 1e6 / frames,
                 profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
                 static_cast<unsigned long long>((GuestGxStream::commandCount - profile.lastCommands) / frames),
                 static_cast<unsigned long long>((GuestGxStream::drawCount - profile.lastDraws) / frames),
@@ -712,15 +707,15 @@ void CompleteHostGraphics() {
             profile.lastEfbPeeks = guestEfbPeeks;
             profile.lastTextureCopyNs = guestTextureCopyNs;
             profile.lastEfbSnapshotNs = guestEfbSnapshotNs;
-            profile.workerNs = profile.gpuNs = profile.completionNs = 0;
+            profile.renderQueueNs = profile.tailNs = profile.completionNs = 0;
             profile.minCopyNs = UINT64_MAX; profile.maxCopyNs = 0;
-            profile.started = afterGpu;
+            profile.started = afterTail;
             profile.cpuStarted = std::clock();
         }
     }
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
-        std::fprintf(stderr, "MH3 GX draw completion %u: CPU GX worker drained\n", completions);
+        std::fprintf(stderr, "MH3 GX draw completion %u: CPU GX queue drained\n", completions);
 #endif
     gpuSynchronized = true;
 }

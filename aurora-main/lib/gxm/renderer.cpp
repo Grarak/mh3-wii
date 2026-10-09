@@ -165,6 +165,8 @@ public:
       // Stored DF32M contains coverage from the previous scene. Recreate the
       // current coverage even when the logical scissor has not changed.
       state.clipDirty = state.depth || state.scissorEnabled;
+      if (state.color) texture(state.color).note_gpu_use(true);
+      if (state.depth) texture(state.depth).note_gpu_use(true);
     }
     if (state.clipDirty) {
       clip.apply(width, height, state.scissorEnabled, state.scissor[0], state.scissor[1], state.scissor[2], state.scissor[3]);
@@ -216,6 +218,7 @@ public:
       const auto& bound = state.textures.at(unit);
       if (!bound.texture) throw std::runtime_error("Native shader requires an unbound sampled texture");
       auto& source = texture(bound.texture);
+      source.note_gpu_use();
       const SamplerDesc desc = bound.sampler ? samplers.at(bound.sampler) : NearestClamp;
       const auto sampled = sampling_view(source, desc);
       // A relocation ends the old scene. Sampling always builds the view
@@ -253,8 +256,23 @@ public:
     clearProgram.set_fragment_uniform("color", color, 4);
     utility_draw(6);
   }
+  void collect() {
+    pool.collect();
+    for (auto it = retiredPrograms.begin(); it != retiredPrograms.end();) {
+      if (int32_t(*it->first.address - it->first.value) < 0) { ++it; continue; }
+      it = retiredPrograms.erase(it);
+    }
+  }
+  void forget_program(GLuint id) {
+    const auto found = programs.find(id);
+    if (found == programs.end()) return;
+    const auto fence = device.completion_fence();
+    if (state.program == id) state.program = 0;
+    retiredPrograms.emplace_back(fence, std::move(found->second));
+    programs.erase(found);
+    collect();
+  }
   void forget_texture(GLuint id) {
-    device.finish();
     for (auto& bound : state.textures) if (bound.texture == id) {
       pin(id, false); bound = {};
     }
@@ -276,6 +294,7 @@ public:
   State state;
   std::map<GLuint, TextureEntry> textures;
   std::map<GLuint, NativeProgram> programs;
+  std::vector<std::pair<SceGxmNotification, NativeProgram>> retiredPrograms;
   std::map<std::pair<uint64_t, uint64_t>, std::weak_ptr<PatchedProgram>> patchedPrograms;
   std::map<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
@@ -379,6 +398,9 @@ bool on_render_thread() noexcept { return g_thread && g_thread->id == std::this_
 const Caps& caps() noexcept { return g_caps; }
 void post(Task task) noexcept {
   if (!g_thread) return;
+  // Nested native work produced while decoding GX keeps command order and
+  // executes before the next FIFO chunk, without a second queue round trip.
+  if (on_render_thread()) { guarded([&] { std::move(task)(); }); return; }
   guarded([&] {
     std::lock_guard lock(g_thread->mutex);
     if (g_thread->stopping) throw std::runtime_error("Native task posted after render shutdown");
@@ -498,9 +520,7 @@ Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
 Program::~Program() {
   if (m_program && initialized()) post([id = m_program] {
     auto& r = renderer();
-    r.device.finish();
-    if (r.state.program == id) r.state.program = 0;
-    r.programs.erase(id);
+    r.forget_program(id);
   });
 }
 GLuint Program::get() noexcept {
@@ -611,12 +631,14 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
       const float region[4]{-1.f, 1.f, 2.f, -2.f}, depth = 0.f;
       r.presentProgram.set_vertex_uniform("region", region, 4);
       r.presentProgram.set_vertex_uniform("depth", &depth, 1);
+      r.texture(source->gl()).note_gpu_use();
       const auto sampled = sampling_view(r.texture(source->gl()), LinearClamp);
       check(sceGxmSetFragmentTexture(r.device.context(), 0, &sampled), "bind presentation source");
       r.utility_draw(6);
       r.pin(source->gl(), false);
     }
     r.device.flip();
+    r.collect();
   });
 }
 std::pair<uint32_t, uint32_t> drawable_size() noexcept { return {Device::Width, Device::Height}; }

@@ -30,6 +30,8 @@ public:
              const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync = nullptr);
   void end();
   void finish();
+  SceGxmNotification current_fence() const noexcept { return {m_notification, m_sceneSerial + unsigned(m_inScene)}; }
+  SceGxmNotification completion_fence() { end(); return current_fence(); }
   void begin_display();
   void flip();
   const void* display_pixels() const noexcept { return m_displayData[m_back]; }
@@ -38,6 +40,9 @@ public:
 private:
   void release() noexcept;
   bool m_initialized = false, m_inScene = false, m_vsync;
+  // Slot 0 is owned by this application context for ordered scene retirement.
+  volatile unsigned* m_notification = nullptr;
+  uint32_t m_sceneSerial = 0;
   SceGxmContext* m_context = nullptr;
   SceGxmShaderPatcher* m_patcher = nullptr;
   void* m_host = nullptr;

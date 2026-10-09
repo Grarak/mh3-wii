@@ -40,7 +40,14 @@ TexturePool::TexturePool(Device& device, size_t mainBudget, size_t phycontBudget
       m_phycontBudget(std::min(phycontBudget, size_t(24u << 20)) & ~size_t((1u << 20) - 1)) {
   if (m_mainBudget > 32u << 20) throw std::runtime_error("Native texture main-RAM spill exceeds 32 MiB budget");
 }
-TexturePool::~TexturePool() { m_device.finish(); }
+TexturePool::~TexturePool() { m_device.finish(); collect(); }
+void TexturePool::collect() {
+  for (auto it = m_retired.begin(); it != m_retired.end();) {
+    if (int32_t(*it->fence.address - it->fence.value) < 0) { ++it; continue; }
+    it->arena->free(it->data, it->bytes);
+    it = m_retired.erase(it);
+  }
+}
 size_t TexturePool::main_used() const noexcept { return m_main ? m_main->used() : 0; }
 size_t TexturePool::phycont_used() const noexcept { return m_phycont ? m_phycont->used() : 0; }
 void* TexturePool::allocate_spill(size_t bytes, MappedArena*& arena) {
@@ -74,6 +81,7 @@ void TexturePool::move(TextureStorage& texture, void* data, MappedArena& arena) 
   ++m_generation;
 }
 void TexturePool::allocate(TextureStorage& texture) {
+  collect();
   auto& cdram = m_device.arena();
   texture.m_data = cdram.allocate(texture.m_bytes);
   while (!texture.m_data) {
@@ -110,8 +118,15 @@ void TexturePool::allocate(TextureStorage& texture) {
 }
 void TexturePool::release(TextureStorage& texture) noexcept {
   if (texture.m_linked) m_lru.erase(texture.m_lru);
-  if (texture.m_data) texture.m_arena->free(texture.m_data, texture.m_bytes);
+  if (texture.m_data) {
+    if (texture.m_lastUse.address && int32_t(*texture.m_lastUse.address - texture.m_lastUse.value) < 0) {
+      // Close an active consuming scene so its fragment notification will fire.
+      m_device.end();
+      m_retired.push_back({texture.m_lastUse, texture.m_data, texture.m_arena, texture.m_bytes});
+    } else texture.m_arena->free(texture.m_data, texture.m_bytes);
+  }
   texture.m_data = nullptr;
+  texture.m_linked = false;
 }
 void TexturePool::touch(TextureStorage& texture) {
   m_lru.splice(m_lru.end(), m_lru, texture.m_lru);
@@ -158,10 +173,7 @@ TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t heig
     refresh_views();
   } catch (...) { m_pool.release(*this); throw; }
 }
-TextureStorage::~TextureStorage() {
-  m_pool.m_device.finish();
-  m_pool.release(*this);
-}
+TextureStorage::~TextureStorage() { m_pool.release(*this); }
 bool TextureStorage::in_cdram() const noexcept { return m_arena == &m_pool.m_device.arena(); }
 uint32_t TextureStorage::row_bytes(uint32_t mip) const { return m_levels.at(mip).pitch; }
 void TextureStorage::refresh_views() {
@@ -205,7 +217,24 @@ void TextureStorage::upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t w, ui
   if (!source || uint64_t(x) + w > level.width || uint64_t(y) + h > level.height ||
       uint64_t(w) * sourcePixelBytes > sourcePitch)
     throw std::runtime_error("Native texture upload exceeds level bounds");
-  m_pool.m_device.finish();
+  if (m_lastUse.address && int32_t(*m_lastUse.address - m_lastUse.value) < 0) {
+    m_pool.m_device.end();
+    if (m_gpuWritten) {
+      // Debug/readback uploads that preserve GPU-written pixels need their
+      // producer completed. The game has no CPU framebuffer composition path.
+      m_pool.m_device.finish();
+    } else {
+      // Mutable CPU textures keep the prior frame's backing until its scene
+      // completes; subsequent draws immediately use the replacement backing.
+      TextureStorage replacement(m_pool, width, height, mips, format);
+      std::memcpy(replacement.m_data, m_data, m_bytes);
+      std::swap(m_data, replacement.m_data);
+      std::swap(m_arena, replacement.m_arena);
+      replacement.m_lastUse = m_lastUse;
+      m_lastUse = {};
+      refresh_views();
+    }
+  }
   auto* dest = static_cast<char*>(m_data) + level.offset + size_t(y) * level.pitch + x * m_pixelBytes;
   auto* data = static_cast<const char*>(source);
   for (unsigned row = 0; row < h; ++row) {
