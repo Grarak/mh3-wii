@@ -115,7 +115,8 @@ target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
   native/mh3_model_submission.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
 target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_updates.c
   native/mh3_model_gpu_inputs.c src/model_material_prep.cpp native/mh3_model_material_prep.c)
-target_sources(MH3 PRIVATE src/model_scope.cpp native/mh3_model_scope.c)
+target_sources(MH3 PRIVATE src/model_scope.cpp native/mh3_model_scope.c
+  native/mh3_model_prepare_cache.c)
 set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
   native/mh3_model_material_prep.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
