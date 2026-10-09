@@ -2,6 +2,7 @@
 #include "ios_host.h"
 #include "disc_image.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
+#include <cstring>
 #include <array>
 #include <cerrno>
 #include <cstdlib>
@@ -747,9 +748,9 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
                 ctx->gpr[3] = 32;
                 return;
             }
-            auto bytes = Disc().Read(uint64_t(position) * 4, length);
-            for (uint32_t i = 0; i < length; ++i)
-                Memory::Write8(output + i, bytes[i]);
+            // Straight into guest RAM (bytes are bytes; no per-byte checks).
+            const auto bytes = Disc().Read(uint64_t(position) * 4, length);
+            std::memcpy(Memory::GetPointer(output, length), bytes.data(), length);
             RecordNativeDiscWrite(output, uint64_t(position) * 4, length);
             lastDiscPosition = position;
             ctx->gpr[3] = 1;

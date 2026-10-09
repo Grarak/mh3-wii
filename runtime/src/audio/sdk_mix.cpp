@@ -280,6 +280,9 @@ void UpdateSettings() {
             continue;
         uint32_t control = 0;
         uint32_t flags = FlatRead32(c + kMode);
+        // Settled channel: nothing to ramp or recompute (the common case).
+        if (!(flags & (kInputRamp | kInputDirty | kMixRamp | kMixDirty)))
+            continue;
         bool input = (flags & kInputRamp) != 0;
         if (input) {
             FlatWrite16(c + kV, FlatRead16(c + kV + 2));
