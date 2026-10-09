@@ -168,7 +168,7 @@ void MH3FrameSplitCall(unsigned kind) {
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];
 }
-void MH3FrameSplitTime(unsigned family, std::chrono::steady_clock::duration elapsed) {
+void MH3FrameSplitTime(unsigned family, MH3SplitClock::duration elapsed) {
     splitFamilies[family] += std::chrono::duration<double, std::milli>(elapsed).count();
     ++splitScopes[family];
 }
@@ -180,7 +180,7 @@ namespace {
 // take over, including the G3D calc passes it runs today) and the rest.
 // Printed once per second with MH3 stats (MH3_STATS=0 disables it).
 struct FrameSplit {
-    using Clock = std::chrono::steady_clock;
+    using Clock = MH3SplitClock;
     Clock::time_point start, mark;
     double logic = 0, draw = 0, other = 0;
     uint32_t frames = 0;
@@ -212,6 +212,7 @@ struct FrameSplit {
                     "timed scopes/frame: traverse %u model %u effect %u node callback %u\n",
                     f(MH3_SPLIT_TRAVERSE), f(MH3_SPLIT_MODEL), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD),
                     f(MH3_SPLIT_MOVIE), n(MH3_SPLIT_TRAVERSE), n(MH3_SPLIT_MODEL), n(MH3_SPLIT_EFFECT), n(MH3_SPLIT_NODE_CALLBACK));
+        std::printf("MH3 scene split: setup %.2f finish %.2f post %.2f ms/frame\n", f(MH3_SPLIT_SCENE_SETUP), f(MH3_SPLIT_SCENE_FINISH), f(MH3_SPLIT_POST));
         if (mh3SplitDetail)
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
                         f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));

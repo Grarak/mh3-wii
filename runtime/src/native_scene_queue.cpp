@@ -199,11 +199,18 @@ void DrawScene(CpuContext* cpu, bool split) {
     const uint32_t root = Memory::Read32(Root);
     if (!split) {
         if (root) {
-            Memory::Write32(frame[0x10], call(0x80082C30, {root}));
+            {
+                MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
+                Memory::Write32(frame[0x10], call(0x80082C30, {root}));
+            }
             Traverse(cpu, frame[0x10], 0);
+            MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
             call(0x80082D40, {root});
         }
-        call(0x800D4910);
+        {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
+            call(0x800D4910);
+        }
         DrawAll(call);
     } else if (root) {
         const uint32_t old = call(0x80049784);
@@ -225,8 +232,12 @@ void DrawScene(CpuContext* cpu, bool split) {
         call(0x80082C6C, {root, old});
         call(0x80082D40, {root});
     }
-    call(0x800885F4, {4});
-    ResetIndirect();
+    {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_FINISH);
+        call(0x800885F4, {4});
+        ResetIndirect();
+    }
+    MH3_SPLIT_SCOPE(MH3_SPLIT_POST);
     if (split) {
         call(0x800583AC);
         call(0x80058460);
