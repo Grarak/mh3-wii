@@ -32,6 +32,7 @@ were deleted on 2026-10-03; they remain in git history.
 
 ## Profiling and capture
 
+- [vita-oct03-head-profile.md](vita-oct03-head-profile.md): latest CPU/GPU profile (`0febd79`), how emulated TLS works on the Vita and the options to replace it.
 - [vita-oct03-optimized-gpu-profile.md](vita-oct03-optimized-gpu-profile.md): latest complete GPU busyness, SCNE pass attribution, CPU supply and recorded gameplay.
 - [vita-oct03-fixed-render-profile.md](vita-oct03-fixed-render-profile.md): matching recorded gameplay, CPU samples with unwind coverage, GPU-only Razor/vprof and current frame-rate bottlenecks.
 - [vita-native-profiling.md](vita-native-profiling.md), [vita-native-stack-profiling.md](vita-native-stack-profiling.md), [vita-razor.md](vita-razor.md): Vita CPU and GPU profiling.

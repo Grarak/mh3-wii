@@ -3,6 +3,7 @@
  * Matrix conventions and resource offsets are validated against the local
  * decompilation. No SDK GX calls or source command-list decoding. */
 #include "mh3_model_state.h"
+#include <assert.h>
 #include <math.h>
 #include <string.h>
 static uint32_t be32(const uint8_t *p) {
@@ -822,6 +823,115 @@ mh3_res_status mh3_light_state_select(mh3_res_mut_span state, uint32_t id, mh3_n
     put32(state.data + 32, x.specular_alpha);
     memcpy(state.data + 36, x.source_ids, 8);
     *slots = x;
+    return MH3_RES_OK;
+}
+
+int mh3_light_delta_changed(mh3_native_light_delta delta) {
+    return !!(delta.lights_changed | delta.source_ids_changed | delta.valid_changed | delta.masks_changed | delta.ambient_changed);
+}
+
+mh3_res_status mh3_light_state_select_delta(mh3_res_mut_span state, uint32_t id, mh3_native_light_slots *slots, mh3_native_light_delta *delta) {
+    mh3_native_light_delta changed = {0};
+    mh3_native_light_selection selection = {{0}, {255, 255, 255, 255}};
+    int8_t resident[8], loaded[8];
+    uint8_t valid = slots ? slots->valid_mask : 0;
+    int miss = 0;
+    if (!state.data || !slots || !delta)
+        return MH3_RES_INVALID;
+    assert((uintptr_t)slots >= (uintptr_t)state.data + state.size || (uintptr_t)state.data >= (uintptr_t)slots + sizeof *slots);
+    if (id < 128) {
+        if (state.size < MH3_LIGHT_STATE_BYTES || be16(state.data) > 128 || be16(state.data + 2) > 128)
+            return MH3_RES_RANGE;
+        const uint8_t *set = state.data + 0x242c + (size_t)id * 12;
+        const int8_t ambient_id = (int8_t)set[8];
+        /* A cached set still samples the live ambient record. */
+        if (ambient_id >= 0)
+            memcpy(&selection.ambient, state.data + 0x222c + (size_t)ambient_id * 4, 4);
+        miss = be32(state.data + 16) != id;
+        if (!miss) {
+            for (unsigned i = 0; i < 4; ++i)
+                selection.masks[i] = be32(state.data + 20 + i * 4);
+        } else {
+            const uint16_t count = be16(state.data);
+            memcpy(resident, state.data + 36, 8);
+            memset(loaded, -1, sizeof loaded);
+            valid = 0;
+            for (unsigned i = 0; i < 8; ++i)
+                if (resident[i] >= 0)
+                    valid |= (uint8_t)(1u << i);
+            /* Plan using the small resident-ID array. Range/eviction failures
+             * precede every serialized or typed write, as in the full oracle. */
+            for (unsigned i = 0; i < 8; ++i) {
+                const int source_id = (int8_t)set[i];
+                if (source_id < 0)
+                    continue;
+                if (source_id >= count)
+                    return MH3_RES_RANGE;
+                const uint32_t flags = be32(state.data + 44 + (size_t)source_id * 68);
+                if (!(flags & MH3_LIGHT_ENABLED))
+                    continue;
+                unsigned slot = 0;
+                while (slot < 8 && resident[slot] != source_id)
+                    ++slot;
+                if (slot == 8) {
+                    slot = 0;
+                    while (slot < 8 && resident[slot] != -1)
+                        ++slot;
+                }
+                if (slot == 8) {
+                    for (slot = 0; slot < 8; ++slot) {
+                        unsigned member = 0;
+                        while (member < 8 && (int8_t)set[member] != resident[slot])
+                            ++member;
+                        if (member == 8)
+                            break;
+                    }
+                    if (slot == 8)
+                        return MH3_RES_INVALID;
+                }
+                if (resident[slot] != source_id)
+                    loaded[slot] = (int8_t)source_id;
+                resident[slot] = (int8_t)source_id;
+                valid |= (uint8_t)(1u << slot);
+                const unsigned mask = (flags & MH3_LIGHT_SPECULAR) ? 2 : 0;
+                if (!(flags & MH3_LIGHT_DISABLE_COLOR))
+                    selection.masks[mask] |= 1u << slot;
+                if (!(flags & MH3_LIGHT_DISABLE_ALPHA))
+                    selection.masks[mask + 1] |= 1u << slot;
+            }
+            for (unsigned slot = 0; slot < 8; ++slot) {
+                const uint8_t bit = (uint8_t)(1u << slot);
+                if (loaded[slot] >= 0) {
+                    mh3_light light;
+                    const mh3_res_status status = mh3_light_read((mh3_res_span){state.data + 44 + (size_t)loaded[slot] * 68, 68}, &light);
+                    assert(status == MH3_RES_OK);
+                    (void)status;
+                    changed.lights_written |= bit;
+                    if (memcmp(&slots->lights[slot], &light, sizeof light))
+                        changed.lights_changed |= bit;
+                    slots->lights[slot] = light;
+                }
+                if (slots->source_ids[slot] != resident[slot])
+                    changed.source_ids_changed |= bit;
+                slots->source_ids[slot] = resident[slot];
+            }
+            changed.valid_changed = slots->valid_mask != valid;
+            slots->valid_mask = valid;
+            put32(state.data + 16, id);
+            for (unsigned i = 0; i < 4; ++i)
+                put32(state.data + 20 + i * 4, selection.masks[i]);
+            memcpy(state.data + 36, resident, 8);
+        }
+    }
+    changed.masks_changed = slots->diffuse_color != selection.masks[0] || slots->diffuse_alpha != selection.masks[1] ||
+                            slots->specular_color != selection.masks[2] || slots->specular_alpha != selection.masks[3];
+    changed.ambient_changed = memcmp(&slots->ambient, &selection.ambient, sizeof selection.ambient) != 0;
+    slots->diffuse_color = selection.masks[0];
+    slots->diffuse_alpha = selection.masks[1];
+    slots->specular_color = selection.masks[2];
+    slots->specular_alpha = selection.masks[3];
+    slots->ambient = selection.ambient;
+    *delta = changed;
     return MH3_RES_OK;
 }
 mh3_res_status mh3_fog_range_table(uint16_t width, const float p[16], uint16_t out[10]) {

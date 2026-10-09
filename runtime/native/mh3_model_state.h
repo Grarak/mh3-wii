@@ -126,6 +126,17 @@ typedef struct mh3_native_light_slots {
     uint32_t diffuse_color, diffuse_alpha, specular_color, specular_alpha;
     mh3_rgba8 ambient;
 } mh3_native_light_slots;
+/* The channel preparation consumer needs only these authored values. */
+typedef struct mh3_native_light_selection {
+    uint32_t masks[4];
+    mh3_rgba8 ambient;
+} mh3_native_light_selection;
+/* Exact typed slot mutations from one selection. Written lights can retain
+ * identical contents; changed bits include all raw light fields. */
+typedef struct mh3_native_light_delta {
+    uint8_t lights_written, lights_changed, source_ids_changed;
+    uint8_t valid_changed, masks_changed, ambient_changed;
+} mh3_native_light_delta;
 /* Native reconstruction of LightState's slot reuse/eviction and masks. */
 mh3_res_status mh3_light_slots_initial(const mh3_light *lights, size_t count, mh3_native_light_slots *out);
 mh3_res_status mh3_light_slots_select(const mh3_light *lights, size_t count, const mh3_light_set *set, const mh3_rgba8 *ambient, size_t ambient_count, mh3_native_light_slots *slots);
@@ -138,6 +149,12 @@ enum {
 mh3_res_status mh3_light_state_import(mh3_res_mut_span state, uint16_t light_count, uint16_t set_count, mh3_res_span lights, mh3_res_span ambient, mh3_res_span sets, const mh3_matrix34 *view,
                                       mh3_native_light_slots *out);
 mh3_res_status mh3_light_state_select(mh3_res_mut_span state, uint32_t set_id, mh3_native_light_slots *slots);
+/* Owner-internal selection: same fields/errors as the checked full reader,
+ * with disjoint serialized state/typed slots. Plans resident IDs before any
+ * writes, decodes only newly loaded records, and never copies whole slots.
+ * Failure leaves state, slots and delta unchanged. */
+mh3_res_status mh3_light_state_select_delta(mh3_res_mut_span state, uint32_t set_id, mh3_native_light_slots *slots, mh3_native_light_delta *delta);
+int mh3_light_delta_changed(mh3_native_light_delta delta);
 #ifdef __cplusplus
 }
 #endif
