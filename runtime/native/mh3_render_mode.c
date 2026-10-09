@@ -1,8 +1,13 @@
 /* Native C reconstruction of RMHP08 RenderInit (8003f794), its mode copy
- * (8003f9a4) and overscan arithmetic (804b7280). The SDK GX entry remains a
- * fatal tripwire; this core neither submits graphics nor emulates registers. */
+ * (8003f9a4), overscan arithmetic (804b7280) and SCGetAspectRatio (804dd060).
+ * The SDK GX entry remains a fatal tripwire; this core neither submits
+ * graphics nor emulates registers. */
 #include "mh3_render_mode.h"
 #include <string.h>
+
+uint8_t mh3_sc_aspect_ratio(int found, uint8_t stored) {
+    return found && stored == 1 ? 1 : 0;
+}
 
 mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences, const mh3_render_mode defaults[3], mh3_render_mode *current) {
     if (!preferences || !defaults || !current)

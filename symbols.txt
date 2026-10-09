@@ -106,6 +106,10 @@
 8003fa48 ApplyWidemode
 # Picks the render mode from the TV format (assert string "RenderInit: invalid TV format").
 8003f794 RenderInit
+# The console's IPL.AR item: 1 = 16:9, otherwise 4:3 (runtime/src/render_mode.cpp).
+804dd060 SCGetAspectRatio
+# SC config lookup of a U8 item (type 0x60) by item ID; returns found.
+804dc740 SCFindU8Item
 8003fd30 NativeGraphicsInit
 8003fe88 NativeCompletionSetup
 8003fe94 NativeDisplaySetup

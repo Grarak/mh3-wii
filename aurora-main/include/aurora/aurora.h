@@ -157,6 +157,18 @@ void aurora_end_frame();
 // boundary. These dimensions do not reserve GX's extra EFB scratch rows.
 // Invalid zero dimensions leave the configuration unchanged.
 bool aurora_configure_native_target(uint32_t width, uint32_t height);
+// How the native target covers the display surface. FIT keeps the base
+// dimensions' aspect, centered (bars on other surfaces). FILL sizes the target
+// to the whole surface and scales the base dimensions per axis, so a game's
+// anamorphic 16:9 picture fills a 16:9 surface. ASPECT_16_9 is a 16:9 target
+// centered on any surface. Call on the graphics owner thread; the target is
+// resized at the next frame boundary.
+typedef enum {
+  AURORA_NATIVE_TARGET_FIT = 0,
+  AURORA_NATIVE_TARGET_FILL = 1,
+  AURORA_NATIVE_TARGET_ASPECT_16_9 = 2,
+} AuroraNativeTargetAspect;
+void aurora_set_native_target_aspect(AuroraNativeTargetAspect aspect);
 // Direct native rendering: call begin before preparing any draws or writing
 // their mapped GPU payload. False skips all drawing/clears/present for this
 // game frame without waiting. Logic still advances; always call end, including

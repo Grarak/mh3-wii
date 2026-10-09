@@ -13,6 +13,7 @@ were deleted on 2026-10-03; they remain in git history.
 - [native-renderer-status.md](native-renderer-status.md): what works on each platform, the verified Vita colour/hunter fixes, shaders and memory limits. Start here.
 - [native-render-plan.md](native-render-plan.md): fixed shading models, frame packets, render thread, model instances and the measured Pi game/render split.
 - [frame-state-slot-exchange.md](frame-state-slot-exchange.md): the three-slot exchange the frame packets use.
+- [vita-widescreen.md](vita-widescreen.md): the game's own 16:9 mode on the Vita's whole 960×544 display (`MH3_WIDESCREEN`), how the anamorphic picture is stretched, devkit numbers.
 - [vita-launcher.md](vita-launcher.md): launcher, reading the disc image in place and load-time texture/model conversion.
 - [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and earlier devkit checkpoints.
 - [vita-native-cdram-capacity.md](vita-native-cdram-capacity.md): CDRAM budgets.

@@ -50,6 +50,11 @@ mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences,
  * other display fields. Unlike RenderInit it does not test component cable. */
 mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences, const mh3_render_mode defaults[3], mh3_render_mode *current);
 
+/* SCGetAspectRatio (804dd060): `found` is SCFindU8Item's result for IPL.AR
+ * and `stored` its byte. Only a stored 1 is 16:9; a missing item or any other
+ * value reads as 4:3 (0). */
+uint8_t mh3_sc_aspect_ratio(int found, uint8_t stored);
+
 #ifdef __cplusplus
 }
 #endif

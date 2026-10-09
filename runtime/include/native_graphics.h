@@ -77,6 +77,13 @@ void ClearNativeMaterialPrograms();
 // Create the renderer on the game thread. Native targets use only the selected
 // visible dimensions, with no guest FIFO or XFB allocation/initialization.
 void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets = true);
+// Game thread: the game's 16:9 mode is anamorphic, a 640x448 EFB the display
+// stretches. Widescreen fills the Vita's 960x544 display with the target,
+// scaled per axis, and shows a 16:9 target on other hosts; 4:3 keeps the
+// target's own aspect. Applies at the next rendered frame.
+void SetNativeDisplayWidescreen(bool widescreen);
+// The aspect of the picture the widescreen target shows on this host.
+float NativeWidescreenAspect();
 // Opens the native texture and model assets of MH3_DISC_DIR: prepared packs,
 // or the load-time asset cache. Done by InitializeNativeGraphics unless told not to.
 void OpenNativeAssets();

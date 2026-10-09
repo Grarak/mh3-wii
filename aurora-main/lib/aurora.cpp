@@ -640,6 +640,15 @@ bool aurora_configure_native_target(uint32_t width, uint32_t height) {
   return width && height;
 #endif
 }
+void aurora_set_native_target_aspect(AuroraNativeTargetAspect aspect) {
+#ifdef AURORA_ENABLE_GX
+  if (aurora::gl::initialized() && !aurora::gl::on_render_thread())
+    aurora::Log.fatal("Native target aspect changed outside the graphics owner");
+#endif
+  aurora::window::set_frame_buffer_aspect_fit(aspect == AURORA_NATIVE_TARGET_FIT);
+  aurora::window::set_force_aspect_16_9(aspect == AURORA_NATIVE_TARGET_ASPECT_16_9);
+  aurora::window::set_present_surface_fill(aspect == AURORA_NATIVE_TARGET_FILL);
+}
 bool aurora_begin_native_frame() { return aurora::begin_native_frame(); }
 bool aurora_native_frame_should_render() { return aurora::g_nativeFrame.should_render(); }
 bool aurora_native_window_presentable() {

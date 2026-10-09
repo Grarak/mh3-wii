@@ -92,6 +92,16 @@ uint32_t efbPitch = 0, efbWidth = 0, efbHeight = 0;
 bool efbBgra = false;
 bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
+bool displayWidescreen = false;
+AuroraNativeTargetAspect DisplayAspect(bool widescreen) {
+    if (!widescreen)
+        return AURORA_NATIVE_TARGET_FIT;
+#ifdef __vita__
+    return AURORA_NATIVE_TARGET_FILL;
+#else
+    return AURORA_NATIVE_TARGET_ASPECT_16_9;
+#endif
+}
 // Event polling and all graphics submission belong to the game thread.
 
 void FlushHostEfbPokes() {
@@ -212,7 +222,8 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
 #else
     config.desiredBackend = BACKEND_OPENGLES;
 #endif
-    config.windowWidth = 640;
+    // A 16:9 window for the game's widescreen mode (the Vita's is its display).
+    config.windowWidth = displayWidescreen ? 854 : 640;
     config.windowHeight = 480;
 #ifdef MH3_DEVELOPMENT
     // MH3_WINDOW_SCALE=n: an n times larger window. It only shows the picture
@@ -370,6 +381,26 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, std::move(task));
 }
 
+float NativeWidescreenAspect() {
+#ifdef __vita__
+    return float(aurora::gxm::Device::Width) / float(aurora::gxm::Device::Height);
+#else
+    return 16.f / 9.f;
+#endif
+}
+
+void SetNativeDisplayWidescreen(bool widescreen) {
+#ifdef MH3_DEVELOPMENT
+    std::fprintf(stderr, "MH3 display: game in %s mode, camera aspect %.4f\n", widescreen ? "16:9" : "4:3", widescreen ? NativeWidescreenAspect() : 4.f / 3.f);
+#endif
+    if (widescreen == displayWidescreen)
+        return;
+    displayWidescreen = widescreen;
+    // Before startup, InitializeNativeGraphics applies it.
+    if (initialized)
+        QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [aspect = DisplayAspect(widescreen)] { aurora_set_native_target_aspect(aspect); });
+}
+
 void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets) {
     if (NativeRenderThreadRunning())
         throw std::runtime_error("Native graphics initialized twice");
@@ -377,6 +408,7 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
         throw std::runtime_error("Native graphics initialized outside the game thread");
     if (!aurora_configure_native_target(width, height))
         throw std::runtime_error("Native graphics target has zero dimensions");
+    aurora_set_native_target_aspect(DisplayAspect(displayWidescreen));
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv, load_native_assets);
