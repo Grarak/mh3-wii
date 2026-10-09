@@ -22,6 +22,7 @@
 #include <psp2/vshbridge.h>
 #else
 #include "controller_host.h"
+#include "../native/mh3_classic_map.h"
 #include <chrono>
 #endif
 #include <algorithm>
@@ -190,13 +191,14 @@ uint32_t LiveButtons() {
         held |= Button::Right;
     return held;
 #else
-    // The host's controls as the game's Classic Controller (keyboard: arrows,
-    // Left Shift B, Space A, E X, Return Plus), its buttons by position on the
-    // Vita: B is Cross, A Circle, X Triangle, Y Square, Plus Start.
+    // The host's controls as the game's Classic Controller (docs/vita-controls.md),
+    // its buttons by position on the Vita: B is Cross, A Circle, X Triangle,
+    // Y Square, Plus Start.
     const auto pad = ReadLiveController();
     static constexpr std::pair<uint16_t, uint32_t> map[] = {
-        {0x0001, Button::Up},   {0x4000, Button::Down},  {0x0002, Button::Left},     {0x8000, Button::Right}, {0x0040, Button::Cross}, {0x0010, Button::Circle},
-        {0x0008, Button::Triangle}, {0x0020, Button::Square}, {0x0400, Button::Start}, {0x1000, Button::Select}, {0x2000, Button::L2}, {0x0200, Button::R2}};
+        {MH3_CL_UP, Button::Up},       {MH3_CL_DOWN, Button::Down},   {MH3_CL_LEFT, Button::Left},    {MH3_CL_RIGHT, Button::Right},
+        {MH3_CL_B, Button::Cross},     {MH3_CL_A, Button::Circle},    {MH3_CL_X, Button::Triangle},   {MH3_CL_Y, Button::Square},
+        {MH3_CL_PLUS, Button::Start},  {MH3_CL_MINUS, Button::Select}, {MH3_CL_L, Button::L2},        {MH3_CL_R, Button::R2}};
     uint32_t held = 0;
     for (const auto& [classic, button] : map)
         if (pad.buttons & classic)

@@ -435,8 +435,9 @@ directory gives the missing-disc message. `MH3_USER_DIR` holds the saves and
 
 Input is `MH3_LAUNCHER_INPUT`, or the host's controls read as the game's
 Classic Controller (`ReadLiveController`), by button position: B is Cross, A
-Circle, X Triangle, Y Square, Plus Start, L/R L/R (keyboard at present:
-arrows, Left Shift, Space, E, R, Return, Q, F). For example, on the VM:
+Circle, X Triangle, Y Square, Plus Start, L/R L/R (keyboard: arrows, Left
+Shift for Cross, Space for Circle, Enter for Start, Q/R for L/R;
+[vita-controls.md](vita-controls.md)). For example, on the VM:
 
 ```
 MH3_BIN=build/linux-arm64-dev/MH3 MH3_ARGS=--launcher CAPTURE_INTERVAL=60 \
