@@ -109,15 +109,19 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 const uint32_t width = (bp[0x4D] & 1023) * 16;
                 const uint32_t sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1;
                 const uint32_t scale = bp[0x4E] & 511;
-                // Scaling changes XFB line count. Preserve the exact unscaled
-                // path first; other modes remain explicit until validated.
-                if (scale != 0 && scale != 256) throw std::runtime_error("GX scaled display copy requires line-count conversion");
+                // BP bit 10 selects reciprocal scaling, not a scaling enable.
+                // Match the hardware copy interval count (height minus one).
+                if ((trigger & 0x400) && scale == 0)
+                    throw std::runtime_error("GX reciprocal display-copy scale is zero");
+                const uint32_t destinationHeight = 1 + ((trigger & 0x400)
+                    ? (sourceHeight - 1) * 256 / scale
+                    : (sourceHeight - 1) * scale / 256);
                 if (width == 0 || width > 1024) throw std::runtime_error("GX display copy has invalid stride");
                 const auto view = resolver(bp[0x4B] << 5);
-                if (uint64_t(width) * sourceHeight * 2 > view.size)
+                if (uint64_t(width) * destinationHeight * 2 > view.size)
                     throw std::runtime_error("GX display copy exceeds guest framebuffer RAM");
                 sink(std::span<const uint8_t>(p, length));
-                copy({view.address, width, sourceHeight, (trigger & 0x800) != 0});
+                copy({view.address, width, destinationHeight, (trigger & 0x800) != 0});
                 offset += length;
                 continue;
             }
