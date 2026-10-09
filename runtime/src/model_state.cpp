@@ -12,7 +12,14 @@
 #include <mutex>
 
 namespace {
-// Typed texture and palette objects (game thread).
+// Typed texture and palette objects. The game thread and the draw thread
+// both store and read them (a material bound on one while the other draws),
+// so every access takes objectsLock: a lookup while the other thread's insert
+// rehashed the map missed, and threw "no typed native producer" (a first load
+// of the village on the Vita, which inserts most of its objects). Recursive:
+// the copies read and store under one hold.
+std::recursive_mutex objectsLock;
+
 struct Objects {
     FastMap<uint32_t, mh3_native_texture_binding> textures;
     FastMap<uint32_t, mh3_native_palette_source> palettes;
@@ -57,6 +64,7 @@ uint32_t Resource(uint32_t reference) {
 
 // Re-storing an unchanged object (UI and effects do every frame) keeps the revision.
 void PutTexture(uint32_t object, const mh3_native_texture_binding& binding) {
+    std::lock_guard lock(objectsLock);
     auto [it, inserted] = O().textures.try_emplace(object, binding);
 
     if (!inserted) {
@@ -70,6 +78,7 @@ void PutTexture(uint32_t object, const mh3_native_texture_binding& binding) {
 }
 
 void PutPalette(uint32_t object, const mh3_native_palette_source& palette) {
+    std::lock_guard lock(objectsLock);
     auto [it, inserted] = O().palettes.try_emplace(object, palette);
 
     if (!inserted) {
@@ -84,6 +93,7 @@ void PutPalette(uint32_t object, const mh3_native_palette_source& palette) {
 
 void PutCopiedObjects(uint32_t destination, bool palette, const std::array<bool, 8>& present, const std::array<mh3_native_texture_binding, 8>& textures,
                       const std::array<mh3_native_palette_source, 8>& colors) {
+    std::lock_guard lock(objectsLock);
     auto& o = O();
 
     for (uint32_t i = 0; i < 8; i++) {
@@ -137,6 +147,8 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
         previous = generation;
     }
 
+    std::lock_guard lock(objectsLock);
+
     for (auto& item : O().textures)
         if (item.second.source.payload_address == payload && generation > item.second.source.generation) {
             mh3_texture_source_updated(&item.second.source, generation);
@@ -188,10 +200,12 @@ bool EqualNativePaletteSource(const mh3_native_palette_source& a, const mh3_nati
 }
 
 uint64_t ReadNativeTextureObjectRevision() {
+    std::lock_guard lock(objectsLock);
     return O().revision;
 }
 
-const mh3_native_texture_binding& NativeTextureObject(uint32_t object) {
+mh3_native_texture_binding NativeTextureObject(uint32_t object) {
+    std::lock_guard lock(objectsLock);
     const auto& textures = O().textures;
     const auto found = textures.find(object);
 
@@ -216,7 +230,8 @@ void StoreNativePaletteObject(uint32_t object, const mh3_native_palette_source& 
     PutPalette(object, copy);
 }
 
-const mh3_native_palette_source& NativePaletteObject(uint32_t object) {
+mh3_native_palette_source NativePaletteObject(uint32_t object) {
+    std::lock_guard lock(objectsLock);
     const auto& palettes = O().palettes;
     const auto found = palettes.find(object);
 
@@ -251,6 +266,8 @@ void InitializeNativeTextureSource(uint32_t reference, bool palette) {
 }
 
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette) {
+    std::lock_guard lock(objectsLock);
+
     if ((destination & 3) || (source & 3))
         MH3_THROW(std::runtime_error("Unaligned native resource object copy"));
 
