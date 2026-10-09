@@ -38,6 +38,8 @@ enum : uint32_t {
     kScale = 0x1C,         // VEC3: root motion scale
     kRotation = 0x28,      // rotation applied to root motion (rotVecZXY)
     kFlags = 0x4C,         // u32: bit 2 = no root motion
+    kBlendLeft = 0x44,     // f32: frames of the cross-fade to the new motion left
+    kBlendLength = 0x48,   // f32: the cross-fade's length in frames
     kRate = 0x5C,          // f32[6]: channel frames per step (speed * 2.0)
     kFrame = 0x74,         // f32[6]
     kPrevFrame = 0x8C,     // f32[6]: frames before this step
@@ -47,12 +49,16 @@ enum : uint32_t {
     kPauseSteps = 0xF1,    // u8: steps to skip entirely (hit stop)
     kHoldSteps = 0xF2,     // u8: steps to advance without moving
     kRootNode = 0xEC,      // u32: the node whose translation is the root motion
+    kWeight = 0xD4,        // f32[6]: channel blend weights before the cross-fade
+    kFadingTag = 0x100,    // u32[3]: cleared with the fading channels 3-5
+    kKeptAnims = 0x11C,    // u32[16]: animations the character keeps (not released)
     kChannelSet = 0x160,   // channel set object (AnmObj with per-channel weights)
 };
 
 enum : uint32_t {
     ChannelAnim = 0x800E1C90,       // (this, channel) -> AnmObj* or 0
-    ChannelBlend = 0x800E1EB4,      // (this)
+    ReleaseAnim = 0x8007B3AC,       // (AnmObj*)
+    Hermite = 0x800522EC,           // (f1 t, f2..f7 curve) -> f1
     InitAnmResult = 0x800610CC,     // (buffer)
     VecScale = 0x80051F44,          // (out, in; f1 scale)
     VecAdd = 0x80073FCC,            // (inout, add)
@@ -60,8 +66,12 @@ enum : uint32_t {
     ResultTranslation = 0x8008E224, // (const ChrAnmResult*, out VEC3*)
 };
 
-// AnmObj virtual slots.
-enum : uint32_t { kSetFrame = 0x1C, kGetFrame = 0x20, kUpdateFrame = 0x24, kGetResult = 0x38, kGetWeight = 0x4C };
+// AnmObj virtual slots (kDetach and the weights: the channel set's).
+enum : uint32_t {
+    kSetFrame = 0x1C, kGetFrame = 0x20, kUpdateFrame = 0x24, kSetRate = 0x28, kGetResult = 0x38,
+    kDetach = 0x40, kSetWeight = 0x48, kGetWeight = 0x4C,
+};
+constexpr uint32_t kZero = 0x807988F8, kOne = 0x807988FC; // f32 0 and 1 (r2-30312, r2-30308)
 
 float F32(uint32_t address) { return Memory::ReadFloat32(address); }
 
@@ -130,7 +140,86 @@ std::array<float, 3> RootDelta(GuestCall& game, uint32_t self, uint32_t anim, fl
     return {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
 }
 
+// 0x800E1C90 (MHcharChannelAnim): channel i's animation, or 0. The channel set
+// holds a count (+0x18) and an array of AnmObj pointers (+0x1C); an index out
+// of range panics (the original does that through 0x80501130).
+uint32_t Channel(GuestCall& game, uint32_t self, uint32_t i) {
+    const uint32_t set = Memory::Read32(self + kChannelSet);
+    if (i >= Memory::Read32(set + 0x18)) [[unlikely]]
+        return game.Call<ChannelAnim>({self, i});
+    return Memory::Read32(Memory::Read32(set + 0x1C) + 4 * i);
+}
+
+// Sets the weights of channels first..first+2 to their shares of `share`, in
+// proportion to their weights at the start of the cross-fade (kWeight); those
+// without an animation get 0.
+void Weigh(GuestCall& game, uint32_t self, uint32_t first, float share) {
+    const float zero = F32(kZero);
+    float total = zero;
+    for (uint32_t ch = first; ch < first + 3; ++ch)
+        if (Channel(game, self, ch)) total += F32(self + kWeight + 4 * ch);
+    for (uint32_t ch = first; ch < first + 3; ++ch) {
+        const float weight =
+            Channel(game, self, ch) && total > zero ? share * (F32(self + kWeight + 4 * ch) / total) : zero;
+        game.Virtual<kSetWeight>(Memory::Read32(self + kChannelSet), {ch}, {weight});
+    }
+}
+
+// 0x800E1EB4 (MHcharChannelBlend), once per step after the channels advanced.
+// Channels 0-2 play the character's motion; while it cross-fades from the one
+// before, that one plays on in channels 3-5. The cross-fade's frames left fall
+// by channel 0's rate each step; the old motion's share of the blend eases
+// (Hermite) from 1 to 0 over the cross-fade's length. When it runs out, the old
+// channels are detached (their animations released unless the character keeps
+// them) and the new ones take the whole blend.
+//
+// Here the frames left fall by the rate times the step length, so a cross-fade
+// takes the same time at any step length. At the stock 1/30 s step this is
+// the original.
+void BlendChannels(GuestCall& game, uint32_t self) {
+    if (!Memory::Read32(self + kChannelSet)) return;
+    const float zero = F32(kZero), one = F32(kOne);
+    float old = zero; // the old motion's share
+    if (Channel(game, self, 3)) {
+        const float left = F32(self + kBlendLeft) - F32(self + kRate) * float(GameStep::Scale());
+        Memory::WriteFloat32(self + kBlendLeft, left);
+        if (left <= zero) {
+            Memory::WriteFloat32(self + kBlendLeft, zero);
+            for (uint32_t ch = 0; ch < 3; ++ch) {
+                const uint32_t anim = game.Virtual<kDetach>(Memory::Read32(self + kChannelSet), {ch + 3});
+                Memory::Write32(self + kFadingTag + 4 * ch, 0);
+                bool kept = false;
+                for (uint32_t k = 0; k < 16 && anim; ++k) kept |= Memory::Read32(self + kKeptAnims + 4 * k) == anim;
+                if (anim && !kept) game.Call<ReleaseAnim>({anim});
+                if (const uint32_t now = Channel(game, self, ch))
+                    game.Virtual<kSetRate>(now, {}, {F32(self + kRate + 4 * ch)});
+            }
+            Memory::Write32(self + kFlags, Memory::Read32(self + kFlags) & ~3u);
+            Weigh(game, self, 0, one);
+            return;
+        }
+        const float length = F32(self + kBlendLength);
+        if (!(left > length)) {
+            game.Call<Hermite>({}, {left / length, zero, zero, zero, one, one, zero});
+            old = game.F1();
+        }
+        Weigh(game, self, 3, old);
+    }
+    Weigh(game, self, 0, one - old);
+}
+
 } // namespace
+
+static void MHcharChannelBlendPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 80);
+    GuestCall game{ctx};
+    BlendChannels(game, frame.Arg(3));
+}
+extern "C" void func_800E1EB4(CpuContext* ctx);
+extern "C" void MH3_MHcharChannelBlend(CpuContext* ctx) {
+    PortCheck::Call(ctx, "MHcharChannelBlend", func_800E1EB4, MHcharChannelBlendPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800E1EB4, MH3_MHcharChannelBlend, "MHcharChannelBlend");
 
 static void MHcharRootMotionDeltaPort(CpuContext* ctx) {
     const uint32_t self = ctx->gpr[3], out = ctx->gpr[4], channelIndex = ctx->gpr[5];
@@ -217,7 +306,7 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
             game.Virtual<kSetFrame>(anim, {}, {std::floor(frameNow)});
         }
 #endif
-    game.Call<ChannelBlend>({self});
+    BlendChannels(game, self);
 
     const float zero = 0.0f; // f32 at r2-30312 (0x807988F8)
     for (uint32_t k = 0; k < 3; ++k) Memory::WriteFloat32(sum + k * 4, zero);

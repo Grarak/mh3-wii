@@ -266,6 +266,7 @@ void PlayerStepTimers(CpuContext* ctx) {
 extern "C" void func_80260B9C(CpuContext* ctx);
 
 extern "C" void MH3_PlayerStepTimers(CpuContext* ctx) {
+    PortCheck::Fuzz(ctx, 'P', ctx->gpr[3]);
     PortCheck::Call(ctx, "PlayerStepTimers", func_80260B9C, PlayerStepTimers);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80260B9C, MH3_PlayerStepTimers, "PlayerStepTimers");

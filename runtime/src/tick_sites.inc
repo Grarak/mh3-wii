@@ -7,98 +7,38 @@
 // moves on by a constant (limit) each step: it is moved on by limit * s.
 // Rate sites load such an amount kept in memory: it becomes k * s. Decay sites
 // (lfs) load the f of `x *= f` each step: it becomes f^s.
-{0x800581F4u, TickSite::Rate},              // screen fades (TickFades 800581A4): fade-in alpha step (+0x60), per step
-{0x80058210u, TickSite::CountdownPastZero}, // screen fades: fade-in steps left (+0x30), done below 0
-{0x8005825Cu, TickSite::Rate},              // screen fades: fade-out alpha step (+0x60)
-{0x80058278u, TickSite::CountdownPastZero}, // screen fades: fade-out steps left (+0x30)
-{0x800E1F08u, TickSite::PerStep},           // MHchar channel blend (800E1EB4): cross-fade -= rate per step
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
-{0x801298C8u, TickSite::Countup, 26999},    // enemy: steps (s16 +0x452), capped at 27000
-{0x80129A3Cu, TickSite::Countdown},         // enemy (80129A3C): countdowns (s16 +0x200, +0x202), clamped at 0
-{0x80129A5Cu, TickSite::Countdown},
-{0x801307C4u, TickSite::Countup, 32766},    // enemy: steps (s16 +0x440), capped at 0x7FFF
 {0x8013896Cu, TickSite::PerStep},           // enemy update (801382A0): fast turn speed (+0x1AC) slows by 10 a step
 {0x801389ACu, TickSite::Decay},             // enemy update: slow turn speed (+0x1AC) *= 0.9 a step
 {0x801389C0u, TickSite::PerStep},           // enemy update: yaw (+0x1A4) += turn speed a step
 {0x80138D14u, TickSite::Countdown},         // enemy (80138BC4): countdown (s16 +0x764)
 {0x80138D40u, TickSite::Countdown},
-{0x801556C8u, TickSite::Countup},           // enemy (801556C8): cycle steps (u16 +0x33C), wraps at 50
-{0x801557A8u, TickSite::Countdown},         // enemy action (8015574C): countdown (+0x20), ends the action below 0
 {0x801AC6D8u, TickSite::Countdown},         // enemy action (801AC674): countdown (+0x20), ends the action at 0
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
-{0x8020A84Cu, TickSite::Countup},           // village player action step counter (PLW+0x28)
-{0x8020A858u, TickSite::Countup, 149},      // village player idle steps (PLW+0x36), capped at 150
-{0x8020B114u, TickSite::CountdownPastZero}, // village player action countdown (PLW+0x28), fires at <= 0
-{0x8020B250u, TickSite::CountdownPastZero},
-{0x8020B7DCu, TickSite::CountdownPastZero},
-{0x8020B960u, TickSite::CountdownPastZero},
-{0x8020C660u, TickSite::CountdownPastZero},
-{0x8020C694u, TickSite::CountdownPastZero},
-{0x8020C6F8u, TickSite::CountdownPastZero},
-{0x8020C74Cu, TickSite::CountdownPastZero},
-{0x8020C7F8u, TickSite::CountdownPastZero},
-{0x8020C944u, TickSite::CountdownPastZero},
-{0x8020C9DCu, TickSite::CountdownPastZero},
-{0x8020CB14u, TickSite::CountdownPastZero},
-{0x8020CD20u, TickSite::Countup},
-{0x8020CEA8u, TickSite::CountdownPastZero},
-{0x8020D51Cu, TickSite::CountdownPastZero},
-{0x8020D7FCu, TickSite::Countdown},         // village player action countdown (PLW+0x28), while > 0
-{0x8020DB2Cu, TickSite::Countdown},
-{0x8020E47Cu, TickSite::CountdownPastZero},
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
 {0x80246C64u, TickSite::Countup},           // player action step counter (PLW+0x28) in action handlers
-{0x80247844u, TickSite::Countdown},         // player action countdown (PLW+0x28), while > 0
-{0x802498B4u, TickSite::Countup},
-{0x802499E4u, TickSite::CountdownPastZero}, // player action countdown (PLW+0x28), fires at <= 0
-{0x8024A884u, TickSite::CountdownPastZero},
 {0x8024ACD0u, TickSite::CountdownPastZero},
-{0x8024B9F0u, TickSite::Countup},
 {0x8024C224u, TickSite::Countdown, 1},
 {0x8024C314u, TickSite::Countdown},
 {0x80250070u, TickSite::Countdown},
 {0x80250114u, TickSite::Countdown},
 {0x802501DCu, TickSite::CountdownPastZero},
-{0x802506CCu, TickSite::CountdownPastZero},
-{0x80250D68u, TickSite::Countdown},
 {0x80251590u, TickSite::Countdown},
 {0x8025182Cu, TickSite::Countdown},
-{0x80251A08u, TickSite::CountdownPastZero},
 {0x80253200u, TickSite::Countdown},
-{0x80253628u, TickSite::CountdownPastZero},
-{0x80253D78u, TickSite::Countdown},
-{0x8025484Cu, TickSite::Countdown},
 {0x80254A4Cu, TickSite::Countup},
 {0x80254F3Cu, TickSite::Countup},
 {0x80256C68u, TickSite::Countdown},
-{0x80257E98u, TickSite::CountdownPastZero},
-{0x80257FE8u, TickSite::CountdownPastZero},
-{0x802582F8u, TickSite::Countdown},
-{0x802584E0u, TickSite::CountdownPastZero},
-{0x802584ECu, TickSite::CountdownPastZero},
 {0x80258E9Cu, TickSite::CountdownPastZero},
-{0x80259480u, TickSite::CountdownPastZero},
-{0x802596A8u, TickSite::Countdown},
-{0x80259884u, TickSite::Countdown},
 {0x802598F0u, TickSite::Countup},
 {0x80259ABCu, TickSite::Countup},
-{0x80259CB8u, TickSite::Countup},
 {0x8025AC3Cu, TickSite::CountdownPastZero},
 {0x8025B380u, TickSite::Countup},
-{0x8025B4C4u, TickSite::Countup},
-{0x8025BD14u, TickSite::Countdown},
-{0x8025C19Cu, TickSite::Countdown},
 {0x8025CEF8u, TickSite::Countup},
 {0x8025D0BCu, TickSite::Countup},
-{0x8025D6B0u, TickSite::Countup},
-{0x8025DBF8u, TickSite::CountdownPastZero},
-{0x8025DD58u, TickSite::CountdownPastZero},
-{0x8026ABC4u, TickSite::Countup, 99},       // player button hold steps (8026AB00), capped at 100
 {0x80281750u, TickSite::CountdownPastZero},
-{0x80281ECCu, TickSite::CountdownPastZero},
 {0x802823CCu, TickSite::CountdownPastZero},
-{0x80282880u, TickSite::CountdownPastZero},
 {0x802857D8u, TickSite::Countup},
 {0x80286B70u, TickSite::Countup},
 {0x80288808u, TickSite::CountdownPastZero},
@@ -115,9 +55,6 @@
 {0x802BCDC8u, TickSite::CountdownPastZero}, // camera script wait (op 0x25): frames left, done below 0
 {0x802BD878u, TickSite::Countdown},         // camera path hold (802BD78C): steps before playing
 {0x802BD8B0u, TickSite::Countup},           // camera path frame (802BD78C)
-{0x802E4C90u, TickSite::Countup},           // 802E4C88: steps in the area (806C04E8)
-{0x802E4CA4u, TickSite::Countup},           // 802E4C88: steps (806C02D8)
-{0x802E4CB0u, TickSite::Countup},           // 802E4C88: steps (806C046C)
 {0x802E4D60u, TickSite::Countup},           // area ambience (802E4CC0): cycle steps (u8 +0xC), 40..190
 {0x802E4DB4u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xD)
 {0x802E4E24u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xE), 30..50
@@ -129,9 +66,6 @@
 {0x80340924u, TickSite::Countdown},         // fish (803408B4): turn steps left (+0xC)
 {0x80340A00u, TickSite::PerStep},           // fish: swim speed (+0x20) moved per step
 {0x80340B00u, TickSite::PerStep},           // fish: swim speed change per step
-{0x80344EBCu, TickSite::Countup, 32766},    // 80344EBC: object ages (+0x34, +0x1C, +0x1E), capped at 0x7FFF
-{0x80344ED0u, TickSite::Countup, 32766},
-{0x80344EE4u, TickSite::Countup, 32766},
 {0x8034E5ECu, TickSite::Countup},           // actor action step counter (+0x28)
 {0x8034EC68u, TickSite::Countup},
 {0x8035B21Cu, TickSite::Countdown},         // 8035AF48: countdown (+8), blinks below 30

@@ -2,6 +2,7 @@
 
 #include "audio/ax_dsp.h"
 #include "game_step.h"
+#include "guest_call.h"
 #include "gx_host.h"
 #include "memory.h"
 
@@ -57,6 +58,9 @@ struct Snapshot {
     }
 };
 
+// Fuzz: every call checked, whatever the clock or the rate.
+bool forced = false;
+
 uint32_t Word(const std::vector<uint8_t>& b, size_t i) {
     return uint32_t(b[i]) << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3];
 }
@@ -73,11 +77,12 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     uint32_t& checks = counts[name];
     // A check copies all of RAM four times: at most one every 500 ms, and per
     // port one every 2 s, so the game keeps most of its speed and every port
-    // named gets its turn.
+    // named gets its turn (Fuzz, and MH3_PORT_CHECK_EVERY=1, check every call).
     const auto now = std::chrono::steady_clock::now();
     auto& previous = last[name];
-    if (GameStep::Ticks() != 1 || now - lastAny < std::chrono::milliseconds(500) ||
-        now - previous < std::chrono::seconds(2)) {
+    static const bool every = std::getenv("MH3_PORT_CHECK_EVERY") != nullptr;
+    if (GameStep::Ticks() != 1 || (!forced && !every &&
+                                   (now - lastAny < std::chrono::milliseconds(500) || now - previous < std::chrono::seconds(2)))) {
         port(ctx);
         return;
     }
@@ -253,6 +258,83 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
     (void)original;
     (void)outputs;
     port(ctx);
+#endif
+}
+
+void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
+#ifdef MH3_DEVELOPMENT
+    static const char* list = std::getenv("MH3_PORT_FUZZ");
+    static const uint32_t after = [] {
+        const char* v = std::getenv("MH3_PORT_FUZZ_AFTER");
+        return v ? uint32_t(std::strtoul(v, nullptr, 0)) : 900u;
+    }();
+    static std::map<char, uint32_t> calls;
+    if (!list || ++calls[kind] != after) return;
+    constexpr uint32_t kStepCounter = 0x8065AA6C;
+    AxDspHle::JoinMixWorker();
+    const CpuContext entry = *ctx;
+    const GameStep::State clock = GameStep::Save();
+    Snapshot start;
+    start.Save();
+    GuestCall game{ctx};
+    uint32_t runs = 0;
+    forced = true;
+    const std::string s = list;
+    for (size_t at = 0; at < s.size();) {
+        size_t end = s.find(',', at);
+        if (end == std::string::npos) end = s.size();
+        const std::string item = s.substr(at, end - at);
+        at = end + 1;
+        if (item.size() < 3 || item[0] != kind || item[1] != ':') continue;
+        const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
+        for (uint32_t arg = 0; arg < 2; ++arg) {
+            if (kind == 'P') {
+                for (uint32_t state = 0; state < 8; ++state)
+                    for (uint32_t timer : {1u, 2u, 40u, 400u}) {
+                        Memory::Write8(work + 5, uint8_t(state));
+                        Memory::Write32(work + 0x20, state * 25);
+                        Memory::Write32(work + 0x28, timer);
+                        game(fn, {work, arg, arg});
+                        start.Restore();
+                        GameStep::Restore(clock);
+                        *ctx = entry;
+                        ++runs;
+                    }
+            } else {
+                const uint32_t counter = Memory::Read32(kStepCounter);
+                for (uint32_t phase = 0; phase < 64; phase += 3) {
+                    Memory::Write32(kStepCounter, (counter & ~63u) + 64 + phase);
+                    game(fn, {work, arg, arg});
+                    start.Restore();
+                    GameStep::Restore(clock);
+                    *ctx = entry;
+                    ++runs;
+                }
+            }
+        }
+    }
+    forced = false;
+    // C: entries (with the player's hook): started once and kept, so the
+    // checks see the updates of what they start.
+    for (size_t at = 0; kind == 'P' && at < s.size();) {
+        size_t end = s.find(',', at);
+        if (end == std::string::npos) end = s.size();
+        const std::string item = s.substr(at, end - at);
+        at = end + 1;
+        if (item.size() < 3 || item[0] != 'C' || item[1] != ':') continue;
+        const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
+        const uint32_t zero = (entry.gpr[1] - 0x400) & ~15u; // below the stack
+        for (uint32_t i = 0; i < 16; i += 4) Memory::Write32(zero + i, 0);
+        game(fn, {work + 0x3C, zero, 0, work}); // PLW+0x3C: the position
+        *ctx = entry;
+        std::printf("MH3 port fuzz: started %08x\n", fn);
+    }
+    std::printf("MH3 port fuzz: %c work %08x, %u calls\n", kind, work, runs);
+    std::fflush(stdout);
+#else
+    (void)ctx;
+    (void)kind;
+    (void)work;
 #endif
 }
 

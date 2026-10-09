@@ -14,8 +14,11 @@
 // instead: the tick of this step that is k mod N if the tick count passed one,
 // otherwise a value that fails the test. Every N ticks the test passes on
 // exactly one step, whatever the step length. At the stock 1/30 s step (one
-// tick per step) every read is the counter itself.
+// tick per step) every read is the counter itself. The player's step counter
+// (PLW+0x20, a tick at a time) gets the same for its tests in code that runs
+// once a step (kind 2 sites).
 #include "game_step.h"
+#include "step_counter.h"
 #include "port_check.h"
 #include "abi_bridge.h"
 #include "guest_call.h"
@@ -39,7 +42,7 @@ constexpr uint32_t kVillageCountdown = kVillage + 0x28;   // u8
 constexpr uint32_t kVillageRamp = kVillage + 0x34;        // s16: steps in the current state, +-60
 constexpr uint32_t kVillageTalk = 0x806ACD48;   // village talk work
 constexpr uint32_t kVillageTalkSteps = kVillageTalk + 0x150; // u32
-// Steps in the area, advanced by 0x802E4C88 (tick sites).
+// Steps in the area, advanced by AreaStepCounters (0x802E4C88, below).
 constexpr uint32_t kAreaSteps[] = {0x806C04E8, 0x806C02D8, 0x806C046C};
 // Quest clock steps (quest work+0x28), advanced by 0x803B0228 (tick sites).
 constexpr uint32_t kQuestSteps = 0x806C7D00;
@@ -54,7 +57,7 @@ struct Site {
     uint32_t pc;
     uint32_t n; // 0: N is a register and the test is == 0
     uint32_t k;
-    uint32_t equality;
+    uint32_t kind; // 0: any other use; 1: `% N == k`; 2: the same on a player's step counter
 };
 constexpr Site kSites[] = {
 #include "step_counter_sites.inc"
@@ -84,12 +87,23 @@ extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc)
     const uint32_t counter = Memory::Read32(address);
     const Site* site = Find(pc);
     const uint32_t ticks = GameStep::Ticks();
-    if (!site || !IsCounter(address) || ticks == 1 || !site->equality || Raw()) return counter;
+    // A player's step counter (PLW+0x20, advanced a tick at a time by
+    // player_timers.cpp) is read through the PLW, so its sites (kind 2) name it.
+    if (!site || ticks == 1 || site->kind == 0 || Raw()) return counter;
+    if (site->kind == 1 && !IsCounter(address)) return counter;
     if (site->n == 0) return ticks == 0 ? 1u : counter; // 1 % N != 0 for any N > 1
     // The latest value in (counter - ticks, counter] that is k mod N.
     const uint32_t back = (counter % site->n + site->n - site->k % site->n) % site->n;
     if (back < ticks) return counter - back;
     return counter % site->n == site->k ? counter + 1 : counter;
+}
+
+bool StepCounter::Every(uint32_t n, uint32_t k) {
+    const uint32_t counter = Memory::Read32(kCounter), ticks = GameStep::Ticks();
+    if (n == 0) return counter == k; // the guest's divwu by 0 gives 0: counter - 0 * 0
+    if (ticks == 1 || Raw()) return counter % n == k;
+    // Whether a value in (counter - ticks, counter] is k mod n.
+    return (counter % n + n - k % n) % n < ticks;
 }
 
 // RunTasks: the counter advances by the ticks of this step (RunTasks adds 1).
@@ -148,3 +162,14 @@ extern "C" void MH3_VillageTalkStep(CpuContext* ctx) {
     func_8021DC88(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8021DC88, MH3_VillageTalkStep, "VillageTalkStep");
+
+// AreaStepCounters (0x802E4C88) adds 1 to each of the area's step counters
+// every step: here the ticks of this step, as the step counter itself.
+static void AreaStepCountersPort(CpuContext*) {
+    for (const uint32_t steps : kAreaSteps) Memory::Write32(steps, Memory::Read32(steps) + GameStep::Ticks());
+}
+extern "C" void func_802E4C88(CpuContext* ctx);
+extern "C" void MH3_AreaStepCounters(CpuContext* ctx) {
+    PortCheck::Call(ctx, "AreaStepCounters", func_802E4C88, AreaStepCountersPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802E4C88, MH3_AreaStepCounters, "AreaStepCounters");
