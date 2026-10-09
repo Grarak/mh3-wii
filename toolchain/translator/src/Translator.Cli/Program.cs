@@ -995,6 +995,25 @@ int RunTranslateRecursive(string[] argsTail)
 
             LogPhase("interprocedural guest ABI");
 
+            {
+                const uint nonvolatile = NonvolatileGprPreservationAnalyzer.NonvolatileGprMask;
+                var unpreserved = guestAbiContracts
+                    .Where(static pair => (pair.Value.GprPreservedMask & nonvolatile) != nonvolatile)
+                    .OrderBy(static pair => pair.Key)
+                    .ToArray();
+                Console.WriteLine(
+                    $"[translator] r14-r31 preserved by {guestAbiContracts.Count - unpreserved.Length:N0} of " +
+                    $"{guestAbiContracts.Count:N0} function(s); the rest publish them through CpuContext.");
+                Directory.CreateDirectory(Path.Combine(root, "logs"));
+                File.WriteAllLines(
+                    Path.Combine(root, "logs", "nonvolatile-unpreserved.log"),
+                    unpreserved.Select(pair =>
+                        $"0x{pair.Key:X8} unpreserved=0x{nonvolatile & ~pair.Value.GprPreservedMask:X8} " +
+                        (canonicalGuestFunctions.TryGetValue(pair.Key, out var body)
+                            ? NonvolatileGprPreservationAnalyzer.Analyze(body, guestAbiContracts).Reason
+                            : "native")));
+            }
+
             // Calls to a registered native observe the native implementation's
             // contract, not the excluded PPC body that happens to share its address.
             foreach (var pair in nativeGuestEffects.Contracts)

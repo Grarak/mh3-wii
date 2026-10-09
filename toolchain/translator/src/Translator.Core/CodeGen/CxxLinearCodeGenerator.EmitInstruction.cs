@@ -359,7 +359,7 @@ public sealed partial class CxxLinearCodeGenerator
                         break;
                     }
                     var boundarySync = usesStateFreeCall || argumentNormalization.Length != 0
-                        ? ResidencyBoundarySync.Full
+                        ? ResidencyBoundarySync.FullForCallee(guestAbiContracts.GetValueOrDefault(addr))
                         : ResolveDirectCallBoundarySync(addr, guestAbiContracts, modOverridableCallTargets);
                     if (!boundarySync.IsFull &&
                         IsGuestPairedScalarFloatReturn(guestAbiProvider, call.Target))
@@ -436,11 +436,12 @@ public sealed partial class CxxLinearCodeGenerator
                 else if (IsGuestCallTarget(call.Target))
                 {
                     var targetSymbol = FormatSymbol(call.Target);
-                    AppendFlush(sb, pad);
+                    var symbolSync = ResidencyBoundarySync.FullForCallee(null);
+                    AppendFlush(sb, pad, symbolSync);
                     EmitNormalizeGuestCallFloatArguments(call.Target, call.Arguments, sb, pad, localPaired, guestAbiProvider);
                     sb.AppendLine($"{pad}{targetSymbol}(ctx);");
                     EmitNormalizeGuestCallFloatReturn(call.Target, sb, pad, localPaired, guestAbiProvider);
-                    AppendReload(sb, pad);
+                    AppendReload(sb, pad, symbolSync);
                 }
                 else
                 {

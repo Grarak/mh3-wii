@@ -105,6 +105,26 @@ public static class RuntimeNativeGuestEffectAnalyzer
             contracts[address] = NativeEabiContract;
         }
 
+        // r14-r31 a native never names are preserved. A native that suspends or switches
+        // threads preserves them all: each guest thread runs on its own host stack, which
+        // keeps its callers' locals, and the switch saves and restores CpuContext whole.
+        const uint nonvolatile = NonvolatileGprPreservationAnalyzer.NonvolatileGprMask;
+        foreach (var address in contracts.Keys.ToArray())
+        {
+            if (fullContext.Contains(address)) continue;
+            var contract = contracts[address];
+            var preserved = contract.HasFullSynchronizationFence
+                ? nonvolatile
+                : nonvolatile & ~(contract.GprReadBeforeWriteMask | contract.GprPossibleWriteMask);
+            contracts[address] = contract with
+            {
+                GprReadBeforeWriteMask = contract.GprReadBeforeWriteMask & ~preserved,
+                GprPossibleWriteMask = contract.GprPossibleWriteMask & ~preserved,
+                GprDefiniteWriteMask = contract.GprDefiniteWriteMask & ~preserved,
+                GprPreservedMask = preserved
+            };
+        }
+
         return new RuntimeNativeGuestEffectSet(contracts, precise, conservative);
 
         void Add(uint address, GuestAbiContract contract, bool isPrecise)

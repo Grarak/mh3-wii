@@ -48,6 +48,13 @@ public sealed partial class CxxLinearCodeGenerator
 
         public bool IsEmpty => _gprs.Count == 0 && _fprs.Count == 0 && !_cr && !_ctr && !_xer;
 
+        /// <summary>
+        /// r14-r31 this body preserves for its caller (its own contract's
+        /// <see cref="GuestAbiContract.GprPreservedMask"/>, which callers rely on). Exits
+        /// don't publish them: no caller reads them back from CpuContext.
+        /// </summary>
+        public uint ExitPreservedGprMask { get; set; }
+
         public static string GprLocal(int index) => GprRegisterName(index);
         public static string FprLocal(int index) => FprRegisterName(index);
         public const string CrLocal = "cr";
@@ -176,7 +183,8 @@ public sealed partial class CxxLinearCodeGenerator
         /// <c>CpuContext</c>. Storing an unmodified register writes the same
         /// value back, so the conservative write set stays correct.
         /// </summary>
-        public void AppendFlush(StringBuilder sb, string pad) => AppendFlush(sb, pad, ResidencyBoundarySync.Full);
+        public void AppendFlush(StringBuilder sb, string pad) =>
+            AppendFlush(sb, pad, ResidencyBoundarySync.Full.ExceptGprs(ExitPreservedGprMask));
 
         /// <summary>
         /// Contract-narrowed flush. Only the registers the boundary can observe
@@ -257,6 +265,20 @@ public sealed partial class CxxLinearCodeGenerator
             FlushesXer: true,
             ReloadsXer: false);
 
+        /// <summary>
+        /// Full minus the r14-r31 a callee preserves. Such a register must not be reloaded: the
+        /// callee never published it, and anything it or its callees left in CpuContext is stale.
+        /// A callee of unknown contract follows the EABI, so it preserves all of them.
+        /// </summary>
+        public static ResidencyBoundarySync FullForCallee(GuestAbiContract? callee) =>
+            Full.ExceptGprs(callee?.GprPreservedMask ?? NonvolatileGprPreservationAnalyzer.NonvolatileGprMask);
+
+        public ResidencyBoundarySync ExceptGprs(uint mask) => mask == 0 ? this : this with
+        {
+            FlushGprMask = FlushGprMask & ~mask,
+            ReloadGprMask = ReloadGprMask & ~mask
+        };
+
         public bool FlushesGpr(int index) => (FlushGprMask & (1u << index)) != 0;
         public bool FlushesFpr(int index) => (FlushFprMask & (1u << index)) != 0;
         public bool ReloadsGpr(int index) => (ReloadGprMask & (1u << index)) != 0;
@@ -307,7 +329,7 @@ public sealed partial class CxxLinearCodeGenerator
 
         public static ResidencyBoundarySync FromCalleeContract(GuestAbiContract contract)
         {
-            if (contract.HasFullSynchronizationFence) return Full;
+            if (contract.HasFullSynchronizationFence) return FullForCallee(contract);
             return new ResidencyBoundarySync(
                 FlushGprMask: contract.GprReadBeforeWriteMask | contract.GprPossibleWriteMask |
                               StackPointerFlushMask,
@@ -365,7 +387,7 @@ public sealed partial class CxxLinearCodeGenerator
             modOverridableCallTargets.Contains(target) ||
             !guestAbiContracts.TryGetValue(target, out var contract))
         {
-            return ResidencyBoundarySync.Full;
+            return ResidencyBoundarySync.FullForCallee(null);
         }
 
         return ResidencyBoundarySync.FromCalleeContract(contract);

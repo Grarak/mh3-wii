@@ -52,6 +52,13 @@ public sealed record GuestAbiContract(
     public byte GqrDefiniteWriteMask { get; init; }
     public byte HidDefiniteWriteMask { get; init; }
 
+    /// <summary>
+    /// The r14-r31 the function preserves as the EABI promises (see
+    /// <see cref="NonvolatileGprPreservationAnalyzer"/>). They appear in none of the GPR masks:
+    /// a caller keeps them in its own locals across the call.
+    /// </summary>
+    public uint GprPreservedMask { get; init; }
+
     public bool HasFullSynchronizationFence =>
         (BoundaryFlags & GuestCallBoundaryFlags.RequiresCompleteContext) != 0;
 }
@@ -211,6 +218,13 @@ public static class GuestAbiContractAnalyzer
             sawExitBlock = true;
         }
 
+        // Reading r14-r31 only to save them, and restoring them before every
+        // exit, is no effect on the caller.
+        var preserved = NonvolatileGprPreservationAnalyzer.Analyze(function, calleeContracts).PreservedMask;
+        readBeforeWrite = readBeforeWrite with { Gpr = readBeforeWrite.Gpr & ~preserved };
+        possibleWrites = possibleWrites with { Gpr = possibleWrites.Gpr & ~preserved };
+        definiteWrites = definiteWrites with { Gpr = definiteWrites.Gpr & ~preserved };
+
         const uint gprReturnMask = (1u << 3) | (1u << 4);
         const uint fprReturnMask = 1u << 1;
         return new GuestAbiContract(
@@ -245,7 +259,8 @@ public static class GuestAbiContractAnalyzer
             DefinitelyWritesLr = definiteWrites.Lr,
             DefinitelyWritesFpscr = definiteWrites.Fpscr,
             GqrDefiniteWriteMask = definiteWrites.Gqr,
-            HidDefiniteWriteMask = definiteWrites.Hid
+            HidDefiniteWriteMask = definiteWrites.Hid,
+            GprPreservedMask = preserved
         };
     }
 
@@ -570,6 +585,7 @@ public static class GuestAbiContractAnalyzer
         GqrReadBeforeWriteMask = byte.MaxValue,
         GqrPossibleWriteMask = byte.MaxValue,
         HidReadBeforeWriteMask = byte.MaxValue,
+        GprPreservedMask = NonvolatileGprPreservationAnalyzer.NonvolatileGprMask,
     };
 
     private static RegisterSet FullState =>

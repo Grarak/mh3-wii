@@ -171,6 +171,7 @@ public static class GuestAbiInterproceduralAnalyzer
         HidReadBeforeWriteMask = 0,
         HidPossibleWriteMask = 0,
         HidDefiniteWriteMask = 0,
+        GprPreservedMask = NonvolatileGprPreservationAnalyzer.NonvolatileGprMask,
         BoundaryFlags = GuestCallBoundaryFlags.NoReturn
     };
 
@@ -228,6 +229,7 @@ public static class GuestAbiInterproceduralAnalyzer
         left.DefinitelyWritesFpscr == right.DefinitelyWritesFpscr &&
         left.GqrDefiniteWriteMask == right.GqrDefiniteWriteMask &&
         left.HidDefiniteWriteMask == right.HidDefiniteWriteMask &&
+        left.GprPreservedMask == right.GprPreservedMask &&
         left.BoundaryFlags == right.BoundaryFlags &&
         SameTargets(left.DirectCallTargets, right.DirectCallTargets);
 

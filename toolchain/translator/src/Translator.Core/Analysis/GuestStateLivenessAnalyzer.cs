@@ -166,6 +166,16 @@ public static class GuestStateLivenessAnalyzer
         var successors = new string[blockCount][];
         for (var index = 0; index < blockCount; ++index)
         {
+            if (blockList[index].Instructions.LastOrDefault() is IrJumpTable table)
+            {
+                // The default arm leaves through the dispatcher; Reads() makes it a full use.
+                successors[index] = table.Cases
+                    .Select(static jumpCase => jumpCase.TargetLabel)
+                    .Where(blocks.ContainsKey)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                continue;
+            }
             var successorCount = Successors(
                 blockList[index],
                 index + 1 < blockCount ? blockList[index + 1].Label : null,
@@ -292,7 +302,24 @@ public static class GuestStateLivenessAnalyzer
                 Add(ref result, value.FirstOriginalAddress.Base); Add(ref result, value.SecondOriginalAddress.Base);
                 AddValue(ref result, value.FirstSource); AddValue(ref result, value.SecondSource);
                 break;
-            case IrCall value: foreach (var argument in value.Arguments) AddValue(ref result, argument); break;
+            case IrCall value:
+                foreach (var argument in value.Arguments) AddValue(ref result, argument);
+                if (GuestTargetParser.TryParseAddress(value.Target, out _))
+                {
+                    // Only reached without a contract: the emitter trusts the EABI and syncs
+                    // everything but r14-r31, so the callee may read all of that.
+                    result = result.Union(FullState with { Gpr = ~NonvolatileGprPreservationAnalyzer.NonvolatileGprMask });
+                }
+                else
+                {
+                    // Implicit CpuContext reads of a runtime helper (unknown helpers and guest
+                    // symbols catalog as complete boundaries).
+                    var effect = GuestHelperEffectCatalog.Analyze(value);
+                    result = result.Union(new GuestStateMask(
+                        effect.GprReadMask, effect.FprReadMask, effect.CrReadMask, effect.ReadsXer,
+                        effect.ReadsCtr, effect.ReadsLr, false, 0, 0));
+                }
+                break;
             case IrIndirectCall value:
                 AddValue(ref result, value.Target);
                 foreach (var argument in value.Arguments) AddValue(ref result, argument);
@@ -307,8 +334,13 @@ public static class GuestStateLivenessAnalyzer
                 result = result with { Xer = true };
                 break;
             case IrPhi value: foreach (var source in value.Sources.Values) Add(ref result, source); break;
-            case IrBranch value: Add(ref result, value.ConditionRegister); break;
-            case IrJumpTable value: Add(ref result, value.Selector); break;
+            case IrBranch value:
+                Add(ref result, value.ConditionRegister);
+                // A raw bc condition is C text (GetCRBit(ctx, n), ctx->ctr), not a register name.
+                if (value.Condition == "raw") result = result with { Cr = byte.MaxValue, Ctr = true };
+                break;
+            // The default arm publishes everything and leaves through the dispatcher.
+            case IrJumpTable value: Add(ref result, value.Selector); result = result.Union(FullState); break;
             case IrReturn { Value: { } value }: AddValue(ref result, value); break;
         }
         return result;

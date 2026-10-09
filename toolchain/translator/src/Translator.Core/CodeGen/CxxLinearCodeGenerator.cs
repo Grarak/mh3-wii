@@ -150,6 +150,15 @@ public sealed partial class CxxLinearCodeGenerator
         // Flattened once per function: the emitter used to hash a (block, index)
         // tuple for every instruction of every emission of this body.
         var suppressedInstructionMasks = BuildSuppressedInstructionMasks(func, flagElision);
+        // r14-r31 this body preserves for callers that rely on it (the published contract, from the
+        // canonical IR, and this body's own analysis must both agree). Their incoming values are
+        // never read and exits don't publish them, so the save/restore pair is dead.
+        var nonvolatilePreservation = NonvolatileGprPreservationAnalyzer.Analyze(architecturalFunc, guestAbiContracts);
+        var exitPreservedGprMask = nonvolatilePreservation.PreservedMask &
+            (guestAbiContracts.TryGetValue(entryPoint, out var publishedContract)
+                ? publishedContract.GprPreservedMask
+                : 0u);
+        SuppressNonvolatileSaveRestores(func, suppressedInstructionMasks, nonvolatilePreservation, exitPreservedGprMask);
         var cxxName = SanitizeIdentifier(signature.Name);
         var pairedFlow = ComputePairedFlowStates(func, cfg, _guestAbiProvider);
         var pairedIn = pairedFlow.In;
@@ -176,6 +185,8 @@ public sealed partial class CxxLinearCodeGenerator
                 func, cfg, cachedRegisters, _guestAbiProvider,
                 emitStateFreeLeafVariant ? guestAbiContracts : null)
             : LeafRegisterCacheInitializers.Empty;
+        // A preserved register's incoming value fed only its (now suppressed) save.
+        registerCacheInitializers.Gprs.RemoveWhere(gpr => (exitPreservedGprMask & (1u << gpr)) != 0);
         var sb = new StringBuilder();
         sb.AppendLine("#include <cstdint>");
         sb.AppendLine("#include \"ppc_runtime.h\"");
@@ -464,8 +475,9 @@ public sealed partial class CxxLinearCodeGenerator
                             body.AppendLine("    default:");
                             // Unlisted selectors leave this frame through the
                             // dispatcher: publish the locals and never write
-                            // them back afterwards.
-                            AppendFlush(body, "        ");
+                            // them back afterwards. Preservation analysis does
+                            // not treat this arm as an exit, so r14-r31 go too.
+                            AppendFlush(body, "        ", ResidencyBoundarySync.Full);
                             body.AppendLine($"        InvokeIndirectJump({selectorExpr}, ctx);");
                             body.AppendLine("        return;");
                             body.AppendLine("    }");
@@ -539,6 +551,7 @@ public sealed partial class CxxLinearCodeGenerator
             var recorder = RegisterResidency.CreateRecorder();
             EmitFunctionBody(recorder, bodyBufferBaseLength, discardResult: true);
             var discovered = recorder.Snapshot();
+            discovered.ExitPreservedGprMask = exitPreservedGprMask;
             if (!discovered.IsEmpty)
             {
                 RequireResidencyNamesAreFree(
@@ -687,6 +700,30 @@ public sealed partial class CxxLinearCodeGenerator
             emittedLocalLabelAddresses.ToArray(),
             stateFreeFacts,
             stateFreeVariantFacts);
+    }
+
+    /// <summary>
+    /// Adds the saves and restores of <paramref name="preservedMask"/>'s registers to the
+    /// suppressed positions. Only instructions that move nothing but those registers qualify.
+    /// </summary>
+    private static void SuppressNonvolatileSaveRestores(
+        IrFunction function,
+        Dictionary<string, bool[]> suppressed,
+        NonvolatileGprPreservation preservation,
+        uint preservedMask)
+    {
+        if (preservedMask == 0) return;
+        var blocks = function.Blocks.ToDictionary(static block => block.Label, StringComparer.Ordinal);
+        foreach (var item in preservation.SaveRestores)
+        {
+            if ((item.Registers & ~preservedMask) != 0 || !blocks.TryGetValue(item.Label, out var block)) continue;
+            if (!suppressed.TryGetValue(item.Label, out var mask))
+            {
+                mask = new bool[block.Instructions.Count];
+                suppressed[item.Label] = mask;
+            }
+            if (item.Index < mask.Length) mask[item.Index] = true;
+        }
     }
 
     private static string EscapeCxxStringLiteral(string value) =>

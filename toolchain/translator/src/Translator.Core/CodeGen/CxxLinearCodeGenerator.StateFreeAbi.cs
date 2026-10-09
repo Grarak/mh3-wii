@@ -391,10 +391,11 @@ public sealed partial class CxxLinearCodeGenerator
             sb.AppendLine($"{inner}{symbol}({arguments});");
         }
         sb.AppendLine($"{pad}}} else {{");
-        AppendFlush(sb, inner, ResidencyBoundarySync.Full);
+        var fallbackSync = ResidencyBoundarySync.FullForCallee(contract);
+        AppendFlush(sb, inner, fallbackSync);
         RecordEmittedDirectCallTarget(address);
         sb.AppendLine($"{inner}InvokeDirectCpu<0x{address:X8}u>(ctx);");
-        AppendReload(sb, inner, ResidencyBoundarySync.Full);
+        AppendReload(sb, inner, fallbackSync);
         sb.AppendLine($"{pad}}}");
     }
 
