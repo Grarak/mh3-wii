@@ -3,6 +3,9 @@
 #include <aurora/native_texture.hpp>
 #include "native_graphics.h"
 #include "../../runtime/native/mh3_material_state.h"
+#include "../../runtime/native/adapters/model_gpu_bridge.h"
+#include <fstream>
+#include <vector>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
 #include <array>
@@ -73,6 +76,51 @@ void Texture() {
     aurora::bind_native_texture(0,source,{});
     textureBinding.source.width=textureBinding.source.height=4;textureBinding.source.levels=1;textureBinding.source.format=6;
     textureBinding.source.generation=1;texturePublished=true;
+}
+void ResidentProbe(const char* path) {
+    std::ifstream file(path,std::ios::binary);Require(bool(file),"model fixture open failed");
+    std::array<uint8_t,20> header{};file.read(reinterpret_cast<char*>(header.data()),header.size());
+    const unsigned bytes=unsigned(header[8])|(unsigned(header[9])<<8)|(unsigned(header[10])<<16)|(unsigned(header[11])<<24);
+    Require(bool(file)&&bytes>=128&&bytes<16*1024*1024,"model metadata size invalid");
+    std::vector<uint8_t> metadata(bytes);file.seekg(0);file.read(reinterpret_cast<char*>(metadata.data()),bytes);
+    Require(bool(file),"model metadata truncated");mh3_mesh_pack pack{};
+    Require(mh3_mesh_pack_open_metadata({metadata.data(),metadata.size()},&pack)==MH3_PACK_OK,"model metadata invalid");
+    RegisterNativeModelGPU(pack,path,1,1);
+    struct Retire {~Retire(){UnregisterNativeModelGPU(1,1);}} retire;
+    mh3_resolved_mesh_submit draw{};draw.pack=&pack;draw.resident_handle=1;
+    draw.resident_generation=draw.source_generation=draw.pose_generation=1;
+    bool found=false;
+    for(unsigned i=0;i<pack.counts[MH3_PACK_MESHES];++i) {
+        Require(mh3_mesh_pack_mesh(&pack,i,&draw.mesh)==MH3_PACK_OK,"fixture mesh invalid");
+        if(draw.mesh.matrix_id>=0 && draw.mesh.index_count && draw.mesh.bounds_max[0]-draw.mesh.bounds_min[0]>1 &&
+           draw.mesh.bounds_max[2]-draw.mesh.bounds_min[2]>1) {draw.mesh_index=i;found=true;break;}
+    }
+    Require(found,"no rigid mesh fixture with visible XZ extent");
+    Require(mh3_mesh_pack_layout(&pack,draw.mesh.layout_index,&draw.layout)==MH3_PACK_OK,"fixture layout invalid");
+    draw.asset_id=draw.mesh.asset_id;draw.model_id=draw.mesh.model_id;draw.shape_id=draw.mesh.source_id;
+    draw.index_count=draw.mesh.index_count;
+    mh3_model_palette palette{};palette.position_valid=1;
+    const float sx=1.6f/(draw.mesh.bounds_max[0]-draw.mesh.bounds_min[0]);
+    const float sy=1.6f/(draw.mesh.bounds_max[2]-draw.mesh.bounds_min[2]);
+    palette.position[0].v[0][0]=sx;palette.position[0].v[0][3]=-.5f*(draw.mesh.bounds_min[0]+draw.mesh.bounds_max[0])*sx;
+    palette.position[0].v[1][2]=sy;palette.position[0].v[1][3]=-.5f*(draw.mesh.bounds_min[2]+draw.mesh.bounds_max[2])*sy;
+    palette.position[0].v[2][3]=-.5f;draw.palette=&palette;
+    const float projection[]{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};draw.projection=projection;
+    auto state=Plain();draw.material=&state;
+    SetNativeViewport(0,0,64,64,0,1);SetNativeScissor(0,0,64,64);
+    SetNativeRaster({0,1,0,3,0,7,0,0,1,1});
+    SubmitNativeModelMesh(draw);
+    const auto& target=aurora::gpu::g_frameBuffer;
+    std::vector<uint8_t> pixels(size_t(target.width)*target.height*4);
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,pixels.data());
+    unsigned white=0;
+    for(size_t i=0;i<pixels.size();i+=4) if(pixels[i]>250&&pixels[i+1]>250&&pixels[i+2]>250) ++white;
+    Require(white>100,"resident runtime model produced no useful coverage");
+    ++draw.resident_generation;
+    Failure([&]{SubmitNativeModelMesh(draw);},"Stale or unregistered");
+    suppressed=true;SubmitNativeModelMesh(draw);suppressed=false;
+    std::printf("Resident runtime model passed: mesh %u, %u indices, %u white pixels, stale generation and frameskip\n",
+                draw.mesh_index,draw.index_count,white);
 }
 void Probe() {
     SetNativeViewport(0,0,64,64,0,1);SetNativeScissor(0,0,64,64);
@@ -167,6 +215,7 @@ int main(int argc,char** argv) {
         aurora::gl::bind_framebuffer(aurora::gpu::g_frameBuffer.texture->gl(),aurora::gpu::g_depthBuffer.texture->gl());
         aurora::gl::apply_raster_state({});
         const float clear[]{0,0,0,1};aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
+        if(argc>2) {ResidentProbe(argv[2]);aurora::gl::clear_color(clear);}
         Probe();aurora_end_native_frame();std::puts("typed native material mapper: pixel and dependency probes passed");
         return 0;
     } catch(const std::exception& error) {std::fprintf(stderr,"%s\n",error.what());return 1;}

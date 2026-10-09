@@ -2,6 +2,8 @@
 // uniforms. No GX state, command-list decoder, FIFO, or GPU wait participates.
 #include "native_graphics.h"
 #include "../native/mh3_material_state.h"
+#include "../native/mh3_model_gpu_inputs.h"
+#include "../native/adapters/model_gpu_bridge.h"
 #include <aurora/native_texture.hpp>
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
@@ -40,6 +42,21 @@ struct ProgramOrder {
 };
 // Ordered typed configuration keys avoid reading or hashing asset contents.
 std::map<ProgramKey,aurora::gl::ProgramPtr,ProgramOrder> programs;
+struct ModelProgramKey {
+    ProgramKey material;
+    std::array<uint32_t,13> layout{};
+    uint8_t nonzeroProjection=0;
+};
+struct ModelProgramOrder {
+    bool operator()(const ModelProgramKey& a,const ModelProgramKey& b) const {
+        const ProgramOrder compare;
+        if(compare(a.material,b.material)) return true;
+        if(compare(b.material,a.material)) return false;
+        if(a.layout!=b.layout) return a.layout<b.layout;
+        return a.nonzeroProjection<b.nonzeroProjection;
+    }
+};
+std::map<ModelProgramKey,aurora::gl::ProgramPtr,ModelProgramOrder> modelPrograms;
 void Owner() {
     if(!aurora::gl::on_render_thread()) throw std::runtime_error("Native material changed outside graphics owner");
 }
@@ -331,11 +348,31 @@ std::array<float,4> ChannelColor(const uint8_t rgba[4],bool alpha) {
     else for(unsigned component=0;component<3;++component) out[component]=rgba[component]/255.f;
     return out;
 }
-void WriteUniforms(const PreparedMaterial& state,AuroraNativeUniforms& uniforms) {
+void WriteUniforms(const PreparedMaterial& state,AuroraNativeUniforms& uniforms,
+                   const mh3_model_gpu_inputs* model=nullptr,const mh3_model_texcoord_sizes* sizes=nullptr) {
     const auto& info=state.info;const auto& config=state.config;
     // The native vertex shader does not consume the declared GX matrix prefix.
     // Zero unused declarations/padding once; append actual material fields in order.
     std::memset(uniforms.data,0,uniforms.size);
+    if(model) {
+        UniformWriter prefix{static_cast<uint8_t*>(uniforms.data),uniforms.size};
+        prefix.offset=8;
+        std::array<float,2> viewport{};GetNativeRenderViewportSize(viewport.data());
+        prefix.Value(viewport);
+        prefix.Value(std::array<float,2>{GetNativeDrawState().viewport[2],GetNativeDrawState().viewport[3]});
+        prefix.offset=80;prefix.Bytes(model->projection,64);
+        for(unsigned i=0;i<info.matrixLayout.postexCount;++i) {
+            const unsigned slot=info.matrixLayout.postexSlots[i];
+            if(slot==aurora::gx::UniformMatrixLayout::kCurrentPnMtx) prefix.Value(model->position);
+            else if(slot>=10 && slot<18 && (model->texcoord_mask&(1u<<(slot-10)))) prefix.Value(model->texgen[slot-10].main);
+            else throw std::runtime_error("Compact model main matrix layout mismatch");
+        }
+        for(unsigned i=0;i<info.matrixLayout.nrmCount;++i) {
+            if(info.matrixLayout.nrmSlots[i]!=aurora::gx::UniformMatrixLayout::kCurrentPnMtx)
+                throw std::runtime_error("Compact model normal matrix layout mismatch");
+            prefix.Value(model->normal);
+        }
+    }
     UniformWriter writer{static_cast<uint8_t*>(uniforms.data),uniforms.size,
         144+48u*(info.matrixLayout.postexCount+info.matrixLayout.nrmCount)};
     for(unsigned i=0;i<4;++i) if(info.loadsTevRegRgb.test(i)||info.loadsTevRegAlpha.test(i))
@@ -358,7 +395,15 @@ void WriteUniforms(const PreparedMaterial& state,AuroraNativeUniforms& uniforms)
         if(alpha.matSrc==GX_SRC_REG) writer.Value(ChannelColor(source.material_color,true));
     }
     for(unsigned i=0;i<4;++i) if(info.sampledKColors.test(i)) writer.Value(Constant(material.konst[i],state.requirements.konst[i]));
-    if(info.usesPTTexMtx.any()) throw std::runtime_error("Native final STQ unexpectedly requires generated postmatrices");
+    if(info.usesPTTexMtx.any()) {
+        if(!model) throw std::runtime_error("Native final STQ unexpectedly requires generated postmatrices");
+        for(unsigned i=0;i<aurora::gx::MaxPTTexMtx;++i) {
+            if(info.usesPTTexMtx.test(i)) {
+                if(i>=8 || !(model->texcoord_mask&(1u<<i))) throw std::runtime_error("Compact model post matrix layout mismatch");
+                writer.Value(model->texgen[i].post);
+            } else writer.Value(mh3_matrix34{});
+        }
+    }
     if(info.usesFog) {
         auto fog=preparedFog;Check(mh3_material_prepare_fog(&fogSource,GetNativeDrawState().viewport[2],&fog),"Native fog draw preparation");
         writer.Value(fog);
@@ -371,7 +416,14 @@ void WriteUniforms(const PreparedMaterial& state,AuroraNativeUniforms& uniforms)
         if(used&64) words[6]=-matrix.scale_exponent;
         writer.Value(words);
     }
-    for(unsigned i=0;i<8;++i) if(info.sampledTexCoords.test(i)) writer.Value(CoordinateScale(i,state));
+    for(unsigned i=0;i<8;++i) if(info.sampledTexCoords.test(i)) {
+        if(!model) writer.Value(CoordinateScale(i,state));
+        else if(aurora::gx::shader_uses_fixed_texcoord_state(config) || info.usedIndStages.any()) {
+            if(!sizes || !(sizes->known&(1u<<i)) || !sizes->width[i] || !sizes->height[i])
+                throw std::runtime_error("Compact model lacks an explicit coordinate scale producer");
+            writer.Value(std::array<float,4>{float(sizes->width[i]),float(sizes->height[i]),0,0});
+        } else writer.Value(std::array<float,4>{1,1,0,0});
+    }
     for(unsigned i=0;i<8;++i) if(info.sampledTextures.test(i)) {
         const auto& texture=Texture(i).source;
         writer.Value(std::array<float,4>{float(texture.width),float(texture.height),aurora::native_texture_shader_lod_bias(i),0});
@@ -444,8 +496,66 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     WriteUniforms(prepared,uniforms);
     aurora_submit_native_material_geometry(&geometry,iterator->second->get(),&uniforms);
 }
+void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
+    Owner();if(!NativeGraphicsFrameShouldRender() || !mesh.index_count) return;
+    const auto resident=ResolveNativeModelGPU(mesh);
+    if(!mesh.material) throw std::runtime_error("Model draw has no native material producer");
+    if(mesh.material!=&material) SetNativeMaterial(*mesh.material);
+    if(!preparedKnown) {prepared=PrepareMaterial();preparedKnown=true;}
+    auto modelState=prepared;
+    auto draw=mesh;draw.mesh=*resident.mesh;draw.material=&material;
+    mh3_model_gpu_inputs inputs{};
+    Check(mh3_model_gpu_prepare(&draw,uint8_t(modelState.info.sampledTexCoords.to_ulong()),
+          modelState.info.lightingEnabled,GetNativeDrawState().viewport[4],GetNativeDrawState().viewport[5],&inputs),
+          "Native model GPU inputs");
+    auto& config=modelState.config;
+    config.attrs={};config.vtxStride=0;
+    for(const auto& a:resident.layout->attributes) {
+        const unsigned location=a.location;
+        const GXAttr attr=location==0?GX_VA_POS:location==1?GX_VA_NRM:
+            location<4?GXAttr(GX_VA_CLR0+location-2):GXAttr(GX_VA_TEX0+location-4);
+        config.attrs[attr]={GX_DIRECT,uint8_t(location<2?3:location<4?4:2),uint8_t(location>=2&&location<4?GX_RGBA8:GX_F32)};
+    }
+    config.dualTexEnabled=false;
+    constexpr GXTexGenSrc source[]{GX_TG_POS,GX_TG_NRM,GX_TG_COLOR0,GX_TG_BINRM,GX_TG_TANGENT,
+        GX_TG_TEX0,GX_TG_TEX1,GX_TG_TEX2,GX_TG_TEX3,GX_TG_TEX4,GX_TG_TEX5,GX_TG_TEX6,GX_TG_TEX7};
+    for(unsigned i=0;i<8;++i) if(inputs.texcoord_mask&(1u<<i)) {
+        const auto& recipe=inputs.texgen[i];auto& gen=config.tcgs[i];
+        gen.src=source[recipe.source_row];gen.inputFormAB11=recipe.input_ab11;
+        gen.type=recipe.projection?GX_TG_MTX3x4:GX_TG_MTX2x4;
+        gen.mtx=recipe.main_identity?GX_IDENTITY:GXTexMtx(30+3*i);
+        gen.postMtx=recipe.post_identity?GX_PTIDENTITY:GXPTTexMtx(64+3*i);
+        gen.normalize=recipe.normalize;
+        if(gen.normalize || !recipe.post_identity) config.dualTexEnabled=true;
+    }
+    modelState.info=aurora::gx::build_shader_info(config);
+    const auto& raster=GetNativeDrawState().raster;
+    if(depthBeforeTexture && raster.depth_test && raster.depth_write && bool(config.alphaCompare))
+        throw std::runtime_error("Native early depth write with alpha discard is unsupported");
+    uint8_t zeroBias=0;
+    for(unsigned i=0;i<8;++i) if(modelState.info.sampledTextures.test(i)) {
+        (void)Texture(i);if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
+    }
+    ModelProgramKey key{{config,zeroBias},{},inputs.nonzero_projective_mask};
+    key.layout[0]=resident.layout->stride;
+    for(unsigned i=0;i<resident.layout->attributes.size();++i) {
+        const auto& a=resident.layout->attributes[i];
+        key.layout[i+1]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
+    }
+    auto program=modelPrograms.find(key);
+    if(program==modelPrograms.end()) {
+        auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask);
+        program=modelPrograms.emplace(key,std::make_shared<aurora::gl::Program>(std::move(description))).first;
+    }
+    AuroraNativeUniforms uniforms{};
+    if(!aurora_allocate_native_uniforms(modelState.info.uniformSize,&uniforms)) return;
+    WriteUniforms(modelState,uniforms,&inputs,mesh.texcoord_sizes);
+    aurora::gl::draw_native_mesh(*resident.buffer,*resident.layout,resident.mesh->vertex_offset,
+        resident.mesh->vertex_count,resident.mesh->index_offset+mesh.first_index*2,mesh.index_count,
+        program->second->get(),uniforms);
+}
 void ClearNativeMaterialPrograms() {
-    Owner();programs.clear();preparedKnown=false;
+    Owner();programs.clear();modelPrograms.clear();ClearNativeModelGPU();preparedKnown=false;
     if(rasterObserverInstalled) SetNativeRasterObserver(nullptr);
     rasterObserverInstalled=false;
 }

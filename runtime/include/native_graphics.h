@@ -10,6 +10,7 @@ struct mh3_native_material_state;
 struct mh3_resolved_mesh_submit;
 
 const mh3_draw_state& GetNativeDrawState();
+void GetNativeRenderViewportSize(float out[2]);
 void SetNativeProjection(const float row_major[16], bool perspective);
 void SetNativePositionMatrix(const float row_major[12]);
 void SetNativeNormalMatrix(uint32_t selector,const float row_major[9]);

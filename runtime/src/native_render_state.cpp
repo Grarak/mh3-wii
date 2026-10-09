@@ -34,6 +34,11 @@ std::array<float,2> TargetScale() {
 }
 }
 const mh3_draw_state& GetNativeDrawState() { return drawState; }
+void GetNativeRenderViewportSize(float out[2]) {
+    RequireOwner();const auto scale=TargetScale();
+    out[0]=float(std::lround(drawState.viewport[2]*scale[0]));
+    out[1]=float(std::lround(drawState.viewport[3]*scale[1]));
+}
 void SetNativeRasterObserver(NativeRasterObserver observer) {
     RequireOwner();rasterObserver=observer;
 }
