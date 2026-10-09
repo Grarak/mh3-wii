@@ -5,7 +5,7 @@
 #include <vector>
 
 // Each enum's count follows it; NativeShaderVertexKeys() and
-// NativeShaderFragmentKeys() iterate these ranges (docs/vita-shader-bank.md).
+// NativeShaderFragmentKeys() iterate these ranges (docs/optimizations/rendering/offline-shader-bank.md).
 // Geometry: pre-transformed vertices. Quad: compact effect quads (object
 // corners and two coordinates; the draw's matrices in the Quad block).
 enum class NativeShaderVertex : uint8_t {
@@ -17,10 +17,11 @@ enum class NativeShaderVertex : uint8_t {
 inline constexpr unsigned NativeShaderVertexCount = 3;
 enum class NativeShaderModel : uint8_t {
     Basic,
-    Modulate
-}; // MH3_SHADE_BASIC / MH3_SHADE_MODULATE
+    Modulate,
+    Layers
+}; // MH3_SHADE_BASIC / MH3_SHADE_MODULATE / MH3_SHADE_LAYERS
 
-inline constexpr unsigned NativeShaderModelCount = 2;
+inline constexpr unsigned NativeShaderModelCount = 3;
 
 // Mesh texgen per role, fixed at compile time. Identity and Affine read the
 // role's coordinate attribute (no projection, normalize, post or palette).
@@ -74,7 +75,7 @@ struct NativeShaderVariant {
     // return A=1 so an unblended RGB mask can become a full GXM color write.
     bool target_alpha_one = false;
 
-    // Material uniforms in GPU memory (docs/native-material-gpu.md): the
+    // Material uniforms in GPU memory (docs/optimizations/rendering/material-uniform-blocks.md): the
     // baked Material block and the Animated block replace the per-draw Shade
     // block. dynamic: a coefficient picks an animated palette entry.
     bool material_gpu = false;
@@ -85,17 +86,17 @@ struct NativeShaderVariant {
     // that input's arithmetic per fragment.
     bool basic_lerp = false;
 
-    // Mesh only: GPU skinning (docs/gpu-skinning.md), four palette rows and
+    // Mesh only: GPU skinning (docs/optimizations/rendering/gpu-skinning.md), four palette rows and
     // weights per vertex instead of the GX matrix selectors.
     bool skinned = false;
     bool operator==(const NativeShaderVariant&) const = default;
 };
 
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 18, "update NativeShader*Key, NativeShader*Keys() and docs/vita-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 18, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
-// the GXM shader bank holds one program per key (docs/vita-shader-bank.md).
+// the GXM shader bank holds one program per key (docs/optimizations/rendering/offline-shader-bank.md).
 // Keys are canonical: fields their stage ignores are cleared.
 struct NativeShaderVertexKey {
     NativeShaderVertex vertex = NativeShaderVertex::Mesh;
@@ -150,7 +151,7 @@ std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key);
 
 #ifdef MH3_WEB_SHADER_BANK
 // The GLSL ES stage sources; the web build's WGSL bank is keyed by XXH3 of
-// these strings (docs/web-build.md). Only its host generator compiles them.
+// these strings (docs/optimizations/platforms/web-build.md). Only its host generator compiles them.
 std::string NativeShaderGlslVertex(const NativeShaderVertexKey& key);
 std::string NativeShaderGlslFragment(const NativeShaderFragmentKey& key);
 #endif

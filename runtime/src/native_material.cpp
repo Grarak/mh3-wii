@@ -629,7 +629,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.vertex = vertex;
     variant.lighting = lighting.kind;
     variant.lights = lighting.lights;
-    variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : NativeShaderModel::Basic;
+    variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : shading.model == MH3_SHADE_LAYERS ? NativeShaderModel::Layers : NativeShaderModel::Basic;
     variant.pure_modulate = shading.pure_modulate != 0;
     variant.basic_lerp = BasicLerp(shading);
     variant.target_alpha_one = aurora::gl::shaded_target_alpha_one();

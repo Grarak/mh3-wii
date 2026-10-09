@@ -12,6 +12,11 @@
  *          each input is one texture role or the vertex colour times constants.
  * OVERLAY: overlay * texture1 * texture2 added to colour input b (the
  *          four-stage "base + masked overlay, then lit" material family).
+ * LAYERS:  out = saturate(saturate((sum_r (vertex * kv_r + kc_r) * t_r +
+ *          vertex * kv_3 + kc_3) * s) * (vertex * mv + mc)), colour and alpha
+ *          separately: stages that add a texture times the vertex colour or a
+ *          constant each (the Deserted Island sea surface, A-p09-uv-suimen*),
+ *          then at most one multiply by the vertex colour or a constant.
  * Multi-stage programs are folded into this form when exact: prev * x
  * multiplies, prev + X layers (up to three) and stages that leave prev alone. */
 #include "mh3_model_state.h"
@@ -64,6 +69,11 @@ typedef struct mh3_shade_modulate {
     float w0[4], w1[4], offset[4], kv[4], kc[4], d[4], s[4];
 } mh3_shade_modulate;
 
+/* LAYERS: kv/kc[r] scale texture role r (0..2), [3] is the textureless term. */
+typedef struct mh3_shade_layers {
+    float kv[4][4], kc[4][4], s[4], mv[4], mc[4];
+} mh3_shade_layers;
+
 /* The View block (mesh vertex stage, binding 6 / vertex BUFFER[4]): the
  * projection and viewport, shared by the draws that use them; a new block
  * only when they change. */
@@ -93,6 +103,7 @@ typedef struct mh3_shade_fragment {
     union {
         mh3_shade_basic basic;
         mh3_shade_modulate modulate;
+        mh3_shade_layers layers;
     } shading;
 } mh3_shade_fragment;
 
@@ -104,11 +115,13 @@ typedef struct mh3_shade_draw {
 
 enum {
     MH3_SHADE_BASIC,
-    MH3_SHADE_MODULATE
+    MH3_SHADE_MODULATE,
+    MH3_SHADE_LAYERS
 };
 #define MH3_SHADE_FRAGMENT_OFFSET 512u
 #define MH3_SHADE_VERTEX_BYTES(textures) ((uint32_t)offsetof(mh3_shade_vertex, texgen) + (uint32_t)(textures) * (uint32_t)sizeof(mh3_shade_texgen))
-#define MH3_SHADE_FRAGMENT_BYTES(model) (48u + ((model) == MH3_SHADE_MODULATE ? (uint32_t)sizeof(mh3_shade_modulate) : (uint32_t)sizeof(mh3_shade_basic)))
+#define MH3_SHADE_FRAGMENT_BYTES(model) \
+    (48u + ((model) == MH3_SHADE_MODULATE ? (uint32_t)sizeof(mh3_shade_modulate) : (model) == MH3_SHADE_LAYERS ? (uint32_t)sizeof(mh3_shade_layers) : (uint32_t)sizeof(mh3_shade_basic)))
 #define MH3_SHADE_DRAW_BYTES(model) (MH3_SHADE_FRAGMENT_OFFSET + MH3_SHADE_FRAGMENT_BYTES(model))
 /* Per vertex ze = fog.x / (fog.y - depth * fog.w) (perspective; fog.x = a * 2^24,
  * fog.w = 2^(24 - shift)) or fog.x * depth (shape.z set: orthographic); the
@@ -171,6 +184,10 @@ typedef struct mh3_shade_material {
     uint8_t texture_map[3], texture_coordinate[3];
     mh3_shade_equation color, alpha;
     mh3_shade_constant overlay_scale;
+    /* LAYERS: input[r] is texture role r's factor (offset + scale * vertex),
+     * input[3] the textureless term, scale the GX scale; factor[0/1] multiplies
+     * the saturated colour/alpha (offset + scale * vertex). */
+    mh3_shade_term factor[2];
     /* Cached exact form: saturate(texture0 * vertex), RGBA independently.
      * Only literal zero/one references qualify; draw-time register values do not. */
     uint8_t pure_modulate;
@@ -201,7 +218,7 @@ int mh3_shade_structure_equal(const mh3_native_material_state *a, const mh3_nati
 int mh3_shade_structure_overlay_changes(const mh3_native_material_state *current, const mh3_native_material_state *source,
                                        uint32_t top_known, uint32_t groups);
 
-/* ---- Material uniforms in GPU memory (docs/native-material-gpu.md) ----
+/* ---- Material uniforms in GPU memory (docs/optimizations/rendering/material-uniform-blocks.md) ----
  * A classified material splits into two std140 blocks:
  *  - Material (static): baked once per classification into persistent GPU
  *    memory. Every shading coefficient is a static factor times at most one

@@ -21,7 +21,7 @@
 // (fragment, binding 3 / fragment BUFFER[0]) and View (mesh vertex, binding 6 /
 // vertex BUFFER[4]: the projection and viewport, shared by the draws). Draw and Shade share one per-draw
 // allocation (mh3_shade_draw); Shade's tail differs per fragment model.
-// MATERIAL_GPU programs (docs/native-material-gpu.md) replace Shade with the
+// MATERIAL_GPU programs (docs/optimizations/rendering/material-uniform-blocks.md) replace Shade with the
 // baked Material block (binding 4 / fragment BUFFER[2]) and the Animated
 // block (binding 5 / fragment BUFFER[3], mesh vertex BUFFER[3]); coefficients
 // are static * picked animated palette entries, evaluated from uniforms only.
@@ -111,6 +111,12 @@ layout(std140) uniform Shade {
     vec4 kc;
     vec4 d;
     vec4 s;
+#elif LAYERS
+    vec4 kv[4];
+    vec4 kc[4];
+    vec4 s;
+    vec4 mv;
+    vec4 mc;
 #else
     Input color_input[4];
     Input alpha_input[4];
@@ -275,7 +281,7 @@ layout(std140) uniform View {
     vec4 viewport;
 } view;
 #if SKINNED
-// The mesh's palette rows (docs/gpu-skinning.md): three vec4 per matrix.
+// The mesh's palette rows (docs/optimizations/rendering/gpu-skinning.md): three vec4 per matrix.
 layout(std140) uniform Palette {
     vec4 rows[765];
 } palette;
@@ -458,6 +464,8 @@ void main() {
 // each input is offset + scale * (select . (t0, t1, t2, vertex)), swizzle.x
 // replicating the source's alpha into a colour input.
 // OVERLAY adds overlay.rgb * texture1 * texture2 to the colour base / b input.
+// LAYERS: out = saturate(saturate((sum_r (v * kv[r] + kc[r]) * t_r + v * kv[3] +
+// kc[3]) * s) * (v * mv + mc)): textures with their own vertex factors summed.
 constexpr const char* GlslFragment = R"GLSL(
 in vec4 v_color0;
 in vec2 v_uv0;
@@ -486,7 +494,7 @@ vec4 coefficient(int k) {
 #define TEXTURE_BIAS shade.texture_bias
 #define ALPHA_RANGE shade.alpha_range
 #endif
-#if !MODULATE
+#if !MODULATE && !LAYERS
 vec4 source(vec4 select, vec4 t0, vec4 t1, vec4 t2) {
     return select.x * t0 + select.y * t1 + select.z * t2 + select.w * v_color0;
 }
@@ -567,6 +575,16 @@ void main() {
     base.rgb += overlay.rgb * t1.rgb * t2.rgb;
 #endif
     vec4 result = clamp((base * (v_color0 * kv + kc) + d) * s, 0.0, 1.0);
+#elif LAYERS
+    vec4 v = v_color0;
+    vec4 sum = (v * shade.kv[0] + shade.kc[0]) * t0 + v * shade.kv[3] + shade.kc[3];
+#if TEXTURES > 1
+    sum += (v * shade.kv[1] + shade.kc[1]) * t1;
+#endif
+#if TEXTURES > 2
+    sum += (v * shade.kv[2] + shade.kc[2]) * t2;
+#endif
+    vec4 result = clamp(clamp(sum * shade.s, 0.0, 1.0) * (v * shade.mv + shade.mc), 0.0, 1.0);
 #elif BASIC_LERP
     // Constant inputs are their offsets; only c (texture role 0) varies, so
     // the whole equation is affine in it: base + slope * texel, both from
@@ -677,6 +695,12 @@ struct Shade {
     float4 kc;
     float4 d;
     float4 s;
+#elif LAYERS
+    float4 kv[4];
+    float4 kc[4];
+    float4 s;
+    float4 mv;
+    float4 mc;
 #else
     Input color_input[4];
     Input alpha_input[4];
@@ -823,7 +847,7 @@ struct View {
 };
 uniform View view : BUFFER[4];
 #if SKINNED
-// The mesh's palette rows (docs/gpu-skinning.md): three float4 per matrix.
+// The mesh's palette rows (docs/optimizations/rendering/gpu-skinning.md): three float4 per matrix.
 struct Palette {
     float4 rows[765];
 };
@@ -1003,7 +1027,7 @@ real4 coefficient(int k) {
 #else
 #define ALPHA_RANGE shade.alpha_range
 #endif
-#if !MODULATE
+#if !MODULATE && !LAYERS
 real4 source(real4 select, real4 t0, real4 t1, real4 t2, real4 v) {
     return select.x * t0 + select.y * t1 + select.z * t2 + select.w * v;
 }
@@ -1096,6 +1120,21 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     real4 result;
     result.rg = saturate((base_rg * (v.rg * kv.rg + kc.rg) + d.rg) * s.rg);
     result.ba = saturate((base_ba * (v.ba * kv.ba + kc.ba) + d.ba) * s.ba);
+#elif LAYERS
+    // Two components wide, as MODULATE.
+    real2 sum_rg = (v.rg * shade.kv[0].rg + shade.kc[0].rg) * t0.rg + v.rg * shade.kv[3].rg + shade.kc[3].rg;
+    real2 sum_ba = (v.ba * shade.kv[0].ba + shade.kc[0].ba) * t0.ba + v.ba * shade.kv[3].ba + shade.kc[3].ba;
+#if TEXTURES > 1
+    sum_rg += (v.rg * shade.kv[1].rg + shade.kc[1].rg) * t1.rg;
+    sum_ba += (v.ba * shade.kv[1].ba + shade.kc[1].ba) * t1.ba;
+#endif
+#if TEXTURES > 2
+    sum_rg += (v.rg * shade.kv[2].rg + shade.kc[2].rg) * t2.rg;
+    sum_ba += (v.ba * shade.kv[2].ba + shade.kc[2].ba) * t2.ba;
+#endif
+    real4 result;
+    result.rg = saturate(saturate(sum_rg * shade.s.rg) * (v.rg * shade.mv.rg + shade.mc.rg));
+    result.ba = saturate(saturate(sum_ba * shade.s.ba) * (v.ba * shade.mv.ba + shade.mc.ba));
 #elif BASIC_LERP
     // Constant inputs are their offsets; only c (texture role 0) varies.
     // Affine in the texture (as the GLSL): psp2shaderperf basic_t1_lerp_gpu
@@ -1197,7 +1236,7 @@ bool Dynamic(const NativeShaderVariant& variant) {
 }
 
 std::string FragmentDefines(const NativeShaderFragmentKey& key) {
-    return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
+    return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("LAYERS", key.model == NativeShaderModel::Layers) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
            Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
            Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp);
 }
@@ -1262,6 +1301,11 @@ NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& var
     key.material_gpu = variant.material_gpu;
     key.dynamic = Dynamic(variant);
     key.basic_lerp = variant.basic_lerp && variant.model == NativeShaderModel::Basic && variant.textures > 0 && !variant.overlay;
+
+    // LAYERS has no Material block (mh3_shade_gpu_bake) and no overlay.
+    if (variant.model == NativeShaderModel::Layers)
+        key.overlay = key.material_gpu = key.dynamic = false;
+
     return key;
 }
 
@@ -1378,7 +1422,8 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
 }
 
 std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
-    return std::string(key.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
+    static constexpr const char* models[NativeShaderModelCount] = {"basic", "modulate", "layers"};
+    return std::string(models[unsigned(key.model)]) + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
            (key.basic_lerp ? "_lerp" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }

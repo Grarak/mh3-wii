@@ -553,9 +553,211 @@ static void reset(mh3_shade_material *out, const mh3_native_material_state *stat
     out->alpha_test = !alpha_always(&state->pixel);
 }
 
+/* LAYERS: each channel is a sum of terms, each a texture role, the vertex
+ * colour or a constant times a constant, then at most one multiply by the
+ * vertex colour or a constant. Per term slot (role 0..2, 3 without a
+ * texture) the vertex and the constant coefficients accumulate. */
+typedef struct {
+    mh3_shade_constant kv[4], kc[4];
+    mh3_shade_term factor;
+    uint8_t scale;
+} layer_sum;
+
+/* A static constant in eighths (zero, one, half, fractions); 0 when a factor
+ * is a register or konst value. */
+static int static_eighths(const mh3_shade_constant *k, unsigned *out) {
+    unsigned value = 8;
+
+    for (unsigned f = 0; f < 2; ++f) {
+        switch (k->kind[f]) {
+        case MH3_SHADE_CONSTANT_ZERO:
+            *out = 0;
+            return 1;
+        case MH3_SHADE_CONSTANT_ONE:
+            break;
+        case MH3_SHADE_CONSTANT_HALF:
+            value *= 4;
+            break;
+        case MH3_SHADE_CONSTANT_FRACTION:
+            value *= k->index[f];
+            break;
+        default:
+            return 0;
+        }
+
+        if (k->kind[f] != MH3_SHADE_CONSTANT_ONE) {
+            if (value % 8)
+                return 0;
+
+            value /= 8;
+        }
+    }
+
+    *out = value;
+    return 1;
+}
+
+/* slot += k: into an empty slot, or two static constants summed. */
+static int add_constant(mh3_shade_constant *slot, const mh3_shade_constant *k) {
+    unsigned a, b;
+
+    if (static_eighths(k, &b) && !b)
+        return 1;
+
+    if (static_eighths(slot, &a) && !a) {
+        *slot = *k;
+        return 1;
+    }
+
+    if (!static_eighths(slot, &a) || !static_eighths(k, &b) || a + b > 255)
+        return 0;
+
+    *slot = constant(MH3_SHADE_CONSTANT_FRACTION, (uint8_t)(a + b), 0);
+    return 1;
+}
+
+/* The constant factor of an argument term: a constant's value, a source's scale. */
+static int factor_of(const mh3_shade_term *t, mh3_shade_constant *out) {
+    if (is_constant(t)) {
+        *out = t->offset;
+        return 1;
+    }
+
+    if (t->offset.kind[0] != MH3_SHADE_CONSTANT_ZERO && t->offset.kind[1] != MH3_SHADE_CONSTANT_ZERO)
+        return 0;
+
+    *out = t->scale;
+    return 1;
+}
+
+/* sum += x * y. Colour terms take colours, not replicated alphas. */
+static int layer_add(layer_sum *l, mh3_shade_term x, mh3_shade_term y, int alpha) {
+    if (is_zero(&x) || is_zero(&y))
+        return 1;
+
+    if (y.source == MH3_SHADE_SOURCE_TEXTURE) {
+        const mh3_shade_term t = x;
+        x = y;
+        y = t;
+    }
+
+    if (y.source == MH3_SHADE_SOURCE_TEXTURE || (x.source == MH3_SHADE_SOURCE_VERTEX && y.source == MH3_SHADE_SOURCE_VERTEX) || (!alpha && (x.replicate_alpha || y.replicate_alpha)))
+        return 0;
+
+    mh3_shade_constant kx, ky;
+
+    if (!factor_of(&x, &kx) || !factor_of(&y, &ky))
+        return 0;
+
+    mh3_shade_term k = constant_term(kx);
+
+    if (!merge(&k, &ky))
+        return 0;
+
+    const unsigned slot = x.source == MH3_SHADE_SOURCE_TEXTURE ? x.texture : 3;
+    const int vertex = x.source == MH3_SHADE_SOURCE_VERTEX || y.source == MH3_SHADE_SOURCE_VERTEX;
+    return add_constant(vertex ? &l->kv[slot] : &l->kc[slot], &k.offset);
+}
+
+static int layer_channel(classifier *c, int alpha, unsigned count, layer_sum *l) {
+    const mh3_shade_term one = constant_term(constant(MH3_SHADE_CONSTANT_ONE, 0, 0));
+    int started = 0, closed = 0;
+    unsigned last = 0;
+
+    for (unsigned i = 0; i < 4; ++i)
+        l->kv[i] = l->kc[i] = constant(MH3_SHADE_CONSTANT_ZERO, 0, 0);
+
+    l->factor = one;
+    l->scale = 0;
+
+    for (unsigned i = 0; i < count; ++i) {
+        const mh3_pack_tev_pass *p = pass_of(c, i, alpha);
+        c->stage = i;
+
+        if (p->output != 0)
+            return 0;
+
+        if (started && passthrough(p, alpha))
+            continue;
+
+        if (closed || p->operation || p->bias)
+            return 0;
+
+        /* prev * x ends the sum; the sum is saturated (its last stage clamps). */
+        if (started && is_zero_argument(p->a, alpha) && is_zero_argument(p->d, alpha) && is_prev(p->b, alpha) != is_prev(p->c, alpha)) {
+            const mh3_shade_term x = argument(c, alpha, is_prev(p->b, alpha) ? p->c : p->b);
+
+            if (p->scale || !pass_of(c, last, alpha)->clamp || x.source == MH3_SHADE_SOURCE_TEXTURE || (!alpha && x.replicate_alpha))
+                return 0;
+
+            l->factor = x;
+            closed = 1;
+            continue;
+        }
+
+        /* A scaled stage scales the sum so far: only the last may scale. */
+        if (reads_prev(p, alpha) || is_prev(p->d, alpha) != started || l->scale)
+            return 0;
+
+        if (!started && !layer_add(l, argument(c, alpha, p->d), one, alpha))
+            return 0;
+
+        /* mix(a, b, c) = a (1 - c) + b c */
+        if (is_zero_argument(p->c, alpha)) {
+            if (!layer_add(l, argument(c, alpha, p->a), one, alpha))
+                return 0;
+        } else if (!alpha && p->c == COLOR_ONE) {
+            if (!layer_add(l, argument(c, alpha, p->b), one, alpha))
+                return 0;
+        } else if (!is_zero_argument(p->a, alpha) || !layer_add(l, argument(c, alpha, p->b), argument(c, alpha, p->c), alpha))
+            return 0;
+
+        l->scale = p->scale;
+        started = 1;
+        last = i;
+    }
+
+    return started;
+}
+
+static mh3_shade_term layer_term(const mh3_shade_constant *kv, const mh3_shade_constant *kc) {
+    unsigned v;
+
+    if (static_eighths(kv, &v) && !v)
+        return constant_term(*kc);
+
+    mh3_shade_term t = source_term(MH3_SHADE_SOURCE_VERTEX, 0, 0);
+    t.offset = *kc;
+    t.scale = *kv;
+    return t;
+}
+
+static int layers(classifier *c, unsigned count) {
+    mh3_shade_material *m = c->out;
+
+    for (int alpha = 0; alpha < 2; ++alpha) {
+        layer_sum l;
+
+        if (!layer_channel(c, alpha, count, &l))
+            return 0;
+
+        mh3_shade_equation *eq = alpha ? &m->alpha : &m->color;
+
+        for (unsigned i = 0; i < 4; ++i)
+            eq->input[i] = layer_term(&l.kv[i], &l.kc[i]);
+
+        eq->subtract = eq->bias = 0;
+        eq->scale = l.scale;
+        m->factor[alpha] = l.factor;
+    }
+
+    return !(c->quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE));
+}
+
 uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_material *out) {
     reset(out, state);
     classifier c = {out, state, 0, 0};
+    int layered = 0;
     const unsigned count = state->tev_count ? (state->tev_count < 16 ? state->tev_count : 16) : 1;
 
     if (!overlay(&c)) {
@@ -590,6 +792,18 @@ uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_mat
         c.quality = 0;
         fold_channel(&c, 0, start[0], count, &out->color);
         fold_channel(&c, 1, start[1], count, &out->alpha);
+
+        if (c.quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE)) {
+            mh3_shade_material trial;
+            reset(&trial, state);
+            classifier t = {&trial, state, 0, 0, 0};
+
+            if (layers(&t, count)) {
+                *out = trial;
+                c.quality = t.quality;
+                layered = 1;
+            }
+        }
     }
 
     for (unsigned i = 0; i < count; ++i)
@@ -599,7 +813,7 @@ uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_mat
         c.quality |= MH3_SHADE_EXACT;
 
     out->quality = c.quality;
-    out->model = modulate_channel(out, &out->color, 0) && modulate_channel(out, &out->alpha, 1) ? MH3_SHADE_MODULATE : MH3_SHADE_BASIC;
+    out->model = layered ? MH3_SHADE_LAYERS : modulate_channel(out, &out->color, 0) && modulate_channel(out, &out->alpha, 1) ? MH3_SHADE_MODULATE : MH3_SHADE_BASIC;
     out->pure_modulate = (c.quality & MH3_SHADE_EXACT) && out->model == MH3_SHADE_MODULATE && out->textures == 1 && !out->overlay &&
                          pure_modulate_channel(&out->color) && pure_modulate_channel(&out->alpha);
     return c.quality;
@@ -820,9 +1034,42 @@ static void modulate_fill(const mh3_shade_material *m, const mh3_native_material
     }
 }
 
+static void layers_fill(const mh3_shade_material *m, const mh3_native_material_state *s, mh3_shade_layers *out) {
+    memset(out, 0, sizeof *out);
+
+    for (int alpha = 0; alpha < 2; ++alpha) {
+        const mh3_shade_equation *e = alpha ? &m->alpha : &m->color;
+        const mh3_shade_term *factor = &m->factor[alpha];
+        const unsigned first = alpha ? 3 : 0, last = alpha ? 4 : 3;
+        float offset[4], scale[4];
+
+        for (unsigned r = 0; r < 4; ++r) {
+            const mh3_shade_term *t = &e->input[r];
+            resolve(s, &t->offset, offset);
+            resolve(s, &t->scale, scale);
+
+            for (unsigned i = first; i < last; ++i) {
+                out->kc[r][i] = offset[i];
+                out->kv[r][i] = t->source == MH3_SHADE_SOURCE_VERTEX ? scale[i] : 0.f;
+            }
+        }
+
+        resolve(s, &factor->offset, offset);
+        resolve(s, &factor->scale, scale);
+
+        for (unsigned i = first; i < last; ++i) {
+            out->s[i] = equation_scale(e->scale);
+            out->mc[i] = offset[i];
+            out->mv[i] = factor->source == MH3_SHADE_SOURCE_VERTEX ? scale[i] : 0.f;
+        }
+    }
+}
+
 void mh3_shade_fill(const mh3_shade_material *m, const mh3_native_material_state *s, mh3_shade_draw *draw) {
     if (m->model == MH3_SHADE_MODULATE)
         modulate_fill(m, s, &draw->fragment.shading.modulate);
+    else if (m->model == MH3_SHADE_LAYERS)
+        layers_fill(m, s, &draw->fragment.shading.layers);
     else {
         mh3_shade_basic *basic = &draw->fragment.shading.basic;
 
@@ -964,6 +1211,10 @@ int mh3_shade_gpu_bake(const mh3_shade_material *m, mh3_shade_gpu_material *out,
         gpu_static_pick(&out->pick[k]);
 
     int ok = 1;
+
+    /* LAYERS has no Material block form: its draws take the Shade uniforms. */
+    if (m->model == MH3_SHADE_LAYERS)
+        return 0;
 
     if (m->model == MH3_SHADE_MODULATE) {
         /* modulate_fill, with each resolved constant kept as static * pick. */

@@ -62,6 +62,18 @@ static float input(const mh3_shade_input *in, unsigned k, const float tex[3][4],
 static float evaluate(const mh3_shade_material *m, const mh3_shade_draw *d,
                       int alpha, unsigned k, const float tex[3][4],
                       const float ras[4]) {
+  if (m->model == MH3_SHADE_LAYERS) {
+    const mh3_shade_layers *q = &d->fragment.shading.layers;
+    float sum = ras[k] * q->kv[3][k] + q->kc[3][k];
+
+    for (unsigned r = 0; r < 3; ++r)
+      sum += (ras[k] * q->kv[r][k] + q->kc[r][k]) * tex[r][k];
+
+    sum *= q->s[k];
+    sum = sum < 0.f ? 0.f : sum > 1.f ? 1.f : sum;
+    return sum * (ras[k] * q->mv[k] + q->mc[k]);
+  }
+
   if (m->model == MH3_SHADE_MODULATE) {
     const mh3_shade_modulate *q = &d->fragment.shading.modulate;
     float base = tex[0][k] * q->w0[k] + tex[1][k] * q->w1[k] + q->offset[k];
@@ -335,6 +347,44 @@ static void split_color_alpha(void) {
   check(&m, &s, 1, 3, tex, ras, tex[1][3] * ras[3]);
 }
 
+/* The Deserted Island sea surface (A-p09-uv-suimen1b; AL-p09-uv-suimen scales
+ * its last colour stage by 2): colour = ras * t0 + ras * t2 + t1 / 2 + a1 * t0,
+ * alpha = saturate(2 * t0 + a0) * ras, roles in stage order (maps 0, 2, 1). */
+static void sea_surface(void) {
+  for (uint8_t scale = 0; scale < 2; ++scale) {
+    mh3_native_material_state s;
+    base(&s);
+    stage(&s, 0, pass(15, 10, 8, 15, 0, 0), pass(4, 7, 7, 4, 0, 0), 0, 4, 12, 28);
+    stage(&s, 1, pass(15, 10, 8, 0, 0, 0), pass(1, 7, 7, 0, 0, 0), 2, 4, 27, 27);
+    stage(&s, 2, pass(15, 13, 8, 0, 0, 0), pass(7, 7, 7, 0, 0, 0), 1, 4, 23, 23);
+    stage(&s, 3, pass(15, 5, 8, 0, scale, 0), pass(7, 5, 0, 7, 0, 0), 0, 4, 12, 28);
+    s.color[1].rgba[3] = 202;
+    s.color[2].rgba[3] = 35;
+    mh3_shade_material m;
+    assert(mh3_shade_classify(&s, &m) == MH3_SHADE_EXACT);
+    assert(m.model == MH3_SHADE_LAYERS && m.textures == 3 && !m.overlay);
+    assert(m.texture_map[0] == 0 && m.texture_map[1] == 2 && m.texture_map[2] == 1);
+    mh3_shade_gpu_material baked;
+    uint8_t dynamic = 0;
+    assert(!mh3_shade_gpu_bake(&m, &baked, &dynamic));
+    mh3_shade_draw d;
+    memset(&d, 0, sizeof d);
+    mh3_shade_fill(&m, &s, &d);
+    const float tex[3][4] = {{0.2f, 0.4f, 0.1f, 0.2f}, {0.3f, 0.1f, 0.4f, 1.f}, {0.5f, 0.6f, 0.7f, 1.f}},
+                faint[3][4] = {{0.2f, 0.4f, 0.1f, 0.05f}},
+                ras[4] = {0.3f, 0.5f, 0.6f, 0.8f};
+
+    for (unsigned k = 0; k < 3; ++k) {
+      float expect = (ras[k] * tex[0][k] + ras[k] * tex[1][k] + 0.5f * tex[2][k] + 35.f / 255.f * tex[0][k]) * (scale ? 2.f : 1.f);
+      expect = expect > 1.f ? 1.f : expect;
+      near(evaluate(&m, &d, 0, k, tex, ras), expect);
+    }
+
+    near(evaluate(&m, &d, 1, 3, tex, ras), 0.8f);
+    near(evaluate(&m, &d, 1, 3, faint, ras), (0.1f + 202.f / 255.f) * 0.8f);
+  }
+}
+
 static void approximations(void) {
   mh3_native_material_state s;
   base(&s);
@@ -488,6 +538,7 @@ int main(void) {
   assert(offsetof(mh3_shade_fragment, shading) == 48);
   assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_BASIC) == 48 + 544);
   assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_MODULATE) == 48 + 112);
+  assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_LAYERS) == 48 + 176);
   basic_texture_times_raster();
   konst_and_register();
   folded_multiply();
@@ -495,6 +546,7 @@ int main(void) {
   overlay_family();
   overlay_alpha_map();
   layers();
+  sea_surface();
   split_color_alpha();
   approximations();
   fog();
