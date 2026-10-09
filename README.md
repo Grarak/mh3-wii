@@ -1,8 +1,8 @@
 # Monster Hunter Tri static recompilation for macOS
 
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
-but it is not playable yet.** The current boot reaches Wii interrupt initialization
-and stops on an unimplemented MMIO write to `0xCC003004`.
+but it is not playable yet.** The current boot passes Wii interrupt initialization
+and stops in EXI device initialization on an unimplemented read from `0xCD00680C`.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -14,13 +14,13 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 - European disc ID `RMHP08`, extracted from the supplied RVZ.
 - DOL SHA-256 `db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162`.
 - Entry `0x80006310`, r13 `0x8079B2E0`, r2 `0x8079FF60`, verified from boot instructions.
-- 19,244 statically translated functions; translator reports zero unsupported
+- 19,241 statically translated functions; translator reports zero unsupported
   instructions and zero invalid SSA functions. This is not proof of full-game coverage.
 - Function discovery uses 758 executable SEL exports, 72 verified compiler
   save/restore thunks, and speculative standard stack-frame starts.
 - `build/native/MH3` is a linked macOS ARM64 executable.
 - Runtime self-test passes RAM aliasing, big-endian access, translated stack stores,
-  unmapped MMIO rejection, and MH3 exception-table initialization.
+  unmapped MMIO rejection, and MH3 exception/interrupt-table initialization.
 - A synthetic translator regression passes for full native replacements, wrappers
   that require original code, and ordinary callees.
 
@@ -50,7 +50,7 @@ ctest --test-dir build/native --output-on-failure
 Run the current boot implementation (expected to stop at an unimplemented service):
 
 ```sh
-build/native/MH3 > logs/run.log 2>&1
+MH3_TRACE_ERRORS=1 build/native/MH3 > logs/run.log 2>&1
 ```
 
 The translation script propagates errors; unsupported instructions are not silently
@@ -77,10 +77,16 @@ original code. See `scripts/test_native_discovery.py`.
 
 The first host crash was a translated stack store into an unmapped fixed host
 window. MH3's checked-memory backend now covers those stores too. The subsequent
-run reaches `__OSInterruptInit` at `0x804D1390`, whose instruction at `0x804D13E0`
-writes the Wii interrupt controller at `0xCC003004`. This needs a native replacement
-that preserves the guest interrupt table and mask state, followed by further
-OS/hardware-service bring-up.
+run reached `__OSInterruptInit` at `0x804D1390`. That routine and hardware mask
+programming at `0x804D1460` now have native replacements preserving the guest
+interrupt table, masks and external exception handler. Native interrupt delivery
+from host services still requires scheduler integration.
+
+Current boot stops at `EXIInit` (`0x804B16C0`), reading the EXI channel-0 transfer
+control register at `0xCD00680C`. With `MH3_TRACE_ERRORS=1`, runtime failures emit
+symbolized native backtraces before unwinding, so routine diagnosis needs no LLDB
+authorization. The recorded call chain is `func_80006310` → `func_804CB040`
+(`OSInit`) → `func_804B16C0` (`EXIInit`).
 
 Remaining requirements for a playable port include:
 
