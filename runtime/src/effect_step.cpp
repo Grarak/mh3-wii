@@ -28,6 +28,7 @@
 //    At dt = 1 (the stock 1/30 s step) the call is the original.
 //
 // Offsets are MH3's nw4r ef (the same layout as Wii Sports' decompiled ef).
+// Effects, particles and their resources live in main RAM: accessed flat.
 #include "abi_bridge.h"
 #include "game_step.h"
 #include "guest_call.h"
@@ -35,6 +36,7 @@
 #include "memory.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <array>
 #include <cmath>
@@ -58,10 +60,10 @@ namespace {
 // ut::List: head, tail, u16 count, u16 offset of the link {prev, next} in each object.
 struct List {
     uint32_t address;
-    uint32_t First() const { return Memory::Read32(address); }
-    uint32_t Last() const { return Memory::Read32(address + 4); }
+    uint32_t First() const { return MemoryInline::FlatRead32(address); }
+    uint32_t Last() const { return MemoryInline::FlatRead32(address + 4); }
     uint32_t Next(uint32_t object) const {
-        return Memory::Read32(object + Memory::Read16(address + 0xA) + 4);
+        return MemoryInline::FlatRead32(object + MemoryInline::FlatRead16(address + 0xA) + 4);
     }
 };
 
@@ -96,20 +98,20 @@ enum : uint8_t { kTrackU8 = 0, kTrackF32 = 3, kTrackRotate = 6 };
 enum : uint8_t { kTrackSkip = 0x08, kTrackEmitterTick = 0x10 };
 
 using Vec3 = std::array<float, 3>;
-Vec3 ReadVec(uint32_t a) { return {Memory::ReadFloat32(a), Memory::ReadFloat32(a + 4), Memory::ReadFloat32(a + 8)}; }
+Vec3 ReadVec(uint32_t a) { return {MemoryInline::FlatReadFloat32(a), MemoryInline::FlatReadFloat32(a + 4), MemoryInline::FlatReadFloat32(a + 8)}; }
 void WriteVec(uint32_t a, const Vec3& v) {
-    for (int k = 0; k < 3; ++k) Memory::WriteFloat32(a + 4 * k, v[k]);
+    for (int k = 0; k < 3; ++k) MemoryInline::FlatWriteFloat32(a + 4 * k, v[k]);
 }
 
 constexpr size_t kCurveWords = (kParticleCurvesEnd - kParticleCurves) / 4;
 using Curves = std::array<uint32_t, kCurveWords>;
 Curves ReadCurves(uint32_t particle) {
     Curves c;
-    for (size_t i = 0; i < kCurveWords; ++i) c[i] = Memory::Read32(particle + kParticleCurves + 4 * i);
+    for (size_t i = 0; i < kCurveWords; ++i) c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
     return c;
 }
 void WriteCurves(uint32_t particle, const Curves& c) {
-    for (size_t i = 0; i < kCurveWords; ++i) Memory::Write32(particle + kParticleCurves + 4 * i, c[i]);
+    for (size_t i = 0; i < kCurveWords; ++i) MemoryInline::FlatWrite32(particle + kParticleCurves + 4 * i, c[i]);
 }
 float F(uint32_t bits) { float f; std::memcpy(&f, &bits, 4); return f; }
 uint32_t Bits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
@@ -202,15 +204,15 @@ void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t ti
         fn(game.cpu);
         return game.cpu->gpr[3];
     };
-    const uint32_t res = Memory::Read32(manager + kManagerResource);
+    const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
     const uint32_t count = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
     const uint32_t first = tick == 0 ? 0 : native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
-    const uint32_t seed = Memory::Read16(particle + kParticleSeed);
-    const uint32_t life = Memory::Read16(particle + kParticleLife);
+    const uint32_t seed = MemoryInline::FlatRead16(particle + kParticleSeed);
+    const uint32_t life = MemoryInline::FlatRead16(particle + kParticleLife);
     for (uint32_t i = first; i < count; ++i) {
         const uint32_t track = native(MH3_ResEmitterGetPtclTrack, {res, i});
-        const uint8_t magic = Memory::Read8(track), target = Memory::Read8(track + 1);
-        const uint8_t kind = Memory::Read8(track + 2), flags = Memory::Read8(track + 4);
+        const uint8_t magic = MemoryInline::FlatRead8(track), target = MemoryInline::FlatRead8(track + 1);
+        const uint8_t kind = MemoryInline::FlatRead8(track + 2), flags = MemoryInline::FlatRead8(track + 4);
         if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2) continue;
         if (kind == kTrackU8)
             native(MH3_AnimCurveExecuteU8, {track, particle + kParticleCurves + target, tick, seed, life});
@@ -221,24 +223,61 @@ void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t ti
     }
 }
 
-// Shows the curves at age `at` (a fraction past a whole tick). A value that
-// changes by the same amount into its tick as out of it (a keyframed ramp) is
-// blended between the ticks either side; one that jumps at the tick holds the
-// tick's value, as the Wii shows it for the whole tick.
-void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
-    const uint32_t tick = uint32_t(at);
-    const float t = float(at - tick);
-    const Curves kept = ReadCurves(particle);
-    Curves before = kept;
-    if (tick > 0) {
-        RunCurves(game, manager, particle, tick - 1);
-        before = ReadCurves(particle);
-        WriteCurves(particle, kept);
+// Which bytes of the curve block (kParticleCurves..kParticleCurvesEnd) the
+// particle's curve tracks write - those RunCurves runs past the initial ones.
+// Every executor writes one element (a byte for u8, a word for f32 and
+// rotation) per set bit of the track's channel mask, from its target; no
+// other state decides it. `inside` is false when a track writes past the block.
+struct CurveFootprint {
+    std::array<uint32_t, 4> bits{}; // one per byte of the 128-byte block
+    bool inside = true;
+    bool Has(size_t byte) const { return bits[byte / 32] >> (byte % 32) & 1; }
+};
+CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
+    auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
+        uint32_t r = 3;
+        for (uint32_t v : ints) game.cpu->gpr[r++] = v;
+        fn(game.cpu);
+        return game.cpu->gpr[3];
+    };
+    constexpr uint32_t kChannelCount = 0x80592428, kChannelBound = 0x80592528; // u8[256] tables
+    CurveFootprint f;
+    const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
+    const uint32_t count = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
+    const uint32_t first = native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
+    for (uint32_t i = first; i < count; ++i) {
+        const uint32_t track = native(MH3_ResEmitterGetPtclTrack, {res, i});
+        const uint8_t magic = MemoryInline::FlatRead8(track), target = MemoryInline::FlatRead8(track + 1);
+        const uint8_t kind = MemoryInline::FlatRead8(track + 2), mask = MemoryInline::FlatRead8(track + 3);
+        const uint8_t flags = MemoryInline::FlatRead8(track + 4);
+        if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2) continue;
+        uint32_t base, width;
+        if (kind == kTrackU8) base = target, width = 1;
+        else if (kind == kTrackF32) base = target, width = 4;
+        else if (kind == kTrackRotate) base = kParticleRotate - kParticleCurves, width = 4;
+        else continue;
+        if (MemoryInline::FlatRead8(kChannelCount + mask) == 0) continue;
+        const uint32_t bound = MemoryInline::FlatRead8(kChannelBound + mask);
+        uint32_t at = base;
+        for (uint32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, at += width) {
+            if ((mask & bit) == 0) continue;
+            if (at + width > kParticleCurvesEnd - kParticleCurves) {
+                f.inside = false;
+                return f;
+            }
+            for (uint32_t b = at; b < at + width; ++b) f.bits[b / 32] |= 1u << (b % 32);
+        }
     }
-    RunCurves(game, manager, particle, tick);
-    const Curves a = ReadCurves(particle);
-    RunCurves(game, manager, particle, tick + 1);
-    const Curves b = ReadCurves(particle);
+    return f;
+}
+
+// The curves shown at a fractional tick: a value that changes by the same
+// amount into its tick as out of it (a keyframed ramp) is blended between the
+// ticks either side, `a` (the tick's) and `b` (the next); one that jumps at
+// the tick holds the tick's value, as the Wii shows it for the whole tick.
+// `before` is the previous tick's. Bytes outside `owned` keep `kept`.
+Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, const Curves& b, float t,
+                   const CurveFootprint* owned) {
     // Into and out of the tick: the same step (within a tenth, or the
     // rounding of a u8) is a ramp.
     auto ramp = [](double in, double out, double slack) {
@@ -252,6 +291,11 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
     for (size_t i = 0; i < colours; ++i) {
         uint32_t v = 0;
         for (int shift = 24; shift >= 0; shift -= 8) {
+            // Guest bytes are big-endian: the top byte is the word's first.
+            if (owned && !owned->Has(i * 4 + (24 - shift) / 8)) {
+                v |= kept[i] & 0xFFu << shift;
+                continue;
+            }
             const float w = float(before[i] >> shift & 0xFF);
             const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
             const float shown = ramp(x - w, y - x, 1.0) ? x + (y - x) * t : x;
@@ -260,6 +304,7 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
         s[i] = v;
     }
     for (size_t i = colours; i < floats; ++i) {
+        if (owned && !owned->Has(i * 4)) continue;
         const float w = F(before[i]), x = F(a[i]), y = F(b[i]);
         // A rotation curve wrapping between the two ticks snaps. Texture
         // offsets step through a flipbook's frames even when evenly: never
@@ -269,7 +314,80 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
                            ramp(double(x) - w, double(y) - x, 1e-6);
         s[i] = blend ? Bits(x + (y - x) * t) : a[i];
     }
-    WriteCurves(particle, s);
+    return s;
+}
+
+// Shows the curves at age `at` (a fraction past a whole tick) from three
+// fresh evaluations.
+void CurvesAtFull(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
+    const uint32_t tick = uint32_t(at);
+    const Curves kept = ReadCurves(particle);
+    Curves before = kept;
+    if (tick > 0) {
+        RunCurves(game, manager, particle, tick - 1);
+        before = ReadCurves(particle);
+        WriteCurves(particle, kept);
+    }
+    RunCurves(game, manager, particle, tick);
+    const Curves a = ReadCurves(particle);
+    RunCurves(game, manager, particle, tick + 1);
+    const Curves b = ReadCurves(particle);
+    WriteCurves(particle, BlendCurves(kept, before, a, b, float(at - tick), nullptr));
+}
+
+// A particle's recent curve evaluations. The values a track writes depend
+// only on the track, the tick, the particle's seed and its life, so they are
+// reused while those match: consecutive passes need overlapping ticks.
+struct CurveCache {
+    uint32_t res = 0;
+    uint16_t seed = 0, life = 0;
+    CurveFootprint owned;
+    std::array<uint32_t, 3> ticks{~0u, ~0u, ~0u};
+    std::array<Curves, 3> values;
+};
+AddressMap<CurveCache> curveCache;
+
+// CurvesAtFull with the evaluations reused: ParticleManager::Calc just left
+// the curves at `keptTick` (the tick the particle's age started the pass in)
+// in the block, and the cache holds earlier passes' ticks. Only the bytes the
+// tracks own are taken from evaluations; the rest keep the block's.
+void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, uint32_t keptTick) {
+    const uint32_t tick = uint32_t(at);
+    // The first tick runs the initial tracks too: rare, and done in full.
+    if (tick == 0) return CurvesAtFull(game, manager, particle, at);
+    const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
+    const uint16_t seed = MemoryInline::FlatRead16(particle + kParticleSeed), life = MemoryInline::FlatRead16(particle + kParticleLife);
+    CurveCache& cache = curveCache[particle];
+    if (cache.res != res || cache.seed != seed || cache.life != life) {
+        cache.res = res;
+        cache.seed = seed;
+        cache.life = life;
+        cache.owned = FootprintOf(game, manager);
+        cache.ticks = {~0u, ~0u, ~0u};
+    }
+    if (!cache.owned.inside) return CurvesAtFull(game, manager, particle, at);
+
+    const Curves kept = ReadCurves(particle);
+    std::array<Curves, 3> got;
+    for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t want = tick - 1 + k;
+        if (want == keptTick) {
+            got[k] = kept;
+            continue;
+        }
+        const auto slot = std::find(cache.ticks.begin(), cache.ticks.end(), want);
+        if (slot != cache.ticks.end()) {
+            got[k] = cache.values[size_t(slot - cache.ticks.begin())];
+            continue;
+        }
+        RunCurves(game, manager, particle, want);
+        got[k] = ReadCurves(particle);
+    }
+    for (uint32_t k = 0; k < 3; ++k) {
+        cache.ticks[k] = tick - 1 + k;
+        cache.values[k] = got[k];
+    }
+    WriteCurves(particle, BlendCurves(kept, got[0], got[1], got[2], float(at - tick), &cache.owned));
 }
 
 } // namespace
@@ -296,7 +414,7 @@ static void EffectCalcPort(CpuContext* ctx) {
         std::vector<std::pair<uint32_t, std::array<uint32_t, 6>>> kept;
         for (uint32_t e = emitters.First(); e; e = emitters.Next(e)) {
             std::array<uint32_t, 6> words;
-            for (size_t i = 0; i < 6; ++i) words[i] = Memory::Read32(e + kEmitterLastTranslate + i * 4);
+            for (size_t i = 0; i < 6; ++i) words[i] = MemoryInline::FlatRead32(e + kEmitterLastTranslate + i * 4);
             kept.emplace_back(e, words);
         }
         step.particleStep = scale;
@@ -305,7 +423,7 @@ static void EffectCalcPort(CpuContext* ctx) {
         func_800A4C20(ctx);
         step.particlesOnly = false;
         for (const auto& [e, words] : kept)
-            for (size_t i = 0; i < 6; ++i) Memory::Write32(e + kEmitterLastTranslate + i * 4, words[i]);
+            for (size_t i = 0; i < 6; ++i) MemoryInline::FlatWrite32(e + kEmitterLastTranslate + i * 4, words[i]);
     } else {
         step.particleStep = scale / ticks;
         for (uint32_t i = 0; i < ticks; ++i) {
@@ -345,7 +463,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     const uint32_t manager = ctx->gpr[3];
     const List list{manager + kManagerParticles};
-    const uint32_t lastCalced = Memory::Read32(manager + kManagerLastCalced);
+    const uint32_t lastCalced = MemoryInline::FlatRead32(manager + kManagerLastCalced);
 
     struct Work {
         uint32_t address;
@@ -355,22 +473,22 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     };
     std::vector<Work> work;
     for (uint32_t p = lastCalced ? list.Next(lastCalced) : list.First(); p; p = list.Next(p)) {
-        if (Memory::Read32(p + kLifeStatus) != kLifeActive || Memory::Read32(p + kParticleEval) != kEvalWait)
+        if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive || MemoryInline::FlatRead32(p + kParticleEval) != kEvalWait)
             continue;
-        const uint16_t tick = Memory::Read16(p + kParticleTick);
+        const uint16_t tick = MemoryInline::FlatRead16(p + kParticleTick);
         double age = tick, dt = step.particleStep;
         if (const Particle* found = step.particles.Find(p)) {
             const Particle& e = *found;
-            if (e.seed == Memory::Read16(p + kParticleSeed) && uint32_t(e.age) == tick) {
+            if (e.seed == MemoryInline::FlatRead16(p + kParticleSeed) && uint32_t(e.age) == tick) {
                 age = e.age;
                 // Calc again in the same pass (calc remain: a particle emitted
                 // with ticks to catch up) is a whole tick.
                 if (e.generation == step.generation) dt = 1.0;
             }
         }
-        Work w{p, age, dt, Memory::ReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity),
+        Work w{p, age, dt, MemoryInline::FlatReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity),
                ReadVec(p + kParticlePosition)};
-        if (dt != 1.0) Memory::WriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
+        if (dt != 1.0) MemoryInline::FlatWriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
         if (std::floor(age + dt) == std::floor(age)) betweenTicks[p] = true;
         work.push_back(w);
     }
@@ -382,12 +500,13 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     GuestCall game{ctx};
     for (const Work& w : work) {
         const uint32_t p = w.address;
-        if (Memory::Read32(p + kLifeStatus) != kLifeActive) { // retired
+        if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive) { // retired
             step.particles.Erase(p);
+            curveCache.Erase(p);
             continue;
         }
         if (w.dt != 1.0) {
-            Memory::WriteFloat32(p + kParticleMomentum, w.momentum);
+            MemoryInline::FlatWriteFloat32(p + kParticleMomentum, w.momentum);
             const Vec3 after = ReadVec(p + kParticleVelocity);
             Vec3 velocity, position = ReadVec(p + kParticlePosition), previous;
             for (int k = 0; k < 3; ++k) {
@@ -401,12 +520,12 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
             WriteVec(p + kParticlePrevPosition, previous);
         }
         const double age = w.age + w.dt;
-        Memory::Write16(p + kParticleTick, uint16_t(age));
+        MemoryInline::FlatWrite16(p + kParticleTick, uint16_t(age));
         if (age == std::floor(age)) {
             step.particles.Erase(p);
             continue;
         }
-        step.particles[p] = {Memory::Read16(p + kParticleSeed), age, step.generation};
+        step.particles[p] = {MemoryInline::FlatRead16(p + kParticleSeed), age, step.generation};
         // After the tick from age k the Wii shows the curves at k: the curves
         // run one tick behind the age, here at age - 1.
 #ifdef MH3_DEVELOPMENT
@@ -414,7 +533,36 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         static const bool tickCurves = std::getenv("MH3_EFFECT_TICK_CURVES") != nullptr;
         if (tickCurves) continue;
 #endif
-        if (age > 1.0) CurvesAt(game, manager, p, age - 1.0);
+        if (age <= 1.0) continue;
+#ifdef MH3_DEVELOPMENT
+        // MH3_EFFECT_CURVE_CHECK=1 (debugging): compare the cached curves
+        // with three fresh evaluations and report how many differ.
+        static const bool checkCurves = std::getenv("MH3_EFFECT_CURVE_CHECK") != nullptr;
+        if (checkCurves) {
+            static uint64_t checked = 0, differing = 0;
+            const Curves start = ReadCurves(p);
+            CurvesAt(game, manager, p, age - 1.0, uint32_t(w.age));
+            const Curves cached = ReadCurves(p);
+            WriteCurves(p, start);
+            CurvesAtFull(game, manager, p, age - 1.0);
+            const Curves full = ReadCurves(p);
+            ++checked;
+            if (cached != full) {
+                if (++differing <= 8) {
+                    std::fprintf(stderr, "MH3 effect curves: particle %08x age %.3f kept tick %u differs:", p, age,
+                                 uint32_t(w.age));
+                    for (size_t i = 0; i < kCurveWords; ++i)
+                        if (cached[i] != full[i]) std::fprintf(stderr, " +%02zx %08x/%08x", 0x20 + 4 * i, cached[i], full[i]);
+                    std::fprintf(stderr, "\n");
+                }
+            }
+            if ((checked & (checked - 1)) == 0 && checked >= 1024)
+                std::fprintf(stderr, "MH3 effect curves: %llu of %llu cached differ\n",
+                             static_cast<unsigned long long>(differing), static_cast<unsigned long long>(checked));
+            continue;
+        }
+#endif
+        CurvesAt(game, manager, p, age - 1.0, uint32_t(w.age));
     }
 }
 extern "C" void func_800AC35C(CpuContext* ctx);
