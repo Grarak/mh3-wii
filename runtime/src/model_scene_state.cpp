@@ -66,6 +66,18 @@ void StorePreparedCamera(uint32_t resource, const mh3_native_camera& camera, uin
         StoreCamera(resource, camera);
 }
 
+// The getters' matrix the record already holds (its valid flag set) is
+// copied out as stored, without decoding the 268-byte record: the scene walk
+// asks for the view and the projection per model, and only the first request
+// after a camera change prepares them.
+bool CopyPreparedMatrix(uint32_t resource, uint32_t flag, uint32_t offset, uint32_t bytes, uint32_t destination) {
+    if (!(Memory::Read32(resource + 112) & flag))
+        return false;
+
+    std::memmove(GuestRange(destination, bytes), GuestRange(resource + offset, bytes), bytes);
+    return true;
+}
+
 void StoreFloats(uint32_t destination, const float* data, size_t count) {
     for (size_t i = 0; i < count; ++i)
         Memory::WriteFloat32(destination + uint32_t(i * 4), data[i]);
@@ -130,6 +142,10 @@ REGISTER_NATIVE_FUNCTION_AS(0x800752BC, MH3_CameraProject, "CameraProject");
 
 extern "C" void MH3_CameraView(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
+
+    if (CopyPreparedMatrix(resource, 8, 0, 48, cpu->gpr[4]))
+        return;
+
     auto camera = Camera(resource);
     const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_view(&camera));
@@ -139,6 +155,10 @@ extern "C" void MH3_CameraView(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x800753F8, MH3_CameraView, "CameraView");
 extern "C" void MH3_CameraProjection(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
+
+    if (CopyPreparedMatrix(resource, 128, 48, 64, cpu->gpr[4]))
+        return;
+
     auto camera = Camera(resource);
     const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_projection(&camera));
