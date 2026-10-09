@@ -5,6 +5,7 @@
 #include "gx_host.h"
 #include "gx_stream.h"
 #include "os_alarm.h"
+#include "controller_host.h"
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -68,6 +69,7 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    RunControllerSelfTests(cpu);
     {
         AudioInterfaceState ai;
         ai.Reset(0);

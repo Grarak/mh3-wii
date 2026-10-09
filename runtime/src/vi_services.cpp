@@ -3,6 +3,7 @@
 #include "ios_host.h"
 #include "audio_dma.h"
 #include "os_alarm.h"
+#include "controller_host.h"
 #include <chrono>
 #include <thread>
 #include <cstdio>
@@ -17,6 +18,7 @@ auto nextRetrace = Clock::now();
 }
 
 void ServiceVideoRetrace(CpuContext* cpu) {
+    ServiceHostController(cpu);
     const auto now = Clock::now();
     if (now < nextRetrace) return;
     nextRetrace = now + std::chrono::nanoseconds(VideoRetracePeriodNs());

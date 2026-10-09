@@ -15,11 +15,11 @@ with a frame capture. It creates and reopens the NAND system file, six character
 data, and save banner. All five initial RSO prologs now execute as compiled native code. Startup prints
 the media version, renders the Capcom logo, and enters THP movie playback.
 Exact preserved partition bytes now satisfy reads into disc padding. Locked-cache DMA now moves the decoded movie buffers into RAM, and a Metal
-frame capture verifies the opening movie’s underwater scene. Title-menu input
-and gameplay remain unverified. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
+frame capture verifies the opening movie’s underwater scene. The full intro reaches the title screen. Classic Controller reports now drive
+movie skipping and title-menu navigation; gameplay remains unverified. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
 channel conversion pass tests; real boot opens SDL audio and executes DMA and
-AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge
-is initialized with no connected remote; keyboard/gamepad input is still pending.
+AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge supplies keyboard/SDL gamepad input as a Classic
+Controller. See [controls and validation](docs/controller-bringup.md).
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling

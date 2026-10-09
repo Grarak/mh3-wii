@@ -274,6 +274,9 @@ std::optional<IosCompletion> TakeIosCompletion() {
     completions.pop_front();
     return result;
 }
+void QueueIosCompletion(IosCompletion completion) {
+    if (completion.callback) completions.push_back(completion);
+}
 void TriggerStmEvent(uint32_t event) {
     if (!eventHook) return;
     Memory::Write32(eventHook->output, event);
