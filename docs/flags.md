@@ -62,6 +62,20 @@ reported at startup (`MH3: MH3_X: unknown option`).
 The items and their defaults are in [Razor](vita-razor.md);
 `scripts/vita-hardware-test.py --wait-razor` reads `live=` from `runtime.env`.
 
+### `MH3_STEP_PROBE`: state that counts steps instead of time
+
+`MH3_STEP_PROBE=T[,T...][,step=N][,settle][,all]`
+([variable step](../HANDOVER.md#variable-step)). Each probe writes
+`mh3-step-probe-N.txt` to the working directory (never commit these);
+`scripts/dev/probefilter.py` filters them.
+
+| Item | Effect |
+| --- | --- |
+| `T` | probe the first logic step at or after T ticks (1/30 s) of game time |
+| `step=N` | probe logic step N |
+| `settle` | both runs take one more 1/30 s step, so copies of the previous step's values agree again |
+| `all` | probe the whole frame (scene update, tasks, drawing), not just the task pass |
+
 ## Renamed and removed
 
 A development build names any of these that is still set at startup.
@@ -76,3 +90,5 @@ A development build names any of these that is still set at startup.
 | `MH3_RAZOR_LIVE`, `_CAPTURE`, `_SALVAGE` | `MH3_RAZOR=live=,capture=,salvage=` |
 | `MH3_RAZOR_LIVE_START_FRAME`, `_LIVE_FRAMES`, `_CAPTURE_FRAME`, `_GROUP` | `MH3_RAZOR=start=,frames=,capture-frame=,group=` |
 | `MH3_RAZOR_HIDE_HUD=1`, `_SCENE_TRACE=1`, `_CPU_TRACE=1` | `MH3_RAZOR=hide-hud,scenes,cpu` |
+| `MH3_STEP_PROBE=N`, `MH3_STEP_PROBE_TICK=T,...` | `MH3_STEP_PROBE=step=N`, `MH3_STEP_PROBE=T,...` |
+| `MH3_STEP_PROBE_SETTLE=1`, `MH3_STEP_PROBE_ALL` | `MH3_STEP_PROBE=...,settle,all` |

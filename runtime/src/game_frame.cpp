@@ -21,6 +21,7 @@
 #include "village_boot.h"
 #include <initializer_list>
 #ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -65,13 +66,19 @@ enum : uint32_t {
 };
 
 #ifdef MH3_DEVELOPMENT
-// MH3_STEP_PROBE=N: before logic step N, find state that counts steps rather
-// than time. From one RAM snapshot the task pass runs once with a 1/30 s step,
-// then (restored) twice with 1/60 s steps; RAM is restored before the real
-// step. Every changed word goes to mh3-step-probe-N.txt with both deltas:
-// time-based state changes about equally, step-based state about twice as much
-// over the two half steps. Host-side effects of the extra passes (audio, GX,
-// DVD requests) are not undone, so probe in a steady scene.
+// MH3_STEP_PROBE=T[,T...][,step=N][,settle][,all] (docs/flags.md): find state
+// that counts steps rather than time, before the first logic step at or after
+// each T ticks of game time (loading runs many short steps at variable step),
+// or before logic step N. From one RAM snapshot the task pass runs once with a
+// 1/30 s step, then (restored) twice with 1/60 s steps; RAM is restored before
+// the real step. Every changed word goes to mh3-step-probe-N.txt with both
+// deltas: time-based state changes about equally, step-based state about twice
+// as much over the two half steps. Host-side effects of the extra passes
+// (audio, GX, DVD requests) are not undone, so probe in a steady scene.
+const DevOptions& StepProbeOptions() {
+    static const DevOptions options("MH3_STEP_PROBE", {"step", "settle", "all"}, DevOptions::Words::Allowed);
+    return options;
+}
 struct Ram {
     std::vector<uint8_t> bytes;
     static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
@@ -89,15 +96,12 @@ struct Ram {
     static uint32_t Address(size_t offset) { return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset) : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size); }
 };
 
-// MH3_STEP_PROBE_SETTLE=1: both runs then take one more 1/30 s step, so
-// words that keep the value from before the step (previous positions, frames,
-// joint matrices) agree again; only amounts still applied per step differ.
+// settle: both runs then take one more 1/30 s step, so words that keep the
+// value from before the step (previous positions, frames, joint matrices)
+// agree again; only amounts still applied per step differ.
 template <typename RunTasks>
 void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
-    static const bool settle = [] {
-        const char* v = std::getenv("MH3_STEP_PROBE_SETTLE");
-        return v && *v == '1';
-    }();
+    static const bool settle = StepProbeOptions().Has("settle");
     const GameStep::State clock = GameStep::Save();
     Ram before, whole, halves;
     before.Save();
@@ -267,21 +271,16 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         Memory::Write8(kSystem + kFramePhase, 2);
 #ifdef MH3_DEVELOPMENT
         static uint32_t logicSteps = 0;
-        static const uint32_t probeAt = [] {
-            const char* v = std::getenv("MH3_STEP_PROBE");
-            return v ? uint32_t(std::strtoul(v, nullptr, 10)) : 0u;
-        }();
-        // MH3_STEP_PROBE_TICK=N[,N...] probes the first step at or after each N
-        // ticks of game time instead (loading runs many short steps at
-        // variable step).
+        static const uint32_t probeAt = uint32_t(StepProbeOptions().Number("step", 0));
         static const std::vector<double> probeTicks = [] {
             std::vector<double> ticks;
-            for (const char* v = std::getenv("MH3_STEP_PROBE_TICK"); v && *v;) {
+            for (const std::string& word : StepProbeOptions().List()) {
                 char* end = nullptr;
-                ticks.push_back(std::strtod(v, &end));
-                if (end == v)
-                    break;
-                v = *end == ',' ? end + 1 : end;
+                const double tick = std::strtod(word.c_str(), &end);
+                if (end == word.c_str() || *end)
+                    std::fprintf(stderr, "MH3: MH3_STEP_PROBE: '%s' is not a tick count\n", word.c_str());
+                else
+                    ticks.push_back(tick);
             }
             return ticks;
         }();
@@ -290,9 +289,9 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         const bool tickDue = nextTickProbe < probeTicks.size() && GameStep::Elapsed() >= probeTicks[nextTickProbe];
         if (tickDue)
             ++nextTickProbe;
-        // MH3_STEP_PROBE_ALL: probe the whole frame (scene update, tasks and
-        // drawing) instead of the task pass alone.
-        static const bool probeAll = std::getenv("MH3_STEP_PROBE_ALL") != nullptr;
+        // all: probe the whole frame (scene update, tasks and drawing) instead
+        // of the task pass alone.
+        static const bool probeAll = StepProbeOptions().Has("all");
         if (logicSteps == probeAt || tickDue)
             ProbeStepDependence(logicSteps, [&] {
                 if (probeAll) {

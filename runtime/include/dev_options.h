@@ -135,6 +135,9 @@ inline void ReportRetiredVariables() {
         {"MH3_RAZOR_CAPTURE", "MH3_RAZOR"},
         {"MH3_RAZOR_CAPTURE_FRAME", "MH3_RAZOR"},
         {"MH3_RAZOR_SALVAGE", "MH3_RAZOR"},
+        {"MH3_STEP_PROBE_TICK", "MH3_STEP_PROBE"},
+        {"MH3_STEP_PROBE_SETTLE", "MH3_STEP_PROBE"},
+        {"MH3_STEP_PROBE_ALL", "MH3_STEP_PROBE"},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))
