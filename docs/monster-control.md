@@ -40,6 +40,20 @@ monster heap layout 5 (+0x390), the only one with a slot of its memory class
 --quest-monster Alatreon` puts it in Moga Woods. Ceadeus and Jhen Mohran
 load the same way but need their own maps.
 
+The field's monster heap (0xB6C000 bytes) holds the layout's six slots (a
+large monster's files, or a small monster kind's) and after them each large
+slot's effects (Great Jaggi and Great Baggi 0x30000, the others 0x78000, the
+three bosses 0xC0000). The disc's layouts fill it: layout 1 (Hunter Killer:
+two large slots and a Great Jaggi one) exactly. A boss beside another large
+monster overran it (the effects of the second ran past the heap: a null
+effect resource in 0x800E228C), so the bosses stay alone. Three different
+large monsters at once need 0xE04000 bytes: custom quests use layout 4 (no
+disc quest does) with the three large slots and three small ones, and the
+native SetMonsterHeaps (0x80146604) pulls a heap that large when the layout
+needs it (the resource memory keeps 0xAD6970 bytes free with it in the land
+arena). The quest's mode byte +0x310 0x02 brings its monsters in at once,
+0x04 one at a time (Arena Free-for-all).
+
 Small monsters: `--quest-small NAME|ID` makes every small monster spawn of
 the quest that monster (the area spawn tables at +0x4B8; only named
 monsters other than the quest's large ones change). The arenas' own spawns

@@ -1,8 +1,10 @@
 #pragma once
 #include "quest_catalog.h"
 #include "status.h"
+#include <array>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -24,6 +26,17 @@ struct CustomQuest {
     std::string storageKey; // Assigned by the read-only catalog, empty for new quests.
     uint16_t encounter = 0; // Authored monster placement on the same ordinary map.
     uint16_t minutes = 0;   // Zero preserves the original time limit.
+
+    // A quest from scratch (map not 0): its map (the quest map number), one
+    // to three large monsters at once (0 for none, after the first), their
+    // size in percent and a rank (0 village, 1 low, 2 high) whose quests give
+    // the monsters' strength and rewards. set and base name the disc quest
+    // whose entry it takes (SetScratchCarrier); count and encounter are
+    // unused. Map 0: a quest edited from a template.
+    uint8_t map = 0;
+    std::array<uint8_t, 3> monsters{};
+    uint8_t rank = 0;
+    uint8_t size = 100;
 };
 
 // Quest editing. A failure (a template missing from the disc, settings the
@@ -33,7 +46,41 @@ Status CompositionOptions(const CustomQuest& quest, std::vector<uint16_t>& optio
 Status CompositionMaps(const CustomQuest& quest, std::vector<uint16_t>& maps);
 Status EditQuestFile(std::span<const uint8_t> source, const CustomQuest& quest, std::vector<uint8_t>& edited);
 
-// Development: quest `id`'s first large monster (and its objectives) replaced
+// Quests from scratch. The maps, and the large monsters a map takes: any but
+// Ceadeus and Jhen Mohran, who stay on their own maps (which take nobody
+// else), and in the water arena only the swimmers.
+std::vector<uint8_t> ScratchMaps();
+std::vector<uint8_t> ScratchMonsters(uint8_t map);
+
+// Ceadeus, Alatreon and Jhen Mohran: only alone (their heap slot and effects
+// leave no room for another large monster).
+bool ScratchAlone(uint8_t monster);
+
+// The monster heap layout the quest needs (the six slots' memory classes;
+// its +0x390 then 4) when no disc layout fits: three different monsters at
+// once. None for one or two.
+std::optional<std::array<int8_t, 6>> ScratchLayout(const CustomQuest& quest);
+
+// Whether the quest's monsters can be captured there: an authored quest
+// captures each, on a map with hunt quests.
+Status ScratchCapture(const CustomQuest& quest, bool& supported);
+
+// The quest's set and base: the disc quest on its map (by rank where there
+// are two) whose entry it is built over.
+void SetScratchCarrier(CustomQuest& quest);
+
+// A template quest's settings as a quest from scratch: its map, monster,
+// objective, time, stars and name.
+Status ScratchFromTemplate(CustomQuest& quest);
+
+// The quest file of quest.set (sets: the disc's three quest files, by set)
+// with quest's entry built: its name, goal, monsters (each with the strength,
+// placement bytes and rewards of the authored quest nearest its rank and
+// stars), objectives and time over the carrier's map, supplies, small
+// monsters and fees.
+Status ScratchQuestFile(const std::array<std::vector<uint8_t>, 3>& sets, const CustomQuest& quest, std::vector<uint8_t>& edited);
+
+// Quest `id`'s first large monster (and its objectives) replaced
 // by `monster`, a monster list id (--quest-monster).
 Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster);
 Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t monster);

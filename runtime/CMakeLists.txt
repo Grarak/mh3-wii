@@ -122,7 +122,7 @@ if(NOT MH3_DEVELOPMENT)
   endif()
 endif()
 
-# Profile-guided optimization (docs/pgo.md). MH3_PGO_GENERATE instruments
+# Profile-guided optimization (docs/optimizations/cpu/pgo-and-thinlto.md). MH3_PGO_GENERATE instruments
 # every C/C++ object with clang's source-based counters, in continuous mode so
 # that a killed run still leaves its profile; MH3_PGO_RUNTIME links a profile
 # runtime the compiler lacks (arm32 Linux). MH3_PGO_USE optimizes with an
@@ -131,12 +131,33 @@ endif()
 # Linux applies to the Vita build's shared code, and code only one target
 # compiles (the GLES or GXM renderer) stays unprofiled. Set before Aurora so
 # that its targets and the fetched dependencies get it too.
-option(MH3_PGO_GENERATE "Instrument the build to collect a PGO profile (docs/pgo.md)" OFF)
+option(MH3_PGO_GENERATE "Instrument the build to collect a PGO profile (docs/optimizations/cpu/pgo-and-thinlto.md)" OFF)
 set(MH3_PGO_RUNTIME "" CACHE FILEPATH "Profile runtime archive for MH3_PGO_GENERATE when the compiler has none")
-set(MH3_PGO_USE "" CACHE FILEPATH "Indexed clang profile to optimize with (docs/pgo.md)")
+set(MH3_PGO_USE "" CACHE FILEPATH "Indexed clang profile to optimize with (docs/optimizations/cpu/pgo-and-thinlto.md)")
+
+option(MH3_PGO_RELEASE_PROFILE "Release builds optimize with the checked-in profile (pgo/)" ON)
 
 if(MH3_PGO_GENERATE AND MH3_PGO_USE)
   message(FATAL_ERROR "MH3_PGO_GENERATE and MH3_PGO_USE are exclusive")
+endif()
+
+# Release builds take the checked-in profile (collected with clang 21, whose
+# indexed format they need) unless another is given. It is unpacked under a
+# name from its hash, so that Ninja rebuilds when it changes.
+set(mh3_release_profile "${CMAKE_CURRENT_SOURCE_DIR}/../pgo/mh3-release.profdata.tar.zst")
+
+if(NOT MH3_DEVELOPMENT AND NOT MH3_PGO_GENERATE AND NOT MH3_PGO_USE AND MH3_PGO_RELEASE_PROFILE AND NOT EMSCRIPTEN AND
+   CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 21 AND EXISTS "${mh3_release_profile}")
+  file(SHA256 "${mh3_release_profile}" mh3_profile_hash)
+  string(SUBSTRING "${mh3_profile_hash}" 0 12 mh3_profile_hash)
+  set(mh3_profile_dir "${CMAKE_BINARY_DIR}/pgo/${mh3_profile_hash}")
+
+  if(NOT EXISTS "${mh3_profile_dir}/mh3-release.profdata")
+    file(ARCHIVE_EXTRACT INPUT "${mh3_release_profile}" DESTINATION "${mh3_profile_dir}")
+  endif()
+
+  set(MH3_PGO_USE "${mh3_profile_dir}/mh3-release.profdata")
+  message(STATUS "MH3: release profile ${MH3_PGO_USE}")
 endif()
 
 if(MH3_PGO_GENERATE)
@@ -263,7 +284,7 @@ add_executable(MH3
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp native/mh3_classic_map.c src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
   src/audio_tests.cpp src/audio_dma.cpp
   src/audio/native_audio_api.cpp src/audio/native_audio_frame.cpp src/audio/native_audio_mixer.cpp src/audio/native_audio_tests.cpp src/audio/sdk_mix.cpp src/audio/sdk_synseq.cpp src/audio/sound_engine.cpp src/audio/sound_stream.cpp
-  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/draw_pages.cpp src/frame_draw.cpp src/hud_draw.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/guest_worker.cpp src/guest_threads.cpp src/net/online_patches.cpp src/net/online_close.cpp src/net/net_ctrl.cpp src/net/ios_net.cpp ${MH3_NET_HOST_SOURCE} src/effect_calc.cpp src/effect_objects.cpp src/effect_draw_order.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/pad_input.cpp src/camera_input.cpp src/field_camera.cpp src/player_aim.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/quest_placement.cpp src/monster_heaps.cpp src/save_data.cpp src/game_tasks.cpp src/field_frame.cpp src/draw_buckets.cpp src/player_health.cpp src/cheats.cpp src/cheat_data.cpp src/cheat_items.cpp src/cheat_monsters.cpp src/cheat_quest.cpp src/cheat_hunter.cpp src/cheat_movement.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/load_progress.cpp src/quest_clock.cpp src/ambient_hover.cpp src/fish_effects.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/anm_obj_chr_res.cpp src/effect_texture.cpp src/effect_billboard.cpp src/effect_particle.cpp src/msl_math.cpp src/texture_scroll.cpp src/ceadeus_intro.cpp src/demo_pose.cpp src/alatreon_actions.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/npc_turn.cpp src/field_actor.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/scene_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp src/g3d_anm_result.cpp src/nw4r_math.cpp src/scn_mdl_tasks.cpp src/gather_spots.cpp src/mhchar_move.cpp src/field_lists.cpp src/res_anm_keys.cpp src/drawshape.cpp src/particle_mtx.cpp src/hunter_parts.cpp src/player_skill.cpp src/sound_shells.cpp src/enemy_hit_shapes.cpp src/enemy_conditions.cpp src/small_monsters.cpp src/ef_mtx_scale.cpp src/ef_resource.cpp src/msl_string.cpp src/debug_font.cpp src/prim_buffers.cpp src/monster_intros.cpp src/monster_roars.cpp src/monster_attacks.cpp src/monster_control.cpp src/enemy_actions.cpp src/monster_waits.cpp src/g3d_destroy.cpp
+  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/frame_draw.cpp src/hud_draw.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/guest_worker.cpp src/guest_threads.cpp src/net/online_patches.cpp src/net/online_close.cpp src/net/net_ctrl.cpp src/net/ios_net.cpp ${MH3_NET_HOST_SOURCE} src/effect_calc.cpp src/effect_objects.cpp src/effect_draw_order.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/pad_input.cpp src/camera_input.cpp src/field_camera.cpp src/player_aim.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/quest_placement.cpp src/monster_heaps.cpp src/save_data.cpp src/game_tasks.cpp src/field_frame.cpp src/draw_buckets.cpp src/player_health.cpp src/cheats.cpp src/cheat_data.cpp src/cheat_items.cpp src/cheat_monsters.cpp src/cheat_quest.cpp src/cheat_hunter.cpp src/cheat_movement.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/load_progress.cpp src/quest_clock.cpp src/ambient_hover.cpp src/fish_effects.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/anm_obj_chr_res.cpp src/effect_texture.cpp src/effect_billboard.cpp src/effect_particle.cpp src/msl_math.cpp src/texture_scroll.cpp src/ceadeus_intro.cpp src/demo_pose.cpp src/alatreon_actions.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/npc_turn.cpp src/field_actor.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/scene_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp src/g3d_anm_result.cpp src/nw4r_math.cpp src/scn_mdl_tasks.cpp src/gather_spots.cpp src/mhchar_move.cpp src/field_lists.cpp src/res_anm_keys.cpp src/drawshape.cpp src/particle_mtx.cpp src/hunter_parts.cpp src/player_skill.cpp src/sound_shells.cpp src/enemy_hit_shapes.cpp src/enemy_conditions.cpp src/small_monsters.cpp src/ef_mtx_scale.cpp src/ef_resource.cpp src/msl_string.cpp src/debug_font.cpp src/prim_buffers.cpp src/monster_intros.cpp src/monster_roars.cpp src/monster_attacks.cpp src/monster_control.cpp src/enemy_actions.cpp src/monster_waits.cpp src/g3d_destroy.cpp
   ../generated/data_sections_init.cpp ${MH3_DATA_BLOBS}
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp ../generated/rso_overlays/net_data.cpp ../generated/rso_overlays/map_town_online.cpp ../generated/rso_overlays/map_town_quest.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
@@ -420,7 +441,7 @@ if(TARGET aurora::core)
     target_compile_options(mh3_shader_cache_pack_check PRIVATE -UNDEBUG)
     add_test(NAME mh3_shader_cache_pack_check COMMAND mh3_shader_cache_pack_check)
 
-    # The Vita shader bank generator (docs/vita-shader-bank.md): sources of
+    # The Vita shader bank generator (docs/optimizations/rendering/offline-shader-bank.md): sources of
     # every stage, keys unique, every fixed GLSL program translatable.
     add_executable(mh3-gxm-shader-bank ../scripts/vita_shader_bank.cpp src/native_shader_source.cpp "${MH3_AURORA_ROOT}/lib/gfx/cg_shader.cpp"
       "${MH3_AURORA_ROOT}/lib/gfx/shader_source.cpp" "${MH3_AURORA_ROOT}/lib/gfx/fixed_shader_sources.cpp")
@@ -429,7 +450,7 @@ if(TARGET aurora::core)
     target_compile_features(mh3-gxm-shader-bank PRIVATE cxx_std_20)
     target_link_libraries(mh3-gxm-shader-bank PRIVATE xxhash)
     add_test(NAME mh3_gxm_shader_bank_sources COMMAND mh3-gxm-shader-bank "${CMAKE_BINARY_DIR}/gxm-shader-bank-check"
-      "${MH3_AURORA_ROOT}/lib/gxm/utility" --preflight)
+      "${MH3_AURORA_ROOT}/lib/gxm/utility")
     add_executable(mh3_shade_check ../tests/native/test_mh3_shade.c native/mh3_shade.c)
     target_include_directories(mh3_shade_check PRIVATE "${MH3_AURORA_ROOT}/include")
     target_link_libraries(mh3_shade_check PRIVATE m)
@@ -528,12 +549,6 @@ if(VITA)
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   if(MH3_DEVELOPMENT)
     set_property(SOURCE vita/platform.cpp vita/launcher.cpp vita/thp_jpeg.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
-
-    # MH3_PMU's per-thread performance monitor counts: libperf is a firmware
-    # module Sony keeps out of submitted titles; development builds alone
-    # import it, weakly.
-    target_sources(MH3 PRIVATE vita/pmu.cpp)
-    target_link_libraries(MH3 PRIVATE ScePerf_stub_weak)
   endif()
 
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
@@ -551,7 +566,7 @@ if(VITA)
   target_compile_definitions(MH3 PRIVATE MH3_HAS_OPENSSL)
   set_target_properties(MH3 PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/ldscript.ld")
 
-  # Every GXM program, compiled offline (docs/vita-shader-bank.md).
+  # Every GXM program, compiled offline (docs/optimizations/rendering/offline-shader-bank.md).
   include(../cmake/GxmShaderBank.cmake)
   include(FetchContent)
   FetchContent_GetProperties(xxhash)
@@ -663,7 +678,7 @@ if(TARGET aurora::core)
     endif()
 
     add_executable(MH3LauncherTests EXCLUDE_FROM_ALL src/launcher_tests.cpp
-      src/launcher_support.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/launcher_models.cpp src/disc_image.cpp
+      src/launcher_support.cpp src/quest_catalog.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/launcher_models.cpp src/disc_image.cpp
       src/rom_image.cpp src/asset_cache.cpp
       native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_skin.c native/mh3_prepare_writer.c native/mh3_model_resources.c
       native/mh3_vertex_sources.c native/mh3_mesh_pack.c native/mh3_material_pack.c native/mh3_model_catalog.c)

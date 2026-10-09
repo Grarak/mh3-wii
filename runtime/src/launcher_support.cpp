@@ -2,10 +2,12 @@
 #include "fatal.h"
 #include "disc_image.h"
 #include "fs_status.h"
+#include "quest_catalog.h"
 #include "quest_placement.h"
 #include <cstdio>
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <fstream>
 #include <numeric>
 #include <stdexcept>
@@ -60,6 +62,22 @@ Status Validate(const CustomQuest& q) {
     for (unsigned char c : q.storageKey)
         if ((c < '0' || c > '9') && c != '-')
             return Status::Error("Invalid custom quest storage key");
+
+    if (!q.map)
+        return {};
+
+    const auto monsters = ScratchMonsters(q.map);
+    const auto allowed = [&](uint8_t monster) { return std::find(monsters.begin(), monsters.end(), monster) != monsters.end(); };
+    CustomQuest carrier = q;
+    SetScratchCarrier(carrier);
+
+    if (!allowed(q.monsters[0]) || (q.monsters[1] && !allowed(q.monsters[1])) || (q.monsters[2] && !allowed(q.monsters[2])) || (q.monsters[2] && !q.monsters[1]) || q.rank > 2 ||
+        q.size < 50 || q.size > 200 || carrier.set != q.set || carrier.base != q.base)
+        return Status::Error("Invalid custom quest settings");
+
+    if (q.monsters[1] && (ScratchAlone(q.monsters[0]) || ScratchAlone(q.monsters[1]) || ScratchAlone(q.monsters[2])))
+        return Status::Error("Ceadeus, Alatreon and Jhen Mohran can only be hunted alone");
+
     return {};
 }
 
@@ -261,6 +279,296 @@ Status EditQuestFile(std::span<const uint8_t> source, const CustomQuest& q, std:
     return Status::Error("Quest template no longer exists on this disc");
 }
 
+// Quests from scratch.
+namespace {
+constexpr uint8_t kCeadeus = 20, kAlatreon = 24, kJhenMohran = 25;
+constexpr std::array<uint8_t, 18> kLargeMonsters{1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14, 15, 16, 18, 19, kCeadeus, kAlatreon, kJhenMohran};
+constexpr std::array<uint8_t, 3> kSwimmers{15, 16, 18}; // the water arena's (their spawn lists' map 12 entries)
+constexpr std::array<uint8_t, 10> kScratchMaps{1, 2, 3, 4, 5, 9, 10, 11, 6, 7};
+constexpr size_t kSlots = 0x314, kObjectives = 0x330, kRecords = 0x394, kRecordBytes = 0x60, kLayout = 0x390;
+
+// The monster's memory class (0x805A22C8: 3 the bosses, 1 Great Jaggi and
+// Great Baggi, 2 the others): a heap slot of the class holds its files.
+int MemoryClass(uint8_t monster) {
+    return monster == kCeadeus || monster == kAlatreon || monster == kJhenMohran ? 3 : monster == 12 || monster == 14 ? 1 : 2;
+}
+
+// The rank of an authored quest: 0 village, 1 low, 2 high, 3 the arena.
+unsigned Rank(size_t set, uint8_t stars) {
+    return set == size_t(QuestCatalog::Set::Village) ? 0 : set == size_t(QuestCatalog::Set::Online) ? (stars <= 3 ? 1 : 2) : 3;
+}
+
+std::string WithArticle(const std::string& name) {
+    return (std::string("AEIOU").find(name.empty() ? 'x' : name[0]) != std::string::npos ? "an " : "a ") + name;
+}
+
+struct Source {
+    size_t set = 0, at = 0, slot = 0, record = 0;
+};
+
+// The authored slot of `monster` in the quest nearest `rank`, then `stars`
+// (the first of equals), with the quest's objective record for it (else its
+// first).
+Status StrengthSource(const std::array<std::vector<uint8_t>, 3>& sets, uint8_t monster, uint8_t rank, uint8_t stars, Source& found) {
+    unsigned best = ~0u;
+
+    for (size_t set = 0; set < sets.size(); ++set) {
+        std::vector<size_t> entries;
+        MH3_RETURN_IF_ERROR(Entries(sets[set], entries));
+
+        for (size_t at : entries)
+            for (size_t slot = 0; slot < 3; ++slot) {
+                const auto& file = sets[set];
+
+                if (file[at + kSlots + slot * 8] != monster)
+                    continue;
+
+                const unsigned questRank = Rank(set, file[at + 0x8a]);
+                const unsigned distance = (questRank > rank ? questRank - rank : rank - questRank) * 16 + unsigned(std::abs(int(file[at + 0x8a]) - int(stars)));
+
+                if (distance >= best)
+                    continue;
+
+                best = distance;
+                found = {set, at, slot, 0};
+
+                for (size_t k = 0; k < 3; ++k)
+                    if ((Word(file, at + kRecords + k * kRecordBytes + 4) >> 16) == monster) {
+                        found.record = k;
+                        break;
+                    }
+            }
+    }
+
+    if (best == ~0u)
+        return Status::Error("No quest on this disc has this monster");
+
+    return {};
+}
+
+std::array<std::vector<uint8_t>, 3> DiscQuestFiles() {
+    std::array<std::vector<uint8_t>, 3> sets;
+
+    for (size_t set = 0; set < sets.size(); ++set)
+        sets[set] = GameDiscImage().ReadFile(QuestPath(QuestCatalog::Set(set)));
+
+    return sets;
+}
+
+// The quest's file as the game is to read it.
+Status CustomQuestFile(const CustomQuest& q, std::vector<uint8_t>& edited) {
+    if (q.map)
+        return ScratchQuestFile(DiscQuestFiles(), q, edited);
+
+    return EditQuestFile(GameDiscImage().ReadFile(QuestPath(q.set)), q, edited);
+}
+} // namespace
+
+bool ScratchAlone(uint8_t monster) {
+    return MemoryClass(monster) == 3;
+}
+
+std::optional<std::array<int8_t, 6>> ScratchLayout(const CustomQuest& q) {
+    // A slot per distinct monster (the same one twice shares its files).
+    std::vector<int8_t> classes;
+
+    for (size_t i = 0; i < q.monsters.size(); ++i)
+        if (q.monsters[i] && std::find(q.monsters.begin(), q.monsters.begin() + i, q.monsters[i]) == q.monsters.begin() + i)
+            classes.push_back(int8_t(MemoryClass(q.monsters[i])));
+
+    // Up to two: the disc's layouts 2 and 5.
+    if (classes.size() < 3)
+        return std::nullopt;
+
+    // Three large slots and three small ones (the heap grows for them:
+    // SetMonsterHeaps' port).
+    std::sort(classes.rbegin(), classes.rend());
+    return std::array<int8_t, 6>{classes[0], classes[1], classes[2], 0, 0, 0};
+}
+
+std::vector<uint8_t> ScratchMaps() {
+    return {kScratchMaps.begin(), kScratchMaps.end()};
+}
+
+std::vector<uint8_t> ScratchMonsters(uint8_t map) {
+    if (map == 6)
+        return {kJhenMohran};
+
+    if (map == 7)
+        return {kCeadeus};
+
+    if (map == 10)
+        return {kSwimmers.begin(), kSwimmers.end()};
+
+    if (std::find(kScratchMaps.begin(), kScratchMaps.end(), map) == kScratchMaps.end())
+        return {};
+
+    std::vector<uint8_t> monsters;
+
+    for (uint8_t monster : kLargeMonsters)
+        if (monster != kCeadeus && monster != kJhenMohran)
+            monsters.push_back(monster);
+    return monsters;
+}
+
+void SetScratchCarrier(CustomQuest& q) {
+    // A hunt quest of each field map; the boss maps' and arenas' own quests.
+    struct Carrier {
+        uint8_t map;
+        QuestCatalog::Set set;
+        uint16_t id;
+    };
+
+    constexpr Carrier carriers[]{{1, QuestCatalog::Set::Village, 1036}, {2, QuestCatalog::Set::Village, 1046}, {3, QuestCatalog::Set::Village, 1026}, {4, QuestCatalog::Set::Village, 1045},
+                                 {5, QuestCatalog::Set::Village, 1044}, {6, QuestCatalog::Set::Online, 14002},  {7, QuestCatalog::Set::Village, 2006}, {9, QuestCatalog::Set::Arena, 9004},
+                                 {10, QuestCatalog::Set::Arena, 9005},  {11, QuestCatalog::Set::Online, 19001}};
+
+    for (const auto& carrier : carriers)
+        if (carrier.map == q.map) {
+            q.set = carrier.set;
+            q.base = carrier.map == 6 && q.rank == 2 ? 16001 : carrier.id;
+        }
+}
+
+Status ScratchCapture(const CustomQuest& q, bool& supported) {
+    supported = q.map >= 1 && q.map <= 5;
+    const auto sets = DiscQuestFiles();
+
+    for (const uint8_t monster : q.monsters) {
+        bool captured = !monster;
+
+        for (const auto& file : sets) {
+            std::vector<size_t> entries;
+            MH3_RETURN_IF_ERROR(Entries(file, entries));
+
+            for (size_t at : entries)
+                for (size_t k = 0; k < 3; ++k)
+                    captured |= Word(file, at + kObjectives + k * 8) == 0x81 && (Word(file, at + kObjectives + k * 8 + 4) >> 16) == monster;
+        }
+
+        supported &= captured;
+    }
+
+    return {};
+}
+
+Status ScratchFromTemplate(CustomQuest& q) {
+    if (q.map)
+        return {};
+
+    const auto file = GameDiscImage().ReadFile(QuestPath(q.set));
+    size_t at = 0, placement = 0;
+    MH3_RETURN_IF_ERROR(Entry(file, q.base, at));
+    MH3_RETURN_IF_ERROR(Entry(file, q.encounter ? q.encounter : q.base, placement));
+    const auto monsters = ScratchMonsters(file[at + 0x8b]);
+
+    if (std::find(monsters.begin(), monsters.end(), file[placement + kSlots]) == monsters.end())
+        return Status::Error("This template's monster cannot be set up from scratch");
+
+    q.map = file[at + 0x8b];
+    q.monsters = {file[placement + kSlots], 0, 0};
+    q.rank = uint8_t(std::min(Rank(size_t(q.set), file[at + 0x8a]), 2u));
+    q.count = 1;
+    q.encounter = 0;
+    SetScratchCarrier(q);
+    return {};
+}
+
+Status ScratchQuestFile(const std::array<std::vector<uint8_t>, 3>& sets, const CustomQuest& q, std::vector<uint8_t>& result) {
+    MH3_RETURN_IF_ERROR(Validate(q));
+
+    if (!q.map)
+        return Status::Error("Not a quest from scratch");
+
+    if (q.capture) {
+        bool supported = false;
+        MH3_RETURN_IF_ERROR(ScratchCapture(q, supported));
+
+        if (!supported)
+            return Status::Error("This quest's monsters cannot be captured here");
+    }
+
+    const auto& carrierFile = sets.at(size_t(q.set));
+    size_t at = 0;
+    MH3_RETURN_IF_ERROR(Entry(carrierFile, q.base, at));
+    std::vector<uint8_t> edited = carrierFile;
+    const size_t count = q.monsters[2] ? 3 : q.monsters[1] ? 2 : 1;
+    const uint32_t carrierMode = Word(carrierFile, at + 0x310), carrierObjective = Word(carrierFile, at + kObjectives);
+    const bool huntCarrier = (carrierMode & 0xF) == 4 || (carrierMode & 0xF) == 5;
+    const uint32_t type = q.capture ? 0x81 : carrierObjective == 0x101 ? 0x101 : 1;
+
+    // The monsters, their objectives and their reward records; the unused
+    // slots, objectives and records empty.
+    std::fill(edited.begin() + at + kSlots, edited.begin() + at + 0x330, 0);
+    std::fill(edited.begin() + at + kObjectives, edited.begin() + at + 0x348, 0);
+    std::fill(edited.begin() + at + kRecords, edited.begin() + at + kRecords + 3 * kRecordBytes, 0);
+
+    for (size_t i = 0; i < count; ++i) {
+        const uint8_t monster = q.monsters[i];
+        Source source;
+        MH3_RETURN_IF_ERROR(StrengthSource(sets, monster, q.rank, q.stars, source));
+        const auto& file = sets[source.set];
+        const size_t slot = at + kSlots + i * 8, objective = at + kObjectives + i * 8, record = at + kRecords + i * kRecordBytes;
+        std::copy_n(file.begin() + source.at + kSlots + source.slot * 8, 8, edited.begin() + slot);
+        std::copy_n(file.begin() + source.at + kRecords + source.record * kRecordBytes, kRecordBytes, edited.begin() + record);
+
+        // The spawn record (each its own, QuestPlacement fills a list's empty
+        // ones), the count and the size in percent.
+        edited[slot + 1] = uint8_t(i);
+        edited[slot + 3] = 1;
+        edited[slot + 6] = q.size;
+
+        for (const size_t to : {objective, record}) {
+            PutWord(edited, to, type);
+            PutHalf(edited, to + 4, monster);
+            PutHalf(edited, to + 6, 1);
+        }
+    }
+
+    // Monsters at once: 0x02000000 (Mating Season, the arena's pairs; three
+    // too). 0x04000000 would bring them one at a time (Arena Free-for-all).
+    uint32_t mode = (carrierMode & ~0x06000000u) | (count > 1 ? 0x02000000 : 0);
+
+    // Hunts without sub-quests (0xC0, set where an authored hunt has them).
+    if (huntCarrier)
+        mode = (mode & ~0xFFu) | (q.capture ? 4 : 5);
+
+    PutWord(edited, at + 0x310, mode);
+    PutWord(edited, at + 0x32c, 0);
+    PutWord(edited, at + kLayout, ScratchLayout(q) ? 4 : MemoryClass(q.monsters[0]) == 3 ? 5 : 2);
+
+    // Its texts: name, goal, no sub-quests, failure, description.
+    const auto names = QuestCatalog::MonsterNames();
+    const auto name = [&](uint8_t monster) { return monster < names.size() && !names[monster].empty() ? names[monster] : "monster " + std::to_string(monster); };
+    const auto text = [&](size_t from, size_t to, const std::string& value) {
+        std::fill(edited.begin() + at + from, edited.begin() + at + to, 0);
+        std::copy_n(value.begin(), std::min(value.size(), to - from - 1), edited.begin() + at + from);
+    };
+
+    const std::string verb = q.capture ? "Capture" : type == 0x101 ? "Slay" : "Hunt";
+    std::string targets, lines;
+
+    for (size_t i = 0; i < count; ++i) {
+        const std::string separator = i == 0 ? "" : i + 1 == count ? " and " : ", ";
+        targets += separator + WithArticle(name(q.monsters[i]));
+        lines += (i == 0 ? " " : i + 1 == count ? "\nand " : ",\n") + WithArticle(name(q.monsters[i]));
+    }
+
+    text(0, 0x2c, q.name);
+    text(0x2e, 0x88, verb + " " + targets);
+    text(0x8c, 0xb5, "None");
+    text(0xb5, 0xde, "None");
+    text(0x13c, 0x19a, q.capture ? "Reward hits 0, time expires,\nor target is slain." : "Reward hits 0, or time expires.");
+    text(0x1cd, 0x30c, "A quest of your own design.\n" + verb + lines + "\nLocation: " + QuestCatalog::MapName(q.map) + ".");
+    edited[at + 0x8a] = q.stars;
+
+    if (q.minutes)
+        PutHalf(edited, at + 0x13a, q.minutes);
+
+    result = std::move(edited);
+    return {};
+}
+
 namespace {
 // The capture support a quest that captures needs.
 Status CheckCapture(const CustomQuest& q) {
@@ -268,7 +576,7 @@ Status CheckCapture(const CustomQuest& q) {
         return {};
 
     bool supported = false;
-    MH3_RETURN_IF_ERROR(SupportsCapture(q, supported));
+    MH3_RETURN_IF_ERROR(q.map ? ScratchCapture(q, supported) : SupportsCapture(q, supported));
 
     if (!supported)
         return Status::Error("This template's target has no verified capture support");
@@ -283,7 +591,7 @@ Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& q) 
 
     // Validate against the actual disc before writing any user record.
     std::vector<uint8_t> edited;
-    MH3_RETURN_IF_ERROR(EditQuestFile(GameDiscImage().ReadFile(QuestPath(q.set)), q, edited));
+    MH3_RETURN_IF_ERROR(CustomQuestFile(q, edited));
     const auto directory = Directory(user);
     MH3_RETURN_IF_ERROR(FsStatus::CreateDirectories(directory));
     std::string key = q.storageKey;
@@ -301,8 +609,9 @@ Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& q) 
     const auto path = directory / (key + ".mh3quest");
     const auto temporary = directory / (key + ".writing");
     std::ofstream output(temporary, std::ios::trunc);
-    output << "mh3-custom-quest-v2\n"
-           << unsigned(q.set) << ' ' << q.base << ' ' << q.count << ' ' << q.capture << ' ' << unsigned(q.stars) << ' ' << q.encounter << ' ' << q.minutes << '\n'
+    output << "mh3-custom-quest-v3\n"
+           << unsigned(q.set) << ' ' << q.base << ' ' << q.count << ' ' << q.capture << ' ' << unsigned(q.stars) << ' ' << q.encounter << ' ' << q.minutes << ' ' << unsigned(q.map) << ' '
+           << unsigned(q.monsters[0]) << ' ' << unsigned(q.monsters[1]) << ' ' << unsigned(q.monsters[2]) << ' ' << unsigned(q.rank) << ' ' << unsigned(q.size) << '\n'
            << q.name << '\n';
     output.close();
 
@@ -348,11 +657,23 @@ Status LoadCustomQuests(const std::filesystem::path& user, std::vector<CustomQue
         CustomQuest q;
         unsigned set = 0, stars = 0;
 
-        if ((version != "mh3-custom-quest-v1" && version != "mh3-custom-quest-v2") || !(input >> set >> q.base >> q.count >> q.capture >> stars))
+        if ((version != "mh3-custom-quest-v1" && version != "mh3-custom-quest-v2" && version != "mh3-custom-quest-v3") || !(input >> set >> q.base >> q.count >> q.capture >> stars))
             continue;
 
-        if (version == "mh3-custom-quest-v2" && !(input >> q.encounter >> q.minutes))
+        if (version != "mh3-custom-quest-v1" && !(input >> q.encounter >> q.minutes))
             continue;
+
+        if (version == "mh3-custom-quest-v3") {
+            unsigned map = 0, first = 0, second = 0, third = 0, rank = 0, size = 0;
+
+            if (!(input >> map >> first >> second >> third >> rank >> size) || map > 255 || first > 255 || second > 255 || third > 255 || rank > 255 || size > 255)
+                continue;
+
+            q.map = map;
+            q.monsters = {uint8_t(first), uint8_t(second), uint8_t(third)};
+            q.rank = rank;
+            q.size = size;
+        }
 
         input.ignore(1024, '\n');
         std::getline(input, q.name);
@@ -376,7 +697,7 @@ Status LoadCustomQuests(const std::filesystem::path& user, std::vector<CustomQue
     return {};
 }
 
-// Development (--quest-monster): quest `id`'s first large monster replaced by
+// --quest-monster: quest `id`'s first large monster replaced by
 // `monster` (its id in the game's monster list), with every objective that
 // targeted the old one, in the copy of the quest file the disc serves. The
 // arena quests make a debug pit for any monster.
@@ -403,7 +724,7 @@ Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster) 
     if (monster == 20 || monster == 24 || monster == 25)
         PutWord(edited, at + 0x390, 5);
 
-    QuestPlacement::Add(monster, edited[at + 0x8b]);
+    QuestPlacement::Add(monster, edited[at + 0x8b], edited[at + 0x315]);
     std::fprintf(stderr, "MH3 quest %u: large monster %u replaced by %u\n", unsigned(id), unsigned(old), unsigned(monster));
     disc.SetFileOverride(QuestPath(set), std::move(edited));
     return {};
@@ -471,10 +792,19 @@ Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t mon
 
 Status ActivateCustomQuest(const CustomQuest& q) {
     MH3_RETURN_IF_ERROR(CheckCapture(q));
-    auto& disc = GameDiscImage();
     std::vector<uint8_t> edited;
-    MH3_RETURN_IF_ERROR(EditQuestFile(disc.ReadFile(QuestPath(q.set)), q, edited));
-    disc.SetFileOverride(QuestPath(q.set), std::move(edited));
+    MH3_RETURN_IF_ERROR(CustomQuestFile(q, edited));
+
+    // Spawn points (each slot's record) for monsters on maps they never
+    // visit, and the heap layout, at boot.
+    for (size_t i = 0; i < q.monsters.size(); ++i)
+        if (q.monsters[i])
+            QuestPlacement::Add(q.monsters[i], q.map, uint8_t(i));
+
+    if (const auto layout = ScratchLayout(q))
+        QuestPlacement::Layout() = *layout;
+
+    GameDiscImage().SetFileOverride(QuestPath(q.set), std::move(edited));
     return {};
 }
 

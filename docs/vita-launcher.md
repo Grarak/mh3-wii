@@ -270,31 +270,48 @@ a save and does not inspect Mario Kart's `rksys.dat`.
 
 ## Custom quests and cheats
 
-The editor starts from an existing hunt/capture quest. For ordinary quests with
-one monster on the five main maps, it also offers separate map and monster
-choices. A monster choice reuses a complete placement authored for that map,
-along with its main objective and rewards. Map changes choose an authored base
-for that map, preserving its small-monster spawn tables and supplies. The
-placement source is shown in the editor. This allows new combinations of an
-authored map environment, encounter, name, hunt/capture objective, time limit
-and stars (1–7), without guessing monster coordinates.
+`Create custom quest` builds a quest from scratch: a map, one to three large
+monsters at once, a hunt or capture, a rank, a size, a time limit and stars.
+The editor's rows are Name, Map, Monster, Second monster, Third monster,
+Objective, Rank, Size, Time, Stars and Save quest.
 
-The editor's rows are Name, Map, Monster, Objective, Target count (`1 of 3`:
-the authored count is the most), Time (`as the template` or 1–50 minutes),
-Stars and Save quest. A template that cannot be composed shows its map and
-monster as `(fixed)`. Of the European disc's 28 offline hunt/capture
-templates 11 can be composed (the first in the list is `Save Our Boat`), of
-the 64 online ones 13. A new quest is named `Custom <template>`; until the
-name is typed over it follows the quest the placement comes from. The editor
-title reads `Create custom quest` or, from Triangle in the custom quest list,
-`Edit custom quest`; Save quest and Circle return to the list it was opened
-from (Save quest of a new quest to the main menu). The custom quest list's
-detail line summarizes the selected quest (`Sandy Plains: Hunt 1 Diablos,
-4*.`).
+- Maps: the five field maps, the land and water arenas, the Sacred Pinnacle,
+  the Great Desert and Ceadeus's lair. Any large monster goes on any map but
+  two: Jhen Mohran only in the Great Desert and Ceadeus only in its lair,
+  each the only monster there; the water arena takes the swimmers
+  (Lagiacrus, Royal Ludroth, Gobul).
+- Ceadeus, Alatreon and Jhen Mohran are always alone: their heap slot and
+  effects leave no room for another large monster. The others combine
+  freely, three different ones too (the heap grows for them; see
+  [monster control](monster-control.md)).
+- Capture: only on the field maps, for monsters the game's own quests
+  capture.
+- Rank (Village, Low, High): each monster's strength, placement bytes and
+  rewards come from the game's quest of that rank nearest the stars that
+  targets it.
+- Size: 50% to 200% in 5% steps, every monster of the quest (the game's
+  quests use about 90% to 120%; event quests go further).
 
-The target count may be reduced within the authored objective's count. Counts
-that need additional monsters are rejected. The time limit can retain the
-template value or use 1–50 minutes. The editor writes private `.mh3quest`
+The quest is built over a carrier: a disc quest on the map (Moga Woods 1036,
+Sandy Plains 1046, Flooded Forest 1026, Tundra 1045, Volcano 1044, the arenas
+9004 and 9005, Great Desert 14002 or 16001 at High rank, Ceadeus's lair 2006,
+Sacred Pinnacle 19001), whose supplies, small monsters and fees it keeps.
+Its name, goal, monsters, objectives, rewards, time and texts are replaced.
+A monster on a map it never visits gets spawn points copied from another
+monster's there at boot (`runtime/src/quest_placement.cpp`). Until the name is
+typed over it follows the goal (`Hunt Giant Deviljho, Rathian and Barroth`;
+`Tiny` at 80% or less, `Giant` at 120% or more). Triangle on a quest of the
+custom quest list edits it; older template quests open as quests from scratch
+with their map, monster, objective, time, stars and name. The list's detail
+line summarizes the selected quest (`Volcano: Hunt Tiny Uragaan, Village, 50%
+size, 4*, 30 minutes.`).
+
+Development hosts play a saved quest directly: `MH3 --quest
+custom:USER/custom-quests/NAME.mh3quest` (the name is the record's storage
+key, digits and dashes). `MH3LauncherTests --quest-audit DISC` builds every
+map, rank and monster combination (1476 on the European disc).
+
+The editor writes private `.mh3quest`
 settings under `saves/custom-quests/`;
 several variants of one template can coexist, and editing updates the selected
 variant. Creation is allowed before a hunter save exists; launching requires
@@ -306,8 +323,9 @@ applies the replacement to full and partial raw DVD reads, so the game loads
 the edited quest objective and text. Both the summary objective at `+0x330` and
 the live expanded objective at `+0x394` change together. When changing the
 monster, old secondary objectives and their expanded records are removed.
-The disc is not modified. Version 2 settings retain compatibility with the
-initial version 1 template records.
+The disc is not modified. Version 3 records (map, three monsters, rank and
+size) are the quests from scratch; versions 1 and 2 are older template
+quests, which still load.
 
 Composition excludes special boss maps, quests with extra monster slots,
 random invaders, and special quest modes. Those quests retain their template's

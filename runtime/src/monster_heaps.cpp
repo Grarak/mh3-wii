@@ -29,6 +29,15 @@
 //              while SlotClassFree is not 1 gives 0
 //   0x80146E58 TakeHeapSlot(monster): FindHeapSlot's slot marked in use by
 //              the monster, the class's counts lowered
+//   0x80146604 SetMonsterHeaps(layout): the field's monster heap pulled from
+//              the resource memory (0x800D4EEC, 0xB6C000 bytes) and cut
+//              into the layout row's slots (a class byte -1 makes none), then
+//              each large slot's effect area (+0xE28, 20 bytes each: class 1
+//              0x30000, 2 0x78000, 3 0xC0000) after them; the free counts
+//              one per slot and hunter; the effect record at +0xEA0 cleared.
+//              The port's heap grows to a row that needs more (QuestPlacement's
+//              layout 4 of three large monsters at once): 0xA3CB70 bytes stay
+//              free in the resource memory on the field
 //   0x801410B4 LoadMonster(monster): its files queued into a new entry and
 //              slot (the model and motion tables at 0x805825E0 / 0x80582B08,
 //              8 bytes {size, path} per id), then its effects and sounds;
@@ -39,6 +48,7 @@
 #include "memory.h"
 #include "port_check.h"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace {
@@ -46,6 +56,8 @@ constexpr uint32_t kState = 0x806A6A10u, kSlots = kState + 0xDB0, kFreeCounts = 
 constexpr uint32_t kClasses = 0x805A22C8u, kModels = 0x805825E0u, kMotions = 0x80582B08u;
 constexpr uint32_t kEntries = 6, kEntryBytes = 24, kSlotBytes = 20;
 constexpr uint32_t kMoveWorks = 0x8065AA60u, kHunterWorkBytes = 0xB20;
+constexpr uint32_t kLayouts = 0x805A23F8u, kClassSizes = 0x805A23E8u, kEffects = kState + 0xE28;
+constexpr uint32_t kHeapBytes = 0xB6C000, kEffectBytes[]{0, 0x30000, 0x78000, 0xC0000};
 
 int32_t MonsterClass(uint8_t monster) {
     return int8_t(MemoryInline::FlatRead8(kClasses + monster));
@@ -154,6 +166,87 @@ uint32_t TakeHeapSlot(GuestCall& game, uint8_t monster) {
     return slot;
 }
 
+void SetMonsterHeaps(GuestCall& game, int8_t layout) {
+    game.Call<0x800F0DEC>({uint8_t(layout)});
+    const uint32_t row = kLayouts + uint32_t(int32_t(layout) * 6);
+    uint32_t needed = 0;
+
+    for (uint32_t i = 0; i < 6; ++i)
+        if (const int8_t heapClass = int8_t(MemoryInline::FlatRead8(row + i)); heapClass >= 0 && heapClass < 4)
+            needed += MemoryInline::FlatRead32(kClassSizes + uint32_t(heapClass) * 4) + kEffectBytes[heapClass];
+
+    const uint32_t bytes = std::max(kHeapBytes, needed);
+    MemoryInline::FlatWrite32(kState + 0xDA4, uint32_t(-1));
+    MemoryInline::FlatWrite32(kState + 0xDA8, 0);
+    MemoryInline::FlatWrite32(kState + 0xDAC, bytes);
+
+    for (uint32_t i = 0; i < 6; ++i)
+        for (const uint32_t record : {kSlots + i * kSlotBytes, kEffects + i * kSlotBytes}) {
+            for (uint32_t b = 0; b < kSlotBytes; b += 4)
+                MemoryInline::FlatWrite32(record + b, 0);
+
+            MemoryInline::FlatWrite8(record + 1, 0xFF);
+        }
+
+    // pull_res_mem(no name, bytes, 1) and getResMemAdrs.
+    const uint32_t handle = game.Call<0x800D4EEC>({0, bytes, 1});
+    MemoryInline::FlatWrite32(kState + 0xDA4, handle);
+    uint32_t base = game.Call<0x800D5168>({handle});
+    MemoryInline::FlatWrite32(kState + 0xDA8, base);
+
+    for (uint32_t b = 0; b < 16; b += 4)
+        MemoryInline::FlatWrite32(kFreeCounts + b, 0);
+
+    uint32_t slot = kSlots;
+
+    for (uint32_t i = 0; i < 6; ++i) {
+        const uint8_t heapClass = MemoryInline::FlatRead8(row + i);
+
+        if (heapClass == 0xFF)
+            continue;
+
+        const uint32_t size = MemoryInline::FlatRead32(kClassSizes + heapClass * 4u);
+        MemoryInline::FlatWrite8(slot + 1, heapClass);
+        MemoryInline::FlatWrite32(slot + 4, base);
+        MemoryInline::FlatWrite32(slot + 8, size);
+        MemoryInline::FlatWrite32(slot + 12, 0);
+        MemoryInline::FlatWrite32(slot + 16, size);
+        base += size;
+
+        for (uint32_t hunter = 0; hunter < 4; ++hunter) {
+            const uint32_t count = kFreeCounts + heapClass * 4u + hunter;
+            MemoryInline::FlatWrite8(count, MemoryInline::FlatRead8(count) + 1);
+        }
+
+        slot += kSlotBytes;
+    }
+
+    // The effect areas of the slots of class 1 to 3.
+    for (uint32_t i = 0; i < 6; ++i) {
+        const uint8_t heapClass = MemoryInline::FlatRead8(kSlots + i * kSlotBytes + 1);
+        const uint32_t effects = kEffects + i * kSlotBytes;
+
+        if (heapClass == 0 || heapClass == 0xFF)
+            continue;
+
+        if (heapClass <= 3) {
+            MemoryInline::FlatWrite8(effects + 1, heapClass);
+            MemoryInline::FlatWrite32(effects + 4, base);
+            MemoryInline::FlatWrite32(effects + 8, kEffectBytes[heapClass]);
+        }
+
+        MemoryInline::FlatWrite32(effects + 12, 0);
+        MemoryInline::FlatWrite32(effects + 16, MemoryInline::FlatRead32(effects + 8));
+        base += MemoryInline::FlatRead32(effects + 8);
+    }
+
+    MemoryInline::FlatWrite8(kState + 0xEA0, 0);
+    MemoryInline::FlatWrite8(kState + 0xEA1, 0);
+
+    for (uint32_t b = 2; b < 23; ++b)
+        MemoryInline::FlatWrite8(kState + 0xEA0 + b, 0xFF);
+}
+
 uint32_t LoadMonster(GuestCall& game, uint8_t monster) {
     if (LoadEntryOf(monster) != 255) {
         if (const int32_t heapClass = MonsterClass(monster); heapClass > 0)
@@ -186,7 +279,15 @@ uint32_t LoadMonster(GuestCall& game, uint8_t monster) {
             game.Call<0x800FAA1C>({kState + 0xEA0 + uint32_t(effects) * 23, monster});
 
     game.Call<0x800F1000>({monster});
+
     return queued;
+}
+
+void SetMonsterHeapsPort(CpuContext* ctx) {
+    const int8_t layout = int8_t(ctx->gpr[3]);
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    SetMonsterHeaps(game, layout);
 }
 
 void LoadEntryWithPort(CpuContext* ctx) {
@@ -306,3 +407,9 @@ extern "C" void MH3_LoadMonster(CpuContext* ctx) {
     PortCheck::Call(ctx, "LoadMonster", func_801410B4, LoadMonsterPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801410B4, MH3_LoadMonster, "LoadMonster");
+
+extern "C" void func_80146604(CpuContext* ctx);
+extern "C" void MH3_SetMonsterHeaps(CpuContext* ctx) {
+    PortCheck::Call(ctx, "SetMonsterHeaps", func_80146604, SetMonsterHeapsPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80146604, MH3_SetMonsterHeaps, "SetMonsterHeaps");

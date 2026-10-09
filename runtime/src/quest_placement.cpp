@@ -10,17 +10,22 @@
 //              monster, u32 count, the record's 32 bytes from +8 (with the
 //              slot's +2 at +10), s8 the objective record (+40; 3 none) and
 //              that record's first word | 8 (+44)
-//   0x803AEBE0 CopyQuestSlot(to, from): 8 bytes
+//   0x803AEBE0 CopyQuestSlot(to, from): 8 bytes (u8 kind, ..., +6 size, +7
+//              level); the cheats Boss/s mod, Set boss/s size to and Set
+//              boss/s level to (EU 0x803AEBE0/C10/C18: the loads replaced by
+//              the value) set them
 //   0x803ADFE8 QuestRecordOf(monster): the first of questwork's three live
 //              objective records (+0x94, 96 bytes each: u32 flags, u16
 //              target) in use that targets the monster or (0x80126000) its
 //              kind; -1 for none
 #include "quest_placement.h"
 #include "abi_bridge.h"
+#include "cheats.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace QuestPlacement {
@@ -28,7 +33,7 @@ constexpr uint32_t kLists = 0x805F7E60, kMapKeys = 0x805F8058;
 
 namespace {
 constexpr uint32_t kMonsters = 32, kRecords = 4, kRecordBytes = 48;
-constexpr uint32_t kQuestWork = 0x80797100u, kLiveRecords = 0x806C7D6Cu;
+constexpr uint32_t kQuestWork = 0x80797100u, kLiveRecords = 0x806C7D6Cu, kLayouts = 0x805A23F8u;
 
 // The records of `list`'s entry for map key `key`, 0 for none.
 uint32_t Records(uint32_t list, uint8_t key) {
@@ -43,29 +48,62 @@ uint32_t Records(uint32_t list, uint8_t key) {
 void Apply(uint32_t base) {
     uint32_t free = base;
 
-    for (const auto [monster, map] : Requests()) {
+    // The custom layout's slots.
+    for (uint32_t i = 0; Layout() && i < 6; ++i)
+        Memory::Write8(kLayouts + 3 * 6 + i, uint8_t((*Layout())[i]));
+
+    // The highest record each monster needs on each map.
+    std::vector<Request> needs;
+
+    for (const Request& request : Requests()) {
+        auto same = std::find_if(needs.begin(), needs.end(), [&](const Request& need) { return need.monster == request.monster && need.map == request.map; });
+
+        if (same == needs.end())
+            needs.push_back(request);
+        else
+            same->record = std::max(same->record, request.record);
+    }
+
+    for (const auto [monster, map, record] : needs) {
         const uint8_t key = Memory::Read8(kMapKeys + map * 2);
         const uint32_t list = monster < kMonsters ? Memory::Read32(kLists + monster * 4) : 0;
+        const uint32_t own = list && key ? Records(list, key) : 0;
 
-        if (!list || !key || Records(list, key))
+        if (!list || !key || record >= kRecords)
             continue;
 
-        // Another monster's spawn points on the map, the first in id order
-        // with records 0 and 1 (a second monster takes record 1), else the
-        // first at all.
-        uint32_t donor = 0, records = 0;
+        bool complete = own != 0;
 
-        for (uint32_t other = 1; other < kMonsters; ++other) {
+        for (uint32_t r = 0; own && r <= record; ++r)
+            complete = complete && Memory::Read32(own + r * kRecordBytes + 4);
+
+        if (complete)
+            continue;
+
+        // The monster's own records there, else another monster's, the first
+        // in id order with the records up to the one needed, else the first
+        // at all.
+        uint32_t donor = monster, records = own, first = 0, firstDonor = 0;
+
+        for (uint32_t other = 1; !records && other < kMonsters; ++other) {
             const uint32_t found = Records(Memory::Read32(kLists + other * 4), key);
-            const bool both = found && Memory::Read32(found + 4) && Memory::Read32(found + kRecordBytes + 4);
+            bool all = found != 0;
 
-            if (found && (!records || both)) {
+            for (uint32_t r = 0; found && r <= record; ++r)
+                all = all && Memory::Read32(found + r * kRecordBytes + 4);
+
+            if (all) {
                 records = found;
                 donor = other;
+            } else if (found && !first) {
+                first = found;
+                firstDonor = other;
             }
+        }
 
-            if (both)
-                break;
+        if (!records && first) {
+            records = first;
+            donor = firstDonor;
         }
 
         uint32_t entries = 0;
@@ -81,26 +119,48 @@ void Apply(uint32_t base) {
         }
 
         // The records, with the monster's id in their first word (803AE9F4
-        // copies from +8 on), then the list.
+        // copies from +8 on) and the empty ones (count 0) a copy of the
+        // first that is not.
         for (uint32_t i = 0; i < kRecords * kRecordBytes; i += 4)
             Memory::Write32(free + i, Memory::Read32(records + i));
 
-        for (uint32_t r = 0; r < kRecords; ++r)
-            if (Memory::Read32(free + r * kRecordBytes))
-                Memory::Write32(free + r * kRecordBytes, monster);
+        uint32_t filled = 0;
 
+        while (filled < kRecords && !Memory::Read32(free + filled * kRecordBytes + 4))
+            ++filled;
+
+        for (uint32_t r = 0; r < kRecords && filled < kRecords; ++r) {
+            const uint32_t at = free + r * kRecordBytes;
+
+            if (!Memory::Read32(at + 4))
+                for (uint32_t i = 0; i < kRecordBytes; i += 4)
+                    Memory::Write32(at + i, Memory::Read32(free + filled * kRecordBytes + i));
+
+            Memory::Write32(at, monster);
+        }
+
+        // The list: its entries, the map's pointing at the records (added
+        // when it has none).
         const uint32_t newList = free + kRecords * kRecordBytes;
+        uint32_t written = 0;
 
-        for (uint32_t i = 0; i < entries * 8; i += 4)
-            Memory::Write32(newList + i, Memory::Read32(list + i));
+        for (uint32_t e = 0; e < entries; ++e, ++written) {
+            Memory::Write32(newList + e * 8, Memory::Read32(list + e * 8));
+            Memory::Write32(newList + e * 8 + 4, Memory::Read8(list + e * 8) == key ? free : Memory::Read32(list + e * 8 + 4));
+        }
 
-        Memory::Write32(newList + entries * 8, uint32_t(key) << 24);
-        Memory::Write32(newList + entries * 8 + 4, free);
-        Memory::Write32(newList + entries * 8 + 8, 0xFF000000);
-        Memory::Write32(newList + entries * 8 + 12, 0);
+        if (!own) {
+            Memory::Write32(newList + written * 8, uint32_t(key) << 24);
+            Memory::Write32(newList + written * 8 + 4, free);
+            ++written;
+        }
+
+        Memory::Write32(newList + written * 8, 0xFF000000);
+        Memory::Write32(newList + written * 8 + 4, 0);
         Memory::Write32(kLists + monster * 4, newList);
         free += bytes;
-        std::fprintf(stderr, "MH3 quest placement: monster %u on map %u at monster %u's spawn points\n", unsigned(monster), unsigned(map), unsigned(donor));
+        std::fprintf(stderr, "MH3 quest placement: monster %u on map %u (record %u) at monster %u's spawn points\n", unsigned(monster), unsigned(map), unsigned(record),
+                     unsigned(donor));
     }
 }
 } // namespace QuestPlacement
@@ -112,8 +172,14 @@ using MemoryInline::FlatWrite32;
 using MemoryInline::FlatWrite8;
 
 void CopyQuestSlot(uint32_t to, uint32_t from) {
-    for (uint32_t i = 0; i < 8; ++i)
+    using Cheats::Id;
+    FlatWrite8(to, Cheats::On(Id::BossMod) ? uint8_t(Cheats::Value(Id::BossMod)) : FlatRead8(from));
+
+    for (uint32_t i = 1; i < 6; ++i)
         FlatWrite8(to + i, FlatRead8(from + i));
+
+    FlatWrite8(to + 6, Cheats::On(Id::BossSize) ? uint8_t(Cheats::Value(Id::BossSize)) : FlatRead8(from + 6));
+    FlatWrite8(to + 7, Cheats::On(Id::BossLevel) ? uint8_t(Cheats::Value(Id::BossLevel)) : FlatRead8(from + 7));
 }
 
 int32_t QuestRecordOf(GuestCall& game, uint8_t monster) {

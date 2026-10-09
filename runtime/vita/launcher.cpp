@@ -649,7 +649,6 @@ enum class Page {
     Saves,
     Quests,
     Custom,
-    Templates,
     Editor,
     Cheats,
     CheatList,
@@ -657,13 +656,12 @@ enum class Page {
 };
 
 const char* PageName(Page page) {
-    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats", "Cheat list", "Online"};
+    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Editor", "Cheats", "Cheat list", "Online"};
     return names[unsigned(page)];
 }
 
-// A new custom quest's name (at most 43 characters).
-std::string DefaultName(const QuestCatalog::Quest& source) {
-    return "Custom " + source.name.substr(0, 36);
+const char* RankName(uint8_t rank) {
+    return rank == 0 ? "Village" : rank == 1 ? "Low rank" : "High rank";
 }
 
 const char* OnOff(bool on) {
@@ -832,7 +830,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
     Page page = Page::Main;
     size_t selected = 0;
-    bool creating = false;
 
     // Where the hunter selection leads: Quests, or a start in the village or the City.
     enum class Then { Quests, Village, City } then = Then::Quests;
@@ -867,10 +864,26 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     // The editor returns to the list it came from.
     Page editorParent = Page::Main;
     QuestCatalog::Set set = QuestCatalog::Set::Village;
-    std::vector<QuestCatalog::Quest> editorQuests;
-    std::vector<uint16_t> encounters, maps;
     const auto monsters = QuestCatalog::MonsterNames();
     const auto monsterName = [&](uint16_t id) { return id < monsters.size() && !monsters[id].empty() ? monsters[id] : "monster " + std::to_string(id); };
+
+    // A quest from scratch's goal ("Hunt Rathalos, Rathian and Barroth";
+    // "Hunt Tiny Uragaan" at 80% or below, "Giant" at 120% or above), also
+    // its name until one is typed (at most 43 characters).
+    const auto goal = [&](const CustomQuest& q) {
+        const size_t count = q.monsters[2] ? 3 : q.monsters[1] ? 2 : 1;
+        std::string text = q.capture ? "Capture " : "Hunt ";
+
+        if (q.size <= 80 || q.size >= 120)
+            text += q.size <= 80 ? "Tiny " : "Giant ";
+
+        for (size_t i = 0; i < count; ++i)
+            text += (i == 0 ? "" : i + 1 == count ? " and " : ", ") + monsterName(q.monsters[i]);
+
+        return text;
+    };
+
+    const auto automaticName = [&](const CustomQuest& q) { return goal(q).substr(0, 43); };
     std::array<std::optional<std::vector<QuestCatalog::Quest>>, 3> catalogs;
     const auto catalog = [&](QuestCatalog::Set s) -> const std::vector<QuestCatalog::Quest>& {
         auto& loaded = catalogs[unsigned(s)];
@@ -885,27 +898,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         const auto& list = catalog(s);
         const auto found = std::find_if(list.begin(), list.end(), [&](const auto& q) { return q.id == id; });
         return found == list.end() ? nullptr : &*found;
-    };
-
-    const auto findEditorQuest = [&](uint16_t id) -> const QuestCatalog::Quest* {
-        const auto found = std::find_if(editorQuests.begin(), editorQuests.end(), [&](const auto& q) { return q.id == id; });
-        return found == editorQuests.end() ? nullptr : &*found;
-    };
-
-    // The editor's template quest `id`.
-    const auto editorQuest = [&](uint16_t id, const QuestCatalog::Quest*& quest) {
-        quest = findEditorQuest(id);
-        return quest ? Status{} : Status::Error("Custom quest template is unavailable");
-    };
-
-    const auto refreshEditor = [&] {
-        editorQuests = catalog(edit.set);
-        std::vector<uint16_t> options, templates;
-        MH3_RETURN_IF_ERROR(CompositionOptions(edit, options));
-        encounters = std::move(options);
-        MH3_RETURN_IF_ERROR(CompositionMaps(edit, templates));
-        maps = std::move(templates);
-        return Status{};
     };
 
     Input input;
@@ -955,7 +947,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                                            "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." +
                                                (LauncherCheats::EnabledCount() ? " Online play is blocked while cheats are on." : "") + cheats,
                                            "Start a quest directly with an existing hunter." + cheats,
-                                           "Make a hunt or capture quest from one of the game's quests.",
+                                           "Make a hunt or capture quest of your own: a map and one or two large monsters.",
                                            "Gameplay toggles for this launch." + cheats,
                                            widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display.",
                                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
@@ -977,11 +969,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             detail = std::string(details[std::min<size_t>(selected, 3)]) + "  Hunter: " + saveName() + ".";
             break;
         }
-        case Page::Templates:
-            title = "Choose a quest template";
-            rows = {"Offline quests", "Online quests", "Arena"};
-            detail = "The template supplies the map, monster spawns and rewards.";
-            break;
         case Page::Saves:
             title = "Choose your hunter";
 
@@ -991,7 +978,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             detail = "Characters of valid saves.";
             break;
         case Page::Quests:
-            title = creating ? "Choose a hunt/capture template" : "Quest list";
+            title = "Quest list";
 
             for (const auto& q : quests)
                 rows.push_back(std::to_string(q.stars) + "*  " + q.name);
@@ -1014,6 +1001,15 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 footer = "O Back";
             } else {
                 const auto& q = custom[std::min(selected, custom.size() - 1)];
+
+                if (q.map) {
+                    detail = QuestCatalog::MapName(q.map) + ": " + goal(q) + ", " + RankName(q.rank) + ", " + (q.size != 100 ? std::to_string(q.size) + "% size, " : "") +
+                             std::to_string(q.stars) + "*" +
+                             (q.minutes ? ", " + std::to_string(q.minutes) + " minutes" : "") + ".";
+                    footer = "X Launch   Triangle Edit   O Back   D-pad Move";
+                    break;
+                }
+
                 const auto* base = findQuest(q.set, q.base);
                 const auto* encounter = findQuest(q.set, q.encounter ? q.encounter : q.base);
 
@@ -1029,42 +1025,37 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
             break;
         case Page::Editor: {
-            const auto* baseFound = findEditorQuest(edit.base);
-            const auto* encounterFound = findEditorQuest(edit.encounter ? edit.encounter : edit.base);
-
-            if (!baseFound || !encounterFound)
-                return Status::Error("Custom quest template is unavailable");
-
-            const auto& baseQuest = *baseFound;
-            const auto& encounter = *encounterFound;
-            const auto& objective = encounter.objectives.front();
             title = edit.storageKey.empty() ? "Create custom quest" : "Edit custom quest";
             rows = {"Name: " + edit.name,
-                    "Map: " + QuestCatalog::MapName(baseQuest.map) + (encounters.empty() ? " (fixed)" : ""),
-                    "Monster: " + monsterName(objective.target) + (encounters.empty() ? " (fixed)" : ""),
+                    "Map: " + QuestCatalog::MapName(edit.map),
+                    "Monster: " + monsterName(edit.monsters[0]),
+                    "Second monster: " + (edit.monsters[1] ? monsterName(edit.monsters[1]) : std::string("None")),
+                    "Third monster: " + (edit.monsters[2] ? monsterName(edit.monsters[2]) : std::string("None")),
                     "Objective: " + std::string(edit.capture ? "Capture" : "Hunt"),
-                    "Target count: " + std::to_string(edit.count) + " of " + std::to_string(objective.count),
-                    "Time: " + (edit.minutes ? std::to_string(edit.minutes) + " minutes" : "as the template"),
+                    "Rank: " + std::string(RankName(edit.rank)),
+                    "Size: " + std::to_string(edit.size) + "%",
+                    "Time: " + (edit.minutes ? std::to_string(edit.minutes) + " minutes" : "as the map's quest"),
                     "Stars: " + std::to_string(edit.stars),
                     "Save quest"};
-            switch (std::min<size_t>(selected, 7)) {
-            case 0:
+            const char* details[] = {
 #ifdef __vita__
-                detail = "X opens the keyboard.";
+                "X opens the keyboard.",
 #else
-                detail = "The keyboard is the Vita's; the host keeps the name.";
+                "The keyboard is the Vita's; the host keeps the name.",
 #endif
-                footer = "X Keyboard   O Back   D-pad Move";
-                break;
-            case 7:
-                detail = edit.storageKey.empty() ? "Saves a new custom quest." : "Saves the changes to this custom quest.";
-                footer = "X Save   O Back   D-pad Move";
-                break;
-            default:
-                detail = encounters.empty() ? "This template's map and monsters are scripted and stay as they are." : "Placement and rewards from " + encounter.name + ".";
-                footer = "Left / Right Change   O Back   D-pad Move";
-            }
-
+                "Any field map, the arenas or the Sacred Pinnacle. Jhen Mohran's Great Desert and Ceadeus's lair take only their own monster.",
+                "Any large monster but Ceadeus and Jhen Mohran, who need their own maps. The Water Arena takes the swimmers.",
+                "A second large monster at the same time, or none. Ceadeus, Alatreon and Jhen Mohran are always alone.",
+                "A third large monster at the same time (after a second), or none.",
+                "Capture needs monsters the game lets you capture, on a field map.",
+                "The monsters' strength and rewards come from the game's quests of this rank, nearest the stars.",
+                "Every monster's size, 50% to 200% (the game's quests: about 90% to 120%; event quests go further).",
+                "1 to 50 minutes.",
+                "The quest's stars; at a rank they also pick the monsters' strength.",
+                edit.storageKey.empty() ? "Saves a new custom quest." : "Saves the changes to this custom quest."};
+            const size_t row = std::min<size_t>(selected, 11);
+            detail = details[row];
+            footer = row == 0 ? "X Keyboard   O Back   D-pad Move" : row == 11 ? "X Save   O Back   D-pad Move" : "Left / Right Change   O Back   D-pad Move";
             break;
         }
         case Page::Cheats: {
@@ -1138,7 +1129,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         if (buttons & Button::Circle) {
             switch (page) {
             case Page::Quests:
-                enter(creating ? Page::Templates : Page::Categories);
+                enter(Page::Categories);
                 break;
             case Page::Custom:
                 enter(Page::Categories);
@@ -1149,16 +1140,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
                 if (editorParent == Page::Custom)
                     MH3_RETURN_IF_ERROR(LoadCustomQuests(user, custom));
+                else
+                    selected = 4;
 
                 break;
             case Page::Saves:
             case Page::Categories:
                 enter(Page::Main);
                 selected = then == Then::Village ? 1 : then == Then::City ? 2 : 3;
-                break;
-            case Page::Templates:
-                enter(Page::Main);
-                selected = 4;
                 break;
             case Page::Cheats:
                 enter(Page::Main);
@@ -1188,86 +1177,94 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 if (selected == 0 && accept)
                     MH3_RETURN_IF_ERROR(TypeName(edit.name, "quest name", 43));
 
-                const auto cycle = [&](size_t index, size_t count) {
-                    return (index + count + (direction ? direction : 1)) % count;
+                const int step = direction ? direction : 1;
+
+                // The next of `list` after `value` (the first when it is not there).
+                const auto next = [&](const std::vector<uint8_t>& list, uint8_t value) {
+                    const auto found = std::find(list.begin(), list.end(), value);
+                    const size_t index = found == list.end() ? 0 : size_t(found - list.begin());
+                    return list[(index + list.size() + step) % list.size()];
                 };
 
-                // A name nobody typed follows the quest the placement comes from.
-                const QuestCatalog::Quest* quest = nullptr;
-                MH3_RETURN_IF_ERROR(editorQuest(edit.encounter ? edit.encounter : edit.base, quest));
-                const bool automaticName = edit.name == DefaultName(*quest);
+                // A name nobody typed follows the quest's goal.
+                const bool automatic = edit.name == automaticName(edit);
+                const CustomQuest before = edit;
 
-                if (selected == 1 && !encounters.empty() && !maps.empty()) {
-                    MH3_RETURN_IF_ERROR(editorQuest(edit.base, quest));
-                    const auto map = quest->map;
-                    bool missing = false;
+                if (selected == 1) {
+                    edit.map = next(ScratchMaps(), edit.map);
+                    const auto allowed = ScratchMonsters(edit.map);
+                    const auto has = [&](uint8_t m) { return std::find(allowed.begin(), allowed.end(), m) != allowed.end(); };
 
-                    // Stops at a missing template, as the search stopped at its failure.
-                    const auto found = std::find_if(maps.begin(), maps.end(), [&](auto id) {
-                        const auto* candidate = findEditorQuest(id);
-                        missing = !candidate;
-                        return missing || candidate->map == map;
-                    });
+                    if (!has(edit.monsters[0]))
+                        edit.monsters[0] = allowed.front();
 
-                    if (missing)
-                        return Status::Error("Custom quest template is unavailable");
+                    for (size_t i = 1; i < edit.monsters.size(); ++i)
+                        if (edit.monsters[i] && !has(edit.monsters[i]))
+                            edit.monsters[i] = 0;
 
-                    edit.base = maps[cycle(found - maps.begin(), maps.size())];
-                    edit.encounter = 0;
-                    MH3_RETURN_IF_ERROR(editorQuest(edit.base, quest));
-                    edit.count = quest->objectives.front().count;
-                    edit.capture = false;
-                    std::vector<uint16_t> options;
-                    MH3_RETURN_IF_ERROR(CompositionOptions(edit, options));
-                    encounters = std::move(options);
+                    if (!edit.monsters[1])
+                        std::swap(edit.monsters[1], edit.monsters[2]);
                 }
 
-                if (selected == 2 && !encounters.empty()) {
-                    const auto found = std::find(encounters.begin(), encounters.end(), edit.encounter ? edit.encounter : edit.base);
-                    edit.encounter = encounters[cycle(found == encounters.end() ? 0 : found - encounters.begin(), encounters.size())];
-                    MH3_RETURN_IF_ERROR(editorQuest(edit.encounter, quest));
-                    edit.count = quest->objectives.front().count;
+                if (selected == 2)
+                    edit.monsters[0] = next(ScratchMonsters(edit.map), edit.monsters[0]);
 
-                    if (edit.capture) {
-                        bool supported = false;
-                        MH3_RETURN_IF_ERROR(SupportsCapture(edit, supported));
+                // A third monster only after a second, none beside the
+                // bosses.
+                if ((selected == 3 || (selected == 4 && edit.monsters[1])) && !ScratchAlone(edit.monsters[0])) {
+                    auto choices = ScratchMonsters(edit.map);
+                    std::erase_if(choices, ScratchAlone);
+                    choices.insert(choices.begin(), 0);
+                    auto& monster = edit.monsters[selected - 2];
+                    monster = next(choices, monster);
 
-                        if (!supported)
-                            edit.capture = false;
-                    }
+                    if (!edit.monsters[1])
+                        edit.monsters[2] = 0;
                 }
 
-                if (automaticName) {
-                    MH3_RETURN_IF_ERROR(editorQuest(edit.encounter ? edit.encounter : edit.base, quest));
-                    edit.name = DefaultName(*quest);
-                }
-
-                if (selected == 3) {
-                    if (!edit.capture) {
-                        bool supported = false;
-                        MH3_RETURN_IF_ERROR(SupportsCapture(edit, supported));
-
-                        if (!supported)
-                            return Status::Error("No quest captures this monster with this placement, so this quest stays a hunt.");
-                    }
-
-                    edit.capture = !edit.capture;
-                }
-
-                if (selected == 4) {
-                    MH3_RETURN_IF_ERROR(editorQuest(edit.encounter ? edit.encounter : edit.base, quest));
-                    edit.count = std::clamp<int>(int(edit.count) + (direction ? direction : 1), 1, quest->objectives.front().count);
-                }
+                if (ScratchAlone(edit.monsters[0]))
+                    edit.monsters[1] = edit.monsters[2] = 0;
 
                 if (selected == 5)
-                    edit.minutes = std::clamp<int>(int(edit.minutes) + (direction ? direction : 1), 0, 50);
+                    edit.capture = !edit.capture;
 
                 if (selected == 6)
-                    edit.stars = std::clamp<int>(int(edit.stars) + (direction ? direction : 1), 1, 7);
+                    edit.rank = uint8_t((edit.rank + 3 + step) % 3);
 
-                if (selected == 7 && accept) {
+                if (selected == 7)
+                    edit.size = uint8_t(std::clamp<int>(int(edit.size) + step * 5, 50, 200));
+
+                if (selected == 8)
+                    edit.minutes = std::clamp<int>(int(edit.minutes ? edit.minutes : 50) + step, 1, 50);
+
+                if (selected == 9)
+                    edit.stars = std::clamp<int>(int(edit.stars) + step, 1, 7);
+
+                SetScratchCarrier(edit);
+
+                // Captures only where the game can capture the monsters.
+                if (edit.capture) {
+                    bool supported = false;
+                    MH3_RETURN_IF_ERROR(ScratchCapture(edit, supported));
+
+                    if (!supported) {
+                        const bool asked = selected == 5;
+                        edit.capture = false;
+
+                        if (asked) {
+                            edit = before;
+                            return Status::Error("The game cannot capture these monsters here, so this quest stays a hunt.");
+                        }
+                    }
+                }
+
+                if (automatic)
+                    edit.name = automaticName(edit);
+
+                if (selected == 11 && accept) {
                     MH3_RETURN_IF_ERROR(SaveCustomQuest(user, edit));
-                    Log("custom quest saved: %s (template %u, encounter %u, %u stars)", edit.name.c_str(), unsigned(edit.base), unsigned(edit.encounter), unsigned(edit.stars));
+                    Log("custom quest saved: %s (map %u, monsters %u %u %u, rank %u, size %u, %u stars)", edit.name.c_str(), unsigned(edit.map), unsigned(edit.monsters[0]),
+                        unsigned(edit.monsters[1]), unsigned(edit.monsters[2]), unsigned(edit.rank), unsigned(edit.size), unsigned(edit.stars));
                     Message("Custom quest saved. Play it from Quests > Custom quests.");
 
                     if (editorParent == Page::Custom) {
@@ -1275,8 +1272,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                         MH3_RETURN_IF_ERROR(LoadCustomQuests(user, saved));
                         custom = std::move(saved);
                         enter(Page::Custom);
-                    } else
+                    } else {
                         enter(Page::Main);
+                        selected = 4;
+                    }
                 }
 
                 return {};
@@ -1300,8 +1299,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             }
 
             if (page == Page::Custom && !custom.empty() && (buttons & Button::Triangle)) {
-                edit = custom[selected];
-                MH3_RETURN_IF_ERROR(refreshEditor());
+                // A template quest opens as one from scratch; saving keeps it so.
+                CustomQuest quest = custom[selected];
+                MH3_RETURN_IF_ERROR(ScratchFromTemplate(quest));
+                edit = quest;
                 editorParent = Page::Custom;
                 enter(Page::Editor);
                 return {};
@@ -1349,7 +1350,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 }
 
                 if (selected >= 1 && selected <= 3) {
-                    creating = false;
                     then = selected == 1 ? Then::Village : selected == 2 ? Then::City : Then::Quests;
                     saves = ProbeSaves(user);
 
@@ -1370,8 +1370,15 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                         return {};
                     }
                 } else if (selected == 4) {
-                    creating = true;
-                    enter(Page::Templates);
+                    edit = {};
+                    edit.map = 1;
+                    edit.monsters = {ScratchMonsters(1).front(), 0, 0};
+                    edit.minutes = 50;
+                    edit.stars = 4;
+                    edit.name = automaticName(edit);
+                    SetScratchCarrier(edit);
+                    editorParent = Page::Main;
+                    enter(Page::Editor);
                 } else if (selected == 5)
                     enter(Page::Cheats);
                 else if (selected == 6) {
@@ -1404,7 +1411,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 enter(Page::Categories);
                 break;
             case Page::Categories:
-            case Page::Templates:
                 if (selected == 3) {
                     std::vector<CustomQuest> saved;
                     MH3_RETURN_IF_ERROR(LoadCustomQuests(user, saved));
@@ -1415,31 +1421,19 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
                 set = QuestCatalog::Set(selected);
                 quests = catalog(set);
-
-                if (creating)
-                    quests.erase(std::remove_if(quests.begin(), quests.end(), [](const auto& q) { return q.objectives.empty() || (q.objectives[0].type != 1 && q.objectives[0].type != 0x81); }),
-                                 quests.end());
                 enter(Page::Quests);
                 break;
             case Page::Quests:
                 if (quests.empty())
                     break;
 
-                if (creating) {
-                    const auto& q = quests[selected];
-                    edit = {DefaultName(q), set, q.id, q.objectives[0].count, q.objectives[0].type == 0x81, q.stars};
-                    MH3_RETURN_IF_ERROR(refreshEditor());
-                    editorParent = Page::Quests;
-                    enter(Page::Editor);
-                } else {
+                {
                     const auto& q = quests[selected];
                     StartVillageBoot(save.file, save.character);
                     RequestQuestJump(q.id, set, -1);
                     start("quest " + std::to_string(q.id) + " " + q.name + ", " + saveName());
                     return {};
                 }
-
-                break;
             case Page::Custom:
                 if (!custom.empty()) {
                     const auto& q = custom[selected];

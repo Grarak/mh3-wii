@@ -307,7 +307,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80137980, MH3_CheatMonsterStep, "CheatMonsterStep"
 // 0x801382A0 skips the monster's sight, awareness and target updates then
 // (its call returns to 0x80138720); Monster can't see you (US 0x801386BC, EU
 // 0x80138720: the branch taken) always skips them. A precise native
-// (docs/native-dispatch-freshness.md): translated callers call it directly.
+// (docs/optimizations/cpu/native-function-ports.md): translated callers call it directly.
 extern "C" void MH3_CheatEventDemoState4(CpuContext* ctx) {
     if (On(Id::MonsterCantSeeYou) && ctx->lr == 0x80138720) {
         ctx->gpr[3] = 1;
@@ -319,24 +319,6 @@ extern "C" void MH3_CheatEventDemoState4(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x803C4878, MH3_CheatEventDemoState4, "CheatEventDemoState4");
 
-// 0x803AEBE0 (to, from): copies a quest's large monster entry (8 bytes: u8
-// kind, ..., +6 size, +7 level). Boss/s mod, Set boss/s size to and Set
-// boss/s level to (US 0x803AEB7C/BAC/BB4, EU 0x803AEBE0/C10/C18: the loads
-// replaced by the value) set them.
-extern "C" void func_803AEBE0(CpuContext* ctx);
-
-extern "C" void MH3_CheatBossEntry(CpuContext* ctx) {
-    const uint32_t to = ctx->gpr[3];
-    func_803AEBE0(ctx);
-
-    if (On(Id::BossMod))
-        Memory::Write8(to, uint8_t(Value(Id::BossMod)));
-
-    if (On(Id::BossSize))
-        Memory::Write8(to + 6, uint8_t(Value(Id::BossSize)));
-
-    if (On(Id::BossLevel))
-        Memory::Write8(to + 7, uint8_t(Value(Id::BossLevel)));
-}
-
-REGISTER_NATIVE_FUNCTION_AS(0x803AEBE0, MH3_CheatBossEntry, "CheatBossEntry");
+// The quest's large monster entries: Boss/s mod, Set boss/s size to and Set
+// boss/s level to (US 0x803AEB7C/BAC/BB4, EU 0x803AEBE0/C10/C18) are in the
+// port of 0x803AEBE0 (quest_placement.cpp).

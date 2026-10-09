@@ -1,5 +1,6 @@
 #include "vita_launcher.h"
 #include "disc_image.h"
+#include "load_progress.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -7,6 +8,11 @@
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
+
+// The asset cache reports conversions to the loading screen, which the tests
+// do not have.
+void LoadProgress::ConversionQueued(uint64_t) {}
+void LoadProgress::ConversionDone(uint64_t) {}
 
 namespace {
 void Check(bool value, const char* message) {
@@ -299,7 +305,72 @@ int main(int argc, char** argv) {
             }
 
             Check(combinations > 0, "external disc has composable quest encounters");
-            std::cout << "Authored quest composition audit passed: " << combinations << " configurations\n";
+
+            // Quests from scratch: every map and rank, one to three of the
+            // map's monsters, small and large, hunted and captured.
+            std::array<std::vector<uint8_t>, 3> sets;
+
+            for (unsigned set = 0; set < 3; ++set)
+                sets[set] = GameDiscImage().ReadFile("05/quest0" + std::to_string(set == 2 ? 3 : set) + "_eng.bin");
+
+            unsigned scratch = 0;
+
+            for (const uint8_t map : VitaLauncher::ScratchMaps()) {
+                const auto allowed = VitaLauncher::ScratchMonsters(map);
+
+                for (uint8_t rank = 0; rank < 3; ++rank)
+                    for (size_t i = 0; i < allowed.size(); ++i)
+                        for (size_t count = 1; count <= std::min<size_t>(3, allowed.size()); ++count)
+                            for (unsigned capture = 0; capture < 2; ++capture) {
+                                VitaLauncher::CustomQuest q{"Scratch"};
+                                q.map = map;
+                                q.rank = rank;
+                                q.stars = 4;
+                                q.minutes = 30;
+                                q.size = count == 2 ? 50 : count == 3 ? 200 : 100;
+                                q.capture = capture;
+
+                                for (size_t k = 0; k < count; ++k)
+                                    q.monsters[k] = allowed[(i + k) % allowed.size()];
+
+                                if (count > 1 && std::any_of(q.monsters.begin(), q.monsters.end(), VitaLauncher::ScratchAlone))
+                                    continue;
+
+                                VitaLauncher::SetScratchCarrier(q);
+                                bool supported = !capture;
+
+                                if (capture)
+                                    CheckStatus(VitaLauncher::ScratchCapture(q, supported));
+
+                                if (!supported)
+                                    continue;
+
+                                std::vector<uint8_t> edited;
+                                CheckStatus(VitaLauncher::ScratchQuestFile(sets, q, edited));
+                                const auto& file = sets[unsigned(q.set)];
+                                Check(edited.size() == file.size(), "scratch quest keeps the quest file's size");
+                                size_t at = 0;
+
+                                for (unsigned j = 0; j < ReadWord(edited, 4); ++j)
+                                    if ((ReadWord(edited, ReadWord(edited, 8 + j * 8) + 0x2c) >> 16) == q.base)
+                                        at = ReadWord(edited, 8 + j * 8);
+
+                                Check(at != 0 && edited[at + 0x8b] == map, "scratch quest is on its map");
+
+                                for (size_t k = 0; k < 3; ++k) {
+                                    const size_t slot = at + 0x314 + k * 8;
+                                    Check(edited[slot] == q.monsters[k] && (!q.monsters[k] || (edited[slot + 1] == k && edited[slot + 3] == 1 && edited[slot + 6] == q.size)),
+                                          "scratch quest slot holds its monster, record and size");
+                                    Check((ReadWord(edited, at + 0x334 + k * 8) >> 16) == q.monsters[k] && ReadWord(edited, at + 0x330 + k * 8) == ReadWord(edited, at + 0x394 + k * 0x60),
+                                          "scratch quest objective targets its monster");
+                                }
+
+                                ++scratch;
+                            }
+            }
+
+            Check(scratch > 0, "quests from scratch build");
+            std::cout << "Authored quest composition audit passed: " << combinations << " configurations, " << scratch << " quests from scratch\n";
             return 0;
         }
 

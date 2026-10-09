@@ -135,12 +135,13 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --city                         start File 1 / character 1 in the City (online play)\n"
                                "  --list quests|online-quests|arena-quests\n"
                                "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-                               "  --quest <id>|free [--area <n>|camp] [--spawn <x,y,z>|exit:<n>[,<m>...]|exit:tour]\n"
+                               "  --quest <id>|free|custom:<file> [--area <n>|camp] [--spawn <x,y,z>|exit:<n>[,<m>...]|exit:tour]\n"
                                "                                 start a quest (village, arena or online) or the\n"
                                "                                 Moga Woods free roam from the village, in the area\n"
                                "                                 numbered n on the map; --spawn moves the hunter\n"
                                "                                 there (arena pit: 0,300,0), or into the area's exit\n"
-                               "                                 to area n\n"
+                               "                                 to area n; custom:<file> plays a custom quest\n"
+                               "                                 (USER/custom-quests/<name>.mh3quest)\n"
                                "  --area-index <n>               (with --quest) start in the game's area n instead\n"
                                "                                 (its own order, also the areas without a number)\n"
                                "  --quest-monster <name|id>      (with --quest) replace the quest's large monster\n"
@@ -234,7 +235,28 @@ void StartQuestBoot(int argc, char** argv) {
     uint32_t quest = 0;
     uint8_t map = 1; // the free roam's
 
-    if (id != "free") {
+    // custom:PATH: a custom quest's record (USER/custom-quests/NAME.mh3quest).
+    if (id.starts_with("custom:")) {
+        const std::filesystem::path path(id.substr(7));
+        std::vector<VitaLauncher::CustomQuest> custom;
+        CheckStatus(VitaLauncher::LoadCustomQuests(path.parent_path().parent_path(), custom));
+        const auto it = std::find_if(custom.begin(), custom.end(), [&](const auto& q) { return q.storageKey == path.stem().string(); });
+
+        if (it == custom.end())
+            MH3_THROW(std::runtime_error("No valid custom quest " + path.string()));
+
+        CheckStatus(VitaLauncher::ActivateCustomQuest(*it));
+        set = it->set;
+        quest = it->base;
+        map = it->map;
+
+        // A template quest is on its base quest's map.
+        for (const auto& q : map ? std::vector<QuestCatalog::Quest>{} : QuestCatalog::Load(set))
+            if (q.id == quest)
+                map = q.map;
+
+        std::cerr << "MH3 quest: custom " << it->name << " over " << quest << " (" << QuestCatalog::MapName(map) << ")\n";
+    } else if (id != "free") {
         quest = uint32_t(std::stoul(std::string(id)));
         bool found = false;
 
@@ -356,10 +378,6 @@ int main(int argc, char** argv) {
     InstallLegacyGxPanicHandler();
 #ifdef __vita__
     InitializeVitaPlatform(argc, argv);
-
-#endif
-#ifdef MH3_DEVELOPMENT
-    ReportRetiredVariables();
 #endif
     // Ctrl-C ends the process at once (the default action); SDL would turn it
     // into a quit event the game only sees at its next event check.
@@ -487,7 +505,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--self-test") {
             Memory::Write32(0x80001000, 0x12345678);
 
-            if (Memory::Read32(0x1000) != 0x12345678 || Memory::Read16(0xC0001000) != 0x1234)
+            if (Memory::Read32(0xC0001000) != 0x12345678 || Memory::Read16(0xC0001000) != 0x1234)
                 MH3_THROW(std::runtime_error("RAM alias or big-endian access failed"));
 
             MemoryInline::FlatWriteRam32(0x80001004, 0xABCDEF01);
