@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#ifdef MH3_DEVELOPMENT
 // quest 0: the season's free-roam quest (the Moga Woods exit). area < 0: the
 // quest's start area.
 void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area);
+#endif

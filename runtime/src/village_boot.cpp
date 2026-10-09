@@ -1,5 +1,5 @@
-// --village: straight into the village with File 1's first character, without
-// the title's movies and menus.
+// --village (development builds): straight into the village with File 1's
+// first character, without the title's movies and menus.
 //
 // The title (demo_data.rso, a task in slot 4) runs a state machine in its work
 // (*0x809D3568, +0 u8 state, +1 u8 sub-state): 0 sets up, 1 plays the intro,
@@ -73,11 +73,14 @@ bool HasFirstCharacter(std::span<const uint8_t> data) {
     return data.size() == SaveData::kFileSize && (Word(data, 0) & 1) && Word(data, SaveData::kCharacters) != 0 &&
            std::accumulate(data.begin() + 8, data.end(), uint32_t(0)) == Word(data, 4);
 }
+#ifdef MH3_DEVELOPMENT
 bool InMainMemory(uint32_t address) {
     return (address >= 0x80000000u && address < 0x81800000u) || (address >= 0x90000000u && address < 0x94000000u);
 }
+#endif
 }
 
+#ifdef MH3_DEVELOPMENT
 void StartVillageBoot() {
     const char* override = std::getenv("MH3_USER_DIR");
     const auto path = std::filesystem::path(override ? override : "saves") /
@@ -126,6 +129,7 @@ void StepVillageBoot(CpuContext* ctx) {
     state = State::Complete;
     std::cerr << "MH3 village boot: loaded File 1 / character 1, starting the village\n";
 }
+#endif
 
 void FinishVillageBoot() {
     if (state == State::Off) return;

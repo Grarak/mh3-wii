@@ -179,7 +179,9 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] { call(RunTasks); });
 #endif
         GameTasks::SkipStrapScreen();
+#ifdef MH3_DEVELOPMENT
         StepVillageBoot(ctx);
+#endif
         call(RunTasks);
         call(GrabScreen);
         call(ResetFade);

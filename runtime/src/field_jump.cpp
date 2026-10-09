@@ -1,4 +1,4 @@
-// Field jump, RMHP08 (development). --quest / --online-quest leave the village
+// Field jump, RMHP08 (development builds). --quest / --online-quest leave the village
 // for a quest's field as soon as the village is up, the way its exits do.
 //
 // Every trip out of the village is a quest: the Moga Woods exit starts the
@@ -113,6 +113,7 @@ static void VillageTaskPort(CpuContext* ctx) {
 extern "C" void MH3_VillageTask(CpuContext* ctx) { PortCheck::Call(ctx, "VillageTask", func_8021F40C, VillageTaskPort); }
 REGISTER_NATIVE_FUNCTION_AS(0x8021F40C, MH3_VillageTask, "VillageTask");
 
+#ifdef MH3_DEVELOPMENT
 void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area) {
     Jump& jump = State();
     jump.enabled = true;
@@ -120,6 +121,7 @@ void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area) {
     jump.set = set;
     jump.area = area;
 }
+#endif
 
 // Loads the field's quest file: the jump's quest set.
 extern "C" void func_803AD264(CpuContext* ctx);

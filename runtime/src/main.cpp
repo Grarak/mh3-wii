@@ -73,15 +73,17 @@ int RunEfbCheck(int argc, char** argv);
 #endif
 
 constexpr const char* kUsage =
+#ifdef MH3_DEVELOPMENT
     "Unknown option. Options:\n"
     "  --village                      start File 1 / character 1 in the village\n"
-#ifdef MH3_DEVELOPMENT
     "  --list quests|online-quests|arena-quests\n"
     "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
     "  --quest <id>|free [--area <n>]\n"
     "                                 start a quest (village, arena or online) or the\n"
     "                                 Moga Woods free roam from the village\n"
     "  --no-damage                    (with any of the above) the hunter takes no damage\n"
+#else
+    "Unknown option (--village, --quest and --list are in development builds)"
 #endif
     ;
 
@@ -202,12 +204,13 @@ int main(int argc, char** argv) {
             RunAudioSelfTests(&cpu);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
 #ifdef MH3_DEVELOPMENT
+        if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
         else if (argc >= 3 && std::string_view(argv[1]) == "--quest")
             StartQuestBoot(argc, argv);
+        else
 #endif
-        else if (argc != 1) throw std::runtime_error(kUsage);
+        if (argc != 1) throw std::runtime_error(kUsage);
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
         // The apploader normally installs the FST in reserved high MEM1.
