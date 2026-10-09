@@ -57,6 +57,17 @@ inline T MaybeByteSwap(T value) {
 // does not behave like a host double-to-float cast for values which were left
 // in double precision, and it has hardware-tested handling for tiny values.
 MKW_MEMORY_FORCE_INLINE uint32_t ConvertPpcDoubleToSingleBits(double value) {
+    // A value that is exactly a single (every lfs result and single-precision
+    // op) narrows to that single's bits, subnormals included. Written as a
+    // cast round trip so the compiler folds it when the value is a widened
+    // float, leaving no conversion at all; NaNs take the bit narrowing.
+    const float single = static_cast<float>(value);
+    if (static_cast<double>(single) == value) [[likely]]
+    {
+        uint32_t singleBits;
+        std::memcpy(&singleBits, &single, sizeof(singleBits));
+        return singleBits;
+    }
     uint64_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     const uint32_t exponent = static_cast<uint32_t>((bits >> 52) & 0x7FFu);
