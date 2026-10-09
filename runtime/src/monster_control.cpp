@@ -21,6 +21,10 @@
 //   goto X Y Z            place it
 //   hunter save|back      remember the local hunter's place, put it back
 //   hunter X Y Z          place the local hunter
+//   hunter act KIND ACTION  start the local hunter's action (FieldNextAction;
+//                         kind 6 holds the reactions, water variants odd)
+//   hunter list           print the hunter's group, action, state, timer,
+//                         motion and its frames
 //   wait TICKS            run the next commands TICKS ticks of game time later
 //   list                  print each monster's kind, action and position
 #include "monster_control.h"
@@ -66,11 +70,22 @@ enum : uint32_t {
     EnemyData = 0x80126098,   // get_enemy_data (work)
     SetPosition = 0x801460BC, // (work; f1-f3)
     SetAngles = 0x80146170,   // (work; f1-f3 degrees)
+    HunterAction = 0x80275B28, // FieldNextAction (plw, u8 kind, u16 action, u16 flags)
 };
 
 #ifdef MH3_DEVELOPMENT
 constexpr uint32_t kStepCounter = 0x8065AA6C; // ticks of game time
 constexpr uint32_t kHunterPosition = 0x3C;    // PLW f32[3] (the teleporter cheat's)
+
+// The PLW's action (player_work.h).
+enum : uint32_t {
+    kHunterState = 5,     // u8
+    kHunterGroup = 9,     // u8: 3 under water
+    kHunterKind = 10,     // u8
+    kHunterAction = 12,   // u16
+    kHunterTimer = 0x28,  // s32
+    kHunterChar = 0x13C,  // MHchar*, its motion a u16 at +0x54
+};
 
 // The action starts this file makes (the trace marks them).
 bool g_commanded = false;
@@ -129,9 +144,21 @@ void Start(GuestCall& game, uint32_t work, uint8_t mode, uint8_t sub) {
     g_commanded = false;
 }
 
+// The motion's channel 0 (mhchar_motion.cpp, at MHchar +4): frame, end and
+// loop frames (loop < 0 holds the end), frames per tick.
+void ListHunter(uint32_t plw) {
+    const uint32_t chr = Memory::Read32(plw + kHunterChar);
+    const uint32_t channel = chr ? chr + 4 : 0;
+    std::fprintf(stderr,
+                 "MH3 monster control: hunter %08x group %u action %u.%u state %u timer %d motion %u frame %.2f end %.1f loop %.1f rate %.2f at %.1f %.1f %.1f\n", plw,
+                 Memory::Read8(plw + kHunterGroup), Memory::Read8(plw + kHunterKind), Memory::Read16(plw + kHunterAction), Memory::Read8(plw + kHunterState),
+                 int32_t(Memory::Read32(plw + kHunterTimer)), chr ? Memory::Read16(chr + 0x54) : 0u, channel ? F(channel + 0x74) : 0.0f, channel ? F(channel + 0xA4) : 0.0f,
+                 channel ? F(channel + 0xBC) : 0.0f, channel ? F(channel + 0x5C) : 0.0f, F(plw + kHunterPosition), F(plw + kHunterPosition + 4), F(plw + kHunterPosition + 8));
+}
+
 void List() {
     if (const uint32_t plw = Cheats::LocalPlayer())
-        std::fprintf(stderr, "MH3 monster control: hunter %08x at %.1f %.1f %.1f\n", plw, F(plw + kHunterPosition), F(plw + kHunterPosition + 4), F(plw + kHunterPosition + 8));
+        ListHunter(plw);
 
     for (uint32_t i = 0, n = Cheats::MoveWorkCount(Cheats::Kind::Monster); i < n; ++i)
         if (const uint32_t m = Monster(i))
@@ -152,6 +179,7 @@ void Run(GuestCall& game, Control& c, const std::string& line) {
     const auto need = [&] {
         if (!work)
             std::fprintf(stderr, "MH3 monster control: no monster %u for '%s'\n", c.target, line.c_str());
+
         return work != 0;
     };
 
@@ -205,6 +233,10 @@ void Run(GuestCall& game, Control& c, const std::string& line) {
         } else if (arg == "back" && c.saved) {
             for (uint32_t k = 0; k < 3; ++k)
                 Memory::WriteFloat32(plw + kHunterPosition + 4 * k, c.hunter[k]);
+        } else if (arg == "act" && in >> a >> b) {
+            game.Call<HunterAction>({plw, a & 0xFF, b & 0xFFFF, 0});
+        } else if (arg == "list") {
+            ListHunter(plw);
         } else {
             std::istringstream place(line.substr(line.find(arg)));
 
