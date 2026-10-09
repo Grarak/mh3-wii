@@ -30,7 +30,17 @@ const DevOptions& Options() {
 } // namespace
 #endif
 
-bool Enabled(const char* name) {
+bool SetSlow() {
+#ifdef MH3_DEVELOPMENT
+    const bool set = Options().Set();
+#else
+    const bool set = false;
+#endif
+    g_set.store(set ? 1 : 0, std::memory_order_relaxed);
+    return set;
+}
+
+bool EnabledSlow(const char* name) {
 #ifdef MH3_DEVELOPMENT
     const DevOptions& options = Options();
     return !options.List().empty() && (options.Listed("all") || options.Listed(name));
@@ -40,7 +50,7 @@ bool Enabled(const char* name) {
 #endif
 }
 
-bool Originals() {
+bool OriginalsSlow() {
 #ifdef MH3_DEVELOPMENT
     static const bool originals = Options().Has("originals");
     return originals;
@@ -267,7 +277,7 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
 #endif
 }
 
-void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
+void FuzzSlow(CpuContext* ctx, char kind, uint32_t work) {
 #ifdef MH3_DEVELOPMENT
     // The fuzz entries: KIND:0xADDR.
     static const std::vector<std::string> fuzz = [] {

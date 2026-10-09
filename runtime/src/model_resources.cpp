@@ -37,7 +37,7 @@ uint32_t Result(mh3_res_status status, uint32_t value) {
 template <void (*Original)(CpuContext*), void (*Port)(CpuContext*)>
 uint32_t Accessor(const char* name, uint32_t r1, uint32_t r3, const uint32_t* r4 = nullptr) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled(name);
+    const bool check = PortCheck::Enabled(name);
     if (check) [[unlikely]] {
         CpuContext* cpu = TryGetCpuContext();
         cpu->gpr[1] = r1;

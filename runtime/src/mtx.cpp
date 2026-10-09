@@ -285,7 +285,7 @@ extern "C" void func_804C6F20(CpuContext* ctx);
 // compares the output matrices (registers from the current context).
 #ifdef MH3_DEVELOPMENT
 #define MH3_MTX_CHECK(name, original, port, out, bytes, ...)                                                                                                                                           \
-    static const bool check = PortCheck::Enabled(name);                                                                                                                                                \
+    const bool check = PortCheck::Enabled(name);                                                                                                                                                       \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         CpuContext* c = TryGetCpuContext();                                                                                                                                                            \
         __VA_ARGS__;                                                                                                                                                                                   \
@@ -349,7 +349,7 @@ static void InversePort(CpuContext* p) {
 }
 static uint32_t InverseChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("PSMTXInverse");
+    const bool check = PortCheck::Enabled("PSMTXInverse");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -510,7 +510,7 @@ static void WorldStepPort(CpuContext* p) {
 }
 static uint32_t WorldStepChecked(uint32_t r1, uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale, uint32_t flags, uint32_t node) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("WorldMtxNodeStepMayaScale");
+    const bool check = PortCheck::Enabled("WorldMtxNodeStepMayaScale");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -724,7 +724,7 @@ extern "C" void func_80501968(CpuContext* ctx);
 
 #ifdef MH3_DEVELOPMENT
 #define MH3_MTX_RESULT_CHECK(name, original, port, out, bytes)                                                                                                                                         \
-    static const bool check = PortCheck::Enabled(name);                                                                                                                                                \
+    const bool check = PortCheck::Enabled(name);                                                                                                                                                       \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         PortCheck::RunOutput(ctx, name, original, port, {{out, bytes}});                                                                                                                               \
         return;                                                                                                                                                                                        \
@@ -800,7 +800,7 @@ static void InverseWrapperPort(CpuContext* p) {
 }
 static uint32_t InverseWrapperChecked(uint32_t r1, uint32_t out, uint32_t in) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("MtxInverseWrapper");
+    const bool check = PortCheck::Enabled("MtxInverseWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = in;
@@ -822,7 +822,7 @@ static void ConcatWrapperPort(CpuContext* p) {
 }
 static void ConcatWrapperChecked(uint32_t r1, uint32_t out, uint32_t a, uint32_t b) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("MtxConcatWrapper");
+    const bool check = PortCheck::Enabled("MtxConcatWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = a, c->gpr[5] = b;
@@ -844,7 +844,7 @@ static void MultVecWrapperPort(CpuContext* p) {
 }
 static void MultVecWrapperChecked(uint32_t r1, uint32_t out, uint32_t m, uint32_t v) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("MtxMultVecWrapper");
+    const bool check = PortCheck::Enabled("MtxMultVecWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = m, c->gpr[5] = v;

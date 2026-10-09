@@ -144,7 +144,7 @@ void RotationYAxisPort(CpuContext* ctx) {
 
 uint32_t RotationYAxisChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("RotationYAxis");
+    const bool check = PortCheck::Enabled("RotationYAxis");
     if (check && ValidOut(r4)) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;

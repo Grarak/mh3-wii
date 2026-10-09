@@ -309,7 +309,7 @@ void RemoveAllTextureProjectsPort(CpuContext* ctx) {
 
 void ListChange(CpuContext* ctx, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("EfResourceLists");
+    const bool check = PortCheck::Enabled("EfResourceLists");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "EfResourceLists", original, port);
         DropIndexes();
@@ -334,7 +334,7 @@ void FindTexturePort(CpuContext* p) {
 // A lookup returning r3, checked with RunPure.
 #ifdef MH3_DEVELOPMENT
 #define MH3_LOOKUP_CHECK(Name, Addr, Port)                                                                                                                                                             \
-    static const bool check = PortCheck::Enabled(#Name);                                                                                                                                               \
+    const bool check = PortCheck::Enabled(#Name);                                                                                                                                                      \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         CpuContext* c = TryGetCpuContext();                                                                                                                                                            \
         c->gpr[1] = r1;                                                                                                                                                                                \

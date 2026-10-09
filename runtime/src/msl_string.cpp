@@ -34,7 +34,7 @@ void StrcmpPort(CpuContext* ctx) {
 
 uint32_t StrcmpChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("strcmp");
+    const bool check = PortCheck::Enabled("strcmp");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;

@@ -563,7 +563,7 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
 #ifdef MH3_DEVELOPMENT
     // MH3_PORT_CHECK=CurvesAt: the block BlendOwned left is the whole-block
     // blend it replaces (BlendCurves, every word written).
-    static const bool check = PortCheck::Enabled("CurvesAt");
+    const bool check = PortCheck::Enabled("CurvesAt");
     if (check) [[unlikely]] {
         static uint64_t checks = 0, mismatches = 0;
         const Curves expected = BlendCurves(kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), &cache.owned);

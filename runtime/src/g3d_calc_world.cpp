@@ -156,7 +156,7 @@ static void SkinningPort(CpuContext* ctx) {
 
 extern "C" void MH3_G3dCalcSkinning(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("G3dCalcSkinning");
+    const bool check = PortCheck::Enabled("G3dCalcSkinning");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "G3dCalcSkinning", func_80074180, SkinningPort);
         return;
@@ -293,7 +293,7 @@ extern "C" void MH3_G3dCalcWorld(CpuContext* ctx) {
     MH3FrameSplitCall(0);
 #endif
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("G3dCalcWorld");
+    const bool check = PortCheck::Enabled("G3dCalcWorld");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "G3dCalcWorld", func_80073830, CalcWorld);
         return;
@@ -454,7 +454,7 @@ extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
     const uint32_t position = ctx->gpr[3], normal = ctx->gpr[4], environment = ctx->gpr[10];
     const uint32_t count = ctx->gpr[7], model_reference = ctx->gpr[9];
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("G3dCalcViewLc");
+    const bool check = PortCheck::Enabled("G3dCalcViewLc");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "G3dCalcViewLc", func_800711FC, CalcViewLc);
         PublishNativeModelPose(position, normal, environment, count, model_reference);

@@ -201,7 +201,7 @@ uint32_t AnmObjChrResResultAt(GuestCall& game, uint32_t anim, uint32_t result, u
 #ifdef MH3_DEVELOPMENT
 // With MH3_PORT_CHECK naming the port, it runs checked against the original.
 #define MH3_ANM_OBJ_CHECK(name, original, port)                                                                                                                                                       \
-    static const bool check = PortCheck::Enabled(name);                                                                                                                                                \
+    const bool check = PortCheck::Enabled(name);                                                                                                                                                       \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         PortCheck::Run(ctx, name, original, port);                                                                                                                                                     \
         return;                                                                                                                                                                                        \

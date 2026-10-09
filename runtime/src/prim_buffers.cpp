@@ -112,7 +112,7 @@ void ResetAllPort(CpuContext*) {
 // The originals and ports from the same RAM snapshot (rate-limited), with the
 // registers the bodies read.
 bool Check(uint32_t r1, uint32_t r3, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
-    static const bool check = PortCheck::Enabled("PrimBuffers");
+    const bool check = PortCheck::Enabled("PrimBuffers");
     if (!check) [[likely]]
         return false;
     CpuContext* c = TryGetCpuContext();

@@ -245,7 +245,7 @@ void BlendPort(CpuContext* ctx) {
 
 extern "C" void MH3_AnmChrBlendGetResult(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnmChrBlendGetResult");
+    const bool check = PortCheck::Enabled("AnmChrBlendGetResult");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "AnmChrBlendGetResult", func_800606BC, BlendPort);
         return;
