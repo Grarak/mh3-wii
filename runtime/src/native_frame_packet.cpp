@@ -226,6 +226,19 @@ void Restore(const Packet& p, const StateIndices& state, StateIndices& applied) 
         RestoreNativeMaterialSnapshot(p.materials.items[state[NATIVE_STATE_MATERIAL]]);
     applied = state;
 }
+#ifdef __vita__
+// GXM reads vertices and indices in place when it executes the frame, so the
+// packet's heap arenas cannot be drawn from: copy each draw into the
+// renderer's GPU-mapped frame slot, which is fenced until the GPU is done.
+template <class Geometry>
+bool GpuGeometry(const Geometry& source, Geometry& out, int (*allocate)(uint32_t, uint32_t, Geometry*)) {
+    if (!allocate(source.vertex_count, source.index_count, &out))
+        return false;
+    std::memcpy(out.vertices, source.vertices, size_t(source.vertex_count) * sizeof(*source.vertices));
+    std::memcpy(out.indices, source.indices, size_t(source.index_count) * sizeof(uint16_t));
+    return true;
+}
+#endif
 void Draw(const Packet& p) {
     const auto& color = aurora::gpu::g_frameBuffer;
     const auto& depth = aurora::gpu::g_depthBuffer;
@@ -279,12 +292,26 @@ void Draw(const Packet& p) {
             // The instance changed the drawing state its record restored.
             forget();
             break;
-        case Kind::MaterialGeometry:
+        case Kind::MaterialGeometry: {
+#ifdef __vita__
+            AuroraNativeMaterialGeometry geometry;
+            if (GpuGeometry(p.materialGeometry[record.payload], geometry, aurora_allocate_native_material_geometry))
+                SubmitNativeMaterialGeometry(geometry);
+#else
             SubmitNativeMaterialGeometry(p.materialGeometry[record.payload]);
+#endif
             break;
-        case Kind::Geometry:
+        }
+        case Kind::Geometry: {
+#ifdef __vita__
+            AuroraNativeGeometry geometry;
+            if (GpuGeometry(p.geometry[record.payload], geometry, aurora_allocate_native_geometry))
+                aurora::gl::draw_native_geometry(geometry, record.textured);
+#else
             aurora::gl::draw_native_geometry(p.geometry[record.payload], record.textured);
+#endif
             break;
+        }
         case Kind::DepthClear:
             aurora::gl::clear_depth_full_target(0.f);
             break;
