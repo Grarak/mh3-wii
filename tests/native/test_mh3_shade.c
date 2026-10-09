@@ -400,6 +400,32 @@ static void srt_rows(void) {
   }
 }
 
+static void color_mapped_text(void) {
+  mh3_native_material_state s;
+  base(&s);
+  /* NW4R colour-mapped text: s0: prev = mix(c0, c1, texc), alpha mix(a0, a1,
+   * texa); s1: prev = prev * rasc, alpha prev * rasa */
+  stage(&s, 0, pass(2, 4, 8, 15, 0, 0), pass(1, 2, 4, 7, 0, 0), 0, 0, 0, 0);
+  stage(&s, 1, pass(15, 0, 10, 15, 0, 0), pass(7, 0, 5, 7, 0, 0), 255, 0, 0, 0);
+  const int16_t c0[4] = {85, 85, 85, 0}, c1[4] = {255, 255, 255, 255};
+  for (unsigned i = 0; i < 4; ++i) {
+    s.color[1].rgba[i] = c0[i];
+    s.color[2].rgba[i] = c1[i];
+  }
+  mh3_shade_material m;
+  assert(mh3_shade_classify(&s, &m) == (MH3_SHADE_EXACT | MH3_SHADE_FOLDED));
+  assert(m.textures == 1 && m.model == MH3_SHADE_BASIC);
+  const float tex[3][4] = {{0.75f, 0.75f, 0.75f, 0.75f}};
+  const float black[4] = {0.f, 0.f, 0.f, 1.f}, tint[4] = {1.f, 0.5f, 0.25f, 0.5f};
+  for (unsigned k = 0; k < 3; ++k) {
+    const float mapped = c0[k] / 255.f + (c1[k] - c0[k]) / 255.f * 0.75f;
+    check(&m, &s, 0, k, tex, black, 0.f);
+    check(&m, &s, 0, k, tex, tint, mapped * tint[k]);
+  }
+  check(&m, &s, 1, 3, tex, black, 0.75f);
+  check(&m, &s, 1, 3, tex, tint, 0.75f * 0.5f);
+}
+
 int main(void) {
   /* std140 layouts of the material-GPU blocks (Material, Animated) */
   assert(sizeof(mh3_shade_gpu_pick) == 48);
@@ -426,6 +452,7 @@ int main(void) {
   basic_texture_times_raster();
   konst_and_register();
   folded_multiply();
+  color_mapped_text();
   overlay_family();
   overlay_alpha_map();
   layers();

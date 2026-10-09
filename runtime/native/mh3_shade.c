@@ -240,8 +240,25 @@ static int fold_multiply(classifier *c, const mh3_pack_tev_pass *p, int alpha, m
         other = p->b;
     else
         return 0;
-    if (!product_form(eq) || (eq->scale && p->scale))
+    if (eq->scale && p->scale)
         return 0;
+    /* mix(A, B, s) * x with constant A and B is mix(A x, B x, s): NW4R's
+     * colour-mapped text, mix(c0, c1, tex) * ras (CharWriter::SetupGX
+     * with a colour mapping, 0x80503C38). */
+    if (!product_form(eq)) {
+        if (!is_zero(&eq->input[3]) || eq->bias || eq->subtract || !is_constant(&eq->input[0]) || !is_constant(&eq->input[1]) || is_constant(&eq->input[2]))
+            return 0;
+        const mh3_shade_term x = argument(c, alpha, other);
+        mh3_shade_term a, b;
+        if (!product(&eq->input[0], &x, &a) || !product(&eq->input[1], &x, &b))
+            return 0;
+        eq->input[0] = a;
+        eq->input[1] = b;
+        if (p->scale)
+            eq->scale = p->scale;
+        c->quality |= MH3_SHADE_FOLDED;
+        return 1;
+    }
     const mh3_shade_term x = argument(c, alpha, other);
     for (unsigned slot = 1; slot <= 2; ++slot) {
         mh3_shade_term merged;
