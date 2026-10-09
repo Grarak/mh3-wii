@@ -24,5 +24,5 @@ There is no CPU interpreter or JIT fallback in this runtime.
 is adapted from the same WiiCompiled commit's `runtime/src/hle/audio` directory.
 MH3 adaptations bind SDK task globals/callbacks, require the verified AX program
 hash `0x4CC52064`, use synchronous mixing during bring-up, and load coefficient
-data from ignored local `Assets/DSP`. The DSP coefficient file is not included
-in this repository; build scripts validate/copy the existing sibling-local file.
+data from ignored local `Assets/DSP`. The DSP coefficient file is included at `runtime/assets/dsp/dsp_coef.bin`;
+build scripts validate it and copy it into the local asset directory.

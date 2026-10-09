@@ -3,7 +3,7 @@
 /Assets/
 tools/
 generated/
-build/
+/build/
 logs/
 saves/
 **/bin/
