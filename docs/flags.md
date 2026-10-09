@@ -87,7 +87,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,serial-prepare][,census]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,serial-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,serial-prepare][,census]`
 
 | Item | Effect |
 | --- | --- |
@@ -100,7 +100,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `unpaced` | turns the game thread limiter off: the game thread records its next frame packet even when published ones wait for the render thread, which then takes the newest and skips the older ones ([packet ring](frame-packet-ring.md); for A/B runs) |
 | `queue=N` | the game thread limiter lets N published frame packets wait for the render thread, 1 (the default) or 2; each adds a render frame of latency while the render thread sets the rate ([packet ring](frame-packet-ring.md)) |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
-| `split-world` | the scene's world matrix pass is split between the game thread and the guest worker; off by default, as it did not pay off on the devkit ([guest worker](guest-worker.md)) |
+| `serial-world` | the scene's world matrix pass runs on the game thread alone, not split between the game thread and the guest worker as in every build by default ([guest worker](guest-worker.md)) |
 | `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
 | `draw-thread` | the 3D scene draws on the draw thread while the game thread waits (stage 1 of the [pipelined draw](pipelined-draw.md)) instead of beside the next logic step |
 | `draw-inline` | the whole frame draws on the game thread, as before the [pipelined draw](pipelined-draw.md); without it (and without `draw-thread`) every build overlaps the draw with the next logic step |
