@@ -1,4 +1,8 @@
 #pragma once
+// Depth peek shaders. Standard library only: the GXM shader bank generator
+// compiles this program (docs/vita-shader-bank.md).
+#include "../gx/reversed_z.hpp"
+#include <string>
 #include <string_view>
 
 namespace aurora::gfx::depth_peek::shaders {
@@ -28,4 +32,11 @@ void main() {
     frag_color = vec4(uvec4(z & 0xffu, (z >> 8u) & 0xffu, z >> 16u, 255u)) / 255.0;
 }
 )";
+// Each destination pixel packs its 24-bit GX depth into RGB bytes.
+inline std::string fragment_body() {
+  std::string source(FragmentShader);
+  const std::string_view token = "DEPTH_EXPR";
+  source.replace(source.find(token), token.size(), gx::UseReversedZ ? "1.0 - depth" : "depth");
+  return source;
+}
 } // namespace aurora::gfx::depth_peek::shaders

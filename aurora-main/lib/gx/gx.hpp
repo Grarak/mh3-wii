@@ -6,6 +6,7 @@
 #include "../gfx/common.hpp"
 #include "../gfx/texture.hpp"
 #include "../gfx/pipeline_cache.hpp"
+#include "reversed_z.hpp"
 
 #include <absl/container/flat_hash_map.h>
 #include <algorithm>
@@ -49,7 +50,6 @@ constexpr float GX_LARGE_NUMBER = -1048576.0f;
 
 namespace aurora::gx {
 constexpr bool UsePerPixelLighting = false;
-constexpr bool UseReversedZ = true;
 
 constexpr u32 MaxTextures = GX_MAX_TEXMAP;
 constexpr u32 MaxTluts = 20;

@@ -4,6 +4,7 @@
 #include "../gl/gl.hpp"
 #include "../dolphin/vi/vi_internal.hpp"
 #include "native_texture_layout.hpp"
+#include "native_scene_feedback_shaders.hpp"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -22,7 +23,7 @@ std::map<const void*, Image> images;
 // Replacing a producer identity must not invalidate the previous binding.
 std::array<gl::TexturePtr, 16> sampledImages;
 uint64_t revision = 0;
-std::array<gl::ProgramPtr, 4> copyPrograms;
+std::array<gl::ProgramPtr, gfx::scene_feedback::shaders::CopyModes> copyPrograms;
 gl::ProgramPtr brightProgram;
 struct PoolTarget {
   gl::TexturePtr texture;
@@ -31,58 +32,6 @@ struct PoolTarget {
 std::vector<PoolTarget> targets;
 SceneFeedbackStats stats;
 uint64_t acquisition = 0;
-constexpr const char* vertex = R"(
-out vec2 v_uv;
-const vec2 positions[3] = vec2[3](vec2(-1.0, 1.0), vec2(-1.0, -3.0), vec2(3.0, 1.0));
-const vec2 uvs[3] = vec2[3](vec2(0.0, 0.0), vec2(0.0, 2.0), vec2(2.0, 0.0));
-void main() { gl_Position = aur_position(vec4(positions[gl_VertexID], 0.0, 1.0)); v_uv = uvs[gl_VertexID]; }
-)";
-constexpr const char* sampleVertex = R"(
-uniform vec4 source_rect;
-uniform vec4 options;
-out vec2 v_sample0;
-const vec2 positions[3] = vec2[3](vec2(-1.0, 1.0), vec2(-1.0, -3.0), vec2(3.0, 1.0));
-const vec2 uvs[3] = vec2[3](vec2(0.0, 0.0), vec2(0.0, 2.0), vec2(2.0, 0.0));
-void main() {
-  gl_Position=aur_position(vec4(positions[gl_VertexID],0.0,1.0));
-  v_sample0=source_rect.xy+uvs[gl_VertexID]*source_rect.zw;
-}
-)";
-std::string copy_vertex(bool box) {
-  std::string source = sampleVertex;
-  if (!box)
-    return source;
-  source.insert(source.find("const vec2 positions"), "out vec2 v_sample1;\nout vec2 v_sample2;\nout vec2 v_sample3;\n");
-  source.insert(source.rfind('}'),
-                "  vec2 uv=v_sample0;\n  v_sample0=uv-options.xy;\n  v_sample1=uv+vec2(options.x,-options.y);\n  v_sample2=uv+vec2(-options.x,options.y);\n  v_sample3=uv+options.xy;\n");
-  return source;
-}
-std::string copy_fragment(bool box, bool rgb565) {
-  std::string source = "uniform sampler2D tex0;\nin vec2 v_sample0;\n";
-  if (box)
-    source += "in vec2 v_sample1;\nin vec2 v_sample2;\nin vec2 v_sample3;\n";
-  source += "layout(location = 0) out vec4 frag_color;\nvoid main() {\n  vec4 c=";
-  source += box ? "0.25*(texture(tex0,v_sample0)+texture(tex0,v_sample1)+texture(tex0,v_sample2)+texture(tex0,v_sample3));\n" : "texture(tex0,v_sample0);\n";
-  if (rgb565)
-    source += "  c=vec4(floor(clamp(c.rgb,0.0,1.0)*vec3(31.0,63.0,31.0)+0.5)/vec3(31.0,63.0,31.0),1.0);\n";
-  source += "  frag_color=c;\n}\n";
-  return source;
-}
-constexpr const char* bright = R"(
-uniform sampler2D tex0;
-uniform vec4 thresholds;
-uniform vec4 scale;
-in vec2 v_uv;
-layout(location = 0) out vec4 frag_color;
-void main() {
-  vec3 rgb=texture(tex0,v_uv).rgb;
-  float l=dot(rgb,vec3(77.0,150.0,29.0)/256.0);
-  if(l<thresholds.x) l-=l*thresholds.z;
-  if(l>thresholds.y) l+=l*thresholds.w;
-  l=clamp(l,0.0,1.0)*scale.x;
-  frag_color=vec4(l,l,l,1.0);
-}
-)";
 void owner() {
   if (!gl::on_render_thread())
     throw std::runtime_error("Scene feedback changed outside graphics owner");
@@ -167,15 +116,18 @@ bool reject_capacity() {
   return false;
 }
 void programs() {
-  for (unsigned mode = 0; mode < 4; mode++)
+  namespace shaders = gfx::scene_feedback::shaders;
+  for (unsigned mode = 0; mode < shaders::CopyModes; mode++)
     if (!copyPrograms[mode])
-      copyPrograms[mode] = std::make_shared<gl::Program>(gl::ProgramDesc{.label = "Native scene feedback capture " + std::to_string(mode),
-                                                                         .vertex = gl::vertex_source(copy_vertex(mode & 2)),
-                                                                         .fragment = gl::fragment_source(copy_fragment(mode & 2, mode & 1)),
+      copyPrograms[mode] = std::make_shared<gl::Program>(gl::ProgramDesc{.label = shaders::copy_label(mode),
+                                                                         .vertex = gl::vertex_source(shaders::copy_vertex(mode)),
+                                                                         .fragment = gl::fragment_source(shaders::copy_fragment(mode)),
                                                                          .samplers = {{"tex0", 0}}});
   if (!brightProgram)
-    brightProgram = std::make_shared<gl::Program>(
-        gl::ProgramDesc{.label = "Native scene glare brightness", .vertex = gl::vertex_source(vertex), .fragment = gl::fragment_source(bright), .samplers = {{"tex0", 0}}});
+    brightProgram = std::make_shared<gl::Program>(gl::ProgramDesc{.label = std::string(shaders::BrightLabel),
+                                                                  .vertex = gl::vertex_source(shaders::Vertex),
+                                                                  .fragment = gl::fragment_source(shaders::Bright),
+                                                                  .samplers = {{"tex0", 0}}});
 }
 struct Restore {
   gl::OffscreenState state = gl::save_offscreen_state();

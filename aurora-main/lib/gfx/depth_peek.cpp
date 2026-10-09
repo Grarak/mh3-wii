@@ -38,18 +38,6 @@ Clock::time_point g_nextSnapshotTime;
 LatestSnapshot g_latest;
 std::mutex g_mutex;
 
-using shaders::VertexShader;
-
-// Each destination pixel packs its 24-bit GX depth into RGB bytes.
-using shaders::FragmentShader;
-
-std::string build_fragment_source() {
-  std::string source(FragmentShader);
-  const std::string_view token = "DEPTH_EXPR";
-  source.replace(source.find(token), token.size(), gx::UseReversedZ ? "1.0 - depth" : "depth");
-  return source;
-}
-
 Params make_params(uint32_t srcWidth, uint32_t srcHeight, const FrameMapping& mapping) noexcept {
   Params params{};
   if (mapping.viewportPolicy == AURORA_VIEWPORT_NATIVE) {
@@ -76,8 +64,8 @@ Params make_params(uint32_t srcWidth, uint32_t srcHeight, const FrameMapping& ma
 void initialize() {
   g_program = std::make_shared<gl::Program>(gl::ProgramDesc{
       .label = "Depth Peek",
-      .vertex = gl::vertex_source(VertexShader),
-      .fragment = gl::fragment_source(build_fragment_source()),
+      .vertex = gl::vertex_source(shaders::VertexShader),
+      .fragment = gl::fragment_source(shaders::fragment_body()),
       .samplers = {{"src", 0}},
   });
 }

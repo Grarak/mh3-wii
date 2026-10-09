@@ -1,4 +1,5 @@
 #include "tex_palette_conv.hpp"
+#include "tex_palette_conv_shaders.hpp"
 
 #include "../internal.hpp"
 #include "texture.hpp"
@@ -6,73 +7,16 @@
 namespace aurora::gfx::tex_palette_conv {
 static Module Log("aurora::gfx::tex_palette_conv");
 
-// Fullscreen triangle; uv (0, 0) is the top-left texel.
-static constexpr std::string_view VertexShader = R"(
-out vec2 v_uv;
-
-const vec2 positions[3] = vec2[3](vec2(-1.0, 1.0), vec2(-1.0, -3.0), vec2(3.0, 1.0));
-const vec2 uvs[3] = vec2[3](vec2(0.0, 0.0), vec2(0.0, 2.0), vec2(2.0, 0.0));
-
-void main() {
-    gl_Position = aur_position(vec4(positions[gl_VertexID], 0.0, 1.0));
-    v_uv = uvs[gl_VertexID];
-}
-)"sv;
-
-// Direct: R16I index texture + TLUT -> RGBA8
-static constexpr std::string_view ShaderDirect = R"(
-uniform highp isampler2D src;
-uniform highp sampler2D tlut;
-in vec2 v_uv;
-layout(location = 0) out vec4 frag_color;
-
-void main() {
-    vec2 texSize = vec2(textureSize(src, 0));
-    ivec2 coord = ivec2(floor(v_uv * texSize));
-    int idx = texelFetch(src, coord, 0).r;
-    frag_color = texelFetch(tlut, ivec2(idx, 0), 0);
-}
-)"sv;
-
-// FromFloat8: float texture -> 8-bit index -> TLUT -> RGBA8
-static constexpr std::string_view ShaderFromFloat8 = R"(
-uniform highp sampler2D src;
-uniform highp sampler2D tlut;
-in vec2 v_uv;
-layout(location = 0) out vec4 frag_color;
-
-void main() {
-    vec2 texSize = vec2(textureSize(src, 0));
-    ivec2 coord = ivec2(floor(v_uv * texSize));
-    float r = texelFetch(src, coord, 0).r;
-    frag_color = texelFetch(tlut, ivec2(int(r * 255.0), 0), 0);
-}
-)"sv;
-
-// FromFloat4: float texture -> 4-bit index -> TLUT -> RGBA8
-static constexpr std::string_view ShaderFromFloat4 = R"(
-uniform highp sampler2D src;
-uniform highp sampler2D tlut;
-in vec2 v_uv;
-layout(location = 0) out vec4 frag_color;
-
-void main() {
-    vec2 texSize = vec2(textureSize(src, 0));
-    ivec2 coord = ivec2(floor(v_uv * texSize));
-    float r = texelFetch(src, coord, 0).r;
-    frag_color = texelFetch(tlut, ivec2(int(r * 15.0), 0), 0);
-}
-)"sv;
-
 static gl::ProgramPtr g_direct;
 static gl::ProgramPtr g_fromFloat8;
 static gl::ProgramPtr g_fromFloat4;
 
-static gl::ProgramPtr create_program(std::string_view fragment, const char* label) {
+static gl::ProgramPtr create_program(Variant variant) {
+  const auto& program = shaders::Programs.at(size_t(variant));
   return std::make_shared<gl::Program>(gl::ProgramDesc{
-      .label = label,
-      .vertex = gl::vertex_source(VertexShader),
-      .fragment = gl::fragment_source(fragment),
+      .label = program.label,
+      .vertex = gl::vertex_source(shaders::VertexShader),
+      .fragment = gl::fragment_source(program.fragment),
       .samplers = {{"src", 0}, {"tlut", 1}},
   });
 }
@@ -90,9 +34,9 @@ static gl::Program& program_for_variant(Variant variant) {
 }
 
 void initialize() {
-  g_direct = create_program(ShaderDirect, "TexPaletteConv Direct");
-  g_fromFloat8 = create_program(ShaderFromFloat8, "TexPaletteConv FromFloat8");
-  g_fromFloat4 = create_program(ShaderFromFloat4, "TexPaletteConv FromFloat4");
+  g_direct = create_program(Variant::Direct);
+  g_fromFloat8 = create_program(Variant::FromFloat8);
+  g_fromFloat4 = create_program(Variant::FromFloat4);
 }
 
 void shutdown() {

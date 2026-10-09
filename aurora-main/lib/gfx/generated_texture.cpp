@@ -1,5 +1,6 @@
 #include "aurora/generated_texture.hpp"
 #include "texture.hpp"
+#include "generated_texture_shaders.hpp"
 #include <memory>
 #include <stdexcept>
 #include <unordered_map>
@@ -14,39 +15,6 @@ struct GeneratedTexture {
 std::unordered_map<const void*, GeneratedTexture> generatedTextures;
 uint32_t generatedVersion = 0;
 gl::ProgramPtr materialProgram;
-constexpr const char* vertex = R"(
-out vec2 v_uv;
-out vec2 v_atlas_uv;
-uniform vec4 atlasOffset;
-const vec2 positions[3] = vec2[3](vec2(-1.0, 1.0), vec2(-1.0, -3.0), vec2(3.0, 1.0));
-const vec2 uvs[3] = vec2[3](vec2(0.0, 0.0), vec2(0.0, 2.0), vec2(2.0, 0.0));
-void main() {
-  gl_Position = aur_position(vec4(positions[gl_VertexID], 0.0, 1.0));
-  v_uv = uvs[gl_VertexID];
-  v_atlas_uv = v_uv + atlasOffset.xy;
-}
-)";
-constexpr const char* fragment = R"(
-uniform sampler2D tex0;
-uniform sampler2D tex1;
-uniform sampler2D tex2;
-uniform sampler2D tex3;
-uniform vec4 params;
-in vec2 v_uv;
-in vec2 v_atlas_uv;
-layout(location = 0) out vec4 frag_color;
-void main() {
-  vec4 base = texture(tex0, v_uv);
-  vec4 color = texture(tex1, v_uv);
-  vec4 detail = texture(tex2, v_uv);
-  vec4 atlas = texture(tex3, v_atlas_uv);
-  float alpha = color.a * params.x;
-  vec3 result = mix(base.rgb, color.rgb, alpha);
-  result = mix(result, detail.rgb, detail.a * params.y);
-  float atlasWeight = step(0.75, v_uv.x) * step(0.875, v_uv.y) * params.z;
-  frag_color = vec4(mix(result, atlas.rgb, atlasWeight), 1.0);
-}
-)";
 gfx::TextureHandle source_texture(const MaterialSource& source) {
 #ifdef AURORA_GXM
   if (source.nativeAsset) {
@@ -66,7 +34,10 @@ void publish_generated_material(uint32_t owner, const void* guestData, MaterialC
   gl::post([saved] { *saved = gl::save_offscreen_state(); });
   if (!materialProgram)
     materialProgram = std::make_shared<gl::Program>(gl::ProgramDesc{
-        .label = "Character material composition", .vertex = gl::vertex_source(vertex), .fragment = gl::fragment_source(fragment), .samplers = {{"tex0", 0}, {"tex1", 1}, {"tex2", 2}, {"tex3", 3}}});
+        .label = std::string(gfx::generated_texture::shaders::Label),
+        .vertex = gl::vertex_source(gfx::generated_texture::shaders::VertexShader),
+        .fragment = gl::fragment_source(gfx::generated_texture::shaders::FragmentShader),
+        .samplers = {{"tex0", 0}, {"tex1", 1}, {"tex2", 2}, {"tex3", 3}}});
   std::array<gfx::TextureHandle, 4> inputs;
   inputs[0] = source_texture(material.sources[0]);
   inputs[1] = source_texture(material.sources[1]);

@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 #include "../gfx/format.hpp"
+#include "../gfx/shader_source.hpp"
 #include <aurora/native_geometry.h>
 
 struct SDL_Window;
@@ -251,10 +252,6 @@ private:
 };
 using ProgramPtr = std::shared_ptr<Program>;
 
-// The shared GLSL ES prelude: version, precision, WGSL-style aliases and helpers.
-std::string_view glsl_prelude() noexcept;
-std::string vertex_source(std::string_view body);
-std::string fragment_source(std::string_view body);
 
 // Fixed-function state for one draw. Compared field by field on the render thread.
 struct RasterState {

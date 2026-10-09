@@ -1,4 +1,4 @@
-#include "../gl/gl.hpp"
+#include "shader_source.hpp"
 
 namespace aurora::gl {
 namespace {
