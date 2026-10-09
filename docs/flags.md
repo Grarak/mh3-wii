@@ -65,6 +65,11 @@ changes the interval).
 | `EffectBatch` | not a port: every material geometry draw's replayed state (its snapshots, colours applied) against the Game state at its submission ([effect batching](native-effects-port.md#batched-particle-draws-and-the-ported-particle-path-2026-10-04)) |
 | `CurvesAt` | not a port: the particle curve blend of the owned words against the whole-block blend, at the variable step |
 
+While `MH3_PORT_CHECK` is set nothing runs beside the game thread: the effect
+calculation stays on it, the world matrix pass is not split (but for
+`ScnGroupCalcWorld`), the scene graph walk stays on it and the next logic step
+waits for each frame's draw ([pipelined draw](pipelined-draw.md)).
+
 ### `MH3_RAZOR`: Vita GPU capture and live metrics
 
 `MH3_RAZOR=live=PATH[,hide-hud][,group=N][,start=N][,frames=N][,scenes][,capture=PATH][,capture-frame=N][,salvage=PATH]`.
@@ -87,25 +92,29 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,serial-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,serial-prepare][,census]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,prepare[,prepare-frames=FIRST-LAST]][,census]`
 
 | Item | Effect |
 | --- | --- |
 | `frames=N` | the legacy frame profile (`MH3 profile:` line) every N frames; only the GLES self-check reaches it now, so game runs print nothing |
 | `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw), the scene processes of model nodes by task in the `MH3 g3d split` line (world matrices, materials, vertices, view matrices, the frame update, the rest), each call of the field's frame update (0x8028CCE0: player control, enemies, camera and the rest) in the `MH3 field split` line, and each 2D layer entry function (the HUD's parts) in the `MH3 layer split` line; game-thread time only |
 | `render` | the `MH3 render split` line: the render thread's time per packet in each part of the replay (tasks, frame begin, scene feedback, state restores, model preparation, model draws, material geometry, other geometry, frame end and presentation, waiting). The render thread stores its current part; a sampler thread (core 0 on the Vita) counts it every 250 us, so the render thread reads no clock |
-| `sync` | the game thread waits for each frame packet to render (serial frames) |
+| `sync` | the game thread waits for each frame packet to render (serial frames): each thread's frame time without the other beside it |
 | `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry), or meshes of model draws: skinned ones (`skinned`), those whose material blends (`blended`) or alpha tests (`discard`); for attributing GPU time with Razor |
 | `fill` | every 300 frames, the `MH3 material fill` lines: screen area (in screens) that material geometry covers per fragment program and blend, clipped to the viewport |
-| `unpaced` | turns the game thread limiter off, as the launcher's `Game thread limit: OFF` does: the game thread records its next frame packet even when published ones wait for the render thread, which then takes the newest and skips the older ones ([packet ring](frame-packet-ring.md); for A/B runs) |
-| `queue=N` | the game thread limiter lets N published frame packets wait for the render thread, 1 (the default) or 2; each adds a render frame of latency while the render thread sets the rate ([packet ring](frame-packet-ring.md)) |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
-| `serial-world` | the scene's world matrix pass runs on the game thread alone, not split between the game thread and the guest worker as in every build by default ([guest worker](guest-worker.md)) |
 | `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
-| `draw-thread` | the 3D scene draws on the draw thread while the game thread waits (stage 1 of the [pipelined draw](pipelined-draw.md)) instead of beside the next logic step |
-| `draw-inline` | the whole frame draws on the game thread, as before the [pipelined draw](pipelined-draw.md); without it (and without `draw-thread`) every build overlaps the draw with the next logic step |
-| `serial-prepare` | the scene graph walk (traverse, view and skinning passes, the root's view matrices) runs on the game thread, not on the draw thread beside the game thread's layers after the scene as in every build by default ([pipelined draw](pipelined-draw.md)) |
 | `census` | every 240 frames, the `MH3 draw census` lines: per frame, the model draws, the skinned palette-batch draws, the distinct index ranges and meshes (a mesh split into palette batches draws once per batch), runs of draws sharing program, material and asset, the ten assets with the most draws, and the sixteen programs (vertex+fragment stage names) with the most triangles, with their draws |
+
+Every item measures or reports (`sync` and `skip` change the timing or the
+render thread's work only to attribute time). The A/B items of paths every build now takes were removed on 2026-10-05 (a
+stale one prints `MH3: MH3_PROFILE: '...' is ignored; it was removed`):
+`draw-inline` (the whole frame drawn on the game thread), `draw-thread` (the
+scene on the draw thread while the game thread waits), `serial-prepare` (the
+scene graph walk on the game thread), `serial-world` (the world matrix pass on
+the game thread alone; `MH3_PORT_CHECK` other than `ScnGroupCalcWorld` still
+keeps it there), `queue=N` (two packets waiting for the render thread) and
+`unpaced` (the launcher's `Game thread limit: OFF` does the same).
 
 ### `MH3_VERIFY`: native paths against what they replace
 
@@ -252,7 +261,9 @@ Removed with the code behind them (git history keeps them):
   uniforms remain for materials without a GPU block), `MH3_MATERIAL_GPU_RING`,
   `MH3_MODEL_CULL=0`, `MH3_MODEL_CULL_GAME=0`, `MH3_RENDER_PREP=0`,
   `MH3_DRAW_TABLE=0`, `MH3_DRAW_TABLE_DISCOVER=0`, `MH3_DRAW_TABLE_TRACE`,
-  `MH3_GXM_ALPHA_ONE=0`, `MH3_GXM_SERIAL_SCENES=1`.
+  `MH3_GXM_ALPHA_ONE=0`, `MH3_GXM_SERIAL_SCENES=1`; and the `MH3_PROFILE`
+  items `draw-inline`, `draw-thread`, `serial-prepare`, `serial-world`,
+  `queue=N` and `unpaced` (2026-10-05, [above](#mh3_profile-frame-profile-split-timers-serial-frames)).
 - Diagnostics: `MH3_VCNT` (the fixed step's retrace budget), `MH3_STEP_SCALE`
   (a forced step length), `MH3_TRACE_PLAYER` (`MH3_TRACE=input` prints the
   player's position), `MH3_DRAW_CENSUS`, `MH3_NATIVE_ASSET_TRACE`,

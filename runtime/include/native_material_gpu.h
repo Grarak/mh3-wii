@@ -1,4 +1,4 @@
-// Material uniforms in GPU memory (docs/native-material-gpu.md).
+// Material uniforms in GPU memory (docs/optimizations/rendering/material-uniform-blocks.md).
 //
 // The fixed shading programs read a material from two uniform blocks:
 //  - Material (static, mh3_shade_gpu_material, 784 bytes): every coefficient
@@ -18,8 +18,8 @@
 // patched variant per blend/output state (PatchedProgram::bind).
 //
 // Today the render thread derives both blocks from the Render owner's
-// material state (MH3_MATERIAL_GPU=0 restores the per-draw Shade uniforms).
-// The functions below let a packet item reference them instead:
+// material state. The functions below let a packet item reference them
+// instead:
 //
 //  Game thread, per material record (once):
 //    ref = AcquireNativeMaterialGpu(state)          // classify + bake
