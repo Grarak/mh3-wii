@@ -7,6 +7,7 @@ struct mh3_native_palette_source;
 struct mh3_native_fog;
 struct mh3_native_light_slots;
 struct mh3_native_material_state;
+struct mh3_model_matrix_selectors;
 struct mh3_resolved_mesh_submit;
 
 const mh3_draw_state& GetNativeDrawState();
@@ -44,6 +45,9 @@ void SetNativeMaterial(const mh3_native_material_state& material);
 // failures leave the material unchanged. Runs on skipped logical frames too.
 void OverlayNativeMaterial(const mh3_native_material_state& patch,uint32_t top_known=0);
 const mh3_native_material_state& GetNativeMaterialState();
+// Explicit current-matrix producer: updates row/dual fields directly and marks
+// consumed shader fields dirty only when those fields actually change.
+void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors);
 // Owner-only cumulative preparation counters, followed by current occupancy
 // and fixed cache bytes. Read only at development reporting boundaries.
 // 0..8: needs, dirty lookups, base hits, full preparations, base evictions,

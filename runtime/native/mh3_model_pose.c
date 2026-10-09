@@ -1,4 +1,5 @@
 #include "mh3_model_pose.h"
+#include <assert.h>
 #include <limits.h>
 #include <string.h>
 
@@ -128,17 +129,30 @@ mh3_res_status mh3_model_matrix_overlay(const mh3_model_matrix_selectors *select
     if(!selectors || !material || selectors->dual_known>1 || selectors->dual_enabled>1) return MH3_RES_INVALID;
     for(unsigned i=0;i<8;i++) if((selectors->known&(1u<<i)) && (selectors->row[i]>60 || selectors->row[i]%3))
         return MH3_RES_UNSUPPORTED;
+    (void)mh3_model_matrix_overlay_unchecked(selectors,material);
+    return MH3_RES_OK;
+}
+uint16_t mh3_model_matrix_overlay_unchecked(const mh3_model_matrix_selectors *selectors,mh3_native_material_state *material) {
+    assert(selectors && material);
+    assert(selectors->dual_known<=1 && selectors->dual_enabled<=1);
+    uint16_t changed=0;
     for(unsigned i=0;i<8;i++) {
+        mh3_pack_texgen *to=&material->texgen[i];
         if(selectors->known&(1u<<i)) {
-            material->texgen[i].known|=1u<<MH3_TEXGEN_MATRIX_ROW;
-            material->texgen[i].values[MH3_TEXGEN_MATRIX_ROW]=selectors->row[i];
+            assert(selectors->row[i]<=60 && selectors->row[i]%3==0);
+            if(!(to->known&(1u<<MH3_TEXGEN_MATRIX_ROW)) || to->values[MH3_TEXGEN_MATRIX_ROW]!=selectors->row[i])
+                changed|=(uint16_t)(1u<<i);
+            to->known|=1u<<MH3_TEXGEN_MATRIX_ROW;
+            to->values[MH3_TEXGEN_MATRIX_ROW]=selectors->row[i];
         }
         if(selectors->dual_known) {
-            material->texgen[i].known|=1u<<MH3_TEXGEN_DUAL_TEXTURE;
-            material->texgen[i].values[MH3_TEXGEN_DUAL_TEXTURE]=selectors->dual_enabled;
+            if(!(to->known&(1u<<MH3_TEXGEN_DUAL_TEXTURE)) || to->values[MH3_TEXGEN_DUAL_TEXTURE]!=selectors->dual_enabled)
+                changed|=(uint16_t)(1u<<(8+i));
+            to->known|=1u<<MH3_TEXGEN_DUAL_TEXTURE;
+            to->values[MH3_TEXGEN_DUAL_TEXTURE]=selectors->dual_enabled;
         }
     }
-    return MH3_RES_OK;
+    return changed;
 }
 mh3_res_status mh3_model_matrix_rows(const uint32_t sources[8],int32_t matrix_id,uint32_t rows[8],int *apply) {
     if(!sources || !rows || !apply) return MH3_RES_INVALID;

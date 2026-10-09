@@ -40,6 +40,11 @@ void mh3_model_matrix_reset(mh3_model_matrix_selectors *state);
 mh3_res_status mh3_model_matrix_dual(mh3_model_matrix_selectors *state,int enabled);
 mh3_res_status mh3_model_matrix_overlay(const mh3_model_matrix_selectors *selectors,
                                        mh3_native_material_state *material);
+/* Internal typed producer. Mutates only known matrix-row/dual fields. Return
+ * bits0..7 for changed rows, bits8..15 for changed dual enables; newly known
+ * fields count as changes. Invalid producer inputs are DEBUG contracts. */
+uint16_t mh3_model_matrix_overlay_unchecked(const mh3_model_matrix_selectors *selectors,
+                                           mh3_native_material_state *material);
 mh3_res_status mh3_model_matrix_rows(const uint32_t sources[8],int32_t matrix_id,uint32_t rows[8],int *apply);
 
 #ifdef __cplusplus

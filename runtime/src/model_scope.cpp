@@ -240,7 +240,9 @@ void SubmitNativeModelShape(uint32_t reference,uint32_t direct_position,uint32_t
         }
     }
     Genmode(true);Memory::GetPointer(sync_address,1)[0]=0;
-    auto material=GetNativeMaterialState();ApplyNativeModelSelectors(material);
+    // Publish the producer's row/dual fields once. Palette batches consume the
+    // owner's material directly; they do not submit a full material copy.
+    ApplyNativeModelSelectors();const auto& material=GetNativeMaterialState();
     float post[8][12]{};uint8_t known=0,format=0;
     for(uint32_t i=0;i<8;i++) {bool matrix3x4=false;if(GetNativeTextureMatrix(64+i*3,post[i],&matrix3x4)) {known|=uint8_t(1u<<i);if(matrix3x4) format|=uint8_t(1u<<i);}}
     auto submit_one=[&](uint32_t batch_index) {

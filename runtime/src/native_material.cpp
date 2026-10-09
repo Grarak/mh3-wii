@@ -4,6 +4,7 @@
 #include "model_assets.h"
 #include "../native/mh3_material_state.h"
 #include "../native/mh3_model_gpu_inputs.h"
+#include "../native/mh3_model_pose.h"
 #include "../native/adapters/model_gpu_bridge.h"
 #include "../native/adapters/model_pose_bridge.h"
 #include <algorithm>
@@ -898,6 +899,21 @@ const mh3_native_material_state& GetNativeMaterialState() {
 }
 void SetNativeMaterial(const mh3_native_material_state& source) {
     OverlayNativeMaterial(source,MH3_MATERIAL_TOP_ALL);
+}
+void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors) {
+    Owner();ObserveRasterPublications();
+    const uint16_t changed=mh3_model_matrix_overlay_unchecked(&selectors,&material);
+    if(!changed) return;
+    if(preparedKnown) {
+        const auto& consumed=ActivePrepared().requirements.texgen;
+        for(unsigned i=0;i<8;++i) {
+            if(((changed&(1u<<i)) && (consumed[i]&(1u<<MH3_TEXGEN_MATRIX_ROW))) ||
+               ((changed&(1u<<(8+i))) && (consumed[i]&(1u<<MH3_TEXGEN_DUAL_TEXTURE)))) {
+                preparedKnown=false;break;
+            }
+        }
+    }
+    preparedAdmissionPending=true;
 }
 void OverlayNativeMaterial(const mh3_native_material_state& source,uint32_t top_known) {
     Owner();ObserveRasterPublications();

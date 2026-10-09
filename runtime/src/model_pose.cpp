@@ -115,8 +115,7 @@ void Array(CpuContext* cpu,uint32_t kind) {
     cpu->gpr[3]=result;
 }
 void PublishSelectors() {
-    auto next=GetNativeMaterialState();Checked(mh3_model_matrix_overlay(&selectors,&next));
-    SetNativeMaterial(next);
+    SetNativeModelMatrixSelectors(selectors);
 }
 void Select(const uint32_t rows[8]) {
     Checked(mh3_model_matrix_select(&selectors,rows));PublishSelectors();
@@ -185,9 +184,7 @@ mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3],uint32_t mode
 void PublishNativeModelDualTexture(bool enabled) {
     Checked(mh3_model_matrix_dual(&selectors,enabled?1:0));PublishSelectors();
 }
-void ApplyNativeModelSelectors(mh3_native_material_state& material) {
-    Checked(mh3_model_matrix_overlay(&selectors,&material));
-}
+void ApplyNativeModelSelectors() {PublishSelectors();}
 void PublishNativeModelMatrixRows(const uint32_t rows[8]) {Select(rows);}
 void PublishNativeModelPositionMatrix(uint32_t selector,const float matrix[12]) {
     if(!matrix || selector%3 || selector>27) throw std::runtime_error("Native position matrix selector invalid");

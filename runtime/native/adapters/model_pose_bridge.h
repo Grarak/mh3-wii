@@ -10,7 +10,7 @@ mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3],uint32_t mode
 void PublishNativeModelDualTexture(bool enabled);
 /* Reapply independent live selector state after an immutable material overlay.
  * Unknown remains unknown; this is never an identity/dual fallback. */
-void ApplyNativeModelSelectors(mh3_native_material_state& material);
+void ApplyNativeModelSelectors();
 void PublishNativeModelMatrixRows(const uint32_t rows[8]);
 /* Actual native matrix setter publications, shared with UI/effects. Selectors
  * are PN rows0..27 and main texture rows30..57, step3; post rows64+ do not
