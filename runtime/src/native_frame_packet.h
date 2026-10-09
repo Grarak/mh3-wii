@@ -78,4 +78,7 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept;
 // the records, captures (revision advanced) and stored copies since the last
 // call; resets them.
 void TakeNativePacketSnapshotCounts(uint32_t out[3][5]);
+// Game thread, once per statistics interval: names the render thread's stage,
+// packet and record when it made no progress since the last two calls.
+void ReportNativeRenderThreadStall();
 #endif

@@ -191,6 +191,20 @@ mh3::statistics::OwnerCpuSample RenderCpuSample(int32_t thread) noexcept {
     return sample;
 }
 #endif
+#ifdef MH3_DEVELOPMENT
+// Where the render thread is, for stall reports: its stage, the packet and
+// the record (index << 8 | kind) or task index within the stage.
+enum class RenderStage : uint32_t { Waiting, BeforeTasks, Begin, Draw, End, AfterTasks, StopTasks };
+std::atomic<uint32_t> renderStage{0}, renderStep{0};
+std::atomic<uint64_t> renderPacket{0};
+void Stage(RenderStage stage, uint32_t step = 0) noexcept {
+    renderStage.store(uint32_t(stage), std::memory_order_relaxed);
+    renderStep.store(step, std::memory_order_relaxed);
+}
+#define MH3_RENDER_STAGE(...) Stage(__VA_ARGS__)
+#else
+#define MH3_RENDER_STAGE(...)
+#endif
 bool synchronous = false;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
@@ -295,7 +309,7 @@ bool Allocate(uint32_t vertices, uint32_t indices, Geometry& out) {
 
 // ---- Render thread ----
 void RunTasks(std::deque<Task>& queue, uint64_t through) {
-    for (;;) {
+    for ([[maybe_unused]] uint32_t index = 0;; ++index) {
         std::function<void()> run;
         {
             std::lock_guard lock(taskLock);
@@ -304,6 +318,9 @@ void RunTasks(std::deque<Task>& queue, uint64_t through) {
             run = std::move(queue.front().run);
             queue.pop_front();
         }
+#ifdef MH3_DEVELOPMENT
+        renderStep.store(index, std::memory_order_relaxed);
+#endif
         run();
     }
 }
@@ -365,7 +382,8 @@ void Draw(const Packet& p) {
         ForgetNativeModelPrepCaches();
     };
     forget();
-    for (const auto& record : p.records) {
+    for ([[maybe_unused]] uint32_t index = 0; const auto& record : p.records) {
+        MH3_RENDER_STAGE(RenderStage::Draw, index++ << 8 | uint32_t(record.kind));
         if (!aurora_native_frame_should_render())
             return;
         switch (record.kind) {
@@ -425,15 +443,23 @@ void Draw(const Packet& p) {
     }
 }
 void Execute(const Packet& p) {
+#ifdef MH3_DEVELOPMENT
+    renderPacket.store(p.sequence, std::memory_order_relaxed);
+#endif
+    MH3_RENDER_STAGE(RenderStage::BeforeTasks);
     RunTasks(beforeTasks, p.sequence);
     if (p.render && !p.canceled) {
+        MH3_RENDER_STAGE(RenderStage::Begin);
         if (aurora_begin_native_frame())
             Draw(p);
         if (!p.capture.empty())
             aurora_request_frame_capture(aurora::gfx::current_frame() + 1, p.capture.c_str());
+        MH3_RENDER_STAGE(RenderStage::End);
         aurora_end_native_frame();
     }
+    MH3_RENDER_STAGE(RenderStage::AfterTasks);
     RunTasks(afterTasks, p.sequence);
+    MH3_RENDER_STAGE(RenderStage::Waiting);
 }
 void RenderLoop() {
     aurora::gl::acquire_context();
@@ -508,6 +534,7 @@ void RenderLoop() {
             completed.notify_all();
         }
         // Resource work queued after the last packet.
+        MH3_RENDER_STAGE(RenderStage::StopTasks);
         RunTasks(beforeTasks, UINT64_MAX);
         RunTasks(afterTasks, UINT64_MAX);
     } catch (const std::exception& error) {
@@ -696,6 +723,27 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept {
         }
     }
     return result;
+}
+void ReportNativeRenderThreadStall() {
+    // Once per statistics interval: an unchanged stage, packet and step over
+    // two reports means the render thread made no progress for over a second.
+    static uint32_t lastStage = 0, lastStep = 0, reports = 0;
+    static uint64_t lastPacket = 0;
+    const auto stage = renderStage.load(std::memory_order_relaxed), step = renderStep.load(std::memory_order_relaxed);
+    const auto packet = renderPacket.load(std::memory_order_relaxed);
+    if (!running.load(std::memory_order_acquire) || stage == uint32_t(RenderStage::Waiting) || stage != lastStage || step != lastStep || packet != lastPacket) {
+        lastStage = stage, lastStep = step, lastPacket = packet, reports = 0;
+        return;
+    }
+    if (++reports < 2)
+        return;
+    constexpr const char* stages[]{"waiting", "tasks before draws", "frame begin", "draw", "frame end", "tasks after draws", "stop tasks"};
+    if (stage == uint32_t(RenderStage::Draw))
+        std::fprintf(stderr, "MH3 render thread: no progress for %u reports in %s of packet %llu, record %u kind %u (game sequence %llu)\n", reports, stages[stage],
+                     static_cast<unsigned long long>(packet), step >> 8, step & 0xff, static_cast<unsigned long long>(sequence));
+    else
+        std::fprintf(stderr, "MH3 render thread: no progress for %u reports in %s of packet %llu, step %u (game sequence %llu)\n", reports, stages[stage < 7 ? stage : 0],
+                     static_cast<unsigned long long>(packet), step, static_cast<unsigned long long>(sequence));
 }
 void TakeNativePacketSnapshotCounts(uint32_t out[3][5]) {
     static_assert(sizeof snapshotCounts == sizeof(uint32_t[3][5]));
