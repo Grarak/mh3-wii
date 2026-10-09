@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <mutex>
 #include <netdb.h>
@@ -592,6 +593,90 @@ bool ParseIpv4(const std::string& text, uint32_t* ip) {
     return inet_pton(AF_INET, text.c_str(), ip) == 1;
 }
 
+namespace {
+// One DNS A query over UDP to SERVER (network order), for when the system's
+// resolver fails: the Vita devkit's answered every name with ECONNREFUSED
+// (getaddrinfo -5, oct07-tls2) while its network worked.
+bool QueryDns(const std::string& name, uint32_t server, std::vector<uint32_t>& addresses) {
+    uint8_t packet[512] = {0x4d, 0x33, 0x01, 0x00, 0x00, 0x01}; // id, recursion desired, one question
+    size_t size = 12;
+
+    for (size_t start = 0; start <= name.size();) {
+        const size_t dot = std::min(name.find('.', start), name.size());
+        const size_t length = dot - start;
+
+        if (length == 0 || length > 63 || size + length + 6 > sizeof(packet))
+            return false;
+
+        packet[size++] = uint8_t(length);
+        std::memcpy(packet + size, name.data() + start, length);
+        size += length;
+        start = dot + 1;
+    }
+
+    const uint8_t question[] = {0, 0, 1, 0, 1}; // end of name, type A, class IN
+    std::memcpy(packet + size, question, sizeof(question));
+    size += sizeof(question);
+    const int handle = ::socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (handle < 0)
+        return false;
+
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(53);
+    to.sin_addr.s_addr = server;
+    pollfd entry{handle, POLLIN, 0};
+    uint8_t reply[512];
+    ssize_t got = -1;
+
+    if (::sendto(handle, packet, size, 0, reinterpret_cast<const sockaddr*>(&to), sizeof(to)) == ssize_t(size) && ::poll(&entry, 1, 2000) > 0)
+        got = ::recv(handle, reply, sizeof(reply), 0);
+
+    ::close(handle);
+
+    // The same id, a response, no error, at least one answer.
+    if (got < 12 || reply[0] != packet[0] || reply[1] != packet[1] || !(reply[2] & 0x80) || (reply[3] & 0x0f) || !(reply[6] | reply[7]))
+        return false;
+
+    const auto skipName = [&](size_t at) -> size_t {
+        while (at < size_t(got)) {
+            if ((reply[at] & 0xc0) == 0xc0)
+                return at + 2;
+
+            if (!reply[at])
+                return at + 1;
+
+            at += reply[at] + 1u;
+        }
+
+        return size_t(got);
+    };
+
+    size_t at = skipName(12) + 4;
+
+    for (unsigned answers = reply[6] << 8 | reply[7]; answers && at + 10 <= size_t(got); --answers) {
+        at = skipName(at);
+
+        if (at + 10 > size_t(got))
+            break;
+
+        const unsigned type = reply[at] << 8 | reply[at + 1], length = reply[at + 8] << 8 | reply[at + 9];
+        at += 10;
+
+        if (type == 1 && length == 4 && at + 4 <= size_t(got)) {
+            uint32_t address;
+            std::memcpy(&address, reply + at, 4);
+            addresses.push_back(address);
+        }
+
+        at += length;
+    }
+
+    return !addresses.empty();
+}
+} // namespace
+
 struct Lookup::State {
     std::mutex lock;
     bool done = false;
@@ -620,12 +705,28 @@ Lookup::Lookup(std::string name) : state_(std::make_shared<State>()) {
         addrinfo* found = nullptr;
         std::vector<uint32_t> addresses;
 
-        if (getaddrinfo(state->name.c_str(), nullptr, &hints, &found) == 0) {
+        if (const int failed = getaddrinfo(state->name.c_str(), nullptr, &hints, &found); failed == 0) {
             for (const addrinfo* entry = found; entry; entry = entry->ai_next)
                 if (entry->ai_family == AF_INET)
                     addresses.push_back(reinterpret_cast<const sockaddr_in*>(entry->ai_addr)->sin_addr.s_addr);
 
             freeaddrinfo(found);
+        } else {
+            // The game shows only that the host was not found (-305).
+            const int error = errno;
+            uint32_t servers[] = {DefaultInterface().dns, 0, 0};
+            inet_pton(AF_INET, "1.1.1.1", &servers[1]);
+            inet_pton(AF_INET, "8.8.8.8", &servers[2]);
+            char text[INET_ADDRSTRLEN] = "";
+
+            for (const uint32_t server : servers)
+                if (server && QueryDns(state->name, server, addresses)) {
+                    inet_ntop(AF_INET, &server, text, sizeof(text));
+                    break;
+                }
+
+            std::fprintf(stderr, "MH3 net: lookup of %s failed: %d (errno %d)%s%s\n", state->name.c_str(), failed, error,
+                         addresses.empty() ? "; no DNS server answered either" : "; answered by DNS server ", text);
         }
 
         {
@@ -682,6 +783,48 @@ const std::string& Lookup::Name() const {
 
 #ifdef MH3_HAS_OPENSSL
 namespace {
+std::string TimeText(ASN1_TIME* time) {
+    BIO* text = BIO_new(BIO_s_mem());
+    char* data = nullptr;
+
+    if (!text)
+        return "?";
+
+    ASN1_TIME_print(text, time);
+    const long length = BIO_get_mem_data(text, &data);
+    std::string result(data && length > 0 ? data : "", data && length > 0 ? size_t(length) : 0);
+    BIO_free(text);
+    return result;
+}
+
+// A certificate the verification refused, with the clock it was checked
+// against: the Wii reports only the kind (verify date, root CA, ...).
+int LogRefusedCertificate(int ok, X509_STORE_CTX* store) {
+    if (ok)
+        return ok;
+
+    X509* certificate = X509_STORE_CTX_get_current_cert(store);
+    char subject[256] = "?";
+    std::string from = "?", to = "?";
+
+    if (certificate) {
+        X509_NAME_oneline(X509_get_subject_name(certificate), subject, sizeof(subject));
+        from = TimeText(X509_get_notBefore(certificate));
+        to = TimeText(X509_get_notAfter(certificate));
+    }
+
+    const time_t now = std::time(nullptr);
+    tm utc{};
+    char clock[32] = "?";
+
+    if (gmtime_r(&now, &utc))
+        std::strftime(clock, sizeof(clock), "%Y-%m-%d %H:%M:%S", &utc);
+
+    std::fprintf(stderr, "MH3 net: TLS certificate %s at depth %d refused: %s (valid %s to %s; now %s UTC)\n", subject, X509_STORE_CTX_get_error_depth(store),
+                 X509_verify_cert_error_string(X509_STORE_CTX_get_error(store)), from.c_str(), to.c_str(), clock);
+    return ok;
+}
+
 class OpenSslTls final : public Tls {
   public:
     OpenSslTls(const std::string& hostname, bool verify) : hostname_(hostname), verify_(verify) {
@@ -699,7 +842,7 @@ class OpenSslTls final : public Tls {
         // The Wii's servers use SHA-1 and 1024-bit RSA certificates.
         SSL_CTX_set_security_level(context_, 0);
 #endif
-        SSL_CTX_set_verify(context_, verify ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, nullptr);
+        SSL_CTX_set_verify(context_, verify ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, verify ? LogRefusedCertificate : nullptr);
         session_ = SSL_new(context_);
 
         // The Wii checks the server's common name against the name it was
