@@ -57,12 +57,14 @@ target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_source
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
 target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
+target_sources(MH3 PRIVATE src/native_display_utilities.cpp)
 target_sources(MH3 PRIVATE native/mh3_draw_state.c)
 target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c
   src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
   src/native_ui.cpp native/mh3_ui.c
   src/native_effect_draw.cpp native/mh3_effect_draw.c
   src/native_scene_feedback.cpp native/mh3_scene_feedback.c
+  native/mh3_demo_menu.c
   src/native_scene_queue.cpp native/mh3_scene_queue.c
   src/launcher_support.cpp)
 # Clang's precise float pragma is unsupported for the Vita target. Keep the

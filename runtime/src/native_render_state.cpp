@@ -79,6 +79,13 @@ void SetNativeViewport(float x,float y,float width,float height,float near_z,flo
         1.f-std::clamp(std::max(near_z,far_z),0.f,1.f),
         1.f-std::clamp(std::min(near_z,far_z),0.f,1.f));
 }
+bool GetNativeScissor(int32_t out[4]) {
+    RequireOwner();
+    if(!out) throw std::runtime_error("Null native scissor destination");
+    if(!scissorKnown) return false;
+    std::memcpy(out,scissor.data(),sizeof(int32_t)*4);
+    return true;
+}
 void SetNativeScissor(int32_t x,int32_t y,int32_t width,int32_t height) {
     RequireOwner();
     if(width<0 || height<0) throw std::runtime_error("Negative native scissor");
