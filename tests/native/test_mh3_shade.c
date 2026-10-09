@@ -191,6 +191,34 @@ static void overlay_family(void) {
   check(&m, &s, 1, 3, tex, ras, tex[0][3] * ras[3]);
 }
 
+/* em024 wings: the overlay family, then a last stage writing a0 = map3.a *
+ * ras.a (GX outputs the last stage whatever its register). The overlay
+ * holds all three roles, so it is dropped: colour keeps the base texture and
+ * alpha samples map 3 instead of the zero left in prev. */
+static void overlay_alpha_map(void) {
+  mh3_native_material_state s;
+  base(&s);
+  s.pixel.values[MH3_PIXEL_ALPHA_COMPARE0] = 6; /* GEQUAL 100 */
+  s.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0] = 100;
+  s.pixel.values[MH3_PIXEL_ALPHA_COMPARE1] = 3; /* LEQUAL 255 */
+  s.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1] = 255;
+  stage(&s, 0, pass(15, 8, 10, 15, 0, 3), pass(7, 7, 7, 7, 0, 0), 0, 0, 0, 0);
+  stage(&s, 1, pass(15, 8, 14, 6, 1, 0), pass(7, 7, 7, 0, 0, 0), 1, 7, 15, 0);
+  stage(&s, 2, pass(6, 0, 8, 15, 0, 0), pass(7, 7, 7, 0, 0, 0), 2, 7, 0, 0);
+  stage(&s, 3, pass(14, 15, 12, 0, 0, 0), pass(7, 4, 5, 7, 0, 1), 3, 0, 0, 0);
+  mh3_shade_material m;
+  mh3_shade_classify(&s, &m);
+  assert(!m.overlay && m.alpha_test && m.textures == 2);
+  assert(m.texture_map[0] == 0 && m.texture_map[1] == 3 && m.texture_coordinate[1] == 3);
+  const float tex[3][4] = {{0.2f, 0.4f, 0.6f, 0.f},
+                           {0.9f, 0.1f, 0.5f, 0.75f},
+                           {0.f, 0.f, 0.f, 0.f}},
+              ras[4] = {0.5f, 0.5f, 0.5f, 0.8f};
+  check(&m, &s, 1, 3, tex, ras, 0.75f * 0.8f);
+  for (unsigned k = 0; k < 3; ++k)
+    check(&m, &s, 0, k, tex, ras, tex[0][k] * ras[k]);
+}
+
 static void layers(void) {
   mh3_native_material_state s;
   base(&s);
@@ -336,6 +364,7 @@ int main(void) {
   konst_and_register();
   folded_multiply();
   overlay_family();
+  overlay_alpha_map();
   layers();
   split_color_alpha();
   approximations();

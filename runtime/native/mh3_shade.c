@@ -94,7 +94,8 @@ typedef struct {
     mh3_shade_material *out;
     const mh3_native_material_state *state;
     uint8_t quality;
-    unsigned stage; /* stage whose arguments are being mapped */
+    unsigned stage;    /* stage whose arguments are being mapped */
+    uint8_t exhausted; /* a stage sampled a map beyond the three roles */
 } classifier;
 
 /* Texture role for a stage's (map, coordinate); allocates the next role. */
@@ -113,6 +114,8 @@ static uint8_t role(classifier *c, const mh3_pack_tev_stage *stage) {
     const int r = texture_role(c, stage);
     if (r < 0) {
         c->quality |= MH3_SHADE_FALLBACK;
+        if (stage->texture_map != 255)
+            c->exhausted = 1;
         return 0;
     }
     return (uint8_t)r;
@@ -367,7 +370,25 @@ static int overlay(classifier *c) {
         if (!passthrough(&s->tev[3].color, 0) && !fold_multiply(c, &s->tev[3].color, 0, eq))
             return 0;
     }
-    fold_channel(c, 1, 0, s->tev_count, &m->alpha);
+    /* Alpha folds from the first start stage that is exact with the roles the
+     * overlay holds. When none is and some start needs a fourth texture (the
+     * em024 wings: a last stage writes a0 = map3.a * ras.a), drop the overlay
+     * so the base texture and the alpha map share the three roles. */
+    unsigned start = 0;
+    int exact = 0, exhausted = 0;
+    for (unsigned i = 0; i < s->tev_count && !exact; ++i) {
+        mh3_shade_material trial = *m;
+        classifier t = {&trial, s, 0, 0, 0};
+        fold_channel(&t, 1, i, s->tev_count, &trial.alpha);
+        exhausted |= t.exhausted;
+        if (!(t.quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE))) {
+            start = i;
+            exact = 1;
+        }
+    }
+    if (!exact && exhausted)
+        return 0;
+    fold_channel(c, 1, start, s->tev_count, &m->alpha);
     m->overlay = 1;
     return 1;
 }
