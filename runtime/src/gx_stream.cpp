@@ -5,34 +5,81 @@
 #include <algorithm>
 #include <bit>
 
-size_t GuestGxStream::VertexSize(unsigned format) const {
+std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned format) const {
     const auto lo = cp[0x50], hi = cp[0x60];
     const auto a = cp[0x70 + format], b = cp[0x80 + format], c = cp[0x90 + format];
-    size_t size = std::popcount(lo & 0x1FF); // one byte per enabled matrix index
-    auto numeric = [&](unsigned descriptor, unsigned type, unsigned components, unsigned indices = 1) {
-        if (!descriptor) return;
-        if (descriptor >= 2) { size += (descriptor - 1) * indices; return; }
+    std::array<Attribute, 12> result{};
+    auto numeric = [](unsigned descriptor, unsigned type, unsigned components, unsigned indices = 1) -> Attribute {
+        if (!descriptor) return {};
         constexpr unsigned bytes[]{1, 1, 2, 2, 4};
         if (type >= std::size(bytes)) throw std::runtime_error("Invalid GX vertex component type");
-        size += bytes[type] * components;
+        return {descriptor, bytes[type] * components, indices};
     };
-    numeric((lo >> 9) & 3, (a >> 1) & 7, 2 + (a & 1));
+    result[0] = numeric((lo >> 9) & 3, (a >> 1) & 7, 2 + (a & 1));
     const bool nbt3 = (a >> 31) != 0;
-    numeric((lo >> 11) & 3, (a >> 10) & 7, ((a & 0x200) || nbt3) ? 9 : 3, nbt3 ? 3 : 1);
+    result[1] = numeric((lo >> 11) & 3, (a >> 10) & 7, ((a & 0x200) || nbt3) ? 9 : 3, nbt3 ? 3 : 1);
     for (unsigned i = 0; i < 2; ++i) {
         const unsigned descriptor = (lo >> (13 + 2 * i)) & 3;
-        if (descriptor >= 2) size += descriptor - 1;
-        else if (descriptor == 1) {
+        if (descriptor) {
             constexpr unsigned bytes[]{2, 3, 4, 2, 3, 4};
             const unsigned type = (a >> (14 + 4 * i)) & 7;
             if (type >= std::size(bytes)) throw std::runtime_error("Invalid GX vertex color type");
-            size += bytes[type];
+            result[2 + i] = {descriptor, bytes[type], 1};
         }
     }
     const uint32_t texFields[]{a >> 21, b, b >> 9, b >> 18, b >> 27, c >> 5, c >> 14, c >> 23};
     for (unsigned i = 0; i < 8; ++i)
-        numeric((hi >> (2 * i)) & 3, (texFields[i] >> 1) & 7, 1 + (texFields[i] & 1));
+        result[4 + i] = numeric((hi >> (2 * i)) & 3, (texFields[i] >> 1) & 7, 1 + (texFields[i] & 1));
+    return result;
+}
+size_t GuestGxStream::VertexSize(unsigned format) const {
+    size_t size = std::popcount(cp[0x50] & 0x1FF);
+    for (const auto& attribute : Attributes(format))
+        size += attribute.descriptor >= 2 ? (attribute.descriptor - 1) * attribute.indices : attribute.bytes;
     return size;
+}
+std::array<uint8_t, 16> GuestGxStream::ArrayPacket(unsigned slot, ArrayView view) {
+    std::array<uint8_t, 16> packet{};
+    packet[0] = 0x50; packet[2] = 0x10 + slot;
+    for (unsigned i = 0; i < 8; ++i) packet[3 + i] = uint64_t(view.address) >> (56 - 8 * i);
+    for (unsigned i = 0; i < 4; ++i) packet[11 + i] = view.size >> (24 - 8 * i);
+    return packet;
+}
+void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver) const {
+    const unsigned count = (unsigned(draw[1]) << 8) | draw[2];
+    if (!count) return;
+    const auto attributes = Attributes(draw[0] & 7);
+    if (std::none_of(attributes.begin(), attributes.end(), [](auto a) { return a.descriptor >= 2; })) return;
+    if (!resolver) throw std::runtime_error("Indexed draw requires guest vertex-array resolution");
+    std::array<uint32_t, 12> maximum{};
+    size_t offset = 3;
+    const unsigned matrixBytes = std::popcount(cp[0x50] & 0x1FF);
+    for (unsigned vertex = 0; vertex < count; ++vertex) {
+        offset += matrixBytes;
+        for (unsigned slot = 0; slot < attributes.size(); ++slot) {
+            const auto& a = attributes[slot];
+            if (a.descriptor < 2) { offset += a.bytes; continue; }
+            for (unsigned i = 0; i < a.indices; ++i) {
+                if (offset + a.descriptor - 1 > draw.size()) throw std::runtime_error("GX index exceeds vertex packet");
+                const unsigned index = a.descriptor == 2 ? draw[offset] : (unsigned(draw[offset]) << 8) | draw[offset + 1];
+                maximum[slot] = std::max(maximum[slot], index);
+                offset += a.descriptor - 1;
+            }
+        }
+    }
+    if (offset != draw.size()) throw std::runtime_error("GX array scan disagrees with vertex framing");
+    for (unsigned slot = 0; slot < attributes.size(); ++slot) {
+        const auto& a = attributes[slot];
+        if (a.descriptor < 2) continue;
+        auto view = resolver(cp[0xA0 + slot]);
+        // NBT3 carries three independent indices into three-component vectors;
+        // ordinary NBT carries one index into a nine-component array element.
+        const uint64_t needed = uint64_t(maximum[slot]) * (cp[0xB0 + slot] & 255) + a.bytes / a.indices;
+        if (!view.address || needed > view.size)
+            throw std::runtime_error("GX draw index exceeds guest vertex-array RAM");
+        view.size = static_cast<uint32_t>(needed);
+        sink(ArrayPacket(slot, view));
+    }
 }
 
 std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayResolver& resolver) {
@@ -170,12 +217,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             const auto view = resolver(guest);
             // Aurora's 0x50/0x0010..1F extension carries a host pointer,
             // accessible byte count, and an explicit guest-big-endian flag.
-            std::array<uint8_t, 16> converted{};
-            converted[0] = 0x50;
-            converted[2] = 0x10 + p[1] - 0xA0;
-            for (unsigned i = 0; i < 8; ++i) converted[3 + i] = uint64_t(view.address) >> (56 - 8 * i);
-            for (unsigned i = 0; i < 4; ++i) converted[11 + i] = view.size >> (24 - 8 * i);
-            sink(converted);
+            sink(ArrayPacket(p[1] - 0xA0, view));
             offset += length;
             continue;
         }
@@ -254,6 +296,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             if (reg == 0x45 || reg == 0x47 || reg == 0x48)
                 throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
         }
+        if (p[0] >= 0x80 && p[0] <= 0xBF)
+            BindDrawArrays(std::span<const uint8_t>(p, length), sink, resolver);
         sink(std::span<const uint8_t>(p, length));
         offset += length;
     }

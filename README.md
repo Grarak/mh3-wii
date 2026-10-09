@@ -14,9 +14,9 @@ Classic Controller reports drive movie skipping and title-menu navigation.
 Selecting Begin the Game passes HID and keyboard initialization and renders all
 six save slots. File selection and the main menu work. Selecting New Game now
 completes its CPU framebuffer read/modify/write loop, then reaches an
-vertex-array staging limit while preparing the character scene. Display lists
-and indexed matrix loads execute; vertex uploads still need bounds derived from
-the draw indices.
+the animated character scene. Display lists, indexed matrix loads, and bounded
+vertex uploads execute. The scene still has repeated smaller images and missing
+UI; frame/copy sequencing is under investigation.
 See [framebuffer support](docs/efb-color-bringup.md). See [controls](docs/controller-bringup.md),
 [HID startup](docs/usb-hid-bringup.md), and [function discovery](docs/function-discovery.md).
 The SDL gamepad source passes a virtual-device mapping/hotplug test; live game
