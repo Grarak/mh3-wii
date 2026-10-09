@@ -170,6 +170,13 @@ class AddressMap {
   public:
     AddressMap() { Rehash(64); }
     bool Empty() const { return count_ == 0; }
+    uint32_t Size() const { return count_; }
+    void Clear() {
+        slots_.assign(64, Slot{0, V{}});
+        mask_ = 63;
+        shift_ = 32 - 6;
+        count_ = 0;
+    }
     V* Find(uint32_t key) {
         for (uint32_t i = Home(key);; i = (i + 1) & mask_) {
             if (slots_[i].key == key)
@@ -238,7 +245,10 @@ struct Step {
 Step step;
 
 // Particles whose age crosses no whole tick in the running ParticleManager::Calc.
-AddressMap<bool> betweenTicks;
+// Stamped with the ParticleManager::Calc call (betweenCall) that set it, so
+// a call need not erase its entries; cleared when it grows.
+AddressMap<uint32_t> betweenTicks;
+uint32_t betweenCall = 0;
 
 // Runs the particle's curve tracks at `tick`, as ParticleManager::Calc does
 // (without the child and texture tracks, the events, and the emitter-age ones).
@@ -677,6 +687,8 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     // Calc does not nest: one list serves every call.
     static std::vector<Work> work;
     work.clear();
+    if (betweenTicks.Size() > 4096)
+        betweenTicks.Clear();
     for (uint32_t p = lastCalced ? list.Next(lastCalced) : list.First(); p; p = list.Next(p)) {
         if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive || MemoryInline::FlatRead32(p + kParticleEval) != kEvalWait)
             continue;
@@ -696,12 +708,11 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         if (dt != 1.0)
             MemoryInline::FlatWriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
         if (std::floor(age + dt) == std::floor(age))
-            betweenTicks[p] = true;
+            betweenTicks[p] = betweenCall;
         work.push_back(w);
     }
     ParticleManagerCalcNative(ctx);
-    for (const Work& w : work)
-        betweenTicks.Erase(w.address);
+    ++betweenCall; // this call's stamps no longer hold
 
     GuestCall game{ctx};
     for (const Work& w : work) {
@@ -748,7 +759,8 @@ REGISTER_NATIVE_FUNCTION_AS(0x800AC35C, MH3_ParticleManagerCalc, "ParticleManage
 // Child emission is a curve event: only when the particle's age crosses a tick.
 extern "C" void func_800A1D0C(CpuContext* ctx);
 static void AnimCurveExecuteChildPort(CpuContext* ctx) {
-    if (!betweenTicks.Find(ctx->gpr[4]))
+    const uint32_t* stamp = betweenTicks.Find(ctx->gpr[4]);
+    if (!stamp || *stamp != betweenCall)
         func_800A1D0C(ctx);
 }
 extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) {
