@@ -7,6 +7,9 @@
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_frame_state_exchange.h"
 #include "model_render_prep.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include <aurora/aurora.h>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
@@ -669,9 +672,8 @@ void StartNativeRenderThread() {
 #ifdef __linux__
     renderCounters.cpuClock.store(-1, std::memory_order_relaxed);
 #endif
-    // MH3_RENDER_SYNC=1: wait for every packet to render (serial frames).
-    if (const char* v = std::getenv("MH3_RENDER_SYNC"))
-        synchronous = v[0] == '1';
+    // MH3_PROFILE=sync: wait for every packet to render (serial frames).
+    synchronous = ProfileOptions().Has("sync");
 #endif
     gameThread = std::this_thread::get_id();
     stopping = false;

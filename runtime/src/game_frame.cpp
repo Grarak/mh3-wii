@@ -160,10 +160,7 @@ uint32_t splitScopes[MH3_SPLIT_FAMILIES];
 #ifdef MH3_DEVELOPMENT
 uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 uint32_t mh3SplitFrame;
-extern const bool mh3SplitDetail = [] {
-    const char* value = std::getenv("MH3_MODEL_SPLIT");
-    return value && value[0] == '1';
-}();
+extern const bool mh3SplitDetail = ProfileOptions().Has("split");
 void MH3FrameSplitCall(unsigned kind) {
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];

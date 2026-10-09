@@ -126,7 +126,7 @@ std::atomic<uint64_t> guestCopies{0}; // logical frames, counted on the game thr
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include "gx_diagnostics.inc"
 #endif
-// Stats (MH3_STATS line, MH3_PROFILE_FRAMES profile, GX counters) are built
+// Stats (MH3_STATS line, MH3_PROFILE frames= profile, GX counters) are built
 // only with MH3_DEVELOPMENT; MH3_STAT(...) compiles its argument away otherwise.
 #ifdef MH3_DEVELOPMENT
 #define MH3_STAT(...) __VA_ARGS__
@@ -265,11 +265,10 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     guestStream.coalesce = false;
 #endif
 #ifdef MH3_DEVELOPMENT
-    if (const char* interval = std::getenv("MH3_PROFILE_FRAMES")) {
-        const auto value = std::stoul(interval);
-        if (!value || value > UINT32_MAX)
-            throw std::runtime_error("MH3_PROFILE_FRAMES must be a positive 32-bit number");
-        profile.interval = static_cast<uint32_t>(value);
+    if (const uint64_t interval = ProfileOptions().Number("frames", 0)) {
+        if (interval > UINT32_MAX)
+            throw std::runtime_error("MH3_PROFILE frames= must be a 32-bit number");
+        profile.interval = static_cast<uint32_t>(interval);
         profile.started = FrameProfile::Clock::now();
         profile.cpuStarted = std::clock();
     }

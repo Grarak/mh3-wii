@@ -141,6 +141,9 @@ inline void ReportRetiredVariables() {
         {"MH3_WRITE_WATCH_LIST", "MH3_WRITE_WATCH"},
         {"MH3_WRITE_WATCH_MS", "MH3_WRITE_WATCH"},
         {"MH3_CALL_TRACE_GATE", "MH3_CALL_TRACE"},
+        {"MH3_PROFILE_FRAMES", "MH3_PROFILE"},
+        {"MH3_MODEL_SPLIT", "MH3_PROFILE"},
+        {"MH3_RENDER_SYNC", "MH3_PROFILE"},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))
@@ -158,5 +161,13 @@ inline void ReportRetiredVariables() {
 // dumps (graphics_host.cpp) and the audio output (audio_output.cpp).
 inline const DevOptions& CaptureOptions() {
     static const DevOptions options("MH3_CAPTURE", {"interval", "start", "frame", "audio"}, DevOptions::Words::Allowed);
+    return options;
+}
+
+// MH3_PROFILE=[frames=N][,split][,sync]: the frame profile and GX counters
+// every N frames (graphics_host.cpp), the per-draw split timers
+// (game_frame.cpp) and serial frames (native_frame_packet.cpp).
+inline const DevOptions& ProfileOptions() {
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "sync"});
     return options;
 }

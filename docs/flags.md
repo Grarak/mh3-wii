@@ -76,6 +76,16 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `settle` | both runs take one more 1/30 s step, so copies of the previous step's values agree again |
 | `all` | probe the whole frame (scene update, tasks, drawing), not just the task pass |
 
+### `MH3_PROFILE`: frame profile, split timers, serial frames
+
+`MH3_PROFILE=[frames=N][,split][,sync]`
+
+| Item | Effect |
+| --- | --- |
+| `frames=N` | the frame profile (wall/CPU ms per frame, completion, queue) and GX counters every N frames |
+| `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw: ~1.5 ms/frame on the Vita) |
+| `sync` | the game thread waits for each frame packet to render (serial frames) |
+
 ## Build-option tools
 
 These need a CMake option, which rebuilds the generated code.
@@ -116,3 +126,4 @@ A development build names any of these that is still set at startup.
 | `MH3_STEP_PROBE_SETTLE=1`, `MH3_STEP_PROBE_ALL` | `MH3_STEP_PROBE=...,settle,all` |
 | `MH3_WRITE_WATCH_LIST=FILE`, `MH3_WRITE_WATCH_MS=N` | `MH3_WRITE_WATCH=list=FILE,ms=N` |
 | `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |
+| `MH3_PROFILE_FRAMES=N`, `MH3_MODEL_SPLIT=1`, `MH3_RENDER_SYNC=1` | `MH3_PROFILE=frames=N,split,sync` |
