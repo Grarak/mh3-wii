@@ -7,6 +7,7 @@
 #include "gx_stream.h"
 #include "os_alarm.h"
 #include "controller_host.h"
+#include "village_boot.h"
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -277,6 +278,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (Memory::Read16(0xCC000006) != 7 || Memory::Read16(0xCC000022) != 0x1FFF || Memory::Read16(0xCC000004))
         throw std::runtime_error("GX CP register masking/acknowledgement failed");
     ResetGxRegisters();
+    RunVillageBootSelfTests();
     GuestGxStream stream;
     std::vector<uint8_t> delivered;
     unsigned packets = 0;
