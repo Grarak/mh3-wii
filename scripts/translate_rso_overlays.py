@@ -109,7 +109,9 @@ def main():
                     'translate-recursive', f'0x{prolog:08X}', '--project', str(work / 'recomp.yml'),
                     '--outdir', str(work / 'functions'), '--output-metadata', str(work / 'translation.json'),
                     '--threads', '8', '--max-instructions', '32768',
-                    '--max-bytes', '262144', '--prune-stale'], cwd=ROOT, check=True)
+                    '--max-bytes', '262144', '--prune-stale',
+                    # Only the overlay and its typed callees are used below.
+                    '--emit-range', f'0x{text:08X}-0x{text + size:08X}'], cwd=ROOT, check=True)
     metadata = json.loads((work / 'translation.json').read_text())
     if any(metadata['quality'][key] for key in ('unsupportedInstructionCount', 'invalidSsaFunctionCount')):
         raise ValueError('Overlay translation quality check failed')

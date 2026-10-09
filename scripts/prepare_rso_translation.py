@@ -105,7 +105,9 @@ def main():
     with (ROOT / 'build/MAP.txt').open('a') as out:
         for address, name in sorted(seeds.items()):
             out.write(f'{address:08x} {name}\n')
-    (ROOT / 'generated/rso_binding.h').write_text(''.join(bindings))
+    binding = ROOT / 'generated/rso_binding.h'
+    if not binding.exists() or binding.read_text() != ''.join(bindings):  # keep its mtime for the build
+        binding.write_text(''.join(bindings))
 
 
 if __name__ == '__main__':

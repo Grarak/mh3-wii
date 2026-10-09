@@ -474,6 +474,17 @@ int RunTranslateRecursive(string[] argsTail)
         }
     }
     var pruneStale = HasFlag(argsTail, "--prune-stale");
+    // --emit-range START-END: analyse the whole program as usual, but emit only
+    // the functions whose entry is in [START, END) and the functions they call
+    // directly (transitively). An RSO overlay profile needs just its own
+    // functions and their typed callees, not another copy of the base image.
+    (uint Start, uint End)? emitRange = null;
+    if (OptionValue(argsTail, "--emit-range") is { } emitRangeText)
+    {
+        var bounds = emitRangeText.Split('-', 2);
+        if (bounds.Length != 2) throw new ArgumentException("--emit-range takes START-END.");
+        emitRange = (ParseAddress(bounds[0]), ParseAddress(bounds[1]));
+    }
     var threadsOption = OptionValue(argsTail, "--threads");
     var maxThreads = threadsOption != null ? Math.Max(1, ParseInt(threadsOption)) : Math.Max(1, Environment.ProcessorCount);
     // Discovery batches: cheap front-end-only work items, so the batch is sized
@@ -1431,18 +1442,35 @@ int RunTranslateRecursive(string[] argsTail)
                                   $"{compactVariantCount:N0} compact call-site specialization(s) from liveness.");
             LogPhase("state-free refinement");
 
+            var emitAddresses = emissionAddresses;
+            if (emitRange is { } range)
+            {
+                var selected = new HashSet<uint>(emissionAddresses.Where(address =>
+                    address >= range.Start && address < range.End));
+                var pending = new Stack<uint>(selected);
+                while (pending.Count != 0)
+                {
+                    foreach (var target in baseSummaries[pending.Pop()].DirectGuestTargets)
+                    {
+                        if (baseSummaries.ContainsKey(target) && selected.Add(target)) pending.Push(target);
+                    }
+                }
+                emitAddresses = emissionAddresses.Where(selected.Contains).ToArray();
+                Console.WriteLine($"[translator] Emitting {emitAddresses.Length:N0} of {emissionAddresses.Length:N0} function(s) " +
+                                  $"(--emit-range 0x{range.Start:X8}-0x{range.End:X8} and callees).");
+            }
             var outputMetadata = outputMetadataPath is null
                 ? null
-                : new BaseTranslationFunctionMetadata[emissionAddresses.Length];
+                : new BaseTranslationFunctionMetadata[emitAddresses.Length];
             using var bundleWriter = productionSourceBundlePath is null
                 ? null
-                : TranslationSourceBundle.CreateWriter(productionSourceBundlePath, emissionAddresses.Length);
+                : TranslationSourceBundle.CreateWriter(productionSourceBundlePath, emitAddresses.Length);
             // Emission is one barrier-free parallel pass: waves used to re-synchronise every few
             // hundred functions and ran only as fast as the slowest straggler. Now each worker
             // publishes into an index slot and a single writer appends in ascending index order,
             // so the bundle stays byte-identical without workers ever waiting on each other.
             var collectSources = bundleWriter is not null;
-            var pendingSources = new string?[collectSources ? emissionAddresses.Length : 0];
+            var pendingSources = new string?[collectSources ? emitAddresses.Length : 0];
             // `emissionDone[i]` is published with a release write after the source
             // slot is filled, so the writer's acquire read of it also makes the
             // source visible. `completionPulse` only wakes the writer; it carries
@@ -1453,7 +1481,7 @@ int RunTranslateRecursive(string[] argsTail)
             Task? pendingBundleWrite = null;
             try
             {
-                if (bundleWriter is not null && emissionAddresses.Length != 0)
+                if (bundleWriter is not null && emitAddresses.Length != 0)
                 {
                     TranslationSourceBundleWriter writer = bundleWriter;
                     // A dedicated thread rather than a pool thread: this task now
@@ -1463,7 +1491,7 @@ int RunTranslateRecursive(string[] argsTail)
                     pendingBundleWrite = Task.Factory.StartNew(
                         () =>
                         {
-                            for (var nextToWrite = 0; nextToWrite < emissionAddresses.Length; nextToWrite++)
+                            for (var nextToWrite = 0; nextToWrite < emitAddresses.Length; nextToWrite++)
                             {
                                 while (!Volatile.Read(ref emissionDone[nextToWrite]))
                                 {
@@ -1478,7 +1506,7 @@ int RunTranslateRecursive(string[] argsTail)
                                     completionPulse.Wait();
                                 }
 
-                                var address = emissionAddresses[nextToWrite];
+                                var address = emitAddresses[nextToWrite];
                                 writer.Write(new TranslationSourceBundleEntry(
                                     address,
                                     Path.GetRelativePath(outDir, baseWork[address].Path).Replace('\\', '/'),
@@ -1496,9 +1524,9 @@ int RunTranslateRecursive(string[] argsTail)
 
                 try
                 {
-                    IndexedParallel.For(emissionAddresses.Length, parallelOptions, i =>
+                    IndexedParallel.For(emitAddresses.Length, parallelOptions, i =>
                     {
-                        var address = emissionAddresses[i];
+                        var address = emitAddresses[i];
                         var work = baseWork[address];
                         var options = BuildEmissionOptions(address, stateFreeAbiContracts);
                         if (!canonicalIrStore.TryGet(address, out var canonicalSsa))
@@ -1561,7 +1589,7 @@ int RunTranslateRecursive(string[] argsTail)
                     : Path.GetRelativePath(
                         Path.GetDirectoryName(Path.GetFullPath(outputMetadataPath!))!,
                         Path.GetFullPath(productionSourceBundlePath)).Replace('\\', '/');
-                var metadataUnsupportedInstructionCount = emissionAddresses.Sum(address =>
+                var metadataUnsupportedInstructionCount = emitAddresses.Sum(address =>
                 {
                     if (!canonicalIrStore.TryGet(address, out var canonicalSsa))
                     {
@@ -3040,7 +3068,7 @@ int EmitGuestSymbolTable(FunctionMap? map, string outputPath)
         sb.Append("\",\n");
     }
     sb.Append("};\n\n} // extern \"C\"\n");
-    File.WriteAllText(outputPath, sb.ToString());
+    FileOutput.WriteTextIfChanged(outputPath, sb.ToString());
     return entries.Count;
 }
 
@@ -3696,7 +3724,8 @@ static (string? Positional, CommandOption[] Options)? CommandSpec(string command
         new("--max-bytes", "N"),
         new("--threads", "N"),
         new("--no-function-files"),
-        new("--prune-stale")
+        new("--prune-stale"),
+        new("--emit-range", "START-END")
     }),
     "translate-mod" => (null, new CommandOption[]
     {
