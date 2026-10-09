@@ -9,6 +9,9 @@ enum {
     INDEX_CHUNK = 4092
 };
 
+/* A shape the skinned form cannot express: written with palette batches. */
+#define SKIN_REJECTED ((mh3_corners_status) - 6)
+
 typedef struct {
     uint8_t semantic, mode, type, components, fraction, bytes;
 } attribute;
@@ -26,6 +29,10 @@ typedef struct {
     uint32_t root, source_corners, source_triangles;
     uint8_t index_buffer[INDEX_CHUNK];
     uint32_t buffered;
+
+    /* Skinned form: the texgen kinds seen per indexed coordinate. */
+    int skin;
+    uint8_t texgen_seen;
 } decode;
 
 static uint16_t be16(const uint8_t *p) {
@@ -322,14 +329,21 @@ static mh3_corners_status output_layout(decode *d, int first) {
     if (!next.count || next.attributes[0].semantic != 0)
         return MH3_CORNERS_UNSUPPORTED;
 
-    for (unsigned i = 0; i < 3; i++)
-        if (mask & (i == 0 ? 15u : i == 1 ? 240u : 256u)) {
-            unsigned n = i == 2 ? 1 : 4;
-            next.attributes[next.count++] = (mh3_pack_attribute){(uint16_t)(12 + i), (uint16_t)at, 0, (uint8_t)n};
-            at += n;
-        }
+    if (d->skin) {
+        // Four raw U8 palette rows, then four F32 weights (docs/optimizations/rendering/gpu-skinning.md).
+        next.attributes[next.count++] = (mh3_pack_attribute){MH3_SEMANTIC_SKIN_ROWS, (uint16_t)at, 0, 4};
+        at += 4;
+        next.attributes[next.count++] = (mh3_pack_attribute){MH3_SEMANTIC_SKIN_WEIGHTS, (uint16_t)at, 9, 4};
+        at += 16;
+    } else
+        for (unsigned i = 0; i < 3; i++)
+            if (mask & (i == 0 ? 15u : i == 1 ? 240u : 256u)) {
+                unsigned n = i == 2 ? 1 : 4;
+                next.attributes[next.count++] = (mh3_pack_attribute){(uint16_t)(12 + i), (uint16_t)at, 0, (uint8_t)n};
+                at += n;
+            }
     next.stride = (at + 3) & ~3u;
-    next.flags = mask << 8;
+    next.flags = mask << 8 | (d->skin ? MH3_LAYOUT_SKINNED : 0u);
 
     if (next.stride > MAX_STRIDE)
         return MH3_CORNERS_UNSUPPORTED;
@@ -393,6 +407,89 @@ static void color(const uint8_t *p, unsigned type, uint8_t *out) {
         }
 }
 
+/* The palette row of (matrix, kind), added on first use. */
+static mh3_corners_status skin_row(decode *d, const mh3_corner_workspace *w, uint16_t matrix, uint8_t kind, uint8_t *row) {
+    uint8_t *lookup = &w->skin_lookup[(size_t)matrix * 2 + kind];
+
+    if (!*lookup) {
+        if (d->result.skin_row_count >= MH3_SKIN_MAX_ROWS)
+            return SKIN_REJECTED;
+
+        w->skin_rows[d->result.skin_row_count] = (mh3_skin_row){matrix, kind};
+        *lookup = (uint8_t)++d->result.skin_row_count;
+    }
+
+    *row = (uint8_t)(*lookup - 1);
+    return MH3_CORNERS_OK;
+}
+
+/* A skinned vertex's palette rows and weights from its position selector's
+ * current draw matrix. The normal must come from the same matrix, and each
+ * indexed texture coordinate must use that matrix's position or environment
+ * matrix (or identity), the same way for the whole shape. */
+static mh3_corners_status skin_value(decode *d, const mh3_corner_workspace *w, const uint8_t *selectors, uint8_t *out) {
+    const mh3_skin_model *skin = w->skin;
+    const unsigned pn = selectors[0];
+    const uint16_t matrix = d->sources[0][pn];
+
+    if (pn >= 10 || matrix == 65535 || matrix >= skin->count || (d->sources[1][pn] != 65535 && d->sources[1][pn] != matrix))
+        return SKIN_REJECTED;
+
+    for (unsigned coordinate = 0; coordinate < 8; coordinate++) {
+        if (!(d->result.matrix_mask & (2u << coordinate)))
+            continue;
+
+        const unsigned slot = selectors[coordinate + 1];
+        uint8_t kind;
+
+        if (slot < 10)
+            kind = d->sources[0][slot] == matrix ? MH3_SKIN_TEXGEN_POSITION : 0;
+        else if (slot < 20)
+            kind = d->sources[2][slot - 10] == matrix ? MH3_SKIN_TEXGEN_ENVIRONMENT : 0;
+        else
+            kind = MH3_SKIN_TEXGEN_IDENTITY;
+
+        if (!kind)
+            return SKIN_REJECTED;
+
+        if (d->texgen_seen & (1u << coordinate)) {
+            if (d->result.skin_texgen[coordinate] != kind)
+                return SKIN_REJECTED;
+        } else {
+            d->result.skin_texgen[coordinate] = kind;
+            d->texgen_seen |= (uint8_t)(1u << coordinate);
+        }
+    }
+
+    const mh3_skin_matrix *m = &skin->matrices[matrix];
+    uint8_t rows[MH3_SKIN_INFLUENCES] = {0};
+    float weights[MH3_SKIN_INFLUENCES] = {0};
+    mh3_corners_status s;
+
+    if (!m->count) {
+        if ((s = skin_row(d, w, matrix, MH3_SKIN_ROW_RIGID, &rows[0])))
+            return s;
+
+        weights[0] = 1.0f;
+    } else
+        for (unsigned i = 0; i < m->count; i++) {
+            if (m->source[i] >= skin->count || !skin->matrices[m->source[i]].bone)
+                return SKIN_REJECTED;
+
+            if ((s = skin_row(d, w, m->source[i], MH3_SKIN_ROW_BONE, &rows[i])))
+                return s;
+
+            weights[i] = m->weight[i];
+        }
+
+    memcpy(out, rows, sizeof rows);
+
+    for (unsigned i = 0; i < MH3_SKIN_INFLUENCES; i++)
+        le32(out + 4 + i * 4, bits(weights[i]));
+
+    return MH3_CORNERS_OK;
+}
+
 static mh3_corners_status corner(const uint8_t *p, decode *d, const mh3_corner_workspace *w, uint16_t *out) {
     uint8_t value[MAX_STRIDE] = {0}, selectors[9] = {0};
     unsigned dest = 0;
@@ -443,12 +540,18 @@ static mh3_corners_status corner(const uint8_t *p, decode *d, const mh3_corner_w
         p += a->bytes;
     }
 
-    for (unsigned i = 0; i < 3; i++)
-        if (d->result.matrix_mask & (i == 0 ? 15u : i == 1 ? 240u : 256u)) {
-            unsigned n = i == 2 ? 1 : 4;
-            memcpy(value + dest, selectors + 4 * i, n);
-            dest += n;
-        }
+    if (d->skin) {
+        mh3_corners_status s = skin_value(d, w, selectors, value + dest);
+
+        if (s)
+            return s;
+    } else
+        for (unsigned i = 0; i < 3; i++)
+            if (d->result.matrix_mask & (i == 0 ? 15u : i == 1 ? 240u : 256u)) {
+                unsigned n = i == 2 ? 1 : 4;
+                memcpy(value + dest, selectors + 4 * i, n);
+                dest += n;
+            }
     const uint32_t before = d->result.vertex_count;
     mh3_corners_status s = unique(d, w, value, out);
 
@@ -538,7 +641,7 @@ static mh3_corners_status triangle(decode *d, const mh3_corner_workspace *w, uns
     for (unsigned i = 0; i < 3; i++) {
         le16(d->index_buffer + d->buffered + 2 * i, ids[i]);
 
-        if (d->result.matrix_mask)
+        if (d->result.matrix_mask && !d->skin)
             required(d, w, ids[i], batch);
     }
 
@@ -606,7 +709,7 @@ static mh3_corners_status primitive(decode *d, const mh3_corner_workspace *w, co
 
     batch.index_count = d->result.index_count - batch.first_index;
 
-    if (!d->result.matrix_mask || !batch.index_count)
+    if (!d->result.matrix_mask || !batch.index_count || d->skin)
         return MH3_CORNERS_OK;
 
     uint16_t *tables[3] = {batch.position_source, batch.normal_source, batch.texture_source};
@@ -744,13 +847,15 @@ mh3_corners_status mh3_prepare_shape(const mh3_res_model *input, uint32_t id, co
         return MH3_CORNERS_INVALID;
 
     if (input->container.size > MH3_PREPARE_MAX_METADATA || work->vertex_bytes > MAX_VERTICES * MAX_STRIDE || !work->tree_count || work->tree_count > MAX_VERTICES || !work->corner_count ||
-        work->corner_count > MAX_VERTICES || work->batch_count > (MH3_PREPARE_MAX_METADATA - 16) / 96)
+        work->corner_count > MAX_VERTICES || work->batch_count > (MH3_PREPARE_MAX_METADATA - 16) / 96 || (work->skin && work->skin->count > MH3_SKIN_MAX_MATRICES))
         return MH3_CORNERS_RANGE;
     const region regions[] = {{input->container.data, input->container.size},
                               {work->vertices, work->vertex_bytes},
                               {work->tree, (size_t)work->tree_count * sizeof *work->tree},
                               {work->corners, (size_t)work->corner_count * sizeof *work->corners},
                               {work->batches, (size_t)work->batch_count * sizeof *work->batches},
+                              {work->skin_rows, work->skin_rows ? MH3_SKIN_MAX_ROWS * sizeof *work->skin_rows : 0},
+                              {work->skin_lookup, work->skin_lookup ? (size_t)MH3_SKIN_MAX_MATRICES * 2 : 0},
                               {out, sizeof *out},
                               {input, sizeof *input},
                               {work, sizeof *work},
@@ -791,21 +896,40 @@ mh3_corners_status mh3_prepare_shape(const mh3_res_model *input, uint32_t id, co
         return s;
     }
 
-    if (work->indices.truncate(work->indices.context, 0))
-        return MH3_CORNERS_ROLLBACK;
+    // An indexed shape is written skinned when the workspace has the model's
+    // skin tables and its selectors allow it, with palette batches otherwise.
+    const int skinnable = work->skin && work->skin_rows && work->skin_lookup && (first.result.matrix_mask & 1);
+    decode d;
 
-    decode d = {0};
-    d.root = NONE;
-    memset(d.sources, 255, sizeof d.sources);
-    d.result.layout = first.result.layout;
-    d.result.matrix_mask = first.result.matrix_mask;
-    s = scan(shape.setup.commands, shape.setup.offset, &d, &model, &shape, work, 0, 1, &error);
+    for (int skin = skinnable; skin >= 0; skin--) {
+        if (work->indices.truncate(work->indices.context, 0))
+            return MH3_CORNERS_ROLLBACK;
 
-    if (!s)
-        s = scan(shape.primitives.commands, shape.primitives.offset, &d, &model, &shape, work, 1, 1, &error);
+        memset(&d, 0, sizeof d);
+        d.root = NONE;
+        d.skin = skin;
+        memset(d.sources, 255, sizeof d.sources);
 
-    if (!s)
-        s = flush(&d, work);
+        // The matrix loads before the first primitive need the mask; the
+        // skinned layout is made by the first primitive's output_layout.
+        d.result.matrix_mask = first.result.matrix_mask;
+
+        if (skin)
+            memset(work->skin_lookup, 0, (size_t)work->skin->count * 2);
+        else
+            d.result.layout = first.result.layout;
+
+        s = scan(shape.setup.commands, shape.setup.offset, &d, &model, &shape, work, 0, 1, &error);
+
+        if (!s)
+            s = scan(shape.primitives.commands, shape.primitives.offset, &d, &model, &shape, work, 1, 1, &error);
+
+        if (!s)
+            s = flush(&d, work);
+
+        if (s != SKIN_REJECTED)
+            break;
+    }
 
     if (s) {
         if (error_offset)
@@ -858,6 +982,46 @@ mh3_corners_status mh3_prepare_palettes(const mh3_prepared_corners *shape, const
         for (unsigned t = 0; t < 3; t++)
             for (unsigned slot = 0; slot < 10; slot++)
                 le16(p + 24 + t * 20 + slot * 2, (t == 0 ? b->position_source : t == 1 ? b->normal_source : b->texture_source)[slot]);
+    }
+
+    *size = (size_t)bytes;
+    return MH3_CORNERS_OK;
+}
+
+mh3_corners_status mh3_prepare_skin_palette(const mh3_prepared_corners *shape, const mh3_corner_workspace *work, uint8_t *data, size_t capacity, size_t *size) {
+    if (!shape || !work || !data || !size || !(shape->layout.flags & MH3_LAYOUT_SKINNED) || !shape->skin_row_count || shape->skin_row_count > MH3_SKIN_MAX_ROWS || !work->skin ||
+        !work->skin_rows)
+        return MH3_CORNERS_INVALID;
+
+    const uint64_t bytes = 24 + (uint64_t)shape->skin_row_count * 52;
+
+    if (bytes > capacity)
+        return MH3_CORNERS_RANGE;
+
+    const region regions[] = {{data, (size_t)bytes}, {work->skin_rows, MH3_SKIN_MAX_ROWS * sizeof *work->skin_rows}, {shape, sizeof *shape}, {work, sizeof *work}, {size, sizeof *size}};
+
+    if (!disjoint(regions, sizeof regions / sizeof *regions))
+        return MH3_CORNERS_INVALID;
+
+    memset(data, 0, (size_t)bytes);
+    memcpy(data, "M3SK", 4);
+    le32(data + 4, 1);
+    le32(data + 8, shape->skin_row_count);
+    memcpy(data + 12, shape->skin_texgen, 8);
+
+    for (uint32_t i = 0; i < shape->skin_row_count; i++) {
+        const mh3_skin_row *row = &work->skin_rows[i];
+        uint8_t *p = data + 24 + (size_t)i * 52;
+
+        if (row->matrix >= work->skin->count || row->kind > MH3_SKIN_ROW_BONE)
+            return MH3_CORNERS_INVALID;
+
+        le16(p, row->matrix);
+        p[2] = row->kind;
+
+        if (row->kind == MH3_SKIN_ROW_BONE)
+            for (unsigned k = 0; k < 12; k++)
+                le32(p + 4 + k * 4, bits(work->skin->matrices[row->matrix].inverse_bind[k]));
     }
 
     *size = (size_t)bytes;

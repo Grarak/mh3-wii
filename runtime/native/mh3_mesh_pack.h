@@ -72,6 +72,16 @@ enum {
     MH3_LAYOUT_MATRIX_MASK_SHIFT = 8u
 };
 
+/* GPU skinning (docs/gpu-skinning.md): mesh flag 16 instead of 8, its last
+ * record word pointing to an M3SK blob; layout flag bit 17; semantic 15 holds
+ * four raw U8 palette rows, semantic 16 four F32 weights. */
+enum {
+    MH3_MESH_SKINNED = 16u,
+    MH3_LAYOUT_SKINNED = 0x20000u,
+    MH3_SEMANTIC_SKIN_ROWS = 15u,
+    MH3_SEMANTIC_SKIN_WEIGHTS = 16u
+};
+
 typedef struct {
     uint32_t count;
     mh3_pack_span bytes;

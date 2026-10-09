@@ -51,6 +51,11 @@ typedef struct {
     mh3_corner_workspace shape;
     mh3_prepare_input indices;
     mh3_prepare_sink gpu;
+
+    /* GPU skinning (docs/optimizations/rendering/gpu-skinning.md): storage for one model's skin
+     * tables (MH3_SKIN_MAX_MATRICES entries), with the shape workspace's
+     * skin_rows and skin_lookup. Absent: indexed shapes keep palette batches. */
+    mh3_skin_matrix *skin_matrices;
 } mh3_prepare_model_workspace;
 
 typedef struct {

@@ -1511,12 +1511,22 @@ static mh3_prepare_status components(preparation *p, const mh3_prepare_model_sou
 }
 
 static mh3_prepare_status corners(preparation *p, const mh3_prepare_model_source *s, mh3_prepare_model_plan *plan, int emit) {
+    // The model's skin tables: its indexed shapes are written skinned where
+    // their selectors allow it (docs/optimizations/rendering/gpu-skinning.md). A model whose NodeMix
+    // the tables cannot hold keeps palette batches.
+    mh3_corner_workspace work = p->w->shape;
+    mh3_skin_model skin;
+    work.skin = p->w->skin_matrices && work.skin_rows && work.skin_lookup &&
+                        mh3_prepare_skin_model(&s->model, p->w->skin_matrices, MH3_SKIN_MAX_MATRICES, &skin) == MH3_SKIN_OK
+                    ? &skin
+                    : NULL;
+
     for (uint32_t i = 0; i < plan->shapes; i++) {
         p->diagnostic.kind = MH3_RES_SHAPES;
         p->diagnostic.resource_id = i;
         mh3_prepared_corners result;
         size_t error = 0;
-        mh3_corners_status status = mh3_prepare_shape(&s->model, i, &p->w->shape, &result, &error);
+        mh3_corners_status status = mh3_prepare_shape(&s->model, i, &work, &result, &error);
         p->diagnostic.offset = error;
 
         if (status)
@@ -1547,7 +1557,7 @@ static mh3_prepare_status corners(preparation *p, const mh3_prepare_model_source
             return MH3_PREPARE_INVALID;
 
         uint32_t vertex = 0, index = 0, bytes = result.vertex_count * result.layout.stride;
-        fail(p, mh3_prepare_gpu(&p->mesh, p->w->shape.vertices, bytes, 64, &vertex));
+        fail(p, mh3_prepare_gpu(&p->mesh, work.vertices, bytes, 64, &vertex));
         size_t chunk = p->w->scratch_bytes < 4096 ? p->w->scratch_bytes : 4096;
 
         if (!chunk)
@@ -1578,10 +1588,12 @@ static mh3_prepare_status corners(preparation *p, const mh3_prepare_model_source
             return st;
 
         uint32_t palette = 0;
+        const int skinned = (result.layout.flags & MH3_LAYOUT_SKINNED) != 0;
 
         if (result.matrix_mask) {
             size_t size;
-            status = mh3_prepare_palettes(&result, &p->w->shape, p->w->scratch, p->w->scratch_bytes, &size);
+            status = skinned ? mh3_prepare_skin_palette(&result, &work, p->w->scratch, p->w->scratch_bytes, &size)
+                             : mh3_prepare_palettes(&result, &work, p->w->scratch, p->w->scratch_bytes, &size);
 
             if (status)
                 return MH3_PREPARE_RANGE;
@@ -1603,7 +1615,7 @@ static mh3_prepare_status corners(preparation *p, const mh3_prepare_model_source
         uint32_t v[32] = {(s->asset_id << 16) | (i + 1),
                           s->asset_id,
                           i,
-                          1 | (component_count ? 2u : 0u) | (result.matrix_mask ? 8u : 0u),
+                          1 | (component_count ? 2u : 0u) | (!result.matrix_mask ? 0u : skinned ? MH3_MESH_SKINNED : MH3_MESH_INDEXED_PALETTE),
                           layout,
                           result.vertex_count,
                           result.index_count,
@@ -1847,6 +1859,9 @@ static mh3_prepare_status preflight(const mh3_prepare_model_source *s, uint32_t 
                               {w->shape.tree, (size_t)w->shape.tree_count * sizeof *w->shape.tree},
                               {w->shape.corners, (size_t)w->shape.corner_count * sizeof *w->shape.corners},
                               {w->shape.batches, (size_t)w->shape.batch_count * sizeof *w->shape.batches},
+                              {w->shape.skin_rows, w->shape.skin_rows ? MH3_SKIN_MAX_ROWS * sizeof *w->shape.skin_rows : 0},
+                              {w->shape.skin_lookup, w->shape.skin_lookup ? (size_t)MH3_SKIN_MAX_MATRICES * 2 : 0},
+                              {w->skin_matrices, w->skin_matrices ? MH3_SKIN_MAX_MATRICES * sizeof *w->skin_matrices : 0},
                               {out, sizeof *out},
                               {diagnostic, diagnostic ? sizeof *diagnostic : 0}};
     const region inputs[] = {{s, (size_t)count * sizeof *s}, {textures, (size_t)texture_count * sizeof *textures}, {w, sizeof *w}};
