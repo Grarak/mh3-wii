@@ -3,7 +3,7 @@
 // motion is before or past a frame, which the enemy update calls once per
 // step:
 //
-//   0x8014BBA4, 0x8014C4C8  em004 (Gigginox) spits: a sound (0x801039C4 1)
+//   0x8014BBA4, 0x8014C4C8  kinds 1/2 (Rathian, Rathalos) spits: a sound (0x801039C4 1)
 //                           every 8 calls until the motion reaches frame 56
 //   0x8017B7AC, 0x8017C6F4  em015 (Lagiacrus) discharges: a spark object
 //                           (0x80306AFC 5) every 3 calls once the motion is
@@ -27,9 +27,13 @@
 // step at the Wii's rate. Their periodic tests of the global step counter
 // (`system_w+0xC & 3`, hooked in the originals) go through StepCounter::Every.
 //
-// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em004Spit,
+// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em001Spit,
 // ... MH3_VARIABLE_STEP=0; the Ludroth spit in the Royal Ludroth arena 9003,
 // the others through the enemy fuzz's A: entries).
+//
+// The kinds (work +3) were relabeled on 2026-10-06 by the dispatcher that
+// reaches each function (docs/monster-control.md); the descriptions of what a
+// monster does were written under the earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"
 #include "game_step.h"
@@ -65,7 +69,7 @@ enum : uint32_t {
     TurnWhile = 0x80133EA0,      // (work, 0x8000; f1, f2 frames)
     TurnSetUp = 0x80134068,      // (work, 0; f1)
     TurnStep = 0x80134178,       // (work, 0, 0x40)
-    Em004Prepare = 0x80154CD8,   // (work)
+    Em001Prepare = 0x80154CD8,   // (work)
     Em016Prepare = 0x80182DA8,   // (work, s32)
     KeyData = 0x80052364,        // getKeyData (keys; f1 frame) -> f1
     Sound = 0x801039C4,          // (work, id)
@@ -77,7 +81,7 @@ enum : uint32_t {
     JointPosition = 0x8013599C,  // get_joint_wpos_em (work, joint, VEC3* out)
     ChangeScale = 0x801359B4,    // get_em_chg_scale (work) -> f1
     ShellParams = 0x801497EC,    // (params*): the shell parameters' constructor
-    Em004ShellAim = 0x8015461C,  // (params*, 0, u16 angle, u16 angle2)
+    Em001ShellAim = 0x8015461C,  // (params*, 0, u16 angle, u16 angle2)
     Em016ShellAim = 0x8019216C,  // (params*, 0, u16 angle, u16 angle2)
     ActionDone = 0x80127FAC,     // (work): back to the AI
     ActionDone94 = 0x80128094,
@@ -95,9 +99,9 @@ void SpitSound(GuestCall& game, uint32_t work, uint32_t params, uint32_t id) {
     game.Call<SoundAt>({work, id, Memory::Read16(params + 0x12), Memory::Read16(params + 0x14)});
 }
 
-// em004's spits: the motion's speed from a table by its frame (kinds 3 and
+// kinds 1/2's spits: the motion's speed from a table by its frame (kinds 3 and
 // 1), the hiss (sound 1) every 8 ticks until frame 56.
-void Em004Hiss(const Em::Enemy& em, GuestCall& game) {
+void Em001Hiss(const Em::Enemy& em, GuestCall& game) {
     if (em.At(2.0f))
         game.Call<Sound>({em.work, 3});
 
@@ -109,13 +113,13 @@ void Em004Hiss(const Em::Enemy& em, GuestCall& game) {
     }
 }
 
-void Em004SpeedFromKeys(GuestCall& game, uint32_t work, uint32_t keys) {
+void Em001SpeedFromKeys(GuestCall& game, uint32_t work, uint32_t keys) {
     game.Call<KeyData>({keys}, {Memory::ReadFloat32(work + kMotionFrame)});
     game.Call<SetMotionSpeed>({work}); // f1: the key's speed
 }
 
-// em004 0x8014BBA4 (r4: the spit's direction 0-2, or 3 the slow one).
-void Em004SpitPort(CpuContext* ctx) {
+// kinds 1/2 0x8014BBA4 (r4: the spit's direction 0-2, or 3 the slow one).
+void Em001SpitPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x30);
     GuestCall game{ctx};
     const Em::Enemy em{game, frame.Arg(3)};
@@ -129,7 +133,7 @@ void Em004SpitPort(CpuContext* ctx) {
         em.Count(0);
 
         if (kind != 3)
-            game.Call<Em004Prepare>({work});
+            game.Call<Em001Prepare>({work});
 
         em.SetMotion(0x33, 6, 0);
         return;
@@ -139,13 +143,13 @@ void Em004SpitPort(CpuContext* ctx) {
         return;
 
     if (kind == 3)
-        Em004SpeedFromKeys(game, work, 0x805A2838);
+        Em001SpeedFromKeys(game, work, 0x805A2838);
 
-    Em004Hiss(em, game);
+    Em001Hiss(em, game);
 
     if (kind == 3) {
         if (em.At(78.0f)) {
-            game.Call<Em004ShellAim>({params, 0, 0, 0});
+            game.Call<Em001ShellAim>({params, 0, 0, 0});
             Throw(game, work, params, 1);
             game.Call<SoundAt>({work, 4, 0, 0});
         }
@@ -153,7 +157,7 @@ void Em004SpitPort(CpuContext* ctx) {
         const uint32_t angle = kind == 1 ? 0xF8E4 : kind == 2 ? 0x71C : 0;
 
         if (em.At(78.0f)) {
-            game.Call<Em004ShellAim>({params, 0, angle, 0});
+            game.Call<Em001ShellAim>({params, 0, angle, 0});
             Throw(game, work, params, 0);
             SpitSound(game, work, params, 0);
             SpitSound(game, work, params, 2);
@@ -164,9 +168,9 @@ void Em004SpitPort(CpuContext* ctx) {
         game.Call<ActionDone>({work});
 }
 
-// em004 0x8014C4C8 (r4: 1 the slow one): three spits at frames 78, 120 and
+// kinds 1/2 0x8014C4C8 (r4: 1 the slow one): three spits at frames 78, 120 and
 // 164.
-void Em004Spit3Port(CpuContext* ctx) {
+void Em001Spit3Port(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x30);
     GuestCall game{ctx};
     const Em::Enemy em{game, frame.Arg(3)};
@@ -177,7 +181,7 @@ void Em004Spit3Port(CpuContext* ctx) {
     if (em.State() == 0) {
         em.State(1);
         game.Call<Em::SetUp>({work, 0});
-        game.Call<Em004Prepare>({work});
+        game.Call<Em001Prepare>({work});
         em.SetMotion(0xD0, 4, 0);
         return;
     }
@@ -186,24 +190,24 @@ void Em004Spit3Port(CpuContext* ctx) {
         return;
 
     if (kind == 1)
-        Em004SpeedFromKeys(game, work, 0x805A2860);
+        Em001SpeedFromKeys(game, work, 0x805A2860);
 
-    Em004Hiss(em, game);
+    Em001Hiss(em, game);
 
     const bool first = em.At(78.0f);
 
     if (first)
-        game.Call<Em004ShellAim>({params, 0, 0x38E, 0});
+        game.Call<Em001ShellAim>({params, 0, 0x38E, 0});
 
     const bool second = em.At(120.0f);
 
     if (second)
-        game.Call<Em004ShellAim>({params, 0, 0x38E, 0xF334});
+        game.Call<Em001ShellAim>({params, 0, 0x38E, 0xF334});
 
     uint32_t spit = first || second ? 1 : 0;
 
     if (em.At(164.0f)) {
-        game.Call<Em004ShellAim>({params, 0, 0x321, 0x105B});
+        game.Call<Em001ShellAim>({params, 0, 0x321, 0x105B});
         spit = 2;
     }
 
@@ -476,7 +480,7 @@ void Em001DivePort(CpuContext* ctx) {
         Memory::Write8(work + 6, 0);
         game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
         game.Call<0x80130628>({work});
-        game.Call<Em004Prepare>({work});
+        game.Call<Em001Prepare>({work});
         em.SetMotion(0xDB, 6, 0);
         game.Call<RoarVoice0>({work, 0, 0x1F});
         game.Call<0x80041EA4>({work + 0x1B0, work + 0x188}); // the start
@@ -584,7 +588,7 @@ void Em001FlyChargePort(CpuContext* ctx) {
         em.State(1);
         game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
         game.Call<0x80130628>({work});
-        game.Call<Em004Prepare>({work});
+        game.Call<Em001Prepare>({work});
         em.SetMotion(0x45, 6, 0);
         Memory::Write8(work + 6, 0);
         game.Call<0x8013545C>({work});
@@ -1062,15 +1066,15 @@ void Em009RollPort(CpuContext* ctx) {
 
 extern "C" void func_8014BBA4(CpuContext* ctx);
 extern "C" void MH3_Em004Spit(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em004Spit", func_8014BBA4, Em004SpitPort);
+    PortCheck::Call(ctx, "Em001Spit", func_8014BBA4, Em001SpitPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8014BBA4, MH3_Em004Spit, "Em004Spit");
+REGISTER_NATIVE_FUNCTION_AS(0x8014BBA4, MH3_Em004Spit, "Em001Spit");
 
 extern "C" void func_8014C4C8(CpuContext* ctx);
 extern "C" void MH3_Em004Spit3(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em004Spit3", func_8014C4C8, Em004Spit3Port);
+    PortCheck::Call(ctx, "Em001Spit3", func_8014C4C8, Em001Spit3Port);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8014C4C8, MH3_Em004Spit3, "Em004Spit3");
+REGISTER_NATIVE_FUNCTION_AS(0x8014C4C8, MH3_Em004Spit3, "Em001Spit3");
 
 extern "C" void func_8017B7AC(CpuContext* ctx);
 extern "C" void MH3_Em015Discharge(CpuContext* ctx) {

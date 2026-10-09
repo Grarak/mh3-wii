@@ -2,11 +2,11 @@
 // enemy roar actions (the threat when a monster spots the hunter), which the
 // enemy update calls once per step while they run:
 //
-//   0x8014858C, 0x8014B3DC  em004 (Gigginox)
+//   0x8014858C, 0x8014B3DC  kinds 1/2 (Rathian, Rathalos)
 //   0x8017766C, 0x80178EBC  em015 (Lagiacrus)
-//   0x801BE084              em008 (Barroth)
-//   0x801C344C, 0x801C4AD0, 0x801C5DEC  em006 (Diablos)
-//   0x801CB3B4              em007 (Deviljho)
+//   0x801BE084              kind 6 (Diablos)
+//   0x801C344C, 0x801C4AD0, 0x801C5DEC  kind 4 (Gigginox)
+//   0x801CB3B4              kind 5 (Barioth)
 //   0x8036F238              em020 (Ceadeus)
 //   0x803798A0              em019 (Agnaktor)
 //
@@ -20,9 +20,13 @@
 // test in the originals): StepCounter::Every here. When the motion ends the
 // action hands back to the AI (0x80127FAC or a variant).
 //
-// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em008Roar,
+// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em006Roar,
 // ... MH3_VARIABLE_STEP=0; the arena's Barroth 9002 and Lagiacrus 9005 roar
 // on sight, the others through the enemy fuzz's A: entries).
+//
+// The kinds (work +3) were relabeled on 2026-10-06 by the dispatcher that
+// reaches each function (docs/monster-control.md); the descriptions of what a
+// monster does were written under the earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"
 #include "guest_call.h"
@@ -48,7 +52,7 @@ enum : uint32_t {
     SetUpCarried = 0x801302AC, // (work) -> f1, then SetScale takes that f1
     SetScale = 0x80130628,    // (work; f1)
     SetUpPart = 0x80130724,   // (work, n)
-    Em004Step = 0x80154D08,   // (work): em004's per-step helper
+    Em001Step = 0x80154D08,   // (work): kinds 1/2's per-step helper
     QuakeMark = 0x802B440C,   // (VEC3* at, u8 area, u16 random)
     ActionDone = 0x80127FAC,  // (work): back to the AI
     ActionDone94 = 0x80128094, // variants of it with other set-ups
@@ -99,8 +103,8 @@ struct Action {
     }
 };
 
-// em004 0x8014858C.
-void Em004RoarPort(CpuContext* ctx) {
+// kinds 1/2 0x8014858C.
+void Em001RoarPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Action a(ctx, frame);
 
@@ -130,11 +134,11 @@ void Em004RoarPort(CpuContext* ctx) {
     a.Done(ActionDone);
 }
 
-// em004 0x8014B3DC.
-void Em004Roar2Port(CpuContext* ctx) {
+// kinds 1/2 0x8014B3DC.
+void Em001Roar2Port(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Action a(ctx, frame);
-    a.game.Call<Em004Step>({a.work});
+    a.game.Call<Em001Step>({a.work});
 
     if (a.em.State() == 0) {
         a.em.State(1);
@@ -242,8 +246,8 @@ void Em015Roar2Port(CpuContext* ctx) {
     a.Done(ActionDone94);
 }
 
-// em008 0x801BE084.
-void Em008RoarPort(CpuContext* ctx) {
+// kind 6 0x801BE084.
+void Em006RoarPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Action a(ctx, frame);
 
@@ -273,7 +277,7 @@ void Em008RoarPort(CpuContext* ctx) {
     a.Done(ActionDone);
 }
 
-// em006's roars: the voice and a ground quake mark at 114, the steam (kind
+// kind 4's roars: the voice and a ground quake mark at 114, the steam (kind
 // `steam`) in [120, 240].
 void DiablosRoar(Action& a, uint32_t steam, uint32_t done) {
     if (a.em.At(114.0f)) {
@@ -291,8 +295,8 @@ void DiablosRoar(Action& a, uint32_t steam, uint32_t done) {
     a.Done(done);
 }
 
-// em006 0x801C344C.
-void Em006RoarPort(CpuContext* ctx) {
+// kind 4 0x801C344C.
+void Em004RoarPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Action a(ctx, frame);
 
@@ -306,7 +310,7 @@ void Em006RoarPort(CpuContext* ctx) {
     }
 }
 
-// em006 0x801C4AD0 and 0x801C5DEC: set up with 0x801302AC's result as the
+// kind 4 0x801C4AD0 and 0x801C5DEC: set up with 0x801302AC's result as the
 // scale (its f1 goes on to SetScale), part `part`, motion `motion`.
 void DiablosRoarCarried(CpuContext* ctx, uint32_t part, uint32_t motion, bool clear, uint32_t done) {
     GuestFrame frame(ctx, 0x20);
@@ -326,16 +330,16 @@ void DiablosRoarCarried(CpuContext* ctx, uint32_t part, uint32_t motion, bool cl
     }
 }
 
-void Em006Roar2Port(CpuContext* ctx) {
+void Em004Roar2Port(CpuContext* ctx) {
     DiablosRoarCarried(ctx, 2, 0xCA, true, ActionDone1A0);
 }
 
-void Em006Roar3Port(CpuContext* ctx) {
+void Em004Roar3Port(CpuContext* ctx) {
     DiablosRoarCarried(ctx, 1, 0xE0, false, ActionDone1F8);
 }
 
-// em007 0x801CB3B4 (r4: 1 = slowed, no voice nor steam).
-void Em007RoarPort(CpuContext* ctx) {
+// kind 5 0x801CB3B4 (r4: 1 = slowed, no voice nor steam).
+void Em005RoarPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Action a(ctx, frame);
     const bool slowed = uint8_t(frame.Arg(4)) == 1;
@@ -422,15 +426,15 @@ void Em020RoarPort(CpuContext* ctx) {
 
 extern "C" void func_8014858C(CpuContext* ctx);
 extern "C" void MH3_Em004Roar(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em004Roar", func_8014858C, Em004RoarPort);
+    PortCheck::Call(ctx, "Em001Roar", func_8014858C, Em001RoarPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8014858C, MH3_Em004Roar, "Em004Roar");
+REGISTER_NATIVE_FUNCTION_AS(0x8014858C, MH3_Em004Roar, "Em001Roar");
 
 extern "C" void func_8014B3DC(CpuContext* ctx);
 extern "C" void MH3_Em004Roar2(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em004Roar2", func_8014B3DC, Em004Roar2Port);
+    PortCheck::Call(ctx, "Em001Roar2", func_8014B3DC, Em001Roar2Port);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8014B3DC, MH3_Em004Roar2, "Em004Roar2");
+REGISTER_NATIVE_FUNCTION_AS(0x8014B3DC, MH3_Em004Roar2, "Em001Roar2");
 
 extern "C" void func_8017766C(CpuContext* ctx);
 extern "C" void MH3_Em015Roar(CpuContext* ctx) {
@@ -446,33 +450,33 @@ REGISTER_NATIVE_FUNCTION_AS(0x80178EBC, MH3_Em015Roar2, "Em015Roar2");
 
 extern "C" void func_801BE084(CpuContext* ctx);
 extern "C" void MH3_Em008Roar(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em008Roar", func_801BE084, Em008RoarPort);
+    PortCheck::Call(ctx, "Em006Roar", func_801BE084, Em006RoarPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801BE084, MH3_Em008Roar, "Em008Roar");
+REGISTER_NATIVE_FUNCTION_AS(0x801BE084, MH3_Em008Roar, "Em006Roar");
 
 extern "C" void func_801C344C(CpuContext* ctx);
 extern "C" void MH3_Em006Roar(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em006Roar", func_801C344C, Em006RoarPort);
+    PortCheck::Call(ctx, "Em004Roar", func_801C344C, Em004RoarPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801C344C, MH3_Em006Roar, "Em006Roar");
+REGISTER_NATIVE_FUNCTION_AS(0x801C344C, MH3_Em006Roar, "Em004Roar");
 
 extern "C" void func_801C4AD0(CpuContext* ctx);
 extern "C" void MH3_Em006Roar2(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em006Roar2", func_801C4AD0, Em006Roar2Port);
+    PortCheck::Call(ctx, "Em004Roar2", func_801C4AD0, Em004Roar2Port);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801C4AD0, MH3_Em006Roar2, "Em006Roar2");
+REGISTER_NATIVE_FUNCTION_AS(0x801C4AD0, MH3_Em006Roar2, "Em004Roar2");
 
 extern "C" void func_801C5DEC(CpuContext* ctx);
 extern "C" void MH3_Em006Roar3(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em006Roar3", func_801C5DEC, Em006Roar3Port);
+    PortCheck::Call(ctx, "Em004Roar3", func_801C5DEC, Em004Roar3Port);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801C5DEC, MH3_Em006Roar3, "Em006Roar3");
+REGISTER_NATIVE_FUNCTION_AS(0x801C5DEC, MH3_Em006Roar3, "Em004Roar3");
 
 extern "C" void func_801CB3B4(CpuContext* ctx);
 extern "C" void MH3_Em007Roar(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em007Roar", func_801CB3B4, Em007RoarPort);
+    PortCheck::Call(ctx, "Em005Roar", func_801CB3B4, Em005RoarPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801CB3B4, MH3_Em007Roar, "Em007Roar");
+REGISTER_NATIVE_FUNCTION_AS(0x801CB3B4, MH3_Em007Roar, "Em005Roar");
 
 extern "C" void func_8036F238(CpuContext* ctx);
 extern "C" void MH3_Em020Roar(CpuContext* ctx) {

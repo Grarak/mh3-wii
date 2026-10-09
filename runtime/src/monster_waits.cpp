@@ -4,11 +4,11 @@
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
 //   short steps: the monster recovered, gave up or moved on early):
-//     0x8015611C  em005 (Barioth)    a stagger, 110 or 220 ticks over the rate
-//     0x80168430  em012 (Great Jaggi) a turn, at most 60-123 ticks
+//     0x8015611C  kind 3 (Qurupeco)    a stagger, 110 or 220 ticks over the rate
+//     0x80168430  kind 10 (Jaggi) a turn, at most 60-123 ticks
 //     0x8019474C  em018 (Gobul)      a lunge, 180 ticks
 //     0x801ACA48  em027 (Aptonoth)   a rest, 30-93 ticks
-//     0x801B2578  em029 (Rhenoplos)  a charge, 80 ticks
+//     0x801B2578  kinds 30/31 (Felyne, Melynx)  a charge, 80 ticks
 //     0x801D91B4  em007 (Deviljho)   a charge (7.3, 7.18), at most 1000 ticks
 //     0x801482AC  kind 1 (Rathian)   a wait (0.0, 0.4), 150 ticks
 //     0x80159054  kind 3 (Qurupeco)  a move, at least 10 or 20 ticks
@@ -24,7 +24,7 @@
 //                 34 Kelbi's code): a 10-tick hold on landing
 //     0x8034FA1C  em024 (Alatreon)   a flight, 300 ticks (an effect at 20 left)
 //     0x8039E9EC  em028 (Popo)       a rest, 150 or 300 ticks
-//     0x801C7570  em006 (Diablos)    an ambush from the sand, 90 ticks
+//     0x801C7570  kind 4 (Gigginox)    an ambush from the sand, 90 ticks
 //     0x80372994  em020 (Ceadeus)    a rise of 214 and an arch of 124 ticks,
 //                 its pitch turning by the step's share of a tick's amount
 //   repeats (an effect every N calls while the motion is in a range):
@@ -39,9 +39,13 @@
 // the repeat, as the originals do). A test of a countdown's exact value (`== 20`) passes on
 // the step that reaches or crosses it.
 //
-// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em005Stagger,
+// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em003Stagger,
 // ... MH3_VARIABLE_STEP=0; the ones of kinds no arena has through the enemy
 // fuzz's A: entries).
+//
+// The kinds (work +3) were relabeled on 2026-10-06 by the dispatcher that
+// reaches each function (docs/monster-control.md); the descriptions of what a
+// monster does were written under the earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"
 #include "game_step.h"
@@ -61,7 +65,7 @@ enum : uint32_t {
     kYaw = 0x1C0,        // s32 angle units
     kRandom = 0x1EC,     // u16: the monster's random word
     kMotionRate = 0x80,  // f32: motion channel 0's frames per step (MHchar +0x5C; 0x8012F948, inlined)
-    kCharging = 0x330,   // u8: em029's charge hit is live
+    kCharging = 0x330,   // u8: kinds 30/31's charge hit is live
     kGulp = 0x79B,       // u8: em018 (0x8012CF84, inlined)
     kJhenFlag = 0x116,   // u8: em025 (0x801321B8, inlined)
     kRestDone = 0x43F,   // u8: em028 (0x801376A0, inlined)
@@ -110,9 +114,9 @@ void ClearVelocity(uint32_t work) {
         Memory::WriteFloat32(work + kVelocity + 4 * i, 0.0f);
 }
 
-// em005 0x8015611C (r4: 1 slowed): a stagger whose length is 110 ticks (220
+// kind 3 0x8015611C (r4: 1 slowed): a stagger whose length is 110 ticks (220
 // with a broken head) over the motion's rate, counted down in state 2.
-void Em005StaggerPort(CpuContext* ctx) {
+void Em003StaggerPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     const Em::Enemy em{game, frame.Arg(3)};
@@ -158,8 +162,8 @@ void Em005StaggerPort(CpuContext* ctx) {
     }
 }
 
-// em012 0x80168430 (r4: 0 a timed turn, 1 one motion long).
-void Em012TurnPort(CpuContext* ctx) {
+// kind 10 0x80168430 (r4: 0 a timed turn, 1 one motion long).
+void Em010TurnPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x10);
     GuestCall game{ctx};
     const Em::Enemy em{game, frame.Arg(3)};
@@ -279,8 +283,8 @@ void Em027RestPort(CpuContext* ctx) {
     }
 }
 
-// em029 0x801B2578 (r4: 1 the other horn): a charge of 80 ticks.
-void Em029ChargePort(CpuContext* ctx) {
+// kinds 30/31 0x801B2578 (r4: 1 the other horn): a charge of 80 ticks.
+void Em030ChargePort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x10);
     GuestCall game{ctx};
     const Em::Enemy em{game, frame.Arg(3)};
@@ -1345,10 +1349,10 @@ void Em024ChargePort(CpuContext* ctx) {
     }
 }
 
-// em006 0x801C7570: buried in the sand, it waits 90 ticks for a hunter to
+// kind 4 0x801C7570: buried in the sand, it waits 90 ticks for a hunter to
 // come within 160 of joint 0x1C, then bursts out at one it can hit, or gives
 // up once the wait is out and none was in reach.
-void Em006AmbushPort(CpuContext* ctx) {
+void Em004AmbushPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x60);
     GuestCall game{ctx};
     const Em::Enemy em{game, frame.Arg(3)};
@@ -1511,9 +1515,9 @@ void Em020DivePort(CpuContext* ctx) {
 
 extern "C" void func_801C7570(CpuContext* ctx);
 extern "C" void MH3_Em006Ambush(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em006Ambush", func_801C7570, Em006AmbushPort);
+    PortCheck::Call(ctx, "Em004Ambush", func_801C7570, Em004AmbushPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801C7570, MH3_Em006Ambush, "Em006Ambush");
+REGISTER_NATIVE_FUNCTION_AS(0x801C7570, MH3_Em006Ambush, "Em004Ambush");
 
 extern "C" void func_80372994(CpuContext* ctx);
 extern "C" void MH3_Em020Dive(CpuContext* ctx) {
@@ -1529,15 +1533,15 @@ REGISTER_NATIVE_FUNCTION_AS(0x8035455C, MH3_Em024Charge, "Em024Charge");
 
 extern "C" void func_8015611C(CpuContext* ctx);
 extern "C" void MH3_Em005Stagger(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em005Stagger", func_8015611C, Em005StaggerPort);
+    PortCheck::Call(ctx, "Em003Stagger", func_8015611C, Em003StaggerPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8015611C, MH3_Em005Stagger, "Em005Stagger");
+REGISTER_NATIVE_FUNCTION_AS(0x8015611C, MH3_Em005Stagger, "Em003Stagger");
 
 extern "C" void func_80168430(CpuContext* ctx);
 extern "C" void MH3_Em012Turn(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em012Turn", func_80168430, Em012TurnPort);
+    PortCheck::Call(ctx, "Em010Turn", func_80168430, Em010TurnPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80168430, MH3_Em012Turn, "Em012Turn");
+REGISTER_NATIVE_FUNCTION_AS(0x80168430, MH3_Em012Turn, "Em010Turn");
 
 extern "C" void func_8019474C(CpuContext* ctx);
 extern "C" void MH3_Em018Lunge(CpuContext* ctx) {
@@ -1553,9 +1557,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x801ACA48, MH3_Em027Rest, "Em027Rest");
 
 extern "C" void func_801B2578(CpuContext* ctx);
 extern "C" void MH3_Em029Charge(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em029Charge", func_801B2578, Em029ChargePort);
+    PortCheck::Call(ctx, "Em030Charge", func_801B2578, Em030ChargePort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801B2578, MH3_Em029Charge, "Em029Charge");
+REGISTER_NATIVE_FUNCTION_AS(0x801B2578, MH3_Em029Charge, "Em030Charge");
 
 extern "C" void func_801482AC(CpuContext* ctx);
 extern "C" void MH3_Em001Wait(CpuContext* ctx) {

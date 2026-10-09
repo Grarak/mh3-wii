@@ -95,6 +95,44 @@ to its next line. `control` marks starts the control file
 made. Once per kind it also prints the species' handler table
 (`MH3 monster handlers`).
 
+## Kinds and their code
+
+A monster's kind is its work's byte +3, the monster list's index (`--quest-monster`
+takes the same numbers) and the game's own `emNNN` (the symbols `em003_*` lie in
+Qurupeco's code, `em015_denki_*` in Lagiacrus', `em030_*` in Felyne's). Each
+kind's handler table (`MH3 monster handlers` lines) gives where its code lies
+and its action dispatcher (handler 3):
+
+| Kind | Monster | Code from | Dispatcher |
+| --- | --- | --- | --- |
+| 1, 2 | Rathian, Rathalos | 0x80147CF8 | 0x80151128 |
+| 3 | Qurupeco | 0x80154EA4 | 0x8015AC34 |
+| 8 | Barroth | 0x8015DA1C | 0x801632FC |
+| 10 | Jaggi | 0x80166E5C | 0x8016C0B8 |
+| 11 | Jaggia | 0x8016D228 | 0x8016FA64 |
+| 12, 14 | Great Jaggi, Great Baggi | 0x80170664 | 0x80174158 |
+| 15 | Lagiacrus | 0x80176C94 | 0x8017F19C |
+| 16, 17 | Royal Ludroth, Ludroth | 0x801830A4 | 0x8018D314 |
+| 18 | Gobul | 0x80192694 | 0x80199B88 |
+| 27 | Aptonoth | 0x801AB0AC | 0x801AEDC4 |
+| 30, 31 | Felyne, Melynx | 0x801B0920 | 0x801B2D98 |
+| 34 | Kelbi | 0x801B4D78 | 0x801B6560 |
+| 40 | the arenas' own (variant 3) | 0x801B99CC | 0x801BB2BC |
+| 6 | Diablos | 0x801BB988 | 0x801BF9FC |
+| 4 | Gigginox | 0x801C2D54 | 0x801C8924 |
+| 5 | Barioth | 0x801CAAF0 | 0x801D4CF4 |
+| 7 | Deviljho | 0x801D7228 | 0x801DB788 |
+| 26 | Giggi | 0x8032CCF4 | 0x8032FAEC |
+| 33 | Altaroth | 0x8035BB18 | 0x8035DD44 |
+| 35 | Bnahabra | 0x8035F0C4 | 0x8035FA00 |
+| 19 | Agnaktor | 0x803790F4 | 0x8037F588 |
+| 9 | Uragaan | 0x80386940 | 0x8038CC38 |
+
+The ports named before 2026-10-06 used `emNNN` labels that were wrong for
+kinds 1-12 (0x8014xxxx was called Gigginox, 0x8015611C Barioth, 0x801C7570
+Diablos, ...); they are relabeled by the dispatcher that reaches each function.
+Their prose describing a monster's behaviour was written under the old names.
+
 ## The control file
 
 `MH3_MONSTER_CONTROL=PATH` names a file of commands, one a line. The game

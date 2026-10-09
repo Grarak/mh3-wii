@@ -4,19 +4,19 @@
 // the demo plays (each is slot 3's action of its kind, em number = the game's
 // monster list index):
 //
-//   0x8038C188  em011 (Jaggia)      0x801C8228  em006 (Diablos)
+//   0x8038C188  kind 9 (Uragaan)      0x801C8228  kind 4 (Gigginox)
 //   0x8032F5B4  em026 (Giggi)       0x802FE5B4  em023 (Epioth)
 //   0x8018B47C  em016/017/021 (the Ludroth kinds' shared intro)
-//   0x80162564  em010 (Jaggi)       0x801BF050  em008 (Barroth)
-//   0x80150830  em004 (Gigginox)    0x8017E56C  em015 (Lagiacrus)
-//   0x801D42F0  em007 (Deviljho)
+//   0x80162564  kind 8 (Barroth)       0x801BF050  kind 6 (Diablos)
+//   0x80150830  kinds 1/2 (Rathian, Rathalos)    0x8017E56C  em015 (Lagiacrus)
+//   0x801D42F0  kind 5 (Barioth)
 //
 // Each is a state machine (+5) that moves on when the event demo clock
 // (EventDemoGetSteps, a tick site: whole ticks) reaches a step (DemoReached
 // takes half steps) or when a motion ends, and spawns effects on motion
 // frames. Things in them were written for one call a tick:
 //
-//  - the em011, em006 and em026 intros pose the monster from keyframe tables
+//  - the kind 9, kind 4 and em026 intros pose the monster from keyframe tables
 //    (DemoPose / DemoPoseAxes, demo_pose.cpp) by a count of their own at
 //    +0x20 that went up by one a call: at 120 steps a second the monster ran
 //    its cutscene path four times as fast, then jumped to the next state's
@@ -27,13 +27,17 @@
 //    steps (`== 0x8F`): the clock holds between ticks, so the test passed on
 //    every step of such a tick, four times as many effects at 120 fps. They
 //    pass on the step whose ticks reach such a step (Em::DemoEvery, DemoAt);
-//  - the steam of the em008, em004, em015 and em007 roars every 8 calls
+//  - the steam of the kind 6, kinds 1/2, em015 and kind 5 roars every 8 calls
 //    in a range of the motion (+0x20): every 8 ticks
 //    (Em::Enemy::CountEvery).
 //
-// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em011Intro,
+// At the stock 1/30 s step these are the originals (MH3_PORT_CHECK=Em009Intro,
 // ... MH3_VARIABLE_STEP=0; the demos need a first encounter, so the enemy
 // fuzz's A: entries check them, see port_check.h).
+//
+// The kinds (work +3) were relabeled on 2026-10-06 by the dispatcher that
+// reaches each function (docs/monster-control.md); the descriptions of what a
+// monster does were written under the earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"
 #include "game_step.h"
@@ -53,12 +57,12 @@ enum : uint32_t {
     kAngleY = 0x1C0,    // the yaw
     kAngleZ = 0x1C4,
     kArea = 0x1E1,      // u8: the area the monster is in
-    kRoamMask = 0x1E4,  // u8: 0x3F after em010's intro set-up
+    kRoamMask = 0x1E4,  // u8: 0x3F after kind 8's intro set-up
     kGroundY = 0x20C,   // f32: the ground height under the monster
     kActed = 0x30C,     // u8: 1, the monster's action ran this step (0x80131DE8, inlined)
-    kActed2 = 0x30E,    // u8: 1 every call of em006's intro (0x80131E00, inlined)
-    kHold785 = 0x785,   // u8: 1 every call of em023's intro and em006's posed states (0x80133CA0, inlined)
-    kHold79C = 0x79C,   // u16: 1 from em008's intro (0x80136D78, inlined)
+    kActed2 = 0x30E,    // u8: 1 every call of kind 4's intro (0x80131E00, inlined)
+    kHold785 = 0x785,   // u8: 1 every call of em023's intro and kind 4's posed states (0x80133CA0, inlined)
+    kHold79C = 0x79C,   // u16: 1 from kind 6's intro (0x80136D78, inlined)
 };
 
 enum : uint32_t {
@@ -74,7 +78,7 @@ enum : uint32_t {
     Vec3Copy = 0x80041EA4,      // (to, from)
     ShellParams = 0x801497EC,   // (params*): the shell parameters' constructor
     ShellAim = 0x8015FD80,      // (params*, direction, 4, VEC3* offset, 0, angle)
-    Em010Signal = 0x8015D8C4,   // (work): em010's intro, demo step 0x280 / 2
+    Em008Signal = 0x8015D8C4,   // (work): kind 8's intro, demo step 0x280 / 2
 };
 
 constexpr uint32_t kShellTable = 0x80797020; // shell_set_func_ptr: the shell functions' table
@@ -155,10 +159,10 @@ struct Intro {
     void Rumble(uint32_t kind, uint32_t length) const { Em::Rumble(work, kind, length); }
 };
 
-// em011 (0x8038C188): runs in along a path (states 2-6, posed by its count),
+// kind 9 (0x8038C188): runs in along a path (states 2-6, posed by its count),
 // kicking up dust (kind 0x44 every 4 demo steps while its motion is past
 // frame 168, 0x45 every 3 in its frame ranges), then stands at five spots.
-void Em011IntroPort(CpuContext* ctx) {
+void Em009IntroPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Intro in(ctx, frame);
     const uint32_t work = in.work;
@@ -336,10 +340,10 @@ void Em011IntroPort(CpuContext* ctx) {
     }
 }
 
-// em006 (0x801C8228): bursts out of the sand (states 5-7, posed by its
+// kind 4 (0x801C8228): bursts out of the sand (states 5-7, posed by its
 // count), then digs and charges; sand (kind 0x80) every 4 demo steps while
 // its motion is in [20, 68] (state 10) and [40, 88] (state 12).
-void Em006IntroPort(CpuContext* ctx) {
+void Em004IntroPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Intro in(ctx, frame);
     const uint32_t work = in.work;
@@ -804,11 +808,11 @@ void LudrothIntroPort(CpuContext* ctx) {
     }
 }
 
-// em010 (0x80162564): runs on, throws two shells on each even pass of its
+// kind 8 (0x80162564): runs on, throws two shells on each even pass of its
 // motion in state 10 (frames 102 and 106, a direction and an angle each),
 // then roars (breath kind 1 every 8 demo steps while its motion is in
 // [164, 264]).
-void Em010IntroPort(CpuContext* ctx) {
+void Em008IntroPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x40);
     Intro in(ctx, frame);
     const uint32_t work = in.work;
@@ -909,7 +913,7 @@ void Em010IntroPort(CpuContext* ctx) {
     case 6:
         if (Memory::Read8(work + kSubState) == 0 && in.Reached(0x280)) {
             Memory::Write8(work + kSubState, 1);
-            in.game.Call<Em010Signal>({work});
+            in.game.Call<Em008Signal>({work});
         }
 
         if (in.Reached(0x2E8)) {
@@ -1009,11 +1013,11 @@ void Em010IntroPort(CpuContext* ctx) {
     }
 }
 
-// em008 (0x801BF050): rises out of the mud three times (mud kinds 0x69/0x6B
+// kind 6 (0x801BF050): rises out of the mud three times (mud kinds 0x69/0x6B
 // at frames 32/38, 0x1A at 60/72/84), shakes off (0x28/0x20 every 3 demo
 // steps while its motion is in [60, 100]), then roars: steam (kind 1) every
 // 8 ticks while its motion is in [116, 286], counted at +0x20.
-void Em008IntroPort(CpuContext* ctx) {
+void Em006IntroPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Intro in(ctx, frame);
     const uint32_t work = in.work;
@@ -1177,10 +1181,10 @@ void Em008IntroPort(CpuContext* ctx) {
     }
 }
 
-// em004 (0x80150830): crawls down a wall and across the ceiling (posed by the
+// kinds 1/2 (0x80150830): crawls down a wall and across the ceiling (posed by the
 // demo clock), drops and roars: steam (kind 1) every 8 ticks while its motion
 // is in [86, 204], counted at +0x20.
-void Em004IntroPort(CpuContext* ctx) {
+void Em001IntroPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Intro in(ctx, frame);
     constexpr uint32_t kWallKeys = 0x805A389C, kCeilingKeys = 0x805A3A40, kCeilingAngleKeys = 0x805A4020;
@@ -1455,10 +1459,10 @@ void Em015IntroPort(CpuContext* ctx) {
     }
 }
 
-// em007 (0x801D42F0): falls in from above (posed by the demo clock), lands,
+// kind 5 (0x801D42F0): falls in from above (posed by the demo clock), lands,
 // walks on and roars: steam (kind 1) every 8 ticks while its motion is in
 // [142, 264], counted at +0x20.
-void Em007IntroPort(CpuContext* ctx) {
+void Em005IntroPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     Intro in(ctx, frame);
     const uint32_t work = in.work;
@@ -1691,27 +1695,27 @@ REGISTER_NATIVE_FUNCTION_AS(0x8017E56C, MH3_Em015Intro, "Em015Intro");
 
 extern "C" void func_801D42F0(CpuContext* ctx);
 extern "C" void MH3_Em007Intro(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em007Intro", func_801D42F0, Em007IntroPort);
+    PortCheck::Call(ctx, "Em005Intro", func_801D42F0, Em005IntroPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801D42F0, MH3_Em007Intro, "Em007Intro");
+REGISTER_NATIVE_FUNCTION_AS(0x801D42F0, MH3_Em007Intro, "Em005Intro");
 
 extern "C" void func_80150830(CpuContext* ctx);
 extern "C" void MH3_Em004Intro(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em004Intro", func_80150830, Em004IntroPort);
+    PortCheck::Call(ctx, "Em001Intro", func_80150830, Em001IntroPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80150830, MH3_Em004Intro, "Em004Intro");
+REGISTER_NATIVE_FUNCTION_AS(0x80150830, MH3_Em004Intro, "Em001Intro");
 
 extern "C" void func_8038C188(CpuContext* ctx);
 extern "C" void MH3_Em011Intro(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em011Intro", func_8038C188, Em011IntroPort);
+    PortCheck::Call(ctx, "Em009Intro", func_8038C188, Em009IntroPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8038C188, MH3_Em011Intro, "Em011Intro");
+REGISTER_NATIVE_FUNCTION_AS(0x8038C188, MH3_Em011Intro, "Em009Intro");
 
 extern "C" void func_801C8228(CpuContext* ctx);
 extern "C" void MH3_Em006Intro(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em006Intro", func_801C8228, Em006IntroPort);
+    PortCheck::Call(ctx, "Em004Intro", func_801C8228, Em004IntroPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801C8228, MH3_Em006Intro, "Em006Intro");
+REGISTER_NATIVE_FUNCTION_AS(0x801C8228, MH3_Em006Intro, "Em004Intro");
 
 extern "C" void func_8032F5B4(CpuContext* ctx);
 extern "C" void MH3_Em026Intro(CpuContext* ctx) {
@@ -1733,12 +1737,12 @@ REGISTER_NATIVE_FUNCTION_AS(0x8018B47C, MH3_LudrothIntro, "LudrothIntro");
 
 extern "C" void func_80162564(CpuContext* ctx);
 extern "C" void MH3_Em010Intro(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em010Intro", func_80162564, Em010IntroPort);
+    PortCheck::Call(ctx, "Em008Intro", func_80162564, Em008IntroPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80162564, MH3_Em010Intro, "Em010Intro");
+REGISTER_NATIVE_FUNCTION_AS(0x80162564, MH3_Em010Intro, "Em008Intro");
 
 extern "C" void func_801BF050(CpuContext* ctx);
 extern "C" void MH3_Em008Intro(CpuContext* ctx) {
-    PortCheck::Call(ctx, "Em008Intro", func_801BF050, Em008IntroPort);
+    PortCheck::Call(ctx, "Em006Intro", func_801BF050, Em006IntroPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801BF050, MH3_Em008Intro, "Em008Intro");
+REGISTER_NATIVE_FUNCTION_AS(0x801BF050, MH3_Em008Intro, "Em006Intro");
