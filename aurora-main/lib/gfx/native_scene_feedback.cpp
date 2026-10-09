@@ -170,7 +170,20 @@ void publish(const void* id, gl::TexturePtr texture) {
   images.insert_or_assign(id, Image{std::move(texture), revision});
 }
 
+// Whether a box-filtered copy halves the source exactly: its span is twice the
+// destination and starts on a texel boundary. Each destination pixel's centre
+// is then the shared corner of its 2x2 source block, where one bilinear sample
+// weighs the four texels 0.25 each, as the four-tap box does.
+bool halves(const gl::TexturePtr& source, const gl::TexturePtr& destination, const std::array<float, 4>& rect) {
+  const float x = rect[0] * float(source->width), y = rect[1] * float(source->height);
+  const float w = rect[2] * float(source->width), h = rect[3] * float(source->height);
+  return x == std::floor(x) && y == std::floor(y) && w == 2.0f * float(destination->width) && h == 2.0f * float(destination->height);
+}
+
 void copy_target(const gl::TexturePtr& source, const gl::TexturePtr& destination, const std::array<float, 4>& rect, bool box, bool rgb565) {
+  if (box && halves(source, destination, rect))
+    box = false;
+
   gl::bind_framebuffer(destination->gl(), 0);
   gl::set_viewport(0, 0, destination->width, destination->height, 0, 1);
   gl::set_scissor_enabled(false);
