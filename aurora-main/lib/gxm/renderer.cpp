@@ -19,6 +19,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -745,13 +746,29 @@ public:
   }
 };
 
+// The owner is the thread whose stack is [stackLow, stackHigh); empty while
+// no thread owns the context. Every renderer call checks the owner, and a
+// stack compare costs a few instructions where std::this_thread::get_id is a
+// TLS lookup through pthread_self.
 struct RenderContext {
   SDL_Window* window = nullptr;
-  std::thread::id id;
+  uintptr_t stackLow = 0, stackHigh = 0;
   std::unique_ptr<Renderer> renderer;
 };
 
 RenderContext* g_context = nullptr;
+
+// Makes the calling thread the context owner.
+void own_context(RenderContext& context) {
+  SceKernelThreadInfo info{};
+  info.size = sizeof(info);
+
+  if (sceKernelGetThreadInfo(sceKernelGetThreadId(), &info) < 0 || !info.stack || !info.stackSize)
+    throw std::runtime_error("GXM context owner has no stack range");
+
+  context.stackLow = reinterpret_cast<uintptr_t>(info.stack);
+  context.stackHigh = context.stackLow + info.stackSize;
+}
 
 // Residency snapshot for readers off the owner thread (stats reporting).
 std::mutex g_residencyLock;
@@ -837,7 +854,7 @@ bool initialize(SDL_Window* window) noexcept {
   try {
     auto thread = std::make_unique<RenderContext>();
     thread->window = window;
-    thread->id = std::this_thread::get_id();
+    own_context(*thread);
     g_context = thread.get();
     thread->renderer = std::make_unique<Renderer>();
     g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1};
@@ -868,7 +885,8 @@ bool initialized() noexcept {
 }
 
 bool on_render_thread() noexcept {
-  return g_context && g_context->id == std::this_thread::get_id();
+  const char probe = 0;
+  return g_context && reinterpret_cast<uintptr_t>(&probe) - g_context->stackLow < g_context->stackHigh - g_context->stackLow;
 }
 
 // The libgxm context has one owner at a time: the game thread until the
@@ -879,14 +897,14 @@ void release_context() noexcept {
     fail("GXM context released outside its owner");
 
   guarded([] { renderer().device.end(); });
-  g_context->id = {};
+  g_context->stackLow = g_context->stackHigh = 0;
 }
 
 void acquire_context() noexcept {
-  if (!g_context || g_context->id != std::thread::id{})
+  if (!g_context || g_context->stackHigh != 0)
     fail("GXM context acquired while another thread owns it");
 
-  g_context->id = std::this_thread::get_id();
+  guarded([] { own_context(*g_context); });
 }
 
 const Caps& caps() noexcept {
