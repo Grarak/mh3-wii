@@ -61,12 +61,17 @@ void FlushHostEfbPokes() {
     if (!frameActive) aurora::gfx::preserve_next_efb_frame();
     efbDirty = false;
 }
-uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0, guestDraws = 0, guestTextureCopies = 0;
-uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
-uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
+uint64_t guestCopies = 0;
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include "gx_diagnostics.inc"
 #endif
+// Stats (MH3_STATS line, MH3_PROFILE_FRAMES profile, GX counters) are built
+// only with MH3_ENABLE_STATS; MH3_STAT(...) compiles its argument away otherwise.
+#ifdef MH3_ENABLE_STATS
+#define MH3_STAT(...) __VA_ARGS__
+uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestDraws = 0, guestTextureCopies = 0;
+uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
+uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
 struct FrameProfile {
     using Clock = std::chrono::steady_clock;
     uint32_t interval = 0;
@@ -80,11 +85,14 @@ struct FrameProfile {
     std::clock_t cpuStarted = std::clock();
 };
 FrameProfile profile;
+#else
+#define MH3_STAT(...)
+#endif
 void ShutdownGraphics() {
     if (initialized) {
-        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
+        MH3_STAT(if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
             static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
-            static_cast<unsigned long long>(guestDraws), static_cast<unsigned long long>(guestTextureCopies));
+            static_cast<unsigned long long>(guestDraws), static_cast<unsigned long long>(guestTextureCopies)));
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
@@ -107,6 +115,7 @@ void InitializeGraphics(int argc, char** argv) {
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
     initialized = true;
+#ifdef MH3_ENABLE_STATS
     if (const char* interval = std::getenv("MH3_PROFILE_FRAMES")) {
         const auto value = std::stoul(interval);
         if (!value || value > UINT32_MAX) throw std::runtime_error("MH3_PROFILE_FRAMES must be a positive 32-bit number");
@@ -114,6 +123,7 @@ void InitializeGraphics(int argc, char** argv) {
         profile.started = FrameProfile::Clock::now();
         profile.cpuStarted = std::clock();
     }
+#endif
     std::atexit(ShutdownGraphics);
     // Aurora falls back to another backend when GLES fails; never run on one.
     if (info.backend != BACKEND_OPENGLES) throw std::runtime_error("Aurora did not select OpenGL ES");
@@ -179,10 +189,12 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
             if (consumed != packet.size())
                 throw std::runtime_error("Guest GX command does not fit after staging capacity submission");
         }
+#ifdef MH3_ENABLE_STATS
         ++guestCommands;
         if (packet[0] >= 0x80 && packet[0] <= 0xBF) ++guestDraws;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] == 0x30) ++guestTextures;
+#endif
     }, [](uint32_t address) -> GuestGxStream::ArrayView {
         const uint32_t physical = address & 0x3FFFFFFF;
         uint32_t size;
@@ -202,7 +214,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 #endif
         displayCopyPending = true;
     }, [](const GuestGxStream::TextureCopy& copy) {
-        const auto started = FrameProfile::Clock::now();
+        MH3_STAT(const auto started = FrameProfile::Clock::now();)
         GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
         GXSetTexCopyDst(copy.width, copy.height, static_cast<GXTexFmt>(copy.format), copy.halfScale ? GX_TRUE : GX_FALSE);
         auto* destination = reinterpret_cast<void*>(copy.destination);
@@ -216,8 +228,8 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
         EfbCopyTrace::AfterCopy(copy.destination, copy.guestDestination, copy.bytes, copy.width, copy.height, copy.format);
 #endif
-        ++guestTextureCopies;
-        guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
+        MH3_STAT(++guestTextureCopies;
+                 guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();)
     });
     // GXCopyDisp is the presentation boundary. Seal its owned draw data now,
     // letting GPU encoding overlap guest work before GXDrawDone/next GX use.
@@ -228,7 +240,8 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 // Game speed is guest VI retraces delivered versus the nominal VI rate, since
 // the guest times its logic by retraces; game FPS counts display copies; host
 // FPS counts frames the render thread actually swapped.
-void ReportHostSpeed(uint64_t retraces, double nominalHz) {
+void ReportHostSpeed([[maybe_unused]] uint64_t retraces, [[maybe_unused]] double nominalHz) {
+#ifdef MH3_ENABLE_STATS
     static const bool enabled = std::getenv("MH3_STATS") != nullptr;
     if (!enabled || !initialized) return;
     using Clock = std::chrono::steady_clock;
@@ -251,6 +264,7 @@ void ReportHostSpeed(uint64_t retraces, double nominalHz) {
     lastCopies = guestCopies;
     lastPresents = presents;
     lastSkipped = skipped;
+#endif
 }
 
 void ServiceHostGraphicsEvents() {
@@ -261,7 +275,7 @@ void ServiceHostGraphicsEvents() {
 
 void CompleteHostGraphics() {
     if (!initialized) return;
-    const auto completionStart = FrameProfile::Clock::now();
+    MH3_STAT(const auto completionStart = FrameProfile::Clock::now();)
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
     // GXDrawDone never waits for the render thread or the GPU: nothing reads
@@ -272,6 +286,7 @@ void CompleteHostGraphics() {
     // decision while the previous frame is certainly still rendering. An EFB
     // peek submits what it needs itself (ReadHostEfbColor).
     if (frameActive && displayCopyPending) SealDisplayFrame();
+#ifdef MH3_ENABLE_STATS
     const auto afterWorker = FrameProfile::Clock::now();
     const auto afterGpu = FrameProfile::Clock::now();
     if (profile.interval) {
@@ -326,14 +341,15 @@ void CompleteHostGraphics() {
             profile.cpuStarted = std::clock();
         }
     }
-    gpuSynchronized = true;
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
         std::fprintf(stderr, "MH3 GX draw completion %u: GPU work finished\n", completions);
+#endif
+    gpuSynchronized = true;
 }
 
 uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
-    ++guestEfbPeeks;
+    MH3_STAT(++guestEfbPeeks;)
     if (!initialized || !gpuSynchronized || guestStream.PendingBytes())
         throw std::runtime_error("EFB color peek requires a completed GXDrawDone boundary");
     const auto& source = aurora::gpu::g_frameBuffer;
@@ -341,7 +357,7 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
     if (efbPixels.empty() || efbWidth != source.width || efbHeight != source.height) {
         // Thousands of CPU peeks can follow one snapshot. New GX commands
         // discard efbPixels, so only the first peek needs the render-thread round trip.
-        const auto started = FrameProfile::Clock::now();
+        MH3_STAT(const auto started = FrameProfile::Clock::now();)
         if (frameActive) {
             // The peek reads this frame's draws: render it and submit them first.
             aurora::gfx::require_frame_render();
@@ -354,11 +370,13 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         aurora::gl::call([&] {
             aurora::gl::read_pixels(source.texture->gl(), 0, 0, efbWidth, efbHeight, efbPixels.data());
         });
+#ifdef MH3_ENABLE_STATS
         ++guestEfbSnapshots;
         guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
         static unsigned snapshots = 0;
         if (++snapshots <= 3) std::fprintf(stderr, "MH3 EFB color snapshot %u: %ux%u, format %u\n",
             snapshots, efbWidth, efbHeight, guestStream.PixelFormat());
+#endif
     }
     auto [logicalWidth, logicalHeight] = aurora::vi::configured_fb_size();
     if (!logicalWidth || !logicalHeight) { logicalWidth = efbWidth; logicalHeight = efbHeight; }
