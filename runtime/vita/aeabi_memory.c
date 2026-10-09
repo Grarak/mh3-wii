@@ -172,20 +172,98 @@ static inline void set_bytes(uint8_t *s, uint8_t c, size_t n)
         *s++ = c;
 }
 
+#ifdef MH3_MEMCPY_CENSUS
+/* MH3_MEMCPY_CENSUS (development): the copies of one thread (the render
+ * thread, mh3_memcpy_census_start) summed by calling place, for finding who
+ * copies what; mh3_memcpy_census_take hands the table over and clears it.
+ * Threads are told apart by TPIDRURO, a register read. */
+enum { CENSUS_SLOTS = 1024 };
+
+typedef struct {
+    uintptr_t caller;
+    uint64_t bytes;
+    uint32_t calls;
+} census_slot;
+
+static census_slot census[CENSUS_SLOTS];
+static uintptr_t census_thread;
+
+static inline uintptr_t thread_pointer(void)
+{
+    uintptr_t value;
+    __asm__ volatile("mrc p15, 0, %0, c13, c0, 3" : "=r"(value));
+    return value;
+}
+
+/* One thread writes; the reader takes the table between its copies. */
+static void census_note(uintptr_t caller, size_t n)
+{
+    for (unsigned i = (unsigned)(caller >> 2) % CENSUS_SLOTS, probes = 0; probes < CENSUS_SLOTS; i = (i + 1) % CENSUS_SLOTS, ++probes) {
+        census_slot *slot = &census[i];
+
+        if (slot->caller == caller || !slot->caller) {
+            slot->caller = caller;
+            slot->bytes += n;
+            ++slot->calls;
+            return;
+        }
+    }
+}
+
+void mh3_memcpy_census_start(void)
+{
+    census_thread = thread_pointer();
+}
+
+/* On the counted thread: copies out up to `max` slots, clears the table. */
+int mh3_memcpy_census_take(uintptr_t *callers, uint64_t *bytes, uint32_t *calls, int max)
+{
+    int count = 0;
+
+    for (unsigned i = 0; i < CENSUS_SLOTS; ++i) {
+        if (!census[i].caller)
+            continue;
+
+        if (count < max) {
+            callers[count] = census[i].caller;
+            bytes[count] = census[i].bytes;
+            calls[count] = census[i].calls;
+            ++count;
+        }
+
+        census[i].caller = 0;
+        census[i].bytes = 0;
+        census[i].calls = 0;
+    }
+
+    return count;
+}
+
+#define CENSUS(n)                                                                                   \
+    do {                                                                                            \
+        if (census_thread && thread_pointer() == census_thread)                                     \
+            census_note((uintptr_t)__builtin_return_address(0), (n));                               \
+    } while (0)
+#else
+#define CENSUS(n) ((void)0)
+#endif
+
 void __aeabi_memcpy(void *dest, const void *src, size_t n)
 {
+    CENSUS(n);
     copy_forward(dest, src, n);
 }
 
 void __aeabi_memcpy4(void *dest, const void *src, size_t n)
 {
+    CENSUS(n);
     word_t *d = dest;
     const word_t *s = src;
 
     for (; n >= 4; n -= 4)
         *d++ = *s++;
 
-    __aeabi_memcpy(d, s, n);
+    copy_forward((uint8_t *)d, (const uint8_t *)s, n);
 }
 
 /* The 8-byte forms share their 4-byte form's code, as in compiler-builtins. */

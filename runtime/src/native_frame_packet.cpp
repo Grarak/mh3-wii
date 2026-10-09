@@ -937,12 +937,45 @@ void WaitForPacket(uint32_t ticket) {
 
 // Replays published packets until the thread stops, then runs the resource
 // work queued after the last one.
+#ifdef MH3_MEMCPY_CENSUS
+extern "C" void mh3_memcpy_census_start();
+extern "C" int mh3_memcpy_census_take(uintptr_t* callers, uint64_t* bytes, uint32_t* calls, int max);
+
+// The render thread's copies by calling place every 300 packets, the most
+// bytes first (runtime/vita/aeabi_memory.c; symbolize the callers with
+// llvm-symbolizer on the ELF).
+void ReportMemcpyCensus() {
+    constexpr int Max = 1024;
+    static uintptr_t callers[Max];
+    static uint64_t bytes[Max];
+    static uint32_t calls[Max];
+    const int count = mh3_memcpy_census_take(callers, bytes, calls, Max);
+    int order[Max];
+    uint64_t total = 0;
+
+    for (int i = 0; i < count; ++i) {
+        order[i] = i;
+        total += bytes[i];
+    }
+
+    std::sort(order, order + count, [](int a, int b) { return bytes[a] > bytes[b]; });
+    std::fprintf(stderr, "MH3 memcpy census: %.1f KiB over 300 packets from %d places\n", double(total) / 1024.0, count);
+
+    for (int k = 0; k < std::min(count, 16); ++k)
+        std::fprintf(stderr, "MH3 memcpy census: 0x%08x %.1f KiB %u calls\n", unsigned(callers[order[k]]), double(bytes[order[k]]) / 1024.0, calls[order[k]]);
+}
+#endif
+
 void RenderPackets() {
 #ifdef __vita__
     // The game thread runs on core 2; the AX mix worker and the display
     // callback on core 0.
     if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1) < 0)
         MH3_THROW(std::runtime_error("Render thread core 1 affinity failed"));
+#endif
+#ifdef MH3_MEMCPY_CENSUS
+    mh3_memcpy_census_start();
+    uint64_t censusPackets = 0;
 #endif
 #ifdef MH3_DEVELOPMENT
     uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0, waitNs = 0, waits = 0, idleStart = 0, wakeNs = 0, wakes = 0, lateWakes = 0;
@@ -1000,6 +1033,10 @@ void RenderPackets() {
         }
 #endif
         Execute(p);
+#ifdef MH3_MEMCPY_CENSUS
+        if (++censusPackets % 300 == 0)
+            ReportMemcpyCensus();
+#endif
 #ifdef MH3_DEVELOPMENT
         const auto elapsed = RenderMonotonicNs() - replayStart;
         ++replayed;

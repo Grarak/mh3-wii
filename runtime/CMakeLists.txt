@@ -18,6 +18,12 @@ if(MH3_AUDIT_HOST_ACCESS)
   add_compile_definitions(MH3_AUDIT_HOST_ACCESS=1)
 endif()
 
+option(MH3_MEMCPY_CENSUS "Debug (Vita): sum the render thread's memcpy calls by caller (MH3 memcpy census lines)" OFF)
+
+if(MH3_MEMCPY_CENSUS)
+  add_compile_definitions(MH3_MEMCPY_CENSUS=1)
+endif()
+
 option(MH3_AUDIT_GUEST_ALIAS "Debug: report each place (translated or native) touching guest memory outside cached MEM1/MEM2 (rebuilds all generated code)" OFF)
 
 if(MH3_AUDIT_GUEST_ALIAS)
