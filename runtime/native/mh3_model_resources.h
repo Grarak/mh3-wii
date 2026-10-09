@@ -53,6 +53,14 @@ typedef struct {
 mh3_res_status mh3_res_relative(mh3_res_span span, size_t base, size_t field_offset,
                                 size_t required, size_t *result);
 mh3_res_status mh3_res_model_open(mh3_res_span container, size_t offset, mh3_res_model *out);
+/* Generic ResDic access for runtime resources, including non-model dictionaries.
+ * A zero entry data offset is ABSENT, matching the game's optional references.
+ * Data can be outside the dictionary; the entire owner span bounds it. */
+mh3_res_status mh3_res_dictionary_count(mh3_res_span container, size_t dictionary_offset, uint32_t *count);
+mh3_res_status mh3_res_dictionary_data(mh3_res_span container, size_t dictionary_offset,
+                                      int32_t index, size_t *data_offset);
+mh3_res_status mh3_res_model_data(const mh3_res_model *model, mh3_res_kind kind,
+                                 int32_t index, size_t *data_offset);
 mh3_res_status mh3_res_model_dictionary(const mh3_res_model *model, mh3_res_kind kind,
                                        size_t *dictionary_offset, uint32_t *count);
 mh3_res_status mh3_res_model_entry(const mh3_res_model *model, mh3_res_kind kind,

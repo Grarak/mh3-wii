@@ -3,9 +3,9 @@
 // reference check (0x800628A4), decompiled with Ghidra and checked against the
 // Gekko disassembly.
 //
-// A ResDic holds a pointer to the dictionary: +4 s32 entry count, then 16-byte
-// entries from +0x10 whose +4 is the data's offset from the dictionary. Entry
-// idx is at +0x10 + (idx + 1) * 16 (entry 0 is the tree's root). A null
+// A ResDic holds a pointer to the dictionary: +4 s32 entry count, then a
+// 16-byte root at +8 and real entries at +24 + idx * 16. Entry +12 is the
+// signed data offset from the dictionary. A null
 // dictionary gives null, an index outside [0, count - 1] panics, a zero offset
 // gives null. The reference check panics on a null reference and returns it.
 //
@@ -14,38 +14,27 @@
 // registered bodies only move r3 and r4, so callers keep a precise call
 // boundary.
 #include "abi_bridge.h"
-#include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
 
 #include <cstdint>
-#include <cstdio>
-#include <stdexcept>
+#include <bit>
+
+// The compatibility boundary maps guest RAM once; dictionary logic is the
+// checked portable C11 reader shared with offline model validation.
+uint32_t MH3NativeResDictionary(uint32_t reference, int32_t index);
+uint32_t MH3NativeResReference(uint32_t reference);
 
 namespace {
 
-[[noreturn]] void Panic(const char* file, const char* what, uint32_t value) {
-    char text[128];
-    std::snprintf(text, sizeof text, "NW4R panic (%s): %s (%08x)", file, what, value);
-    throw std::runtime_error(text);
-}
-
 // 0x800628A4: ResCommon<T>::ref(), panicking on a null reference.
 uint32_t ResCommonRefCheck(uint32_t res) {
-    const uint32_t data = MemoryInline::FlatRead32(res);
-    if (!data) Panic("g3d_rescommon.h", "NW4R:Failed assertion IsValid()", res);
-    return data;
+    return MH3NativeResReference(res);
 }
 
 // 0x800627B4: ResDic::operator[](int idx), the data of entry idx.
 uint32_t ResDicAt(uint32_t dic, uint32_t idx) {
-    const uint32_t data = MemoryInline::FlatRead32(dic);
-    if (!data) return 0;
-    const int32_t index = int32_t(idx);
-    if (!(index >= 0 && index <= int32_t(MemoryInline::FlatRead32(data + 4)) - 1))
-        Panic("g3d_resdict_ac.h", "idx is out of bounds", idx);
-    const uint32_t offset = MemoryInline::FlatRead32(data + (idx + 1) * 16 + 0x14);
-    return offset ? data + offset : 0;
+    return MH3NativeResDictionary(dic, std::bit_cast<int32_t>(idx));
 }
 
 // The port, or with MH3_PORT_CHECK naming it the port checked against the

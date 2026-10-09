@@ -62,6 +62,26 @@ mh3_res_status mh3_res_model_open(mh3_res_span s, size_t at, mh3_res_model *out)
     return MH3_RES_OK;
 }
 
+mh3_res_status mh3_res_dictionary_count(mh3_res_span s,size_t at,uint32_t *count) {
+    uint32_t size,n;
+    if (!count) return MH3_RES_INVALID;
+    *count=0;
+    if (!fits(s,at,24)) return MH3_RES_RANGE;
+    size=be32(s.data+at); n=be32(s.data+at+4);
+    if (size<24 || n>(size-24)/16) return MH3_RES_INVALID;
+    if (!fits(s,at,size)) return MH3_RES_RANGE;
+    *count=n; return MH3_RES_OK;
+}
+
+mh3_res_status mh3_res_dictionary_data(mh3_res_span s,size_t at,int32_t index,size_t *out) {
+    uint32_t count; mh3_res_status status;
+    if (!out) return MH3_RES_INVALID;
+    *out=0;
+    status=mh3_res_dictionary_count(s,at,&count); if (status) return status;
+    if (index<0 || (uint32_t)index>=count) return MH3_RES_RANGE;
+    return mh3_res_relative(s,at,at+24+(size_t)index*16+12,1,out);
+}
+
 static mh3_res_status dictionary_field(const mh3_res_model *m, mh3_res_kind k, size_t *field) {
     static const uint8_t offsets[] = {0x10,0x14,0x18,0x1c,0x20,0x24,0x28,0x2c,0x30,0x34,0x38};
     uint8_t off;
@@ -96,6 +116,15 @@ mh3_res_status mh3_res_model_dictionary(const mh3_res_model *m, mh3_res_kind kin
     if (!model_fits(m, *at, dictionary_size)) return MH3_RES_RANGE;
     *count = n;
     return MH3_RES_OK;
+}
+
+mh3_res_status mh3_res_model_data(const mh3_res_model *m,mh3_res_kind kind,int32_t index,size_t *out) {
+    size_t dic; uint32_t count; mh3_res_status status;
+    if (!out) return MH3_RES_INVALID;
+    *out=0;
+    status=mh3_res_model_dictionary(m,kind,&dic,&count); if (status) return status;
+    status=mh3_res_dictionary_data(m->container,dic,index,out); if (status) return status;
+    return model_fits(m,*out,1)?MH3_RES_OK:MH3_RES_RANGE;
 }
 
 /* ResDicLookup 800627b4 plus node 80097f14, position 8009802c,
