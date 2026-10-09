@@ -86,6 +86,13 @@ void RunOutput(CpuContext* ctx, const char* name, Returns returns, void (*origin
 // C:0xADDR (player hook): called once as (PLW+0x3C, a zero vector, 0, PLW)
 // and kept, to start something rare whose updates the checks then see
 // (eft045_set 0x8031EBB8: ObjectListScrollUpdate).
+// A:0xADDR[:KIND] (player hook): an enemy action (work), run once on an active
+// enemy of that kind (work +3), one in the current area if any, from
+// fuzz-after on, over samples of its state, substate, count, motion frame (or
+// the fuzz-frames=V/V/... ones), the event demo clock (or the
+// fuzz-demo=V/V/... steps) and the step counter: actions only a
+// first-encounter demo reaches (monster_intros.cpp) and others of kinds the
+// arena lacks.
 void FuzzSlow(CpuContext* ctx, char kind, uint32_t work);
 inline void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
     if (Set()) [[unlikely]]

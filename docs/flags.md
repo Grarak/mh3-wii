@@ -55,7 +55,7 @@ changes the interval).
 
 ### `MH3_PORT_CHECK`: native ports against their originals
 
-`MH3_PORT_CHECK=NAME[,NAME...][,every][,dump=DIR][,originals][,KIND:0xADDR...][,fuzz-after=N][,fuzz-samples=N]`
+`MH3_PORT_CHECK=NAME[,NAME...][,every][,dump=DIR][,originals][,KIND:0xADDR...][,fuzz-after=N][,fuzz-samples=N][,fuzz-demo=V/V...][,fuzz-frames=V/V...]`
 ([port checks](../HANDOVER.md#native-ports-and-port-checks), `runtime/include/port_check.h`)
 
 | Item | Effect |
@@ -66,7 +66,10 @@ changes the interval).
 | `originals` | sound engine entry points not named run their translated originals ([native audio](native-audio.md#checking-the-engine-port)) |
 | `P:0xADDR`, `E:0xADDR`, `C:0xADDR` | fuzz: player and enemy functions called from made-up states (name their ports too); `C:` starts something once |
 | `fuzz-after=N` | the fuzz hooks fire on their Nth call (default 900) |
-| `fuzz-samples=N` | player fuzz samples per function (default 64) |
+| `A:0xADDR[:KIND]` | fuzz an enemy action: run once (from the player's hook, from `fuzz-after` on) on an active enemy of that kind (+3), one in the current area if any, over 4 × `fuzz-samples` states (+5 each of 0-15, substate, count +0x20, motion frame, the event demo clock, the step counter); for actions only an event demo reaches (`monster_intros.cpp`) or that no organic run reaches soon (name their ports too) |
+| `fuzz-samples=N` | player fuzz samples per function (default 64; the A: fuzz runs four times as many) |
+| `fuzz-demo=V/V/...` | A: fuzz: every fourth run of 16 samples sets the event demo clock to one of these steps (for `steps == K` tests) |
+| `fuzz-frames=V/V/...` | A: fuzz: every other run of 16 samples puts the motion on (or half a frame or a frame before) one of these frames |
 | `EffectBatch` | not a port: every material geometry draw's replayed state (its snapshots, colours applied) against the Game state at its submission ([effect batching](native-effects-port.md#batched-particle-draws-and-the-ported-particle-path-2026-10-04)) |
 | `CurvesAt` | not a port: the particle curve blend of the owned words against the whole-block blend, at the variable step |
 

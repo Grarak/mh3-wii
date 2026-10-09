@@ -81,6 +81,18 @@ struct Enemy {
     void Spawn(float scale, uint32_t kind, uint32_t joint, uint32_t offset = 0) const { game.Call<Em::Spawn>({work, kind, joint, offset}, {scale}); }
 };
 
+// 0x80056AB8 (work, kind, length), which the translator inlines: the
+// rumble request of a monster (0x8066D178).
+inline void Rumble(uint32_t work, uint32_t kind, uint32_t length) {
+    constexpr uint32_t kRequest = 0x8066D178;
+    Memory::Write8(kRequest + 0x5C, 1);
+    Memory::Write8(kRequest + 0x5D, 0);
+    Memory::Write32(kRequest + 0x58, work);
+    Memory::Write32(kRequest + 0x54, length);
+    Memory::Write8(kRequest + 0x60, uint8_t(kind));
+    Memory::Write8(kRequest + 0x62, 0);
+}
+
 // The event demo clock (a tick site: whole ticks).
 inline int32_t DemoClock(GuestCall& game) {
     return int16_t(game.Call<DemoSteps>());
