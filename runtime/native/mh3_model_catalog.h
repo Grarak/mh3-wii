@@ -77,6 +77,10 @@ mh3_res_status mh3_source_resolve_model(const mh3_source_tracker *tracker,
  * without keeping PPC alignment/paired-load implementations. Zero bytes allow
  * null pointers and return destination exactly as both guest entries do. */
 void *mh3_model_copy_bytes(void *destination,const void *source,size_t bytes);
+/* Canonical cached alias for the verified 24 MiB MEM1 / 64 MiB MEM2 mapping.
+ * I/O and copied resource references may use physical or uncached aliases of
+ * the same allocation. Bounds and outputs are transactional. */
+mh3_res_status mh3_source_canonical_address(uint32_t address,uint32_t bytes,uint32_t *out);
 #ifdef __cplusplus
 }
 #endif

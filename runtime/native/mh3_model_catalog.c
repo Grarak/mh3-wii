@@ -275,3 +275,14 @@ mh3_res_status mh3_source_resolve_model(const mh3_source_tracker *t,const mh3_mo
 void *mh3_model_copy_bytes(void *destination,const void *source,size_t bytes) {
     return bytes?memmove(destination,source,bytes):destination;
 }
+mh3_res_status mh3_source_canonical_address(uint32_t address,uint32_t bytes,uint32_t *out) {
+    if(!out) return MH3_RES_INVALID;
+    const uint32_t high=address&0xc0000000u,physical=address&0x3fffffffu;
+    if(high!=0 && high!=0x80000000u && high!=0xc0000000u) return MH3_RES_RANGE;
+    uint32_t end;
+    if(physical<0x01800000u) end=0x01800000u;
+    else if(physical>=0x10000000u && physical<0x14000000u) end=0x14000000u;
+    else return MH3_RES_RANGE;
+    if(bytes>end-physical) return MH3_RES_RANGE;
+    *out=physical|0x80000000u;return MH3_RES_OK;
+}

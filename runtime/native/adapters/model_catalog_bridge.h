@@ -1,6 +1,7 @@
 #pragma once
 #include "runtime/native/mh3_model_submission.h"
 #include "runtime/native/mh3_vertex_sources.h"
+#include "runtime/native/mh3_texture_matrices.h"
 /* Explicit loader events. Tracking disc reads alone does not certify copied,
  * recycled or decompressed owners. No bind-time revision bumps or hashing. */
 void RecordNativeDiscWrite(uint32_t destination,uint64_t partition_offset,uint32_t bytes);
@@ -21,6 +22,15 @@ struct NativeModelOwner {
 NativeModelOwner ResolveNativeModelOwner(uint32_t model_address);
 mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner,
                                                 uint32_t resource_address,bool material);
+/* Prepared at RegisterNativeModelPack, not lazily decoded during a draw.
+ * Returns immutable metadata only; valid until the resident handle is removed.
+ * Resource-address/header joins are cached until a provenance event invalidates
+ * them. Never stores a pose/material/camera pointer. */
+const mh3_prepared_mesh& ReadNativePreparedMesh(const NativeModelOwner& owner,uint32_t shape_address);
+using NativePreparedMaterial=mh3_prepared_material;
+/* Immutable resource defaults/recipes only. Live replacements/inherited pass
+ * state must be merged by typed producers; no live borrowed pointers cached. */
+const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner& owner,uint32_t material_address);
 /* Explicit mutable vertex producers must advance source revisions when arrays
  * change in place. A bind event only advances binding_generation. */
 void MarkNativeVertexProduced(uint32_t payload,uint64_t generation);
