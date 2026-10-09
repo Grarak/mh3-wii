@@ -5,13 +5,12 @@
 #include "texture_convert.hpp"
 #include "native_texture_layout.hpp"
 #include "../gxm/sampler_bias.hpp"
+#include <aurora/fast_map.h>
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
-#include <map>
 #include <memory>
-#include <tuple>
 #include <stdexcept>
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -23,14 +22,26 @@ namespace {
 // targets. GLES texel estimates exclude driver bookkeeping; GXM charges the
 // CDRAM image/palette layout. Backend fences retain evicted in-flight storage.
 constexpr size_t CacheBudget = 48u << 20;
-using Key = std::tuple<uintptr_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint64_t, uintptr_t, uint32_t, uint32_t, uint64_t>;
+struct Key {
+  uintptr_t bytes;
+  uint32_t asset, width, height, levels, format;
+  uint64_t generation;
+  uintptr_t palette;
+  uint32_t paletteFormat, paletteEntries;
+  uint64_t paletteGeneration;
+  bool operator==(const Key&) const = default;
+  friend uint32_t FastHashValue(const Key& k) {
+    return FastHash(k.bytes, k.asset, k.width, k.height, k.levels, k.format, k.generation, k.palette, k.paletteFormat, k.paletteEntries, k.paletteGeneration);
+  }
+};
+
 struct Entry {
   gl::TexturePtr texture;
   size_t bytes;
   uint64_t used;
 };
 
-std::map<Key, Entry> cache;
+FastMap<Key, Entry> cache;
 std::array<gl::TexturePtr, 8> bindings;
 struct Binding {
   NativeTextureSource source;
@@ -217,17 +228,18 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
     return size_t(width) * height * 3 / 2;
   }
 
-  uint32_t tileWidth = 4, tileHeight = 4, tileBytes = 32;
+  // Tiles are 4 or 8 texels a side: shifts (the Cortex-A9 has no divide).
+  uint32_t tileWidthShift = 2, tileHeightShift = 2, tileBytes = 32;
 
   switch (format) {
   case 0:
   case 8:
-    tileWidth = tileHeight = 8;
+    tileWidthShift = tileHeightShift = 3;
     break;
   case 1:
   case 2:
   case 9:
-    tileWidth = 8;
+    tileWidthShift = 3;
     break;
   case 3:
   case 4:
@@ -238,7 +250,7 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
     tileBytes = 64;
     break;
   case 14:
-    tileWidth = tileHeight = 8;
+    tileWidthShift = tileHeightShift = 3;
     break;
   default:
     throw std::runtime_error("Unsupported native texture source format");
@@ -247,7 +259,7 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
   size_t bytes = 0;
 
   for (unsigned mip = 0; mip < levels; ++mip) {
-    bytes += size_t((width + tileWidth - 1) / tileWidth) * ((height + tileHeight - 1) / tileHeight) * tileBytes;
+    bytes += size_t((width + (1u << tileWidthShift) - 1) >> tileWidthShift) * ((height + (1u << tileHeightShift) - 1) >> tileHeightShift) * tileBytes;
     width = std::max(width >> 1, 1u);
     height = std::max(height >> 1, 1u);
   }
@@ -382,7 +394,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   bindings[unit].reset();
 
   for (auto it = cache.begin(); it != cache.end();) {
-    if (!offline && std::get<0>(it->first) == std::get<0>(key) && std::get<6>(it->first) != source.generation && it->second.texture.use_count() == 1) {
+    if (!offline && it->first.bytes == key.bytes && it->first.generation != source.generation && it->second.texture.use_count() == 1) {
       residentBytes -= it->second.bytes;
       it = cache.erase(it);
     } else
@@ -460,9 +472,8 @@ void clear_native_textures() {
   serial = 0;
 }
 
+// A read of the bound state for every draw: the binders check the owner.
 float native_texture_shader_lod_bias(uint32_t unit) {
-  owner();
-
   if (unit >= logicalBindings.size() || !logicalBindings[unit].valid || !aurora_native_frame_should_render())
     throw std::runtime_error("Native texture shader bias requested without an admitted binding");
 

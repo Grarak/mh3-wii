@@ -16,6 +16,10 @@ std::atomic<float> g_presentAspectCorrection{1.f};
 std::mutex g_renderModeMutex;
 std::optional<Vec2<uint32_t>> g_nativeTargetSize;
 
+// render_mode_size_locked() as of the last change (width in the low half):
+// the native renderer reads it for every draw, without the mode lock.
+std::atomic<uint64_t> g_renderModeSize{640 | uint64_t(528) << 32};
+
 float calculate_present_aspect_correction(const GXRenderModeObj& rm) noexcept {
   if (rm.viWidth == 0 || rm.viHeight == 0) {
     return 1.f;
@@ -45,11 +49,16 @@ Vec2<uint32_t> render_mode_size_locked() noexcept {
   return {std::max<uint32_t>(g_renderMode->fbWidth, 640), std::max<uint32_t>(g_renderMode->efbHeight, 528)};
 }
 
+void publish_render_mode_size_locked() noexcept {
+  const auto size = render_mode_size_locked();
+  g_renderModeSize.store(size.x | uint64_t(size.y) << 32, std::memory_order_release);
+}
+
 } // namespace
 
 Vec2<uint32_t> render_mode_size() noexcept {
-  std::lock_guard lock(g_renderModeMutex);
-  return render_mode_size_locked();
+  const uint64_t size = g_renderModeSize.load(std::memory_order_acquire);
+  return {uint32_t(size), uint32_t(size >> 32)};
 }
 
 void configure(const GXRenderModeObj* rm) noexcept {
@@ -70,6 +79,7 @@ void configure(const GXRenderModeObj* rm) noexcept {
       g_presentAspectCorrection.store(1.f, std::memory_order_release);
     }
 
+    publish_render_mode_size_locked();
     sizeChanged = render_mode_size_locked() != oldSize;
   }
 
@@ -88,6 +98,7 @@ bool configure_native(uint32_t width, uint32_t height) noexcept {
     g_nativeTargetSize = Vec2<uint32_t>{width, height};
     g_renderMode.reset();
     g_presentAspectCorrection.store(1.f, std::memory_order_release);
+    publish_render_mode_size_locked();
     changed = oldSize != *g_nativeTargetSize;
   }
 

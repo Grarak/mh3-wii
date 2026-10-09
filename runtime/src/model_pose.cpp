@@ -531,17 +531,25 @@ void PublishNativeModelMatrixRows(const uint32_t rows[8]) {
     Select(rows);
 }
 
+// A matrix given from the palette's own slot (EditNativeModelPalette) is
+// already in place.
 void PublishNativeModelPositionMatrix(uint32_t selector, const float matrix[12], NativeOwner owner) {
     auto& p = Palette(owner);
     ++p.revision;
-    std::memcpy(&p.palette.position[selector / 3], matrix, 48);
+
+    if (auto* slot = &p.palette.position[selector / 3]; static_cast<const void*>(slot) != matrix)
+        std::memcpy(slot, matrix, 48);
+
     p.palette.position_valid |= uint16_t(1u << (selector / 3));
 }
 
 void PublishNativeModelNormalMatrix(uint32_t selector, const float matrix[9], NativeOwner owner) {
     auto& p = Palette(owner);
     ++p.revision;
-    std::memcpy(&p.palette.normal[selector / 3], matrix, 36);
+
+    if (auto* slot = &p.palette.normal[selector / 3]; static_cast<const void*>(slot) != matrix)
+        std::memcpy(slot, matrix, 36);
+
     p.palette.normal_valid |= uint16_t(1u << (selector / 3));
 }
 
@@ -550,7 +558,9 @@ void PublishNativeModelTextureMatrix(uint32_t selector, const float matrix[12], 
         return; // post/SRT matrices have an independent owner
     auto& p = Palette(owner);
     ++p.revision;
-    std::memcpy(&p.palette.texture[(selector - 30) / 3], matrix, matrix3x4 ? 48 : 32);
+
+    if (auto* slot = &p.palette.texture[(selector - 30) / 3]; static_cast<const void*>(slot) != matrix)
+        std::memcpy(slot, matrix, matrix3x4 ? 48 : 32);
 
     if (matrix3x4)
         p.palette.texture_valid |= uint16_t(1u << ((selector - 30) / 3));
@@ -568,6 +578,12 @@ void PublishNativeModelPalette(const mh3_model_palette& palette, NativeOwner own
     auto& p = Palette(owner);
     ++p.revision;
     p.palette = palette;
+}
+
+mh3_model_palette& EditNativeModelPalette(NativeOwner owner) {
+    auto& p = Palette(owner);
+    ++p.revision;
+    return p.palette;
 }
 
 uint32_t NativeModelViewArray(uint32_t scene, unsigned kind) {

@@ -112,6 +112,13 @@ mh3_res_status mh3_model_palette_load(const mh3_matrix_sources *sources, const m
  * These are the values of actual native matrix publications, not borrowed pose
  * pointers. Both routines are transactional and permit output aliasing. */
 mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, const mh3_model_palette *produced, mh3_model_palette *out);
+/* mh3_model_palette_rigid overlaid onto palette in place, without the
+ * produced copy: writes only the produced slots and the texture IDs. Returns
+ * the produced slots as MH3_PALETTE_PRODUCED_* bits. */
+#define MH3_PALETTE_PRODUCED_POSITION 1u
+#define MH3_PALETTE_PRODUCED_NORMAL 2u
+#define MH3_PALETTE_PRODUCED_TEXTURE(slot) (256u << (slot))
+uint32_t mh3_model_palette_rigid_into(const mh3_shape_matrix_input *input, const mh3_matrix_sources *sources, mh3_model_palette *palette);
 /* Apply an admitted effective M3PL source map to certified pose extents.
  * Clear known bits preserve the actual inherited slot. Required masks do not
  * validate inherited values. Source pointers/indices are caller obligations.

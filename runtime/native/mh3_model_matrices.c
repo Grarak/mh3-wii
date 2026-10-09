@@ -11,16 +11,20 @@ static uint32_t be32(const uint8_t *p) {
 
 /* Palette sources and selectors are trusted producer inputs. The public table
  * inspection API below keeps its own checks; draws use only this copy. */
-static void read_palette_matrix(mh3_matrix_table t, size_t index, size_t words, void *out) {
-    const size_t at = index * t.stride;
+static inline void read_palette_matrix(mh3_matrix_table t, size_t index, size_t words, void *out) {
+    const uint8_t *source = t.bytes.data + index * t.stride;
     uint8_t *destination = out;
 
+    if (!t.big_endian) {
+        memcpy(destination, source, words * 4);
+        return;
+    }
+    /* Whole words: the swap vectorizes (vrev32) once words is a constant. */
     for (size_t i = 0; i < words; i++) {
-        if (t.big_endian) {
-            uint32_t bits = be32(t.bytes.data + at + i * 4);
-            memcpy(destination + i * 4, &bits, 4);
-        } else
-            memcpy(destination + i * 4, t.bytes.data + at + i * 4, 4);
+        uint32_t bits;
+        memcpy(&bits, source + i * 4, 4);
+        bits = __builtin_bswap32(bits);
+        memcpy(destination + i * 4, &bits, 4);
     }
 }
 
@@ -339,41 +343,105 @@ mh3_res_status mh3_model_palette_load(const mh3_matrix_sources *s, const mh3_mat
 }
 
 mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, const mh3_model_palette *produced, mh3_model_palette *out) {
-    mh3_model_palette next = *inherited;
+    /* In place (out == inherited) only the produced slots are written. */
+    if (out != inherited) {
+        if (out == produced) {
+            mh3_model_palette next = *inherited;
+            mh3_model_palette_overlay(&next, produced, &next);
+            *out = next;
+            return MH3_RES_OK;
+        }
+
+        *out = *inherited;
+    }
 
     for (unsigned i = 0; i < 10; i++) {
         if (produced->position_valid & (1u << i))
-            next.position[i] = produced->position[i];
+            out->position[i] = produced->position[i];
 
         if (produced->normal_valid & (1u << i))
-            next.normal[i] = produced->normal[i];
+            out->normal[i] = produced->normal[i];
 
         if (produced->texture_valid & (1u << i))
-            next.texture[i] = produced->texture[i];
+            out->texture[i] = produced->texture[i];
     }
 
-    next.position_valid |= produced->position_valid;
-    next.normal_valid |= produced->normal_valid;
-    next.texture_valid |= produced->texture_valid;
-    memcpy(next.texture_ids, produced->texture_ids, sizeof next.texture_ids);
-    *out = next;
+    out->position_valid |= produced->position_valid;
+    out->normal_valid |= produced->normal_valid;
+    out->texture_valid |= produced->texture_valid;
+    memcpy(out->texture_ids, produced->texture_ids, sizeof out->texture_ids);
     return MH3_RES_OK;
 }
 
-mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch, const mh3_matrix_sources *sources, const mh3_model_palette *inherited, mh3_model_palette *out) {
-    const uint16_t known[3] = {batch->position_known, batch->normal_known, batch->texture_known};
-    const uint16_t *const ids[3] = {batch->position_source, batch->normal_source, batch->texture_source};
-    mh3_model_palette next = *inherited;
+uint32_t mh3_model_palette_rigid_into(const mh3_shape_matrix_input *in, const mh3_matrix_sources *s, mh3_model_palette *p) {
+    uint32_t produced = 0;
+    size_t i, id;
 
-    for (unsigned slot = 0; slot < 10; slot++) {
-        for (unsigned group = 0; group < 3; group++)
-            if (known[group] & (1u << slot)) {
-                const mh3_matrix_load load = {(uint8_t)group, ids[group][slot], (uint16_t)(group == 0 ? slot * 12 : group == 1 ? 0x400 + slot * 9 : 120 + slot * 12), (uint8_t)(group == 1 ? 9 : 12)};
-                mh3_model_palette_load(sources, &load, &next);
-            }
+    for (i = 0; i < 8; i++)
+        p->texture_ids[i] = 60;
+
+    if (!in->valid || in->matrix_id < 0)
+        return 0;
+
+    id = (uint32_t)in->matrix_id & 0xffff;
+
+    if (in->direct_position)
+        p->position[0] = *in->direct_position;
+    else
+        read_palette_matrix(s->positions, id, 12, &p->position[0]);
+
+    p->position_valid |= 1;
+    produced |= MH3_PALETTE_PRODUCED_POSITION;
+
+    if (in->has_normal) {
+        if (in->direct_position)
+            p->normal[0] = upper(in->direct_normal ? *in->direct_normal : *in->direct_position);
+        else
+            read_palette_matrix(s->normals, id, 9, &p->normal[0]);
+
+        p->normal_valid |= 1;
+        produced |= MH3_PALETTE_PRODUCED_NORMAL;
     }
 
-    *out = next;
+    for (i = 0; i < 8; i++) {
+        if (in->texture_source[i] == 1) {
+            mh3_matrix33 n;
+            normal_at(s, id, &n);
+            p->texture[i] = expanded(n);
+            p->texture_valid |= (uint16_t)(1u << i);
+            p->texture_ids[i] = 30 + (uint32_t)i * 3;
+            produced |= MH3_PALETTE_PRODUCED_TEXTURE(i);
+        } else if (in->texture_source[i] == 2)
+            p->texture_ids[i] = 0;
+    }
+
+    return produced;
+}
+
+mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch, const mh3_matrix_sources *sources, const mh3_model_palette *inherited, mh3_model_palette *out) {
+    /* The loads cannot fail: in place (out == inherited) they write the
+     * loaded slots directly. */
+    if (out != inherited)
+        *out = *inherited;
+
+    for (uint32_t known = batch->position_known & 0x3ffu; known; known &= known - 1) {
+        const unsigned slot = (unsigned)__builtin_ctz(known);
+        read_palette_matrix(sources->positions, batch->position_source[slot], 12, &out->position[slot]);
+    }
+
+    for (uint32_t known = batch->normal_known & 0x3ffu; known; known &= known - 1) {
+        const unsigned slot = (unsigned)__builtin_ctz(known);
+        read_palette_matrix(sources->normals, batch->normal_source[slot], 9, &out->normal[slot]);
+    }
+
+    for (uint32_t known = batch->texture_known & 0x3ffu; known; known &= known - 1) {
+        const unsigned slot = (unsigned)__builtin_ctz(known);
+        read_palette_matrix(sources->environment, batch->texture_source[slot], 12, &out->texture[slot]);
+    }
+
+    out->position_valid |= (uint16_t)(batch->position_known & 0x3ffu);
+    out->normal_valid |= (uint16_t)(batch->normal_known & 0x3ffu);
+    out->texture_valid |= (uint16_t)(batch->texture_known & 0x3ffu);
     return MH3_RES_OK;
 }
 

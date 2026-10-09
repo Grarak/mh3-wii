@@ -228,12 +228,13 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
     if (!mesh || !out || !positions_out || !normals_out || !textures_out || !mesh->projection || !mesh->material || mesh->layout.count > 16 || normal_required < 0 || normal_required > 1 || !__builtin_isfinite(near_z) ||
         !__builtin_isfinite(far_z))
         return MH3_RES_INVALID;
-    memset(out, 0, sizeof *out);
-    memset(positions_out, 0, 10 * sizeof *positions_out);
-    memset(normals_out, 0, 10 * sizeof *normals_out);
-    memset(textures_out, 0, 10 * sizeof *textures_out);
+    /* Only what the draw consumes is initialized: the scalars here, each
+     * selected coordinate's recipe below, and the palette slots the shader
+     * reads exactly once (see the end). */
+    out->texcoord_mask = out->nonzero_projective_mask = out->zero_projective_mask = 0;
     out->matrix_index_mask = (uint16_t)((mesh->layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) & 0x1ffu);
     out->position = out->normal = identity();
+    uint32_t written_positions = 0, written_normals = 0, written_textures = 0;
 
     if (out->matrix_index_mask) {
         const mh3_pack_palette_batch *batch = mesh->palette_batch;
@@ -249,17 +250,25 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             }
 
             if (normal_required && (batch->normal_required & (1u << slot))) {
-                // The final GPU matrix's padding is exact +0 from the memset.
-                for (unsigned r = 0; r < 3; r++)
+                // The final GPU matrix's padding is exact +0.
+                for (unsigned r = 0; r < 3; r++) {
                     for (unsigned c = 0; c < 3; c++)
                         normals_out[slot].v[r][c] = mesh->palette->normal[slot].v[r][c];
+
+                    normals_out[slot].v[r][3] = 0.f;
+                }
             }
         }
+
+        written_positions = positions & 0x3ffu;
+        written_textures = batch->texture_required & 0x3ffu;
+        written_normals = normal_required ? batch->normal_required & 0x3ffu : 0;
     }
 
     if (!(out->matrix_index_mask & 1)) {
         out->position = mesh->palette->position[0];
         positions_out[0] = out->position;
+        written_positions |= 1;
     }
 
     for (unsigned i = 0; i < 16; i++) {
@@ -285,6 +294,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 for (unsigned c = 0; c < 3; c++)
                     out->normal.v[r][c] = mesh->palette->normal[0].v[r][c];
             normals_out[0] = out->normal;
+            written_normals |= 1;
         }
     }
 
@@ -311,6 +321,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 return MH3_RES_INVALID;
 
             mh3_model_gpu_texgen *gen = &out->texgen[i];
+            memset(gen, 0, sizeof *gen);
             gen->source_row = v[MH3_TEXGEN_SOURCE_ROW];
             gen->projection = v[MH3_TEXGEN_PROJECTION];
             gen->input_ab11 = v[MH3_TEXGEN_INPUT_AB11];
@@ -333,10 +344,13 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 main_matrix(mesh->palette, v[MH3_TEXGEN_MATRIX_ROW], &gen->main);
                 gen->main_slot = (uint8_t)(v[MH3_TEXGEN_MATRIX_ROW] / 3);
 
-                if (gen->main_slot < 10)
+                if (gen->main_slot < 10) {
                     positions_out[gen->main_slot] = gen->main;
-                else if (gen->main_slot < 20)
+                    written_positions |= 1u << gen->main_slot;
+                } else if (gen->main_slot < 20) {
                     textures_out[gen->main_slot - 10] = gen->main;
+                    written_textures |= 1u << (gen->main_slot - 10);
+                }
             }
 
             gen->post = identity();
@@ -368,6 +382,22 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 out->zero_projective_mask |= 1u << i;
         }
     out->texcoord_mask = mask;
+    /* A rigid draw's shader reads only slot 0 (written above); draws with
+     * per-vertex selectors read the slots nothing loads as zero. */
+    if (!out->matrix_index_mask)
+        return MH3_RES_OK;
+
+    for (unsigned slot = 0; slot < 10; slot++) {
+        if (!(written_positions & (1u << slot)))
+            memset(&positions_out[slot], 0, sizeof *positions_out);
+
+        if (!(written_normals & (1u << slot)))
+            memset(&normals_out[slot], 0, sizeof *normals_out);
+
+        if (!(written_textures & (1u << slot)))
+            memset(&textures_out[slot], 0, sizeof *textures_out);
+    }
+
     return MH3_RES_OK;
 }
 
@@ -379,6 +409,7 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh, uint8
 
     mh3_model_gpu_inputs result = {0};
     mh3_model_gpu_draw_inputs draw;
+    memset(&draw, 0, sizeof draw);
     const mh3_res_status status = mh3_model_gpu_prepare_draw(mesh, mask, normal_required, near_z, far_z, &draw, result.position_palette, result.normal_palette, result.texture_palette);
 
     if (status != MH3_RES_OK)

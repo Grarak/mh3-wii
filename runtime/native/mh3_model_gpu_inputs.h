@@ -43,6 +43,9 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh, uint8
 /* Prepare directly into final draw metadata and three 10-slot palette arrays.
  * The caller owns writable arrays in its admitted GPU frame allocation.
  * Failure can leave outputs partially written; consume them only on success.
+ * Only the selected coordinates' texgen recipes are written. A rigid draw (no
+ * matrix index attributes) does not clear the palette slots its shader does
+ * not read (all but slot 0); with matrix indices the unloaded slots are zero.
  * Palette storage, coefficients, masks and main/post selectors are trusted
  * producer inputs, without admission checks. Conservative projective-Q rules
  * match the transactional API above. No live guest pose pointer is retained. */

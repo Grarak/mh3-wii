@@ -20,6 +20,14 @@ struct Resident {
 };
 
 std::map<uintptr_t, Resident> residents;
+
+// Advances whenever a resident is registered, retired or cleared.
+uint64_t residentsRevision = 0;
+
+// The resident the last submission resolved: a model's meshes draw in a row.
+// Forgotten when a resident retires (map insertions keep it valid).
+uintptr_t lastHandle = 0;
+const Resident* lastResident = nullptr;
 void Owner() {
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Model GPU ownership outside graphics owner");
@@ -105,6 +113,7 @@ void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t han
         if (mh3_mesh_pack_mesh(&bound, i, &next.meshes[i]) != MH3_PACK_OK)
             throw std::runtime_error("Invalid resident model mesh");
     residents.emplace(handle, std::move(next));
+    ++residentsRevision;
 
     // Only the GPU span changes; the game thread keeps reading the metadata.
     pack.gpu = bound.gpu;
@@ -121,6 +130,9 @@ void UnregisterNativeModelGPU(uintptr_t handle, uint64_t generation) {
 
     // NativeMeshBuffer retirement preserves every submitted frame's backing.
     residents.erase(found);
+    ++residentsRevision;
+    lastHandle = 0;
+    lastResident = nullptr;
 }
 
 void ClearNativeModelGPU() {
@@ -130,6 +142,9 @@ void ClearNativeModelGPU() {
         resident.pack->gpu = {};
 
     residents.clear();
+    ++residentsRevision;
+    lastHandle = 0;
+    lastResident = nullptr;
 }
 
 size_t NativeModelGPUAllocationBytes(uint32_t bytes) {
@@ -142,19 +157,33 @@ size_t NativeModelGPUResidentBytes() {
     return aurora::gl::native_mesh_resident_bytes();
 }
 
+// Plain reads (no owner check): the asset manager asks them for every draw.
 uint32_t NativeModelGPUFrameSerial() {
-    Owner();
     return aurora::gfx::current_frame();
+}
+
+uint64_t NativeModelGPURevision() {
+    return residentsRevision;
 }
 
 NativeModelGPUView ResolveNativeModelGPU(const mh3_resolved_mesh_submit& mesh) {
     Owner();
-    const auto found = residents.find(mesh.resident_handle);
 
-    if (found == residents.end() || found->second.generation != mesh.resident_generation || found->second.pack != mesh.pack || !mesh.source_generation || !mesh.pose_generation ||
-        mesh.mesh_index >= found->second.meshes.size())
+    if (mesh.resident_handle != lastHandle || !lastResident) {
+        const auto found = residents.find(mesh.resident_handle);
+
+        if (found == residents.end())
+            throw std::runtime_error("Stale or unregistered model GPU submission");
+
+        lastHandle = mesh.resident_handle;
+        lastResident = &found->second;
+    }
+
+    const auto& resident = *lastResident;
+
+    if (resident.generation != mesh.resident_generation || resident.pack != mesh.pack || !mesh.source_generation || !mesh.pose_generation || mesh.mesh_index >= resident.meshes.size())
         throw std::runtime_error("Stale or unregistered model GPU submission");
-    const auto& resident = found->second;
+
     const auto& immutable = resident.meshes[mesh.mesh_index];
 
     if (immutable.asset_id != mesh.asset_id || immutable.model_id != mesh.model_id || immutable.source_id != mesh.shape_id || uint64_t(mesh.first_index) + mesh.index_count > immutable.index_count)
