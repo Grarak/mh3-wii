@@ -12,7 +12,6 @@ public:
   using std::runtime_error::runtime_error;
 };
 
-struct StagingBatchFull {};
 inline uint64_t staging_padded(uint64_t bytes, uint64_t alignment) {
   if (!bytes)
     return alignment;
