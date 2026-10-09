@@ -59,12 +59,17 @@ void display_callback(const void* data) {
   frame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
   frame.width = Device::Width;
   frame.height = Device::Height;
-  const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
-  // Sony's sync object can release the old buffer only after the actual flip.
-  // This wait belongs to the display callback on core 0, never the game thread.
-  const auto started = std::chrono::steady_clock::now();
-  const int waitResult = sceDisplayWaitSetFrameBuf();
-  g_displayWaitMicros.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
+  // Sony requires VBlank when starting display from black. With the fixed
+  // width/format established, use the sample's next-HSync flip mode: it returns
+  // without WaitSetFrameBuf and lets libgxm retire the old buffer's sync.
+  const bool firstDisplay = g_displayPresented.load(std::memory_order_relaxed) == 0;
+  const int setResult = sceDisplaySetFrameBuf(&frame, firstDisplay ? SCE_DISPLAY_SETBUF_NEXTFRAME : SCE_DISPLAY_SETBUF_IMMEDIATE);
+  int waitResult = 0;
+  if (setResult >= 0 && firstDisplay) {
+    const auto started = std::chrono::steady_clock::now();
+    waitResult = sceDisplayWaitSetFrameBuf();
+    g_displayWaitMicros.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
+  }
   if (setResult >= 0 && waitResult >= 0)
     g_displayPresented.fetch_add(1, std::memory_order_relaxed);
   else
@@ -102,7 +107,7 @@ const SceGxmProgram* fragment_scalar_binary(uint64_t hash) {
   return find_binary(FragmentScalarShaders, FragmentScalarShaderCount, hash, RuntimeShaderStage::ScalarFragment);
 }
 
-Device::Device(bool /*vsync*/) {
+Device::Device() {
   try {
     // Our vertices read CPU-owned streams/uniforms, never a fragment result.
     // Keep the previous serialization as a diagnostic comparison option.
@@ -203,6 +208,7 @@ Device::Device(bool /*vsync*/) {
             "initialize display surface");
       check(sceGxmSyncObjectCreate(&m_sync[i]), "create display sync");
     }
+    std::fprintf(stderr, "Aurora GXM: VSync disabled (next-HSync flips; first display at VBlank)\n");
   } catch (...) {
     release();
     throw;

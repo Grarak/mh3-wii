@@ -39,7 +39,7 @@ struct Caps {
   int32_t maxAnisotropy = 1;
 };
 
-bool initialize(SDL_Window* window, bool vsync) noexcept;
+bool initialize(SDL_Window* window) noexcept;
 void shutdown() noexcept;
 bool initialized() noexcept;
 const Caps& caps() noexcept;

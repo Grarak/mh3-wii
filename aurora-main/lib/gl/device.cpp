@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 
 namespace aurora::gx {
 void clear_display_copy_cache() noexcept;
@@ -49,18 +48,11 @@ RenderTargetSize clamp_frame_buffer_size(uint32_t width, uint32_t height) noexce
   return {budgeted.width, budgeted.height};
 }
 
-bool env_flag(const char* name, bool fallback) noexcept {
-  const char* value = std::getenv(name);
-  if (value == nullptr || value[0] == '\0') {
-    return fallback;
-  }
-  return value[0] != '0';
-}
 } // namespace
 
 bool initialize(SDL_Window* window) {
-  // The guest paces itself, so presenting never waits for vblank unless asked.
-  if (!gl::initialize(window, env_flag("AURORA_GL_VSYNC", false))) {
+  // The guest paces itself; presentation never enables VSync.
+  if (!gl::initialize(window)) {
     return false;
   }
   const auto& caps = gl::caps();

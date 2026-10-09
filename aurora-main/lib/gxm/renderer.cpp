@@ -147,8 +147,8 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
 }
 class Renderer {
 public:
-  explicit Renderer(bool vsync)
-  : device(vsync), pool(device), draws(device), clip(device), clearProgram(device, 1, 1), presentProgram(device, 1, 2), utility(4096, MappedMemory::Kind::Draw, "Aurora utility draws") {
+  Renderer()
+  : pool(device), draws(device), clip(device), clearProgram(device, 1, 1), presentProgram(device, 1, 2), utility(4096, MappedMemory::Kind::Draw, "Aurora utility draws") {
     const float ids[4]{0, 1, 2, 3};
     const uint16_t indices[6]{0, 1, 2, 2, 1, 3};
     std::memcpy(utility.data(), ids, sizeof(ids));
@@ -574,7 +574,7 @@ size_t native_mesh_resident_bytes() {
     bytes += item.second.size();
   return bytes;
 }
-bool initialize(SDL_Window* window, bool vsync) noexcept {
+bool initialize(SDL_Window* window) noexcept {
   if (g_context)
     return g_context->window == window;
   try {
@@ -582,7 +582,7 @@ bool initialize(SDL_Window* window, bool vsync) noexcept {
     thread->window = window;
     thread->id = std::this_thread::get_id();
     g_context = thread.get();
-    thread->renderer = std::make_unique<Renderer>(vsync);
+    thread->renderer = std::make_unique<Renderer>();
     g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1};
     thread.release();
     return true;

@@ -88,8 +88,8 @@ typedef struct {
   AuroraBackend desiredBackend;
   uint32_t msaa;
   uint16_t maxTextureAnisotropy;
-  // No vsync knob exists: the swapchain is always configured for a
-  // non-blocking present mode (Immediate, else Mailbox). See best_present_mode.
+  // No VSync knob exists: GL uses swap interval 0; GXM uses next-HSync flips
+  // after the required first-display transition at VBlank.
   bool startFullscreen;
   bool allowJoystickBackgroundEvents;
   bool pauseOnFocusLost;

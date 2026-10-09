@@ -260,7 +260,7 @@ GLuint compile_shader(GLenum stage, const std::string& source, const std::string
 
 // ---- Game-thread context ownership ----
 
-bool initialize(SDL_Window* window, bool vsync) noexcept {
+bool initialize(SDL_Window* window) noexcept {
   if (g_context != nullptr) {
     return g_context->window == window;
   }
@@ -269,7 +269,7 @@ bool initialize(SDL_Window* window, bool vsync) noexcept {
     Log.error("Failed to create an OpenGL ES 3.0 context: {}", SDL_GetError());
     return false;
   }
-  if (!SDL_GL_SetSwapInterval(vsync ? 1 : 0)) {
+  if (!SDL_GL_SetSwapInterval(0)) {
     Log.warn("Failed to set the swap interval: {}", SDL_GetError());
   }
   auto* rt = new RenderContext;
