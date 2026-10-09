@@ -1,0 +1,9 @@
+// Native interleaved geometry; clip coordinates are already projected on CPU.
+void main(float4 position_in : POSITION, float2 uv_in : TEXCOORD0,
+          half4 color_in : COLOR0, out float4 position : POSITION,
+          out float2 uv : TEXCOORD0, out half4 color : COLOR0)
+{
+    position = position_in;
+    uv = uv_in;
+    color = color_in;
+}

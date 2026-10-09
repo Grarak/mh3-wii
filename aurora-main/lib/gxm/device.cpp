@@ -4,6 +4,7 @@
 #include <aurora/gpu_completion.hpp>
 #include <aurora/thread_role.hpp>
 #include <psp2/display.h>
+#include <psp2/common_dialog.h>
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
 #include <array>
@@ -22,6 +23,7 @@ namespace {
 std::atomic<Device*> g_frameDevice{nullptr};
 std::atomic<uint32_t> g_displayQueued{0}, g_displayCompleted{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
+bool g_commonDialogActive = false;
 struct DisplayData { void* address; };
 void display_callback(const void* data) {
   aurora::pin_current_thread(aurora::ThreadRole::Worker);
@@ -233,6 +235,17 @@ bool gpu_frame_pending() noexcept {
 void Device::flip() {
   end();
   const unsigned back = m_frames.slot();
+  if (g_commonDialogActive) {
+    SceCommonDialogUpdateParam params{};
+    params.renderTarget.colorSurfaceData = m_displayData[back];
+    params.renderTarget.surfaceType = SCE_GXM_COLOR_SURFACE_LINEAR;
+    params.renderTarget.colorFormat = SCE_GXM_COLOR_FORMAT_A8B8G8R8;
+    params.renderTarget.width = Width;
+    params.renderTarget.height = Height;
+    params.renderTarget.strideInPixels = Stride;
+    params.displaySyncObject = m_sync[back];
+    check(sceCommonDialogUpdate(&params), "render common dialog");
+  }
   check(sceGxmPadHeartbeat(&m_display[back], m_sync[back]), "display heartbeat");
   razor_frame();
   const DisplayData display{m_displayData[back]};
@@ -242,8 +255,10 @@ void Device::flip() {
   m_frames.advance();
 }
 
+void set_common_dialog_active(bool active) noexcept { g_commonDialogActive = active; }
+
 PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,
-                               SceGxmIndexFormat indices)
+                               SceGxmIndexFormat indices, std::span<const VertexInput> inputs)
     : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)),
       m_fragmentHash(fragmentHash) {
   try {
@@ -251,12 +266,37 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
     check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
     check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
     check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
-    SceGxmVertexAttribute attributes[2]{};
-    SceGxmVertexStream streams[2]{
+    SceGxmVertexAttribute attributes[16]{};
+    SceGxmVertexStream streams[16]{
         {4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT)},
         {4, uint16_t(indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INSTANCE_16BIT : SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT)}};
     unsigned count = 0;
-    for (unsigned stream = 0; stream < 2; ++stream) {
+    unsigned streamCount = 2;
+    if (!inputs.empty()) {
+      streamCount = 0;
+      std::fill(std::begin(streams), std::end(streams), SceGxmVertexStream{});
+      for (const auto& input : inputs) {
+        if (input.stream >= 16 || !input.stride || input.offset >= input.stride ||
+            !input.components || input.components > 4 || count == 16)
+          throw std::runtime_error("Native vertex input exceeds hardware layout limits");
+        const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, input.name);
+        if (!parameter) continue; // Compiler removed an unused attribute.
+        if (sceGxmProgramParameterGetCategory(parameter) != SCE_GXM_PARAMETER_CATEGORY_ATTRIBUTE)
+          throw std::runtime_error("Native vertex input is not an attribute");
+        auto& stream = streams[input.stream];
+        if (stream.stride && stream.stride != input.stride)
+          throw std::runtime_error("Native vertex stream has conflicting strides");
+        stream.stride = input.stride;
+        stream.indexSource = indices == SCE_GXM_INDEX_FORMAT_U16 ? SCE_GXM_INDEX_SOURCE_INDEX_16BIT : SCE_GXM_INDEX_SOURCE_INDEX_32BIT;
+        streamCount = std::max(streamCount, unsigned(input.stream) + 1);
+        auto& attribute = attributes[count++];
+        attribute.streamIndex = input.stream;
+        attribute.offset = input.offset;
+        attribute.format = input.format;
+        attribute.componentCount = input.components;
+        attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
+      }
+    } else for (unsigned stream = 0; stream < 2; ++stream) {
       const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, stream ? "instance_id" : "vertex_id");
       if (!parameter) continue;
       auto& attribute = attributes[count++];
@@ -267,7 +307,7 @@ PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fra
       attribute.componentCount = 1;
       attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
     }
-    check(sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, 2, &m_vertex), "patch vertex program");
+    check(sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, streamCount, &m_vertex), "patch vertex program");
   } catch (...) { release(); throw; }
 }
 PatchedProgram::~PatchedProgram() { release(); }

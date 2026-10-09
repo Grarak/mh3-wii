@@ -63,6 +63,8 @@ struct State {
   GLuint emptyVao = 0;
 };
 State g_state;
+ProgramPtr g_nativePrograms[2];
+GLuint g_nativeVao = 0, g_nativeVertexBuffer = 0, g_nativeIndexBuffer = 0;
 
 struct FramebufferKey {
   GLuint color;
@@ -199,6 +201,12 @@ void shutdown() noexcept {
   }
   if (!on_render_thread()) Log.fatal("GL shutdown called outside the game thread");
   post([] {
+    g_nativePrograms[0].reset();
+    g_nativePrograms[1].reset();
+    if (g_nativeVao) glDeleteVertexArrays(1, &g_nativeVao);
+    if (g_nativeVertexBuffer) glDeleteBuffers(1, &g_nativeVertexBuffer);
+    if (g_nativeIndexBuffer) glDeleteBuffers(1, &g_nativeIndexBuffer);
+    g_nativeVao = g_nativeVertexBuffer = g_nativeIndexBuffer = 0;
     for (auto& [_, fbo] : g_framebuffers) {
       glDeleteFramebuffers(1, &fbo);
     }
@@ -732,6 +740,61 @@ void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances)
   glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT,
                          reinterpret_cast<const void*>(static_cast<uintptr_t>(indexOffset)),
                          static_cast<GLsizei>(instances));
+}
+void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+  auto& program = g_nativePrograms[textured];
+  if (!program) {
+    ProgramDesc desc;
+    desc.label = textured ? "Native textured geometry" : "Native colored geometry";
+    desc.vertex = vertex_source(R"(
+layout(location=0) in vec4 position_in;
+layout(location=1) in vec2 uv_in;
+layout(location=2) in vec4 color_in;
+out vec2 native_uv;
+out vec4 native_color;
+void main() {
+  gl_Position = vec4(position_in.x, -position_in.y, position_in.zw);
+  native_uv = uv_in;
+  native_color = color_in;
+})");
+    desc.fragment = fragment_source(textured ? R"(
+in vec2 native_uv;
+in vec4 native_color;
+uniform sampler2D native_texture;
+layout(location=0) out vec4 native_output;
+void main() { native_output = texture(native_texture, native_uv) * native_color; }
+)" : R"(
+in vec4 native_color;
+layout(location=0) out vec4 native_output;
+void main() { native_output = native_color; }
+)");
+    if (textured) desc.samplers.emplace_back("native_texture", 0);
+    program = std::make_shared<Program>(std::move(desc));
+  }
+  use_program(program->get());
+  if (!g_nativeVao) {
+    glGenVertexArrays(1, &g_nativeVao);
+    glGenBuffers(1, &g_nativeVertexBuffer);
+    glGenBuffers(1, &g_nativeIndexBuffer);
+    glBindVertexArray(g_nativeVao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_nativeVertexBuffer);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(AuroraNativeVertex), nullptr);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(AuroraNativeVertex),
+                          reinterpret_cast<void*>(offsetof(AuroraNativeVertex, uv)));
+    glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(AuroraNativeVertex),
+                          reinterpret_cast<void*>(offsetof(AuroraNativeVertex, color)));
+    for (unsigned i = 0; i < 3; ++i) glEnableVertexAttribArray(i);
+  } else glBindVertexArray(g_nativeVao);
+  glBindBuffer(GL_ARRAY_BUFFER, g_nativeVertexBuffer);
+  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(AuroraNativeVertex),
+               geometry.vertices, GL_STREAM_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_nativeIndexBuffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * sizeof(uint16_t),
+               geometry.indices, GL_STREAM_DRAW);
+  glDrawElements(GL_TRIANGLES, geometry.index_count, GL_UNSIGNED_SHORT, nullptr);
+  // The recorded/native generic draw VAO has its own element-buffer binding.
+  glBindVertexArray(g_state.emptyVao);
 }
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {
   glUniform4f(glGetUniformLocation(program, name), x, y, z, w);

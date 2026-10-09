@@ -3,6 +3,7 @@
 #include <aurora/native_draw_memory.hpp>
 #ifdef AURORA_GXM
 #include "gxm/draw_memory.hpp"
+#include "gxm/device.hpp"
 #endif
 
 #ifdef AURORA_ENABLE_GX
@@ -605,6 +606,15 @@ AuroraInfo aurora_initialize(int argc, char* argv[], const AuroraConfig* config)
   return aurora::initialize(argc, argv, *config);
 }
 void aurora_shutdown() { aurora::shutdown(); }
+void aurora_set_common_dialog_active(bool active) {
+#ifdef AURORA_GXM
+  if (!aurora::gl::on_render_thread())
+    aurora::Log.fatal("Common dialog changed outside the game thread");
+  aurora::gxm::set_common_dialog_active(active);
+#else
+  (void)active;
+#endif
+}
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }

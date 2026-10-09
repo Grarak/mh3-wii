@@ -7,10 +7,14 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <span>
 
 namespace aurora::gxm {
 
 void check(int result, const char* operation);
+// Game-thread toggle. Common dialogs render into the next admitted display
+// surface after its application scene ends, using the same display sync.
+void set_common_dialog_active(bool active) noexcept;
 const SceGxmProgram* vertex_binary(uint64_t hash);
 const SceGxmProgram* fragment_binary(uint64_t hash);
 const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
@@ -61,10 +65,16 @@ private:
 
 // Reflection supplies the vertex-ID / instance-ID stream register indices.
 // Fragment variants include native blend equations and channel write masks.
+struct VertexInput {
+  const char* name;
+  SceGxmAttributeFormat format;
+  uint16_t components, offset, stride, stream;
+};
 class PatchedProgram {
 public:
   PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,
-                 SceGxmIndexFormat indices = SCE_GXM_INDEX_FORMAT_U16);
+                 SceGxmIndexFormat indices = SCE_GXM_INDEX_FORMAT_U16,
+                 std::span<const VertexInput> inputs = {});
   ~PatchedProgram();
   PatchedProgram(const PatchedProgram&) = delete;
   PatchedProgram& operator=(const PatchedProgram&) = delete;

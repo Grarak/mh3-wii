@@ -288,6 +288,7 @@ public:
   DrawMemory draws;
   PixelClip clip;
   PatchedProgram clearProgram, presentProgram;
+  std::unique_ptr<PatchedProgram> nativeGeometryPrograms[2];
   MappedMemory utility;
   State state;
   std::map<GLuint, TextureEntry> textures;
@@ -564,6 +565,39 @@ void clear_depth(float depth) noexcept {
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
   if (!aurora::native_frame_drawing_allowed()) return;
   guarded([&] { if (!indexCount || !instances) return; auto& r = renderer(); r.prepare(r.state.program); r.draws.draw(indexCount, indexOffset, instances); });
+}
+void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+  guarded([&] {
+    auto& r = renderer();
+    auto& program = r.nativeGeometryPrograms[textured];
+    if (!program) {
+      static_assert(sizeof(AuroraNativeVertex) == 28);
+      const VertexInput inputs[]{
+        {"position_in", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, 0, 28, 0},
+        {"uv_in", SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, 16, 28, 0},
+        {"color_in", SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, 24, 28, 0}};
+      program = std::make_unique<PatchedProgram>(r.device, 7, textured ? 8 : 7,
+                                                SCE_GXM_INDEX_FORMAT_U16, inputs);
+    }
+    r.scene();
+    r.viewport();
+    apply_raster(r.state.raster, r.device.context());
+    auto blend = blend_info(r.state.raster, r.state.blendColor);
+    if (!r.state.display && !r.state.color) blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
+    program->bind(blend, r.output_format());
+    if (textured) {
+      const auto& binding = r.state.textures[0];
+      if (!binding.texture) throw std::runtime_error("Native geometry has no texture binding");
+      auto& texture = r.texture(binding.texture);
+      texture.note_gpu_use();
+      const auto sampled = sampling_view(texture, binding.sampler ? r.samplers.at(binding.sampler) : NearestClamp);
+      check(sceGxmSetFragmentTexture(r.device.context(), 0, &sampled), "bind native geometry texture");
+    }
+    check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind native vertex attributes");
+    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
+                    geometry.indices, geometry.index_count), "draw native triangles");
+  });
 }
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });

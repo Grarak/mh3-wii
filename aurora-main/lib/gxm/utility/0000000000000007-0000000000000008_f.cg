@@ -1,0 +1,7 @@
+// Coordinates arrive directly from the vertex program, allowing independent
+// texture sampling. Neither native immediate program discards or replaces Z.
+float4 main(float2 uv : TEXCOORD0, half4 color : COLOR0,
+           uniform sampler2D native_texture : TEXUNIT0) : COLOR
+{
+    return tex2D(native_texture, uv) * color;
+}

@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 #include "../gfx/format.hpp"
+#include <aurora/native_geometry.h>
 
 struct SDL_Window;
 
@@ -227,6 +228,9 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
 void clear_color(const float* color) noexcept;
 void clear_depth(float depth) noexcept;
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
+// Direct interleaved attributes and U16 triangles. GXM consumes the admitted
+// CDRAM allocation directly; GLES uploads the host allocation into VBOs.
+void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept;
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
 
 // Render thread only: blit `source` into the window with the letterboxed
