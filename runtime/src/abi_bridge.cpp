@@ -197,7 +197,6 @@ void RebuildIndicesLocked() {
             .address = address,
             .entry = entry.rawCpuInvoker,
             .nonvolatileFprWriteMask = NonvolatileFprGuardMaskFor(&entry),
-            .preserveNonvolatileGprs = ShouldPreserveNonvolatileGprsForRawCpuCall(&entry),
         });
     }
 
@@ -238,7 +237,7 @@ std::string ValidateGeneratedIndirectDispatchLocked() {
 
         const auto& info = Registry()[winner->second];
 
-        if (info.kind == FunctionKind::Native || info.rawCpuInvoker != record.entry || NonvolatileFprGuardMaskFor(&info) != record.nonvolatileFprWriteMask || record.preserveNonvolatileGprs) {
+        if (info.kind == FunctionKind::Native || info.rawCpuInvoker != record.entry || NonvolatileFprGuardMaskFor(&info) != record.nonvolatileFprWriteMask) {
             std::ostringstream message;
             message << "Stale generated indirect dispatch winner at 0x" << std::hex << record.address << " for profile '" << table->profileName << "'";
             return message.str();

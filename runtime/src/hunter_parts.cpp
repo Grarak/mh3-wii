@@ -144,7 +144,7 @@ extern "C" void func_802296FC(CpuContext* ctx);
 extern "C" void MH3_PartNodeCallbackB(CpuContext* ctx) {
     PortCheck::Call(ctx, "PartNodeCallbackB", func_802296FC, CallbackB);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x802296FC, MH3_PartNodeCallbackB, "PartNodeCallbackB", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x802296FC, MH3_PartNodeCallbackB, "PartNodeCallbackB");
 
 extern "C" void func_80229508(CpuContext* ctx);
 static void CallbackAChecked(uint32_t r1, uint32_t r3, uint32_t r4, uint32_t r6) {

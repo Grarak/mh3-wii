@@ -105,10 +105,10 @@ extern "C" void func_800A9508(CpuContext* ctx);
 extern "C" void MH3_EmitterCalcGlobalMtx(CpuContext* ctx) {
     PortCheck::Call(ctx, "EmitterCalcGlobalMtx", func_800A9508, EmitterGlobalPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800A9508, MH3_EmitterCalcGlobalMtx, "EmitterCalcGlobalMtx", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800A9508, MH3_EmitterCalcGlobalMtx, "EmitterCalcGlobalMtx");
 
 extern "C" void func_800AE3C4(CpuContext* ctx);
 extern "C" void MH3_ParticleManagerLocalMtx(CpuContext* ctx) {
     PortCheck::Call(ctx, "ParticleManagerLocalMtx", func_800AE3C4, ManagerLocalPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800AE3C4, MH3_ParticleManagerLocalMtx, "ParticleManagerLocalMtx", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800AE3C4, MH3_ParticleManagerLocalMtx, "ParticleManagerLocalMtx");

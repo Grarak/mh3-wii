@@ -143,10 +143,6 @@ uint32_t GetResult(GuestCall& game, uint32_t self, uint32_t result, uint32_t ind
 
 // The registered bodies: guest frames as small as the originals' (32 or 16
 // bytes); the f1 and r3 results are set after the frame restores the GPRs.
-// They are registered kNativeKeepsNonvolatile (no dispatch guard around them):
-// they name no r14-r31 or f14-f31, the frames restore every GPR, and their
-// guest calls go through GuestCall, whose dispatch guards a callee that may
-// change f14-f31.
 void SetFramePort(CpuContext* ctx) {
     GuestFrame frame(ctx, 32);
     GuestCall game{ctx};
@@ -239,46 +235,46 @@ extern "C" void MH3_AnmObjChrResSetFrame(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("AnmObjChrResSetFrame", func_80061D90, SetFramePort)
     SetFramePort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80061D90, MH3_AnmObjChrResSetFrame, "AnmObjChrResSetFrame", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x80061D90, MH3_AnmObjChrResSetFrame, "AnmObjChrResSetFrame");
 
 extern "C" void func_80061F28(CpuContext* ctx);
 extern "C" void MH3_FrameCtrlSetFrame(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("FrameCtrlSetFrame", func_80061F28, ControlSetFramePort)
     ControlSetFramePort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80061F28, MH3_FrameCtrlSetFrame, "FrameCtrlSetFrame", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x80061F28, MH3_FrameCtrlSetFrame, "FrameCtrlSetFrame");
 
 extern "C" void func_80061F6C(CpuContext* ctx);
 extern "C" void MH3_AnmObjChrResGetFrame(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("AnmObjChrResGetFrame", func_80061F6C, GetFramePort)
     GetFramePort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80061F6C, MH3_AnmObjChrResGetFrame, "AnmObjChrResGetFrame", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x80061F6C, MH3_AnmObjChrResGetFrame, "AnmObjChrResGetFrame");
 
 extern "C" void func_8006236C(CpuContext* ctx);
 extern "C" void MH3_AnmObjChrResUpdateFrame(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("AnmObjChrResUpdateFrame", func_8006236C, UpdateFramePort)
     UpdateFramePort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8006236C, MH3_AnmObjChrResUpdateFrame, "AnmObjChrResUpdateFrame", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8006236C, MH3_AnmObjChrResUpdateFrame, "AnmObjChrResUpdateFrame");
 
 extern "C" void func_800624B0(CpuContext* ctx);
 extern "C" void MH3_FrameCtrlUpdateFrm(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("FrameCtrlUpdateFrm", func_800624B0, ControlUpdateFrmPort)
     ControlUpdateFrmPort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800624B0, MH3_FrameCtrlUpdateFrm, "FrameCtrlUpdateFrm", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800624B0, MH3_FrameCtrlUpdateFrm, "FrameCtrlUpdateFrm");
 
 extern "C" void func_800631D4(CpuContext* ctx);
 extern "C" void MH3_AnmObjChrResGetResult(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("AnmObjChrResGetResult", func_800631D4, GetResultPort)
     GetResultPort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800631D4, MH3_AnmObjChrResGetResult, "AnmObjChrResGetResult", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800631D4, MH3_AnmObjChrResGetResult, "AnmObjChrResGetResult");
 
 extern "C" void func_800634A0(CpuContext* ctx);
 extern "C" void MH3_AnmObjChrResUpdateCache(CpuContext* ctx) {
     MH3_ANM_OBJ_CHECK("AnmObjChrResUpdateCache", func_800634A0, UpdateCachePort)
     UpdateCachePort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800634A0, MH3_AnmObjChrResUpdateCache, "AnmObjChrResUpdateCache", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800634A0, MH3_AnmObjChrResUpdateCache, "AnmObjChrResUpdateCache");

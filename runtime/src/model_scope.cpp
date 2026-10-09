@@ -1915,7 +1915,7 @@ extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
 
 // Only integer guest arguments/results reach the native matrix producers;
 // no guest call or CpuContext is passed to their descendants.
-REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices", true);
+REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices");
 namespace {
 // The dispatch's shape visibility: its resolved shape's flag, or by reference.
 bool ShapeVisible(const NativeModelDispatch& d, const Resolved* r) {
@@ -2371,4 +2371,4 @@ extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
 }
 
 // Material/shape preparation and packet recording preserve every guest FPR.
-REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch", true);
+REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch");

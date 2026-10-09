@@ -70,10 +70,10 @@ extern "C" void func_801440E0(CpuContext* ctx);
 extern "C" void MH3_SmallMonstersUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "SmallMonstersUpdate", func_801440E0, Update);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x801440E0, MH3_SmallMonstersUpdate, "SmallMonstersUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x801440E0, MH3_SmallMonstersUpdate, "SmallMonstersUpdate");
 
 extern "C" void func_80343D48(CpuContext* ctx);
 extern "C" void MH3_MonsterIconsUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "MonsterIconsUpdate", func_80343D48, Icons);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80343D48, MH3_MonsterIconsUpdate, "MonsterIconsUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x80343D48, MH3_MonsterIconsUpdate, "MonsterIconsUpdate");

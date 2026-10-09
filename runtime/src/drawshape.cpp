@@ -162,7 +162,7 @@ extern "C" void func_802E07A4(CpuContext* ctx);
 extern "C" void MH3_DrawSprite(CpuContext* ctx) {
     PortCheck::Call(ctx, "DrawSprite", func_802E07A4, DrawSprite);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x802E07A4, MH3_DrawSprite, "DrawSprite", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x802E07A4, MH3_DrawSprite, "DrawSprite");
 
 extern "C" void func_80053BCC(CpuContext* ctx);
 static void SetTextureRectPort(CpuContext* p) {

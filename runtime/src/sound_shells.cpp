@@ -153,4 +153,4 @@ extern "C" void func_800D811C(CpuContext* ctx);
 extern "C" void MH3_SoundSourcesUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "SoundSourcesUpdate", func_800D811C, Update);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800D811C, MH3_SoundSourcesUpdate, "SoundSourcesUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800D811C, MH3_SoundSourcesUpdate, "SoundSourcesUpdate");

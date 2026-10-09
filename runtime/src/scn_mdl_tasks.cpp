@@ -519,7 +519,7 @@ extern "C" void MH3_ScnMdlSimpleCalcWorld(CpuContext* ctx) {
 #endif
     SimpleCalcWorld(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8007F480, MH3_ScnMdlSimpleCalcWorld, "ScnMdlSimpleCalcWorld", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8007F480, MH3_ScnMdlSimpleCalcWorld, "ScnMdlSimpleCalcWorld");
 
 extern "C" void func_8007D4E0(CpuContext* ctx);
 extern "C" void MH3_ScnMdlCalcWorldTask(CpuContext* ctx) {
@@ -531,7 +531,7 @@ extern "C" void MH3_ScnMdlCalcWorldTask(CpuContext* ctx) {
 #endif
     CalcWorldTask(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8007D4E0, MH3_ScnMdlCalcWorldTask, "ScnMdlCalcWorldTask", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8007D4E0, MH3_ScnMdlCalcWorldTask, "ScnMdlCalcWorldTask");
 
 extern "C" void func_8007FADC(CpuContext* ctx);
 extern "C" void MH3_ScnMdlSimpleCalcView(CpuContext* ctx) {
@@ -543,7 +543,7 @@ extern "C" void MH3_ScnMdlSimpleCalcView(CpuContext* ctx) {
 #endif
     SimpleCalcView(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8007FADC, MH3_ScnMdlSimpleCalcView, "ScnMdlSimpleCalcView", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8007FADC, MH3_ScnMdlSimpleCalcView, "ScnMdlSimpleCalcView");
 
 extern "C" void func_8007D600(CpuContext* ctx);
 extern "C" void MH3_ScnMdlCalcMat(CpuContext* ctx) {
@@ -555,7 +555,7 @@ extern "C" void MH3_ScnMdlCalcMat(CpuContext* ctx) {
 #endif
     CalcMat(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8007D600, MH3_ScnMdlCalcMat, "ScnMdlCalcMat", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8007D600, MH3_ScnMdlCalcMat, "ScnMdlCalcMat");
 
 extern "C" void func_8007E4FC(CpuContext* ctx);
 extern "C" void MH3_CopiedMatRefresh(CpuContext* ctx) {
@@ -567,7 +567,7 @@ extern "C" void MH3_CopiedMatRefresh(CpuContext* ctx) {
 #endif
     CopiedMatRefresh(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8007E4FC, MH3_CopiedMatRefresh, "CopiedMatRefresh", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8007E4FC, MH3_CopiedMatRefresh, "CopiedMatRefresh");
 
 extern "C" void func_80081A94(CpuContext* ctx);
 extern "C" void MH3_ScnObjG3dProc(CpuContext* ctx) {
@@ -579,7 +579,7 @@ extern "C" void MH3_ScnObjG3dProc(CpuContext* ctx) {
 #endif
     ScnObjG3dProc(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80081A94, MH3_ScnObjG3dProc, "ScnObjG3dProc", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x80081A94, MH3_ScnObjG3dProc, "ScnObjG3dProc");
 
 // CopiedMatAccess's constructor returns this; checked with RunOutput.
 extern "C" void func_8007BF10(CpuContext* ctx);

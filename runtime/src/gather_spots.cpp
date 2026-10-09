@@ -169,4 +169,4 @@ extern "C" void func_803BA604(CpuContext* ctx);
 extern "C" void MH3_GatherSpotsUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "GatherSpotsUpdate", func_803BA604, Update);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x803BA604, MH3_GatherSpotsUpdate, "GatherSpotsUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x803BA604, MH3_GatherSpotsUpdate, "GatherSpotsUpdate");

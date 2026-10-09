@@ -251,31 +251,31 @@ extern "C" void func_800F8E08(CpuContext* ctx);
 extern "C" void MH3_EffectObjectsUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "EffectObjectsUpdate", func_800F8E08, EffectObjectsUpdate);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800F8E08, MH3_EffectObjectsUpdate, "EffectObjectsUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800F8E08, MH3_EffectObjectsUpdate, "EffectObjectsUpdate");
 
 extern "C" void func_800D854C(CpuContext* ctx);
 extern "C" void MH3_ShellSlotsUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "ShellSlotsUpdate", func_800D854C, ShellSlotsUpdate);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800D854C, MH3_ShellSlotsUpdate, "ShellSlotsUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800D854C, MH3_ShellSlotsUpdate, "ShellSlotsUpdate");
 
 extern "C" void func_800D8614(CpuContext* ctx);
 extern "C" void MH3_ShellSlotsUpdate2(CpuContext* ctx) {
     PortCheck::Call(ctx, "ShellSlotsUpdate2", func_800D8614, ShellSlotsUpdate);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800D8614, MH3_ShellSlotsUpdate2, "ShellSlotsUpdate2", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800D8614, MH3_ShellSlotsUpdate2, "ShellSlotsUpdate2");
 
 extern "C" void func_800D8794(CpuContext* ctx);
 extern "C" void MH3_ShellSlotsRefresh(CpuContext* ctx) {
     PortCheck::Call(ctx, "ShellSlotsRefresh", func_800D8794, ShellSlotsRefresh);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800D8794, MH3_ShellSlotsRefresh, "ShellSlotsRefresh", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800D8794, MH3_ShellSlotsRefresh, "ShellSlotsRefresh");
 
 extern "C" void func_802AAE40(CpuContext* ctx);
 extern "C" void MH3_FieldObjectsUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "FieldObjectsUpdate", func_802AAE40, FieldObjectsUpdate);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x802AAE40, MH3_FieldObjectsUpdate, "FieldObjectsUpdate", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x802AAE40, MH3_FieldObjectsUpdate, "FieldObjectsUpdate");
 
 extern "C" void func_8028F5BC(CpuContext* ctx);
 static void CapsuleSetupPort(CpuContext* p) {

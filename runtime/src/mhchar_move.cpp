@@ -132,13 +132,13 @@ extern "C" void func_800E078C(CpuContext* ctx);
 extern "C" void MH3_MHcharMove(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharMove", func_800E078C, Move);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800E078C, MH3_MHcharMove, "MHcharMove", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800E078C, MH3_MHcharMove, "MHcharMove");
 
 extern "C" void func_800E0978(CpuContext* ctx);
 extern "C" void MH3_MHcharSetWorld(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharSetWorld", func_800E0978, SetWorldPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800E0978, MH3_MHcharSetWorld, "MHcharSetWorld", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800E0978, MH3_MHcharSetWorld, "MHcharSetWorld");
 
 extern "C" void func_800E3154(CpuContext* ctx);
 static void SetVisibilityChecked([[maybe_unused]] uint32_t r1, uint32_t r3, uint32_t r4, uint32_t r5) {

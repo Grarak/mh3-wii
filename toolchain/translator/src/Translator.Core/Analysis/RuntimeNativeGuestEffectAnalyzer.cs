@@ -91,7 +91,7 @@ public static class RuntimeNativeGuestEffectAnalyzer
         // complete-context fence, unless it can suspend or switch threads or
         // is marked MH3_NATIVE_FULL_CONTEXT(0x...) (it reads or changes the
         // caller's non-volatile registers, e.g. a context switch). It stays
-        // off the precise list, so it keeps the guarded native dispatch.
+        // off the precise list, so its callers reach it through the dispatch.
         var fullContext = new HashSet<uint>();
         foreach (var sourceFile in sources)
             foreach (Match match in FullContextRegex.Matches(sourceFile.Content))

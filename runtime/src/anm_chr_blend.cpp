@@ -20,11 +20,6 @@
 // animations' GetResult (virtual +0x38), logf, expf and the SDK quaternion and
 // vector routines stay guest calls; the rest keeps the Gekko single-precision
 // arithmetic of the translated code, so the port matches it bit for bit.
-//
-// Registered kNativeKeepsNonvolatile (no dispatch guard around it): it names
-// no r14-r31 or f14-f31, its guest frame restores every GPR, the animations'
-// GetResult go through GuestCall's dispatch and the direct SDK calls are
-// guarded below.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -287,4 +282,4 @@ extern "C" void MH3_AnmChrBlendGetResult(CpuContext* ctx) {
 #endif
     BlendPort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800606BC, MH3_AnmChrBlendGetResult, "AnmChrBlendGetResult", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x800606BC, MH3_AnmChrBlendGetResult, "AnmChrBlendGetResult");

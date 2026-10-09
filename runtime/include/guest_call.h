@@ -44,9 +44,8 @@ struct GuestCall {
 
     // operator() for a constant target: the first call after the registry is
     // published binds the target's entry point once, so later calls skip the
-    // dispatch lookup, the translated-address bookkeeping and the r14-r31
-    // guard of a native target (the port's GuestFrame restores the GPRs).
-    // Targets that may change the nonvolatile FPRs keep the guarded dispatch.
+    // dispatch lookup and the translated-address bookkeeping. Targets that may
+    // change the nonvolatile FPRs keep the guarded dispatch.
     template <uint32_t Target>
     [[gnu::always_inline]] uint32_t Call(std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         uint32_t r = 3, f = 1;

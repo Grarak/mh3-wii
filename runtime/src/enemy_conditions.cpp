@@ -104,7 +104,7 @@ extern "C" void func_8012FA28(CpuContext* ctx);
 extern "C" void MH3_EnemyPartEnabled(CpuContext* ctx) {
     PortCheck::Call(ctx, "EnemyPartEnabled", func_8012FA28, PartEnabledPort);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8012FA28, MH3_EnemyPartEnabled, "EnemyPartEnabled", kNativeKeepsNonvolatile);
+REGISTER_NATIVE_FUNCTION_AS(0x8012FA28, MH3_EnemyPartEnabled, "EnemyPartEnabled");
 
 extern "C" void func_80140C64(CpuContext* ctx);
 static uint32_t ActionTableChecked([[maybe_unused]] uint32_t r1, uint32_t r3, uint32_t r4) {

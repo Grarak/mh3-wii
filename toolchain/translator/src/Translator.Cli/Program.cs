@@ -235,12 +235,11 @@ int RunCheckBaseModAwareness(string[] argsTail)
 // precise_native_calls.inc: InvokeDirectCpu calls these natives' entry points
 // directly. A precise native's contract names every register it touches and
 // its callers sync exactly those, so the generic dispatch (registry lookup,
-// the r14-r31 save/restore guard, the thread's context check) is not needed.
-// Only extern "C" CpuContext entry points (declared extern "C" or defined in an
-// extern "C" { } block) with a literal REGISTER_NATIVE_FUNCTION_AS registration
-// are listed. kKeepsNonvolatile: the contract writes none of r14-r31 and
-// f14-f31, so the runtime's indirect dispatch (bctrl, GuestCall) needs no guard
-// around the native either.
+// the thread's context check) is not needed. Only extern "C" CpuContext entry
+// points (declared extern "C" or defined in an extern "C" { } block) with a
+// literal REGISTER_NATIVE_FUNCTION_AS registration are listed.
+// kKeepsNonvolatile: the contract writes none of r14-r31 and f14-f31 (the
+// runtime no longer reads it: no native's calls are guarded).
 static bool HasCLinkage(string source, string symbol)
 {
     var escaped = System.Text.RegularExpressions.Regex.Escape(symbol);
