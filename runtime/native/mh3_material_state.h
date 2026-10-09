@@ -60,6 +60,13 @@ mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination
  * an atomic temporary fallback, including destination==source self overlays. */
 mh3_res_status mh3_material_state_overlay_candidate(mh3_native_material_state *candidate,
     const mh3_native_material_state *current,const mh3_native_material_state *source,uint32_t top_known);
+/* Internal renderer publication: declared fields merge directly in place.
+ * Trusted typed producers supply valid masks/domains; external data must use
+ * checked admission APIs first. Exact self alias is supported; partial overlap
+ * uses the checked overlay path. NDEBUG removes all domain checks and debug
+ * candidate storage. Mutation never depends on assertion evaluation. */
+void mh3_material_state_overlay_unchecked(mh3_native_material_state *destination,
+    const mh3_native_material_state *source,uint32_t top_known);
 /* Null requirements checks known value domains only. ABSENT identifies missing
  * consumed fields; UNSUPPORTED identifies an unpromised backend capability. */
 mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state,
@@ -88,6 +95,9 @@ mh3_res_status mh3_material_state_require_step(mh3_material_requirement_proof *p
 /* Alpha comparisons and other non-raster fields stay shader/backend owned.
  * A partial blend-mode triple returns ABSENT without changing any raster byte. */
 mh3_res_status mh3_material_pixel_raster(const mh3_pack_pixel_inputs *pixel,mh3_raster_state *raster);
+/* Internal typed pixel publication. Retains the partial blend triple error;
+ * NDEBUG omits value-domain validation. Raster changes only on success. */
+mh3_res_status mh3_material_pixel_raster_unchecked(const mh3_pack_pixel_inputs *pixel,mh3_raster_state *raster);
 
 /* Byte-identical float layouts consumed by the material shader serializer. */
 typedef struct mh3_shader_light {

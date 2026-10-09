@@ -16,6 +16,7 @@
 namespace aurora::gfx { uint32_t current_frame() noexcept; }
 #endif
 #include <array>
+#include <cassert>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -245,14 +246,29 @@ void Check(mh3_res_status status,const char* operation) {
     if(status!=MH3_RES_OK) throw std::runtime_error(std::string(operation)+": status "+std::to_string(status));
 }
 void Validate(const mh3_material_requirements* requirements,mh3_material_requirement_proof& proof) {
+#ifndef NDEBUG
     mh3_material_diagnostic diagnostic{};
     // This proof lives only inside one owner-only immutable preparation.
     // Each discovery boundary checks newly consumed fields before reading them.
     const auto status=requirements ? mh3_material_state_require_step(&proof,&material,requirements,&diagnostic) :
         mh3_material_state_require_begin(&proof,&material,&diagnostic);
-    if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
-        ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
-        ", fields "+std::to_string(diagnostic.fields));
+    assert(status==MH3_RES_OK);
+#else
+    (void)requirements;(void)proof;
+#endif
+}
+void RequireCapabilities(const mh3_material_requirements& requirements) {
+    const auto unsupported=[](mh3_material_group group,uint64_t fields) {
+        throw std::runtime_error("Native material status "+std::to_string(MH3_RES_UNSUPPORTED)+
+            ", group "+std::to_string(group)+", index 0, fields "+std::to_string(fields));
+    };
+    if(material.clip_mode_known && material.clip_disabled &&
+       !(requirements.supported_features&MH3_MATERIAL_SUPPORT_CLIP_DISABLED))
+        unsupported(MH3_MATERIAL_CLIP,1);
+    constexpr unsigned fields[]{MH3_PIXEL_DITHER,MH3_PIXEL_DESTINATION_ALPHA_ENABLE,MH3_PIXEL_DEPTH_TEXTURE_OPERATION};
+    constexpr uint32_t capabilities[]{MH3_MATERIAL_SUPPORT_DITHER,MH3_MATERIAL_SUPPORT_DESTINATION_ALPHA,MH3_MATERIAL_SUPPORT_DEPTH_TEXTURE};
+    for(unsigned i=0;i<3;++i) if((material.pixel.known&Bit(fields[i])) && material.pixel.values[fields[i]] &&
+       !(requirements.supported_features&capabilities[i])) unsupported(MH3_MATERIAL_PIXEL,Bit(fields[i]));
 }
 void ImportRaster(const mh3_raster_state& raster) {
     const uint32_t fields[][2]={
@@ -313,9 +329,10 @@ void ChannelConfig(const mh3_pack_channel_control& source,aurora::gx::ColorChann
 }
 PreparedMaterial PrepareMaterial() {
     mh3_material_requirement_proof proof{};
+    RequireCapabilities({});
     Validate(nullptr,proof);
-    if(!material.tev_count) throw std::runtime_error("Native material has no active combiner stages");
-    if(material.fog_reference>=0 && !fogKnown) throw std::runtime_error("Native material fog reference has no typed producer");
+    assert(material.tev_count);
+    assert(material.fog_reference<0 || fogKnown);
     PreparedMaterial result;
     auto& config=result.config;auto& requirements=result.requirements;
     config.vtxStride=sizeof(AuroraNativeMaterialVertex);
@@ -489,9 +506,9 @@ PreparedMaterial PrepareMaterial() {
     result.info=aurora::gx::build_shader_info(config);
     return result;
 }
-// Publication already checked every known domain. Compare only the previous
-// successful derivation's consumed structural fields; uniform values remain
-// live in material and are read by WriteUniforms on every admitted draw.
+// Compare only the previous successful derivation's consumed structural
+// fields; uniform values remain live in material and are read by WriteUniforms
+// on every admitted draw. Internal producer contracts are DEBUG assertions.
 template<typename T> bool ChangedFields(const T* a,const T* b,uint64_t fields,unsigned count) {
     while(fields) {
         const unsigned i=std::countr_zero(fields);if(i>=count) break;
@@ -535,8 +552,26 @@ bool SameMaterialStructure(const mh3_native_material_state& source,const mh3_nat
     if((next.pixel.known&requirements.pixel)!=requirements.pixel) return false;
     return !ChangedFields(source.pixel.values,next.pixel.values,requirements.pixel,MH3_PIXEL_FIELD_COUNT);
 }
-bool MaterialStructureChanged(const mh3_native_material_state& next) {
-    return !SameMaterialStructure(material,next,ActivePrepared().requirements);
+bool MaterialOverlayStructureChanged(const mh3_native_material_state& patch,uint32_t top) {
+    const auto& used=ActivePrepared().requirements;
+    if(((top&MH3_MATERIAL_TOP_TEV_COUNT) && patch.tev_count!=material.tev_count) ||
+       ((top&MH3_MATERIAL_TOP_TEXGEN_COUNT) && patch.texgen_count!=material.texgen_count) ||
+       ((top&MH3_MATERIAL_TOP_CHANNEL_COUNT) && patch.channel_count!=material.channel_count) ||
+       ((top&MH3_MATERIAL_TOP_INDIRECT_COUNT) && patch.indirect_count!=material.indirect_count)) return true;
+    for(unsigned i=0;i<16;++i) if(ChangedFields(reinterpret_cast<const uint8_t*>(&material.tev[i].color),
+        reinterpret_cast<const uint8_t*>(&patch.tev[i].color),used.tev[i]&patch.tev[i].known,MH3_TEV_FIELD_COUNT)) return true;
+    for(unsigned i=0;i<8;++i) if(ChangedFields(material.texgen[i].values,patch.texgen[i].values,
+        used.texgen[i]&patch.texgen[i].known,MH3_TEXGEN_FIELD_COUNT)) return true;
+    for(unsigned i=0;i<2;++i) {
+        const uint32_t controls=used.channel[i]&patch.channel[i].flags;
+        if((controls&MH3_CHANNEL_CONTROL_COLOR) && std::memcmp(&material.channel[i].color,&patch.channel[i].color,5)!=0) return true;
+        if((controls&MH3_CHANNEL_CONTROL_ALPHA) && std::memcmp(&material.channel[i].alpha,&patch.channel[i].alpha,5)!=0) return true;
+    }
+    for(unsigned i=0;i<4;++i) {
+        if(ChangedFields(material.swaps[i].rgba,patch.swaps[i].rgba,used.swaps[i]&patch.swaps[i].known,4)) return true;
+        if(ChangedFields(&material.indirect[i].coordinate,&patch.indirect[i].coordinate,used.indirect[i]&patch.indirect[i].known,4)) return true;
+    }
+    return ChangedFields(material.pixel.values,patch.pixel.values,used.pixel&patch.pixel.known,MH3_PIXEL_FIELD_COUNT);
 }
 bool SameRequirements(const mh3_material_requirements& a,const mh3_material_requirements& b) {
     // Compare typed dependencies: the C structure has trailing padding, which
@@ -551,13 +586,13 @@ bool SameRequirements(const mh3_material_requirements& a,const mh3_material_requ
         a.supported_features==b.supported_features && a.require_clip==b.require_clip;
 }
 void RequirePrepared(const PreparedMaterial& state) {
-    if(material.fog_reference>=0 && !fogKnown)
-        throw std::runtime_error("Native material fog reference has no typed producer");
+    RequireCapabilities(state.requirements);
+#ifndef NDEBUG
+    assert(material.fog_reference<0 || fogKnown);
     mh3_material_diagnostic diagnostic{};
     const auto status=mh3_material_state_require(&material,&state.requirements,&diagnostic);
-    if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
-        ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
-        ", fields "+std::to_string(diagnostic.fields));
+    assert(status==MH3_RES_OK);
+#endif
 }
 bool PreparationFilter(uint64_t& filter) {
     // Integer rejection tag only. Never read an unknown equation operation,
@@ -850,6 +885,14 @@ void WriteUniforms(const PreparedMaterial& state,AuroraNativeUniforms& uniforms,
 }
 }
 
+namespace {
+// Keep the compatibility candidate and its full copy off the ordinary stack.
+[[gnu::noinline]] void OverlayOverlappingMaterial(const mh3_native_material_state& source,uint32_t top) {
+    mh3_native_material_state next;
+    Check(mh3_material_state_overlay_candidate(&next,&material,&source,top),"Native material overlay");
+    OverlayNativeMaterial(next,MH3_MATERIAL_TOP_ALL);
+}
+}
 const mh3_native_material_state& GetNativeMaterialState() {
     Owner();ObserveRasterPublications();return material;
 }
@@ -858,14 +901,28 @@ void SetNativeMaterial(const mh3_native_material_state& source) {
 }
 void OverlayNativeMaterial(const mh3_native_material_state& source,uint32_t top_known) {
     Owner();ObserveRasterPublications();
-    mh3_native_material_state next;
-    Check(mh3_material_state_overlay_candidate(&next,&material,&source,top_known),"Native material overlay");
-    auto raster=GetNativeDrawState().raster;Check(mh3_material_pixel_raster(&next.pixel,&raster),"Native material pixel raster");
-    raster.cull_mode=next.cull_mode;
-    const bool structural=preparedKnown && MaterialStructureChanged(next);
+    // Typed renderer producers own this internal boundary. External resource
+    // admission keeps its checked APIs; release publication merges only declared
+    // fields, with no whole-state candidate or repeated domain validation.
+    const uintptr_t from=reinterpret_cast<uintptr_t>(&source),to=reinterpret_cast<uintptr_t>(&material);
+    const bool overlap=from!=to && (from<to ? to-from : from-to)<sizeof(material);
+    if(overlap) {OverlayOverlappingMaterial(source,top_known);return;}
+    mh3_pack_pixel_inputs pixel=material.pixel;
+    uint64_t fields=source.pixel.known;
+    while(fields) {
+        const unsigned i=std::countr_zero(fields);
+        assert(i<MH3_PIXEL_FIELD_COUNT);
+        pixel.values[i]=source.pixel.values[i];fields&=fields-1;
+    }
+    pixel.known|=source.pixel.known;
+    if(top_known&MH3_MATERIAL_TOP_PIXEL_CLASSIFICATION) pixel.classification=source.pixel.classification;
+    auto raster=GetNativeDrawState().raster;
+    Check(mh3_material_pixel_raster_unchecked(&pixel,&raster),"Native material pixel raster");
+    raster.cull_mode=(top_known&MH3_MATERIAL_TOP_CULL)?source.cull_mode:material.cull_mode;
+    const bool structural=preparedKnown && MaterialOverlayStructureChanged(source,top_known);
     struct Export {Export(){publishingMaterialRaster=true;}~Export(){publishingMaterialRaster=false;}};
     {Export scoped;SetNativeRaster(raster);}
-    material=next;
+    mh3_material_state_overlay_unchecked(&material,&source,top_known);
     if(structural) preparedKnown=false;
     preparedAdmissionPending=true;
 }
