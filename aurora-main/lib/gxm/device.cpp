@@ -112,11 +112,23 @@ void display_callback(const void* data) {
   // VSync: flip at the next VBlank and wait for it, so the old buffer's sync
   // is released only after scanout has moved on. This wait belongs to the
   // display callback on core 0, never the game or render thread. Without
-  // VSync (the game thread limit off, set_vsync) the flip takes effect at
-  // once, tearing, and the displayed rate is no longer the VBlank's.
+  // VSync (the game thread limit off, set_vsync) the flip is still set for
+  // the next VBlank but the callback does not wait for it, so the display
+  // queue no longer paces the GPU and the render thread (the newest frame at
+  // each VBlank is shown; a buffer may be reused before scanout leaves it).
+  // SCE_DISPLAY_SETBUF_IMMEDIATE fails from the display queue's callback
+  // (every flip, devkit 2026-10-06: a black screen); vita2d's no-vsync mode
+  // does the same as here.
   const bool vsync = g_vsync.load(std::memory_order_relaxed);
-  const int setResult = sceDisplaySetFrameBuf(&frame, vsync ? SCE_DISPLAY_SETBUF_NEXTFRAME : SCE_DISPLAY_SETBUF_IMMEDIATE);
+  const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
   int waitResult = 0;
+
+  if (setResult < 0) {
+    static std::atomic<bool> reported{false};
+
+    if (!reported.exchange(true, std::memory_order_relaxed))
+      std::printf("Aurora GXM: sceDisplaySetFrameBuf failed: 0x%08x\n", unsigned(setResult));
+  }
 
   if (setResult >= 0 && vsync) {
     const auto started = std::chrono::steady_clock::now();
@@ -427,7 +439,7 @@ bool Device::frame_pending() const noexcept {
 
 void set_vsync(bool enabled) noexcept {
   g_vsync.store(enabled, std::memory_order_relaxed);
-  std::fprintf(stderr, "Aurora GXM: VSync %s\n", enabled ? "on (flips at VBlank)" : "off (immediate flips)");
+  std::fprintf(stderr, "Aurora GXM: VSync %s\n", enabled ? "on (flips at VBlank)" : "off (flips at VBlank, not waited for)");
 }
 
 bool gpu_frame_pending() noexcept {

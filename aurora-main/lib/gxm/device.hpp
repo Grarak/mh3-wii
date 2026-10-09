@@ -45,7 +45,8 @@ struct DisplayStatistics {
 
 DisplayStatistics display_statistics() noexcept;
 
-// VSync on (the default): flips at VBlank; off: immediate flips (tearing),
+// VSync on (the default): flips at VBlank and waits; off: flips at VBlank
+// without waiting (the display queue no longer paces the render thread),
 // for the game thread limit off.
 void set_vsync(bool enabled) noexcept;
 
