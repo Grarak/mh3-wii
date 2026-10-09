@@ -518,7 +518,86 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     textureCase(14, 9, 9, false, 128, true);
     textureCase(6, 4, 4, true, 191, false);
     textureCase(6, 4, 4, true, 192, true);
-    textureCase(8, 4, 4, false, 1024, false);
+    textureCase(8, 9, 8, false, 64, true);
+    textureCase(8, 9, 8, false, 63, false);
+    textureCase(9, 8, 5, false, 64, true);
+    textureCase(10, 4, 4, false, 32, true);
+    {
+        GuestGxStream paletteStream;
+        std::array<uint8_t, 512> source{};
+        const uint8_t paletteList[]{0x61,0x64,0,0x80,0, 0x61,0x65,0,6,0};
+        source[0] = 0xF8; source[1] = 0x00;
+        uint32_t available = source.size();
+        std::vector<std::vector<uint8_t>> packets;
+        auto receive = [&](std::span<const uint8_t> p) { packets.emplace_back(p.begin(), p.end()); };
+        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address == 0x100000) return {reinterpret_cast<uintptr_t>(source.data()), available};
+            if (address == 0x200000) return {0x12340000, 32768};
+            if (address == 0x300000) return {reinterpret_cast<uintptr_t>(paletteList), sizeof(paletteList)};
+            throw std::runtime_error("Unexpected TLUT source address");
+        };
+        auto write = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            // Fragmentation must preserve the upload's command boundary.
+            paletteStream.Write({command, 2}, receive, resolve);
+            paletteStream.Write({command + 2, 3}, receive, resolve);
+        };
+        const uint8_t draw[]{0x90, 0, 3}; // Three vertices with no enabled attributes.
+        auto drawPalette = [&] { paletteStream.Write(draw, receive, resolve); };
+        auto palettePackets = [&] {
+            std::vector<std::vector<uint8_t>> result;
+            for (const auto& p : packets) if (p[0] == 0x50 && p[2] == 0x31) result.push_back(p);
+            return result;
+        };
+        auto word = [](const auto& p, unsigned at) {
+            return (uint32_t(p[at]) << 24) | (uint32_t(p[at+1]) << 16) | (uint32_t(p[at+2]) << 8) | p[at+3];
+        };
+        write(0x64, 0x100000 >> 5);
+        write(0x65, (16 << 10) | 0x200); // 512-byte C8 palette at TMEM 0x40000.
+        source[0] = 0; // The DMA must already have taken its snapshot.
+        write(0xA8, 9 << 20); write(0xB4, 0x200000 >> 5);
+        write(0xB8, (1 << 10) | 0x200);
+        write(0x28, 64 | 4); // TEV stage zero samples texture unit four.
+        drawPalette();
+        auto p = palettePackets();
+        if (p.size() != 1 || p[0].size() != 26 || p[0][3] != 4 || word(p[0], 12) != 1 ||
+            p[0][16] != 1 || p[0][17] != 0)
+            throw std::runtime_error("GX TLUT slot/format/entry encoding failed");
+        uintptr_t pointer = 0;
+        for (unsigned i = 4; i < 12; ++i) pointer = (pointer << 8) | p[0][i];
+        if (reinterpret_cast<const uint8_t*>(pointer)[0] != 0xF8)
+            throw std::runtime_error("GX TLUT did not snapshot guest RAM");
+        drawPalette();
+        if (palettePackets().size() != 1) throw std::runtime_error("GX TLUT cache did not retain unchanged binding");
+        write(0x65, (1 << 10) | 0x200); // Partial overlapping update keeps the tail.
+        drawPalette();
+        p = palettePackets();
+        if (p.size() != 2 || word(p[0], 22) == word(p[1], 22) || reinterpret_cast<const uint8_t*>(pointer)[0] != 0)
+            throw std::runtime_error("GX TLUT overlapping reload was not rebound");
+        for (unsigned format : {0u, 2u}) {
+            write(0xB8, (format << 10) | 0x200); drawPalette();
+            if (word(palettePackets().back(), 12) != format) throw std::runtime_error("GX TLUT format rebind failed");
+        }
+        source[0] = 0xAB;
+        const uint8_t call[]{0x40,0,0x30,0,0, 0,0,0,sizeof(paletteList)};
+        paletteStream.Write(call, receive, resolve);
+        drawPalette();
+        if (reinterpret_cast<const uint8_t*>(pointer)[0] != 0xAB || palettePackets().size() != 5)
+            throw std::runtime_error("GX TLUT display-list state did not reach its caller");
+        auto mustReject = [&](auto operation) {
+            bool rejected = false;
+            try { operation(); } catch (const std::runtime_error&) { rejected = true; }
+            if (!rejected) throw std::runtime_error("Invalid GX TLUT operation accepted");
+        };
+        write(0xB8, 0x300); // A different, never-loaded TMEM range.
+        mustReject(drawPalette);
+        // Use a fresh stream after a rejected command, since pending FIFO bytes
+        // deliberately remain available for diagnosis.
+        GuestGxStream invalid;
+        const uint8_t shortLoad[]{0x61,0x64,0,0x80,0, 0x61,0x65,0,8,0};
+        available = 32;
+        mustReject([&] { invalid.Write(shortLoad, receive, resolve); });
+    }
     auto copyCase = [&](uint32_t room, uint32_t scale, uint32_t trigger, bool shouldPass, uint32_t expectedHeight = 528) {
         GuestGxStream copyStream;
         unsigned copies = 0;

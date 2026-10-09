@@ -4,6 +4,7 @@
 #include <string>
 #include <algorithm>
 #include <bit>
+#include <cstring>
 
 std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned format) const {
     const auto lo = cp[0x50], hi = cp[0x60];
@@ -91,9 +92,9 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     const uint32_t format = (image >> 20) & 15;
     unsigned tileW = 4, tileH = 4, tileBytes = 32;
     switch (format) {
-    case 0: case 14: tileW = tileH = 8; break; // I4, CMPR
-    case 1: case 2: tileW = 8; break; // I8, IA4
-    case 3: case 4: case 5: break; // IA8, RGB565, RGB5A3
+    case 0: case 8: case 14: tileW = tileH = 8; break; // I4, C4, CMPR
+    case 1: case 2: case 9: tileW = 8; break; // I8, IA4, C8
+    case 3: case 4: case 5: case 10: break; // IA8, RGB565, RGB5A3, C14X2
     case 6: tileBytes = 64; break; // RGBA8
     default: throw std::runtime_error("Guest GX texture format requires palette/format support: " + std::to_string(format));
     }
@@ -114,11 +115,75 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
         for (unsigned i = 0; i < 4; ++i) out[offset + i] = value >> (24 - 8 * i);
     };
     put(12, width); put(16, height); put(20, format);
-    // Non-paletted formats have no TLUT; a fresh revision prevents stale data
+    // Each texture unit gets its own host TLUT slot. Guest TMEM offsets and
+    // formats are resolved immediately before the draw that uses the palette.
+    if (format >= 8 && format <= 10) put(24, slot);
+    // A fresh revision prevents stale data
     // when the game rewrites a texture at an existing guest address.
     out[28] = mips;
     put(29, guest); put(33, ++textureRevision);
     return out;
+}
+
+void GuestGxStream::LoadPalette(const ArrayResolver& resolver) {
+    paletteBindings = {};
+    const uint32_t size = ((bp[0x65] >> 10) & 0x7FF) * 32;
+    if (!size) return;
+    if (!resolver) throw std::runtime_error("Guest GX TLUT load requires RAM resolution");
+    const auto view = resolver(bp[0x64] << 5);
+    if (!view.address || size > view.size) throw std::runtime_error("Guest GX TLUT load exceeds RAM");
+    if (!palettes) palettes = std::make_shared<PaletteMemory>();
+    const uint32_t destination = (bp[0x65] & 1023) * 512;
+    // Preserve the DMA snapshot even if the guest rewrites or frees its source.
+    std::memcpy(palettes->bytes.data() + destination, reinterpret_cast<const void*>(view.address), size);
+    std::fill_n(palettes->loadedLines.begin() + destination / 32, size / 32, true);
+    if (++palettes->revision == 0) throw std::runtime_error("Guest GX TLUT revision overflow");
+}
+
+void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& resolver) {
+    unsigned used = 0;
+    for (unsigned stage = 0; stage <= ((bp[0] >> 10) & 15); ++stage) {
+        const auto order = bp[0x28 + stage / 2] >> ((stage & 1) * 12);
+        if (order & 64) used |= 1u << (order & 7);
+    }
+    const unsigned indirect = (bp[0] >> 16) & 7;
+    if (indirect > 4) throw std::runtime_error("Invalid GX indirect stage count");
+    for (unsigned stage = 0; stage < indirect; ++stage) used |= 1u << ((bp[0x27] >> (stage * 6)) & 7);
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        if (!(used & (1u << slot)) || !textureBound[slot]) continue;
+        const unsigned bank = slot < 4 ? 0x80 : 0xA0, index = slot & 3;
+        const unsigned format = (bp[bank + 8 + index] >> 20) & 15;
+        if (format < 8 || format > 10) continue;
+        const uint32_t descriptor = bp[bank + 24 + index] & 0xFFF;
+        const unsigned paletteFormat = descriptor >> 10;
+        if (paletteFormat > 2) throw std::runtime_error("Invalid GX TLUT format");
+        const unsigned entries = format == 8 ? 16 : format == 9 ? 256 : 16384;
+        const unsigned start = (descriptor & 1023) * 512;
+        if (!palettes || !std::all_of(palettes->loadedLines.begin() + start / 32,
+            palettes->loadedLines.begin() + (start + entries * 2) / 32, [](bool loaded) { return loaded; }))
+            throw std::runtime_error("Guest GX texture uses an incompletely loaded palette");
+        auto& bound = paletteBindings[slot];
+        if (bound.revision == palettes->revision && bound.descriptor == descriptor && bound.entries == entries) continue;
+        std::array<uint8_t, 26> packet{};
+        packet[0] = 0x50; packet[2] = 0x31; packet[3] = slot;
+        const auto address = reinterpret_cast<uintptr_t>(palettes->bytes.data() + start);
+        for (unsigned i = 0; i < 8; ++i) packet[4 + i] = uint64_t(address) >> (56 - 8 * i);
+        packet[15] = paletteFormat;
+        packet[16] = entries >> 8; packet[17] = entries;
+        // Stable identity per host slot; revision also changes for overlapping
+        // TMEM writes and descriptor/format changes at the same destination.
+        const uint32_t identity = 0x80000000u | slot;
+        const uint32_t revision = ++textureRevision;
+        for (unsigned i = 0; i < 4; ++i) {
+            packet[18 + i] = identity >> (24 - 8 * i);
+            packet[22 + i] = revision >> (24 - 8 * i);
+        }
+        sink(packet);
+        // Aurora's per-texture resolve memo keys the texture revision. Refresh
+        // that identity too when only the palette has changed.
+        sink(TexturePacket(slot, resolver));
+        bound = {palettes->revision, descriptor, entries};
+    }
 }
 
 void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver,
@@ -200,11 +265,13 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 GuestGxStream child;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
                 child.textureBound = textureBound; child.textureRevision = textureRevision;
+                child.palettes = palettes; child.paletteBindings = paletteBindings;
                 child.displayListDepth = displayListDepth + 1;
                 child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, textureCopy);
                 if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
                 bp = child.bp; cp = child.cp; bpMask = child.bpMask;
                 textureBound = child.textureBound; textureRevision = child.textureRevision;
+                palettes = child.palettes; paletteBindings = child.paletteBindings;
             }
             offset += length;
             continue;
@@ -229,11 +296,10 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 bp[reg] = (bp[reg] & ~bpMask) | (value & bpMask);
                 bpMask = 0xFFFFFF;
             }
-            if (reg == 0x64 || reg == 0x65)
-                throw std::runtime_error("Guest GX TLUT address requires host pointer conversion");
+            if (reg == 0x65) LoadPalette(resolver);
             const unsigned bank = reg >= 0xA0 ? 0xA0 : 0x80;
             const unsigned group = (reg - bank) & ~3u;
-            if (reg >= bank && reg < bank + 24 && (group == 0 || group == 4 || group == 8 || group == 20)) {
+            if (reg >= bank && reg < bank + 28 && (group == 0 || group == 4 || group == 8 || group == 20 || group == 24)) {
                 const unsigned slot = (reg & 3) + (bank == 0xA0 ? 4 : 0);
                 if (group == 20) textureBound[slot] = true;
                 if (textureBound[slot]) {
@@ -296,8 +362,10 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             if (reg == 0x45 || reg == 0x47 || reg == 0x48)
                 throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
         }
-        if (p[0] >= 0x80 && p[0] <= 0xBF)
+        if (p[0] >= 0x80 && p[0] <= 0xBF) {
             BindDrawArrays(std::span<const uint8_t>(p, length), sink, resolver);
+            BindDrawPalettes(sink, resolver);
+        }
         sink(std::span<const uint8_t>(p, length));
         offset += length;
     }

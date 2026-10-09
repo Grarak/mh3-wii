@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -32,6 +33,16 @@ private:
     std::array<bool, 8> textureBound{};
     unsigned displayListDepth = 0;
     uint32_t bpMask = 0xFFFFFF, textureRevision = 0;
+    struct PaletteMemory {
+        std::array<uint8_t, 1024 * 1024> bytes{};
+        std::array<bool, 32768> loadedLines{};
+        uint32_t revision = 0;
+    };
+    std::shared_ptr<PaletteMemory> palettes;
+    struct PaletteBinding { uint32_t revision = 0, descriptor = 0, entries = 0; };
+    std::array<PaletteBinding, 8> paletteBindings{};
+    void LoadPalette(const ArrayResolver& resolver);
+    void BindDrawPalettes(const Sink& sink, const ArrayResolver& resolver);
     std::array<uint8_t, 37> TexturePacket(unsigned slot, const ArrayResolver& resolver);
     struct Attribute { unsigned descriptor = 0, bytes = 0, indices = 1; };
     std::array<Attribute, 12> Attributes(unsigned format) const;
