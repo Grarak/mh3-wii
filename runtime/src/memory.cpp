@@ -41,6 +41,10 @@ uint8_t* resolve(uint32_t address, size_t length) {
     return region->data() + physical;
 }
 template<class T> T read(uint32_t address) {
+    // Resolved-range fallbacks also arrive here directly, without passing
+    // through Memory::Read*. Preserve the scalar RAM fast path for those calls.
+    T ramValue;
+    if (MemoryInline::TryReadGuestScalar(address, ramValue)) return ramValue;
     if constexpr (std::is_same_v<T, uint32_t>) {
         uint32_t efbValue;
         if (ReadEfbColor32(address, efbValue)) return efbValue;
@@ -60,6 +64,8 @@ template<class T> T read(uint32_t address) {
     return MemoryInline::MaybeByteSwap(value);
 }
 template<class T> void write(uint32_t address, T value) {
+    // This lookup still checks the exact executable guard pages.
+    if (MemoryInline::TryWriteGuestScalar(address, value)) return;
     if constexpr (std::is_same_v<T, uint32_t>) {
         if (WriteEfbColor32(address, value)) return;
         if (WriteAudioRegister32(address, value)) return;
@@ -105,6 +111,16 @@ void Memory::Init(size_t size) {
     for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
         auto* pointer = resolve(i << MemoryInline::kPageShift, MemoryInline::kPageSize);
         MemoryInline::g_pageTable[i] = {pointer, pointer ? MemoryInline::kPageSize : 0};
+        // Scalar fast reads may cross a page boundary by up to seven bytes.
+        // Only publish a bias when that entire span belongs to this allocation;
+        // terminal RAM pages, MMIO and the small locked cache stay checked.
+        auto* contiguous = resolve(i << MemoryInline::kPageShift,
+            MemoryInline::kPageSize + MemoryInline::kMaxFastScalarSize - 1);
+        const uintptr_t bias = contiguous
+            ? reinterpret_cast<uintptr_t>(contiguous) - (uintptr_t(i) << MemoryInline::kPageShift) + 1
+            : 0;
+        MemoryInline::g_fullPageBias[i] = bias;
+        MemoryInline::g_fullReadablePageBias[i] = bias;
     }
 }
 uint8_t* Memory::GetPointer(uint32_t address) { return GetPointer(address, 1); }

@@ -72,6 +72,28 @@ void TestIosCallback(CpuContext* cpu) {
 }
 
 void RunDeviceSelfTests(CpuContext* cpu) {
+    {
+        // Exercise the published scalar-read biases across pages and aliases,
+        // and ensure they cannot bypass the end of an allocation or MMIO.
+        for (uint32_t base : {0u, 0x10000000u}) {
+            const uint32_t address = base + 0xFFFFD;
+            Memory::Write64(address, 0x0123456789ABCDEFull);
+            for (uint32_t alias : {0u, 0x80000000u, 0xC0000000u}) {
+                uint64_t value = 0;
+                if (!MemoryInline::TryReadGuestScalar(address | alias, value) ||
+                    value != 0x0123456789ABCDEFull)
+                    throw std::runtime_error("Fast RAM read boundary/alias failed");
+            }
+        }
+        for (uint32_t address : {0x817FFFFCu, 0x93FFFFFCu, 0x48000000u, 0xC8000000u, 0xCC008000u}) {
+            uint64_t value = 0;
+            if (MemoryInline::TryReadGuestScalar(address, value))
+                throw std::runtime_error("Fast read accepted terminal RAM or MMIO");
+        }
+        bool rejected = false;
+        try { Memory::Read64(0x817FFFFC); } catch (const Memory::AccessViolation&) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Cross-allocation RAM read accepted");
+    }
     RunVideoTimingSelfTests();
     RunControllerSelfTests(cpu);
     RunRsoOverlaySelfTests(cpu);
