@@ -1999,6 +1999,7 @@
 800a3de0 DrawOrderRemove
 800f943c EffectDrawRequest
 80308d64 EffectFadeUpdate
+80115ae4 HunterTrailUpdate
 800e3bf0 PrimRequest
 8007f130 ScnRootPushBack
 800e0af8 get_joint_wpos__6MHcharFUlPQ34nw4r4math4VEC3

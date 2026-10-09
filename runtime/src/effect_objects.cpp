@@ -53,6 +53,8 @@
 //   0x80308D64 EffectFadeUpdate            a monster effect's state 2: kind
 //                                          7 faded by its share of the
 //                                          ticks, following the owner monster
+//   0x80115AE4 HunterTrailUpdate           the hunter's trail models: their
+//                                          joint history shifted once a tick
 //   0x802BDD44 GetCameraPos                the view camera's position, with
 //                                          0x800473FC, 0x80082C30, 0x80082BD4
 //                                          and 0x80074A2C
@@ -2625,6 +2627,37 @@ REGISTER_NATIVE_FUNCTION_AS(0x800F943C, MH3_EffectDrawRequest, "EffectDrawReques
 
 MH3_EFFECT_PORT(80308D64, EffectFadeUpdate, { return EffectFadeUpdate(game, frame.Arg(3), frame); });
 REGISTER_NATIVE_FUNCTION_AS(0x80308D64, MH3_EffectFadeUpdate, "EffectFadeUpdate");
+
+// 0x80115AE4 HunterTrailUpdate (the hunter effect 0x801156C8's update): each
+// trail model (data +0x38: count, then per model 0x120 bytes of six Mtx34
+// from +0xC) is drawn through a history of the hunter's joint 7: every step
+// the original shifts it on (matrix 5 = 4, ..., 1 = 0) and puts the joint's
+// matrix in 0. Five steps of history were five ticks on the Wii; at a step
+// without a whole tick, the history is first shifted back (0 = 1, ..., 4 =
+// 5), so the original's shift leaves it as it was and only the head follows
+// the joint. The trail keeps its length in game time at any step length.
+extern "C" void func_80115AE4(CpuContext* ctx);
+
+static void HunterTrailUpdatePort(CpuContext* ctx) {
+    if (GameStep::Ticks() == 0) {
+        const uint32_t data = FlatRead32(ctx->gpr[3] + 0x38);
+        const int32_t count = int32_t(FlatRead32(data));
+
+        for (int32_t model = 0; model < count; ++model) {
+            const uint32_t history = data + 0xC + 0x120 * uint32_t(model);
+
+            for (uint32_t i = 0; i < 5 * 0x30; i += 4)
+                FlatWrite32(history + i, FlatRead32(history + 0x30 + i));
+        }
+    }
+
+    func_80115AE4(ctx);
+}
+
+extern "C" void MH3_HunterTrailUpdate(CpuContext* ctx) {
+    PortCheck::Call(ctx, "HunterTrailUpdate", func_80115AE4, HunterTrailUpdatePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80115AE4, MH3_HunterTrailUpdate, "HunterTrailUpdate");
 
 MH3_GAME_PORT(800E3BF0, PrimRequest, { return PrimRequest(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7), frame.Arg(8), frame.Arg(9)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800E3BF0, MH3_PrimRequest, "PrimRequest");
