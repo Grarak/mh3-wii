@@ -1009,6 +1009,9 @@ void Launch(const CpuContext& game) {
     if (deferral.calls.empty() || deferral.launched)
         return;
 
+    // A world split's job may still be pending, its models all taken back by
+    // the game thread (scene_world.cpp): it ends as soon as the worker wakes.
+    GuestWorker::Wait();
     GuestWorker::Submit(game, RunDeferred, nullptr);
     deferral.launched = true;
 }

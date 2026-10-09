@@ -17,7 +17,8 @@
 // hunter's equipment, the monster). While the root's children run, the worker
 // takes some of them, chosen by their last measured cost so both sides take
 // about as long, and the game thread the rest, each side in the original
-// order. The models share neither the locked cache, which is never granted
+// order; then the game thread also runs those of the worker's it has not
+// started yet. The models share neither the locked cache, which is never granted
 // (LockedCacheAcquire, g3d_calc_world.cpp), nor the scratch at 0x8066D300,
 // which the worker has a copy of. MH3_PORT_CHECK=ScnGroupCalcWorld compares
 // the root's split pass with the original in one thread (MH3_VARIABLE_STEP=0;
@@ -32,6 +33,7 @@
 #include "port_check.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #ifdef MH3_DEVELOPMENT
 #include <cstdio>
@@ -98,20 +100,27 @@ uint32_t LastCost(uint32_t child) {
     return 50;
 }
 
-// One side's children, in the original order, and their measured costs.
+// One side's children, in the original order, and their measured costs. The
+// worker's share is claimed a child at a time (`next`) by the worker and, once
+// its own share is done, by the game thread: a worker that wakes late (a
+// parked wake takes 0.1-1.9 ms on the devkit, on core 0 beside the audio
+// mixer) leaves its models to the game thread instead of holding it up.
 struct Share {
     uint32_t argument = 0, matrix = 0;
     unsigned count = 0;
     std::array<uint32_t, kMaxChildren> children{};
     std::array<uint32_t, kMaxChildren> us{};
+    std::array<bool, kMaxChildren> byGame{}; // the worker's share: who ran each child
+    std::atomic<unsigned> next{0}, done{0};
 };
 
 Share workerShare, gameShare;
 #ifdef MH3_DEVELOPMENT
 // The MH3 world split line: per split pass, each side's time (from the
-// submit to its last model) and the largest model.
+// submit to its last model), the largest model, the worker's models the game
+// thread ran and how long it then waited for the worker's last.
 struct SplitStatistics {
-    uint64_t passes = 0, gameUs = 0, workerUs = 0, largestUs = 0, models = 0;
+    uint64_t passes = 0, gameUs = 0, workerUs = 0, largestUs = 0, models = 0, takenBack = 0, waitUs = 0;
 } statistics;
 #endif
 
@@ -125,8 +134,23 @@ void RunShare(CpuContext* cpu, Share& share) {
     }
 }
 
+// Runs the worker's share's children that are left, in order, a claim at a
+// time.
+void RunClaimed(CpuContext* cpu, bool game) {
+    Share& share = workerShare;
+    GuestCall call{cpu};
+
+    for (unsigned i; (i = share.next.fetch_add(1, std::memory_order_relaxed)) < share.count;) {
+        const uint64_t start = NowUs();
+        call.Virtual(share.children[i], kG3dProc, {kTaskCalcWorld, share.argument, share.matrix});
+        share.us[i] = uint32_t(NowUs() - start);
+        share.byGame[i] = game;
+        share.done.fetch_add(1, std::memory_order_release);
+    }
+}
+
 void RunWorkerShare(CpuContext* cpu, void*) {
-    RunShare(cpu, workerShare);
+    RunClaimed(cpu, false);
 }
 
 // In every build: the overlapped draw reads the matrices on its own core
@@ -217,21 +241,45 @@ void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t 
         share.children[share.count++] = children[i];
     }
 
-    if (workerShare.count)
+    if (workerShare.count) {
+        workerShare.next.store(0, std::memory_order_relaxed);
+        workerShare.done.store(0, std::memory_order_relaxed);
         GuestWorker::Submit(*cpu, RunWorkerShare, nullptr);
+    }
 
     RunShare(cpu, gameShare);
-    GuestWorker::Wait();
+#ifdef MH3_DEVELOPMENT
+    uint64_t waited = 0;
+#endif
+
+    // The worker's children it has not claimed yet, then the one it is
+    // running. Its job may still be pending after (it wakes to find nothing
+    // left): the effect launch waits for it, and the next split runs only
+    // without a pending job.
+    if (workerShare.count) {
+        RunClaimed(cpu, true);
+#ifdef MH3_DEVELOPMENT
+        const uint64_t start = NowUs();
+#endif
+        while (workerShare.done.load(std::memory_order_acquire) != workerShare.count) {
+        }
+#ifdef MH3_DEVELOPMENT
+        waited = NowUs() - start;
+#endif
+    }
+
     costCount = 0;
 #ifdef MH3_DEVELOPMENT
-    uint32_t sum[2] = {0, 0}, largest = 0;
+    uint32_t sum[2] = {0, 0}, largest = 0, takenBack = 0;
 #endif
 
     for (const Share* share : {&gameShare, &workerShare}) {
         for (unsigned i = 0; i < share->count; ++i) {
             costs[costCount++] = {share->children[i], share->us[i]};
 #ifdef MH3_DEVELOPMENT
-            sum[share == &workerShare] += share->us[i];
+            const bool game = share == &gameShare || share->byGame[i];
+            sum[!game] += share->us[i];
+            takenBack += share == &workerShare && game;
             largest = std::max(largest, share->us[i]);
 #endif
         }
@@ -242,6 +290,8 @@ void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t 
     statistics.workerUs += sum[1];
     statistics.largestUs += largest;
     statistics.models += count;
+    statistics.takenBack += takenBack;
+    statistics.waitUs += waited;
 #endif
 }
 
@@ -302,9 +352,11 @@ void MH3PrintWorldSplit(unsigned frames) {
         return;
 
     const auto ms = [&](uint64_t us) { return double(us) / 1000.0 / frames; };
-    std::printf("MH3 world split: %.2f passes/frame, models on the game thread %.2f ms, on the guest worker %.2f ms, the largest model %.2f ms per frame; %.1f models/pass\n",
-                double(statistics.passes) / frames, ms(statistics.gameUs), ms(statistics.workerUs), ms(statistics.largestUs),
-                statistics.passes ? double(statistics.models) / double(statistics.passes) : 0.0);
+    const auto perPass = [&](uint64_t n) { return statistics.passes ? double(n) / double(statistics.passes) : 0.0; };
+    std::printf("MH3 world split: %.2f passes/frame, models on the game thread %.2f ms, on the guest worker %.2f ms, the largest model %.2f ms per frame; "
+                "%.1f models/pass, %.1f of the worker's taken back; the game thread waited %.2f ms per frame for the worker's last\n",
+                double(statistics.passes) / frames, ms(statistics.gameUs), ms(statistics.workerUs), ms(statistics.largestUs), perPass(statistics.models),
+                perPass(statistics.takenBack), ms(statistics.waitUs));
     statistics = {};
 }
 #endif
