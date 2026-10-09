@@ -1,7 +1,12 @@
 // Online play against the community MH3SP servers (docs/online.md).
 #pragma once
 
+#include <span>
 #include <string>
+
+namespace NetHost {
+class Tls;
+}
 
 // Writes the MH3SP patch's data changes into guest memory: its CA for the
 // Capcom server's pinned certificate and its server host names
@@ -26,3 +31,17 @@ std::string CheckOnlineServer(const std::string& server);
 // for a server whose OPN runs without TLS (MH3SP's UseSSL = OFF).
 bool SkipTlsSetting();
 void SetSkipTlsSetting(bool skip);
+
+// Community servers: a server whose TLS certificate the MH3SP CA signed
+// (mh3sp.com, or any server on its patch). Online play there allows no
+// cheats: while any cheat is on, their TLS handshakes fail. The loading
+// screen shows the rules in the City after such a server's handshake, and
+// the refusal over the connection error and on the loading screen after it
+// (HUDDraw, native_system_ui.cpp).
+//
+// After a TLS session's handshake: whether it may go on.
+bool AdmitTlsServer(NetHost::Tls& tls);
+
+// The notice's lines (empty: none), from HUDDraw once a frame; `loading`
+// while the loading screen is up.
+std::span<const char* const> OnlineNotice(bool loading);

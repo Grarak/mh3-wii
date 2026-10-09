@@ -941,6 +941,24 @@ class OpenSslTls final : public Tls {
 
     void Close() override { SSL_shutdown(session_); }
 
+    bool PeerSignedBy(const uint8_t* der, size_t size) override {
+        const unsigned char* cursor = der;
+        X509* ca = d2i_X509(nullptr, &cursor, long(size));
+        EVP_PKEY* key = ca ? X509_get_pubkey(ca) : nullptr;
+
+        // The certificates the server sent, its own first.
+        STACK_OF(X509)* chain = SSL_get_peer_cert_chain(session_);
+        bool signed_by = false;
+
+        for (int i = 0; key && chain && i < sk_X509_num(chain) && !signed_by; ++i)
+            signed_by = X509_verify(sk_X509_value(chain, i), key) == 1;
+
+        EVP_PKEY_free(key);
+        X509_free(ca);
+        ERR_clear_error();
+        return signed_by;
+    }
+
   private:
     int32_t Failure(int result) {
         const int error = SSL_get_error(session_, result);

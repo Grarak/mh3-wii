@@ -104,10 +104,8 @@ enum : uint8_t {
     kStateNotice = 0x9A,
 };
 
-// net_ctrl_wk's windows.
+// More of net_ctrl_wk.
 enum : uint32_t {
-    kDialog = 0xBF30,        // u32: the message window
-    kList = 0xBF34,          // u32: the list window
     kChosenCategory = 0xA11C, // u32
     kGateCount = 0xA140,     // u32
 };

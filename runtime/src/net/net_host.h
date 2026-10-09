@@ -150,6 +150,10 @@ class Tls {
     virtual int32_t Write(const uint8_t* data, size_t size) = 0;
     virtual int32_t Read(uint8_t* data, size_t size) = 0;
     virtual void Close() = 0;
+
+    // After the handshake: whether a certificate the server sent is signed
+    // by the CA `der` (its signature only: no names, dates or chain).
+    virtual bool PeerSignedBy(const uint8_t* der, size_t size) = 0;
 };
 
 // Whether TLS sessions are available in this build.

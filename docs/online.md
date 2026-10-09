@@ -75,6 +75,31 @@ original resolved `"<gamename>.<default host>"`, the patch the default host
 name itself. That function is a native port with the patch applied; the
 translated code is not changed.
 
+### No cheats on community servers
+
+A server whose TLS certificate the MH3SP CA signed is a community server:
+`mh3sp.com`'s, or any other running on the MH3SP patch (its certificate is
+`mh.capcom.co.jp`, issued under the CA's Nintendo Class 2 subject). After
+each TLS handshake `AdmitTlsServer` (`online_patches.cpp`) checks the
+certificates the server sent against the embedded CA's key, whatever the
+game's verify option, `MH3_ONLINE_CA` or the server setting. While any cheat
+is on (the launcher's, `--cheat`, `--no-damage`), the handshake fails: the
+game shows its connection error (11602) and goes back to the mode menu.
+
+`HUDDraw` (`native_system_ui.cpp`) tells the player why:
+
+- after a refusal, "Online play refused: cheats are on.", "Cheats are not
+  allowed online." and "Do not harass other players." over the online
+  screens' message window (the error) and on the next loading screen;
+- in the City (`GetOnlineMode` 2) after a community server's handshake, the
+  last two lines on every loading screen. The OPN session is the only TLS
+  one and ends after the login, so the last handshake's server decides.
+
+The lines are drawn in the game's debug font (`flfntPrintf`), as the loading
+screen's own text. A local MH3SP (Skip TLS, or its own CA) is no community
+server; `MH3_ONLINE_COMMUNITY_TEST=1` (development builds) makes every server
+one, to try both on it.
+
 ## Guest threads
 
 One guest thread runs at a time, as on the Wii's single core. Each guest

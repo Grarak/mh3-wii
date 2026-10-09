@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
+#include "net/online.h"
 #include "../native/mh3_system_ui.h"
 #include "../native/mh3_material_state.h"
 #include "../native/adapters/model_state_bridge.h"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1390,6 +1392,31 @@ void HudProgress(float shift, float share) {
     Submit(vertices, share > 0 ? 8 : 4);
     SetNativeMaterial(saved);
 }
+
+// The online notice (online.h): the rules on a community server, or why
+// online play was refused. Lines centered as the loading screen's text, in
+// the font's printf (no '%' in them), from a guest copy. `top`: the first
+// line's y in the HUD's 480 lines.
+constexpr uint32_t kLoadingNoticeTop = 96, kDialogNoticeTop = 300;
+
+void Notice(CpuContext* cpu, std::span<const char* const> lines, uint32_t top) {
+    if (lines.empty() || !NativeGraphicsFrameShouldRender())
+        return;
+
+    GuestFrame frame(cpu, 0x60);
+    GuestCall call{cpu};
+    const float width = call(0x80040424) == 1 ? 854 : 640;
+
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const size_t length = std::strlen(lines[i]);
+        std::memcpy(Memory::GetPointer(frame[0x10], uint32_t(length + 1)), lines[i], length + 1);
+        call(0x8005b714, {22, 22});
+        call(0x8005b780, {uint32_t(int32_t((width - float(length * 11)) * .5f)), uint32_t(top + i * 30)});
+        call(0x8005b7ec, {i == 0 && lines.size() == 3 ? 0xf0a060ffu : 0xc0c0c0ffu});
+        call(0x8005ba04, {frame[0x10]});
+        call(0x8005c174);
+    }
+}
 } // namespace
 
 extern "C" void MH3_HUDTexgen(CpuContext* cpu) {
@@ -1438,12 +1465,14 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
 
     if (!Memory::Read8(0x806977a0)) {
         LoadProgress::Idle();
+        Notice(cpu, OnlineNotice(false), kDialogNoticeTop);
         return;
     }
 
     if (Memory::Read8(0x80697846) == 6 && !uint8_t(call(0x800d0744))) {
         Memory::Write8(0x806977a0, 0);
         LoadProgress::Idle();
+        Notice(cpu, OnlineNotice(false), kDialogNoticeTop);
         return;
     }
 
@@ -1586,5 +1615,7 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
         call(0x8005ba04, {text});
         call(0x8005c174);
     }
+
+    Notice(cpu, OnlineNotice(true), kLoadingNoticeTop);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800D10B0, MH3_HUDDraw, "HUDDraw");

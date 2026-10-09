@@ -942,7 +942,8 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             const std::string cheats = ActiveCheats();
             const std::string details[] = {"Continue through the game's title and character selection." + cheats,
                                            "Straight into Moga Village with an existing hunter, past the title." + cheats,
-                                           "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." + cheats,
+                                           "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." +
+                                               (LauncherCheats::EnabledCount() ? " Community servers refuse online play while cheats are on." : "") + cheats,
                                            "Start a quest directly with an existing hunter." + cheats,
                                            "Make a hunt or capture quest from one of the game's quests.",
                                            "Gameplay toggles for this launch." + cheats,

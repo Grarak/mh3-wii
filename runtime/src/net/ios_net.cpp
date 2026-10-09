@@ -114,6 +114,8 @@ std::array<std::optional<Socket>, kMaxSockets> sockets;
 struct TlsSession {
     std::unique_ptr<NetHost::Tls> tls;
     int32_t socket = -1; // the Wii socket it runs over
+    bool admitted = false; // its handshake done and its server checked (AdmitTlsServer)
+    bool refused = false;
 };
 
 std::array<std::optional<TlsSession>, kMaxTlsSessions> sessions;
@@ -820,6 +822,7 @@ class PlainTls final : public NetHost::Tls {
     }
 
     void Close() override {}
+    bool PeerSignedBy(const uint8_t*, size_t) override { return false; }
 
   private:
     static int32_t Result(int32_t result, int32_t wait) {
@@ -939,12 +942,25 @@ std::optional<Attempt> SslIoctlv(uint32_t command, const std::vector<Vector>& in
 
             int32_t result;
 
-            if (command == kSslRead)
+            if (current->refused)
+                result = NetHost::Tls::kFailed;
+            else if (command == kSslRead)
                 result = current->tls->Read(Memory::GetPointer(data.address, data.size), data.size);
             else if (command == kSslWrite)
                 result = current->tls->Write(Memory::GetPointer(data.address, data.size), data.size);
             else {
                 result = current->tls->Handshake();
+
+                // A community server's session: refused while any cheat is on.
+                if (result == NetHost::Tls::kOk && !current->admitted) {
+                    current->admitted = true;
+                    current->refused = !AdmitTlsServer(*current->tls);
+
+                    if (current->refused) {
+                        current->tls->Close();
+                        result = NetHost::Tls::kFailed;
+                    }
+                }
 
                 if (TraceNet() && result != NetHost::Tls::kWantRead && result != NetHost::Tls::kWantWrite)
                     std::fprintf(stderr, "MH3 net: TLS session %d handshake: %d\n", id + 1, result);

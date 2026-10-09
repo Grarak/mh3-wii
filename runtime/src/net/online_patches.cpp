@@ -18,10 +18,13 @@
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "guest_call.h"
+#include "launcher_cheats.h"
 #include "memory.h"
+#include "net_ctrl.h"
 #include "net_host.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -148,7 +151,74 @@ std::vector<uint8_t> RootCa() {
 
     return {std::begin(kMh3spCa), std::end(kMh3spCa)};
 }
+
+// The last server a TLS session went on with was a community one.
+std::atomic<bool> community{false};
+
+// A refusal's notice: 1 until a loading screen shows it, 2 while that
+// screen is up.
+std::atomic<int> refusal{0};
+
+constexpr uint32_t kOnlineMode = 0x8065AA84; // u8, GetOnlineMode (0x800CF26C): 2 the City, online
+constexpr const char* kRules[]{"Cheats are not allowed online.", "Do not harass other players."};
+constexpr const char* kRefused[]{"Online play refused: cheats are on.", "Cheats are not allowed online.", "Do not harass other players."};
+
+// MH3_ONLINE_COMMUNITY_TEST=1 (development builds): every server counts as a
+// community one, to try the refusal and the notice on a local MH3SP.
+bool CommunityTest() {
+#ifdef MH3_DEVELOPMENT
+    static const bool test = [] {
+        const char* value = std::getenv("MH3_ONLINE_COMMUNITY_TEST");
+        return value && *value && value[0] != '0';
+    }();
+    return test;
+#else
+    return false;
+#endif
+}
 } // namespace
+
+bool AdmitTlsServer(NetHost::Tls& tls) {
+    const bool signed_by_ca = tls.PeerSignedBy(kMh3spCa, sizeof(kMh3spCa)) || CommunityTest();
+
+    if (signed_by_ca && LauncherCheats::EnabledCount()) {
+        refusal = 1;
+        std::fprintf(stderr, "MH3 net: a community server: online play refused while cheats are on (%u)\n", unsigned(LauncherCheats::EnabledCount()));
+        return false;
+    }
+
+    if (signed_by_ca && !community)
+        std::fprintf(stderr, "MH3 net: a community server (its certificate signed by the MH3SP CA)\n");
+
+    community = signed_by_ca;
+    return true;
+}
+
+std::span<const char* const> OnlineNotice(bool loading) {
+    if (loading) {
+        if (refusal) {
+            refusal = 2;
+            return kRefused;
+        }
+
+        return community && Memory::Read8(kOnlineMode) == 2 ? std::span<const char* const>(kRules) : std::span<const char* const>();
+    }
+
+    // The loading screen that showed the refusal has ended.
+    int shown = 2;
+
+    if (refusal.compare_exchange_strong(shown, 0))
+        return {};
+
+    // Before that screen: over the online screens' message windows (the
+    // connection error the refusal leads to).
+    const uint32_t work = Memory::Read32(NetCtrl::kWorkPointer);
+
+    if (refusal && work && Memory::Read32(work + NetCtrl::kDialog))
+        return kRefused;
+
+    return {};
+}
 
 std::string OnlineServerSetting() {
     if (serverSetting)

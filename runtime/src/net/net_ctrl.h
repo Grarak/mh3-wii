@@ -33,6 +33,8 @@ enum : uint32_t {
     kServerCount = 0x660, // u32
     kServers = 0x668,     // 0x40 bytes a server
     kCategoryServers = 0xA100, // u32[4]: the servers in each category
+    kDialog = 0xBF30,     // u32: the message window (0: none open)
+    kList = 0xBF34,       // u32: the list window
     kGateName = 0xC0C4,   // char[]: the entered gate's name
     kCityName = 0xC104,   // char[]: the entered city's name
     kDelay = 0xC48C,      // s32: frames before a list takes input
