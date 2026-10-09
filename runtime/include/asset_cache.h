@@ -31,6 +31,9 @@ class AssetCache {
     // A game disc read: indexes the source files it touches and patches their
     // native texture tags into the bytes.
     void Read(uint64_t offset, uint8_t* out, size_t bytes);
+    // A map's overlay is loading: from now on stream reads are recorded for
+    // `map`, and the streams it read before are extracted ahead of their use.
+    void PrefetchStreams(const std::string& map);
     // The converted pack holding texture asset `id`, once it is written.
     std::string TexturePack(uint32_t id);
     // The converted model pack of the source file containing partition offset

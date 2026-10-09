@@ -123,6 +123,10 @@ struct AssetCache::Impl {
     std::vector<Source> sources;        // by partition offset
     std::vector<Extract> extracts;      // by partition offset
     uint64_t extractedBytes = 0, reads = 0;
+    // Learned prefetch: the streams each map read (cache/files/streams.log,
+    // "map-name offset" lines), queued again when that map loads.
+    std::string streamContext;
+    std::map<std::string, std::vector<uint64_t>> streamsByMap;
     std::map<uint32_t, Source*> byTexture; // first texture ID -> source
     uint32_t nextTexture = 1, nextModel = 1;
     std::mutex lock;
@@ -164,6 +168,7 @@ struct AssetCache::Impl {
                 extractedBytes += size;
             }
         }
+        LoadStreamLog();
         threads.resize(Workers);
         for (auto& thread : threads) {
             pthread_attr_t attributes;
@@ -193,6 +198,32 @@ struct AssetCache::Impl {
             if (e.copy)
                 std::fclose(e.copy);
     }
+    void LoadStreamLog() {
+        std::ifstream log(cache / "files" / "streams.log");
+        std::string map;
+        uint64_t offset = 0;
+        while (log >> map >> offset)
+            streamsByMap[map].push_back(offset);
+    }
+    // Lock held. Records that the active map read this stream.
+    void NoteStream(const Extract& e) {
+        if (streamContext.empty())
+            return;
+        auto& known = streamsByMap[streamContext];
+        if (std::find(known.begin(), known.end(), e.file.offset) != known.end())
+            return;
+        known.push_back(e.file.offset);
+        std::ofstream log(cache / "files" / "streams.log", std::ios::app);
+        log << streamContext << ' ' << e.file.offset << '\n';
+    }
+    // Lock held. Queues the extraction of a stream not yet copied.
+    void QueueExtract(Extract& e) {
+        if (e.state != Extract::State::None || e.failed)
+            return;
+        e.state = Extract::State::Queued;
+        jobs.push_back({nullptr, Kind::Extract, &e});
+        changed.notify_all();
+    }
     Extract* FindExtract(uint64_t at) {
         auto it = std::upper_bound(extracts.begin(), extracts.end(), at, [](uint64_t value, const Extract& e) { return value < e.file.offset; });
         if (it == extracts.begin())
@@ -204,11 +235,8 @@ struct AssetCache::Impl {
     // (and queues its extraction).
     bool ReadExtracted(Extract& e, uint64_t at, uint64_t stop, uint8_t* out) {
         e.used = ++reads;
-        if (e.state == Extract::State::None && !e.failed) {
-            e.state = Extract::State::Queued;
-            jobs.push_back({nullptr, Kind::Extract, &e});
-            changed.notify_all();
-        }
+        NoteStream(e);
+        QueueExtract(e);
         if (e.state != Extract::State::Ready)
             return false;
         const size_t count = size_t(stop - at);
@@ -572,6 +600,19 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
         }
         at = stop;
     }
+}
+void AssetCache::PrefetchStreams(const std::string& map) {
+    auto& m = *impl;
+    std::lock_guard guard(m.lock);
+    m.streamContext = map;
+    const auto known = m.streamsByMap.find(map);
+    if (known == m.streamsByMap.end())
+        return;
+    for (const uint64_t offset : known->second)
+        if (auto* e = m.FindExtract(offset); e && e->file.offset == offset) {
+            e->used = ++m.reads; // keep this map's copies over older ones
+            m.QueueExtract(*e);
+        }
 }
 std::string AssetCache::TexturePack(uint32_t id) {
     auto& m = *impl;

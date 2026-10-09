@@ -1,3 +1,4 @@
+#include "asset_cache.h"
 #include "abi_bridge.h"
 #include "village_boot.h"
 #include "generated/rso_binding.h"
@@ -109,6 +110,10 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint3
     profile->active = true;
     if (std::string_view(name) == "map_village.rso")
         FinishVillageBoot();
+    // The map's loading screen: extract the audio streams it played before.
+    if (std::string_view(name).starts_with("map"))
+        if (auto* cache = GameAssetCache())
+            cache->PrefetchStreams(name);
     std::cerr << "MH3 RSO: verified " << name << " static binding\n";
 }
 
