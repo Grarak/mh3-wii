@@ -176,7 +176,16 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         ++logicSteps;
         const bool tickDue = nextTickProbe < probeTicks.size() && GameStep::Elapsed() >= probeTicks[nextTickProbe];
         if (tickDue) ++nextTickProbe;
-        if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] { call(RunTasks); });
+        // MH3_STEP_PROBE_ALL: probe the whole frame (scene update, tasks and
+        // drawing) instead of the task pass alone.
+        static const bool probeAll = std::getenv("MH3_STEP_PROBE_ALL") != nullptr;
+        if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] {
+            if (probeAll) { call(flfntStackReset); call(UpdateScene); call(Setup2DProjection); call(MovieUpdate); }
+            call(RunTasks);
+            if (!probeAll) return;
+            call(GrabScreen); call(ResetFade); call(TickSystemTimers); call(DrawScene); call(flfntFlush);
+            call(DrawFadeOverlay); call(TickFades); call(DrawHud); call(MovieDraw); call(PauseHook); call(OverlayHook);
+        });
 #endif
         GameTasks::SkipStrapScreen();
 #ifdef MH3_DEVELOPMENT

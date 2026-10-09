@@ -160,6 +160,8 @@
 800581a4 TickFades
 80058f84 RestoreGrabbedScreen
 800d10b0 DrawHud
+800d09e4 LoadingLetters
+800d0f78 loading_disp_set
 80435d84 MovieDrawOverlay
 800d2678 PauseHook
 800d298c OverlayHook
