@@ -17,6 +17,7 @@
 // tick per step) every read is the counter itself. The player's step counter
 // (PLW+0x20, a tick at a time) gets the same for its tests in code that runs
 // once a step (kind 2 sites).
+#include "cheats.h"
 #include "game_step.h"
 #include "step_counter.h"
 #include "port_check.h"
@@ -42,8 +43,10 @@ constexpr uint32_t kVillageCountdown = kVillage + 0x28;      // u8
 constexpr uint32_t kVillageRamp = kVillage + 0x34;           // s16: steps in the current state, +-60
 constexpr uint32_t kVillageTalk = 0x806ACD48;                // village talk work
 constexpr uint32_t kVillageTalkSteps = kVillageTalk + 0x150; // u32
+
 // Steps in the area, advanced by AreaStepCounters (0x802E4C88, below).
 constexpr uint32_t kAreaSteps[] = {0x806C04E8, 0x806C02D8, 0x806C046C};
+
 // Quest clock steps (quest work+0x28), advanced by 0x803B0228 (tick sites).
 constexpr uint32_t kQuestSteps = 0x806C7D00;
 
@@ -58,6 +61,7 @@ struct Site {
     uint32_t k;
     uint32_t kind; // 0: any other use; 1: `% N == k`; 2: the same on a player's step counter
 };
+
 constexpr Site kSites[] = {
 #include "step_counter_sites.inc"
 };
@@ -74,23 +78,29 @@ extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc)
     const uint32_t counter = Memory::Read32(address);
     const Site* site = Find(pc);
     const uint32_t ticks = GameStep::Ticks();
+
     // A player's step counter (PLW+0x20, advanced a tick at a time by
     // player_timers.cpp) is read through the PLW, so its sites (kind 2) name it.
     if (!site || ticks == 1 || site->kind == 0)
         return counter;
+
     if (site->kind == 1 && !IsCounter(address))
         return counter;
+
     if (site->n == 0)
         return ticks == 0 ? 1u : counter; // 1 % N != 0 for any N > 1
     // The latest value in (counter - ticks, counter] that is k mod N.
     const uint32_t back = (counter % site->n + site->n - site->k % site->n) % site->n;
+
     if (back < ticks)
         return counter - back;
+
     return counter % site->n == site->k ? counter + 1 : counter;
 }
 
 bool StepCounter::Every(uint32_t n, uint32_t k) {
     const uint32_t counter = Memory::Read32(kCounter), ticks = GameStep::Ticks();
+
     if (n == 0)
         return counter == k; // the guest's divwu by 0 gives 0: counter - 0 * 0
     if (ticks == 1)
@@ -108,17 +118,24 @@ extern "C" void MH3_RunTasks(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x800416F8, MH3_RunTasks, "RunTasks");
 
 // The play-time clock (0x800D2F80, called by each scene's step): steps, and
-// seconds every 30 of them. One pass per tick.
+// seconds every 30 of them. One pass per tick. No playtime increase
+// (cheats.h) drops the step count's store, which stops both.
 static void PlayTimeTickPort(CpuContext*) {
+    if (Cheats::On(Cheats::Id::NoPlaytimeIncrease))
+        return;
+
     for (uint32_t i = 0, ticks = GameStep::Ticks(); i < ticks; ++i) {
         const uint32_t steps = Memory::Read32(kPlaySteps) + 1;
         Memory::Write32(kPlaySteps, steps);
+
         if (steps % 30 != 0)
             continue;
+
         const uint32_t seconds = Memory::Read32(kPlaySeconds) + 1;
         Memory::Write32(kPlaySeconds, seconds > kPlaySecondsMax ? kPlaySecondsMax : seconds);
     }
 }
+
 extern "C" void func_800D2F80(CpuContext* ctx);
 extern "C" void MH3_PlayTimeTick(CpuContext* ctx) {
     PortCheck::Call(ctx, "PlayTimeTick", func_800D2F80, PlayTimeTickPort);
@@ -131,24 +148,30 @@ REGISTER_NATIVE_FUNCTION_AS(0x800D2F80, MH3_PlayTimeTick, "PlayTimeTick");
 static void VillageStepCountersPort(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     const uint32_t ticks = GameStep::Ticks();
+
     for (uint32_t i = 0; i < ticks; ++i)
         if (const uint8_t n = Memory::Read8(kVillageCountdown))
             Memory::Write8(kVillageCountdown, n - 1);
     const bool down = GuestCall{ctx}(0x8021F29C) != 0;
     int32_t ramp = int16_t(Memory::Read16(kVillageRamp));
+
     if (down) {
         if (ramp > 0)
             ramp = 0;
+
         ramp = std::max(ramp - int32_t(ticks), std::min(ramp, -60));
     } else {
         if (ramp < 0)
             ramp = 0;
+
         ramp = std::min(ramp + int32_t(ticks), std::max(ramp, 60));
     }
+
     Memory::Write16(kVillageRamp, uint16_t(ramp));
     Memory::Write32(kVillageSteps, Memory::Read32(kVillageSteps) + ticks);
     *ctx = saved;
 }
+
 extern "C" void func_80212680(CpuContext* ctx);
 extern "C" void MH3_VillageStepCounters(CpuContext* ctx) {
     PortCheck::Call(ctx, "VillageStepCounters", func_80212680, VillageStepCountersPort);
@@ -170,6 +193,7 @@ static void AreaStepCountersPort(CpuContext*) {
     for (const uint32_t steps : kAreaSteps)
         Memory::Write32(steps, Memory::Read32(steps) + GameStep::Ticks());
 }
+
 extern "C" void func_802E4C88(CpuContext* ctx);
 extern "C" void MH3_AreaStepCounters(CpuContext* ctx) {
     PortCheck::Call(ctx, "AreaStepCounters", func_802E4C88, AreaStepCountersPort);

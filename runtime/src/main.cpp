@@ -97,8 +97,9 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 moves the hunter there (arena pit: 0,300,0)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
-                               "                                 the launcher's list by its name, with a value by label\n"
-                               "                                 or number\n"
+                               "                                 the launcher's list by its name (\"InfHP\"; with its\n"
+                               "                                 group when lists share it, \"Bully:ActionRepeater\"),\n"
+                               "                                 with a value by label or number\n"
                                "  --rom <image>                  (with any of the above) play from the European disc\n"
                                "                                 (RVZ, WIA or ISO); remembered in disc/ next to the executable\n";
 

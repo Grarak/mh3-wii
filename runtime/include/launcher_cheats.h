@@ -51,7 +51,10 @@ std::string ValueLabel(size_t cheat);
 size_t EnabledCount();
 
 // Turns a cheat on by name, with a value by option label or number (empty:
-// its default). Returns false for an unknown name or value.
+// its default). Returns false for an unknown name or value. Letters and
+// digits count, in any case; "Group:name" picks the cheat of that group
+// (or of the groups starting with it) when several lists have the name, else
+// the first in the list.
 bool EnableByName(std::string_view name, std::string_view value);
 
 } // namespace LauncherCheats

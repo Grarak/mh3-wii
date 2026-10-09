@@ -27,21 +27,39 @@ enum class Id : uint16_t {
     // Stuff
     GalleryClips,
     TurnItUpTo11,
+    InstantFlex,
     MapOnHud,
+    CursedWeapons,
     MaxHealMonsters,
+    FelvineForever,
     MonsterActionRepeater,
     // Seth@WiiPlaza
+    AltInfiniteHealth,
     VillageSpeedHack,
     VillageSnailSpeed,
     SethInfiniteHealth,
     SethUltraSharp,
     SethSpeedGlide,
     SethOxygen,
+    ToggleInfiniteHealth,
+    // Bully@Wiiplaza
+    BullyInfiniteHealth,
+    HotDrinkForever,
+    ColdDrinkForever,
+    Daredevil,
+    NoPlaytimeIncrease,
+    SuperSpeed,
+    BullyActionRepeater,
+    MoonJump,
+    Teleporter,
+    FreeFly,
     // Skiller
     MorningOnLoad,
     EveningOnLoad,
     ResourcesZero,
     MaxMoney,
+    LongSwordPowerMax,
+    SkillerInfiniteTime,
     SexChange,
     InfiniteHp,
     InfiniteStamina,
@@ -87,6 +105,7 @@ enum class Id : uint16_t {
     ClothingGreen,
     ClothingBlue,
     // Argon
+    ArgonInfiniteTime,
     SetPlayTime,
     UnlimitedBarrelBombs,
     UnlimitedColdDrink,
@@ -140,6 +159,7 @@ enum class Id : uint16_t {
     ForceEvade,
     SleepAnywhere,
     BackToCamp,
+    InvinciblePlayers,
     ShowMonstersOnMap,
     FreezeMonsters,
     SwitchAxeGaugeFull,
@@ -166,6 +186,19 @@ inline bool On(Id id) {
 inline int32_t Value(Id id) {
     return g_value[size_t(id)];
 }
+
+// The switches of the codes that their buttons turn on and off (the Gecko
+// "CC" lines): on while the cheat is and its buttons have switched it on.
+bool Toggled(Id id);
+
+// The infinite time codes' buttons, held this step: they run the quest's
+// time out (quest_clock.cpp).
+bool QuestEndPressed();
+
+// The position a jump's fall leaves as it is (Jump15 in
+// field_player_actions.cpp, for moon jump and free fly): bits 0, 1 and 2 for
+// x, y and z.
+uint32_t FallKeeps(uint32_t plw);
 
 // The data writes, once per logic step before the task pass (MH3_GameFrame).
 void Step(CpuContext* ctx);

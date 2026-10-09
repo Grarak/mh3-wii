@@ -53,6 +53,13 @@ constexpr Option kActivatorsOrAlways[]{
     {"SELECT+Right", kMinus | kRight},
 };
 
+// The teleporter's buttons, with d-pad down (save) or up (teleport).
+constexpr Option kModifiers[]{
+    {"L+R", kL | kR},
+    {"ZL+ZR", kZL | kZR},
+    {"SELECT", kMinus},
+};
+
 constexpr Option kPlayTimes[]{
     {"0:00", 0},
     {"10:00", 10 * 3600},
@@ -86,21 +93,39 @@ constexpr Entry kEntries[]{
 
     {Id::GalleryClips, {kStuff, "Unlock all gallery clips", "Every movie of the gallery can be watched; saved with the game."}},
     {Id::TurnItUpTo11, {kStuff, "Turn it up to 11", "Music volume past the option's maximum."}},
+    {Id::InstantFlex, {kStuff, "Instant flex", "The quest fails once less than a minute of its time is left."}},
     {Id::MapOnHud, {kStuff, "Map attached to HUD", "The map option follows the HUD's state (Gecko: map option 0, 1 in HUD state 0x3C04)."}},
+    {Id::CursedWeapons, {kStuff, "Cursed weapons", "While the weapon is drawn, health drains by 1 every 32 steps."}},
     {Id::MaxHealMonsters, {kStuff, "Max heal all monsters", "The buttons heal every monster to its full health.", kActivators}},
+    {Id::FelvineForever, {kStuff, "Felvine lasts forever on monster", "A monster's felvine countdown never runs out."}},
     {Id::MonsterActionRepeater, {kStuff, "Action repeater for targeted monster", "The buttons restart the action of the monster nearest the hunter.", kActivators}},
 
+    {Id::AltInfiniteHealth, {kSeth, "Alternate infinite health", "Damage leaves health as it is, unless a hit would empty it."}},
     {Id::VillageSpeedHack, {kSeth, "Speed hack in village", "Hold ZL in the village to move very fast."}},
     {Id::VillageSnailSpeed, {kSeth, "Snail speed (village only)", "Hold ZL in the village to move very slowly."}},
     {Id::SethInfiniteHealth, {kSeth, "Infinite health (online code)", "Health and maximum stay at 100 (the online code, on the local hunter)."}},
     {Id::SethUltraSharp, {kSeth, "Weapons ultra sharp (online code)", "Purple sharpness that never wears (the online code, on the local hunter)."}},
     {Id::SethSpeedGlide, {kSeth, "Speed glide/skate (online code)", "Hold ZL while running to glide very fast (the online code, on the local hunter)."}},
     {Id::SethOxygen, {kSeth, "Increase oxygen bar (online code)", "Oxygen gauge of 255 (the online code, on the local hunter)."}},
+    {Id::ToggleInfiniteHealth, {kSeth, "Toggle infinite health", "The buttons switch it on and off: while on, health never changes.", kActivators}},
+
+    {Id::BullyInfiniteHealth, {kBully, "Infinite health", "Health never changes; the maximum drops to the current health."}},
+    {Id::HotDrinkForever, {kBully, "Hot drink lasts forever", "A hot drink no longer runs out outside the cold areas (in them it still does)."}},
+    {Id::ColdDrinkForever, {kBully, "Cold drink lasts forever", "A cold drink no longer runs out outside the hot areas (in them it still does)."}},
+    {Id::Daredevil, {kBully, "Daredevil mode", "Any change to health empties it."}},
+    {Id::NoPlaytimeIncrease, {kBully, "No playtime increase", "The play time clock stops."}},
+    {Id::SuperSpeed, {kBully, "Super speed", "The buttons switch it on and off: the hunter's motions play five times as fast.", kActivators}},
+    {Id::BullyActionRepeater, {kBully, "Action repeater", "The buttons restart the hunter's current action.", kActivators}},
+    {Id::MoonJump, {kBully, "Moon jump", "Hold A+B to rise (not with Free fly)."}},
+    {Id::Teleporter, {kBully, "Teleporter", "These buttons with d-pad down save the position, with d-pad up teleport there.", kModifiers}},
+    {Id::FreeFly, {kBully, "Free fly", "Hold L with the d-pad to move, A+B to rise; the buttons switch falling off and on.", kActivators}},
 
     {Id::MorningOnLoad, {kSkiller, "Change to morning (upon loading)", "The village and Moga Woods load in the morning."}},
     {Id::EveningOnLoad, {kSkiller, "Change to evening (upon loading)", "The village and Moga Woods load in the evening."}},
     {Id::ResourcesZero, {kSkiller, "Res 0", "Resources (Moga Woods) stay at 0."}},
     {Id::MaxMoney, {kSkiller, "Max/inf money", "Money stays at 9,999,999z."}},
+    {Id::LongSwordPowerMax, {kSkiller, "On hit long sword power max (charge bar)", "When the long sword's spirit gauge would go down, it fills."}},
+    {Id::SkillerInfiniteTime, {kSkiller, "Inf time arena/quests (finish mission press __)", "The quest clock stops; the buttons run the time out.", kActivators}},
     {Id::SexChange, {kSkiller, "Sex change", "The character's sex (0 male, 1 female); loads with the character.", {}, {0, 1}}},
     {Id::InfiniteHp, {kSkiller, "Inf HP", "Health and recoverable health stay full."}},
     {Id::InfiniteStamina, {kSkiller, "Inf stamina", "Stamina stays full."}},
@@ -146,6 +171,7 @@ constexpr Entry kEntries[]{
     {Id::ClothingGreen, {kSkiller, "Color changing clothing (green)", "Clothing colour, green.", {}, {0, 255, 15}}},
     {Id::ClothingBlue, {kSkiller, "Color changing clothing (blue)", "Clothing colour, blue.", {}, {0, 255, 15}}},
 
+    {Id::ArgonInfiniteTime, {kArgon, "Infinite time arena and quests", "The quest clock stops; the buttons run the time out.", kActivators}},
     {Id::SetPlayTime, {kArgon, "Set playtime", "The play time stays at this value.", kPlayTimes}},
     {Id::UnlimitedBarrelBombs, {kArgon, "Set unlimited barrel bombs", "Barrel bombs on the field never count against the limit."}},
     {Id::UnlimitedColdDrink, {kArgon, "Unlimited cold drink", "A cold drink's effect never ends."}},
@@ -199,6 +225,7 @@ constexpr Entry kEntries[]{
     {Id::ForceEvade, {kDoudley, "Force evade (quick recover)", "With the buttons held, B evades out of any action.", kActivatorsOrAlways}},
     {Id::SleepAnywhere, {kDoudley, "Sleep anywhere", "SELECT and B together lie the hunter down to sleep (standing on the ground)."}},
     {Id::BackToCamp, {kDoudley, "Thrown back to camp", "SELECT and R together faint the hunter back to camp."}},
+    {Id::InvinciblePlayers, {kDoudley, "Invincible players", "Hunters take no damage."}},
     {Id::ShowMonstersOnMap, {kDoudley, "Show all monsters on the map", "Every monster shows on the map."}},
     {Id::FreezeMonsters, {kDoudley, "Freeze monsters", "The buttons freeze monsters before their next action.", kActivators}},
     {Id::SwitchAxeGaugeFull, {kDoudley, "Switch axe power gauge always full", "The switch axe's phial gauge stays full."}},
@@ -305,6 +332,25 @@ uint32_t LocalPlayer() {
 }
 
 namespace {
+bool g_toggled[size_t(Id::Count)];
+
+// The cheats switched by their buttons.
+constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly};
+} // namespace
+
+bool Toggled(Id id) {
+    return On(id) && g_toggled[size_t(id)];
+}
+
+bool QuestEndPressed() {
+    for (const Id id : {Id::ArgonInfiniteTime, Id::SkillerInfiniteTime})
+        if (On(id) && HeldAll(uint16_t(Value(id))))
+            return true;
+
+    return false;
+}
+
+namespace {
 constexpr uint32_t kPsw = 0x8065B7D0; // channel 0's pad work
 constexpr uint32_t kClassicHeld = 0xD6, kClassicPressed = 0xDA;
 } // namespace
@@ -327,6 +373,10 @@ void Step(CpuContext*) {
 
     if (!any)
         return;
+
+    for (const Id id : kToggles)
+        if (On(id) && Combo(uint16_t(Value(id))))
+            g_toggled[size_t(id)] = !g_toggled[size_t(id)];
 
     StepSaveData();
     StepPlayer();
@@ -441,8 +491,17 @@ int32_t Number(std::string_view text) {
 } // namespace
 
 bool EnableByName(std::string_view name, std::string_view value) {
+    // "Group:name" picks among cheats of the same name in several lists (the
+    // group by the start of its name: "bully:actionrepeater").
+    std::string_view group;
+
+    if (const size_t colon = name.find(':'); colon != std::string_view::npos) {
+        group = name.substr(0, colon);
+        name.remove_prefix(colon + 1);
+    }
+
     for (size_t i = 0; i < kList.size(); ++i) {
-        if (Key(name) != Key(kList[i].name))
+        if (Key(name) != Key(kList[i].name) || !Key(kList[i].group).starts_with(Key(group)))
             continue;
 
         if (!value.empty()) {

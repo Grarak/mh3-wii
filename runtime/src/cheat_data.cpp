@@ -11,7 +11,12 @@
 // the Classic bits.
 #include "cheats.h"
 
+#include "game_step.h"
+#include "step_counter.h"
+
+#include <algorithm>
 #include <bit>
+#include <utility>
 
 namespace Cheats {
 
@@ -292,6 +297,77 @@ void StepMovement(uint32_t plw) {
 
         if (Memory::Read16(kClassicDirs) & 0x10)
             Memory::Write16(plw + kPitch, 0x1000);
+    }
+}
+
+// Whether Jump15's fall ran since the last pass (FallKeeps): the hunter is
+// in the air.
+bool g_falling = false;
+
+constexpr float kTakeOff = 31.0f;
+
+// Bully's movement codes, which patched the player's spot search
+// (0x803BAA14, called as the hunter moves) where it reads the position, and
+// Jump15's stores of the fall (FallKeeps). Their Wii Remote buttons are the
+// Classic's here: A+B for A+B, L with the d-pad for C with it. The moves
+// take the step's share of their amount a 1/30 s; a rise from the ground
+// takes 31 at once, as the original's searches of a step (one add per spot
+// in range) did: the ground check (0x8025FA64) pulls the hunter back from up
+// to 30 above the ground (0x8079C2F8), from more the fall starts.
+void StepBully(uint32_t plw) {
+    const float step = float(GameStep::Scale());
+    const bool airborne = std::exchange(g_falling, false);
+
+    const auto move = [&](uint32_t axis, float by) {
+        const uint32_t address = plw + kPlayerX + 4 * axis;
+
+        WriteF32(address, std::bit_cast<float>(Memory::Read32(address)) + by * step);
+    };
+
+    const auto rise = [&](float by) {
+        move(1, airborne ? by : std::max(by, kTakeOff) / step);
+    };
+
+    if (On(Id::BullyActionRepeater) && Combo(uint16_t(Value(Id::BullyActionRepeater))))
+        Memory::Write8(plw + kState, 0);
+
+    if (On(Id::MoonJump) && HeldAll(kA | kB))
+        rise(3.25f);
+
+    // The teleporter's position, saved by its buttons with d-pad down.
+    static float saved[3];
+    static bool hasSaved = false;
+
+    if (On(Id::Teleporter)) {
+        const auto buttons = uint16_t(Value(Id::Teleporter));
+
+        if (Combo(buttons | kDown)) {
+            for (uint32_t k = 0; k < 3; ++k)
+                saved[k] = std::bit_cast<float>(Memory::Read32(plw + kPlayerX + 4 * k));
+
+            hasSaved = true;
+        }
+
+        if (Combo(buttons | kUp) && hasSaved)
+            for (uint32_t k = 0; k < 3; ++k)
+                WriteF32(plw + kPlayerX + 4 * k, saved[k]);
+    }
+
+    if (On(Id::FreeFly)) {
+        if (HeldAll(kL | kRight))
+            move(0, 8.0f);
+
+        if (HeldAll(kL | kLeft))
+            move(0, -8.0f);
+
+        if (HeldAll(kA | kB))
+            rise(8.0f);
+
+        if (HeldAll(kL | kUp))
+            move(2, -8.0f);
+
+        if (HeldAll(kL | kDown))
+            move(2, 8.0f);
     }
 }
 
@@ -651,8 +727,15 @@ void StepPlayer() {
     StepStatus(plw);
     StepItems(plw);
     StepMovement(plw);
+    StepBully(plw);
     StepWeapons(plw);
     StepActions(plw);
+
+    // Cursed weapons patched the player's turn (0x80260330): with the weapon
+    // drawn, every 32 steps of the turn's counter (+0x37C), the word at
+    // +0x36E (health in its low half) less 1.
+    if (On(Id::CursedWeapons) && Memory::Read8(plw + kDrawn) == 1 && StepCounter::Every(32))
+        Memory::Write32(plw + kHealth - 2, Memory::Read32(plw + kHealth - 2) - 1);
 
     // Seth's village codes: with Z held (here ZL), a float of the village's
     // move work (0x901B2F14, the village heap as the US disc has it) huge or
@@ -664,6 +747,23 @@ void StepPlayer() {
         if (On(Id::VillageSnailSpeed))
             Memory::Write32(kVillageSpeed, 0x00070000);
     }
+}
+
+uint32_t FallKeeps(uint32_t plw) {
+    if (plw != LocalPlayer())
+        return 0;
+
+    g_falling = true;
+
+    uint32_t keep = 0;
+
+    if (On(Id::MoonJump) && HeldAll(kA | kB))
+        keep |= 2;
+
+    if (Toggled(Id::FreeFly))
+        keep |= 7;
+
+    return keep;
 }
 
 void StepMonsters() {
