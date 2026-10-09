@@ -55,6 +55,7 @@ target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
   native/mh3_model_submission.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
 target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_updates.c
   native/mh3_model_gpu_inputs.c src/model_material_prep.cpp native/mh3_model_material_prep.c)
+target_sources(MH3 PRIVATE src/model_scope.cpp native/mh3_model_scope.c)
 set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
   native/mh3_model_material_prep.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
@@ -62,6 +63,7 @@ target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_
 target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
 target_sources(MH3 PRIVATE src/native_startup_textures.cpp native/mh3_startup_textures.c)
 target_sources(MH3 PRIVATE src/native_system_fatal.cpp native/mh3_system_fatal.c)
+target_sources(MH3 PRIVATE src/native_ui_cursor.cpp native/mh3_ui_cursor.c)
 target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
@@ -140,17 +142,24 @@ if(TARGET aurora::core)
     target_include_directories(mh3_native_frame_statistics_check PRIVATE include)
     target_compile_features(mh3_native_frame_statistics_check PRIVATE cxx_std_20)
     add_test(NAME mh3_native_frame_statistics_check COMMAND mh3_native_frame_statistics_check)
+    add_executable(mh3_native_depth_clear_check EXCLUDE_FROM_ALL
+      ../tests/native/native_depth_clear_check.cpp src/native_display_utilities.cpp
+      src/native_render_state.cpp native/mh3_draw_state.c)
+    target_include_directories(mh3_native_depth_clear_check BEFORE PRIVATE
+      ../tests/native/ui_cursor_test_support "${MH3_AURORA_ROOT}/lib" include ..)
+    target_compile_features(mh3_native_depth_clear_check PRIVATE cxx_std_20)
+    target_link_libraries(mh3_native_depth_clear_check PRIVATE aurora::core aurora::gx aurora::vi)
     add_executable(mh3_native_geometry_check EXCLUDE_FROM_ALL
       "${MH3_AURORA_ROOT}/tests/native_geometry_check.cpp"
       src/native_render_state.cpp native/mh3_draw_state.c)
-    target_include_directories(mh3_native_geometry_check PRIVATE "${MH3_AURORA_ROOT}/lib" include)
+    target_include_directories(mh3_native_geometry_check PRIVATE "${MH3_AURORA_ROOT}/lib" include ..)
     target_compile_features(mh3_native_geometry_check PRIVATE cxx_std_20)
     target_link_libraries(mh3_native_geometry_check PRIVATE aurora::core aurora::gx aurora::vi)
     add_executable(mh3_native_material_check EXCLUDE_FROM_ALL
       ../tests/native/native_material_check.cpp src/native_material.cpp src/native_render_state.cpp
       native/mh3_material_state.c native/mh3_draw_state.c
       src/model_gpu.cpp native/mh3_model_gpu_inputs.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
-    target_include_directories(mh3_native_material_check PRIVATE "${MH3_AURORA_ROOT}/lib" include)
+    target_include_directories(mh3_native_material_check PRIVATE "${MH3_AURORA_ROOT}/lib" include ..)
     target_compile_features(mh3_native_material_check PRIVATE cxx_std_20)
     target_link_libraries(mh3_native_material_check PRIVATE aurora::core aurora::gx aurora::vi)
     add_executable(mh3_native_scene_feedback_check EXCLUDE_FROM_ALL

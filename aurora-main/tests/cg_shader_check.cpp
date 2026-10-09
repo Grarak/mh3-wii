@@ -63,6 +63,21 @@ out vec4 color;
 void main() { gl_Position=mesh_position; color=mesh_color0; }
 )", Stage::Vertex);
   has(mesh, "a_mesh_color0 : COLOR0"); has(mesh, "o_color : TEXCOORD0");
+  const auto indexed = convert(R"(#version 330 core
+layout(location=0) in vec4 mesh_position;
+layout(location=12) in vec4 mesh_matrix0;
+layout(location=13) in vec4 mesh_matrix1;
+layout(location=14) in vec4 mesh_matrix2;
+layout(std140) uniform Ubuf {mat3x4 palette[20];} ubuf;
+void main() {
+    uint slot=uint(mesh_matrix0.x);
+    gl_Position=vec4(mesh_position * ubuf.palette[slot], 1.0);
+}
+)", Stage::Vertex);
+  has(indexed, "a_mesh_matrix0 : BLENDINDICES0");
+  has(indexed, "a_mesh_matrix1 : BLENDINDICES1");
+  has(indexed, "a_mesh_matrix2 : BLENDINDICES2");
+  has(indexed, "mul(mesh_position, ubuf.palette[slot])");
   const auto legacy = convert(R"(uniform usampler2D vbuf;
 uint aur_word(int b, uint i) { return 0u; }
 void main(){gl_Position=vec4(uintBitsToFloat(aur_word(vbuf, uint(gl_VertexID))));}

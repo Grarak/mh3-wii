@@ -24,6 +24,7 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
     using F=aurora::gl::MeshAttributeFormat;
     if(!source.stride || source.stride>UINT16_MAX) throw std::runtime_error("Compact model stride exceeds hardware limits");
     aurora::gl::MeshLayout out;out.stride=uint16_t(source.stride);
+    out.matrixIndexMask=uint16_t((source.flags>>8)&0x1ffu);
     for(unsigned i=0;i<source.count;++i) {
         const auto& a=source.attributes[i];F format;
         switch(a.format) {
@@ -31,9 +32,10 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
         case 8:format=F::F16;break;
         case 7:format=F::S16N;break;
         case 4:format=F::U8N;break;
+        case 0:format=F::U8;break;
         default:throw std::runtime_error("Unsupported compact model attribute format");
         }
-        if(a.semantic>11) throw std::runtime_error("Compact model needs an unsupported attribute producer");
+        if(a.semantic>14) throw std::runtime_error("Compact model needs an unsupported attribute producer");
         out.attributes.push_back({a.offset,uint8_t(a.semantic),a.components,format});
     }
     aurora::gfx::validate_mesh_layout(out);return out;

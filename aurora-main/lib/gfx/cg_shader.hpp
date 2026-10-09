@@ -5,7 +5,7 @@
 
 namespace aurora::gfx::cg {
 enum class Stage { Vertex, Fragment };
-inline constexpr uint32_t Version = 3;
+inline constexpr uint32_t Version = 4;
 
 // Translate Aurora's generated GLSL dialect, not arbitrary GLSL. Unsupported
 // interfaces/layouts throw std::runtime_error instead of guessing a GPU ABI.

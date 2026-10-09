@@ -1021,6 +1021,7 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
     case MeshAttributeFormat::F32: break;
     case MeshAttributeFormat::F16: type=GL_HALF_FLOAT; break;
     case MeshAttributeFormat::U8N: type=GL_UNSIGNED_BYTE; normalized=GL_TRUE; break;
+    case MeshAttributeFormat::U8: type=GL_UNSIGNED_BYTE; break;
     case MeshAttributeFormat::S16N: type=GL_SHORT; normalized=GL_TRUE; break;
     }
     glVertexAttribPointer(attribute.location,attribute.components,type,normalized,layout.stride,

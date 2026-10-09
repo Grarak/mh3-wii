@@ -74,7 +74,8 @@ static int nonzero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_te
     }
     magnitude+=fabsf(gen->post.v[2][3]);
     const float error=64*FLT_EPSILON*fmaxf(1,magnitude);
-    return isfinite(lo)&&isfinite(hi)&&isfinite(error)&&(lo>error || hi < -error);
+    if(!isfinite(lo)||!isfinite(hi)||!isfinite(error)) return 0;
+    return lo>error?1:hi < -error?-1:0;
 }
 /* Certify the actual vertex equation, not a cancelling composed float row.
  * Packed positions come from finite offline values and validated finite bounds;
@@ -96,14 +97,76 @@ static int zero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_texge
     }
     return 0;
 }
+/* The converter supplies the referenced slot union and per-coordinate identity
+ * and position-region presence. Equal signs across all guarded intervals are
+ * required; individually nonzero matrices of opposite signs can interpolate
+ * through 0. A zero certificate requires every candidate's direct zero row. */
+static unsigned indexed_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_texgen *gen,unsigned coordinate) {
+    const mh3_pack_palette_batch *batch=mesh->palette_batch;
+    if(!batch) return 0;
+    mh3_model_gpu_texgen candidate=*gen;
+    int have=0,sign=0,same_sign=1,all_zero=1;
+    if(batch->texture_identity_mask&(1u<<coordinate)) {
+        candidate.main=identity();sign=nonzero_q(mesh,&candidate);have=1;
+        same_sign=sign!=0;all_zero=zero_q(mesh,&candidate);
+    }
+    for(unsigned slot=0;slot<10;slot++) {
+        if((batch->texture_position_mask&(1u<<coordinate)) && (batch->position_required&(1u<<slot))) {
+            candidate.main=mesh->palette->position[slot];
+            const int current=nonzero_q(mesh,&candidate);
+            if(!have) sign=current;
+            same_sign&=current!=0 && current==sign;
+            all_zero&=zero_q(mesh,&candidate);have=1;
+        }
+        if(batch->texture_required&(1u<<slot)) {
+            candidate.main=mesh->palette->texture[slot];
+            const int current=nonzero_q(mesh,&candidate);
+            if(!have) sign=current;
+            same_sign&=current!=0 && current==sign;
+            all_zero&=zero_q(mesh,&candidate);have=1;
+        }
+    }
+    return !have?0:all_zero?2:same_sign?1:0;
+}
 mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
     uint8_t mask,int normal_required,float near_z,float far_z,mh3_model_gpu_inputs *out) {
     if(!mesh||!out||!mesh->palette||!mesh->projection||!mesh->material||mesh->layout.count>16||
-       normal_required<0||normal_required>1||!isfinite(near_z)||!isfinite(far_z)||
-       !(mesh->palette->position_valid&1)) return MH3_RES_INVALID;
+       normal_required<0||normal_required>1||!isfinite(near_z)||!isfinite(far_z)) return MH3_RES_INVALID;
     mh3_model_gpu_inputs result;memset(&result,0,sizeof result);
-    result.position=mesh->palette->position[0];result.normal=identity();
-    if(!finite_matrix(&result.position)) return MH3_RES_INVALID;
+    result.matrix_index_mask=(uint16_t)((mesh->layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)&0x1ffu);
+    result.position=result.normal=identity();
+    if(result.matrix_index_mask) {
+        const mh3_pack_palette_batch *batch=mesh->palette_batch;
+        if(!batch) return MH3_RES_ABSENT;
+        if((batch->position_required|batch->normal_required|batch->texture_required)&~0x3ffu) return MH3_RES_INVALID;
+        if((result.matrix_index_mask&1) && (!batch->position_required || (normal_required && !batch->normal_required)))
+            return MH3_RES_ABSENT;
+        const uint16_t positions=batch->position_required|((result.matrix_index_mask&1)?0:1);
+        if((positions&~mesh->palette->position_valid) ||
+           (batch->texture_required&~mesh->palette->texture_valid) ||
+           (normal_required && (batch->normal_required&~mesh->palette->normal_valid))) return MH3_RES_ABSENT;
+        for(unsigned slot=0;slot<10;slot++) {
+            if(positions&(1u<<slot)) {
+                if(!finite_matrix(&mesh->palette->position[slot])) return MH3_RES_INVALID;
+                result.position_palette[slot]=mesh->palette->position[slot];
+            }
+            if(batch->texture_required&(1u<<slot)) {
+                if(!finite_matrix(&mesh->palette->texture[slot])) return MH3_RES_INVALID;
+                result.texture_palette[slot]=mesh->palette->texture[slot];
+            }
+            if(normal_required && (batch->normal_required&(1u<<slot))) {
+                for(unsigned r=0;r<3;r++) for(unsigned c=0;c<3;c++)
+                    result.normal_palette[slot].v[r][c]=mesh->palette->normal[slot].v[r][c];
+                if(!finite_matrix(&result.normal_palette[slot])) return MH3_RES_INVALID;
+            }
+        }
+    }
+    if(!(result.matrix_index_mask&1)) {
+        if(!(mesh->palette->position_valid&1)) return MH3_RES_ABSENT;
+        result.position=mesh->palette->position[0];
+        if(!finite_matrix(&result.position)) return MH3_RES_INVALID;
+        result.position_palette[0]=result.position;
+    }
     for(unsigned i=0;i<16;i++) {
         if(!isfinite(mesh->projection[i])) return MH3_RES_INVALID;
         result.projection[i]=mesh->projection[i];
@@ -113,16 +176,22 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
         if(!isfinite(result.projection[8+i])) return MH3_RES_INVALID;
     }
     if(normal_required) {
-        if(!(mesh->palette->normal_valid&1) || !attribute(&mesh->layout,1)) return MH3_RES_ABSENT;
-        for(unsigned r=0;r<3;r++) for(unsigned c=0;c<3;c++) result.normal.v[r][c]=mesh->palette->normal[0].v[r][c];
-        if(!finite_matrix(&result.normal)) return MH3_RES_INVALID;
+        if(!attribute(&mesh->layout,1)) return MH3_RES_ABSENT;
+        if(!(result.matrix_index_mask&1)) {
+            if(!(mesh->palette->normal_valid&1)) return MH3_RES_ABSENT;
+            for(unsigned r=0;r<3;r++) for(unsigned c=0;c<3;c++) result.normal.v[r][c]=mesh->palette->normal[0].v[r][c];
+            if(!finite_matrix(&result.normal)) return MH3_RES_INVALID;
+            result.normal_palette[0]=result.normal;
+        }
     }
     for(unsigned i=0;i<8;i++) if(mask&(1u<<i)) {
         if(i>=mesh->material->texgen_count) return MH3_RES_ABSENT;
         const mh3_pack_texgen *source=&mesh->material->texgen[i];
+        const int indexed=(result.matrix_index_mask&(2u<<i))!=0;
         const unsigned required=(1u<<MH3_TEXGEN_PROJECTION)|(1u<<MH3_TEXGEN_INPUT_AB11)|
             (1u<<MH3_TEXGEN_FUNCTION)|(1u<<MH3_TEXGEN_SOURCE_ROW)|(1u<<MH3_TEXGEN_MATRIX_ROW)|(1u<<MH3_TEXGEN_DUAL_TEXTURE);
-        if((source->known&required)!=required) return MH3_RES_ABSENT;
+        const unsigned consumed=indexed?required&~(1u<<MH3_TEXGEN_MATRIX_ROW):required;
+        if((source->known&consumed)!=consumed) return MH3_RES_ABSENT;
         const uint8_t *v=source->values;
         if(v[MH3_TEXGEN_FUNCTION]!=0) return MH3_RES_UNSUPPORTED;
         if(v[MH3_TEXGEN_PROJECTION]>1||v[MH3_TEXGEN_INPUT_AB11]>1||v[MH3_TEXGEN_DUAL_TEXTURE]>1) return MH3_RES_INVALID;
@@ -132,9 +201,15 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
         if(row==3||row==4||row>12) return MH3_RES_UNSUPPORTED;
         const unsigned semantic=row<=2?row:row-1;
         if(!attribute(&mesh->layout,semantic)) return MH3_RES_ABSENT;
-        gen->main_identity=v[MH3_TEXGEN_MATRIX_ROW]==60;
-        mh3_res_status status=main_matrix(mesh->palette,v[MH3_TEXGEN_MATRIX_ROW],&gen->main);
-        if(status!=MH3_RES_OK) return status;
+        gen->indexed=(uint8_t)indexed;gen->main=identity();gen->main_slot=20;
+        gen->main_identity=indexed || v[MH3_TEXGEN_MATRIX_ROW]==60;
+        if(!indexed) {
+            mh3_res_status status=main_matrix(mesh->palette,v[MH3_TEXGEN_MATRIX_ROW],&gen->main);
+            if(status!=MH3_RES_OK) return status;
+            gen->main_slot=(uint8_t)(v[MH3_TEXGEN_MATRIX_ROW]/3);
+            if(gen->main_slot<10) result.position_palette[gen->main_slot]=gen->main;
+            else if(gen->main_slot<20) result.texture_palette[gen->main_slot-10]=gen->main;
+        }
         gen->post=identity();gen->post_identity=1;
         if(v[MH3_TEXGEN_DUAL_TEXTURE]) {
             const unsigned post_required=(1u<<MH3_TEXGEN_NORMALIZE)|(1u<<MH3_TEXGEN_POST_MATRIX_ROW);
@@ -150,8 +225,9 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
                 gen->post_identity=0;
             }
         }
-        if(nonzero_q(mesh,gen)) result.nonzero_projective_mask|=1u<<i;
-        else if(zero_q(mesh,gen)) result.zero_projective_mask|=1u<<i;
+        const unsigned q=indexed?indexed_q(mesh,gen,i):nonzero_q(mesh,gen)?1:zero_q(mesh,gen)?2:0;
+        if(q==1) result.nonzero_projective_mask|=1u<<i;
+        else if(q==2) result.zero_projective_mask|=1u<<i;
     }
     result.texcoord_mask=mask;*out=result;return MH3_RES_OK;
 }

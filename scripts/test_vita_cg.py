@@ -50,7 +50,7 @@ def check_capture(binary, directory):
         normalized_pair = oracle.source_hash(vertex) + '-' + oracle.source_hash(normalized)
         require(value['glsl_pair'] == original, 'capture lost actual GLSL identity')
         require(value['vita_pair'] == normalized_pair, 'capture has incorrect Vita identity')
-        require(value['alpha_parameterized'] and value['generator_version'] == 3, 'generator metadata incorrect')
+        require(value['alpha_parameterized'] and value['generator_version'] == 4, 'generator metadata incorrect')
         require(tokens((shaders / value['vertex_cg']).read_text()) == tokens(oracle.convert(vertex, 'vertex')), 'captured vertex differs from oracle')
         fragment_cg = (shaders / value['fragment_cg']).read_text()
         require(tokens(fragment_cg) == tokens(oracle.convert(normalized, 'fragment')), 'captured fragment differs from oracle')

@@ -145,7 +145,7 @@ void bind_framebuffer(GLuint color, GLuint depth) noexcept;
 
 // Immutable compact mesh input contract. Locations and names are shared by
 // the generated model vertex shader and both hardware backends.
-enum class MeshAttributeFormat : uint8_t { F32, F16, U8N, S16N };
+enum class MeshAttributeFormat : uint8_t { F32, F16, U8N, S16N, U8 };
 struct MeshAttribute {
   uint16_t offset = 0;
   uint8_t location = 0, components = 0;
@@ -155,6 +155,9 @@ struct MeshAttribute {
 struct MeshLayout {
   uint16_t stride = 0;
   std::vector<MeshAttribute> attributes;
+  // PN bit0, texture matrix selectors0..7 bits1..8. A missing bit uses the
+  // inherited uniform matrix even when another lane shares its packed input.
+  uint16_t matrixIndexMask = 0;
   bool operator==(const MeshLayout&) const = default;
 };
 

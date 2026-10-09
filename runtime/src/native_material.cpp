@@ -1,9 +1,11 @@
 // Typed native material state, pure equation generation, and direct frame-slot
 // uniforms. No GX state, command-list decoder, FIFO, or GPU wait participates.
 #include "native_graphics.h"
+#include "model_assets.h"
 #include "../native/mh3_material_state.h"
 #include "../native/mh3_model_gpu_inputs.h"
 #include "../native/adapters/model_gpu_bridge.h"
+#include "../native/adapters/model_pose_bridge.h"
 #include <aurora/native_texture.hpp>
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
@@ -44,7 +46,7 @@ struct ProgramOrder {
 std::map<ProgramKey,aurora::gl::ProgramPtr,ProgramOrder> programs;
 struct ModelProgramKey {
     ProgramKey material;
-    std::array<uint32_t,13> layout{};
+    std::array<uint32_t,17> layout{};
     uint8_t nonzeroProjection=0;
     uint8_t zeroProjection=0;
 };
@@ -366,13 +368,16 @@ void WriteUniforms(const PreparedMaterial& state,AuroraNativeUniforms& uniforms,
         for(unsigned i=0;i<info.matrixLayout.postexCount;++i) {
             const unsigned slot=info.matrixLayout.postexSlots[i];
             if(slot==aurora::gx::UniformMatrixLayout::kCurrentPnMtx) prefix.Value(model->position);
+            else if(info.matrixLayout.absolutePosRegion && slot<10) prefix.Value(model->position_palette[slot]);
+            else if(info.matrixLayout.absolutePosRegion && slot<20) prefix.Value(model->texture_palette[slot-10]);
             else if(slot>=10 && slot<18 && (model->texcoord_mask&(1u<<(slot-10)))) prefix.Value(model->texgen[slot-10].main);
             else throw std::runtime_error("Compact model main matrix layout mismatch");
         }
         for(unsigned i=0;i<info.matrixLayout.nrmCount;++i) {
-            if(info.matrixLayout.nrmSlots[i]!=aurora::gx::UniformMatrixLayout::kCurrentPnMtx)
-                throw std::runtime_error("Compact model normal matrix layout mismatch");
-            prefix.Value(model->normal);
+            const unsigned slot=info.matrixLayout.nrmSlots[i];
+            if(slot==aurora::gx::UniformMatrixLayout::kCurrentPnMtx) prefix.Value(model->normal);
+            else if(info.matrixLayout.absolutePosRegion && slot<10) prefix.Value(model->normal_palette[slot]);
+            else throw std::runtime_error("Compact model normal matrix layout mismatch");
         }
     }
     UniformWriter writer{static_cast<uint8_t*>(uniforms.data),uniforms.size,
@@ -463,6 +468,7 @@ void SetNativeTextureMatrix(uint32_t selector,const float matrix[12],bool matrix
     else if(selector>=64 && selector<124 && (selector-64)%3==0) destination=&postTextureMatrices[(selector-64)/3];
     if(!destination || !matrix) throw std::runtime_error("Invalid native texture-matrix producer");
     for(unsigned i=0;i<12;++i) if(!std::isfinite(matrix[i])) throw std::runtime_error("Nonfinite native texture matrix");
+    PublishNativeModelTextureMatrix(selector,matrix,matrix3x4);
     std::memcpy(destination->values.data(),matrix,48);destination->known=true;destination->matrix3x4=matrix3x4;
 }
 bool GetNativeTextureMatrix(uint32_t selector,float matrix[12],bool* matrix3x4) {
@@ -501,13 +507,20 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     aurora_submit_native_material_geometry(&geometry,iterator->second->get(),&uniforms);
 }
 void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
-    Owner();if(!NativeGraphicsFrameShouldRender() || !mesh.index_count) return;
+    Owner();if(!mesh.index_count) return;
+    ObserveNativeModelAssetDemand(mesh.resident_handle,mesh.resident_generation);
+    if(!NativeGraphicsFrameShouldRender()) return;
+    if(!EnsureNativeModelAssetGPU(mesh.resident_handle,mesh.resident_generation)) {
+        CancelNativeGraphicsFrame();return;
+    }
     const auto resident=ResolveNativeModelGPU(mesh);
     if(!mesh.material) throw std::runtime_error("Model draw has no native material producer");
     if(mesh.material!=&material) SetNativeMaterial(*mesh.material);
     if(!preparedKnown) {prepared=PrepareMaterial();preparedKnown=true;}
     auto modelState=prepared;
     auto draw=mesh;draw.mesh=*resident.mesh;draw.material=&material;
+    if(((draw.layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)&0x1ffu)!=resident.layout->matrixIndexMask)
+        throw std::runtime_error("Native model matrix selector layout mismatch");
     mh3_model_gpu_inputs inputs{};
     Check(mh3_model_gpu_prepare(&draw,uint8_t(modelState.info.sampledTexCoords.to_ulong()),
           modelState.info.lightingEnabled,GetNativeDrawState().viewport[4],GetNativeDrawState().viewport[5],&inputs),
@@ -516,10 +529,16 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     config.attrs={};config.vtxStride=0;
     for(const auto& a:resident.layout->attributes) {
         const unsigned location=a.location;
+        if(location>=12) continue;
         const GXAttr attr=location==0?GX_VA_POS:location==1?GX_VA_NRM:
             location<4?GXAttr(GX_VA_CLR0+location-2):GXAttr(GX_VA_TEX0+location-4);
         config.attrs[attr]={GX_DIRECT,uint8_t(location<2?3:location<4?4:2),uint8_t(location>=2&&location<4?GX_RGBA8:GX_F32)};
     }
+    if(inputs.matrix_index_mask&1) config.attrs[GX_VA_PNMTXIDX]={GX_DIRECT,1,GX_U8};
+    for(unsigned i=0;i<8;++i) if(inputs.matrix_index_mask&(2u<<i))
+        config.attrs[GX_VA_TEX0MTXIDX+i]={GX_DIRECT,1,GX_U8};
+    const bool absoluteMatrices=(inputs.matrix_index_mask&1) ||
+        ((inputs.matrix_index_mask>>1)&inputs.texcoord_mask);
     config.dualTexEnabled=false;
     constexpr GXTexGenSrc source[]{GX_TG_POS,GX_TG_NRM,GX_TG_COLOR0,GX_TG_BINRM,GX_TG_TANGENT,
         GX_TG_TEX0,GX_TG_TEX1,GX_TG_TEX2,GX_TG_TEX3,GX_TG_TEX4,GX_TG_TEX5,GX_TG_TEX6,GX_TG_TEX7};
@@ -527,7 +546,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
         const auto& recipe=inputs.texgen[i];auto& gen=config.tcgs[i];
         gen.src=source[recipe.source_row];gen.inputFormAB11=recipe.input_ab11;
         gen.type=recipe.projection?GX_TG_MTX3x4:GX_TG_MTX2x4;
-        gen.mtx=recipe.main_identity?GX_IDENTITY:GXTexMtx(30+3*i);
+        gen.mtx=recipe.main_identity?GX_IDENTITY:GXTexMtx(absoluteMatrices?3*recipe.main_slot:30+3*i);
         gen.postMtx=recipe.post_identity?GX_PTIDENTITY:GXPTTexMtx(64+3*i);
         gen.normalize=recipe.normalize;
         if(gen.normalize || !recipe.post_identity) config.dualTexEnabled=true;
@@ -542,9 +561,10 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     }
     ModelProgramKey key{{config,zeroBias},{},inputs.nonzero_projective_mask,inputs.zero_projective_mask};
     key.layout[0]=resident.layout->stride;
+    key.layout[1]=resident.layout->matrixIndexMask;
     for(unsigned i=0;i<resident.layout->attributes.size();++i) {
         const auto& a=resident.layout->attributes[i];
-        key.layout[i+1]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
+        key.layout[i+2]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
     }
     auto program=modelPrograms.find(key);
     if(program==modelPrograms.end()) {

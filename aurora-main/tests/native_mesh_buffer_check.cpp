@@ -9,9 +9,118 @@
 #include <cstring>
 #include <filesystem>
 #include <stdexcept>
+#include <vector>
 
 static void require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
+}
+// Diagnostic-only CPU reference bytes are built once. Production never
+// expands resident vertices; this compares its actual palette shader equation.
+static void indexed_palette_probe(const std::filesystem::path& path) {
+  using Matrix=std::array<float,12>;
+  const Matrix identity{1,0,0,0,0,1,0,0,0,0,1,0};
+  std::array<Matrix,20> matrices;matrices.fill(identity);
+  matrices[9][3]=matrices[9][7]=.125f;
+  matrices[10]={.5f,0,0,.25f,0,.5f,0,.25f,0,0,1,0};
+  matrices[11]={.5f,0,0,.25f,0,.5f,0,.25f,0,0,1,0};
+  matrices[19]={.5f,0,0,.5f,0,.5f,0,.25f,0,0,1,0};
+  const Matrix post{.5f,0,0,.25f,0,.5f,0,.25f,0,0,1,0};
+  const auto transform=[](const Matrix& matrix,const std::array<float,4>& value) {
+    std::array<float,3> out{};
+    for(unsigned r=0;r<3;++r) for(unsigned c=0;c<4;++c) out[r]+=matrix[r*4+c]*value[c];
+    return out;
+  };
+  struct Vertex {float position[3],uv[2];uint8_t selectors[9],pad[3];};
+  static_assert(sizeof(Vertex)==32);
+  const float xy[][2]{{-.75f,-.75f},{.75f,-.75f},{-.75f,.75f},
+                     {.75f,-.75f},{.75f,.75f},{-.75f,.75f}};
+  const uint8_t pn[]{0,9,0,9,0,9},tex0[]{10,19,20,19,10,20},tex7[]{0,9,20,9,0,20};
+  std::array<Vertex,24> vertices{};
+  for(unsigned i=0;i<6;++i) {
+    auto& vertex=vertices[i];vertex.position[0]=xy[i][0];vertex.position[1]=xy[i][1];
+    vertex.uv[0]=(xy[i][0]+.75f)/1.5f;vertex.uv[1]=(xy[i][1]+.75f)/1.5f;
+    vertex.selectors[0]=pn[i];vertex.selectors[1]=tex0[i];vertex.selectors[4]=20;vertex.selectors[8]=tex7[i];
+    for(unsigned pass=0;pass<3;++pass) {
+      auto& reference=vertices[6*(pass+1)+i];
+      const auto position=transform(matrices[pn[i]],{vertex.position[0],vertex.position[1],0,1});
+      std::memcpy(reference.position,position.data(),12);
+      const unsigned selector=pass==0?tex0[i]:pass==1?11:tex7[i];
+      const auto main=selector==20?std::array<float,3>{vertex.uv[0],vertex.uv[1],1}:
+          transform(matrices[selector],{vertex.uv[0],vertex.uv[1],1,1});
+      const auto uv=transform(post,{main[0],main[1],1,1});
+      reference.uv[0]=uv[0];reference.uv[1]=uv[1];
+    }
+  }
+  std::array<uint8_t,800> payload{};
+  std::memcpy(payload.data(),vertices.data(),sizeof vertices);
+  const uint16_t indices[]{0,1,2,3,4,5};std::memcpy(payload.data()+768,indices,sizeof indices);
+  FILE* file=std::fopen(path.c_str(),"wb");require(file,"cannot create indexed palette fixture");
+  const auto written=std::fwrite(payload.data(),1,payload.size(),file);std::fclose(file);
+  require(written==payload.size(),"indexed palette fixture write failed");
+  aurora::gl::NativeMeshBuffer buffer(path.c_str(),0,payload.size());
+  using F=aurora::gl::MeshAttributeFormat;
+  const aurora::gl::MeshLayout indexed{32,{{0,0,3,F::F32},{12,4,2,F::F32},
+      {20,12,4,F::U8},{24,13,4,F::U8},{28,14,1,F::U8}},uint16_t(1|2|16|256)};
+  const aurora::gl::MeshLayout reference{32,{{0,0,3,F::F32},{12,4,2,F::F32}}};
+  require(aurora_begin_native_frame(),"indexed palette frame admission failed");
+  aurora::gl::bind_framebuffer(aurora::gpu::g_frameBuffer.texture->gl(),0);
+  aurora::gl::set_viewport(0,0,64,64,0,1);aurora::gl::set_scissor_enabled(false);
+  aurora::gl::RasterState raster{};raster.cull=false;raster.depthTest=false;raster.blend=false;
+  aurora::gl::apply_raster_state(raster);
+  auto texture=aurora::gl::create_texture(4,1,1,aurora::gl::Format::RGBA8,"indexed palette probe");
+  const uint8_t texels[]{255,0,0,255,0,255,0,255,255,0,0,255,0,255,0,255};
+  aurora::gl::write_texture(texture,0,0,0,4,1,texels,sizeof texels);
+  aurora::gl::bind_texture(0,texture->gl(),aurora::gl::sampler(aurora::gl::NearestClamp));
+  const auto populate=[&](const aurora::gx::ShaderInfo& info,bool palette) {
+    AuroraNativeUniforms uniforms{};
+    require(aurora_allocate_native_uniforms(info.uniformSize,&uniforms),"indexed palette uniform allocation failed");
+    std::memset(uniforms.data,0,uniforms.size);auto* words=static_cast<float*>(uniforms.data);
+    words[2]=words[3]=words[4]=words[5]=64;
+    const float projection[]{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};std::memcpy(words+20,projection,64);
+    unsigned offset=36;
+    for(unsigned i=0;i<info.matrixLayout.postexCount;++i) {
+      const unsigned slot=info.matrixLayout.postexSlots[i];
+      const auto& matrix=palette?matrices[slot]:identity;
+      std::memcpy(words+offset,matrix.data(),48);offset+=12;
+    }
+    for(unsigned i=0;i<info.matrixLayout.nrmCount;++i) {std::memcpy(words+offset,identity.data(),48);offset+=12;}
+    if(info.usesPTTexMtx.any()) std::memcpy(words+offset,post.data(),48);
+    return uniforms;
+  };
+  const auto& target=aurora::gpu::g_frameBuffer;
+  std::vector<uint8_t> actual(size_t(target.width)*target.height*4),expected(actual.size());
+  for(unsigned pass=0;pass<3;++pass) {
+    const unsigned coordinate=pass==0?0:pass==1?1:7;
+    aurora::gx::ShaderConfig config;config.attrs[GX_VA_POS]={GX_DIRECT,3,GX_F32};
+    config.attrs[GX_VA_TEX0]={GX_DIRECT,2,GX_F32};config.attrs[GX_VA_PNMTXIDX]={GX_DIRECT,1,GX_U8};
+    for(unsigned i:{0u,3u,7u}) config.attrs[GX_VA_TEX0MTXIDX+i]={GX_DIRECT,1,GX_U8};
+    config.numTexGens=8;config.dualTexEnabled=true;
+    auto& gen=config.tcgs[coordinate];gen.type=GX_TG_MTX2x4;gen.src=GX_TG_TEX0;
+    gen.mtx=GX_TEXMTX1;gen.postMtx=GX_PTTEXMTX0;
+    config.tevStageCount=1;auto& tev=config.tevStages[0];tev.texMapId=GX_TEXMAP0;tev.texCoordId=GXTexCoordID(coordinate);
+    tev.colorPass={GX_CC_ZERO,GX_CC_ZERO,GX_CC_ZERO,GX_CC_TEXC};
+    tev.alphaPass={GX_CA_ZERO,GX_CA_ZERO,GX_CA_ZERO,GX_CA_TEXA};
+    const auto info=aurora::gx::build_shader_info(config);
+    auto desc=aurora::gx::build_shader_description(config,true,1,true,&indexed);
+    desc.origin="tests/native_mesh_buffer_check.cpp:indexed_palette_probe coordinate="+std::to_string(coordinate);
+    aurora::gl::Program program(std::move(desc));const auto uniforms=populate(info,true);
+    const float clear[]{0,0,1,1};aurora::gl::clear_color(clear);
+    aurora::gl::draw_native_mesh(buffer,indexed,0,6,768,6,program.get(),uniforms);
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,actual.data());
+    config.attrs[GX_VA_PNMTXIDX]={};for(unsigned i:{0u,3u,7u}) config.attrs[GX_VA_TEX0MTXIDX+i]={};
+    config.dualTexEnabled=false;gen.mtx=GX_IDENTITY;gen.postMtx=GX_PTIDENTITY;
+    const auto referenceInfo=aurora::gx::build_shader_info(config);
+    aurora::gl::Program referenceProgram(aurora::gx::build_shader_description(config,true,1,true,&reference));
+    const auto referenceUniforms=populate(referenceInfo,false);aurora::gl::clear_color(clear);
+    aurora::gl::draw_native_mesh(buffer,reference,192*(pass+1),6,768,6,referenceProgram.get(),referenceUniforms);
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,expected.data());
+    require(actual==expected,"indexed PN/texture/post palette pixels differ from immutable reference");
+    bool red=false,green=false;
+    for(size_t i=0;i<actual.size();i+=4) {red|=actual[i]>250&&actual[i+1]<2;green|=actual[i]<2&&actual[i+1]>250;}
+    require(red&&green,"indexed palette fixture failed to exercise both texture colors");
+  }
+  require(!std::memcmp(buffer.data(),payload.data(),payload.size()),"indexed palette draw changed immutable vertices");
+  aurora_end_native_frame();std::puts("Indexed palette passed: raw U8 groups, PN0/9, TEX0/9, identity20, tex7, inherited selector, post matrices; identical framebuffers");
 }
 int main(int argc, char** argv) {
   try {
@@ -30,6 +139,7 @@ int main(int argc, char** argv) {
     require(aurora_initialize(argc,argv,&config).initializationStatus==AURORA_INITIALIZATION_SUCCESS,
             "renderer initialization failed");
     struct Shutdown { ~Shutdown() { aurora_shutdown(); } } shutdown;
+    indexed_palette_probe(directory/"indexed-palettes.bin");
     GLuint sentinel=0; glGenBuffers(1,&sentinel); glBindBuffer(GL_COPY_WRITE_BUFFER,sentinel);
     {
       aurora::gl::NativeMeshBuffer buffer(path.c_str(),64,384);

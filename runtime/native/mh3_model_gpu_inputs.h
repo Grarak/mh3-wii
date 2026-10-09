@@ -9,13 +9,17 @@ extern "C" {
 typedef struct {
     mh3_matrix34 main,post;
     uint8_t source_row,projection,input_ab11,normalize;
-    uint8_t main_identity,post_identity;
+    uint8_t main_identity,post_identity,main_slot,indexed;
 } mh3_model_gpu_texgen;
 typedef struct {
     float projection[16];
     mh3_matrix34 position,normal;
+    // Canonical palette slots. Normal matrices use the shader's padded 3x4
+    // layout; only required slots and consumed inherited selectors are copied.
+    mh3_matrix34 position_palette[10],normal_palette[10],texture_palette[10];
     mh3_model_gpu_texgen texgen[8];
     uint8_t texcoord_mask,nonzero_projective_mask,zero_projective_mask;
+    uint16_t matrix_index_mask;
 } mh3_model_gpu_inputs;
 /* Prepare only consumed inputs, transactionally. near_z/far_z are the logical
  * viewport values; projection follows mh3_draw_vertex's reversed-depth rule.

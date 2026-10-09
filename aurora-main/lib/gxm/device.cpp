@@ -142,14 +142,17 @@ Device::Device(bool /*vsync*/) {
     check(sceKernelGetFreeMemorySize(&available), "query memory partitions");
     // Three direct draw slots: 24.75 MiB after CDRAM block rounding, plus
     // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
-    // committing the texture/display arena, and leave 8 MiB for the driver.
+    // committing the texture/display arena. Compact models own separately
+    // allocated CDRAM blocks, capped at 32 MiB including notified retirement.
+    // Keep that capacity available and leave 8 MiB for the driver.
     constexpr unsigned producerReserve = 26u << 20;
+    constexpr unsigned modelReserve = 32u << 20;
     constexpr unsigned driverReserve = 8u << 20;
-    if (available.size_cdram <= producerReserve + driverReserve)
-      throw std::runtime_error("Insufficient CDRAM for Aurora and three producer slots");
-    const unsigned budget = (unsigned(available.size_cdram) - producerReserve - driverReserve) & ~0x3ffffu;
+    if (available.size_cdram <= producerReserve + modelReserve + driverReserve)
+      throw std::runtime_error("Insufficient CDRAM for Aurora, producer slots and resident models");
+    const unsigned budget = (unsigned(available.size_cdram) - producerReserve - modelReserve - driverReserve) & ~0x3ffffu;
     m_arena = std::make_unique<CdramArena>(budget);
-    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation 26 MiB\n", budget / 1048576.0);
+    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation 26 MiB, model reservation 32 MiB\n", budget / 1048576.0);
     for (unsigned i = 0; i < aurora::GpuFrameRing::BufferCount; ++i) {
       m_displayData[i] = m_arena->allocate(Stride * Height * 4);
       if (!m_displayData[i]) throw std::bad_alloc();

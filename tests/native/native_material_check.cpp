@@ -20,6 +20,13 @@ static bool suppressed=false;
 static mh3_native_texture_binding textureBinding{};
 static bool texturePublished=false;
 bool NativeGraphicsFrameShouldRender() {return !suppressed && aurora_native_frame_should_render();}
+// The ROM-free resident fixture registers its immutable GPU buffer directly.
+bool EnsureNativeModelAssetGPU(uintptr_t,uint64_t) {return true;}
+void ObserveNativeModelAssetDemand(uintptr_t,uint64_t) {}
+void PublishNativeModelTextureMatrix(uint32_t,const float[12],bool) {}
+void PublishNativeModelPositionMatrix(uint32_t,const float[12]) {}
+void PublishNativeModelNormalMatrix(uint32_t,const float[9]) {}
+void CancelNativeGraphicsFrame() {aurora_cancel_native_frame();}
 const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit) {
     return unit==0 && texturePublished ? &textureBinding : nullptr;
 }

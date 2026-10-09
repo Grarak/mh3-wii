@@ -254,6 +254,11 @@ std::string attribute_semantic(const Interface& a, const std::string& family) {
   }
   const bool mesh = family == "mesh"; const auto& names = mesh ? meshNames : dynamicNames;
   const auto& semantics = mesh ? meshSemantics : dynamicSemantics; const auto firstTex = unsigned(names.size());
+  if(mesh && a.location>=12 && a.location<15) {
+    if(a.name!="mesh_matrix"+std::to_string(a.location-12) || a.type!="vec4")
+      fail("native matrix selector attribute does not match layout: " + a.name);
+    return "BLENDINDICES"+std::to_string(a.location-12);
+  }
   const auto expected = a.location < firstTex ? names[a.location] : (mesh ? "mesh_tex" : "native_tex") + std::to_string(a.location - firstTex);
   if (a.location >= firstTex + 8 || a.name != expected) fail("unsupported/mixed native attribute " + a.name);
   if ((!mesh && a.type != ((a.location == 1 || a.location == 2 || a.location >= 5) ? "vec3" : "vec4")) ||

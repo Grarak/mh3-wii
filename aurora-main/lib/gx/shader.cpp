@@ -1067,8 +1067,16 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
 
   if (compact) {
     vtxInAttrs.clear();
-    vtxXfrAttrsPre="\n    uint in_pnmtxidx = ubuf.current_pnmtx;";
+    vtxXfrAttrsPre=(nativeMeshLayout->matrixIndexMask&1)?
+        "\n    uint in_pnmtxidx = uint(mesh_matrix0.x);":
+        "\n    uint in_pnmtxidx = ubuf.current_pnmtx;";
+    for(unsigned i=0;i<8;++i) if(nativeMeshLayout->matrixIndexMask&(2u<<i)) {
+      const unsigned packed=i+1;
+      vtxXfrAttrsPre+=fmt::format("\n    uint in_texmtxidx{} = uint(mesh_matrix{}.{});",
+          i,packed/4,"xyzw"[packed%4]);
+    }
     for (const auto& attribute : nativeMeshLayout->attributes) {
+      if(attribute.location>=12) continue;
       const GXAttr attr=attribute.location==0?GX_VA_POS:attribute.location==1?GX_VA_NRM:
                         attribute.location<4?GXAttr(GX_VA_CLR0+attribute.location-2):
                                              GXAttr(GX_VA_TEX0+attribute.location-4);
@@ -1344,7 +1352,16 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     }
     if (tcg.type == GX_TG_MTX2x4 || tcg.type == GX_TG_MTX3x4) {
       if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
-        vtxXfrAttrs += fmt::format("\n    vec3 tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
+        if(compact) {
+          // Converted selectors are canonical slots, including identity20.
+          // Preserve identity before matrix fetch; the array has slots0..19.
+          vtxXfrAttrs += fmt::format(
+              "\n    vec3 tc{0}_tmp;"
+              "\n    if (in_texmtxidx{0} == 20u) tc{0}_tmp = tc{0}.xyz;"
+              "\n    else tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0}];", i);
+        } else {
+          vtxXfrAttrs += fmt::format("\n    vec3 tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
+        }
       } else if (tcg.mtx == GX_IDENTITY) {
         vtxXfrAttrs += fmt::format("\n    vec3 tc{0}_tmp = tc{0}.xyz;", i);
       } else {

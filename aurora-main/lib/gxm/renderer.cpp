@@ -555,6 +555,7 @@ GLuint Program::get() noexcept {
           case MeshAttributeFormat::F32: break;
           case MeshAttributeFormat::F16: format=SCE_GXM_ATTRIBUTE_FORMAT_F16; break;
           case MeshAttributeFormat::U8N: format=SCE_GXM_ATTRIBUTE_FORMAT_U8N; break;
+          case MeshAttributeFormat::U8: format=SCE_GXM_ATTRIBUTE_FORMAT_U8; break;
           case MeshAttributeFormat::S16N: format=SCE_GXM_ATTRIBUTE_FORMAT_S16N; break;
           }
           inputs.push_back({gfx::MeshAttributeNames[attribute.location],format,
