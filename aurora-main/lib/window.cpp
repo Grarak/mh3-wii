@@ -592,6 +592,9 @@ void pump_events() noexcept {
   // No SDL_SyncWindow here: on X11 it sleeps in 1 ms steps until pending window
   // operations settle, which cost the game thread about a third of its time when
   // pumped twice per frame. Events arrive through SDL_PumpEvents regardless.
+  // A host that records frames on a worker thread pumps from its main thread
+  // itself (SDL pumps only there).
+  if (!SDL_IsMainThread()) return;
   SDL_PumpEvents();
 }
 
