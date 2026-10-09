@@ -19,6 +19,10 @@ struct NativeTextureSource {
   // Certified by explicit resource-load producers, never inferred from bytes.
   // Later image or palette writes invalidate the corresponding baseline.
   bool original_image = false, original_palette = false;
+
+  // The image's cache identity when `bytes` is a copy (a movie frame read
+  // from the frame packet's copy of its planes): the original's address.
+  const void* identity = nullptr;
 };
 
 struct NativeTextureSampler {

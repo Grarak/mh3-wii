@@ -1,4 +1,5 @@
 #include "native_graphics.h"
+#include "native_effect_draw.h"
 #include "fatal.h"
 #include "native_shade_snapshot.h"
 #include "bytes_equal.h"
@@ -48,6 +49,15 @@ void BindBackend(const mh3_native_texture_binding& binding) {
     source.original_image = NativeTextureResourceIsOriginal(input.payload_address, input.generation);
     const size_t bytes = aurora::native_texture_source_size(source.format, source.width, source.height, source.levels);
     source.bytes = {Memory::GetPointer(input.payload_address, bytes), bytes};
+
+    // A movie frame converts from the packet's copy of the planes, which the
+    // next decode does not rewrite; it keeps the planes' address as its
+    // identity.
+    if (source.format == aurora::NativeTextureFormatYuv420)
+        if (const uint8_t* copy = NativeMovieFrameCopy(input.payload_address, input.generation, bytes)) {
+            source.identity = source.bytes.data();
+            source.bytes = {copy, bytes};
+        }
 
     if (input.indexed) {
         if (binding.tlut_id >= palettes.size())

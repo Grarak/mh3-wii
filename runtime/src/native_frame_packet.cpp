@@ -842,7 +842,10 @@ struct DepthLivenessScope {
     ~DepthLivenessScope() { aurora::gl::set_depth_liveness(0, true, true); }
 };
 
+uint32_t drawingSlot = 0;
+
 void Draw(const Packet& p) {
+    drawingSlot = p.slot;
     const auto& color = aurora::gpu::g_frameBuffer;
     const auto& depth = aurora::gpu::g_depthBuffer;
     aurora::gl::bind_framebuffer(color.texture->gl(), depth.texture->gl());
@@ -1584,6 +1587,10 @@ uint32_t NativeFramePacketSlot() {
 
 uint64_t NativeFramePacketSequence() {
     return sequence;
+}
+
+uint32_t NativeRenderPacketSlot() {
+    return drawingSlot;
 }
 
 bool FrameLimitSetting() {

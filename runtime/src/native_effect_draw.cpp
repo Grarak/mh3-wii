@@ -11,9 +11,11 @@
 #include "../native/adapters/model_state_bridge.h"
 #include <aurora/native_texture.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -783,10 +785,46 @@ REGISTER_NATIVE_FUNCTION_AS(0x800B7E14, MH3_EffectViewMatrix, "EffectViewMatrix"
 
 namespace {
 uint64_t movie_generation = 1;
+
+// The movie decodes every frame into the same Y/U/V planes (0x806D6CCC..D4),
+// and the render thread converts a bound frame one or more packets after the
+// game thread recorded it: by then the next frame's decode may have rewritten
+// the planes' top rows (a tear at the top). Each packet slot keeps a copy of
+// the planes it binds; the ring never records into the slot being drawn.
+struct MovieFrame {
+    std::unique_ptr<uint8_t[]> bytes;
+    size_t size = 0;
+    uint32_t address = 0;
+    uint64_t generation = 0;
+};
+
+std::array<MovieFrame, kNativeFramePacketSlots> movie_frames;
+
+// Game thread, recording: copy the planes the packet binds.
+void CopyMovieFrame(uint32_t address, size_t bytes) {
+    auto& frame = movie_frames[NativeFramePacketSlot()];
+
+    if (frame.address == address && frame.generation == movie_generation && frame.size >= bytes)
+        return;
+
+    if (frame.size < bytes) {
+        frame.bytes.reset(new uint8_t[bytes]);
+        frame.size = bytes;
+    }
+
+    std::memcpy(frame.bytes.get(), Memory::GetPointer(address, bytes), bytes);
+    frame.address = address;
+    frame.generation = movie_generation;
 }
+} // namespace
 
 void NativeMovieFrameDecoded() {
     ++movie_generation;
+}
+
+const uint8_t* NativeMovieFrameCopy(uint32_t address, uint64_t generation, size_t bytes) {
+    const auto& frame = movie_frames[NativeRenderPacketSlot()];
+    return frame.address == address && frame.generation == generation && frame.size >= bytes ? frame.bytes.get() : nullptr;
 }
 
 extern "C" void MH3_NativeMovieSetup(CpuContext *c) {
@@ -851,6 +889,10 @@ extern "C" void MH3_NativeMoviePlanes(CpuContext *c) {
     binding.source.mutable_source = 1;
     binding.source.generation = movie_generation;
     binding.map_id = 0;
+
+    if (NativeGraphicsFrameShouldRender())
+        CopyMovieFrame(y, aurora::native_texture_source_size(aurora::NativeTextureFormatYuv420, width, height, 1));
+
     BindNativeTexture(binding);
     mh3_effect_quad q;
     int16_t draw_width = int16_t(c->gpr[10]), draw_height = int16_t(FlatRead32(c->gpr[1] + 8));

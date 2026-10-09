@@ -298,7 +298,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   // GPU producers publish their own backing revisions. A guest texture slot
   // naming such a target is not a mutable CPU image and needs no byte revision.
   // Resolve this before the frame gate so skipped bindings remain validated.
-  const auto identity = source.bytes.data();
+  const auto identity = static_cast<const uint8_t*>(source.identity ? source.identity : source.bytes.data());
   const uint64_t feedbackRevision = identity ? scene_feedback_texture_version(identity, source.width, source.height) : 0;
   const uint32_t generatedRevision = identity && !feedbackRevision ? generated_texture_version(identity, source.width, source.height) : 0;
 
@@ -398,7 +398,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   // generation. Bytes without a generation (resources never initialized,
   // such as the HUD's) keep their asset ID, so an image that a later load
   // puts at the same address with the same shape is not taken for them.
-  const Key key{offline ? 0 : reinterpret_cast<uintptr_t>(source.bytes.data()),
+  const Key key{offline ? 0 : reinterpret_cast<uintptr_t>(source.identity ? source.identity : source.bytes.data()),
                 source.asset,
                 source.width,
                 source.height,

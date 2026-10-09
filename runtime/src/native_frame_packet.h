@@ -59,6 +59,10 @@ inline constexpr uint32_t kNativeFramePacketSlots = 4;
 uint32_t NativeFramePacketSlot();
 uint64_t NativeFramePacketSequence();
 
+// Render thread, while drawing a packet: its slot. The game thread does not
+// record into it until the draw is done.
+uint32_t NativeRenderPacketSlot();
+
 // Game thread: every packet up to this sequence has rendered or was skipped
 // unrendered (the game thread limit off), so nothing it recorded is read any
 // more (all of them while no render thread runs).
