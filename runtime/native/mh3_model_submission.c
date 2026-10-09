@@ -22,9 +22,13 @@ mh3_res_status mh3_model_texcoord_sizes_select(const mh3_prepared_material *prep
 
 mh3_pack_status mh3_model_material_group_select(const mh3_prepared_material *prepared,
     mh3_model_material_block block,uint32_t count,mh3_native_material_state *out) {
-    if(!prepared || !out || block<0 || block>=MH3_MODEL_MATERIAL_BLOCK_COUNT)
+    if(!prepared) return MH3_PACK_INVALID;
+    return mh3_model_material_fields_select(&prepared->state,block,count,out);
+}
+mh3_pack_status mh3_model_material_fields_select(const mh3_native_material_state *source,
+    mh3_model_material_block block,uint32_t count,mh3_native_material_state *out) {
+    if(!source || !out || block<0 || block>=MH3_MODEL_MATERIAL_BLOCK_COUNT)
         return MH3_PACK_INVALID;
-    const mh3_native_material_state *source=&prepared->state;
     if(source->tev_count>16 || source->texgen_count>8 || source->indirect_count>4)
         return MH3_PACK_INVALID;
     if(block==MH3_MODEL_MATERIAL_TEXGEN && count && count!=source->texgen_count)

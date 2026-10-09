@@ -7,6 +7,12 @@
 void RecordNativeDiscWrite(uint32_t destination,uint64_t partition_offset,uint32_t bytes);
 void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t bytes);
 void RetireNativeResourceOwner(uint32_t address,uint32_t bytes);
+/* Only a verified native material producer may use these. Exact block bounds
+ * preserve the certified allocation/model identity while content revisions
+ * change. Generic memcpy/DI/free/unknown overwrite always retires overlapping
+ * certificates. Typed field records must be published by the producer too. */
+void RecordNativeTypedMaterialWrite(uint32_t address,uint32_t bytes,mh3_model_material_block kind);
+void RecordNativeTypedMaterialCopy(uint32_t destination,uint32_t source,uint32_t bytes,mh3_model_material_block kind);
 /* Caller owns validated metadata/catalog and resident allocation until explicit
  * unregistration. Backend's asynchronous fence lifetime is a separate owner. */
 void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* catalog,
@@ -42,6 +48,21 @@ struct NativeMaterialBlockDefaults {
  * no packed-list inspection, pointer/name guesses or bind-time hashing. */
 NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner,
     uint32_t material_address,mh3_model_material_block kind,uint32_t actual_block);
+/* Owned CPU fields with a separate producer revision. No borrowed RAM/material
+ * pointer survives an overwrite or resident retirement. First creation joins
+ * complete source provenance to admitted typed defaults; later reads are O(1).
+ * Writes must call RecordNativeTypedMaterialWrite before publishing. */
+struct NativeLiveMaterialBlock {
+    mh3_native_material_state fields;
+    uint32_t address,bytes;
+    mh3_model_material_block kind;
+    uintptr_t resident_handle;
+    uint64_t resident_generation,origin_offset,source_generation;
+};
+NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_material_block kind);
+void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
+uint64_t NextNativeMaterialRevision();
+void CopyNativeLiveMaterialBlock(uint32_t destination,uint32_t source,mh3_model_material_block kind);
 /* Explicit mutable vertex producers must advance source revisions when arrays
  * change in place. A bind event only advances binding_generation. */
 void MarkNativeVertexProduced(uint32_t payload,uint64_t generation);

@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <map>
+#include <cstring>
 
 namespace {
 constexpr size_t capacity=8192;
@@ -23,15 +25,19 @@ struct Pack {
     std::vector<NativePreparedMaterial> materials;
     std::vector<uint32_t> material_catalog_indices;
     std::vector<std::array<mh3_catalog_material_block,5>> material_blocks;
+    struct Origin {uint32_t material_index,bytes,source_offset,model_index;};
+    std::map<std::pair<uint64_t,uint32_t>,Origin> origins;
 };
 std::vector<Pack> packs;
 uint64_t source_epoch=0;
-struct CachedOwner {uint64_t epoch;NativeModelOwner owner;};
+struct CachedOwner {NativeModelOwner owner;mh3_source_owner certificate;};
 struct CachedResource {uint64_t epoch,generation;mh3_catalog_resource resource;};
 struct CachedBlock {uint64_t epoch,source_generation;uintptr_t resident_handle;uint64_t resident_generation;uint32_t material_index;};
 std::unordered_map<uint32_t,CachedOwner> owners;
 std::unordered_map<uint64_t,CachedResource> resources;
 std::unordered_map<uint64_t,CachedBlock> blocks;
+std::map<uint64_t,NativeLiveMaterialBlock> live_blocks;
+uint64_t material_revision=0;
 void Checked(mh3_res_status status) {
     if(status!=MH3_RES_OK) throw std::runtime_error("Native model provenance failed: "+std::to_string(status));
 }
@@ -52,6 +58,68 @@ void InvalidateSourceCache() {
     if(source_epoch==UINT64_MAX) throw std::runtime_error("Native model source cache epoch overflow");
     ++source_epoch;
 }
+bool RetireCertificates(uint32_t address,uint32_t bytes) {
+    bool retired=false;
+    for(auto it=owners.begin();it!=owners.end();) {
+        if(mh3_source_owner_intersects(&it->second.certificate,address,bytes)) {it=owners.erase(it);retired=true;}
+        else ++it;
+    }
+    return retired;
+}
+void CheckTypedMaterialWrite(uint32_t address,uint32_t bytes,mh3_model_material_block kind) {
+    for(const auto& item:owners) {
+        const auto status=mh3_source_owner_material_write(&item.second.certificate,item.second.owner.catalog,address,bytes,uint32_t(kind));
+        if(status!=MH3_RES_OK && status!=MH3_RES_ABSENT) Checked(status);
+    }
+}
+uint64_t LiveKey(uint32_t address,mh3_model_material_block kind) {
+    if(kind<0 || kind>=MH3_MODEL_MATERIAL_BLOCK_COUNT) throw std::runtime_error("Invalid native material group");
+    return (uint64_t(address)<<3)|uint32_t(kind);
+}
+bool RetireLiveBlocks(uint32_t address,uint32_t bytes) {
+    bool retired=false;
+    // Every admitted group is at most480 bytes. Avoid walking all records for
+    // unrelated generic copies, while still finding a partially hit record.
+    const uint32_t start=address>480?address-480:0;
+    auto it=live_blocks.lower_bound(uint64_t(start)<<3);
+    const uint64_t end=(uint64_t)address+bytes;
+    while(it!=live_blocks.end() && it->second.address<end) {
+        const auto& block=it->second;
+        if((uint64_t)block.address+block.bytes>address) {it=live_blocks.erase(it);retired=true;}
+        else ++it;
+    }
+    return retired;
+}
+std::vector<NativeLiveMaterialBlock> SnapshotLiveCopy(uint32_t source,uint32_t destination,uint32_t bytes) {
+    std::vector<NativeLiveMaterialBlock> result;
+    auto it=live_blocks.lower_bound(uint64_t(source)<<3);
+    while(it!=live_blocks.end() && it->second.address<(uint64_t)source+bytes) {
+        const auto& block=it->second;
+        if((uint64_t)block.address+block.bytes<=(uint64_t)source+bytes) {
+            auto copy=block;copy.address=destination+(block.address-source);
+            copy.fields.generation=NextNativeMaterialRevision();result.push_back(copy);
+        }
+        ++it;
+    }
+    return result;
+}
+std::vector<CachedOwner> SnapshotOwnerCopy(uint32_t source,uint32_t destination,uint32_t bytes,uint64_t generation) {
+    std::vector<CachedOwner> result;
+    for(const auto& item:owners) {
+        const auto& certificate=item.second.certificate;
+        if(certificate.container_address<source ||
+           (uint64_t)certificate.container_address+certificate.file_bytes>(uint64_t)source+bytes) continue;
+        auto copy=item.second;
+        copy.certificate.container_address=destination+(certificate.container_address-source);
+        copy.certificate.model_address=copy.certificate.container_address+
+            (certificate.model_address-certificate.container_address);
+        copy.certificate.load_generation=generation;
+        copy.owner.container_address=copy.certificate.container_address;
+        copy.owner.model_address=copy.certificate.model_address;copy.owner.source_generation=generation;
+        result.push_back(copy);
+    }
+    return result;
+}
 void Copy(CpuContext* cpu) {
     const uint32_t destination=cpu->gpr[3],source=cpu->gpr[4],bytes=cpu->gpr[5];
     if(bytes) {
@@ -69,7 +137,8 @@ void Copy(CpuContext* cpu) {
 void RecordNativeDiscWrite(uint32_t destination,uint64_t offset,uint32_t bytes) {
     if(!bytes) return;
     Initialize();destination=Canonical(destination,bytes);
-    Checked(mh3_source_record_disc(&tracker,destination,bytes,offset,NextGeneration()));InvalidateSourceCache();
+    Checked(mh3_source_record_disc(&tracker,destination,bytes,offset,NextGeneration()));
+    RetireCertificates(destination,bytes);RetireLiveBlocks(destination,bytes);InvalidateSourceCache();
 }
 void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t bytes) {
     if(!bytes || destination==source) return;
@@ -77,16 +146,49 @@ void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t byte
     if(destination==source) return;
     // Most runtime copies have no disc ownership. Avoid walking all intervals
     // unless a source or overwritten destination intersects tracked bytes.
-    if(!mh3_source_intersects(&tracker,source,bytes) &&
-       !mh3_source_intersects(&tracker,destination,bytes)) return;
-    Checked(mh3_source_record_copy(&tracker,destination,source,bytes,NextGeneration()));InvalidateSourceCache();
+    const bool tracked=mh3_source_intersects(&tracker,source,bytes) ||
+        mh3_source_intersects(&tracker,destination,bytes);
+    const auto copies=SnapshotLiveCopy(source,destination,bytes);
+    const uint64_t generation=NextGeneration();
+    const auto owner_copies=SnapshotOwnerCopy(source,destination,bytes,generation);
+    if(tracked || !owner_copies.empty())
+        Checked(mh3_source_record_copy(&tracker,destination,source,bytes,generation));
+    // A typed mutation may already have retired the byte provenance. Unknown
+    // writes must still retire the independent allocation certificate.
+    const bool retired_owner=RetireCertificates(destination,bytes),retired_block=RetireLiveBlocks(destination,bytes);
+    // A complete memmove/memcpy of a certified container preserves its proven
+    // structure, including typed material holes. Partial copies never certify
+    // a model. Snapshots also preserve overlapping memmove source semantics.
+    for(const auto& copy:owner_copies) owners.insert_or_assign(copy.owner.model_address,copy);
+    for(const auto& copy:copies) live_blocks.insert_or_assign(LiveKey(copy.address,copy.kind),copy);
+    if(retired_owner || retired_block || tracked || !copies.empty() || !owner_copies.empty()) InvalidateSourceCache();
 }
 void RetireNativeResourceOwner(uint32_t address,uint32_t bytes) {
     if(!bytes) return;
     Initialize();address=Canonical(address,bytes);
-    if(mh3_source_intersects(&tracker,address,bytes)) {
-        Checked(mh3_source_retire(&tracker,address,bytes));InvalidateSourceCache();
-    }
+    const bool tracked=mh3_source_intersects(&tracker,address,bytes);
+    if(tracked) Checked(mh3_source_retire(&tracker,address,bytes));
+    const bool retired_owner=RetireCertificates(address,bytes),retired_block=RetireLiveBlocks(address,bytes);
+    if(retired_owner || retired_block || tracked) InvalidateSourceCache();
+}
+void RecordNativeTypedMaterialWrite(uint32_t address,uint32_t bytes,mh3_model_material_block kind) {
+    if(!bytes) return;
+    Initialize();address=Canonical(address,bytes);CheckTypedMaterialWrite(address,bytes,kind);
+    // Retire content provenance, not the independently certified load owner.
+    // A reader without the newly published typed record now fails explicitly.
+    if(mh3_source_intersects(&tracker,address,bytes)) Checked(mh3_source_retire(&tracker,address,bytes));
+    RetireLiveBlocks(address,bytes);
+    InvalidateSourceCache();
+}
+void RecordNativeTypedMaterialCopy(uint32_t destination,uint32_t source,uint32_t bytes,mh3_model_material_block kind) {
+    if(!bytes || destination==source) return;
+    Initialize();destination=Canonical(destination,bytes);source=Canonical(source,bytes);
+    if(destination==source) return;
+    CheckTypedMaterialWrite(destination,bytes,kind);
+    if(mh3_source_intersects(&tracker,source,bytes) || mh3_source_intersects(&tracker,destination,bytes))
+        Checked(mh3_source_record_copy(&tracker,destination,source,bytes,NextGeneration()));
+    RetireLiveBlocks(destination,bytes);
+    InvalidateSourceCache();
 }
 void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* catalog,
                              uintptr_t handle,uint64_t generation) {
@@ -101,7 +203,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
                 throw std::runtime_error("Ambiguous external native model pack identity");
         }
     }
-    Pack admitted{pack,catalog,handle,generation,{},{},{},{}};
+    Pack admitted{pack,catalog,handle,generation,{},{},{},{},{}};
     admitted.meshes.resize(pack->counts[MH3_PACK_MESHES]);
     for(uint32_t i=0;i<catalog->model_count;i++) {
         mh3_catalog_model model{};mh3_model_catalog_model(catalog,i,&model);
@@ -131,12 +233,40 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
         const uint32_t required=(1u<<material.state.texgen_count)-1;
         if((material.texcoord_map_known&required)!=required)
             throw std::runtime_error("Native model requires M3MT v3 exact texture-coordinate map provenance");
+        if(catalog->version==2) {
+            mh3_catalog_resource resource{};mh3_catalog_model model{};
+            mh3_model_catalog_resource(catalog,1,admitted.material_catalog_indices.at(i),&resource);
+            mh3_model_catalog_model(catalog,resource.model_index,&model);
+            for(uint32_t kind=0;kind<5;kind++) {
+                const auto& block=admitted.material_blocks[i][kind];if(!(block.flags&1)) continue;
+                const auto key=std::make_pair(model.partition_offset+block.source_offset,kind);
+                Pack::Origin origin{i,block.source_bytes,block.source_offset,resource.model_index};
+                const auto alias=admitted.origins.find(key);
+                if(alias!=admitted.origins.end()) {
+                    mh3_native_material_state a{},b{};
+                    const auto& other=admitted.materials.at(alias->second.material_index);
+                    const uint32_t count=kind==MH3_MODEL_MATERIAL_TEXGEN?material.state.texgen_count:1;
+                    if(alias->second.bytes!=origin.bytes ||
+                       mh3_model_material_group_select(&material,mh3_model_material_block(kind),count,&a)!=MH3_PACK_OK ||
+                       mh3_model_material_group_select(&other,mh3_model_material_block(kind),count,&b)!=MH3_PACK_OK ||
+                       std::memcmp(&a,&b,sizeof a))
+                        throw std::runtime_error("Shared material source extent has inconsistent typed ownership");
+                } else admitted.origins.emplace(key,origin);
+            }
+        }
     }
-    packs.push_back(std::move(admitted));owners.clear();resources.clear();blocks.clear();
+    packs.push_back(std::move(admitted));resources.clear();blocks.clear();
 }
 void UnregisterNativeModelPack(uintptr_t handle) {
     for(auto it=packs.begin();it!=packs.end();++it) if(it->handle==handle) {
-        packs.erase(it);owners.clear();resources.clear();blocks.clear();return;
+        packs.erase(it);resources.clear();blocks.clear();
+        for(auto owner=owners.begin();owner!=owners.end();) {
+            if(owner->second.owner.resident_handle==handle) owner=owners.erase(owner);else ++owner;
+        }
+        for(auto block=live_blocks.begin();block!=live_blocks.end();) {
+            if(block->second.resident_handle==handle) block=live_blocks.erase(block);else ++block;
+        }
+        return;
     }
     throw std::runtime_error("Unknown native model resident handle");
 }
@@ -144,21 +274,36 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
     Initialize();
     model_address=Canonical(model_address,16);
     const auto cached=owners.find(model_address);
-    if(cached!=owners.end() && cached->second.epoch==source_epoch) return cached->second.owner;
+    if(cached!=owners.end()) return cached->second.owner;
     for(const auto& p:packs) {
-        uint32_t index=0,container=0;uint64_t generation=0;
-        const auto status=mh3_source_resolve_model(&tracker,p.catalog,model_address,&index,&container,&generation);
+        mh3_source_owner certificate{};
+        const auto status=mh3_source_owner_certify(&tracker,p.catalog,model_address,&certificate);
         if(status==MH3_RES_ABSENT) continue;
         Checked(status);
-        mh3_catalog_model model{};mh3_model_catalog_model(p.catalog,index,&model);
-        // Provenance selected the owner; these fields validate that the loader
-        // still exposes the expected resource, rather than identifying bytes.
-        if(Memory::Read32(model_address)!=0x4d444c30 || Memory::Read32(model_address+4)!=model.model_bytes ||
-           Memory::Read32(model_address+8)!=model.revision ||
-           Canonical(model_address+Memory::Read32(model_address+12),1)!=container)
-            throw std::runtime_error("Loaded native MDL0 header differs from registered source identity");
+        const uint32_t index=certificate.catalog_index,container=certificate.container_address;
+        const uint64_t generation=certificate.load_generation;
+        // Certify every cataloged sibling now. A subsequent verified mutation
+        // may remove material content provenance before another model is used.
+        std::vector<CachedOwner> siblings;
+        for(uint32_t j=0;j<p.catalog->model_count;j++) {
+            mh3_source_owner sibling{};
+            const auto sibling_status=mh3_source_owner_sibling(&certificate,p.catalog,j,&sibling);
+            if(sibling_status==MH3_RES_ABSENT) continue;
+            Checked(sibling_status);
+            mh3_catalog_model model{};mh3_model_catalog_model(p.catalog,j,&model);
+            const uint32_t address=sibling.model_address;
+            // Provenance selected the owner; header fields validate layout,
+            // rather than identifying bytes by a magic/name/content match.
+            if(Memory::Read32(address)!=0x4d444c30 || Memory::Read32(address+4)!=model.model_bytes ||
+               Memory::Read32(address+8)!=model.revision ||
+               Canonical(address+Memory::Read32(address+12),1)!=container)
+                throw std::runtime_error("Loaded native MDL0 header differs from registered source identity");
+            NativeModelOwner related{p.pack,p.catalog,j,container,address,p.handle,p.generation,generation};
+            siblings.push_back({related,sibling});
+        }
         NativeModelOwner owner{p.pack,p.catalog,index,container,model_address,p.handle,p.generation,generation};
-        owners.insert_or_assign(model_address,CachedOwner{source_epoch,owner});return owner;
+        for(const auto& sibling:siblings) owners.insert_or_assign(sibling.owner.model_address,sibling);
+        return owner;
     }
     throw std::runtime_error("Model has no complete native loader provenance or external converted pack");
 }
@@ -225,6 +370,62 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
         return {&pack.materials.at(resource.pack_index),actual_block,block.source_bytes,kind,generation};
     }
     throw std::runtime_error("Native material block resident owner was retired");
+}
+uint64_t NextNativeMaterialRevision() {
+    if(material_revision==UINT64_MAX) throw std::runtime_error("Native material producer revision overflow");
+    return ++material_revision;
+}
+NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_material_block kind) {
+    Initialize();address=Canonical(address,1);const auto key=LiveKey(address,kind);
+    const auto cached=live_blocks.find(key);if(cached!=live_blocks.end()) return cached->second;
+    mh3_source_identity identity{};Checked(mh3_source_resolve(&tracker,address,1,&identity));
+    for(const auto& pack:packs) {
+        const auto origin=pack.origins.find(std::make_pair(identity.partition_offset,uint32_t(kind)));
+        if(origin==pack.origins.end()) continue;
+        const auto& source=origin->second;Canonical(address,source.bytes);
+        uint64_t generation=0;
+        Checked(mh3_source_resolve_material_block(&tracker,pack.catalog,address,
+            pack.material_catalog_indices.at(source.material_index),uint32_t(kind),&generation));
+        // If this is the complete original container, certify its model before
+        // this producer removes nonstructural byte provenance. A standalone
+        // copied block needs only its own complete source proof.
+        if(address>=source.source_offset) {
+            mh3_catalog_model model{};mh3_model_catalog_model(pack.catalog,source.model_index,&model);
+            const uint64_t candidate=(uint64_t)address-source.source_offset+model.model_offset;
+            if(candidate<=UINT32_MAX) {
+                mh3_source_owner owner{};
+                const auto status=mh3_source_owner_certify(&tracker,pack.catalog,uint32_t(candidate),&owner);
+                if(status==MH3_RES_OK) (void)ResolveNativeModelOwner(uint32_t(candidate));
+                else if(status!=MH3_RES_ABSENT) Checked(status);
+            }
+        }
+        NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state,address,source.bytes,kind,
+            pack.handle,pack.generation,identity.partition_offset,generation};
+        block.fields.generation=NextNativeMaterialRevision();live_blocks.emplace(key,block);return block;
+    }
+    throw std::runtime_error("Material block has no admitted typed source extent");
+}
+void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
+    if(!block.fields.generation || block.fields.generation>material_revision ||
+       Canonical(block.address,block.bytes)!=block.address)
+        throw std::runtime_error("Invalid typed native material publication");
+    for(const auto& pack:packs) if(pack.handle==block.resident_handle && pack.generation==block.resident_generation) {
+        const auto origin=pack.origins.find(std::make_pair(block.origin_offset,uint32_t(block.kind)));
+        if(origin==pack.origins.end() || origin->second.bytes!=block.bytes)
+            throw std::runtime_error("Native material publication changed source layout identity");
+        live_blocks.insert_or_assign(LiveKey(block.address,block.kind),block);return;
+    }
+    throw std::runtime_error("Native material publication refers to a retired resident allocation");
+}
+void CopyNativeLiveMaterialBlock(uint32_t destination,uint32_t source,mh3_model_material_block kind) {
+    auto block=ReadNativeLiveMaterialBlock(source,kind);
+    destination=Canonical(destination,block.bytes);source=Canonical(source,block.bytes);
+    void* output=Memory::GetPointer(destination,block.bytes);const void* input=Memory::GetPointer(source,block.bytes);
+    if(destination==source) return;
+    const uint64_t revision=NextNativeMaterialRevision();
+    RecordNativeTypedMaterialCopy(destination,source,block.bytes,kind);
+    mh3_model_copy_bytes(output,input,block.bytes);
+    block.address=destination;block.fields.generation=revision;PublishNativeLiveMaterialBlock(block);
 }
 extern "C" void MH3_ModelMemcpy(CpuContext* cpu) {Copy(cpu);}
 REGISTER_NATIVE_FUNCTION_AS(0x80004000,MH3_ModelMemcpy,"NativeResourceMemcpy");

@@ -71,6 +71,10 @@ typedef enum mh3_model_material_block {
  * Output is transactional. Apply with mh3_material_state_overlay(...,0). */
 mh3_pack_status mh3_model_material_group_select(const mh3_prepared_material *prepared,
     mh3_model_material_block block,uint32_t count,mh3_native_material_state *out);
+/* Same field ownership for an explicitly published live material record.
+ * Its declared counts come from its producer, never inherited GPU state. */
+mh3_pack_status mh3_model_material_fields_select(const mh3_native_material_state *fields,
+    mh3_model_material_block block,uint32_t count,mh3_native_material_state *out);
 /* Typed TexCoordScaleState::LoadTexCoordScale_: caller supplies
  * actual map dimensions from texture producers and inherited coordinate sizes.
  * Exact NULL entries preserve inherited values/known bits. No map is inferred

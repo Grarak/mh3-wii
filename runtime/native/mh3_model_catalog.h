@@ -63,6 +63,26 @@ typedef struct {
     uint64_t generation;
 } mh3_source_tracker;
 typedef struct {uint64_t partition_offset, generation;} mh3_source_identity;
+/* Certified once from a complete loaded file. Typed nonstructural mutations
+ * preserve this allocation/model identity while retiring content provenance;
+ * unknown writes, DI replacement and allocation retirement invalidate it. */
+typedef struct {
+    uint32_t container_address,model_address,catalog_index,file_bytes;
+    uint64_t load_generation;
+} mh3_source_owner;
+mh3_res_status mh3_source_owner_certify(const mh3_source_tracker *tracker,
+    const mh3_model_catalog *catalog,uint32_t model_address,mh3_source_owner *out);
+/* A complete certified container also certifies the allocation identity of
+ * its other cataloged models. The bridge validates their live headers before
+ * publication; no fresh unchanged-content proof is required after typed edits. */
+mh3_res_status mh3_source_owner_sibling(const mh3_source_owner *owner,
+    const mh3_model_catalog *catalog,uint32_t catalog_index,mh3_source_owner *out);
+int mh3_source_owner_intersects(const mh3_source_owner *owner,uint32_t address,uint32_t bytes);
+/* Explicit native material producer only: prove a write fits a verified group
+ * and never touches layout/identity headers. ABSENT means no owner overlap;
+ * unsupported/range means the caller cannot retain that owner for this write. */
+mh3_res_status mh3_source_owner_material_write(const mh3_source_owner *owner,
+    const mh3_model_catalog *catalog,uint32_t address,uint32_t bytes,uint32_t kind);
 mh3_res_status mh3_source_tracker_init(mh3_source_tracker *tracker,
                                       mh3_source_range *ranges,mh3_source_range *work,
                                       mh3_source_range *transfer,size_t capacity);

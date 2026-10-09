@@ -10,6 +10,10 @@ mh3_native_palette_source ReadNativePaletteObject(uint32_t object);
 void StoreNativePaletteObject(uint32_t object,const mh3_native_palette_source& palette);
 void MarkNativeTextureProduced(uint32_t payload,uint64_t generation);
 uint64_t ReadNativeTextureGeneration(uint32_t payload);
+/* True only for the explicit resource-initialization revision. Unknown and
+ * subsequently produced images/palettes remain on the mutable producer path.
+ * Unreported raw writes are not covered by this provenance query. */
+bool NativeTextureResourceIsOriginal(uint32_t payload,uint64_t generation);
 /* Load/create hooks, never bind hooks. ResFile::Init calls ResTex::Init and
  * ResPltt::Init once per resource initialization; each event advances revision. */
 void InitializeNativeTextureSource(uint32_t reference,bool palette);

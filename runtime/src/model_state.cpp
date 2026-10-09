@@ -11,6 +11,7 @@ namespace {
 std::unordered_map<uint32_t,mh3_native_texture_binding> objects;
 std::unordered_map<uint32_t,mh3_native_palette_source> palettes;
 std::unordered_map<uint32_t,uint64_t> generations;
+std::unordered_map<uint32_t,uint64_t> initialized_generations;
 std::unordered_map<uint32_t,mh3_matrix_binding> matrix_sources;
 uint64_t resource_generation=0;
 void Checked(mh3_res_status status) {
@@ -27,6 +28,11 @@ uint32_t Resource(uint32_t reference) {
 uint64_t ReadNativeTextureGeneration(uint32_t payload) {
     const auto found=generations.find(payload);
     return found==generations.end()?0:found->second;
+}
+bool NativeTextureResourceIsOriginal(uint32_t payload,uint64_t generation) {
+    const auto found=initialized_generations.find(payload);
+    return generation && found!=initialized_generations.end() && found->second==generation &&
+        ReadNativeTextureGeneration(payload)==generation;
 }
 void MarkNativeTextureProduced(uint32_t payload,uint64_t generation) {
     if (!payload || !generation) throw std::runtime_error("Native texture producer requires address and generation");
@@ -81,6 +87,7 @@ void InitializeNativeTextureSource(uint32_t reference,bool palette) {
     if (resource_generation<previous) resource_generation=previous;
     if (resource_generation==UINT64_MAX) throw std::runtime_error("Native texture resource revision overflow");
     MarkNativeTextureProduced(payload,++resource_generation);
+    initialized_generations.insert_or_assign(payload,resource_generation);
 }
 void CopyNativeResourceObjects(uint32_t destination,uint32_t source,bool palette) {
     if ((destination&3) || (source&3)) throw std::runtime_error("Unaligned native resource object copy");

@@ -199,6 +199,71 @@ mh3_pack_status mh3_model_catalog_validate_pack(const mh3_model_catalog *c,const
 static int memory_range(uint32_t address,uint32_t bytes) {
     return bytes && (uint64_t)address+bytes<=UINT64_C(0x100000000);
 }
+mh3_res_status mh3_source_owner_certify(const mh3_source_tracker *tracker,
+    const mh3_model_catalog *catalog,uint32_t model_address,mh3_source_owner *out) {
+    if (!tracker || !catalog || !out) return MH3_RES_INVALID;
+    mh3_source_owner owner;memset(&owner,0,sizeof owner);owner.model_address=model_address;
+    mh3_res_status status=mh3_source_resolve_model(tracker,catalog,model_address,
+        &owner.catalog_index,&owner.container_address,&owner.load_generation);
+    if (status!=MH3_RES_OK) return status;
+    mh3_catalog_model model;
+    if (mh3_model_catalog_model(catalog,owner.catalog_index,&model)!=MH3_PACK_OK) return MH3_RES_INVALID;
+    owner.file_bytes=model.file_bytes;*out=owner;return MH3_RES_OK;
+}
+int mh3_source_owner_intersects(const mh3_source_owner *owner,uint32_t address,uint32_t bytes) {
+    if (!owner || !memory_range(address,bytes) || !memory_range(owner->container_address,owner->file_bytes)) return 0;
+    return (uint64_t)address+bytes>owner->container_address &&
+        (uint64_t)owner->container_address+owner->file_bytes>address;
+}
+mh3_res_status mh3_source_owner_sibling(const mh3_source_owner *owner,
+    const mh3_model_catalog *catalog,uint32_t index,mh3_source_owner *out) {
+    if(!owner || !catalog || !out || !owner->load_generation ||
+       !memory_range(owner->container_address,owner->file_bytes)) return MH3_RES_INVALID;
+    mh3_catalog_model original,sibling;
+    if(mh3_model_catalog_model(catalog,owner->catalog_index,&original)!=MH3_PACK_OK ||
+       original.file_bytes!=owner->file_bytes ||
+       (uint64_t)owner->container_address+original.model_offset!=owner->model_address)
+        return MH3_RES_INVALID;
+    if(mh3_model_catalog_model(catalog,index,&sibling)!=MH3_PACK_OK) return MH3_RES_RANGE;
+    if(sibling.partition_offset!=original.partition_offset || sibling.file_bytes!=original.file_bytes)
+        return MH3_RES_ABSENT;
+    mh3_source_owner result=*owner;result.catalog_index=index;
+    result.model_address=owner->container_address+sibling.model_offset;*out=result;return MH3_RES_OK;
+}
+mh3_res_status mh3_source_owner_material_write(const mh3_source_owner *owner,
+    const mh3_model_catalog *catalog,uint32_t address,uint32_t bytes,uint32_t kind) {
+    if (!owner || !catalog || !memory_range(address,bytes) || kind>=MH3_CATALOG_MATERIAL_BLOCKS) return MH3_RES_INVALID;
+    if (!mh3_source_owner_intersects(owner,address,bytes)) return MH3_RES_ABSENT;
+    if (catalog->version!=2) return MH3_RES_UNSUPPORTED;
+    mh3_catalog_model model;
+    if (mh3_model_catalog_model(catalog,owner->catalog_index,&model)!=MH3_PACK_OK || model.file_bytes!=owner->file_bytes ||
+        (uint64_t)owner->container_address+model.model_offset!=owner->model_address) return MH3_RES_INVALID;
+    /* Several MDL0 resources can share a BRRES allocation. A typed write in
+     * any certified material block preserves every model's allocation owner,
+     * without allowing writes to the container or resource layout headers. */
+    uint32_t first_model=owner->catalog_index;
+    while (first_model) {
+        mh3_catalog_model preceding;
+        if (mh3_model_catalog_model(catalog,first_model-1,&preceding)!=MH3_PACK_OK) return MH3_RES_INVALID;
+        if (preceding.partition_offset!=model.partition_offset) break;
+        first_model--;
+    }
+    for (uint32_t j=first_model;j<catalog->model_count;j++) {
+        mh3_catalog_model same_file;
+        if (mh3_model_catalog_model(catalog,j,&same_file)!=MH3_PACK_OK) return MH3_RES_INVALID;
+        if (same_file.partition_offset!=model.partition_offset) break;
+        if (same_file.file_bytes!=owner->file_bytes) return MH3_RES_INVALID;
+        for (uint32_t i=0;i<same_file.material_count;i++) {
+            mh3_catalog_material_block block;
+            const mh3_pack_status status=mh3_model_catalog_material_block_find(catalog,same_file.material_first+i,kind,&block);
+            if (status==MH3_PACK_UNSUPPORTED) continue;
+            if (status!=MH3_PACK_OK) return MH3_RES_INVALID;
+            const uint64_t first=(uint64_t)owner->container_address+block.source_offset;
+            if (address>=first && (uint64_t)address+bytes<=first+block.source_bytes) return MH3_RES_OK;
+        }
+    }
+    return MH3_RES_RANGE;
+}
 mh3_res_status mh3_source_resolve_material_block(const mh3_source_tracker *tracker,
     const mh3_model_catalog *catalog,uint32_t address,uint32_t material_index,
     uint32_t kind,uint64_t *generation) {
