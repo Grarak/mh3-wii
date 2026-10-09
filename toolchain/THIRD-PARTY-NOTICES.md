@@ -127,6 +127,13 @@ with their headers from the 7-Zip 25.01 source release (`7z2501-src.tar.xz`, SHA
 `runtime/third_party/lzma`. Each file states that it is in the public domain.
 Source: <https://www.7-zip.org/sdk.html>
 
+### compiler-builtins 0.1.160 memory helpers - MIT AND Apache-2.0 WITH LLVM-exception
+
+Copyright (c) The Rust Project contributors. `runtime/vita/aeabi_memory.c` is a C port of the ARM
+EABI memory helpers (`src/arm.rs`) and generic memory routines (`src/mem/impls.rs`) that the Vita
+build previously linked from the nod decoder's Rust archive.
+Source and license texts: <https://github.com/rust-lang/compiler-builtins> (`LICENSE.txt`).
+
 ### nod - MIT OR Apache-2.0 (reference)
 
 Copyright (c) Luke Street. The disc image decoder reproduces the reads of nod 1.4.4's
