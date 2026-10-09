@@ -152,7 +152,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,materials][,draw-writes][,particles][,loading][,lights][,sun][,glare]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,materials][,draw-writes][,particles][,loading][,lights][,sun][,glare][,fog]`
 
 | Item | Effect |
 | --- | --- |
@@ -172,6 +172,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 | `lights` | each LightObj of a LightSetting (ModelLightSetting 0x8008551C: flags, the words at +4 and +8 (the colour), the floats from +12) and its ambient colour when they changed since the last import, the first change and every 30th per light, with the caller and the step counter (`MH3 light` lines, model_scene_state.cpp): which lights the game animates |
 | `sun` | the sun's lens flare (LensFlareUpdate 0x80102008, lens_flare.cpp): each switch between updates that run and updates that return early (the game skips them with the camera below y 0), with the camera's height, the sun's visibility, the parts' visibility and the glare fade's state; a summary every 1800 updates (`MH3 sun` lines) |
 | `glare` | the glare (bloom) settings at each draw (GlareFilter::draw 0x80056F88, native_scene_feedback.cpp): enabled, whether the scene was captured, the composite colour and blend factors, levels, shift, thresholds, darken/brighten; a value that leaves its neighbours' range for one draw prints the three draws, and every 1800 draws each value's range (`MH3 glare` lines): one-frame bloom flashes |
+| `fog` | the shading scene block's fog (native_material.cpp, render thread): each distinct set of colour, range, curve and shape when it first appears, with its frame, type and viewport width, and every 600 frames how often each set was built (`MH3 fog` lines): one-frame fog flashes (the underwater blue flicker) |
 
 ### `MH3_MONSTER_CONTROL`: drive a monster
 

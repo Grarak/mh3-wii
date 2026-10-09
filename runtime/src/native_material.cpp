@@ -276,6 +276,59 @@ const ShadeEntry& ShadeMaterial() {
     return *entry;
 }
 
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=fog: the scene block's fog values (colour, range, curve, shape),
+// each distinct set when it first appears and how often each was built, every
+// 600 frames (the underwater blue flashes, todo 3.5).
+void TraceSceneFog(uint32_t type, float width) {
+    static const bool enabled = TraceOptions().Has("fog");
+
+    if (!enabled)
+        return;
+
+    struct Seen {
+        float values[16];
+        uint32_t type, builds;
+    };
+
+    static std::vector<Seen> seen;
+    static uint32_t lastFrame = 0;
+    const auto& scene = shade.scene;
+    static_assert(offsetof(mh3_shade_scene, fog_shape) == offsetof(mh3_shade_scene, fog_color) + 48);
+    auto found = std::find_if(seen.begin(), seen.end(), [&](const Seen& s) { return s.type == type && !std::memcmp(s.values, scene.fog_color, sizeof s.values); });
+    const uint32_t frame = aurora::gfx::current_frame();
+
+    if (found == seen.end() && seen.size() < 64) {
+        Seen next{};
+        std::memcpy(next.values, scene.fog_color, sizeof next.values);
+        next.type = type;
+        seen.push_back(next);
+        found = seen.end() - 1;
+        const float* v = next.values;
+        std::fprintf(stderr,
+                     "MH3 fog: new set %u at frame %u: type %u width %.0f color %.3f %.3f %.3f %.3f fog %g %g %g %g curve %g %g %g %g shape %g %g %g %g\n",
+                     unsigned(found - seen.begin()), frame, type, width, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]);
+    }
+
+    if (found != seen.end())
+        ++found->builds;
+
+    if (frame - lastFrame >= 600) {
+        lastFrame = frame;
+        std::string line = "MH3 fog: builds by set since the last line:";
+
+        for (auto& s : seen) {
+            if (s.builds)
+                line += " " + std::to_string(&s - seen.data()) + ":" + std::to_string(s.builds);
+
+            s.builds = 0;
+        }
+
+        std::fprintf(stderr, "%s (frame %u)\n", line.c_str(), frame);
+    }
+}
+#endif
+
 const mh3_shade_scene& ShadeScene(uint64_t& upload) {
     const float width = GetNativeDrawState(NativeOwner::Render).viewport[2];
     const uint32_t revision = nativeStateRevision[unsigned(NativeOwner::Render)][NATIVE_STATE_LIGHTING];
@@ -297,6 +350,9 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
         shade.built = revision;
         shade.width = width;
         ++shade.upload;
+#ifdef MH3_DEVELOPMENT
+        TraceSceneFog(type, width);
+#endif
     }
 
     upload = shade.upload;
