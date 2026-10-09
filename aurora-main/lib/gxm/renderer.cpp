@@ -6,7 +6,9 @@
 #include "alpha_compare.hpp"
 #include "../gfx/native_texture_set.hpp"
 #include "device.hpp"
+#ifdef MH3_DEVELOPMENT
 #include "runtime_shader.hpp"
+#endif
 #include "razor.hpp"
 #include <aurora/native_frame_gate.hpp>
 #include "draw_memory.hpp"
@@ -879,7 +881,10 @@ GLuint Program::get() noexcept {
     if (m_program)
       return m_program;
     auto& r = renderer();
+#ifdef MH3_DEVELOPMENT
+    // Sources for the development compiler, which serves only bank misses.
     register_runtime_shader_sources(m_vertexHash, m_fragmentHash, m_desc.vertex, m_desc.fragment, m_desc.origin.empty() ? m_desc.label : m_desc.origin + "; " + m_desc.label, m_desc.cg);
+#endif
     const auto* binary = fragment_binary(m_fragmentHash);
     m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
     m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);

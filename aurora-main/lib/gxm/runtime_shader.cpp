@@ -1,5 +1,4 @@
 #include "runtime_shader.hpp"
-#include "shaders.hpp"
 #include "shader_cache_pack.hpp"
 #include "../gfx/cg_shader.hpp"
 #include <vitashark.h>
@@ -65,10 +64,6 @@ std::string json_string(std::string_view value) {
       result += char(c);
   }
   return result + '"';
-}
-bool embedded(uint64_t hash, const ShaderBinary* list, size_t count) {
-  const auto* entry = std::lower_bound(list, list + count, hash, [](const ShaderBinary& entry, uint64_t value) { return entry.sourceHash < value; });
-  return entry != list + count && entry->sourceHash == hash;
 }
 std::string read_text(const std::filesystem::path& path, size_t limit) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -165,10 +160,10 @@ void register_runtime_shader_sources(uint64_t vertexHash, uint64_t fragmentHash,
   auto& s = store();
   const std::string pair = id(vertexHash, RuntimeShaderStage::Vertex).substr(0, 16) + "-" + id(fragmentHash, RuntimeShaderStage::Fragment).substr(0, 16);
   const std::string metadata = "{\"program\":" + json_string(origin) + ",\"source_pair\":" + json_string(pair) + "}";
-  if (!embedded(vertexHash, VertexShaders, VertexShaderCount))
+  if (!shader_bank::contains(vertexHash, ShaderStage::Vertex))
     remember(s, {vertexHash, RuntimeShaderStage::Vertex}, vertex, metadata, cg);
   // Retain one fragment source for both RGBA and lazy scalar-target compilation.
-  if (!embedded(fragmentHash, FragmentShaders, FragmentShaderCount) || !embedded(fragmentHash, FragmentScalarShaders, FragmentScalarShaderCount))
+  if (!shader_bank::contains(fragmentHash, ShaderStage::Fragment) || !shader_bank::contains(fragmentHash, ShaderStage::ScalarFragment))
     remember(s, {fragmentHash, RuntimeShaderStage::Fragment}, fragment, metadata, cg);
 }
 
@@ -184,11 +179,16 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
       found = s.entries.find(key);
     }
   }
-  if (found == s.entries.end())
+  if (found == s.entries.end()) {
+    std::fprintf(stderr, "MH3 GXM SHADER BANK MISS %s (no registered source)\n", id(hash, stage).c_str());
     throw std::runtime_error("Missing runtime GLSL origin for GXM shader " + id(hash, stage));
+  }
   auto& entry = found->second;
   if (entry.binary)
     return static_cast<const SceGxmProgram*>(entry.binary.get());
+  // Once per stage. Retail cannot compile: the offline bank must hold every
+  // program (docs/vita-shader-bank.md), so any miss is a bank defect.
+  std::fprintf(stderr, "MH3 GXM SHADER BANK MISS %s (%s): development runtime compile\n", id(hash, stage).c_str(), entry.origin.c_str());
   std::string cg = entry.cg ? entry.source : gfx::cg::convert(entry.source, stage == RuntimeShaderStage::Vertex ? gfx::cg::Stage::Vertex : gfx::cg::Stage::Fragment);
   if (stage == RuntimeShaderStage::ScalarFragment)
     cg = gfx::cg::scalar_fragment(cg);

@@ -1,6 +1,6 @@
 #pragma once
 // GLSL ES program sources as every renderer program receives them. Standard
-// library only: the GXM shader bank generator (runtime/tools) links it.
+// library only: the GXM shader bank generator (scripts/vita_shader_bank.cpp) links it.
 #include <string>
 #include <string_view>
 

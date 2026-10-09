@@ -100,7 +100,7 @@ struct NativeShaderFragmentKey {
 NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant);
 NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& variant);
 // The complete domain: every key of a valid variant, each once. The bank
-// generator (runtime/tools/gxm_shader_bank.cpp) compiles exactly these.
+// generator (scripts/vita_shader_bank.cpp) compiles exactly these.
 std::vector<NativeShaderVertexKey> NativeShaderVertexKeys();
 std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys();
 

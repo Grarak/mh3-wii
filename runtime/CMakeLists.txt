@@ -222,6 +222,16 @@ if(TARGET aurora::core)
     target_compile_features(mh3_shader_cache_pack_check PRIVATE cxx_std_20)
     target_compile_options(mh3_shader_cache_pack_check PRIVATE -UNDEBUG)
     add_test(NAME mh3_shader_cache_pack_check COMMAND mh3_shader_cache_pack_check)
+    # The Vita shader bank generator (docs/vita-shader-bank.md): sources of
+    # every stage, keys unique, every fixed GLSL program translatable.
+    add_executable(mh3-gxm-shader-bank ../scripts/vita_shader_bank.cpp src/native_shader_source.cpp "${MH3_AURORA_ROOT}/lib/gfx/cg_shader.cpp"
+      "${MH3_AURORA_ROOT}/lib/gfx/shader_source.cpp" "${MH3_AURORA_ROOT}/lib/gfx/fixed_shader_sources.cpp")
+    target_include_directories(mh3-gxm-shader-bank PRIVATE "${MH3_AURORA_ROOT}/lib" "${MH3_AURORA_ROOT}/include")
+    target_compile_definitions(mh3-gxm-shader-bank PRIVATE TARGET_PC)
+    target_compile_features(mh3-gxm-shader-bank PRIVATE cxx_std_20)
+    target_link_libraries(mh3-gxm-shader-bank PRIVATE xxhash)
+    add_test(NAME mh3_gxm_shader_bank_sources COMMAND mh3-gxm-shader-bank "${CMAKE_BINARY_DIR}/gxm-shader-bank-check"
+      "${MH3_AURORA_ROOT}/lib/gxm/utility" --preflight)
     add_executable(mh3_shade_check ../tests/native/test_mh3_shade.c native/mh3_shade.c)
     target_include_directories(mh3_shade_check PRIVATE "${MH3_AURORA_ROOT}/include")
     target_link_libraries(mh3_shade_check PRIVATE m)
@@ -306,6 +316,11 @@ if(VITA)
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
     ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub SceCtrl_stub SceTouch_stub SceCommonDialog_stub)
   set_target_properties(MH3 PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/ldscript.ld")
+  # Every GXM program, compiled offline (docs/vita-shader-bank.md).
+  include(../cmake/GxmShaderBank.cmake)
+  include(FetchContent)
+  FetchContent_GetProperties(xxhash)
+  mh3_gxm_shader_bank(MH3 "${xxhash_SOURCE_DIR}")
   set(VITA_MAKE_FSELF_FLAGS "-a 0x2800000000000001")
   set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
   vita_create_self(eboot.bin MH3 UNSAFE NOASLR)

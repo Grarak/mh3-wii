@@ -1,7 +1,7 @@
 #pragma once
 // Every fixed GLSL program the shared renderer modules create, with the exact
 // sources their gl::ProgramDesc receives. Standard library only: the GXM shader
-// bank generator (runtime/tools/gxm_shader_bank.cpp) compiles each of these
+// bank generator (scripts/vita_shader_bank.cpp) compiles each of these
 // (docs/vita-shader-bank.md). A module that creates a new program adds it here.
 #include <string>
 #include <vector>
