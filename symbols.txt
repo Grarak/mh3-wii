@@ -1433,3 +1433,7 @@
 800f7cd8 EftRelinkResources
 800f9228 EftCreateByIndex
 800f9854 EftFindEmitterHandle
+# The per-frame primitive buffers (ported in runtime/src/prim_buffers.cpp).
+800e3c80 PrimAlloc
+800e3cf4 PrimReset
+800e3d20 PrimResetGroup
