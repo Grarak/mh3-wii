@@ -499,31 +499,36 @@ class PackPreparer {
         changed.notify_all();
     }
 
+    // How Take found the pack.
+    enum class Taken { None, Withdrawn, Ready, Waited };
+
     // Game thread: the pack read ahead for `key` (waiting while a worker
-    // reads it), and how its read went; false when none was read or begun,
-    // and a queued one is withdrawn: the caller reads it.
-    bool Take(uint32_t key, std::unique_ptr<Assets>& pack, Status& status) {
+    // reads it), and how its read went. None when it was never queued, and
+    // Withdrawn when it was not begun: the caller reads it.
+    Taken Take(uint32_t key, std::unique_ptr<Assets>& pack, Status& status) {
         std::unique_lock guard(lock);
+        bool waited = false;
 
         for (;;) {
             const auto found = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.key == key; });
 
             if (found == entries.end())
-                return false;
+                return Taken::None;
 
             if (found->state == Entry::Queued) {
                 entries.erase(found);
-                return false;
+                return Taken::Withdrawn;
             }
 
             if (found->state == Entry::Ready) {
                 pack = std::move(found->pack);
                 status = std::move(found->status);
                 entries.erase(found);
-                return true;
+                return waited ? Taken::Waited : Taken::Ready;
             }
 
             // Timed: VitaSDK's condition variable can lose a notification.
+            waited = true;
             changed.wait_for(guard, std::chrono::milliseconds(5));
         }
     }
@@ -594,13 +599,16 @@ class PackPreparer {
 Status OpenConvertedPack(Manager& m, const std::filesystem::path& path, uint32_t key, std::unique_ptr<Assets>& result) {
     Status read;
     const auto start = std::chrono::steady_clock::now();
-    const bool taken = PackPreparer::Get().Take(key, result, read);
+    const auto taken = PackPreparer::Get().Take(key, result, read);
     {
         std::lock_guard lock(m.lock);
         m.stats.take_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        ++(taken == PackPreparer::Taken::Ready    ? m.stats.read_ahead_ready
+           : taken == PackPreparer::Taken::Waited ? m.stats.read_ahead_waited
+                                                  : m.stats.read_ahead_own);
     }
 
-    if (!taken)
+    if (taken == PackPreparer::Taken::None || taken == PackPreparer::Taken::Withdrawn)
         return TimedOpenPack(m, path, key, result);
 
     MH3_RETURN_IF_ERROR(read);
@@ -931,7 +939,7 @@ NativeModelPackOpenings ReadNativeModelPackOpenings() {
 
     std::lock_guard lock(manager->lock);
     const auto& stats = manager->stats;
-    return {stats.admissions, stats.open_ms, stats.cache_ms, stats.take_ms, stats.ensure_ms};
+    return {stats.admissions, stats.open_ms, stats.cache_ms, stats.take_ms, stats.ensure_ms, stats.read_ahead_ready, stats.read_ahead_waited, stats.read_ahead_own};
 }
 
 void UnloadNativeModelAssets() {

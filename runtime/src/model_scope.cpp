@@ -1244,6 +1244,7 @@ struct LoadingScreen {
     double certify_ms = 0, open_ms = 0;    // of prepare_ms: certification, and the packs it opened
     double cache_ms = 0, take_ms = 0;      // of certify_ms: waiting for the asset cache and the read-ahead
     double ensure_ms = 0;                  // of certify_ms: the packs' admission in all (cache_ms and take_ms are of it)
+    uint64_t ready = 0, waited = 0, own = 0; // the read-ahead's packs: read already, waited for, read here
 } loading;
 
 void ReportLoadingScreen() {
@@ -1254,10 +1255,12 @@ void ReportLoadingScreen() {
     loading.open = false;
     std::fprintf(stderr,
                  "MH3 loading screen: %.3f s, %u frames, longest %.0f ms; draw table preparation %.2f ms (%llu models certified in %.2f ms, %llu packs opened in %.2f ms, %llu tables, %llu "
-                 "from the cache); certification's admissions took %.2f ms, of it %.2f ms waiting for the asset cache and %.2f ms for read-ahead packs\n",
+                 "from the cache); certification's admissions took %.2f ms, of it %.2f ms waiting for the asset cache and %.2f ms for read-ahead packs (%llu read ahead, %llu waited "
+                 "for, %llu read here)\n",
                  std::chrono::duration<double>(loading.last - loading.first).count(), loading.frames, loading.longest_ms, loading.prepare_ms, static_cast<unsigned long long>(loading.certified),
                  loading.certify_ms, static_cast<unsigned long long>(loading.admissions), loading.open_ms, static_cast<unsigned long long>(loading.tables),
-                 static_cast<unsigned long long>(loading.cached), loading.ensure_ms, loading.cache_ms, loading.take_ms);
+                 static_cast<unsigned long long>(loading.cached), loading.ensure_ms, loading.cache_ms, loading.take_ms, static_cast<unsigned long long>(loading.ready),
+                 static_cast<unsigned long long>(loading.waited), static_cast<unsigned long long>(loading.own));
 #endif
 }
 } // namespace
@@ -1303,6 +1306,9 @@ void PrepareNativeModelDrawTables() {
     loading.cache_ms += after.cache_ms - before.cache_ms;
     loading.take_ms += after.take_ms - before.take_ms;
     loading.ensure_ms += after.ensure_ms - before.ensure_ms;
+    loading.ready += after.ready - before.ready;
+    loading.waited += after.waited - before.waited;
+    loading.own += after.own - before.own;
 #endif
     std::vector<NativeModelOwner> owners;
     ListNativeModelOwnersWithoutDrawTable(owners);

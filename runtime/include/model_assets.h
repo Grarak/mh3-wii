@@ -38,6 +38,9 @@ struct NativeModelAssetStats {
     double cache_ms = 0; // the asset cache's answer for a source's pack (indexing, its models converted)
     double take_ms = 0;  // waiting for a pack the read-ahead worker is reading
     double ensure_ms = 0; // TryEnsureNativeModelAssets in all, for converted packs
+    // Converted packs certification asked the read-ahead for: read already,
+    // waited for while being read, read on the admitting thread.
+    uint64_t read_ahead_ready = 0, read_ahead_waited = 0, read_ahead_own = 0;
 };
 
 // GPU bytes include retired backing pending completion, with Vita rounding.
@@ -48,6 +51,7 @@ NativeModelAssetStats ReadNativeModelAssetStats();
 struct NativeModelPackOpenings {
     uint64_t admissions = 0;
     double open_ms = 0, cache_ms = 0, take_ms = 0, ensure_ms = 0;
+    uint64_t ready = 0, waited = 0, own = 0; // read-ahead packs: read already, waited for, read here
 };
 
 NativeModelPackOpenings ReadNativeModelPackOpenings();
