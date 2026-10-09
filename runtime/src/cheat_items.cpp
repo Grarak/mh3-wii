@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -28,18 +30,18 @@ uint32_t UserData() {
 
 // Save data fields.
 enum : uint32_t {
-    kMoney = 0x18,          // s32
-    kItemBox = 0x180,       // (u16 item, s16 count) pairs
-    kTalismans = 0xE00,     // 12 bytes each, byte 0 the kind (0: free)
-    kHunterPoints = 0x3DE0, // u32
-    kHunterRank = 0x3DE4,   // u16
-    kResources = 0x3F04,    // s32
-    kStarQuests = 0x47DA,   // u16 bits
+    kMoney = 0x18,           // s32
+    kItemBox = 0x180,        // (u16 item, s16 count) pairs
+    kEquipmentBox = 0xE00,   // 12 bytes each, byte 0 the kind (0: free)
+    kHunterPoints = 0x3DE0,  // u32
+    kHunterRank = 0x3DE4,    // u16
+    kResources = 0x3F04,     // s32
+    kStarQuests = 0x47DA,    // u16 bits
     kClearedQuests = 0x512C, // u32 bits
 };
 
 constexpr int32_t kMaxMoney = 9999999;
-constexpr uint32_t kTalismanSlots = 800; // 8 pages of 100
+constexpr uint32_t kEquipmentSlots = 800; // 8 pages of 100
 
 constexpr uint32_t GetItemData = 0x8029F740; // GetItemData__FUs (item): +3 u8 stack size, +0xC u32 price
 
@@ -200,11 +202,11 @@ extern "C" void MH3_CheatMaterialCount(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x8004B770, MH3_CheatMaterialCount, "CheatMaterialCount");
 
-// 0x8004C620 (save data, talisman): stores a talisman in the box's first free
-// slot (0x8004AED4: the box's slots, 100 a page; 0x8004A270 copies it in,
-// 0x8004C45C sorts the slot in); 0xFFFF when the box is full, else the slot.
-// Talismans sent to box start at slot (US 0x8004C5E4, EU 0x8004C648) starts
-// the search there (here no further than the save data's 800 slots).
+// 0x8004C620 (save data, talisman): stores a talisman in the equipment box's
+// first free slot (0x8004AED4: the box's slots, 100 a page; 0x8004A270 copies
+// it in, 0x8004C45C marks it obtained); 0xFFFF when the box is full, else the
+// slot. Talismans sent to box start at slot (US 0x8004C5E4, EU 0x8004C648)
+// starts the search there (here no further than the save data's 800 slots).
 extern "C" void MH3_TalismanToBox(CpuContext* ctx) {
     uint32_t slot = 0xFFFF;
 
@@ -215,8 +217,8 @@ extern "C" void MH3_TalismanToBox(CpuContext* ctx) {
         const uint32_t slots = game.Call<0x8004AED4>({save}) & 0xFFFF;
         const uint32_t first = On(Id::TalismanStartSlot) ? uint32_t(Value(Id::TalismanStartSlot)) : 0;
 
-        for (uint32_t i = 0; i < slots && first + i < kTalismanSlots; ++i) {
-            const uint32_t at = save + kTalismans + (first + i) * 12;
+        for (uint32_t i = 0; i < slots && first + i < kEquipmentSlots; ++i) {
+            const uint32_t at = save + kEquipmentBox + (first + i) * 12;
 
             if (Memory::Read8(at) != 0)
                 continue;
@@ -691,8 +693,8 @@ constexpr uint32_t kName = 0x3, kNameSize = 17;
 
 // The item box: (u16 item, s16 count) slots from +0x180, as many as
 // ItemBoxSlots (0x8004AED4) says: 100 a page, BoxPages' 4 to 8 (800 slots
-// reach the talismans at +0xE00). ItemBoxAdd (0x8004BF08: item, count, s16*
-// slot) stores an item as the game does: none of what ItemNotStorable
+// reach the equipment box at +0xE00). ItemBoxAdd (0x8004BF08: item, count,
+// s16* slot) stores an item as the game does: none of what ItemNotStorable
 // (0x8004B098) names (0, 223 No Item, 438 BBQ with Mask, 439 No Mask), at
 // most 99 a slot (ItemSlotsAddStacked 0x8004BDBC), the item marked as
 // obtained, nothing once the box is full.
@@ -706,16 +708,22 @@ constexpr uint16_t kPlaceholders[]{90, 114, 148, 156, 158, 159, 160, 161, 162, 1
                                    246, 257, 258, 259, 260, 261, 262, 263, 271, 272, 369, 370, 371, 372, 373};
 
 bool g_boxFilled = false;
+bool g_equipmentFilled = false;
 
-// All items in the item box: the box at its largest (both guides obtained,
-// as getting them does: 8 pages), its slots emptied, then every item in
-// turn.
+// Both boxes at their largest: both guides obtained, as getting them does
+// (BoxPages: 8 pages).
+void MaxBoxPages(GuestCall& game, uint32_t save) {
+    game.Call<ItemObtainedSet>({save, kOrganizerGuide});
+    game.Call<ItemObtainedSet>({save, kPackRatGuide});
+}
+
+// All items in the item box: the box at its largest, its slots emptied, then
+// every item in turn.
 void FillItemBox(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     const uint32_t save = UserData();
-    game.Call<ItemObtainedSet>({save, kOrganizerGuide});
-    game.Call<ItemObtainedSet>({save, kPackRatGuide});
+    MaxBoxPages(game, save);
 
     const uint32_t slots = game.Call<ItemBoxSlots>({save}) & 0xFFFF;
 
@@ -729,6 +737,187 @@ void FillItemBox(CpuContext* ctx) {
             game.Call<ItemBoxAdd>({item, count, frame[0x10]});
 }
 
+// The equipment box: 12-byte records from +0xE00, as many as EquipBoxSlots
+// (0x8004AEFC) says, BoxPages' pages of 100 as for the item box: 800 at most,
+// which end at the 20 equipment sets (+0x3380, 0x2A each: the slots of a
+// set's pieces) and the 20 bowgun sets (+0x36C8). A record (EquipCopy
+// 0x8004A270): u8 kind, u8 an armor piece's upgrade level or a talisman's
+// slots, u16 id, u16 an armor piece's pigment or a talisman's skill points
+// (each + 10, the first skill's in the low byte), u16[3] the decorations in
+// the slots, a talisman's skills after its slots. What the hunter wears is
+// the slots at +0x8C (weapon or frame), +0x8E (barrel), +0x90 (stock), +0x92
+// (chest) to +0x9A (head) and +0x9C (talisman), 0xFFFF none.
+//   EquipBoxAdd (0x8004C578: save data, kind, id), which the smithy, the
+//     shops and quest rewards call, stores a new piece (level 0, no
+//     decorations) in the first free slot, marked obtained (bits from +0x4B50
+//     by kind and id, 0x8004C45C); 0xFFFF when the box is full.
+//   EquipBoxRemove (0x8004C744: save data, slot) frees a slot as selling does
+//     and clears the sets that use it; 0 for what the hunter wears.
+constexpr uint32_t EquipBoxSlots = 0x8004AEFC, EquipBoxAdd = 0x8004C578, EquipBoxRemove = 0x8004C744;
+constexpr uint32_t TalismanToBox = 0x8004C620;
+
+// Get_equip_rare (0x8027FDE0, record): the rarity, 0 to 6.
+constexpr uint32_t EquipRarity = 0x8027FDE0;
+
+enum : uint8_t {
+    kChest = 1,
+    kTalisman = 6,
+    kGreatSword = 7,
+    kSwordAndShield = 8,
+    kHammer = 9,
+    kLance = 10,
+    kFrame = 11,
+    kBarrel = 12,
+    kStock = 13,
+    kLongSword = 14,
+    kSwitchAxe = 15,
+};
+
+// Each kind's count of ids (u32 a kind, from kind 1: chest, arms, waist,
+// legs, head, talisman, then the weapons; id 0 is No Equipment): 130 chests,
+// 124 arms, 125 waists, 124 legs, 140 heads, 7 talismans, 93 great swords,
+// 91 swords, 85 hammers, 97 lances, 19 frames, 20 barrels, 19 stocks, 43 long
+// swords and 61 switch axes. The tables come with the game data (their list
+// at 0x806ADC90, 0 before).
+constexpr uint32_t kEquipmentCounts = 0x80570E80, kEquipmentData = 0x806ADC90;
+
+// Placeholders, named ダミー (dummy) in the weapon names, and the frame
+// named Dummy.
+constexpr uint16_t kDummyGreatSwords[]{20, 22, 27, 28, 29, 30, 32, 52, 53, 54, 70, 74, 75, 76, 77, 78, 79, 83, 84, 85, 86};
+constexpr uint16_t kDummySwords[]{19, 20, 21, 22, 45, 47, 52, 53, 54, 55, 56, 66, 70, 71, 72, 73, 74, 75, 82, 83, 84, 85};
+constexpr uint16_t kDummyHammers[]{12, 14, 19, 20, 21, 22, 23, 29, 30, 31, 32, 34, 63, 67, 68, 69, 70, 71, 72, 76, 77, 78};
+constexpr uint16_t kDummyLances[]{9, 12, 13, 14, 16, 18, 23, 24, 25, 26, 28, 31, 32, 33, 34, 35, 56, 57, 59, 60, 72, 76, 77, 78, 79, 80, 81, 85, 86, 87, 88};
+constexpr uint16_t kDummyFrames[]{16};
+constexpr uint16_t kDummyLongSwords[]{3, 5, 7, 8, 11, 12, 13, 14, 24, 25, 26, 27, 31, 32, 33, 34};
+constexpr uint16_t kDummySwitchAxes[]{5, 8, 9, 10, 11, 12, 13, 14, 16, 20, 22, 27, 28, 29, 30, 40, 41, 42, 47, 51, 52, 53, 54, 55, 56};
+
+// Frames 17 to 19 (Aquamatic "Spark" and "Longshot", Vulcannon) take no
+// barrel or stock (Gunner_opt_ok_ck 0x8027F128): the hunter's copy of the
+// worn equipment (0x8004CE08) gets the barrel and stock of the frame's id, so
+// barrels and stocks 17 to 19 belong to those frames, not to the box.
+constexpr uint16_t kFixedFrameParts[]{17, 18, 19};
+
+std::span<const uint16_t> Excluded(uint32_t kind) {
+    switch (kind) {
+    case kGreatSword:
+        return kDummyGreatSwords;
+    case kSwordAndShield:
+        return kDummySwords;
+    case kHammer:
+        return kDummyHammers;
+    case kLance:
+        return kDummyLances;
+    case kFrame:
+        return kDummyFrames;
+    case kBarrel:
+    case kStock:
+        return kFixedFrameParts;
+    case kLongSword:
+        return kDummyLongSwords;
+    case kSwitchAxe:
+        return kDummySwitchAxes;
+    default:
+        return {};
+    }
+}
+
+// Talismans: TalismanGenerate (0x8027F7DC) gives at most +10 a skill, and a
+// talisman's slots and skills share its three entries. Its skills are the
+// three lists at 0x805C6B88 (u16, 0xFFFF the end; TalismanSkillPick
+// 0x8027F6D8): 80 skills. Here a Queen Talisman (id 5, the generator's for
+// +10 with two slots) for each: the skill +10, two slots.
+constexpr uint32_t kTalismanSkills = 0x805C6B88;
+constexpr uint16_t kQueenTalisman = 5;
+constexpr uint8_t kTalismanSlots = 2, kTalismanPoints = 10;
+
+struct Piece {
+    uint8_t kind;
+    uint16_t id;
+    uint8_t rarity;
+};
+
+// All equipment in the equipment box: the box at its largest, what the hunter
+// wears kept and the rest removed, then the talismans and every weapon and
+// armor piece but the placeholders: 1107 for at most 800 slots. The
+// talismans go first, then the pieces by rarity, the highest first, armor
+// before weapons at the same rarity (a set's pieces share it); those of the
+// lowest rarities are left out. The box gets them in kind and id order.
+void FillEquipmentBox(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t save = UserData();
+    const uint32_t record = frame[0x10];
+    MaxBoxPages(game, save);
+
+    const uint32_t slots = game.Call<EquipBoxSlots>({save}) & 0xFFFF;
+    std::vector<uint32_t> worn; // kind << 16 | id
+    uint32_t room = 0;
+
+    for (uint32_t i = 0; i < slots; ++i) {
+        const uint32_t at = save + kEquipmentBox + 12 * i;
+        const uint32_t piece = uint32_t(Memory::Read8(at)) << 16 | Memory::Read16(at + 2);
+
+        if (piece != 0 && game.Call<EquipBoxRemove>({save, i}) == 0)
+            worn.push_back(piece);
+        else
+            ++room;
+    }
+
+    std::vector<Piece> pieces;
+
+    for (uint32_t kind = kChest; kind <= kSwitchAxe; ++kind) {
+        if (kind == kTalisman)
+            continue;
+
+        const uint32_t count = Memory::Read32(kEquipmentCounts + 4 * (kind - 1));
+        const std::span<const uint16_t> excluded = Excluded(kind);
+
+        for (uint32_t id = 1; id < count; ++id) {
+            if (std::find(excluded.begin(), excluded.end(), id) != excluded.end() || std::find(worn.begin(), worn.end(), kind << 16 | id) != worn.end())
+                continue;
+
+            for (uint32_t i = 0; i < 12; i += 4)
+                Memory::Write32(record + i, 0);
+
+            Memory::Write8(record, uint8_t(kind));
+            Memory::Write16(record + 2, uint16_t(id));
+            pieces.push_back({uint8_t(kind), uint16_t(id), uint8_t(game.Call<EquipRarity>({record}))});
+        }
+    }
+
+    std::vector<uint16_t> skills;
+
+    for (uint32_t list = 0; list < 3; ++list)
+        for (uint32_t at = Memory::Read32(kTalismanSkills + 4 * list); Memory::Read16(at) != 0xFFFF; at += 2)
+            skills.push_back(Memory::Read16(at));
+
+    std::sort(skills.begin(), skills.end());
+    skills.resize(std::min<size_t>(skills.size(), room));
+    std::stable_sort(pieces.begin(), pieces.end(), [](const Piece& a, const Piece& b) { return a.rarity > b.rarity; });
+    pieces.resize(std::min<size_t>(pieces.size(), room - skills.size()));
+    std::sort(pieces.begin(), pieces.end(), [](const Piece& a, const Piece& b) { return (a.kind << 16 | a.id) < (b.kind << 16 | b.id); });
+
+    // Armor, the talismans, then the weapons.
+    const auto weapons = std::find_if(pieces.begin(), pieces.end(), [](const Piece& piece) { return piece.kind > kTalisman; });
+
+    for (auto piece = pieces.begin(); piece != weapons; ++piece)
+        game.Call<EquipBoxAdd>({save, piece->kind, piece->id});
+
+    for (const uint16_t skill : skills) {
+        Memory::Write8(record, kTalisman);
+        Memory::Write8(record + 1, kTalismanSlots);
+        Memory::Write16(record + 2, kQueenTalisman);
+        Memory::Write16(record + 4, kTalismanPoints + 10);
+        Memory::Write16(record + 6, 0);
+        Memory::Write16(record + 8, 0);
+        Memory::Write16(record + 10, skill);
+        game.Call<TalismanToBox>({save, record});
+    }
+
+    for (auto piece = weapons; piece != pieces.end(); ++piece)
+        game.Call<EquipBoxAdd>({save, piece->kind, piece->id});
+}
+
 } // namespace
 
 // PlLoadUserData (0x80049FE0, player): the player's work filled from the
@@ -736,8 +925,11 @@ void FillItemBox(CpuContext* ctx) {
 // name modifier, C2 at US 0x8004A0E0, EU 0x8004A144) wrote the typed name
 // into the save data just before the name is copied; here before the call
 // (nothing earlier in it reads the name). Skiller's Name change wrote the
-// same field (7 characters) each frame. All items in the item box fills the
-// box here once a launch, when a character has first loaded.
+// same field (7 characters) each frame. All items in the item box and All
+// equipment in the equipment box fill their boxes here once a launch, when a
+// character has first loaded (the equipment once its tables are there). The
+// call copies the worn equipment from the save data's own copies (+0x20 to
+// +0x8B), which the equipment box's fill keeps.
 extern "C" void func_80049FE0(CpuContext* ctx);
 
 extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
@@ -750,6 +942,11 @@ extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
     if (On(Id::AllItems) && !g_boxFilled && UserData() != 0) {
         g_boxFilled = true;
         FillItemBox(ctx);
+    }
+
+    if (On(Id::AllEquipment) && !g_equipmentFilled && UserData() != 0 && Memory::Read32(kEquipmentData) != 0) {
+        g_equipmentFilled = true;
+        FillEquipmentBox(ctx);
     }
 
     func_80049FE0(ctx);

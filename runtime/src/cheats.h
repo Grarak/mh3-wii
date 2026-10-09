@@ -26,6 +26,7 @@ enum class Id : uint16_t {
     NoDamage,
     NoStaminaDrain,
     AllItems,
+    AllEquipment,
     // Stuff
     GalleryClips,
     TurnItUpTo11,

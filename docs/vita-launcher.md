@@ -271,9 +271,10 @@ selection. No new game code or guessed spawn tables are generated.
 
 Cheats lists the codes of the RMHE08 (US) Gecko code lists, ported to this
 EU disc, in groups by the lists' author tags: Basic (`No damage`,
-`No action stamina drain` and `All items in the item box`, the launcher's
-own), Stuff (43), Seth@WiiPlaza (10), Bully@Wiiplaza (30), Skiller (80),
-Argon (6) and Doudley (88), 257 codes and the three Basic entries. The
+`No action stamina drain`, `All items in the item box` and
+`All equipment in the equipment box`, the launcher's own), Stuff (43),
+Seth@WiiPlaza (10), Bully@Wiiplaza (30), Skiller (80), Argon (6) and
+Doudley (88), 257 codes and the four Basic entries. The
 Cheats page shows how many codes of each group are on;
 a group's page lists its codes with On/Off and, where a code has a value,
 the value in brackets. X toggles the selected code and Left/Right changes its
@@ -308,13 +309,46 @@ Guide (item 0x244) was obtained and 2 more with the Pack Rat Guide (0x245):
 the obtained bits at the save data's +0x4AD8 (ItemObtained 0x8004D38C,
 ItemObtainedSet 0x8004D318), which adding an item to the pouch or the box
 sets. The cheat sets both bits, as getting the two guides does, so the box
-has its largest 8 pages (800 slots, up to the talismans at +0xE00); it
+has its largest 8 pages (800 slots, up to the equipment box at +0xE00); it
 empties them and stores every item through the game's ItemBoxAdd
 (0x8004BF08: at most 99 a slot, the item marked obtained), the count
 chosen (99, 10 or 1) each. The item table (GetItemData 0x8029F740,
 ItemName 0x8029F68C) has items 1 to 0x2EA; ItemNotStorable (0x8004B098)
 refuses 223 No Item, 438 BBQ with Mask and 439 No Mask, and 30 entries
 named `ERR<n>` are placeholders, which leaves 713 items in slots 0 to 712.
+
+`All equipment in the equipment box` fills that box at the same point. The
+equipment box is the save data's 12-byte records from +0xE00 (u8 kind, u8 an
+armor piece's upgrade level or a talisman's slots, u16 id, u16 an armor
+piece's pigment or a talisman's skill points, u16[3] the decorations in the
+slots, a talisman's skills after its slots), as many as the item box has
+slots (EquipBoxSlots 0x8004AEFC, the same BoxPages): the cheat sets the two
+guides' bits too, for 800 slots. That is the most the box can have: its
+records end at the 20 equipment sets (+0x3380, the slots of a set's pieces)
+and the bowgun sets (+0x36C8) that follow it in the save data's 0x6000
+bytes, and about 60 translated functions (the box's own, the box menus, the
+sets, the smithy) address a slot as +0xE00 plus 12 times its index. Kinds: 1
+chest, 2 arms, 3 waist, 4 legs, 5 head, 6 talisman, 7 great sword, 8 sword
+and shield, 9 hammer, 10 lance, 11 bowgun frame, 12 barrel, 13 stock, 14
+long sword, 15 switch axe; each kind's id count is at 0x80570E80. What the
+hunter wears (the slots at +0x8C to +0x9C) stays; every other record goes
+through EquipBoxRemove (0x8004C744), which frees a slot as selling does and
+clears the sets that use it. The weapons and armor then come from the game's
+EquipBoxAdd (0x8004C578, what the smithy, the shops and quest rewards call:
+level 0, no decorations, the piece marked obtained) and the talismans from
+TalismanToBox (0x8004C620). Every armor piece (643) counts, and every weapon
+but the 137 named `ダミー` (dummy), frame 16 (`Dummy`) and barrels and stocks
+17 to 19, which belong to the three frames that take no parts (384). For
+talismans, the generator (TalismanGenerate 0x8027F7DC) gives at most +10 a
+skill, and slots and skills share three entries; its skill lists
+(0x805C6B88) hold 80 skills, so the box gets a Queen Talisman with each
+skill at +10 and two slots. That is 1107 records for at most 800 slots: the
+talismans come first, then the pieces by rarity (Get_equip_rare 0x8027FDE0),
+the highest first, armor before weapons at the same rarity, and the box gets
+those that fit in kind and id order (armor, talismans, weapons). With
+nothing but a weapon worn, that is every armor piece of rarity 3 to 7 (RARE
+as the box shows it; 487), the 80 talismans and 232 weapons: rarity 4 to 7
+of every kind and rarity 3 of the great swords, swords and hammers.
 
 The lists' authors copied each other's codes, so 31 of the 288 ported codes
 did the same for the player as another code (the same patched instruction,
