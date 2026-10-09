@@ -24,6 +24,8 @@
 //                                          cached manager id (r13 - 0x4500)
 //                                          dropped when it is this one
 //   0x800A4A90 EffectRetireEmitterAll      the effect's active emitters
+//   0x800A5DF0 EffectSystemRetireEffectAll a group's active effects
+//   0x800F9C04 EffectChangeScaleVec        the first emitter's scale vector
 //   0x800A6484 EmitterDestroyFunc          its particles, managers and (with
 //                                          flag 1) its descendants retired
 //   0x800A63B4 EmitterRetireParticleAll    each manager's RetireParticleAll
@@ -71,6 +73,7 @@
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "g3d_native.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -732,6 +735,23 @@ void EffectChangeScale(CpuContext* cpu, uint32_t effect, double scale) {
     }
 }
 
+// 0x800F9C04: EffectChangeScale with a vector: the first emitter's scale,
+// unless the vector's squared length (PSVECSquareMag) is under 0.00001.
+void EffectChangeScaleVec(CpuContext* cpu, uint32_t effect, uint32_t scale) {
+    if (Routed<0x800F9C04>())
+        return void(GuestCall{cpu}.Call<0x800F9C04>({effect, scale}));
+
+    const float x = FlatReadFloat32(scale), y = FlatReadFloat32(scale + 4), z = FlatReadFloat32(scale + 8);
+
+    if (z * z + x * x + y * y < FlatReadFloat32(0x80798A9C) || !FlatRead16(effect + 0x24 + 8))
+        return;
+
+    GuestCall game{cpu};
+
+    if (const uint32_t emitter = EffectGetEmitter(game, effect, 0))
+        EmitterSetScale(cpu, emitter, scale);
+}
+
 // 0x800F98E8: whether any of the effect's emitters has managers.
 bool EffectHasManagers(GuestCall& game, uint32_t effect) {
     if (Routed<0x800F98E8>())
@@ -815,6 +835,23 @@ void RetireEffects(GuestCall& game, uint32_t effects, int32_t count) {
 
         FlatWrite32(effects, 0);
     }
+}
+
+// EffectSystem::RetireEffectAll (0x800A5DF0): the group's active effects
+// retired; how many were.
+uint32_t EffectSystemRetireEffectAll(GuestCall& game, uint32_t system, uint32_t group) {
+    if (Routed<0x800A5DF0>())
+        return game.Call<0x800A5DF0>({system, group});
+
+    std::array<uint32_t, 0x200> effects;
+    const uint32_t n = ListArray(FlatRead32(system + 0xC018) + group * 28, effects, "ef_effectsystem.cpp", 0xB2);
+    uint32_t retired = 0;
+
+    for (uint32_t i = 0; i < n; ++i)
+        if (FlatRead32(effects[i] + 0xC) == 1)
+            retired += game.Call<0x800A5C6C>({system, effects[i]}); // EffectSystem::RetireEffect
+
+    return retired;
 }
 
 // 0x800F8CDC: `count` 0x40-byte effect slots from `first` back to the free
@@ -2085,9 +2122,13 @@ void EffectObjectUpdate(CpuContext* cpu, GuestCall& game, uint32_t object, const
 
 // The ports run their bodies in a guest frame of 0x80 bytes (restoring the
 // caller's GPRs; scratch from +0x10) and return what the body returns in r3;
-// while port checks run, the body's address is g_portBody.
-template <uint32_t Address, uint32_t (*Body)(CpuContext*, GuestCall&, const GuestFrame&)>
+// while port checks run, the body's address is g_portBody. An effect port
+// first joins the previous step's calculation (EffectStep::Touch).
+template <uint32_t Address, uint32_t (*Body)(CpuContext*, GuestCall&, const GuestFrame&), bool Effects = true>
 void FramedPort(CpuContext* cpu) {
+    if constexpr (Effects)
+        EffectStep::Touch();
+
     const uint32_t outer = g_portBody;
     const bool checking = PortCheck::Set();
 
@@ -2116,6 +2157,18 @@ void FramedPort(CpuContext* cpu) {
     extern "C" void func_##ADDRESS(CpuContext* ctx);                                                                                                  \
     extern "C" void MH3_##NAME(CpuContext* ctx) {                                                                                                     \
         PortCheck::Call(ctx, #NAME, func_##ADDRESS, FramedPort<0x##ADDRESS, NAME##Body>);                                                             \
+    }
+
+// A port that does not use the effects (camera, model and quest helpers).
+#define MH3_GAME_PORT(ADDRESS, NAME, ...)                                                                                                            \
+    static uint32_t NAME##Body(CpuContext* cpu, GuestCall& game, const GuestFrame& frame) {                                                          \
+        (void)cpu;                                                                                                                                    \
+        (void)game;                                                                                                                                   \
+        __VA_ARGS__                                                                                                                                   \
+    }                                                                                                                                                 \
+    extern "C" void func_##ADDRESS(CpuContext* ctx);                                                                                                  \
+    extern "C" void MH3_##NAME(CpuContext* ctx) {                                                                                                     \
+        PortCheck::Call(ctx, #NAME, func_##ADDRESS, FramedPort<0x##ADDRESS, NAME##Body, false>);                                                      \
     }
 
 extern "C" void MH3_EffectObjectRelease(CpuContext* ctx);
@@ -2154,6 +2207,7 @@ static void EffectObjectStepPort(CpuContext* cpu) {
 
 extern "C" void func_80330444(CpuContext* ctx);
 extern "C" void MH3_EffectObjectStep(CpuContext* ctx) {
+    EffectStep::Touch();
     PortCheck::Call(ctx, "EffectObjectStep", func_80330444, EffectObjectStepPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80330444, MH3_EffectObjectStep, "EffectObjectStep");
@@ -2164,6 +2218,7 @@ static void EffectSpawnerStepPort(CpuContext* cpu) {
 
 extern "C" void func_800FE9A0(CpuContext* ctx);
 extern "C" void MH3_EffectSpawnerStep(CpuContext* ctx) {
+    EffectStep::Touch();
     PortCheck::Call(ctx, "EffectSpawnerStep", func_800FE9A0, EffectSpawnerStepPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800FE9A0, MH3_EffectSpawnerStep, "EffectSpawnerStep");
@@ -2417,6 +2472,15 @@ MH3_EFFECT_PORT(800F9B24, EffectChangeScale, {
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800F9B24, MH3_EffectChangeScale, "EffectChangeScale");
 
+MH3_EFFECT_PORT(800F9C04, EffectChangeScaleVec, {
+    EffectChangeScaleVec(cpu, frame.Arg(3), frame.Arg(4));
+    return cpu->gpr[3];
+});
+REGISTER_NATIVE_FUNCTION_AS(0x800F9C04, MH3_EffectChangeScaleVec, "EffectChangeScaleVec");
+
+MH3_EFFECT_PORT(800A5DF0, EffectSystemRetireEffectAll, { return EffectSystemRetireEffectAll(game, frame.Arg(3), frame.Arg(4)); });
+REGISTER_NATIVE_FUNCTION_AS(0x800A5DF0, MH3_EffectSystemRetireEffectAll, "EffectSystemRetireEffectAll");
+
 MH3_EFFECT_PORT(800F9BCC, EmitterSetScale, {
     EmitterSetScale(cpu, frame.Arg(3), frame.Arg(4));
     return cpu->gpr[3];
@@ -2462,11 +2526,11 @@ REGISTER_NATIVE_FUNCTION_AS(0x800FFF6C, MH3_EffectSpawnerRetireEffect, "EffectSp
 
 MH3_EFFECT_PORT(800F9358, EffectObjectAlive, { return EffectObjectAlive(game, frame.Arg(3), frame.Arg(4)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800F9358, MH3_EffectObjectAlive, "EffectObjectAlive");
-MH3_EFFECT_PORT(800E3BA0, MHcharDrawPass, { return MHcharDrawPass(game, frame.Arg(3)); });
+MH3_GAME_PORT(800E3BA0, MHcharDrawPass, { return MHcharDrawPass(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800E3BA0, MH3_MHcharDrawPass, "MHcharDrawPass");
 MH3_EFFECT_PORT(800F93E4, EffectDrawFlags, { return EffectDrawFlags(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800F93E4, MH3_EffectDrawFlags, "EffectDrawFlags");
-MH3_EFFECT_PORT(8026FE38, PlMasterCheck, { return PlMasterCheck(game, frame.Arg(3)); });
+MH3_GAME_PORT(8026FE38, PlMasterCheck, { return PlMasterCheck(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x8026FE38, MH3_PlMasterCheck, "PlMasterCheck");
 
 MH3_EFFECT_PORT(800FA804, EftKeyRGB, {
@@ -2507,12 +2571,12 @@ MH3_EFFECT_PORT(800F943C, EffectDrawRequest, {
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800F943C, MH3_EffectDrawRequest, "EffectDrawRequest");
 
-MH3_EFFECT_PORT(800E3BF0, PrimRequest, { return PrimRequest(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7), frame.Arg(8), frame.Arg(9)); });
+MH3_GAME_PORT(800E3BF0, PrimRequest, { return PrimRequest(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7), frame.Arg(8), frame.Arg(9)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800E3BF0, MH3_PrimRequest, "PrimRequest");
-MH3_EFFECT_PORT(8007F130, ScnRootPushBack, { return ScnRootPushBack(game, frame.Arg(3), frame.Arg(4)); });
+MH3_GAME_PORT(8007F130, ScnRootPushBack, { return ScnRootPushBack(game, frame.Arg(3), frame.Arg(4)); });
 REGISTER_NATIVE_FUNCTION_AS(0x8007F130, MH3_ScnRootPushBack, "ScnRootPushBack");
 
-MH3_EFFECT_PORT(800E0AF8, GetJointWpos, {
+MH3_GAME_PORT(800E0AF8, GetJointWpos, {
     GetJointWpos(game, frame.Arg(3), frame.Arg(4), frame.Arg(5));
     return cpu->gpr[3];
 });
@@ -2520,7 +2584,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800E0AF8, MH3_GetJointWpos, "GetJointWpos");
 
 // ResNode::GetID (0x8006FE30): the id (+0x10) of the ResNode the handle at
 // r3 holds.
-MH3_EFFECT_PORT(8006FE30, ResNodeGetId, {
+MH3_GAME_PORT(8006FE30, ResNodeGetId, {
     const uint32_t node = FlatRead32(frame.Arg(3));
 
     if (!node)
@@ -2530,41 +2594,41 @@ MH3_EFFECT_PORT(8006FE30, ResNodeGetId, {
 });
 REGISTER_NATIVE_FUNCTION_AS(0x8006FE30, MH3_ResNodeGetId, "ResNodeGetId");
 
-MH3_EFFECT_PORT(802BDD44, GetCameraPos, {
+MH3_GAME_PORT(802BDD44, GetCameraPos, {
     GetCameraPos(game, frame.Arg(3), frame[0x10]);
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x802BDD44, MH3_GetCameraPos, "GetCameraPos");
 
-MH3_EFFECT_PORT(800473FC, ViewCamera, { return ViewCamera(game); });
+MH3_GAME_PORT(800473FC, ViewCamera, { return ViewCamera(game); });
 REGISTER_NATIVE_FUNCTION_AS(0x800473FC, MH3_ViewCamera, "ViewCamera");
-MH3_EFFECT_PORT(80082C30, ScnRootCurrentCamera, { return ScnRootCurrentCamera(game, frame.Arg(3)); });
+MH3_GAME_PORT(80082C30, ScnRootCurrentCamera, { return ScnRootCurrentCamera(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x80082C30, MH3_ScnRootCurrentCamera, "ScnRootCurrentCamera");
-MH3_EFFECT_PORT(80082BD4, ScnRootGetCamera, { return ScnRootGetCamera(game, frame.Arg(3), frame.Arg(4)); });
+MH3_GAME_PORT(80082BD4, ScnRootGetCamera, { return ScnRootGetCamera(game, frame.Arg(3), frame.Arg(4)); });
 REGISTER_NATIVE_FUNCTION_AS(0x80082BD4, MH3_ScnRootGetCamera, "ScnRootGetCamera");
 
-MH3_EFFECT_PORT(80074A2C, CameraGetPosition, {
+MH3_GAME_PORT(80074A2C, CameraGetPosition, {
     CameraGetPosition(game, frame.Arg(3), frame.Arg(4));
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x80074A2C, MH3_CameraGetPosition, "CameraGetPosition");
 
-MH3_EFFECT_PORT(802FB9E0, StarQuestFirstStages, { return StarQuestFirstStages(game); });
+MH3_GAME_PORT(802FB9E0, StarQuestFirstStages, { return StarQuestFirstStages(game); });
 REGISTER_NATIVE_FUNCTION_AS(0x802FB9E0, MH3_StarQuestFirstStages, "StarQuestFirstStages");
-MH3_EFFECT_PORT(802FB558, StarQuestGroupCurrent, { return StarQuestGroupCurrent(game, frame.Arg(3)); });
+MH3_GAME_PORT(802FB558, StarQuestGroupCurrent, { return StarQuestGroupCurrent(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x802FB558, MH3_StarQuestGroupCurrent, "StarQuestGroupCurrent");
-MH3_EFFECT_PORT(802FB520, StarQuestGroupDone, { return StarQuestGroupDone(game, frame.Arg(3)); });
+MH3_GAME_PORT(802FB520, StarQuestGroupDone, { return StarQuestGroupDone(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x802FB520, MH3_StarQuestGroupDone, "StarQuestGroupDone");
-MH3_EFFECT_PORT(802FB414, StarQuestGroupDoneLow, { return StarQuestGroupDoneLow(game, frame.Arg(3)); });
+MH3_GAME_PORT(802FB414, StarQuestGroupDoneLow, { return StarQuestGroupDoneLow(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x802FB414, MH3_StarQuestGroupDoneLow, "StarQuestGroupDoneLow");
-MH3_EFFECT_PORT(802FB498, StarQuestGroupDoneHigh, { return StarQuestGroupDoneHigh(game, frame.Arg(3)); });
+MH3_GAME_PORT(802FB498, StarQuestGroupDoneHigh, { return StarQuestGroupDoneHigh(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x802FB498, MH3_StarQuestGroupDoneHigh, "StarQuestGroupDoneHigh");
 
 MH3_EFFECT_PORT(800A9778, EmitterGetManager, { return EmitterGetManager(game, frame.Arg(3), frame.Arg(4)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800A9778, MH3_EmitterGetManager, "EmitterGetManager");
-MH3_EFFECT_PORT(802B035C, StageEffectColor, { return StageEffectColor(game, frame.Arg(3), frame.Arg(4)); });
+MH3_GAME_PORT(802B035C, StageEffectColor, { return StageEffectColor(game, frame.Arg(3), frame.Arg(4)); });
 REGISTER_NATIVE_FUNCTION_AS(0x802B035C, MH3_StageEffectColor, "StageEffectColor");
-MH3_EFFECT_PORT(800FA26C, ZoneContains, { return ZoneContains(game, frame.Arg(3), frame.Arg(4)) ? 1 : 0; });
+MH3_GAME_PORT(800FA26C, ZoneContains, { return ZoneContains(game, frame.Arg(3), frame.Arg(4)) ? 1 : 0; });
 REGISTER_NATIVE_FUNCTION_AS(0x800FA26C, MH3_ZoneContains, "ZoneContains");
 
 MH3_EFFECT_PORT(800F9E68, ZoneApplyColor, {
@@ -2579,43 +2643,43 @@ MH3_EFFECT_PORT(800FA4B4, EffectZoneColor, {
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800FA4B4, MH3_EffectZoneColor, "EffectZoneColor");
 
-MH3_EFFECT_PORT(800FA638, ModelZoneColor, {
+MH3_GAME_PORT(800FA638, ModelZoneColor, {
     ModelZoneColor(game, frame.Arg(3), frame.Arg(4), frame[0x10]);
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800FA638, MH3_ModelZoneColor, "ModelZoneColor");
 
-MH3_EFFECT_PORT(800E2950, SetMatColor, {
+MH3_GAME_PORT(800E2950, SetMatColor, {
     SetMatColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7));
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800E2950, MH3_SetMatColor, "SetMatColor");
 
-MH3_EFFECT_PORT(800E2B58, GetMatColor, { return GetMatColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6)); });
+MH3_GAME_PORT(800E2B58, GetMatColor, { return GetMatColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800E2B58, MH3_GetMatColor, "GetMatColor");
 
-MH3_EFFECT_PORT(800E2D38, GetTevKColor, {
+MH3_GAME_PORT(800E2D38, GetTevKColor, {
     GetTevKColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6));
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800E2D38, MH3_GetTevKColor, "GetTevKColor");
 
-MH3_EFFECT_PORT(800E2DC4, SetTevKColor, {
+MH3_GAME_PORT(800E2DC4, SetTevKColor, {
     SetTevKColor(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame[0x10]);
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800E2DC4, MH3_SetTevKColor, "SetTevKColor");
 
 // The ResMatChan and ResMatTevColor accessors take the handle's address.
-MH3_EFFECT_PORT(80096DE0, ResMatChanSetColor, {
+MH3_GAME_PORT(80096DE0, ResMatChanSetColor, {
     MatChanSetColor(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5));
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x80096DE0, MH3_ResMatChanSetColor, "ResMatChanSetColor");
 
-MH3_EFFECT_PORT(80096EF0, ResMatChanGetColor, { return MatChanGetColor(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5)); });
+MH3_GAME_PORT(80096EF0, ResMatChanGetColor, { return MatChanGetColor(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5)); });
 REGISTER_NATIVE_FUNCTION_AS(0x80096EF0, MH3_ResMatChanGetColor, "ResMatChanGetColor");
-MH3_EFFECT_PORT(80096424, ResTevColorGetKColor, { return TevKColorGet(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5)); });
+MH3_GAME_PORT(80096424, ResTevColorGetKColor, { return TevKColorGet(FlatRead32(frame.Arg(3)), frame.Arg(4), frame.Arg(5)); });
 REGISTER_NATIVE_FUNCTION_AS(0x80096424, MH3_ResTevColorGetKColor, "ResTevColorGetKColor");
 
 // The geometry tests write no guest memory but their result (and the

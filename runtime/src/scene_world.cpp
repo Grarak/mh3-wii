@@ -25,6 +25,7 @@
 // The split is on in every build. The MH3 world split line (development)
 // shows each side's time.
 #include "abi_bridge.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "guest_worker.h"
 #include "memory.h"
@@ -137,6 +138,9 @@ bool SplitAllowed() {
     if (PortCheck::Set() && !PortCheck::Enabled("ScnGroupCalcWorld"))
         return false;
 #endif
+    // The worker may still calculate the previous step's effects: the split
+    // waits for them rather than leave the whole pass to the game thread.
+    EffectStep::Touch();
     return GuestWorker::Available() && !GuestWorker::Pending();
 }
 

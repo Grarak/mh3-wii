@@ -336,6 +336,7 @@ static void ListToArrayPort(CpuContext* cpu) {
 
 extern "C" void func_8009B3D8(CpuContext* ctx);
 extern "C" void MH3_EffUtilListToArray(CpuContext* ctx) {
+    EffectStep::Touch();
     PortCheck::Call(ctx, "EffUtilListToArray", func_8009B3D8, ListToArrayPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009B3D8, MH3_EffUtilListToArray, "EffUtilListToArray");

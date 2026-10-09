@@ -68,6 +68,12 @@ extern "C" void MH3_AnimCurveExecuteRotate(CpuContext*);
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
 #endif
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+#include "guest_flat_memory.h"
+#include "recomp_mod_loader.h"
+#include <signal.h>
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -277,6 +283,20 @@ struct Step {
 };
 
 Step step;
+
+// The clock of the step whose Effect::Calc calls run. The deferred calls run
+// on the worker into the next step, which the frame's pacing began
+// (GameStep::Begin): they take the clock the task pass collected them under.
+struct CalcClock {
+    double scale = 1.0, elapsed = 0.0;
+    uint32_t ticks = 1;
+};
+
+const CalcClock* deferredClock = nullptr; // while RunDeferred runs
+
+CalcClock CurrentClock() {
+    return deferredClock ? *deferredClock : CalcClock{GameStep::Scale(), GameStep::Elapsed(), GameStep::Ticks()};
+}
 
 // Particles whose age crosses no whole tick in the running ParticleManager::Calc.
 // Stamped with the ParticleManager::Calc call (betweenCall) that set it, so
@@ -697,8 +717,9 @@ void Restore(const std::any& state) {
 static void EffectCalcPort(CpuContext* ctx) {
     const uint32_t effect = ctx->gpr[3];
     const bool onlyBillboard = (ctx->gpr[4] & 0xFF) != 0;
-    const double scale = GameStep::Scale();
-    const uint32_t ticks = GameStep::Ticks();
+    const CalcClock clock = CurrentClock();
+    const double scale = clock.scale;
+    const uint32_t ticks = clock.ticks;
 
     if (onlyBillboard) {
         EffectCalcNative(ctx);
@@ -757,7 +778,12 @@ namespace {
 struct Deferral {
     bool enabled = false, collecting = false, viewPending = false;
     std::atomic<bool> launched{false}; // the draw thread reads it beside the game thread (overlap)
+
+    // Overlapped: the previous step's calls, launched and not joined yet; the
+    // task pass joins them at its first use of the effects (Touch).
+    std::atomic<bool> joinPending{false};
     std::vector<std::pair<uint32_t, uint32_t>> calls;
+    CalcClock clock; // the task pass's, for the calls
 };
 
 bool overlap = false;
@@ -781,12 +807,133 @@ void PutEffectView(CpuContext* cpu) {
 
 // Runs the collected calls (on the worker, or on the game thread at Join).
 void RunDeferred(CpuContext* cpu, void*) {
+    deferredClock = &deferral.clock;
+
     for (const auto& [effect, onlyBillboard] : deferral.calls) {
         cpu->gpr[3] = effect;
         cpu->gpr[4] = onlyBillboard;
         CalcEffect(cpu);
     }
+
+    deferredClock = nullptr;
 }
+
+// The previous step's calls are done (waited for when they were launched):
+// the list goes.
+void FinishPrevious() {
+    if (deferral.launched)
+        GuestWorker::Wait();
+
+    deferral.calls.clear();
+    deferral.launched = false;
+    deferral.joinPending.store(false, std::memory_order_relaxed);
+}
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+
+// MH3_EFFECT_TOUCH_CHECK=1 verifies the join points (Touch). The task pass
+// joins the calculation at its start again, and the effect pools are
+// inaccessible from there until its first Touch: an access before it is a use
+// of the effects the lazy join would race with. Each function that makes one
+// is reported once; the pools then open for the rest of the pass.
+namespace TouchCheck {
+// The ef heap: MEM1, allocated once at boot (effects, emitters, particle
+// managers and particles all fall inside it).
+constexpr uint32_t kPoolStart = 0x814F6000, kPoolEnd = 0x81580000;
+std::atomic<bool> armed{false};
+struct sigaction previous {};
+std::array<uint32_t, 64> reported{};
+std::atomic<uint32_t> reportedCount{0};
+uint32_t passes = 0, faultPasses = 0;
+bool faulted = false;
+
+bool Enabled() {
+    // Read at first use, after the environment is complete.
+    static const bool enabled = [] {
+        const char* value = std::getenv("MH3_EFFECT_TOUCH_CHECK");
+        return value && *value && value[0] != '0';
+    }();
+    return enabled;
+}
+
+uint8_t* Pools() {
+    return static_cast<uint8_t*>(GuestFlat::Host(kPoolStart));
+}
+
+void Disarm() {
+    if (armed.exchange(false))
+        mprotect(Pools(), kPoolEnd - kPoolStart, PROT_READ | PROT_WRITE);
+}
+
+void Fault(int signal, siginfo_t* info, void* context) {
+    const auto address = reinterpret_cast<uint8_t*>(info->si_addr);
+
+    if (!armed.load() || address < Pools() || address >= Pools() + (kPoolEnd - kPoolStart)) {
+        if (previous.sa_flags & SA_SIGINFO)
+            previous.sa_sigaction(signal, info, context);
+        else
+            sigaction(signal, &previous, nullptr); // the faulting access repeats under it
+
+        return;
+    }
+
+    Disarm();
+    const uint32_t function = RecompMod::CurrentTranslatedExecutionAddress();
+
+    // quest_field's thunk to an effect's virtual Calc (vtable +0x18, the vtable
+    // at +0x1C) reads only the vtable, which the calculation never writes;
+    // Effect::Calc then joins.
+    if (function == 0x808E9800)
+        return;
+
+    faulted = true;
+    const uint32_t count = reportedCount.load();
+
+    for (uint32_t i = 0; i < count; ++i)
+        if (reported[i] == function)
+            return;
+
+    if (count < reported.size()) {
+        reported[count] = function;
+        reportedCount.store(count + 1);
+    }
+
+    const bool game = PpcThread::CurrentThread() == PpcThread::Game;
+    const CpuContext* cpu = PpcThread::state[PpcThread::Game].context;
+    std::fprintf(stderr, "MH3 effect touch check: %08x (%s thread, lr %08x) used effect memory %08x before the task pass joined the calculation\n", function,
+                 game ? "game" : "another", cpu ? cpu->lr : 0, kPoolStart + uint32_t(address - Pools()));
+}
+
+void Arm() {
+    if (!Enabled())
+        return;
+
+    static const bool installed = [] {
+        struct sigaction action {};
+        action.sa_sigaction = Fault;
+        action.sa_flags = SA_SIGINFO | SA_NODEFER;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGSEGV, &action, &previous);
+        return true;
+    }();
+    (void)installed;
+
+    // Nothing else may use the pools meanwhile: the draw thread draws the
+    // effects, and the calculation was joined.
+    if (DrawThread::Thread().Pending())
+        DrawThread::Thread().Wait();
+
+    if (faulted)
+        ++faultPasses;
+
+    if (++passes % 600 == 0)
+        std::fprintf(stderr, "MH3 effect touch check: %u task passes, %u with an access before the join, %u functions\n", passes, faultPasses, reportedCount.load());
+
+    faulted = false;
+    armed = true;
+    mprotect(Pools(), kPoolEnd - kPoolStart, PROT_NONE);
+}
+} // namespace TouchCheck
+#endif
 } // namespace
 
 namespace EffectStep {
@@ -807,27 +954,59 @@ uint32_t TakeRetireDrawWaits() {
 #endif
 
 void Defer(bool enabled) {
-    // Overlapped: the previous step's calls may still run beside the draw
-    // thread's scene; the list is the game thread's, joined before the next.
+    // Overlapped: the previous step's calls may still run on the worker. The
+    // task pass's tasks before its first use of the effects run beside them,
+    // and that use joins them (Touch); the list is the game thread's.
     if (overlap) {
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+        if (deferral.launched && !TouchCheck::Enabled())
+#else
         if (deferral.launched)
-            GuestWorker::Wait();
-
-        deferral.calls.clear();
-        deferral.launched = false;
+#endif
+            deferral.joinPending.store(true, std::memory_order_relaxed);
+        else
+            FinishPrevious();
     }
 
     // Port checks compare whole RAM around a call: they need the game thread's order.
     deferral.enabled = enabled && GuestWorker::Available() && !PortCheck::Set();
     deferral.collecting = deferral.enabled;
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+    TouchCheck::Arm();
+#endif
+}
+
+void Touch() {
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+    if (TouchCheck::armed.load(std::memory_order_relaxed) && PpcThread::CurrentThread() == PpcThread::Game)
+        TouchCheck::Disarm();
+#endif
+    if (!deferral.joinPending.load(std::memory_order_relaxed) || PpcThread::CurrentThread() != PpcThread::Game)
+        return;
+
+    FinishPrevious();
 }
 
 void Collected() {
     deferral.collecting = false;
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+    TouchCheck::Disarm();
+#endif
+
+    // Still pending, no call was collected, and the previous calls may still
+    // read their clock.
+    if (!deferral.joinPending.load(std::memory_order_relaxed))
+        deferral.clock = {GameStep::Scale(), GameStep::Elapsed(), GameStep::Ticks()};
 }
 
 void Launch(const CpuContext& game) {
-    if (deferral.calls.empty() || deferral.launched || (overlap && OnDrawThread()))
+    if (overlap && OnDrawThread())
+        return;
+
+    // The previous step's calls first, when this task pass never used the effects.
+    Touch();
+
+    if (deferral.calls.empty() || deferral.launched)
         return;
 
     GuestWorker::Submit(game, RunDeferred, nullptr);
@@ -846,6 +1025,7 @@ void Join(CpuContext* cpu) {
     }
 
     deferral.collecting = false;
+    Touch();
 
     if (deferral.calls.empty())
         return;
@@ -873,6 +1053,7 @@ void Join(CpuContext* cpu) {
 extern "C" void func_800A5C6C(CpuContext* ctx);
 extern "C" void MH3_EffectSystemRetireEffect(CpuContext* ctx) {
     const uint32_t effect = ctx->gpr[4];
+    EffectStep::Touch();
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("effect retirement");
 #endif
@@ -902,6 +1083,14 @@ extern "C" void MH3_EffectSystemRetireEffect(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A5C6C, MH3_EffectSystemRetireEffect, "EffectSystemRetireEffect");
 
+// nw4r::ef::EffectSystem::CreateEffect: a new effect from the system's pools.
+extern "C" void func_800A5AF4(CpuContext* ctx);
+extern "C" void MH3_EffectSystemCreateEffect(CpuContext* ctx) {
+    EffectStep::Touch();
+    func_800A5AF4(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800A5AF4, MH3_EffectSystemCreateEffect, "EffectSystemCreateEffect");
+
 // func_800D4910 (DrawScene, before the buckets): when the effect system draws
 // and has a view matrix, puts the current view (get_current_view_mtx) there.
 // The original builds it on the stack and copies it; the getter takes its
@@ -923,6 +1112,7 @@ extern "C" void MH3_EffectCalc(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
         GuestWorker::NoteShared("Effect::Calc collection");
 #endif
+        EffectStep::Touch();
         deferral.calls.emplace_back(ctx->gpr[3], ctx->gpr[4] & 0xFF);
         return;
     }
@@ -975,7 +1165,7 @@ void TraceParticles(uint32_t manager) {
 
     static uint64_t tick = UINT64_MAX;
     static AddressMap<uint64_t> printed;
-    const uint64_t now = uint64_t(std::floor(GameStep::Elapsed() + 1e-9));
+    const uint64_t now = uint64_t(std::floor(CurrentClock().elapsed + 1e-9));
 
     if (now % 3 != 0)
         return;

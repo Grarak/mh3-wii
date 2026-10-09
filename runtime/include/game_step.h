@@ -65,11 +65,18 @@ void Collected();
 void Launch(const CpuContext& game);
 void Join(CpuContext* cpu);
 
-// The overlapped draw (the default, docs/pipelined-draw.md): the
-// game thread launches a step's calls at its handoff and owns the list, joining
-// them in the next step's Defer; the draw thread's Join only waits for the
-// calculation and puts the effect view, and its Launch does nothing.
+// The overlapped draw (the default, docs/optimizations/threading/pipelined-draw.md): the
+// game thread launches a step's calls at its handoff and owns the list; the
+// next step's task pass joins them at its first touch of the effect system
+// (Touch), and its earlier tasks run beside the calculation. The draw thread's
+// Join only waits for the calculation and puts the effect view, and its Launch
+// does nothing.
 void SetOverlap(bool enabled);
+
+// Game thread, before any use of the effects (the effect ports, Effect::Calc,
+// effect creation, the world split's worker job): joins the previous step's
+// calculation if it still runs. Other threads return at once.
+void Touch();
 #ifdef MH3_DEVELOPMENT
 // MH3_TRACE=particles: child emissions an Effect::Calc found queued.
 void NoteQueuedChildren(uint32_t count);

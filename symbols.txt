@@ -1982,6 +1982,7 @@
 800f99ec EffectChangeColor
 800f9b24 EffectChangeScale
 800f9bcc EmitterSetScale
+800f9c04 EffectChangeScaleVec
 800f9744 EffectSetRootTrans
 800f98e8 EffectHasManagers
 800f9984 EffectMove
