@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of twenty-one enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of twenty-two enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -13,6 +13,7 @@
 //     0x801482AC  kind 1 (Rathian)   a wait (0.0, 0.4), 150 ticks
 //     0x80159054  kind 3 (Qurupeco)  a move, at least 10 or 20 ticks
 //     0x8015898C  kind 3 (Qurupeco)  a backward hop, 22 or 30 ticks
+//     0x80171B7C  kind 12 (Great Jaggi) a retreat, 15 ticks before it may end
 //     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
 //     0x801BD89C  kind 6 (Diablos)   a move under the sand, at least 20 ticks
 //     0x801B795C, 0x801B867C  hops (the dispatcher 0x801B94B4, after kind
@@ -462,6 +463,54 @@ void Em003BackstepPort(CpuContext* ctx) {
                 game.Call<0x80128AD4>({work, 4, 1});
             else
                 game.Call<0x80128110>({work});
+        }
+
+        break;
+    }
+}
+
+// kind 12 0x80171B7C: Great Jaggi backing away from its target (motion 10,
+// half the distance at most its data's first value, 0x80134068), then
+// motion 11 for 15 ticks (the original's 15 calls) before it ends with the
+// motion or once nearer than that value.
+void Em012RetreatPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const uint32_t data = game.Call<0x801264B8>({work}); // the kind's data: f32 the near distance
+    const float near = Memory::ReadFloat32(data);
+
+    switch (em.State()) {
+    case 0: {
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(10, 6, 0);
+        game.Call<0x80050F58>({work + 0x188, work + 0x36C});
+        const float away = -0.5f * game.F1();
+        game.Call<TurnSetUp>({work, 0}, {double(away > -near ? -near : away)});
+        break;
+    }
+    case 1:
+        if (game.Call<TurnStep>({work, 0, 0x80}) == 1 && game.Call<0x8012F9AC>({work}) == 0) {
+            em.NextState();
+            em.SetMotion(11, 4, 0);
+            game.Call<TurnSetUp>({work, 0}, {0.0});
+            em.Count(0xF);
+        }
+
+        break;
+    case 2:
+        game.Call<TurnStep>({work, 0, 0x80});
+
+        if (em.Count() > 0)
+            em.Count(em.Count() - int32_t(GameStep::Ticks()));
+        else if (em.Ended()) {
+            game.Call<ActionDone>({work});
+        } else {
+            game.Call<0x80050FE4>({work + 0x188, work + 0x36C});
+
+            if (game.F1() < near)
+                game.Call<ActionDone>({work});
         }
 
         break;
@@ -1395,6 +1444,12 @@ extern "C" void MH3_Em034HopBack(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em034HopBack", func_801B867C, Em034HopBackPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801B867C, MH3_Em034HopBack, "Em034HopBack");
+
+extern "C" void func_80171B7C(CpuContext* ctx);
+extern "C" void MH3_Em012Retreat(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em012Retreat", func_80171B7C, Em012RetreatPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80171B7C, MH3_Em012Retreat, "Em012Retreat");
 
 extern "C" void func_801BD724(CpuContext* ctx);
 extern "C" void MH3_Em006Buried(CpuContext* ctx) {
