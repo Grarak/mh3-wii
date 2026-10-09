@@ -7,6 +7,8 @@
 // can be checked against the translated originals (MH3_PORT_CHECK). Remote
 // speaker sends are computed as the SDK does; the native mixer does not play
 // them.
+#include "sdk_mix.h"
+
 #include "abi_bridge.h"
 #include "memory_access.h"
 #include "port_check.h"
@@ -403,6 +405,36 @@ void UpdateSettingsPort(CpuContext*) {
 
 } // namespace
 
+namespace SdkMix {
+void InitChannel(uint32_t voice, uint32_t mode, int32_t input, uint32_t auxA, uint32_t auxB, uint32_t auxC, uint32_t pan, uint32_t span, uint32_t fader) {
+    ::InitChannel(voice, mode, input, auxA, auxB, auxC, pan, span, fader);
+}
+void ReleaseChannel(uint32_t voice) {
+    FlatWrite32(Channel(voice) + kVoice, 0);
+}
+void SetInput(uint32_t voice, int32_t db) {
+    SetField(voice, kInput, uint32_t(db), kInputDirty);
+}
+void SetPan(uint32_t voice, int32_t pan) {
+    const uint32_t c = Channel(voice);
+    FlatWrite32(c + kPan, ClampPan(pan));
+    ::SetPan(c);
+    FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
+}
+void SetSPan(uint32_t voice, int32_t span) {
+    const uint32_t c = Channel(voice);
+    FlatWrite32(c + kSPan, ClampPan(span));
+    ::SetPan(c);
+    FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
+}
+void UpdateSettings() {
+    ::UpdateSettings();
+}
+uint32_t SoundMode() {
+    return FlatRead32(kSoundMode);
+}
+} // namespace SdkMix
+
 extern "C" {
 void func_804C2D60(CpuContext*);
 void func_804C2EC0(CpuContext*);
@@ -423,10 +455,10 @@ void MH3_MIXInitChannel(CpuContext* cpu) {
     PortCheck::Call(cpu, "MIXInitChannel", func_804C2EC0, InitChannelPort);
 }
 void MH3_MIXReleaseChannel(CpuContext* cpu) {
-    FlatWrite32(Channel(cpu->gpr[3]) + kVoice, 0);
+    SdkMix::ReleaseChannel(cpu->gpr[3]);
 }
 void MH3_MIXSetInput(CpuContext* cpu) {
-    SetField(cpu->gpr[3], kInput, cpu->gpr[4], kInputDirty);
+    SdkMix::SetInput(cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
 void MH3_MIXSetAuxA(CpuContext* cpu) {
     SetField(cpu->gpr[3], kAuxA, cpu->gpr[4], kMixDirty);
@@ -435,16 +467,10 @@ void MH3_MIXSetAuxB(CpuContext* cpu) {
     SetField(cpu->gpr[3], kAuxB, cpu->gpr[4], kMixDirty);
 }
 void MH3_MIXSetPan(CpuContext* cpu) {
-    const uint32_t c = Channel(cpu->gpr[3]);
-    FlatWrite32(c + kPan, ClampPan(int32_t(cpu->gpr[4])));
-    SetPan(c);
-    FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
+    SdkMix::SetPan(cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
 void MH3_MIXSetSPan(CpuContext* cpu) {
-    const uint32_t c = Channel(cpu->gpr[3]);
-    FlatWrite32(c + kSPan, ClampPan(int32_t(cpu->gpr[4])));
-    SetPan(c);
-    FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
+    SdkMix::SetSPan(cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
 void MH3_MIXSetFader(CpuContext* cpu) {
     SetField(cpu->gpr[3], kFader, cpu->gpr[4], kMixDirty);

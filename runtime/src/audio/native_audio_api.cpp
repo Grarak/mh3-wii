@@ -11,6 +11,7 @@
 // of the DSP task and AI DMA, __AXOutQuit stops it, and registering an aux
 // callback hands a known effect (AXFX ReverbHi) to the mixer.
 #include "native_audio.h"
+#include "sound_voice.h"
 
 #include "abi_bridge.h"
 #include "guest_call.h"
@@ -252,6 +253,144 @@ uint32_t ToUnsigned(double value) {
 
 } // namespace
 
+namespace SoundVoice {
+
+void Free(uint32_t voice) {
+    RemoveFromStack(voice);
+    if (FlatRead16(voice + 0x38) == 1)
+        FlatWrite32(voice + kVpbDepop, 1);
+    SetPBDefault(voice);
+    PushFreeStack(voice);
+}
+
+void SetState(uint32_t voice, uint32_t state) {
+    if (FlatRead16(voice + 0x38) == state)  // cmplw of the zero-extended halfword
+        return;
+    FlatWrite16(voice + 0x38, uint16_t(state));
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncState);
+    if (state == 0)
+        FlatWrite32(voice + kVpbDepop, 1);
+}
+
+void SetPriority(uint32_t voice, uint32_t priority) {
+    RemoveFromStack(voice);
+    PushToStack(voice, priority);
+    FlatWrite32(voice + kVpbPriority, priority);
+}
+
+// 0 none, 1 linear, 2-4 polyphase (coefficient set 0-2).
+void SetSrcType(uint32_t voice, uint32_t type) {
+    if (type == 0) {
+        FlatWrite16(voice + 0x30, 2);
+    } else if (type == 1) {
+        FlatWrite16(voice + 0x30, 1);
+    } else if (type <= 4) {
+        FlatWrite16(voice + 0x30, 0);
+        FlatWrite16(voice + 0x32, uint16_t(type - 2));
+    }
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrcSelect);
+}
+
+// Stored as 16.16 (fmuls by 65536.0f).
+void SetSrcRatio(uint32_t voice, float ratio) {
+    const uint32_t fixed = ToUnsigned(double(float(65536.0f * ratio)));
+    FlatWrite16(voice + 0xD0, uint16_t(fixed));
+    FlatWrite16(voice + 0xCE, uint16_t(fixed >> 16));
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrcRatio);
+}
+
+void SetCurrentAddr(uint32_t voice, uint32_t address) {
+    FlatWrite16(voice + 0xA2, uint16_t(address >> 16));
+    FlatWrite16(voice + 0xA4, uint16_t(address));
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncCurrAddr);
+}
+
+void SetAdpcmLoop(uint32_t voice, uint16_t predScale, uint16_t yn1, uint16_t yn2) {
+    FlatWrite16(voice + 0xDC, predScale);
+    FlatWrite16(voice + 0xDE, yn1);
+    FlatWrite16(voice + 0xE0, yn2);
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAdpcmLoop);
+}
+
+void SetLpf(uint32_t voice, uint16_t on, uint16_t yn1, uint16_t a0, uint16_t b0) {
+    FlatWrite16(voice + 0xE2, on);
+    FlatWrite16(voice + 0xE4, yn1);
+    FlatWrite16(voice + 0xE6, a0);
+    FlatWrite16(voice + 0xE8, b0);
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncLpf);
+}
+
+// c = 2 - cos(2 pi f / 32000); b0 = 32768 (c - sqrt(c^2 - 1)); a0 = 0x7FFF - b0,
+// in the original's single-precision steps.
+void LpfCoefs(uint16_t frequency, uint16_t& a0, uint16_t& b0) {
+    const float w = float(6.2831854820251465f * float(frequency)) / 32000.0f;
+    const float c = 2.0f - float(std::cos(double(w)));
+    const float root = float(std::sqrt(double(c * c - 1.0f)));
+    const float scaled = 32768.0f * -(root - c);
+    b0 = uint16_t(int32_t(scaled));
+    a0 = uint16_t(0x7FFF - b0);
+}
+
+void SetFormat(uint32_t voice, uint16_t loopFlag, uint16_t format) {
+    FlatWrite16(voice + 0x96, loopFlag);
+    FlatWrite16(voice + 0x98, format);
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAddr);
+}
+
+// The loop, end and current addresses are hi/lo halfword pairs (only
+// halfword aligned).
+void SetLoop(uint32_t voice, uint16_t loopFlag, uint32_t loop, uint32_t end, uint32_t current) {
+    FlatWrite16(voice + 0x96, loopFlag);
+    const uint32_t words[3] = {loop, end, current};
+    for (uint32_t i = 0; i < 3; ++i) {
+        FlatWrite16(voice + 0x9A + i * 4, uint16_t(words[i] >> 16));
+        FlatWrite16(voice + 0x9C + i * 4, uint16_t(words[i]));
+    }
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAddr);
+}
+
+void SetAddr(uint32_t voice, const Addr& addr) {
+    SetFormat(voice, addr.loopFlag, addr.format);
+    SetLoop(voice, addr.loopFlag, addr.loop, addr.end, addr.current);
+}
+
+void SetAdpcm(uint32_t voice, const Adpcm& adpcm) {
+    for (uint32_t i = 0; i < 16; ++i)
+        FlatWrite16(voice + 0xA6 + i * 2, adpcm.coefs[i]);
+    FlatWrite16(voice + 0xC6, adpcm.gain);
+    FlatWrite16(voice + 0xC8, adpcm.predScale);
+    FlatWrite16(voice + 0xCA, adpcm.yn1);
+    FlatWrite16(voice + 0xCC, adpcm.yn2);
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAdpcm);
+}
+
+void SetSrc(uint32_t voice, uint32_t ratio) {
+    FlatWrite16(voice + 0xCE, uint16_t(ratio >> 16));
+    FlatWrite16(voice + 0xD0, uint16_t(ratio));
+    for (uint32_t at = 0xD2; at <= 0xDA; at += 2)
+        FlatWrite16(voice + at, 0);
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrc);
+}
+
+void SetType(uint32_t voice, uint16_t type) {
+    FlatWrite16(voice + 0x3A, type);
+    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncType);
+}
+
+uint32_t State(uint32_t voice) {
+    return FlatRead16(voice + 0x38);
+}
+
+uint32_t LoopFlag(uint32_t voice) {
+    return FlatRead16(voice + 0x96);
+}
+
+uint32_t CurrentAddr(uint32_t voice) {
+    return uint32_t(FlatRead16(voice + 0xA2)) << 16 | FlatRead16(voice + 0xA4);
+}
+
+} // namespace SoundVoice
+
 extern "C" {
 
 // AXInit, 0x8046EA50.
@@ -332,12 +471,7 @@ void MH3_AXRemoveFromStack(CpuContext* cpu) {
 
 // AXFreeVoice, 0x8046EE60.
 void MH3_AXFreeVoice(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3];
-    RemoveFromStack(voice);
-    if (FlatRead16(voice + 0x38) == 1)
-        FlatWrite32(voice + kVpbDepop, 1);
-    SetPBDefault(voice);
-    PushFreeStack(voice);
+    SoundVoice::Free(cpu->gpr[3]);
 }
 
 // AXAcquireVoice, 0x8046EEE0: r3 priority, r4 callback, r5 user context.
@@ -391,10 +525,7 @@ void MH3_AXAcquireVoice(CpuContext* cpu) {
 
 // AXSetVoicePriority, 0x8046F070.
 void MH3_AXSetVoicePriority(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3], priority = cpu->gpr[4];
-    RemoveFromStack(voice);
-    PushToStack(voice, priority);
-    FlatWrite32(voice + kVpbPriority, priority);
+    SoundVoice::SetPriority(cpu->gpr[3], cpu->gpr[4]);
 }
 
 // __AXAuxInit, 0x8046F110, and __AXAuxQuit, 0x8046F230.
@@ -512,60 +643,34 @@ void MH3_AXVPBQuit(CpuContext*) {
 
 // AXSetVoiceSrcType, 0x80471BD0: 0 none, 1 linear, 2-4 polyphase (coefficient set 0-2).
 void MH3_AXSetVoiceSrcType(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3], type = cpu->gpr[4];
-    if (type == 0) {
-        FlatWrite16(voice + 0x30, 2);
-    } else if (type == 1) {
-        FlatWrite16(voice + 0x30, 1);
-    } else if (type <= 4) {
-        FlatWrite16(voice + 0x30, 0);
-        FlatWrite16(voice + 0x32, uint16_t(type - 2));
-    }
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrcSelect);
+    SoundVoice::SetSrcType(cpu->gpr[3], cpu->gpr[4]);
 }
 
 // AXSetVoiceState, 0x80471C90.
 void MH3_AXSetVoiceState(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3], state = cpu->gpr[4];
-    if (FlatRead16(voice + 0x38) == state)  // cmplw of the zero-extended halfword
-        return;
-    FlatWrite16(voice + 0x38, uint16_t(state));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncState);
-    if (state == 0)
-        FlatWrite32(voice + kVpbDepop, 1);
+    SoundVoice::SetState(cpu->gpr[3], cpu->gpr[4]);
 }
 
 // AXSetVoiceCurrentAddr, 0x80471D00.
 void MH3_AXSetVoiceCurrentAddr(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3], address = cpu->gpr[4];
-    FlatWrite16(voice + 0xA2, uint16_t(address >> 16));
-    FlatWrite16(voice + 0xA4, uint16_t(address));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncCurrAddr);
+    SoundVoice::SetCurrentAddr(cpu->gpr[3], cpu->gpr[4]);
 }
 
 // AXSetVoiceSrcRatio, 0x80471D60: f1 ratio, stored as 16.16 (fmuls by 65536.0f).
 void MH3_AXSetVoiceSrcRatio(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3];
-    const uint32_t ratio = ToUnsigned(double(float(65536.0 * cpu->fpr[1].d)));
-    FlatWrite16(voice + 0xD0, uint16_t(ratio));
-    FlatWrite16(voice + 0xCE, uint16_t(ratio >> 16));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrcRatio);
+    SoundVoice::SetSrcRatio(cpu->gpr[3], float(cpu->fpr[1].d));
 }
 
 // AXSetVoiceAdpcmLoop, 0x80471DE0: r4 points at {pred_scale, yn1, yn2}.
 void MH3_AXSetVoiceAdpcmLoop(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3], loop = cpu->gpr[4];
-    for (uint32_t i = 0; i < 3; ++i)
-        FlatWrite16(voice + 0xDC + i * 2, FlatRead16(loop + i * 2));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAdpcmLoop);
+    const uint32_t loop = cpu->gpr[4];
+    SoundVoice::SetAdpcmLoop(cpu->gpr[3], FlatRead16(loop), FlatRead16(loop + 2), FlatRead16(loop + 4));
 }
 
 // AXSetVoiceLpf, 0x80471E40: r4 points at {on, yn1, a0, b0}.
 void MH3_AXSetVoiceLpf(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3], lpf = cpu->gpr[4];
-    for (uint32_t i = 0; i < 4; ++i)
-        FlatWrite16(voice + 0xE2 + i * 2, FlatRead16(lpf + i * 2));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncLpf);
+    const uint32_t lpf = cpu->gpr[4];
+    SoundVoice::SetLpf(cpu->gpr[3], FlatRead16(lpf), FlatRead16(lpf + 2), FlatRead16(lpf + 4), FlatRead16(lpf + 6));
 }
 
 // AXSetVoiceLpfCoefs, 0x80471EB0: r4 a0, r5 b0.
@@ -580,14 +685,10 @@ void MH3_AXSetVoiceLpfCoefs(CpuContext* cpu) {
 // c = 2 - cos(2 pi f / 32000); b0 = 32768 (c - sqrt(c^2 - 1)); a0 = 0x7FFF - b0,
 // in the original's single-precision steps.
 void MH3_AXGetLpfCoefs(CpuContext* cpu) {
-    const float frequency = float(cpu->gpr[3]);
-    const float w = float(6.2831854820251465f * frequency) / 32000.0f;
-    const float c = 2.0f - float(std::cos(double(w)));
-    const float root = float(std::sqrt(double(c * c - 1.0f)));
-    const float scaled = 32768.0f * -(root - c);
-    const uint32_t b0 = uint32_t(int32_t(scaled)) & 0xFFFF;
-    FlatWrite16(cpu->gpr[5], uint16_t(b0));
-    FlatWrite16(cpu->gpr[4], uint16_t(0x7FFF - b0));
+    uint16_t a0, b0;
+    SoundVoice::LpfCoefs(uint16_t(cpu->gpr[3]), a0, b0);
+    FlatWrite16(cpu->gpr[5], b0);
+    FlatWrite16(cpu->gpr[4], a0);
 }
 
 // AXGetMaxVoices, 0x80471FD0.
