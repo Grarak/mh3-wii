@@ -17,6 +17,11 @@ void SetInputFrame(uint64_t frame);
 
 // Holds MH3_INPUT playback before its next entry (while the village shortcut drives input).
 void HoldInputPlayback(bool hold);
+#ifdef MH3_DEVELOPMENT
+// MH3_INPUT=camera=N[:D]: the monster the field camera looks at, or -1, and
+// the eye's distance from it (0: the game's eye).
+int DebugCameraMonster(float* distance = nullptr);
+#endif
 
 // The live controls: SDL keyboard/gamepad on Linux, the Vita's pad and touch
 // panels on the Vita; MH3_INPUT=file= in development builds.

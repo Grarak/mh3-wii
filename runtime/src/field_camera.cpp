@@ -26,6 +26,13 @@
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
+#ifdef MH3_DEVELOPMENT
+#include "cheats.h"
+#include "controller_host.h"
+#include "dev_options.h"
+#include <chrono>
+#include <cstdio>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -168,6 +175,29 @@ void EaseHeight(uint32_t value, uint32_t wanted, float d) {
     WF(value, F(value) + step);
 }
 
+#ifdef MH3_DEVELOPMENT
+constexpr uint32_t kMovePosition = 0x188; // VEC3, a monster work's position (enemy_glide.cpp)
+
+// MH3_TRACE=monsters: each monster's move work and position once a second.
+void ReportMonsters() {
+    static const bool enabled = TraceOptions().Has("monsters");
+    static auto last = std::chrono::steady_clock::now();
+
+    if (!enabled || std::chrono::steady_clock::now() - last < std::chrono::seconds(1))
+        return;
+
+    last = std::chrono::steady_clock::now();
+    const uint32_t count = Cheats::MoveWorkCount(Cheats::Kind::Monster);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t m = Cheats::MoveWork(Cheats::Kind::Monster, i);
+
+        if (m && Memory::Read16(m))
+            std::fprintf(stderr, "MH3 monsters: [%u] work %08x id %04x position %.1f %.1f %.1f\n", i, m, Memory::Read16(m), F(m + kMovePosition), F(m + kMovePosition + 4),
+                         F(m + kMovePosition + 8));
+    }
+}
+#endif
 } // namespace
 
 static void FieldCameraUpdatePort(CpuContext* ctx) {
@@ -496,6 +526,40 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
 
     game.Call<VecCopy>({cam + kOldEye, cam + kEye});
     game.Call<VecCopy>({cam + kOldTarget, cam + kTarget});
+#ifdef MH3_DEVELOPMENT
+    ReportMonsters();
+
+    // MH3_INPUT=camera=N[:D]: the camera looks at monster N instead, from the
+    // game's eye or from D units away on the line to it (raised by D/3); the
+    // camera work keeps its own eye and target, so the game's eases are
+    // unchanged.
+    float distance = 0.0f;
+
+    if (const int monster = DebugCameraMonster(&distance); monster >= 0) {
+        if (const uint32_t m = Cheats::MoveWork(Cheats::Kind::Monster, uint32_t(monster)); m && Memory::Read16(m)) {
+            const uint32_t target = frame[8], eye = frame[20];
+            game.Call<VecCopy>({target, m + kMovePosition});
+            game.Call<VecCopy>({eye, cam + kEye});
+
+            if (distance > 0.0f) {
+                float away[3], length = 0.0f;
+
+                for (unsigned k = 0; k < 3; ++k) {
+                    away[k] = F(cam + kEye + 4 * k) - F(target + 4 * k);
+                    length += away[k] * away[k];
+                }
+
+                length = length > 0.0f ? std::sqrt(length) : 1.0f;
+
+                for (unsigned k = 0; k < 3; ++k)
+                    Memory::WriteFloat32(eye + 4 * k, F(target + 4 * k) + away[k] / length * distance + (k == 1 ? distance / 3.0f : 0.0f));
+            }
+
+            game.Call<CameraSet>({0, eye, target}, {F(cam + kFovA), F(cam + kFovB)});
+            return;
+        }
+    }
+#endif
     game.Call<CameraSet>({0, cam + kEye, cam + kTarget}, {F(cam + kFovA), F(cam + kFovB)});
 }
 

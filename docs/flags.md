@@ -122,22 +122,24 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_INPUT`: scripted controller input
 
-`MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH]` ([WPAD bridge](wpad-bridge.md#scripted-input-development-builds))
+`MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH][,camera=N[:D]]` ([WPAD bridge](wpad-bridge.md#scripted-input-development-builds))
 
 | Item | Effect |
 | --- | --- |
 | `file=PATH` | a one-sample control file (hex buttons and four axes), read every frame, replaces the host controller |
 | `record=PATH` | logs the host input, one line per change: `frame buttons lx ly rx ry` in 30 Hz frames of game time |
 | `playback=PATH` | replays such a log instead of the host input |
+| `camera=N[:D]` | the field camera looks at monster N (its move work, `MH3_TRACE=monsters`): from the game's eye, or from D units away on the line to it, raised by D/3. The camera work keeps its own eye and target |
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages]`
+`MH3_TRACE=[input][,draw-pages][,monsters]`
 
 | Item | Effect |
 | --- | --- |
 | `input` | once per tick of game time: the sticks and game keys as the game read them, the field camera's yaw and pitch, player 0's position and facing, steps and key repeats since the last line ([variable step](variable-step.md#7-input-from-the-host-to-the-game)) |
 | `draw-pages[=N]` | Linux hosts: from frame body N (default 1500), for 30 frames, the guest RAM pages each draw touches (MEM1/MEM2 protected, first access per page recorded) against those the next frame's logic writes; prints the conflicts per pair, by logic phase, and their writers and draw readers (`MH3 draw pages` lines). What a draw running beside the next logic step would have to snapshot or wait for. Slow while recording |
+| `monsters` | once a second, each monster's move work, its in-use word and its position (`MH3 monsters` lines; field_camera.cpp) |
 
 ## Build-option tools
 

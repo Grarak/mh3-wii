@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <cstdio>
@@ -21,14 +22,15 @@ std::optional<ClassicControllerSample> testSample;
 uint64_t inputFrame = 0;
 bool playbackHeld = false;
 
-// MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH]: scripted controller
+// MH3_INPUT=[file=PATH][,record=PATH][,playback=PATH][,camera=N]: scripted controller
 // input. file: a one-sample control file, read every frame, replaces the host
 // controller. record and playback: frame-indexed input logs for repeatable
 // runs; each line is "frame buttons(hex) lx ly rx ry", the sample in effect
 // from that paced frame on. record writes one line per change of the host
-// input; playback replaces the host input with a log.
+// input; playback replaces the host input with a log. camera=N[:D]: the
+// field camera looks at monster N, from D units away (field_camera.cpp).
 const DevOptions& InputOptions() {
-    static const DevOptions options("MH3_INPUT", {"file", "record", "playback"});
+    static const DevOptions options("MH3_INPUT", {"file", "record", "playback", "camera"});
     return options;
 }
 
@@ -119,6 +121,27 @@ std::optional<ClassicControllerSample> PlaybackInput() {
 }
 #endif
 } // namespace
+#ifdef MH3_DEVELOPMENT
+int DebugCameraMonster(float* distance) {
+    static float eyeDistance = 0.0f;
+    static const int monster = [] {
+        const char* value = InputOptions().Value("camera");
+
+        if (!value)
+            return -1;
+
+        if (const char* colon = std::strchr(value, ':'))
+            eyeDistance = float(std::atof(colon + 1));
+
+        return std::atoi(value);
+    }();
+
+    if (distance)
+        *distance = eyeDistance;
+
+    return monster;
+}
+#endif
 
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample) {
     testSample = sample;
