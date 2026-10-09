@@ -147,6 +147,7 @@
 {0x801E3EDCu, TickSite::CountdownPastZero}, // effect (801E3E68, ending): steps left (+0x10) before the release
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
+{0x8021D258u, TickSite::Countup},           // village talk typing (8021D238): steps (0x806ACC2C); shows steps / 2 + 1 letters
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
 {0x8024ACD0u, TickSite::CountdownPastZero},
 {0x8024C224u, TickSite::Countdown, 1},
@@ -310,6 +311,7 @@
 {0x803C3A28u, TickSite::Advance, 255},
 {0x803C3A34u, TickSite::Advance, 512},
 {0x803C477Cu, TickSite::Countup},           // event demo (803C46C4): demo steps (0x806D4FA4), the demo script's clock
+{0x803C80F4u, TickSite::Countup},           // quest NPC talk typing (803C7FEC): steps (+0x10C); shows steps / 2 + 1 letters
 {0x80449B20u, TickSite::Countdown},         // name-entry keyboard open (80449B00): input wait (0x8079722C), 15 after opening
 {0x8044A058u, TickSite::Countdown},         // name-entry keyboard update (8044A038): the same input wait
 {0x8044C784u, TickSite::CountdownPastZero}, // name-entry keyboard (8044C72C): close delay (the same word, from 2), fires below 0

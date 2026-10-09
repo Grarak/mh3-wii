@@ -286,6 +286,10 @@
 8021dc88 VillageTalkStep
 801fc750 VillageSceneMove
 8021ecfc VillageTalkDraw
+8021d238 VillageTalkTypeStep
+8021d634 VillageTalkTextDraw
+803c7fec QuestNpcTalkStep
+803c828c QuestNpcTalkDraw
 802b5938 CameraMove
 802b579c CameraUpdate
 802bc248 CameraEventUpdate
@@ -1244,6 +1248,7 @@
 8005bfcc FontGlyphColumns
 8005c010 FontGlyphNarrow
 8005c040 FontPutsText
+8005cac8 FontTypeText
 8005c174 FontFlush
 8005c564 FontTextureCoordinates
 80069a2c ModelTextureReplace
