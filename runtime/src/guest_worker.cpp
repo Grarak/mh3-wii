@@ -144,7 +144,7 @@ void GuestThread::Submit(const CpuContext& seed, Job job, void* data) {
     submitted_.Advance();
 }
 
-void GuestThread::Wait(bool park) {
+void GuestThread::Wait() {
     const uint32_t target = submitted_.Load();
 
     if (finished_.Load() == target)
@@ -155,7 +155,7 @@ void GuestThread::Wait(bool park) {
     // A job is a part of the frame the submitter would otherwise run itself:
     // spin, which also skips a condition variable's wake latency.
     for (uint32_t done = finished_.Load(); done != target;)
-        done = park ? finished_.AwaitChange(done, 50) : finished_.SpinForChange(done);
+        done = finished_.SpinForChange(done);
 
     waitTime_ += NowNs() - start;
     ++waitCount_;

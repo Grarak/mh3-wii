@@ -54,11 +54,9 @@ class GuestThread {
     // have been waited for.
     void Submit(const CpuContext& seed, Job job, void* data);
 
-    // Waits until the submitted job has finished; returns at once when none
-    // is pending. It spins, unless `park`: then it blocks after a short spin,
-    // leaving its core to a thread that shares it (on the Vita a spinning
-    // thread keeps a core from other threads of its priority).
-    void Wait(bool park = false);
+    // Waits (spinning) until the submitted job has finished; returns at once
+    // when none is pending.
+    void Wait();
 
     // True from Submit until the job finishes.
     bool Pending() const;
