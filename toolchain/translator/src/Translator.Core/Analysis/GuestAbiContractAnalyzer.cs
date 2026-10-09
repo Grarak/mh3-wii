@@ -12,7 +12,10 @@ public enum GuestCallBoundaryFlags
     RequiresCompleteContext = 1 << 0,
     CanSuspend = 1 << 1,
     CanSwitchThreads = 1 << 2,
-    InvokesGuestCode = 1 << 3
+    InvokesGuestCode = 1 << 3,
+    // The function never returns (see GuestAbiInterproceduralAnalyzer.NoReturnContract). Callers
+    // don't inherit it: a path through such a call ends there instead.
+    NoReturn = 1 << 4
 }
 
 public sealed record GuestAbiContract(
@@ -88,16 +91,26 @@ public static class GuestAbiContractAnalyzer
             ordinals.Add(blockList[index].Label, index);
         }
 
+        // A block that calls a function which never returns ends there: its later instructions
+        // and successors are dead through it, and the path leading only into it doesn't count
+        // toward the contract (see LiveBlocks).
+        var dies = new bool[blockCount];
+        for (var index = 0; index < blockCount; ++index)
+            dies[index] = blockList[index].Instructions.Any(instruction => IsNoReturnCall(instruction, calleeContracts));
+
         var predecessors = new List<int>[blockCount];
         for (var index = 0; index < blockCount; ++index) predecessors[index] = new List<int>();
         for (var index = 0; index < blockCount; ++index)
         {
+            if (dies[index]) continue;
             var successorCount = Successors(blockList[index], out var first, out var second);
             if (successorCount >= 1 && ordinals.TryGetValue(first, out var firstOrdinal))
                 predecessors[firstOrdinal].Add(index);
             if (successorCount == 2 && ordinals.TryGetValue(second, out var secondOrdinal))
                 predecessors[secondOrdinal].Add(index);
         }
+
+        var live = LiveBlocks(function, ordinals, predecessors, dies);
 
         var definiteWritesByBlock = new RegisterSet[blockCount];
         for (var index = 0; index < blockCount; ++index)
@@ -150,6 +163,7 @@ public static class GuestAbiContractAnalyzer
         var boundaryFlags = GuestCallBoundaryFlags.None;
         for (var index = 0; index < blockCount; ++index)
         {
+            if (!live[index]) continue;
             var written = definiteIn[index];
             var instructions = blockList[index].Instructions;
             for (var position = 0; position < instructions.Count; ++position)
@@ -164,7 +178,7 @@ public static class GuestAbiContractAnalyzer
                     if (!TryGetInlineThunk(target, out _, out _))
                         directTargets.Add(target);
                     if (calleeContracts?.TryGetValue(target, out var callee) == true)
-                        boundaryFlags |= callee.BoundaryFlags;
+                        boundaryFlags |= callee.BoundaryFlags & ~GuestCallBoundaryFlags.NoReturn;
                 }
                 else if (instruction is IrCall helperCall)
                 {
@@ -181,6 +195,7 @@ public static class GuestAbiContractAnalyzer
         var sawExitBlock = false;
         for (var index = 0; index < blockCount; ++index)
         {
+            if (!live[index]) continue;
             var successorCount = Successors(blockList[index], out var first, out var second);
             if ((successorCount >= 1 && ordinals.ContainsKey(first)) ||
                 (successorCount == 2 && ordinals.ContainsKey(second)))
@@ -225,6 +240,56 @@ public static class GuestAbiContractAnalyzer
             GqrDefiniteWriteMask = definiteWrites.Gqr,
             HidDefiniteWriteMask = definiteWrites.Hid
         };
+    }
+
+    private static bool IsNoReturnCall(
+        IrInstruction instruction,
+        IReadOnlyDictionary<uint, GuestAbiContract>? calleeContracts) =>
+        instruction is IrCall call &&
+        GuestTargetParser.TryParseAddress(call.Target, out var target) &&
+        calleeContracts?.TryGetValue(target, out var callee) == true &&
+        (callee.BoundaryFlags & GuestCallBoundaryFlags.NoReturn) != 0;
+
+    /// <summary>
+    /// Blocks that count toward the contract: all but those that call a no-return function and
+    /// those whose every successor is such a block (the argument setup leading into a panic).
+    /// Blocks that never reach an exit otherwise (loops, jump tables) keep counting.
+    /// </summary>
+    private static bool[] LiveBlocks(
+        IrFunction function,
+        Dictionary<string, int> ordinals,
+        List<int>[] predecessors,
+        bool[] dies)
+    {
+        var blockList = function.Blocks;
+        var blockCount = blockList.Count;
+        var pruned = (bool[])dies.Clone();
+        bool changed;
+        do
+        {
+            changed = false;
+            for (var index = 0; index < blockCount; ++index)
+            {
+                if (pruned[index]) continue;
+                var successorCount = Successors(blockList[index], out var first, out var second);
+                if (successorCount == 0) continue;
+                if (!ordinals.TryGetValue(first, out var firstOrdinal) || !pruned[firstOrdinal]) continue;
+                if (successorCount == 2 &&
+                    (!ordinals.TryGetValue(second, out var secondOrdinal) || !pruned[secondOrdinal])) continue;
+                pruned[index] = true;
+                changed = true;
+            }
+        } while (changed);
+
+        var live = new bool[blockCount];
+        var any = false;
+        for (var index = 0; index < blockCount; ++index)
+        {
+            live[index] = !pruned[index];
+            any |= live[index];
+        }
+        if (!any) Array.Fill(live, true);
+        return live;
     }
 
     /// <summary>

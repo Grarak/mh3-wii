@@ -18,9 +18,11 @@ public static class GuestAbiInterproceduralAnalyzer
 {
     public static GuestAbiInterproceduralResult Analyze(
         IReadOnlyDictionary<uint, IrFunction> functions,
-        IReadOnlyDictionary<uint, GuestAbiContract>? externalContracts = null)
+        IReadOnlyDictionary<uint, GuestAbiContract>? externalContracts = null,
+        IReadOnlySet<uint>? noReturnFunctions = null)
     {
         externalContracts ??= new Dictionary<uint, GuestAbiContract>();
+        noReturnFunctions ??= new HashSet<uint>();
         var addresses = functions.Keys.OrderBy(static address => address).ToArray();
 
         // GuestAbiContractAnalyzer.Analyze is pure and the round's contract snapshot is frozen, so
@@ -41,6 +43,13 @@ public static class GuestAbiInterproceduralAnalyzer
             addresses.Length,
             parallelOptions,
             index => current[index] = GuestAbiContractAnalyzer.Analyze(bodies[index]));
+        var pinned = new bool[addresses.Length];
+        for (var index = 0; index < addresses.Length; ++index)
+        {
+            if (!noReturnFunctions.Contains(addresses[index])) continue;
+            current[index] = NoReturnContract(current[index]);
+            pinned[index] = true;
+        }
 
         var contracts = new Dictionary<uint, GuestAbiContract>(addresses.Length);
         for (var index = 0; index < addresses.Length; ++index) contracts.Add(addresses[index], current[index]);
@@ -79,7 +88,7 @@ public static class GuestAbiInterproceduralAnalyzer
 
         var pending = new bool[addresses.Length];
         var nextRound = new bool[addresses.Length];
-        Array.Fill(pending, true);
+        for (var index = 0; index < addresses.Length; ++index) pending[index] = !pinned[index];
         // Ascending ordinals of the functions this round re-analyzes, plus the
         // slot each one writes its result into.  Both are reused every round.
         var worklist = new int[addresses.Length];
@@ -113,7 +122,7 @@ public static class GuestAbiInterproceduralAnalyzer
                 visible[address] = contract;
                 var callerList = callers[ordinal];
                 if (callerList is null) continue;
-                foreach (var caller in callerList) nextRound[caller] = true;
+                foreach (var caller in callerList) nextRound[caller] = !pinned[caller];
             }
 
             if (!updated) break;
@@ -123,6 +132,47 @@ public static class GuestAbiInterproceduralAnalyzer
 
         return new GuestAbiInterproceduralResult(contracts, BuildComponents(functions, contracts));
     }
+
+    /// <summary>
+    /// A function that never returns (an assertion panic or fatal error: the game is over) is seen
+    /// by its callers as reading only r1, r2, r13 and its first three arguments (for the panics the
+    /// file, line and format of the message, whose varargs may then print stale), and as writing
+    /// nothing, with no boundary flags. Otherwise its complete-context fence and vararg register
+    /// reads spread to every function with an assertion, and every call there spills and reloads
+    /// the whole guest context.
+    /// </summary>
+    private static GuestAbiContract NoReturnContract(GuestAbiContract contract) => contract with
+    {
+        GprReadBeforeWriteMask = contract.GprReadBeforeWriteMask & 0x0000203Eu,
+        GprPossibleWriteMask = 0,
+        GprReturnMask = 0,
+        GprDefiniteWriteMask = 0,
+        FprReadBeforeWriteMask = 0,
+        FprPossibleWriteMask = 0,
+        FprReturnMask = 0,
+        FprDefiniteWriteMask = 0,
+        CrReadBeforeWriteMask = 0,
+        CrPossibleWriteMask = 0,
+        CrDefiniteWriteMask = 0,
+        ReadsXerBeforeWrite = false,
+        MayWriteXer = false,
+        DefinitelyWritesXer = false,
+        ReadsCtrBeforeWrite = false,
+        MayWriteCtr = false,
+        DefinitelyWritesCtr = false,
+        MayWriteLr = false,
+        DefinitelyWritesLr = false,
+        ReadsFpscrBeforeWrite = false,
+        MayWriteFpscr = false,
+        DefinitelyWritesFpscr = false,
+        GqrReadBeforeWriteMask = 0,
+        GqrPossibleWriteMask = 0,
+        GqrDefiniteWriteMask = 0,
+        HidReadBeforeWriteMask = 0,
+        HidPossibleWriteMask = 0,
+        HidDefiniteWriteMask = 0,
+        BoundaryFlags = GuestCallBoundaryFlags.NoReturn
+    };
 
     /// <summary>
     /// Ordinals of functions this one calls directly, from raw IR rather than

@@ -30,6 +30,12 @@ translation:
   tick_sites_path: runtime/src/tick_sites.inc
   # Functions whose accesses may reach hardware; all others use flat guest memory.
   hardware_access_path: runtime/src/hardware_access.inc
+  # Panics and fatal errors end the game, so callers need not take on their
+  # complete-context call boundary (nw4r::db::Panic, OSPanic, OSFatal).
+  no_return_functions:
+    - 0x80501130
+    - 0x804CDD30
+    - 0x804CFE20
 
 # Mario Kart's address-specific native registrations must not be used for MH3.
 runtime:

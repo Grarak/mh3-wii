@@ -103,13 +103,17 @@ internal sealed class TranslationProjectConfig
         string? hardwareAccessPath = dto.Translation?.HardwareAccessPath is { Length: > 0 } hardware
             ? ResolvePath(workspaceRoot, hardware)
             : null;
+        var noReturnFunctions = (dto.Translation?.NoReturnFunctions ?? [])
+            .Select((value, index) => ParseUInt32(value, null, $"translation.no_return_functions[{index}]"))
+            .ToArray();
         var translation = new ProjectTranslation(
             entryPoints,
             functionMapPath,
             dto.Translation?.AllowUnsupportedInstructions ?? false,
             loadHooksPath,
             tickSitesPath,
-            hardwareAccessPath);
+            hardwareAccessPath,
+            noReturnFunctions);
 
         var abiDirectories = (dto.Runtime?.NativeAbiDirectories ?? [])
             .Select(pathValue => ResolvePath(workspaceRoot, pathValue))
@@ -427,6 +431,9 @@ internal sealed class TranslationProjectConfig
         // MMIO registers, the GX FIFO or the EFB. Their accesses go through MemoryHw; every
         // other function addresses guest memory as plain host memory.
         public string? HardwareAccessPath { get; init; }
+        // Guest functions that never return (assertion panics ending in PPCHalt). Their callers
+        // don't take on their complete-context boundary; see GuestAbiInterproceduralAnalyzer.
+        public List<string>? NoReturnFunctions { get; init; }
     }
 
     private sealed class FunctionMapDto
@@ -497,7 +504,8 @@ internal sealed record ProjectTranslation(
     bool AllowUnsupportedInstructions,
     string? LoadHooksPath = null,
     string? TickSitesPath = null,
-    string? HardwareAccessPath = null);
+    string? HardwareAccessPath = null,
+    IReadOnlyList<uint>? NoReturnFunctions = null);
 internal sealed record ProjectRuntime(
     IReadOnlyList<string> NativeAbiDirectories,
     string NativeRegistrationRoot);
