@@ -1998,6 +1998,7 @@
 800a3b84 DrawOrderAdd
 800a3de0 DrawOrderRemove
 800f943c EffectDrawRequest
+80308d64 EffectFadeUpdate
 800e3bf0 PrimRequest
 8007f130 ScnRootPushBack
 800e0af8 get_joint_wpos__6MHcharFUlPQ34nw4r4math4VEC3

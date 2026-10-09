@@ -115,6 +115,10 @@ def site_kind(lines, i, reg):
                 if lines[jj] is None:
                     break
                 bop, bops = lines[jj][1], lines[jj][2]
+                # bt/bf, or the raw `bc BO, BI` llvm-objdump prints for them
+                # with a prediction hint (BO 5, 13): a CR bit test without CTR.
+                if bop == 'bc' and len(bops) >= 2 and bops[0].isdigit() and int(bops[0]) & 0x14 == 0x04:
+                    bop, bops = 'bt', bops[1:]
                 if bop in ('bt', 'bf') and bops and bops[0].isdigit():
                     bit = int(bops[0])
                     eq = bit % 4 == 2 and bit // 4 == int(cr.replace('cr', '') or 0)

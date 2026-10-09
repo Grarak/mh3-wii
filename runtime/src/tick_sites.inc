@@ -384,7 +384,7 @@
 {0x808F6CFCu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x14)
 {0x808F6F3Cu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x14)
 {0x808F7460u, TickSite::Countdown},          // quest object (quest_data RSO): countdown (+0x10)
-{0x808F7A7Cu, TickSite::CountdownPastZero},  // quest object (quest_data RSO): countdown (+0x10)
+{0x808F7A7Cu, TickSite::CountdownEvery, 10}, // quest object (quest_data RSO): countdown (+0x10), kind 123 at % 10 == 0
 {0x808F7C90u, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x14)
 {0x808F7E80u, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x14)
 {0x808F860Cu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x10)

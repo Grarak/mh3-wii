@@ -50,6 +50,9 @@
 //   0x800F943C EffectDrawRequest           the effects' or models' primitive
 //                                          requests (0x800E3BF0) and scene
 //                                          root PushBack (0x8007F130)
+//   0x80308D64 EffectFadeUpdate            a monster effect's state 2: kind
+//                                          7 faded by its share of the
+//                                          ticks, following the owner monster
 //   0x802BDD44 GetCameraPos                the view camera's position, with
 //                                          0x800473FC, 0x80082C30, 0x80082BD4
 //                                          and 0x80074A2C
@@ -79,6 +82,7 @@
 #include "port_check.h"
 #include "ppc_runtime.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -2122,6 +2126,50 @@ void EffectObjectUpdate(CpuContext* cpu, GuestCall& game, uint32_t object, const
         EffectDrawRequest(game, object, entry, flags, 1, 0);
     }
 }
+
+// 0x80308D64 EffectFadeUpdate, the monster effect's (step 0x80307054) state
+// 2, also reached from its update 0x80307F30. Kind +2 7 (Alatreon's 7.3/7.4,
+// 0x802F82F4) fades out; other kinds move on. While its life (+0xC) runs, the
+// colour's alpha (data +0xF) drops by +8 a tick and the model (data +4)
+// follows the owner monster (+0x30): the joint's position (0x8013599C, joint
+// by kind from 0x805DD2DC) at +0x18, the owner's rotation (+0x1BC),
+// setMatColor, MHchar::move, drawn as models (count data +0). A dead owner
+// (em_work_die_ck, 0x8012D068) or the end of its life moves the object on
+// (+5). The original counted the life and faded once a step; the port counts
+// the step's ticks and fades by its share.
+uint32_t EffectFadeUpdate(GuestCall& game, uint32_t object, const GuestFrame& frame) {
+    const uint32_t data = FlatRead32(object + 0x38), owner = FlatRead32(object + 0x30);
+    const uint8_t kind = FlatRead8(object + 2), state = FlatRead8(object + 5);
+
+    if (kind != 7) {
+        FlatWrite8(object + 5, uint8_t(state + 1));
+        return object;
+    }
+
+    const int32_t life = int32_t(FlatRead32(object + 0xC)) - int32_t(GameStep::Ticks());
+    const bool alive = FlatRead8(owner) != 0 && FlatRead8(owner + 4) < 2;
+
+    if (alive)
+        FlatWrite32(object + 0xC, uint32_t(life));
+
+    if (!alive || life <= 0) {
+        FlatWrite8(object + 5, uint8_t(state + 1));
+        return state;
+    }
+
+    const int32_t alpha = FlatRead8(data + 0xF) - GameStep::Share(FlatRead8(object + 8));
+    FlatWrite8(data + 0xF, uint8_t(std::max(alpha, 0)));
+
+    const uint32_t model = FlatRead32(data + 4), color = frame[0x10];
+    game.Call<0x8013599C>({owner, FlatRead32(0x805DD2DC + 4 * kind), object + 0x18}); // get_joint_wpos_em
+    CopyVec3(model + 4, object + 0x18);
+    CopyVec3(model + 0x28, owner + 0x1BC);
+    FlatWrite32(color, FlatRead32(data + 0xC));
+    SetMatColor(game, model, 0, 4, color, 0);
+    game.Call<0x800E078C>({model, 0}); // MHchar::move
+    EffectDrawRequest(game, object, data + 4, 2, int32_t(FlatRead32(data)), 0);
+    return game.cpu->gpr[3];
+}
 } // namespace
 
 // The ports run their bodies in a guest frame of 0x80 bytes (restoring the
@@ -2574,6 +2622,9 @@ MH3_EFFECT_PORT(800F943C, EffectDrawRequest, {
     return cpu->gpr[3];
 });
 REGISTER_NATIVE_FUNCTION_AS(0x800F943C, MH3_EffectDrawRequest, "EffectDrawRequest");
+
+MH3_EFFECT_PORT(80308D64, EffectFadeUpdate, { return EffectFadeUpdate(game, frame.Arg(3), frame); });
+REGISTER_NATIVE_FUNCTION_AS(0x80308D64, MH3_EffectFadeUpdate, "EffectFadeUpdate");
 
 MH3_GAME_PORT(800E3BF0, PrimRequest, { return PrimRequest(game, frame.Arg(3), frame.Arg(4), frame.Arg(5), frame.Arg(6), frame.Arg(7), frame.Arg(8), frame.Arg(9)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800E3BF0, MH3_PrimRequest, "PrimRequest");
