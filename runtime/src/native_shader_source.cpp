@@ -723,15 +723,31 @@ void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_c
 )CG";
 
 // Texture reads take the interpolated coordinate directly; LOD bias is in the
-// texture control words, so no read depends on fragment arithmetic.
+// texture control words, so no read depends on fragment arithmetic. Colours
+// are computed in half precision (real), which halves the primary attributes
+// and shortens most programs (psp2shaderperf: modulate_t1 12 -> 8 cycles,
+// modulate_t1_fog_linear 19 -> 16, basic_t1_fog_linear 67 -> 51); half keeps
+// 11 significant bits, the 8-bit target 8. Programs that evaluate picks stay
+// in float: converting the picked coefficients costs them 1 to 8 cycles.
 constexpr const char* CgFragment = R"CG(
+#if DYNAMIC
+#define real float
+#define real2 float2
+#define real3 float3
+#define real4 float4
+#else
+#define real half
+#define real2 half2
+#define real3 half3
+#define real4 half4
+#endif
 #if MATERIAL_GPU
-float4 coefficient(int k) {
+real4 coefficient(int k) {
 #if DYNAMIC
     Pick p = material.pick[k];
-    float4 c = anim.palette[int(p.index.x)];
-    float4 a = anim.palette[int(p.index.y)];
-    return material.coefficient[k] * float4(lerp(c.rgb, dot(c, p.color_mask).xxx, p.index.z), dot(a, p.alpha_mask));
+    real4 c = anim.palette[int(p.index.x)];
+    real4 a = anim.palette[int(p.index.y)];
+    return material.coefficient[k] * real4(lerp(c.rgb, dot(c, p.color_mask).xxx, p.index.z), dot(a, p.alpha_mask));
 #else
     return material.coefficient[k];
 #endif
@@ -741,15 +757,15 @@ float4 coefficient(int k) {
 #define ALPHA_RANGE shade.alpha_range
 #endif
 #if !MODULATE
-float4 source(float4 select, float4 t0, float4 t1, float4 t2, float4 v) {
+real4 source(real4 select, real4 t0, real4 t1, real4 t2, real4 v) {
     return select.x * t0 + select.y * t1 + select.z * t2 + select.w * v;
 }
 #if MATERIAL_GPU
-float3 color_input(int i, float swizzle, float4 t0, float4 t1, float4 t2, float4 v) {
-    float4 value = source(material.select[i], t0, t1, t2, v);
+real3 color_input(int i, real swizzle, real4 t0, real4 t1, real4 t2, real4 v) {
+    real4 value = source(material.select[i], t0, t1, t2, v);
     return coefficient(i).rgb + coefficient(4 + i).rgb * lerp(value.rgb, value.aaa, swizzle);
 }
-float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
+real alpha_input(int i, real4 t0, real4 t1, real4 t2, real4 v) {
     return coefficient(i).a + coefficient(4 + i).a * source(material.select[4 + i], t0, t1, t2, v).a;
 }
 #define SWIZZLE0 material.swizzle.x
@@ -765,19 +781,19 @@ float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
 #define LERP_ALPHA_SCALE coefficient(6).a
 #define LERP_SWIZZLE material.swizzle.z
 #else
-float3 color_input(int i, float swizzle, float4 t0, float4 t1, float4 t2, float4 v) {
+real3 color_input(int i, real swizzle, real4 t0, real4 t1, real4 t2, real4 v) {
     Input s = shade.color_input[i];
-    float4 value = source(s.select, t0, t1, t2, v);
-    return s.offset.rgb + s.scale.rgb * lerp(value.rgb, value.aaa, s.swizzle.x);
+    real4 value = source(s.select, t0, t1, t2, v);
+    return s.offset.rgb + s.scale.rgb * lerp(value.rgb, value.aaa, real(s.swizzle.x));
 }
-float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
+real alpha_input(int i, real4 t0, real4 t1, real4 t2, real4 v) {
     Input s = shade.alpha_input[i];
     return s.offset.a + s.scale.a * source(s.select, t0, t1, t2, v).a;
 }
-#define SWIZZLE0 0.0f
-#define SWIZZLE1 0.0f
-#define SWIZZLE2 0.0f
-#define SWIZZLE3 0.0f
+#define SWIZZLE0 0.0h
+#define SWIZZLE1 0.0h
+#define SWIZZLE2 0.0h
+#define SWIZZLE3 0.0h
 #define COLOR_EQUATION shade.color_equation
 #define ALPHA_EQUATION shade.alpha_equation
 #define OVERLAY_SCALE shade.overlay
@@ -788,9 +804,9 @@ float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
 #define LERP_SWIZZLE shade.color_input[2].swizzle.x
 #endif
 #endif
-float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, float v_fog : TEXCOORD3,
+real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, real v_fog : TEXCOORD3,
             uniform sampler2D u_texture0 : TEXUNIT0, uniform sampler2D u_texture1 : TEXUNIT1, uniform sampler2D u_texture2 : TEXUNIT2) : COLOR {
-    float4 t0 = float4(1.0f, 1.0f, 1.0f, 1.0f), t1 = t0, t2 = t0;
+    real4 t0 = real4(1.0h, 1.0h, 1.0h, 1.0h), t1 = t0, t2 = t0;
 #if TEXTURES > 0
     t0 = tex2D(u_texture0, v_uv0);
 #endif
@@ -800,23 +816,23 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
 #if TEXTURES > 2
     t2 = tex2D(u_texture2, v_uv2);
 #endif
-    float4 v = v_color0;
+    real4 v = v_color0;
 #if MODULATE && PURE_MODULATE
-    float4 result;
+    real4 result;
     result.rg = saturate(t0.rg * v.rg);
     result.ba = saturate(t0.ba * v.ba);
 #elif MODULATE
 #if MATERIAL_GPU
-    float4 w0 = coefficient(0), w1 = coefficient(1), offset = coefficient(2), kv = coefficient(3), kc = coefficient(4);
-    float4 d = coefficient(5) + material.add, s = material.scale, overlay = coefficient(6);
+    real4 w0 = coefficient(0), w1 = coefficient(1), offset = coefficient(2), kv = coefficient(3), kc = coefficient(4);
+    real4 d = coefficient(5) + material.add, s = material.scale, overlay = coefficient(6);
 #else
-    float4 w0 = shade.w0, w1 = shade.w1, offset = shade.offset, kv = shade.kv, kc = shade.kc, d = shade.d, s = shade.s, overlay = shade.overlay;
+    real4 w0 = shade.w0, w1 = shade.w1, offset = shade.offset, kv = shade.kv, kc = shade.kc, d = shade.d, s = shade.s, overlay = shade.overlay;
 #endif
     // Keep each arithmetic chain two components wide. The float4 chain's
     // masked upper-lane uniform MAD loses B/A on the devkit; identical RG/BA
     // equations pass the isolated native Shade-buffer readback test.
-    float2 base_rg = t0.rg * w0.rg + offset.rg;
-    float2 base_ba = t0.ba * w0.ba + offset.ba;
+    real2 base_rg = t0.rg * w0.rg + offset.rg;
+    real2 base_ba = t0.ba * w0.ba + offset.ba;
 #if TEXTURES == 2
     base_rg += t1.rg * w1.rg;
     base_ba += t1.ba * w1.ba;
@@ -825,45 +841,45 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
     base_rg += overlay.rg * t1.rg * t2.rg;
     base_ba.x += overlay.b * t1.b * t2.b;
 #endif
-    float4 result;
+    real4 result;
     result.rg = saturate((base_rg * (v.rg * kv.rg + kc.rg) + d.rg) * s.rg);
     result.ba = saturate((base_ba * (v.ba * kv.ba + kc.ba) + d.ba) * s.ba);
 #elif BASIC_LERP
     // Constant inputs are their offsets; only c (texture role 0) varies.
-    float3 c = LERP_COLOR_SCALE.rgb * lerp(t0.rgb, t0.aaa, LERP_SWIZZLE) + LERP_COLOR_OFFSET(2).rgb;
-    float3 color = lerp(LERP_COLOR_OFFSET(0).rgb, LERP_COLOR_OFFSET(1).rgb, c);
+    real3 c = LERP_COLOR_SCALE.rgb * lerp(t0.rgb, t0.aaa, real(LERP_SWIZZLE)) + LERP_COLOR_OFFSET(2).rgb;
+    real3 color = lerp(LERP_COLOR_OFFSET(0).rgb, LERP_COLOR_OFFSET(1).rgb, c);
     color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
-    float alpha = lerp(LERP_ALPHA_OFFSET(0), LERP_ALPHA_OFFSET(1), LERP_ALPHA_SCALE * t0.a + LERP_ALPHA_OFFSET(2));
+    real alpha = lerp(LERP_ALPHA_OFFSET(0), LERP_ALPHA_OFFSET(1), LERP_ALPHA_SCALE * t0.a + LERP_ALPHA_OFFSET(2));
     alpha = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
-    float4 result = saturate(float4(color, alpha));
+    real4 result = saturate(real4(color, alpha));
 #else
-    float3 b = color_input(1, SWIZZLE1, t0, t1, t2, v);
+    real3 b = color_input(1, SWIZZLE1, t0, t1, t2, v);
 #if OVERLAY
     b += OVERLAY_SCALE.rgb * t1.rgb * t2.rgb;
 #endif
-    float3 color = lerp(color_input(0, SWIZZLE0, t0, t1, t2, v), b, color_input(2, SWIZZLE2, t0, t1, t2, v));
+    real3 color = lerp(color_input(0, SWIZZLE0, t0, t1, t2, v), b, color_input(2, SWIZZLE2, t0, t1, t2, v));
     color = (color_input(3, SWIZZLE3, t0, t1, t2, v) + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
-    float alpha = lerp(alpha_input(0, t0, t1, t2, v), alpha_input(1, t0, t1, t2, v), alpha_input(2, t0, t1, t2, v));
+    real alpha = lerp(alpha_input(0, t0, t1, t2, v), alpha_input(1, t0, t1, t2, v), alpha_input(2, t0, t1, t2, v));
     alpha = (alpha_input(3, t0, t1, t2, v) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
-    float4 result = saturate(float4(color, alpha));
+    real4 result = saturate(real4(color, alpha));
 #endif
 #if ALPHA_TEST
     if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
 #endif
 #if FOG
-    float f = saturate(v_fog);
+    real f = saturate(v_fog);
 #if LINEAR_FOG
-    float amount = scene.fog_curve.w * f + scene.fog_shape.x;
+    real amount = scene.fog_curve.w * f + scene.fog_shape.x;
 #else
-    float g = scene.fog_curve.x + scene.fog_curve.y * f;
-    g = lerp(g, g * g, scene.fog_curve.z);
-    float amount = scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0f * g);
+    real g = scene.fog_curve.x + scene.fog_curve.y * f;
+    g = lerp(g, g * g, real(scene.fog_curve.z));
+    real amount = scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0h * g);
 #endif
     result.rgb = lerp(result.rgb, scene.fog_color.rgb, saturate(amount));
 #endif
 #if TARGET_ALPHA_ONE
-    result.a = 1.0f;
+    result.a = 1.0h;
 #endif
     return result;
 }
