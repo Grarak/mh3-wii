@@ -21,5 +21,16 @@ uint32_t MtxInvTranspose34(uint32_t dst, uint32_t src); // 0x80330F5C
 void MtxTo33(uint32_t dst, uint32_t src);               // 0x80501968 MTX34ToMTX33
 void MtxRotXYZFIdx(uint32_t m, float x, float y, float z,
                    uint32_t r2);                                                                                                         // 0x80501AB4 MTX34RotXYZFIdx
+
+// g3d_anm_result.cpp
+void ResNodeChrAnmResult(uint32_t ref, uint32_t result);        // 0x80098FD0
+void ResNodePatchChrAnmResult(uint32_t ref, uint32_t result);   // 0x80098DC0
+void ChrAnmResultGetTranslation(uint32_t result, uint32_t out); // 0x8008E224
+void ChrAnmResultSetTranslation(uint32_t result, uint32_t t);   // 0x8008F1AC
+void ChrAnmResultGetMtx(uint32_t result, uint32_t out);         // 0x8008E6FC
+
+// 0x8008F440; scratch: 12 guest bytes
+void ChrAnmResultSetMtx(uint32_t result, uint32_t m, uint32_t scratch);
+
 uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale, uint32_t flags, uint32_t node); // 0x800D7814
 } // namespace G3dNative
