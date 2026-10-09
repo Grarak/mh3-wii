@@ -18,6 +18,8 @@ uint32_t MtxInv34(uint32_t dst, uint32_t src);            // 0x80331064 MTX34Inv
 uint32_t MtxInvTranspose33(uint32_t dst, uint32_t src);   // 0x80330E78
 uint32_t MtxInvTranspose34(uint32_t dst, uint32_t src);   // 0x80330F5C
 void MtxTo33(uint32_t dst, uint32_t src);                 // 0x80501968 MTX34ToMTX33
+void MtxRotXYZFIdx(uint32_t m, float x, float y, float z,
+                   uint32_t r2);                          // 0x80501AB4 MTX34RotXYZFIdx
 uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale,
                                    uint32_t flags, uint32_t node); // 0x800D7814
 } // namespace G3dNative

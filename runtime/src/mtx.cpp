@@ -318,6 +318,8 @@ void RotXYZFIdx(uint32_t m, float x, float y, float z, uint32_t r2) {
 
 } // namespace
 
+void G3dNative::MtxRotXYZFIdx(uint32_t m, float x, float y, float z, uint32_t r2) { RotXYZFIdx(m, x, y, z, r2); }
+
 extern "C" void func_80501AB4(CpuContext* ctx);
 static void RotXYZFIdxPort(CpuContext* p) {
     RotXYZFIdx(p->gpr[3], float(p->fpr[1].d), float(p->fpr[2].d), float(p->fpr[3].d), p->gpr[2]);

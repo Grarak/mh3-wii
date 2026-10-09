@@ -652,6 +652,21 @@
 8008b9c0 AnmChrKeyEvalFVS32
 8008c09c AnmChrRotationFormatDispatch
 8008d660 AnmChrGetAnmResult
+8008da1c AnmChrGetNodeData
+8008a6c8 AnmChrScaleDecode
+8008cf90 AnmChrTranslationDecode
+8008c4e8 AnmChrRotationMtxFromDegrees
+8008a99c AnmChrTrackFVS96
+8008b110 AnmChrTrackFVS48
+8008b86c AnmChrTrackFVS32
+8008d210 AnmChrResultNone
+8008d330 AnmChrResultS
+8008d2c0 AnmChrResultR
+8008d440 AnmChrResultSR
+8008d228 AnmChrResultT
+8008d4e0 AnmChrResultST
+8008d370 AnmChrResultRT
+8008d58c AnmChrResultSRT
 8008e224 ChrAnmResultGetTranslation
 800606bc AnmChrBlendGetResult
 # g3d NodeTree bytecode: world matrices (0x80074180 the NodeMix skinning pass), view matrices, draw opa/xlu.

@@ -21,6 +21,8 @@
 // The registered bodies only move registers, so callers keep the precise call
 // boundary the translated functions had.
 #include "abi_bridge.h"
+#include "g3d_native.h"
+#include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -433,3 +435,181 @@ extern "C" void MH3_AnmChrKeyEvalFVS96(CpuContext* ctx) {
     ctx->fpr[1].d = AnmChrKeyEvalFVS96Checked(ctx->gpr[1], ctx->gpr[2], ctx->gpr[3], ctx->fpr[1].d);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8008AAF0, MH3_AnmChrKeyEvalFVS96, "AnmChrKeyEvalFVS96");
+
+// 0x8008D660: ResAnmChr::GetAnmResult(result, node index, frame). The node's
+// data comes from the animation's node dictionary (data +0x10); its flags
+// (+4) give the result's flags (low 13 bits) and pick one of eight handlers
+// (bits 22-24, the table at 0x8056FED0) by which of scale, rotation and
+// translation it animates, whose data follows from node +8 in that order:
+//   scale (0x8008A6C8) to result +4: format bits 25-26 (constant f32, FVS32,
+//     FVS48, FVS96), per-axis constant bits 13-15, uniform bit 4 (one value);
+//   rotation (0x8008C09C) as degrees to result +0x10 and the matrix at +0x1C
+//     (MTX34RotXYZFIdx of the degrees times 256/360), format bits 27-29
+//     (also three per-frame formats, 0x8008C4FC/C864/CBFC, run as guest
+//     code), per-axis constant bits 16-18, and flag bit 31 set;
+//   translation (0x8008CF90) to the matrix's +0xC/+0x1C/+0x2C: format bits
+//     30-31, per-axis constant bits 19-21.
+// Unanimated scale is 1, an unanimated rotation the identity, translation 0.
+// A constant component is the f32 in the data, an animated one a track at the
+// node plus the data word (0x8008A99C/B110/B86C), evaluated by the key ports
+// above. The debug build's pointer and float checks panic as the original.
+namespace {
+
+enum : uint32_t {
+    kResultScale = 0x04,
+    kResultRotate = 0x10,
+    kResultMtx = 0x1C,
+};
+
+struct ResultPort {
+    CpuContext* ctx;
+    uint32_t r1, r2, node, flags, frames; // frames: the u16 frame count's address
+    double frame;
+
+    float Load(uint32_t a) const { return MemoryInline::FlatReadFloat32(a); }
+    void Store(uint32_t a, float v) const { MemoryInline::FlatWriteFloat32(a, v); }
+
+    // Formats 1-3: FVS32, FVS48, FVS96 (0x8008B86C, 0x8008B110, 0x8008A99C).
+    float Key(uint32_t format, uint32_t data, bool constant) const {
+        if (constant) return Load(data);
+        const uint32_t track = node + MemoryInline::FlatRead32(data);
+        if (!ValidPointer(track)) Panic("NW4R:Pointer Error pAnm is not valid", track);
+        switch (format) {
+        case 1: return float(EvaluateFast<Fvs32>(*ctx, r1, r2, track, frame));
+        case 2: return float(EvaluateFast<Fvs48>(*ctx, r1, r2, track, frame));
+        default: return float(EvaluateFast<Fvs96>(*ctx, r1, r2, track, frame));
+        }
+    }
+    // Three components from data (format 0 constant f32s, 1-3 keys, constant
+    // bits from `constantBit` up), returning the data past them.
+    uint32_t Vector(uint32_t format, uint32_t data, uint32_t constantBit, float out[3]) const {
+        for (int i = 0; i < 3; ++i, data += 4)
+            out[i] = format == 0 ? Load(data) : Key(format, data, flags & constantBit << i);
+        return data;
+    }
+
+    // 0x8008A6C8.
+    uint32_t Scale(uint32_t result, uint32_t data) const {
+        const uint32_t format = flags >> 25 & 3;
+        float s[3];
+        if (flags & 0x10) {
+            s[0] = s[1] = s[2] = format == 0 ? Load(data) : Key(format, data, flags & 0x2000);
+            data += 4;
+        } else {
+            data = Vector(format, data, 0x2000, s);
+        }
+        for (int i = 0; i < 3; ++i) Store(result + kResultScale + 4 * i, s[i]);
+        return data;
+    }
+    // 0x8008C09C.
+    uint32_t Rotate(uint32_t result, uint32_t data) const {
+        const uint32_t format = flags >> 27 & 7;
+        float r[3];
+        if (format <= 3) {
+            data = Vector(format, data, 0x10000, r);
+        } else if (format <= 6) {
+            static constexpr uint32_t kBaked[3] = {0x8008CBFCu, 0x8008C864u, 0x8008C4FCu};
+            GuestCall game{ctx};
+            for (int i = 0; i < 3; ++i, data += 4) {
+                ctx->gpr[1] = r1;
+                game(kBaked[format - 4],
+                     {node, data, MemoryInline::FlatRead16(frames), uint32_t((flags & 0x10000u << i) != 0)},
+                     {frame});
+                r[i] = float(ctx->fpr[1].d);
+            }
+        } else {
+            Panic("NW4R:Internal error ResAnmChrNodeData rotation format", flags);
+        }
+        const float k = Load(r2 - 0x7BAC); // 256/360
+        G3dNative::MtxRotXYZFIdx(result + kResultMtx, k * r[0], k * r[1], k * r[2], r2);
+        for (int i = 0; i < 3; ++i) Store(result + kResultRotate + 4 * i, r[i]);
+        MemoryInline::FlatWrite32(result, MemoryInline::FlatRead32(result) | 0x80000000u);
+        return data;
+    }
+    // 0x8008CF90, into the matrix's translation column.
+    void Translate(uint32_t result, uint32_t data) const {
+        float t[3];
+        Vector(flags >> 30, data, 0x80000, t);
+        for (int i = 0; i < 3; ++i) Store(result + kResultMtx + 0xC + 0x10 * i, t[i]);
+    }
+    void UnitScale(uint32_t result) const {
+        const float one = Load(r2 - 0x7BB8);
+        for (int i = 0; i < 3; ++i) Store(result + kResultScale + 4 * i, one);
+    }
+    void Identity(uint32_t result) const { // 0x80050538 (PSMTXIdentity)
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 4; ++col) Store(result + kResultMtx + 0x10 * row + 4 * col, row == col ? 1.0f : 0.0f);
+    }
+    void ZeroTranslation(uint32_t result) const {
+        const float zero = Load(r2 - 0x7BD0);
+        for (int i = 0; i < 3; ++i) Store(result + kResultMtx + 0xC + 0x10 * i, zero);
+    }
+};
+
+// 0x8008DA1C: the node dictionary's entry `index` (0x800627B4, whose checks it keeps).
+uint32_t NodeData(uint32_t data, uint32_t index) {
+    const uint32_t offset = MemoryInline::FlatRead32(data + 0x10);
+    const uint32_t dic = offset ? data + offset : 0;
+    if (dic & 3) Panic("NW4R:Failed assertion ptr is not aligned", dic);
+    if (!dic) return 0;
+    const int32_t i = int32_t(index);
+    if (!(i >= 0 && i <= int32_t(MemoryInline::FlatRead32(dic + 4)) - 1)) Panic("idx is out of bounds", index);
+    const uint32_t entry = MemoryInline::FlatRead32(dic + (index + 1) * 16 + 0x14);
+    return entry ? dic + entry : 0;
+}
+
+void GetAnmResult(CpuContext* ctx) {
+    const uint32_t anm = ctx->gpr[3], result = ctx->gpr[4], index = ctx->gpr[5];
+    const double frame = ctx->fpr[1].d;
+    if (!ValidPointer(anm)) Panic("NW4R:Pointer Error this is not valid", anm);
+    if (!ValidPointer(result)) Panic("NW4R:Pointer Error pResult is not valid", result);
+    if (!std::isfinite(frame)) Panic("NW4R:Floating Point Value Error frame", 0);
+    const uint32_t data = MemoryInline::FlatRead32(anm);
+    if (!data) Panic("NW4R:Failed assertion IsValid()", anm);
+    const uint32_t node = NodeData(data, index);
+    if (!ValidPointer(node)) Panic("NW4R:Pointer Error nodeData is not valid", node);
+    const uint32_t flags = MemoryInline::FlatRead32(node + 4);
+    MemoryInline::FlatWrite32(result, flags & 0x1FFF);
+
+    const ResultPort p{ctx, ctx->gpr[1], ctx->gpr[2], node, flags, data + 0x20, frame};
+    const uint32_t first = node + 8;
+    switch (flags >> 22 & 7) {
+    case 0: p.UnitScale(result), p.Identity(result); break;                        // 0x8008D210
+    case 1: p.Scale(result, first), p.Identity(result); break;                     // 0x8008D330
+    case 2: p.UnitScale(result), p.Rotate(result, first), p.ZeroTranslation(result); break; // 0x8008D2C0
+    case 3: p.Rotate(result, p.Scale(result, first)), p.ZeroTranslation(result); break;   // 0x8008D440
+    case 4: p.UnitScale(result), p.Identity(result), p.Translate(result, first); break;  // 0x8008D228
+    case 5: {                                                                      // 0x8008D4E0
+        const uint32_t next = p.Scale(result, first);
+        p.Identity(result), p.Translate(result, next);
+        break;
+    }
+    case 6: p.UnitScale(result), p.Translate(result, p.Rotate(result, first)); break;     // 0x8008D370
+    default: p.Translate(result, p.Rotate(result, p.Scale(result, first))); break;      // 0x8008D58C
+    }
+}
+
+void GetAnmResultPort(CpuContext* ctx) {
+    const CpuContext saved = *ctx; // the baked formats' guest calls clobber volatiles
+    GetAnmResult(ctx);
+    const uint32_t r3 = ctx->gpr[3];
+    *ctx = saved;
+    ctx->gpr[3] = r3;
+}
+
+} // namespace
+
+// The port, or with MH3_PORT_CHECK=AnmChrGetAnmResult the port checked against
+// the original (whose key evaluation is the key ports above too).
+extern "C" void func_8008D660(CpuContext* ctx);
+extern "C" void MH3_AnmChrGetAnmResult(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("AnmChrGetAnmResult");
+    if (check) [[unlikely]] {
+        PortCheck::Run(ctx, "AnmChrGetAnmResult", func_8008D660, GetAnmResultPort);
+        return;
+    }
+#endif
+    GetAnmResult(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8008D660, MH3_AnmChrGetAnmResult, "AnmChrGetAnmResult");
