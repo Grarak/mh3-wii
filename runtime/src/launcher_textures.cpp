@@ -180,16 +180,18 @@ void Publish(const std::filesystem::path& temporary, const std::filesystem::path
 }
 } // namespace
 
-TextureConversion ConvertTexture(const TextureInventory::Texture& s, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path) {
-    TextureInventory::ValidateSource(data, fileOffset, s);
+// The native layout and record checks below hold for any texture that
+// passed ValidateSource and the inventory's checks.
+Status ConvertTexture(const TextureInventory::Texture& s, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path, TextureConversion& out) {
+    MH3_RETURN_IF_ERROR(TextureInventory::ValidateSource(data, fileOffset, s));
     const aurora::ArrayRef<uint8_t> bytes{data.data() + s.offset, s.bytes};
     auto converted = s.entries
                          ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries, {data.data() + s.palette, size_t(s.entries) * 2})
                          : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
     if (converted.data.empty())
-        throw std::runtime_error("Texture conversion failed: " + path);
+        return Status::Error("Texture conversion failed: " + path);
 
-    TextureConversion out{};
+    out = {};
     auto& r = out.record;
     r.id = s.id;
     r.format = 1;
@@ -208,7 +210,7 @@ TextureConversion ConvertTexture(const TextureInventory::Texture& s, std::span<c
     const auto layout = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, aurora::gfx::native_texture_format(r.format));
 
     if (out.payload.size() != layout.total_bytes)
-        throw std::runtime_error("Texture payload disagrees with native storage: " + path);
+        return Status::Error("Texture payload disagrees with native storage: " + path);
 
     r.image_bytes = layout.image_bytes;
     r.palette_offset = layout.palette_offset;
@@ -219,17 +221,20 @@ TextureConversion ConvertTexture(const TextureInventory::Texture& s, std::span<c
     const int64_t delta = int64_t(s.palette) - s.offset;
 
     if (s.entries && (delta < INT32_MIN || delta > INT32_MAX))
-        throw std::runtime_error("Texture palette offset exceeds native record: " + path);
+        return Status::Error("Texture palette offset exceeds native record: " + path);
 
     r.source_palette_delta = s.entries ? int32_t(delta) : 0;
     r.bytes = out.payload.size();
-    return out;
+    return {};
 }
 
-TexturePackWriter::TexturePackWriter(const std::filesystem::path& path, uint32_t count, uint32_t firstId)
-    : output(path, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc), records(count), base(firstId - 1) {
+Status TexturePackWriter::Open(const std::filesystem::path& path, uint32_t count, uint32_t firstId) {
+    output.open(path, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
+    records.assign(count, {});
+    base = firstId - 1;
+
     if (!output)
-        throw std::runtime_error("Cannot create native texture pack " + path.string());
+        return Status::Error("Cannot create native texture pack " + path.string());
 
     const std::array<uint32_t, 8> header{0x5456334d, 2, count, sizeof(Record), base, 0, 0, 0};
 
@@ -238,11 +243,12 @@ TexturePackWriter::TexturePackWriter(const std::filesystem::path& path, uint32_t
 
     std::vector<uint8_t> zero(records.size() * sizeof(Record));
     output.write(reinterpret_cast<const char*>(zero.data()), zero.size());
+    return {};
 }
 
-void TexturePackWriter::Add(TextureConversion&& texture) {
+Status TexturePackWriter::Add(TextureConversion&& texture) {
     if (added == records.size())
-        throw std::runtime_error("Native texture pack overflow");
+        return Status::Error("Native texture pack overflow");
 
     auto& r = texture.record;
     r.offset = (uint64_t(output.tellp()) + 63) & ~uint64_t(63);
@@ -252,14 +258,15 @@ void TexturePackWriter::Add(TextureConversion&& texture) {
     output.write(reinterpret_cast<const char*>(texture.payload.data()), texture.payload.size());
 
     if (!output)
-        throw std::runtime_error("Cannot write native texture payload");
+        return Status::Error("Cannot write native texture payload");
 
     records[added++] = r;
+    return {};
 }
 
-void TexturePackWriter::Finish() {
+Status TexturePackWriter::Finish() {
     if (added != records.size())
-        throw std::runtime_error("Native texture pack is incomplete");
+        return Status::Error("Native texture pack is incomplete");
 
     output.seekp(32);
 
@@ -272,7 +279,9 @@ void TexturePackWriter::Finish() {
     output.close();
 
     if (!output)
-        throw std::runtime_error("Cannot close native texture pack");
+        return Status::Error("Cannot close native texture pack");
+
+    return {};
 }
 
 void PrepareTextures(const std::filesystem::path& root, const Progress& progress) {
@@ -290,10 +299,13 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
             throw std::runtime_error("Oversized texture source: " + path);
 
         data = disc.ReadFile(path);
+        std::vector<TextureInventory::Texture> textures;
 
         // RMHP08's largest BRRES is 5.4 MiB. Source and dimension limits bound
         // conversion buffers; dictionaries and names have separate parser caps.
-        for (auto texture : TextureInventory::Parse(data, disc.FileOffset(path), uint32_t(sources.size() + 1))) {
+        CheckStatus(TextureInventory::Parse(data, disc.FileOffset(path), textures, uint32_t(sources.size() + 1)));
+
+        for (auto& texture : textures) {
             Source source;
             static_cast<TextureInventory::Texture&>(source) = std::move(texture);
             source.path = path;
@@ -303,7 +315,8 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
 
     data.clear();
     data.shrink_to_fit();
-    TexturePackWriter output(root / "native-textures.bin.preparing", uint32_t(sources.size()), 1);
+    TexturePackWriter output;
+    CheckStatus(output.Open(root / "native-textures.bin.preparing", uint32_t(sources.size()), 1));
     std::string path;
 
     for (size_t i = 0; i < sources.size(); ++i) {
@@ -319,10 +332,12 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
             data = disc.ReadFile(path);
         }
 
-        output.Add(ConvertTexture(s, data, disc.FileOffset(path), path));
+        TextureConversion converted;
+        CheckStatus(ConvertTexture(s, data, disc.FileOffset(path), path, converted));
+        CheckStatus(output.Add(std::move(converted)));
     }
 
-    output.Finish();
+    CheckStatus(output.Finish());
 
     // Publish the patch table after all of its referenced payloads are complete.
     std::sort(sources.begin(), sources.end(), [](const auto& a, const auto& b) { return a.patch < b.patch; });

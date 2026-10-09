@@ -139,12 +139,15 @@ void Inventory(const DiscImage& disc, std::vector<File>& files, std::vector<Text
 
         const auto data = disc.ReadFile(path);
         const uint64_t offset = disc.FileOffset(path);
+        std::vector<TextureInventory::Texture> parsed;
+        CheckStatus(TextureInventory::Parse(data, offset, parsed, nextTexture));
 
-        for (const auto& t : TextureInventory::Parse(data, offset, nextTexture))
+        for (const auto& t : parsed)
             textures.push_back(TextureRow(offset, t));
 
         nextTexture = textures.empty() ? 1 : textures.back().id + 1;
-        File file{path, offset, ListModels(data)};
+        File file{path, offset, {}};
+        CheckStatus(ListModels(data, file.models));
 
         for (auto& model : file.models)
             model.id = nextModel++;
@@ -180,19 +183,23 @@ bool ModelsReady(const std::filesystem::path& root) {
     return list.eof(); // a disc without models has an empty list
 }
 
-std::vector<ModelSource> ListModels(std::span<const uint8_t> data) {
-    std::vector<ModelSource> models;
+Status ListModels(std::span<const uint8_t> data, std::vector<ModelSource>& models) {
+    models.clear();
+    std::vector<TextureInventory::Container> containers;
+    std::vector<TextureInventory::detail::Resource> resources;
+    MH3_RETURN_IF_ERROR(TextureInventory::Containers(data, containers));
 
-    for (const auto& container : TextureInventory::Containers(data)) {
+    for (const auto& container : containers) {
         const TextureInventory::detail::Reader r{data, container.offset, size_t(container.offset) + container.bytes};
+        MH3_RETURN_IF_ERROR(TextureInventory::detail::Resources(r, resources));
 
-        for (const auto& resource : TextureInventory::detail::Resources(r))
+        for (const auto& resource : resources)
             if (resource.magic == Mdl0)
                 models.push_back({container.offset, container.bytes, uint32_t(resource.offset - container.offset), 0, resource.name});
     }
 
     std::sort(models.begin(), models.end(), [](const ModelSource& a, const ModelSource& b) { return a.container != b.container ? a.container < b.container : a.name < b.name; });
-    return models;
+    return {};
 }
 
 TextureRow::TextureRow(uint64_t fileOffset, const TextureInventory::Texture& t)

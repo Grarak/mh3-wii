@@ -446,7 +446,8 @@ void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
 
     if (m.converted) {
         uint32_t key = 0;
-        const auto path = GameAssetCache()->ModelPack(offset, key);
+        std::filesystem::path path;
+        CheckStatus(GameAssetCache()->ModelPack(offset, key, path));
 
         if (path.empty()) {
             std::ostringstream reason;

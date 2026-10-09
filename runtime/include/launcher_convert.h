@@ -17,19 +17,19 @@ struct TextureConversion {
 };
 
 // One parsed texture of the source file at fileOffset (data is the whole file).
-TextureConversion ConvertTexture(const TextureInventory::Texture& texture, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path);
+Status ConvertTexture(const TextureInventory::Texture& texture, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path, TextureConversion& out);
 
 // A version 2 native texture pack holding IDs firstId..firstId+count-1, added in order.
 class TexturePackWriter {
   public:
-    TexturePackWriter(const std::filesystem::path& path, uint32_t count, uint32_t firstId);
-    void Add(TextureConversion&& texture);
-    void Finish();
+    Status Open(const std::filesystem::path& path, uint32_t count, uint32_t firstId);
+    Status Add(TextureConversion&& texture);
+    Status Finish();
 
   private:
     std::fstream output;
     std::vector<aurora::gfx::NativeTextureRecord> records;
-    uint32_t base, added = 0;
+    uint32_t base = 0, added = 0;
 };
 
 struct ModelSource {
@@ -38,7 +38,7 @@ struct ModelSource {
 };
 
 // Every MDL0 of a source file, by (container, name); IDs are left 0.
-std::vector<ModelSource> ListModels(std::span<const uint8_t> data);
+Status ListModels(std::span<const uint8_t> data, std::vector<ModelSource>& models);
 struct TextureRow {
     uint64_t partition;
     std::string name;

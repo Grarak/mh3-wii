@@ -286,7 +286,8 @@ class DiscReader {
     }
 
     // Reader thread, unlocked: reads the next piece of a request's rest; false
-    // when there is nothing to read ahead.
+    // when there is nothing to read ahead, or the read failed: the read-ahead
+    // is dropped then, and the chunk's own read reports the failure.
     bool ReadAhead() {
         for (auto& a : aheads) {
             const uint64_t at = a.start + a.Size();
@@ -294,7 +295,12 @@ class DiscReader {
             if (!a.block || at >= a.end || a.Size() >= kAheadWindow)
                 continue;
 
-            const auto piece = Disc().Read(at, uint32_t(std::min<uint64_t>(kAheadPiece, a.end - at)));
+            std::vector<uint8_t> piece;
+
+            if (!Disc().TryRead(at, uint32_t(std::min<uint64_t>(kAheadPiece, a.end - at)), piece).ok()) {
+                aheads = {};
+                return false;
+            }
 
             if (a.head && a.head >= a.data.size() / 2) {
                 a.data.erase(a.data.begin(), a.data.begin() + a.head);
@@ -331,14 +337,7 @@ class DiscReader {
             // Timed: VitaSDK's condition variable can lose a notification.
             while (!stopping && !pending()) {
                 guard.unlock();
-                bool read = false;
-
-                try {
-                    read = ReadAhead();
-                } catch (...) {
-                    aheads = {}; // the chunk's own read reports the failure
-                }
-
+                const bool read = ReadAhead();
                 guard.lock();
 
                 if (!read && !stopping && !pending())

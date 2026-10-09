@@ -198,8 +198,16 @@ void OpenNativeAssets() {
     else if (GameAssetCache())
         // Load-time conversion: a texture's pack is opened at its first use.
         aurora::gl::set_native_texture_resolver([](uint32_t asset) {
+            std::string pack;
+            const Status found = GameAssetCache()->TexturePack(asset, pack);
+
+            if (!found.ok()) {
+                std::fprintf(stderr, "MH3: %s\n", found.message().c_str());
+                std::abort();
+            }
+
             try {
-                aurora::gl::open_native_texture_pack(GameAssetCache()->TexturePack(asset).c_str());
+                aurora::gl::open_native_texture_pack(pack.c_str());
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "MH3: %s\n", e.what());
                 std::abort();

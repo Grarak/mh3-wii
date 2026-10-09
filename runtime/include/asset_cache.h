@@ -36,7 +36,7 @@ class AssetCache {
 
     // A game disc read: indexes the source files it touches and patches their
     // native texture tags into the bytes.
-    void Read(uint64_t offset, uint8_t* out, size_t bytes);
+    Status Read(uint64_t offset, uint8_t* out, size_t bytes);
 
     // Whether the textures and models of the source files that [offset,
     // offset + bytes) touches are converted (or failed), waiting up to
@@ -49,12 +49,14 @@ class AssetCache {
     // `map`, and the streams it read before are extracted ahead of their use.
     void PrefetchStreams(const std::string& map);
 
-    // The converted pack holding texture asset `id`, once it is written.
-    std::string TexturePack(uint32_t id);
+    // The converted pack holding texture asset `id`, once it is written; an
+    // error when the asset is unknown or its source failed to convert.
+    Status TexturePack(uint32_t id, std::string& pack);
 
     // The converted model pack of the source file containing partition offset
-    // `at`; `key` identifies that file. Empty when the file has no usable models.
-    std::filesystem::path ModelPack(uint64_t at, uint32_t& key);
+    // `at`; `key` identifies that file. Empty when the file has no usable
+    // models; an error when its conversion failed.
+    Status ModelPack(uint64_t at, uint32_t& key, std::filesystem::path& pack);
 
     // The extent of the indexed source file containing partition offset `at`
     // when it has models (converted yet or not). Never waits.
