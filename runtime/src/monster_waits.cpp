@@ -987,6 +987,114 @@ void Em016RestPort(CpuContext* ctx) {
     }
 }
 
+// Timed actions, one per kind with the same code: a motion played for a
+// count of ticks (a constant, or plus the random word's low bits), then the
+// next action. The originals count calls.
+struct TimedAction {
+    bool steer;          // 0x8012CF84 each step first
+    int32_t setUp;       // SetUp's kind, -1 the carried scale (0x801302AC, SetScale)
+    bool loop;           // the motion through SetMotionLoop
+    uint32_t motion, flags;
+    int32_t ticks;       // the count
+    uint16_t randomBits; // plus the random word (+0x1EC) & these
+    uint32_t end;        // called at the end (work), or with `group`, `action`
+    uint32_t group = 0, action = 0;
+    void (*extra)(GuestCall&, uint32_t) = nullptr; // after the count is set
+};
+
+void Timed(CpuContext* ctx, const TimedAction& t) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+
+    if (t.steer)
+        game.Call<0x8012CF84>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+
+        if (t.setUp < 0) {
+            game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
+            game.Call<SetScale>({work});
+        } else
+            game.Call<Em::SetUp>({work, uint32_t(t.setUp)});
+
+        if (t.loop)
+            game.Call<SetMotionLoop>({work, t.motion, t.flags, 0});
+        else
+            em.SetMotion(t.motion, t.flags, 0);
+
+        em.Count(t.ticks + (Memory::Read16(work + kRandom) & t.randomBits));
+
+        if (t.extra)
+            t.extra(game, work);
+
+        break;
+    case 1:
+        if (CountDown(em)) {
+            if (t.end == NextAction)
+                game.Call<NextAction>({work, t.group, t.action});
+            else
+                game(t.end, {work});
+        }
+
+        break;
+    }
+}
+
+// The timed actions found by their per-call counts (+0x20 - 1 each step):
+//   0x80177A00 kind 15 (Lagiacrus) motion 6, 300 ticks, then 1.6
+//   0x80379C34 kind 19 (Agnaktor) the same; 0x8037F414 too, with 0x803B9C04
+//              (work, its place, 60) and then 13.8
+//   0x801AD4FC, 0x801AD58C kind 27 (Aptonoth) motion 3 / 4 (looped), 120 /
+//              60 ticks plus up to 127
+//   0x801B1198, 0x801B1378 kinds 30/31 (Felyne, Melynx) motion 0x1C / 0x24,
+//              60 / 150 ticks plus up to 63
+//   0x80157FA8 kind 3 (Qurupeco) hovering, motion 0x1F for 60 ticks, then
+//              0x80155700
+//   0x801BC10C kind 6 (Diablos), 0x801CB5E0 kind 5 (Barioth) walking (motion
+//              0x13, steering each step) for 300 ticks, then 1.4 / 1.3
+void Em015PausePort(CpuContext* ctx) {
+    Timed(ctx, {false, 0, false, 0x6, 10, 300, 0x0, NextAction, 1, 6, nullptr});
+}
+
+void Em019PausePort(CpuContext* ctx) {
+    Timed(ctx, {false, 0, false, 0x6, 10, 300, 0x0, NextAction, 1, 6, nullptr});
+}
+
+void Em019Pause2Port(CpuContext* ctx) {
+    Timed(ctx, {false, 0, false, 0x6, 10, 300, 0x0, NextAction, 13, 8, [](GuestCall& g, uint32_t w) { g.Call<0x803B9C04>({w, w + 0x188, 0x3C}); }});
+}
+
+void Em027GrazePort(CpuContext* ctx) {
+    Timed(ctx, {false, 0, false, 0x3, 4, 120, 0x7F, ActionDone, 0, 0, nullptr});
+}
+
+void Em027Graze2Port(CpuContext* ctx) {
+    Timed(ctx, {false, 0, true, 0x4, 4, 60, 0x7F, ActionDone, 0, 0, nullptr});
+}
+
+void Em030IdlePort(CpuContext* ctx) {
+    Timed(ctx, {false, 0, false, 0x1C, 4, 60, 0x3F, ActionDone, 0, 0, nullptr});
+}
+
+void Em030Idle2Port(CpuContext* ctx) {
+    Timed(ctx, {false, 0, false, 0x24, 6, 150, 0x3F, ActionDone, 0, 0, nullptr});
+}
+
+void Em003HoverPort(CpuContext* ctx) {
+    Timed(ctx, {false, -1, true, 0x1F, 4, 60, 0x0, 0x80155700, 0, 0, nullptr});
+}
+
+void Em006WalkPort(CpuContext* ctx) {
+    Timed(ctx, {true, 0, false, 0x13, 6, 300, 0x0, NextAction, 1, 4, nullptr});
+}
+
+void Em005WalkPort(CpuContext* ctx) {
+    Timed(ctx, {true, 0, false, 0x13, 6, 300, 0x0, NextAction, 1, 3, nullptr});
+}
+
 // kind 35 0x8035F378 and 0x8035F560 (motion flags 4 or 0): Bnahabra
 // waiting, motion 1 looped for 90 ticks (the original's 90 calls).
 void Em035Wait(CpuContext* ctx, uint32_t flags) {
@@ -2124,6 +2232,66 @@ extern "C" void MH3_Em016Rest(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em016Rest", func_8018599C, Em016RestPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8018599C, MH3_Em016Rest, "Em016Rest");
+
+extern "C" void func_80177A00(CpuContext* ctx);
+extern "C" void MH3_Em015Pause(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em015Pause", func_80177A00, Em015PausePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80177A00, MH3_Em015Pause, "Em015Pause");
+
+extern "C" void func_80379C34(CpuContext* ctx);
+extern "C" void MH3_Em019Pause(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em019Pause", func_80379C34, Em019PausePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80379C34, MH3_Em019Pause, "Em019Pause");
+
+extern "C" void func_8037F414(CpuContext* ctx);
+extern "C" void MH3_Em019Pause2(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em019Pause2", func_8037F414, Em019Pause2Port);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8037F414, MH3_Em019Pause2, "Em019Pause2");
+
+extern "C" void func_801AD4FC(CpuContext* ctx);
+extern "C" void MH3_Em027Graze(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em027Graze", func_801AD4FC, Em027GrazePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801AD4FC, MH3_Em027Graze, "Em027Graze");
+
+extern "C" void func_801AD58C(CpuContext* ctx);
+extern "C" void MH3_Em027Graze2(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em027Graze2", func_801AD58C, Em027Graze2Port);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801AD58C, MH3_Em027Graze2, "Em027Graze2");
+
+extern "C" void func_801B1198(CpuContext* ctx);
+extern "C" void MH3_Em030Idle(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em030Idle", func_801B1198, Em030IdlePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801B1198, MH3_Em030Idle, "Em030Idle");
+
+extern "C" void func_801B1378(CpuContext* ctx);
+extern "C" void MH3_Em030Idle2(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em030Idle2", func_801B1378, Em030Idle2Port);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801B1378, MH3_Em030Idle2, "Em030Idle2");
+
+extern "C" void func_80157FA8(CpuContext* ctx);
+extern "C" void MH3_Em003Hover(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em003Hover", func_80157FA8, Em003HoverPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80157FA8, MH3_Em003Hover, "Em003Hover");
+
+extern "C" void func_801BC10C(CpuContext* ctx);
+extern "C" void MH3_Em006Walk(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em006Walk", func_801BC10C, Em006WalkPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801BC10C, MH3_Em006Walk, "Em006Walk");
+
+extern "C" void func_801CB5E0(CpuContext* ctx);
+extern "C" void MH3_Em005Walk(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em005Walk", func_801CB5E0, Em005WalkPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801CB5E0, MH3_Em005Walk, "Em005Walk");
 
 extern "C" void func_8035F378(CpuContext* ctx);
 extern "C" void MH3_Em035Wait(CpuContext* ctx) {
