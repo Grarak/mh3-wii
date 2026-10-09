@@ -101,6 +101,15 @@ struct Writer {
 std::map<uint32_t, Writer> writers;
 std::map<uint32_t, uint32_t> readers;
 std::map<uint32_t, Writer> lastReaders; // the last draw function on each conflict page
+
+// Per conflict page (by index): in how many pairs, and its last writer,
+// first draw user and last draw user.
+struct Recurring {
+    uint32_t pairs = 0, writer = 0, reader = 0, lastReader = 0;
+    uint8_t phase = 0;
+};
+
+std::map<size_t, Recurring> recurring;
 std::map<uint32_t, Writer> resultReaders; // logic functions reading what the draw wrote
 uint64_t drawPages = 0, logicPages = 0, conflictPages = 0, otherThreadPages = 0, drawWrittenPages = 0, resultPages = 0;
 uint32_t phaseConflicts[4]{};
@@ -276,6 +285,12 @@ void Tally() {
         last.earliestUs = last.earliestUs == UINT32_MAX ? page.drawLastUs : std::max(last.earliestUs, page.drawLastUs);
         ++phaseConflicts[page.logicPhase & 3];
         conflictLastUs.push_back(page.drawLastUs);
+        auto& r = recurring[i];
+        ++r.pairs;
+        r.writer = page.logicFunction;
+        r.reader = page.drawFunction;
+        r.lastReader = page.drawLastFunction;
+        r.phase = page.logicPhase;
         pair.firstConflictUs = std::min(pair.firstConflictUs, page.logicUs);
         pair.lastConflictUs = std::max(pair.lastConflictUs, page.drawLastUs);
     }
@@ -325,6 +340,16 @@ void Report() {
 
     for (size_t i = 0; i < byLast.size() && i < 40; ++i)
         std::fprintf(stderr, "MH3 draw pages: last draw user %08x %u pages, latest %u us into the draw\n", byLast[i].first, byLast[i].second.pages, byLast[i].second.earliestUs);
+
+    // The conflict pages, by guest address: those in at least half the pairs.
+    for (const auto& [index, r] : recurring) {
+        if (r.pairs * 2 < pairs)
+            continue;
+
+        const uint32_t address = index < mem1Pages ? Memory::kMem1CachedBase + uint32_t(index * pageBytes) : Memory::kMem2CachedBase + uint32_t((index - mem1Pages) * pageBytes);
+        std::fprintf(stderr, "MH3 draw pages: conflict page %08x in %u pairs: written by %08x (phase %u), drawn by %08x, last by %08x\n", address, r.pairs, r.writer, r.phase, r.reader,
+                     r.lastReader);
+    }
 
     std::vector<std::pair<uint32_t, Writer>> byResult(resultReaders.begin(), resultReaders.end());
     std::sort(byResult.begin(), byResult.end(), [](const auto& a, const auto& b) { return a.second.pages > b.second.pages; });
