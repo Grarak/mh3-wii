@@ -4,12 +4,20 @@
 // pointers: the worker resolves addresses exclusively into the private bytes.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
 namespace AxDspHle {
+
+#ifdef MH3_AX_PRIVATE_JOB_TEST
+// The native timing fixture records the actual admitted range/write stream.
+// No observer or observer branch is present in production builds.
+void PrivateMixTestRangeHook(uint32_t addr, size_t bytes, uint8_t* destination, bool writable);
+void PrivateMixTestWriteHook(uint32_t addr, size_t bytes);
+#endif
 
 inline bool NormalizeMixAddress(uint32_t addr, size_t bytes, uint32_t& physical) {
     constexpr uint32_t mem1Size = 24u << 20, mem2Size = 64u << 20;
@@ -53,29 +61,40 @@ public:
             if (m_writeCount == m_writes.size()) return false;
             m_writes[m_writeCount++] = {begin, end};
         }
-        // Merge both directions and all aliases before copying. Adjacent spans
-        // have no gap, so the merged byte view retains intra-command ordering.
+        // Sorted, disjoint spans make admission lookups bounded by a binary
+        // search. Merge all aliases and adjacency before copying so writes
+        // still forward through the complete intra-command byte view.
         uint32_t mergedBegin = begin, mergedEnd = end;
         uint8_t* mergedDestination = destination;
-        for (size_t i = 0; i < m_spanCount;) {
-            const Span& span = m_spans[i];
-            if (span.end < mergedBegin || span.begin > mergedEnd) { ++i; continue; }
+        size_t lo = 0, hi = m_spanCount;
+        if (m_spanCount && m_spans[m_spanCount - 1].end < begin) lo = hi;
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (m_spans[mid].end < begin) lo = mid + 1;
+            else hi = mid;
+        }
+        size_t next = lo;
+        while (next < m_spanCount && m_spans[next].begin <= mergedEnd) {
+            const Span& span = m_spans[next++];
             if (span.begin < mergedBegin) {
                 mergedBegin = span.begin;
                 mergedDestination = span.destination;
             }
             mergedEnd = std::max(mergedEnd, span.end);
-            m_spans[i] = m_spans[--m_spanCount];
-            i = 0;
         }
-        if (m_spanCount == m_spans.size()) return false;
-        m_spans[m_spanCount++] = {mergedBegin, mergedEnd, 0, mergedDestination, false};
+        if (next == lo && m_spanCount == m_spans.size()) return false;
+        const size_t tail = m_spanCount - next;
+        if (tail && next != lo + 1)
+            std::memmove(m_spans.data() + lo + 1, m_spans.data() + next, tail * sizeof(Span));
+        m_spanCount = lo + 1 + tail;
+        m_spans[lo] = {mergedBegin, mergedEnd, 0, mergedDestination, false};
+#ifdef MH3_AX_PRIVATE_JOB_TEST
+        PrivateMixTestRangeHook(addr, bytes, destination, writable);
+#endif
         return true;
     }
 
     bool Seal() {
-        std::sort(m_spans.begin(), m_spans.begin() + m_spanCount,
-                  [](const Span& a, const Span& b) { return a.begin < b.begin; });
         m_bytes = 0;
         for (size_t i = 0; i < m_spanCount; ++i) {
             Span& span = m_spans[i];
@@ -110,6 +129,9 @@ public:
             if (!Writable(physical, bytes)) return nullptr;
             MarkDirty(offset, bytes);
             span->written = true;
+#ifdef MH3_AX_PRIVATE_JOB_TEST
+            PrivateMixTestWriteHook(addr, bytes);
+#endif
         }
         return m_data.data() + offset;
     }
@@ -134,9 +156,8 @@ public:
             const size_t begin = span.offset, end = begin + span.end - span.begin;
             size_t pos = begin;
             while (pos < end) {
-                while (pos < end && !Dirty(pos)) ++pos;
-                const size_t run = pos;
-                while (pos < end && Dirty(pos)) ++pos;
+                const size_t run = NextDirtyBit<true>(pos, end);
+                pos = NextDirtyBit<false>(run, end);
                 if (pos != run)
                     std::memcpy(span.destination + run - begin, m_data.data() + run, pos - run);
             }
@@ -185,7 +206,18 @@ private:
         m_lastWrite = lo - 1;
         return true;
     }
-    bool Dirty(size_t offset) const { return m_dirty[offset / 8] & (1u << (offset % 8)); }
+    template <bool dirty>
+    size_t NextDirtyBit(size_t offset, size_t end) const {
+        // Skip eight clean/dirty guest bytes with one bitmap-byte load. Mixed
+        // bytes retain exact partial-write runs, including unaligned span ends.
+        while (offset < end) {
+            const uint8_t mask = m_dirty[offset / 8];
+            const unsigned bits = (dirty ? mask : uint8_t(~mask)) >> (offset % 8);
+            if (bits) return std::min(end, offset + std::countr_zero(bits));
+            offset = (offset | size_t(7)) + 1;
+        }
+        return end;
+    }
     void MarkDirty(size_t offset, size_t bytes) {
         const size_t end = offset + bytes;
         while (offset < end && offset % 8) {
