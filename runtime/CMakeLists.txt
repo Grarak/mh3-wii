@@ -54,11 +54,13 @@ target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
 target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
   native/mh3_model_submission.c)
 target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_updates.c
-  native/mh3_model_gpu_inputs.c)
+  native/mh3_model_gpu_inputs.c src/model_material_prep.cpp native/mh3_model_material_prep.c)
 set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
+  native/mh3_model_material_prep.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_lifetime.c)
 target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
+target_sources(MH3 PRIVATE src/native_startup_textures.cpp native/mh3_startup_textures.c)
 target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
@@ -109,7 +111,7 @@ add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
-    src/native_material.cpp src/model_gpu.cpp src/character_material.cpp)
+    src/native_material.cpp src/model_gpu.cpp src/model_assets.cpp src/character_material.cpp)
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()

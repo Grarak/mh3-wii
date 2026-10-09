@@ -1,6 +1,7 @@
 #include "gx_host.h"
 #include "gx_panic.h"
 #include "native_graphics.h"
+#include "model_assets.h"
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
@@ -124,6 +125,7 @@ void ShutdownGraphics() {
         // Shader patcher storage must outlive the last submitted draw. This
         // drain is only at shutdown; frame admission/submission never waits.
         aurora::gl::finish();
+        UnloadNativeModelAssets();
         ClearNativeMaterialPrograms();
         aurora::clear_scene_feedback_textures();
         aurora::clear_generated_textures();
@@ -167,14 +169,14 @@ void InitializeGraphics(int argc, char** argv,bool loadNativeAssets=true) {
     const auto info = aurora_initialize(argc, argv, &config);
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
-#ifdef __vita__
+    initialized = true;
+    std::atexit(ShutdownGraphics);
     const char* discRoot = std::getenv("MH3_DISC_DIR");
+#ifdef __vita__
     const auto nativePack = std::filesystem::path(discRoot ? discRoot : "ux0:/data/mh3-wii") / "native-textures.bin";
     if (loadNativeAssets && std::filesystem::exists(nativePack)) aurora::gl::open_native_texture_pack(nativePack.string().c_str());
-#else
-    (void)loadNativeAssets;
 #endif
-    initialized = true;
+    if (loadNativeAssets) LoadNativeModelAssets(discRoot);
 #ifdef MH3_DEVELOPMENT
     // MH3_RENDER_SCALE=n: render the EFB at n times the native resolution,
     // whatever the window size (captures are at that size).
@@ -200,7 +202,6 @@ void InitializeGraphics(int argc, char** argv,bool loadNativeAssets=true) {
         profile.cpuStarted = std::clock();
     }
 #endif
-    std::atexit(ShutdownGraphics);
     if (info.backend != config.desiredBackend) throw std::runtime_error("Aurora did not select the required renderer");
     // Frameskip polls GPU completion before native draw preparation.
     aurora_set_frameskip(true);
