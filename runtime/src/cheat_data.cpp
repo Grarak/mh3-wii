@@ -70,8 +70,6 @@ enum : uint32_t {
     kWeapon = 0x1D0,       // u8 weapon type: 7 great sword, 8 sword and shield, 9 hammer,
                            //   0xA lance, 0xB bowgun, 0xE long sword, 0xF switch axe
     kClip = 0x269,         // u8 shots loaded, u8 at +1
-    kTrapsOut = 0x30C,     // u8
-    kBarrelsOut = 0x30E,   // u8
     kMotionSpeed = 0x354,  // f32
     kGauge = 0x36C,        // u16 switch axe phial gauge
     kHealth = 0x370,       // s16, maximum at +2, recoverable at +6
@@ -82,7 +80,6 @@ enum : uint32_t {
     kDefense = 0x3C0,      // f32
     kElementStatus = 0x3DE, // u16 timers from here on
     kPoison = 0x3EA,
-    kStun = 0x3FC,
     kPurple = 0x404,
     kFelvine = 0x410,
     kSpeedBurst = 0x412,
@@ -117,7 +114,6 @@ enum : uint32_t {
 enum : uint32_t {
     kMonsterState = 0x5,   // u8: the action's state
     kMonsterHealth = 0x7A0, // s32, maximum at +4
-    kMonsterMap = 0x811,   // u8: 2 shown on the map
     kMonsterX = 0x28,      // f32 position, z at +8
 };
 
@@ -318,7 +314,7 @@ void StepBully(uint32_t plw) {
         move(1, airborne ? by : std::max(by, kTakeOff) / step);
     };
 
-    if (On(Id::BullyActionRepeater) && Combo(uint16_t(Value(Id::BullyActionRepeater))))
+    if (On(Id::ActionRepeater) && Combo(uint16_t(Value(Id::ActionRepeater))))
         Memory::Write8(plw + kState, 0);
 
     if (On(Id::MoonJump) && HeldAll(kA | kB))
@@ -444,9 +440,6 @@ void StepActions(uint32_t plw) {
     if (On(Id::ForceUnsheathe) && Combo(uint16_t(Value(Id::ForceUnsheathe))))
         Memory::Write8(plw + kDrawn, 1);
 
-    if (On(Id::ActionRepeater) && (Pressed() & kPlus))
-        Memory::Write8(plw + kState, 0);
-
     if (On(Id::ForceEvade) && Activated(Id::ForceEvade) && Memory::Read8(plw + kAction9) != 2 && Memory::Read8(plw + kActionGroup) != 2 &&
         ButtonsIn(plw, kPressed, kB)) {
         Memory::Write8(plw + kState, 0);
@@ -478,8 +471,10 @@ void StepStatus(uint32_t plw) {
         uint16_t value;
     };
 
-    // Skiller's and Doudley's status codes: u16 timers and bonuses held at
-    // a value.
+    // Skiller's, Argon's and Doudley's status codes: u16 timers and bonuses
+    // held at a value. Argon's drinks hold the drink's timer up, so its
+    // effect never ends (Bully's Hot and Cold drink lasts forever only
+    // dropped the countdown outside the drink's climate).
     constexpr Write kWrites[]{
         {Id::NeverLifeDrain, kLifeDrain, 0},
         {Id::AddDragon, kDragonUp, 0x3000},
@@ -497,7 +492,6 @@ void StepStatus(uint32_t plw) {
         {Id::NeverSnowman, kSnowman, 0},
         {Id::NeverMuddy, kMuddy, 0},
         {Id::AlwaysWindproof, kWindproof, 0x300},
-        {Id::NeverStun, kStun, 0},
         {Id::NeverPoison, kPoison, 0},
         {Id::NaturalRecoveryUp, kNaturalRecovery, 0x300},
         {Id::PurpleHealthBar, kPurple, 0x3000},
@@ -513,7 +507,11 @@ void StepStatus(uint32_t plw) {
         if (On(write.id))
             Memory::Write16(plw + write.offset, write.value);
 
-    if (On(Id::InfiniteHp)) {
+    // Skiller's Inf HP and Seth's Infinite health (online code) wrote 100 to
+    // the health and its maximum (Skiller's to the recoverable health too),
+    // Skiller's Inf stamina and Bully's Infinite stamina 600 and 605 to the
+    // stamina and its maximum; here the maximum the hunter has.
+    if (On(Id::InfiniteHealth)) {
         const uint16_t maximum = Memory::Read16(plw + kHealth + 2);
         Memory::Write16(plw + kHealth, maximum);
         Memory::Write16(plw + kHealth + 6, maximum);
@@ -542,9 +540,6 @@ void StepStatus(uint32_t plw) {
 
     // Seth's online codes wrote the online layout's player work
     // (0x9014AE80); here the local player's, wherever it is.
-    if (On(Id::SethInfiniteHealth))
-        Memory::Write32(plw + kHealth, 0x00640064);
-
     if (On(Id::SethUltraSharp))
         Memory::Write32(plw + kSharpness, 0x06400404);
 
@@ -557,12 +552,6 @@ void StepStatus(uint32_t plw) {
 }
 
 void StepItems(uint32_t plw) {
-    if (On(Id::UnlimitedBarrelBombs))
-        Memory::Write8(plw + kBarrelsOut, 0);
-
-    if (On(Id::UnlimitedTraps))
-        Memory::Write8(plw + kTrapsOut, 0);
-
     if (On(Id::LoadShots)) {
         Memory::Write8(plw + kClip, uint8_t(Value(Id::LoadShots)));
         Memory::Write8(plw + kClip + 1, uint8_t(Value(Id::LoadShots)));
@@ -729,8 +718,6 @@ constexpr uint32_t kArmorEntry = 24, kWeaponEntry = 36;
 constexpr uint32_t kBarrels = 12;
 
 enum : uint32_t {
-    kArmorPigment = 0x4, // u8: 2 can be dyed
-    kArmorClasses = 0x6, // u8: 0x0F blademaster and gunner
     kArmorSkills = 0xE,  // five u8 pairs: skill, points
     kBarrelRange = 0xA,  // u16: hundredths
 };
@@ -798,27 +785,16 @@ void StepArmorSkills() {
 
 } // namespace
 
-// Doudley's equipment codes (serial writes to the tables, entries 1 on).
+// Doudley's equipment codes (serial writes to the tables, entries 1 on). His
+// Enable both armor type and Enable armour pigment for all armors wrote the
+// armor tables' +6 (0x0F) and +4 (2): Equip blade/gunner armor and Enable
+// armor pigment for all armor (cheat_items.cpp, cheat_hunter.cpp) answer the
+// checks that read them instead. Range 3.00 is one of Range's values.
 void StepEquipment() {
-    if (On(Id::DoudleyBothArmorTypes))
-        for (uint32_t kind = 1; kind <= 4; ++kind)
-            if (const uint32_t table = EquipmentTable(kind))
-                for (uint32_t i = 1; i < EquipmentCount(kind); ++i)
-                    Memory::Write8(table + i * kArmorEntry + kArmorClasses, 0x0F);
-
-    if (On(Id::DoudleyArmorPigment))
-        for (uint32_t kind = 1; kind <= 5; ++kind)
-            if (const uint32_t table = EquipmentTable(kind))
-                for (uint32_t i = 1; i < EquipmentCount(kind); ++i)
-                    Memory::Write8(table + i * kArmorEntry + kArmorPigment, 2);
-
-    if (On(Id::BarrelRange300) || On(Id::BarrelRange)) {
-        const auto range = uint16_t(On(Id::BarrelRange) ? Value(Id::BarrelRange) : 300);
-
+    if (On(Id::BarrelRange))
         if (const uint32_t table = EquipmentTable(kBarrels))
             for (uint32_t i = 1; i < EquipmentCount(kBarrels); ++i)
-                Memory::Write16(table + i * kWeaponEntry + kBarrelRange, range);
-    }
+                Memory::Write16(table + i * kWeaponEntry + kBarrelRange, uint16_t(Value(Id::BarrelRange)));
 
     StepArmorSkills();
 }
@@ -923,15 +899,6 @@ void StepMonsters() {
 
         if (nearest)
             Memory::Write8(nearest + kMonsterState, 0);
-    }
-
-    // The first 21 monsters, while the first is in use.
-    if (On(Id::ShowMonstersOnMap)) {
-        const uint32_t first = MoveWork(Kind::Monster, 0);
-
-        if (first && Memory::Read16(first) == 0x0101)
-            for (uint32_t i = 0; i < 21 && i < count; ++i)
-                Memory::Write8(MoveWork(Kind::Monster, i) + kMonsterMap, 2);
     }
 }
 

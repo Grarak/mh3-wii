@@ -53,14 +53,14 @@ constexpr uint32_t GetItemData = 0x8029F740; // GetItemData__FUs (item): +3 u8 s
 //   Infinite bombs in pouch (US 0x8004BB64, EU 0x8004BBC8: the new count's
 //     store dropped) keeps the count;
 //   Gain/use items get 10 (0x8004BB60/BBC4: the count + change replaced by
-//     10), and its button-switched copy, set it to 10;
+//     10), always or switched on and off by its buttons, sets it to 10;
 //   Sell/use item get 10 (C2 at 0x8004BB64/BBC8) sets it to 10 when it goes
 //     down;
 // a new stack (Buy new item get 10, C2 at 0x8004BAF0/BB54) starts at 10.
 extern "C" void func_8004BAA0(CpuContext* ctx);
 
 extern "C" void MH3_CheatItemAdd(CpuContext* ctx) {
-    const bool get10 = On(Id::ItemsGet10) || Cheats::Toggled(Id::ItemsGet10Toggle);
+    const bool get10 = Cheats::Toggled(Id::ItemsGet10);
     const bool any = get10 || On(Id::InfiniteBombsInPouch) || On(Id::SellUseGet10) || On(Id::BuyNewGet10);
 
     if (!any) {
@@ -121,15 +121,15 @@ REGISTER_NATIVE_FUNCTION_AS(0x8004BAA0, MH3_CheatItemAdd, "CheatItemAdd");
 // 0x80272E94 (player, item, change): the player uses (-1) an item of the
 // pouch. Infinite items (Bully: li r5,-1 made li r5,0 before six calls, US
 // 0x802490B4 ..., EU 0x80249118 ...: drinking, eating, sharpening, and so on)
-// and Doudley's Inf ammo (C2 at 0x80287DF0/0x80287E54, the bowgun's shot)
-// use none.
+// and Inf ammo (Doudley: C2 at 0x80287DF0/0x80287E54, the bowgun's shot) use
+// none.
 extern "C" void func_80272E94(CpuContext* ctx);
 
 extern "C" void MH3_CheatPlayerItemUse(CpuContext* ctx) {
     static constexpr uint32_t kItemUses[]{0x80249120, 0x8024B9D8, 0x8024C858, 0x8024D6E0, 0x8024F210, 0x8024F5FC};
     const uint32_t from = ctx->lr;
     const bool item = On(Id::InfiniteItems) && std::find(std::begin(kItemUses), std::end(kItemUses), from) != std::end(kItemUses);
-    const bool ammo = On(Id::DoudleyInfiniteAmmo) && from == 0x80287E5C;
+    const bool ammo = On(Id::InfiniteAmmo) && from == 0x80287E5C;
 
     if ((item || ammo) && int32_t(ctx->gpr[5]) < 0)
         ctx->gpr[5] = 0;
@@ -354,9 +354,10 @@ extern "C" void MH3_CheatQuestFeeMoney(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x803214C0, MH3_CheatQuestFeeMoney, "CheatQuestFeeMoney");
 
 // 0x8004D14C (s32 change, &money): money += change, clamped to 0..9,999,999.
-// Gain/use money > max money (US 0x8004D100, EU 0x8004D164: the clamp's
-// branch to its store) sets it to 9,999,999 on any change; Dont lose money
-// buying items (C2 at 0x8004D0F0/D154) keeps it when it would go down.
+// Dont lose money buying items (C2 at US 0x8004D0F0, EU 0x8004D154) keeps it
+// when it would go down. (Skiller's Gain/use money > max money set it to
+// 9,999,999 on any change, 0x8004D100/D164: Infinite money, cheat_data.cpp,
+// holds it there.)
 extern "C" void MH3_MoneyAdd(CpuContext* ctx) {
     int32_t change = int32_t(ctx->gpr[3]);
     const uint32_t money = ctx->gpr[4];
@@ -368,7 +369,7 @@ extern "C" void MH3_MoneyAdd(CpuContext* ctx) {
 
     total += change;
 
-    if (total > kMaxMoney || On(Id::MoneyChangeMax))
+    if (total > kMaxMoney)
         total = kMaxMoney;
     else if (total < 0)
         total = 0;
@@ -397,31 +398,16 @@ extern "C" void MH3_ResourcesAdd(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x8004D398, MH3_ResourcesAdd, "ResourcesAdd");
 
-// 0x802DF748 and 0x803090FC: the money (and in the second the resources)
-// printed for menus. Infinite funds (C2 at US 0x802DF714/0x8030942C, EU
-// 0x802DF778/0x80309490) first set the money to 999,999 and 99,999,999;
-// Infinite ressources (C2 at 0x80309354/0x803093B8) the resources to
-// 99,999,999.
-extern "C" void func_802DF748(CpuContext* ctx);
+// 0x803090FC: the money and the resources printed for menus. Infinite
+// ressources (C2 at US 0x80309354, EU 0x803093B8) first sets the resources to
+// 99,999,999. (Bully's Infinite funds set the money to 999,999 and 99,999,999
+// there and at 0x802DF748: Infinite money, cheat_data.cpp, holds it at
+// 9,999,999.)
 extern "C" void func_803090FC(CpuContext* ctx);
 
-extern "C" void MH3_CheatMoneyPanel(CpuContext* ctx) {
-    if (On(Id::InfiniteFunds) && UserData() != 0)
-        Memory::Write32(UserData() + kMoney, 999999);
-
-    func_802DF748(ctx);
-}
-
-REGISTER_NATIVE_FUNCTION_AS(0x802DF748, MH3_CheatMoneyPanel, "CheatMoneyPanel");
-
 extern "C" void MH3_CheatFundsPanel(CpuContext* ctx) {
-    if (UserData() != 0) {
-        if (On(Id::InfiniteFunds))
-            Memory::Write32(UserData() + kMoney, 99999999);
-
-        if (On(Id::InfiniteResources))
-            Memory::Write32(UserData() + kResources, 99999999);
-    }
+    if (On(Id::InfiniteResources) && UserData() != 0)
+        Memory::Write32(UserData() + kResources, 99999999);
 
     func_803090FC(ctx);
 }
@@ -693,25 +679,22 @@ namespace {
 // The character's name in the save data: 17 bytes from +3.
 constexpr uint32_t kName = 0x3, kNameSize = 17;
 
-void WriteName(uint32_t user, std::string_view name, uint32_t size) {
-    for (uint32_t i = 0; i < size; ++i)
-        Memory::Write8(user + kName + i, i < name.size() ? uint8_t(name[i]) : 0);
-}
-
 } // namespace
 
 // PlLoadUserData (0x80049FE0, player): the player's work filled from the
-// save data, the name to its +0x5CA. Profile name modifier (C2 at US
-// 0x8004A0E0, EU 0x8004A144) wrote the typed name into the save data just
-// before the name is copied; here before the call (nothing earlier in it
-// reads the name).
+// save data, the name to its +0x5CA. Character name change (Bully's Profile
+// name modifier, C2 at US 0x8004A0E0, EU 0x8004A144) wrote the typed name
+// into the save data just before the name is copied; here before the call
+// (nothing earlier in it reads the name). Skiller's Name change wrote the
+// same field (7 characters) each frame.
 extern "C" void func_80049FE0(CpuContext* ctx);
 
 extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
     const std::string_view name = Cheats::Text(Id::ProfileNameModifier);
 
     if (On(Id::ProfileNameModifier) && !name.empty() && UserData() != 0)
-        WriteName(UserData(), name, kNameSize);
+        for (uint32_t i = 0; i < kNameSize; ++i)
+            Memory::Write8(UserData() + kName + i, i < name.size() ? uint8_t(name[i]) : 0);
 
     func_80049FE0(ctx);
 }
@@ -726,13 +709,6 @@ namespace Cheats {
 void StepItems() {
     if (On(Id::LanguageChanger))
         Memory::Write8(kSystem + 9, uint8_t(Value(Id::LanguageChanger)));
-
-    // Name change (US 0x900E0573 to 0x900E057A, the save data's +3): the
-    // typed name's 7 characters, the rest 0.
-    const std::string_view name = Text(Id::NameChange);
-
-    if (On(Id::NameChange) && !name.empty() && ::UserData() != 0)
-        WriteName(::UserData(), name, 8);
 }
 
 } // namespace Cheats

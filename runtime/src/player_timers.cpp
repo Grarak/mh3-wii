@@ -14,8 +14,7 @@
 // Cheats (cheats.h), by the instruction they replaced: Super speed sets the
 // motion speed (+0x354) to 5 before the stamina recovery reads it; On hit
 // long sword power max stores 100 to the spirit gauge and its level (+0x384,
-// +0x386) where the gauge would go down; the drinks' codes drop the timers'
-// countdown outside their climate (Hot drink +0x466, Cold drink +0x464).
+// +0x386) where the gauge would go down.
 #include "cheats.h"
 #include "game_step.h"
 #include "guest_call.h"
@@ -311,7 +310,7 @@ void Tick(GuestCall& game, const Plw p) {
 
             if (p.S16(timer) < 0)
                 p.W16(timer, 0);
-        } else if (!Cheats::On(timer == 0x464u ? Cheats::Id::ColdDrinkForever : Cheats::Id::HotDrinkForever)) {
+        } else {
             p.W16(timer, p.U16(timer) - 1);
         }
 

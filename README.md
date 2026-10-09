@@ -95,7 +95,7 @@ MH3 --launcher                # development builds: the Vita launcher's menus
 
 `--quest <id>|free [--area <n>] [--spawn x,y,z] [--no-damage]` starts a quest
 directly. `--cheat <name>[=<value>]` (repeatable, with any option) turns on a
-code of the launcher's cheat list, for example `--cheat "Inf HP"` or
+code of the launcher's cheat list, for example `--cheat "Infinite health"` or
 `--cheat "Bully:Super speed=L+R+Up"` ([cheats](docs/vita-launcher.md#custom-quests-and-cheats)).
 `MH3_DISC_DIR` points at another prepared data directory instead.
 Saves default to `saves/` (`MH3_USER_DIR` changes the root); development

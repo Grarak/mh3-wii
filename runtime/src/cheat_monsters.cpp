@@ -50,30 +50,20 @@ int32_t Fctiwz(double v) {
     return int32_t(v);
 }
 
-// One hit kills: Enable 1 hit kills, Enable 1 HP and Normal enemy HP switch
-// among these by their buttons.
-enum class HealthMode { Normal, Kill, OneHp };
-HealthMode g_healthMode = HealthMode::Normal;
-
 } // namespace
 
 // 0x8011E6BC (monster, s32 change, s32 max): health += change, within 0 and
 // max (at least the health it had), and not below the floor (the maximum
 // times +0x7B0). The codes (all US 0x8011E6xx, EU +0x64):
-//   (Alt) 1 hit kills, and its button-switched copy (C2 at 0x8011E65C): the
-//     health is 0 first, so any change leaves 0 (or the floor);
-//   1 hit kills enemy and Enemy has 1 HP (0x8011E670: the sum replaced by 0
-//     and 1), and Enable 1 hit kills, Enable 1 HP and Normal enemy HP, which
-//     switch between them by their buttons;
+//   1 hit kills and Enemy has 1 HP (0x8011E670: the sum replaced by 0 and
+//     1), always or switched on and off by their buttons (Skiller's Enable
+//     1 hit kills, Enable 1 HP and Normal enemy HP patched the same sum; his
+//     "(Alt)" codes emptied the health first, C2 at 0x8011E65C);
 //   Tranq attaq (C2 at 0x8011E674): +0x93A (the tranquilizer gauge) 0x150.
 extern "C" void MH3_MonsterHealthAdd(CpuContext* ctx) {
     const uint32_t monster = ctx->gpr[3];
     const int32_t change = int32_t(ctx->gpr[4]);
     int32_t max = int32_t(ctx->gpr[5]);
-
-    if (On(Id::AltOneHitKills) || Toggled(Id::AltOneHitKillsToggle))
-        Memory::Write32(monster + kHealth, 0);
-
     const int32_t health = int32_t(Memory::Read32(monster + kHealth));
 
     if (max < health)
@@ -81,15 +71,10 @@ extern "C" void MH3_MonsterHealthAdd(CpuContext* ctx) {
 
     int32_t total = health + change;
 
-    if (On(Id::OneHitKills))
+    if (Toggled(Id::OneHitKills))
         total = 0;
 
-    if (On(Id::EnemyOneHp))
-        total = 1;
-
-    if (g_healthMode == HealthMode::Kill)
-        total = 0;
-    else if (g_healthMode == HealthMode::OneHp)
+    if (Toggled(Id::EnemyOneHp))
         total = 1;
 
     Memory::Write32(monster + kHealth, uint32_t(total));
@@ -354,19 +339,3 @@ extern "C" void MH3_CheatBossEntry(CpuContext* ctx) {
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x803AEBE0, MH3_CheatBossEntry, "CheatBossEntry");
-
-namespace Cheats {
-
-// The buttons of Enable 1 hit kills, Enable 1 HP and Normal enemy HP.
-void StepMonsterCodes() {
-    if (On(Id::EnableOneHitKills) && Combo(uint16_t(Value(Id::EnableOneHitKills))))
-        g_healthMode = HealthMode::Kill;
-
-    if (On(Id::EnableOneHp) && Combo(uint16_t(Value(Id::EnableOneHp))))
-        g_healthMode = HealthMode::OneHp;
-
-    if (On(Id::NormalEnemyHp) && Combo(uint16_t(Value(Id::NormalEnemyHp))))
-        g_healthMode = HealthMode::Normal;
-}
-
-} // namespace Cheats

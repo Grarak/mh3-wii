@@ -1538,7 +1538,6 @@
 803214c0 QuestCounterStep
 8004d14c MoneyAdd
 8004d398 ResourcesAdd
-802df748 MoneyPanelDraw
 803090fc FundsPanelDraw
 8004d2e0 StarQuestUnlocked
 8004d770 QuestCleared

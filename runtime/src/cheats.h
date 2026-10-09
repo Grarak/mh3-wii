@@ -57,8 +57,6 @@ enum class Id : uint16_t {
     InfiniteRetries,
     Autofail,
     Autoclear,
-    AutofailAtWill,
-    AutoclearAtWill,
     CursedWeapons,
     NoKnockback,
     MonsterHpMultiplier,
@@ -78,26 +76,18 @@ enum class Id : uint16_t {
     AltInfiniteHealth,
     VillageSpeedHack,
     VillageSnailSpeed,
-    SethInfiniteHealth,
     SethUltraSharp,
     SethSpeedGlide,
     SethOxygen,
-    ToggleInfiniteHealth,
+    HealthNeverChanges,
     // Bully@Wiiplaza
-    BullyUnlimitedTraps,
-    BullyUnlimitedBarrelBombs,
+    UnlimitedTraps,
+    UnlimitedBarrelBombs,
     SpeedCombosEnabled,
     CombineEnabled,
     LongSwordsMaxSharpness,
     NoDefeats,
-    ThunderAlwaysCharged,
-    BullyInfiniteHealth,
-    BullyInfiniteStamina,
-    HotDrinkForever,
-    ColdDrinkForever,
     Daredevil,
-    BullyWeaponsSharp,
-    BullyInfiniteAmmo,
     CrossbowRapidFire,
     InfiniteItems,
     JoinAnyQuest,
@@ -115,10 +105,9 @@ enum class Id : uint16_t {
     PouchItemsX10,
     BoxItemsX99,
     InfiniteResources,
-    InfiniteFunds,
     ProfileNameModifier,
     SuperSpeed,
-    BullyActionRepeater,
+    ActionRepeater,
     MoonJump,
     Teleporter,
     FreeFly,
@@ -132,22 +121,15 @@ enum class Id : uint16_t {
     InfiniteGathering,
     InfiniteCarving,
     GatherItem,
-    AltOneHitKillsToggle,
-    AltOneHitKills,
     OneHitKills,
     EnemyOneHp,
-    EnableOneHitKills,
-    EnableOneHp,
-    NormalEnemyHp,
-    SkillerWeaponSharp,
+    WeaponsSharp,
     Boxes8Pages,
     MaxResourcesOnConverting,
     ResourcesZero,
     ItemsGet10,
-    ItemsGet10Toggle,
     SellUseGet10,
     BuyNewGet10,
-    MoneyChangeMax,
     MaxMoney,
     ItemsCost1z,
     DontLoseMoney,
@@ -160,10 +142,8 @@ enum class Id : uint16_t {
     BossMod,
     BossSize,
     BossLevel,
-    SkillerInfiniteTime,
     SexChange,
-    NameChange,
-    InfiniteHp,
+    InfiniteHealth,
     InfiniteStamina,
     InfiniteAir,
     DefenseUpgrade,
@@ -192,7 +172,6 @@ enum class Id : uint16_t {
     NeverSnowman,
     NeverMuddy,
     AlwaysWindproof,
-    NeverStun,
     NeverPoison,
     NaturalRecoveryUp,
     PurpleHealthBar,
@@ -214,14 +193,12 @@ enum class Id : uint16_t {
     ClothingGreen,
     ClothingBlue,
     // Argon
-    ArgonInfiniteTime,
+    InfiniteTime,
     SetPlayTime,
     AddToDefense,
-    UnlimitedBarrelBombs,
     UnlimitedColdDrink,
     UnlimitedHotDrink,
     LoadShots,
-    UnlimitedTraps,
     // Doudley
     NoFallZoom,
     EnhancedLeap,
@@ -245,9 +222,8 @@ enum class Id : uint16_t {
     LanceChargeController,
     Battojutsu,
     SwitchAxeSwordMode,
-    DoudleyInfiniteAmmo,
+    InfiniteAmmo,
     EnableAllAmmo,
-    RapidFireHold,
     RapidFire,
     AirAttackGreatSword,
     AirAttackSwordAndShield,
@@ -281,7 +257,6 @@ enum class Id : uint16_t {
     QuickGestures,
     ForceSheathe,
     ForceUnsheathe,
-    ActionRepeater,
     ForceEvade,
     SleepAnywhere,
     BackToCamp,
@@ -292,11 +267,8 @@ enum class Id : uint16_t {
     EvadeDistanceX2,
     EvadeDistanceX10,
     WeaponReach,
-    UnknockablePlayers,
-    InvinciblePlayers,
     WalkThroughWalls,
     PassThroughMonsters,
-    ShowMonstersOnMap,
     SlowMo,
     FreezeMonsters,
     SwitchAxeGaugeFull,
@@ -309,9 +281,6 @@ enum class Id : uint16_t {
     BeltLevel255,
     PantsLevel255,
     SkinTone,
-    DoudleyBothArmorTypes,
-    DoudleyArmorPigment,
-    BarrelRange300,
     BarrelRange,
     HelmSkills,
     ChestSkills,
@@ -335,14 +304,15 @@ inline int32_t Value(Id id) {
 }
 
 // The switches of the codes that their buttons turn on and off (the Gecko
-// "CC" lines): on while the cheat is and its buttons have switched it on.
+// "CC" lines): on while the cheat is and its buttons have switched it on,
+// or always with the "Always" choice (0).
 bool Toggled(Id id);
 
 // The name a cheat with a typed value was given (empty: none).
 std::string_view Text(Id id);
 
-// The infinite time codes' buttons, held this step: they run the quest's
-// time out (quest_clock.cpp).
+// Infinite time's buttons, held this step: they run the quest's time out
+// (quest_clock.cpp).
 bool QuestEndPressed();
 
 // The position a jump's fall leaves as it is (Jump15 in
@@ -383,7 +353,6 @@ void Step(CpuContext* ctx);
 void StepSaveData();
 void StepEquipment();
 void StepItems();
-void StepMonsterCodes();
 void StepHunterCodes();
 void StepPlayer();
 void StepMonsters();

@@ -9,11 +9,11 @@
 // of the step instead: a whole frame per call would run the clock several times
 // too fast at high frame rates.
 //
-// Cheats (cheats.h): the infinite time codes stop the countdown (Argon's made
-// the limit test pass, Skiller's subtracted 0) and run the time out on their
-// buttons (Skiller's stored 0; Argon's wrote a byte, quest work +0x2440, that
-// is 0 throughout a quest here); Instant flex runs it out under a minute
-// (the final clamp at 1800 frames instead of 0).
+// Cheats (cheats.h): Infinite time stops the countdown (Argon's code made the
+// limit test pass; Skiller's, the same cheat, subtracted 0) and runs the time
+// out on its buttons (Skiller's stored 0; Argon's wrote a byte, quest work
+// +0x2440, that is 0 throughout a quest here); Instant flex runs it out under
+// a minute (the final clamp at 1800 frames instead of 0).
 #include "cheats.h"
 #include "game_step.h"
 #include "guest_call.h"
@@ -59,16 +59,14 @@ void QuestClockTick(CpuContext* ctx) {
     if (left >= kNoLimitMinutes * (60.0f * Memory::ReadFloat32(kFrameRate)))
         return;
 
-    const bool stopped = Cheats::On(Cheats::Id::ArgonInfiniteTime) || Cheats::On(Cheats::Id::SkillerInfiniteTime);
+    if (Cheats::On(Cheats::Id::InfiniteTime)) {
+        if (Cheats::QuestEndPressed()) {
+            Memory::WriteFloat64(work + kTimeLeftExact, 0.0);
+            Memory::Write32(work + kTimeLeft, 0);
+        }
 
-    if (stopped && Cheats::QuestEndPressed()) {
-        Memory::WriteFloat64(work + kTimeLeftExact, 0.0);
-        Memory::Write32(work + kTimeLeft, 0);
         return;
     }
-
-    if (Cheats::On(Cheats::Id::ArgonInfiniteTime))
-        return;
 
     Memory::WriteFloat64(work + kPrevious, ReadF64(work + kNow));
     game.Call<OSGetTime>();
@@ -89,11 +87,11 @@ void QuestClockTick(CpuContext* ctx) {
                 frames = 1.0;
         }
 
-        if (running == 0 || stopped)
+        if (running == 0)
             frames = 0.0;
 
         Memory::WriteFloat64(work + kTimeLeftExact, ReadF64(work + kTimeLeftExact) - frames);
-    } else if (running == 1 && !stopped) {
+    } else if (running == 1) {
         Memory::WriteFloat64(work + kTimeLeftExact, ReadF64(work + kTimeLeftExact) - 1.0);
     }
 
