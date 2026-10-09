@@ -16,8 +16,9 @@ constexpr uint32_t Objects[]={0x8066B990,0x8066BA10,0x8066BA90};
 struct Startup { GuestCall call;uint32_t archives[3];uint64_t generation; };
 mh3_res_status Archive(void *user,uint32_t group,uint32_t *count) {
     auto& startup=*static_cast<Startup*>(user);
-    startup.call(0x804E4C30,{startup.archives[group]}); // pure CPU pointer relocation
     *count=Memory::Read32(startup.archives[group]+4);
+    if(*count>UINT16_MAX) return MH3_RES_RANGE;
+    startup.call(0x804E4C30,{startup.archives[group]}); // pure CPU pointer relocation
     return MH3_RES_OK;
 }
 mh3_res_status Image(void *user,uint32_t group,uint32_t index,mh3_native_texture_binding *out) {
