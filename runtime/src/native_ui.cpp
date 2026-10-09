@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
+#include "native_shade_snapshot.h"
 #include "../native/mh3_ui.h"
 #include "../native/mh3_system_ui.h"
 #include "../native/adapters/model_state_bridge.h"
@@ -137,6 +138,49 @@ void DrawVertices(mh3_ui_primitive primitive, const mh3_ui_vertex* vertices, uin
     SubmitNativeGeometry(geometry, textured);
 }
 
+// What this file last published as the material, and the material
+// revision and raster right after: while both are unchanged, publishing the
+// same again changes nothing.
+struct PublishedMaterial {
+    uint32_t revision = UINT32_MAX, key = UINT32_MAX;
+    mh3_raster_state raster{};
+};
+
+PublishedMaterial uiMaterial, uiCoordinatesMaterial;
+
+bool MaterialCurrent(const PublishedMaterial& published, uint32_t key) {
+    return published.key == key && published.revision == nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_MATERIAL] &&
+           !std::memcmp(&published.raster, &GetNativeDrawState().raster, sizeof published.raster);
+}
+
+void Remember(PublishedMaterial& published, uint32_t key) {
+    published = {nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_MATERIAL], key, GetNativeDrawState().raster};
+}
+
+// The primitive material: one colour channel from the vertex colours, no
+// alpha test, the application pipeline (with a texture stage when textured).
+void PublishPrimitiveMaterial(bool textured) {
+    auto material = GetNativeMaterialState();
+    material.channel_count = 1;
+    material.channel[0].color = material.channel[0].alpha = (mh3_pack_channel_control){1, 1, 0, 0, 2, 0};
+    material.channel[0].flags |= MH3_CHANNEL_CONTROL_COLOR | MH3_CHANNEL_CONTROL_ALPHA;
+
+    for (unsigned field = MH3_PIXEL_ALPHA_COMPARE0; field <= MH3_PIXEL_ALPHA_OPERATION; ++field) {
+        material.pixel.known |= UINT64_C(1) << field;
+        material.pixel.values[field] = field == MH3_PIXEL_ALPHA_COMPARE0 || field == MH3_PIXEL_ALPHA_COMPARE1 ? 7 : field == MH3_PIXEL_ALPHA_OPERATION ? 1 : 0;
+    }
+
+    mh3_system_ui_application_pipeline(&material, textured);
+
+    if (textured) {
+        const uint32_t stage = 0;
+        mh3_system_ui_direct_stages(&material, &stage, 1);
+    }
+
+    SetNativeMaterial(material);
+    Remember(uiMaterial, textured);
+}
+
 void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t palette, const float* overrideMatrix = nullptr) {
     uiFlags = flags;
 
@@ -163,28 +207,20 @@ void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t 
     raster.cull_mode = 0;
     SetNativeRaster(raster);
     SetNativeDepthCompareBeforeTexture(false);
-    auto material = GetNativeMaterialState();
-    material.channel_count = 1;
-    material.channel[0].color = material.channel[0].alpha = (mh3_pack_channel_control){1, 1, 0, 0, 2, 0};
-    material.channel[0].flags |= MH3_CHANNEL_CONTROL_COLOR | MH3_CHANNEL_CONTROL_ALPHA;
+    const bool textured = (flags & 2) != 0;
 
-    for (unsigned field = MH3_PIXEL_ALPHA_COMPARE0; field <= MH3_PIXEL_ALPHA_OPERATION; ++field) {
-        material.pixel.known |= UINT64_C(1) << field;
-        material.pixel.values[field] = field == MH3_PIXEL_ALPHA_COMPARE0 || field == MH3_PIXEL_ALPHA_COMPARE1 ? 7 : field == MH3_PIXEL_ALPHA_OPERATION ? 1 : 0;
-    }
+    // Consecutive shapes: when neither the material nor the raster changed
+    // since this code published the material below, the state holds it
+    // already (copying out and comparing the 1.3 KiB state cost the field HUD
+    // about a tenth of its draw).
+    if (!MaterialCurrent(uiMaterial, textured))
+        PublishPrimitiveMaterial(textured);
 
-    mh3_system_ui_application_pipeline(&material, (flags & 2) != 0);
-
-    if (flags & 2) {
-        const uint32_t stage = 0;
-        mh3_system_ui_direct_stages(&material, &stage, 1);
-    }
-
-    SetNativeMaterial(material);
-    uiTextured = (flags & 2) != 0;
+    uiTextured = textured;
     uiStages = 1;
 
     if (uiTextured) {
+
         uiCoordinates = {1, 4, 60};
         auto binding = ResourceBinding(texture);
         binding.map_id = 0;
@@ -205,10 +241,16 @@ void ConfigureDirectCoordinates(uint32_t id, uint32_t type, uint32_t source, uin
         MH3_THROW(std::runtime_error("Native UI texture coordinates require an unsupported generator"));
 
     uiCoordinates = {type, source, matrix};
+
+    // As SetupPrimitive's material: unchanged since published, nothing to do.
+    if (MaterialCurrent(uiCoordinatesMaterial, type))
+        return;
+
     auto material = GetNativeMaterialState();
     material.texgen[0].known |= 1u << MH3_TEXGEN_PROJECTION;
     material.texgen[0].values[MH3_TEXGEN_PROJECTION] = type == 0;
     SetNativeMaterial(material);
+    Remember(uiCoordinatesMaterial, type);
 }
 
 mh3_ui_stream ShapeStream(uint32_t flags, uint32_t count) {
