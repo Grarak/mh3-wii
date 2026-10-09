@@ -1149,3 +1149,18 @@
 80435888 NativeMovieTexgen
 80435894 NativeMoviePlanes
 804360b0 NativeMovieCleanup
+# RVL SDK MIX, ported natively in runtime/src/audio/sdk_mix.cpp.
+804c2c60 __MIXSetPan
+804c2d20 __MIXGetVolume
+804c2e80 MIXQuit
+804c2ea0 MIXSetSoundMode
+804c2ec0 MIXInitChannel
+804c4590 MIXReleaseChannel
+804c45b0 MIXSetInput
+804c45e0 MIXSetAuxA
+804c4610 MIXSetAuxB
+804c4640 MIXSetPan
+804c46b0 MIXSetSPan
+804c4720 MIXSetFader
+804c5df0 __MIXRmtUpdateSettings
+804c6230 __MIXRmtResetChannel
