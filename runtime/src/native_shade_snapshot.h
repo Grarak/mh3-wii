@@ -98,6 +98,13 @@ void ApplyNativeColorSnapshot(mh3_native_material_state& material, const NativeC
 // restore rebinds every unit (after the backend changed its own bindings).
 void ForgetNativeTextureBindings();
 
+// A guest heap freed (or handed out again) the canonical range: the cached
+// textures whose images were in it go once the packets recorded before it
+// have drawn. Any thread; the game thread queues them as each packet begins
+// (QueueNativeTextureRetirements).
+void RetireNativeTextureSources(uint32_t address, uint32_t bytes);
+void QueueNativeTextureRetirements();
+
 // Deferred model preparation (model_render_prep.h): copy one owner's logical
 // material/post, texture and raster state into another (MH3_RENDER_PREP=2
 // starts its Shadow from the Game state) and compare the results.

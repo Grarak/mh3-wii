@@ -6,11 +6,16 @@
 #include "memory.h"
 #include "../native/mh3_model_state.h"
 #include "../native/adapters/model_state_bridge.h"
+#include "../native/mh3_model_catalog.h"
+#include "native_frame_packet.h"
 #include <aurora/native_texture.hpp>
 #include "gl/gl.hpp"
 #include <array>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 struct TextureBinding {
@@ -49,6 +54,12 @@ void BindBackend(const mh3_native_texture_binding& binding) {
     source.original_image = NativeTextureResourceIsOriginal(input.payload_address, input.generation);
     const size_t bytes = aurora::native_texture_source_size(source.format, source.width, source.height, source.levels);
     source.bytes = {Memory::GetPointer(input.payload_address, bytes), bytes};
+
+    // The guest memory the image is in, as the heap retirements number it.
+    if (uint32_t owner; mh3_source_canonical_address(input.payload_address, uint32_t(bytes), &owner) == MH3_RES_OK) {
+        source.owner = owner;
+        source.owner_bytes = uint32_t(bytes);
+    }
 
     // A movie frame converts from the packet's copy of the planes, which the
     // next decode does not rewrite; it keeps the planes' address as its
@@ -220,6 +231,56 @@ void RestoreNativeTextureSnapshot(const NativeTextureSnapshot& snapshot) {
     }
 
     Changed(NativeOwner::Render);
+}
+
+namespace {
+using OwnerRanges = std::vector<aurora::NativeTextureOwnerRange>;
+
+// Guest memory a heap freed or handed out again since the last packet's
+// begin, from any guest thread (native_resource_lifetime.cpp). A queued
+// batch comes back from the render thread cleared: the few batches in flight
+// keep their capacity instead of allocating each frame.
+std::mutex retiredLock;
+OwnerRanges retiredSources;
+std::deque<OwnerRanges> retiredBatches;
+std::vector<OwnerRanges*> freeRetiredBatches;
+} // namespace
+
+void RetireNativeTextureSources(uint32_t address, uint32_t bytes) {
+    std::lock_guard guard(retiredLock);
+    retiredSources.push_back({address, bytes});
+}
+
+void QueueNativeTextureRetirements() {
+    OwnerRanges* batch;
+    {
+        std::lock_guard guard(retiredLock);
+
+        if (retiredSources.empty())
+            return;
+
+        if (freeRetiredBatches.empty())
+            batch = &retiredBatches.emplace_back();
+        else {
+            batch = freeRetiredBatches.back();
+            freeRetiredBatches.pop_back();
+        }
+
+        batch->swap(retiredSources);
+    }
+
+    // At a packet's begin: after the draws of the packets recorded before the
+    // frees, ahead of this one's tasks (a new scene's first textures). The task
+    // queue keeps it when the render thread skips the packet: it runs with the
+    // next one taken.
+    QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [batch] {
+        if (aurora::retire_native_textures(*batch))
+            ForgetNativeTextureBindings();
+
+        batch->clear();
+        std::lock_guard guard(retiredLock);
+        freeRetiredBatches.push_back(batch);
+    });
 }
 
 void ForgetNativeTextureBindings() {

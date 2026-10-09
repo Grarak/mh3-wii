@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace aurora {
 // Immutable view of one explicitly published producer revision. Data is used
@@ -23,6 +24,15 @@ struct NativeTextureSource {
   // The image's cache identity when `bytes` is a copy (a movie frame read
   // from the frame packet's copy of its planes): the original's address.
   const void* identity = nullptr;
+
+  // The producer's memory that holds the image (a guest load, a movie's
+  // planes), as the producer numbers it: retire_native_textures drops the
+  // cached textures of ranges it no longer owns.
+  uint32_t owner = 0, owner_bytes = 0;
+};
+
+struct NativeTextureOwnerRange {
+  uint32_t address = 0, bytes = 0;
 };
 
 struct NativeTextureSampler {
@@ -58,4 +68,11 @@ NativeTexturePortableSampling native_texture_portable_sampling(uint32_t unit);
 // Reapply logical bindings after presentation changed the backend's units.
 void restore_native_textures();
 void clear_native_textures();
+
+// Drop the cached textures whose owner range meets one of `ranges` (an area
+// change freed their sources). Textures from memory still owned stay
+// resident; in-flight scenes keep their own references, and the storage
+// frees with the last one. Units bound to such a texture are unbound: true
+// when one was, and the caller must bind them again. Sorts and merges `ranges`.
+bool retire_native_textures(std::vector<NativeTextureOwnerRange>& ranges);
 } // namespace aurora

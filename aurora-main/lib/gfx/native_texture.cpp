@@ -13,6 +13,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #if defined(__ARM_NEON)
@@ -42,6 +43,9 @@ struct Entry {
   gl::TexturePtr texture;
   size_t bytes;
   uint64_t used;
+
+  // The source's owner range, from its latest binding (retire_native_textures).
+  uint32_t owner = 0, ownerBytes = 0;
 };
 
 FastMap<Key, Entry> cache;
@@ -411,6 +415,8 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
                 offline ? 0 : source.palette_generation};
   if (auto found = cache.find(key); found != cache.end()) {
     found->second.used = ++serial;
+    found->second.owner = source.owner;
+    found->second.ownerBytes = source.owner_bytes;
     publish(found->second.texture);
     return;
   }
@@ -452,7 +458,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
         gl::upload_texture(*texture, 0, 0, y, source.width, Band, rgba.get(), source.width * 4);
       }
 
-      cache.emplace(key, Entry{texture, allocated, ++serial});
+      cache.emplace(key, Entry{texture, allocated, ++serial, source.owner, source.owner_bytes});
       residentBytes += allocated;
       publish(texture);
       return;
@@ -482,7 +488,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     }
   }
 
-  cache.emplace(key, Entry{texture, allocated, ++serial});
+  cache.emplace(key, Entry{texture, allocated, ++serial, source.owner, source.owner_bytes});
   residentBytes += allocated;
   publish(texture);
 }
@@ -509,6 +515,71 @@ float native_texture_shader_lod_bias(uint32_t unit) {
 NativeTexturePortableSampling native_texture_portable_sampling(uint32_t unit) {
   (void)native_texture_shader_lod_bias(unit);
   return portableSampling[unit];
+}
+
+bool retire_native_textures(std::vector<NativeTextureOwnerRange>& ranges) {
+  owner();
+
+  if (ranges.empty())
+    return false;
+
+  std::sort(ranges.begin(), ranges.end(), [](const auto& a, const auto& b) { return a.address < b.address; });
+  size_t merged = 0;
+
+  for (const auto& range : ranges) {
+    if (!range.bytes)
+      continue;
+
+    if (merged && uint64_t(ranges[merged - 1].address) + ranges[merged - 1].bytes >= range.address) {
+      auto& last = ranges[merged - 1];
+      last.bytes = uint32_t(std::max(uint64_t(last.address) + last.bytes, uint64_t(range.address) + range.bytes) - last.address);
+    } else
+      ranges[merged++] = range;
+  }
+
+  ranges.resize(merged);
+
+  // Whether the last merged range that starts before the owner's end reaches it.
+  const auto freed = [&](uint32_t owner, uint32_t bytes) {
+    if (!bytes)
+      return false;
+
+    const uint64_t end = uint64_t(owner) + bytes;
+    const auto next = std::partition_point(ranges.begin(), ranges.end(), [&](const auto& range) { return range.address < end; });
+    return next != ranges.begin() && uint64_t(std::prev(next)->address) + std::prev(next)->bytes > owner;
+  };
+
+  // A frame's start rebinds the logical bindings (restore_native_textures),
+  // which must not recreate a freed image: the next draw binds its own. The
+  // backend keeps its texture until that bind replaces it.
+  bool unbound = false;
+
+  for (auto& binding : logicalBindings)
+    if (binding.valid && freed(binding.source.owner, binding.source.owner_bytes)) {
+      binding.valid = false;
+      unbound = true;
+    }
+
+  uint32_t retired = 0;
+  size_t retiredBytes = 0;
+
+  for (auto it = cache.begin(); it != cache.end();) {
+    const auto& entry = it->second;
+
+    if (freed(entry.owner, entry.ownerBytes)) {
+      ++retired;
+      retiredBytes += entry.bytes;
+      residentBytes -= entry.bytes;
+      it = cache.erase(it);
+    } else
+      ++it;
+  }
+
+  if (retired)
+    std::fprintf(stderr, "Aurora native textures: retired %u textures (%.2f MiB) whose sources were freed, %u (%.2f MiB) stay\n", retired, retiredBytes / 1048576.0,
+                 unsigned(cache.size()), residentBytes / 1048576.0);
+
+  return unbound;
 }
 
 void restore_native_textures() {

@@ -7,6 +7,7 @@
 #include "guest_call.h"
 #include "guest_worker.h"
 #include "native_frame_packet.h"
+#include "native_shade_snapshot.h"
 #include "memory.h"
 #include "recomp_mod_loader.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -126,6 +127,12 @@ void PrepareWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer pr
     RetireWrite(address, bytes, producer);
 }
 
+// A heap's memory changing owner (created, destroyed, a block freed or handed
+// out): the textures loaded into it are gone with it, as on an area change.
+void RetireHeapRange(uint32_t address, uint32_t bytes) {
+    RetireNativeTextureSources(RamAddress(address, bytes), bytes);
+}
+
 void CopyBlocks(uint32_t destination, uint32_t source, uint32_t bytes) {
     Checked(mh3_lifetime_validate_copy32(destination, source, bytes));
 
@@ -172,6 +179,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
     Memory::GetPointer(region.address, region.bytes);
     RamAddress(region.address, region.bytes);
     PrepareWrite(region.address, region.bytes, NativeSourceEpochProducer::HeapCreate);
+    RetireHeapRange(region.address, region.bytes);
     GuestFrame frame(cpu, 0x40);
     GuestCall call{cpu};
     call(0x804C1F20, {region.address, 0x45585048, region.address + 80, region.address + region.bytes, options});
@@ -183,6 +191,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
 uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     const auto heap = ReadHeap(address);
     PrepareWrite(heap.address, heap.end - heap.address, NativeSourceEpochProducer::HeapDestroy);
+    RetireHeapRange(heap.address, heap.end - heap.address);
     GuestFrame frame(cpu, 0x40);
     GuestCall{cpu}(0x804C20E0, {address});
     return address;
@@ -205,6 +214,7 @@ uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t ali
         // The allocator may absorb a short fragment: retire its actual extent,
         // including the header/alignment padding, rather than the request size.
         RetireNativeResourceOwner(region.address, region.bytes, NativeSourceEpochProducer::HeapAllocate);
+        RetireHeapRange(region.address, region.bytes);
     }
 
     return result;
@@ -295,6 +305,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     Memory::GetPointer(plan.links[0].address, 4);
     Memory::GetPointer(plan.links[1].address, 4);
     PrepareWrite(plan.retired.address, plan.retired.bytes, NativeSourceEpochProducer::HeapFree);
+    RetireHeapRange(plan.retired.address, plan.retired.bytes);
     Memory::Write32(plan.links[0].address, next);
     Memory::Write32(plan.links[1].address, previous);
     const uint32_t padding = (block.settings >> 8) & 127;

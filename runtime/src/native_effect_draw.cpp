@@ -4,9 +4,11 @@
 #include "effect_particle.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
+#include "native_shade_snapshot.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "../native/mh3_effect_draw.h"
+#include "../native/mh3_model_catalog.h"
 #include "../native/mh3_particle_draw_state.h"
 #include "../native/adapters/model_state_bridge.h"
 #include <aurora/native_texture.hpp>
@@ -815,9 +817,17 @@ struct MovieFrame {
 
 std::array<MovieFrame, kNativeFramePacketSlots> movie_frames;
 
+// The packet that last copied a movie frame, and the planes it bound until
+// the movie's texture is retired.
+uint64_t movie_copy_sequence = 0;
+uint32_t movie_planes = 0, movie_planes_bytes = 0;
+
 // Game thread, recording: copy the planes the packet binds.
 void CopyMovieFrame(uint32_t address, size_t bytes) {
     auto& frame = movie_frames[NativeFramePacketSlot()];
+    movie_copy_sequence = NativeFramePacketSequence();
+    movie_planes = address;
+    movie_planes_bytes = uint32_t(bytes);
 
     if (frame.address == address && frame.generation == movie_generation && frame.size >= bytes)
         return;
@@ -835,6 +845,22 @@ void CopyMovieFrame(uint32_t address, size_t bytes) {
 
 void NativeMovieFrameDecoded() {
     ++movie_generation;
+}
+
+void ReleaseMovieFrameCopy() {
+    if (NativeFramePacketSequence() - movie_copy_sequence < kNativeFramePacketSlots)
+        return;
+
+    // The movie's last frame: 640x480 planes are 450 KiB in each slot.
+    if (auto& frame = movie_frames[NativeFramePacketSlot()]; frame.bytes)
+        frame = {};
+
+    // The player keeps its planes after the movie ends (no heap frees them):
+    // its frame texture leaves CDRAM once no packet in the ring draws it.
+    if (uint32_t owner; movie_planes_bytes && mh3_source_canonical_address(movie_planes, movie_planes_bytes, &owner) == MH3_RES_OK)
+        RetireNativeTextureSources(owner, movie_planes_bytes);
+
+    movie_planes_bytes = 0;
 }
 
 const uint8_t* NativeMovieFrameCopy(uint32_t address, uint64_t generation, size_t bytes) {

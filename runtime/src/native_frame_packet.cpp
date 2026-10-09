@@ -4,6 +4,7 @@
 #include "bytes_equal.h"
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
+#include "native_effect_draw.h"
 #include "frame_split.h"
 #include "game_step.h"
 #include "isa/ppc_isa_thread_state.h"
@@ -1927,6 +1928,10 @@ void BeginNativeFramePacket(bool render) {
     p.inputNs = RenderMonotonicNs();
 #endif
     recording = &p;
+
+    // The heap frees since the last begin, before this packet's tasks and draws.
+    QueueNativeTextureRetirements();
+    ReleaseMovieFrameCopy();
 }
 
 bool NativeFramePacketRecording() {
