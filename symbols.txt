@@ -1286,6 +1286,20 @@
 80448708 KeyboardLayoutLoad
 80506d30 KeyboardFontSetup
 80507450 KeyboardFontGetGlyph
+# Controllers: pad records at 0x8065B7D0 (0x350 bytes per channel), filled each frame by
+# PollControllers; the Classic Controller path is described in docs/vita-controls.md.
+80041b08 PadInit
+80042bc4 PadStickSector
+80042eb8 PadStickLength
+80042ef4 PadNunchukStickAngle
+80043268 PadClassicStickAngle
+8004351c PadConnectCallback
+8004378c PadExtensionCallback
+800440bc PadPointerStart
+80044ba0 PadPointerOn
+80044c68 PadPointerTimeout
+8043ab60 CharMakeTurnPreview
+80449c58 MenuKeysFromPad
 # Visibility census (docs/vita-widescreen.md#visibility-tests). Screen-space
 # tests project through CameraProject (GXProject with the camera's own
 # projection and viewport, 640 EFB pixels wide in both 4:3 and 16:9).
@@ -1300,21 +1314,3 @@
 802bbcb4 PreviewCameraSetup
 80047140 SplitCameraSetup
 80085cd4 G3dStateSetCamera
-# Controllers: pad records at 0x8065B7D0 (0x350 bytes per channel), filled each frame by
-# PollControllers; the Classic Controller path is described in docs/vita-controls.md.
-80041b08 PadInit
-80042088 PadRead
-80042890 PadClearRemote
-800429a4 PadReadGameCube
-80042bc4 PadStickSector
-80042eb8 PadStickLength
-80042ef4 PadNunchukStickAngle
-80042fdc PadClassicSticks
-80043268 PadClassicStickAngle
-8004351c PadConnectCallback
-8004378c PadExtensionCallback
-800440bc PadPointerStart
-80044ba0 PadPointerOn
-80044c68 PadPointerTimeout
-8043ab60 CharMakeTurnPreview
-80449c58 MenuKeysFromPad

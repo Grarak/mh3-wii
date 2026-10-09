@@ -11,7 +11,7 @@ same on every host.
 
 RMHP08 never falls back to Wii Remote and Nunchuk controls while a Classic
 Controller is attached. What it does, per frame (`PollControllers`
-0x80041F6C → `PadRead` 0x80042088 for each of the four channels; pad records
+0x80041F6C → `PadReadWii` 0x80042088 for each of the four channels; pad records
 of 0x350 bytes at 0x8065B7D0):
 
 - `WPADProbe` gives the device type (+0x34). Our WPAD bridge
@@ -54,12 +54,12 @@ changing for it.
 | Classic Controller | PS Vita | PS TV controller | In the game |
 | --- | --- | --- | --- |
 | Left stick | Left stick | Left stick | Move |
-| Right stick | Right stick | Right stick | Camera; turns the hunter in character creation |
+| Right stick | Right stick | Right stick | Attack (the game's default) or camera (its camera option); turns the hunter in character creation |
 | A | ○ | ○ | Confirm, act |
 | B | × | × | Back |
 | X | △ | △ | Per control style |
 | Y | □ | □ | Per control style |
-| D-pad | D-pad | D-pad | Menu cursor; per control style |
+| D-pad | D-pad | D-pad | Menu cursor; camera (the game's default) |
 | L (trigger, fully pressed) | L | L1 | Per control style; menu tab |
 | R (trigger, fully pressed) | R | R1 | Per control style; menu tab |
 | ZL | Rear touch, upper-left quarter | L2 | Per control style |
@@ -108,11 +108,11 @@ game. One sample serves 4 ms of the game's several reads per frame. Code:
 
 ### Sticks
 
-The game itself moves the hunter and the camera by the stick's length in a
-narrow window (above). A linear mapping (the Vita's 0..255 times four, as the
-SDL path did) put that whole window into 18–37 % of the Vita stick's travel:
-the rest was dead or saturated, so slight tilts jumped from standing to
-running. The mapping now spreads the window over the travel:
+The game reads the stick's length in a narrow window (above). A linear
+mapping (the Vita's 0..255 times four, as the SDL path did) put that whole
+window into 18–37 % of the Vita stick's travel: the rest was dead or
+saturated, so slight tilts jumped from standing to running. The mapping now
+spreads the window over the travel:
 
 - radial dead zone of 12 % (Vita sticks rest within about ±10 of centre);
 - just past it the length is the game's threshold (31), growing linearly to
@@ -126,8 +126,17 @@ running. The mapping now spreads the window over the travel:
 
 `tests/native/test_mh3_classic_map.c` checks the dead zone, the window,
 monotonic length, direction error under 0.05 rad, full deflection and every
-button and touch region. The game's stick-to-camera speed is not changed
-here; only how far the Vita stick has to move to reach a given game length.
+button and touch region. The game's own responses are not changed here; only
+how far the Vita stick has to move to reach a given game length.
+
+On the VM (input playback of the mapped values, quest 10057 area 6), the
+hunter walks at one pace (about 2.8 units a 30 Hz frame) at lengths 42, 61
+and 80 and runs (about 15) from 100 on, so with the Vita curve the walk
+takes about 12–50 % of the travel and the run the rest; the hunter stands
+still at rest. In the game's default Classic layout the right stick draws
+the weapon and attacks (a partial tilt, length 46, already does) and the
+D-pad turns the camera; the right stick turns the camera only with the
+game's camera option set to it.
 
 ## Linux hosts (SDL)
 
@@ -162,6 +171,35 @@ Keyboard, while the window has focus:
 | Escape or Home | HOME |
 
 Keyboard sticks and gamepad sticks combine per stick (a key held wins).
+
+## Devkit checklist
+
+Checked on the dev VM only (playback and the SDL/keyboard path); none of the
+Vita-side reading has run on hardware yet. On the devkit:
+
+1. `--playback` with the usual log: the recorded axes still reach ±511
+   (`saw_move`, `saw_camera`, the run-forward and camera phases), and the
+   playback finishes. A CTRLP run, if used, still drives the game (port 1
+   first, then port 0).
+2. The launcher still selects with × (it reads the pad itself); in the
+   game ○ confirms and × goes back, the D-pad moves menu cursors.
+3. Left stick: resting does not move the hunter; a slight tilt walks, the
+   run starts at about half tilt (not at the first touch); full tilt in
+   every direction runs.
+4. Right stick, default layout: resting does nothing, a tilt draws the
+   weapon and attacks. With the game's camera option on the right stick it
+   turns the camera instead. Character creation turns the hunter. The D-pad
+   turns the camera by default.
+5. L and R act as the Classic L/R triggers (field actions per control
+   style, menu tabs); START opens the pause menu (+), SELECT is −.
+6. Rear touch: the upper-left and upper-right quarters are ZL and ZR; holding
+   the lower half does nothing.
+7. A tap at the top centre of the screen is HOME; check whether the HOME
+   Menu opens and can be closed with the Classic Controller.
+8. Name entry: touches on the IME keyboard do not reach the game (no HOME,
+   ZL or ZR while the dialog is up).
+9. PS TV, if one is at hand: L2/R2 are ZL/ZR, L3 + R3 is HOME.
+10. The vprof profile shows no measurable time in `ReadVitaController`.
 
 ## Not configurable yet
 
