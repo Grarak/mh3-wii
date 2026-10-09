@@ -12,6 +12,12 @@ uint32_t ResDicAtOffset14(uint32_t mdl, uint32_t index); // 0x80097F7C
 void MtxCopy(uint32_t src, uint32_t dst);                 // 0x804C62C0 PSMTXCopy
 void MtxConcat(uint32_t a, uint32_t b, uint32_t ab);      // 0x804C6300 PSMTXConcat
 void MtxApplyScale(uint32_t out, uint32_t m, uint32_t s); // 0x805019BC MTX34Scale
+void MtxConcatArray(uint32_t a, uint32_t src, uint32_t dst, uint32_t count,
+                    uint32_t r13);                        // 0x804C63D0 PSMTXConcatArray
+uint32_t MtxInv34(uint32_t dst, uint32_t src);            // 0x80331064 MTX34Inv
+uint32_t MtxInvTranspose33(uint32_t dst, uint32_t src);   // 0x80330E78
+uint32_t MtxInvTranspose34(uint32_t dst, uint32_t src);   // 0x80330F5C
+void MtxTo33(uint32_t dst, uint32_t src);                 // 0x80501968 MTX34ToMTX33
 uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale,
                                    uint32_t flags, uint32_t node); // 0x800D7814
 } // namespace G3dNative

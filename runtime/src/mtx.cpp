@@ -467,3 +467,193 @@ uint32_t G3dNative::WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScal
                                               uint32_t flags, uint32_t node) {
     return ::WorldMtxNodeStepMayaScale(world, worldScale, parent, scale, flags, node);
 }
+
+// nw4r::math's MTX34Inv (0x80331064), MTX34InvTranspose to a Mtx33
+// (0x80330E78) and to a Mtx34 (0x80330F5C), and MTX34ToMTX33 (0x80501968).
+// The three inverses share PSMTXInverse's cofactors but call a matrix
+// singular when |det| is below the epsilon pair at 0x8079D6F0 (ps_cmpo0: a
+// NaN determinant is not below it). Mirrored instruction by instruction.
+namespace {
+
+struct Cofactors {
+    double f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13;
+    bool singular;
+};
+
+Cofactors LoadCofactors(uint32_t src) {
+    Cofactors c;
+    c.f0 = LoadPacked1(src);
+    c.f1 = LoadPacked(src + 4);
+    c.f2 = LoadPacked1(src + 0x10);
+    c.f6 = PPC_PsMerge10Inline(c.f1, c.f0);
+    c.f3 = LoadPacked(src + 0x14);
+    c.f4 = LoadPacked1(src + 0x20);
+    c.f7 = PPC_PsMerge10Inline(c.f3, c.f2);
+    c.f5 = LoadPacked(src + 0x24);
+    c.f11 = PPC_PsMulInline(c.f3, c.f6);
+    c.f8 = PPC_PsMerge10Inline(c.f5, c.f4);
+    c.f13 = PPC_PsMulInline(c.f5, c.f7);
+    c.f11 = PPC_PsMsubInline(c.f1, c.f7, c.f11);
+    c.f12 = PPC_PsMulInline(c.f1, c.f8);
+    c.f13 = PPC_PsMsubInline(c.f3, c.f8, c.f13);
+    c.f12 = PPC_PsMsubInline(c.f5, c.f6, c.f12);
+    c.f7 = PPC_PsMulInline(c.f0, c.f13);
+    c.f10 = PPC_PsMulInline(c.f3, c.f4);
+    c.f7 = PPC_PsMaddInline(c.f2, c.f12, c.f7);
+    c.f6 = LoadPacked1(0x8079D6F0u);
+    c.f9 = PPC_PsMulInline(c.f0, c.f5);
+    c.f7 = PPC_PsMaddInline(c.f4, c.f11, c.f7);
+    c.f10 = PPC_PsMsubInline(c.f2, c.f5, c.f10);
+    c.f9 = PPC_PsMsubInline(c.f1, c.f4, c.f9);
+    c.f8 = PPC_PsAbsInline(c.f7);
+    c.singular = PpcGetPs0Inline(c.f8) < PpcGetPs0Inline(c.f6);
+    return c;
+}
+
+// fres of the determinant refined by one Newton step, and the last cofactor.
+double Reciprocal(Cofactors& c) {
+    const double r = PPC_Fres(c.f7);
+    c.f8 = PPC_PsMulInline(c.f1, c.f2);
+    const double twice = PPC_PsAddInline(r, r);
+    c.f8 = PPC_PsMsubInline(c.f0, c.f3, c.f8);
+    const double rd = PPC_PsMulInline(c.f7, r);
+    return PPC_PsNmsubInline(r, rd, twice);
+}
+
+uint32_t Inv34(uint32_t dst, uint32_t src) {
+    Cofactors c = LoadCofactors(src);
+    if (c.singular) return 0;
+    const double r = Reciprocal(c);
+    const double t1 = Broadcast(src + 0xC), t2 = Broadcast(src + 0x1C), t3 = Broadcast(src + 0x2C);
+    const double f13 = PPC_PsMuls0Inline(c.f13, r), f12 = PPC_PsMuls0Inline(c.f12, r);
+    const double f11 = PPC_PsMuls0Inline(c.f11, r);
+    StorePacked(dst, PPC_PsMerge00Inline(f13, f12));
+    StorePacked(dst + 0x10, PPC_PsMerge11Inline(f13, f12));
+    double t = PPC_PsMulInline(f13, t1);
+    const double f10 = PPC_PsMuls0Inline(c.f10, r), f9 = PPC_PsMuls0Inline(c.f9, r);
+    t = PPC_PsMaddInline(f12, t2, t);
+    StorePacked1(dst + 0x20, f10);
+    const double f8 = PPC_PsMuls0Inline(c.f8, r);
+    t = PPC_PsNmaddInline(f11, t3, t);
+    StorePacked1(dst + 0x24, f9);
+    double u = PPC_PsMulInline(f10, t1);
+    StorePacked1(dst + 0x28, f8);
+    u = PPC_PsMaddInline(f9, t2, u);
+    StorePacked(dst + 0x08, PPC_PsMerge00Inline(f11, t));
+    u = PPC_PsNmaddInline(f8, t3, u);
+    StorePacked(dst + 0x18, PPC_PsMerge11Inline(f11, t));
+    StorePacked1(dst + 0x2C, u);
+    return 1;
+}
+
+uint32_t InvTranspose33(uint32_t dst, uint32_t src) {
+    Cofactors c = LoadCofactors(src);
+    if (c.singular) {
+        StorePacked1(dst, c.f0);
+        StorePacked1(dst + 0xC, c.f2);
+        StorePacked1(dst + 0x18, c.f4);
+        StorePacked(dst + 4, c.f1);
+        StorePacked(dst + 0x10, c.f3);
+        StorePacked(dst + 0x1C, c.f5);
+        return 0;
+    }
+    const double r = Reciprocal(c);
+    StorePacked(dst, PPC_PsMuls0Inline(c.f13, r));
+    StorePacked(dst + 0xC, PPC_PsMuls0Inline(c.f12, r));
+    StorePacked(dst + 0x18, PPC_PsMuls0Inline(c.f11, r));
+    StorePacked1(dst + 0x8, PPC_PsMuls0Inline(c.f10, r));
+    StorePacked1(dst + 0x14, PPC_PsMuls0Inline(c.f9, r));
+    StorePacked1(dst + 0x20, PPC_PsMuls0Inline(c.f8, r));
+    return 1;
+}
+
+uint32_t InvTranspose34(uint32_t dst, uint32_t src) {
+    Cofactors c = LoadCofactors(src);
+    const double zero = PPC_PsSubInline(c.f6, c.f6);
+    if (c.singular) {
+        if (dst == src) return 0;
+        StorePacked1(dst, c.f0);
+        StorePacked1(dst + 0x10, c.f2);
+        StorePacked1(dst + 0x20, c.f4);
+        StorePacked(dst + 4, c.f1);
+        StorePacked(dst + 0x14, c.f3);
+        StorePacked(dst + 0x24, c.f5);
+        StorePacked1(dst + 0xC, zero);
+        StorePacked1(dst + 0x1C, zero);
+        StorePacked1(dst + 0x2C, zero);
+        return 0;
+    }
+    const double r = Reciprocal(c);
+    StorePacked1(dst + 0xC, zero);
+    StorePacked1(dst + 0x1C, zero);
+    StorePacked1(dst + 0x2C, zero);
+    StorePacked(dst, PPC_PsMuls0Inline(c.f13, r));
+    StorePacked(dst + 0x10, PPC_PsMuls0Inline(c.f12, r));
+    StorePacked(dst + 0x20, PPC_PsMuls0Inline(c.f11, r));
+    StorePacked1(dst + 0x8, PPC_PsMuls0Inline(c.f10, r));
+    StorePacked1(dst + 0x18, PPC_PsMuls0Inline(c.f9, r));
+    StorePacked1(dst + 0x28, PPC_PsMuls0Inline(c.f8, r));
+    return 1;
+}
+
+// The rotation part of a Mtx34 as a Mtx33 (float bits copied through
+// psq_l/psq_st, which is exact for floats).
+void To33(uint32_t dst, uint32_t src) {
+    for (unsigned r = 0; r < 3; ++r)
+        for (unsigned k = 0; k < 3; ++k)
+            MemoryInline::FlatWrite32(dst + 12 * r + 4 * k, MemoryInline::FlatRead32(src + 16 * r + 4 * k));
+}
+
+} // namespace
+
+extern "C" void func_80331064(CpuContext* ctx);
+extern "C" void func_80330E78(CpuContext* ctx);
+extern "C" void func_80330F5C(CpuContext* ctx);
+extern "C" void func_80501968(CpuContext* ctx);
+
+#ifdef MH3_DEVELOPMENT
+#define MH3_MTX_RESULT_CHECK(name, original, port, out, bytes)                                                \
+    static const bool check = PortCheck::Enabled(name);                                                        \
+    if (check) [[unlikely]] {                                                                                  \
+        PortCheck::RunOutput(ctx, name, original, port, {{out, bytes}});                                       \
+        return;                                                                                                \
+    }
+#else
+#define MH3_MTX_RESULT_CHECK(...)
+#endif
+
+static void Inv34Port(CpuContext* p) { p->gpr[3] = Inv34(p->gpr[3], p->gpr[4]); }
+extern "C" void MH3_MTX34Inv(CpuContext* ctx) {
+    MH3_MTX_RESULT_CHECK("MTX34Inv", func_80331064, Inv34Port, ctx->gpr[3], 0x30);
+    Inv34Port(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80331064, MH3_MTX34Inv, "MTX34Inv");
+
+static void InvTranspose33Port(CpuContext* p) { p->gpr[3] = InvTranspose33(p->gpr[3], p->gpr[4]); }
+extern "C" void MH3_MTX34InvTransposeTo33(CpuContext* ctx) {
+    MH3_MTX_RESULT_CHECK("MTX34InvTransposeTo33", func_80330E78, InvTranspose33Port, ctx->gpr[3], 0x24);
+    InvTranspose33Port(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80330E78, MH3_MTX34InvTransposeTo33, "MTX34InvTransposeTo33");
+
+static void InvTranspose34Port(CpuContext* p) { p->gpr[3] = InvTranspose34(p->gpr[3], p->gpr[4]); }
+extern "C" void MH3_MTX34InvTranspose(CpuContext* ctx) {
+    MH3_MTX_RESULT_CHECK("MTX34InvTranspose", func_80330F5C, InvTranspose34Port, ctx->gpr[3], 0x30);
+    InvTranspose34Port(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80330F5C, MH3_MTX34InvTranspose, "MTX34InvTranspose");
+
+static void To33Port(CpuContext* p) { To33(p->gpr[3], p->gpr[4]); }
+extern "C" void MH3_MTX34ToMTX33(CpuContext* ctx) {
+    MH3_MTX_RESULT_CHECK("MTX34ToMTX33", func_80501968, To33Port, ctx->gpr[3], 0x24);
+    To33Port(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80501968, MH3_MTX34ToMTX33, "MTX34ToMTX33");
+
+uint32_t G3dNative::MtxInv34(uint32_t dst, uint32_t src) { return Inv34(dst, src); }
+uint32_t G3dNative::MtxInvTranspose33(uint32_t dst, uint32_t src) { return InvTranspose33(dst, src); }
+uint32_t G3dNative::MtxInvTranspose34(uint32_t dst, uint32_t src) { return InvTranspose34(dst, src); }
+void G3dNative::MtxTo33(uint32_t dst, uint32_t src) { To33(dst, src); }
+void G3dNative::MtxConcatArray(uint32_t a, uint32_t src, uint32_t dst, uint32_t count, uint32_t r13) {
+    ConcatArray(a, src, dst, count, r13);
+}

@@ -653,6 +653,7 @@
 80073830 G3dCalcWorld
 80074180 G3dCalcSkinning
 80071cac G3dCalcView
+800711fc G3dCalcViewLc
 80078b00 G3dDrawOpaXlu
 800d7814 WorldMtxNodeStepMayaScale
 800871c0 TexSrtMtxSetup
@@ -666,6 +667,10 @@
 80501ab4 MTX34RotXYZFIdx
 80501a10 MTX34MultTrans
 805019bc MTX34Scale
+80501968 MTX34ToMTX33
+80331064 MTX34Inv
+80330e78 MTX34InvTransposeTo33
+80330f5c MTX34InvTranspose
 804c63d0 PSMTXConcatArray
 80471590 AXSyncPBs
 # ResAnmChr key helpers (ported in runtime/src/anm_chr_keys.cpp): the hermite blend, a

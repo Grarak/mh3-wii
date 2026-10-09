@@ -40,6 +40,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 namespace {
 
@@ -279,3 +280,120 @@ extern "C" void MH3_G3dCalcWorld(CpuContext* ctx) {
     CalcWorld(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80073830, MH3_G3dCalcWorld, "G3dCalcWorld");
+
+// 0x800711FC (G3dCalcViewLc, calcview.cpp's CalcView_LC): the view matrices
+// (view * model), their normal matrices and texture matrices, 40 at a time
+// through the locked cache.
+//
+// G3dCalcViewLc(viewPos, nrm, model, attrib, count, view, mdl, tex): per
+// chunk, view * model into LC buffer A; a billboard matrix (attrib & 0xFF, 1-6)
+// through the table at 0x8056FDF8, keeping view * model * inverse(model) of a
+// billboard that has children (node + 0x60) in the scratch at 0x8066D300; a
+// node with flag 0x400 (under a billboard) is its billboard parent's scratch *
+// its model matrix. A is DMA'd to viewPos. With nrm: per matrix the inverse
+// transpose of A (or A itself when attrib bit 29 says it has no scale), the
+// 3x3 into B for nrm and, with tex, the 3x4 with a zero translation into C for
+// tex. Buffers A-C alternate with a second set between chunks. The DMA copies
+// whole 32-byte blocks, as the runtime's locked-cache DMA does.
+namespace {
+
+constexpr uint32_t kLockedCache = 0xE0000000u;
+constexpr uint32_t kBillboards = 0x8056FDF8u;
+
+void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
+    const uint32_t size = (blocks ? blocks : 128) * 32;
+    std::memcpy(Memory::GetPointer(dst & 0x1FFFFFE0u, size), Memory::GetPointer(cache & ~31u, size), size);
+}
+
+// The node of matrix id: the model info's matrix-to-node table (-1 when none).
+int32_t MatrixNode(uint32_t info, uint32_t id) {
+    const uint32_t table = info + Read32(info + 0x24);
+    return int32_t(Read32(table + 4 + 4 * id));
+}
+
+void CalcViewLc(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x100);
+    const uint32_t viewPos = frame.Arg(3), nrm = frame.Arg(4), model = frame.Arg(5), attrib = frame.Arg(6);
+    const uint32_t count = frame.Arg(7), view = frame.Arg(8), mdl = frame.Arg(9), tex = frame.Arg(10);
+    const uint32_t r13 = frame.Arg(13);
+    if (count == 0) return;
+    uint32_t a = kLockedCache + 0x800, b = kLockedCache + 0x1000, c = kLockedCache + 0x1800;
+    uint32_t a1 = kLockedCache + 0x2800, b1 = kLockedCache + 0x3000, c1 = kLockedCache + 0x3800;
+    const uint32_t info = Read32(mdl) + 0x4C;
+    const float zero = ReadFloat(0x80798268u);
+    const uint32_t inverse = frame[0x58];
+    GuestCall game{ctx};
+
+    for (uint32_t first = 0; first < count; first += 40) {
+        const uint32_t n = count - first > 40 ? 40 : count - first;
+        const uint32_t blocksA = (n * 0x30 + 31) >> 5, blocksB = (n * 0x24 + 31) >> 5;
+        if (n > 1) G3dNative::MtxConcatArray(view, model + 0x30 * first, a, n, r13);
+        else G3dNative::MtxConcat(view, model + 0x30 * first, a);
+
+        for (uint32_t k = 0; k < n; ++k) {
+            const uint32_t id = first + k, attr = Read32(attrib + 4 * id), mtx = a + 0x30 * k;
+            const uint32_t billboard = attr & 0xFF;
+            if (billboard != 0) {
+                MemoryInline::FlatWrite32(frame[0x30], Read32(mdl));
+                game(Read32(kBillboards + 4 * billboard), {mtx, model, (attr >> 29) & 1, view, frame[0x30], id});
+                const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(MatrixNode(info, id)));
+                if (node == 0 || Read32(node + 0x60) == 0) continue;
+                // A billboard with children: what they are relative to.
+                const uint32_t scratch = kWorkMatrices + 0x30 * id;
+                if (G3dNative::MtxInv34(inverse, model + 0x30 * id) == 1) {
+                    G3dNative::MtxConcat(mtx, inverse, scratch);
+                } else {
+                    for (unsigned w = 0; w < 12; ++w) WriteFloat(scratch + 4 * w, w % 5 == 0 ? 1.0f : 0.0f);
+                    for (uint32_t t = 0xC; t < 0x30; t += 0x10) MemoryInline::FlatWrite32(scratch + t, Read32(view + t));
+                }
+                continue;
+            }
+            const int32_t nodeId = MatrixNode(info, id);
+            if (nodeId < 0) continue;
+            const uint32_t node = G3dNative::ResDicAtOffset14(mdl, uint32_t(nodeId));
+            if (node == 0 || (Read32(node + 0x14) & 0x400) == 0) continue;
+            const uint32_t parent = G3dNative::ResDicAtOffset14(mdl, Read32(node + 0x1C));
+            const uint32_t parentId = parent ? Read32(parent + 0x10) : 0;
+            G3dNative::MtxConcat(kWorkMatrices + 0x30 * parentId, model + 0x30 * id, mtx);
+        }
+        LcStore(viewPos + 0x30 * first, a, blocksA);
+
+        if (nrm) {
+            for (uint32_t k = 0; k < n; ++k) {
+                const uint32_t id = first + k, mtx = a + 0x30 * k, n33 = b + 0x24 * k, t34 = c + 0x30 * k;
+                if ((Read32(attrib + 4 * id) & 0x20000000u) != 0) {
+                    if (tex) {
+                        G3dNative::MtxCopy(mtx, t34);
+                        for (uint32_t t = 0xC; t < 0x30; t += 0x10) WriteFloat(t34 + t, zero);
+                    }
+                    G3dNative::MtxTo33(n33, mtx);
+                } else if (tex) {
+                    G3dNative::MtxInvTranspose34(t34, mtx);
+                    G3dNative::MtxTo33(n33, t34);
+                } else {
+                    G3dNative::MtxInvTranspose33(n33, mtx);
+                }
+            }
+            LcStore(nrm + 0x24 * first, b, blocksB);
+            if (tex) LcStore(tex + 0x30 * first, c, blocksA);
+        }
+        std::swap(a, a1);
+        std::swap(b, b1);
+        std::swap(c, c1);
+    }
+}
+
+} // namespace
+
+extern "C" void func_800711FC(CpuContext* ctx);
+extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("G3dCalcViewLc");
+    if (check) [[unlikely]] {
+        PortCheck::Run(ctx, "G3dCalcViewLc", func_800711FC, CalcViewLc);
+        return;
+    }
+#endif
+    CalcViewLc(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800711FC, MH3_G3dCalcViewLc, "G3dCalcViewLc");
