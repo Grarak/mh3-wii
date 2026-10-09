@@ -207,9 +207,11 @@ struct FrameSplit {
         std::printf("MH3 frame split: logic %.2f draw %.2f other %.2f ms/frame (%u frames); calls logic/draw: world %u/%u anim %u/%u effect %u/%u view %u/%u\n", logic / frames, draw / frames,
                     other / frames, frames, splitCalls[0][2], splitCalls[0][3], splitCalls[1][2], splitCalls[1][3], splitCalls[2][2], splitCalls[2][3], splitCalls[3][2], splitCalls[3][3]);
         const auto f = [this](unsigned family) { return splitFamilies[family] / frames; };
-        std::printf("MH3 draw split: traverse %.2f model %.2f effect %.2f node callback %.2f font %.2f fade %.2f hud %.2f movie %.2f ms/frame\n", f(MH3_SPLIT_TRAVERSE),
-                    f(MH3_SPLIT_MODEL), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD), f(MH3_SPLIT_MOVIE));
         const auto n = [this](unsigned family) { return splitScopes[family] / frames; };
+        std::printf("MH3 draw split: traverse %.2f model %.2f effect %.2f node callback %.2f font %.2f fade %.2f hud %.2f movie %.2f ms/frame; "
+                    "timed scopes/frame: traverse %u model %u effect %u node callback %u\n",
+                    f(MH3_SPLIT_TRAVERSE), f(MH3_SPLIT_MODEL), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD),
+                    f(MH3_SPLIT_MOVIE), n(MH3_SPLIT_TRAVERSE), n(MH3_SPLIT_MODEL), n(MH3_SPLIT_EFFECT), n(MH3_SPLIT_NODE_CALLBACK));
         if (mh3SplitDetail)
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
                         f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));

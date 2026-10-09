@@ -7,12 +7,14 @@
 #include <psp2/io/stat.h>
 #include <psp2/io/devctl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 #include <psp2/appmgr.h>
 #include <cstdio>
 #include <cerrno>
 #include <reent.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -171,6 +173,25 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     const int xbarClock = scePowerSetGpuXbarClockFrequency(166);
     std::fprintf(stderr, "MH3 Vita clocks: CPU %d, bus %d, GPU %d, crossbar %d MHz (set %d/%d/%d/%d)\n", scePowerGetArmClockFrequency(), scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency(),
                  scePowerGetGpuXbarClockFrequency(), armClock, busClock, gpuClock, xbarClock);
+#ifdef MH3_DEVELOPMENT
+    {
+        // What one read of each clock a development timer could use costs.
+        constexpr int calls = 2000;
+        volatile uint64_t sink = 0;
+        const auto cost = [&](auto read) {
+            const uint64_t start = sceKernelGetProcessTimeWide();
+            for (int i = 0; i < calls; ++i)
+                sink = read();
+            return double(sceKernelGetProcessTimeWide() - start) * 1000.0 / calls;
+        };
+        const double steady = cost([] { return uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()); });
+        const double process = cost([] { return uint64_t(sceKernelGetProcessTimeWide()); });
+        const double processLow = cost([] { return uint64_t(sceKernelGetProcessTimeLow()); });
+        const double system = cost([] { return uint64_t(sceKernelGetSystemTimeWide()); });
+        (void)sink;
+        std::fprintf(stderr, "MH3 Vita clock read cost: steady_clock %.0f ns, process time %.0f ns (low %.0f ns), system time %.0f ns\n", steady, process, processLow, system);
+    }
+#endif
     ReportVitaMemory();
 }
 
