@@ -59,6 +59,9 @@ add_executable(MH3
   ${MKW_BASE_REGISTRATION_SOURCES})
 target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/model_submission_trace.cpp
   native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
+target_sources(MH3 PRIVATE src/model_draw_dispatch.cpp native/mh3_model_draw_dispatch.c)
+set_source_files_properties(native/mh3_model_draw_dispatch.c
+  PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
 target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
   native/mh3_model_submission.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
