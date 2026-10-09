@@ -563,6 +563,56 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         catch (const std::runtime_error&) { rejected = true; }
         if (!rejected || draws != 5) throw std::runtime_error("Out-of-RAM draw was emitted");
     }
+    {
+        GuestGxStream skipped;
+        skipped.coalesce = false;
+        bool drop = true;
+        skipped.skipDraw = [&] { return drop; };
+        unsigned draws = 0, arrayPackets = 0, texturePackets = 0, traces = 0;
+        uint32_t lastArraySize = 0;
+        std::array<uint8_t, 32> textureBytes{};
+        const uint8_t draw[]{0x90, 0, 1, 0, 3}; // Index 3 into the position array.
+        const uint8_t list[]{8,0xB0,0,0,0,16, 0x61,0x43,0,0,3, 0x90,0,1,0,3};
+        auto receive = [&](std::span<const uint8_t> packet) {
+            if (packet[0] >= 0x80) ++draws;
+            if (packet[0] == 0x50 && packet[2] == 0x10) {
+                ++arrayPackets;
+                lastArraySize = (uint32_t(packet[11]) << 24) | (uint32_t(packet[12]) << 16) |
+                                (uint32_t(packet[13]) << 8) | packet[14];
+            }
+            if (packet[0] == 0x50 && packet[2] == 0x30) ++texturePackets;
+        };
+        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address == 0x1000) return {0x10000000, 64};
+            if (address == 0x2000) return {reinterpret_cast<uintptr_t>(list), sizeof(list)};
+            if (address == 0x3000) return {reinterpret_cast<uintptr_t>(textureBytes.data()), textureBytes.size()};
+            throw std::runtime_error("Skipped draw resolved unexpected RAM");
+        };
+        auto cp = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{8, reg, uint8_t(value >> 24), uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            skipped.Write(command, receive, resolve);
+        };
+        auto bp = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            skipped.Write(command, receive, resolve);
+        };
+        cp(0xA0, 0x1000); cp(0xB0, 12); cp(0x50, 3 << 9); cp(0x70, 9);
+        bp(0x88, (7 << 10) | 7); bp(0x94, 0x3000 >> 5);
+        skipped.traceDraw = [&](uint32_t, uint32_t) { ++traces; };
+        const auto before = GuestGxStream::skippedDrawCount;
+        const uint8_t call[]{0x40,0,0,0x20,0, 0,0,0,sizeof(list)};
+        skipped.Write(call, receive, resolve);
+        skipped.Write(std::span(draw).first(2), receive, resolve);
+        skipped.Write(std::span(draw).subspan(2), receive, resolve);
+        if (draws || texturePackets || traces || arrayPackets != 1 ||
+            skipped.PendingBytes() || skipped.PixelFormat() != 3 ||
+            GuestGxStream::skippedDrawCount - before != 2)
+            throw std::runtime_error("Skipped nested/fragmented GX draws lost state or prepared resources");
+        drop = false;
+        skipped.Write(draw, receive, resolve);
+        if (draws != 1 || traces != 1 || texturePackets != 1 || arrayPackets != 2 || lastArraySize != 60)
+            throw std::runtime_error("Visible GX draw did not use deferred texture and display-list array state");
+    }
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass,
                            uint32_t guestAddress = 0) {
         GuestGxStream textureStream;
@@ -729,6 +779,19 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         if (word(palettePackets().back(), 22) != word(p[0], 22) ||
             reinterpret_cast<const uint8_t*>(pointer)[0] != 0xF8)
             throw std::runtime_error("GX TLUT A/B/A reload lost the original content identity");
+        bool skipPaletteDraw = true;
+        paletteStream.skipDraw = [&] { return skipPaletteDraw; };
+        const auto beforeSkip = palettePackets().size();
+        source[0] = 0x55;
+        write(0x65, (16 << 10) | 0x200);
+        drawPalette();
+        if (palettePackets().size() != beforeSkip)
+            throw std::runtime_error("Skipped GX draw prepared a palette conversion");
+        source[0] = 0x99; // The skipped frame's DMA snapshot must survive RAM reuse.
+        skipPaletteDraw = false;
+        drawPalette();
+        if (palettePackets().size() != beforeSkip + 1 || reinterpret_cast<const uint8_t*>(pointer)[0] != 0x55)
+            throw std::runtime_error("Skipped GX frame lost the next visible draw's palette snapshot");
         auto mustReject = [&](auto operation) {
             bool rejected = false;
             try { operation(); } catch (const std::runtime_error&) { rejected = true; }

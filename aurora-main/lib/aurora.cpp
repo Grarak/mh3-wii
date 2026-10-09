@@ -442,7 +442,12 @@ bool begin_frame() noexcept {
   }
   // Blocks while every staging set is in flight on the render thread; that is the
   // producer's backpressure.
-  return gfx::begin_frame();
+  const bool began = gfx::begin_frame();
+  // The FIFO bridge may decide frameskip before preparing its first draw.
+  // Protect a requested capture before that decision can drop geometry.
+  if (began && g_captureFrame.load(std::memory_order_acquire) == gfx::current_frame() + 1)
+    gfx::require_frame_render();
+  return began;
 #else
   return true;
 #endif

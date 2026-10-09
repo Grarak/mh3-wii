@@ -25,11 +25,15 @@ public:
     unsigned PixelFormat() const { return bp[0x43] & 7; }
     // Sink one command per call instead of runs of them (per-draw diagnostics).
     bool coalesce = true;
+    // Decide before preparing a complete draw. Skipping sinks prior state but
+    // does not scan indices or prepare arrays/textures; visible runs coalesce.
+    std::function<bool()> skipDraw;
     // Optional source trace, before a draw reaches the sink. Address zero
     // denotes the CPU FIFO; other addresses identify guest display lists.
     std::function<void(uint32_t address, uint32_t offset)> traceDraw;
     // Commands and draws framed, display lists included.
     inline static uint64_t commandCount = 0, drawCount = 0;
+    inline static uint64_t skippedDrawCount = 0;
     // Textures hashed, and clears of the hashes kept until an invalidation.
     inline static uint64_t textureHashCount = 0, textureInvalidateCount = 0;
     static void InvalidateTextureHashes();

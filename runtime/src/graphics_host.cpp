@@ -47,13 +47,14 @@
 #include "efb_copy_trace.h"
 #endif
 namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame() noexcept; void split_staging_batch(); void require_frame_render() noexcept;
-    std::array<uint64_t, 4> staging_high_water() noexcept; uint64_t staging_split_count() noexcept; }
+    bool frame_skipped() noexcept; std::array<uint64_t, 4> staging_high_water() noexcept; uint64_t staging_split_count() noexcept; }
 
 namespace aurora::gx::fifo {
 void init();
 uint32_t process(const uint8_t*, uint32_t, bool);
 }
 namespace {
+void BeginHostGxFrame();
 bool initialized = false;
 bool frameActive = false;
 bool gpuSynchronized = true, displayCopyPending = false, hasBegunFrame = false;
@@ -233,6 +234,7 @@ struct FrameProfile {
     uint64_t renderQueueNs = 0, tailNs = 0, completionNs = 0;
     uint64_t minCopyNs = UINT64_MAX, maxCopyNs = 0, measuredCopies = 0;
     uint64_t lastCopies = 0, lastCommands = 0, lastArrays = 0, lastTextures = 0, lastDraws = 0;
+    uint64_t lastSkippedDraws = 0;
     uint64_t lastTextureCopies = 0, lastEfbSnapshots = 0, lastEfbPeeks = 0;
     uint64_t lastTextureHashes = 0, lastTextureInvalidates = 0;
     uint64_t lastTextureCopyNs = 0, lastEfbSnapshotNs = 0;
@@ -325,6 +327,15 @@ void InitializeGraphics(int argc, char** argv) {
     std::atexit(ShutdownGraphics);
     if (info.backend != config.desiredBackend) throw std::runtime_error("Aurora did not select the required renderer");
     aurora::gx::fifo::init();
+#if !defined(MH3_ENABLE_GX_DIAGNOSTICS) && !defined(MH3_ENABLE_EFB_COPY_TRACE)
+    const char* earlySkip = std::getenv("MH3_GX_EARLY_SKIP");
+    if (!earlySkip || earlySkip[0] != '0') guestStream.skipDraw = [] {
+        // Start a new frame if a display-copy boundary occurred within this
+        // FIFO chunk. Visible command runs retain their normal coalescing.
+        BeginHostGxFrame();
+        return aurora::gfx::frame_skipped();
+    };
+#endif
     // Frameskip: a frame is dropped when the render thread is still busy with the
     // previous one. MH3_FRAMESKIP=0 renders every frame (debugging).
     aurora_set_frameskip(true);
@@ -397,6 +408,17 @@ void PollHostGraphicsEvents() {
 }
 
 namespace {
+void BeginHostGxFrame() {
+    if (frameActive) return;
+    std::lock_guard lock(auroraFrameMutex);
+    if (hasBegunFrame) aurora::gfx::preserve_next_efb_frame();
+    frameActive = aurora_begin_frame();
+    hasBegunFrame = true;
+    if (!frameActive) throw std::runtime_error("Aurora could not begin the guest GX frame");
+    const auto frame = aurora::gfx::current_frame() + 1;
+    if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
+        aurora::gfx::require_frame_render();
+}
 // Decode guest FIFO bytes on the render thread (game-thread diagnostics remain opt-in).
 void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
 #ifdef MH3_DEVELOPMENT
@@ -418,14 +440,9 @@ void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
         aurora::gx::fifo::set_capture_callers(callers.data());
     }
 #endif
-    if (!frameActive) {
-        std::lock_guard lock(auroraFrameMutex);
-        if (hasBegunFrame) aurora::gfx::preserve_next_efb_frame();
-        frameActive = aurora_begin_frame();
-        hasBegunFrame = true;
-        if (!frameActive) throw std::runtime_error("Aurora could not begin the guest GX frame");
-    }
+    BeginHostGxFrame();
     guestStream.Write(std::span<const uint8_t>(data, size), [](auto packet) {
+        BeginHostGxFrame();
 #ifdef MH3_DEVELOPMENT
         // MH3_GX_DRAW_LOG=file,from,to: per draw of frames from..to, the
         // frame, the draw's index, its primitive and vertex count, a hash of
@@ -494,6 +511,7 @@ void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
         else throw std::runtime_error("GX vertex array does not point into guest RAM");
         return {reinterpret_cast<uintptr_t>(Memory::GetPointer(address, size)), size};
     }, [](const GuestGxStream::DisplayCopy& copy) {
+        BeginHostGxFrame();
         GXSetDispCopyDst(copy.width, copy.height);
         GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
         ++guestCopies;
@@ -504,14 +522,15 @@ void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
         UpdateGxDiagnosticMode();
 #endif
         displayCopyPending = true;
+        // End at the actual copy boundary, including inside nested display
+        // lists or chunks containing commands from more than one frame.
+        SealDisplayFrame();
     }, [](const GuestGxStream::EfbClear& copy) {
+        BeginHostGxFrame();
         // The stream retains only a texture-copy command's clear side effect.
         GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
         GXCopyTex(nullptr, GX_TRUE);
     });
-    // GXCopyDisp is the presentation boundary. Seal its owned draw data now,
-    // letting GPU encoding overlap guest work before GXDrawDone/next GX use.
-    if (displayCopyPending) SealDisplayFrame();
 }
 }
 
@@ -641,11 +660,10 @@ void CompleteHostGraphics() {
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
     // GXDrawDone consumes queued CPU commands before the guest reuses their
     // source arrays. It does not explicitly wait for GPU completion; nothing
-    // reads rendered results back on the CPU, and frameskip handles a busy GPU. Mid-frame it does not
-    // submit either; MH3's display routine calls it after the next frame's first
-    // GX writes, and an early submission there would force the frameskip
-    // decision while the previous frame is certainly still rendering. An EFB
-    // peek submits what it needs itself (ReadHostEfbColor).
+    // reads rendered results back on the CPU, and frameskip handles a busy GPU.
+    // Normal display copies seal at their FIFO boundary; this handles the
+    // remaining manual/diagnostic path without submitting a partial frame.
+    // An EFB peek submits what it needs itself (ReadHostEfbColor).
     if (frameActive && displayCopyPending) SealDisplayFrame();
 #ifdef MH3_DEVELOPMENT
     const auto afterTail = FrameProfile::Clock::now();
@@ -677,7 +695,7 @@ void CompleteHostGraphics() {
                 "MH3 profile: %llu display copies; %.2f ms wall/copy, %.2f ms %s/copy, "
                 "%.2f ms GX completion/copy (%.2f ms CPU decode/submit, %.2f ms graphics tail), "
                 "%.2f..%.2f ms copy interval, "
-                "%llu GX commands/copy, %llu draws/copy, %llu arrays/copy, %llu textures/copy, "
+                "%llu GX commands/copy, %llu draws/copy (%llu skipped before preparation), %llu arrays/copy, %llu textures/copy, "
                 "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy; "
                 "last frame %u host draws + %u merged into them; %.1f texture hashes/copy, %.1f TMEM invalidations/copy\n",
                 static_cast<unsigned long long>(frames), wallMs, cpuMs, cpuClockLabel, profile.completionNs / 1e6 / frames,
@@ -685,6 +703,7 @@ void CompleteHostGraphics() {
                 profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
                 static_cast<unsigned long long>((GuestGxStream::commandCount - profile.lastCommands) / frames),
                 static_cast<unsigned long long>((GuestGxStream::drawCount - profile.lastDraws) / frames),
+                static_cast<unsigned long long>((GuestGxStream::skippedDrawCount - profile.lastSkippedDraws) / frames),
                 static_cast<unsigned long long>((guestArrays - profile.lastArrays) / frames),
                 static_cast<unsigned long long>((guestTextures - profile.lastTextures) / frames),
                 static_cast<unsigned long long>((guestTextureCopies - profile.lastTextureCopies) / frames),
@@ -702,6 +721,7 @@ void CompleteHostGraphics() {
             profile.lastArrays = guestArrays;
             profile.lastTextures = guestTextures;
             profile.lastDraws = GuestGxStream::drawCount;
+            profile.lastSkippedDraws = GuestGxStream::skippedDrawCount;
             profile.lastTextureCopies = guestTextureCopies;
             profile.lastEfbSnapshots = guestEfbSnapshots;
             profile.lastEfbPeeks = guestEfbPeeks;

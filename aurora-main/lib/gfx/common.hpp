@@ -280,11 +280,10 @@ void shutdown();
 bool begin_frame();
 bool resume_frame();
 
-// Frameskip: when enabled, a frame whose first submission finds the render thread
-// still busy with an earlier frame is skipped. Its draws, clears, EFB-copy resolves
-// and present are dropped; staging uploads and palette conversions still run so the
-// texture caches stay valid. The decision is made once per frame, at its first
-// submission (mid-frame flush, staging split or end_frame), and then sticks.
+// Frameskip: decide once per frame, before its first draw preparation or
+// submission. A busy previous frame drops draws, clears, resolves and present;
+// already prepared palette conversions still run. Forced captures must be
+// requested before early draw skipping. GXM also checks GPU scene completion.
 void set_frameskip(bool enabled) noexcept;
 // The current frame must render (a new copy texture, a requested capture).
 void require_frame_render() noexcept;
