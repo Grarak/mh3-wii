@@ -606,11 +606,18 @@ uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_mat
 }
 
 /* ---- Per-draw resolution ---- */
+#define UNIT_BYTE(b) ((float)(b) / 255.f)
+#define UNIT_BYTE4(b) UNIT_BYTE(b), UNIT_BYTE((b) + 1), UNIT_BYTE((b) + 2), UNIT_BYTE((b) + 3)
+#define UNIT_BYTE16(b) UNIT_BYTE4(b), UNIT_BYTE4((b) + 4), UNIT_BYTE4((b) + 8), UNIT_BYTE4((b) + 12)
+#define UNIT_BYTE64(b) UNIT_BYTE16(b), UNIT_BYTE16((b) + 16), UNIT_BYTE16((b) + 32), UNIT_BYTE16((b) + 48)
+
+const float mh3_unit_byte[256] = {UNIT_BYTE64(0), UNIT_BYTE64(64), UNIT_BYTE64(128), UNIT_BYTE64(192)};
+
 static void register_value(const mh3_native_material_state *s, unsigned index, float out[4]) {
     const mh3_pack_tev_color *color = &s->color[index & 3];
 
     for (unsigned i = 0; i < 4; ++i)
-        out[i] = color->rgba[i] / 255.f;
+        out[i] = mh3_unit_value(color->rgba[i]);
 }
 
 static void konst_value(const mh3_native_material_state *s, uint8_t selector, float out[4]) {
@@ -627,15 +634,15 @@ static void konst_value(const mh3_native_material_state *s, uint8_t selector, fl
         const mh3_pack_tev_color *k = &s->konst[selector - 12];
 
         for (unsigned i = 0; i < 3; ++i)
-            out[i] = k->rgba[i] / 255.f;
+            out[i] = mh3_unit_value(k->rgba[i]);
 
-        out[3] = k->rgba[3] / 255.f;
+        out[3] = mh3_unit_value(k->rgba[3]);
         return;
     }
 
     if (selector >= 16 && selector < 32) {
         const mh3_pack_tev_color *k = &s->konst[(selector - 16) & 3];
-        const float v = k->rgba[(selector - 16) / 4] / 255.f;
+        const float v = mh3_unit_value(k->rgba[(selector - 16) / 4]);
         out[0] = out[1] = out[2] = out[3] = v;
         return;
     }
@@ -1011,8 +1018,8 @@ int mh3_shade_gpu_bake(const mh3_shade_material *m, mh3_shade_gpu_material *out,
 void mh3_shade_gpu_palette(const mh3_native_material_state *s, mh3_shade_gpu_animated *out) {
     for (unsigned j = 0; j < 4; ++j)
         for (unsigned i = 0; i < 4; ++i) {
-            out->palette[j][i] = s->color[j].rgba[i] / 255.f;
-            out->palette[4 + j][i] = s->konst[j].rgba[i] / 255.f;
+            out->palette[j][i] = mh3_unit_value(s->color[j].rgba[i]);
+            out->palette[4 + j][i] = mh3_unit_value(s->konst[j].rgba[i]);
         }
     for (unsigned i = 0; i < 4; ++i)
         out->palette[MH3_SHADE_GPU_ONE][i] = 1.f;

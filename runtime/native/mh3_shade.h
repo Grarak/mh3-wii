@@ -263,6 +263,16 @@ typedef struct mh3_shade_gpu_animated {
  * two animated factors (no shader form; the caller keeps resolving on the
  * CPU). *dynamic is set when a coefficient picks an animated entry. */
 int mh3_shade_gpu_bake(const mh3_shade_material *material, mh3_shade_gpu_material *out, uint8_t *dynamic);
+/* byte / 255.f for every byte, folded at compile time: the A9 has no
+ * pipelined divide, and a multiply by 1/255 rounds 126 bytes differently. */
+extern const float mh3_unit_byte[256];
+
+/* value / 255.f of a TEV colour register (signed 11-bit): the table for
+ * 0-255, the divide otherwise. */
+static inline float mh3_unit_value(int value) {
+    return (unsigned)value < 256u ? mh3_unit_byte[value] : (float)value / 255.f;
+}
+
 /* The animated palette (TEV colour registers, konst colours, one). */
 void mh3_shade_gpu_palette(const mh3_native_material_state *state, mh3_shade_gpu_animated *out);
 /* GX alpha compare (pixel compare/reference/operation values) as the

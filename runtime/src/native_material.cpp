@@ -380,8 +380,8 @@ ShadeLighting ShadeChannels(const mh3_shade_material& shading, mh3_shade_vertex&
     const auto& channel = material.channel[(shading.quality & MH3_SHADE_CHANNEL1) ? 1 : 0];
 
     for (unsigned i = 0; i < 4; ++i) {
-        out.channel_material[i] = channel.material_color[i] / 255.f;
-        out.channel_ambient[i] = channel.ambient_color[i] / 255.f;
+        out.channel_material[i] = mh3_unit_byte[channel.material_color[i]];
+        out.channel_ambient[i] = mh3_unit_byte[channel.ambient_color[i]];
     }
 
     const auto& color = channel.color;
@@ -1690,7 +1690,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     quad.normal[3] = 0.0f;
 
     for (unsigned c = 0; c < 4; ++c)
-        quad.color0[c] = float(color[c]) / 255.0f;
+        quad.color0[c] = mh3_unit_byte[color[c]];
 
     for (unsigned role = 0; role < 3; ++role) {
         const uint8_t coordinate = role < shading.textures && shading.texture_coordinate[role] < 8 ? shading.texture_coordinate[role] : 0xff;
