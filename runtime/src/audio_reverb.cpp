@@ -193,6 +193,21 @@ static void AudioReverb(CpuContext* ctx) {
         float32x4_t vLowpass = {lowpassState[0], lowpassState[1], lowpassState[2], 0.0f};
         for (unsigned s = 0; s < kSamples; ++s) {
             const unsigned o = 4 * s;
+            // The filter waits on its ~30 delay-line streams (each sample
+            // touches every line once); fetch each 16 samples ahead. A prefetch
+            // past a line's end is harmless.
+            if ((s & 7) == 0) {
+                constexpr unsigned ahead = 4 * 16;
+                for (unsigned c = 0; c < 3; ++c) {
+                    for (unsigned k = 0; k < 3; ++k) {
+                        __builtin_prefetch(early[c] + 4 * taps[k] + ahead, 1);
+                        __builtin_prefetch(comb[c][k] + 4 * combPos[k] + ahead, 1);
+                    }
+                    if (preDelayLength) __builtin_prefetch(preDelay[c] + 4 * preDelayPos + ahead, 1);
+                    for (unsigned k = 0; k < 2; ++k) __builtin_prefetch(allpass[c][k] + 4 * apPos[k] + ahead, 1);
+                    __builtin_prefetch(last[c] + 4 * lastPos[c] + ahead, 1);
+                }
+            }
             uint32x4_t samples = vreinterpretq_u32_f32(Gather(in[0] + o, in[1] + o, in[2] + o));
             if (aux[0]) samples = vaddq_u32(samples, vreinterpretq_u32_f32(Gather(aux[0] + o, aux[1] + o, aux[2] + o)));
             const float32x4_t x = vcvtq_f32_s32(vreinterpretq_s32_u32(samples));
