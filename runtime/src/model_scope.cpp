@@ -1735,6 +1735,10 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
         SubmitNativeModelMesh(submit);
     };
 
+#ifdef MH3_DEVELOPMENT
+    if (prepared.skin_row_count && NativeSkipSkinnedMeshes())
+        return;
+#endif
     if (prepared.palette_batch_count && !prepared.skin_row_count)
         for (uint32_t i = 0; i < prepared.palette_batch_count; i++)
             submit_one(i);

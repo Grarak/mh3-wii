@@ -88,6 +88,10 @@ void EndNativeFramePacketTail();
 // (development builds check), and model lookups admit it
 // (FindNativeModelNodeViews).
 void SetNativeFramePacketPrepareOnDraw(bool running);
+#ifdef MH3_DEVELOPMENT
+// MH3_PROFILE=skip=skinned: the render thread drops skinned model meshes.
+bool NativeSkipSkinnedMeshes();
+#endif
 bool NativeFramePacketPrepareOnDraw();
 
 // Another thread takes over the packet's recording with its own native state

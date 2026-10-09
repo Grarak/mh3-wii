@@ -671,7 +671,10 @@ bool GpuGeometry(const Geometry& source, Geometry& out, int (*allocate)(uint32_t
 #ifdef MH3_DEVELOPMENT
 // MH3_PROFILE=skip=KIND[+KIND...]: the render thread drops these draw records
 // (model, material: material geometry such as effects, geometry: the other
-// pre-transformed geometry), to attribute GPU time to them.
+// pre-transformed geometry) or the skinned meshes of model draws (skinned),
+// to attribute GPU time to them.
+bool skipSkinned = false;
+
 uint32_t SkippedKinds() {
     static const uint32_t mask = [] {
         uint32_t kinds = 0;
@@ -687,8 +690,10 @@ uint32_t SkippedKinds() {
                 kinds |= 1u << unsigned(Kind::MaterialGeometry);
             else if (kind == "geometry")
                 kinds |= 1u << unsigned(Kind::Geometry);
+            else if (kind == "skinned")
+                skipSkinned = true;
             else
-                std::fprintf(stderr, "MH3: MH3_PROFILE: skip=%.*s is not model, material or geometry\n", int(kind.size()), kind.data());
+                std::fprintf(stderr, "MH3: MH3_PROFILE: skip=%.*s is not model, material, geometry or skinned\n", int(kind.size()), kind.data());
 
             rest = plus == std::string_view::npos ? std::string_view{} : rest.substr(plus + 1);
         }
@@ -1465,6 +1470,13 @@ void EndNativeFramePacketTail() {
     if (recording && recording->tailBegin != SIZE_MAX)
         recording->tailEnd = recording->records.size();
 }
+
+#ifdef MH3_DEVELOPMENT
+bool NativeSkipSkinnedMeshes() {
+    SkippedKinds();
+    return skipSkinned;
+}
+#endif
 
 void SetNativeFramePacketPrepareOnDraw(bool running) {
     prepareOnDraw.store(running, std::memory_order_release);
