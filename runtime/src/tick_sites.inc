@@ -5,6 +5,7 @@
 // Float sites (lfs): EaseDivisor loads the d of `x += (goal - x) / d`, PerStep an
 // amount applied once per step. Integer Advance sites load a value the guest
 // moves on by a constant (limit) each step: it is moved on by limit * s.
+// Rate sites load such an amount kept in memory: it becomes k * s.
 {0x800E1F08u, TickSite::PerStep},           // MHchar channel blend (800E1EB4): cross-fade -= rate per step
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
@@ -127,3 +128,33 @@
 {0x803C37E0u, TickSite::Advance, 512},      // online marker effect: bob phase (u16)
 {0x803C3A28u, TickSite::Advance, 255},
 {0x803C3A34u, TickSite::Advance, 512},
+{0x8097DDE0u, TickSite::Advance, 1024},     // title character view (8097DCFC): turn (+0x1142) while the button is held
+{0x8097DDF8u, TickSite::Advance, -1024},
+{0x8097EC5Cu, TickSite::Countdown},         // title (demo_title_move 8097EBE4): wait (+4) before the state runs
+{0x8097ED38u, TickSite::Countdown},         // title: state timer (+6) counting down
+{0x8097ED70u, TickSite::Countdown},
+{0x8097EF14u, TickSite::Countup, 899},      // title screen: idle steps (+6) until the attract movie at 900
+{0x8097EF54u, TickSite::Rate},              // title: pulse phase (+0x104C) += rate (+0x1050, 512)
+{0x8097EFECu, TickSite::Countup},           // title: steps (+6) of the fade to the attract movie, 20
+{0x8097F144u, TickSite::Countdown},
+{0x8097F694u, TickSite::Rate},
+{0x8097FA50u, TickSite::Countdown},
+{0x8097FBFCu, TickSite::Rate},
+{0x8097FEA8u, TickSite::Countdown},
+{0x809808F8u, TickSite::Rate},
+{0x80980FA8u, TickSite::Countup},           // title: steps (+0x1140) until the menu music starts
+{0x80981144u, TickSite::Countdown},
+{0x80981218u, TickSite::Rate},
+{0x809814D0u, TickSite::Countdown},
+{0x80981654u, TickSite::Rate},
+{0x80981ECCu, TickSite::Rate},
+{0x809828A0u, TickSite::Rate},
+{0x80982B78u, TickSite::Countdown},
+{0x80982DCCu, TickSite::Rate},
+{0x80982DECu, TickSite::Countup},           // title menu: blink steps (+6), mod 30
+{0x809831C8u, TickSite::Rate},
+{0x809833DCu, TickSite::Countdown},
+{0x80983918u, TickSite::Countdown},
+{0x80984200u, TickSite::Countdown},
+{0x80993528u, TickSite::Countdown},         // title task (Demo_task 80993470): logo timer (+0xC)
+{0x80993560u, TickSite::Countdown},

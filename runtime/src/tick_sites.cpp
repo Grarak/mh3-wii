@@ -15,6 +15,8 @@
 // Advance sites load an integer the guest moves on by a constant each step (a
 // spin angle, a phase): the site's limit is that amount k, and the value is
 // moved on so that the store advances it by GameStep::Share(k), k * s.
+// Rate sites load that amount itself (a speed kept in memory): it is replaced
+// by its share of this step, GameStep::Share(amount).
 #include "game_step.h"
 #include "ppc_runtime.h"
 
@@ -32,6 +34,7 @@ enum class TickSite : uint32_t {
     EaseDivisor,        // f32 d of x += (goal - x) / d (MH3_EaseDivisor)
     PerStep,            // f32 amount applied once per step (MH3_PerStep)
     Advance,            // x + limit: moved on by limit * s
+    Rate,               // the amount k of x + k: k * s
 };
 
 struct Site {
@@ -60,6 +63,7 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     if (site && site->kind == TickSite::Advance) {
         return value + uint32_t(GameStep::Share(site->limit) - site->limit);
     }
+    if (site && site->kind == TickSite::Rate) return uint32_t(GameStep::Share(int32_t(value)));
     if (!site || ticks == 1) return value;
     const int32_t v = int32_t(value);
     switch (site->kind) {
@@ -70,6 +74,7 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     case TickSite::EaseDivisor:
     case TickSite::PerStep:
     case TickSite::Advance:
+    case TickSite::Rate:
         return value;
     case TickSite::Countup:
         if (site->limit != 0 && v > site->limit) return value;
