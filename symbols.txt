@@ -1560,7 +1560,7 @@
 80044c68 PadPointerTimeout
 8043ab60 CharMakeTurnPreview
 80449c58 MenuKeysFromPad
-# Visibility census (docs/vita-widescreen.md#visibility-tests). Screen-space
+# Visibility census (docs/optimizations/rendering/widescreen.md#visibility-tests). Screen-space
 # tests project through CameraProject (GXProject with the camera's own
 # projection and viewport, 640 EFB pixels wide in both 4:3 and 16:9).
 80102008 LensFlareUpdate
@@ -2118,3 +2118,17 @@
 803d99b0 SessionStartPhases
 803da0cc SessionEndPhases
 803dc5ac SessionEvent
+
+# Quest monsters and their heap slots (quest_placement.cpp, monster_heaps.cpp).
+803ae9f4 SetQuestMonsters
+803aebe0 CopyQuestSlot
+803adfe8 QuestRecordOf
+80141434 LoadEntryWith
+80141538 LoadEntryOf
+801414d4 TakeLoadEntry
+80146bfc CountSlotTaken
+80146a88 SlotClassFree
+80146cc8 FindHeapSlot
+80146e58 TakeHeapSlot
+801410b4 LoadMonster
+80146604 SetMonsterHeaps

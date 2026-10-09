@@ -2,6 +2,7 @@
 #include "fatal.h"
 #include "disc_image.h"
 #include "fs_status.h"
+#include "quest_placement.h"
 #include <cstdio>
 #include <algorithm>
 #include <array>
@@ -396,6 +397,13 @@ Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster) 
             if (Word(edited, at + objectives + 8 * k + 4) >> 16 == old)
                 PutHalf(edited, at + objectives + 8 * k + 4, monster);
 
+    // The field's monster heap slots (+0x390, a layout of 0x805A23F8 + 1): a
+    // monster of memory class 3 (0x805A22C8: Ceadeus, Alatreon, Jhen Mohran)
+    // loads only into layout 5's class 3 slot.
+    if (monster == 20 || monster == 24 || monster == 25)
+        PutWord(edited, at + 0x390, 5);
+
+    QuestPlacement::Add(monster, edited[at + 0x8b]);
     std::fprintf(stderr, "MH3 quest %u: large monster %u replaced by %u\n", unsigned(id), unsigned(old), unsigned(monster));
     disc.SetFileOverride(QuestPath(set), std::move(edited));
     return {};

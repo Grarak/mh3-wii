@@ -28,6 +28,18 @@ animation (`--quest 9005 --quest-monster Gobul`). Both are the arena map
 (9): the land arena its area 0, the water arena its area 1, where a water
 arena quest starts (field_jump.cpp, QuestMapSetupPort).
 
+`--quest-monster` works on any quest with a large monster, on any map. A
+monster spawns only where its spawn list (0x805F7E60, one per monster id)
+has an entry for the map, so for a map it never visits the boot gives it
+one, a copy of another monster's spawn points there
+(`runtime/src/quest_placement.cpp`, `MH3 quest placement: monster 5 on map 5
+at monster 1's spawn points`): Barioth in the Volcano is `--quest 1044
+--area-index 3 --quest-monster Barioth`. Alatreon takes the quest's
+monster heap layout 5 (+0x390), the only one with a slot of its memory class
+(`runtime/src/monster_heaps.cpp`): `--quest 1036 --area-index 10
+--quest-monster Alatreon` puts it in Moga Woods. Ceadeus and Jhen Mohran
+load the same way but need their own maps.
+
 Small monsters: `--quest-small NAME|ID` makes every small monster spawn of
 the quest that monster (the area spawn tables at +0x4B8; only named
 monsters other than the quest's large ones change). The arenas' own spawns
@@ -40,8 +52,7 @@ quest 1010: ... (table:kinds 1:27,27 3:33,33,34 ...)`).
 
 Where the kinds that need their own map live: Giggi `--quest 1045 --area 1
 --quest-small Giggi` (Tundra), Jhen Mohran `--quest 14002` (the sandship),
-Ceadeus `--quest 2006` (its lair; `--quest-monster 20` in an arena does not
-spawn it), Alatreon `--quest 19001 --area 1`. Altaroth did not appear in any
+Ceadeus `--quest 2006` (its lair), Alatreon `--quest 19001 --area 1`. Altaroth did not appear in any
 run (swapped in on the Sandy Plains or Moga Woods, or natively in quest 1010
 "Bug Hunt"); its actions were fuzz-checked on an Aptonoth's work instead
 (`MH3_PORT_CHECK=...,A:0xADDR:27`: original and port run the same calls on

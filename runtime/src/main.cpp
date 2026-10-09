@@ -8,6 +8,7 @@
 #include "gx_host.h"
 #include "gx_panic.h"
 #include "field_jump.h"
+#include "quest_placement.h"
 #include "quest_catalog.h"
 #include "launcher_cheats.h"
 #include "guest_worker.h"
@@ -617,8 +618,13 @@ int main(int argc, char** argv) {
         // end the MEM2 arena.
         const uint32_t workerArea = 0x935E0000 - GuestWorker::kWorkAreaBytes;
         GuestWorker::ReserveWorkArea(workerArea);
-        const uint32_t mem2ArenaHi = workerArea - GuestWorker::kWorkAreaBytes;
-        DrawThread::Thread().ReserveWorkArea(mem2ArenaHi);
+        const uint32_t drawArea = workerArea - GuestWorker::kWorkAreaBytes;
+        DrawThread::Thread().ReserveWorkArea(drawArea);
+
+        // Then the spawn lists of monsters a quest puts on maps they have no
+        // placement for (custom quests, --quest-monster).
+        const uint32_t mem2ArenaHi = drawArea - QuestPlacement::kBytes;
+        QuestPlacement::Apply(mem2ArenaHi);
         Memory::Write32(0x80003128, mem2ArenaHi);
         Memory::Write32(0x80003130, 0x935E0000);
         Memory::Write32(0x80003134, 0x93600000);
