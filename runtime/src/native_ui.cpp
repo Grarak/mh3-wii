@@ -149,12 +149,12 @@ struct PublishedMaterial {
 PublishedMaterial uiMaterial, uiCoordinatesMaterial;
 
 bool MaterialCurrent(const PublishedMaterial& published, uint32_t key) {
-    return published.key == key && published.revision == nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_MATERIAL] &&
+    return published.key == key && published.revision == nativeStateRevision[NativeOwnerIndex(NativeOwner::Game)][NATIVE_STATE_MATERIAL] &&
            !std::memcmp(&published.raster, &GetNativeDrawState().raster, sizeof published.raster);
 }
 
 void Remember(PublishedMaterial& published, uint32_t key) {
-    published = {nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_MATERIAL], key, GetNativeDrawState().raster};
+    published = {nativeStateRevision[NativeOwnerIndex(NativeOwner::Game)][NATIVE_STATE_MATERIAL], key, GetNativeDrawState().raster};
 }
 
 // The primitive material: one colour channel from the vertex colours, no

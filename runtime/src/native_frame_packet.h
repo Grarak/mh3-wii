@@ -70,6 +70,12 @@ void CancelNativeFramePacket();
 // packet is waited for, so it cannot be replaced before it renders.
 void PublishNativeFramePacket(std::string capture);
 
+// The draw's game-side part (the HUD and what follows the scene,
+// docs/pipelined-draw.md) is recorded before the scene but replays after it:
+// the records between these calls move to the packet's end at publication.
+void BeginNativeFramePacketTail();
+void EndNativeFramePacketTail();
+
 #ifdef MH3_DEVELOPMENT
 #include "native_frame_statistics.h"
 // Cumulative completed replay work, including ordered resource tasks and
@@ -99,6 +105,10 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept;
 // colours) the records, captures (revision advanced) and stored copies since
 // the last call; resets them.
 void TakeNativePacketSnapshotCounts(uint32_t out[3][6]);
+
+// Development, draw-thread mode: the records logic steps made before their
+// draw since the last call (BeginNativeFramePacketTail).
+uint32_t TakeNativeRecordsBeforeDraw();
 
 // Game thread: time spent waiting for the render thread to take the last
 // packet (pacing) since the previous call, and how many frames waited.

@@ -30,13 +30,13 @@ struct DrawOwner {
 
 constinit DrawOwner owners[NativeOwnerCount]{};
 DrawOwner& D(NativeOwner owner = NativeOwner::Game) {
-    return owners[unsigned(owner)];
+    return owners[NativeOwnerIndex(owner)];
 }
 
 // Game: the material imports raster publications.
 constinit NativeRasterObserver rasterObserver = nullptr;
 void Changed(NativeOwner owner = NativeOwner::Game) {
-    ++nativeStateRevision[unsigned(owner)][NATIVE_STATE_DRAW];
+    ++nativeStateRevision[NativeOwnerIndex(owner)][NATIVE_STATE_DRAW];
 }
 
 std::array<float, 2> TargetScale() {
@@ -304,4 +304,9 @@ void RestoreNativeDrawSnapshot(const NativeDrawSnapshot& snapshot) {
     d.rasterKnown = snapshot.rasterKnown;
     Changed(NativeOwner::Render);
     ApplyRenderState();
+}
+
+void CopyNativeDrawStoreForDraw() {
+    owners[unsigned(NativeOwner::Draw)] = owners[unsigned(NativeOwner::Game)];
+    nativeStateRevision[unsigned(NativeOwner::Draw)][NATIVE_STATE_DRAW] = nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_DRAW];
 }

@@ -18,6 +18,7 @@
 #include <aurora/aurora.h>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -31,6 +32,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <chrono>
 #ifdef __vita__
@@ -99,6 +101,10 @@ struct Packet {
     Pool<NativeColorSnapshot> colors;
     std::unique_ptr<uint8_t[]> vertices{new uint8_t[VertexArenaBytes]}, indices{new uint8_t[IndexArenaBytes]};
     size_t vertexCursor = 0, indexCursor = 0;
+
+    // The records of the game-side tail (BeginNativeFramePacketTail), moved
+    // to the end at publication; tailBegin SIZE_MAX when none.
+    size_t tailBegin = SIZE_MAX, tailEnd = 0;
 #ifdef MH3_DEVELOPMENT
     uint64_t publishedNs = 0; // RenderMonotonicNs at publication
     uint64_t inputNs = 0;     // RenderMonotonicNs at the begin, just before the logic reads the input
@@ -120,6 +126,8 @@ struct Packet {
         textures.Reset();
         colors.Reset();
         vertexCursor = indexCursor = 0;
+        tailBegin = SIZE_MAX;
+        tailEnd = 0;
     }
 };
 
@@ -353,7 +361,7 @@ uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
 #ifdef MH3_DEVELOPMENT
     ++snapshotCounts[0][component];
 #endif
-    const uint32_t revision = nativeStateRevision[unsigned(NativeOwner::Game)][component];
+    const uint32_t revision = nativeStateRevision[NativeOwnerIndex(NativeOwner::Game)][component];
 
     if (pool.valid && pool.revision == revision)
         return pool.current;
@@ -1400,6 +1408,27 @@ void CancelNativeFramePacket() {
         recording->canceled = true;
 }
 
+// Records the logic step made before the draw (statistics, draw-thread mode):
+// the records already there when the game-side tail begins.
+uint32_t recordsBeforeDraw = 0;
+
+uint32_t TakeNativeRecordsBeforeDraw() {
+    return std::exchange(recordsBeforeDraw, 0);
+}
+
+void BeginNativeFramePacketTail() {
+    if (!recording)
+        return;
+
+    recording->tailBegin = recording->records.size();
+    recordsBeforeDraw += uint32_t(recording->records.size());
+}
+
+void EndNativeFramePacketTail() {
+    if (recording && recording->tailBegin != SIZE_MAX)
+        recording->tailEnd = recording->records.size();
+}
+
 void PublishNativeFramePacket(std::string capture) {
     RequireGame();
 
@@ -1408,6 +1437,11 @@ void PublishNativeFramePacket(std::string capture) {
 
     auto& p = *recording;
     recording = nullptr;
+
+    // The game-side tail, recorded before the scene, replays after it.
+    if (p.tailBegin != SIZE_MAX)
+        std::rotate(p.records.begin() + std::ptrdiff_t(p.tailBegin), p.records.begin() + std::ptrdiff_t(p.tailEnd), p.records.end());
+
     p.capture = std::move(capture);
     const bool wait = synchronous || !p.capture.empty();
     uint32_t replaced = 0;

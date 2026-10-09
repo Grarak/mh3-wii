@@ -17,10 +17,12 @@
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
+#include "guest_call.h"
 #include "guest_worker.h"
 #include "memory.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
+#include "native_owner.h"
 #include "village_boot.h"
 #include <initializer_list>
 #ifdef MH3_DEVELOPMENT
@@ -265,8 +267,8 @@ struct FrameSplit {
         uint32_t snapshots[3][6];
         TakeNativePacketSnapshotCounts(snapshots);
         const auto s = [&](unsigned row, unsigned component) { return snapshots[row][component] / frames; };
-        std::printf("MH3 packet snapshots: %u records/frame; captured/stored per frame: draw %u/%u material %u/%u lighting %u/%u post %u/%u textures %u/%u colors %u/%u\n",
-                    s(0, 0), s(1, 0), s(2, 0), s(1, 1), s(2, 1), s(1, 2), s(2, 2), s(1, 3), s(2, 3), s(1, 4), s(2, 4), s(1, 5), s(2, 5));
+        std::printf("MH3 packet snapshots: %u records/frame (%.1f before the draw); captured/stored per frame: draw %u/%u material %u/%u lighting %u/%u post %u/%u textures %u/%u colors %u/%u\n",
+                    s(0, 0), double(TakeNativeRecordsBeforeDraw()) / frames, s(1, 0), s(2, 0), s(1, 1), s(2, 1), s(1, 2), s(2, 2), s(1, 3), s(2, 3), s(1, 4), s(2, 4), s(1, 5), s(2, 5));
         uint32_t geometry, merged;
         TakeNativeGeometryBatchCounts(geometry, merged);
         std::printf("MH3 geometry batch: %.1f material geometry submissions/frame, %.1f joined the draw before them\n", double(geometry) / frames, double(merged) / frames);
@@ -283,6 +285,10 @@ struct FrameSplit {
 
 // The draw section of the frame body: the scene, fonts and fade overlay, the
 // fade timers (and the grabbed screen's restore), the HUD and the movie.
+// Inline it runs in that order; with the draw thread (docs/pipelined-draw.md)
+// it splits: GameSideSection on the game thread first, its records moved
+// behind the scene's (BeginNativeFramePacketTail), then SceneSection on the
+// draw thread.
 void DrawSection(CpuContext* ctx, bool render) {
     auto call = [ctx](uint32_t fn) {
         InvokeIndirectCpu(fn, ctx);
@@ -331,8 +337,57 @@ void DrawSection(CpuContext* ctx, bool render) {
 #undef MH3_SPLIT
 }
 
-// MH3_PROFILE=draw-thread (development, docs/pipelined-draw.md): the draw
-// section runs on the draw thread while the game thread waits.
+// The draw thread's part: the scene and the effect calculation's join.
+void SceneSection(CpuContext* ctx, bool render) {
+    if (render) {
+        DrawPages::DrawBegins(ctx->gpr[1]);
+        InvokeIndirectCpu(DrawScene, ctx);
+        DrawPages::DrawEnds();
+    }
+
+    EffectStep::Join(ctx);
+}
+
+// The game thread's part, which reads gameplay state directly (the HUD): the
+// rest of the draw section in its order.
+void GameSideSection(CpuContext* ctx, bool render) {
+    GuestFrame frame(ctx, 0x10);
+    auto call = [ctx](uint32_t fn) { InvokeIndirectCpu(fn, ctx); };
+    BeginNativeFramePacketTail();
+
+    if (render) {
+        {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
+            call(flfntFlush);
+        }
+
+        MH3_SPLIT_SCOPE(MH3_SPLIT_FADE);
+        call(DrawFadeOverlay);
+    }
+
+    call(TickFades);
+
+    if (render && Memory::Read8(kSystem + kScreenGrab)) {
+        Memory::Write8(kSystem + kScreenGrab, 0);
+        call(RestoreGrabbedScreen);
+    }
+
+    if (render) {
+        {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_HUD);
+            call(DrawHud);
+        }
+
+        MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
+        call(MovieDraw);
+    }
+
+    EndNativeFramePacketTail();
+}
+
+// MH3_PROFILE=draw-thread (development, docs/pipelined-draw.md): the scene
+// runs on the draw thread while the game thread waits, after the game thread
+// recorded the game-side part.
 bool DrawOnThread() {
 #ifdef MH3_DEVELOPMENT
     static const bool enabled = ProfileOptions().Has("draw-thread") && DrawThread::Thread().Available();
@@ -347,7 +402,7 @@ struct DrawJob {
 };
 
 void RunDrawJob(CpuContext* cpu, void* data) {
-    DrawSection(cpu, static_cast<DrawJob*>(data)->render);
+    SceneSection(cpu, static_cast<DrawJob*>(data)->render);
 }
 
 } // namespace
@@ -481,6 +536,10 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         if (DrawOnThread()) {
             // Stage 1 of docs/pipelined-draw.md: the same section on the draw
             // thread, the game thread waiting.
+            GameSideSection(ctx, render);
+
+            // The scene starts from the game's state after the game side.
+            CopyNativeGameStateForDraw();
             DrawJob job{render};
             DrawThread::Thread().Submit(*ctx, RunDrawJob, &job);
             DrawThread::Thread().Wait(true);

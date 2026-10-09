@@ -26,11 +26,11 @@ struct TextureOwner {
 
 constinit TextureOwner owners[NativeOwnerCount]{};
 TextureOwner& T(NativeOwner owner = NativeOwner::Game) {
-    return owners[unsigned(owner)];
+    return owners[NativeOwnerIndex(owner)];
 }
 
 void Changed(NativeOwner owner = NativeOwner::Game) {
-    ++nativeStateRevision[unsigned(owner)][NATIVE_STATE_TEXTURES];
+    ++nativeStateRevision[NativeOwnerIndex(owner)][NATIVE_STATE_TEXTURES];
 }
 
 // Render thread: bind one recorded texture to its backend unit.
@@ -215,4 +215,9 @@ void RestoreNativeTextureSnapshot(const NativeTextureSnapshot& snapshot) {
 void ForgetNativeTextureBindings() {
     for (auto& texture : T(NativeOwner::Render).textures)
         texture.valid = false;
+}
+
+void CopyNativeTextureStoreForDraw() {
+    owners[unsigned(NativeOwner::Draw)] = owners[unsigned(NativeOwner::Game)];
+    nativeStateRevision[unsigned(NativeOwner::Draw)][NATIVE_STATE_TEXTURES] = nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_TEXTURES];
 }

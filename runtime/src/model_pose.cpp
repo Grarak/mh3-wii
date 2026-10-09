@@ -51,7 +51,7 @@ struct MatrixPalette {
 
 constinit MatrixPalette matrixPalettes[NativeOwnerCount]{};
 MatrixPalette& Palette(NativeOwner owner) {
-    return matrixPalettes[unsigned(owner)];
+    return matrixPalettes[NativeOwnerIndex(owner)];
 }
 
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
@@ -712,3 +712,7 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
     Memory::Write8(0x80796db4, 0);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087D30, MH3_ModelPreTextureMatrices, "ModelPreTextureMatrices");
+
+void CopyNativePaletteStoreForDraw() {
+    matrixPalettes[unsigned(NativeOwner::Draw)] = matrixPalettes[unsigned(NativeOwner::Game)];
+}
