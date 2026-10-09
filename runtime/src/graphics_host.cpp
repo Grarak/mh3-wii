@@ -27,7 +27,7 @@
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
 #include "efb_copy_trace.h"
 #endif
-namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); }
+namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); void require_frame_render() noexcept; }
 
 namespace aurora::gx::fifo {
 void init();
@@ -118,6 +118,10 @@ void InitializeGraphics(int argc, char** argv) {
     // Aurora falls back to another backend when GLES fails; never run on one.
     if (info.backend != BACKEND_OPENGLES) throw std::runtime_error("Aurora did not select OpenGL ES");
     aurora::gx::fifo::init();
+    // Frameskip: a frame is dropped when the render thread is still busy with the
+    // previous one. MH3_FRAMESKIP=0 renders every frame (debugging).
+    const char* frameskip = std::getenv("MH3_FRAMESKIP");
+    aurora_set_frameskip(!(frameskip && frameskip[0] == '0'));
     if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
         if (const char* interval = std::getenv("MH3_CAPTURE_INTERVAL")) {
             const auto value = std::stoul(interval);
@@ -229,21 +233,24 @@ void ReportHostSpeed(uint64_t retraces, double nominalHz) {
     if (!enabled || !initialized) return;
     using Clock = std::chrono::steady_clock;
     static auto last = Clock::now();
-    static uint64_t lastRetraces = retraces, lastCopies = guestCopies, lastPresents = aurora_presented_frame_count();
+    static uint64_t lastRetraces = retraces, lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
+                    lastSkipped = aurora_skipped_frame_count();
     const auto now = Clock::now();
     const double seconds = std::chrono::duration<double>(now - last).count();
     if (seconds < 1.0) return;
-    const uint64_t presents = aurora_presented_frame_count();
+    const uint64_t presents = aurora_presented_frame_count(), skipped = aurora_skipped_frame_count();
     const double viHz = (retraces - lastRetraces) / seconds;
     std::fprintf(stderr,
         "MH3 stats: game speed %.1f%% (VI %.1f/%.1f Hz), game %.1f fps (display copies), host %.1f fps (presents), "
-        "%llu frames in flight\n",
+        "%.1f fps skipped, %llu frames in flight\n",
         100.0 * viHz / nominalHz, viHz, nominalHz, (guestCopies - lastCopies) / seconds,
-        (presents - lastPresents) / seconds, static_cast<unsigned long long>(guestCopies - presents));
+        (presents - lastPresents) / seconds, (skipped - lastSkipped) / seconds,
+        static_cast<unsigned long long>(guestCopies - presents - skipped));
     last = now;
     lastRetraces = retraces;
     lastCopies = guestCopies;
     lastPresents = presents;
+    lastSkipped = skipped;
 }
 
 void ServiceHostGraphicsEvents() {
@@ -257,14 +264,15 @@ void CompleteHostGraphics() {
     const auto completionStart = FrameProfile::Clock::now();
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
-    if (frameActive && !displayCopyPending) {
-        if (!aurora_flush_draws()) throw std::runtime_error("GXDrawDone could not resume the in-progress frame");
-    } else if (frameActive) {
-        SealDisplayFrame();
-    }
+    // GXDrawDone never waits for the render thread or the GPU: nothing reads
+    // rendered results back on the CPU (no copy readback, no peeks since bloom is
+    // gone), and frameskip absorbs a slow GPU instead. Mid-frame it does not
+    // submit either; MH3's display routine calls it after the next frame's first
+    // GX writes, and an early submission there would force the frameskip
+    // decision while the previous frame is certainly still rendering. An EFB
+    // peek submits what it needs itself (ReadHostEfbColor).
+    if (frameActive && displayCopyPending) SealDisplayFrame();
     const auto afterWorker = FrameProfile::Clock::now();
-    // Wait for the render thread and the GPU, not just the producer's submission.
-    aurora_wait_for_gpu_idle();
     const auto afterGpu = FrameProfile::Clock::now();
     if (profile.interval) {
         auto ns = [](auto end, auto start) { return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); };
@@ -334,6 +342,11 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         // Thousands of CPU peeks can follow one snapshot. New GX commands
         // discard efbPixels, so only the first peek needs the render-thread round trip.
         const auto started = FrameProfile::Clock::now();
+        if (frameActive) {
+            // The peek reads this frame's draws: render it and submit them first.
+            aurora::gfx::require_frame_render();
+            if (!aurora_flush_draws()) throw std::runtime_error("EFB peek could not resume the in-progress frame");
+        }
         efbWidth = source.width; efbHeight = source.height;
         efbBgra = false; // The EFB is RGBA8, rows top-down.
         efbPitch = efbWidth * 4;

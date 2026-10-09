@@ -455,12 +455,27 @@ void end_frame() {
   auto asyncDownloads = gfx::efb_ram::seal_async_downloads();
   gfx::end_frame();
   auto capture = take_frame_capture();
+  if (capture.has_value()) {
+    gfx::require_frame_render();
+  }
+  const bool skip = gfx::frame_skipped();
   // Latched before the next gfx::begin_frame() clears the display-copy override.
   auto presentSource = gpu::current_present_source();
   gfx::efb_ram::cancel();
   auto frame = std::make_shared<gfx::SealedFrame>();
   gfx::seal_frame(*frame);
   gfx::expire_bind_group_cache();
+  if (skip) {
+    // Frameskip: the render thread only runs the frame's palette conversions.
+    gfx::count_skipped_frame();
+    gl::post([frame = std::move(frame)]() mutable {
+      gfx::render(*frame, -1, true);
+      gfx::after_submit();
+    });
+    record_frame_telemetry();
+    return;
+  }
+  gfx::frame_render_posted();
   gl::post([frame = std::move(frame), asyncDownloads = std::move(asyncDownloads),
             capture = std::move(capture), presentSource = std::move(presentSource)]() mutable {
     gfx::render(*frame, -1, true);
@@ -472,6 +487,7 @@ void end_frame() {
     }
     present_frame(presentSource);
     gfx::after_submit();
+    gfx::frame_render_finished();
   });
   gfx::g_stats.presentedFrameCount = 1;
   gfx::g_stats.interpolatedFrameCount = 0;
@@ -514,6 +530,18 @@ bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }
 void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callback) {
   aurora::g_frameWorkerWaitCallback.store(callback, std::memory_order_release);
+}
+void aurora_set_frameskip(bool enabled) {
+#ifdef AURORA_ENABLE_GX
+  aurora::gfx::set_frameskip(enabled);
+#endif
+}
+uint64_t aurora_skipped_frame_count() {
+#ifdef AURORA_ENABLE_GX
+  return aurora::gfx::skipped_frame_count();
+#else
+  return 0;
+#endif
 }
 uint64_t aurora_presented_frame_count() {
   return aurora::g_presentedFrames.load(std::memory_order_relaxed);

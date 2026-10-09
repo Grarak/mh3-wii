@@ -480,6 +480,8 @@ void GXCopyTex(void* dest, GXBool clear) {
   }
   auto it = g_gxState.copyTextureCache.find(key);
   if (it == g_gxState.copyTextureCache.end()) {
+    // A fresh copy texture has no earlier contents to fall back on: render this frame.
+    aurora::gfx::require_frame_render();
     auto handle = acquire_copy_texture(key, scaledDstWidth, scaledDstHeight, texCopyFmt);
     it = g_gxState.copyTextureCache.emplace(key, aurora::gx::GXState::CopyTextureRef{.handle = handle, .revision = 0}).first;
   }
@@ -490,6 +492,7 @@ void GXCopyTex(void* dest, GXBool clear) {
                                  handle.handle->size.height != scaledDstHeight;
   auto clearState = get_copy_clear_state(clear);
   if (sampledThisFrame || scaledSizeChanged) {
+    aurora::gfx::require_frame_render();
     const u32 revision = handle.revision;
     const u32 lastProducedFrame = handle.lastProducedFrame;
     handle = aurora::gx::GXState::CopyTextureRef{

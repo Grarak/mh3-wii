@@ -270,6 +270,22 @@ void shutdown();
 
 bool begin_frame();
 bool resume_frame();
+
+// Frameskip: when enabled, a frame whose first submission finds the render thread
+// still busy with an earlier frame is skipped. Its draws, clears, EFB-copy resolves
+// and present are dropped; staging uploads and palette conversions still run so the
+// texture caches stay valid. The decision is made once per frame, at its first
+// submission (mid-frame flush, staging split or end_frame), and then sticks.
+void set_frameskip(bool enabled) noexcept;
+// The current frame must render (a new copy texture, a requested capture).
+void require_frame_render() noexcept;
+// Decide (once) and return whether the current frame is skipped.
+bool frame_skipped() noexcept;
+// Rendered frames posted to the render thread and not yet presented.
+void frame_render_posted() noexcept;
+void frame_render_finished() noexcept;
+void count_skipped_frame() noexcept;
+uint64_t skipped_frame_count() noexcept;
 void abort_frame() noexcept;
 // Hands the recorded staging data to the render thread.
 void end_frame();

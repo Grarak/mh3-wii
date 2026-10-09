@@ -168,6 +168,10 @@ bool aurora_flush_draws();
 // Blocks until the render thread and the GPU have finished all submitted work.
 void aurora_wait_for_gpu_idle();
 // Frames the render thread has swapped to the window so far.
+// Frameskip: skip rendering a frame when the render thread is still busy with the
+// previous one (see gfx::set_frameskip). Off by default.
+void aurora_set_frameskip(bool enabled);
+uint64_t aurora_skipped_frame_count();
 uint64_t aurora_presented_frame_count();
 
 void aurora_set_log_level(AuroraLogLevel level);

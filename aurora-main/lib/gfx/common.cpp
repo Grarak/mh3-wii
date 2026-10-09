@@ -220,6 +220,7 @@ static void recycle_render_passes(std::vector<RenderPass>& passes) noexcept {
 
 struct SealedFrameData {
   depth_peek::FrameMapping depthMapping;
+  bool skipDraws = false;
   DebugFrameData debug;
   std::vector<RenderPass> passes;
   // Released after the render thread has executed `passes`.
@@ -944,7 +945,29 @@ static bool begin_frame_impl(bool clearEfb, bool capacityResume = false) {
 
 // A GX display copy's clear flag only affects the next frame's EFB; MH3 relies on
 // GXDrawDone keeping the EFB intact, so the embedder can request one preserved frame.
+static bool g_frameskip = false;
+static bool g_mustRender = false;
+static int g_skipDecision = -1; // -1: not decided yet for this frame
+static std::atomic<uint32_t> g_framesInFlight{0};
+static std::atomic<uint64_t> g_skippedFrames{0};
+
+void set_frameskip(bool enabled) noexcept { g_frameskip = enabled; }
+void require_frame_render() noexcept { g_mustRender = true; }
+bool frame_skipped() noexcept {
+  if (g_skipDecision < 0) {
+    g_skipDecision = g_frameskip && !g_mustRender && g_framesInFlight.load(std::memory_order_acquire) > 0;
+  }
+  return g_skipDecision == 1;
+}
+void count_skipped_frame() noexcept { g_skippedFrames.fetch_add(1, std::memory_order_relaxed); }
+void frame_render_posted() noexcept { g_framesInFlight.fetch_add(1, std::memory_order_release); }
+void frame_render_finished() noexcept { g_framesInFlight.fetch_sub(1, std::memory_order_release); }
+uint64_t skipped_frame_count() noexcept { return g_skippedFrames.load(std::memory_order_relaxed); }
+
 bool begin_frame() {
+  // A new guest frame: the previous one was sealed, so reset the skip decision.
+  g_skipDecision = -1;
+  g_mustRender = false;
   const bool clear = !g_preserveNextEfb;
   g_preserveNextEfb = false;
   return begin_frame_impl(clear);
@@ -1016,6 +1039,7 @@ static void submit_recorded_passes() {
   auto frame = std::make_shared<SealedFrame>();
   auto& data = frame->data();
   data.depthMapping = depth_peek::capture_frame_mapping();
+  data.skipDraws = frame_skipped();
   data.passes.swap(g_renderPasses);
   data.retiredBindGroups.swap(g_retiredBindGroups);
 #ifdef AURORA_GFX_DEBUG_GROUPS
@@ -1140,7 +1164,8 @@ static void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_
 }
 
 static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpolatedFrame, bool finalize,
-                        DebugFrameData& debugFrame, const depth_peek::FrameMapping& depthMapping) {
+                        DebugFrameData& debugFrame, const depth_peek::FrameMapping& depthMapping,
+                        bool skipDraws = false) {
   ZoneScoped;
   // Palette conversions and EFB copies depend on sealed frame state, not on the interpolation
   // weight, so run them on the native render only.
@@ -1151,6 +1176,10 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
       for (const auto& conv : passInfo.paletteConvs) {
         tex_palette_conv::run(conv);
       }
+    }
+    if (skipDraws) {
+      // Skipped frame: keep the palette conversions above, drop draws and resolves.
+      continue;
     }
     const bool hasRenderWork = passInfo.clearColor || passInfo.clearDepth || !passInfo.commands.empty();
     if (i == renderPasses.size() - 1) {
@@ -1238,6 +1267,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
 
 void seal_frame(SealedFrame& out) noexcept {
   out.data().depthMapping = depth_peek::capture_frame_mapping();
+  out.data().skipDraws = frame_skipped();
   ZoneScoped;
   auto& passes = out.data().passes;
   recycle_render_passes(passes);
@@ -1257,7 +1287,8 @@ void seal_frame(SealedFrame& out) noexcept {
 }
 
 void render(SealedFrame& frame, int32_t interpolatedFrame, bool finalize) {
-  render_impl(frame.data().passes, interpolatedFrame, finalize, frame.data().debug, frame.data().depthMapping);
+  render_impl(frame.data().passes, interpolatedFrame, finalize, frame.data().debug, frame.data().depthMapping,
+              frame.data().skipDraws);
   if (finalize) {
     frame.data().retiredBindGroups.clear();
   }
