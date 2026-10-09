@@ -31,7 +31,11 @@ typedef struct mh3_temporal_feedback_plan {
     mh3_scene_capture_plan capture;
     mh3_scene_quad_plan initial, previous, threshold;
 } mh3_temporal_feedback_plan;
+/* A disabled input sets only frames, enabled and the draw flags; a failed
+ * prepare leaves the plan untouched. */
 int mh3_scene_temporal_prepare(const mh3_temporal_feedback_input *input, const mh3_draw_state *draw, const mh3_native_material_state *material, mh3_temporal_feedback_plan *out);
+/* Nonzero when preparing the input as enabled succeeds (no plan built). */
+int mh3_scene_temporal_valid(const mh3_temporal_feedback_input *input);
 int mh3_scene_capture_quad(uint32_t identity, float texture_width, float texture_height, float screen_width, float screen_height, uint8_t tint, int subtract, const mh3_draw_state *draw,
                            const mh3_native_material_state *material, mh3_scene_quad_plan *out);
 typedef struct mh3_scene_glare_input {

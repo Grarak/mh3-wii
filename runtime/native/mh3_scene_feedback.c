@@ -27,11 +27,14 @@ static void material_quad(mh3_native_material_state *m, int modulate) {
     }
     m->swaps[0] = (mh3_pack_swap_table){15, {0, 1, 2, 3}};
 }
-static int quad(mh3_scene_quad_plan *q, float w, float h, const mh3_draw_state *draw, const mh3_native_material_state *material, int modulate) {
-    if (!isfinite(w) || !isfinite(h) || w <= 0 || h <= 0 || w > 32767 || h > 32767)
-        return 0;
-    if (!mh3_draw_ortho(q->projection, 0, h, 0, w, 0, 1))
-        return 0;
+/* A quad's size is valid exactly when quad_fill's projection is: plans are
+ * checked first and then built in their output (no zeroed local and copy). */
+static int quad_valid(float w, float h) {
+    return isfinite(w) && isfinite(h) && w > 0 && h > 0 && w <= 32767 && h <= 32767;
+}
+/* Writes every field but identity, width, height and format. */
+static void quad_fill(mh3_scene_quad_plan *q, float w, float h, const mh3_draw_state *draw, const mh3_native_material_state *material, int modulate) {
+    (void)mh3_draw_ortho(q->projection, 0, h, 0, w, 0, 1);
     mh3_draw_identity_position(q->position);
     q->raster = draw->raster;
     q->material = *material;
@@ -45,25 +48,27 @@ static int quad(mh3_scene_quad_plan *q, float w, float h, const mh3_draw_state *
     memcpy(q->vertices, positions, sizeof(positions));
     memcpy(q->uv, uv, sizeof(uv));
     memset(q->color, 255, 4);
+}
+static int quad(mh3_scene_quad_plan *q, float w, float h, const mh3_draw_state *draw, const mh3_native_material_state *material, int modulate) {
+    if (!quad_valid(w, h))
+        return 0;
+    quad_fill(q, w, h, draw, material, modulate);
     return 1;
 }
 int mh3_scene_capture_quad(uint32_t id, float tw, float th, float sw, float sh, uint8_t tint, int subtract, const mh3_draw_state *draw, const mh3_native_material_state *material,
                            mh3_scene_quad_plan *out) {
-    if (!out || !draw || !material || !id || !isfinite(tw) || !isfinite(th) || tw < 1 || th < 1 || tw > 65535 || th > 65535)
+    if (!out || !draw || !material || !id || !isfinite(tw) || !isfinite(th) || tw < 1 || th < 1 || tw > 65535 || th > 65535 || !quad_valid(sw, sh))
         return 0;
-    mh3_scene_quad_plan q = {0};
-    if (!quad(&q, sw, sh, draw, material, 1))
-        return 0;
-    q.identity = id;
-    q.width = (uint16_t)(int32_t)tw;
-    q.height = (uint16_t)(int32_t)th;
-    q.format = 6;
-    q.color[0] = q.color[1] = q.color[2] = tint;
-    q.raster.blend_mode = subtract ? 3 : 1;
-    q.raster.src_factor = subtract ? 2 : 1;
-    q.raster.dst_factor = subtract ? 2 : 0;
-    q.raster.logic_op = 0;
-    *out = q;
+    quad_fill(out, sw, sh, draw, material, 1);
+    out->identity = id;
+    out->width = (uint16_t)(int32_t)tw;
+    out->height = (uint16_t)(int32_t)th;
+    out->format = 6;
+    out->color[0] = out->color[1] = out->color[2] = tint;
+    out->raster.blend_mode = subtract ? 3 : 1;
+    out->raster.src_factor = subtract ? 2 : 1;
+    out->raster.dst_factor = subtract ? 2 : 0;
+    out->raster.logic_op = 0;
     return 1;
 }
 int mh3_scene_demo_setup(float w, float h, const mh3_draw_state *draw, const mh3_native_material_state *material, mh3_scene_quad_plan *out) {
@@ -93,70 +98,88 @@ void mh3_scene_demo_quad(mh3_scene_quad_plan *q, int16_t x, int16_t y, int16_t w
     q->raster.dst_factor = additive ? 1 : 5;
     q->raster.logic_op = 0;
 }
+/* Every field of a quad plan but its material. */
+static void quad_header(mh3_scene_quad_plan *to, const mh3_scene_quad_plan *from) {
+    memcpy(to->projection, from->projection, sizeof(to->projection));
+    memcpy(to->position, from->position, sizeof(to->position));
+    memcpy(to->vertices, from->vertices, sizeof(to->vertices));
+    memcpy(to->uv, from->uv, sizeof(to->uv));
+    memcpy(to->color, from->color, sizeof(to->color));
+    to->raster = from->raster;
+    to->identity = from->identity;
+    to->width = from->width;
+    to->height = from->height;
+    to->format = from->format;
+}
+int mh3_scene_temporal_valid(const mh3_temporal_feedback_input *in) {
+    /* Both of the previous image's projections are valid with its quad. */
+    return in && in->identity && in->screen_width >= 2 && in->screen_height >= 2 && quad_valid((float)in->screen_width, in->projection_height);
+}
 int mh3_scene_temporal_prepare(const mh3_temporal_feedback_input *in, const mh3_draw_state *draw, const mh3_native_material_state *material, mh3_temporal_feedback_plan *out) {
     if (!in || !draw || !material || !out)
         return 0;
-    mh3_temporal_feedback_plan p = {0};
-    p.frames = in->frames;
-    p.enabled = in->enabled;
-    if (!p.enabled) {
-        *out = p;
+    /* Checked first, then built in place: the plan holds three material
+     * states, and a zeroed local copied out cost four times what it holds. */
+    if (!in->enabled) {
+        out->frames = in->frames;
+        out->enabled = 0;
+        out->draw_previous = out->draw_threshold = 0;
         return 1;
     }
-    if (!in->identity || in->screen_width < 2 || in->screen_height < 2)
+    if (!mh3_scene_temporal_valid(in))
         return 0;
-    p.frames++;
-    p.capture = (mh3_scene_capture_plan){in->identity, in->screen_width / 2, in->screen_height / 2, 4, {0, 0, in->screen_width, in->screen_height}, 1};
-    if (!quad(&p.previous, (float)in->screen_width, in->projection_height, draw, material, 0))
-        return 0;
-    p.previous.identity = p.capture.identity;
-    p.previous.width = p.capture.width;
-    p.previous.height = p.capture.height;
-    p.previous.format = 4;
-    p.previous.raster.depth_test = 0;
-    p.previous.raster.color_write = 1;
-    p.previous.raster.blend_mode = in->mode == 2 ? 3 : 1;
-    p.previous.raster.src_factor = 4;
-    p.previous.raster.dst_factor = in->mode == 1 ? 1 : 5;
-    p.previous.raster.logic_op = 0;
-    p.previous.material.color[1].known = 15;
+    out->frames = in->frames + 1;
+    out->enabled = in->enabled;
+    out->capture = (mh3_scene_capture_plan){in->identity, in->screen_width / 2, in->screen_height / 2, 4, {0, 0, in->screen_width, in->screen_height}, 1};
+    mh3_scene_quad_plan *previous = &out->previous;
+    quad_fill(previous, (float)in->screen_width, in->projection_height, draw, material, 0);
+    previous->identity = out->capture.identity;
+    previous->width = out->capture.width;
+    previous->height = out->capture.height;
+    previous->format = 4;
+    previous->raster.depth_test = 0;
+    previous->raster.color_write = 1;
+    previous->raster.blend_mode = in->mode == 2 ? 3 : 1;
+    previous->raster.src_factor = 4;
+    previous->raster.dst_factor = in->mode == 1 ? 1 : 5;
+    previous->raster.logic_op = 0;
+    previous->material.color[1].known = 15;
     for (unsigned i = 0; i < 3; i++)
-        p.previous.material.color[1].rgba[i] = in->mode == 1 ? in->amount : in->tint[i];
-    p.previous.material.color[1].rgba[3] = in->alpha;
+        previous->material.color[1].rgba[i] = in->mode == 1 ? in->amount : in->tint[i];
+    previous->material.color[1].rgba[3] = in->alpha;
     if (in->mode == 1) {
-        p.previous.material.tev[0].color = (mh3_pack_tev_pass){2, 15, 15, 8, 1, 0, in->subtract_scale, 1, 0};
+        previous->material.tev[0].color = (mh3_pack_tev_pass){2, 15, 15, 8, 1, 0, in->subtract_scale, 1, 0};
     }
     /* DOL807980DC is -1; temporal feedback differs from scene draw-back. */
-    if (!mh3_draw_ortho(p.previous.projection, 0, in->projection_height, 0, (float)in->screen_width, 0, -1))
-        return 0;
-    p.initial = p.previous;
-    p.initial.material = *material;
-    p.initial.material.color[1].known = 15;
+    (void)mh3_draw_ortho(previous->projection, 0, in->projection_height, 0, (float)in->screen_width, 0, -1);
+    /* The initial image: the previous one's quad over the current material. */
+    quad_header(&out->initial, previous);
+    out->initial.material = *material;
+    out->initial.material.color[1].known = 15;
     for (unsigned i = 0; i < 3; i++)
-        p.initial.material.color[1].rgba[i] = in->tint[i];
-    p.initial.material.color[1].rgba[3] = in->alpha;
-    p.initial.raster.blend_mode = draw->raster.blend_mode;
-    p.initial.raster.src_factor = draw->raster.src_factor;
-    p.initial.raster.dst_factor = draw->raster.dst_factor;
-    p.initial.raster.logic_op = draw->raster.logic_op;
+        out->initial.material.color[1].rgba[i] = in->tint[i];
+    out->initial.material.color[1].rgba[3] = in->alpha;
+    out->initial.raster.blend_mode = draw->raster.blend_mode;
+    out->initial.raster.src_factor = draw->raster.src_factor;
+    out->initial.raster.dst_factor = draw->raster.dst_factor;
+    out->initial.raster.logic_op = draw->raster.logic_op;
     /* DOL807980E0 is 1/1024, not a normalized byte factor. */
     if (in->mode == 3) {
         float f = (float)in->amount / 1024.0f, s0 = f + in->offset[0] * f, s1 = (1 - f) + in->offset[0] * f, t0 = f + in->offset[1] * f, t1 = (1 - f) + in->offset[1] * f;
         const float uv[4][2] = {{s0, t0}, {s1, t0}, {s1, t1}, {s0, t1}};
-        memcpy(p.previous.uv, uv, sizeof(uv));
+        memcpy(previous->uv, uv, sizeof(uv));
     }
-    p.draw_previous = p.frames != 1 && in->alpha != 0;
-    p.threshold = p.previous;
-    p.threshold.material.channel_count = 1;
-    p.threshold.raster.alpha_write = 0;
-    p.threshold.raster.blend_mode = 1;
-    p.threshold.raster.dst_factor = 1;
-    p.threshold.material.color[1] = (mh3_pack_tev_color){15, {in->threshold_gray, in->threshold_gray, in->threshold_gray, in->threshold_alpha}};
-    p.threshold.material.tev[0].color = (mh3_pack_tev_pass){15, 2, 12, 8, 1, 0, (uint8_t)(in->threshold_mode ? in->threshold_mode - 1 : 0), 1, 0};
+    out->draw_previous = out->frames != 1 && in->alpha != 0;
+    out->threshold = *previous;
+    out->threshold.material.channel_count = 1;
+    out->threshold.raster.alpha_write = 0;
+    out->threshold.raster.blend_mode = 1;
+    out->threshold.raster.dst_factor = 1;
+    out->threshold.material.color[1] = (mh3_pack_tev_color){15, {in->threshold_gray, in->threshold_gray, in->threshold_gray, in->threshold_alpha}};
+    out->threshold.material.tev[0].color = (mh3_pack_tev_pass){15, 2, 12, 8, 1, 0, (uint8_t)(in->threshold_mode ? in->threshold_mode - 1 : 0), 1, 0};
     const float full[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
-    memcpy(p.threshold.uv, full, sizeof(full));
-    p.draw_threshold = in->threshold_mode != 0;
-    *out = p;
+    memcpy(out->threshold.uv, full, sizeof(full));
+    out->draw_threshold = in->threshold_mode != 0;
     return 1;
 }
 int mh3_scene_glare_prepare(const mh3_scene_glare_input *in, mh3_scene_glare_plan *out) {

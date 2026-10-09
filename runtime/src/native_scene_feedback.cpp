@@ -336,11 +336,14 @@ extern "C" void MH3_NativeTemporalFeedback(CpuContext *cpu) {
 extern "C" void MH3_NativeFeedbackThreshold(CpuContext *cpu) {
     auto input = TemporalInput(cpu->gpr[3]);
     input.enabled = 1;
-    mh3_temporal_feedback_plan plan;
-    Require(mh3_scene_temporal_prepare(&input, &GetNativeDrawState(), &GetNativeMaterialState(), &plan), "Invalid feedback threshold resource");
-    if (plan.draw_threshold)
+    // The plan's threshold quad draws only with a threshold mode; without
+    // one only the history image is bound, and no plan is built.
+    if (input.threshold_mode) {
+        mh3_temporal_feedback_plan plan;
+        Require(mh3_scene_temporal_prepare(&input, &GetNativeDrawState(), &GetNativeMaterialState(), &plan), "Invalid feedback threshold resource");
         Emit(plan.threshold);
-    else {
+    } else {
+        Require(mh3_scene_temporal_valid(&input), "Invalid feedback threshold resource");
         /* The original binds the history image before testing the mode. */
         mh3_native_texture_binding binding{};
         binding.source.resource_address = binding.source.payload_address = input.identity;
