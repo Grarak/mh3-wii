@@ -160,6 +160,8 @@ struct MeshLayout {
 
 struct ProgramDesc {
   std::string label;
+  // Development shader capture/cache provenance; never part of GPU state.
+  std::string origin;
   std::string vertex;
   std::string fragment;
   // Sampler uniform name -> texture unit.

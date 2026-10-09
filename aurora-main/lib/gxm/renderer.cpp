@@ -5,6 +5,7 @@
 #include "alpha_compare.hpp"
 #include "native_assets.hpp"
 #include "device.hpp"
+#include "runtime_shader.hpp"
 #include <aurora/native_frame_gate.hpp>
 #include "draw_memory.hpp"
 #include "raster.hpp"
@@ -497,12 +498,14 @@ void bind_framebuffer(GLuint color, GLuint depth) noexcept { guarded([&] { rende
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   guarded([&] {
     m_usesAlphaReferences = parameterize_alpha_references(m_desc.fragment, m_alphaReferences);
-    gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment);
+    gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin);
     m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
     m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
-    const auto* binary = fragment_binary(m_fragmentHash);
-    m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
-    m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
+    // Construction also covers unused diagnostic programs. Compile/register
+    // only when get() actually binds a program; preserve conservative source
+    // properties until the compiled program can provide exact flags.
+    m_usesDiscard = m_desc.fragment.find("discard;") != std::string::npos;
+    m_replacesDepth = m_desc.fragment.find("gl_FragDepth =") != std::string::npos;
   });
 }
 Program::~Program() {
@@ -515,6 +518,11 @@ GLuint Program::get() noexcept {
   return guarded([&] {
     if (m_program) return m_program;
     auto& r = renderer();
+    register_runtime_shader_sources(m_vertexHash, m_fragmentHash, m_desc.vertex,
+        m_desc.fragment, m_desc.origin.empty() ? m_desc.label : m_desc.origin + "; " + m_desc.label);
+    const auto* binary = fragment_binary(m_fragmentHash);
+    m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
+    m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
     NativeProgram native;
     native.nativeMaterialVertices=m_desc.nativeMaterialVertices;
     native.nativeMeshLayout=m_desc.nativeMeshLayout;

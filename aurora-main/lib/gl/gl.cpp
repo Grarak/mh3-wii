@@ -504,7 +504,7 @@ Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
   m_usesDiscard = m_desc.fragment.find("discard;") != std::string::npos;
   m_replacesDepth = m_desc.fragment.find("gl_FragDepth =") != std::string::npos;
-  gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment);
+  gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin);
 }
 
 Program::~Program() {

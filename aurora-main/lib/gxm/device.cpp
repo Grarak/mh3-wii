@@ -1,6 +1,7 @@
 #include "device.hpp"
 #include "razor.hpp"
 #include "shaders.hpp"
+#include "runtime_shader.hpp"
 #include <aurora/gpu_completion.hpp>
 #include <aurora/thread_role.hpp>
 #include <psp2/display.h>
@@ -43,14 +44,11 @@ void display_callback(const void* data) {
 }
 void* host_alloc(void*, unsigned bytes) { return std::malloc(bytes); }
 void host_free(void*, void* memory) { std::free(memory); }
-const SceGxmProgram* find_binary(const ShaderBinary* list, size_t count, uint64_t hash, const char* stage) {
+const SceGxmProgram* find_binary(const ShaderBinary* list, size_t count, uint64_t hash, RuntimeShaderStage stage) {
   const auto* found = std::lower_bound(list, list + count, hash,
       [](const ShaderBinary& entry, uint64_t value) { return entry.sourceHash < value; });
   if (found == list + count || found->sourceHash != hash) {
-    char message[160];
-    std::snprintf(message, sizeof(message), "Missing offline GXM %s shader %08x%08x",
-                  stage, unsigned(hash >> 32), unsigned(hash));
-    throw std::runtime_error(message);
+    return runtime_shader_binary(hash, stage);
   }
   return reinterpret_cast<const SceGxmProgram*>(found->bytes);
 }
@@ -62,13 +60,13 @@ void check(int result, const char* operation) {
   throw std::runtime_error(message);
 }
 const SceGxmProgram* vertex_binary(uint64_t hash) {
-  return find_binary(VertexShaders, VertexShaderCount, hash, "vertex");
+  return find_binary(VertexShaders, VertexShaderCount, hash, RuntimeShaderStage::Vertex);
 }
 const SceGxmProgram* fragment_binary(uint64_t hash) {
-  return find_binary(FragmentShaders, FragmentShaderCount, hash, "fragment");
+  return find_binary(FragmentShaders, FragmentShaderCount, hash, RuntimeShaderStage::Fragment);
 }
 const SceGxmProgram* fragment_scalar_binary(uint64_t hash) {
-  return find_binary(FragmentScalarShaders, FragmentScalarShaderCount, hash, "scalar fragment");
+  return find_binary(FragmentScalarShaders, FragmentScalarShaderCount, hash, RuntimeShaderStage::ScalarFragment);
 }
 
 Device::Device(bool /*vsync*/) {
@@ -173,6 +171,7 @@ void Device::release() noexcept {
   if (m_initialized) sceGxmTerminate();
   razor_terminate();
   m_initialized = false;
+  clear_runtime_shaders();
 }
 void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color,
                    const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync) {

@@ -488,7 +488,9 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     if(iterator==programs.end()) {
         // Always use the user-selected float native equations. The generator's
         // exact mode exists only for independent reference probes.
-        auto program=std::make_shared<aurora::gl::Program>(aurora::gx::build_shader_description(prepared.config,true,zeroBias,true));
+        auto description=aurora::gx::build_shader_description(prepared.config,true,zeroBias,true);
+        description.origin="runtime/src/native_material.cpp:SubmitNativeMaterialGeometry";
+        auto program=std::make_shared<aurora::gl::Program>(std::move(description));
         iterator=programs.emplace(std::move(key),std::move(program)).first;
     }
     AuroraNativeUniforms uniforms{};
@@ -545,6 +547,8 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     auto program=modelPrograms.find(key);
     if(program==modelPrograms.end()) {
         auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask);
+        description.origin="runtime/src/native_material.cpp:SubmitNativeModelMesh asset="+std::to_string(mesh.asset_id)+
+            " model="+std::to_string(mesh.model_id)+" shape="+std::to_string(mesh.shape_id);
         program=modelPrograms.emplace(key,std::make_shared<aurora::gl::Program>(std::move(description))).first;
     }
     AuroraNativeUniforms uniforms{};
