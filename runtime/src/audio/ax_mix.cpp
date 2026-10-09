@@ -29,6 +29,17 @@
 namespace AxDspHle {
 namespace {
 
+// The DSP mixes in parallel with the CPU on the Wii, so the mix runs on its own
+// thread wherever there is a core for it: dispatch hands the command list over
+// and the next AI DMA block (or anything else that reads the mix) joins it.
+// MH3_AX_MIX_WORKER=0 (development) mixes inline on the guest thread.
+bool MixWorkerWanted() {
+#ifdef MH3_DEVELOPMENT
+    if (const char* value = std::getenv("MH3_AX_MIX_WORKER")) return value[0] != '0';
+#endif
+    return std::thread::hardware_concurrency() > 1;
+}
+
 std::filesystem::path FindDspCoefficientRom() {
     for (auto base = std::filesystem::current_path(); !base.empty();) {
         const auto sourceTreeAsset = base / "Assets" / "DSP" / "dsp_coef.bin";
@@ -60,7 +71,7 @@ public:
         JoinMix();
         RefreshMixMemoryMap();
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_mixWorkerEnabled = false;
+        m_mixWorkerEnabled = MixWorkerWanted();
         MarkDspInitialized();
         ResetDspTaskGlobals();
         m_mailState = MailState::WaitingForCmdListSize;
