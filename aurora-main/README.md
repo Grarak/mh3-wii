@@ -11,9 +11,9 @@ deliberately panic. Dawn/WebGPU, Vulkan,
 D3D12 and Metal are not build targets in this checkout.
 
 See [the dependency note](../docs/aurora-dependency.md) for origin/build details
-and [native renderer status](../docs/native-renderer-status.md) for the
-current renderer. Use the repository's build scripts and
-[HANDOVER](../HANDOVER.md); upstream Aurora build instructions describe a
+and [GX replacement](../docs/optimizations/rendering/gx-replacement.md) for the
+current renderer. Use the repository's build scripts (see the
+[README](../README.md)); upstream Aurora build instructions describe a
 different renderer.
 
 Aurora originated as a source-level GameCube/Wii compatibility layer, developed

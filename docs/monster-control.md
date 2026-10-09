@@ -15,9 +15,8 @@ or the number. The quest's objectives follow the new monster
 `--no-damage` help keep the hunter alive and out of the way.
 
 ```
-MH3_SAVE_DIR=saves MH3_ARGS="--quest 9004 --quest-monster Deviljho --no-damage" \
-  MH3_MONSTER_CONTROL=$PWD/logs/jho.ctl MH3_TRACE=actions,hit-shapes \
-  scripts/dev/run-heartbeat.sh jho 300
+MH3_MONSTER_CONTROL=$PWD/jho.ctl MH3_TRACE=actions \
+  build/linux-arm64-dev/MH3 --quest 9004 --quest-monster Deviljho --no-damage
 ```
 
 The arena quests (`--list arena-quests`) use two arenas: the land arena
@@ -72,32 +71,6 @@ run (swapped in on the Sandy Plains or Moga Woods, or natively in quest 1010
 (`MH3_PORT_CHECK=...,A:0xADDR:27`: original and port run the same calls on
 the same state, so the compare holds for any kind's work). Kind 40 (the
 arena helper, and Uragaan's bouncing rock) is in every arena.
-
-## The sweep
-
-`scripts/dev/monster_sweep.py NAME --quest Q [--area N] [--monster M]
-[--small S] --kind K` checks one monster's actions for per-step tickers:
-it lets the monster fight with its AI on (learning every action it starts
-itself), then forces each action from the same place and yaw with `ai off`,
-once at the fixed 1/30 s step and once at the variable step side by side,
-and compares each action's game time, yaw turned and distance moved
-(`logs/runs/NAME-sweep.txt`). A flagged action is then watched
-(`scripts/dev/gdbwatch.sh` with the field that differs) to name its writer.
-
-```
-scripts/dev/monster_sweep.py sw-jho --quest 9004 --monster Deviljho --kind 7
-scripts/dev/monster_sweep.py sw-jaggi --quest 1028 --area 1 --small Jaggi --kind 10
-```
-
-`--watch` forces the actions once under gdb with write watches on the
-monster work's count (+0x20), yaw, pitch and x, and reports the translated
-writers: the per-call counters and turns still to port. `--pairs FILE` forces
-every action the kind's dispatcher has instead of the learned ones (`mode
-sub` lines from `scripts/dev/enemy_action_pairs.py DISPATCHER`, the kind's
-handler 3; modes 10-13, reactions, death, area changes and intros, are left
-out unless `--modes` names them). The water arena's monsters need it: the
-hunter cannot reach their pool there (its floor is at height 0, Lagiacrus
-swims near -1100), so their AI only waits.
 
 ## Actions
 
@@ -177,7 +150,7 @@ and its action dispatcher (handler 3):
 | 19 | Agnaktor | 0x803790F4 | 0x8037F588 |
 | 9 | Uragaan | 0x80386940 | 0x8038CC38 |
 
-The ports named before 2026-10-06 used `emNNN` labels that were wrong for
+Early ports used `emNNN` labels that were wrong for
 kinds 1-12 (0x8014xxxx was called Gigginox, 0x8015611C Barioth, 0x801C7570
 Diablos, ...); they are relabeled by the dispatcher that reaches each function.
 Their prose describing a monster's behaviour was written under the old names.
@@ -186,7 +159,7 @@ Their prose describing a monster's behaviour was written under the old names.
 
 `MH3_MONSTER_CONTROL=PATH` names a file of commands, one a line. The game
 reads it about every third of a second and runs each new complete line once,
-so append to it while the game runs (`echo "act 2 5" >> logs/jho.ctl`).
+so append to it while the game runs (`echo "act 2 5" >> jho.ctl`).
 A file written anew from the start runs from its first line again. Each
 command run is echoed (`MH3 monster control: act 2 5`).
 
@@ -209,7 +182,6 @@ command run is echoed (`MH3 monster control: act 2 5`).
 
 The action pairs a monster uses come from the trace: run the pit with
 `MH3_TRACE=actions`, let it fight, and read the `MH3 monster action` lines.
-`MH3_TRACE=hit-shapes` names the body parts each attack hits with.
 
 The integrated cheats work beside it (`--cheat NAME`): *Monster speed
 modifier*, *Monster can't see you*, *Freeze/unfreeze monsters*, *Action

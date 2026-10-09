@@ -58,7 +58,8 @@ Put exactly one European `RMHP08` disc image in `ux0:/data/mh3-wii/`:
 
 * ISO, including a normal encrypted Wii ISO;
 * RVZ, including Zstandard, Bzip2, LZMA or LZMA2 compression;
-* WIA with the same compressions (not Purge).
+* WIA with the same compressions (not Purge); recognized, but the game has
+  not been tested from a WIA image and may be unstable.
 
 The input stays read-only and stays where it is: the game reads its partition
 in place for the whole session (`RomImage`, `runtime/src/rom_image.cpp`).
@@ -82,8 +83,11 @@ rejected before decoding.
 
 At first start the launcher writes `ux0:/data/mh3-wii/disc/` (about 7 MB):
 the boot/FST/DOL/IOS metadata and `rom.txt`, which names the image and its
-size. Every start checks the metadata against the image; a moved or changed
-image is processed again (the converted-asset cache is kept). A `.processing`
+size. Every start checks the metadata against the image once (`Checking game
+data`: the image's file table read through its decryption); a moved or
+changed image is processed again (the converted-asset cache is kept). The
+screen shows the step with moving dots: the steps report no fraction, so
+there is no progress bar. A `.processing`
 sibling holds work in progress, and the directory is published only after
 `DiscImage` validation. A development install of a prepared disc directly in
 `ux0:/data/mh3-wii/` (with `partition.bin`) is still used as is. No game
@@ -105,12 +109,12 @@ a file's textures: the worker converting them places every texture's payload
 in the pack first (its native size is known before converting it), queues a
 helper job per other worker at the front of the queue, and the workers claim
 the textures in order, one at a time, writing each at its place; the pack is
-byte for byte the serial one ([loading progress](loading-progress.md#texture-conversion-on-idle-workers)).
+byte for byte the serial one ([loading progress](optimizations/assets/load-time-asset-conversion.md)).
 While a file awaits
 conversion its bytes stay in memory and further reads of it are served from
 there; past 16 MiB (Vita) or 48 MiB (other hosts) of pending files a read
 waits for the workers. The disc's audio streams are copied to plain files in
-`disc/cache/files/` the same way ([native audio](native-audio.md#streams-from-the-disc-image)).
+`disc/cache/files/` the same way ([native audio](optimizations/system/native-audio.md)).
 
 The game thread does not do this work. The DVD library reads through
 `IOS_IoctlAsync` (DI 0x71); those reads run on a disc reader thread
@@ -122,7 +126,7 @@ later waits: not the loading screen's draw-table preparation, not model or
 texture binding. A file's model pack is also read and validated ahead, by a
 preparation worker, while the game reads the file; the loading screen's
 certification then admits it without reading the card
-([model pack read-ahead](loading-progress.md#model-pack-read-ahead)).
+([model pack read-ahead](optimizations/assets/load-time-asset-conversion.md)).
 The game's file loader (`load_file_req` 0x800CEB14, served
 once a frame by 0x800CE704) issues a read and polls for its reply each
 frame, so its loading screens keep animating through the conversions. Its
@@ -173,7 +177,7 @@ Every page has the same layout: the title bar, up to seven rows, a detail
 line about the selected row, and the page's buttons in the footer. A list
 longer than seven rows shows the position (`12 / 28`) in the title bar and
 marks above and below the rows when more are hidden there. The messages and
-progress screen before the menu draw over the same empty page.
+the game data check before the menu draw over the same empty page.
 
 | Control | Action |
 | --- | --- |
@@ -188,7 +192,7 @@ progress screen before the menu draw over the same empty page.
 The pad is read with `sceCtrlPeekBufferPositive2`, port 1 first and port 0
 when that fails, as the game's own input reads it (SDL's Vita driver, and
 the Classic Controller mapping's `vita_controller.cpp`): a PS TV controller
-or the devkit harness's CTRLP pad drives the menus too. With this call the
+drives the menus too. With this call the
 handheld's L/R report as L1/R1.
 
 The main menu contains `Start game`, `Village`, `City (online)`, `Quests`,
@@ -203,12 +207,11 @@ toggles the game's 16:9 mode for this launch (on by default;
 `MH3_WIDESCREEN=0` starts it off) through
 `SetWidescreenSetting`; the game reads it once, at `RenderInit`, after the
 hand-off. Off, the game runs in 4:3 on a pillarboxed 777×544 target
-([vita-widescreen.md](vita-widescreen.md)). The Quests submenu contains `Offline quests`, `Online quests`,
+([vita-widescreen.md](optimizations/rendering/widescreen.md)). The Quests submenu contains `Offline quests`, `Online quests`,
 `Arena` and `Custom quests`. Online quests are the disc's online quest
 catalogue launched locally; this menu does not establish an online service.
 The row reads `Widescreen: ON (16:9)` or `Widescreen: OFF (4:3)` and changes
-at each press; on, off and on again starts the title in 16:9 (checked on the
-host with `widescreen-toggle-start.tsv`).
+at each press; on, off and on again starts the title in 16:9.
 
 `Upscaling` chooses the game's render resolution for this launch, on by
 default, through `SetUpscalingSetting` (`runtime/include/upscaling.h`). The
@@ -226,7 +229,7 @@ rows). The development `MH3_RENDER_SCALE` overrides it.
 `runtime/include/frame_limit.h`) reads `Framelimit: ON` or `OFF`. On,
 the game thread records a frame only once the render thread took the one
 before it, parked until the render thread signals that take, so every frame
-it makes is shown ([packet ring](frame-packet-ring.md#the-game-thread-limiter)).
+it makes is shown ([packet ring](optimizations/threading/render-thread.md)).
 Off, the game thread runs ahead, the render thread draws the newest frame
 and skips the others, and motion can judder. The game's render thread start,
 after the hand-off, applies it.
@@ -240,8 +243,8 @@ copies. A scene whose depth no later draw reads (depth liveness: the HUD and
 2D layers after the 3D scene) draws single-sampled into the resolved colour,
 with a one-sample view of the dead depth's memory for the pixel clip's mask.
 The game's graphics startup applies it; the development `MH3_MSAA=2` or `4`
-(runtime.env) sets it for runs started without the launcher. It costs GPU
-time and CDRAM, not CPU. On the devkit (Alatreon, frame limit off, camera
+sets it for runs started without the launcher. It costs GPU
+time and CDRAM, not CPU. On a Vita (Alatreon, frame limit off, camera
 turning, 2026-10-08) the game drew 67.9 fps without MSAA, 64.3 at 2x (-5%)
 and 58.6 at 4x (-14%; 56.5 before the single-sampled scenes); the launcher's
 detail line gives these estimates. The 4-sample depth takes 6 MiB more CDRAM
@@ -311,38 +314,29 @@ custom:USER/custom-quests/NAME.mh3quest` (the name is the record's storage
 key, digits and dashes). `MH3LauncherTests --quest-audit DISC` builds every
 map, rank and monster combination (1476 on the European disc).
 
-The editor writes private `.mh3quest`
-settings under `saves/custom-quests/`;
-several variants of one template can coexist, and editing updates the selected
-variant. Creation is allowed before a hunter save exists; launching requires
-the same valid save check as other quests.
+The editor writes private `.mh3quest` records under `custom-quests/` in the
+user directory (`ux0:/data/mh3-wii/saves/custom-quests/` on the Vita); saving an
+edited quest replaces its record. Creation is allowed before a hunter save
+exists; launching requires the same valid save check as other quests.
 
-At launch the settings are applied to a copy of the corresponding complete
-disc quest file. The original IDs and file length stay fixed. `DiscImage`
-applies the replacement to full and partial raw DVD reads, so the game loads
-the edited quest objective and text. Both the summary objective at `+0x330` and
-the live expanded objective at `+0x394` change together. When changing the
-monster, old secondary objectives and their expanded records are removed.
-The disc is not modified. Version 3 records (map, three monsters, rank and
-size) are the quests from scratch; versions 1 and 2 are older template
-quests, which still load.
+At launch the record is applied to a copy of the carrier's complete disc quest
+file. The original IDs and file length stay fixed. `DiscImage` applies the
+replacement to full and partial raw DVD reads, so the game loads the edited
+quest. The summary objective at `+0x330` and the live expanded objectives at
+`+0x394` change together; the carrier's other objectives and their expanded
+records are removed. The disc is not modified. Version 3 records (map, three
+monsters, rank and size) are the quests from scratch; versions 1 and 2 are
+older template quests, which still load.
 
-Composition excludes special boss maps, quests with extra monster slots,
-random invaders, and special quest modes. Those quests retain their template's
-map and placements. Creation currently uses hunt/capture templates; Arena's
-slay objectives are available for launching but not for composition. Arbitrary
-monster combinations, coordinate editing and new spawn scripts remain outside
-this initial editor's scope.
-Capture requires an authored capture objective for that species with matching
-placement mode bytes; targets or scripted variants without that evidence cannot
-be changed to capture.
+Capture requires an authored capture objective for that species in one of the
+game's quests, with matching placement mode bytes.
 
 The field evidence comes from `803AE9F4` (complete eight-byte monster slot at
 `+0x314`, monster/map placement lookup and spawn index), `803AEF34` (copying
 three expanded objective/reward records from `+0x394`), `803AF518` (time limit
-at `+0x13a`) and `803AD4E0` (eight star buckets). Composition requires the
-ordinary `0x300c4/0x300c5` quest modes and preserves the base map's day/night
-selection. No new game code or guessed spawn tables are generated.
+at `+0x13a`) and `803AD4E0` (eight star buckets). Quests keep the ordinary
+`0x300c4/0x300c5` quest modes and the carrier map's day/night selection. No new
+game code is generated; spawn points only come from the disc's own placements.
 
 Cheats lists the codes of the RMHE08 (US) Gecko code lists, ported to this
 EU disc, in groups by the lists' author tags: Basic (`No damage`,
@@ -373,8 +367,7 @@ actions); or wrappers registered at a translated function's address that
 change its arguments, a small-data constant it loads, or its result. The 20
 codes that only work online (cities, lobby, chat, friends, servers, quest
 board) and Bully's button activator template are not in the table. The
-user's untracked `cheats.txt` and `cheats/` are only read while porting;
-the build does not use them.
+code lists themselves are not part of the repository.
 
 `All items in the item box` fills the box once a launch, when a character
 first loads (PlLoadUserData, 0x80049FE0). The box is the save data's
@@ -478,19 +471,17 @@ Infinite bombs in pouch; Increase oxygen bar and Inf air.
 ## Build and verification
 
 The disc image decoder is C++ with vendored C codecs, built like the rest of
-the game; no Rust toolchain is needed. The C++ sources and GXM shaders use the
-port's clang build and the offline [shader bank](vita-shader-bank.md). The
-launcher does not compile shaders at runtime.
+the game; no Rust toolchain is needed. The GXM shaders come from the offline
+[shader bank](optimizations/rendering/offline-shader-bank.md); the launcher
+does not compile shaders at runtime.
 
-Focused host verification:
+Host tests:
 
 ```
-cmake --build build/linux-arm64 --target MH3LauncherTests -j$(nproc)
-build/linux-arm64/MH3LauncherTests /tmp/mh3-launcher-test-data
-# Optional validation against the user's external prepared game assets:
-build/linux-arm64/MH3LauncherTests --quest-audit Assets/DATA
-python3 scripts/test_launcher_texture_inventory.py --asset-root Assets/DATA \
-  --launcher build/linux-arm64/MH3LauncherTests -v
+cmake --build build/linux-arm64-dev --target MH3LauncherTests -j$(nproc)
+build/linux-arm64-dev/MH3LauncherTests /tmp/mh3-launcher-test-data
+# Optional, against a prepared disc directory:
+build/linux-arm64-dev/MH3LauncherTests --quest-audit DISC_DIR
 ```
 
 The tests create synthetic assets in their own temporary subdirectory. They
@@ -500,19 +491,15 @@ authored placement transfer, smaller objective counts, incompatible-map and
 scripted-mode rejection, exact ISO extraction, read-only ROM handling, and
 rejection of a truncated native texture pack. `--quest-audit` checks the
 parser and quest overlays against every authored base/encounter/hunt-or-capture
-configuration of the external disc (107 on the European disc).
+configuration of the disc (107 on the European disc).
 
-## Devkit testing
+## Scripted menu input
 
-`scripts/dev/devkit-heartbeat.sh RUN --launcher` launches `host0:/game/eboot.bin` without
-arguments. Without `MH3_DISC_DIR`, the launcher checks `ux0:/data/mh3-wii`
-itself; the devkit still holds an older prepared install there
-(`partition.bin`, `native-textures.bin`) that this check would use as is, so
-test runs set `MH3_DISC_DIR=ux0:/data/mh3-wii/disc`. Menu input comes from
-`MH3_LAUNCHER_INPUT` (development builds): lines `FRAME BUTTONS`, each holding
-its buttons from that launcher frame on (names joined by `+`, `none`, or
-`SCE_CTRL` bits). While a script runs, dialogs close after 2.5 s. For example,
-Quests > Online quests > three pages down > quest 10057:
+Menu input can come from a file, `MH3_LAUNCHER_INPUT` (development builds):
+lines `FRAME BUTTONS`, each holding its buttons from that launcher frame on
+(names joined by `+`, `none`, or `SCE_CTRL` bits). While a script runs,
+dialogs close after 2.5 s. For example, Quests > Online quests > three pages
+down > quest 10057:
 
 ```text
 120 down
@@ -538,54 +525,15 @@ Quests > Online quests > three pages down > quest 10057:
 ```
 
 The launcher logs its pages, inputs, dialogs and
-`starting the game (...) after N launcher frames`; the harness counts readiness
-frames from that point. `--pad-script` sends timed CTRLP `pad` states, which the
-game sees (Circle, the Classic Controller's A, skips the intro movie:
-`scripts/launcher-input/skip-intro.pad`); pad entries not yet sent when the
-readiness count is reached are dropped. On the host, `MH3 --launcher-screen-check`
-draws launcher frames through the render thread, hands off, restarts the
-renderer at the game's 640×456 render mode (764×544 on the 960×544 display) and
-checks pixels and the target size.
-
-Verified on the devkit: the menu at full screen, script navigation with L/R
-paging, the no-save message dialog over the menu, the hand-off into a quest
-(10057, replayed movement) and into Start game's intro and title, and
-Widescreen off in the menu giving a 4:3 pillarboxed title. The render-thread
-restart and target resize work; there is no hand-off stall. Two things seen
-in those runs belong to the game:
-
-- **Shader program creation.** At a quest's first model draws the render
-  thread creates about 25 GXM programs. When they were compiled at runtime
-  and cached as files, the screen held the loading screen for 20–25 s. They
-  now come from the embedded [shader bank](vita-shader-bank.md), which needs
-  no compile or file access (`oct03-head-bank-1`: none at runtime).
-- **The THP intro** decodes on the game thread at about 320 ms per step (about
-  3 logical fps). Its colours were fixed afterwards (3e4fabc: the YUV planes
-  are converted to RGB when the texture is made); the devkit has not shown the
-  intro since. Running the vprof register profiler during the intro stopped
-  the process's output, so profile after it: skip it with Circle
-  (`--pad-script scripts/launcher-input/skip-intro.pad`) and set
-  `--ready-copies` past it (1100 frames after the hand-off).
+`starting the game (...) after N launcher frames`. On the host,
+`MH3 --launcher-screen-check` draws launcher frames through the render
+thread, hands off, restarts the renderer at the game's 640×456 render mode
+(764×544 on the 960×544 display) and checks pixels and the target size.
 
 Development builds report a render thread that makes no progress for two
 statistics intervals: `MH3 render thread: no progress for N reports in draw
 of packet P, record R kind K` (or the task stage). A slow but moving freeze
 does not trigger it.
-
-Input scripts are in `scripts/launcher-input/`:
-
-| Script | Route |
-| --- | --- |
-| `quest-10057.tsv` | Quests > Online quests > three pages (R) > quest 10057 |
-| `no-save-then-start.tsv` | Quests without a save (message), then Start game |
-| `widescreen-off-start.tsv` | Widescreen off, Start game (4:3 title) |
-| `widescreen-toggle-start.tsv` | Widescreen off, on again, Start game (16:9 title) |
-| `tour-custom-quest.tsv` | Cheats on, a custom quest from `Save Our Boat` with another map and monster (keyboard opened on Name), saved, edited from the custom quest list and saved again, launched; needs exactly one hunter |
-| `name-keyboard.tsv` | Ends on the editor's Name with the keyboard open, for `name-keyboard.pad` |
-| `hold-dialogs.tsv` | Nothing; only keeps dialogs closing by themselves (missing-disc message) |
-| `skip-intro.pad` | CTRLP: Circle (A) after the hand-off skips the intro |
-| `ctrlp-quest-10057.pad` | CTRLP: `quest-10057.tsv`'s route with the pad alone |
-| `name-keyboard.pad` | CTRLP: types into the keyboard, confirms with Start, saves, closes the message |
 
 ## Development hosts: `MH3 --launcher`
 
@@ -609,95 +557,4 @@ Input is `MH3_LAUNCHER_INPUT`, or the host's controls read as the game's
 Classic Controller (`ReadLiveController`), by button position: B is Cross, A
 Circle, X Triangle, Y Square, Plus Start, L/R L/R (keyboard: arrows, Left
 Shift for Cross, Space for Circle, Enter for Start, Q/R for L/R;
-[vita-controls.md](vita-controls.md)). For example, on the VM:
-
-```
-MH3_BIN=build/linux-arm64-dev/MH3 MH3_ARGS=--launcher CAPTURE_INTERVAL=60 \
-  scripts/dev/run-heartbeat.sh tour 75 MH3_AUDIO_NULL=1 XAUTHORITY=... \
-  MH3_DISC_DIR=$PWD/build/disc MH3_LAUNCHER_INPUT=$PWD/scripts/launcher-input/tour-custom-quest.tsv
-```
-
-Frame dumps count frame packets, which keep counting after the hand-off: the
-intro and title run thousands of packets per second on the VM, so keep such
-runs short. Results (VM, llvmpipe, October 2026):
-
-| Run | Result |
-| --- | --- |
-| `--launcher-screen-check` | Passes (target 960×544, then 764×544 after the game's startup). |
-| Empty `MH3_DISC_DIR`, `hold-dialogs.tsv` | The missing-disc message over the empty page, closed after 2.5 s; exit 0. |
-| Directory with only the RVZ | `disc/` written (under a second), then the menu. |
-| `tour-custom-quest.tsv` | Cheats toggled, the editor changed map (Flooded Forest to Sandy Plains) and monster (Barroth to Diablos), saved, edited and saved again (`0-1027-1.mh3quest`), launched: the quest loads into Sandy Plains with the HUD. |
-| `widescreen-toggle-start.tsv` | Row text OFF (4:3), then ON (16:9); the intro and the title in 16:9 on the whole display. Plus during the intro: no skip; A: skip. |
-| Upscaling off (and Widescreen off), then quest 10057 | `upscaling off` logged; `EFB render target 791x448` (640x448 with Widescreen off) after the hand-off, against 960x544 (777x544) with Upscaling on; frame dumps at those sizes; the window shows the 16:9 picture over its whole client area, filtered, and the 4:3 one between bars. |
-| Framelimit off, then quest 10057 | `framelimit off` logged; the game thread runs ahead of the render thread: 99 logical frames/s against 33 drawn ([packet ring](frame-packet-ring.md#the-wait)). |
-
-## Devkit checklist
-
-Not run yet on hardware: the custom quest tour (editor, IME keyboard, save,
-saved quest launch, cheats), the missing-disc message, the launcher reading
-CTRLP, re-enabling Widescreen, Upscaling off, the Framelimit's
-semaphore wait and Framelimit off, and a release build of the launcher. Run
-each through `scripts/dev/devkit-heartbeat.sh` (main session only), in a new
-directory `build/vita-devkit/RUN` staged like this:
-
-```
-build/vita-devkit/RUN/host0/game/eboot.bin           # build/vita/eboot.bin
-build/vita-devkit/RUN/host0/game/runtime.env
-build/vita-devkit/RUN/host0/game/launcher-input.tsv  # the run's script
-build/vita-devkit/RUN/host0/game/test-saves/nand/title/00010000/524d4850/data/nocopy/data00
-                                                      # fixtures/post-chief-data00.bin (one hunter)
-```
-
-with `runtime.env`:
-
-```
-MH3_STATS=1
-MH3_DISC_DIR=ux0:/data/mh3-wii/disc
-MH3_USER_DIR=host0:/game/test-saves
-MH3_LAUNCHER_INPUT=host0:/game/launcher-input.tsv
-```
-
-Build: `scripts/build-vita.sh` (development, the default). Release check:
-`MH3_VITA_BUILD_DIR=build/vita-release MH3_DEVELOPMENT=OFF scripts/build-vita.sh`
-(the release eboot has no input script code).
-
-1. **Tour** (`launcher-tour-1`): `tour-custom-quest.tsv`;
-   `scripts/dev/devkit-heartbeat.sh build/vita-devkit/launcher-tour-1 --launcher --timeout 600`.
-   Expect in the log: `cheat No damage on`, `cheat No action stamina drain on`,
-   `quest-name keyboard open` with the keyboard over the editor on HDMI for
-   2.5 s, `custom quest saved: Custom The Horned Dragon (template 1027,
-   encounter 1046, 4 stars)` twice, each with the `saved` message dialog,
-   then `starting the game (custom quest Custom The Horned Dragon on template
-   1027, File 1 / Character 1)`, and after the GXM program freeze Sandy
-   Plains. `host0/game/test-saves/custom-quests/0-1027-1.mh3quest` holds the
-   quest. Check the menu pages on HDMI: footer, detail line, `n / 28` in the
-   template list.
-2. **Keyboard** (`launcher-keyboard-1`): `name-keyboard.tsv` and
-   `--pad-script scripts/launcher-input/name-keyboard.pad --timeout 120`.
-   The script ends with the keyboard open, so the keyboard stays until the
-   pad confirms. Expect `quest name: ...` (typed name) and `custom quest
-   saved: <that name>`, and the message closing on the pad's Cross. If the
-   keyboard opened later than 45 s after the launch (`quest-name keyboard
-   open` in `events.jsonl`), shift the pad script. If the IME or the message
-   ignores CTRLP, the log stops at `quest-name keyboard open` or at the
-   message: report it; system dialogs then need the touch screen or a person.
-3. **CTRLP** (`launcher-ctrlp-1`): no `MH3_LAUNCHER_INPUT` line in
-   `runtime.env`; `--pad-script scripts/launcher-input/ctrlp-quest-10057.pad
-   --timeout 600`. Expect `input frame N buttons 0x40` (down), `0x4000`
-   (cross) and `0x800` (CTRLP `r`, R1) lines and `starting the game (quest
-   10057 ...)`. If `menu ready` comes after 30 s, shift the pad script.
-4. **Missing disc** (`launcher-nodisc-1`): `MH3_DISC_DIR=host0:/game/empty`
-   (stage the empty directory), `hold-dialogs.tsv`, `--launcher --timeout 60`.
-   Expect `message: Game data is missing. Copy your European Monster Hunter
-   Tri (RMHP08) disc image (ISO, RVZ or WIA) to host0:/game/empty, then start
-   Monster Hunter Tri again.` over the empty parchment page, the dialog
-   closing after 2.5 s and the process ending (no hand-off).
-5. **Widescreen on again** (`launcher-widescreen-1`):
-   `widescreen-toggle-start.tsv`, `--pad-script
-   scripts/launcher-input/skip-intro.pad --ready-copies 1100`. Expect
-   `widescreen off`, `widescreen on`, and the title at 960×544 without bars.
-6. **Release** (`launcher-release-1`, optional): the release eboot, no
-   `MH3_LAUNCHER_INPUT`, `--pad-script
-   scripts/launcher-input/ctrlp-quest-10057.pad --timeout 240`. A release
-   build logs nothing, so the harness sees no hand-off: judge by HDMI (menu,
-   navigation, quest 10057's loading screen).
+[vita-controls.md](vita-controls.md)).

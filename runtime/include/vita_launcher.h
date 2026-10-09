@@ -102,6 +102,9 @@ Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path
 // The metadata is present and matches partition.bin or the recorded image.
 bool DiscReady(const std::filesystem::path& output);
 
+// output's rom.txt names iso (only the record is read, nothing validated).
+bool DiscPreparedFrom(const std::filesystem::path& output, const std::filesystem::path& iso);
+
 // Whole-disc conversion (development tools): native-textures.bin and its tag map.
 void PrepareTextures(const std::filesystem::path& root, const Progress& progress);
 

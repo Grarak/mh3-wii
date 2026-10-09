@@ -1,19 +1,19 @@
 # Profiling
 
 What to optimize: the game thread's milliseconds per frame on a Cortex-A9
-(Vita core 2). The Pi 5 runs the same Cortex-A9 build for CPU comparisons;
-the VM's llvmpipe timings are not representative, and the Pi's GPU says
-nothing about the Vita's. The benchmark is Alatreon
-(`--quest 19001 --area 1`). Measure on the Pi with at least three alternating
-runs per build.
-
-GPU captures on the Vita (Sony Razor) are in [vita-razor.md](vita-razor.md).
+(Vita core 2). A Raspberry Pi 5 (or any ARMv8 board) running the arm32
+Cortex-A9 build shows relative CPU costs: it runs the game about 4-5 times
+faster than a Vita, so aim for 4-5 times the speed wanted on the Vita
+(240-300 game fps on the Pi 5 for 60 on the Vita). An x86 or arm64 desktop
+with software rendering does not show these costs, and no desktop GPU says
+anything about the Vita's. A good benchmark is the Alatreon fight (`--quest 19001 --area 1`)
+with the frame limit off (`MH3_FRAME_LIMIT=off`); measure at least three
+alternating runs per build.
 
 ## Statistics lines
 
 Development builds (`MH3_DEVELOPMENT=ON`) print these about once a second
-unless `MH3_STATS=0`. On the Vita they go to the TTY, which the devkit
-harness records as `[TTY0]` lines in `RUN/console.txt`.
+unless `MH3_STATS=0`. On the Vita they go to the console's TTY.
 
 | Line | Meaning |
 | --- | --- |
@@ -23,7 +23,7 @@ harness records as `[TTY0]` lines in `RUN/console.txt`.
 | `MH3 native work: render replay ...` | completed packet replays per second and their mean wall time (resource tasks, replay, presentation); excludes waiting for the next packet |
 | `MH3 native work: render waited for packets` | time the render thread waited for the game thread |
 | `MH3 native work: render CPU` | the render thread's scheduled CPU, thread ID, core |
-| `MH3 native work: displayed ... backlog ... callback wait` | completed display flips, queued display entries, pending GXM scenes, display errors and the core-0 display callback's wait |
+| `MH3 native work: displayed ... backlog ... callback wait` | completed display flips, queued display entries, pending GXM scenes, display errors and the display callback's wait |
 | `MH3 native work: latency input to flip` | development, Vita: per flipped frame, the time from the frame's packet begin (just before the logic reads the input) to its flip, average and largest, and its parts: the game thread (to the packet's publication), the render thread's queue and replay (to the present), the GPU and earlier queued flips (to the display callback) and the VBlank wait |
 | `MH3 frame split:` | the game frame timed as logic (input, scene update, tasks, timers) and draw (DrawScene, fonts, fade, HUD, movie) |
 | `MH3 draw split:`, `MH3 scene split:` | the draw pass by family (traverse, model, effect, ..., the 2D layers and UI sprites around the scene) and DrawScene's setup, buckets and post effects |
@@ -33,175 +33,46 @@ harness records as `[TTY0]` lines in `RUN/console.txt`.
 | `MH3 audio: native mixer` | the mixer's CPU time, ticks per second, output padded while the game is behind, active voices, thread and core |
 | `MH3 material GPU:` | material-GPU counters every 300 frames (only when `MH3_STATS` is set) |
 | `MH3 render thread: no progress ...` | the render thread made no progress for two reports: names the packet, record and kind |
-| `MH3 pmu game:`, `MH3 pmu render:` | `MH3_PMU`, Vita: the thread's Cortex-A9 performance monitor counts over the window (below) |
 
 Mean packet wall time is not CPU time; use the `CPU` lines for scheduled
 execution and a profile for hotspots. `MH3_PROFILE=split` adds per-draw split
 timers (`MH3 model split`): two clock reads per draw, and the `MH3 g3d split`
 (scene processes by task), `MH3 field split` (the field update's calls) and
 `MH3 layer split` (each 2D layer entry function, the HUD's parts) lines. The split timers read
-`sceKernelGetProcessTimeWide` on the Vita. Avoid `steady_clock` in hot code
-there: it is a `gettimeofday` system call. The startup line
-`MH3 Vita clock read cost` reports the clocks: `steady_clock` about 6 µs,
-`sceKernelGetProcessTimeWide` about 0.7 µs (`Low` 0.3 µs),
-`sceKernelGetSystemTimeWide` 1.9 µs.
+`sceKernelGetProcessTimeWide` on the Vita (about 0.7 µs a read;
+`sceKernelGetSystemTimeWide` 1.9 µs; the SDK's `gettimeofday` was a 6 µs
+system call, which the port wraps).
 
-### Performance monitor counts
+### Where the A9's cycles go
 
-The DTrace sampler is timer-driven: it records PCs, never PMU events.
-Cache, branch and stall counts come from the Cortex-A9's performance
-monitor instead, per thread: `MH3_PMU=1` (development, Vita;
-`runtime/vita/pmu.cpp`) has libperf count six events and the cycles of the
-game and render threads. libperf keeps the counters in each thread's
-context, so they are the thread's own on any core. Each report prints the
-thread's cycles per second, IPC, the counted events per 1000 instructions
-and the stall events as a share of its cycles:
-
-```
-MH3 pmu game: 351.1 M cycles/s, IPC 0.43 (149.7 M instructions/s); icache-miss 39.95, dcache-miss 9.37, branch-miss 18.45 per 1000 instructions; icache-stall 15.1%, dcache-stall 16.3% of cycles
-```
-
-The default events are `instructions,icache-miss,icache-stall,dcache-miss,
-dcache-stall,branch-miss`; `MH3_PMU=EVENT,...` picks up to six of
-`instructions`, `icache-miss`, `itlb-miss`, `dcache-miss`, `dcache-access`,
-`dtlb-miss`, `exceptions`, `unaligned`, `branch-miss`, `branches`,
-`icache-stall`, `dcache-stall`, `tlb-stall`, `strex-fail`, `evictions`,
-`issue-stall`, `issue-empty`, `fpu`, `neon`, `pld-stall`, `write-stall`,
-`dmb-stall`, `interrupts`, or ARM event numbers (`0x6E`; Cortex-A9 TRM r3p0
-11.4.1). Event 0x68 (`instructions`) misses MRC and MCR; DMB counts as DSB
-(libperf's known defects). libperf is a firmware module
-(`vs0:sys/external/libperf.suprx`, retail firmware too), loaded with
-`sceSysmoduleLoadModule(SCE_SYSMODULE_PERF)`; Sony's SDK bars it from
-submitted titles, so only development builds import it (a weak stub), and
-they load it only when `MH3_PMU` is set.
-
-Alatreon fight on the devkit (frame limit off, 2026-10-08,
-`oct08-pmu-alatreon-prof`): the game thread runs at IPC 0.42 with 40 I-cache
-misses and 18 branch mispredicts per 1000 instructions, 15% of its cycles
-stalled on the I-cache and 16% on the D-cache; the render thread at IPC 0.43
-with 68 I-cache misses and 37 mispredicts per 1000 instructions, 10% and 25%
-stalled. The counting cost no frame rate.
+Measured with the Cortex-A9's performance monitor (libperf) in the Alatreon
+fight with the frame limit off: the game thread runs at IPC 0.42 with 40
+I-cache misses and 18 branch mispredicts per 1000 instructions, 15% of its
+cycles stalled on the I-cache and 16% on the D-cache; the render thread at
+IPC 0.43 with 68 I-cache misses and 37 mispredicts per 1000 instructions,
+10% and 25% stalled. Large translated code is I-cache bound: PGO and
+smaller hot paths help more than arithmetic tuning.
 
 ## Vita CPU profile
 
-Only the main session uses the devkit; agents in worktrees use the VM and the
-Pi (the harness refuses to run from `.claude/worktrees`). Every devkit run
-goes through `scripts/dev/devkit-heartbeat.sh` and is profiled (see
-[HANDOVER.md](../HANDOVER.md#vita-devkit)).
-
-Stage `RUN/game.elf` (`build/vita/MH3`) and `RUN/game.velf`
-(`build/vita/MH3.velf`) next to `RUN/host0/game/`; the harness checks the
-pair's unwind registration (`scripts/vita-check-unwind.py`) before it starts.
-`--cpu-profile-seconds N` (1–60) starts the collector after the readiness
-count (`--ready-copies`, default 300 frames), `--cpu-profile-delay S` seconds
-later; `--cpu-profile-from-launch S` starts it S seconds after the game's
-process starts instead (the launch's LOADP reply, which the collector reads
-the process from; loading the eboot over host0 takes about 5 s), to profile
-the load:
-
-- **Flat** (no `--cpu-registers`): Sony's DTrace sampler at 997 Hz, PC only.
-  Use this in Alatreon. The harness asks for no user-stack backtrace
-  (`--stack-depth 0`): Sony's USTACK returns no callers from the profile timer
-  anyway, and with the 32-frame default about a third of the runs froze the
-  console as the sampler started (three of nine on 2026-10-05; then six of six
-  clean at depth 0). The walk overruns the stack: `vita_vprof.py` defaults to
-  depth 0 and refuses more than 8 frames.
-- **With stack snapshots** (`--cpu-registers --cpu-stack-bytes N`): a second
-  stream of registers and N bytes of stack at 199 Hz for offline caller
-  recovery. Snapshots can freeze the Vita: in Alatreon, 8 KiB snapshots froze
-  it in about half the runs and 32 KiB within about 4 s of sampling (stack
-  overrun). Both scripts default to 2 KiB and refuse more than 4 KiB; during
-  the THP intro they stopped the process's output. The render thread's
-  snapshots all fail, so it has no stacks.
-
-Outputs: `native-cpu.samples`, `.txt`, `.vprof`; with snapshots also
-`native-cpu.register-info.json`, `.registers.jsonl`, `.stack.bin`. The
-wrapper then writes `RUN/profile-summary.txt` with
-`scripts/vita-profile-summary.py RUN`: per thread (game, render, audio mixer,
-from the `CPU` lines and the mixer's startup line) the available samples, the
-hottest functions and the shares of TLS, copy/clear and division helpers.
-
-Further analysis with psp2-lle's vprof CLI
-(`/path/to/psp2-lle/build/vprof-ui/vprof-cli`):
-
-```sh
-vprof-cli threads RUN/native-cpu.vprof --elf RUN/game.elf
-vprof-cli functions RUN/native-cpu.vprof --elf RUN/game.elf --thread thread-0xTID --top 30
-vprof-cli callers RUN/native-cpu.vprof SYMBOL --elf RUN/game.elf
-```
-
-`scripts/vita-perf-data.py RUN` converts the DTrace samples
-(`native-cpu.samples`, no vprof capture involved) to Linux perf's format,
-`RUN/native-cpu.perf.data` (`devkit-heartbeat.sh` writes it after every
-profile), for perf and the tools that read it:
-
-```sh
-perf report -i RUN/native-cpu.perf.data --sort comm,dso,sym
-perf report -i RUN/native-cpu.perf.data --comms game --sort sym
-perf script -i RUN/native-cpu.perf.data | stackcollapse-perf.pl | flamegraph.pl > flame.svg
-```
-
-Each sample is a `cpu-clock` event of the sampler's period on its CPU and
-thread; threads are named as in `profile-summary.txt` (`game`, `render`,
-`audio-mixer`, the others by ID). The game's addresses are moved back to the
-ELF's, so perf reads `RUN/game.elf`'s symbols and inlined frames itself.
-Samples in Sony's modules show as `[unknown]`, kernel samples as kernel mode.
-The counts match vprof-cli's.
-
-Rules for reading them:
-
-- Percentages are of the thread's available user-PC samples. Rows with only a
-  kernel PC are kernel time; count them in `native-cpu.samples`. Missing PCs
-  (zero or `0xffffffff`) are kept as unavailable rows.
-- DTrace timestamps have their own origin and rate; do not derive utilization
-  from the requested duration or merge them with Razor timelines.
-- Sony's USTACK action returns no callers from the profile timer: the
-  firmware's backtrace service rejects the running interrupted thread
-  (`SCE_KERNEL_ERROR_RUNNING`). Callers come only from the snapshot stream.
-
-### Callers from snapshots
-
-```sh
-python3 scripts/vita-unwind-snapshots.py --info RUN/native-cpu.register-info.json \
-  --elf RUN/game.elf --out RUN/analysis/snapshot-cfi --max-depth 64
-python3 scripts/vita_vprof.py --samples RUN/analysis/snapshot-cfi.samples \
-  --stacks RUN/analysis/snapshot-cfi.stacks.jsonl --stack-source 'SHA-verified ARM32 DWARF CFI' \
-  --deci-log RUN/deci4p.log --elf RUN/game.elf --hz 199 --out RUN/analysis/snapshot-cfi
-vprof-cli functions RUN/analysis/snapshot-cfi.vprof --elf RUN/game.elf --inclusive --top 30
-python3 scripts/vita-perf-data.py RUN --samples RUN/analysis/snapshot-cfi.samples
-perf report -i RUN/analysis/snapshot-cfi.perf.data --comms game --children --sort sym
-```
-
-In perf the unwound stacks (`snapshot-cfi.stacks.jsonl`) are callchains
-(`perf report -g`, flame graphs).
-
-The unwinder checks the recorded hashes, the exact ELF and the interrupted
-context, reads only the captured stack bytes and uses DWARF CFI; it never
-scans for return addresses. The EABI memory helpers
-(`runtime/vita/aeabi_memory.c`) have ordinary CFI. Every chain is a
-prefix that stops at the captured stack's end, a missing CFI frame or an
-unverified mapping; 8 KiB stacks favour shallow draw-phase stacks. Snapshot
-events are a separate stream: never pair them with primary samples or use
-their counts as CPU-time weights. Leaf helpers without CFI (`__udivmodsi4`,
-the `gettimeofday` stub) can be attributed through the snapshot's link
-register.
-
-### Build configuration
-
-`MH3_PROFILE_FRAME_POINTERS` (default: the value of `MH3_DEVELOPMENT`) adds
-`-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -funwind-tables` (ARM32
-also `-mframe-chain=aapcs+leaf`) to the game, the runtime and Aurora.
-Compare timings only between builds with the same setting.
-
-`scripts/build-vita.sh` packages with the patched `vita-elf-create`
-(`/path/to/vita-toolchain/build-unwind/src/vita-elf-create`, or
-`MH3_VITA_ELF_CREATE`), which registers the real `.ARM.exidx`/`.ARM.extab`
-ranges in the module info (the stock tool writes zero ranges) and emits the
-module TLS template. It then runs `scripts/vita-check-unwind.py`, which fails
-the build for missing or wrong registration and writes
-`build/vita/unwind-packaging.json`. A release build (`MH3_DEVELOPMENT=OFF`)
-has no unwind tables of its own (nor exceptions) and is not checked: profile
+Sample the game on the Vita with a PC-sampling profiler and symbolize
+against the unstripped ELF (`build/vita/MH3`). Development builds keep frame
+pointers (`MH3_PROFILE_FRAME_POINTERS`, default: the value of
+`MH3_DEVELOPMENT`: `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+-funwind-tables`, ARM32 also `-mframe-chain=aapcs+leaf`) for the game, the
+runtime and Aurora. Compare timings only between builds with the same
+setting. A release build has no unwind tables and no exceptions: profile
 development builds.
+
+Rules for reading such profiles:
+
+- Percentages are of the thread's user-PC samples; count kernel-only
+  samples separately.
+- Stack walks from a timer interrupt are fragile on the Vita: deep user
+  stack backtraces or large stack snapshots overrun the sampler's stack and
+  can freeze the console. Keep backtraces off or shallow, and stack
+  snapshots small (a few KiB).
+- Compare CPU and GPU only from the same run.
 
 ### Memory and math helpers in Vita profiles
 
@@ -216,7 +87,7 @@ reserves for the caller (a helper/ABI mismatch kept from compiler-builtins,
 not a known fault). Hot byte comparisons in the renderer
 use `BytesEqual` (`runtime/include/bytes_equal.h`, NEON, equality only)
 instead of `memcmp`. The SDK's TLS lookups for its prebuilt libraries go
-through the fast paths in [vita-tls-lookup-optimization.md](vita-tls-lookup-optimization.md).
+through the fast paths in [Vita TLS lookups](optimizations/platforms/vita-tls-lookups.md).
 
 ### Barriers on ARM32
 
@@ -235,8 +106,7 @@ arm-linux-gnueabihf-objdump -d --no-show-raw-insn build/linux-arm32/MH3 \
 ```
 
 Intersect it with the function list of a Vita CPU profile to find the hot
-ones. Removed on 2026-10-04 (game thread, development builds included,
-since the devkit runs those):
+ones. Already removed (game thread, development builds included):
 
 - Port-check flags held in local statics in every checked native: now
   `PortCheck::Enabled`, an inline relaxed byte test while `MH3_PORT_CHECK` is
@@ -260,25 +130,13 @@ and, on the render side,
 namespace-scope variables or relaxed atomics, and keep guarded statics and
 `shared_ptr` copies out of per-call paths.
 
-## Pi and VM
+## ARM boards and desktops
 
-`scripts/pi/benchmark.py` (copied to `~/mh3` on the Pi) runs a quest with an
-isolated save and scripted movement and reports idle and movement game fps
-and scheduled CPU ms per frame; see [HANDOVER.md](../HANDOVER.md#run).
-
-The Pi's `perf report` gives no usable ARM32 call stacks. For call graphs,
-profile the arm64 build on the VM with `perf record --call-graph fp`
-(`perf_event_paranoid` needs root, so run perf through Docker).
-
-`scripts/pi/perf_arm32_stacks.py` recovers callers offline from a Pi
-`perf record --call-graph dwarf,32768` capture: it reads the recorded
-registers and stack bytes with libdwfl and the exact ELF files (mirror the
-Pi's libraries with `--symfs`). It computes the relocation bias from the
-mapping's file offset and the executable PT_LOAD (perf's own frontend picks a
-bias 64 KiB off for this executable layout and fails). The Pi's libc and libm
-have no DWARF frame data, so their memcpy/memcmp/memset/fmaf samples stay
-without callers; in the October 2 captures about 45% of samples recovered at
-least one caller.
+On an ARM Linux board, `perf record` of the arm32 build gives flat profiles;
+its ARM32 call stacks are unreliable. For call graphs, profile the arm64
+build with `perf record --call-graph fp`, or record
+`--call-graph dwarf,32768` and unwind offline with libdwfl against the exact
+ELF files.
 
 ## Stalls
 
@@ -293,8 +151,8 @@ hide:
   (`guest_worker.cpp`).
 - `MH3 long packet N: X ms: GPU slot wait, before tasks (count, slowest, from
   ADDRESS), draw, after tasks`: a render-thread packet over 40 ms
-  (`native_frame_packet.cpp`); symbolize the task's address against the run's
-  ELF (`addr2line -e RUN/game.elf`).
+  (`native_frame_packet.cpp`); symbolize the task's address against the
+  build's ELF (`addr2line`).
 - `MH3 slow shade program`, `MH3 GXM slow ...`, `MH3 slow scene setup call`:
   shader program creation over 2 ms and scene setup calls over 20 ms.
 

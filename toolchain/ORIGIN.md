@@ -1,10 +1,10 @@
 # WiiCompiled-derived components
 
-Translator and Launcher/WiiCompiled.Setup.Common copied from the sibling
-WiiCompiled checkout, commit `85f250155f8f397c1c463dc51dd4dc2707371d06`.
+Translator and Launcher/WiiCompiled.Setup.Common copied from the WiiCompiled
+project, commit `85f250155f8f397c1c463dc51dd4dc2707371d06`.
 `../runtime/include` and the runtime's `abi_bridge.cpp`, `ppc_helpers.cpp`, and
 `fpu_helpers.cpp` are also derived from that checkout. The GPLv3 license and
-third-party notices are preserved here. Original source checkout is unchanged.
+third-party notices are preserved here.
 
 MH3-specific changes:
 
@@ -22,6 +22,4 @@ There is no CPU interpreter or JIT fallback in this runtime.
 
 The AX/DSP mixer that was adapted from the same WiiCompiled commit's
 `runtime/src/hle/audio` directory has been removed; audio is now a native
-mixer (`runtime/src/audio`). The DSP coefficient file it used is still included
-at `runtime/assets/dsp/dsp_coef.bin`; the build scripts validate it and copy it
-into the local asset directory, though the native mixer does not read it.
+mixer (`runtime/src/audio`).

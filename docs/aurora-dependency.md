@@ -1,11 +1,11 @@
 # Aurora
 
-`aurora-main/` started as a source snapshot of Aurora copied from the sibling
-WiiCompiled checkout on 2026-09-27 (parent commit
+`aurora-main/` started as a source snapshot of Aurora taken from the
+WiiCompiled project on 2026-09-27 (parent commit
 `85f250155f8f397c1c463dc51dd4dc2707371d06`). Aurora's MIT license is kept at
 `aurora-main/LICENSE`.
 
-It is now MH3's own copy and is edited in place. Commit `3cb845e` replaced
+It is now MH3's own copy and is edited in place. Commit `0313223` replaced
 WebGPU/Dawn with **OpenGL ES 3.0** (`aurora-main/lib/gl`); the Vita backend uses
 native **GXM** (`aurora-main/lib/gxm`). The web build adds **WebGPU** again
 (`aurora-main/lib/webgpu`, Emscripten's emdawnwebgpu, `AURORA_WEBGPU`; see
@@ -18,8 +18,8 @@ The runtime's render thread owns the graphics context (core 0 on Vita) and
 replays frame packets recorded by the game thread; backend tasks execute on
 it. No GX queue remains; GX compatibility APIs/FIFO routes panic. Native rendering
 reuses pure material equations and typed resource helpers from the tree,
-without restoring GX submission. See [native renderer status](native-renderer-status.md)
-for current integration, waits, texture formats and memory limits. The old
+without restoring GX submission. See [GX replacement](optimizations/rendering/gx-replacement.md)
+for how the game's draws reach the renderer. The old
 build-time overlay scripts (`aurora-efb.cmake`, `patch_aurora_*.py`) are gone.
 
 `scripts/build-aurora.sh` configures the runtime against this tree (override
@@ -32,7 +32,3 @@ against Debian's armhf packages. Aurora's hash containers are the runtime's
 `FastMap`/`FastSet` (`aurora-main/include/aurora/fast_map.h`).
 
 The translator and its notices are under `toolchain/`.
-`runtime/assets/dsp/dsp_coef.bin` is the free Dolphin DSP coefficient table,
-with provenance in `toolchain/THIRD-PARTY-NOTICES.md`; the build scripts still
-check it (`scripts/prepare_audio_assets.py`), but the native mixer does not
-read it.

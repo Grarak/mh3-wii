@@ -1,4 +1,4 @@
-# Controls: the Classic Controller on every host — 2026-10-03
+# Controls: the Classic Controller on every host
 
 The game always sees one Wii Remote with a Classic Controller (the original
 RVL-005, not the Pro) on channel 0. The PS Vita's controls, SDL gamepads and
@@ -30,8 +30,8 @@ of 0x350 bytes at 0x8065B7D0):
   game uses the L/R full-press bits only.
 - Sticks: `WPADClampStick` (circle: 60 units of play per axis, radius 248),
   then the stick reader `PadClassicSticks` (0x80042FDC; its computation is
-  `mh3_classic_read_sticks` in `runtime/native/mh3_classic_map.c`, not yet
-  registered as a native) stores direction, length (0 below 30, at most
+  `mh3_classic_read_sticks` in `runtime/native/mh3_classic_map.c`, which the
+  mapping uses to shape the sticks; the game's own copy runs translated) stores direction, length (0 below 30, at most
   127) and 8-way bits (from length 37) for each stick. So of the report range
   −512..511 only raw 90..187 along an axis changes the result; a real Classic
   stick's full tilt (about 308) is far past saturation.
@@ -71,7 +71,6 @@ changing for it.
 "Per control style": the game's Classic Style 1/2 options decide the field
 actions; the mapping keeps every Classic control where it is on the original
 controller, so both styles work as the game's own help screens show them.
-The field roles of L, R, ZL, ZR and − were not checked in a run yet.
 
 Why this layout:
 
@@ -84,17 +83,16 @@ Why this layout:
   game uses most, and on the original controller the outer triggers that
   the index fingers rest on. A press reports the trigger fully down (the
   digital L/R bit and an analog value of 255).
-- **No touch input** (user, 2026-10-06). The front and rear panels are not
+- **No touch input.** The front and rear panels are not
   read: a hand gripping the rear panel or a thumb resting on the screen never
   reaches the game. The handheld has no control left for the Classic
   Controller's ZL/ZR (small extra buttons inside its triggers) or HOME (the
   PS button belongs to the system); a PS TV controller has them on L2/R2 and
-  L3 + R3. Until 2026-10-06 the rear panel's upper quarters were ZL/ZR and a
-  tap at the top centre of the screen was HOME.
+  L3 + R3.
 
 The pad is read with `sceCtrlPeekBufferPositive2` (port 1 first, as SDL's
-Vita driver did, then port 0), so the devkit harness's CTRLP pad still
-drives the game. One sample serves 4 ms of the game's several reads per frame. Code:
+Vita driver did, then port 0), so a PS TV controller drives the game too.
+One sample serves 4 ms of the game's several reads per frame. Code:
 `runtime/vita/vita_controller.cpp` (Vita APIs) and
 `runtime/native/mh3_classic_map.c` (the mapping, host-testable).
 
@@ -106,8 +104,8 @@ window into 18–37 % of the Vita stick's travel: the rest was dead or
 saturated, so slight tilts jumped from standing to running. The mapping now
 spreads the window over the travel:
 
-- radial dead zone of 30 % (the sticks rest within about ±10 of centre; 12 %
-  made them too sensitive, user 2026-10-06);
+- radial dead zone of 30 % (the sticks rest within about ±10 of centre; a
+  smaller one made them too sensitive);
 - just past it the length is the game's threshold (31), growing linearly to
   127 at 78 % of the travel (80 % of the travel past the dead zone up to the
   90 % taken as full);
@@ -122,7 +120,7 @@ monotonic length, direction error under 0.05 rad, full deflection and every
 button. The game's own responses are not changed here; only
 how far the Vita stick has to move to reach a given game length.
 
-On the VM (input playback of the mapped values, quest 10057 area 6), the
+On arm64 Linux (input playback of the mapped values, quest 10057 area 6), the
 hunter walks at one pace (about 2.8 units a 30 Hz frame) at lengths 42, 61
 and 80 and runs (about 15) from 100 on, so with the Vita curve the walk
 takes about 12–50 % of the travel and the run the rest; the hunter stands
@@ -164,31 +162,6 @@ Keyboard, while the window has focus:
 | Escape or Home | HOME |
 
 Keyboard sticks and gamepad sticks combine per stick (a key held wins).
-
-## Devkit checklist
-
-Checked on the dev VM only (playback and the SDL/keyboard path); none of the
-Vita-side reading has run on hardware yet. On the devkit:
-
-1. `--playback` with the usual log: the recorded axes still reach ±511
-   (`saw_move`, `saw_camera`, the run-forward and camera phases), and the
-   playback finishes. A CTRLP run, if used, still drives the game (port 1
-   first, then port 0).
-2. The launcher still selects with × (it reads the pad itself); in the
-   game ○ confirms and × goes back, the D-pad moves menu cursors.
-3. Left stick: resting does not move the hunter; a slight tilt walks, the
-   run starts at about half tilt (not at the first touch); full tilt in
-   every direction runs.
-4. Right stick, default layout: resting does nothing, a tilt draws the
-   weapon and attacks. With the game's camera option on the right stick it
-   turns the camera instead. Character creation turns the hunter. The D-pad
-   turns the camera by default.
-5. L and R act as the Classic L/R triggers (field actions per control
-   style, menu tabs); START opens the pause menu (+), SELECT is −.
-6. Touching the screen or the rear panel does nothing in the game.
-7. PS TV, if one is at hand: L2/R2 are ZL/ZR, L3 + R3 is HOME; check whether
-   the HOME Menu opens and can be closed with the Classic Controller.
-8. The vprof profile shows no measurable time in `ReadVitaController`.
 
 ## Not configurable yet
 

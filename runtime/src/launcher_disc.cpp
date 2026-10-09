@@ -58,14 +58,27 @@ bool DiscReady(const std::filesystem::path& output) {
     return disc.Load(output, false).ok() && FsStatus::Exists(output / "disc-layout.txt", layout).ok() && layout;
 }
 
-Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress) {
+namespace {
+Status ImagePath(const std::filesystem::path& iso, std::filesystem::path& image) {
 #ifdef __vita__
     // libstdc++'s POSIX absolute() treats the Vita mount prefix as relative.
-    const auto image = iso;
+    image = iso;
+    return {};
 #else
-    std::filesystem::path image;
-    MH3_RETURN_IF_ERROR(FsStatus::Absolute(iso, image));
+    return FsStatus::Absolute(iso, image);
 #endif
+}
+} // namespace
+
+bool DiscPreparedFrom(const std::filesystem::path& output, const std::filesystem::path& iso) {
+    std::filesystem::path image;
+    return ImagePath(iso, image).ok() && RecordedRom(output) == image.string();
+}
+
+Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress) {
+    std::filesystem::path image;
+    MH3_RETURN_IF_ERROR(ImagePath(iso, image));
+
     if (DiscReady(output)) {
         bool recorded = false;
         MH3_RETURN_IF_ERROR(FsStatus::Exists(output / "rom.txt", recorded));

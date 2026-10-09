@@ -37,11 +37,9 @@ the reader itself. Disc (raw) reads never use the worker.
 
 On the Vita the worker runs on core 3 (the workers' core), beside the DVD
 reader thread that calls the decoder, below the default priority so the guest
-worker and the reader run first; cores 0-1 are the render and draw threads'
-(2026-10-08).
-From 2026-10-06 to 2026-10-08 both ran on core 0, and before that the worker
-alone on core 3: sharing the reader's core gives no parallel decoding (one
-boot read took 422 ms instead of ~70).
+worker and the reader run first; cores 0-1 are the render and draw threads'.
+The worker must not share the reader's core: that gives no parallel decoding
+(one boot read took 422 ms instead of ~70).
 
 Checked with a standalone comparison of two decoders, with and without the
 worker: the whole 4 GiB game partition in 512 KiB reads and 20,000 random
@@ -54,7 +52,7 @@ MiB/s:
 | 128 KiB stream | 482 | 816 |
 | 32 KiB stream | 633 | 1,047 |
 
-Devkit (`MH3_PROFILE=disc`, Alatreon quest): decoded 512 KiB reads 15.9 ->
+Vita (`MH3_PROFILE=disc`, Alatreon quest): decoded 512 KiB reads 15.9 ->
 20.5 MiB/s, the image's share of the time 34% -> 68% (the card's 10-11.5
 MiB/s is now the limit); the village motion archive's 512 KiB read 210 -> 101
 ms. The quest's load time stayed 11.6 s: it is not bound by decoding.
@@ -79,9 +77,9 @@ Vita program through its compiler-builtins. They come from these sources now:
   same compiler-builtins 0.1.160 routines: scalar word loops in the generic
   bodies, a 16-byte NEON loop in the aligned copy and set (it changes `d16/d17`,
   as before), the 4/8 and move forms sharing one body each. The SDK's would be
-  a byte loop for move and a scalar loop for set. The helper benchmark
-  (`tests/native/benchmark_vita_memory.c`) passes for the port under QEMU
-  Cortex-A9 with the Rust objects' register masks; on the idle Pi 5, ns per
+  a byte loop for move and a scalar loop for set. A helper benchmark
+  passed for the port under QEMU Cortex-A9 with the Rust objects' register
+  masks; on an idle Pi 5, ns per
   call at 4 KiB / 32 KiB, aligned:
 
   | | Rust (nod) | C port | SDK |
@@ -96,7 +94,7 @@ Vita program through its compiler-builtins. They come from these sources now:
   `floor`, `ceil`, `round`, `trunc`, `fmod`, `sqrt` and their float forms,
   `fabs`, `fmin` and `fmax` from newlib's libm. These have exactly specified
   results; their speed on the Vita is unmeasured (`__udivmodsi4` was 3.3% of
-  the game thread in [the October 3 profile](vita-oct03-fixed-render-profile.md)).
+  the game thread in an October 3 Vita profile).
 - The C helpers have ordinary CFI for snapshot unwinding.
 
 ## Verification (2026-10-03)
@@ -112,8 +110,8 @@ disc-level stream (4,699,979,776 bytes) and 40,000 random flat reads (1 B to
   LZMA2 RVZ and LZMA WIA (2 MiB chunks).
 
 The decrypted ISO gives the same partition as the RVZ. `MH3 --rom` writes a
-`disc/` identical to the nod build's, on the VM (arm64) and on the Pi (arm32
-build), and Alatreon ran from the RVZ on the VM. SHA-1 matches `sha1sum` for
+`disc/` identical to the nod build's, on arm64 Linux and on the Pi (arm32
+build), and Alatreon ran from the RVZ on arm64 Linux. SHA-1 matches `sha1sum` for
 lengths 0–299 and AES the FIPS-197 vector.
 
 Decode speed on the Pi 5, arm32 Cortex-A9 code, one thread, 1 MiB reads,

@@ -11,7 +11,7 @@ scripts/dev/debug-port.py state 'wait 30' "shot $PWD/village.bmp"
 ```
 
 `MH3_DEBUG_PORT=PORT` listens on 127.0.0.1, `MH3_DEBUG_PORT=ADDR:PORT` on
-that address (`0.0.0.0:7777` to reach a game on the Pi5 from the host). Each
+that address (`0.0.0.0:7777` to reach a game on another machine). Each
 line sent is a command; each command gets one answer line, starting with
 `ok` or `error`. The game thread runs the commands in order, once a logic
 step before the tasks (game_frame.cpp). Commands that take game time
@@ -38,6 +38,9 @@ when one is an error.
 | `movie skip` | ends the open movie: its player sees it finished at its next check (once no frame is pending, as the game's own Movie_cut) and closes it as at its last frame, also where a button can't skip it (the opening after character creation, the Loc Lac movie); `error: no movie is open` otherwise |
 | `trace` | the `MH3_TRACE` items that can be switched, each `=on` or `=off` |
 | `trace ITEM on\|off` | turns a trace item on or off ([flags](flags.md#mh3_trace-game-state-over-game-time)) |
+| `online [state]` | online: the network state and sub-state, the menu command, whether the hunter leads, the joined circle (quest group), members present and standing, the gate and city names |
+| `online post QUEST [MEMBERS]`, `join [N]`, `ready`, `unready`, `depart`, `accept [QUEST]`, `circles` | posts a quest, joins the Nth posted one, readies, departs, accepts a quest at the counter, counts the posted quests (the game's own calls; `online_auto.cpp`) |
+| `online auto SPEC` | starts the online autopilot with an `MH3_ONLINE_AUTO` spec ([online](online.md)) |
 
 Addresses are guest virtual addresses (0x80000000 up); others answer
 `error: no guest RAM`.

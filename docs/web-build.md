@@ -101,8 +101,8 @@ shows a canvas frame only when its thread returns to the event loop. So:
 
 ### What it restores
 
-From Aurora's Dawn renderer as it was before 3cb845e4
-(`3cb845e4^:aurora-main/lib/webgpu/gpu.cpp`, `wgpu.hpp`) and its
+From Aurora's Dawn renderer as it was before 03132238
+(`03132238^:aurora-main/lib/webgpu/gpu.cpp`, `wgpu.hpp`) and its
 WiiCompiled original: the device setup (instance, adapter and device requests
 with the uncaptured-error and device-lost callbacks, which stop the game as
 there), the surface configuration and the letterboxed present blit, rebuilt on
@@ -113,7 +113,7 @@ browser counterpart and are not restored.
 What the old backend drew with, the GX/TEV pipeline cache and the TEV WGSL
 generator, no longer exists in the runtime (no runtime GX/TEV since the frame
 packets and baked materials), so the old code could not serve the current
-interface: `renderer.cpp` is new, an implementation of `aurora/gl/gl.hpp` (the
+interface: `renderer.cpp` is new, an implementation of `aurora-main/lib/gl/gl.hpp` (the
 interface `lib/gl` and `lib/gxm` implement), modelled on the GXM backend's
 structure (names mapped to backend objects, state recorded until a draw).
 
@@ -180,8 +180,8 @@ A program the bank lacks fails with `WebGPU shader bank has no program`.
 - Floating-point flush-to-zero (the guest's FPSCR[NI]): WebAssembly always
   keeps denormals. Fused multiply-adds are a multiply and an add, as on the
   Cortex-A9.
-- Fault reports for stray guest accesses (WebAssembly has no signals); the
-  draw-pages trace; native backtraces.
+- Fault reports for stray guest accesses (WebAssembly has no signals); native
+  backtraces.
 
 ## Platform port
 
@@ -197,7 +197,7 @@ translator assembles with `.incbin` are embedded with `#embed` instead
 
 ## Status
 
-Checked on the arm64 VM with Playwright 1.63's headless Chromium 153
+Checked on arm64 Linux with Playwright 1.63's headless Chromium 153
 (WebGPU on SwiftShader), `scripts/web-check.mjs`, 2026-10-05:
 
 - Boot, disc preparation into OPFS (`--rom` on the first start), the intro
@@ -212,7 +212,7 @@ Checked on the arm64 VM with Playwright 1.63's headless Chromium 153
 - Audio plays through SDL's ScriptProcessorNode (`MH3_AUDIO_NULL=1` turns it
   off).
 
-Chromium on this VM, headless or on the desktop, does not show WebGPU canvas
+Chromium on that machine, headless or on the desktop, does not show WebGPU canvas
 contents (neither the canvas, page screenshots nor `drawImage` see them): a
 bare page with a 2D, a WebGL 2 and a WebGPU canvas shows the first two and a
 blank third, so this is the browser's WebGPU presentation here, not the build.
@@ -229,7 +229,7 @@ PLAYWRIGHT_DIR=<dir with node_modules> node scripts/web-check.mjs \
   --url http://localhost:8090/ --disc "/disc/<image file name>" \
   --profile <profile dir> --shots <screenshot dir> --env MH3_STATS=1 \
   --args "--quest 19001 --area 1 --no-damage" \
-  --nand saves/nand --data00 fixtures/post-chief-data00.bin --seconds 300
+  --nand saves/nand --data00 <your data00 save> --seconds 300
 ```
 
 Keyboard input reaches the game (the controls of
@@ -247,7 +247,7 @@ no longer exists").
 
 ### GLES and GXM unchanged
 
-Checked against the parent commit (7af32751), 2026-10-05:
+Checked against the parent commit (4d8c4d96), 2026-10-05:
 
 - Shader sources: all 208,384 GLSL and Cg variants of the native key domain
   stream out byte-identical, and so do the 4,808 GXM bank stages (4,190

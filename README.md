@@ -1,160 +1,134 @@
-# Monster Hunter Tri static recompilation for ARM Linux and Vita
+# Monster Hunter Tri for the PS Vita
 
-Monster Hunter Tri's PowerPC code (European disc `RMHP08`) is statically
-recompiled to C++ and linked with a native runtime into one executable. There
-is no interpreter or JIT fallback. Aurora provides **OpenGL ES 3.0** on Linux
-and native **GXM** on Vita, driven by a render thread; materials are drawn
-with fixed hand-written shaders instead of TEV.
+A static recompilation of Monster Hunter Tri (Wii) to native ARM code. The
+game's PowerPC code is translated to C++ and linked with a native runtime
+that replaces the Wii's hardware and system software: there is no emulator,
+interpreter or JIT. Rendering goes through native GXM on the PS Vita and
+OpenGL ES 3.0 on Linux; a WebAssembly build draws through WebGPU.
 
-- **Targets:** Vita (ARM32, Cortex-A9, GXM), arm32 Linux (armhf, Cortex-A9
-  build tested on a Raspberry Pi 5), and arm64 Linux for development; a
-  WebAssembly build renders through WebGPU in browsers
-  ([web build](docs/web-build.md)).
-- **Status:** Alatreon (`--quest 19001 --area 1`, the benchmark) plays on the
-  Vita devkit at 27–34 fps; the game thread runs at 200–210 fps moving on the
-  Pi 5. See [HANDOVER.md](HANDOVER.md) and
-  [renderer status](docs/native-renderer-status.md).
+The repository contains no game code or data. You need your own copy of the
+**European** disc (`RMHP08`, "Monster Hunter Tri (Europe) (En,Fr,De,Es,It)")
+as an **ISO or RVZ** image. WIA images are recognized too, but untested and
+possibly unstable. Other regions are not supported.
 
-## Build
+How the port reaches full speed on a 444 MHz Cortex-A9, written so that the
+techniques carry over to other Wii games:
+[docs/optimizations](docs/optimizations/README.md).
 
-Requirements: an arm64 Linux host with Python 3, CMake, Ninja, Clang 21,
-OpenGL ES/EGL development files and Docker (for arm32), plus a .NET 8 SDK
-unpacked in `tools/dotnet` and nodtool `v2.0.0-alpha.10`
-([release](https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10);
-the `linux-aarch64` build) in `tools/nodtool`. You need your own copy of the
-European disc (`RMHP08`) as an RVZ, WIA or ISO. ROMs, extracted assets,
-generated code, builds, saves and logs are all git-ignored.
+## Installing on the PS Vita
 
-### 1. Translate the PowerPC code
+1. A Vita or PS TV with HENkaku/Ensō (taiHEN).
+2. Install the kernel plugins [kubridge](https://github.com/bythos14/kubridge/releases)
+   (0.3.1 or newer) and [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker)
+   under `*KERNEL` in `ux0:tai/config.txt` (or `ur0:tai/config.txt`), then
+   reboot:
 
-The translator reads the game's executable and overlays from an extracted
-disc:
+   ```
+   *KERNEL
+   ur0:tai/kubridge.skprx
+   ur0:tai/CapUnlocker.skprx
+   ```
+
+3. Install `mh3-vita.vpk` with VitaShell.
+4. Copy the disc image to `ux0:/data/mh3-wii/`.
+
+The first start checks the image and writes about 7 MB of disc metadata to
+`ux0:/data/mh3-wii/disc/`; textures and models are converted while the game
+loads them and cached there. Saves live in `ux0:/data/mh3-wii/saves/`. The
+launcher's menus start the game, quests and custom quests, and set cheats,
+widescreen, upscaling, MSAA and the frame limit ([launcher](docs/vita-launcher.md),
+[controls](docs/vita-controls.md)). Online play uses the community
+[MH3SP](https://github.com/sepalani/MH3SP) servers ([online](docs/online.md)).
+
+## Building
+
+Tested on arm64 Linux. You need:
+
+- Python 3, CMake 3.25+, Ninja, Git and Docker;
+- **clang-21** with lld-21 and llvm-21 (`clang-21`, `clang++-21`,
+  `llvm-ar-21` on `PATH`; the Vita build compiles with them as well, not with
+  VitaSDK's gcc);
+- the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) for the
+  translator, in `tools/dotnet/` or named by `DOTNET_BIN`;
+- [nodtool](https://github.com/encounter/nod/releases) to extract the disc
+  for the translator;
+- for the Vita: [VitaSDK](https://vitasdk.org) (`VITASDK`, default
+  `/usr/local/vitasdk`) and **a copy of Sony's `psp2cgc.exe`** shader
+  compiler from the official PS Vita SDK's host tools, which cannot be
+  distributed here. Export its absolute path:
+
+  ```sh
+  export PSP2CGC=/absolute/path/to/psp2cgc.exe
+  ```
+
+  The build runs psp2cgc under Wine in Docker; the image is built from
+  [docker/psp2cgc-wine.Dockerfile](docker/psp2cgc-wine.Dockerfile) on first
+  use (on an arm64 host through qemu-user binfmt for i386). Every shader is
+  compiled once at build time into the executable.
+
+### 1. Translate the game
 
 ```sh
 tools/nodtool extract -q 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' Assets/DATA
 tools/dotnet/dotnet build -c Release toolchain/translator/src/Translator.Cli
-scripts/translate.sh            # about 3.5 min; regenerates generated/
+scripts/translate.sh            # writes generated/ (a few minutes)
 ```
 
-Rebuild the translator after changes under `toolchain/`. Retranslate after
-adding or removing a native registration (`REGISTER_NATIVE_FUNCTION_AS`) or
-editing `symbols.txt`, `recomp.yml` or `runtime/src/tick_sites.inc`; editing
-the body of an existing native port only needs a rebuild.
+`generated/` and `Assets/` are not part of the repository. Translate again
+after changing `symbols.txt`, `recomp.yml`, `runtime/src/tick_sites.inc` or
+adding or removing a native function registration (`REGISTER_NATIVE_FUNCTION_AS`).
 
-### 2. Build the executable
+### 2. Build
 
-arm64 (development host):
+PS Vita (`build/vita/mh3-vita.vpk`):
+
+```sh
+scripts/build-vita.sh                        # release: ThinLTO and the PGO profile
+MH3_DEVELOPMENT=ON scripts/build-vita.sh     # development: statistics and debug tools
+```
+
+Release builds use the checked-in profile `pgo/mh3-release.profdata.tar.zst`
+([PGO and ThinLTO](docs/optimizations/cpu/pgo-and-thinlto.md)).
+
+Linux, arm64 (development host):
 
 ```sh
 MH3_ARCH=arm64 MH3_BUILD_DIR=build/linux-arm64-dev MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON \
   scripts/build-aurora.sh
-cmake --build build/linux-arm64-dev --target MH3     # later rebuilds
 ```
 
-arm32 (armhf, Cortex-A9 code generation, `build/linux-arm32/MH3`),
-cross-compiled in the `mh3-armhf-cross` image, which `docker-build.sh`
-builds on first use:
+Linux, arm32 (armhf, Cortex-A9 code; for a Raspberry Pi or another ARMv7+
+board), cross-compiled in a Docker image built from
+[docker/armhf-cross.Dockerfile](docker/armhf-cross.Dockerfile) on first use:
 
 ```sh
-MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=ON -DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' \
-  scripts/docker-build.sh scripts/build-aurora.sh
-scripts/docker-build.sh cmake --build build/linux-arm32 --target MH3   # later rebuilds
+MH3_EXTRA_CMAKE_ARGS='-DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' scripts/docker-build.sh scripts/build-aurora.sh
 ```
 
-The image carries OpenSSL for online play's TLS. An image built before it
-did needs `docker build -t mh3-armhf-cross -f docker/armhf-cross.Dockerfile
-docker`, and a build directory configured without it
-`scripts/docker-build.sh cmake -U 'OPENSSL*' build/linux-arm32` (a full
-rebuild): without OpenSSL the game's TLS sessions fail, and the community
-server with them (error 11612).
+Like the Vita's, Linux builds are release builds unless `-DMH3_DEVELOPMENT=ON`
+is added.
 
-Vita: `BUILD_JOBS=$(nproc) scripts/build-vita.sh` (VitaSDK, clang-21 and the
-patched `vita-elf-create`; [Vita platform](docs/vita-platform.md)).
+Web: `scripts/build-web.sh`, then `scripts/serve-web.py build/web`
+([web build](docs/web-build.md)).
 
-Web: `scripts/build-web.sh`, then `scripts/serve-web.py build/web` (Emscripten
-SDK, glslangValidator, naga; [web build](docs/web-build.md)).
-
-The container mounts the checkout at the same absolute path because the
-translated data blobs use absolute `.incbin` paths; configure and build arm32
-only inside it. `MH3_DEVELOPMENT` adds statistics, captures, scripted input
-and port checks; leave it OFF for a plain (release) build, which is compiled
-and linked with ThinLTO and needs lld (without `MH3_BUILD_DIR` the
-build goes to `build/linux-<arch>`). Assertions follow Release/NDEBUG
-independently. Configure and build logs go to `logs/aurora-*.log`.
-
-Disc images decode with the native decoder in every build
-([docs/rom-decoder.md](docs/rom-decoder.md)).
-`MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
-packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
-`../Vita3K/external/stb` or `STB_INCLUDE_DIR`).
-
-## Run
-
-Pass the disc image once. The game reads it in place: the first launch only
-writes the disc metadata (about 7 MB) to `disc/` next to the executable and
-records where the image is, which takes well under a second. Textures and
-models are converted while the game loads them, on worker threads, and kept
-in `disc/cache/`, so each one is converted only once. Every launch checks that
-the image is still there and unchanged; pass `--rom` again after moving it:
+## Running on Linux
 
 ```sh
-MH3 --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --village
-MH3 --village                 # File 1, character 1, straight into the village
-MH3 --list quests             # also online-quests, arena-quests
-MH3 --quest 19001 --area 1 --no-damage    # Alatreon, the benchmark quest
-MH3 --launcher                # development builds: the Vita launcher's menus
+MH3 --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --village   # first start
+MH3 --village                   # file 1, character 1, straight into the village
+MH3 --list quests               # also online-quests, arena-quests
+MH3 --quest 19001 --area 1      # a quest, here Alatreon
+MH3 --launcher                  # development builds: the Vita launcher's menus
 ```
 
-`--quest <id>|free [--area <n>] [--spawn x,y,z|exit:<n>] [--no-damage]` starts a
-quest directly, in the area numbered n on the in-game map (`camp` or 0: the
-base camp; `--area-index <n>` takes the game's own area order instead);
-`--spawn exit:<n>` puts the hunter into the start area's exit to area n, so
-the game changes area as it does in play.
-`--cheat <name>[=<value>]` (repeatable, with any option) turns on a code of
-the launcher's cheat list, for example `--cheat "Infinite health"` or
-`--cheat "Bully:Super speed=L+R+Up"` ([cheats](docs/vita-launcher.md#custom-quests-and-cheats)).
-`MH3_DISC_DIR` points at another prepared data directory instead.
-Saves default to `saves/` (`MH3_USER_DIR` changes the root); development
-builds print game speed and fps once a second (`MH3_STATS=0` turns that off).
-On a VM without a working GPU driver use `DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1`
-(llvmpipe; virgl draws the geometry wrong).
-
-On the Vita, put the disc image in `ux0:/data/mh3-wii/`; the launcher writes
-the same metadata and cache to `ux0:/data/mh3-wii/disc/`
-([details](docs/vita-launcher.md#load-time-texture-and-model-conversion)).
-
-For development runs, `scripts/dev/run-heartbeat.sh` launches with an isolated
-copy of the post-Chief save fixture, dumps a frame every 150 game frames and
-prints a heartbeat every minute:
-
-```sh
-MH3_BIN=build/linux-arm64-dev/MH3 MH3_ARGS="--quest 19001 --area 1 --no-damage" \
-  scripts/dev/run-heartbeat.sh alat 150
-```
-
-On the Raspberry Pi 5 (64-bit Raspberry Pi OS with armhf multiarch), copy
-`build/linux-arm32/MH3` over and run it the same way, with `--rom` on the
-first launch. `scripts/pi/benchmark.py` measures a quest with isolated saves
-and scripted movement ([HANDOVER](HANDOVER.md#run)).
-
-Keyboard: Space = A, Left Shift = B, WASD = left stick, IJKL = right stick,
-arrows = D-pad, Enter = Plus ([controls](docs/vita-controls.md)). Unported or
-unsupported rendering paths fail explicitly rather than falling back.
-
-[HANDOVER.md](HANDOVER.md) covers the current state, open work, debugging
-tools, tests and conventions; the `docs/` notes are listed in
-[docs/README.md](docs/README.md).
-
-## Verified facts
-
-- DOL SHA-256 `db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162`.
-- Entry point `0x80006310`, r13 `0x8079B2E0`, r2 `0x8079FF60`.
-- Over 20,000 translated functions in the DOL, plus the 15 RSO overlay
-  profiles (village, quest, enemy and map00–map11 fields). The translator
-  reports no unsupported instructions.
+The image is read in place; pass `--rom` again after moving it. Saves go to
+`saves/` (`MH3_USER_DIR`). Keyboard: Space = A, Left Shift = B, WASD = left
+stick, IJKL = right stick, arrows = D-pad, Enter = Plus; SDL gamepads work too.
+Runtime options: [flags](docs/flags.md); debugging and profiling:
+[docs](docs/README.md).
 
 ## License
 
-The port uses WiiCompiled's PowerPC-to-C++ translator and ISA/dispatch support.
-The derived source is under GPLv3; see `LICENSE`, `toolchain/ORIGIN.md` and
-`toolchain/THIRD-PARTY-NOTICES.md`. Aurora is MIT (`aurora-main/LICENSE`).
+The translator and the code derived from WiiCompiled are GPLv3 (`LICENSE`,
+`toolchain/ORIGIN.md`, `toolchain/THIRD-PARTY-NOTICES.md`). Aurora is MIT
+(`aurora-main/LICENSE`).

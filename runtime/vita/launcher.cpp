@@ -82,7 +82,7 @@ void Wait(unsigned microseconds) {
     std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
 }
 #endif
-// Development log lines (the TTY); the devkit harness reads them.
+// Development log lines (the TTY).
 [[gnu::format(printf, 1, 2)]] void Log([[maybe_unused]] const char* format, ...) {
 #ifdef MH3_DEVELOPMENT
     va_list arguments;
@@ -94,7 +94,7 @@ void Wait(unsigned microseconds) {
 #endif
 }
 #ifdef MH3_DEVELOPMENT
-// MH3_LAUNCHER_INPUT=file: scripted launcher input for devkit tests. Each line
+// MH3_LAUNCHER_INPUT=file: scripted launcher input for tests. Each line
 // "FRAME BUTTONS" holds BUTTONS from launcher input frame FRAME on: names
 // joined by '+' (up down left right cross circle triangle square start select
 // l r), "none", or SCE_CTRL bits as a number. Frames count the menu's input
@@ -209,7 +209,7 @@ void Rect(std::vector<Rectangle>& list, float x, float y, float w, float h, uint
 uint32_t LiveButtons() {
 #ifdef __vita__
     // Port 1 first, then the handheld's port 0, as the game's input reads them
-    // (SDL's Vita driver): a PS TV controller, or the devkit harness's CTRLP pad.
+    // (SDL's Vita driver): a PS TV controller.
     SceCtrlData sample{};
 
     if (sceCtrlPeekBufferPositive2(1, &sample, 1) < 0 && sceCtrlPeekBufferPositive2(0, &sample, 1) < 0)
@@ -529,11 +529,23 @@ void Draw(Font& font, const std::string& title, const std::vector<std::string>& 
 // in base/disc. A development install of a prepared disc directly in base is used as is.
 Status EnsureDisc(Font& font, const std::filesystem::path& base) {
     auto output = base;
-
-    if (!DiscReady(output))
-        output = base / "disc";
-
     std::filesystem::path iso;
+
+    // The check reads the image's file table (one validation of the
+    // metadata against the image); steps report no fraction, so the screen
+    // shows the step, with dots while it runs.
+    unsigned frames = 0;
+    const auto screen = [&](const std::string& label) {
+        auto& rects = shown;
+        Frame(rects);
+        Rect(rects, 42, 46, 876, 48, ink);
+        font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  Preparing your game", gold, 840);
+        font.Text(rects, 150, 203, iso.filename().string(), ink, 660);
+        font.Text(rects, 150, 243, label + std::string(frames++ / 20 % 4, '.'), ink, 660);
+        font.Text(rects, 45, 513, "Keep the application open", light, 890);
+        PresentScreen(&rects);
+    };
+
     std::error_code listing;
     std::filesystem::directory_iterator entries(base, listing);
 
@@ -559,21 +571,28 @@ Status EnsureDisc(Font& font, const std::filesystem::path& base) {
     if (listing)
         return Status::Error("filesystem error: directory iterator cannot advance: " + listing.message());
 
-    if (!DiscReady(output) || (!iso.empty() && output != base)) {
+    if (!DiscReady(output))
+        output = base / "disc";
+
+    if (output != base) {
+        screen("Checking game data");
+        Pump();
+    }
+
+    // A development install prepared in base is used as is; disc/ when it
+    // was prepared from this image.
+    if (output != base && (!DiscReady(output) || (!iso.empty() && !DiscPreparedFrom(output, iso)))) {
         if (iso.empty())
             return Status::Error("Game data is missing. Copy your European Monster Hunter Tri (RMHP08) disc image (ISO, RVZ or WIA) to " + base.string() +
                                  ", then start Monster Hunter Tri again.");
         std::mutex mutex;
         std::string status = "Checking game data", error;
-        uint64_t done = 0, total = 1;
         std::atomic<bool> finished = false;
         std::jthread worker([&] {
             aurora::pin_current_thread(aurora::ThreadRole::Worker);
-            const Progress progress = [&](const std::string& s, uint64_t d, uint64_t t) {
+            const Progress progress = [&](const std::string& s, uint64_t, uint64_t) {
                 std::lock_guard guard(mutex);
                 status = s;
-                done = d;
-                total = std::max<uint64_t>(t, 1);
             };
 
             const Status processed = ProcessDisc(iso, output, progress);
@@ -588,26 +607,12 @@ Status EnsureDisc(Font& font, const std::filesystem::path& base) {
 
         while (!finished.load(std::memory_order_acquire)) {
             std::string label;
-            uint64_t completed, maximum;
             {
                 std::lock_guard guard(mutex);
                 label = status;
-                completed = done;
-                maximum = total;
             }
 
-            const unsigned percent = std::min<uint64_t>(100, completed * 100 / maximum);
-            auto& rects = shown;
-            Frame(rects);
-            Rect(rects, 42, 46, 876, 48, ink);
-            font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  Preparing your game", gold, 840);
-            font.Text(rects, 150, 203, iso.filename().string(), ink, 660);
-            font.Text(rects, 150, 243, label, ink, 660);
-            Rect(rects, 150, 288, 660, 25, ink);
-            Rect(rects, 153, 291, 654 * percent / 100.f, 19, gold);
-            font.Text(rects, 150, 327, std::to_string(percent) + "%", ink, 660);
-            font.Text(rects, 45, 513, "Keep the application open", light, 890);
-            PresentScreen(&rects);
+            screen(label);
             Pump();
             Wait(12000);
         }
@@ -1049,7 +1054,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 "A third large monster at the same time (after a second), or none.",
                 "Capture needs monsters the game lets you capture, on a field map.",
                 "The monsters' strength and rewards come from the game's quests of this rank, nearest the stars.",
-                "Every monster's size, 50% to 200% (the game's quests: about 90% to 120%; event quests go further).",
+                "Every monster's size, 50-200% (the game's quests: about 90-120%; event quests go further).",
                 "1 to 50 minutes.",
                 "The quest's stars; at a rank they also pick the monsters' strength.",
                 edit.storageKey.empty() ? "Saves a new custom quest." : "Saves the changes to this custom quest."};
