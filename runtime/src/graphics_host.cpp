@@ -22,11 +22,12 @@ namespace {
 bool initialized = false;
 bool frameActive = false;
 GuestGxStream guestStream;
-uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0;
+uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0, guestDraws = 0, guestTextureCopies = 0;
 void ShutdownGraphics() {
     if (initialized) {
-        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies\n",
-            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies));
+        if (guestCommands) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
+            static_cast<unsigned long long>(guestCommands), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
+            static_cast<unsigned long long>(guestDraws), static_cast<unsigned long long>(guestTextureCopies));
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
@@ -51,6 +52,10 @@ void InitializeGraphics(int argc, char** argv) {
     std::atexit(ShutdownGraphics);
     if (info.backend != BACKEND_METAL) throw std::runtime_error("Aurora did not select Metal");
     aurora::gx::fifo::init();
+    if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
+        const char* frame = std::getenv("MH3_CAPTURE_FRAME");
+        aurora_request_frame_capture(frame ? std::stoul(frame) : 30, path);
+    }
 }
 }
 
@@ -67,6 +72,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         const auto consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
         if (consumed != packet.size()) throw std::runtime_error("Aurora did not consume the complete GX command");
         ++guestCommands;
+        if (packet[0] >= 0x80 && packet[0] <= 0xBF) ++guestDraws;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] >= 0x10 && packet[2] <= 0x1F) ++guestArrays;
         if (packet[0] == 0x50 && packet[1] == 0 && packet[2] == 0x30) ++guestTextures;
     }, [](uint32_t address) -> GuestGxStream::ArrayView {
@@ -80,6 +86,16 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         GXSetDispCopyDst(copy.width, copy.height);
         GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
         ++guestCopies;
+    }, [](const GuestGxStream::TextureCopy& copy) {
+        GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
+        GXSetTexCopyDst(copy.width, copy.height, static_cast<GXTexFmt>(copy.format), copy.halfScale ? GX_TRUE : GX_FALSE);
+        auto* destination = reinterpret_cast<void*>(copy.destination);
+        GXCopyTex(destination, copy.clear ? GX_TRUE : GX_FALSE);
+        // Eager readback keeps all translated RAM reads coherent, including
+        // inlined accesses. A later demand-paged bridge may defer this wait.
+        if (!aurora_flush_efb_copy_to_ram(destination))
+            throw std::runtime_error("GX texture-copy readback failed");
+        ++guestTextureCopies;
     });
 }
 
@@ -102,7 +118,9 @@ void CompleteHostGraphics() {
     const auto wait = aurora::webgpu::g_instance.WaitAny(future, 10000000000ULL);
     if (wait != wgpu::WaitStatus::Success || *result != wgpu::QueueWorkDoneStatus::Success)
         throw std::runtime_error("GXDrawDone failed while waiting for Metal completion");
-    std::fprintf(stderr, "MH3 GX draw completion: Metal work finished\n");
+    static unsigned completions = 0;
+    if (++completions <= 3 || completions % 300 == 0)
+        std::fprintf(stderr, "MH3 GX draw completion %u: Metal work finished\n", completions);
 }
 
 int RunGraphicsCheck(int argc, char** argv) {

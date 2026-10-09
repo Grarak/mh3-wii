@@ -15,12 +15,21 @@ public:
     using ArrayResolver = std::function<ArrayView(uint32_t)>;
     struct DisplayCopy { uintptr_t destination; uint32_t width, height; bool clear; };
     using CopySink = std::function<void(const DisplayCopy&)>;
-    void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {}, const CopySink& copy = {});
+    struct TextureCopy {
+        uintptr_t destination;
+        uint32_t x, y, sourceWidth, sourceHeight, width, height, format;
+        bool halfScale, clear;
+    };
+    using TextureCopySink = std::function<void(const TextureCopy&)>;
+    void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {},
+               const CopySink& copy = {}, const TextureCopySink& textureCopy = {});
     size_t PendingBytes() const { return pending.size(); }
 private:
     std::vector<uint8_t> pending;
     std::array<uint32_t, 256> bp{};
+    std::array<uint32_t, 256> cp{};
     std::array<bool, 8> textureBound{};
     uint32_t bpMask = 0xFFFFFF, textureRevision = 0;
     std::array<uint8_t, 37> TexturePacket(unsigned slot, const ArrayResolver& resolver);
+    size_t VertexSize(unsigned format) const;
 };

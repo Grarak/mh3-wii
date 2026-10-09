@@ -197,6 +197,50 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     });
     const std::vector<uint8_t> expected{0x50, 0, 0x13, 1, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0, 0, 0x12, 0x34, 0};
     if (delivered != expected) throw std::runtime_error("GX host array command encoding failed");
+    auto vertexCase = [&](uint32_t lo, uint32_t hi, uint32_t a, uint32_t b, uint32_t c,
+                          size_t stride, uint16_t count, uint8_t opcode) {
+        GuestGxStream vertices;
+        unsigned draws = 0, nops = 0;
+        std::vector<uint8_t> packet(3 + count * stride, 0x61);
+        packet[0] = opcode; packet[1] = count >> 8; packet[2] = count;
+        auto receive = [&](std::span<const uint8_t> command) {
+            if (command[0] >= 0x80) {
+                if (!std::equal(command.begin(), command.end(), packet.begin(), packet.end()))
+                    throw std::runtime_error("GX vertex packet size/data changed");
+                ++draws;
+            } else if (!command[0]) ++nops;
+        };
+        auto setCp = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{8, reg, uint8_t(value >> 24), uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            for (auto byte : command) vertices.Write(std::span(&byte, 1), receive);
+        };
+        const auto fmt = opcode & 7;
+        setCp(0x50, lo); setCp(0x60, hi);
+        setCp(0x70 + fmt, a); setCp(0x80 + fmt, b); setCp(0x90 + fmt, c);
+        vertices.Write(std::span(packet).first(2), receive);
+        vertices.Write(std::span(packet).subspan(2, packet.size() - 3), receive);
+        if (draws || vertices.PendingBytes() != packet.size() - 1)
+            throw std::runtime_error("GX emitted an incomplete vertex packet");
+        const uint8_t tail[]{packet.back(), 0};
+        vertices.Write(tail, receive);
+        if (draws != 1 || nops != 1 || vertices.PendingBytes())
+            throw std::runtime_error("GX vertex packet framing lost the next command");
+    };
+    for (unsigned opcode = 0x80; opcode <= 0xBF; ++opcode)
+        vertexCase(0x101 | (1 << 9) | (1 << 13), 1,
+                   9 | (5 << 14) | (5 << 21), 0, 0, 22, 4, opcode);
+    // Nine matrix bytes, index8 position/color, three index16 normals,
+    // and eight index16 texture coordinates.
+    vertexCase(0x1FF | (2 << 9) | (3 << 11) | (2 << 13), 0xFFFF,
+               0x80000200, 0, 0, 33, 3, 0x97);
+    // Mixed direct formats crossing all three VAT words, including TEX4's split field.
+    vertexCase(0x1FF | (1 << 9) | (1 << 11) | (1 << 13) | (1 << 15), 0x5555,
+               (3 << 1) | (1 << 10) | (1 << 14) | (2 << 18) | (8 << 21),
+               1 | (4 << 9) | (9 << 18) | (5u << 27),
+               (0 << 5) | (9 << 14) | (4 << 23), 54, 3, 0xA3);
+    // More than 1 MiB, and the full 16-bit vertex count, with direct XYZ+NBT floats.
+    vertexCase((1 << 9) | (1 << 11), 0, 9 | (1 << 9) | (4 << 10), 0, 0, 48, 65535, 0x90);
+    vertexCase(0, 0, 0, 0, 0, 0, 0, 0xBF);
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
         GuestGxStream textureStream;
         std::vector<uint8_t> metadata;
@@ -271,6 +315,50 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     copyCase(640 * 2, 0, 0x4800, true, 1);
     copyCase(640 * 528 * 2, 0, 0x4C00, false);
     copyCase(640 * 528 * 2, 256, 0x0800, false);
+    auto textureCopyCase = [&](unsigned format, uint32_t strideBytes, uint32_t room,
+                               bool half, bool shouldPass, bool depth = false) {
+        GuestGxStream copies;
+        unsigned copied = 0;
+        auto sink = [](auto) {};
+        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address != 0x200000) throw std::runtime_error("Texture-copy address was not decoded");
+            return {0x12345678, room};
+        };
+        auto copyTexture = [&](const GuestGxStream::TextureCopy& copy) {
+            if (copy.destination != 0x12345678 || copy.x != 4 || copy.y != 8 ||
+                copy.sourceWidth != 10 || copy.sourceHeight != 9 ||
+                copy.width != (half ? 5 : 10) || copy.height != (half ? 4 : 9) ||
+                copy.format != format || copy.halfScale != half || !copy.clear)
+                throw std::runtime_error("Texture-copy metadata incorrect");
+            ++copied;
+        };
+        auto bpWrite = [&](uint8_t reg, uint32_t value) {
+            const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
+            copies.Write(command, sink, resolve, {}, copyTexture);
+        };
+        bool passed = true;
+        try {
+            bpWrite(0x43, depth ? 3 : 0);
+            bpWrite(0x49, (8 << 10) | 4);
+            bpWrite(0x4A, (8 << 10) | 9);
+            bpWrite(0x4B, 0x200000 >> 5);
+            bpWrite(0x4D, strideBytes / 32);
+            bpWrite(0x52, 0x10800 | (format <= 3 ? 0x8000 : 0) |
+                          ((format * 2) << 3) | (half ? 0x200 : 0));
+        } catch (const std::runtime_error&) { passed = false; }
+        if (passed != shouldPass || copied != unsigned(shouldPass))
+            throw std::runtime_error("Texture-copy bounds/format/dispatch failed");
+    };
+    const unsigned copyRows[]{64, 64, 64, 96, 96, 96, 192};
+    const unsigned copyBytes[]{128, 192, 192, 288, 288, 288, 576};
+    for (unsigned fmt = 0; fmt < 7; ++fmt) {
+        textureCopyCase(fmt, copyRows[fmt], copyBytes[fmt], false, true);
+        textureCopyCase(fmt, copyRows[fmt], copyBytes[fmt] - 1, false, false);
+        textureCopyCase(fmt, copyRows[fmt] + 32, 4096, false, false);
+    }
+    textureCopyCase(6, 128, 128, true, true);
+    textureCopyCase(6, 128, 127, true, false);
+    textureCopyCase(6, 192, 576, false, false, true);
     MH3_OSGetResetCode(cpu);
     if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
     Memory::Write32(0x8074F740, 1);

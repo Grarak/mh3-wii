@@ -10,8 +10,9 @@ prolog and constructors. It passes locked-cache and GameCube controller
 initialization and the original WPAD channel setup. AI/AX and DMA
 setup now complete, followed by a scaled display copy and a second Metal GPU
 completion wait. Host-timed sleeps service the original alarm queue, retraces,
-disc completions, and audio DMA. Boot now reaches its first GX primitive packet,
-which still requires vertex decoding. Native PCM mixing, DMA timing, and host
+disc completions, and audio DMA. Boot now renders the Nintendo wrist-strap screen through native Metal, verified
+with a frame capture. It completes 649 display copies before stopping at an
+unimplemented direct IOS IPC request. Native PCM mixing, DMA timing, and host
 channel conversion pass tests; real boot opens SDL audio and executes DMA and
 AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.

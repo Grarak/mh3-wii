@@ -3,6 +3,37 @@
 #include <array>
 #include <string>
 #include <algorithm>
+#include <bit>
+
+size_t GuestGxStream::VertexSize(unsigned format) const {
+    const auto lo = cp[0x50], hi = cp[0x60];
+    const auto a = cp[0x70 + format], b = cp[0x80 + format], c = cp[0x90 + format];
+    size_t size = std::popcount(lo & 0x1FF); // one byte per enabled matrix index
+    auto numeric = [&](unsigned descriptor, unsigned type, unsigned components, unsigned indices = 1) {
+        if (!descriptor) return;
+        if (descriptor >= 2) { size += (descriptor - 1) * indices; return; }
+        constexpr unsigned bytes[]{1, 1, 2, 2, 4};
+        if (type >= std::size(bytes)) throw std::runtime_error("Invalid GX vertex component type");
+        size += bytes[type] * components;
+    };
+    numeric((lo >> 9) & 3, (a >> 1) & 7, 2 + (a & 1));
+    const bool nbt3 = (a >> 31) != 0;
+    numeric((lo >> 11) & 3, (a >> 10) & 7, ((a & 0x200) || nbt3) ? 9 : 3, nbt3 ? 3 : 1);
+    for (unsigned i = 0; i < 2; ++i) {
+        const unsigned descriptor = (lo >> (13 + 2 * i)) & 3;
+        if (descriptor >= 2) size += descriptor - 1;
+        else if (descriptor == 1) {
+            constexpr unsigned bytes[]{2, 3, 4, 2, 3, 4};
+            const unsigned type = (a >> (14 + 4 * i)) & 7;
+            if (type >= std::size(bytes)) throw std::runtime_error("Invalid GX vertex color type");
+            size += bytes[type];
+        }
+    }
+    const uint32_t texFields[]{a >> 21, b, b >> 9, b >> 18, b >> 27, c >> 5, c >> 14, c >> 23};
+    for (unsigned i = 0; i < 8; ++i)
+        numeric((hi >> (2 * i)) & 3, (texFields[i] >> 1) & 7, 1 + (texFields[i] & 1));
+    return size;
+}
 
 std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayResolver& resolver) {
     if (!resolver) throw std::runtime_error("Guest GX texture requires host pointer conversion");
@@ -43,9 +74,12 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     return out;
 }
 
-void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver, const CopySink& copy) {
-    if (bytes.size() > 1024 * 1024 || pending.size() + bytes.size() > 1024 * 1024)
-        throw std::runtime_error("Guest GX command buffer exceeds 1 MiB");
+void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver,
+                          const CopySink& copy, const TextureCopySink& textureCopy) {
+    // A 65535-vertex direct packet can exceed 8 MiB with all attributes.
+    constexpr size_t limit = 16 * 1024 * 1024;
+    if (bytes.size() > limit || pending.size() + bytes.size() > limit)
+        throw std::runtime_error("Guest GX command buffer exceeds 16 MiB");
     pending.insert(pending.end(), bytes.begin(), bytes.end());
     size_t offset = 0;
     while (offset < pending.size()) {
@@ -61,9 +95,17 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             length = 5 + 4 * (1 + ((size_t(p[1]) << 8) | p[2]));
             break;
         default:
+            if (p[0] >= 0x80 && p[0] <= 0xBF) {
+                if (available < 3) goto incomplete;
+                const auto vertices = (size_t(p[1]) << 8) | p[2];
+                length = 3 + vertices * VertexSize(p[0] & 7);
+                break;
+            }
             throw std::runtime_error("Guest GX opcode requires a bridge: " + std::to_string(p[0]));
         }
         if (available < length) break;
+        if (p[0] == 0x08)
+            cp[p[1]] = (uint32_t(p[2]) << 24) | (uint32_t(p[3]) << 16) | (uint32_t(p[4]) << 8) | p[5];
         if (p[0] == 0x08 && p[1] >= 0xA0 && p[1] <= 0xAF) {
             if (!resolver) throw std::runtime_error("Guest GX vertex-array address requires host pointer conversion");
             const uint32_t guest = (uint32_t(p[2]) << 24) | (uint32_t(p[3]) << 16) | (uint32_t(p[4]) << 8) | p[5];
@@ -104,7 +146,33 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             }
             if (reg == 0x52) {
                 const uint32_t trigger = bp[reg];
-                if (!(trigger & 0x4000)) throw std::runtime_error("GX texture copy requires a RAM/cache bridge");
+                if (!(trigger & 0x4000)) {
+                    if (!textureCopy || !resolver) throw std::runtime_error("GX texture copy requires a RAM/cache bridge");
+                    const uint32_t encodedFormat = (trigger >> 3) & 15;
+                    const uint32_t format = (encodedFormat >> 1) | ((encodedFormat & 1) << 3);
+                    if ((bp[0x43] & 7) == 3 || !(trigger & 0x10000) || format > 6 ||
+                        ((format <= 3) != bool(trigger & 0x8000)))
+                        throw std::runtime_error("GX texture copy requires depth/channel format conversion");
+                    const uint32_t sourceWidth = (bp[0x4A] & 1023) + 1;
+                    const uint32_t sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1;
+                    const bool halfScale = (trigger & 0x200) != 0;
+                    const uint32_t width = std::max(1u, sourceWidth >> unsigned(halfScale));
+                    const uint32_t height = std::max(1u, sourceHeight >> unsigned(halfScale));
+                    const uint32_t tileWidth = format <= 2 ? 8 : 4;
+                    const uint32_t tileHeight = format == 0 ? 8 : 4;
+                    const uint32_t tileBytes = format == 6 ? 64 : 32;
+                    const uint32_t rowBytes = ((width + tileWidth - 1) / tileWidth) * tileBytes;
+                    if ((bp[0x4D] & 1023) * 32 != rowBytes)
+                        throw std::runtime_error("GX texture copy requires strided RAM output");
+                    const auto view = resolver(bp[0x4B] << 5);
+                    if (uint64_t(rowBytes) * ((height + tileHeight - 1) / tileHeight) > view.size)
+                        throw std::runtime_error("GX texture copy exceeds guest RAM");
+                    sink(std::span<const uint8_t>(p, length));
+                    textureCopy({view.address, bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
+                                 sourceWidth, sourceHeight, width, height, format, halfScale, (trigger & 0x800) != 0});
+                    offset += length;
+                    continue;
+                }
                 if (!copy || !resolver) throw std::runtime_error("GX display copy requires a host surface bridge");
                 const uint32_t width = (bp[0x4D] & 1023) * 16;
                 const uint32_t sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1;
