@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 
 namespace {
@@ -17,6 +18,24 @@ struct VertexBindings {
     uint64_t generation = 0;
 };
 constinit VertexBindings vertexBindings{};
+// Sources bound in place (BindNativeVertexSourcesInPlace): for the semantics
+// in `known` the bindings are these, not vertexBindings', until a reader, a
+// store, a retirement or the owner's release copies them over.
+struct InPlace {
+    const mh3_native_vertex_source* sources = nullptr;
+    uint16_t known = 0;
+};
+constinit InPlace inPlace{};
+void StoreBinding(uint32_t semantic, const mh3_native_vertex_source& source);
+void Materialize() {
+    if (!inPlace.known)
+        return;
+    const InPlace pending = inPlace;
+    inPlace = {};
+    for (uint32_t i = 0; i < 12; i++)
+        if (pending.known & (1u << i))
+            StoreBinding(i, pending.sources[i]);
+}
 struct Revision {
     uint64_t value;
     uint32_t bytes;
@@ -36,6 +55,7 @@ bool Intersects(uint32_t a, uint32_t n, uint32_t b, uint32_t m) {
     return n && m && uint64_t(a) + n > b && uint64_t(b) + m > a;
 }
 void Retire(uint32_t address, uint32_t bytes) {
+    Materialize();
     auto& state = vertexBindings;
     for (uint32_t i = 0; i < 12; i++)
         if (state.known[i]) {
@@ -64,6 +84,7 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
         throw std::runtime_error("Invalid native vertex producer generation");
     Observe();
+    Materialize();
     payload = Canonical(payload);
     auto& generations = Generations();
     if (generations.contains(payload) && generation < generations.at(payload).value)
@@ -94,7 +115,8 @@ mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_ver
     }
     return source;
 }
-void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& source) {
+namespace {
+void StoreBinding(uint32_t semantic, const mh3_native_vertex_source& source) {
     auto& state = vertexBindings;
     if (semantic >= 12 || !source.payload_address || state.generation == UINT64_MAX)
         throw std::runtime_error("Invalid native vertex source binding");
@@ -114,7 +136,38 @@ void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& 
         generation->second.bytes = source.payload_bytes;
     }
 }
+} // namespace
+void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& source) {
+    Materialize();
+    StoreBinding(semantic, source);
+}
+void BindNativeVertexSourcesInPlace(const mh3_native_vertex_source* sources, uint16_t known) {
+    if (!sources || !known || known >> 12)
+        throw std::runtime_error("Invalid native vertex source binding");
+    // Semantics the previous in-place set binds and this one does not keep
+    // their binding: copy those over.
+    if (const uint16_t kept = inPlace.known & ~known) {
+        const auto* previous = inPlace.sources;
+        inPlace = {};
+        for (uint32_t i = 0; i < 12; i++)
+            if (kept & (1u << i))
+                StoreBinding(i, previous[i]);
+    }
+    inPlace = {sources, known};
+}
+bool NativeVertexSourcesBoundInPlace(const mh3_native_vertex_source* sources) {
+    return inPlace.known && inPlace.sources == sources;
+}
+void ReleaseNativeVertexSources(const void* begin, const void* end) {
+    const auto* at = static_cast<const void*>(inPlace.sources);
+    if (inPlace.known && std::less_equal<const void*>()(begin, at) && std::less<const void*>()(at, end))
+        Materialize();
+}
+bool NativeVertexSourcesUnproduced() {
+    return Generations().empty();
+}
 const mh3_native_vertex_source* PeekNativeVertexSource(uint32_t semantic) {
+    Materialize();
     if (semantic >= 12 || !vertexBindings.known[semantic])
         return nullptr;
     return &vertexBindings.bindings[semantic];
@@ -122,6 +175,7 @@ const mh3_native_vertex_source* PeekNativeVertexSource(uint32_t semantic) {
 bool ReadNativeVertexSource(uint32_t semantic, mh3_native_vertex_source* out) {
     if (semantic >= 12 || !out)
         return false;
+    Materialize();
     const auto& state = vertexBindings;
     if (!state.known[semantic])
         return false;

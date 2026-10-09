@@ -32,6 +32,9 @@ class AssetCache {
     // The converted model pack of the source file containing partition offset
     // `at`; `key` identifies that file. Empty when the file has no usable models.
     std::filesystem::path ModelPack(uint64_t at, uint32_t& key);
+    // The extent of the indexed source file containing partition offset `at`
+    // when it has models (converted yet or not). Never waits.
+    bool ModelFile(uint64_t at, uint64_t& offset, uint32_t& bytes);
 
   private:
     struct Impl;

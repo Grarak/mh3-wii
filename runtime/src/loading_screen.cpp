@@ -10,6 +10,7 @@
 #include "game_step.h"
 #include "memory.h"
 #include "port_check.h"
+#include "runtime/native/adapters/model_scope_bridge.h"
 
 #include <cstdint>
 
@@ -134,5 +135,8 @@ extern "C" void func_800D09E4(CpuContext* ctx);
 
 extern "C" void MH3_LoadingLetters(CpuContext* ctx) {
     PortCheck::Call(ctx, "LoadingLetters", func_800D09E4, LoadingLetters);
+    // The loading screen absorbs the area's first-sight work: resolve the
+    // draw tables of the models loaded so far.
+    PrepareNativeModelDrawTables();
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800D09E4, MH3_LoadingLetters, "LoadingLetters");

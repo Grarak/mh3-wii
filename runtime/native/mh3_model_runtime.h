@@ -45,6 +45,8 @@ mh3_res_status mh3_res_runtime_shape_parent(const mh3_res_memory *memory, uint32
 /* Attribute 0=position (required), 1=normal, 2/3=color, 4..11=UV,
  * 12=fur vector, 13=fur position. Optional -1 resources return null; other negatives fail. */
 mh3_res_status mh3_res_runtime_shape_array(const mh3_res_memory *memory, uint32_t reference, uint32_t attribute, uint32_t *result);
+/* The same for the shape at `shape` (its address instead of a reference to it). */
+mh3_res_status mh3_res_runtime_shape_array_at(const mh3_res_memory *memory, uint32_t shape, uint32_t attribute, uint32_t *result);
 mh3_res_status mh3_res_runtime_shape_color(const mh3_res_memory *memory, uint32_t reference, uint32_t channel, uint32_t *result);
 mh3_res_status mh3_res_runtime_shape_texcoord(const mh3_res_memory *memory, uint32_t reference, uint32_t channel, uint32_t *result);
 mh3_res_status mh3_res_runtime_shape_tag(const mh3_res_memory *memory, uint32_t reference, int primitive, int require_valid, uint32_t *result);

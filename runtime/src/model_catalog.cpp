@@ -7,6 +7,7 @@
 #include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
+#include "runtime/native/adapters/model_scope_bridge.h"
 #include <algorithm>
 #include <array>
 #include <memory>
@@ -40,7 +41,13 @@ struct Pack {
 struct CachedOwner {
     NativeModelOwner owner;
     mh3_source_owner certificate;
+    // The model's draw table: it lives exactly as long as this certificate.
+    std::shared_ptr<NativeModelDrawTable> table;
 };
+bool SameOwner(const NativeModelOwner& a, const NativeModelOwner& b) {
+    return a.pack == b.pack && a.catalog == b.catalog && a.catalog_model_index == b.catalog_model_index && a.container_address == b.container_address && a.model_address == b.model_address &&
+           a.resident_handle == b.resident_handle && a.resident_generation == b.resident_generation && a.source_generation == b.source_generation;
+}
 struct CachedResource {
     uint64_t epoch, generation;
     mh3_catalog_resource resource;
@@ -76,6 +83,8 @@ struct Catalog {
     std::vector<uint64_t> certificate_ends;
     bool certificates_dirty = true;
     uint64_t material_revision = 0;
+    // Tracker generation of the last CertifyLoadedNativeModels pass.
+    uint64_t discovered_generation = UINT64_MAX;
     NativeModelPreparationDiagnostics* diagnostics = nullptr;
     bool diagnostics_initialized = false;
 };
@@ -321,6 +330,8 @@ std::vector<CachedOwner> SnapshotOwnerCopy(uint32_t source, uint32_t destination
         copy.owner.container_address = copy.certificate.container_address;
         copy.owner.model_address = copy.certificate.model_address;
         copy.owner.source_generation = generation;
+        // Tables hold absolute addresses: the copy builds its own.
+        copy.table.reset();
         result.push_back(copy);
     }
     return result;
@@ -338,8 +349,21 @@ void InstallPack(const std::shared_ptr<const Pack>& pack, uint32_t diagnostic_fr
 // retire content provenance.
 void Certify(const std::vector<CachedOwner>& certified) {
     for (const auto& item : certified) {
-        C().owners.insert_or_assign(item.owner.model_address, item);
-        OwnerAdded(item);
+        auto [entry, inserted] = C().owners.try_emplace(item.owner.model_address, item);
+        if (inserted) {
+            OwnerAdded(item);
+            continue;
+        }
+        // Recertifying an unchanged owner keeps its draw table (and its
+        // container, so typed writes inside it stay validated).
+        const bool same = SameOwner(entry->second.owner, item.owner);
+        auto table = same ? std::move(entry->second.table) : nullptr;
+        entry->second = item;
+        entry->second.table = std::move(table);
+        if (same)
+            OwnersChanged();
+        else
+            OwnerAdded(item);
     }
 }
 void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
@@ -367,6 +391,7 @@ NativeModelPreparationDiagnostics* ActiveNativeModelPreparationDiagnostics() {
 }
 
 void ReportNativeModelPreparationDiagnostics() {
+    ReportNativeModelDrawTables();
     auto* d = ActiveNativeModelPreparationDiagnostics();
     if (!d)
         return;
@@ -741,6 +766,76 @@ mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, u
         throw std::runtime_error("Native model subresource identity differs from registered source");
     C().resources.insert_or_assign(key, CachedResource{C().source_epoch, owner.source_generation, r});
     return r;
+}
+std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_address) {
+    const auto cached = C().owners.find(Canonical(model_address, 16));
+    return cached != C().owners.end() ? cached->second.table : nullptr;
+}
+void AttachNativeModelDrawTable(const NativeModelOwner& owner, std::shared_ptr<NativeModelDrawTable> table) {
+    const auto cached = C().owners.find(owner.model_address);
+    if (cached == C().owners.end() || !SameOwner(cached->second.owner, owner))
+        throw std::runtime_error("Native model draw table has no certified owner");
+    cached->second.table = std::move(table);
+}
+size_t CertifyLoadedNativeModels() {
+    auto& c = Initialize();
+    // Nothing was loaded, copied or retired since the last pass.
+    if (c.tracker.generation == c.discovered_generation)
+        return 0;
+    c.discovered_generation = c.tracker.generation;
+    // The containers of complete model files: each range holding a file start.
+    struct Candidate {
+        uint32_t container;
+        uint64_t file;
+    };
+    std::vector<Candidate> candidates;
+    for (size_t i = 0; i < c.tracker.count; i++) {
+        const auto& range = c.tracker.ranges[i];
+        uint64_t file = 0;
+        uint32_t bytes = 0;
+        if (!FindNativeModelSource(range.partition_offset, &file, &bytes) || file < range.partition_offset || file - range.partition_offset >= range.bytes)
+            continue;
+        candidates.push_back({range.address + uint32_t(file - range.partition_offset), file});
+    }
+    size_t certified = 0;
+    std::vector<uint32_t> models;
+    for (const auto& candidate : candidates) {
+        try {
+            EnsureNativeModelAssets(candidate.file, 16);
+            models.clear();
+            for (const auto& p : Packs())
+                for (uint32_t j = 0; j < p.catalog->model_count; j++) {
+                    mh3_catalog_model model{};
+                    mh3_model_catalog_model(p.catalog, j, &model);
+                    if (model.partition_offset != candidate.file || uint64_t(candidate.container) + model.model_offset > UINT32_MAX)
+                        continue;
+                    const uint32_t address = candidate.container + model.model_offset;
+                    mh3_source_owner certificate{};
+                    if (!C().owners.contains(address) && mh3_source_owner_certify(&c.tracker, p.catalog, address, &certificate) == MH3_RES_OK)
+                        models.push_back(address);
+                }
+            // Certification may admit packs: resolve outside the pack walk.
+            for (const uint32_t address : models)
+                if (!C().owners.contains(address)) {
+                    (void)ResolveNativeModelOwner(address);
+                    ++certified;
+                }
+        } catch (const std::exception& e) {
+#ifdef MH3_DEVELOPMENT
+            std::fprintf(stderr, "MH3 native catalog: loaded model file %llx at %08x not certified: %s\n", static_cast<unsigned long long>(candidate.file), candidate.container, e.what());
+#endif
+        }
+    }
+    return certified;
+}
+size_t CountNativeModelOwners() {
+    return C().owners.size();
+}
+void ListNativeModelOwnersWithoutDrawTable(std::vector<NativeModelOwner>& out) {
+    out.clear();
+    for (const auto& item : C().owners)
+        if (!item.second.table)
+            out.push_back(item.second.owner);
 }
 const mh3_prepared_mesh& ReadNativePreparedMesh(const NativeModelOwner& owner, uint32_t shape) {
     const mh3_catalog_resource resource = ResolveNativeModelResource(owner, shape, false);

@@ -72,6 +72,8 @@ mh3_res_status mh3_model_shape_cache(mh3_res_mut_span cache, mh3_res_span source
     memcpy(cache.data, record, 12);
     return MH3_RES_OK;
 }
+/* Record bytes of each MH3_MAT_* resource slot. */
+static const uint32_t sizes[11] = {260, 100, 8, 32, 32, 128, 64, 40, 160, 12, 0x248};
 mh3_res_status mh3_model_material_scope_read(const mh3_res_memory *memory, uint32_t address, uint32_t version, const mh3_model_material_bindings *swaps, mh3_model_material_scope *out) {
     if (!memory || !out)
         return MH3_RES_INVALID;
@@ -106,7 +108,6 @@ mh3_res_status mh3_model_material_scope_read(const mh3_res_memory *memory, uint3
     if (status && status != MH3_RES_ABSENT)
         return status;
     const uint32_t offsets[11] = {0x40, 0x144, 0x14, 0, 0, 0, 0, 0x3f0, 0, 0x1c, 0x1a8};
-    const uint32_t sizes[11] = {260, 100, 8, 32, 32, 128, 64, 40, 160, 12, 0x248};
     uint32_t list = 0;
     for (unsigned i = 0; i < 11; i++) {
         if (scope.selected.resource_slots[i]) {
@@ -132,6 +133,34 @@ mh3_res_status mh3_model_material_scope_read(const mh3_res_memory *memory, uint3
             status = inline_record(address, size, offsets[i], sizes[i], &scope.selected.resource_slots[i]);
         if (status)
             return status;
+    }
+    *out = scope;
+    return MH3_RES_OK;
+}
+mh3_res_status mh3_model_material_scope_overlay(const mh3_res_memory *memory, const mh3_model_material_scope *base, const mh3_model_material_bindings *swaps, mh3_model_material_scope *out) {
+    if (!memory || !base || !swaps || !out || base->replacement_mask)
+        return MH3_RES_INVALID;
+    mh3_model_material_scope scope = *base;
+    memcpy(scope.selected.vertex_tables, swaps->vertex_tables, sizeof scope.selected.vertex_tables);
+    for (unsigned i = 0; i < 11; i++)
+        if (swaps->resource_slots[i])
+            scope.replacement_mask |= (uint16_t)(1u << i);
+    if (!base->material_address) {
+        scope.selected = *swaps;
+        *out = scope;
+        return MH3_RES_OK;
+    }
+    for (unsigned i = 0; i < 11; i++) {
+        const uint32_t address = swaps->resource_slots[i];
+        if (!address)
+            continue;
+        if (address & 3u)
+            return MH3_RES_RANGE;
+        mh3_res_span replacement;
+        const mh3_res_status status = map(memory, address, sizes[i], &replacement);
+        if (status)
+            return status;
+        scope.selected.resource_slots[i] = address;
     }
     *out = scope;
     return MH3_RES_OK;

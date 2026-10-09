@@ -406,6 +406,21 @@ void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
     auto asset = OpenPack(m, path, index);
     Admit(m, index, std::move(asset), false);
 }
+bool FindNativeModelSource(uint64_t offset, uint64_t* file_offset, uint32_t* file_bytes) {
+    if (!manager || !file_offset || !file_bytes)
+        return false;
+    auto& m = *manager;
+    if (m.converted)
+        return GameAssetCache()->ModelFile(offset, *file_offset, *file_bytes);
+    if (m.index.empty())
+        return false;
+    const uint32_t source = SourceIndex(m, offset, 1);
+    if (source == UINT32_MAX)
+        return false;
+    *file_offset = Long(SourceRecord(m, source));
+    *file_bytes = Word(SourceRecord(m, source) + 8);
+    return true;
+}
 namespace {
 void ObserveDemand(Manager& m, uintptr_t handle, uint64_t epoch) {
     auto& asset = Find(m, handle, epoch);

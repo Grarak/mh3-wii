@@ -18,7 +18,11 @@
 #include "native_shade_snapshot.h"
 #include "model_render_prep.h"
 #include <array>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -263,8 +267,43 @@ struct ShapeSources {
     const mh3_prepared_mesh* prepared;
     int32_t matrix_id;
     bool has_normal;
+    // The prepared mesh's vertex attributes all read authored sources the
+    // shape binds (CaptureShape's converted-source check, given the bindings).
+    bool covers_layout;
+    uint32_t address; // the shape
 };
-const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, uint32_t shape) {
+// The owner's prepared mesh and the authored vertex sources of the shape.
+ShapeSources ReadSources(const NativeModelOwner& owner, uint32_t shape) {
+    ShapeSources result{};
+    result.source_generation = owner.source_generation;
+    result.resident_handle = owner.resident_handle;
+    result.resident_generation = owner.resident_generation;
+    result.owner = owner;
+    result.address = shape;
+    result.prepared = &ReadNativePreparedMesh(owner, shape);
+    result.matrix_id = int32_t(Memory::Read32(shape + 8));
+    result.has_normal = (Memory::Read32(shape + 0x30) & (1u << 10)) != 0;
+    for (uint32_t i = 0; i < 12; i++) {
+        uint32_t resource = 0;
+        Checked(mh3_res_runtime_shape_array_at(&MH3NativeResourceMemory(), shape, i, &resource));
+        if (!resource)
+            continue;
+        const auto kind = i == 0 ? MH3_VERTEX_POSITION : i == 1 ? MH3_VERTEX_NORMAL : i < 4 ? MH3_VERTEX_COLOR : MH3_VERTEX_UV;
+        result.source[i] = ReadNativeVertexResourceData(resource, kind);
+        result.known |= uint16_t(1u << i);
+    }
+    const auto& layout = result.prepared->immutable.layout;
+    result.covers_layout = true;
+    for (uint32_t i = 0; i < layout.count; i++) {
+        const uint32_t semantic = layout.attributes[i].semantic;
+        if (semantic >= 12 && result.prepared->palette_batch_count)
+            continue;
+        if (semantic >= 12 || !(result.known & (1u << semantic)))
+            result.covers_layout = false;
+    }
+    return result;
+}
+const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t shape) {
     const uint32_t key = shape;
     auto& recipes = Recipes<ShapeSources>();
     auto& shape_sources = recipes.entries;
@@ -272,23 +311,7 @@ const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, u
     if (cached != shape_sources.end() && cached->second.source_generation == owner.source_generation && cached->second.resident_handle == owner.resident_handle &&
         cached->second.resident_generation == owner.resident_generation)
         return cached->second;
-    ShapeSources result{};
-    result.source_generation = owner.source_generation;
-    result.resident_handle = owner.resident_handle;
-    result.resident_generation = owner.resident_generation;
-    result.owner = owner;
-    result.prepared = &ReadNativePreparedMesh(owner, shape);
-    result.matrix_id = int32_t(Memory::Read32(shape + 8));
-    result.has_normal = (Memory::Read32(shape + 0x30) & (1u << 10)) != 0;
-    for (uint32_t i = 0; i < 12; i++) {
-        uint32_t resource = 0;
-        Checked(mh3_res_runtime_shape_array(&MH3NativeResourceMemory(), reference, i, &resource));
-        if (!resource)
-            continue;
-        const auto kind = i == 0 ? MH3_VERTEX_POSITION : i == 1 ? MH3_VERTEX_NORMAL : i < 4 ? MH3_VERTEX_COLOR : MH3_VERTEX_UV;
-        result.source[i] = ReadNativeVertexResourceData(resource, kind);
-        result.known |= uint16_t(1u << i);
-    }
+    const ShapeSources result = ReadSources(owner, shape);
     // Owned scalar metadata only. Bound the cache across recycled scene heaps;
     // evicting it requires fresh CPU header resolution, never GPU repacking.
     if (shape_sources.size() >= 8192) {
@@ -331,9 +354,228 @@ ShapeContext ResolveShape(uint32_t reference) {
     if (recipes.counters)
         ++recipes.counters->misses;
     context.owner = ShapeOwner(reference, &context.shape);
-    context.sources = &Sources(context.owner, reference, context.shape);
+    context.sources = &Sources(context.owner, context.shape);
     return context;
 }
+// A dispatch's material scope and shape, resolved through its model's draw
+// table instead of by address (DispatchNativeModelIndexed).
+struct Resolved {
+    mh3_model_material_scope scope;
+    ShapeContext shape;
+};
+} // namespace
+
+// One certified model's resolved draw records (model_catalog_bridge.h): what
+// Scope and ResolveShape produce for its materials and shapes, by draw-stream
+// ID. Built once per certified owner; replacements are applied per draw.
+struct NativeModelDrawTable {
+    uint32_t model = 0; // MDL0 address (the alias the addresses were made from)
+    NativeModelOwner owner{};
+    // Scope without replacements; material_address 0: no record (by address).
+    std::vector<mh3_model_material_scope> materials;
+    // prepared == nullptr: no record (by address).
+    std::vector<ShapeSources> shapes;
+    NativeModelDrawTable() = default;
+    NativeModelDrawTable(const NativeModelDrawTable&) = delete;
+    // Shape sources may be bound in place (DispatchDeferred).
+    ~NativeModelDrawTable() { ReleaseNativeVertexSources(shapes.data(), shapes.data() + shapes.size()); }
+};
+
+namespace {
+// MH3_DRAW_TABLE: 1 (default) resolves draw items through their model's draw
+// table, 0 resolves every item by address; 2 (development) does both and
+// compares them for every indexed item.
+uint8_t DrawTableMode() {
+    static const uint8_t mode = [] {
+        const char* value = std::getenv("MH3_DRAW_TABLE");
+        if (!value || !*value)
+            return uint8_t(1);
+        const uint8_t requested = uint8_t(std::strtoul(value, nullptr, 10));
+#ifdef MH3_DEVELOPMENT
+        return requested > 2 ? uint8_t(1) : requested;
+#else
+        return requested ? uint8_t(1) : uint8_t(0);
+#endif
+    }();
+    return mode;
+}
+struct TableStats {
+    uint64_t built = 0, materials = 0, shapes = 0, missing_materials = 0, missing_shapes = 0, failed = 0, eager = 0;
+    uint64_t indexed = 0, unindexed = 0, aliases = 0, compared = 0, mismatches = 0, in_place = 0;
+    double build_ms = 0;
+} tableStats;
+// Models whose table could not be built, with the structure revision then.
+FastMap<uint32_t, uint64_t> tableFailures;
+bool TableTrace() {
+#ifdef MH3_DEVELOPMENT
+    static const bool enabled = [] {
+        const char* value = std::getenv("MH3_DRAW_TABLE_TRACE");
+        return value && *value && std::strcmp(value, "0");
+    }();
+    return enabled;
+#else
+    return false;
+#endif
+}
+// Resolves every material and shape of the certified model at `model`. A
+// record that does not resolve stays empty: its draws take the address path,
+// which fails as before if it is ever drawn.
+std::shared_ptr<NativeModelDrawTable> BuildDrawTable(uint32_t model) {
+    const auto start = std::chrono::steady_clock::now();
+    const auto& memory = MH3NativeResourceMemory();
+    auto table = std::make_shared<NativeModelDrawTable>();
+    table->model = model;
+    table->owner = ResolveNativeModelOwner(model);
+    const auto& owner = table->owner;
+    mh3_catalog_model catalog{};
+    PackChecked(mh3_model_catalog_model(owner.catalog, owner.catalog_model_index, &catalog));
+    mh3_res_memory_view view{};
+    Checked(mh3_res_runtime_map(&memory, model, 16, &view));
+    mh3_res_model resource{};
+    Checked(mh3_res_model_open(view.span, view.offset, &resource));
+    const auto address = [&](size_t offset) {
+        if (offset > UINT32_MAX - view.guest_base)
+            throw std::runtime_error("Model resource address overflow");
+        return view.guest_base + uint32_t(offset);
+    };
+    size_t dictionary = 0;
+    uint32_t count = 0;
+    Checked(mh3_res_model_dictionary(&resource, MH3_RES_MATERIALS, &dictionary, &count));
+    table->materials.resize(count);
+    const mh3_model_material_bindings none{};
+    for (uint32_t id = 0; id < count; id++) {
+        try {
+            mh3_res_entry entry{};
+            Checked(mh3_res_model_entry(&resource, MH3_RES_MATERIALS, id, &entry));
+            const uint32_t material = address(entry.offset);
+            // Scope's admission: the material's parent is this model.
+            const int32_t delta = int32_t(Memory::Read32(material + 4));
+            if (!delta || int64_t(material) + delta < 0 || int64_t(material) + delta > UINT32_MAX || Canonical(uint32_t(int64_t(material) + delta)) != Canonical(model))
+                throw std::runtime_error("Material belongs to another model");
+            (void)ResolveNativeModelResource(owner, material, true);
+            mh3_model_material_scope scope{};
+            Checked(mh3_model_material_scope_read(&memory, material, catalog.revision, &none, &scope));
+            table->materials[id] = scope;
+        } catch (const std::exception& e) {
+            table->materials[id] = {};
+            ++tableStats.missing_materials;
+            if (TableTrace())
+                std::fprintf(stderr, "MH3 draw table: model %08x material %u has no record: %s\n", model, id, e.what());
+        }
+    }
+    Checked(mh3_res_model_dictionary(&resource, MH3_RES_SHAPES, &dictionary, &count));
+    table->shapes.resize(count);
+    for (uint32_t id = 0; id < count; id++) {
+        try {
+            mh3_res_entry entry{};
+            Checked(mh3_res_model_entry(&resource, MH3_RES_SHAPES, id, &entry));
+            const uint32_t shape = address(entry.offset);
+            // ShapeOwner's admission: the shape's parent is this model.
+            const int32_t delta = int32_t(Memory::Read32(shape + 4));
+            if (!delta || int64_t(shape) + delta < 0 || int64_t(shape) + delta > UINT32_MAX || Canonical(uint32_t(int64_t(shape) + delta)) != Canonical(model))
+                throw std::runtime_error("Shape belongs to another model");
+            (void)ResolveNativeModelResource(owner, shape, false);
+            table->shapes[id] = ReadSources(owner, shape);
+        } catch (const std::exception& e) {
+            table->shapes[id] = {};
+            ++tableStats.missing_shapes;
+            if (TableTrace())
+                std::fprintf(stderr, "MH3 draw table: model %08x shape %u has no record: %s\n", model, id, e.what());
+        }
+    }
+    AttachNativeModelDrawTable(owner, table);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    ++tableStats.built;
+    tableStats.materials += table->materials.size();
+    tableStats.shapes += table->shapes.size();
+    tableStats.build_ms += ms;
+    if (TableTrace())
+        std::fprintf(stderr, "MH3 draw table: model %08x (file %llx model %u) %zu materials %zu shapes in %.3f ms, frame %u\n", model, static_cast<unsigned long long>(catalog.partition_offset),
+                     owner.catalog_model_index, table->materials.size(), table->shapes.size(), ms, Memory::Read32(0x80796d28));
+    return table;
+}
+bool SameScope(const mh3_model_material_scope& a, const mh3_model_material_scope& b) {
+    return a.material_address == b.material_address && a.fur_address == b.fur_address && a.replacement_mask == b.replacement_mask &&
+           !std::memcmp(&a.selected, &b.selected, sizeof a.selected);
+}
+bool SameSource(const mh3_native_vertex_source& a, const mh3_native_vertex_source& b) {
+    return a.resource_address == b.resource_address && a.payload_address == b.payload_address && a.source_id == b.source_id && a.resource_bytes == b.resource_bytes &&
+           a.payload_bytes == b.payload_bytes && a.count == b.count && a.stride == b.stride && a.components == b.components && a.format == b.format && a.fraction == b.fraction &&
+           a.component_mode == b.component_mode && a.sample_index == b.sample_index && a.sample_count == b.sample_count && a.sample_stride == b.sample_stride && a.kind == b.kind;
+}
+bool SameOwnerRecord(const NativeModelOwner& a, const NativeModelOwner& b) {
+    return a.pack == b.pack && a.catalog == b.catalog && a.catalog_model_index == b.catalog_model_index && a.container_address == b.container_address && a.model_address == b.model_address &&
+           a.resident_handle == b.resident_handle && a.resident_generation == b.resident_generation && a.source_generation == b.source_generation;
+}
+} // namespace
+
+NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<NativeModelDrawTable>& hold) {
+    hold.reset();
+    if (!DrawTableMode() || !model)
+        return nullptr;
+    hold = FindNativeModelDrawTable(model);
+    if (!hold) {
+        const uint64_t revision = ReadNativeModelStructureRevision();
+        const auto failed = tableFailures.find(model);
+        if (failed != tableFailures.end() && failed->second == revision)
+            return nullptr;
+        try {
+            hold = BuildDrawTable(model);
+        } catch (const std::exception& e) {
+            // The address path resolves (and reports) whatever this model draws.
+            ++tableStats.failed;
+            if (TableTrace())
+                std::fprintf(stderr, "MH3 draw table: model %08x has no table: %s\n", model, e.what());
+            if (tableFailures.size() >= 4096)
+                tableFailures.clear();
+            tableFailures.insert_or_assign(model, ReadNativeModelStructureRevision());
+            return nullptr;
+        }
+    }
+    if (hold->model != model) {
+        ++tableStats.aliases;
+        return nullptr;
+    }
+    return hold.get();
+}
+void PrepareNativeModelDrawTables() {
+    if (!DrawTableMode())
+        return;
+    // MH3_DRAW_TABLE_DISCOVER=0: only models already certified (drawn).
+    static const bool discover = [] {
+        const char* value = std::getenv("MH3_DRAW_TABLE_DISCOVER");
+        return !value || std::strcmp(value, "0");
+    }();
+    const auto start = std::chrono::steady_clock::now();
+    const size_t certified = discover ? CertifyLoadedNativeModels() : 0;
+    std::vector<NativeModelOwner> owners;
+    ListNativeModelOwnersWithoutDrawTable(owners);
+    for (const auto& owner : owners) {
+        if (FindNativeModelDrawTable(owner.model_address))
+            continue; // a sibling's certification may have replaced the list
+        try {
+            (void)BuildDrawTable(owner.model_address);
+            ++tableStats.eager;
+        } catch (const std::exception& e) {
+            ++tableStats.failed;
+            if (TableTrace())
+                std::fprintf(stderr, "MH3 draw table: model %08x has no table: %s\n", owner.model_address, e.what());
+        }
+    }
+    if (TableTrace() && (certified || !owners.empty()))
+        std::fprintf(stderr, "MH3 draw table: loading screen certified %zu models, built %zu tables (%zu owners) in %.3f ms, frame %u\n", certified, owners.size(), CountNativeModelOwners(),
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), Memory::Read32(0x80796d28));
+}
+void ReportNativeModelDrawTables() {
+    if (!TableTrace() && !ActiveNativeModelPreparationDiagnostics())
+        return;
+    const auto& s = tableStats;
+    const auto n = [](uint64_t value) { return static_cast<unsigned long long>(value); };
+    std::fprintf(stderr, "MH3 draw tables: %zu owners, %llu built (%llu eager, %llu failed) %llu materials (%llu missing) %llu shapes (%llu missing) in %.2f ms; items %llu indexed %llu by address (%llu sources in place); %llu alias misses; compared %llu mismatches %llu\n",
+                 CountNativeModelOwners(), n(s.built), n(s.eager), n(s.failed), n(s.materials), n(s.missing_materials), n(s.shapes), n(s.missing_shapes), s.build_ms, n(s.indexed), n(s.unindexed), n(s.in_place), n(s.aliases), n(s.compared),
+                 n(s.mismatches));
+}
+namespace {
 void PrePrimitive(const ShapeContext& context) {
     const uint32_t shape = context.shape;
     const auto& sources = *context.sources;
@@ -741,33 +983,39 @@ extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
 // no guest call or CpuContext is passed to their descendants.
 REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices", true);
 namespace {
-void DispatchGameThread(const NativeModelDispatch& d) {
+// The dispatch's shape visibility: its resolved shape's flag, or by reference.
+bool ShapeVisible(const NativeModelDispatch& d, const Resolved* r) {
+    if (r)
+        return !(Memory::Read32(r->shape.shape + 0x34) & 2);
+    uint32_t visible = 0;
+    Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), d.shape, &visible));
+    return visible != 0;
+}
+void DispatchGameThread(const NativeModelDispatch& d, const Resolved* r) {
     TraceNativeModelDispatch(d);
     mh3_model_material_scope scope;
     {
         MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MATERIAL_PREP);
-        scope = Scope(d.material, d.bindings);
+        scope = r ? r->scope : Scope(d.material, d.bindings);
         const bool ignore = !scope.material_address || (d.flags & 16);
         PrepareContext context{};
         Checked(mh3_model_material_prepare_scope(&scope, d.flags, d.descriptor, ignore, PrepareStep, &context));
     }
-    uint32_t visible = 0;
-    Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), d.shape, &visible));
-    if (!visible)
+    if (!ShapeVisible(d, r))
         return;
     if (scope.fur_address)
         throw std::runtime_error("Fur model needs native sampled-shell material preparation");
     // A dispatch resolves its shape's owner and sources once for the
     // primitive setup, replacements and submission. Without a shape only the
     // replacements (which require one) have an effect: they fail.
-    if (!Resource(d.shape)) {
+    if (!r && !Resource(d.shape)) {
         if (!(d.flags & 2))
             Replacements(ResolveShape(d.shape), scope);
         return;
     }
     const auto shape = [&] {
         MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        return ResolveShape(d.shape);
+        return r ? r->shape : ResolveShape(d.shape);
     }();
     if (!(d.flags & 2)) {
         MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
@@ -838,7 +1086,11 @@ void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& cont
     const auto& prepared = *context.sources->prepared;
     item.prepared = &prepared;
     const auto& originals = *context.sources;
-    for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
+    // Sources bound in place since are the shape's own, unproduced ones: the
+    // check holds when they cover the converted layout.
+    const bool bound = originals.covers_layout && NativeVertexSourcesBoundInPlace(originals.source.data()) && NativeVertexSourcesUnproduced();
+    tableStats.in_place += bound;
+    for (uint32_t i = 0; i < (bound ? 0 : prepared.immutable.layout.count); i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
         if (semantic >= 12 && prepared.palette_batch_count)
             continue;
@@ -869,7 +1121,7 @@ void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& cont
     item.prep.has_normal = originals.has_normal;
     item.prep.has_binding = binding.address[0] != 0;
 }
-void DispatchDeferred(const NativeModelDispatch& d) {
+void DispatchDeferred(const NativeModelDispatch& d, const Resolved* r) {
     TraceNativeModelDispatch(d);
     // Skipped frames record nothing (the game-side steps still run); the
     // render thread forgets its caches at the next recorded frame.
@@ -884,8 +1136,8 @@ void DispatchDeferred(const NativeModelDispatch& d) {
     mh3_model_material_scope scope;
     bool ignore;
     {
-        MH3_SPLIT_SCOPE(MH3_SPLIT_MATERIAL_PREP);
-        scope = Scope(d.material, d.bindings);
+        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MATERIAL_PREP);
+        scope = r ? r->scope : Scope(d.material, d.bindings);
         ignore = !scope.material_address || (d.flags & 16);
         if (!ignore)
             GameLightingSteps(scope);
@@ -906,21 +1158,24 @@ void DispatchDeferred(const NativeModelDispatch& d) {
             CaptureInputs(in, d, scope, ignore, capture->srts);
         }
     }
-    uint32_t visible = 0;
-    Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), d.shape, &visible));
-    bool draws = visible != 0;
+    bool draws = ShapeVisible(d, r);
     if (draws) {
         if (scope.fur_address)
             throw std::runtime_error("Fur model needs native sampled-shell material preparation");
-        if (!Resource(d.shape)) {
+        if (!r && !Resource(d.shape)) {
             if (!(d.flags & 2))
                 Replacements(ResolveShape(d.shape), scope);
             draws = false;
         } else {
-            MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
-            const auto shape = ResolveShape(d.shape);
+            MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
+            const auto shape = r ? r->shape : ResolveShape(d.shape);
             if (!(d.flags & 2)) {
-                PrePrimitiveSources(shape);
+                // A table's sources stay put while its owner lives: bind them
+                // in place instead of copying twelve records per draw.
+                if (r)
+                    BindNativeVertexSourcesInPlace(shape.sources->source.data(), shape.sources->known);
+                else
+                    PrePrimitiveSources(shape);
                 Replacements(shape, scope);
                 if (item)
                     std::memcpy(item->prep.shape_cache, Bytes(shape.shape + 12, 12).data, 12);
@@ -932,7 +1187,7 @@ void DispatchDeferred(const NativeModelDispatch& d) {
     if (!item)
         return;
     item->prep.visible = draws;
-    MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
+    MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MODEL_RECORD);
     RecordNativeModelDraw(uint32_t(capture->itemCount++), true);
 }
 
@@ -944,7 +1199,7 @@ struct Verify {
     ModelPrepSrtList srts;
     uint64_t dispatches = 0, mismatches = 0, reported = 0;
 } verify;
-void DispatchVerify(const NativeModelDispatch& d) {
+void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
     auto& m = verify.mirror;
     CopyNativeMaterialOwner(NativeOwner::Game, NativeOwner::Shadow);
     CopyNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow);
@@ -958,9 +1213,9 @@ void DispatchVerify(const NativeModelDispatch& d) {
     m.coordinate_sizes = coordinate_sizes;
     m.selectors = ReadNativeModelSelectors();
     lastSubmitted = nullptr;
-    DispatchGameThread(d);
+    DispatchGameThread(d, r);
     // Capture what the original consumed (its fog/light steps already ran).
-    const auto scope = Scope(d.material, d.bindings);
+    const auto scope = r ? r->scope : Scope(d.material, d.bindings);
     const bool ignore = !scope.material_address || (d.flags & 16);
     ModelPrepInputs in;
     in.flags = d.flags;
@@ -970,7 +1225,7 @@ void DispatchVerify(const NativeModelDispatch& d) {
     CaptureInputs(in, d, scope, ignore, verify.srts);
     mh3_matrix34 position{}, normal{};
     if (in.visible) {
-        const auto shape = ResolveShape(d.shape);
+        const auto shape = r ? r->shape : ResolveShape(d.shape);
         std::memcpy(in.shape_cache, Bytes(shape.shape + 12, 12).data, 12);
         in.matrix_id = shape.sources->matrix_id;
         in.has_normal = shape.sources->has_normal;
@@ -1026,23 +1281,80 @@ void DispatchVerify(const NativeModelDispatch& d) {
         std::fprintf(stderr, "MH3 render prep verify: %llu dispatches, %llu mismatches\n", static_cast<unsigned long long>(verify.dispatches), static_cast<unsigned long long>(verify.mismatches));
 }
 #endif
-} // namespace
-void DispatchNativeModel(const NativeModelDispatch& d) {
+void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
     switch (NativeModelPrepMode()) {
     case ModelPrepMode::GameThread:
-        DispatchGameThread(d);
+        DispatchGameThread(d, r);
         break;
     case ModelPrepMode::Deferred:
-        DispatchDeferred(d);
+        DispatchDeferred(d, r);
         break;
     case ModelPrepMode::Verify:
 #ifdef MH3_DEVELOPMENT
-        DispatchVerify(d);
+        DispatchVerify(d, r);
 #else
-        DispatchGameThread(d);
+        DispatchGameThread(d, r);
 #endif
         break;
     }
+}
+#ifdef MH3_DEVELOPMENT
+// MH3_DRAW_TABLE=2: the item's address resolution must equal its table's.
+void CompareIndexed(const NativeModelDispatch& d, const Resolved& r) {
+    ++tableStats.compared;
+    std::string diff;
+    if (Resource(d.material) != r.scope.material_address)
+        diff += " material-address";
+    if (!SameScope(Scope(d.material, d.bindings), r.scope))
+        diff += " scope";
+    const auto shape = ResolveShape(d.shape);
+    if (shape.shape != r.shape.shape || shape.reference != r.shape.reference)
+        diff += " shape-address";
+    if (!SameOwnerRecord(shape.owner, r.shape.owner))
+        diff += " owner";
+    const auto& a = *shape.sources;
+    const auto& b = *r.shape.sources;
+    if (a.prepared != b.prepared || a.matrix_id != b.matrix_id || a.has_normal != b.has_normal || a.known != b.known || a.address != b.address || !SameOwnerRecord(a.owner, b.owner))
+        diff += " shape-record";
+    for (uint32_t i = 0; i < 12; i++)
+        if ((a.known & (1u << i)) && !SameSource(a.source[i], b.source[i])) {
+            diff += " source" + std::to_string(i);
+            break;
+        }
+    if (diff.empty())
+        return;
+    if (tableStats.mismatches++ < 40)
+        std::fprintf(stderr, "MH3 draw table mismatch: material %08x shape %08x flags %x:%s\n", r.scope.material_address, r.shape.shape, d.flags, diff.c_str());
+}
+#endif
+} // namespace
+void DispatchNativeModel(const NativeModelDispatch& d) {
+    Dispatch(d, nullptr);
+}
+bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t material_id, uint32_t shape_id, const mh3_model_material_bindings* replacements, const NativeModelDispatch& d) {
+    if (material_id >= table.materials.size() || shape_id >= table.shapes.size()) {
+        ++tableStats.unindexed;
+        return false;
+    }
+    const auto& material = table.materials[material_id];
+    const auto& sources = table.shapes[shape_id];
+    if (!material.material_address || !sources.prepared) {
+        ++tableStats.unindexed;
+        return false;
+    }
+    Resolved r;
+    if (replacements)
+        Checked(mh3_model_material_scope_overlay(&MH3NativeResourceMemory(), &material, replacements, &r.scope));
+    else
+        r.scope = material;
+    r.shape = {d.shape, sources.address, sources.owner, &sources};
+    ++tableStats.indexed;
+#ifdef MH3_DEVELOPMENT
+    if (DrawTableMode() == 2)
+        CompareIndexed(d, r);
+#endif
+    Dispatch(d, &r);
+    return true;
 }
 extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
     DispatchNativeModel({cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9]});

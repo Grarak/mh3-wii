@@ -22,6 +22,11 @@ mh3_res_status mh3_model_shape_cache(mh3_res_mut_span cache, mh3_res_span source
  * select their actual pointer; zero slots select the source material record.
  * This does not establish loader/producer identity or execute a draw. */
 mh3_res_status mh3_model_material_scope_read(const mh3_res_memory *memory, uint32_t material_address, uint32_t model_version, const mh3_model_material_bindings *swaps, mh3_model_material_scope *out);
+/* The scope mh3_model_material_scope_read returns with `swaps` for a material
+ * whose scope without replacements is `base` (as that read returned it): the
+ * nonzero replacement slots and vertex tables replace the base's, with the
+ * read's alignment and mapping checks. Base must hold no replacements. */
+mh3_res_status mh3_model_material_scope_overlay(const mh3_res_memory *memory, const mh3_model_material_scope *base, const mh3_model_material_bindings *swaps, mh3_model_material_scope *out);
 
 typedef enum mh3_model_material_action {
     MH3_MATERIAL_PREP_FOG,

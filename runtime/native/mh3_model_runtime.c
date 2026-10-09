@@ -240,7 +240,7 @@ mh3_res_status mh3_res_runtime_shape_parent(const mh3_res_memory *m, uint32_t re
     }
     return s ? s : pointer_result(v, at, out);
 }
-mh3_res_status mh3_res_runtime_shape_array(const mh3_res_memory *m, uint32_t ref, uint32_t attr, uint32_t *out) {
+static mh3_res_status shape_array(const mh3_res_memory *m, uint32_t shape, int by_reference, uint32_t attr, uint32_t *out) {
     view v;
     size_t parent, at, field;
     int32_t index;
@@ -251,7 +251,10 @@ mh3_res_status mh3_res_runtime_shape_array(const mh3_res_memory *m, uint32_t ref
         return MH3_RES_INVALID;
     *out = 0;
     field = 0x48 + (size_t)attr * 2;
-    s = object(m, ref, field + 2, &v);
+    if (by_reference)
+        s = object(m, shape, field + 2, &v);
+    else
+        s = shape ? mapped(m, shape, field + 2, &v) : MH3_RES_INVALID;
     if (s)
         return s;
     {
@@ -273,6 +276,12 @@ mh3_res_status mh3_res_runtime_shape_array(const mh3_res_memory *m, uint32_t ref
     if (s == MH3_RES_ABSENT)
         return MH3_RES_OK;
     return s ? s : pointer_result(v, at, out);
+}
+mh3_res_status mh3_res_runtime_shape_array(const mh3_res_memory *m, uint32_t ref, uint32_t attr, uint32_t *out) {
+    return shape_array(m, ref, 1, attr, out);
+}
+mh3_res_status mh3_res_runtime_shape_array_at(const mh3_res_memory *m, uint32_t shape, uint32_t attr, uint32_t *out) {
+    return shape_array(m, shape, 0, attr, out);
 }
 mh3_res_status mh3_res_runtime_shape_tag(const mh3_res_memory *m, uint32_t ref, int primitive, int require_valid, uint32_t *out) {
     uint32_t data, offset = primitive ? 0x24 : 0x18;

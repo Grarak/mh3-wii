@@ -452,6 +452,16 @@ std::filesystem::path AssetCache::ModelPack(uint64_t at, uint32_t& key) {
     m.Fail(*s);
     return s->modelsUsable ? m.ModelPath(*s) : std::filesystem::path{};
 }
+bool AssetCache::ModelFile(uint64_t at, uint64_t& offset, uint32_t& bytes) {
+    auto& m = *impl;
+    std::lock_guard guard(m.lock);
+    const auto* s = m.Find(at);
+    if (!s || !s->indexed || !s->modelCount || (s->modelsDone && !s->modelsUsable))
+        return false;
+    offset = s->file.offset;
+    bytes = s->file.bytes;
+    return true;
+}
 
 namespace {
 struct Game {

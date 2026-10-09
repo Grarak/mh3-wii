@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <vector>
 #include "runtime/native/mh3_model_submission.h"
 #include "runtime/native/mh3_vertex_sources.h"
 #include "runtime/native/mh3_texture_matrices.h"
@@ -48,6 +49,24 @@ struct NativeModelOwner {
 };
 NativeModelOwner ResolveNativeModelOwner(uint32_t model_address);
 mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource_address, bool material);
+/* Per-model draw tables (built by model_scope.cpp): the resolved material
+ * scopes and shape sources of one certified model, by draw-stream material
+ * and shape ID. A table belongs to its model's owner certificate: whatever
+ * retires or replaces that certificate (an overwrite, a copy over it, the
+ * allocation's retirement, the pack's unregistration) drops the table with
+ * it, and a copied certificate starts without one. Game thread. */
+struct NativeModelDrawTable;
+/* The table of the certified model at model_address, or null. */
+std::shared_ptr<NativeModelDrawTable> FindNativeModelDrawTable(uint32_t model_address);
+/* Attaches a table to owner's certificate, which must be the current one. */
+void AttachNativeModelDrawTable(const NativeModelOwner& owner, std::shared_ptr<NativeModelDrawTable> table);
+/* Certified owners that have no table yet. */
+void ListNativeModelOwnersWithoutDrawTable(std::vector<NativeModelOwner>& out);
+/* Certifies the models of every complete model file the provenance tracker
+ * holds (admitting their packs), as a first draw would; for loading screens.
+ * Returns the number of models certified. */
+size_t CertifyLoadedNativeModels();
+size_t CountNativeModelOwners();
 /* Prepared at RegisterNativeModelPack, not lazily decoded during a draw.
  * Returns immutable metadata only; valid until the resident handle is removed.
  * Resource-address/header joins are cached until a provenance event invalidates
@@ -147,6 +166,17 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation);
 mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex_kind kind);
 mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind);
 void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& source);
+/* Binds sources[i] for every semantic i in `known` without copying them: they
+ * read as bound (every reader, store, retirement and producer revision sees
+ * them) while the caller keeps them unchanged at that address. An owner about
+ * to free or change such sources calls ReleaseNativeVertexSources first. */
+void BindNativeVertexSourcesInPlace(const mh3_native_vertex_source* sources, uint16_t known);
+/* Nothing was stored since `sources` were bound in place. */
+bool NativeVertexSourcesBoundInPlace(const mh3_native_vertex_source* sources);
+/* Copies sources bound in place from [begin, end) into the binding state. */
+void ReleaseNativeVertexSources(const void* begin, const void* end);
+/* No producer revision exists: every bound source has source generation 0. */
+bool NativeVertexSourcesUnproduced();
 bool ReadNativeVertexSource(uint32_t semantic, mh3_native_vertex_source* out);
 /* The bound source of `semantic` without a copy, or null when none is bound;
  * valid until the next bind or retirement. */

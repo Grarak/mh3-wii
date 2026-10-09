@@ -119,6 +119,8 @@ struct Submit {
     const Model& model;
     uint32_t replacement;
     References refs;
+    // The model's draw table, when it has one: items dispatch by ID.
+    const NativeModelDrawTable* table;
     static mh3_res_status Emit(void* user, const mh3_model_draw_item* item) {
         auto& s = *static_cast<Submit*>(user);
         const auto& r = s.refs;
@@ -126,22 +128,24 @@ struct Submit {
         Memory::Write32(r.shape, s.model.Address(item->shape.offset));
         Memory::Write32(r.node, s.model.Address(item->node.offset));
         Memory::Write32(r.material, s.model.Address(item->material.offset));
+        mh3_model_material_bindings replacements{};
         if (s.replacement) {
-            mh3_model_material_bindings bindings{};
-            const auto status = mh3_model_material_select(Bytes(s.replacement, 64), item->material_index, &bindings);
+            const auto status = mh3_model_material_select(Bytes(s.replacement, 64), item->material_index, &replacements);
             if (status)
                 return status;
             for (unsigned i = 0; i < 11; i++)
-                Memory::Write32(r.bindings + i * 4, bindings.resource_slots[i]);
+                Memory::Write32(r.bindings + i * 4, replacements.resource_slots[i]);
             for (unsigned i = 0; i < 3; i++)
-                Memory::Write32(r.bindings + (i + 11) * 4, bindings.vertex_tables[i]);
+                Memory::Write32(r.bindings + (i + 11) * 4, replacements.vertex_tables[i]);
         }
         const uint32_t bindings = s.replacement ? r.bindings : 0;
         // 80077814 and 80076A58 are the native ModelIndirectMatrices and
         // ModelDisplayListDispatch; neither reads guest registers or the
         // stack, so call them directly instead of through a guarded guest call.
         const uint32_t descriptor = NativeModelIndirectMatrices(r.material, r.node, r.shape);
-        DispatchNativeModel({r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor});
+        const NativeModelDispatch dispatch{r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor};
+        if (!s.table || !DispatchNativeModelIndexed(*s.table, item->draw.material_id, item->draw.shape_id, s.replacement ? &replacements : nullptr, dispatch))
+            DispatchNativeModel(dispatch);
         return MH3_RES_OK;
     }
 };
@@ -155,7 +159,8 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
     const Model model(resource);
     GuestFrame frame(cpu, 0x80);
     const References refs{frame[0x10], frame[0x14], frame[0x18], frame[0x20]};
-    Submit submit{model, replacement, refs};
+    std::shared_ptr<NativeModelDrawTable> hold;
+    Submit submit{model, replacement, refs, NativeModelDrawTableFor(resource, hold)};
     BeginNativeModelDraw();
     if (sorted)
         Checked(mh3_model_draw_sorted_read(&model.value, count, options, ReadRecord, &stream, Submit::Emit, &submit, nullptr));

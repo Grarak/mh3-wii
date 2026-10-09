@@ -1,5 +1,6 @@
 #pragma once
 #include "runtime/native/mh3_model_scope.h"
+#include <memory>
 /* Explicit G3D texture producer state. Backend sampler bindings may be changed
  * by UI/effects; they are not a substitute for this coordinate-size owner. */
 void PublishNativeModelMapSize(uint32_t map, uint16_t width, uint16_t height);
@@ -22,3 +23,22 @@ struct NativeModelDispatch {
 uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference);
 void DispatchNativeModel(const NativeModelDispatch& dispatch);
 void TraceNativeModelDispatch(const NativeModelDispatch& dispatch);
+// Draw tables (model_catalog_bridge.h): a model draw resolves its model's
+// table once, then dispatches each item by its draw-stream material and shape
+// ID instead of resolving its material scope and shape by address.
+// MH3_DRAW_TABLE=0 turns them off; =2 (development) also resolves every
+// indexed item by address and reports any difference.
+struct NativeModelDrawTable;
+// The table of the model whose MDL0 is at `model` (as drawn), built now if it
+// has none; `hold` keeps it alive. Null when tables are off or the model has
+// no certified owner (its items then dispatch by address).
+NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<NativeModelDrawTable>& hold);
+// DispatchNativeModel for an item of the table's model. `replacements` are the
+// item's replacement bindings (also at dispatch.bindings), or null. False
+// when the table has no record for the item: dispatch it by address instead.
+bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t material_id, uint32_t shape_id, const mh3_model_material_bindings* replacements,
+                                const NativeModelDispatch& dispatch);
+// Builds the tables of every certified model that has none (loading screens).
+void PrepareNativeModelDrawTables();
+// Development statistics (MH3_PREPARE_DIAGNOSTICS / MH3_DRAW_TABLE_TRACE).
+void ReportNativeModelDrawTables();
