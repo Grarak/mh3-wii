@@ -6,10 +6,11 @@
 // scroll at the same speed at any step length. At the stock 1/30 s step each
 // is the original.
 //
-//   0x803750E8 sea surface (the Ceadeus lair's open sea, its intro cutscene):
-//     materials 8 and 9 of the model at +316: V offset + 0.0025 (sda2 -7740)
-//     a step, back by 1 past 1; U offset a sine of the tick counter
-//     (system_w+0xC << 7). Then TEV colours: material 6 register 3 from the
+//   0x803750E8 Ceadeus (its enemy work; the model at +316 is the work's
+//     +0x13C), seen in its lair and its intro cutscene: materials 8 and 9 of
+//     the model at +316: V offset + 0.0025 (sda2 -7740) a step, back by 1
+//     past 1; U offset a sine of the tick counter (system_w+0xC << 7), here
+//     of the counter plus the step's fraction of a tick. Then TEV colours: material 6 register 3 from the
 //     bytes at +825..827, and register 0 of materials 0-3 white when +481
 //     is set and the act (+485/+486, 0x8012D270) is not 13/2, else grey 150.
 //   0x801A9274 when the kind at +480 (through the map at 0x805CF500, 255: as
@@ -161,7 +162,13 @@ void SeaSurfacePort(CpuContext* ctx) {
         MaterialTexCoords(game, mat8, frame[12], frame[20]);
         MaterialTexCoords(game, mat9, frame[8], frame[16]);
         GetEffectMtx(ctx, frame[20], 1, mtx);
-        game.Call<SinIdx>({(Memory::Read32(kTickCounter) << 7) & 0xFF80});
+
+        // The U offset swings with a sine of the tick counter, 128 index
+        // units a tick: here of the step's game time (the counter and the
+        // part of a tick past it), so it moves every step instead of holding
+        // between ticks.
+        const double ticks = double(Memory::Read32(kTickCounter)) + GameStep::Fraction();
+        game.Call<SinIdx>({uint32_t(std::fmod(ticks * 128.0, 65536.0))});
         F(mtx + 12, F(r2 - 8660) * game.F1());
         float v = F(mtx + 28) + F(r2 - 7740) * Step();
 
