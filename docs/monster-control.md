@@ -50,6 +50,16 @@ scripts/dev/monster_sweep.py sw-jho --quest 9004 --monster Deviljho --kind 7
 scripts/dev/monster_sweep.py sw-jaggi --quest 1028 --area 1 --small Jaggi --kind 10
 ```
 
+`--watch` forces the actions once under gdb with write watches on the
+monster work's count (+0x20), yaw, pitch and x, and reports the translated
+writers: the per-call counters and turns still to port. `--pairs FILE` forces
+every action the kind's dispatcher has instead of the learned ones (`mode
+sub` lines from `scripts/dev/enemy_action_pairs.py DISPATCHER`, the kind's
+handler 3; modes 10-13, reactions, death, area changes and intros, are left
+out unless `--modes` names them). The water arena's monsters need it: the
+hunter cannot reach their pool there (its floor is at height 0, Lagiacrus
+swims near -1100), so their AI only waits.
+
 ## Actions
 
 A monster's action is a pair of bytes in its work: the **mode** (+0x1E5) and

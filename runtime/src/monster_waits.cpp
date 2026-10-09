@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of twenty-six enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of twenty-eight enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -16,6 +16,7 @@
 //     0x80171B7C  kind 12 (Great Jaggi) a retreat, 15 ticks before it may end
 //     0x8037A8AC  kind 19 (Agnaktor) under the ground: 15, 60 or 90 ticks, a mark every 8
 //     0x801AC674  kind 27 (Aptonoth) a walk, 256-511 ticks
+//     0x8035F378, 0x8035F560  kind 35 (Bnahabra) waits, 90 ticks
 //     0x801B1228  kind 30 (Felyne)   a rest, 150 or 250 ticks and up to 63 more
 //     0x801B1708  kind 30 (Felyne)   a run, at most 60 or 150 ticks (15 when near)
 //     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
@@ -595,6 +596,36 @@ void Em030RunPort(CpuContext* ctx) {
 
         break;
     }
+}
+
+// kind 35 0x8035F378 and 0x8035F560 (motion flags 4 or 0): Bnahabra
+// waiting, motion 1 looped for 90 ticks (the original's 90 calls).
+void Em035Wait(CpuContext* ctx, uint32_t flags) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        game.Call<SetMotionLoop>({work, 1, flags, 0});
+        em.Count(0x5A);
+        break;
+    case 1:
+        if (CountDown(em))
+            game.Call<ActionDone>({work});
+
+        break;
+    }
+}
+
+void Em035WaitPort(CpuContext* ctx) {
+    Em035Wait(ctx, 4);
+}
+
+void Em035HoverPort(CpuContext* ctx) {
+    Em035Wait(ctx, 0);
 }
 
 // kind 27 0x801AC674: Aptonoth walking (motion 3 looped, steering at
@@ -1608,6 +1639,18 @@ extern "C" void MH3_Em030Run(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em030Run", func_801B1708, Em030RunPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801B1708, MH3_Em030Run, "Em030Run");
+
+extern "C" void func_8035F378(CpuContext* ctx);
+extern "C" void MH3_Em035Wait(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em035Wait", func_8035F378, Em035WaitPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8035F378, MH3_Em035Wait, "Em035Wait");
+
+extern "C" void func_8035F560(CpuContext* ctx);
+extern "C" void MH3_Em035Hover(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em035Hover", func_8035F560, Em035HoverPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8035F560, MH3_Em035Hover, "Em035Hover");
 
 extern "C" void func_801AC674(CpuContext* ctx);
 extern "C" void MH3_Em027Walk(CpuContext* ctx) {
