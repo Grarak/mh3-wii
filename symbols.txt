@@ -8,3 +8,16 @@
 # Leaf callback in the five-entry table at DOL file offset 0x56FDF8.
 # Called by 0x8047AA10 during wireless-controller initialization.
 80479c20 WirelessInitCallback
+# Ground-hit path at the dock. hit_ground_comon (0x80291D34) and
+# GetGroundHit/GetGroundHit2 (0x802916A0/0x802916C8) already have export names.
+# 0x802963CC compares query X/Z against LandData's four horizontal bounds.
+802963cc GroundHitXZBoundsContains
+# 0x802968D4 converts coordinates to grid cells and gathers candidate faces.
+802968d4 GroundHitGridCandidates
+# 0x80296A5C tests a query point against a triangle via signed 2D areas.
+80296a5c GroundHitPointInTriangle
+# 0x80296B28 computes the 2D signed area of three vertices.
+80296b28 TriangleSignedArea2D
+# 0x80296BA4 compares the query against all three directed triangle edges,
+# preserving the triangle winding and returning an inside/outside class.
+80296ba4 TriangleWindingClassifyPoint

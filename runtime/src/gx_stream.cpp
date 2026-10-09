@@ -5,6 +5,22 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#ifdef MH3_HAS_AURORA
+#include <xxhash.h>
+#endif
+
+namespace {
+uint32_t TextureContentsVersion(const void* data, size_t size) {
+#ifdef MH3_HAS_AURORA
+    const uint64_t digest = XXH3_64bits(data, size);
+#else
+    uint64_t digest = 14695981039346656037ull;
+    for (const uint8_t byte : std::span(static_cast<const uint8_t*>(data), size))
+        digest = (digest ^ byte) * 1099511628211ull;
+#endif
+    return uint32_t(digest) ^ uint32_t(digest >> 32);
+}
+}
 
 std::array<GuestGxStream::Attribute, 12> GuestGxStream::Attributes(unsigned format) const {
     const auto lo = cp[0x50], hi = cp[0x60];
@@ -46,7 +62,7 @@ std::array<uint8_t, 16> GuestGxStream::ArrayPacket(unsigned slot, ArrayView view
     for (unsigned i = 0; i < 4; ++i) packet[11 + i] = view.size >> (24 - 8 * i);
     return packet;
 }
-void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver) const {
+void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver) {
     const unsigned count = (unsigned(draw[1]) << 8) | draw[2];
     if (!count) return;
     const auto attributes = Attributes(draw[0] & 7);
@@ -79,7 +95,11 @@ void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& si
         if (!view.address || needed > view.size)
             throw std::runtime_error("GX draw index exceeds guest vertex-array RAM");
         view.size = static_cast<uint32_t>(needed);
-        sink(ArrayPacket(slot, view));
+        auto& bound = boundArrays[slot];
+        if (bound.address != view.address || bound.size != view.size) {
+            sink(ArrayPacket(slot, view));
+            bound = view;
+        }
     }
 }
 
@@ -118,10 +138,11 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     // Each texture unit gets its own host TLUT slot. Guest TMEM offsets and
     // formats are resolved immediately before the draw that uses the palette.
     if (format >= 8 && format <= 10) put(24, slot);
-    // A fresh revision prevents stale data
-    // when the game rewrites a texture at an existing guest address.
+    // Aurora keys its decoded-texture cache on this revision. A fresh number
+    // for every BP write defeats that cache; hash the actual guest bytes so a
+    // rewrite at the same address still invalidates the decoded texture.
     out[28] = mips;
-    put(29, guest); put(33, ++textureRevision);
+    put(29, guest); put(33, TextureContentsVersion(reinterpret_cast<const void*>(view.address), needed));
     return out;
 }
 
@@ -173,14 +194,14 @@ void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& reso
         // Stable identity per host slot; revision also changes for overlapping
         // TMEM writes and descriptor/format changes at the same destination.
         const uint32_t identity = 0x80000000u | slot;
-        const uint32_t revision = ++textureRevision;
+        const uint32_t revision = ++paletteRevision;
         for (unsigned i = 0; i < 4; ++i) {
             packet[18 + i] = identity >> (24 - 8 * i);
             packet[22 + i] = revision >> (24 - 8 * i);
         }
         sink(packet);
-        // Aurora's per-texture resolve memo keys the texture revision. Refresh
-        // that identity too when only the palette has changed.
+        // Refresh the texture binding after the TLUT revision changes so the
+        // next draw resolves the new palette with the same source bytes.
         sink(TexturePacket(slot, resolver));
         bound = {palettes->revision, descriptor, entries};
     }
@@ -264,13 +285,15 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 // the call exactly as if its commands appeared inline.
                 GuestGxStream child;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
-                child.textureBound = textureBound; child.textureRevision = textureRevision;
+                child.textureBound = textureBound; child.paletteRevision = paletteRevision;
+                child.boundArrays = boundArrays;
                 child.palettes = palettes; child.paletteBindings = paletteBindings;
                 child.displayListDepth = displayListDepth + 1;
                 child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, textureCopy);
                 if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
                 bp = child.bp; cp = child.cp; bpMask = child.bpMask;
-                textureBound = child.textureBound; textureRevision = child.textureRevision;
+                textureBound = child.textureBound; paletteRevision = child.paletteRevision;
+                boundArrays = child.boundArrays;
                 palettes = child.palettes; paletteBindings = child.paletteBindings;
             }
             offset += length;
@@ -285,6 +308,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             // Aurora's 0x50/0x0010..1F extension carries a host pointer,
             // accessible byte count, and an explicit guest-big-endian flag.
             sink(ArrayPacket(p[1] - 0xA0, view));
+            boundArrays[p[1] - 0xA0] = view;
             offset += length;
             continue;
         }
