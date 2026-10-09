@@ -332,7 +332,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         if (coordinate >= 8)
             continue;
         const auto& source = inputs.texgen[coordinate];
-        const bool plain = source.source_row > 1 && !source.projection && !source.normalize && source.post_identity && !source.indexed;
+        const bool plain = mh3_model_gpu_texgen_is_plain(&source);
         kinds[role] = !plain ? NativeShaderTexgen::General : source.main_identity ? NativeShaderTexgen::Identity : NativeShaderTexgen::Affine;
         auto& texgen = vertex.texgen[role];
         std::memcpy(texgen.main, &source.main, sizeof texgen.main);

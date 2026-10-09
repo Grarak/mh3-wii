@@ -6,6 +6,7 @@
 #include "../gfx/native_texture_set.hpp"
 #include "device.hpp"
 #include "runtime_shader.hpp"
+#include "razor.hpp"
 #include <aurora/native_frame_gate.hpp>
 #include "draw_memory.hpp"
 #include "raster.hpp"
@@ -62,6 +63,8 @@ struct TextureEntry {
   unsigned pins = 0;
 };
 struct NativeProgram {
+  std::string label;
+  bool usesDiscard = false, replacesDepth = false;
   std::shared_ptr<PatchedProgram> program;
   std::vector<std::pair<std::string, int>> samplers;
   std::map<std::string, std::array<float, 4>> uniforms;
@@ -212,6 +215,7 @@ public:
         device.begin_display();
       else
         device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr);
+      razor_scene_begin(gfx::current_frame(), device.current_fence().value, width, height, state.color, state.depth, state.display);
       // Stored DF32M contains coverage from the previous scene. Recreate the
       // current coverage even when the logical scissor has not changed.
       state.clipDirty = state.depth || state.scissorEnabled;
@@ -415,6 +419,13 @@ public:
     textures.erase(id);
   }
   void capture_draw(std::string_view kind, GLuint program, uint32_t vertices, uint32_t indices, uint32_t instances = 1, const RasterState* actualRaster = nullptr, GLuint texture0 = 0) {
+    const auto& r = actualRaster ? *actualRaster : state.raster;
+    if (razor_scene_tracing()) {
+      const auto found = programs.find(program);
+      const auto* native = found == programs.end() ? nullptr : &found->second;
+      razor_scene_draw(kind, native ? std::string_view(native->label) : kind, vertices, indices, instances, r.blend,
+                       native && native->usesDiscard, native && native->replacesDepth);
+    }
     using namespace gfx::port_capture;
     if (!enabled())
       return;
@@ -424,7 +435,6 @@ public:
     s.vertices = vertices;
     s.indices = indices;
     s.instances = instances;
-    const auto& r = actualRaster ? *actualRaster : state.raster;
     s.flags = (r.depthTest ? DepthCompare : 0u) | (r.depthWrite ? DepthWrite : 0u) | (r.blend ? Blend : 0u) | ((r.colorMask[0] || r.colorMask[1] || r.colorMask[2]) ? ColorWrite : 0u) |
               (r.colorMask[3] ? AlphaWrite : 0u);
     s.depthFunction = r.depthFunc;
@@ -778,6 +788,10 @@ GLuint Program::get() noexcept {
     m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
     m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
     NativeProgram native;
+    if (razor_scene_tracing())
+      native.label = m_desc.label;
+    native.usesDiscard = m_usesDiscard;
+    native.replacesDepth = m_replacesDepth;
     native.nativeMaterialVertices = m_desc.nativeMaterialVertices;
     native.nativeMeshLayout = m_desc.nativeMeshLayout;
     native.shaded = m_desc.cg;

@@ -7,6 +7,22 @@ static mh3_matrix34 identity(void) {
     const mh3_matrix34 matrix = {{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}}};
     return matrix;
 }
+int mh3_model_gpu_texgen_is_plain(const mh3_model_gpu_texgen *gen) {
+    if (!gen || gen->source_row <= 1 || gen->projection || gen->normalize || gen->indexed)
+        return 0;
+    if (gen->post_identity)
+        return 1;
+    if (!gen->main_identity)
+        return 0;
+    /* Authored post selectors often point at an actual identity matrix. Keep
+     * the producer's selector/Q metadata intact; specialize only this shader
+     * choice. No tolerance admits a nonidentity matrix. */
+    for (unsigned r = 0; r < 3; r++)
+        for (unsigned c = 0; c < 4; c++)
+            if (gen->post.v[r][c] != (r == c ? 1.f : 0.f))
+                return 0;
+    return 1;
+}
 /* Explicit classification keeps VitaSDK's isfinite macro from calling
  * __fpclassifyf for every validated float. NaN/Inf checks remain strict. */
 static int finite_matrix(const mh3_matrix34 *matrix) {

@@ -43,6 +43,10 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh, uint8
  * API above. No pointer into live guest pose memory is retained. */
 mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, uint8_t texcoord_mask, int normal_required, float near_z, float far_z, mh3_model_gpu_draw_inputs *out,
                                         mh3_matrix34 *positions, mh3_matrix34 *normals, mh3_matrix34 *textures);
+/* Whether the admitted coordinate recipe can use the fixed Identity/Affine
+ * vertex form. An explicit identity post matrix also qualifies when the main
+ * transform is identity; dynamic/indexed/projective/normalized forms do not. */
+int mh3_model_gpu_texgen_is_plain(const mh3_model_gpu_texgen *gen);
 #ifdef __cplusplus
 }
 #endif
