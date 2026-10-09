@@ -104,20 +104,28 @@ inline T MaybeByteSwap(T value) {
 // in double precision, and it has hardware-tested handling for tiny values.
 MKW_MEMORY_FORCE_INLINE uint32_t ConvertPpcDoubleToSingleBits(double value) {
     // A value that is exactly a single (every lfs result and single-precision
-    // op) narrows to that single's bits, subnormals included. Written as a
-    // cast round trip so the compiler folds it when the value is a widened
-    // float, leaving no conversion at all; NaNs take the bit narrowing.
+    // op) narrows to that single's bits, subnormals and NaNs included, and the
+    // bit narrowing below gives those same bits. When the caller's value is a
+    // widened float, the round trip folds to the value itself and the bit
+    // compare to a constant true: the store is the float's bits, with no
+    // conversion and no compare. (A floating compare can't fold, since a NaN
+    // fails it: that left a vcmp and an FPSCR read on each such store.)
+    // Otherwise the test isn't constant and the narrowing runs alone.
     const float single = static_cast<float>(value);
+    const double widened = static_cast<double>(single);
+    uint64_t bits = 0, widenedBits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    std::memcpy(&widenedBits, &widened, sizeof(widenedBits));
 
-    if (static_cast<double>(single) == value) [[likely]] {
+    if (__builtin_constant_p(widenedBits == bits) && widenedBits == bits) {
         uint32_t singleBits;
         std::memcpy(&singleBits, &single, sizeof(singleBits));
         return singleBits;
     }
 
-    uint64_t bits = 0;
-    std::memcpy(&bits, &value, sizeof(bits));
-    const uint32_t exponent = static_cast<uint32_t>((bits >> 52) & 0x7FFu);
+    // In 32-bit halves: as 64-bit operations, clang moves them to NEON.
+    const uint32_t high = static_cast<uint32_t>(bits >> 32), low = static_cast<uint32_t>(bits);
+    const uint32_t exponent = (high >> 20) & 0x7FFu;
 
     // The subnormal-single arm applies to exactly the exponents 874..896; every
     // other exponent takes the plain sign/exponent/fraction narrowing below.
@@ -125,15 +133,13 @@ MKW_MEMORY_FORCE_INLINE uint32_t ConvertPpcDoubleToSingleBits(double value) {
     // be zero and needs no separate test - the zero case (exponent 0) reaches
     // the narrowing exactly as it did when the two arms shared that test.
     if (exponent - 874u <= 22u) [[unlikely]] {
-        uint32_t narrowed = static_cast<uint32_t>(0x80000000ULL | ((bits & 0x000FFFFFFFFFFFFFULL) >> 21));
-        narrowed >>= (905u - exponent);
-        narrowed |= static_cast<uint32_t>((bits >> 32) & 0x80000000ULL);
-        return narrowed;
+        const uint32_t narrowed = 0x80000000u | ((high & 0x000FFFFFu) << 11) | (low >> 21);
+        return (narrowed >> (905u - exponent)) | (high & 0x80000000u);
     }
 
     // Results below the documented conversion range are architecturally
     // undefined; this is the behavior measured on Gekko/Broadway hardware.
-    return static_cast<uint32_t>(((bits >> 32) & 0xC0000000ULL) | ((bits >> 29) & 0x3FFFFFFFULL));
+    return (high & 0xC0000000u) | ((high << 3) & 0x3FFFFFF8u) | (low >> 29);
 }
 
 MKW_MEMORY_FORCE_INLINE float PpcSingleBitsToFloat(uint32_t bits) {
