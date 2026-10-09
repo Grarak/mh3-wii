@@ -308,18 +308,18 @@ ShadeLighting ShadeChannels(const mh3_shade_material& shading, mh3_shade_vertex&
     const auto& alpha = channel.alpha;
     const int32_t bits =
         (color.lighting ? 1 : 0) | (alpha.lighting ? 2 : 0) | (color.material_source ? 4 : 0) | (color.ambient_source ? 8 : 0) | (alpha.material_source ? 16 : 0) | (alpha.ambient_source ? 32 : 0);
-    out.channel[0] = int32_t(color.light_mask & lightSlots.valid_mask);
+    const uint32_t colorMask = color.light_mask & lightSlots.valid_mask;
     out.channel[1] = int32_t(alpha.light_mask & lightSlots.valid_mask);
     out.channel[2] = bits;
     out.channel[3] = int32_t((color.diffuse | color.attenuation << 2) | (alpha.diffuse | alpha.attenuation << 2) << 8);
-    if (!(bits & 3))
-        return {};
-    if ((bits & 2) || color.diffuse != 2 /* GX_DF_CLAMP */ || color.attenuation != 1 /* GX_AF_SPOT */)
-        return {NativeShaderLighting::General, 0};
+    if (!(bits & 3) || (bits & 2) || color.diffuse != 2 /* GX_DF_CLAMP */ || color.attenuation != 1 /* GX_AF_SPOT */) {
+        out.channel[0] = int32_t(colorMask);
+        return bits & 3 ? ShadeLighting{NativeShaderLighting::General, 0} : ShadeLighting{};
+    }
     ShadeLighting lighting{NativeShaderLighting::Spot, 0};
     uint32_t packed = 0;
     for (unsigned light = 0; light < 8; ++light)
-        if (out.channel[0] & (1 << light))
+        if (colorMask & (1u << light))
             packed |= light << (4 * lighting.lights++);
     out.channel[0] = int32_t(packed);
     return lighting;
@@ -359,24 +359,22 @@ bool ShadeSceneMemory(uint64_t& upload) {
 }
 // One per-draw allocation holds Draw, Shade and (mesh draws) the palette at
 // ShadePaletteOffset; it is filled in place and uploaded/bound once.
-// Material-GPU draws have no Shade: the palette follows Draw at 512.
+// Material-GPU draws have no Shade: the palette follows Draw at 512. The
+// caller writes the Draw part (MH3_SHADE_FRAGMENT_OFFSET bytes) completely.
 constexpr uint32_t ShadePaletteOffset(uint8_t model) {
     return (MH3_SHADE_DRAW_BYTES(model) + 255u) & ~255u;
 }
 constexpr uint32_t ShadeGpuPaletteOffset = MH3_SHADE_FRAGMENT_OFFSET;
+static_assert(sizeof(mh3_shade_vertex) <= MH3_SHADE_FRAGMENT_OFFSET);
 mh3_shade_draw* ShadeDrawMemory(uint8_t model, bool palette, AuroraNativeUniforms& memory) {
     if (!aurora_allocate_native_uniforms(palette ? ShadePaletteOffset(model) + uint32_t(sizeof(mh3_shade_palette)) : MH3_SHADE_DRAW_BYTES(model), &memory))
         return nullptr;
-    auto* block = static_cast<mh3_shade_draw*>(memory.data);
-    std::memset(block, 0, MH3_SHADE_FRAGMENT_OFFSET);
-    return block;
+    return static_cast<mh3_shade_draw*>(memory.data);
 }
 mh3_shade_vertex* ShadeGpuDrawMemory(bool palette, AuroraNativeUniforms& memory) {
     if (!aurora_allocate_native_uniforms(palette ? ShadeGpuPaletteOffset + uint32_t(sizeof(mh3_shade_palette)) : MH3_SHADE_FRAGMENT_OFFSET, &memory))
         return nullptr;
-    auto* block = static_cast<mh3_shade_vertex*>(memory.data);
-    std::memset(block, 0, MH3_SHADE_FRAGMENT_OFFSET);
-    return block;
+    return static_cast<mh3_shade_vertex*>(memory.data);
 }
 std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& draw, uint8_t model, bool palette) {
     aurora::gl::ShadedBlocks blocks;
@@ -861,7 +859,9 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     }
     if (!vertexBlock)
         return;
-    auto& vertex = *vertexBlock;
+    // Built here and copied once: the frame's uniform memory is uncached CDRAM
+    // on the Vita, where clearing it and then writing the fields cost twice.
+    mh3_shade_vertex vertex{};
     const auto lighting = ShadeChannels(shading, vertex);
     uint8_t coordinates = 0;
     for (unsigned role = 0; role < shading.textures; ++role)
@@ -920,8 +920,8 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         std::memcpy(texgen.main, &source.main, sizeof texgen.main);
         const unsigned row = source.source_row;
         texgen.mode[0] = row == 0 ? MH3_SHADE_TEXGEN_POSITION : row == 1 ? MH3_SHADE_TEXGEN_NORMAL : MH3_SHADE_TEXGEN_COORDINATE;
-        texgen.mode[1] = (source.projection ? MH3_SHADE_TEXGEN_PROJECTIVE : 0) | (source.normalize ? MH3_SHADE_TEXGEN_NORMALIZE : 0) | (source.main_identity ? MH3_SHADE_TEXGEN_MAIN_IDENTITY : 0) |
-                         (source.post_identity ? MH3_SHADE_TEXGEN_POST_IDENTITY : 0) | (source.indexed ? MH3_SHADE_TEXGEN_INDEXED : 0);
+        int32_t mode = (source.projection ? MH3_SHADE_TEXGEN_PROJECTIVE : 0) | (source.normalize ? MH3_SHADE_TEXGEN_NORMALIZE : 0) | (source.main_identity ? MH3_SHADE_TEXGEN_MAIN_IDENTITY : 0) |
+                       (source.post_identity ? MH3_SHADE_TEXGEN_POST_IDENTITY : 0) | (source.indexed ? MH3_SHADE_TEXGEN_INDEXED : 0);
         if (srtRoles & (1u << role)) {
             // Exactly the SRT matrix: identity parameters are the identity post.
             const bool plainRow = row > 1 && !source.projection && !source.normalize && !source.indexed;
@@ -930,12 +930,13 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
                 kinds[role] = !plainRow ? NativeShaderTexgen::General : source.main_identity ? NativeShaderTexgen::Identity : NativeShaderTexgen::Affine;
             else
                 kinds[role] = plainRow ? NativeShaderTexgen::Srt : NativeShaderTexgen::General;
-            texgen.mode[1] |= MH3_SHADE_TEXGEN_POST_SRT;
+            mode |= MH3_SHADE_TEXGEN_POST_SRT;
         } else {
             const bool plain = mh3_model_gpu_texgen_is_plain(&source);
             kinds[role] = !plain ? NativeShaderTexgen::General : source.main_identity ? NativeShaderTexgen::Identity : NativeShaderTexgen::Affine;
             std::memcpy(texgen.post, &source.post, sizeof texgen.post);
         }
+        texgen.mode[1] = mode;
         if (row > 1)
             bind.location[3 + role] = int8_t(row <= 2 ? row : row - 1);
         if (source.indexed) {
@@ -944,6 +945,8 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
             bind.lane[7 + role] = int8_t(packed % 4);
         }
     }
+    std::memcpy(vertexBlock, &vertex, sizeof vertex);
+    std::memset(reinterpret_cast<char*>(vertexBlock) + sizeof vertex, 0, MH3_SHADE_FRAGMENT_OFFSET - sizeof vertex);
     float bias[4];
     const auto units = ShadeTextures(shading, bias);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Mesh, lighting);
@@ -1027,6 +1030,7 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     }
     if (!vertexBlock)
         return;
+    std::memset(vertexBlock, 0, MH3_SHADE_FRAGMENT_OFFSET);
     const auto lighting = ShadeChannels(shading, *vertexBlock);
     std::array<uint8_t, 3> coordinates{};
     for (unsigned role = 0; role < shading.textures; ++role)
