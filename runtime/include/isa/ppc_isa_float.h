@@ -710,18 +710,30 @@ inline float PpcResolveNanLaneInline(float result, float op1, float op2, float o
     return PpcPairLaneFromBitsInline(0xFFC00000u);
 }
 
+[[gnu::cold, gnu::noinline]] inline PpcPairVec PpcResolveNanPairSlow(
+    PpcPairVec result, PpcPairVec op1, PpcPairVec op2, PpcPairVec op3)
+{
+    return {PpcResolveNanLaneInline(result.lane0, op1.lane0, op2.lane0, op3.lane0),
+            PpcResolveNanLaneInline(result.lane1, op1.lane1, op2.lane1, op3.lane1)};
+}
+
+// Every paired op ends here, so the common case must stay small: comparing the two result
+// lanes with each other is unordered exactly when either is a NaN, one VFP compare and branch
+// instead of moving each lane to a core register to test its bits.
 inline PpcPairVec PpcResolveNanLanesInline(PpcPairVec result, PpcPairVec op1, PpcPairVec op2)
 {
+    if (!__builtin_isunordered(result.lane0, result.lane1)) [[likely]]
+        return result;
     // A non-NaN value in the op3 slot never wins.
-    return {PpcResolveNanLaneInline(result.lane0, op1.lane0, op2.lane0, 0.0f),
-            PpcResolveNanLaneInline(result.lane1, op1.lane1, op2.lane1, 0.0f)};
+    return PpcResolveNanPairSlow(result, op1, op2, PpcPairVec{0.0f, 0.0f});
 }
 
 inline PpcPairVec PpcResolveNanLanes3Inline(
     PpcPairVec result, PpcPairVec op1, PpcPairVec op2, PpcPairVec op3)
 {
-    return {PpcResolveNanLaneInline(result.lane0, op1.lane0, op2.lane0, op3.lane0),
-            PpcResolveNanLaneInline(result.lane1, op1.lane1, op2.lane1, op3.lane1)};
+    if (!__builtin_isunordered(result.lane0, result.lane1)) [[likely]]
+        return result;
+    return PpcResolveNanPairSlow(result, op1, op2, op3);
 }
 #endif // defined(__arm__)
 
