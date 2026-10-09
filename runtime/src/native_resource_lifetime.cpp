@@ -212,6 +212,9 @@ void SystemFree(CpuContext* cpu, uint32_t payload) {
 }
 } // namespace
 
+void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes) {
+    Fill(destination, value, bytes);
+}
 extern "C" void MH3_Copy32Blocks(CpuContext* cpu) {
     CopyBlocks(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }

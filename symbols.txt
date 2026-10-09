@@ -173,6 +173,7 @@
 800d2678 PauseHook
 800d298c OverlayHook
 80048890 ClearDrawBuckets
+80048834 InitDrawBuckets
 80048ffc ClearDrawSlots
 8028d7dc StaffRollUpdate
 # Animation stepping: NW4R g3d FrameCtrl (frame += rate * smBaseUpdateRate at f32 0x80793628) and MHchar root motion.
