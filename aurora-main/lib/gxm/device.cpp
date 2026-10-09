@@ -26,6 +26,7 @@
 
 // These firmware exports are in the SDK stub library but absent from its header.
 extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSurface*, SceBool);
+extern "C" bool sceGxmIsDebugVersion(void);
 
 namespace aurora::gxm {
 namespace {
@@ -211,6 +212,10 @@ Device::Device() {
   razor_initialize();
   check(sceGxmInitialize(&init), "initialize");
   m_initialized = true;
+
+  // The devkit runs the debug libgxm (more state checks per draw): its CPU
+  // profiles overstate the library's share against a retail Vita.
+  std::printf("Aurora GXM: %s libgxm\n", sceGxmIsDebugVersion() ? "debug" : "release");
   m_notification = sceGxmGetNotificationRegion();
 
   if (!m_notification)

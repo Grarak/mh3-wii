@@ -1,27 +1,18 @@
 #include "platform.h"
 #include "fatal.h"
-#include "disc_image.h"
 #include "nand_recover.h"
 #include <aurora/thread_role.hpp>
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/sysmem.h>
-#include <psp2/io/dirent.h>
-#include <psp2/io/fcntl.h>
-#include <psp2/io/stat.h>
-#include <psp2/io/devctl.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 #include <psp2/appmgr.h>
 #include <csignal>
 #include <cstdio>
-#include <cerrno>
 #include <unwind.h>
-#include <reent.h>
 #include <algorithm>
-#include <chrono>
 #include <cstdlib>
-#include <fstream>
 #include <string>
 #include <string_view>
 #include <stdexcept>
@@ -29,7 +20,7 @@
 
 // All allocations in this heap are committed by newlib at startup. Guest RAM
 // and GXM buffers have separate bounded memblocks; leave room for them within
-// the retail main-memory budget rather than using the DevKit's extra memory.
+// the retail main-memory budget.
 extern "C" {
 unsigned int _newlib_heap_size_user = 112 * 1024 * 1024;
 unsigned int _pthread_stack_default_user = 1024 * 1024;
@@ -64,7 +55,7 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
 
     // SceAppMgr supplies an empty argv[0], the SELF path and its own options.
     // Preserve the game's option/value pairs and give the shared parser a
-    // conventional argv[0]. This also identifies debug launches from host0.
+    // conventional argv[0].
     static char program[] = "MH3";
     static std::vector<char*> arguments;
     arguments = {program};
@@ -102,9 +93,7 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     setenv("MH3_DISC_DIR", "ux0:/data/mh3-wii", 0);
     setenv("MH3_USER_DIR", "ux0:/data/mh3-wii/saves", 0);
 #ifdef MH3_DEVELOPMENT
-    // The log goes to the Vita's TTY, which the devkit's CP debug link carries
-    // (console.txt), apart from the DECI link that serves host0: files: a
-    // stalled host0 link no longer blocks every thread that logs. Whole lines.
+    // The log goes to the Vita's TTY, whole lines.
     std::setvbuf(stderr, nullptr, _IOLBF, 1024);
     std::fprintf(stderr, "MH3 Vita: main thread core 2, heap 112 MiB, argv0=%s\n", argc ? argv[0] : "");
 
@@ -121,39 +110,16 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     (void)argc;
     (void)argv;
 #endif
-    // Match Azahar's documented native clock setup using official ScePower
-    // rates. Query the resulting clocks in diagnostics rather than assuming
-    // the DevKit's shell left them at the intended performance setting.
     // Before the launcher lists saves or a quest launch reads one.
     RecoverNandSaves();
+
+    // The highest clocks ScePower offers.
     const int armClock = scePowerSetArmClockFrequency(444);
     const int busClock = scePowerSetBusClockFrequency(222);
     const int gpuClock = scePowerSetGpuClockFrequency(222);
     const int xbarClock = scePowerSetGpuXbarClockFrequency(166);
     std::fprintf(stderr, "MH3 Vita clocks: CPU %d, bus %d, GPU %d, crossbar %d MHz (set %d/%d/%d/%d)\n", scePowerGetArmClockFrequency(), scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency(),
                  scePowerGetGpuXbarClockFrequency(), armClock, busClock, gpuClock, xbarClock);
-#ifdef MH3_DEVELOPMENT
-    {
-        // What one read of each clock a development timer could use costs.
-        constexpr int calls = 2000;
-        volatile uint64_t sink = 0;
-        const auto cost = [&](auto read) {
-            const uint64_t start = sceKernelGetProcessTimeWide();
-
-            for (int i = 0; i < calls; ++i)
-                sink = read();
-
-            return double(sceKernelGetProcessTimeWide() - start) * 1000.0 / calls;
-        };
-
-        const double steady = cost([] { return uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()); });
-        const double process = cost([] { return uint64_t(sceKernelGetProcessTimeWide()); });
-        const double processLow = cost([] { return uint64_t(sceKernelGetProcessTimeLow()); });
-        const double system = cost([] { return uint64_t(sceKernelGetSystemTimeWide()); });
-        (void)sink;
-        std::fprintf(stderr, "MH3 Vita clock read cost: steady_clock %.0f ns, process time %.0f ns (low %.0f ns), system time %.0f ns\n", steady, process, processLow, system);
-    }
-#endif
     ReportVitaMemory();
 }
 
@@ -198,47 +164,3 @@ void ReportVitaMemory() {
     if (sceKernelGetFreeMemorySize(&memory) >= 0)
         std::fprintf(stderr, "MH3 Vita free: main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB\n", memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
 }
-
-
-namespace {
-// Bytes in a directory tree; `leftovers` counts the files a crashed write
-// left behind (asset cache .tmp files).
-uint64_t VitaTreeBytes(const std::string& path, uint64_t& leftovers, unsigned& leftoverFiles) {
-    uint64_t bytes = 0;
-    const int dir = sceIoDopen(path.c_str());
-
-    if (dir < 0)
-        return 0;
-
-    SceIoDirent entry{};
-    std::vector<std::string> directories;
-
-    while (sceIoDread(dir, &entry) > 0) {
-        const std::string name = entry.d_name;
-
-        if (name == "." || name == "..")
-            continue;
-
-        if (SCE_S_ISDIR(entry.d_stat.st_mode)) {
-            directories.push_back(path + "/" + name);
-            continue;
-        }
-
-        bytes += entry.d_stat.st_size;
-
-        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tmp") == 0) {
-            leftovers += entry.d_stat.st_size;
-            ++leftoverFiles;
-        }
-    }
-
-    sceIoDclose(dir);
-
-    for (const auto& child : directories)
-        bytes += VitaTreeBytes(child, leftovers, leftoverFiles);
-
-    return bytes;
-}
-
-} // namespace
-
