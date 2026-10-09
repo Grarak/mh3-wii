@@ -46,7 +46,10 @@ private:
 
 class TextureStorage {
 public:
-  TextureStorage(TexturePool& pool, uint32_t width, uint32_t height, uint32_t mips, gl::Format format);
+  // samples 4 (RGBA8 and Depth32F render targets only): a 4x MSAA target.
+  // The colour surface downscales into the texture's own pixels; the depth
+  // keeps every sample, as a 2x wide and high image that sampling reads.
+  TextureStorage(TexturePool& pool, uint32_t width, uint32_t height, uint32_t mips, gl::Format format, uint32_t samples = 1);
   ~TextureStorage();
   TextureStorage(const TextureStorage&) = delete;
   TextureStorage& operator=(const TextureStorage&) = delete;
@@ -72,6 +75,7 @@ public:
   size_t palette_bytes() const noexcept { return m_paletteBytes; }
   const uint32_t width, height, mips;
   const gl::Format format;
+  const uint32_t samples;
 
 private:
   friend class TexturePool;

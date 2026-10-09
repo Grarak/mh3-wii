@@ -266,9 +266,14 @@ void TexturePool::touch(TextureStorage& texture) {
   }
 }
 
-TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t height_, uint32_t mips_, gl::Format format_) : width(width_), height(height_), mips(mips_), format(format_), m_pool(pool) {
+TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t height_, uint32_t mips_, gl::Format format_, uint32_t samples_)
+    : width(width_), height(height_), mips(mips_), format(format_), samples(samples_), m_pool(pool) {
+  if (samples != 1 && (samples != 4 || mips != 1 || (format != gl::Format::RGBA8 && format != gl::Format::Depth32F)))
+    AURORA_THROW(std::runtime_error("Native multisampling needs a 4x RGBA8 or depth render target"));
+
   m_pixelBytes = native_format(format).bytes;
-  auto layout = gfx::native_texture_layout(width, height, mips, format);
+  const uint32_t scale = samples == 4 && format == gl::Format::Depth32F ? 2 : 1;
+  auto layout = gfx::native_texture_layout(width * scale, height * scale, mips, format);
   m_levels = std::move(layout.levels);
   m_imageBytes = layout.image_bytes;
   m_paletteOffset = layout.palette_offset;
@@ -308,7 +313,10 @@ void TextureStorage::refresh_views() {
     if (m_paletteBytes)
       check(sceGxmTextureSetPalette(&m_sampled, static_cast<uint8_t*>(m_data) + m_paletteOffset), "initialize native CDRAM palette");
   } else if (format == gl::Format::Depth32F) {
-    check(sceGxmTextureInitLinearStrided(&m_sampled, m_data, native.sampled, width, height, m_levels[0].pitch), "initialize sampled depth view");
+    // A 4x target's samples: each pixel's four are the 2x2 block at twice its
+    // coordinates, so nearest sampling at the same coordinates reads one.
+    const uint32_t scale = samples == 4 ? 2 : 1;
+    check(sceGxmTextureInitLinearStrided(&m_sampled, m_data, native.sampled, width * scale, height * scale, m_levels[0].pitch), "initialize sampled depth view");
     check(sceGxmDepthStencilSurfaceInit(&m_depth, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32M, SCE_GXM_DEPTH_STENCIL_SURFACE_LINEAR, m_levels[0].pitch / 4, m_data, nullptr), "initialize native depth surface");
     sceGxmDepthStencilSurfaceSetForceStoreMode(&m_depth, SCE_GXM_DEPTH_STENCIL_FORCE_STORE_ENABLED);
     sceGxmDepthStencilSurfaceSetForceLoadMode(&m_depth, SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED);
@@ -318,8 +326,9 @@ void TextureStorage::refresh_views() {
 
     if (format >= gl::Format::U8_RRRR)
       return; // Explicit asset formats are sample-only.
-    check(sceGxmColorSurfaceInit(&m_color, native.color, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, width, height,
-                                 m_levels[0].pitch / m_pixelBytes, m_data),
+    check(sceGxmColorSurfaceInit(&m_color, native.color, SCE_GXM_COLOR_SURFACE_LINEAR,
+                                 samples == 4 ? SCE_GXM_COLOR_SURFACE_SCALE_MSAA_DOWNSCALE : SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
+                                 width, height, m_levels[0].pitch / m_pixelBytes, m_data),
           "initialize native color surface");
   }
 }
@@ -348,6 +357,9 @@ void TextureStorage::upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t w, ui
 
   if (gfx::native_swizzled(format))
     AURORA_THROW(std::runtime_error("Swizzled assets require native packed uploads"));
+
+  if (samples != 1 && format == gl::Format::Depth32F)
+    AURORA_THROW(std::runtime_error("Native multisampled depth takes no uploads"));
 
   const auto& level = m_levels.at(mip);
   const uint32_t sourcePixelBytes = format == gl::Format::R16I ? 2 : m_pixelBytes;

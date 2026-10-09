@@ -390,9 +390,9 @@ void Device::release() noexcept {
 }
 
 void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color, const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync,
-                   DepthScene depthScene) {
+                   DepthScene depthScene, bool multisample) {
   end();
-  const auto key = std::make_pair(width, height);
+  const auto key = std::make_tuple(width, height, multisample);
   auto found = m_targets.find(key);
 
   if (found == m_targets.end()) {
@@ -400,6 +400,7 @@ void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* co
     params.width = width;
     params.height = height;
     params.scenesPerFrame = 8;
+    params.multisampleMode = multisample ? SCE_GXM_MULTISAMPLE_4X : SCE_GXM_MULTISAMPLE_NONE;
     params.driverMemBlock = -1;
     SceGxmRenderTarget* target = nullptr;
     check(sceGxmCreateRenderTarget(&params, &target), "create render target");
@@ -431,6 +432,7 @@ void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* co
   check(sceGxmBeginScene(m_context, 0, found->second, nullptr, nullptr, sync, color, depth), "begin scene");
   forget_raster_state();
   m_inScene = true;
+  m_multisample = multisample;
 }
 
 void Device::end() {
@@ -714,7 +716,8 @@ void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterForm
   m_boundFragmentBinary = scalar ? m_scalarFragmentBinary : m_fragmentBinary;
   uint32_t blendKey;
   std::memcpy(&blendKey, &blend, sizeof(blendKey));
-  const uint64_t key = uint64_t(blendKey) | (uint64_t(output) << 32);
+  const bool multisample = m_device.scene_multisample();
+  const uint64_t key = uint64_t(blendKey) | (uint64_t(output) << 32) | (uint64_t(multisample) << 48);
 
   // Blend state is part of a GXM fragment program: one patched variant per
   // blend/output state, created once. Consecutive draws mostly repeat it.
@@ -734,7 +737,8 @@ void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterForm
     // Explicit scalar output cannot use the runtime half4 conversion/blend
     // patch. F32 surfaces have only R, so an unblended R write needs no mask.
     const SlowProgramReport report{"fragment patch", m_fragmentHash};
-    check(sceGxmShaderPatcherCreateFragmentProgram(m_device.patcher(), scalar ? m_scalarFragmentId : m_fragmentId, scalar ? SCE_GXM_OUTPUT_REGISTER_FORMAT_DECLARED : output, SCE_GXM_MULTISAMPLE_NONE,
+    check(sceGxmShaderPatcherCreateFragmentProgram(m_device.patcher(), scalar ? m_scalarFragmentId : m_fragmentId, scalar ? SCE_GXM_OUTPUT_REGISTER_FORMAT_DECLARED : output,
+                                                   multisample ? SCE_GXM_MULTISAMPLE_4X : SCE_GXM_MULTISAMPLE_NONE,
                                                    scalar ? nullptr : &blend, m_vertexBinary, &fragment),
           "patch fragment program");
     found = m_fragments.emplace(key, fragment).first;

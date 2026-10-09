@@ -666,6 +666,11 @@ TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
 }
 
+// Single-sampled: this OpenGL ES renderer has no multisampled targets.
+TexturePtr create_render_target(uint32_t width, uint32_t height, Format format, uint32_t, std::string_view label) noexcept {
+  return create_texture(width, height, 1, format, label);
+}
+
 bool render_target_reusable(const Texture& texture) noexcept {
   if (!on_render_thread())
     Log.fatal("GL target reuse queried outside the game thread");

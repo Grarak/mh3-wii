@@ -2,6 +2,7 @@
 #include "fatal.h"
 #include "gx_panic.h"
 #include "native_graphics.h"
+#include "msaa.h"
 #include "upscaling.h"
 #include "model_cull.h"
 #include "scene_cull.h"
@@ -113,6 +114,7 @@ bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 bool displayWidescreen = false;
 bool upscaling = true;
+bool msaa = false;
 
 // Every host renders for the Vita's display; other hosts scale it into their window.
 constexpr uint32_t DisplayWidth = 960, DisplayHeight = 544;
@@ -342,7 +344,13 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
         }
     }
 #endif
-    config.msaa = 1;
+    // MH3_MSAA=4 or off: the launcher's MSAA setting for runs started without it.
+    bool multisample = msaa;
+#ifdef MH3_DEVELOPMENT
+    if (const char* v = std::getenv("MH3_MSAA"))
+        multisample = std::strcmp(v, "4") == 0;
+#endif
+    config.msaa = multisample ? 4 : 1;
     config.maxTextureAnisotropy = 1;
     const auto info = aurora_initialize(argc, argv, &config);
 
@@ -491,6 +499,14 @@ bool UpscalingSetting() {
 
 void SetUpscalingSetting(bool enabled) {
     upscaling = enabled;
+}
+
+bool MsaaSetting() {
+    return msaa;
+}
+
+void SetMsaaSetting(bool enabled) {
+    msaa = enabled;
 }
 
 void SetNativeDisplayWidescreen(bool widescreen) {

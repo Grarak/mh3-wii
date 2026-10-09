@@ -65,13 +65,13 @@ bool initialize(SDL_Window* window) {
   g_graphicsConfig = GraphicsConfig{
       .width = size.native_fb_width,
       .height = size.native_fb_height,
-      .msaaSamples = 1,
+      .msaaSamples = g_config.msaa >= 4 && caps.maxRenderTargetSamples >= 4 ? 4u : 1u,
       .textureAnisotropy = static_cast<uint16_t>(std::clamp<int32_t>(g_config.maxTextureAnisotropy, 1, std::max(caps.maxAnisotropy, 1))),
       .maxTextureDimension2D = static_cast<uint32_t>(std::max(caps.maxTextureSize, 1)),
   };
 
-  if (g_config.msaa > 1) {
-    Log.info("MSAA is not supported by the OpenGL ES renderer; rendering single-sampled");
+  if (g_config.msaa > 1 && g_graphicsConfig.msaaSamples == 1) {
+    Log.info("MSAA {}x is not supported by this renderer; rendering single-sampled", g_config.msaa);
   }
 
   resize_swapchain(size.fb_width, size.fb_height, size.native_fb_width, size.native_fb_height, true);
@@ -185,17 +185,17 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
   gfx::clear_caches();
   clear_present_source_override();
   g_frameBuffer = {
-      .texture = gl::create_texture(render_width, render_height, 1, gl::Format::RGBA8, "EFB color"),
+      .texture = gl::create_render_target(render_width, render_height, gl::Format::RGBA8, g_graphicsConfig.msaaSamples, "EFB color"),
       .width = render_width,
       .height = render_height,
   };
 
   g_depthBuffer = {
-      .texture = gl::create_texture(render_width, render_height, 1, gl::Format::Depth32F, "EFB depth"),
+      .texture = gl::create_render_target(render_width, render_height, gl::Format::Depth32F, g_graphicsConfig.msaaSamples, "EFB depth"),
       .width = render_width,
       .height = render_height,
   };
 
-  Log.info("EFB render target {}x{}", render_width, render_height);
+  Log.info("EFB render target {}x{}, {} sample(s) per pixel", render_width, render_height, g_graphicsConfig.msaaSamples);
 }
 } // namespace aurora::gpu

@@ -347,9 +347,16 @@ public:
     if (!device.scene_active()) {
       if (state.display)
         device.begin_display();
-      else
+      else {
+        const uint32_t samples = texture(state.color ? state.color : state.depth).samples;
+
+        if (state.color && state.depth && texture(state.depth).samples != samples)
+          AURORA_THROW(std::runtime_error("Native framebuffer attachments differ in samples"));
+
         device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr,
-                     nullptr, state.depth ? depth_scene(clearDepth) : Device::DepthScene{});
+                     nullptr, state.depth ? depth_scene(clearDepth) : Device::DepthScene{}, samples == 4);
+      }
+
       razor_scene_begin(gfx::current_frame(), device.current_fence().value, width, height, state.color, state.depth, state.display);
 
       // Stored DF32M contains coverage from the previous scene. Recreate the
@@ -1178,7 +1185,7 @@ bool initialize(SDL_Window* window) noexcept {
     own_context(*thread);
     g_context = thread.get();
     thread->renderer = std::make_unique<Renderer>();
-    g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1};
+    g_caps = {"Sony", "SGX543 native GXM", "libgxm", 4096, 16, 16384, 1, 4};
     thread.release();
     return true;
 #if defined(__cpp_exceptions)
@@ -1314,6 +1321,20 @@ Texture::~Texture() {
 
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
+}
+
+// The texture's storage is replaced by a multisampled one before any other
+// render-thread work uses it (posted work runs in order).
+TexturePtr create_render_target(uint32_t width, uint32_t height, Format format, uint32_t samples, std::string_view label) noexcept {
+  auto texture = create_texture(width, height, 1, format, label);
+
+  if (samples > 1)
+    post([texture, samples] {
+      auto& r = renderer();
+      r.entry(texture->gl()).storage = std::make_unique<TextureStorage>(r.pool, texture->width, texture->height, 1, texture->format, samples);
+    });
+
+  return texture;
 }
 
 bool render_target_reusable(const Texture& texture) noexcept {
@@ -1807,7 +1828,7 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
     auto& dst = r.texture(dest);
 
     if (srcX < 0 || srcY < 0 || dstX < 0 || dstY < 0 || uint64_t(srcX) + width > src.width || uint64_t(srcY) + height > src.height || uint64_t(dstX) + width > dst.width ||
-        uint64_t(dstY) + height > dst.height || src.format != dst.format)
+        uint64_t(dstY) + height > dst.height || src.format != dst.format || (src.format == Format::Depth32F && (src.samples != 1 || dst.samples != 1)))
       AURORA_THROW(std::runtime_error("Native texture copy has incompatible formats or exceeds bounds"));
     SceGxmTransferFormat format;
 

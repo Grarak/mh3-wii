@@ -192,8 +192,8 @@ or the devkit harness's CTRLP pad drives the menus too. With this call the
 handheld's L/R report as L1/R1.
 
 The main menu contains `Start game`, `Village`, `City (online)`, `Quests`,
-`Create custom quest`, `Cheats`, `Widescreen`, `Upscaling`, `Game thread
-limit` and `Online settings`. `Village` and `City (online)` choose a hunter as
+`Create custom quest`, `Cheats`, `Widescreen`, `Upscaling`, `Framelimit`,
+`MSAA`, `Language` and `Online settings`. `Village` and `City (online)` choose a hunter as
 Quests does and skip the title: the boot (`StartVillageBoot`) loads the
 character and makes the mode menu's Village or City choice (City: the network
 screen, [online.md](online.md); `--city` on the command line). `Online
@@ -230,6 +230,18 @@ it makes is shown ([packet ring](frame-packet-ring.md#the-game-thread-limiter)).
 Off, the game thread runs ahead, the render thread draws the newest frame
 and skips the others, and motion can judder. The game's render thread start,
 after the hand-off, applies it.
+
+`MSAA` (off by default; `SetMsaaSetting`, `runtime/include/msaa.h`) reads
+`MSAA: 4x` or `OFF`. On, the game's EFB is a 4x multisampled GXM target: the
+colour resolves into the EFB's pixels as each scene stores it, and the depth
+keeps all four samples (four times the memory) for depth tests and the
+nearest reads of depth copies. The game's graphics startup applies it; the
+development `MH3_MSAA=4` (runtime.env) turns it on for runs started without
+the launcher. It costs GPU time and CDRAM, not CPU: on the devkit (frame
+limit off, 2026-10-08) the village walk went from 64 to 59 fps (the GPU
+became the limit) and the Alatreon intro and fight start from 64 to 53 fps
+(about 3 ms more GPU per frame), and the 4-sample depth takes 6 MiB more
+CDRAM (Alatreon 36 of 47 MiB instead of 30).
 
 `Start game` goes through the game's own intro movie and title. Only the
 Classic Controller's A (the Vita's Circle) skips the intro: Plus (Start) does

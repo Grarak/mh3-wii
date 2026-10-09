@@ -35,6 +35,9 @@ struct Caps {
   int32_t uniformOffsetAlignment = 256;
   int32_t maxUniformBlockSize = 16384;
   int32_t maxAnisotropy = 1;
+
+  // Samples per pixel create_render_target can give a render target (1: none).
+  int32_t maxRenderTargetSamples = 1;
 };
 
 bool initialize(SDL_Window* window) noexcept;
@@ -97,6 +100,12 @@ private:
 using TexturePtr = std::shared_ptr<Texture>;
 
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept;
+
+// A single-level render target with `samples` per pixel (1, or up to
+// caps().maxRenderTargetSamples; a backend without them makes a plain
+// texture). Sampling it and copies from it see the resolved pixels; a depth
+// target's samples are only for depth tests and nearest reads.
+TexturePtr create_render_target(uint32_t width, uint32_t height, Format format, uint32_t samples, std::string_view label) noexcept;
 
 // Owner only; never submits or waits. Reuse also requires exclusive shared
 // ownership. GXM checks the texture's latest actual GPU use, not a frame slot;
@@ -233,6 +242,7 @@ bool shaded_target_alpha_one() noexcept;
 class NativeMeshBuffer {
 public:
   NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes);
+
   // A payload another thread read (16-byte aligned), copied in.
   NativeMeshBuffer(const void* payload, uint32_t bytes);
   ~NativeMeshBuffer();
@@ -388,7 +398,7 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
 
 // A uniform block in GPU-visible memory. Persistent blocks (material uniforms
-// baked once, docs/native-material-gpu.md) live in a CDRAM arena allocation on
+// baked once, docs/optimizations/rendering/material-uniform-blocks.md) live in a CDRAM arena allocation on
 // GXM (data) or a range of one UBO on GLES (buffer, offset). Frame blocks
 // point into the admitted frame's uniform memory (data, buffer 0): GXM reads
 // them in place, GLES uploads them when they change.

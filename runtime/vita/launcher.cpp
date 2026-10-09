@@ -14,6 +14,7 @@
 #include "widescreen.h"
 #include "upscaling.h"
 #include "frame_limit.h"
+#include "msaa.h"
 #include "language.h"
 #include "../src/net/online.h"
 #include <aurora/aurora.h>
@@ -741,6 +742,8 @@ void LoadSettings(const std::filesystem::path& base) {
             SetUpscalingSetting(on);
         else if (key == "framelimit")
             SetFrameLimitSetting(on);
+        else if (key == "msaa")
+            SetMsaaSetting(on);
         else if (key == "online_skip_tls")
             SetSkipTlsSetting(on);
     }
@@ -759,6 +762,7 @@ Status SaveSettings(const std::filesystem::path& base) {
         std::ofstream file(temporary, std::ios::trunc);
         const auto onOff = [](bool on) { return on ? "on" : "off"; };
         file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << onOff(FrameLimitSetting())
+             << "\nmsaa=" << onOff(MsaaSetting())
              << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
         file.close();
 
@@ -837,6 +841,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
     bool frameLimit = FrameLimitSetting();
+    bool msaa = MsaaSetting();
     std::string onlineServer = OnlineServerSetting();
     bool skipTls = SkipTlsSetting();
 
@@ -937,6 +942,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
                     std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
                     std::string("Framelimit: ") + (frameLimit ? "ON" : "OFF"),
+                    std::string("MSAA: ") + (msaa ? "4x" : "OFF"),
                     std::string("Language: ") + languages[language].name,
                     "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
             const std::string cheats = ActiveCheats();
@@ -951,9 +957,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
                                            frameLimit ? "The game waits for each frame to be drawn before the next: every frame is shown."
                                                       : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
+                                           msaa ? "4x multisample antialiasing: smoother edges, more GPU work." : "No antialiasing.",
                                            "The game's text, menus and keyboard: English, French, German, Italian or Spanish.",
                                            "The server the game's City mode connects to."};
-            detail = details[std::min<size_t>(selected, 10)];
+            detail = details[std::min<size_t>(selected, 11)];
             footer = "X Select   D-pad Move";
             break;
         }
@@ -1294,7 +1301,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
             }
 
-            if (page == Page::Main && selected == 9 && (accept || direction)) {
+            if (page == Page::Main && selected == 10 && (accept || direction)) {
                 language = (language + languages.size() + (direction ? direction : 1)) % languages.size();
                 SetLanguageSetting(languages[language].system);
                 Log("language %s", languages[language].code);
@@ -1364,10 +1371,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     frameLimit = !frameLimit;
                     SetFrameLimitSetting(frameLimit);
                     Log("framelimit %s", frameLimit ? "on" : "off");
+                } else if (selected == 9) {
+                    msaa = !msaa;
+                    SetMsaaSetting(msaa);
+                    Log("msaa %s", msaa ? "4x" : "off");
                 } else
                     enter(Page::Online);
 
-                if (selected >= 6 && selected <= 8)
+                if (selected >= 6 && selected <= 9)
                     return SaveSettings(base);
 
                 break;

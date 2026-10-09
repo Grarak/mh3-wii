@@ -1,5 +1,5 @@
 // The renderer interface (gl/gl.hpp) on WebGPU, for the web build
-// (docs/web-build.md). The GLES backend's immediate state model maps onto
+// (docs/optimizations/platforms/web-build.md). The GLES backend's immediate state model maps onto
 // WebGPU as follows:
 //
 // - State calls only record state. A draw opens the target's render pass on
@@ -1502,7 +1502,7 @@ void call(Task task) noexcept {
 
 // The browser paces requestAnimationFrame to the frames the GPU completes.
 // Queue completion cannot stand in: with a canvas texture in flight, headless
-// Chromium rejects onSubmittedWorkDone (docs/web-build.md).
+// Chromium rejects onSubmittedWorkDone (docs/optimizations/platforms/web-build.md).
 bool gpu_frame_pending() noexcept {
   return false;
 }
@@ -1595,6 +1595,11 @@ Texture::~Texture() {
 
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
+}
+
+// Single-sampled: this WebGPU renderer has no multisampled targets.
+TexturePtr create_render_target(uint32_t width, uint32_t height, Format format, uint32_t, std::string_view label) noexcept {
+  return create_texture(width, height, 1, format, label);
 }
 
 bool render_target_reusable(const Texture& texture) noexcept {
