@@ -28,7 +28,9 @@
 //     +48 to another random, +56 = 1, +53 = 1, and scrolls material 0 of the
 //     model at +280: U offset - const (sda2 -11224) a step, wrapped into
 //     [-11240, -11244). The byte at +5 counts passes; the list's s16 at +22 is
-//     the object index.
+//     the object index. The pass count and the random scale and +48 (the
+//     parts' flicker) are per tick: the count moves on by the step's whole
+//     ticks, and a step without one keeps each object's last roll.
 //
 // ResMatTexCoordGen (nw4r g3d): the handle's data (0x8006E310, 0x800878D4 its
 // null check) holds 8 texture coordinate entries of 52 bytes; +171 flags (bit
@@ -42,6 +44,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace {
 
@@ -234,12 +237,24 @@ void Mat6ScrollPort(CpuContext* ctx) {
     }
 }
 
+// An effect-45 part's last roll: its scale factor and +48.
+struct Flicker {
+    float scale;
+    uint32_t random;
+};
+
 void ObjectListPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 288);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3);
     const uint32_t list = Memory::Read32(self + 56);
-    Memory::Write8(self + 5, uint8_t(Memory::Read8(self + 5) + 1));
+    const uint32_t ticks = GameStep::Ticks();
+    static std::unordered_map<uint32_t, Flicker> rolls;
+
+    if (rolls.size() > 256)
+        rolls.clear();
+
+    Memory::Write8(self + 5, uint8_t(Memory::Read8(self + 5) + ticks));
     Memory::Write16(list + 22, 0);
     const float wide = F(r2 - 11248), one = F(r2 - 11244), low = F(r2 - 11240), spread = F(r2 - 11236);
     const float scaleStep = F(r2 - 11228), scaleBase = F(r2 - 11232), speed = F(r2 - 11224);
@@ -266,9 +281,19 @@ void ObjectListPort(CpuContext* ctx) {
             Memory::Write32(obj + 48, 0);
         }
 
+        const auto kept = rolls.find(obj);
+        Flicker roll;
+
+        if (ticks || kept == rolls.end()) {
+            roll.scale = scaleBase + scaleStep * float(int32_t(Rand() % 20));
+            roll.random = Rand();
+            rolls[obj] = roll;
+        } else
+            roll = kept->second;
+
         F(obj + 28, wide), F(obj + 32, wide), F(obj + 36, one);
-        game.Call<VecScaleBy>({obj + 28}, {scaleBase + scaleStep * float(int32_t(Rand() % 20))});
-        Memory::Write32(obj + 48, Rand());
+        game.Call<VecScaleBy>({obj + 28}, {roll.scale});
+        Memory::Write32(obj + 48, roll.random);
         Memory::Write32(obj + 56, 1);
         Memory::Write8(obj + 53, 1);
         Memory::Write16(list + 16 + 2 * uint32_t(i), uint16_t(int16_t(-6 * i)));

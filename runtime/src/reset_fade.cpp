@@ -6,8 +6,10 @@
 // second, fades back in, and returns to the title through the game's reset
 // hooks. Its fade steps are counted in 60 Hz retraces: 1 per frame at a
 // 1-retrace frame budget (unless a movie frame was drawn), 2 otherwise, so
-// the fade takes the same time at 30 and 60 fps.
+// the fade takes the same time at 30 and 60 fps. Those amounts are per tick
+// of game time: a variable-length step applies its share (GameStep::Share).
 #include "abi_bridge.h"
+#include "game_step.h"
 #include "memory.h"
 #include <initializer_list>
 
@@ -100,6 +102,11 @@ extern "C" void MH3_ResetFade(CpuContext* ctx) {
         return int32_t(Memory::Read32(saved.gpr[13] + uint32_t(kRetracesPerFrame))) == 1 && Memory::Read8(kMovieFrameDrawn) == 0;
     };
 
+    // This step's share of the retraces a tick counts.
+    auto retraces = [&](int32_t perRetrace) {
+        return GameStep::Share(oneRetrace() ? perRetrace : perRetrace * 2);
+    };
+
     auto level = [] {
         return int32_t(Memory::Read32(kFade + kLevel));
     };
@@ -150,7 +157,7 @@ extern "C" void MH3_ResetFade(CpuContext* ctx) {
                 nextState();
                 Memory::Write16(kFade + kHold, 60);
             } else {
-                int32_t v = level() + (oneRetrace() ? step() : step() * 2);
+                int32_t v = level() + retraces(step());
                 Memory::Write32(kFade + kLevel, uint32_t(v > 0xFF ? 0xFF : v));
             }
 
@@ -161,7 +168,7 @@ extern "C" void MH3_ResetFade(CpuContext* ctx) {
             if (hold <= 0)
                 nextState();
             else
-                Memory::Write16(kFade + kHold, uint16_t(hold - (oneRetrace() ? 1 : 2)));
+                Memory::Write16(kFade + kHold, uint16_t(hold - retraces(1)));
 
             break;
         }
@@ -171,7 +178,7 @@ extern "C" void MH3_ResetFade(CpuContext* ctx) {
                 Memory::Write8(kFade + kActive, 0);
                 Memory::Write8(kResetRequested, 0);
             } else {
-                int32_t v = level() - (oneRetrace() ? step() : step() * 2);
+                int32_t v = level() - retraces(step());
                 Memory::Write32(kFade + kLevel, uint32_t(v < step() ? 0 : v));
             }
 
