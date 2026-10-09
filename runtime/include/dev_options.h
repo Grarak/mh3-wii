@@ -249,7 +249,7 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_TRACE=[input][,draw-pages]: the input as the game read it once per tick
+// MH3_TRACE=[input][,draw-pages[=N]]: the input as the game read it once per tick
 // of game time (frame_pacer.cpp), and the guest RAM pages each frame's draw
 // touches against those the next frame's logic writes (draw_pages.cpp: what
 // a draw running beside the next logic step would conflict with).

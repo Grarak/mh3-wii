@@ -3,7 +3,7 @@
 // on another core beside the next logic step would read those pages while
 // they change: these are what it has to snapshot, defer or wait for.
 //
-// From in-quest frame kStart on, each draw window (DrawScene to MovieDraw)
+// From frame body kStart (MH3_TRACE=draw-pages=N: N) on, each draw window (DrawScene to MovieDraw)
 // runs with MEM1 and MEM2 (cached views) inaccessible: the first access to a
 // page, on any thread, records it as the draw's (read or write, the
 // translated function, the thread) and opens it. A sampler thread closes all
@@ -50,11 +50,13 @@
 #include <vector>
 
 namespace DrawPages {
+uint32_t Start();
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr uint32_t kStart = 1500; // frame bodies before the first recorded draw
+constexpr uint32_t kStart = 1500; // frame bodies before the first recorded draw (default)
 constexpr uint32_t kPairs = 30;
 constexpr uint32_t kResampleUs = 250;
 
@@ -107,7 +109,12 @@ std::map<uint32_t, Writer> lastReaders; // the last draw function on each confli
 struct Recurring {
     uint32_t pairs = 0, writer = 0, reader = 0, lastReader = 0;
     uint8_t phase = 0;
+    std::map<uint32_t, uint32_t> words; // page offset -> pairs the logic changed it in
 };
+
+// The drawn pages as the draw left them (the next logic's start), to find
+// the words the logic changes on the conflict pages.
+std::map<size_t, std::vector<uint8_t>> drawnContents;
 
 std::map<size_t, Recurring> recurring;
 std::map<uint32_t, Writer> resultReaders; // logic functions reading what the draw wrote
@@ -241,7 +248,7 @@ void Install() {
     sigemptyset(&action.sa_mask);
     sigaction(SIGSEGV, &action, &previous);
     std::thread(Sampler).detach();
-    std::fprintf(stderr, "MH3 draw pages: recording %u draw/logic pairs from frame %u (%zu pages of %zu bytes)\n", kPairs, kStart, totalPages, pageBytes);
+    std::fprintf(stderr, "MH3 draw pages: recording %u draw/logic pairs from frame %u (%zu pages of %zu bytes)\n", kPairs, Start(), totalPages, pageBytes);
 }
 
 // The pair just finished: the draw's pages against the logic's writes.
@@ -287,6 +294,15 @@ void Tally() {
         conflictLastUs.push_back(page.drawLastUs);
         auto& r = recurring[i];
         ++r.pairs;
+
+        if (const auto before = drawnContents.find(i); before != drawnContents.end()) {
+            const uint8_t* now = PageAddress(i);
+
+            for (uint32_t offset = 0; offset < pageBytes; offset += 4)
+                if (std::memcmp(before->second.data() + offset, now + offset, 4) != 0)
+                    ++r.words[offset];
+        }
+
         r.writer = page.logicFunction;
         r.reader = page.drawFunction;
         r.lastReader = page.drawLastFunction;
@@ -349,6 +365,25 @@ void Report() {
         const uint32_t address = index < mem1Pages ? Memory::kMem1CachedBase + uint32_t(index * pageBytes) : Memory::kMem2CachedBase + uint32_t((index - mem1Pages) * pageBytes);
         std::fprintf(stderr, "MH3 draw pages: conflict page %08x in %u pairs: written by %08x (phase %u), drawn by %08x, last by %08x\n", address, r.pairs, r.writer, r.phase, r.reader,
                      r.lastReader);
+
+        // The words the logic changed there, as runs of consecutive words.
+        std::string line = "MH3 draw pages:   changed words";
+        unsigned runs = 0;
+
+        for (auto it = r.words.begin(); it != r.words.end() && runs < 24;) {
+            const uint32_t first = it->first;
+            uint32_t last = first;
+
+            for (++it; it != r.words.end() && it->first == last + 4; ++it)
+                last = it->first;
+
+            char word[40];
+            std::snprintf(word, sizeof word, first == last ? " %08x" : " %08x-%08x", address + first, address + last + 3);
+            line += word;
+            ++runs;
+        }
+
+        std::fprintf(stderr, "%s%s\n", line.c_str(), r.words.empty() ? " (none)" : "");
     }
 
     std::vector<std::pair<uint32_t, Writer>> byResult(resultReaders.begin(), resultReaders.end());
@@ -362,8 +397,13 @@ void Report() {
 } // namespace
 
 bool Enabled() {
-    static const bool enabled = TraceOptions().Has("draw-pages");
+    static const bool enabled = TraceOptions().Has("draw-pages") || TraceOptions().Value("draw-pages");
     return enabled;
+}
+
+uint32_t Start() {
+    static const uint32_t start = uint32_t(TraceOptions().Number("draw-pages", kStart));
+    return start;
 }
 
 void LogicPhase(Phase next) {
@@ -377,7 +417,7 @@ void LogicPhase(Phase next) {
 }
 
 void DrawBegins(uint32_t stack) {
-    if (finished || !Enabled() || ++frames < kStart)
+    if (finished || !Enabled() || ++frames < Start())
         return;
 
     if (!recording) {
@@ -421,8 +461,19 @@ void DrawEnds() {
     // first: an access on another thread meanwhile is recorded).
     std::lock_guard lock(protection);
     drawUs = Since(drawStart);
-    mode.store(Logic, std::memory_order_release);
+
+    // The drawn pages' contents, before the logic changes them. RAM turns
+    // read-only first, still in draw mode: another thread's access meanwhile
+    // (the audio mixer reads samples) faults into the draw's record, never
+    // into an unprotected gap.
+    drawnContents.clear();
     Protect(PROT_READ);
+
+    for (size_t i = 0; i < totalPages; ++i)
+        if ((pages[i].drawRead || pages[i].drawWrite) && !Stack(i))
+            drawnContents[i].assign(PageAddress(i), PageAddress(i) + pageBytes);
+
+    mode.store(Logic, std::memory_order_release);
 
     for (size_t i = 0; i < totalPages; ++i)
         if (pages[i].drawWrite && !Stack(i))
