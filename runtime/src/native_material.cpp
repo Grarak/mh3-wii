@@ -419,6 +419,28 @@ namespace {
     Check(mh3_material_state_overlay_candidate(&next, &game.material, &source, top), "Native material overlay");
     OverlayNativeMaterial(next, MH3_MATERIAL_TOP_ALL);
 }
+// True when every field known in target is known in source as well (top-level
+// counts and references are not tracked by known bits).
+bool KnownSuperset(const mh3_native_material_state& source, const mh3_native_material_state& target) {
+    const auto covers = [](auto from, auto to) { return (to & ~from) == 0; };
+    for (unsigned i = 0; i < 16; ++i)
+        if (!covers(source.tev[i].known, target.tev[i].known))
+            return false;
+    for (unsigned i = 0; i < 8; ++i)
+        if (!covers(source.texgen[i].known, target.texgen[i].known))
+            return false;
+    for (unsigned i = 0; i < 2; ++i)
+        if (!covers(source.channel[i].flags, target.channel[i].flags))
+            return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!covers(source.color[i].known, target.color[i].known) || !covers(source.konst[i].known, target.konst[i].known) ||
+            !covers(source.swaps[i].known, target.swaps[i].known) || !covers(source.indirect[i].known, target.indirect[i].known))
+            return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (!covers(source.indirect_matrix[i].known, target.indirect_matrix[i].known))
+            return false;
+    return covers(source.pixel.known, target.pixel.known) && (source.clip_mode_known || !target.clip_mode_known);
+}
 // Publishes a material-derived raster without importing it back.
 void PublishMaterialRaster(const mh3_raster_state& raster) {
     struct Export {
@@ -496,7 +518,16 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
     PublishMaterialRaster(raster);
     const bool structureChanged = !game.shadeStructureDirty &&
         mh3_shade_structure_overlay_changes(&material, &source, top_known, MH3_SHADE_STRUCTURE_ALL);
-    if (mh3_material_state_overlay_mutation_unchecked(&material, &source, top_known))
+    if (top_known == MH3_MATERIAL_TOP_ALL && KnownSuperset(source, material)) {
+        // The effect, UI and scene producers publish a copy of the current
+        // state with a few fields changed: every field the state knows is
+        // known in the source, so the field-by-field merge would produce the
+        // source itself. Compare and copy it whole instead.
+        if (std::memcmp(&material, &source, sizeof material)) {
+            material = source;
+            Changed(NATIVE_STATE_MATERIAL);
+        }
+    } else if (mh3_material_state_overlay_mutation_unchecked(&material, &source, top_known))
         Changed(NATIVE_STATE_MATERIAL);
     game.shadeStructureDirty |= structureChanged;
 }
