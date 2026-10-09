@@ -49,6 +49,10 @@ void ApplyDeferredModelInvalidate();
 // model_catalog.cpp: the pose and vertex cache retirements of a logic step
 // that ran beside the draw.
 void ApplyDeferredDrawCacheRetirements();
+#ifdef MH3_DEVELOPMENT
+extern uintptr_t mh3GameStackProbe;                           // model_catalog.cpp
+void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]); // model_catalog.cpp
+#endif
 
 namespace {
 
@@ -308,9 +312,15 @@ struct FrameSplit {
                     worker.waitNs / 1e6 / frames, static_cast<unsigned long long>(worker.waits));
 
         // The draw thread's scenes, and the game thread's waits for them at the handoff.
-        if (const auto draw = DrawThread::Thread().TakeStatistics(); draw.jobs)
-            std::printf("MH3 draw thread: %.2f scenes/frame, %.2f ms/frame of scenes, game waited %.2f ms/frame (%llu waits, %u of them effect retirements)\n", double(draw.jobs) / frames,
-                        draw.jobNs / 1e6 / frames, draw.waitNs / 1e6 / frames, static_cast<unsigned long long>(draw.waits), EffectStep::TakeRetireDrawWaits());
+        if (const auto draw = DrawThread::Thread().TakeStatistics(); draw.jobs) {
+            uint64_t catalogWaits[2], catalogNs[2];
+            MH3TakeCatalogDrawWaits(catalogWaits, catalogNs);
+            std::printf("MH3 draw thread: %.2f scenes/frame, %.2f ms/frame of scenes, game waited %.2f ms/frame (%llu waits, %u of them effect retirements; catalog writes: "
+                        "game thread %llu waits %.2f ms/frame, other threads %llu waits %.2f ms/frame)\n",
+                        double(draw.jobs) / frames, draw.jobNs / 1e6 / frames, draw.waitNs / 1e6 / frames, static_cast<unsigned long long>(draw.waits), EffectStep::TakeRetireDrawWaits(),
+                        static_cast<unsigned long long>(catalogWaits[1]), catalogNs[1] / 1e6 / frames, static_cast<unsigned long long>(catalogWaits[0]), catalogNs[0] / 1e6 / frames);
+        }
+
         MH3PrintWorldSplit(frames);
 
         if (mh3SplitDetail) {
@@ -563,6 +573,9 @@ void MH3StartDrawOverlap() {
 
 extern "C" void MH3_GameFrame(CpuContext* ctx) {
     const CpuContext saved = *ctx;
+#ifdef MH3_DEVELOPMENT
+    mh3GameStackProbe = uintptr_t(&saved);
+#endif
     ctx->gpr[1] = (saved.gpr[1] - 0x10) & ~0xFu;
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
     auto call = [ctx](uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
@@ -681,6 +694,15 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         DrawPages::LogicPhase(DrawPages::Phase::Tasks);
         call(RunTasks);
         EffectStep::Collected();
+
+        // The calculation starts here when the previous frame's draw, which
+        // draws the effects it moves, is done; the next task pass joins it,
+        // and launching at the handoff leaves little time for it. The rest of
+        // the logic step and the frame's draw section do not use the effects
+        // but for the scene, which joins first.
+        if (!DrawThread::Thread().Pending() && !GuestWorker::Pending() && !PortCheck::Set())
+            EffectStep::Launch(*ctx);
+
         DrawPages::LogicPhase(DrawPages::Phase::Timers);
         call(GrabScreen);
         call(ResetFade);

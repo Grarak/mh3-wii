@@ -606,6 +606,11 @@ uint64_t ReadNativeMaterialBlockRevision() {
 uint64_t ReadNativeLiveMaterialRevision() {
     return live_version;
 }
+#ifdef MH3_DEVELOPMENT
+
+// An address on MH3_GameFrame's stack, set as it starts (game_frame.cpp).
+uintptr_t mh3GameStackProbe = 0;
+#endif
 
 namespace {
 // The overlapped draw (docs/pipelined-draw.md): the draw thread and the game
@@ -677,9 +682,27 @@ bool TrackedForDraw(uint32_t address, uint32_t bytes) {
     return mh3_source_intersects(&C().tracker, Canonical(address, bytes), bytes);
 }
 
+#ifdef MH3_DEVELOPMENT
+// The draw waits of catalog writes, by whether the game thread waited (its
+// stack within 1 MiB of MH3_GameFrame's) or another host thread that
+// PpcThread counts as the game's (disc replies): MH3TakeCatalogDrawWaits.
+std::atomic<uint64_t> quiesceWaits[2]{}, quiesceNs[2]{};
+#endif
+
 void QuiesceDraw(bool tracked) {
-    if (tracked && PpcThread::CurrentThread() == PpcThread::Game && DrawThread::Thread().Pending())
-        DrawThread::Thread().Wait();
+    if (!tracked || PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending())
+        return;
+
+#ifdef MH3_DEVELOPMENT
+    const char probe = 0;
+    const bool game = uintptr_t(&probe) - (mh3GameStackProbe - (1u << 20)) < (2u << 20);
+    const auto start = std::chrono::steady_clock::now();
+#endif
+    DrawThread::Thread().Wait();
+#ifdef MH3_DEVELOPMENT
+    quiesceWaits[game].fetch_add(1, std::memory_order_relaxed);
+    quiesceNs[game].fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+#endif
 }
 
 // The pose versions and vertex caches the draw thread uses while the next
@@ -700,6 +723,15 @@ void RetireDrawCaches(uint32_t address, uint32_t bytes) {
         vertex_retire(address, bytes);
 }
 } // namespace
+
+#ifdef MH3_DEVELOPMENT
+void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]) {
+    for (unsigned i = 0; i < 2; ++i) {
+        waits[i] = quiesceWaits[i].exchange(0, std::memory_order_relaxed);
+        ns[i] = quiesceNs[i].exchange(0, std::memory_order_relaxed);
+    }
+}
+#endif
 
 void ApplyDeferredDrawCacheRetirements() {
     std::lock_guard guard(catalogLock);
