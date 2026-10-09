@@ -108,6 +108,10 @@ void PutCopiedObjects(uint32_t destination, bool palette, const std::array<bool,
 
 uint64_t ReadNativeTextureGeneration(uint32_t payload) {
     std::lock_guard lock(generationLock);
+    return NativeTextureGeneration(payload);
+}
+
+uint64_t NativeTextureGeneration(uint32_t payload) {
     const auto found = generations.find(payload);
     return found == generations.end() ? 0 : found->second;
 }
@@ -226,8 +230,7 @@ mh3_native_palette_source ReadNativePaletteObject(uint32_t object) {
     return NativePaletteObject(object);
 }
 
-void InitializeNativeTextureSource(uint32_t reference, bool palette) {
-    const uint32_t payload = palette ? ReadNativeResPalette(reference).payload_address : ReadNativeResTexture(reference).payload_address;
+uint64_t ProduceNativeTextureSource(uint32_t payload) {
     const uint64_t previous = ReadNativeTextureGeneration(payload);
 
     if (resource_generation < previous)
@@ -237,8 +240,14 @@ void InitializeNativeTextureSource(uint32_t reference, bool palette) {
         MH3_THROW(std::runtime_error("Native texture resource revision overflow"));
 
     MarkNativeTextureProduced(payload, ++resource_generation);
+    return resource_generation;
+}
+
+void InitializeNativeTextureSource(uint32_t reference, bool palette) {
+    const uint32_t payload = palette ? ReadNativeResPalette(reference).payload_address : ReadNativeResTexture(reference).payload_address;
+    const uint64_t generation = ProduceNativeTextureSource(payload);
     std::lock_guard lock(generationLock);
-    initialized_generations.insert_or_assign(payload, resource_generation);
+    initialized_generations.insert_or_assign(payload, generation);
 }
 
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette) {

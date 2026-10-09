@@ -8,6 +8,7 @@
 #include "memory.h"
 #include "../native/mh3_effect_draw.h"
 #include "../native/mh3_particle_draw_state.h"
+#include "../native/adapters/model_state_bridge.h"
 #include <aurora/native_texture.hpp>
 #include <algorithm>
 #include <cmath>
@@ -514,8 +515,13 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu) {
                 MH3_THROW(std::runtime_error(message));
             }
 
-            if (binding.source.indexed)
+            // The texture project's load generations (ef_resource.cpp).
+            binding.source.generation = NativeTextureGeneration(binding.source.payload_address);
+
+            if (binding.source.indexed) {
+                palette.generation = NativeTextureGeneration(palette.payload_address);
                 BindNativePalette(uint32_t(map), palette);
+            }
 
             BindNativeTexture(binding);
             FlatWrite32(cache + 4, texture);

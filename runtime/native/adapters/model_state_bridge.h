@@ -23,6 +23,9 @@ void SelectNativeModelPaletteObjects(uint32_t state, uint32_t objects);
 void LoadNativeModelTextureSrt(uint32_t resource);
 void MarkNativeTextureProduced(uint32_t payload, uint64_t generation);
 uint64_t ReadNativeTextureGeneration(uint32_t payload);
+/* The same without the lock: the game thread writes every generation, so its
+ * own reads need none (game thread only). */
+uint64_t NativeTextureGeneration(uint32_t payload);
 /* True only for the explicit resource-initialization revision. Unknown and
  * subsequently produced images/palettes remain on the mutable producer path.
  * Unreported raw writes are not covered by this provenance query. */
@@ -30,6 +33,10 @@ bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation);
 /* Load/create hooks, never bind hooks. ResFile::Init calls ResTex::Init and
  * ResPltt::Init once per resource initialization; each event advances revision. */
 void InitializeNativeTextureSource(uint32_t reference, bool palette);
+/* A load of new bytes at an image or palette address without the original
+ * certificate (the effect texture projects): advances its generation and
+ * returns it. */
+uint64_t ProduceNativeTextureSource(uint32_t payload);
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette);
 void RestoreNativeModelCamera();
 /* 800885F4 Invalidate: forgets the selected CPU cache fields (0x7ff: all). */

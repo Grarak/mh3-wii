@@ -41,6 +41,7 @@
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
+#include "runtime/native/adapters/model_state_bridge.h"
 
 #include <aurora/fast_map.h>
 
@@ -363,6 +364,28 @@ void ListChange(CpuContext* ctx, void (*original)(CpuContext*), void (*port)(Cpu
     port(ctx);
 }
 
+// A texture project's images and palettes are new bytes, often where another
+// project's were: give each a new generation, which the effect draw records
+// with its binding, so the renderer converts them instead of reusing what it
+// converted from that address before. The relocation (0x800B32A4) pointed
+// each texture's image (+0x1C) and palette (+0x20) into its data.
+void ProduceTextures(uint32_t project) {
+    const uint32_t table = project + FlatRead32(project);
+    uint32_t entry = table + 8;
+
+    for (uint32_t i = 0, count = FlatRead16(table + 4); i < count; ++i) {
+        const uint32_t offset = entry + 2 + FlatRead16(entry);
+        const uint32_t texture = table + FlatRead32(offset);
+        const uint8_t format = FlatRead8(texture + 0xC);
+        ProduceNativeTextureSource(FlatRead32(texture + 0x1C));
+
+        if (format >= 8 && format <= 10)
+            ProduceNativeTextureSource(FlatRead32(texture + 0x20));
+
+        entry = offset + 8;
+    }
+}
+
 void FindEmitterInProjectPort(CpuContext* p) {
     p->gpr[3] = FindInProject(p->gpr[3], p->gpr[4]);
 }
@@ -446,6 +469,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800B36D4, MH3_EfAddEffectProject, "EfAddEffectProj
 
 extern "C" void MH3_EfAddTextureProject(CpuContext* ctx) {
     ListChange(ctx, func_800B3EE4, AddTextureProjectPort);
+    ProduceTextures(ctx->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800B3EE4, MH3_EfAddTextureProject, "EfAddTextureProject");
 

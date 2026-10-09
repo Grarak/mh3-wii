@@ -389,8 +389,12 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     }
   }
 
+  // A converted image is the bytes at an address under one producer
+  // generation. Bytes without a generation (resources never initialized,
+  // such as the HUD's) keep their asset ID, so an image that a later load
+  // puts at the same address with the same shape is not taken for them.
   const Key key{offline ? 0 : reinterpret_cast<uintptr_t>(source.bytes.data()),
-                offline ? source.asset : 0,
+                source.asset,
                 source.width,
                 source.height,
                 source.levels,
@@ -411,7 +415,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   bindings[unit].reset();
 
   for (auto it = cache.begin(); it != cache.end();) {
-    if (!offline && it->first.bytes == key.bytes && it->first.generation != source.generation && it->second.texture.use_count() == 1) {
+    if (!offline && it->first.bytes == key.bytes && (it->first.generation != source.generation || it->first.asset != key.asset) && it->second.texture.use_count() == 1) {
       residentBytes -= it->second.bytes;
       it = cache.erase(it);
     } else
