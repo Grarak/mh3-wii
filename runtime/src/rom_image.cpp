@@ -10,6 +10,9 @@
 #include <string>
 #include "../vita/rom_decoder.h"
 #ifdef __vita__
+#include "../vita/aligned_io.h"
+#endif
+#ifdef __vita__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/kernel/sysmem.h>
@@ -60,7 +63,7 @@ class File {
 
         while (done < count) {
 #ifdef __vita__
-            const auto n = sceIoPread(fd, bytes + done, count - done, at + done);
+            const auto n = VitaIo::Pread(fd, bytes + done, count - done, at + done);
 #else
             const auto n = pread(fd, bytes + done, count - done, at + done);
 

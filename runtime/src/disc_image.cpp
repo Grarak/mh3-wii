@@ -16,6 +16,7 @@
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
+#include "../vita/aligned_io.h"
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -72,7 +73,7 @@ class DiscFile {
         while (done < length) {
 #ifdef __vita__
             const int file = handle.load(std::memory_order_acquire);
-            const auto count = sceIoPread(file, output + done, length - done, static_cast<SceOff>(offset + done));
+            const auto count = VitaIo::Pread(file, output + done, length - done, offset + done);
 
             // Invalidated by a suspend (or closed by another reader's reopen).
             if (count < 0 && !reopened) {
