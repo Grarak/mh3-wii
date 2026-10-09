@@ -16,9 +16,13 @@ struct NativeTextureSource {
 struct NativeTextureSampler {
   uint32_t wrap_s=0,wrap_t=0,min_filter=0,mag_filter=0,anisotropy=0;
   float min_lod=0,max_lod=0;
+  float lod_bias=0;
 };
 size_t native_texture_source_size(uint32_t format,uint32_t width,uint32_t height,uint32_t levels);
 void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const NativeTextureSampler& sampler);
+// Bias left for the shader after native sampler bias. Read on the graphics
+// owner after frame admission and binding restoration.
+float native_texture_shader_lod_bias(uint32_t unit);
 // Reapply logical bindings after presentation changed the backend's units.
 void restore_native_textures();
 void clear_native_textures();

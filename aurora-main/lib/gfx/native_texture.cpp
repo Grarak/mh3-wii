@@ -2,6 +2,7 @@
 #include <aurora/aurora.h>
 #include <aurora/generated_texture.hpp>
 #include "texture_convert.hpp"
+#include "../gxm/sampler_bias.hpp"
 #include <array>
 #include <bit>
 #include <cmath>
@@ -21,6 +22,7 @@ std::map<Key,Entry> cache;
 std::array<gl::TexturePtr,8> bindings;
 struct Binding { NativeTextureSource source; NativeTextureSampler sampling; bool valid=false; };
 std::array<Binding,8> logicalBindings;
+std::array<float,8> shaderLodBias{};
 size_t residentBytes=0;
 uint64_t serial=0;
 void owner() {
@@ -29,7 +31,8 @@ void owner() {
 gl::SamplerDesc sampler(const NativeTextureSampler& source) {
   if(source.wrap_s>2 || source.wrap_t>2 || source.min_filter>5 || source.mag_filter>1 ||
      source.anisotropy>2 || !std::isfinite(source.min_lod) || !std::isfinite(source.max_lod) ||
-     source.min_lod>source.max_lod) throw std::runtime_error("Invalid native texture sampler");
+     !std::isfinite(source.lod_bias) || source.min_lod>source.max_lod)
+    throw std::runtime_error("Invalid native texture sampler");
   constexpr GLenum wrap[]{GL_CLAMP_TO_EDGE,GL_REPEAT,GL_MIRRORED_REPEAT};
   constexpr GLenum filter[]{GL_NEAREST,GL_LINEAR,GL_NEAREST_MIPMAP_NEAREST,
     GL_LINEAR_MIPMAP_NEAREST,GL_NEAREST_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR};
@@ -84,9 +87,17 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   if(source.mutable_source && !source.generation)
     throw std::runtime_error("Mutable native texture has no producer revision");
   logicalBindings[unit]={source,sampling,true};
+  shaderLodBias[unit]=sampling.lod_bias;
   if(!aurora_native_frame_should_render()) return;
   const auto publish=[&](const gl::TexturePtr& texture) {
-    bindings[unit]=texture;gl::bind_texture(unit,texture->gl(),gl::sampler(descriptor));
+    auto nativeDescriptor=descriptor;
+#ifdef AURORA_GXM
+    if(texture->format!=gl::Format::Depth32F && gxm::sampler_bias_encoding(sampling.lod_bias)>=0) {
+      nativeDescriptor.lodBias=sampling.lod_bias;
+      shaderLodBias[unit]=0;
+    }
+#endif
+    bindings[unit]=texture;gl::bind_texture(unit,texture->gl(),gl::sampler(nativeDescriptor));
   };
   if(source.bytes.data()) {
     const auto version=generated_texture_version(source.bytes.data(),source.width,source.height);
@@ -150,7 +161,13 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   publish(texture);
 }
 void clear_native_textures() {
-  owner();logicalBindings={};bindings={};cache.clear();residentBytes=0;serial=0;
+  owner();logicalBindings={};bindings={};shaderLodBias={};cache.clear();residentBytes=0;serial=0;
+}
+float native_texture_shader_lod_bias(uint32_t unit) {
+  owner();
+  if(unit>=logicalBindings.size() || !logicalBindings[unit].valid || !aurora_native_frame_should_render())
+    throw std::runtime_error("Native texture shader bias requested without an admitted binding");
+  return shaderLodBias[unit];
 }
 void restore_native_textures() {
   owner();

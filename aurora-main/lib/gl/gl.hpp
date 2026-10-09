@@ -122,10 +122,11 @@ struct SamplerDesc {
   float minLod = 0.f;
   float maxLod = 1000.f;
   uint32_t maxAnisotropy = 1;
+  float lodBias = 0.f;
 
   bool operator==(const SamplerDesc& rhs) const noexcept {
     return wrapS == rhs.wrapS && wrapT == rhs.wrapT && minFilter == rhs.minFilter && magFilter == rhs.magFilter &&
-           minLod == rhs.minLod && maxLod == rhs.maxLod && maxAnisotropy == rhs.maxAnisotropy;
+           minLod == rhs.minLod && maxLod == rhs.maxLod && maxAnisotropy == rhs.maxAnisotropy && lodBias == rhs.lodBias;
   }
 };
 // Render thread only: the cached sampler object for `desc`.

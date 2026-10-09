@@ -7,6 +7,7 @@
 #include "gl/device.hpp"
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
+#include "gxm/sampler_bias.hpp"
 #include "native_graphics.h"
 #include <array>
 #include <cmath>
@@ -110,8 +111,11 @@ void material_quad(GLuint program,const aurora::gx::ShaderInfo& info) {
   require(aurora_allocate_native_uniforms(info.uniformSize,&uniforms),"material uniforms allocation failed");
   std::memset(uniforms.data,0,uniforms.size);
   size_t at=144+48*(info.matrixLayout.postexCount+info.matrixLayout.nrmCount);
-  const float texture[4]{4,4,0,0};
-  for(unsigned i=0;i<2;++i) {std::memcpy(static_cast<uint8_t*>(uniforms.data)+at,texture,16);at+=16;}
+  float texture[4]{4,4,0,0};
+  for(unsigned i=0;i<2;++i) {
+    texture[2]=i?aurora::native_texture_shader_lod_bias(0):0;
+    std::memcpy(static_cast<uint8_t*>(uniforms.data)+at,texture,16);at+=16;
+  }
   require(at<=uniforms.size,"fixture material uniforms exceed layout");
   std::memset(geometry.vertices,0,4*sizeof(*geometry.vertices));
   const float positions[4][2]{{-.08f,-.6f},{.08f,-.6f},{.08f,-.4f},{-.08f,-.4f}};
@@ -119,7 +123,8 @@ void material_quad(GLuint program,const aurora::gx::ShaderInfo& info) {
     auto& vertex=geometry.vertices[i];
     vertex.position[0]=positions[i][0];vertex.position[1]=positions[i][1];
     vertex.position[2]=.8f;vertex.position[3]=1;
-    vertex.normal[0]=1;vertex.texcoord[0][0]=vertex.texcoord[0][1]=.5f;vertex.texcoord[0][2]=1;
+    vertex.normal[0]=1;vertex.texcoord[0][0]=(i==1 || i==2)?1.f:0.f;
+    vertex.texcoord[0][1]=i>=2?1.f:0.f;vertex.texcoord[0][2]=1;
     const uint8_t color[]{255,128,255,255};std::memcpy(vertex.color[0],color,4);
   }
   const uint16_t indices[]{0,1,2,0,2,3};std::memcpy(geometry.indices,indices,sizeof(indices));
@@ -153,6 +158,14 @@ int main(int argc,char** argv) {
     require(biasedDescription.fragment.find("texture(tex0, tex0_uv, ubuf.tex0_size_bias.z)")!=std::string::npos,
             "unspecialized native sample lost sampler bias");
     auto materialProgram=std::make_shared<aurora::gl::Program>(std::move(materialDescription));
+    auto biasedProgram=std::make_shared<aurora::gl::Program>(biasedDescription);
+    for(int code=0;code<64;++code)
+      require(aurora::gxm::sampler_bias_encoding(float(code-31)/8)==code,"GXM bias encoding mismatch");
+    for(float bias:{-4.f,4.125f,.0625f,-.0625f})
+      require(aurora::gxm::sampler_bias_encoding(bias)==-1,"GXM bias silently rounded");
+    auto samplerA=aurora::gl::NearestClamp,samplerB=samplerA;
+    samplerB.lodBias=1;
+    require(!(samplerA==samplerB),"sampler cache ignores LOD bias");
     require(aurora::native_texture_source_size(14,9,9,1)==128,"CMPR tile size mismatch");
     require(aurora::native_texture_source_size(6,4,4,3)==192,"small mip tile size mismatch");
     std::array<uint8_t,64> texels{};
@@ -187,6 +200,26 @@ int main(int argc,char** argv) {
         aurora::gl::apply_raster_state(raster);
         const float clear[]{20.f/255,40.f/255,80.f/255,1};
         aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
+        if(frame==0) {
+          std::array<uint8_t,192> mipBytes{};
+          for(unsigned mip=0;mip<3;++mip) for(unsigned texel=0;texel<16;++texel) {
+            auto* p=mipBytes.data()+64*mip;
+            p[texel*2]=255;p[texel*2+1]=mip==0?255:0;
+            p[32+texel*2]=mip==1?255:0;p[33+texel*2]=mip==2?255:0;
+          }
+          aurora::NativeTextureSource mipSource;
+          mipSource.bytes=mipBytes;mipSource.width=mipSource.height=4;mipSource.levels=3;mipSource.format=6;
+          aurora::NativeTextureSampler mipSampler;
+          mipSampler.min_filter=2;mipSampler.max_lod=2;
+          aurora::bind_native_texture(0,mipSource,mipSampler);
+          material_quad(biasedProgram->get(),materialInfo);pixel(32,48,{255,0,0,255});
+          aurora::gl::clear_depth(0);
+          mipSampler.lod_bias=2;
+          aurora::bind_native_texture(0,mipSource,mipSampler);
+          require(aurora::native_texture_shader_lod_bias(0)==2,"GLES lost shader LOD bias");
+          material_quad(biasedProgram->get(),materialInfo);pixel(32,48,{0,0,255,255});
+          aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
+        }
         quad(-.9f,-.1f,.1f,.9f,0,{255,0,0,255},false);
         if(rendered==2) {fill(128);source.generation=2;}
         // Deliberately mutate the staging bytes without publishing a new

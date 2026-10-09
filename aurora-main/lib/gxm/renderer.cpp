@@ -7,6 +7,7 @@
 #include "draw_memory.hpp"
 #include "raster.hpp"
 #include "texture.hpp"
+#include "sampler_bias.hpp"
 #include <aurora/thread_role.hpp>
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -77,10 +78,13 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   const bool mipLinear = desc.minFilter == GL_NEAREST_MIPMAP_LINEAR || desc.minFilter == GL_LINEAR_MIPMAP_LINEAR;
   if (texture.format == Format::Depth32F) {
     // LINEAR_STRIDED shares min/mip/LOD bits with its explicit stride.
-    if (minLinear || desc.magFilter != GL_NEAREST || mipmapped)
+    if (minLinear || desc.magFilter != GL_NEAREST || mipmapped || desc.lodBias != 0.f)
       throw std::runtime_error("Strided depth sampling requires nearest filtering");
     return result;
   }
+  const int bias = sampler_bias_encoding(desc.lodBias);
+  if (bias < 0) throw std::runtime_error("Native GXM sampler bias is not exactly representable");
+  check(sceGxmTextureSetLodBias(&result, uint32_t(bias)), "set sampler LOD bias");
   check(sceGxmTextureSetMinFilter(&result, minLinear ? SCE_GXM_TEXTURE_FILTER_LINEAR : SCE_GXM_TEXTURE_FILTER_POINT), "set min filter");
   check(sceGxmTextureSetMagFilter(&result, desc.magFilter == GL_LINEAR ? SCE_GXM_TEXTURE_FILTER_LINEAR : SCE_GXM_TEXTURE_FILTER_POINT), "set mag filter");
   check(sceGxmTextureSetMipFilter(&result, mipLinear ? SCE_GXM_TEXTURE_MIP_FILTER_ENABLED : SCE_GXM_TEXTURE_MIP_FILTER_DISABLED), "set mip filter");

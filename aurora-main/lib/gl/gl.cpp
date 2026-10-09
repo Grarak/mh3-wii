@@ -85,7 +85,7 @@ struct SamplerKey {
   friend H AbslHashValue(H h, const SamplerKey& key) {
     const auto& d = key.desc;
     return H::combine(std::move(h), d.wrapS, d.wrapT, d.minFilter, d.magFilter, d.minLod, d.maxLod,
-                      d.maxAnisotropy);
+                      d.maxAnisotropy, d.lodBias);
   }
 };
 absl::flat_hash_map<SamplerKey, GLuint> g_samplers;
@@ -360,6 +360,7 @@ void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t
 // ---- Samplers and framebuffers ----
 
 GLuint sampler(const SamplerDesc& desc) noexcept {
+  if (desc.lodBias != 0.f) Log.fatal("GLES sampler bias must be passed through the material shader");
   const auto [it, inserted] = g_samplers.try_emplace(SamplerKey{desc}, 0);
   if (inserted) {
     GLuint s = 0;
