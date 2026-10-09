@@ -17,3 +17,4 @@ python3 scripts/prepare_rso_translation.py
 "$dotnet_bin" "$translator" emit-build-shards --project recomp.yml \
     --base-metadata generated/translation.json --base-functions-dir generated/functions \
     --native-source-dir runtime/src --out generated/build_shards 2>&1 | tee logs/shards.log
+python3 scripts/translate_rso_overlays.py 2>&1 | tee logs/rso-overlays.log
