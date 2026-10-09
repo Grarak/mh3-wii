@@ -20,12 +20,11 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
 /* Whether the in-flight overlapped draw may read [address, address + bytes):
  * a game-thread retirement of it waits for that draw. */
 bool NativeResourceReadByDraw(uint32_t address, uint32_t bytes);
-/* The structural producer token. Changes on source/pack lifetime
- * events, never a draw or a typed material-field update. */
+/* The structural producer token. Changes when an owner is certified, retired
+ * or copied, a live block retired or copied, on disc loads and pack lifetime
+ * events; never on a draw, a typed material-field update or provenance moving
+ * outside owners and live blocks. */
 uint64_t ReadNativeModelStructureRevision();
-/* Advances on every typed material group write or copy. With the structure
- * revision unchanged, every live material block keeps its node and version. */
-uint64_t ReadNativeMaterialBlockRevision();
 /* Advances whenever a live material block node is erased or fully
  * (re)published. While it is unchanged every live block keeps its node; an
  * in-place producer update (WritableNativeLiveMaterialBlock) changes only the
@@ -104,17 +103,6 @@ using NativePreparedMaterial = mh3_prepared_material;
 /* Immutable resource defaults/recipes only. Live replacements/inherited pass
  * state must be merged by typed producers; no live borrowed pointers cached. */
 const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner& owner, uint32_t material_address);
-struct NativeMaterialBlockDefaults {
-    const NativePreparedMaterial* prepared;
-    uint32_t source_address, source_bytes;
-    mh3_model_material_block kind;
-    uint64_t source_generation;
-};
-
-/* Origin/default scope only. The current producer must separately certify live
- * mutations and supply typed overrides. actual_block may be a proven copy;
- * no packed-list inspection, pointer/name guesses or bind-time hashing. */
-NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner, uint32_t material_address, mh3_model_material_block kind, uint32_t actual_block);
 /* Owned CPU fields with a separate producer revision. No borrowed RAM/material
  * pointer survives an overwrite or resident retirement. First creation joins
  * complete source provenance to admitted typed defaults; later reads are O(1).

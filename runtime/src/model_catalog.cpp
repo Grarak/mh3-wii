@@ -71,13 +71,6 @@ struct CachedResource {
     mh3_catalog_resource resource;
 };
 
-struct CachedBlock {
-    uint64_t epoch, block_epoch, source_generation;
-    uintptr_t resident_handle;
-    uint64_t resident_generation;
-    uint32_t material_index;
-};
-
 // The provenance state (game thread). Admitted packs are immutable.
 struct Catalog {
     std::array<mh3_source_range, capacity> ranges{}, work{}, transfer{};
@@ -85,13 +78,14 @@ struct Catalog {
     bool initialized = false;
     std::vector<std::shared_ptr<const Pack>> packs;
 
-    // source_epoch: any provenance/structure change (copies, loads, retirement).
-    // block_epoch: typed material group writes, which change block provenance
-    // but never a resource header, so resolved resources stay valid across them.
-    uint64_t source_epoch = 0, block_epoch = 0;
+    // source_epoch: what resolved resources, recipes, cull records and failed
+    // draw tables depend on: the owner set (certified, retired or copied),
+    // the live blocks (retired or copied), disc loads and packs. Provenance
+    // that moves elsewhere (a string copied out of a loaded file, a buffer
+    // cleared) leaves it.
+    uint64_t source_epoch = 0;
     FastMap<uint32_t, CachedOwner> owners;
     FastMap<uint64_t, CachedResource> resources;
-    FastMap<uint64_t, CachedBlock> blocks;
 
     // live_blocks keeps the address order RetireLiveBlocks walks; live_index
     // finds a block's node by key without the tree walk (nodes stay put until
@@ -368,13 +362,6 @@ bool MayHitCertificate(uint32_t address, uint32_t bytes) {
     return n && c.certificate_ends[n - 1] > address;
 }
 
-void InvalidateBlockCache() {
-    if (C().block_epoch == UINT64_MAX)
-        MH3_THROW(std::runtime_error("Native model block cache epoch overflow"));
-
-    ++C().block_epoch;
-}
-
 bool RetireCertificates(uint32_t address, uint32_t bytes) {
     bool retired = false;
 
@@ -497,18 +484,20 @@ void InstallPack(const std::shared_ptr<const Pack>& pack, uint32_t diagnostic_fr
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
     c.packs.push_back(pack);
     c.resources.clear();
-    c.blocks.clear();
     InvalidateSourceCache(c, NativeSourceEpochReason::PackInstall, NativeSourceEpochProducer::PackManager, 0, 0, 0, 0, 0, frame);
 }
 
 // Certificates carry state the tracker alone cannot rebuild once typed writes
 // retire content provenance.
 void Certify(const std::vector<CachedOwner>& certified) {
+    bool added = false;
+
     for (const auto& item : certified) {
         auto [entry, inserted] = C().owners.try_emplace(item.owner.model_address, item);
 
         if (inserted) {
             OwnerAdded(item);
+            added = true;
             continue;
         }
 
@@ -521,9 +510,15 @@ void Certify(const std::vector<CachedOwner>& certified) {
 
         if (same)
             OwnersChanged();
-        else
+        else {
             OwnerAdded(item);
+            added = true;
+        }
     }
+
+    // A new owner: a model whose draw table failed before it may build one.
+    if (added)
+        InvalidateSourceCache(C(), NativeSourceEpochReason::OwnerCertify, NativeSourceEpochProducer::Certify, 0, 0, 0, 0, 0, DiagnosticFrame(C()));
 }
 
 uint32_t Copy(uint32_t destination, uint32_t source, uint32_t bytes, NativeSourceEpochProducer producer) {
@@ -579,8 +574,8 @@ void ReportNativeModelPreparationDiagnostics() {
         n(m.discarded_entries - previous.material.discarded_entries), n(s.discarded_entries - previous.shape.discarded_entries),
         n(d->epoch_advances - previous.advances), n(d->frames_with_epoch_advance - previous.frames), Memory::Read32(0x80796d28),
         d->stored_events, n(d->matching_events), d->sample_first, d->sample_last);
-    constexpr const char* reasons[]{"DI", "copy", "retire", "install", "unregister"};
-    constexpr const char* producers[]{"DI", "resource-copy", "resource-retire", "memcpy", "memmove", "copy32", "copy32-unknown", "fill", "heap-create", "heap-destroy", "heap-allocate", "heap-free", "view-DMA", "view-LC", "locked-cache-DMA", "pack-manager"};
+    constexpr const char* reasons[]{"DI", "copy", "retire", "install", "unregister", "certify"};
+    constexpr const char* producers[]{"DI", "resource-copy", "resource-retire", "memcpy", "memmove", "copy32", "copy32-unknown", "fill", "heap-create", "heap-destroy", "heap-allocate", "heap-free", "view-DMA", "view-LC", "locked-cache-DMA", "pack-manager", "certify"};
     std::fprintf(stderr, "MH3 source epoch reasons:");
 
     for (unsigned i = 0; i < static_cast<unsigned>(NativeSourceEpochReason::Count); ++i) {
@@ -608,10 +603,6 @@ void ReportNativeModelPreparationDiagnostics() {
 
 uint64_t ReadNativeModelStructureRevision() {
     return C().source_epoch;
-}
-
-uint64_t ReadNativeMaterialBlockRevision() {
-    return C().block_epoch;
 }
 
 uint64_t ReadNativeLiveMaterialRevision() {
@@ -876,7 +867,10 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     if (!copies.empty())
         ++live_version;
 
-    if (retired_owner || retired_block || tracked || !copies.empty() || !owner_copies.empty())
+    // Provenance copied elsewhere (sprintf's copies of disc strings, once a
+    // frame at the Deserted Island beach) changes no owner or live block: the
+    // draw thread's resolved resources and cull records stay valid.
+    if (retired_owner || retired_block || !copies.empty() || !owner_copies.empty())
         InvalidateSourceCache(c, NativeSourceEpochReason::ResourceCopy, producer, destination, source, bytes, 0,
             (tracked_source ? NATIVE_EPOCH_TRACKED_SOURCE : 0u) | (tracked_destination ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) |
             (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u) |
@@ -904,7 +898,7 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 
     const bool retired_owner = RetireCertificates(address, bytes), retired_block = RetireLiveBlocks(address, bytes);
 
-    if (retired_owner || retired_block || tracked)
+    if (retired_owner || retired_block)
         InvalidateSourceCache(c, NativeSourceEpochReason::ResourceRetire, producer, address, 0, bytes, 0,
             (tracked ? NATIVE_EPOCH_TRACKED_DESTINATION : 0u) | (retired_owner ? NATIVE_EPOCH_RETIRED_OWNER : 0u) | (retired_block ? NATIVE_EPOCH_RETIRED_BLOCK : 0u), frame);
 }
@@ -932,7 +926,6 @@ void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_
         Checked(mh3_source_retire(&C().tracker, address, bytes));
 
     RetireLiveBlocks(address, bytes);
-    InvalidateBlockCache();
 }
 
 void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32_t bytes, mh3_model_material_block kind) {
@@ -954,7 +947,6 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
         Checked(mh3_source_record_copy(&C().tracker, destination, source, bytes, NextGeneration()));
 
     RetireLiveBlocks(destination, bytes);
-    InvalidateBlockCache();
 }
 
 // Pack admission and eviction (model_assets.cpp) run under the catalog lock
@@ -1102,7 +1094,6 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
         if ((*it)->handle == handle) {
             C().packs.erase(it);
             C().resources.clear();
-            C().blocks.clear();
 
             for (auto owner = C().owners.begin(); owner != C().owners.end();) {
                 if (owner->second.owner.resident_handle == handle) {
@@ -1516,42 +1507,6 @@ const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner&
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
             return pack.materials.at(resource.pack_index);
     MH3_THROW(std::runtime_error("Native model material resident allocation was retired"));
-}
-
-NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner, uint32_t material, mh3_model_material_block kind, uint32_t actual_block) {
-    std::lock_guard guard(catalogLock);
-    const mh3_catalog_resource resource = ResolveResource(owner, material, true);
-
-    if (kind < 0 || kind >= MH3_MODEL_MATERIAL_BLOCK_COUNT)
-        MH3_THROW(std::runtime_error("Invalid native material block kind"));
-
-    for (const auto& pack : Packs())
-        if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation) {
-            const auto& block = pack.material_blocks.at(resource.pack_index)[kind];
-
-            if (!(block.flags & 1))
-                MH3_THROW(std::runtime_error("Native material block requires verified M3ID v2 ownership"));
-
-            actual_block = Canonical(actual_block, block.source_bytes);
-
-            // Material tables have 128-byte records in a U32-sized metadata span,
-            // so their admitted index fits the lower29 bits. Keep shared TEV
-            // scopes separate instead of evicting each other on alternate draws.
-            const uint64_t key = (uint64_t(actual_block) << 32) | (uint64_t(resource.pack_index) << 3) | uint32_t(kind);
-            const auto cached = C().blocks.find(key);
-            uint64_t generation = 0;
-
-            if (cached != C().blocks.end() && cached->second.epoch == C().source_epoch && cached->second.block_epoch == C().block_epoch && cached->second.resident_handle == owner.resident_handle &&
-                cached->second.resident_generation == owner.resident_generation && cached->second.material_index == resource.pack_index)
-                generation = cached->second.source_generation;
-            else {
-                Checked(mh3_source_resolve_material_block(&C().tracker, owner.catalog, actual_block, pack.material_catalog_indices.at(resource.pack_index), uint32_t(kind), &generation));
-                C().blocks.insert_or_assign(key, CachedBlock{C().source_epoch, C().block_epoch, generation, owner.resident_handle, owner.resident_generation, resource.pack_index});
-            }
-
-            return {&pack.materials.at(resource.pack_index), actual_block, block.source_bytes, kind, generation};
-        }
-    MH3_THROW(std::runtime_error("Native material block resident owner was retired"));
 }
 
 uint64_t NextNativeMaterialRevision() {

@@ -4,13 +4,13 @@
 /* Opt-in CPU metadata only. The game thread writes and reports it; the
  * renderer never reads it. */
 enum class NativeSourceEpochReason : uint32_t {
-    DiscWrite, ResourceCopy, ResourceRetire, PackInstall, PackUnregister, Count
+    DiscWrite, ResourceCopy, ResourceRetire, PackInstall, PackUnregister, OwnerCertify, Count
 };
 
 enum class NativeSourceEpochProducer : uint32_t {
     Disc, ResourceCopy, ResourceRetire, Memcpy, Memmove, Copy32, Copy32Unknown,
     Fill, HeapCreate, HeapDestroy, HeapAllocate, HeapFree, ViewDma, ViewLc,
-    LockedCacheDma, PackManager, Count
+    LockedCacheDma, PackManager, Certify, Count
 };
 
 enum NativeSourceEpochCondition : uint32_t {
