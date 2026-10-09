@@ -185,8 +185,8 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
         !__builtin_isfinite(far_z))
         return MH3_RES_INVALID;
     /* Only what the draw consumes is initialized: the scalars here, each
-     * selected coordinate's recipe below, and every palette slot exactly once
-     * (the slots nothing loads are zeroed at the end). */
+     * selected coordinate's recipe below, and the palette slots the shader
+     * reads exactly once (see the end). */
     out->texcoord_mask = out->nonzero_projective_mask = out->zero_projective_mask = 0;
     out->matrix_index_mask = (uint16_t)((mesh->layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) & 0x1ffu);
     out->position = out->normal = identity();
@@ -304,6 +304,10 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 out->zero_projective_mask |= 1u << i;
         }
     out->texcoord_mask = mask;
+    /* A rigid draw's shader reads only slot 0 (written above); draws with
+     * per-vertex selectors read the slots nothing loads as zero. */
+    if (!out->matrix_index_mask)
+        return MH3_RES_OK;
     for (unsigned slot = 0; slot < 10; slot++) {
         if (!(written_positions & (1u << slot)))
             memset(&positions_out[slot], 0, sizeof *positions_out);
