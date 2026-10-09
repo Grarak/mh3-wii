@@ -942,3 +942,5 @@
 8012b9a8 EnemyGaugeAdd390
 8012b9ec EnemyGaugeAdd3A0
 8012ba20 EnemyGaugeAdd3A4
+80368dcc GroupShuttle
+803692f0 GroupTravel

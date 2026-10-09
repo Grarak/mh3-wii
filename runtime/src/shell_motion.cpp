@@ -79,6 +79,7 @@ constexpr uint32_t kRateCalls[] = {
     0x80308A18u,              // 0x80308960 debris: position += velocity
     0x8031E48Cu,              // 0x8031DF1C: +0x14 += +0x20
     0x80328E2Cu,              // 0x80328BDC enemy: velocity += acceleration
+    0x80369404u, 0x80369818u, 0x80369C54u, // 0x803692F0 desert object group: position += velocity
     0x803BC9ECu,              // 0x803BC584 ambient creature: position += velocity
 };
 

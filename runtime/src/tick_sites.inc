@@ -141,12 +141,6 @@
 {0x8035B21Cu, TickSite::Countdown},         // 8035AF48: countdown (+8), blinks below 30
 {0x80367920u, TickSite::Countup},            // desert object (803677C4): steps (+0x40) per part
 {0x80368ACCu, TickSite::Countup},            // desert object (80368A94): steps (+0x40) per part
-{0x80368F44u, TickSite::Countup},            // desert object (80368DCC): steps (+0x40) per part
-{0x80369034u, TickSite::Countdown},          // desert object: countdown (+0x40), next state at 0
-{0x80369068u, TickSite::Countup},
-{0x80369128u, TickSite::Countup},
-{0x80369218u, TickSite::Countdown},
-{0x8036924Cu, TickSite::Countup},
 {0x80369360u, TickSite::Countup},            // desert object (803692F0): steps (+0x40) per part
 {0x80369BA8u, TickSite::Countup},
 {0x8037F62Cu, TickSite::Countup, 449},       // volcano object (8037F5C8): steps (s16 +0x35A), up to 450
