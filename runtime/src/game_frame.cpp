@@ -52,6 +52,7 @@ void ApplyDeferredDrawCacheRetirements();
 #ifdef MH3_DEVELOPMENT
 extern uintptr_t mh3GameStackProbe;                           // model_catalog.cpp
 void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]); // model_catalog.cpp
+extern "C" uint64_t MH3TakeEffectParticlesDrawn();                // native_effect_draw.cpp
 #endif
 
 namespace {
@@ -306,8 +307,8 @@ struct FrameSplit {
         // Deferred Effect::Calc calls run as the guest worker's jobs (its only
         // ones), so the game thread's calc is the rest.
         const auto worker = GuestWorker::TakeStatistics();
-        std::printf("MH3 effect split: calc %.2f on the game thread, %.2f on the guest worker; draw %.2f ms/frame (game-thread calc scopes/frame %u)\n",
-                    f(MH3_SPLIT_EFFECT_CALC), worker.jobNs / 1e6 / frames, f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC));
+        std::printf("MH3 effect split: calc %.2f on the game thread, %.2f on the guest worker; draw %.2f ms/frame (game-thread calc scopes/frame %u, particles drawn/frame %.1f)\n",
+                    f(MH3_SPLIT_EFFECT_CALC), worker.jobNs / 1e6 / frames, f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC), double(MH3TakeEffectParticlesDrawn()) / frames);
         std::printf("MH3 guest worker: %.2f jobs/frame, %.2f ms/frame of jobs, game waited %.2f ms/frame (%llu waits)\n", double(worker.jobs) / frames, worker.jobNs / 1e6 / frames,
                     worker.waitNs / 1e6 / frames, static_cast<unsigned long long>(worker.waits));
 

@@ -432,6 +432,17 @@ bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
     return retired;
 }
 
+bool LiveBlocksOver(uint32_t address, uint32_t bytes) {
+    const uint32_t start = address > 480 ? address - 480 : 0;
+    const uint64_t end = (uint64_t)address + bytes;
+
+    for (auto it = C().live_blocks.lower_bound(uint64_t(start) << 3); it != C().live_blocks.end() && it->second.address < end; ++it)
+        if ((uint64_t)it->second.address + it->second.bytes > address)
+            return true;
+
+    return false;
+}
+
 std::vector<NativeLiveMaterialBlock> SnapshotLiveCopy(uint32_t source, uint32_t destination, uint32_t bytes) {
     std::vector<NativeLiveMaterialBlock> result;
     auto it = C().live_blocks.lower_bound(uint64_t(source) << 3);
@@ -682,6 +693,15 @@ bool TrackedForDraw(uint32_t address, uint32_t bytes) {
     return mh3_source_intersects(&C().tracker, Canonical(address, bytes), bytes);
 }
 
+// Whether the draw thread can use what a typed material copy replaces: the
+// destination's provenance or live blocks. The copy only reads its source.
+bool CopyDestinationForDraw(uint32_t destination, uint32_t bytes) {
+    std::lock_guard guard(catalogLock);
+    Initialize();
+    destination = Canonical(destination, bytes);
+    return mh3_source_intersects(&C().tracker, destination, bytes) || LiveBlocksOver(destination, bytes);
+}
+
 #ifdef MH3_DEVELOPMENT
 // The draw waits of catalog writes, by whether the game thread waited (its
 // stack within 1 MiB of MH3_GameFrame's) or another host thread that
@@ -877,7 +897,7 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
     if (!bytes || destination == source)
         return;
 
-    QuiesceDraw(TrackedForDraw(destination, bytes) || TrackedForDraw(source, bytes));
+    QuiesceDraw(CopyDestinationForDraw(destination, bytes));
     std::lock_guard guard(catalogLock);
     Initialize();
     destination = Canonical(destination, bytes);
@@ -1580,6 +1600,32 @@ NativeLiveMaterialBlock* WritableLiveBlock(uint32_t address, mh3_model_material_
 
     return block;
 }
+
+// The block a typed copy replaces in place: a writable block of the copy's
+// size at the destination, apart from the source. Its bytes may still carry
+// the provenance the first copy into it recorded (RecordNativeTypedMaterialCopy
+// from disc data); the in-place copy retires it, as a typed write does. Else
+// each re-copy of the group (every frame, CopiedMatRefresh) took the
+// replacing path, which waits for the draw: about 20 waits a second in the
+// Jhen fight.
+NativeLiveMaterialBlock* InPlaceCopyBlock(uint32_t destination, uint32_t source, uint32_t bytes, mh3_model_material_block kind) {
+    auto& c = Initialize();
+    const auto found = c.live_index.find(LiveKey(destination, kind));
+
+    if (found == c.live_index.end())
+        return nullptr;
+
+    auto* block = found->second;
+
+    if (!block->writable || block->bytes != bytes || block->address != destination ||
+        !(uint64_t(destination) + bytes <= source || uint64_t(source) + bytes <= destination))
+        return nullptr;
+
+    if (mh3_source_intersects(&c.tracker, destination, bytes))
+        Checked(mh3_source_retire(&c.tracker, destination, bytes));
+
+    return block;
+}
 } // namespace
 
 NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
@@ -1758,8 +1804,7 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     // the destination keeps no byte provenance, as after a typed write. An
     // unchanged group keeps its generation (frozen copies stay current), and
     // a re-copy of the same unchanged source skips the 1.3 KiB fields copy.
-    if (auto* to = WritableLiveBlock(destination, kind); to && to->bytes == bytes && to->address == destination &&
-        (uint64_t(destination) + bytes <= source || uint64_t(source) + bytes <= destination)) {
+    if (auto* to = InPlaceCopyBlock(destination, source, bytes, kind)) {
         mh3_model_copy_bytes(output, input, bytes);
         const bool current = to->copied_from == source && to->copied_generation == from.fields.generation && to->copy_result == to->fields.generation;
         const uint64_t generation = SameGroup(to->fields, from.fields, kind) ? to->fields.generation : NextRevision();

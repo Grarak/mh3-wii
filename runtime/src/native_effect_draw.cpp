@@ -12,6 +12,7 @@
 #include <aurora/native_texture.hpp>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -456,7 +457,15 @@ uint32_t Next(void *opaque, uint32_t p) {
     return GuestCall{c.cpu}(c.next_fn, {c.manager, p});
 }
 
+#ifdef MH3_DEVELOPMENT
+// The particles the billboard-like strategies read (MH3TakeEffectParticlesDrawn).
+std::atomic<uint64_t> particlesDrawn{0};
+#endif
+
 void ReadParticle(void *opaque, uint32_t p, mh3_effect_particle *out) {
+#ifdef MH3_DEVELOPMENT
+    particlesDrawn.fetch_add(1, std::memory_order_relaxed);
+#endif
     auto &c = *static_cast<BillboardContext *>(opaque);
     *out = {};
     ReadVector(p + 0xac, out->position, 3);
@@ -693,6 +702,12 @@ extern "C" void MH3_EffectColors(CpuContext *c) {
 
     c->gpr[3] = result;
 }
+
+#ifdef MH3_DEVELOPMENT
+extern "C" uint64_t MH3TakeEffectParticlesDrawn() {
+    return particlesDrawn.exchange(0, std::memory_order_relaxed);
+}
+#endif
 
 extern "C" void MH3_EffectParticleState(CpuContext *c) {
     GuestFrame f(c, 0x30);
