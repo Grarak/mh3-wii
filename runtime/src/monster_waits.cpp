@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of forty-two enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of forty-four enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -17,6 +17,8 @@
 //     0x8037A8AC  kind 19 (Agnaktor) under the ground: 15, 60 or 90 ticks, a mark every 8
 //     0x801AC674  kind 27 (Aptonoth) a walk, 256-511 ticks
 //     0x8035F378, 0x8035F560  kind 35 (Bnahabra) waits, 90 ticks
+//     0x8014888C  kinds 1/2 (Rathian, Rathalos) a walk, 300 ticks
+//     0x8014A8C4  kinds 1/2 a hover, 60 ticks
 //     0x80184DFC  kinds 16/17 (the Ludroth kinds) a swim, at most 200, 150+ or 90+ ticks
 //     0x8018599C  kinds 16/17 a rest underwater, up to 1800 ticks, hunters checked every 30
 //     sleeps of 1800 ticks: 0x80148ED0 kinds 1/2, 0x80155EBC 3, 0x8015E39C 8,
@@ -59,6 +61,7 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
+#include "step_counter.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -731,6 +734,93 @@ void Em004SleepPort(CpuContext* ctx) {
                     g.Call<SetScale>({w});
                     g.Call<0x80130724>({w, 1});
                 }});
+}
+
+// kinds 1/2 0x8014888C (r4: 0 steering through 0x8012CF84 each step, 1 with
+// its dust): Rathian's and Rathalos' walk, motion 0x13 for 300 ticks (the
+// original's 300 calls), then 1.5 (1.8 for walk 1). Walk 1 kicks up dust
+// (0x33, 0x34 at joint 0x1A) and a puff (0x80104A34) on its motion's frames,
+// the 0x34 dust every 4 steps of the step counter in two frame ranges.
+void Em001WalkPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x08];
+    const bool dusty = uint8_t(frame.Arg(4)) == 1;
+    game.Call<0x80043F0C>({at});
+
+    if (uint8_t(frame.Arg(4)) == 0)
+        game.Call<0x8012CF84>({work});
+
+    const auto dust = [&](uint32_t kind, float scale) {
+        game.Call<Em::Vec3Set>({at}, {0.0, -30.0, 70.0});
+        game.Call<Em::Spawn>({work, kind, 0x1A, at}, {double(scale)});
+    };
+
+    const auto puff = [&] {
+        game.Call<Em::Vec3Set>({at}, {0.0, 0.0, 50.0});
+        game.Call<0x80104A34>({work, 0x1A, 0x2F, 0, at}, {1.4});
+    };
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0x13, 6, 0);
+        em.Count(300);
+        break;
+    case 1:
+        if (dusty) {
+            if (em.At(92.0f) || em.At(262.0f))
+                dust(0x33, 1.0f);
+
+            if (em.At(96.0f))
+                puff();
+
+            if ((em.At(136.0f, 3, 152.0f) || em.At(344.0f, 3, 368.0f)) && StepCounter::Every(4))
+                dust(0x34, 1.0f);
+
+            if (em.At(156.0f) || em.At(190.0f) || em.At(386.0f))
+                dust(0x33, 0.6f);
+
+            if (em.At(262.0f))
+                puff();
+
+            if ((em.At(398.0f, 3, 426.0f) || em.At(458.0f, 3, 478.0f)) && StepCounter::Every(4))
+                dust(0x34, 0.8f);
+
+            if (em.At(434.0f))
+                dust(0x33, 0.9f);
+        }
+
+        if (CountDown(em))
+            game.Call<NextAction>({work, 1, dusty ? 8u : 5u});
+
+        break;
+    }
+}
+
+// kinds 1/2 0x8014A8C4: Rathian and Rathalos hovering, motion 0x1F looped for
+// 60 ticks (the original's 60 calls), then 0x80148260.
+void Em001HoverPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
+        game.Call<SetScale>({work});
+        game.Call<SetMotionLoop>({work, 0x1F, 4, 0});
+        em.Count(0x3C);
+        break;
+    case 1:
+        if (CountDown(em))
+            game.Call<0x80148260>({work});
+
+        break;
+    }
 }
 
 // kinds 16/17 0x80184DFC (r4 the swim 0-9, r5: 0 motion 0x37, else 0x30): the
@@ -2010,6 +2100,18 @@ extern "C" void MH3_Em004Sleep(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em004Sleep", func_801C6014, Em004SleepPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801C6014, MH3_Em004Sleep, "Em004Sleep");
+
+extern "C" void func_8014888C(CpuContext* ctx);
+extern "C" void MH3_Em001Walk(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em001Walk", func_8014888C, Em001WalkPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8014888C, MH3_Em001Walk, "Em001Walk");
+
+extern "C" void func_8014A8C4(CpuContext* ctx);
+extern "C" void MH3_Em001Hover(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em001Hover", func_8014A8C4, Em001HoverPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8014A8C4, MH3_Em001Hover, "Em001Hover");
 
 extern "C" void func_80184DFC(CpuContext* ctx);
 extern "C" void MH3_Em016Swim(CpuContext* ctx) {
