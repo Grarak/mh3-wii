@@ -542,6 +542,11 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
             textureStream.Write(command, textureSink, resolve);
         };
+        // Texture metadata goes out before the next draw (an empty one here).
+        auto draw = [&] {
+            const uint8_t command[]{0x90, 0, 0};
+            textureStream.Write(command, textureSink, resolve);
+        };
         bool passed = true;
         try {
             bpWrite(0x80, mips ? 0xC0 : 0x80);
@@ -551,6 +556,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             bpWrite(0xFE, 0x3FF);
             bpWrite(0x88, 0xF00000 | (width - 1));
             bpWrite(0x94, 0x100000 >> 5);
+            draw();
         } catch (const std::runtime_error&) { passed = false; }
         if (passed != shouldPass) throw std::runtime_error("GX texture footprint validation failed");
         if (passed && (metadata.size() != 37 || metadata[2] != 0x30 ||
@@ -561,10 +567,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             const auto version = std::vector<uint8_t>(metadata.begin() + 33, metadata.end());
             const uint8_t repeat[]{0x61,0x94,0,0x80,0};
             textureStream.Write(repeat, textureSink, resolve);
+            draw();
             if (!std::equal(version.begin(), version.end(), metadata.begin() + 33))
                 throw std::runtime_error("Unchanged GX texture lost its cache identity");
             textureBytes[0] ^= 0xFF;
             textureStream.Write(repeat, textureSink, resolve);
+            draw();
             if (std::equal(version.begin(), version.end(), metadata.begin() + 33))
                 throw std::runtime_error("Rewritten GX texture kept a stale cache identity");
         }

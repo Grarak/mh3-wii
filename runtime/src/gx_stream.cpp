@@ -302,14 +302,16 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 // the call exactly as if its commands appeared inline.
                 GuestGxStream child;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
-                child.textureBound = textureBound; child.paletteRevision = paletteRevision;
+                child.textureBound = textureBound; child.textureDirty = textureDirty;
+                child.paletteRevision = paletteRevision;
                 child.boundArrays = boundArrays;
                 child.palettes = palettes; child.paletteBindings = paletteBindings;
                 child.displayListDepth = displayListDepth + 1;
                 child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, textureCopy);
                 if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
                 bp = child.bp; cp = child.cp; bpMask = child.bpMask;
-                textureBound = child.textureBound; paletteRevision = child.paletteRevision;
+                textureBound = child.textureBound; textureDirty = child.textureDirty;
+                paletteRevision = child.paletteRevision;
                 boundArrays = child.boundArrays;
                 palettes = child.palettes; paletteBindings = child.paletteBindings;
             }
@@ -344,13 +346,11 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             if (reg >= bank && reg < bank + 28 && (group == 0 || group == 4 || group == 8 || group == 20 || group == 24)) {
                 const unsigned slot = (reg & 3) + (bank == 0xA0 ? 4 : 0);
                 if (group == 20) textureBound[slot] = true;
-                if (textureBound[slot]) {
-                    const auto metadata = TexturePacket(slot, resolver);
-                    sink(std::span<const uint8_t>(p, length));
-                    sink(metadata);
-                    offset += length;
-                    continue;
-                }
+                // The texture's metadata (host pointer and contents hash) goes
+                // out before the next draw: a texture load writes up to five of
+                // these registers, and hashing the texture for each of them was
+                // the stream's largest cost.
+                if (textureBound[slot]) textureDirty |= 1u << slot;
             }
             if (reg == 0x52) {
                 const uint32_t trigger = bp[reg];
@@ -407,6 +407,9 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
         }
         if (p[0] >= 0x80 && p[0] <= 0xBF) {
             BindDrawArrays(std::span<const uint8_t>(p, length), sink, resolver);
+            for (unsigned slot = 0; slot < 8; ++slot)
+                if (textureDirty & (1u << slot)) sink(TexturePacket(slot, resolver));
+            textureDirty = 0;
             BindDrawPalettes(sink, resolver);
         }
         sink(std::span<const uint8_t>(p, length));

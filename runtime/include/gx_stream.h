@@ -33,6 +33,7 @@ private:
     std::array<uint32_t, 256> cp{};
     std::array<ArrayView, 16> boundArrays{};
     std::array<bool, 8> textureBound{};
+    uint32_t textureDirty = 0; // slots whose metadata is due before the next draw
     unsigned displayListDepth = 0;
     uint32_t bpMask = 0xFFFFFF, paletteRevision = 0;
     struct PaletteMemory {
