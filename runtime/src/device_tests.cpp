@@ -503,12 +503,21 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             throw std::runtime_error("Unchanged draw redundantly rebound vertex arrays");
         for (unsigned slot : {3, 5, 6, 7, 8, 9, 10, 11})
             if (sizes[slot]) throw std::runtime_error("Unused draw array was uploaded");
-        // A later draw may use less of the same source; don't retain the RAM-region size.
+        // A later draw that reads less of the same array reuses the bound prefix
+        // (every rebind is another upload)...
         auto smaller = std::vector<uint8_t>(std::begin(vertices), std::end(vertices));
         smaller[5] = 2;
         arrays.Write(smaller, receive, resolve);
-        if (sizes[0] != 36 || draws != 3) throw std::runtime_error("Draw array extent did not shrink");
+        if (draws != 3 || arrayPackets != firstArrayPackets)
+            throw std::runtime_error("Smaller draw extent redundantly rebound vertex arrays");
+        // ...but a base-register write never keeps its RAM-region size: the next
+        // draw binds only what it reads.
+        cp(0xA0, 0x1000);
+        sizes.fill(0);
+        arrays.Write(smaller, receive, resolve);
+        if (sizes[0] != 36 || draws != 4) throw std::runtime_error("Draw array extent did not shrink");
         cp(0x50, 2 << 11); cp(0x60, 0); cp(0x70, (1 << 9) | (3 << 10)); cp(0xB1, 20);
+        cp(0xA1, 0x1100);
         const uint8_t nbt[]{0x90, 0, 1, 4};
         arrays.Write(nbt, receive, resolve);
         if (sizes[1] != 98) throw std::runtime_error("Single-index NBT extent failed");
@@ -516,7 +525,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         bool rejected = false;
         try { arrays.Write(nbt, receive, resolve); }
         catch (const std::runtime_error&) { rejected = true; }
-        if (!rejected || draws != 4) throw std::runtime_error("Out-of-RAM draw was emitted");
+        if (!rejected || draws != 5) throw std::runtime_error("Out-of-RAM draw was emitted");
     }
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass) {
         GuestGxStream textureStream;

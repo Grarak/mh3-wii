@@ -2261,6 +2261,35 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   return true;
 }
 
+// Uploads a guest vertex array into this staging batch, reusing an earlier upload of the
+// same bytes. Hosts rebind an array whenever a draw reads more of it, and interleaved
+// meshes rebind back and forth, so without this one array is copied many times per batch.
+// Keyed by content hash, so CPU-rewritten vertex data is still uploaded again.
+static gfx::Range upload_vertex_array(const void* data, uint32_t size) {
+  struct Key {
+    const void* data;
+    uint32_t size;
+    HashType hash;
+    bool operator==(const Key&) const = default;
+  };
+  struct KeyHash {
+    size_t operator()(const Key& key) const noexcept { return static_cast<size_t>(key.hash); }
+  };
+  static absl::flat_hash_map<Key, gfx::Range, KeyHash> uploads;
+  static uint64_t uploadsEpoch = UINT64_MAX;
+  if (uploadsEpoch != gfx::staging_epoch()) {
+    uploads.clear();
+    uploadsEpoch = gfx::staging_epoch();
+  }
+  const Key key{data, size, xxh3_hash_s(data, size, reinterpret_cast<uintptr_t>(data))};
+  if (const auto it = uploads.find(key); it != uploads.end()) {
+    return it->second;
+  }
+  const auto range = gfx::push_storage(static_cast<const uint8_t*>(data), size);
+  uploads.emplace(key, range);
+  return range;
+}
+
 static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
                                  gfx::Range vertRange, uint16_t usedPnMtxMask,
                                  HashType matrixTopologySignature,
@@ -2288,7 +2317,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
     if (array.cachedRange.size > 0) {
       ranges.vaRanges[i - GX_VA_POS] = array.cachedRange;
     } else {
-      const auto range = gfx::push_storage(static_cast<const uint8_t*>(array.data), array.size);
+      const auto range = upload_vertex_array(array.data, array.size);
       ranges.vaRanges[i - GX_VA_POS] = range;
       array.cachedRange = range;
     }

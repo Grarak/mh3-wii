@@ -97,9 +97,17 @@ void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& si
         const uint64_t needed = uint64_t(maximum[slot]) * (cp[0xB0 + slot] & 255) + a.bytes / a.indices;
         if (!view.address || needed > view.size)
             throw std::runtime_error("GX draw index exceeds guest vertex-array RAM");
-        view.size = static_cast<uint32_t>(needed);
+        // Rebind only for a new array or one that now needs more bytes. A draw with a
+        // smaller maximum index reads a prefix of the bound range, and every rebind
+        // makes Aurora upload the array again. Growth at least doubles the range
+        // (within the RAM region): meshes drawn in chunks from one big array read
+        // further into it draw by draw, and exact growth re-uploaded ever longer
+        // prefixes dozens of times per frame.
         auto& bound = boundArrays[slot];
-        if (bound.address != view.address || bound.size != view.size) {
+        const bool grow = bound.address == view.address && needed > bound.size;
+        if (bound.address != view.address || grow) {
+            const uint64_t size = grow && bound.size ? std::max<uint64_t>(needed, uint64_t(bound.size) * 2) : needed;
+            view.size = static_cast<uint32_t>(std::min<uint64_t>(size, view.size));
             sink(ArrayPacket(slot, view));
             bound = view;
         }
@@ -317,7 +325,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             // Aurora's 0x50/0x0010..1F extension carries a host pointer,
             // accessible byte count, and an explicit guest-big-endian flag.
             sink(ArrayPacket(p[1] - 0xA0, view));
-            boundArrays[p[1] - 0xA0] = view;
+            // Unsized: the next indexed draw binds the range it actually reads.
+            boundArrays[p[1] - 0xA0] = {view.address, 0};
             offset += length;
             continue;
         }
