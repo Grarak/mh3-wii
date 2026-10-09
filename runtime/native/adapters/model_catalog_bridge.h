@@ -17,6 +17,9 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceCopy, uint32_t diagnostic_frame = UINT32_MAX);
 void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
     NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceRetire, uint32_t diagnostic_frame = UINT32_MAX);
+/* Whether the in-flight overlapped draw may read [address, address + bytes):
+ * a game-thread retirement of it waits for that draw. */
+bool NativeResourceReadByDraw(uint32_t address, uint32_t bytes);
 /* The structural producer token. Changes on source/pack lifetime
  * events, never a draw or a typed material-field update. */
 uint64_t ReadNativeModelStructureRevision();

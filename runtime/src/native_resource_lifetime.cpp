@@ -16,11 +16,13 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
-#include <mutex>
 #endif
 
 namespace {
@@ -169,6 +171,8 @@ void Fill(uint32_t destination, uint8_t value, uint32_t bytes) {
     Checked(mh3_lifetime_fill(pointer, bytes, value, bytes));
 }
 
+void DropDeferredFrees(uint32_t begin, uint64_t end);
+
 uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t options) {
     mh3_lifetime_range region;
     Checked(mh3_lifetime_expheap_create_plan(address, bytes, &region));
@@ -178,6 +182,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
 
     Memory::GetPointer(region.address, region.bytes);
     RamAddress(region.address, region.bytes);
+    DropDeferredFrees(region.address, uint64_t(region.address) + region.bytes);
     PrepareWrite(region.address, region.bytes, NativeSourceEpochProducer::HeapCreate);
     RetireHeapRange(region.address, region.bytes);
     GuestFrame frame(cpu, 0x40);
@@ -190,6 +195,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
 
 uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     const auto heap = ReadHeap(address);
+    DropDeferredFrees(heap.address, heap.end);
     PrepareWrite(heap.address, heap.end - heap.address, NativeSourceEpochProducer::HeapDestroy);
     RetireHeapRange(heap.address, heap.end - heap.address);
     GuestFrame frame(cpu, 0x40);
@@ -197,7 +203,9 @@ uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     return address;
 }
 
-uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t alignment) {
+bool FlushDeferredFrees(CpuContext* cpu, uint32_t heap = 0);
+
+uint32_t TryAllocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t alignment) {
     GuestFrame frame(cpu, 0x60);
     HeapLock lock(cpu, address);
     GuestCall call{cpu};
@@ -218,6 +226,13 @@ uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t ali
     }
 
     return result;
+}
+
+uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t alignment) {
+    const uint32_t result = TryAllocate(cpu, address, bytes, alignment);
+
+    // A block a free left to the draw (DeferFree) may be the room it needs.
+    return result || !FlushDeferredFrees(cpu) ? result : TryAllocate(cpu, address, bytes, alignment);
 }
 
 #ifdef MH3_DEVELOPMENT
@@ -249,35 +264,81 @@ void RecordDrawSideWrite(CpuContext*, char, uint32_t, uint32_t) {}
 #endif
 
 // A logic step that runs beside the overlapped draw (game_frame.cpp) must not
-// free what the draw still calls into: a model the next step destroys is
-// still in the prepared buckets. Such a free first waits for the draw, before
-// the heap lock, which the draw thread may need.
-void WaitForDrawBeforeFree(CpuContext* cpu, uint32_t payload, uint32_t bytes) {
-    if (PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending() || !SceneQueue::HoldsPrepared(payload, payload + bytes))
-        return;
+// free what the draw still reads or calls into: a model the next step
+// destroys is still in the prepared buckets, and the draw reads the resource
+// data in it. Such a free waited for the draw (a scene model's destructor:
+// about a third of the game thread's catalog waits at the Deserted Island
+// beach on the devkit); it now waits in this list for the next handoff
+// (ApplyDeferredHeapFrees), the block allocated until then. Host threads PpcThread counts as the game's (disc
+// replies) free here too.
+struct DeferredFree {
+    uint32_t heap, payload, canonical_heap, canonical_payload;
+};
 
-#ifdef MH3_DEVELOPMENT
-    // The first few waits with the guest call chain of the free.
-    static unsigned reported = 0;
+std::mutex deferredFreesLock;
+std::vector<DeferredFree> deferredFrees;
 
-    if (reported < 8) {
-        ++reported;
-        std::fprintf(stderr, "MH3 draw wait: free of %08x (%u bytes) from %08x", payload, bytes, cpu->lr);
-        uint32_t sp = cpu->gpr[1];
+bool DeferFree(uint32_t heap, uint32_t payload, uint32_t canonical_payload, uint32_t bytes) {
+    if (PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending())
+        return false;
 
-        for (unsigned depth = 0; depth < 6 && sp >= 0x80000000u && sp < 0x94000000u; ++depth) {
-            sp = Memory::Read32(sp);
+    if (!SceneQueue::HoldsPrepared(payload, payload + bytes)) {
+        const auto record = ReadHeap(heap);
+        const auto block = ReadBlock(canonical_payload - 16);
+        mh3_lifetime_range region;
+        Checked(mh3_lifetime_expblock_extent(&record, canonical_payload, &block, &region));
 
-            if (sp < 0x80000000u || sp >= 0x94000000u)
-                break;
-
-            std::fprintf(stderr, " <- %08x", Memory::Read32(sp + 4));
-        }
-
-        std::fprintf(stderr, "\n");
+        if (!NativeResourceReadByDraw(region.address, region.bytes))
+            return false;
     }
-#endif
+
+    std::lock_guard guard(deferredFreesLock);
+    deferredFrees.push_back({heap, payload, RamAddress(heap, 80), canonical_payload});
+    return true;
+}
+
+void Free(CpuContext* cpu, uint32_t address, uint32_t payload);
+
+// The deferred frees, once the draw that could read them is done.
+void ApplyFrees(CpuContext* cpu, std::vector<DeferredFree>& frees) {
+    for (const auto& f : frees)
+        Free(cpu, f.heap, f.payload);
+}
+
+// Those of the heap at `heap` (all with 0), for a caller that needs the room
+// or the heap's true free size now: they wait for the draw.
+bool FlushDeferredFrees(CpuContext* cpu, uint32_t heap) {
+    if (PpcThread::CurrentThread() != PpcThread::Game)
+        return false;
+
+    std::vector<DeferredFree> frees;
+    {
+        std::lock_guard guard(deferredFreesLock);
+
+        if (!heap)
+            frees.swap(deferredFrees);
+        else {
+            const uint32_t canonical_heap = RamAddress(heap, 80);
+            const auto of = [canonical_heap](const DeferredFree& f) { return f.canonical_heap == canonical_heap; };
+            std::copy_if(deferredFrees.begin(), deferredFrees.end(), std::back_inserter(frees), of);
+            std::erase_if(deferredFrees, of);
+        }
+    }
+
+    if (frees.empty())
+        return false;
+
     DrawThread::Thread().Wait();
+    ApplyFrees(cpu, frees);
+    return true;
+}
+
+// Memory a heap is destroyed, created or freed over takes the heaps and
+// blocks in it with it (a child heap freed with its parent's block).
+void DropDeferredFrees(uint32_t begin, uint64_t end) {
+    const auto in = [&](uint32_t address) { return address >= begin && address < end; };
+    std::lock_guard guard(deferredFreesLock);
+    std::erase_if(deferredFrees, [&](const DeferredFree& f) { return in(f.canonical_heap) || in(f.canonical_payload); });
 }
 
 void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
@@ -290,7 +351,10 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     // lock below.
     const uint32_t bytes = ReadBlock(canonical_payload - 16).size;
     RecordDrawSideWrite(cpu, 'f', payload, bytes);
-    WaitForDrawBeforeFree(cpu, payload, bytes);
+
+    if (DeferFree(address, payload, canonical_payload, bytes))
+        return;
+
     GuestFrame frame(cpu, 0x60);
     HeapLock lock(cpu, address);
     GuestCall call{cpu};
@@ -306,6 +370,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     Memory::GetPointer(plan.links[1].address, 4);
     PrepareWrite(plan.retired.address, plan.retired.bytes, NativeSourceEpochProducer::HeapFree);
     RetireHeapRange(plan.retired.address, plan.retired.bytes);
+    DropDeferredFrees(plan.retired.address, uint64_t(plan.retired.address) + plan.retired.bytes);
     Memory::Write32(plan.links[0].address, next);
     Memory::Write32(plan.links[1].address, previous);
     const uint32_t padding = (block.settings >> 8) & 127;
@@ -315,6 +380,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
 }
 
 uint32_t Available(CpuContext* cpu, uint32_t address, int32_t alignment) {
+    FlushDeferredFrees(cpu, address);
     GuestFrame frame(cpu, 0x40);
     HeapLock lock(cpu, address);
     const auto heap = ReadHeap(address);
@@ -342,6 +408,17 @@ void SystemFree(CpuContext* cpu, uint32_t payload) {
         Free(cpu, Memory::Read32(0x80796C48), payload);
 }
 } // namespace
+
+// At the handoff, the draw done (game_frame.cpp).
+void ApplyDeferredHeapFrees(CpuContext* cpu) {
+    std::vector<DeferredFree> frees;
+    {
+        std::lock_guard guard(deferredFreesLock);
+        frees.swap(deferredFrees);
+    }
+
+    ApplyFrees(cpu, frees);
+}
 
 void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes) {
     Fill(destination, value, bytes);

@@ -702,6 +702,19 @@ bool CopyDestinationForDraw(uint32_t destination, uint32_t bytes) {
     return mh3_source_intersects(&C().tracker, destination, bytes) || LiveBlocksOver(destination, bytes);
 }
 
+// Whether the in-flight draw may read what a change of [address, address +
+// bytes) replaces or retires. The draw reads tracked bytes only through model
+// certificates (the resources in their containers) and live material blocks
+// (every material block it reads is admitted as one, and prepared materials
+// keep pointers to them). Other disc-loaded bytes it never reads, such as the
+// strings sprintf copies, each copy handing their provenance on.
+bool DrawMayRead(uint32_t address, uint32_t bytes) {
+    std::lock_guard guard(catalogLock);
+    Initialize();
+    address = Canonical(address, bytes);
+    return LiveBlocksOver(address, bytes) || MayHitCertificate(address, bytes);
+}
+
 #ifdef MH3_DEVELOPMENT
 // The draw waits of catalog writes, by whether the game thread waited (its
 // stack within 1 MiB of MH3_GameFrame's) or another host thread that
@@ -757,6 +770,10 @@ void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]) {
 }
 #endif
 
+bool NativeResourceReadByDraw(uint32_t address, uint32_t bytes) {
+    return bytes && DrawMayRead(address, bytes);
+}
+
 void ApplyDeferredDrawCacheRetirements() {
     std::lock_guard guard(catalogLock);
 
@@ -809,7 +826,12 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("resource copy");
 #endif
-    QuiesceDraw([&] { return TrackedForDraw(destination, bytes) || TrackedForDraw(source, bytes); });
+    // The copy only reads its source, and only what the draw reads at the
+    // destination makes it wait: sprintf's copies of disc strings, once each
+    // frame at the Deserted Island beach and nearly all of the game thread's
+    // catalog waits there, do not. The draw's caches check source_epoch on
+    // their next use.
+    QuiesceDraw([&] { return DrawMayRead(destination, bytes); });
     std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();
@@ -867,7 +889,7 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpo
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("resource owner retirement");
 #endif
-    QuiesceDraw([&] { return TrackedForDraw(address, bytes); });
+    QuiesceDraw([&] { return DrawMayRead(address, bytes); });
     std::lock_guard guard(catalogLock);
 
     auto& c = Initialize();

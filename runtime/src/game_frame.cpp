@@ -49,6 +49,7 @@ void ApplyDeferredModelInvalidate();
 // model_catalog.cpp: the pose and vertex cache retirements of a logic step
 // that ran beside the draw.
 void ApplyDeferredDrawCacheRetirements();
+void ApplyDeferredHeapFrees(CpuContext* cpu);
 #ifdef MH3_DEVELOPMENT
 extern uintptr_t mh3GameStackProbe;                           // model_catalog.cpp
 void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]); // model_catalog.cpp
@@ -722,6 +723,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         }
 #endif
         ApplyDeferredDrawCacheRetirements();
+        ApplyDeferredHeapFrees(ctx);
         BeginOverlappedNativeGraphicsFrame();
         GameSideSection(ctx, render);
         EffectStep::Launch(*ctx);
