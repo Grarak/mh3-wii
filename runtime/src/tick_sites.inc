@@ -175,9 +175,6 @@
 {0x803407E8u, TickSite::PerStep},           // fish appearing: scale y grown per step
 {0x803407FCu, TickSite::PerStep},           // fish appearing: scale z grown per step
 {0x80340810u, TickSite::Countdown},         // fish appearing: steps left (+0xC), then the full scale
-{0x80340924u, TickSite::Countdown},         // fish (803408B4): turn steps left (+0xC)
-{0x80340A00u, TickSite::PerStep},           // fish: swim speed (+0x20) moved per step
-{0x80340B00u, TickSite::PerStep},           // fish: swim speed change per step
 {0x80341064u, TickSite::PerStep},           // fish (80340D14, at a bait): speed (+0x20) to the bait moved per step
 {0x803410ACu, TickSite::Countdown},         // fish at a bait: steps to the bait left (+0xC)
 {0x803416CCu, TickSite::PerStep},           // fish at a bait: lunge speed (+0x20) moved per step
