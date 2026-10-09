@@ -222,8 +222,8 @@ itself always draws at 960×544; the game's graphics startup
 target's scale (`VISetFrameBufferScale`: 0 for the display's size, 1 for 448
 rows). The development `MH3_RENDER_SCALE` overrides it.
 
-`Game thread limit` (on by default; `SetFrameLimitSetting`,
-`runtime/include/frame_limit.h`) reads `Game thread limit: ON` or `OFF`. On,
+`Framelimit` (on by default; `SetFrameLimitSetting`,
+`runtime/include/frame_limit.h`) reads `Framelimit: ON` or `OFF`. On,
 the game thread records a frame only once the render thread took the one
 before it, parked until the render thread signals that take, so every frame
 it makes is shown ([packet ring](frame-packet-ring.md#the-game-thread-limiter)).

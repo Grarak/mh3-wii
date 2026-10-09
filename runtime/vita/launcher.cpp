@@ -865,7 +865,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     "Cheats",
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
                     std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
-                    std::string("Game thread limit: ") + (frameLimit ? "ON" : "OFF"),
+                    std::string("Framelimit: ") + (frameLimit ? "ON" : "OFF"),
                     "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
             const std::string cheats = ActiveCheats();
             const std::string details[] = {"Continue through the game's title and character selection." + cheats,
