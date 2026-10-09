@@ -11,6 +11,8 @@
 // Pointer-bearing commands stay rejected until their conversion is implemented.
 class GuestGxStream {
 public:
+    // An array index in a vertex: its offset, width in bytes and attribute slot.
+    struct IndexField { uint16_t offset; uint8_t width, slot; };
     using Sink = std::function<void(std::span<const uint8_t>)>;
     struct ArrayView { uintptr_t address; uint32_t size; };
     using ArrayResolver = std::function<ArrayView(uint32_t)>;
@@ -60,11 +62,11 @@ private:
     void BindDrawArrays(std::span<const uint8_t> draw, const Sink& sink, const ArrayResolver& resolver);
     // A vertex format's layout under the current CP state: its size and where
     // its array indices are. Rebuilt when one of the registers it reads changes.
-    struct IndexField { uint16_t offset; uint8_t width, slot; };
     struct VertexLayout {
         std::array<uint32_t, 5> key{};
         bool valid = false;
         uint32_t size = 0, indexedSlots = 0, fieldCount = 0;
+        uint32_t fieldWidth = 0; // the width all index fields share, 0 when they differ
         std::array<IndexField, 36> fields{};
         std::array<uint32_t, 12> bytes{}; // bytes read at an index
     };

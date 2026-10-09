@@ -42,6 +42,32 @@ uint32_t CachedTextureVersion(uintptr_t address, uint32_t size) {
     }
     return entry.second;
 }
+
+// The index scan for the usual layouts: up to four fields of one width, with
+// the maxima in registers. False for any other layout.
+template <unsigned Width, unsigned N>
+void ScanIndexFieldsN(const uint8_t* vertex, unsigned count, uint32_t stride,
+                      std::span<const GuestGxStream::IndexField> fields, std::array<uint32_t, 12>& maximum) {
+    uint32_t offset[N], most[N]{};
+    for (unsigned i = 0; i < N; ++i) offset[i] = fields[i].offset;
+    for (unsigned v = 0; v < count; ++v, vertex += stride)
+        for (unsigned i = 0; i < N; ++i) {
+            const uint8_t* p = vertex + offset[i];
+            most[i] = std::max(most[i], Width == 1 ? uint32_t(p[0]) : (uint32_t(p[0]) << 8) | p[1]);
+        }
+    for (unsigned i = 0; i < N; ++i) maximum[fields[i].slot] = std::max(maximum[fields[i].slot], most[i]);
+}
+template <unsigned Width>
+bool ScanIndexFields(const uint8_t* vertex, unsigned count, uint32_t stride,
+                     std::span<const GuestGxStream::IndexField> fields, std::array<uint32_t, 12>& maximum) {
+    switch (fields.size()) {
+    case 1: ScanIndexFieldsN<Width, 1>(vertex, count, stride, fields, maximum); return true;
+    case 2: ScanIndexFieldsN<Width, 2>(vertex, count, stride, fields, maximum); return true;
+    case 3: ScanIndexFieldsN<Width, 3>(vertex, count, stride, fields, maximum); return true;
+    case 4: ScanIndexFieldsN<Width, 4>(vertex, count, stride, fields, maximum); return true;
+    default: return false;
+    }
+}
 }
 
 void GuestGxStream::InvalidateTextureHashes() {
@@ -95,6 +121,10 @@ const GuestGxStream::VertexLayout& GuestGxStream::Layout(unsigned format) {
         }
     }
     layout.size = offset;
+    for (unsigned i = 0; i < layout.fieldCount; ++i) {
+        const unsigned width = layout.fields[i].width;
+        layout.fieldWidth = i == 0 || layout.fieldWidth == width ? width : 0;
+    }
     layout.key = key;
     layout.valid = true;
     return layout;
@@ -118,13 +148,19 @@ void GuestGxStream::BindDrawArrays(std::span<const uint8_t> draw, const Sink& si
     // The largest index each array is read at: a tight pass over the index
     // fields of the cached layout (13,000 draws a frame in the field).
     std::array<uint32_t, 12> maximum{};
-    const uint8_t* vertex = draw.data() + 3;
+    const uint8_t* vertices = draw.data() + 3;
     const auto fields = std::span(layout.fields.data(), layout.fieldCount);
-    for (unsigned v = 0; v < count; ++v, vertex += layout.size) {
-        for (const auto& field : fields) {
-            const uint8_t* p = vertex + field.offset;
-            const uint32_t index = field.width == 1 ? p[0] : (uint32_t(p[0]) << 8) | p[1];
-            maximum[field.slot] = std::max(maximum[field.slot], index);
+    const bool scanned = layout.fieldWidth == 2
+        ? ScanIndexFields<2>(vertices, count, layout.size, fields, maximum)
+        : layout.fieldWidth == 1 && ScanIndexFields<1>(vertices, count, layout.size, fields, maximum);
+    if (!scanned) {
+        const uint8_t* vertex = vertices;
+        for (unsigned v = 0; v < count; ++v, vertex += layout.size) {
+            for (const auto& field : fields) {
+                const uint8_t* p = vertex + field.offset;
+                const uint32_t index = field.width == 1 ? p[0] : (uint32_t(p[0]) << 8) | p[1];
+                maximum[field.slot] = std::max(maximum[field.slot], index);
+            }
         }
     }
     for (unsigned slot = 0; slot < 12; ++slot) {
