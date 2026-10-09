@@ -38,6 +38,10 @@ void SetNativeTextureMatrix(uint32_t selector,const float row_major[12],bool mat
 bool GetNativeTextureMatrix(uint32_t selector,float row_major[12],bool* matrix3x4=nullptr);
 void SetNativeDepthCompareBeforeTexture(bool before);
 void SetNativeMaterial(const mh3_native_material_state& material);
+// Atomic sparse field publication; inherited bytes and unknown-field rejection
+// are identical to SetNativeMaterial, with only the selected top fields copied.
+// This CPU publication runs on skipped logical frames too.
+void OverlayNativeMaterial(const mh3_native_material_state& patch,uint32_t top_known=0);
 const mh3_native_material_state& GetNativeMaterialState();
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) { SetNativeMaterial(material); }
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);

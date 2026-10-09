@@ -73,7 +73,10 @@ void Check(mh3_res_status status,const char* operation) {
 }
 void Validate(const mh3_material_requirements* requirements) {
     mh3_material_diagnostic diagnostic{};
-    const auto status=mh3_material_state_validate(&material,requirements,&diagnostic);
+    // PrepareMaterial checks all domains once before building dependencies.
+    // Its owner-only state remains unchanged throughout that preparation.
+    const auto status=requirements ? mh3_material_state_require(&material,requirements,&diagnostic) :
+        mh3_material_state_validate(&material,nullptr,&diagnostic);
     if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
         ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
         ", fields "+std::to_string(diagnostic.fields));
@@ -447,8 +450,11 @@ const mh3_native_material_state& GetNativeMaterialState() {
     Owner();ObserveRasterPublications();return material;
 }
 void SetNativeMaterial(const mh3_native_material_state& source) {
+    OverlayNativeMaterial(source,MH3_MATERIAL_TOP_ALL);
+}
+void OverlayNativeMaterial(const mh3_native_material_state& source,uint32_t top_known) {
     Owner();ObserveRasterPublications();
-    auto next=material;Check(mh3_material_state_overlay(&next,&source,MH3_MATERIAL_TOP_ALL),"Native material overlay");
+    auto next=material;Check(mh3_material_state_overlay(&next,&source,top_known),"Native material overlay");
     auto raster=GetNativeDrawState().raster;Check(mh3_material_pixel_raster(&next.pixel,&raster),"Native material pixel raster");
     raster.cull_mode=next.cull_mode;
     struct Export {Export(){publishingMaterialRaster=true;}~Export(){publishingMaterialRaster=false;}};

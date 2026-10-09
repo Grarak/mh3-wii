@@ -35,46 +35,46 @@ static int tev_domain(unsigned field,uint8_t value) {
     if(field==MH3_TEV_INDIRECT_MATRIX) return value<=3 || (value>=5 && value<=7) || (value>=9 && value<=11);
     return 1;
 }
-static mh3_res_status tev_check(const mh3_pack_tev_stage *stage,uint64_t required,uint32_t index,mh3_material_diagnostic *out) {
+static mh3_res_status tev_check(const mh3_pack_tev_stage *stage,uint64_t required,uint32_t index,mh3_material_diagnostic *out,int domains) {
     const uint8_t *values=(const uint8_t*)&stage->color;
     mh3_res_status status=mask_check(stage->known,MH3_MATERIAL_TEV_MASK,required,MH3_MATERIAL_TEV,index,out);
     if(status) return status;
-    for(unsigned field=0;field<MH3_TEV_FIELD_COUNT;++field)
+    if(domains) for(unsigned field=0;field<MH3_TEV_FIELD_COUNT;++field)
         if((stage->known&BIT(field)) && !tev_domain(field,values[field]))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TEV,index,BIT(field));
     return MH3_RES_OK;
 }
-static mh3_res_status pixel_check(const mh3_pack_pixel_inputs *pixel,uint64_t required,mh3_material_diagnostic *out) {
+static mh3_res_status pixel_check(const mh3_pack_pixel_inputs *pixel,uint64_t required,mh3_material_diagnostic *out,int domains) {
     static const uint32_t maximum[22]={7,255,7,255,3,1,7,1,1,1,1,7,7,15,1,1,1,1,255,2,2,0xffffff};
     mh3_res_status status=mask_check(pixel->known,MH3_MATERIAL_PIXEL_MASK,required,MH3_MATERIAL_PIXEL,0,out);
     if(status) return status;
     if(pixel->classification>3) return fail(out,MH3_RES_INVALID,MH3_MATERIAL_PIXEL,0,0);
-    for(unsigned field=0;field<MH3_PIXEL_FIELD_COUNT;++field)
+    if(domains) for(unsigned field=0;field<MH3_PIXEL_FIELD_COUNT;++field)
         if((pixel->known&BIT(field)) && pixel->values[field]>maximum[field])
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_PIXEL,0,BIT(field));
     return MH3_RES_OK;
 }
-static mh3_res_status channel_check(const mh3_pack_channel *channel,uint32_t required,uint32_t index,mh3_material_diagnostic *out) {
+static mh3_res_status channel_check(const mh3_pack_channel *channel,uint32_t required,uint32_t index,mh3_material_diagnostic *out,int domains) {
     mh3_res_status status=mask_check(channel->flags,63,required,MH3_MATERIAL_CHANNEL,index,out);
     if(status) return status;
     const mh3_pack_channel_control *controls[2]={&channel->color,&channel->alpha};
-    for(unsigned pass=0;pass<2;++pass) if(channel->flags&(16u<<pass)) {
+    if(domains) for(unsigned pass=0;pass<2;++pass) if(channel->flags&(16u<<pass)) {
         const mh3_pack_channel_control *control=controls[pass];
         if(control->material_source>1 || control->ambient_source>1 || control->lighting>1 || control->diffuse>2 || control->attenuation>2)
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_CHANNEL,index,16u<<pass);
     }
     return MH3_RES_OK;
 }
-static mh3_res_status constant_check(const mh3_pack_tev_color *color,uint32_t required,int konst,uint32_t index,mh3_material_diagnostic *out) {
+static mh3_res_status constant_check(const mh3_pack_tev_color *color,uint32_t required,int konst,uint32_t index,mh3_material_diagnostic *out,int domains) {
     const mh3_material_group group=konst ? MH3_MATERIAL_KONST : MH3_MATERIAL_COLOR;
     mh3_res_status status=mask_check(color->known,15,required,group,index,out);
     if(status) return status;
-    for(unsigned component=0;component<4;++component) if(color->known&(1u<<component))
+    if(domains) for(unsigned component=0;component<4;++component) if(color->known&(1u<<component))
         if(color->rgba[component]<(konst?0:-1024) || color->rgba[component]>(konst?255:1023))
             return fail(out,MH3_RES_INVALID,group,index,1u<<component);
     return MH3_RES_OK;
 }
-mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state,const mh3_material_requirements *requirements,mh3_material_diagnostic *out) {
+static mh3_res_status validate(const mh3_native_material_state *state,const mh3_material_requirements *requirements,mh3_material_diagnostic *out,int domains) {
     if(!state) return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TOP,0,0);
     if(state->texgen_count>8 || state->channel_count>2 || state->tev_count>16 || state->indirect_count>4 || state->cull_mode>3 ||
        state->light_set_reference < -128 || state->light_set_reference>127 || state->fog_reference < -128 || state->fog_reference>127)
@@ -87,7 +87,7 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
     for(unsigned index=0;index<16;++index) {
         const uint64_t required=requirements ? requirements->tev[index] : 0;
         if(index>=state->tev_count) {if(required) return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_TEV,index,required);continue;}
-        status=tev_check(&state->tev[index],required,index,out);if(status) return status;
+        status=tev_check(&state->tev[index],required,index,out,domains);if(status) return status;
     }
     for(unsigned index=0;index<8;++index) {
         const uint32_t required=requirements ? requirements->texgen[index] : 0;
@@ -95,39 +95,39 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
         const mh3_pack_texgen *texgen=&state->texgen[index];
         static const uint8_t maximum[10]={1,1,3,12,7,7,63,63,1,1};
         status=mask_check(texgen->known,MH3_MATERIAL_TEXGEN_MASK,required,MH3_MATERIAL_TEXGEN,index,out);if(status) return status;
-        for(unsigned field=0;field<10;++field) if((texgen->known&(1u<<field)) && texgen->values[field]>maximum[field])
+        if(domains) for(unsigned field=0;field<10;++field) if((texgen->known&(1u<<field)) && texgen->values[field]>maximum[field])
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TEXGEN,index,1u<<field);
     }
     for(unsigned index=0;index<2;++index) {
         const uint32_t required=requirements ? requirements->channel[index] : 0;
         if(index>=state->channel_count) {if(required) return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_CHANNEL,index,required);continue;}
-        status=channel_check(&state->channel[index],required,index,out);if(status) return status;
+        status=channel_check(&state->channel[index],required,index,out,domains);if(status) return status;
     }
     for(unsigned index=0;index<4;++index) {
-        status=constant_check(&state->color[index],requirements?requirements->color[index]:0,0,index,out);if(status) return status;
-        status=constant_check(&state->konst[index],requirements?requirements->konst[index]:0,1,index,out);if(status) return status;
+        status=constant_check(&state->color[index],requirements?requirements->color[index]:0,0,index,out,domains);if(status) return status;
+        status=constant_check(&state->konst[index],requirements?requirements->konst[index]:0,1,index,out,domains);if(status) return status;
         const mh3_pack_swap_table *swap=&state->swaps[index];
         status=mask_check(swap->known,15,requirements?requirements->swaps[index]:0,MH3_MATERIAL_SWAP,index,out);if(status) return status;
-        for(unsigned component=0;component<4;++component) if((swap->known&(1u<<component)) && swap->rgba[component]>3)
+        if(domains) for(unsigned component=0;component<4;++component) if((swap->known&(1u<<component)) && swap->rgba[component]>3)
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_SWAP,index,1u<<component);
         const mh3_pack_indirect_stage *indirect=&state->indirect[index];
         const uint32_t required=requirements?requirements->indirect[index]:0;
         if(index>=state->indirect_count) {if(required) return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_INDIRECT,index,required);continue;}
         status=mask_check(indirect->known,15,required,MH3_MATERIAL_INDIRECT,index,out);if(status) return status;
         const uint8_t values[4]={indirect->coordinate,indirect->map,indirect->scale_s,indirect->scale_t};
-        for(unsigned field=0;field<4;++field) if((indirect->known&(1u<<field)) &&
+        if(domains) for(unsigned field=0;field<4;++field) if((indirect->known&(1u<<field)) &&
             (field<2 ? values[field]>7 && values[field]!=255 : values[field]>8))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_INDIRECT,index,1u<<field);
     }
     for(unsigned index=0;index<3;++index) {
         const mh3_pack_indirect_matrix *matrix=&state->indirect_matrix[index];
         status=mask_check(matrix->known,127,requirements?requirements->indirect_matrix[index]:0,MH3_MATERIAL_INDIRECT_MATRIX,index,out);if(status) return status;
-        for(unsigned field=0;field<6;++field) if((matrix->known&(1u<<field)) && (matrix->coefficients[field]<-1024 || matrix->coefficients[field]>1023))
+        if(domains) for(unsigned field=0;field<6;++field) if((matrix->known&(1u<<field)) && (matrix->coefficients[field]<-1024 || matrix->coefficients[field]>1023))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_INDIRECT_MATRIX,index,1u<<field);
-        if((matrix->known&64) && (matrix->scale_exponent < -17 || matrix->scale_exponent>46))
+        if(domains && (matrix->known&64) && (matrix->scale_exponent < -17 || matrix->scale_exponent>46))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_INDIRECT_MATRIX,index,64);
     }
-    status=pixel_check(&state->pixel,requirements?requirements->pixel:0,out);if(status) return status;
+    status=pixel_check(&state->pixel,requirements?requirements->pixel:0,out,domains);if(status) return status;
     if(requirements) {
         if(requirements->require_clip && !state->clip_mode_known) return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_CLIP,0,1);
         if(state->clip_mode_known && state->clip_disabled && !(requirements->supported_features&MH3_MATERIAL_SUPPORT_CLIP_DISABLED))
@@ -139,7 +139,15 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
     }
     return MH3_RES_OK;
 }
+mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state,const mh3_material_requirements *requirements,mh3_material_diagnostic *out) {
+    return validate(state,requirements,out,1);
+}
+mh3_res_status mh3_material_state_require(const mh3_native_material_state *state,const mh3_material_requirements *requirements,mh3_material_diagnostic *out) {
+    return validate(state,requirements,out,0);
+}
 static void merge_bytes(void *destination,const void *source,uint64_t known,size_t count,size_t stride) {
+    if(!known) return;
+    if(known==(BIT(count)-1)) {memcpy(destination,source,count*stride);return;}
     for(size_t field=0;field<count;++field) if(known&BIT(field))
         memcpy((uint8_t*)destination+field*stride,(const uint8_t*)source+field*stride,stride);
 }
@@ -196,7 +204,7 @@ mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination
 }
 mh3_res_status mh3_material_pixel_raster(const mh3_pack_pixel_inputs *pixel,mh3_raster_state *raster) {
     if(!pixel || !raster) return MH3_RES_INVALID;
-    const mh3_res_status status=pixel_check(pixel,0,NULL);if(status) return status;
+    const mh3_res_status status=pixel_check(pixel,0,NULL,1);if(status) return status;
     const uint64_t modes=BIT(MH3_PIXEL_BLEND_ENABLE)|BIT(MH3_PIXEL_LOGIC_ENABLE)|BIT(MH3_PIXEL_BLEND_SUBTRACT);
     if((pixel->known&modes) && (pixel->known&modes)!=modes) return MH3_RES_ABSENT;
     mh3_raster_state next;memcpy(&next,raster,sizeof next);

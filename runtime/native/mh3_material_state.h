@@ -58,6 +58,11 @@ mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination
  * consumed fields; UNSUPPORTED identifies an unpromised backend capability. */
 mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state,
     const mh3_material_requirements *requirements,mh3_material_diagnostic *diagnostic);
+/* Dependency/capability checks for an unchanged state whose known value domains
+ * already passed state_validate. The owner must revalidate domains after every
+ * publication; this helper is not an admission check for arbitrary input. */
+mh3_res_status mh3_material_state_require(const mh3_native_material_state *state,
+    const mh3_material_requirements *requirements,mh3_material_diagnostic *diagnostic);
 /* Alpha comparisons and other non-raster fields stay shader/backend owned.
  * A partial blend-mode triple returns ABSENT without changing any raster byte. */
 mh3_res_status mh3_material_pixel_raster(const mh3_pack_pixel_inputs *pixel,mh3_raster_state *raster);

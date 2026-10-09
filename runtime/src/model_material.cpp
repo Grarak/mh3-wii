@@ -22,8 +22,7 @@ uint32_t Data(CpuContext* cpu) {return MH3NativeResReference(cpu->gpr[3]);}
 void Submit(CpuContext* cpu,mh3_model_material_block kind,uint32_t count=1) {
     if((kind==MH3_MODEL_MATERIAL_INDIRECT || kind==MH3_MODEL_MATERIAL_TEXGEN) && !count) return;
     const auto selected=ReadNativeModelMaterialGroup(Data(cpu),kind,count);
-    auto next=GetNativeMaterialState();Checked(mh3_material_state_overlay(&next,&selected,0));
-    SetNativeMaterial(next);
+    OverlayNativeMaterial(selected);
 }
 void Copy(CpuContext* cpu,mh3_model_material_block kind) {
     const uint32_t destination=cpu->gpr[4];

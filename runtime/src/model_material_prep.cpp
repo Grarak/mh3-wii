@@ -23,7 +23,7 @@ uint32_t Resource(uint32_t reference,bool required=false) {
 mh3_res_span Bytes(uint32_t address,size_t size) {return {Memory::GetPointer(address,size),size};}
 mh3_res_mut_span Mutable(uint32_t address,size_t size) {return {Memory::GetPointer(address,size),size};}
 void Publish(const mh3_native_material_state& patch,uint32_t top=0) {
-    auto next=GetNativeMaterialState();Checked(mh3_material_state_overlay(&next,&patch,top));SetNativeMaterial(next);
+    OverlayNativeMaterial(patch,top);
 }
 void PublishGenMode(uint32_t address,bool xf) {
     mh3_native_material_state patch{};uint32_t top=0;int apply=0;

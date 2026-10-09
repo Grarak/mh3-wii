@@ -259,6 +259,22 @@ void Probe() {
     auto direct=GetNativeDrawState().raster;SetNativeRaster(direct);
     Require(GetNativeMaterialState().pixel.values[MH3_PIXEL_BLEND_ENABLE]==0 &&
         GetNativeMaterialState().pixel.values[MH3_PIXEL_LOGIC_ENABLE]==1,"same-mode direct raster publication was lost");
+    // Sparse publications remain CPU work during a skipped logical frame.
+    // Unknown top fields inherit; invalid producers still reject atomically.
+    const auto beforeSkip=GetNativeMaterialState();auto skipped=Quad(-1,1,-1,1);
+    mh3_native_material_state patch{};patch.generation=UINT64_MAX;patch.tev_count=16;
+    patch.pixel.known=Bit(MH3_PIXEL_ALPHA_REFERENCE0);patch.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0]=91;
+    suppressed=true;OverlayNativeMaterial(patch);SubmitNativeMaterialGeometry(skipped);
+    Require(GetNativeMaterialState().pixel.values[MH3_PIXEL_ALPHA_REFERENCE0]==91 &&
+        GetNativeMaterialState().generation==beforeSkip.generation && GetNativeMaterialState().tev_count==beforeSkip.tev_count,
+        "skipped sparse material publication changed unknown top fields");
+    const auto published=GetNativeMaterialState();const auto rasterBeforeFailure=GetNativeDrawState().raster;
+    patch.tev[0].known=Bit(MH3_TEV_COLOR_OPERATION);patch.tev[0].color.operation=2;
+    Failure([&]{OverlayNativeMaterial(patch);},"Native material overlay");
+    Require(std::memcmp(&published,&GetNativeMaterialState(),sizeof published)==0 &&
+        std::memcmp(&rasterBeforeFailure,&GetNativeDrawState().raster,sizeof rasterBeforeFailure)==0,
+        "invalid skipped material publication changed owned state or raster");
+    suppressed=false;SetNativeMaterial(beforeSkip);
 }
 }
 int main(int argc,char** argv) {

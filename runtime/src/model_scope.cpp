@@ -38,7 +38,7 @@ uint32_t Resource(uint32_t reference,bool required=false) {
 }
 uint32_t Canonical(uint32_t address) {return address?(address&0x3fffffffu)|0x80000000u:0;}
 void Publish(const mh3_native_material_state& patch,uint32_t top=0) {
-    auto next=GetNativeMaterialState();Checked(mh3_material_state_overlay(&next,&patch,top));SetNativeMaterial(next);
+    OverlayNativeMaterial(patch,top);
 }
 mh3_model_genmode Mode() {
     mh3_model_genmode mode{};Checked(mh3_model_genmode_read(Bytes(genmode,12),&mode));return mode;
