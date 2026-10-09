@@ -26,6 +26,7 @@
 #include "memory.h"
 #include "ppc_runtime.h"
 
+#include <array>
 #include <cstdint>
 #include <initializer_list>
 #include <vector>
@@ -224,15 +225,22 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
     // Per call rather than per particle and track: the resource's tracks and
     // its emit data (the original looks both up again each time).
     const uint32_t res = FlatRead32(manager + 0x24);
-    std::vector<uint32_t> tracks;
-    tracks.reserve(32);
+    // On the stack: no heap allocation per call (a resource has a few tracks).
+    std::array<uint32_t, 64> trackList;
+    std::vector<uint32_t> trackOverflow;
+    uint32_t trackCount = 0;
+    uint32_t* tracks = trackList.data();
     uint32_t initTracks = 0, data = 0;
     bool resolved = false;
     auto resolve = [&] {
         resolved = true;
-        const uint32_t count = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
-        for (uint32_t i = 0; i < count; ++i)
-            tracks.push_back(native(MH3_ResEmitterGetPtclTrack, {res, i}));
+        trackCount = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
+        if (trackCount > trackList.size()) {
+            trackOverflow.resize(trackCount);
+            tracks = trackOverflow.data();
+        }
+        for (uint32_t i = 0; i < trackCount; ++i)
+            tracks[i] = native(MH3_ResEmitterGetPtclTrack, {res, i});
         initTracks = native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
         FlatWrite32(sp + kResSlot, res);
         data = game.Call<kResEmitterData>({sp + kResSlot});
@@ -267,7 +275,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
         Zero3(sp + kPush, zero);
         bool postField = false;
         uint32_t collision = 0;
-        const uint32_t count = uint32_t(tracks.size());
+        const uint32_t count = trackCount;
         for (uint32_t i = FlatRead16(p + 0xDC) == 0 ? 0 : initTracks; (i & 0xFFFF) < count; ++i) {
             const uint32_t track = tracks[i & 0xFFFF];
             const uint8_t flags = FlatRead8(track + 4);

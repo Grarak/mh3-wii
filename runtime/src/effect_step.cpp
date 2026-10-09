@@ -36,6 +36,9 @@
 #include "memory.h"
 
 #include <algorithm>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <array>
@@ -122,9 +125,16 @@ void WriteVec(uint32_t a, const Vec3& v) {
 
 constexpr size_t kCurveWords = (kParticleCurvesEnd - kParticleCurves) / 4;
 using Curves = std::array<uint32_t, kCurveWords>;
+// The 32 big-endian words in one pass (NEON: four byte reversals per load).
 void ReadCurves(uint32_t particle, Curves& c) {
+#if defined(__ARM_NEON)
+    const uint8_t* source = GuestFlat::Host(particle + kParticleCurves);
+    for (size_t i = 0; i < kCurveWords; i += 4)
+        vst1q_u32(c.data() + i, vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(source + 4 * i))));
+#else
     for (size_t i = 0; i < kCurveWords; ++i)
         c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
+#endif
 }
 Curves ReadCurves(uint32_t particle) {
     Curves c;
@@ -271,6 +281,20 @@ struct CurveFootprint {
     std::array<uint32_t, 4> bits{}; // one per byte of the 128-byte block
     bool inside = true;
     bool Has(size_t byte) const { return bits[byte / 32] >> (byte % 32) & 1; }
+    // The words with an owned byte, ascending, and each one's owned bytes
+    // (bit k: byte k of the word in guest order): BlendOwned's work list.
+    uint8_t count = 0;
+    std::array<uint8_t, kCurveWords> word{}, bytes{};
+    void Index() {
+        count = 0;
+        for (uint32_t i = 0; i < kCurveWords; ++i) {
+            const uint8_t mask = uint8_t(bits[i / 8] >> (4 * (i % 8)) & 15);
+            if (mask) {
+                word[count] = uint8_t(i);
+                bytes[count++] = mask;
+            }
+        }
+    }
 };
 CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
     auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
@@ -316,6 +340,7 @@ CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
                 f.bits[b / 32] |= 1u << (b % 32);
         }
     }
+    f.Index();
     return f;
 }
 
@@ -364,6 +389,49 @@ Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, co
     return s;
 }
 
+// BlendCurves for the words the tracks own, stored straight to the block:
+// the rest of the block already holds `kept` (the evaluations write owned
+// bytes only), so only these words are computed and written.
+void BlendOwned(uint32_t particle, const Curves& kept, const Curves& before, const Curves& a, const Curves& b, float t, const CurveFootprint& owned) {
+    auto ramp = [](double in, double out, double slack) {
+        return std::fabs(out - in) <= 0.1 * std::max(std::fabs(in), std::fabs(out)) + slack;
+    };
+    constexpr size_t colours = (kParticleColours - kParticleCurves) / 4;
+    constexpr size_t floats = (kParticleFloats - kParticleCurves) / 4;
+    constexpr size_t rotate = (kParticleRotate - kParticleCurves) / 4;
+    constexpr size_t translate = (kParticleTexTranslate - kParticleCurves) / 4;
+    for (uint32_t n = 0; n < owned.count; ++n) {
+        const size_t i = owned.word[n];
+        uint32_t v;
+        if (i < colours) {
+            v = 0;
+            for (int k = 0; k < 4; ++k) {
+                const int shift = 24 - 8 * k;
+                if (!(owned.bytes[n] >> k & 1)) {
+                    v |= kept[i] & 0xFFu << shift;
+                    continue;
+                }
+                const float w = float(before[i] >> shift & 0xFF);
+                const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
+                const float shown = ramp(x - w, y - x, 1.0) ? x + (y - x) * t : x;
+                v |= uint32_t(shown + 0.5f) << shift;
+            }
+        } else if (i < floats) {
+            if (!(owned.bytes[n] & 1)) {
+                v = kept[i];
+            } else {
+                const float w = F(before[i]), x = F(a[i]), y = F(b[i]);
+                const bool wraps = i >= rotate && i < rotate + 3 && std::fabs(y - x) > 3.1415927f;
+                const bool blend = i < translate && std::isfinite(w) && std::isfinite(x) && std::isfinite(y) && !wraps && ramp(double(x) - w, double(y) - x, 1e-6);
+                v = blend ? Bits(x + (y - x) * t) : a[i];
+            }
+        } else {
+            v = kept[i];
+        }
+        MemoryInline::FlatWrite32(particle + kParticleCurves + 4 * uint32_t(i), v);
+    }
+}
+
 // Shows the curves at age `at` (a fraction past a whole tick) from three
 // fresh evaluations.
 void CurvesAtFull(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
@@ -392,7 +460,37 @@ struct CurveCache {
     std::array<uint32_t, 3> ticks{~0u, ~0u, ~0u};
     std::array<Curves, 3> values;
 };
-AddressMap<CurveCache> curveCache;
+// The caches in a slab, the map holding slot + 1: a cache is 450 bytes, which
+// the map's rehashes and backward-shift deletions would otherwise move.
+class CurveCaches {
+  public:
+    CurveCache& operator[](uint32_t particle) {
+        uint32_t& slot = index_[particle];
+        if (!slot) {
+            if (!free_.empty()) {
+                slot = free_.back() + 1;
+                free_.pop_back();
+                slab_[slot - 1] = CurveCache{};
+            } else {
+                slab_.emplace_back();
+                slot = uint32_t(slab_.size());
+            }
+        }
+        return slab_[slot - 1];
+    }
+    void Erase(uint32_t particle) {
+        if (const uint32_t* slot = index_.Find(particle)) {
+            free_.push_back(*slot - 1);
+            index_.Erase(particle);
+        }
+    }
+
+  private:
+    AddressMap<uint32_t> index_;
+    std::vector<CurveCache> slab_;
+    std::vector<uint32_t> free_;
+};
+CurveCaches curveCache;
 
 // CurvesAtFull with the evaluations reused: ParticleManager::Calc just left
 // the curves at `keptTick` (the tick the particle's age started the pass in)
@@ -421,7 +519,7 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
     // take the slots left over.
     const Curves kept = ReadCurves(particle);
     std::array<int, 3> slotOf{-1, -1, -1};
-    bool used[3] = {};
+    bool used[3] = {}, initial = false;
     for (uint32_t k = 0; k < 3; ++k)
         for (int s = 0; s < 3; ++s)
             if (!used[s] && cache.ticks[s] == tick - 1 + k) {
@@ -438,14 +536,41 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
             if (want != keptTick) {
                 RunCurves(game, manager, particle, want);
                 ReadCurves(particle, cache.values[s]);
+                initial |= want == 0;
                 continue;
             }
         }
         if (want == keptTick)
             cache.values[s] = kept;
     }
-    const std::array<const Curves*, 3> got{&cache.values[slotOf[0]], &cache.values[slotOf[1]], &cache.values[slotOf[2]]};
-    WriteCurves(particle, BlendCurves(kept, *got[0], *got[1], *got[2], float(at - tick), &cache.owned));
+    // Tick 0 also ran the initial tracks, which write outside the footprint:
+    // put the whole block back then.
+    if (initial)
+        WriteCurves(particle, BlendCurves(kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), &cache.owned));
+    else
+        BlendOwned(particle, kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), cache.owned);
+#ifdef MH3_DEVELOPMENT
+    // MH3_PORT_CHECK=CurvesAt: the block BlendOwned left is the whole-block
+    // blend it replaces (BlendCurves, every word written).
+    static const bool check = PortCheck::Enabled("CurvesAt");
+    if (check) [[unlikely]] {
+        static uint64_t checks = 0, mismatches = 0;
+        const Curves expected = BlendCurves(kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), &cache.owned);
+        Curves actual;
+        ReadCurves(particle, actual);
+        ++checks;
+        if (actual != expected) {
+            if (++mismatches <= 20)
+                for (size_t i = 0; i < kCurveWords; ++i)
+                    if (actual[i] != expected[i]) {
+                        std::printf("MH3 port check: CurvesAt word %zu is %08x, the whole-block blend %08x (particle %08x) owned %u kept %08x before %08x a %08x b %08x t %g\n", i, actual[i], expected[i], particle,
+                                    unsigned(cache.owned.bits[i / 8] >> (4 * (i % 8)) & 15), kept[i], cache.values[slotOf[0]][i], cache.values[slotOf[1]][i], cache.values[slotOf[2]][i], double(at - tick));
+                        break;
+                    }
+        } else if ((checks & (checks - 1)) == 0)
+            std::printf("MH3 port check: CurvesAt matches the original (%llu blends, %llu differ)\n", static_cast<unsigned long long>(checks), static_cast<unsigned long long>(mismatches));
+    }
+#endif
 }
 
 } // namespace
