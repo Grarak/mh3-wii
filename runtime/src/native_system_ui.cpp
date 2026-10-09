@@ -1372,7 +1372,7 @@ void HudBlend(unsigned mode) {
 }
 
 // The loading progress bar under the "Now Loading" letters
-// (docs/loading-progress.md): the letters' stone colour on a dark brown
+// (docs/optimizations/assets/load-time-asset-conversion.md): the letters' stone colour on a dark brown
 // track, as wide as the row of letters at rest, untextured and blended as the
 // screen's other quads. `shift`: the letters' horizontal offset (4:3).
 void HudProgress(float shift, float share) {
@@ -1393,10 +1393,11 @@ void HudProgress(float shift, float share) {
     SetNativeMaterial(saved);
 }
 
-// The online notice (online.h): the rules on a community server, or why
-// online play was refused. Lines centered as the loading screen's text, in
-// the font's printf (no '%' in them), from a guest copy. `top`: the first
-// line's y in the HUD's 480 lines.
+// The online notice (online.h): the rules on a community server's loading
+// screens, or why online play was refused (two lines, the first in orange).
+// Lines centered as the loading screen's text, in the font's printf (no '%'
+// in them), from a guest copy. `top`: the first line's y in the HUD's 480
+// lines.
 constexpr uint32_t kLoadingNoticeTop = 96, kDialogNoticeTop = 300;
 
 void Notice(CpuContext* cpu, std::span<const char* const> lines, uint32_t top) {
@@ -1412,7 +1413,7 @@ void Notice(CpuContext* cpu, std::span<const char* const> lines, uint32_t top) {
         std::memcpy(Memory::GetPointer(frame[0x10], uint32_t(length + 1)), lines[i], length + 1);
         call(0x8005b714, {22, 22});
         call(0x8005b780, {uint32_t(int32_t((width - float(length * 11)) * .5f)), uint32_t(top + i * 30)});
-        call(0x8005b7ec, {i == 0 && lines.size() == 3 ? 0xf0a060ffu : 0xc0c0c0ffu});
+        call(0x8005b7ec, {i == 0 && lines.size() > 1 ? 0xf0a060ffu : 0xc0c0c0ffu});
         call(0x8005ba04, {frame[0x10]});
         call(0x8005c174);
     }

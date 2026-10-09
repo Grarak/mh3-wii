@@ -114,8 +114,7 @@ std::array<std::optional<Socket>, kMaxSockets> sockets;
 struct TlsSession {
     std::unique_ptr<NetHost::Tls> tls;
     int32_t socket = -1; // the Wii socket it runs over
-    bool admitted = false; // its handshake done and its server checked (AdmitTlsServer)
-    bool refused = false;
+    bool noted = false; // its handshake done and its server noted (NoteTlsServer)
 };
 
 std::array<std::optional<TlsSession>, kMaxTlsSessions> sessions;
@@ -165,8 +164,7 @@ struct Pending {
 std::vector<Pending> pending;
 
 #ifdef MH3_DEVELOPMENT
-// MH3_TRACE=net. Read at first use: the Vita applies runtime.env after static
-// initialization.
+// MH3_TRACE=net, read at first use.
 bool TraceNet() {
     static const TraceFlag trace("net");
     return trace;
@@ -401,6 +399,10 @@ Attempt GetHostByName(uint32_t in, uint32_t out, uint32_t outSize) {
 }
 
 std::optional<Attempt> IpTopIoctl(uint32_t command, uint32_t in, uint32_t inSize, uint32_t out, uint32_t outSize) {
+    // No online play while cheats are on (AdmitOnline): no name resolves and
+    // no connection starts, so the game's first server contact fails.
+    if ((command == kSoConnect || command == kSoGetHostByName || command == kSoInetAtoN) && !AdmitOnline())
+        return Done(command == kSoConnect ? -NetHost::kSoENetUnreach : command == kSoGetHostByName ? -1 : 0);
 
     switch (command) {
     case kSoStartup:
@@ -707,6 +709,9 @@ int32_t GetInterfaceOption(const std::vector<Vector>& in, const std::vector<Vect
 }
 
 std::optional<Attempt> IpTopIoctlv(uint32_t command, const std::vector<Vector>& in, const std::vector<Vector>& out) {
+    // As IpTopIoctl: no datagram leaves and no name resolves.
+    if ((command == kSoSendTo || command == kSoGetAddrInfo) && !AdmitOnline())
+        return Done(command == kSoSendTo ? -NetHost::kSoENetUnreach : -305);
 
     switch (command) {
     case kSoStartup:
@@ -942,24 +947,17 @@ std::optional<Attempt> SslIoctlv(uint32_t command, const std::vector<Vector>& in
 
             int32_t result;
 
-            if (current->refused)
-                result = NetHost::Tls::kFailed;
-            else if (command == kSslRead)
+            if (command == kSslRead)
                 result = current->tls->Read(Memory::GetPointer(data.address, data.size), data.size);
             else if (command == kSslWrite)
                 result = current->tls->Write(Memory::GetPointer(data.address, data.size), data.size);
             else {
                 result = current->tls->Handshake();
 
-                // A community server's session: refused while any cheat is on.
-                if (result == NetHost::Tls::kOk && !current->admitted) {
-                    current->admitted = true;
-                    current->refused = !AdmitTlsServer(*current->tls);
-
-                    if (current->refused) {
-                        current->tls->Close();
-                        result = NetHost::Tls::kFailed;
-                    }
+                // Whether a community server's (the loading screens' rules).
+                if (result == NetHost::Tls::kOk && !current->noted) {
+                    current->noted = true;
+                    NoteTlsServer(*current->tls);
                 }
 
                 if (TraceNet() && result != NetHost::Tls::kWantRead && result != NetHost::Tls::kWantWrite)

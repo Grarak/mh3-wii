@@ -155,16 +155,15 @@ std::vector<uint8_t> RootCa() {
 // The last server a TLS session went on with was a community one.
 std::atomic<bool> community{false};
 
-// A refusal's notice: 1 until a loading screen shows it, 2 while that
-// screen is up.
-std::atomic<int> refusal{0};
+// Online play was refused while cheats are on (AdmitOnline).
+std::atomic<bool> refused{false};
 
 constexpr uint32_t kOnlineMode = 0x8065AA84; // u8, GetOnlineMode (0x800CF26C): 2 the City, online
-constexpr const char* kRules[]{"Cheats are not allowed online.", "Do not harass other players."};
-constexpr const char* kRefused[]{"Online play refused: cheats are on.", "Cheats are not allowed online.", "Do not harass other players."};
+constexpr const char* kRules[]{"Do not harass other players."};
+constexpr const char* kRefused[]{"Cheats are not allowed online,", "please don't harass other players."};
 
 // MH3_ONLINE_COMMUNITY_TEST=1 (development builds): every server counts as a
-// community one, to try the refusal and the notice on a local MH3SP.
+// community one, to try the loading screens' rules on a local MH3SP.
 bool CommunityTest() {
 #ifdef MH3_DEVELOPMENT
     static const bool test = [] {
@@ -178,43 +177,34 @@ bool CommunityTest() {
 }
 } // namespace
 
-bool AdmitTlsServer(NetHost::Tls& tls) {
-    const bool signed_by_ca = tls.PeerSignedBy(kMh3spCa, sizeof(kMh3spCa)) || CommunityTest();
+bool AdmitOnline() {
+    if (!LauncherCheats::EnabledCount())
+        return true;
 
-    if (signed_by_ca && LauncherCheats::EnabledCount()) {
-        refusal = 1;
-        std::fprintf(stderr, "MH3 net: a community server: online play refused while cheats are on (%u)\n", unsigned(LauncherCheats::EnabledCount()));
-        return false;
-    }
+    if (!refused.exchange(true))
+        std::fprintf(stderr, "MH3 net: online play refused while cheats are on (%u)\n", unsigned(LauncherCheats::EnabledCount()));
+
+    return false;
+}
+
+void NoteTlsServer(NetHost::Tls& tls) {
+    const bool signed_by_ca = tls.PeerSignedBy(kMh3spCa, sizeof(kMh3spCa)) || CommunityTest();
 
     if (signed_by_ca && !community)
         std::fprintf(stderr, "MH3 net: a community server (its certificate signed by the MH3SP CA)\n");
 
     community = signed_by_ca;
-    return true;
 }
 
 std::span<const char* const> OnlineNotice(bool loading) {
-    if (loading) {
-        if (refusal) {
-            refusal = 2;
-            return kRefused;
-        }
-
+    if (loading)
         return community && Memory::Read8(kOnlineMode) == 2 ? std::span<const char* const>(kRules) : std::span<const char* const>();
-    }
 
-    // The loading screen that showed the refusal has ended.
-    int shown = 2;
-
-    if (refusal.compare_exchange_strong(shown, 0))
-        return {};
-
-    // Before that screen: over the online screens' message windows (the
-    // connection error the refusal leads to).
+    // Over the online screens' message window: the connection error the
+    // refusal leads to.
     const uint32_t work = Memory::Read32(NetCtrl::kWorkPointer);
 
-    if (refusal && work && Memory::Read32(work + NetCtrl::kDialog))
+    if (refused && work && Memory::Read32(work + NetCtrl::kDialog))
         return kRefused;
 
     return {};

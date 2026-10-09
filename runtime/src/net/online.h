@@ -32,15 +32,16 @@ std::string CheckOnlineServer(const std::string& server);
 bool SkipTlsSetting();
 void SetSkipTlsSetting(bool skip);
 
+// No online play while any cheat is on: no name lookup, connection or
+// datagram leaves (ios_net.cpp), so the game's first server contact fails
+// and it shows its connection error, before any server is reached. Whether
+// they may; HUDDraw (native_system_ui.cpp) shows why over that error.
+bool AdmitOnline();
+
 // Community servers: a server whose TLS certificate the MH3SP CA signed
-// (mh3sp.com, or any server on its patch). Online play there allows no
-// cheats: while any cheat is on, their TLS handshakes fail. The loading
-// screen shows the rules in the City after such a server's handshake, and
-// the refusal over the connection error and on the loading screen after it
-// (HUDDraw, native_system_ui.cpp).
-//
-// After a TLS session's handshake: whether it may go on.
-bool AdmitTlsServer(NetHost::Tls& tls);
+// (mh3sp.com, or any server on its patch). The City's loading screens show
+// the rules after such a server's handshake. After each TLS handshake.
+void NoteTlsServer(NetHost::Tls& tls);
 
 // The notice's lines (empty: none), from HUDDraw once a frame; `loading`
 // while the loading screen is up.
