@@ -248,6 +248,15 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
+// MH3_TRACE=[input][,draw-pages]: the input as the game read it once per tick
+// of game time (frame_pacer.cpp), and the guest RAM pages each frame's draw
+// touches against those the next frame's logic writes (draw_pages.cpp: what
+// a draw running beside the next logic step would conflict with).
+inline const DevOptions& TraceOptions() {
+    static const DevOptions options("MH3_TRACE", {"input", "draw-pages"});
+    return options;
+}
+
 // MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table][,replay]: in-run checks of
 // a native path against what it replaces: `pose` compares every reused pose
 // version with the live view arrays (model_pose.cpp), `material` the material

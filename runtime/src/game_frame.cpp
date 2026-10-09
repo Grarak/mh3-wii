@@ -13,6 +13,7 @@
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
 #include "cheats.h"
+#include "draw_pages.h"
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
@@ -302,6 +303,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 #else
 #define MH3_SPLIT(bucket)
 #endif
+    DrawPages::LogicPhase(DrawPages::Phase::Input);
     call(WPADDisconnect, {2});
     call(WPADDisconnect, {3});
     call(PollControllers);
@@ -313,6 +315,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     const bool render = NativeGraphicsFrameShouldRender();
 
     if (uint8_t(boot - 1) <= 1) {
+        DrawPages::LogicPhase(DrawPages::Phase::Scene);
         call(flfntStackReset);
         call(UpdateScene);
 
@@ -396,8 +399,10 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         // the scene's traverse and opaque draws (EffectStep::Launch in the
         // scene queue's DrawScene).
         EffectStep::Defer(render);
+        DrawPages::LogicPhase(DrawPages::Phase::Tasks);
         call(RunTasks);
         EffectStep::Collected();
+        DrawPages::LogicPhase(DrawPages::Phase::Timers);
         call(GrabScreen);
         call(ResetFade);
         call(TickSystemTimers);
@@ -405,6 +410,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         MH3_SPLIT(logic);
 
         if (render) {
+            DrawPages::DrawBegins(ctx->gpr[1]);
             call(DrawScene);
             {
                 MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
@@ -435,6 +441,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 
             MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
             call(MovieDraw);
+            DrawPages::DrawEnds();
         }
 
         MH3_SPLIT(draw);
