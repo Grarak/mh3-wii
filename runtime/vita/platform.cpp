@@ -107,7 +107,7 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
 }
 
 void ReportVitaMemory() {
-    static uint64_t last = 0, peakMain = 0;
+    static uint64_t last = 0, peakMain = 0, peakCdram = 0, peakPhycont = 0;
     const uint64_t now = sceKernelGetProcessTimeWide();
     if (last && now - last < 1000000) return;
     last = now;
@@ -117,14 +117,19 @@ void ReportVitaMemory() {
         info.size = sizeof(info);
         const int result = sceAppMgrGetBudgetInfo(&info);
         if (result >= 0 && info.total_user_rw_mem && info.free_user_rw <= info.total_user_rw_mem &&
-            info.free_extra_mem <= info.total_extra_mem) {
+            info.free_extra_mem <= info.total_extra_mem && info.free_cdram_mem <= info.total_cdram_mem &&
+            info.free_phycont_mem <= info.total_phycont_mem) {
             const uint64_t main = uint64_t(info.total_user_rw_mem) - info.free_user_rw +
                                   uint64_t(info.total_extra_mem) - info.free_extra_mem;
             peakMain = std::max(peakMain, main);
-            std::fprintf(stderr, "MH3 Vita budget: main %.2f MiB, peak %.2f MiB; CDRAM %.2f MiB; phycont %.2f MiB\n",
+            const uint64_t cdram = uint64_t(info.total_cdram_mem) - info.free_cdram_mem;
+            const uint64_t phycont = uint64_t(info.total_phycont_mem) - info.free_phycont_mem;
+            peakCdram = std::max(peakCdram, cdram);
+            peakPhycont = std::max(peakPhycont, phycont);
+            std::fprintf(stderr, "MH3 Vita budget: main %.2f MiB, sampled peak %.2f MiB; CDRAM %.2f MiB, sampled peak %.2f MiB; phycont %.2f MiB, sampled peak %.2f MiB\n",
                 main / 1048576.0, peakMain / 1048576.0,
-                (info.total_cdram_mem - info.free_cdram_mem) / 1048576.0,
-                (info.total_phycont_mem - info.free_phycont_mem) / 1048576.0);
+                cdram / 1048576.0, peakCdram / 1048576.0,
+                phycont / 1048576.0, peakPhycont / 1048576.0);
             if (main >= 365000000) throw std::runtime_error("Vita main RAM exceeds the 365 MB port limit");
             return;
         }
