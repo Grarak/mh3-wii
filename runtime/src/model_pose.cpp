@@ -187,24 +187,27 @@ void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
     if (it != regions.begin())
         --it;
 
-    std::vector<uint32_t> affected;
-
-    for (; it != regions.end() && it->first < end; ++it)
-        if (uint64_t(it->first) + it->second.bytes > address)
-            affected.insert(affected.end(), it->second.scenes.begin(), it->second.scenes.end());
     bool erased = false;
 
-    for (const uint32_t scene : affected) {
-        const auto found = owners.find(scene);
-
-        if (found == owners.end())
+    // Straight over the regions, without collecting their scenes first (the
+    // view pass retires every model's output each frame): retiring changes
+    // only the owners, and the regions are rebuilt from them afterwards.
+    for (; it != regions.end() && it->first < end; ++it) {
+        if (uint64_t(it->first) + it->second.bytes <= address)
             continue;
 
-        mh3_model_pose_retire(&found->second, address, bytes);
+        for (const uint32_t scene : it->second.scenes) {
+            const auto found = owners.find(scene);
 
-        if (!found->second.scene_address) {
-            owners.erase(found);
-            erased = true;
+            if (found == owners.end())
+                continue;
+
+            mh3_model_pose_retire(&found->second, address, bytes);
+
+            if (!found->second.scene_address) {
+                owners.erase(found);
+                erased = true;
+            }
         }
     }
 
