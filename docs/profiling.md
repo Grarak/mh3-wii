@@ -33,6 +33,7 @@ harness records as `[TTY0]` lines in `RUN/console.txt`.
 | `MH3 audio: native mixer` | the mixer's CPU time, ticks per second, output padded while the game is behind, active voices, thread and core |
 | `MH3 material GPU:` | material-GPU counters every 300 frames (only when `MH3_STATS` is set) |
 | `MH3 render thread: no progress ...` | the render thread made no progress for two reports: names the packet, record and kind |
+| `MH3 pmu game:`, `MH3 pmu render:` | `MH3_PMU`, Vita: the thread's Cortex-A9 performance monitor counts over the window (below) |
 
 Mean packet wall time is not CPU time; use the `CPU` lines for scheduled
 execution and a profile for hotspots. `MH3_PROFILE=split` adds per-draw split
@@ -44,6 +45,42 @@ there: it is a `gettimeofday` system call. The startup line
 `MH3 Vita clock read cost` reports the clocks: `steady_clock` about 6 µs,
 `sceKernelGetProcessTimeWide` about 0.7 µs (`Low` 0.3 µs),
 `sceKernelGetSystemTimeWide` 1.9 µs.
+
+### Performance monitor counts
+
+The DTrace sampler is timer-driven: it records PCs, never PMU events.
+Cache, branch and stall counts come from the Cortex-A9's performance
+monitor instead, per thread: `MH3_PMU=1` (development, Vita;
+`runtime/vita/pmu.cpp`) has libperf count six events and the cycles of the
+game and render threads. libperf keeps the counters in each thread's
+context, so they are the thread's own on any core. Each report prints the
+thread's cycles per second, IPC, the counted events per 1000 instructions
+and the stall events as a share of its cycles:
+
+```
+MH3 pmu game: 351.1 M cycles/s, IPC 0.43 (149.7 M instructions/s); icache-miss 39.95, dcache-miss 9.37, branch-miss 18.45 per 1000 instructions; icache-stall 15.1%, dcache-stall 16.3% of cycles
+```
+
+The default events are `instructions,icache-miss,icache-stall,dcache-miss,
+dcache-stall,branch-miss`; `MH3_PMU=EVENT,...` picks up to six of
+`instructions`, `icache-miss`, `itlb-miss`, `dcache-miss`, `dcache-access`,
+`dtlb-miss`, `exceptions`, `unaligned`, `branch-miss`, `branches`,
+`icache-stall`, `dcache-stall`, `tlb-stall`, `strex-fail`, `evictions`,
+`issue-stall`, `issue-empty`, `fpu`, `neon`, `pld-stall`, `write-stall`,
+`dmb-stall`, `interrupts`, or ARM event numbers (`0x6E`; Cortex-A9 TRM r3p0
+11.4.1). Event 0x68 (`instructions`) misses MRC and MCR; DMB counts as DSB
+(libperf's known defects). libperf is a firmware module
+(`vs0:sys/external/libperf.suprx`, retail firmware too), loaded with
+`sceSysmoduleLoadModule(SCE_SYSMODULE_PERF)`; Sony's SDK bars it from
+submitted titles, so only development builds import it (a weak stub), and
+they load it only when `MH3_PMU` is set.
+
+Alatreon fight on the devkit (frame limit off, 2026-10-08,
+`oct08-pmu-alatreon-prof`): the game thread runs at IPC 0.42 with 40 I-cache
+misses and 18 branch mispredicts per 1000 instructions, 15% of its cycles
+stalled on the I-cache and 16% on the D-cache; the render thread at IPC 0.43
+with 68 I-cache misses and 37 mispredicts per 1000 instructions, 10% and 25%
+stalled. The counting cost no frame rate.
 
 ## Vita CPU profile
 

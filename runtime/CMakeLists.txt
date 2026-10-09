@@ -524,6 +524,12 @@ if(VITA)
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   if(MH3_DEVELOPMENT)
     set_property(SOURCE vita/platform.cpp vita/launcher.cpp vita/thp_jpeg.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
+
+    # MH3_PMU's per-thread performance monitor counts: libperf is a firmware
+    # module Sony keeps out of submitted titles; development builds alone
+    # import it, weakly.
+    target_sources(MH3 PRIVATE vita/pmu.cpp)
+    target_link_libraries(MH3 PRIVATE ScePerf_stub_weak)
   endif()
 
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub

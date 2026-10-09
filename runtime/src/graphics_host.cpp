@@ -33,6 +33,9 @@
 #include "dolphin/vi/vi_internal.hpp"
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
+#ifdef __vita__
+#include "../vita/pmu.h"
+#endif
 #endif
 #include <algorithm>
 #include <utility>
@@ -833,6 +836,14 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     else
         std::fprintf(stderr, "MH3 native work: render CPU unavailable, thread %d core %d affinity %x\n", render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity));
 
+#if defined(__vita__) && defined(MH3_DEVELOPMENT)
+    // MH3_PMU: the game and render threads' performance monitor counts.
+    if (work.owner_running_available)
+        VitaPmuWatch("game", work.owner_thread);
+
+    VitaPmuWatch("render", render.cpu.thread);
+    VitaPmuReport();
+#endif
     previousRender = render;
     ReportNativeRenderThreadStall();
 #ifdef AURORA_GXM
