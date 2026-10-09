@@ -16,6 +16,7 @@ bool GetNativeNormalMatrix(uint32_t selector,float row_major[9]);
 void SetNativeViewport(float x,float y,float width,float height,float near_z,float far_z);
 void SetNativeScissor(int32_t x,int32_t y,int32_t width,int32_t height);
 void SetNativeRaster(const mh3_raster_state& raster);
+void RestoreNativeRenderState();
 void BindNativeTexture(const mh3_native_texture_binding& binding);
 void BindNativePalette(uint32_t slot,const mh3_native_palette_source& palette);
 void SetNativeFog(const mh3_native_fog& fog);

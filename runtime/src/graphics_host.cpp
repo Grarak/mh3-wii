@@ -327,6 +327,7 @@ bool BeginNativeGraphicsFrame() {
     const float black[4]{0.f, 0.f, 0.f, 1.f};
     aurora::gl::clear_color(black);
     aurora::gl::clear_depth(0.f); // native shader projection uses reversed Z
+    RestoreNativeRenderState();
     return true;
 }
 

@@ -7,15 +7,59 @@
 #include "gl/device.hpp"
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
+#include "native_graphics.h"
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <stdexcept>
 
+// This probe links the real runtime state publisher without the game/ROM.
+// Suppression models a logical frame which was not admitted for rendering.
+static bool suppressDrawing=false;
+bool NativeGraphicsFrameShouldRender() {
+  return !suppressDrawing && aurora_native_frame_should_render();
+}
+
 namespace {
 void require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
+}
+void check_state_restore(unsigned frame) {
+  GLint oldViewport[4]{},oldScissor[4]{};
+  glGetIntegerv(GL_VIEWPORT,oldViewport);glGetIntegerv(GL_SCISSOR_BOX,oldScissor);
+  const GLboolean oldDepthWrite=[] {GLboolean value;glGetBooleanv(GL_DEPTH_WRITEMASK,&value);return value;}();
+  suppressDrawing=true;
+  const float side=8+frame;
+  SetNativeViewport(0,0,side,side,.25f,.75f);
+  SetNativeScissor(1,1,4,4);
+  const mh3_raster_state raster{0,1,0,3,1,3,0,0,1,0};
+  SetNativeRaster(raster);
+  RestoreNativeRenderState();
+  GLint afterViewport[4]{},afterScissor[4]{};GLboolean afterDepthWrite;
+  glGetIntegerv(GL_VIEWPORT,afterViewport);glGetIntegerv(GL_SCISSOR_BOX,afterScissor);
+  glGetBooleanv(GL_DEPTH_WRITEMASK,&afterDepthWrite);
+  require(std::memcmp(oldViewport,afterViewport,sizeof(oldViewport))==0 &&
+          std::memcmp(oldScissor,afterScissor,sizeof(oldScissor))==0 && oldDepthWrite==afterDepthWrite,
+          "suppressed native state touched GPU state");
+  suppressDrawing=false;
+  RestoreNativeRenderState();
+  glGetIntegerv(GL_VIEWPORT,afterViewport);glGetIntegerv(GL_SCISSOR_BOX,afterScissor);
+  glGetBooleanv(GL_DEPTH_WRITEMASK,&afterDepthWrite);
+  const float sx=float(aurora::gpu::g_frameBuffer.width)/64;
+  const float sy=float(aurora::gpu::g_frameBuffer.height)/64;
+  require(afterViewport[0]==0 && afterViewport[1]==0 &&
+          afterViewport[2]==std::lround(side*sx) && afterViewport[3]==std::lround(side*sy),
+          "native viewport from suppressed frame was lost");
+  require(glIsEnabled(GL_SCISSOR_TEST) && afterScissor[0]==std::floor(sx) &&
+          afterScissor[1]==std::floor(sy) &&
+          afterScissor[2]==std::ceil(5*sx)-std::floor(sx) &&
+          afterScissor[3]==std::ceil(5*sy)-std::floor(sy),
+          "native scissor from suppressed frame was lost");
+  GLboolean mask[4]{};glGetBooleanv(GL_COLOR_WRITEMASK,mask);
+  require(!afterDepthWrite && mask[0] && mask[1] && mask[2] && !mask[3],
+          "native raster from suppressed frame was lost");
 }
 void quad(float left, float right, float bottom, float top, float z,
           const std::array<uint8_t,4>& color, bool textured) {
@@ -134,6 +178,7 @@ int main(int argc,char** argv) {
         slots|=1u<<aurora_native_frame_slot();++rendered;
         const auto& target=aurora::gpu::g_frameBuffer;
         aurora::gl::bind_framebuffer(target.texture->gl(),aurora::gpu::g_depthBuffer.texture->gl());
+        check_state_restore(frame);
         aurora::gl::set_viewport(0,0,64,64,0,1);
         aurora::gl::set_scissor_enabled(false);
         aurora::gl::RasterState raster{};

@@ -11,6 +11,8 @@
 namespace {
 struct NormalMatrix { std::array<float,9> values; bool known=false; };
 std::array<NormalMatrix,10> normalMatrices{};
+std::array<int32_t,4> scissor{};
+bool viewportKnown=false,scissorKnown=false,rasterKnown=false;
 mh3_draw_state drawState = [] {
     mh3_draw_state s{};
     mh3_draw_identity_position(s.position);
@@ -65,6 +67,7 @@ void SetNativeViewport(float x,float y,float width,float height,float near_z,flo
     for(float v:values) if(!std::isfinite(v)) throw std::runtime_error("Non-finite native viewport");
     if(width<0 || height<0) throw std::runtime_error("Negative native viewport");
     std::memcpy(drawState.viewport,values,sizeof(values));
+    viewportKnown=true;
     if (!NativeGraphicsFrameShouldRender()) return;
     const auto scale=TargetScale();
     aurora::gl::set_viewport(std::lround(x*scale[0]),std::lround(y*scale[1]),
@@ -75,6 +78,7 @@ void SetNativeViewport(float x,float y,float width,float height,float near_z,flo
 void SetNativeScissor(int32_t x,int32_t y,int32_t width,int32_t height) {
     RequireOwner();
     if(width<0 || height<0) throw std::runtime_error("Negative native scissor");
+    scissor={x,y,width,height};scissorKnown=true;
     if(!NativeGraphicsFrameShouldRender()) return;
     const auto scale=TargetScale();
     const int32_t left=std::floor(x*scale[0]),top=std::floor(y*scale[1]);
@@ -118,5 +122,20 @@ void SetNativeRaster(const mh3_raster_state& raster) {
         else throw std::runtime_error("Native bitwise logic operation requires a framebuffer material");
     }
     drawState.raster=raster;
+    rasterKnown=true;
     if(NativeGraphicsFrameShouldRender()) aurora::gl::apply_raster_state(out);
+}
+
+void RestoreNativeRenderState() {
+    RequireOwner();
+    if(!NativeGraphicsFrameShouldRender()) return;
+    // Frame clearing and presentation use their own backend state. Reapply
+    // the application's last published values, including skipped-frame writes.
+    // Convert logical rectangles again because the target may have resized.
+    if(viewportKnown) {
+        const auto& v=drawState.viewport;
+        SetNativeViewport(v[0],v[1],v[2],v[3],v[4],v[5]);
+    }
+    if(scissorKnown) SetNativeScissor(scissor[0],scissor[1],scissor[2],scissor[3]);
+    if(rasterKnown) SetNativeRaster(drawState.raster);
 }

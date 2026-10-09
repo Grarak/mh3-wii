@@ -55,7 +55,7 @@ target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
 target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
 target_sources(MH3 PRIVATE native/mh3_draw_state.c)
-target_sources(MH3 PRIVATE src/model_state.cpp native/mh3_model_state.c
+target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c
   src/native_ui.cpp native/mh3_ui.c
   src/native_effect_draw.cpp native/mh3_effect_draw.c
   src/launcher_support.cpp)
@@ -109,8 +109,9 @@ if(TARGET aurora::core)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
   if(NOT VITA)
     add_executable(mh3_native_geometry_check EXCLUDE_FROM_ALL
-      "${MH3_AURORA_ROOT}/tests/native_geometry_check.cpp")
-    target_include_directories(mh3_native_geometry_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+      "${MH3_AURORA_ROOT}/tests/native_geometry_check.cpp"
+      src/native_render_state.cpp native/mh3_draw_state.c)
+    target_include_directories(mh3_native_geometry_check PRIVATE "${MH3_AURORA_ROOT}/lib" include)
     target_compile_features(mh3_native_geometry_check PRIVATE cxx_std_20)
     target_link_libraries(mh3_native_geometry_check PRIVATE aurora::core aurora::gx aurora::vi)
   endif()
