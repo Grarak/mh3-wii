@@ -256,6 +256,12 @@ if(VITA)
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
     src/launcher_disc.cpp src/launcher_textures.cpp)
+  option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)
+  if(MH3_VITA_FAST_TLS)
+    target_sources(MH3 PRIVATE vita/fast_tls.c)
+    target_link_options(MH3 PRIVATE "-Wl,--wrap=__getreent"
+      "-Wl,--wrap=pte_osTlsGetValue")
+  endif()
   set(rom_decoder_dir "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder")
   set(rom_decoder_script "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build-vita-rom-decoder.sh")
   set(rom_decoder_archive "${CMAKE_BINARY_DIR}/rom-decoder/armv7-sony-vita-newlibeabihf/release/libmh3_rom_decoder.a")

@@ -39,6 +39,8 @@ struct NativeShaderVariant {
     bool overlay = false;
     bool alpha_test = false;
     bool fog = false;
+    // Nonzero GX fog types with (type & 7) < 4 have no exponential term.
+    bool linear_fog = false;
     bool operator==(const NativeShaderVariant&) const = default;
 };
 

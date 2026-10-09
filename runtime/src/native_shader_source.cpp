@@ -332,9 +332,13 @@ void main() {
 #endif
 #if FOG
     float f = clamp(v_fog, 0.0, 1.0);
+#if LINEAR_FOG
+    float amount = scene.fog_curve.w * f + scene.fog_shape.x;
+#else
     float g = scene.fog_curve.x + scene.fog_curve.y * f;
     g = mix(g, g * g, scene.fog_curve.z);
     float amount = scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0 * g);
+#endif
     result.rgb = mix(result.rgb, scene.fog_color.rgb, clamp(amount, 0.0, 1.0));
 #endif
     frag_color = result;
@@ -610,9 +614,13 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
 #endif
 #if FOG
     float f = saturate(v_fog);
+#if LINEAR_FOG
+    float amount = scene.fog_curve.w * f + scene.fog_shape.x;
+#else
     float g = scene.fog_curve.x + scene.fog_curve.y * f;
     g = lerp(g, g * g, scene.fog_curve.z);
     float amount = scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0f * g);
+#endif
     result.rgb = lerp(result.rgb, scene.fog_color.rgb, saturate(amount));
 #endif
     return result;
@@ -651,7 +659,7 @@ std::string VertexDefines(NativeShaderVariant variant) {
 }
 std::string FragmentDefines(NativeShaderVariant variant) {
     return Define("MODULATE", variant.model == NativeShaderModel::Modulate) + Define("TEXTURES", variant.textures) + Define("OVERLAY", variant.overlay) + Define("ALPHA_TEST", variant.alpha_test) +
-           Define("FOG", variant.fog);
+           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog);
 }
 } // namespace
 
@@ -706,5 +714,5 @@ std::string NativeShaderVertexName(NativeShaderVariant variant) {
 
 std::string NativeShaderFragmentName(NativeShaderVariant variant) {
     return std::string(variant.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(variant.textures) + (variant.overlay ? "_overlay" : "") +
-           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? "_fog" : "");
+           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "");
 }
