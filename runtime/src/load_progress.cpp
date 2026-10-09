@@ -291,11 +291,14 @@ float Frame() {
 
     // The disc bytes still to come: what the loader has queued or is reading,
     // or what the screen read when last shown, whichever is more. A screen
-    // not learned yet assumes as much again as it has read and queued.
+    // not learned yet assumes as much again as it has read and queued. A
+    // screen opens a few frames before the game queues its first file:
+    // nothing known yet is an empty bar (a full one would stay, as the share
+    // shown never decreases).
     const uint64_t known = read + request.Left() + waiting;
     const uint64_t disc = std::max(known, screen.match ? screen.match->bytes : 2 * known);
     const uint64_t done = read + conversion, total = disc + conversion + converting;
-    const float share = total ? float(double(done) / double(total)) : 1.0f;
+    const float share = total ? float(double(done) / double(total)) : 0.0f;
     screen.shown = std::min(1.0f, std::max(screen.shown, share));
 #ifdef MH3_DEVELOPMENT
     static const bool trace = TraceOptions().Has("loading");
