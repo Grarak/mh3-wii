@@ -143,8 +143,10 @@ constexpr uint32_t kPostBlockBytes = 0x40;
 
 struct Plan {
     bool on = false;
-    uint32_t id = 0, server = 0, gate = 0, city = 0;
-    int32_t post = -1, join = -1;
+    uint32_t id = 0, server = 0, gate = 0;
+
+    // city -1: stay in the gate (Loc Lac's streets) instead of a city.
+    int32_t city = 0, post = -1, join = -1;
     uint32_t members = 4, depart = 0;
 };
 
@@ -411,11 +413,11 @@ void RunCircle(CpuContext* cpu, uint32_t work, bool movie) {
         }
 
         // In the gate: its counter's city list, as talking to it.
-        inGate = inside && Memory::Read8(work + kGateName) && !Memory::Read8(kLobby) && !movie ? inGate + 1 : 0;
+        inGate = inside && plan.city >= 0 && Memory::Read8(work + kGateName) && !Memory::Read8(kLobby) && !movie ? inGate + 1 : 0;
 
         if (inGate == kGateFrames) {
             if (const uint32_t plw = Cheats::LocalPlayer()) {
-                Say("open the gate's city list for city %u", plan.city);
+                Say("open the gate's city list for city %d", plan.city);
                 call(TalkStart, {plw});
                 call(OpenCities, {plw, kGateCounter});
                 call(SendAction, {plw, 0});

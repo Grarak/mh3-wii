@@ -32,7 +32,7 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_ONLINE_PORTS` | `from=to[,...]`: connect to port `to` instead of `from` (a local account server instead of port 80; [online](online.md)) | Linux |
 | `MH3_ONLINE_ADDRESSES` | `from=to[,...]`: reach IPv4 address `from` at `to`, and read packets from `to` as from `from` (a server that names its ZeroTier address, reached from a Vita on the LAN; [online](online.md)) | Linux |
 | `MH3_ONLINE_COMMUNITY_TEST` | `1`: every server counts as a community server, for its loading-screen lines ([online](online.md)) | development |
-| `MH3_ONLINE_AUTO` | `id=N,server=N,gate=N,city=N,post=QUEST[,members=N][,depart=N]` or `...,join=N`: the online autopilot takes a `--city` launch through the online screens into a quest without input (`runtime/src/net/online_auto.cpp`) | development |
+| `MH3_ONLINE_AUTO` | `id=N,server=N,gate=N,city=N,post=QUEST[,members=N][,depart=N]` or `...,join=N`: the online autopilot takes a `--city` launch through the online screens into a quest without input (`city=-1`: it stays in the gate, Loc Lac's streets) (`runtime/src/net/online_auto.cpp`) | development |
 
 ## Development tools
 
