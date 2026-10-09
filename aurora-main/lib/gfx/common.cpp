@@ -238,6 +238,7 @@ struct SealedFrameData {
   // Released after the render thread has executed `passes`.
   std::vector<std::shared_ptr<const TextureBindGroup>> retiredBindGroups;
 };
+static void prepare_recorded_passes(SealedFrameData& data, u32 frameIndex);
 
 SealedFrame::SealedFrame() : m_data(std::make_unique<SealedFrameData>()) {}
 SealedFrame::~SealedFrame() = default;
@@ -1079,6 +1080,7 @@ static void submit_recorded_passes() {
   data.depthMapping = depth_peek::capture_frame_mapping();
   data.skipDraws = frame_skipped();
   data.passes.swap(g_renderPasses);
+  prepare_recorded_passes(data, g_frameIndex);
   data.retiredBindGroups.swap(g_retiredBindGroups);
 #ifdef AURORA_GFX_DEBUG_GROUPS
   data.debug.groups = g_debugFrame.groups;
@@ -1302,7 +1304,7 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
 // viewport/scissor, clear, copy/pass, blend, or depth-state dependencies. This
 // groups pass types, not textures: coplanar order between categories still needs
 // visual validation before enabling it by default.
-static void group_cutout_draws(std::vector<RenderPass>& passes) {
+static void group_cutout_draws(std::vector<RenderPass>& passes, u32 frameIndex) {
   static const bool enabled = [] {
     const char* value = std::getenv("AURORA_GROUP_CUTOUTS");
     return value && std::strcmp(value, "1") == 0;
@@ -1364,7 +1366,30 @@ static void group_cutout_draws(std::vector<RenderPass>& passes) {
       begin = end;
     }
   }
-  port_capture::schedule(g_frameIndex, regions, draws, transitionsBefore, transitionsAfter);
+  port_capture::schedule(frameIndex, regions, draws, transitionsBefore, transitionsAfter);
+}
+
+static void prepare_recorded_passes(SealedFrameData& data, u32 frameIndex) {
+  if (data.skipDraws) return;
+  auto& passes = data.passes;
+  group_cutout_draws(passes, frameIndex);
+  if (port_capture::enabled()) {
+    // Intermediate staging flushes submit before the final seal. Keep their
+    // passes in the same frame graph with unique, monotonically increasing IDs.
+    static u32 captureFrame = UINT32_MAX, nextPass = 0;
+    if (captureFrame != frameIndex) { captureFrame = frameIndex; nextPass = 0; }
+    for (u32 i = 0; i < passes.size(); ++i) {
+      auto& pass = passes[i];
+      const u32 passIndex = nextPass++;
+      for (auto& command : pass.commands)
+        if (command.type == CommandType::Draw && command.data.draw.type == ShaderType::GX)
+          command.data.draw.gx.capture.passIndex = passIndex;
+      port_capture::pass(frameIndex, passIndex, pass.color.get(), pass.depth.get(),
+          pass.resolveTarget ? pass.resolveTarget->texture.get() : nullptr,
+          pass.resolveSourceSnapshot ? pass.resolveSourceSnapshot->texture.get() : nullptr,
+          pass.targetSize.width, pass.targetSize.height, pass.commands.size());
+    }
+  }
 }
 
 void seal_frame(SealedFrame& out) noexcept {
@@ -1374,16 +1399,8 @@ void seal_frame(SealedFrame& out) noexcept {
   auto& passes = out.data().passes;
   recycle_render_passes(passes);
   passes.swap(g_renderPasses);
-  if (!out.data().skipDraws) group_cutout_draws(passes);
-  if (!out.data().skipDraws && port_capture::enabled()) {
-    for (u32 i = 0; i < passes.size(); ++i) {
-      const auto& pass = passes[i];
-      port_capture::pass(g_frameIndex, i, pass.color.get(), pass.depth.get(),
-          pass.resolveTarget ? pass.resolveTarget->texture.get() : nullptr,
-          pass.resolveSourceSnapshot ? pass.resolveSourceSnapshot->texture.get() : nullptr,
-          pass.targetSize.width, pass.targetSize.height, pass.commands.size());
-    }
-  }
+  // end_frame() advances the producer index before the final seal.
+  prepare_recorded_passes(out.data(), g_frameIndex - 1);
   out.data().retiredBindGroups.clear();
   out.data().retiredBindGroups.swap(g_retiredBindGroups);
 #ifdef AURORA_GFX_DEBUG_GROUPS

@@ -76,9 +76,14 @@ void render(const DrawData& data, DrawEncodeState& state, bool requireReadyPipel
   if (gfx::port_capture::enabled()) {
     const auto* pipeline = gfx::find_pipeline_object(data.pipeline);
     const auto& program = *pipeline->program;
+    std::array<const void*, 8> textures{};
+    if (group) {
+      for (u32 i = 0; i < textures.size(); ++i)
+        if (group->textures[i].ref) textures[i] = group->textures[i].ref->texture.get();
+    }
     gfx::port_capture::draw(data.capture, program.vertex_hash(), program.fragment_hash(),
                            data.vtxCount, data.indexCount, data.instanceCount,
-                           program.uses_discard(), program.replaces_depth());
+                           program.uses_discard(), program.replaces_depth(), textures);
   }
 }
 } // namespace aurora::gx

@@ -42,7 +42,8 @@ void pass(uint32_t frame, uint32_t index, const void* color, const void* depth,
           const void* resolve, const void* snapshot, uint32_t width, uint32_t height,
           uint32_t commands) noexcept {
   auto& c = capture();
-  if (!c.events || frame % c.drawInterval != 0) return;
+  // Keep every pass plan: a sampled draw may consume a previous frame's copy.
+  if (!c.events) return;
   std::lock_guard lock(c.mutex);
   std::fprintf(c.events, "pass_plan\t%u\t%u\t%p\t%p\t%p\t%p\t%u\t%u\t%u\n",
                frame, index, color, depth, resolve, snapshot, width, height, commands);
@@ -56,7 +57,8 @@ void schedule(uint32_t frame, uint32_t regions, uint32_t draws,
                transitionsBefore, transitionsAfter);
 }
 void draw(const DrawState& s, uint64_t vh, uint64_t fh, uint32_t vertices,
-          uint32_t indices, uint32_t instances, bool discard, bool depthReplace) noexcept {
+          uint32_t indices, uint32_t instances, bool discard, bool depthReplace,
+          const std::array<const void*, 8>& textures) noexcept {
   auto& c = capture();
   if (!c.events || s.frame % c.drawInterval != 0) return;
   std::lock_guard lock(c.mutex);
@@ -70,6 +72,10 @@ void draw(const DrawState& s, uint64_t vh, uint64_t fh, uint32_t vertices,
   std::fprintf(c.events, "draw_textures\t%u\t%016llx-%016llx", s.frame,
                (unsigned long long)vh, (unsigned long long)fh);
   for (const auto source : s.textureSources) std::fprintf(c.events, "\t%08x", source);
+  std::fputc('\n', c.events);
+  std::fprintf(c.events, "draw_bindings\t%u\t%u\t%016llx-%016llx", s.frame, s.passIndex,
+               (unsigned long long)vh, (unsigned long long)fh);
+  for (const auto texture : textures) std::fprintf(c.events, "\t%p", texture);
   std::fputc('\n', c.events);
 }
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment) noexcept {

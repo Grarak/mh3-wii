@@ -16,6 +16,7 @@ void pass(uint32_t frame, uint32_t index, const void* color, const void* depth,
 // retain the producer's frame and guest origin.
 struct DrawState {
   uint32_t frame = 0;
+  uint32_t passIndex = 0;
   uint32_t alphaCompare = 0;
   uint32_t flags = 0;
   uint32_t primitives = 1;
@@ -31,7 +32,7 @@ enum DrawFlags : uint32_t {
 };
 void draw(const DrawState& state, uint64_t vertexHash, uint64_t fragmentHash,
           uint32_t vertices, uint32_t indices, uint32_t instances,
-          bool discard, bool depthReplace) noexcept;
+          bool discard, bool depthReplace, const std::array<const void*, 8>& textures) noexcept;
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment) noexcept;
 void texture(const void* id, bool create, uint32_t width, uint32_t height, uint32_t mips,
              uint32_t format, uint32_t bytesPerPixel, std::string_view label = {}) noexcept;
