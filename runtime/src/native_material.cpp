@@ -1566,6 +1566,13 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
     Check(mh3_material_pixel_raster_unchecked(&pixel, &raster), "Native material pixel raster");
     raster.cull_mode = (top_known & MH3_MATERIAL_TOP_CULL) ? source.cull_mode : material.cull_mode;
     PublishMaterialRaster(raster);
+
+    // The effect, UI and scene producers republish the current state per
+    // draw: an identical whole state changes nothing (no structure to compare,
+    // no known fields to cover).
+    if (top_known == MH3_MATERIAL_TOP_ALL && BytesEqual(&material, &source, sizeof material))
+        return;
+
     const bool structureChanged = !game.shadeStructureDirty &&
         mh3_shade_structure_overlay_changes(&material, &source, top_known, MH3_SHADE_STRUCTURE_ALL);
     if (top_known == MH3_MATERIAL_TOP_ALL && KnownSuperset(source, material)) {

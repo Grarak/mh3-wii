@@ -592,14 +592,20 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu) {
         SetNativeTextureMatrix(t.position_source ? 3 * uint32_t(map) + 0x40 : 3 * uint32_t(map) + 0x1e, effect.vertex.texture_matrix[map], t.position_source);
 
         if (force) {
-            mh3_native_material_state material = GetNativeMaterialState();
-            auto &gen = material.texgen[map];
+            // The emitter's texgen; republished only when it differs (the
+            // whole material is 1.3 KiB to copy out and back).
+            auto gen = GetNativeMaterialState().texgen[map];
             gen.known = (1u << MH3_TEXGEN_FIELD_COUNT) - 1;
             std::memset(gen.values, 0, sizeof(gen.values));
             gen.values[MH3_TEXGEN_PROJECTION] = t.position_source ? 1 : 0;
             gen.values[MH3_TEXGEN_SOURCE_ROW] = t.position_source ? 0 : 5;
             gen.values[MH3_TEXGEN_POST_MATRIX_ROW] = t.position_source ? uint8_t(3 * map) : 61;
-            SetNativeMaterial(material);
+
+            if (std::memcmp(&gen, &GetNativeMaterialState().texgen[map], sizeof gen)) {
+                mh3_native_material_state material = GetNativeMaterialState();
+                material.texgen[map] = gen;
+                SetNativeMaterial(material);
+            }
         }
     }
 
