@@ -14,6 +14,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <array>
+#include <utility>
 
 namespace {
 using namespace MemoryInline;
@@ -406,6 +407,16 @@ mh3_scene_cpu_ops CpuOps(CpuContext *cpu) {
 }
 } // namespace
 
+#ifdef MH3_DEVELOPMENT
+// The MH3 feedback temporal line (graphics_host.cpp): enabled calls, those
+// that drew the previous frame's image back, and the last call's settings.
+TemporalFeedbackStatistics temporalStatistics;
+
+TemporalFeedbackStatistics TakeTemporalFeedbackStatistics() {
+    return std::exchange(temporalStatistics, {});
+}
+#endif
+
 extern "C" void MH3_NativeFeedbackThreshold(CpuContext *cpu);
 extern "C" void MH3_NativeTemporalFeedback(CpuContext *cpu) {
     uint32_t self = cpu->gpr[3];
@@ -415,6 +426,13 @@ extern "C" void MH3_NativeTemporalFeedback(CpuContext *cpu) {
 
     if (!plan.enabled)
         return;
+#ifdef MH3_DEVELOPMENT
+    ++temporalStatistics.calls;
+    temporalStatistics.previous += plan.draw_previous;
+    temporalStatistics.mode = input.mode;
+    temporalStatistics.alpha = input.alpha;
+    temporalStatistics.amount = input.amount;
+#endif
 
     FlatWrite32(self + 0x34, plan.frames);
     const bool history = NativeSceneFeedbackVersion(Identity(plan.capture.identity), plan.capture.width, plan.capture.height) != 0;

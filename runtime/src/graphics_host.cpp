@@ -666,6 +666,11 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  double(feedback.capture_calls - previousFeedback.capture_calls) / seconds, double(feedback.glare_calls - previousFeedback.glare_calls) / seconds,
                  double(feedback.clone_calls - previousFeedback.clone_calls) / seconds, feedback.last_call_targets, feedback.last_call_allocations, feedback.last_call_reuses,
                  feedback.last_call_bytes / 1048576.0, static_cast<unsigned long long>(feedback.untracked_sizes));
+#ifdef MH3_DEVELOPMENT
+    if (const auto temporal = TakeTemporalFeedbackStatistics(); temporal.calls)
+        std::fprintf(stderr, "MH3 feedback: temporal %.1f/s, previous frame drawn back %.1f/s (mode %u alpha %u amount %u)\n", double(temporal.calls) / seconds,
+                     double(temporal.previous) / seconds, temporal.mode, temporal.alpha, temporal.amount);
+#endif
     for (uint32_t i = 0; i < feedback.size_count; ++i) {
         const auto& size = feedback.sizes[i];
 

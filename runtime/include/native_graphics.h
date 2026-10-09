@@ -130,3 +130,15 @@ void EndNativeGraphicsFrame();
 
 // The game thread or the render thread: each owns its logical draw state.
 bool OnNativeGraphicsThread();
+
+#ifdef MH3_DEVELOPMENT
+// The scene's temporal feedback (0x80055FBC, native_scene_feedback.cpp), since
+// the last call: enabled passes, those that drew the previous frame's image
+// back over the scene, and the last pass's mode, alpha and amount.
+struct TemporalFeedbackStatistics {
+    uint64_t calls = 0, previous = 0;
+    uint8_t mode = 0, alpha = 0, amount = 0;
+};
+
+TemporalFeedbackStatistics TakeTemporalFeedbackStatistics();
+#endif
