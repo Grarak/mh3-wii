@@ -31,6 +31,17 @@ using NativePreparedMaterial=mh3_prepared_material;
 /* Immutable resource defaults/recipes only. Live replacements/inherited pass
  * state must be merged by typed producers; no live borrowed pointers cached. */
 const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner& owner,uint32_t material_address);
+struct NativeMaterialBlockDefaults {
+    const NativePreparedMaterial* prepared;
+    uint32_t source_address,source_bytes;
+    mh3_model_material_block kind;
+    uint64_t source_generation;
+};
+/* Origin/default scope only. The current producer must separately certify live
+ * mutations and supply typed overrides. actual_block may be a proven copy;
+ * no packed-list inspection, pointer/name guesses or bind-time hashing. */
+NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner,
+    uint32_t material_address,mh3_model_material_block kind,uint32_t actual_block);
 /* Explicit mutable vertex producers must advance source revisions when arrays
  * change in place. A bind event only advances binding_generation. */
 void MarkNativeVertexProduced(uint32_t payload,uint64_t generation);

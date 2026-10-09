@@ -29,22 +29,46 @@ mh3_pack_status mh3_model_catalog_resource(const mh3_model_catalog *c,int materi
     mh3_catalog_resource r={u32(p),u32(p+4),u32(p+8),u32(p+12),u32(p+16),u32(p+20)};
     *out=r;return MH3_PACK_OK;
 }
+mh3_pack_status mh3_model_catalog_block(const mh3_model_catalog *c,uint32_t index,mh3_catalog_material_block *out) {
+    if (!c || !out) return MH3_PACK_INVALID;
+    if (c->version!=2) return MH3_PACK_UNSUPPORTED;
+    if (index>=c->block_count) return MH3_PACK_RANGE;
+    const uint8_t *p=c->bytes.data+c->block_offset+(size_t)index*24;
+    mh3_catalog_material_block b={u32(p),u32(p+4),u32(p+8),u32(p+12),u32(p+16)};
+    *out=b;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_catalog_material_block_find(const mh3_model_catalog *c,uint32_t material,
+    uint32_t kind,mh3_catalog_material_block *out) {
+    if (!c || !out) return MH3_PACK_INVALID;
+    if (c->version!=2) return MH3_PACK_UNSUPPORTED;
+    if (material>=c->material_count || kind>=MH3_CATALOG_MATERIAL_BLOCKS) return MH3_PACK_RANGE;
+    mh3_catalog_material_block b;
+    mh3_pack_status status=mh3_model_catalog_block(c,material*MH3_CATALOG_MATERIAL_BLOCKS+kind,&b);
+    if (status!=MH3_PACK_OK) return status;
+    if (!(b.flags&1)) return MH3_PACK_UNSUPPORTED;
+    *out=b;return MH3_PACK_OK;
+}
 mh3_pack_status mh3_model_catalog_open(mh3_pack_span bytes,mh3_model_catalog *out) {
     if (!out || !bytes.data || bytes.size<64 || bytes.size>UINT32_MAX) return MH3_PACK_RANGE;
     const uint8_t *p=bytes.data;
     if (memcmp(p,"M3ID",4)) return MH3_PACK_INVALID;
-    if (u32(p+4)!=1) return MH3_PACK_UNSUPPORTED;
+    if (u32(p+4)!=1 && u32(p+4)!=2) return MH3_PACK_UNSUPPORTED;
     if (u32(p+8)!=bytes.size) return MH3_PACK_RANGE;
-    mh3_model_catalog c={bytes,u32(p+12),u32(p+16),u32(p+20),u32(p+24),u32(p+28),u32(p+32)};
-    for (uint32_t i=36;i<64;i+=4) if (u32(p+i)) return MH3_PACK_INVALID;
+    mh3_model_catalog c={bytes,u32(p+12),u32(p+16),u32(p+20),u32(p+24),u32(p+28),u32(p+32),u32(p+4),u32(p+36),u32(p+40)};
+    for (uint32_t i=c.version==1?36:44;i<64;i+=4) if (u32(p+i)) return MH3_PACK_INVALID;
     if (!table(bytes,c.model_offset,c.model_count,64) ||
         !table(bytes,c.shape_offset,c.shape_count,24) ||
-        !table(bytes,c.material_offset,c.material_count,24)) return MH3_PACK_RANGE;
+        !table(bytes,c.material_offset,c.material_count,24) ||
+        (c.version==2 && !table(bytes,c.block_offset,c.block_count,24))) return MH3_PACK_RANGE;
     /* Canonical tightly packed tables prohibit aliasing, orphan tails and
      * inconsistent sizes without overflowing a 32-bit host's multiplication. */
     if (c.model_offset!=64 || (uint64_t)c.shape_offset!=64+(uint64_t)c.model_count*64 ||
-        (uint64_t)c.material_offset!=(uint64_t)c.shape_offset+(uint64_t)c.shape_count*24 ||
-        bytes.size!=(uint64_t)c.material_offset+(uint64_t)c.material_count*24) return MH3_PACK_INVALID;
+        (uint64_t)c.material_offset!=(uint64_t)c.shape_offset+(uint64_t)c.shape_count*24) return MH3_PACK_INVALID;
+    const uint64_t resource_end=(uint64_t)c.material_offset+(uint64_t)c.material_count*24;
+    if (c.version==1?bytes.size!=resource_end:
+        ((uint64_t)c.block_count!=(uint64_t)c.material_count*MH3_CATALOG_MATERIAL_BLOCKS ||
+         c.block_offset!=resource_end || bytes.size!=(uint64_t)c.block_offset+(uint64_t)c.block_count*24))
+        return MH3_PACK_INVALID;
     uint32_t shape_first=0,material_first=0;
     mh3_catalog_model previous={0};
     for (uint32_t i=0;i<c.model_count;i++) {
@@ -77,6 +101,24 @@ mh3_pack_status mh3_model_catalog_open(mh3_pack_span bytes,mh3_model_catalog *ou
         shape_first+=m.shape_count;material_first+=m.material_count;previous=m;
     }
     if (shape_first!=c.shape_count || material_first!=c.material_count) return MH3_PACK_INVALID;
+    if (c.version==2) for (uint32_t i=0;i<c.block_count;i++) {
+        mh3_catalog_material_block b;mh3_catalog_resource material;mh3_catalog_model model;
+        mh3_model_catalog_block(&c,i,&b);
+        if (b.material_index!=i/MH3_CATALOG_MATERIAL_BLOCKS || b.kind!=i%MH3_CATALOG_MATERIAL_BLOCKS ||
+            b.flags>1 || u32(bytes.data+c.block_offset+(size_t)i*24+20)) return MH3_PACK_INVALID;
+        if (!b.flags) {if (b.source_offset || b.source_bytes) return MH3_PACK_INVALID;continue;}
+        mh3_model_catalog_resource(&c,1,b.material_index,&material);
+        mh3_model_catalog_model(&c,material.model_index,&model);
+        if (b.source_offset<model.model_offset ||
+            !extent(model.model_bytes,(size_t)b.source_offset-model.model_offset,b.source_bytes)) return MH3_PACK_INVALID;
+        if (b.kind<4) {
+            static const uint32_t sizes[4]={32,128,64,160},offsets[4]={0,32,160,224};
+            if (b.source_bytes!=sizes[b.kind] || b.source_offset<material.source_offset ||
+                !extent(material.source_bytes,(size_t)b.source_offset-material.source_offset,b.source_bytes)) return MH3_PACK_INVALID;
+            mh3_catalog_material_block pixel;mh3_model_catalog_block(&c,i-b.kind,&pixel);
+            if ((pixel.flags&1) && (uint64_t)b.source_offset!=(uint64_t)pixel.source_offset+offsets[b.kind]) return MH3_PACK_INVALID;
+        } else if (b.source_bytes<160 || b.source_bytes>480 || (b.source_bytes&31)) return MH3_PACK_INVALID;
+    }
     *out=c;return MH3_PACK_OK;
 }
 mh3_pack_status mh3_model_catalog_find(const mh3_model_catalog *c,uint64_t offset,uint32_t model_offset,
@@ -132,6 +174,14 @@ mh3_pack_status mh3_model_catalog_validate_pack(const mh3_model_catalog *c,const
                     if (r.pack_index<p.material_first || r.pack_index-p.material_first>=p.material_count ||
                         mh3_mesh_pack_material(pack,r.pack_index,&mat)!=MH3_PACK_OK || mat.model_id!=m.model_id ||
                         mat.source_id!=r.source_id || mat.asset_id!=r.asset_id) return MH3_PACK_INVALID;
+                    if (c->version==2) {
+                        mh3_catalog_material_block block;
+                        mh3_pack_status s=mh3_model_catalog_material_block_find(c,first+j,4,&block);
+                        if (s==MH3_PACK_OK) {
+                            const uint32_t emitted=(96+((mat.tev_count+1)/2)*48+31)&~31u;
+                            if (!mat.tev_count || mat.tev_count>16 || block.source_bytes!=emitted) return MH3_PACK_INVALID;
+                        } else if (s!=MH3_PACK_UNSUPPORTED) return s;
+                    }
                 } else if (r.pack_index!=UINT32_MAX) {
                     mh3_pack_mesh mesh;
                     if (r.pack_index<p.mesh_first || r.pack_index-p.mesh_first>=p.mesh_count ||
@@ -148,6 +198,22 @@ mh3_pack_status mh3_model_catalog_validate_pack(const mh3_model_catalog *c,const
 
 static int memory_range(uint32_t address,uint32_t bytes) {
     return bytes && (uint64_t)address+bytes<=UINT64_C(0x100000000);
+}
+mh3_res_status mh3_source_resolve_material_block(const mh3_source_tracker *tracker,
+    const mh3_model_catalog *catalog,uint32_t address,uint32_t material_index,
+    uint32_t kind,uint64_t *generation) {
+    if (!tracker || !catalog || !generation) return MH3_RES_INVALID;
+    mh3_catalog_material_block block;
+    const mh3_pack_status status=mh3_model_catalog_material_block_find(catalog,material_index,kind,&block);
+    if (status==MH3_PACK_UNSUPPORTED) return MH3_RES_UNSUPPORTED;
+    if (status!=MH3_PACK_OK) return MH3_RES_RANGE;
+    mh3_catalog_resource material;mh3_catalog_model model;mh3_source_identity source;
+    if (mh3_model_catalog_resource(catalog,1,material_index,&material)!=MH3_PACK_OK ||
+        mh3_model_catalog_model(catalog,material.model_index,&model)!=MH3_PACK_OK) return MH3_RES_INVALID;
+    const mh3_res_status resolved=mh3_source_resolve(tracker,address,block.source_bytes,&source);
+    if (resolved!=MH3_RES_OK) return resolved;
+    if (source.partition_offset!=model.partition_offset+block.source_offset) return MH3_RES_ABSENT;
+    *generation=source.generation;return MH3_RES_OK;
 }
 mh3_res_status mh3_source_tracker_init(mh3_source_tracker *out,mh3_source_range *ranges,
                                       mh3_source_range *work,mh3_source_range *transfer,size_t capacity) {

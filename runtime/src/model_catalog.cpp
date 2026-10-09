@@ -21,13 +21,17 @@ struct Pack {
     uint64_t generation;
     std::vector<mh3_prepared_mesh> meshes;
     std::vector<NativePreparedMaterial> materials;
+    std::vector<uint32_t> material_catalog_indices;
+    std::vector<std::array<mh3_catalog_material_block,5>> material_blocks;
 };
 std::vector<Pack> packs;
 uint64_t source_epoch=0;
 struct CachedOwner {uint64_t epoch;NativeModelOwner owner;};
 struct CachedResource {uint64_t epoch,generation;mh3_catalog_resource resource;};
+struct CachedBlock {uint64_t epoch,source_generation;uintptr_t resident_handle;uint64_t resident_generation;uint32_t material_index;};
 std::unordered_map<uint32_t,CachedOwner> owners;
 std::unordered_map<uint64_t,CachedResource> resources;
+std::unordered_map<uint64_t,CachedBlock> blocks;
 void Checked(mh3_res_status status) {
     if(status!=MH3_RES_OK) throw std::runtime_error("Native model provenance failed: "+std::to_string(status));
 }
@@ -97,7 +101,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
                 throw std::runtime_error("Ambiguous external native model pack identity");
         }
     }
-    Pack admitted{pack,catalog,handle,generation,{}, {}};
+    Pack admitted{pack,catalog,handle,generation,{},{},{},{}};
     admitted.meshes.resize(pack->counts[MH3_PACK_MESHES]);
     for(uint32_t i=0;i<catalog->model_count;i++) {
         mh3_catalog_model model{};mh3_model_catalog_model(catalog,i,&model);
@@ -110,15 +114,29 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
         }
     }
     admitted.materials.resize(pack->counts[MH3_PACK_MATERIALS]);
+    admitted.material_catalog_indices.resize(admitted.materials.size(),UINT32_MAX);
+    admitted.material_blocks.resize(admitted.materials.size());
+    for(uint32_t i=0;i<catalog->material_count;i++) {
+        mh3_catalog_resource resource{};mh3_model_catalog_resource(catalog,1,i,&resource);
+        admitted.material_catalog_indices.at(resource.pack_index)=i;
+        if(catalog->version==2) for(uint32_t kind=0;kind<5;kind++) {
+            if(mh3_model_catalog_block(catalog,i*5+kind,&admitted.material_blocks.at(resource.pack_index)[kind])!=MH3_PACK_OK)
+                throw std::runtime_error("Native material block admission failed");
+        }
+    }
     for(uint32_t i=0;i<admitted.materials.size();i++) {
         if(mh3_model_material_prepare(pack,i,&admitted.materials[i])!=MH3_PACK_OK)
             throw std::runtime_error("Native model requires complete supported typed material payload");
+        const auto& material=admitted.materials[i];
+        const uint32_t required=(1u<<material.state.texgen_count)-1;
+        if((material.texcoord_map_known&required)!=required)
+            throw std::runtime_error("Native model requires M3MT v3 exact texture-coordinate map provenance");
     }
-    packs.push_back(std::move(admitted));owners.clear();resources.clear();
+    packs.push_back(std::move(admitted));owners.clear();resources.clear();blocks.clear();
 }
 void UnregisterNativeModelPack(uintptr_t handle) {
     for(auto it=packs.begin();it!=packs.end();++it) if(it->handle==handle) {
-        packs.erase(it);owners.clear();resources.clear();return;
+        packs.erase(it);owners.clear();resources.clear();blocks.clear();return;
     }
     throw std::runtime_error("Unknown native model resident handle");
 }
@@ -180,6 +198,33 @@ const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner&
     for(const auto& pack:packs) if(pack.handle==owner.resident_handle && pack.generation==owner.resident_generation)
         return pack.materials.at(resource.pack_index);
     throw std::runtime_error("Native model material resident allocation was retired");
+}
+NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwner& owner,
+    uint32_t material,mh3_model_material_block kind,uint32_t actual_block) {
+    const mh3_catalog_resource resource=ResolveNativeModelResource(owner,material,true);
+    if(kind<0 || kind>=MH3_MODEL_MATERIAL_BLOCK_COUNT)
+        throw std::runtime_error("Invalid native material block kind");
+    for(const auto& pack:packs) if(pack.handle==owner.resident_handle && pack.generation==owner.resident_generation) {
+        const auto& block=pack.material_blocks.at(resource.pack_index)[kind];
+        if(!(block.flags&1)) throw std::runtime_error("Native material block requires verified M3ID v2 ownership");
+        actual_block=Canonical(actual_block,block.source_bytes);
+        // Material tables have 128-byte records in a U32-sized metadata span,
+        // so their admitted index fits the lower29 bits. Keep shared TEV
+        // scopes separate instead of evicting each other on alternate draws.
+        const uint64_t key=(uint64_t(actual_block)<<32)|(uint64_t(resource.pack_index)<<3)|uint32_t(kind);
+        const auto cached=blocks.find(key);
+        uint64_t generation=0;
+        if(cached!=blocks.end() && cached->second.epoch==source_epoch &&
+           cached->second.resident_handle==owner.resident_handle && cached->second.resident_generation==owner.resident_generation &&
+           cached->second.material_index==resource.pack_index) generation=cached->second.source_generation;
+        else {
+            Checked(mh3_source_resolve_material_block(&tracker,owner.catalog,actual_block,
+                pack.material_catalog_indices.at(resource.pack_index),uint32_t(kind),&generation));
+            blocks.insert_or_assign(key,CachedBlock{source_epoch,generation,owner.resident_handle,owner.resident_generation,resource.pack_index});
+        }
+        return {&pack.materials.at(resource.pack_index),actual_block,block.source_bytes,kind,generation};
+    }
+    throw std::runtime_error("Native material block resident owner was retired");
 }
 extern "C" void MH3_ModelMemcpy(CpuContext* cpu) {Copy(cpu);}
 REGISTER_NATIVE_FUNCTION_AS(0x80004000,MH3_ModelMemcpy,"NativeResourceMemcpy");

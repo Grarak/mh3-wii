@@ -7,6 +7,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct mh3_model_texcoord_sizes {
+    uint16_t width[8],height[8];
+    uint8_t known;
+} mh3_model_texcoord_sizes;
 /* Direct native model boundary, not a GPU uniform ABI. Borrowed CPU metadata,
  * resident GPU ranges and typed live inputs must survive the submit call. The
  * backend retains GPU allocations through its existing asynchronous fences and
@@ -26,6 +30,10 @@ typedef struct mh3_resolved_mesh_submit {
     const float *projection; /* 16 floats */
     const float (*texture_matrices)[12]; /* 8 prepared post-texture matrices */
     uint8_t texture_matrix_known, texture_matrix_3x4;
+    /* Exact manual coordinate scale, selected by ResTev's map table. NULL map
+     * entries inherit the previous coordinate value; bound map dimensions and
+     * coordinate dimensions are distinct state, never interchangeable guesses. */
+    const mh3_model_texcoord_sizes *texcoord_sizes;
     uint32_t first_index, index_count;
 } mh3_resolved_mesh_submit;
 /* Admit once per resident generation. No borrowed live material/pose/camera
@@ -40,7 +48,37 @@ typedef struct mh3_prepared_material {
     mh3_native_texture_srt srt;
     uint32_t binding_count;
     mh3_pack_binding bindings[8];
+    uint8_t texcoord_map[8],texcoord_map_known;
 } mh3_prepared_material;
+/* Field ownership of the resource submitters, not an instruction stream. The
+ * selected record is an overlay: its top-level counts/references/generation
+ * are deliberately unknown and must not replace inherited pass state. */
+typedef enum mh3_model_material_block {
+    MH3_MODEL_MATERIAL_PIXEL,
+    MH3_MODEL_MATERIAL_COLORS,
+    MH3_MODEL_MATERIAL_INDIRECT,
+    MH3_MODEL_MATERIAL_TEXGEN,
+    MH3_MODEL_MATERIAL_PIPELINE,
+    MH3_MODEL_MATERIAL_BLOCK_COUNT
+} mh3_model_material_block;
+/* Pure C replacements for the field effects of 80094480/8009454C/80096634/
+ * 80097210/8009A244 once the caller resolves a certified typed block producer.
+ * count is the caller's indirect/texgen count; ignored by the other blocks.
+ * Texgen count changes require a new typed producer because inactive source
+ * fields are not retained by the current M3MT payload. Zero indirect/texgen
+ * count has the original conditional no-publication behavior (empty overlay).
+ * This never reads source command bytes or invents fields from inherited state.
+ * Output is transactional. Apply with mh3_material_state_overlay(...,0). */
+mh3_pack_status mh3_model_material_group_select(const mh3_prepared_material *prepared,
+    mh3_model_material_block block,uint32_t count,mh3_native_material_state *out);
+/* Typed TexCoordScaleState::LoadTexCoordScale_: caller supplies
+ * actual map dimensions from texture producers and inherited coordinate sizes.
+ * Exact NULL entries preserve inherited values/known bits. No map is inferred
+ * from TEV stages; zero dimensions are rejected pending an explicit producer
+ * for their original hardware underflow semantics. Both outputs transactional. */
+mh3_res_status mh3_model_texcoord_sizes_select(const mh3_prepared_material *prepared,
+    uint32_t count,const mh3_model_texcoord_sizes *map_sizes,
+    const mh3_model_texcoord_sizes *current,mh3_model_texcoord_sizes *out,uint8_t *written);
 /* Immutable defaults/known masks, SRT recipes and texture binding IDs are
  * assembled once. Strings borrow pack metadata, never a live source object. */
 mh3_pack_status mh3_model_material_prepare(const mh3_mesh_pack *pack,uint32_t material_index,

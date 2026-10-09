@@ -2,6 +2,78 @@
 #include <math.h>
 #include <string.h>
 
+mh3_res_status mh3_model_texcoord_sizes_select(const mh3_prepared_material *prepared,uint32_t count,
+    const mh3_model_texcoord_sizes *maps,const mh3_model_texcoord_sizes *current,
+    mh3_model_texcoord_sizes *out,uint8_t *written) {
+    if(!prepared || !maps || !current || !out || !written || count>8) return MH3_RES_INVALID;
+    mh3_model_texcoord_sizes result=*current;uint8_t changed=0;
+    for(uint32_t i=0;i<count;i++) {
+        if(!(prepared->texcoord_map_known&(1u<<i))) return MH3_RES_UNSUPPORTED;
+        const uint32_t map=prepared->texcoord_map[i];
+        if(map==255) continue;
+        if(map>7) return MH3_RES_INVALID;
+        if(!(maps->known&(1u<<map))) return MH3_RES_ABSENT;
+        if(!maps->width[map] || !maps->height[map]) return MH3_RES_INVALID;
+        result.width[i]=maps->width[map];result.height[i]=maps->height[map];
+        changed|=(uint8_t)(1u<<i);result.known|=(uint8_t)(1u<<i);
+    }
+    *out=result;*written=changed;return MH3_RES_OK;
+}
+
+mh3_pack_status mh3_model_material_group_select(const mh3_prepared_material *prepared,
+    mh3_model_material_block block,uint32_t count,mh3_native_material_state *out) {
+    if(!prepared || !out || block<0 || block>=MH3_MODEL_MATERIAL_BLOCK_COUNT)
+        return MH3_PACK_INVALID;
+    const mh3_native_material_state *source=&prepared->state;
+    if(source->tev_count>16 || source->texgen_count>8 || source->indirect_count>4)
+        return MH3_PACK_INVALID;
+    if(block==MH3_MODEL_MATERIAL_TEXGEN && count && count!=source->texgen_count)
+        return MH3_PACK_UNSUPPORTED;
+    if(block==MH3_MODEL_MATERIAL_PIPELINE && !source->tev_count)
+        return MH3_PACK_UNSUPPORTED;
+    mh3_native_material_state selected;memset(&selected,0,sizeof selected);
+    switch(block) {
+    case MH3_MODEL_MATERIAL_PIXEL:
+        selected.pixel=source->pixel;
+        selected.pixel.known&=(UINT64_C(1)<<MH3_PIXEL_DEPTH_TEXTURE_OPERATION)-1;
+        for(uint32_t i=MH3_PIXEL_DEPTH_TEXTURE_OPERATION;i<MH3_PIXEL_FIELD_COUNT;i++) selected.pixel.values[i]=0;
+        break;
+    case MH3_MODEL_MATERIAL_COLORS:
+        memcpy(selected.color,source->color,sizeof selected.color);
+        memcpy(selected.konst,source->konst,sizeof selected.konst);
+        break;
+    case MH3_MODEL_MATERIAL_INDIRECT:
+        if(count) {
+            memcpy(selected.indirect_matrix,source->indirect_matrix,sizeof selected.indirect_matrix);
+            for(uint32_t i=0;i<4;i++) {
+                selected.indirect[i].known=source->indirect[i].known&12u;
+                if(selected.indirect[i].known&4u) selected.indirect[i].scale_s=source->indirect[i].scale_s;
+                if(selected.indirect[i].known&8u) selected.indirect[i].scale_t=source->indirect[i].scale_t;
+            }
+        }
+        break;
+    case MH3_MODEL_MATERIAL_TEXGEN:
+        if(count) for(uint32_t i=0;i<8;i++) {
+            selected.texgen[i]=source->texgen[i];
+            selected.texgen[i].known&=~((1u<<MH3_TEXGEN_MATRIX_ROW)|(1u<<MH3_TEXGEN_DUAL_TEXTURE));
+            selected.texgen[i].values[MH3_TEXGEN_MATRIX_ROW]=0;
+            selected.texgen[i].values[MH3_TEXGEN_DUAL_TEXTURE]=0;
+        }
+        break;
+    case MH3_MODEL_MATERIAL_PIPELINE:
+        memcpy(selected.tev,source->tev,sizeof selected.tev);
+        memcpy(selected.swaps,source->swaps,sizeof selected.swaps);
+        for(uint32_t i=0;i<4;i++) {
+            selected.indirect[i].known=source->indirect[i].known&3u;
+            if(selected.indirect[i].known&1u) selected.indirect[i].coordinate=source->indirect[i].coordinate;
+            if(selected.indirect[i].known&2u) selected.indirect[i].map=source->indirect[i].map;
+        }
+        break;
+    default:return MH3_PACK_INVALID;
+    }
+    *out=selected;return MH3_PACK_OK;
+}
+
 mh3_pack_status mh3_model_material_prepare(const mh3_mesh_pack *pack,uint32_t index,mh3_prepared_material *out) {
     if(!pack || !out) return MH3_PACK_INVALID;
     mh3_prepared_material material;mh3_pack_native_material native;mh3_pack_material base;
@@ -9,6 +81,8 @@ mh3_pack_status mh3_model_material_prepare(const mh3_mesh_pack *pack,uint32_t in
     mh3_pack_status status=mh3_material_state_read(pack,index,&material.state);if(status!=MH3_PACK_OK) return status;
     status=mh3_mesh_pack_material_native(pack,index,&native);if(status!=MH3_PACK_OK) return status;
     status=mh3_mesh_pack_material(pack,index,&base);if(status!=MH3_PACK_OK) return status;
+    status=mh3_mesh_pack_texcoord_map(&native,material.texcoord_map,&material.texcoord_map_known);
+    if(status!=MH3_PACK_OK && status!=MH3_PACK_UNSUPPORTED) return status;
     if(base.binding_count>8) return MH3_PACK_UNSUPPORTED;
     material.srt.flags=native.srt_flags;material.srt.mode=native.texture_matrix_mode;
     for(uint32_t i=0;i<8;i++) {

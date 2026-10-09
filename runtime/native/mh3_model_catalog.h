@@ -11,6 +11,7 @@ typedef struct mh3_model_catalog {
     mh3_pack_span bytes;
     uint32_t model_count, model_offset, shape_count, shape_offset;
     uint32_t material_count, material_offset;
+    uint32_t version, block_count, block_offset;
 } mh3_model_catalog;
 typedef struct {
     uint64_t partition_offset;
@@ -20,7 +21,11 @@ typedef struct {
 typedef struct {
     uint32_t model_index, source_id, source_offset, source_bytes, asset_id, pack_index;
 } mh3_catalog_resource;
-/* Transactional M3ID v1 reader. References, ordering, reserved fields and all
+enum { MH3_CATALOG_MATERIAL_BLOCKS=5 };
+typedef struct {
+    uint32_t material_index,kind,source_offset,source_bytes,flags;
+} mh3_catalog_material_block;
+/* Transactional M3ID v1/v2 reader. References, ordering, reserved fields and all
  * source extents are checked. UINT32_MAX denotes an unconverted shape. */
 mh3_pack_status mh3_model_catalog_open(mh3_pack_span bytes, mh3_model_catalog *out);
 mh3_pack_status mh3_model_catalog_validate_pack(const mh3_model_catalog *catalog,
@@ -35,6 +40,13 @@ mh3_pack_status mh3_model_catalog_find(const mh3_model_catalog *catalog,
 mh3_pack_status mh3_model_catalog_find_resource(const mh3_model_catalog *catalog,
                                                 uint32_t model_index,int material,
                                                 uint32_t source_id,mh3_catalog_resource *out);
+/* v2 block order: pixel, colors, indirect, texgen, pipeline. flags bit0 means
+ * the extractor verified static field ownership. A clear bit is unsupported,
+ * not permission to inspect/replay packed commands. v1 returns UNSUPPORTED. */
+mh3_pack_status mh3_model_catalog_block(const mh3_model_catalog *catalog,uint32_t index,
+                                       mh3_catalog_material_block *out);
+mh3_pack_status mh3_model_catalog_material_block_find(const mh3_model_catalog *catalog,
+    uint32_t material_index,uint32_t kind,mh3_catalog_material_block *out);
 
 /* Provenance consists of known byte intervals, not address guesses. All storage
  * is caller owned; work/transfer need capacity entries each and must be distinct.
@@ -72,6 +84,13 @@ mh3_res_status mh3_source_resolve_model(const mh3_source_tracker *tracker,
                                        const mh3_model_catalog *catalog,uint32_t model_address,
                                        uint32_t *catalog_index,uint32_t *container_address,
                                        uint64_t *generation);
+/* Resolve a scoped block (including a copied block) by its complete byte
+ * provenance and the exact offline span. This certifies origin, not that an
+ * unreported live CPU mutation has not happened. Mutation producers must
+ * publish typed overrides/retire that origin before a draw consumes defaults. */
+mh3_res_status mh3_source_resolve_material_block(const mh3_source_tracker *tracker,
+    const mh3_model_catalog *catalog,uint32_t address,uint32_t material_index,
+    uint32_t kind,uint64_t *generation);
 /* RMHP08 80004000 memcpy preserves overlap by copying backward when needed,
  * as does 8045BC18 memmove. Native library memmove expresses that byte behavior
  * without keeping PPC alignment/paired-load implementations. Zero bytes allow
