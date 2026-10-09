@@ -2,6 +2,7 @@
 // semantics; no guest function, GX, FIFO or vertex expansion is performed.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "draw_memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -138,17 +139,6 @@ mh3_model_pose_owner& Declare(uint32_t scene) {
     owners = std::move(prospective);
     TraceOwner("declare-new", owners.at(next.scene_address));
     return owners.at(next.scene_address);
-}
-void Array(CpuContext* cpu, uint32_t kind) {
-    const auto& owner = Declare(cpu->gpr[3]);
-    uint32_t result = 0;
-    Checked(mh3_model_pose_array(&owner, kind, &result));
-    // The native records use cached aliases; the guest getter retains its input
-    // base alias exactly, including uncached resources.
-    const uint32_t base = Memory::Read32(cpu->gpr[3] + 0xf4 + kind * 4);
-    if (base)
-        result = base + (result - owner.base[kind]);
-    cpu->gpr[3] = result;
 }
 void PublishSelectors() {
     SetNativeModelMatrixSelectors(selectors);
@@ -297,16 +287,27 @@ void PublishNativeModelPalette(const mh3_model_palette& palette) {
     matrix_palette = palette;
 }
 
+uint32_t NativeModelViewArray(uint32_t scene, unsigned kind) {
+    const auto& owner = Declare(scene);
+    uint32_t result = 0;
+    Checked(mh3_model_pose_array(&owner, kind, &result));
+    // The native records use cached aliases; the guest getter retains its input
+    // base alias exactly, including uncached resources.
+    const uint32_t base = DrawMemory::Read32(scene + 0xf4 + kind * 4);
+    if (base)
+        result = base + (result - owner.base[kind]);
+    return result;
+}
 extern "C" void MH3_ModelViewPosition(CpuContext* cpu) {
-    Array(cpu, 0);
+    cpu->gpr[3] = NativeModelViewArray(cpu->gpr[3], 0);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80080BC0, MH3_ModelViewPosition, "ModelViewPosition");
 extern "C" void MH3_ModelViewNormal(CpuContext* cpu) {
-    Array(cpu, 1);
+    cpu->gpr[3] = NativeModelViewArray(cpu->gpr[3], 1);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80080C0C, MH3_ModelViewNormal, "ModelViewNormal");
 extern "C" void MH3_ModelViewEnvironment(CpuContext* cpu) {
-    Array(cpu, 2);
+    cpu->gpr[3] = NativeModelViewArray(cpu->gpr[3], 2);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80080C68, MH3_ModelViewEnvironment, "ModelViewEnvironment");
 extern "C" void MH3_ModelViewCount(CpuContext* cpu) {
@@ -324,15 +325,15 @@ REGISTER_NATIVE_FUNCTION_AS(0x8009B13C, MH3_ModelMainMatrixReset, "ModelMainMatr
 extern "C" void MH3_ModelMainMatrixSelect(CpuContext* cpu) {
     uint32_t rows[8];
     for (uint32_t i = 0; i < 8; i++)
-        rows[i] = Memory::Read32(cpu->gpr[3] + 4 * i);
+        rows[i] = DrawMemory::Read32(cpu->gpr[3] + 4 * i);
     Select(rows);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009B1A4, MH3_ModelMainMatrixSelect, "ModelMainMatrixSelect");
 extern "C" void MH3_ModelCurrentMatrixReset(CpuContext* cpu) {
-    if (!Memory::Read8(cpu->gpr[3])) {
+    if (!DrawMemory::Read8(cpu->gpr[3])) {
         mh3_model_matrix_reset(&selectors);
         PublishSelectors();
-        Memory::Write8(cpu->gpr[3], 1);
+        DrawMemory::Write8(cpu->gpr[3], 1);
     }
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087CF0, MH3_ModelCurrentMatrixReset, "ModelCurrentMatrixReset");
@@ -342,14 +343,14 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
     uint32_t types[8], rows[8];
     int apply = 0;
     for (uint32_t i = 0; i < 8; i++)
-        types[i] = Memory::Read32(cpu->gpr[3] + 4 * i);
+        types[i] = DrawMemory::Read32(cpu->gpr[3] + 4 * i);
     Checked(mh3_model_matrix_rows(types, int32_t(cpu->gpr[4]), rows, &apply));
     const bool identity = std::all_of(std::begin(rows), std::end(rows), [](uint32_t row) { return row == 60; });
     if (identity) {
-        if (!Memory::Read8(0x80796db4)) {
+        if (!DrawMemory::Read8(0x80796db4)) {
             mh3_model_matrix_reset(&selectors);
             PublishSelectors();
-            Memory::Write8(0x80796db4, 1);
+            DrawMemory::Write8(0x80796db4, 1);
         }
         return;
     }
@@ -367,6 +368,6 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
                 SetNativeTextureMatrix(30 + i * 3, &palette.texture[i].v[0][0], true);
     }
     Select(rows);
-    Memory::Write8(0x80796db4, 0);
+    DrawMemory::Write8(0x80796db4, 0);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087D30, MH3_ModelPreTextureMatrices, "ModelPreTextureMatrices");

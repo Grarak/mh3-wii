@@ -6,6 +6,9 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
 void RetireNativeModelPose(uint32_t address, uint32_t bytes);
 void ClearNativeModelPose();
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model_address = 0);
+/* 80080BC0/80080C0C/80080C68: the scene's current view array (0 position,
+ * 1 normal, 2 environment), declaring its allocation owner. */
+uint32_t NativeModelViewArray(uint32_t scene, unsigned kind);
 void PublishNativeModelDualTexture(bool enabled);
 /* Reapply independent live selector state after an immutable material overlay.
  * Unknown remains unknown; this is never an identity/dual fallback. */

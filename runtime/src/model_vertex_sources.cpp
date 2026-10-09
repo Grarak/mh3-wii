@@ -1,6 +1,7 @@
 // Pure array binding ABI: retain typed source provenance instead of GXSetArray.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "draw_memory.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <array>
 #include <stdexcept>
@@ -42,7 +43,7 @@ void Observe() {
     SetNativeModelVertexRetireHook(Retire);
 }
 void Bind(CpuContext* cpu, mh3_vertex_kind kind, uint32_t semantic) {
-    if (!Memory::Read32(cpu->gpr[3]))
+    if (!DrawMemory::Read32(cpu->gpr[3]))
         return; // Original invalid optional resource.
     StoreNativeVertexSource(semantic, ReadNativeVertexResource(cpu->gpr[3], kind));
 }
@@ -63,13 +64,13 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
         }
 }
 mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex_kind kind) {
-    return ReadNativeVertexResourceData(Memory::Read32(reference), kind);
+    return ReadNativeVertexResourceData(DrawMemory::Read32(reference), kind);
 }
 mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind) {
     Observe();
-    const uint32_t size = Memory::Read32(resource);
+    const uint32_t size = DrawMemory::Read32(resource);
     mh3_native_vertex_source source{};
-    if (mh3_vertex_source_read({Memory::GetPointer(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
+    if (mh3_vertex_source_read({DrawMemory::Pointer(resource, size), size}, resource, kind, &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native vertex array resource");
     const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));
     if (generation != generations.end()) {
@@ -112,10 +113,10 @@ extern "C" void MH3_ModelColorArray(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80089178, MH3_ModelColorArray, "NativeModelColorArray");
 extern "C" void MH3_ModelFurPositionArray(CpuContext* cpu) {
-    const uint32_t resource = Memory::Read32(cpu->gpr[3]);
+    const uint32_t resource = DrawMemory::Read32(cpu->gpr[3]);
     if (!resource)
         return;
-    const uint32_t size = Memory::Read32(resource);
+    const uint32_t size = DrawMemory::Read32(resource);
     mh3_native_vertex_source source{};
     if (mh3_vertex_fur_source_read({Memory::GetPointer(resource, size), size}, resource, uint16_t(cpu->gpr[4]), &source) != MH3_RES_OK)
         throw std::runtime_error("Invalid native fur position sample");

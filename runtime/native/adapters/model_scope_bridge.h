@@ -13,4 +13,12 @@ void SubmitNativeModelShape(uint32_t shape_reference, uint32_t position, uint32_
 // Each model draw call starts its own pose copies.
 void BeginNativeModelDraw();
 void ExecuteNativeModelDraw(uint32_t slot, uint32_t item);
-void TraceNativeModelDispatch(struct CpuContext* cpu);
+// RMHP08 display-list dispatch 80076A58: material/shape resource references,
+// direct position/normal matrices, dispatch flags, replacement bindings and the
+// indirect operator from 80077814.
+struct NativeModelDispatch {
+    uint32_t material, shape, position, normal, flags, bindings, descriptor;
+};
+uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference);
+void DispatchNativeModel(const NativeModelDispatch& dispatch);
+void TraceNativeModelDispatch(const NativeModelDispatch& dispatch);

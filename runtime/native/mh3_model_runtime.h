@@ -8,9 +8,25 @@
 extern "C" {
 #endif
 
+/* Owned bytes standing in for guest memory from a canonical cached address
+ * (0x8xxxxxxx/0x9xxxxxxx) or a locked-cache address (0xe00xxxxx). A writable
+ * region's span data may be written through by its owner. */
+typedef struct {
+    uint32_t address;
+    mh3_res_span span;
+    int writable;
+} mh3_res_region;
 typedef struct {
     mh3_res_span mem1, mem2, locked_cache;
+    /* Optional owned regions, ordered by address and nonoverlapping. They
+     * overlay the guest windows: an access that starts in a region must end
+     * in it; any other access maps through the windows. */
+    const mh3_res_region *regions;
+    size_t region_count;
 } mh3_res_memory;
+/* The region holding [address, address + bytes), or NULL (no region starts at
+ * or before the canonical address, or the range leaves the region). */
+const mh3_res_region *mh3_res_memory_region(const mh3_res_memory *, uint32_t address, size_t bytes, size_t *offset);
 typedef struct {
     mh3_res_span span;
     size_t offset;

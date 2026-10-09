@@ -2,6 +2,7 @@
 // live in native C; this file only maps owned RAM spans, arguments and results.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "draw_memory.h"
 #include "port_check.h"
 #include "../native/mh3_model_runtime.h"
 
@@ -10,11 +11,15 @@
 #include <stdexcept>
 
 namespace {
-const mh3_res_memory& ResourceMemory() {
+const mh3_res_memory& LiveMemory() {
     static const mh3_res_memory memory{{Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size), Memory::kMem1Size},
                                        {Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size), Memory::kMem2Size},
                                        {Memory::GetPointer(0xe0000000, 0x4000), 0x4000}};
     return memory;
+}
+// The draw path's installed view (draw_memory.h), else live guest memory.
+const mh3_res_memory& ResourceMemory() {
+    return DrawMemory::view ? *DrawMemory::view : LiveMemory();
 }
 uint32_t Result(mh3_res_status status, uint32_t value) {
     if (status != MH3_RES_OK) {

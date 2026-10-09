@@ -2,6 +2,7 @@
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "draw_memory.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
@@ -444,8 +445,8 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
             const uint32_t address = sibling.model_address;
             // Provenance selected the owner; header fields validate layout,
             // rather than identifying bytes by a magic/name/content match.
-            if (Memory::Read32(address) != 0x4d444c30 || Memory::Read32(address + 4) != model.model_bytes || Memory::Read32(address + 8) != model.revision ||
-                Canonical(address + Memory::Read32(address + 12), 1) != container)
+            if (DrawMemory::Read32(address) != 0x4d444c30 || DrawMemory::Read32(address + 4) != model.model_bytes || DrawMemory::Read32(address + 8) != model.revision ||
+                Canonical(address + DrawMemory::Read32(address + 12), 1) != container)
                 throw std::runtime_error("Loaded native MDL0 header differs from registered source identity");
             NativeModelOwner related{p.pack, p.catalog, j, container, address, p.handle, p.generation, generation};
             siblings.push_back({related, sibling});
@@ -472,10 +473,10 @@ mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, u
     }
     if (resource < owner.container_address)
         throw std::runtime_error("Native model resource precedes its container");
-    const uint32_t id = Memory::Read32(resource + (material ? 12 : 60));
+    const uint32_t id = DrawMemory::Read32(resource + (material ? 12 : 60));
     mh3_catalog_resource r{};
     if (mh3_model_catalog_find_resource(owner.catalog, owner.catalog_model_index, material, id, &r) != MH3_PACK_OK || resource - owner.container_address != r.source_offset ||
-        Memory::Read32(resource) != r.source_bytes || Canonical(resource + Memory::Read32(resource + 4), 1) != owner.model_address)
+        DrawMemory::Read32(resource) != r.source_bytes || Canonical(resource + DrawMemory::Read32(resource + 4), 1) != owner.model_address)
         throw std::runtime_error("Native model subresource identity differs from registered source");
     resources.insert_or_assign(key, CachedResource{source_epoch, owner.source_generation, r});
     return r;

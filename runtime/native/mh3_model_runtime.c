@@ -8,6 +8,55 @@ typedef mh3_res_memory_view view;
 static uint32_t word(const uint8_t *p) {
     return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
 }
+static uint32_t canonical_address(uint32_t address) {
+    return address >= UINT32_C(0xe0000000) ? address : (address & UINT32_C(0x3fffffff)) | UINT32_C(0x80000000);
+}
+/* Index one past the last region starting at or before the canonical address. */
+static size_t region_after(const mh3_res_memory *m, uint32_t canonical) {
+    size_t lo = 0, hi = m->region_count;
+    while (lo < hi) {
+        const size_t mid = lo + (hi - lo) / 2;
+        if (m->regions[mid].address <= canonical)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+const mh3_res_region *mh3_res_memory_region(const mh3_res_memory *m, uint32_t address, size_t bytes, size_t *offset) {
+    if (!m || !m->regions)
+        return NULL;
+    const uint32_t canonical = canonical_address(address);
+    const size_t after = region_after(m, canonical);
+    if (!after)
+        return NULL;
+    const mh3_res_region *r = &m->regions[after - 1];
+    const size_t at = canonical - r->address;
+    if (!r->span.data || at > r->span.size || bytes > r->span.size - at)
+        return NULL;
+    if (offset)
+        *offset = at;
+    return r;
+}
+/* RES_ABSENT: the range touches no region (map through the windows). A range
+ * that runs from the windows into a region is out of range. */
+static mh3_res_status mapped_region(const mh3_res_memory *m, uint32_t address, size_t bytes, view *out) {
+    const uint32_t canonical = canonical_address(address);
+    const size_t after = region_after(m, canonical);
+    const mh3_res_region *r = after ? &m->regions[after - 1] : NULL;
+    const size_t offset = r ? canonical - r->address : 0;
+    if (!r || !r->span.data || offset >= r->span.size) {
+        if (after < m->region_count && (uint64_t)canonical + bytes > m->regions[after].address)
+            return MH3_RES_RANGE;
+        return MH3_RES_ABSENT;
+    }
+    if (bytes > r->span.size - offset)
+        return MH3_RES_RANGE;
+    out->span = r->span;
+    out->offset = offset;
+    out->guest_base = address - (uint32_t)offset;
+    return MH3_RES_OK;
+}
 static mh3_res_status mapped(const mh3_res_memory *m, uint32_t address, size_t bytes, view *out) {
     uint32_t physical = address & UINT32_C(0x3fffffff), offset;
     mh3_res_span span;
@@ -15,6 +64,11 @@ static mh3_res_status mapped(const mh3_res_memory *m, uint32_t address, size_t b
         return MH3_RES_INVALID;
     if ((address >> 30) == 1)
         return MH3_RES_RANGE;
+    if (m->regions) {
+        const mh3_res_status status = mapped_region(m, address, bytes, out);
+        if (status != MH3_RES_ABSENT)
+            return status;
+    }
     if (address >= UINT32_C(0xe0000000) && address < UINT32_C(0xe0004000)) {
         offset = address - UINT32_C(0xe0000000);
         span = m->locked_cache;

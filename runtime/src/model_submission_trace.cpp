@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "port_check.h"
 #include "../native/mh3_model_draw.h"
+#include "runtime/native/adapters/model_scope_bridge.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -115,21 +116,21 @@ mh3_res_status Predict(void* opaque, const mh3_model_draw_item* item) {
     return MH3_RES_OK;
 }
 
-void TraceDispatch(CpuContext* cpu) {
+void TraceDispatch(const NativeModelDispatch& d) {
     if (!activeTrace)
         return;
     auto& trace = *activeTrace;
-    const uint32_t material = Memory::Read32(cpu->gpr[3]);
-    const uint32_t shape = Memory::Read32(cpu->gpr[4]);
+    const uint32_t material = Memory::Read32(d.material);
+    const uint32_t shape = Memory::Read32(d.shape);
     bool matches = trace.actual < trace.expected.size();
     if (matches) {
         const auto& item = trace.expected[trace.actual];
-        matches = material == Address(trace.view, item.material.offset) && shape == Address(trace.view, item.shape.offset) && cpu->gpr[7] == item.dispatch_flags;
+        matches = material == Address(trace.view, item.material.offset) && shape == Address(trace.view, item.shape.offset) && d.flags == item.dispatch_flags;
     }
     if (!matches)
         ++trace.mismatches;
     std::fprintf(Config().file, "dispatch\t%u\t%llu\t%u\t%08x\t%08x\t%x\t%08x\t%08x\t%08x\t%08x\t%u\n", trace.frame, static_cast<unsigned long long>(trace.call), trace.actual++, material, shape,
-                 cpu->gpr[7], cpu->gpr[5], cpu->gpr[6], cpu->gpr[8], cpu->gpr[9], unsigned(matches));
+                 d.flags, d.position, d.normal, d.bindings, d.descriptor, unsigned(matches));
 }
 #endif
 
@@ -245,8 +246,8 @@ extern "C" void MH3_ModelDraw(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80078B00, MH3_ModelDraw, "G3dDrawOpaXlu");
 
-void TraceNativeModelDispatch(CpuContext* cpu) {
+void TraceNativeModelDispatch(const NativeModelDispatch& dispatch) {
 #ifdef MH3_DEVELOPMENT
-    TraceDispatch(cpu);
+    TraceDispatch(dispatch);
 #endif
 }

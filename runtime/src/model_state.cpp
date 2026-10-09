@@ -1,6 +1,7 @@
 // Platform memory/ownership bridge to typed native C model inputs. No GX,
 // guest rendering helper or source command-list decoder is called here.
 #include "memory.h"
+#include "draw_memory.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include <stdexcept>
 #include <string>
@@ -25,7 +26,7 @@ void Checked(mh3_res_status status) {
 uint32_t Resource(uint32_t reference) {
     if (!reference)
         throw std::runtime_error("Null native resource reference");
-    const uint32_t resource = Memory::Read32(reference);
+    const uint32_t resource = DrawMemory::Read32(reference);
     if (!resource)
         throw std::runtime_error("Null native resource data");
     return resource;
@@ -61,16 +62,16 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
             item.second.generation = generation;
 }
 mh3_native_texture_source ReadNativeResTexture(uint32_t reference) {
-    const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
+    const uint32_t resource = Resource(reference), size = DrawMemory::Read32(resource + 4);
     mh3_native_texture_source source{};
-    Checked(mh3_texture_source_read({Memory::GetPointer(resource, size), size}, resource, &source));
+    Checked(mh3_texture_source_read({DrawMemory::Pointer(resource, size), size}, resource, &source));
     source.generation = ReadNativeTextureGeneration(source.payload_address);
     return source;
 }
 mh3_native_palette_source ReadNativeResPalette(uint32_t reference) {
-    const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
+    const uint32_t resource = Resource(reference), size = DrawMemory::Read32(resource + 4);
     mh3_native_palette_source source{};
-    Checked(mh3_palette_source_read({Memory::GetPointer(resource, size), size}, resource, &source));
+    Checked(mh3_palette_source_read({DrawMemory::Pointer(resource, size), size}, resource, &source));
     source.generation = ReadNativeTextureGeneration(source.payload_address);
     return source;
 }
@@ -152,7 +153,7 @@ void StoreNativeModelMatrixSources(uint32_t state, const uint32_t addresses[3]) 
     if (next.generation == UINT64_MAX)
         throw std::runtime_error("Native matrix source revision overflow");
     mh3_matrix_bind(&next, addresses);
-    Checked(mh3_matrix_store_sources({Memory::GetPointer(state, 12), 12}, addresses));
+    Checked(mh3_matrix_store_sources({DrawMemory::Mutable(state, 12), 12}, addresses));
     matrix_sources.insert_or_assign(state, next);
 }
 mh3_matrix_binding ReadNativeModelMatrixSources(uint32_t state) {

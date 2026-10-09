@@ -3,6 +3,7 @@
 // no guest rendering functions, GX calls or source command lists are used.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "draw_memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
@@ -23,10 +24,10 @@ uint32_t Resource(uint32_t reference) {
     return result;
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {DrawMemory::Mutable(address, size), size};
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {DrawMemory::Pointer(address, size), size};
 }
 mh3_native_camera Camera(uint32_t resource) {
     mh3_native_camera camera{};
@@ -38,7 +39,7 @@ void StoreCamera(uint32_t resource, const mh3_native_camera& camera) {
 }
 void StoreFloats(uint32_t destination, const float* data, size_t count) {
     for (size_t i = 0; i < count; ++i)
-        Memory::WriteFloat32(destination + uint32_t(i * 4), data[i]);
+        DrawMemory::WriteFloat32(destination + uint32_t(i * 4), data[i]);
 }
 void ApplyScissor(const mh3_native_camera& camera) {
     int32_t rectangle[4];
@@ -51,11 +52,11 @@ std::unordered_map<uint32_t, mh3_native_light_slots> light_slots;
 void RestoreNativeModelCamera() {
     // 802BDCF4 ->800473FC ->ScnRoot::GetCamera, not an inherited backend
     // projection. MyPlayerIndex is the signed byte8065AA87 (800CF3E8).
-    const uint32_t scene = Memory::Read32(0x80796e34);
+    const uint32_t scene = DrawMemory::Read32(0x80796e34);
     mh3_res_memory_view view{};
     Checked(mh3_res_runtime_map(&MH3NativeResourceMemory(), scene, 248, &view));
     uint32_t resource = 0;
-    Checked(mh3_scene_camera_select({view.span.data + view.offset, view.span.size - view.offset}, scene, Memory::Read8(0x8065b4d6) != 0, int8_t(Memory::Read8(0x8065aa87)), Bytes(0x8065b50c, 4),
+    Checked(mh3_scene_camera_select({view.span.data + view.offset, view.span.size - view.offset}, scene, DrawMemory::Read8(0x8065b4d6) != 0, int8_t(DrawMemory::Read8(0x8065aa87)), Bytes(0x8065b50c, 4),
                                     &resource));
     auto camera = Camera(resource);
     Checked(mh3_camera_prepare_projection(&camera));
@@ -73,7 +74,7 @@ extern "C" void MH3_CameraProject(CpuContext* cpu) {
         return;
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
-    const mh3_vec3 point{{Memory::ReadFloat32(cpu->gpr[5]), Memory::ReadFloat32(cpu->gpr[5] + 4), Memory::ReadFloat32(cpu->gpr[5] + 8)}};
+    const mh3_vec3 point{{DrawMemory::ReadFloat32(cpu->gpr[5]), DrawMemory::ReadFloat32(cpu->gpr[5] + 4), DrawMemory::ReadFloat32(cpu->gpr[5] + 8)}};
     mh3_vec3 result{};
     Checked(mh3_camera_project(&camera, &point, &result));
     StoreCamera(resource, camera);
@@ -109,7 +110,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80075E3C, MH3_CameraPrepareProjection, "CameraPrep
 extern "C" void MH3_CameraApplyViewport(CpuContext* cpu) {
     const auto camera = Camera(Resource(cpu->gpr[3]));
     auto y = camera.viewport[1];
-    if (Memory::Read8(0x8068a7e0) && !(camera.flags & 256))
+    if (DrawMemory::Read8(0x8068a7e0) && !(camera.flags & 256))
         y -= 0.5f;
     SetNativeViewport(camera.viewport[0], y, camera.viewport[2], camera.viewport[3], camera.viewport[4], camera.viewport[5]);
 }
@@ -136,7 +137,7 @@ extern "C" void MH3_FogRange(CpuContext* cpu) {
     float projection[16];
     uint16_t table[10];
     for (uint32_t i = 0; i < 16; i++)
-        projection[i] = Memory::ReadFloat32(cpu->gpr[6] + i * 4);
+        projection[i] = DrawMemory::ReadFloat32(cpu->gpr[6] + i * 4);
     Checked(mh3_fog_range_table(uint16_t(cpu->gpr[4]), projection, table));
     Checked(mh3_fog_range_store(Mutable(resource, 48), uint16_t(cpu->gpr[5]), table));
 }
@@ -158,14 +159,14 @@ REGISTER_NATIVE_FUNCTION_AS(0x80088200, MH3_FogSelect, "FogSelect");
 
 extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
     const uint32_t state = cpu->gpr[3], setting = cpu->gpr[4];
-    const uint16_t count = Memory::Read16(setting), sets = Memory::Read16(setting + 2);
+    const uint16_t count = DrawMemory::Read16(setting), sets = DrawMemory::Read16(setting + 2);
     if (count > 128 || sets > 128)
         throw std::runtime_error("Native LightSetting capacity exceeds128");
     mh3_matrix34 view{};
     Checked(mh3_scene_view_matrix(Bytes(0x80688d94, 52 + 32 * 48), &view));
     mh3_native_light_slots slots{};
-    Checked(mh3_light_state_import(Mutable(state, MH3_LIGHT_STATE_BYTES), count, sets, count ? Bytes(Memory::Read32(setting + 4), size_t(count) * 68) : mh3_res_span{},
-                                   count ? Bytes(Memory::Read32(setting + 8), size_t(count) * 4) : mh3_res_span{}, sets ? Bytes(Memory::Read32(setting + 12), size_t(sets) * 12) : mh3_res_span{},
+    Checked(mh3_light_state_import(Mutable(state, MH3_LIGHT_STATE_BYTES), count, sets, count ? Bytes(DrawMemory::Read32(setting + 4), size_t(count) * 68) : mh3_res_span{},
+                                   count ? Bytes(DrawMemory::Read32(setting + 8), size_t(count) * 4) : mh3_res_span{}, sets ? Bytes(DrawMemory::Read32(setting + 12), size_t(sets) * 12) : mh3_res_span{},
                                    &view, &slots));
     light_slots.insert_or_assign(state, slots);
     SetNativeModelLights(slots);
@@ -185,7 +186,7 @@ extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
     for (uint32_t i = 0; i < 4; i++)
         if (cpu->gpr[5 + i])
-            Memory::Write32(cpu->gpr[5 + i], masks[i]);
+            DrawMemory::Write32(cpu->gpr[5 + i], masks[i]);
     if (cpu->gpr[9]) {
         auto* destination = Memory::GetPointer(cpu->gpr[9], 4);
         destination[0] = slots.ambient.r;
@@ -223,7 +224,7 @@ extern "C" void MH3_ModelTextureObject(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800976C0, MH3_ModelTextureObject, "ModelTextureObject");
 extern "C" void MH3_ModelPaletteObject(CpuContext* cpu) {
-    const uint32_t info = Resource(cpu->gpr[3]), objects = Resource(cpu->gpr[5]), slot = Memory::Read32(info + 16);
+    const uint32_t info = Resource(cpu->gpr[3]), objects = Resource(cpu->gpr[5]), slot = DrawMemory::Read32(info + 16);
     if (slot >= 8)
         throw std::runtime_error("Native material palette slot outside0..7");
     const auto palette = ReadNativeResPalette(cpu->gpr[4]);
@@ -235,7 +236,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80097990, MH3_ModelPaletteObject, "ModelPaletteObj
 
 extern "C" void MH3_ModelTextureReplace(CpuContext* cpu) {
     const uint32_t objects = Resource(cpu->gpr[3]), palettes = Resource(cpu->gpr[4]), result = cpu->gpr[5];
-    const auto texture_mask = Memory::Read8(result), palette_mask = Memory::Read8(result + 1);
+    const auto texture_mask = DrawMemory::Read8(result), palette_mask = DrawMemory::Read8(result + 1);
     for (uint32_t i = 0; i < 8; i++) {
         if (texture_mask & (1u << i)) {
             const uint32_t object = objects + 4 + i * 32;

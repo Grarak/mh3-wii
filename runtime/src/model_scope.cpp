@@ -3,6 +3,7 @@
 // forward direct material/mesh publications. No guest/GX/FIFO calls.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "draw_memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -37,10 +38,10 @@ void PackChecked(mh3_pack_status status) {
         throw std::runtime_error("Native model resident mesh failed: " + std::to_string(status));
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {DrawMemory::Pointer(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {DrawMemory::Mutable(address, size), size};
 }
 uint32_t Resource(uint32_t reference, bool required = false) {
     uint32_t data = 0;
@@ -74,7 +75,7 @@ void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
     const auto* fields = count ? &ReadNativeLiveMaterialBlockView(address, kind).fields : nullptr;
     if (!xf)
         Genmode(false);
-    Memory::GetPointer(sync_address, 1)[0] = 0;
+    DrawMemory::Write8(sync_address, 0);
     if (count)
         OverlayNativeModelMaterialGroup(*fields, kind, count);
     if (xf)
@@ -85,7 +86,7 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     uint32_t version = 0;
     if (material) {
         uint32_t parent = 0;
-        Checked(mh3_res_runtime_offset(&MH3NativeResourceMemory(), reference, int32_t(Memory::Read32(material + 4)), 4, &parent));
+        Checked(mh3_res_runtime_offset(&MH3NativeResourceMemory(), reference, int32_t(DrawMemory::Read32(material + 4)), 4, &parent));
         const auto owner = ResolveNativeModelOwner(parent);
         (void)ResolveNativeModelResource(owner, material, true);
         mh3_catalog_model model{};
@@ -104,8 +105,8 @@ struct PrepareContext {
 };
 void OperatorKnown(uint32_t address) {
     Checked(mh3_matrix_runtime_operator(&MH3NativeResourceMemory(), address, 0x80088a5c, 0x800888bc));
-    const uint32_t table = Memory::Read32(address);
-    if (Memory::Read32(table + 8) != 0x80088aac)
+    const uint32_t table = DrawMemory::Read32(address);
+    if (DrawMemory::Read32(table + 8) != 0x80088aac)
         throw std::runtime_error("Custom indirect apply callback has no native producer");
 }
 void Indirect(uint32_t resource, uint32_t op) {
@@ -250,7 +251,7 @@ void PrePrimitive(const ShapeContext& context) {
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     Genmode(true);
     Checked(mh3_model_shape_cache(Mutable(0x80685504, 12), Bytes(shape + 12, 12)));
-    Memory::GetPointer(sync_address, 1)[0] = 0;
+    DrawMemory::Write8(sync_address, 0);
     for (uint32_t i = 0; i < 12; i++)
         if (sources.known & (1u << i))
             StoreNativeVertexSource(i, sources.source[i]);
@@ -266,12 +267,12 @@ void Replacements(const ShapeContext& context, const mh3_model_material_scope& s
         const uint32_t table = scope.selected.vertex_tables[i < 2 ? i : 2];
         if (!table)
             continue;
-        const int32_t id = int16_t(Memory::Read16(shape + 0x48 + i * 2));
+        const int32_t id = int16_t(DrawMemory::Read16(shape + 0x48 + i * 2));
         if (id < 0)
             continue;
         if (uint64_t(table) + uint32_t(id) * 4 > UINT32_MAX)
             throw std::runtime_error("Model replacement vertex table overflows");
-        const uint32_t resource = Memory::Read32(table + uint32_t(id) * 4);
+        const uint32_t resource = DrawMemory::Read32(table + uint32_t(id) * 4);
         const auto kind = i == 0 ? MH3_VERTEX_POSITION : i == 1 ? MH3_VERTEX_NORMAL : MH3_VERTEX_COLOR;
         const auto source = ReadNativeVertexResourceData(resource, kind);
         if (i == 0 && Canonical(source.payload_address) != Canonical(originals.source[0].payload_address))
@@ -306,16 +307,16 @@ void LoadNativeModelPipeline(uint32_t resource) {
         throw std::runtime_error("Model pipeline offset overflows");
     const auto& fields = ReadNativeLiveMaterialBlockView(resource + 32, MH3_MODEL_MATERIAL_PIPELINE).fields;
     const auto generation = fields.generation;
-    if (Memory::Read32(0x80796dbc) == resource && pipeline_address == resource && pipeline_revision == generation)
+    if (DrawMemory::Read32(0x80796dbc) == resource && pipeline_address == resource && pipeline_revision == generation)
         return;
     uint8_t table[8], known = 0;
     ReadNativeModelCoordinateMap(resource + 32, table, &known);
     Checked(mh3_model_coordinate_table(Mutable(coordinate_cache, 108), table));
     coordinate_map_known = known;
     Genmode(false);
-    Memory::GetPointer(sync_address, 1)[0] = 0;
+    DrawMemory::Write8(sync_address, 0);
     OverlayNativeModelMaterialGroup(fields, MH3_MODEL_MATERIAL_PIPELINE);
-    Memory::Write32(0x80796dbc, resource);
+    DrawMemory::Write32(0x80796dbc, resource);
     pipeline_address = resource;
     pipeline_revision = generation;
     PrepareNativeModelCoordinateSizes(Mode().texgens);
@@ -439,10 +440,10 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         for (uint32_t row : produced.texture_ids)
             if (row != 60)
                 identity = false;
-        if (!identity || !Memory::Read8(locations.current_valid))
+        if (!identity || !DrawMemory::Read8(locations.current_valid))
             PublishNativeModelMatrixRows(produced.texture_ids);
-        Memory::Write8(locations.current_valid, identity ? 1 : 0);
-    } else if (!Memory::Read8(locations.current_valid)) {
+        DrawMemory::Write8(locations.current_valid, identity ? 1 : 0);
+    } else if (!DrawMemory::Read8(locations.current_valid)) {
         // Envelope setup selects identity CURRENT tex-matrix rows; it does not
         // load identity position/normal slots. Per-vertex indices select the
         // actual ordered loads/inherited values in the converted primitives.
@@ -450,15 +451,15 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         for (auto& row : rows)
             row = 60;
         PublishNativeModelMatrixRows(rows);
-        Memory::Write8(locations.current_valid, 1);
+        DrawMemory::Write8(locations.current_valid, 1);
     }
     Genmode(true);
-    Memory::GetPointer(sync_address, 1)[0] = 0;
+    DrawMemory::Write8(sync_address, 0);
     // Publish the producer's row/dual fields once. Palette batches consume the
     // owner's material directly; they do not submit a full material copy.
     ApplyNativeModelSelectors();
     if (item.input.matrix_id < 0)
-        Memory::Write8(locations.current_valid, 0);
+        DrawMemory::Write8(locations.current_valid, 0);
 }
 void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
     const auto& prepared = *item.prepared;
@@ -577,41 +578,42 @@ extern "C" void MH3_ModelShapePrimitive(CpuContext* cpu) {
     SubmitNativeModelShape(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087B34, MH3_ModelShapePrimitive, "ModelShapePrimitive");
-extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
+uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference) {
     current_operator = {};
     operator_address = 0;
-    const uint32_t material = Resource(cpu->gpr[3]), shape = Resource(cpu->gpr[5]);
-    if (material && shape && (Memory::Read8(material + 0x20) || Memory::Read8(material + 0x21) || Memory::Read8(material + 0x22))) {
+    const uint32_t material = Resource(material_reference), shape = Resource(shape_reference);
+    if (material && shape && (DrawMemory::Read8(material + 0x20) || DrawMemory::Read8(material + 0x21) || DrawMemory::Read8(material + 0x22))) {
         uint32_t parent = 0;
-        Checked(mh3_res_runtime_shape_parent(&MH3NativeResourceMemory(), cpu->gpr[5], &parent));
+        Checked(mh3_res_runtime_shape_parent(&MH3NativeResourceMemory(), shape_reference, &parent));
         const auto owner = ResolveNativeModelOwner(parent);
         const auto binding = ReadNativeModelMatrixSources(locations.arrays);
-        if (int32_t(Memory::Read32(shape + 8)) >= 0)
+        if (int32_t(DrawMemory::Read32(shape + 8)) >= 0)
             (void)ReadNativeModelPose(binding.address, owner.model_address);
     }
-    Checked(mh3_matrix_runtime_indirect(&MH3NativeResourceMemory(), &locations, cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], &current_operator));
-    if (!current_operator.active) {
-        cpu->gpr[3] = 0;
-        return;
-    }
+    Checked(mh3_matrix_runtime_indirect(&MH3NativeResourceMemory(), &locations, material_reference, node_reference, shape_reference, &current_operator));
+    if (!current_operator.active)
+        return 0;
     operator_address = Resource(0x80793708, true);
     OperatorKnown(operator_address);
     Checked(mh3_matrix_store_indirect(Mutable(operator_address, 152), &current_operator));
-    cpu->gpr[3] = operator_address;
+    return operator_address;
+}
+extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
+    cpu->gpr[3] = NativeModelIndirectMatrices(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices");
-extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
-    TraceNativeModelDispatch(cpu);
+void DispatchNativeModel(const NativeModelDispatch& d) {
+    TraceNativeModelDispatch(d);
     mh3_model_material_scope scope;
     {
         MH3_SPLIT_SCOPE(MH3_SPLIT_MATERIAL_PREP);
-        scope = Scope(cpu->gpr[3], cpu->gpr[8]);
-        const bool ignore = !scope.material_address || (cpu->gpr[7] & 16);
+        scope = Scope(d.material, d.bindings);
+        const bool ignore = !scope.material_address || (d.flags & 16);
         PrepareContext context{};
-        Checked(mh3_model_material_prepare_scope(&scope, cpu->gpr[7], cpu->gpr[9], ignore, PrepareStep, &context));
+        Checked(mh3_model_material_prepare_scope(&scope, d.flags, d.descriptor, ignore, PrepareStep, &context));
     }
     uint32_t visible = 0;
-    Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), cpu->gpr[4], &visible));
+    Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), d.shape, &visible));
     if (!visible)
         return;
     if (scope.fur_address)
@@ -619,26 +621,29 @@ extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
     // A dispatch resolves its shape's owner and sources once for the
     // primitive setup, replacements and submission. Without a shape only the
     // replacements (which require one) have an effect: they fail.
-    if (!Resource(cpu->gpr[4])) {
-        if (!(cpu->gpr[7] & 2))
-            Replacements(ResolveShape(cpu->gpr[4]), scope);
+    if (!Resource(d.shape)) {
+        if (!(d.flags & 2))
+            Replacements(ResolveShape(d.shape), scope);
         return;
     }
     const auto shape = [&] {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        return ResolveShape(cpu->gpr[4]);
+        return ResolveShape(d.shape);
     }();
-    if (!(cpu->gpr[7] & 2)) {
+    if (!(d.flags & 2)) {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
         PrePrimitive(shape);
         Replacements(shape, scope);
     }
-    if (cpu->gpr[7] & 4) {
+    if (d.flags & 4) {
         // The original republishes the whole material with front culling.
         OverlayNativeMaterialTop(MH3_MATERIAL_TOP_CULL, 0, 0, 0, 0, 1);
-        std::memset(Memory::GetPointer(0x80685504, 12), 0, 12);
-        Memory::Write8(sync_address, 1);
+        std::memset(DrawMemory::Mutable(0x80685504, 12), 0, 12);
+        DrawMemory::Write8(sync_address, 1);
     }
-    SubmitShape(shape, cpu->gpr[5], cpu->gpr[6]);
+    SubmitShape(shape, d.position, d.normal);
+}
+extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
+    DispatchNativeModel({cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9]});
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch");
