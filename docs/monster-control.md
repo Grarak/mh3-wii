@@ -177,7 +177,7 @@ command run is echoed (`MH3 monster control: act 2 5`).
 | `face DEGREES` | set its yaw |
 | `goto X Y Z` | place it |
 | `hunter save`, `hunter back`, `hunter X Y Z` | remember the local hunter's place, put it back there, or place it (attacks aim at the hunter, so a sweep puts it back before each) |
-| `hunter act KIND ACTION`, `hunter list` | start the local hunter's action through FieldNextAction (0x80275B28), or print its group, action, state, timer, motion and the motion's frame, end and loop frames; the reactions are kind 6 (dispatcher 0x8025A33C), their water variants mostly the odd actions |
+| `hunter act KIND ACTION`, `hunter list` | start the local hunter's action through FieldNextAction (0x80275B28), or print the map and area, its group, action, state, timer, motion and the motion's frame, end and loop frames; the reactions are kind 6 (dispatcher 0x8025A33C), their water variants mostly the odd actions |
 | `wait TICKS` | run the next commands TICKS ticks of game time later (a whole sequence can be written before the start) |
 | `list` | print each monster's index, work, kind, action, state, position and yaw |
 | `# ...` | a comment |

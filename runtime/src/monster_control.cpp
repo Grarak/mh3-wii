@@ -23,8 +23,8 @@
 //   hunter X Y Z          place the local hunter
 //   hunter act KIND ACTION  start the local hunter's action (FieldNextAction;
 //                         kind 6 holds the reactions, water variants odd)
-//   hunter list           print the hunter's group, action, state, timer,
-//                         motion and its frames
+//   hunter list           print the map and area, the hunter's group, action,
+//                         state, timer, motion and its frames
 //   wait TICKS            run the next commands TICKS ticks of game time later
 //   list                  print each monster's kind, action and position
 #include "monster_control.h"
@@ -76,6 +76,7 @@ enum : uint32_t {
 #ifdef MH3_DEVELOPMENT
 constexpr uint32_t kStepCounter = 0x8065AA6C; // ticks of game time
 constexpr uint32_t kHunterPosition = 0x3C;    // PLW f32[3] (the teleporter cheat's)
+constexpr uint32_t kMapNo = 0x806BB805, kAreaNo = 0x806BB806; // u8: get_now_mapno, get_now_areano
 
 // The PLW's action (player_work.h).
 enum : uint32_t {
@@ -144,14 +145,14 @@ void Start(GuestCall& game, uint32_t work, uint8_t mode, uint8_t sub) {
     g_commanded = false;
 }
 
-// The motion's channel 0 (mhchar_motion.cpp, at MHchar +4): frame, end and
-// loop frames (loop < 0 holds the end), frames per tick.
+// The map and area, and the motion's channel 0 (mhchar_motion.cpp, at MHchar
+// +4): frame, end and loop frames (loop < 0 holds the end), frames per tick.
 void ListHunter(uint32_t plw) {
     const uint32_t chr = Memory::Read32(plw + kHunterChar);
     const uint32_t channel = chr ? chr + 4 : 0;
     std::fprintf(stderr,
-                 "MH3 monster control: hunter %08x group %u action %u.%u state %u timer %d motion %u frame %.2f end %.1f loop %.1f rate %.2f at %.1f %.1f %.1f\n", plw,
-                 Memory::Read8(plw + kHunterGroup), Memory::Read8(plw + kHunterKind), Memory::Read16(plw + kHunterAction), Memory::Read8(plw + kHunterState),
+                 "MH3 monster control: hunter %08x map %u area %u group %u action %u.%u state %u timer %d motion %u frame %.2f end %.1f loop %.1f rate %.2f at %.1f %.1f %.1f\n",
+                 plw, Memory::Read8(kMapNo), Memory::Read8(kAreaNo), Memory::Read8(plw + kHunterGroup), Memory::Read8(plw + kHunterKind), Memory::Read16(plw + kHunterAction), Memory::Read8(plw + kHunterState),
                  int32_t(Memory::Read32(plw + kHunterTimer)), chr ? Memory::Read16(chr + 0x54) : 0u, channel ? F(channel + 0x74) : 0.0f, channel ? F(channel + 0xA4) : 0.0f,
                  channel ? F(channel + 0xBC) : 0.0f, channel ? F(channel + 0x5C) : 0.0f, F(plw + kHunterPosition), F(plw + kHunterPosition + 4), F(plw + kHunterPosition + 8));
 }
