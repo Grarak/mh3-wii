@@ -181,6 +181,9 @@ struct ProgramDesc {
   // and with texture coordinates prepared by the native application producer.
   bool nativeMaterialVertices = false;
   MeshLayout nativeMeshLayout;
+  // GXM: vertex/fragment are hand-written Cg for draw_shaded_* (no GLSL
+  // conversion); blocks name BUFFER indices, vertex attributes bind per draw.
+  bool cg = false;
 };
 
 // One immutable converted-pack payload. Vita reads directly into CDRAM; GLES
@@ -318,6 +321,34 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
 void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount, GLuint program,
                       const AuroraNativeUniforms& uniforms);
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
+
+// Fixed native shading programs (runtime/src/native_shader_source.cpp). Blocks:
+// Draw 0 (vertex), Scene 1, Palette 2 (mesh vertex), Shade 3 (fragment). Draw
+// and Shade share one allocation; Shade starts at shadeOffset. Scene is
+// re-uploaded only when its revision changes.
+struct ShadedBlocks {
+  const void* draw = nullptr;
+  uint32_t drawBytes = 0, shadeOffset = 0, shadeBytes = 0;
+  const void* palette = nullptr;
+  uint32_t paletteBytes = 0;
+  const void* scene = nullptr;
+  uint32_t sceneBytes = 0;
+  uint64_t sceneRevision = 0;
+};
+// Shader input locations 0..9 (position, normal, color0, uv0..2, PN selector,
+// role selectors 0..2) each read one compact mesh attribute by its layout
+// location, or one byte lane of a U8 selector attribute; -1 leaves it unbound.
+struct ShadedMeshInputs {
+  std::array<int8_t, 10> location{};
+  std::array<int8_t, 10> lane{};
+  bool operator==(const ShadedMeshInputs&) const = default;
+};
+// u_texture0..2 read the native texture units (GX map IDs) given per draw.
+void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
+                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits);
+// Application geometry: role r reads texcoord[coordinates[r]].
+void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
+                          const std::array<uint8_t, 3>& textureUnits) noexcept;
 
 // Render thread only: blit `source` into the window with the letterboxed
 // viewport and swap. Rows are stored top-down, so the blit flips.

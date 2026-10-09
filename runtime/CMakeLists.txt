@@ -179,7 +179,8 @@ add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
-    src/native_material.cpp src/model_gpu.cpp src/model_assets.cpp src/native_frame_statistics.cpp src/character_material.cpp)
+    src/native_material.cpp src/model_gpu.cpp src/model_assets.cpp src/native_frame_statistics.cpp src/character_material.cpp
+    src/native_shader_source.cpp native/mh3_shade.c)
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()
@@ -207,6 +208,10 @@ if(TARGET aurora::core)
     target_include_directories(mh3_native_frame_statistics_check PRIVATE include)
     target_compile_features(mh3_native_frame_statistics_check PRIVATE cxx_std_20)
     add_test(NAME mh3_native_frame_statistics_check COMMAND mh3_native_frame_statistics_check)
+    add_executable(mh3_shade_check ../tests/native/test_mh3_shade.c native/mh3_shade.c)
+    target_include_directories(mh3_shade_check PRIVATE "${MH3_AURORA_ROOT}/include")
+    target_link_libraries(mh3_shade_check PRIVATE m)
+    add_test(NAME mh3_shade_check COMMAND mh3_shade_check)
     add_executable(mh3_native_depth_clear_check EXCLUDE_FROM_ALL
       ../tests/native/native_depth_clear_check.cpp src/native_display_utilities.cpp
       src/native_render_state.cpp native/mh3_draw_state.c)
@@ -222,7 +227,7 @@ if(TARGET aurora::core)
     target_link_libraries(mh3_native_geometry_check PRIVATE aurora::core aurora::gx aurora::vi)
     add_executable(mh3_native_material_check EXCLUDE_FROM_ALL
       ../tests/native/native_material_check.cpp src/native_material.cpp src/native_render_state.cpp
-      native/mh3_material_state.c native/mh3_material_group_publication.c native/mh3_draw_state.c
+      src/native_shader_source.cpp native/mh3_shade.c native/mh3_material_state.c native/mh3_material_group_publication.c native/mh3_draw_state.c
       src/model_gpu.cpp native/mh3_model_gpu_inputs.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
     target_include_directories(mh3_native_material_check PRIVATE "${MH3_AURORA_ROOT}/lib" include ..)
     target_compile_features(mh3_native_material_check PRIVATE cxx_std_20)

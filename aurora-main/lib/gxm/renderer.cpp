@@ -22,9 +22,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
+#include <span>
 #include <stdexcept>
 
 #include <thread>
+#include <vector>
 
 namespace aurora::gfx {
 uint32_t current_frame() noexcept;
@@ -61,7 +64,16 @@ struct NativeProgram {
   bool buffer0 = false;
   bool nativeMaterialVertices = false;
   MeshLayout nativeMeshLayout;
+  // draw_shaded_*: hand-written Cg patched once per distinct vertex binding.
+  bool shaded = false;
+  uint64_t vertexHash = 0, fragmentHash = 0;
+  std::vector<std::pair<std::vector<VertexInput>, std::shared_ptr<PatchedProgram>>> bindings;
 };
+bool same_inputs(std::span<const VertexInput> a, std::span<const VertexInput> b) {
+  return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const VertexInput& x, const VertexInput& y) {
+    return x.name == y.name && x.format == y.format && x.components == y.components && x.offset == y.offset && x.stride == y.stride && x.stream == y.stream;
+  });
+}
 struct State {
   RasterState raster;
   std::array<int32_t, 4> viewport{0, 0, Device::Width, Device::Height};
@@ -267,6 +279,38 @@ public:
       const std::string parameter = "aur_size_" + samplerName;
       native.program->set_vertex_uniform(parameter.c_str(), size, 2);
       native.program->set_fragment_uniform(parameter.c_str(), size, 2);
+    }
+  }
+  PatchedProgram& shaded_program(NativeProgram& native, std::span<const VertexInput> inputs) {
+    if (!native.shaded)
+      throw std::runtime_error("Shaded draw uses a non-shaded program");
+    for (auto& [key, program] : native.bindings)
+      if (same_inputs(key, inputs))
+        return *program;
+    auto program = std::make_shared<PatchedProgram>(device, native.vertexHash, native.fragmentHash, SCE_GXM_INDEX_FORMAT_U16, inputs);
+    native.bindings.emplace_back(std::vector<VertexInput>(inputs.begin(), inputs.end()), program);
+    return *program;
+  }
+  // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette; fragment BUFFER[0] Shade,
+  // [1] Scene. Sampler slot r reads the texture bound at unit units[r].
+  void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units) {
+    scene();
+    viewport();
+    apply_raster(state.raster, device.context());
+    auto blend = blend_info(state.raster, state.blendColor);
+    if (!state.display && !state.color)
+      blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
+    program.bind(blend, output_format());
+    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.palette, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    for (const auto& [samplerName, slot] : native.samplers) {
+      const auto& bound = state.textures.at(units.at(slot));
+      if (!bound.texture)
+        throw std::runtime_error("Shaded draw samples an unbound texture unit");
+      auto& source = texture(bound.texture);
+      source.note_gpu_use();
+      const SamplerDesc desc = bound.sampler ? samplers.at(bound.sampler) : NearestClamp;
+      const auto sampled = sampling_view(source, desc);
+      check(sceGxmSetFragmentTexture(device.context(), slot, &sampled), "bind shaded texture");
     }
   }
   void utility_draw(uint32_t count) {
@@ -631,7 +675,7 @@ void bind_framebuffer(GLuint color, GLuint depth) noexcept {
 }
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   guarded([&] {
-    m_usesAlphaReferences = parameterize_alpha_references(m_desc.fragment, m_alphaReferences);
+    m_usesAlphaReferences = !m_desc.cg && parameterize_alpha_references(m_desc.fragment, m_alphaReferences);
     const auto captured = gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin);
     m_capturePortableHashes = captured.portableHashes;
     m_capturePortableOrigin = captured.originFile;
@@ -656,19 +700,24 @@ GLuint Program::get() noexcept {
     if (m_program)
       return m_program;
     auto& r = renderer();
-    register_runtime_shader_sources(m_vertexHash, m_fragmentHash, m_desc.vertex, m_desc.fragment, m_desc.origin.empty() ? m_desc.label : m_desc.origin + "; " + m_desc.label);
+    register_runtime_shader_sources(m_vertexHash, m_fragmentHash, m_desc.vertex, m_desc.fragment, m_desc.origin.empty() ? m_desc.label : m_desc.origin + "; " + m_desc.label, m_desc.cg);
     const auto* binary = fragment_binary(m_fragmentHash);
     m_usesDiscard = sceGxmProgramIsDiscardUsed(binary);
     m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
     NativeProgram native;
     native.nativeMaterialVertices = m_desc.nativeMaterialVertices;
     native.nativeMeshLayout = m_desc.nativeMeshLayout;
-    auto& shared = r.patchedPrograms[{m_vertexHash, m_fragmentHash}];
+    native.shaded = m_desc.cg;
+    native.vertexHash = m_vertexHash;
+    native.fragmentHash = m_fragmentHash;
+    // Shaded programs patch per vertex binding at draw time (shaded_program).
+    std::weak_ptr<PatchedProgram> unshared;
+    auto& shared = m_desc.cg ? unshared : r.patchedPrograms[{m_vertexHash, m_fragmentHash}];
     // Compact layouts own their patched program. Shader hashes alone cannot
     // distinguish vertex strides/offsets. The frontend caches each full layout.
     if (!m_desc.nativeMeshLayout.stride)
       native.program = shared.lock();
-    if (!native.program) {
+    if (!native.program && !native.shaded) {
       if (m_desc.nativeMeshLayout.stride) {
         gfx::validate_mesh_layout(m_desc.nativeMeshLayout);
         std::vector<VertexInput> inputs;
@@ -720,6 +769,8 @@ GLuint Program::get() noexcept {
       }
     }
     for (const auto& [name, binding] : m_desc.blocks) {
+      if (native.shaded)
+        break; // Fixed BUFFER indices, bound by prepare_shaded.
       if (binding != 0)
         throw std::runtime_error("Native shader uniform block uses an unsupported binding");
       native.buffer0 = true;
@@ -1002,6 +1053,91 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw resident mesh triangles");
   r.capture_draw("mesh", program, vertexCount, indexCount);
 }
+namespace {
+SceGxmAttributeFormat attribute_format(MeshAttributeFormat format, unsigned& componentBytes) {
+  switch (format) {
+  case MeshAttributeFormat::F32:
+    componentBytes = 4;
+    return SCE_GXM_ATTRIBUTE_FORMAT_F32;
+  case MeshAttributeFormat::F16:
+    componentBytes = 2;
+    return SCE_GXM_ATTRIBUTE_FORMAT_F16;
+  case MeshAttributeFormat::U8N:
+    componentBytes = 1;
+    return SCE_GXM_ATTRIBUTE_FORMAT_U8N;
+  case MeshAttributeFormat::U8:
+    componentBytes = 1;
+    return SCE_GXM_ATTRIBUTE_FORMAT_U8;
+  case MeshAttributeFormat::S16N:
+    componentBytes = 2;
+    return SCE_GXM_ATTRIBUTE_FORMAT_S16N;
+  }
+  throw std::runtime_error("Unknown mesh attribute format");
+}
+} // namespace
+
+void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
+                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+  if (!aurora::native_frame_drawing_allowed() || !indexCount)
+    return;
+  gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
+  if (!blocks.draw || !blocks.palette || !blocks.scene)
+    throw std::runtime_error("Shaded mesh has no uniform blocks");
+  auto& r = renderer();
+  const auto found = r.meshes.find(buffer.get());
+  if (found == r.meshes.end() || found->second.data() != buffer.data())
+    throw std::runtime_error("Resident mesh backing was retired");
+  // Same order as the Cg mesh entry point; a selector lane reads one byte.
+  static constexpr const char* Names[] = {"a_position", "a_normal", "a_color0", "a_uv0", "a_uv1", "a_uv2", "a_select", "a_select0", "a_select1", "a_select2"};
+  static_assert(std::size(Names) == std::tuple_size_v<decltype(inputs.location)>);
+  VertexInput bound[std::size(Names)];
+  unsigned count = 0;
+  for (unsigned i = 0; i < std::size(Names); ++i) {
+    if (inputs.location[i] < 0)
+      continue;
+    const MeshAttribute* attribute = nullptr;
+    for (const auto& candidate : layout.attributes)
+      if (candidate.location == uint8_t(inputs.location[i]))
+        attribute = &candidate;
+    if (!attribute)
+      continue;
+    unsigned componentBytes = 0;
+    const auto format = attribute_format(attribute->format, componentBytes);
+    const int lane = inputs.lane[i];
+    bound[count++] = {Names[i], format, uint16_t(lane >= 0 ? 1 : attribute->components), uint16_t(attribute->offset + (lane >= 0 ? unsigned(lane) * componentBytes : 0)), uint16_t(layout.stride), 0};
+  }
+  auto& native = r.programs.at(program);
+  r.prepare_shaded(native, r.shaded_program(native, {bound, count}), blocks, textureUnits);
+  check(sceGxmSetVertexStream(r.device.context(), 0, buffer.data() + vertexOffset), "bind shaded mesh attributes");
+  check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, buffer.data() + indexOffset, indexCount), "draw shaded mesh");
+  r.capture_draw("shaded-mesh", program, vertexCount, indexCount);
+}
+
+void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
+                          const std::array<uint8_t, 3>& textureUnits) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
+    return;
+  guarded([&] {
+    if (!blocks.draw || !blocks.scene)
+      throw std::runtime_error("Shaded geometry has no uniform blocks");
+    auto& r = renderer();
+    constexpr uint16_t stride = sizeof(AuroraNativeMaterialVertex);
+    const auto texcoord = [&](unsigned role) { return uint16_t(offsetof(AuroraNativeMaterialVertex, texcoord) + std::min<unsigned>(coordinates[role], 7) * 12); };
+    const VertexInput inputs[]{{"a_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, offsetof(AuroraNativeMaterialVertex, position), stride, 0},
+                               {"a_view_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeMaterialVertex, view_position), stride, 0},
+                               {"a_normal", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeMaterialVertex, normal), stride, 0},
+                               {"a_color0", SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, offsetof(AuroraNativeMaterialVertex, color), stride, 0},
+                               {"a_uv0", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, texcoord(0), stride, 0},
+                               {"a_uv1", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, texcoord(1), stride, 0},
+                               {"a_uv2", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, texcoord(2), stride, 0}};
+    auto& native = r.programs.at(program);
+    r.prepare_shaded(native, r.shaded_program(native, inputs), blocks, textureUnits);
+    check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind shaded geometry attributes");
+    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, geometry.indices, geometry.index_count), "draw shaded geometry");
+    r.capture_draw("shaded-geometry", program, geometry.vertex_count, geometry.index_count);
+  });
+}
+
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });
 }

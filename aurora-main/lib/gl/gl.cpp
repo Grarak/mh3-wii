@@ -17,6 +17,7 @@
 #include <cstring>
 #include <new>
 #include <thread>
+#include <unordered_map>
 
 #include "tracy/Tracy.hpp"
 
@@ -161,6 +162,16 @@ ProgramPtr g_nativePrograms[2];
 GLuint g_nativeVao = 0, g_nativeVertexBuffer = 0, g_nativeIndexBuffer = 0;
 GLuint g_meshVao = 0, g_meshUniformBuffer = 0;
 GLuint g_materialVao = 0, g_materialVertexBuffer = 0, g_materialIndexBuffer = 0, g_materialUniformBuffer = 0;
+// Fixed shading programs: per-draw Draw+Shade and Palette blocks, Scene on revision.
+GLuint g_shadeMeshVao = 0, g_shadeGeometryVao = 0, g_shadeGeometryVertexBuffer = 0, g_shadeGeometryIndexBuffer = 0;
+GLuint g_shadeDrawBuffer = 0, g_shadePaletteBuffer = 0, g_shadeSceneBuffer = 0;
+uint64_t g_shadeSceneRevision = UINT64_MAX;
+// Program -> sampler units currently assigned to u_texture0..2 and their locations.
+struct ShadedSamplers {
+  std::array<GLint, 3> location{-1, -1, -1};
+  std::array<int, 3> unit{-1, -1, -1};
+};
+std::unordered_map<GLuint, ShadedSamplers> g_shadedSamplers;
 
 struct FramebufferKey {
   GLuint color;
@@ -332,6 +343,18 @@ void shutdown() noexcept {
     if (g_materialUniformBuffer)
       glDeleteBuffers(1, &g_materialUniformBuffer);
     g_materialVao = g_materialVertexBuffer = g_materialIndexBuffer = g_materialUniformBuffer = 0;
+    const GLuint shadeVaos[] = {g_shadeMeshVao, g_shadeGeometryVao};
+    for (GLuint vao : shadeVaos)
+      if (vao)
+        glDeleteVertexArrays(1, &vao);
+    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeDrawBuffer, g_shadePaletteBuffer, g_shadeSceneBuffer};
+    for (GLuint buffer : shadeBuffers)
+      if (buffer)
+        glDeleteBuffers(1, &buffer);
+    g_shadeMeshVao = g_shadeGeometryVao = g_shadeGeometryVertexBuffer = g_shadeGeometryIndexBuffer = 0;
+    g_shadeDrawBuffer = g_shadePaletteBuffer = g_shadeSceneBuffer = 0;
+    g_shadeSceneRevision = UINT64_MAX;
+    g_shadedSamplers.clear();
     for (auto& [_, fbo] : g_framebuffers) {
       glDeleteFramebuffers(1, &fbo);
     }
@@ -682,6 +705,7 @@ Program::~Program() {
       if (g_state.program == program) {
         g_state.program = UINT32_MAX;
       }
+      g_shadedSamplers.erase(program);
       glDeleteProgram(program);
     });
   }
@@ -1244,6 +1268,140 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   capture_native_draw("mesh", vertexCount, indexCount);
   glBindVertexArray(g_state.emptyVao);
 }
+namespace {
+GLuint shade_buffer(GLuint& buffer) {
+  if (!buffer)
+    glGenBuffers(1, &buffer);
+  return buffer;
+}
+void bind_shaded_blocks(const ShadedBlocks& blocks) {
+  if (blocks.shadeOffset % uint32_t(std::max(g_caps.uniformOffsetAlignment, 1)) != 0)
+    throw std::runtime_error("Shade block offset violates the uniform buffer alignment");
+  glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeDrawBuffer));
+  glBufferData(GL_UNIFORM_BUFFER, blocks.drawBytes, blocks.draw, GL_STREAM_DRAW);
+  bind_uniform_range(0, g_shadeDrawBuffer, 0, blocks.shadeOffset);
+  bind_uniform_range(3, g_shadeDrawBuffer, blocks.shadeOffset, blocks.shadeBytes);
+  if (blocks.palette) {
+    glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadePaletteBuffer));
+    glBufferData(GL_UNIFORM_BUFFER, blocks.paletteBytes, blocks.palette, GL_STREAM_DRAW);
+    bind_uniform_range(2, g_shadePaletteBuffer, 0, blocks.paletteBytes);
+  }
+  if (blocks.sceneRevision != g_shadeSceneRevision || !g_shadeSceneBuffer) {
+    glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeSceneBuffer));
+    glBufferData(GL_UNIFORM_BUFFER, blocks.sceneBytes, blocks.scene, GL_STREAM_DRAW);
+    g_shadeSceneRevision = blocks.sceneRevision;
+  }
+  bind_uniform_range(1, g_shadeSceneBuffer, 0, blocks.sceneBytes);
+}
+void bind_shaded_samplers(GLuint program, const std::array<uint8_t, 3>& units) {
+  auto [entry, inserted] = g_shadedSamplers.try_emplace(program);
+  auto& samplers = entry->second;
+  if (inserted)
+    for (unsigned i = 0; i < 3; ++i) {
+      const char name[] = {'u', '_', 't', 'e', 'x', 't', 'u', 'r', 'e', char('0' + i), 0};
+      samplers.location[i] = glGetUniformLocation(program, name);
+    }
+  for (unsigned i = 0; i < 3; ++i)
+    if (samplers.location[i] >= 0 && samplers.unit[i] != units[i]) {
+      glUniform1i(samplers.location[i], units[i]);
+      samplers.unit[i] = units[i];
+    }
+}
+} // namespace
+
+void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
+                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+  if (!aurora::native_frame_drawing_allowed() || !indexCount)
+    return;
+  gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
+  if (!blocks.draw || !blocks.palette || !blocks.scene)
+    throw std::runtime_error("Shaded mesh has no uniform blocks");
+  use_program(program);
+  bind_shaded_samplers(program, textureUnits);
+  if (!g_shadeMeshVao)
+    glGenVertexArrays(1, &g_shadeMeshVao);
+  glBindVertexArray(g_shadeMeshVao);
+  glBindBuffer(GL_ARRAY_BUFFER, buffer.get());
+  for (unsigned i = 0; i < inputs.location.size(); ++i) {
+    const MeshAttribute* attribute = nullptr;
+    if (inputs.location[i] >= 0)
+      for (const auto& candidate : layout.attributes)
+        if (candidate.location == uint8_t(inputs.location[i]))
+          attribute = &candidate;
+    if (!attribute) {
+      glDisableVertexAttribArray(i);
+      continue;
+    }
+    GLenum type = GL_FLOAT;
+    GLboolean normalized = GL_FALSE;
+    unsigned size = 4;
+    switch (attribute->format) {
+    case MeshAttributeFormat::F32:
+      break;
+    case MeshAttributeFormat::F16:
+      type = GL_HALF_FLOAT;
+      size = 2;
+      break;
+    case MeshAttributeFormat::U8N:
+      type = GL_UNSIGNED_BYTE;
+      normalized = GL_TRUE;
+      size = 1;
+      break;
+    case MeshAttributeFormat::U8:
+      type = GL_UNSIGNED_BYTE;
+      size = 1;
+      break;
+    case MeshAttributeFormat::S16N:
+      type = GL_SHORT;
+      normalized = GL_TRUE;
+      size = 2;
+      break;
+    }
+    const int lane = inputs.lane[i];
+    const unsigned components = lane >= 0 ? 1 : attribute->components;
+    const uintptr_t offset = uintptr_t(vertexOffset) + attribute->offset + (lane >= 0 ? unsigned(lane) * size : 0);
+    glVertexAttribPointer(i, GLint(components), type, normalized, layout.stride, reinterpret_cast<const void*>(offset));
+    glEnableVertexAttribArray(i);
+  }
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer.get());
+  bind_shaded_blocks(blocks);
+  glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_SHORT, reinterpret_cast<const void*>(uintptr_t(indexOffset)));
+  capture_native_draw("shaded-mesh", vertexCount, indexCount);
+  glBindVertexArray(g_state.emptyVao);
+}
+
+void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
+                          const std::array<uint8_t, 3>& textureUnits) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
+    return;
+  use_program(program);
+  bind_shaded_samplers(program, textureUnits);
+  if (!g_shadeGeometryVao) {
+    glGenVertexArrays(1, &g_shadeGeometryVao);
+    glGenBuffers(1, &g_shadeGeometryVertexBuffer);
+    glGenBuffers(1, &g_shadeGeometryIndexBuffer);
+  }
+  glBindVertexArray(g_shadeGeometryVao);
+  glBindBuffer(GL_ARRAY_BUFFER, g_shadeGeometryVertexBuffer);
+  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(*geometry.vertices), geometry.vertices, GL_STREAM_DRAW);
+  const auto attribute = [](unsigned location, int components, GLenum type, bool normalized, size_t offset) {
+    glVertexAttribPointer(location, components, type, normalized, sizeof(AuroraNativeMaterialVertex), reinterpret_cast<void*>(offset));
+    glEnableVertexAttribArray(location);
+  };
+  attribute(0, 4, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, position));
+  attribute(1, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, view_position));
+  attribute(2, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, normal));
+  attribute(3, 4, GL_UNSIGNED_BYTE, true, offsetof(AuroraNativeMaterialVertex, color));
+  for (unsigned role = 0; role < 3; ++role)
+    attribute(4 + role, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, texcoord) + std::min<unsigned>(coordinates[role], 7) * 12);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_shadeGeometryIndexBuffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * 2, geometry.indices, GL_STREAM_DRAW);
+  bind_shaded_blocks(blocks);
+  glDrawElements(GL_TRIANGLES, geometry.index_count, GL_UNSIGNED_SHORT, nullptr);
+  capture_native_draw("shaded-geometry", geometry.vertex_count, geometry.index_count);
+  glBindVertexArray(g_state.emptyVao);
+}
+
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {
   use_program(program);
   glUniform4f(glGetUniformLocation(program, name), x, y, z, w);

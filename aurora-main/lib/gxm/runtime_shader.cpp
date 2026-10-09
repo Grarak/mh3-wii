@@ -24,6 +24,7 @@ constexpr size_t MaxResidentBytes = 16 * 1024 * 1024;
 using Key = std::pair<uint64_t, RuntimeShaderStage>;
 struct Entry {
   std::string source, origin;
+  bool cg = false;
   std::unique_ptr<void, decltype(&std::free)> binary{nullptr, std::free};
   size_t bytes = 0;
 };
@@ -117,7 +118,7 @@ void start_compiler(Store& s) {
   shark_install_log_cb(compiler_log);
   shark_set_warnings_level(SHARK_WARN_HIGH);
 }
-void remember(Store& s, Key key, std::string_view source, std::string_view origin) {
+void remember(Store& s, Key key, std::string_view source, std::string_view origin, bool cg) {
   auto found = s.entries.find(key);
   if (found != s.entries.end()) {
     if (found->second.source != source)
@@ -130,20 +131,21 @@ void remember(Store& s, Key key, std::string_view source, std::string_view origi
   Entry entry;
   entry.source = source;
   entry.origin = origin;
+  entry.cg = cg;
   s.entries.emplace(key, std::move(entry));
   s.residentBytes += extra;
 }
 } // namespace
 
-void register_runtime_shader_sources(uint64_t vertexHash, uint64_t fragmentHash, std::string_view vertex, std::string_view fragment, std::string_view origin) {
+void register_runtime_shader_sources(uint64_t vertexHash, uint64_t fragmentHash, std::string_view vertex, std::string_view fragment, std::string_view origin, bool cg) {
   auto& s = store();
   const std::string pair = id(vertexHash, RuntimeShaderStage::Vertex).substr(0, 16) + "-" + id(fragmentHash, RuntimeShaderStage::Fragment).substr(0, 16);
   const std::string metadata = "{\"program\":" + json_string(origin) + ",\"source_pair\":" + json_string(pair) + "}";
   if (!embedded(vertexHash, VertexShaders, VertexShaderCount))
-    remember(s, {vertexHash, RuntimeShaderStage::Vertex}, vertex, metadata);
+    remember(s, {vertexHash, RuntimeShaderStage::Vertex}, vertex, metadata, cg);
   // Retain one fragment source for both RGBA and lazy scalar-target compilation.
   if (!embedded(fragmentHash, FragmentShaders, FragmentShaderCount) || !embedded(fragmentHash, FragmentScalarShaders, FragmentScalarShaderCount))
-    remember(s, {fragmentHash, RuntimeShaderStage::Fragment}, fragment, metadata);
+    remember(s, {fragmentHash, RuntimeShaderStage::Fragment}, fragment, metadata, cg);
 }
 
 const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage stage) {
@@ -154,7 +156,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
     const auto fragment = s.entries.find({hash, RuntimeShaderStage::Fragment});
     if (fragment != s.entries.end()) {
       // The scalar entry shares source identity but has its own declared output.
-      remember(s, key, fragment->second.source, fragment->second.origin);
+      remember(s, key, fragment->second.source, fragment->second.origin, fragment->second.cg);
       found = s.entries.find(key);
     }
   }
@@ -163,7 +165,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
   auto& entry = found->second;
   if (entry.binary)
     return static_cast<const SceGxmProgram*>(entry.binary.get());
-  std::string cg = gfx::cg::convert(entry.source, stage == RuntimeShaderStage::Vertex ? gfx::cg::Stage::Vertex : gfx::cg::Stage::Fragment);
+  std::string cg = entry.cg ? entry.source : gfx::cg::convert(entry.source, stage == RuntimeShaderStage::Vertex ? gfx::cg::Stage::Vertex : gfx::cg::Stage::Fragment);
   if (stage == RuntimeShaderStage::ScalarFragment)
     cg = gfx::cg::scalar_fragment(cg);
   std::error_code error;
