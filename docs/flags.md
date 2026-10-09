@@ -87,7 +87,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,serial-world][,prepare[,prepare-frames=FIRST-LAST]]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]]`
 
 | Item | Effect |
 | --- | --- |
@@ -99,7 +99,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `fill` | every 300 frames, the `MH3 material fill` lines: screen area (in screens) that material geometry covers per fragment program and blend, clipped to the viewport |
 | `unpaced` | the game thread records its next frame packet even when the render thread has not taken the last one, which the new packet then replaces (the behaviour before pacing; for A/B runs) |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
-| `serial-world` | the scene's world matrix pass runs on the game thread alone instead of split with the guest worker ([guest worker](guest-worker.md); for A/B runs) |
+| `split-world` | the scene's world matrix pass is split between the game thread and the guest worker; off by default, as it did not pay off on the devkit ([guest worker](guest-worker.md)) |
 | `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
 
 ### `MH3_VERIFY`: native paths against what they replace

@@ -21,9 +21,9 @@
 // (LockedCacheAcquire, g3d_calc_world.cpp), nor the scratch at 0x8066D300,
 // which the worker has a copy of. MH3_PORT_CHECK=ScnGroupCalcWorld compares
 // the root's split pass with the original in one thread (MH3_VARIABLE_STEP=0;
-// the worker's stack and scratch, which the original leaves alone, differ);
-// MH3_PROFILE=serial-world keeps the whole pass on the game thread, and the
-// MH3 world split line (development) shows each side's time.
+// the worker's stack and scratch, which the original leaves alone, differ).
+// The split is opt-in (MH3_PROFILE=split-world): it did not pay off on the
+// devkit. The MH3 world split line (development) shows each side's time.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "guest_worker.h"
@@ -131,18 +131,24 @@ void RunWorkerShare(CpuContext* cpu, void*) {
     RunShare(cpu, workerShare);
 }
 
+// Opt-in (MH3_PROFILE=split-world, or this pass's own port check): on the
+// devkit the split saved 0.4 ms/frame of logic, and the draw lost as much
+// reading the matrices the worker wrote on another core (docs/guest-worker.md).
 bool SplitAllowed() {
 #ifdef MH3_DEVELOPMENT
-    static const bool serial = ProfileOptions().Has("serial-world");
+    static const bool enabled = ProfileOptions().Has("split-world") || PortCheck::Enabled("ScnGroupCalcWorld");
 
-    if (serial)
+    if (!enabled)
         return false;
     // Other port checks compare whole RAM around their own call and need the
     // game thread's order; this one checks the split pass itself.
     if (PortCheck::Set() && !PortCheck::Enabled("ScnGroupCalcWorld"))
         return false;
-#endif
+
     return GuestWorker::Available() && !GuestWorker::Pending();
+#else
+    return false;
+#endif
 }
 
 // The models that must stay on the game thread, in their order. A model's
