@@ -31,7 +31,7 @@ add_executable(MH3
   src/main.cpp src/memory.cpp src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
   src/audio/ax_mix.cpp src/audio/ax_memory.cpp src/audio_services.cpp src/audio_tests.cpp src/audio_dma.cpp
-  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp
+  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
@@ -40,7 +40,7 @@ target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized MH3_TRACE_ERRORS stack traces.
 set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
-target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-O1;-gline-tables-only;-ffp-contract=off>)
+target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-O2;-gline-tables-only;-ffp-contract=off>)
 if(MH3_ENABLE_GUEST_CALL_TRACE)
   target_sources(MH3 PRIVATE src/guest_call_trace.cpp)
   set(trace_manifest "${CMAKE_SOURCE_DIR}/../generated/build_shards/guest_trace_sources.cmake")

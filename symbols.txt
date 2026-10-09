@@ -102,3 +102,12 @@
 # Three-channel floating-point delay/filter processing in the audio callback chain.
 # Exact effect/SDK identity remains unverified.
 80475880 AudioThreeChannelFilterCallback
+# Main loop end-of-frame pacer: waits for the retrace budget, flips the XFB (runtime/src/frame_pacer.cpp).
+800401a8 FramePacer
+# Returns the frame budget in VI retraces (r13-0x4684).
+8003f588 GetRetracesPerFrame
+# Reconfigures VI and copy settings for a render mode index.
+8003fa48 ApplyRenderMode
+804e9130 VISetNextFrameBuffer
+# `sc; blr`
+804777d0 SystemCall
