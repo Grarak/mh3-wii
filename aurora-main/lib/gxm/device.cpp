@@ -1,7 +1,6 @@
 #include "device.hpp"
 #include <aurora/fatal.hpp>
 #include "raster.hpp"
-#include "razor.hpp"
 #include "shader_bank.hpp"
 #ifdef MH3_DEVELOPMENT
 #include "runtime_shader.hpp"
@@ -36,9 +35,6 @@ std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
 std::atomic<uint64_t> g_displayWaitMicros{0};
 std::atomic<uint64_t> g_pacedFlips{0}, g_pacingErrorMicros{0}, g_flipVblanks[4]{};
 std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
-std::atomic<bool> g_flipTrace{false};
-FlipSample g_flips[256];
-std::atomic<uint64_t> g_flipCount{0};
 std::atomic<int64_t> g_repeatedVblanks{0};
 
 // Flips wait for VBlank (set_vsync).
@@ -99,12 +95,6 @@ void record_pacing(uint64_t gameUs) {
     g_flipVblanks[std::clamp<int64_t>(vblanks, 1, 4) - 1].fetch_add(1, std::memory_order_relaxed);
   }
 
-  if (g_flipTrace.load(std::memory_order_relaxed)) {
-    const uint64_t count = g_flipCount.load(std::memory_order_relaxed);
-    g_flips[count % std::size(g_flips)] = {now, gameUs};
-    g_flipCount.store(count + 1, std::memory_order_release);
-  }
-
   lastFlip = now;
   lastGame = gameUs;
 }
@@ -123,7 +113,7 @@ void display_callback(const void* data) {
 
   // VSync: flip at the next VBlank and wait for it, so the old buffer's sync
   // is released only after scanout has moved on. This wait belongs to the
-  // display callback on core 0, never the game or render thread. Without
+  // display callback on core 3, never the game or render thread. Without
   // VSync (the game thread limit off, set_vsync) the flip is still set for
   // the next VBlank but the callback does not wait for it, so the display
   // queue no longer paces the GPU and the render thread (the newest frame at
@@ -177,7 +167,7 @@ void host_free(void*, void* memory) {
   std::free(memory);
 }
 
-// Every program comes from the offline bank (docs/vita-shader-bank.md). A
+// Every program comes from the offline bank (docs/optimizations/rendering/offline-shader-bank.md). A
 // miss means the bank and the program sources disagree: development builds
 // report it and compile at runtime, release builds (no compiler) stop.
 const SceGxmProgram* find_binary(uint64_t hash, ShaderStage stage) {
@@ -231,7 +221,6 @@ Device::Device() {
   init.displayQueueCallback = display_callback;
   init.displayQueueCallbackDataSize = sizeof(DisplayData);
   init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;
-  razor_initialize();
   check(sceGxmInitialize(&init), "initialize");
   m_initialized = true;
 
@@ -349,8 +338,6 @@ void Device::release() noexcept {
   if (m_context)
     sceGxmFinish(m_context);
 
-  razor_stop();
-
   if (m_initialized)
     sceGxmDisplayQueueFinish();
 
@@ -379,7 +366,6 @@ void Device::release() noexcept {
   if (m_initialized)
     sceGxmTerminate();
 
-  razor_terminate();
   m_initialized = false;
 #ifdef MH3_DEVELOPMENT
   clear_runtime_shaders();
@@ -478,25 +464,8 @@ bool gpu_frame_pending() noexcept {
   return device && device->frame_pending();
 }
 
-void set_flip_trace(bool enabled) noexcept {
-  g_flipTrace.store(enabled, std::memory_order_relaxed);
-}
-
 int64_t repeated_vblanks() noexcept {
   return g_repeatedVblanks.load(std::memory_order_relaxed);
-}
-
-size_t take_flips(FlipSample* out, size_t capacity) noexcept {
-  static uint64_t taken = 0;
-  const uint64_t count = g_flipCount.load(std::memory_order_acquire);
-  const uint64_t first = std::max({taken, count - std::min<uint64_t>(count, std::size(g_flips)), count - std::min<uint64_t>(count, capacity)});
-  size_t n = 0;
-
-  for (uint64_t i = first; i < count; ++i)
-    out[n++] = g_flips[i % std::size(g_flips)];
-
-  taken = count;
-  return n;
 }
 
 DisplayStatistics display_statistics() noexcept {
@@ -546,7 +515,6 @@ void Device::flip() {
   }
 
   check(sceGxmPadHeartbeat(&m_display[back], m_sync[back]), "display heartbeat");
-  razor_frame();
   const DisplayData display{m_displayData[back], m_presentGameUs, m_presentInputUs, m_presentPublishedUs, m_presentInputUs ? steady_us() : 0};
   g_displayQueued.fetch_add(1, std::memory_order_release);
   check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[back], &display), "queue display");

@@ -14,7 +14,7 @@ native **GXM** (`aurora-main/lib/gxm`). The web build adds **WebGPU** again
 `BACKEND_GXM` on Vita and `BACKEND_WEBGPU` on the web and rejects an
 unexpected backend.
 
-The runtime's render thread owns the graphics context (core 1 on Vita) and
+The runtime's render thread owns the graphics context (core 0 on Vita) and
 replays frame packets recorded by the game thread; backend tasks execute on
 it. No GX queue remains; GX compatibility APIs/FIFO routes panic. Native rendering
 reuses pure material equations and typed resource helpers from the tree,

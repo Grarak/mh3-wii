@@ -1,7 +1,7 @@
 #pragma once
 
 // Native audio, RMHP08. The game's voices are mixed natively on an audio
-// thread (Vita core 0); there is no AX, DSP, command list, mailbox or AI DMA.
+// thread (Vita core 3); there is no AX, DSP, command list, mailbox or AI DMA.
 //
 // Game thread (core 2): the game's sound engine (sound_engine.cpp,
 // sound_stream.cpp) and MIX drive host voice records (native_audio_api.cpp,

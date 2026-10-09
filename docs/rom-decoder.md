@@ -37,7 +37,8 @@ the reader itself. Disc (raw) reads never use the worker.
 
 On the Vita the worker runs on core 3 (the workers' core), beside the DVD
 reader thread that calls the decoder, below the default priority so the guest
-worker and the reader run first; core 0 is the draw thread's (2026-10-08).
+worker and the reader run first; cores 0-1 are the render and draw threads'
+(2026-10-08).
 From 2026-10-06 to 2026-10-08 both ran on core 0, and before that the worker
 alone on core 3: sharing the reader's core gives no parallel decoding (one
 boot read took 422 ms instead of ~70).

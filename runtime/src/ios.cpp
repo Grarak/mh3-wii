@@ -99,17 +99,6 @@ bool SoundStream(uint32_t caller) {
 // of the request ahead, and the next chunk is answered from memory.
 class DiscReader {
     using Clock = std::chrono::steady_clock;
-#ifdef MH3_DEVELOPMENT
-    // MH3_TRACE=disc-reads: each read's request and delivery, on the clock of
-    // MH3_TRACE=loading's frame lines.
-    static bool TraceReads() {
-        static const TraceFlag trace("disc-reads");
-        return trace;
-    }
-
-    static double Seconds(Clock::time_point at) { return std::chrono::duration<double>(at.time_since_epoch()).count(); }
-#endif
-
   public:
     // Game thread. A read (length != 0) is answered once the reader has it,
     // anything else at once; replies keep the order of their requests.
@@ -119,10 +108,6 @@ class DiscReader {
         replies.back().request = request;
 #ifdef MH3_DEVELOPMENT
         replies.back().submitted = Clock::now();
-
-        if (length && TraceReads())
-            std::fprintf(stderr, "MH3 disc read: %.4f caller %08x asks %u bytes at 0x%llx\n", Seconds(replies.back().submitted), request.caller, length,
-                         (unsigned long long)offset);
 
         // The caller's first read after its last reply: how long it was idle.
         if (const auto last = delivered.find(request.caller); length && last != delivered.end()) {
@@ -169,10 +154,6 @@ class DiscReader {
                 const auto now = Clock::now();
                 callers[reply.request.caller].deliver += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(now - reply.readyAt).count());
                 delivered[reply.request.caller] = now;
-
-                if (TraceReads())
-                    std::fprintf(stderr, "MH3 disc read: %.4f caller %08x gets %u bytes at 0x%llx, ready at %.4f\n", Seconds(now), reply.request.caller, reply.length,
-                                 (unsigned long long)reply.offset, Seconds(reply.readyAt));
             }
 #endif
             guard.unlock();
@@ -382,7 +363,7 @@ class DiscReader {
     }
 
     void Run() {
-        // The workers' core (Vita): the game, render and draw threads keep
+        // The workers' core (Vita): the game, draw and render threads keep
         // cores 2, 1 and 0. Here (core 3) the village load once took 4.28 s
         // instead of 3.82 s on core 0 on the devkit.
         aurora::pin_current_thread(aurora::ThreadRole::Worker);
@@ -618,7 +599,7 @@ constexpr const char* metadataName = "user.mh3.nand";
 int SetMetadata(int fd, const NandMetadata& metadata) {
 #ifdef __EMSCRIPTEN__
     // WasmFS has no extended attributes: on the web every entry keeps the
-    // title's defaults (docs/web-build.md).
+    // title's defaults (docs/optimizations/platforms/web-build.md).
     (void)fd;
     (void)metadata;
     const int result = 0;

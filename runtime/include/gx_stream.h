@@ -53,8 +53,6 @@ class GuestGxStream {
     inline static uint64_t commandCount = 0, drawCount = 0;
     inline static uint64_t skippedDrawCount = 0;
 
-    // Textures hashed, and clears of the hashes kept until an invalidation.
-    inline static uint64_t textureHashCount = 0, textureInvalidateCount = 0;
     static void InvalidateTextureHashes();
 
     // Drops the hashes of textures overlapping host bytes [address, address + size).

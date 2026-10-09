@@ -103,7 +103,7 @@ uint32_t LastCost(uint32_t child) {
 // One side's children, in the original order, and their measured costs. The
 // worker's share is claimed a child at a time (`next`) by the worker and, once
 // its own share is done, by the game thread: a worker that wakes late (a
-// parked wake takes 0.1-1.9 ms on the devkit, on core 0 beside the audio
+// parked wake takes 0.1-1.9 ms on the devkit, on core 3 beside the audio
 // mixer) leaves its models to the game thread instead of holding it up.
 struct Share {
     uint32_t argument = 0, matrix = 0;
@@ -154,7 +154,7 @@ void RunWorkerShare(CpuContext* cpu, void*) {
 }
 
 // In every build: the overlapped draw reads the matrices on its own core
-// either way, and the split gains about 2 logical fps (docs/guest-worker.md).
+// either way, and the split gains about 2 logical fps (docs/optimizations/threading/guest-worker.md).
 bool SplitAllowed() {
 #ifdef MH3_DEVELOPMENT
     // Port checks compare whole RAM around their own call and need the game

@@ -46,17 +46,6 @@ struct DisplayStatistics {
 
 DisplayStatistics display_statistics() noexcept;
 
-// Flip trace (off by default): each paced flip's time and its frame's game
-// time, both in microseconds, kept in a ring of the last 256 flips.
-// take_flips copies those since the previous call (at most `capacity`, the
-// newest) and returns how many; one reader.
-struct FlipSample {
-  uint64_t flip_us = 0, game_us = 0;
-};
-
-void set_flip_trace(bool enabled) noexcept;
-size_t take_flips(FlipSample* out, size_t capacity) noexcept;
-
 // With VSync: the VBlanks between flips beyond one each (a frame the display
 // kept for more VBlanks because the next was late), summed since the start.
 // Any thread.
@@ -68,7 +57,7 @@ int64_t repeated_vblanks() noexcept;
 void set_vsync(bool enabled) noexcept;
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
-// to the render owner. The display callback is pinned to worker core 0.
+// to the render owner. The display callback is pinned to the workers' core 3.
 // How a scene uses its depth surface's memory. Without a load each tile starts
 // from `background` (a scene that begins with a depth clear, or depth no draw
 // reads); without a store the scene's depth is discarded.

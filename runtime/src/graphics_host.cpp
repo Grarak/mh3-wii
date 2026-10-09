@@ -19,7 +19,6 @@
 #include "audio_dma_statistics.h"
 #ifdef __vita__
 #include "../vita/platform.h"
-#include "gxm/razor.hpp"
 #include "gxm/device.hpp"
 #include "gxm/residency.hpp"
 #endif
@@ -33,9 +32,6 @@
 #include "dolphin/vi/vi_internal.hpp"
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
-#ifdef __vita__
-#include "../vita/pmu.h"
-#endif
 #endif
 #include <algorithm>
 #include <utility>
@@ -56,7 +52,6 @@
 #include <dolphin/gx.h>
 #include <dolphin/vi.h>
 #include <chrono>
-#include <ctime>
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
@@ -95,9 +90,6 @@ namespace {
 bool initialized = false;
 bool frameActive = false;
 bool gpuSynchronized = true, displayCopyPending = false;
-#ifdef __vita__
-uint64_t razorNativeFrameStarted = 0;
-#endif
 uint32_t captureInterval = 0;
 uint32_t captureStart = 0;
 std::filesystem::path capturePath;
@@ -168,40 +160,21 @@ void FlushHostEfbPokes() {
 
 std::atomic<uint64_t> guestCopies{0}; // logical frames, counted on the game thread
 
-// Stats (MH3_STATS line, MH3_PROFILE frames= profile, GX counters) are built
-// only with MH3_DEVELOPMENT; MH3_STAT(...) compiles its argument away otherwise.
+// The GX bridge's counters are built only with MH3_DEVELOPMENT; MH3_STAT(...)
+// compiles its argument away otherwise.
 #ifdef MH3_DEVELOPMENT
 #define MH3_STAT(...) __VA_ARGS__
-uint64_t guestArrays = 0, guestTextures = 0, guestTextureCopies = 0;
-uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
-uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
-struct FrameProfile {
-    using Clock = std::chrono::steady_clock;
-    uint32_t interval = 0;
-    uint64_t renderQueueNs = 0, tailNs = 0, completionNs = 0;
-    uint64_t minCopyNs = UINT64_MAX, maxCopyNs = 0, measuredCopies = 0;
-    uint64_t lastCopies = 0, lastCommands = 0, lastArrays = 0, lastTextures = 0, lastDraws = 0;
-    uint64_t lastSkippedDraws = 0;
-    uint64_t lastTextureCopies = 0, lastEfbSnapshots = 0, lastEfbPeeks = 0;
-    uint64_t lastTextureHashes = 0, lastTextureInvalidates = 0;
-    uint64_t lastTextureCopyNs = 0, lastEfbSnapshotNs = 0;
-    Clock::time_point started = Clock::now();
-    Clock::time_point previousCopy{};
-    std::clock_t cpuStarted = std::clock();
-};
-
-FrameProfile profile;
 #else
 #define MH3_STAT(...)
 #endif
+
 void ShutdownGraphics() {
     if (initialized) {
         // Drain the render thread; it hands the graphics context back.
         StopNativeRenderThread();
         MH3_STAT(if (GuestGxStream::commandCount)
-                     std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
-                                  static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures),
-                                  static_cast<unsigned long long>(guestCopies), static_cast<unsigned long long>(GuestGxStream::drawCount), static_cast<unsigned long long>(guestTextureCopies)));
+                     std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu display copies, %llu draws\n", static_cast<unsigned long long>(GuestGxStream::commandCount),
+                                  static_cast<unsigned long long>(guestCopies), static_cast<unsigned long long>(GuestGxStream::drawCount)));
         // Shader patcher storage must outlive the last submitted draw. This
         // drain is only at shutdown; frame admission/submission never waits.
         aurora::gl::finish();
@@ -364,16 +337,7 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
 
     if (loadNativeAssets)
         OpenNativeAssets();
-#ifdef MH3_DEVELOPMENT
-    if (const uint64_t interval = ProfileOptions().Number("frames", 0)) {
-        if (interval > UINT32_MAX)
-            MH3_THROW(std::runtime_error("MH3_PROFILE frames= must be a 32-bit number"));
 
-        profile.interval = static_cast<uint32_t>(interval);
-        profile.started = FrameProfile::Clock::now();
-        profile.cpuStarted = std::clock();
-    }
-#endif
     if (info.backend != config.desiredBackend)
         MH3_THROW(std::runtime_error("Aurora did not select the required renderer"));
     // Frameskip polls GPU completion before native draw preparation.
@@ -519,7 +483,7 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
     StartNativeRenderThread();
 }
 
-// The overlapped draw (docs/pipelined-draw.md): the frame's packet begins at
+// The overlapped draw (docs/optimizations/threading/pipelined-draw.md): the frame's packet begins at
 // the handoff, after the previous scene published its own, and the draw
 // thread publishes it; frame begin only latches admission.
 bool frameOverlap = false, overlapAdmitted = false, overlapPacketBegun = false, overlapSubmitted = false;
@@ -573,11 +537,6 @@ bool BeginNativeGraphicsFrame() {
     // Before the frame's statistics: the wait is not game-thread work.
     PaceNativeFramePacket();
     MH3_STAT(BeginNativeFrameStatistics();)
-#ifdef __vita__
-    // Include admission and logical work on skipped frames. Razor is opt-in;
-    // this returns zero without a clock read when live CPU tracing is inactive.
-    razorNativeFrameStarted = aurora::gxm::razor_begin_cpu_work();
-#endif
     BeginNativeFramePacket(aurora_native_window_presentable());
     PumpNativeModelGPUReads();
     return NativeFramePacketRecording();
@@ -625,12 +584,6 @@ bool EndOverlappedNativeGraphicsFrame() {
 
 void EndNativeGraphicsFrame() {
     MH3_STAT(const bool rendered = NativeFramePacketRecording();)
-#ifdef __vita__
-    // Close before presentation's heartbeat flushes/stops live collection.
-    // This span excludes presentation and the subsequent frame-pacer sleep.
-    aurora::gxm::razor_end_cpu_work(razorNativeFrameStarted);
-    razorNativeFrameStarted = 0;
-#endif
     std::string capture;
     const auto frame = NativeFramePacketSequence();
 
@@ -804,19 +757,11 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     else
         std::fprintf(stderr, "MH3 native work: render CPU unavailable, thread %d core %d affinity %x\n", render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity));
 
-#if defined(__vita__) && defined(MH3_DEVELOPMENT)
-    // MH3_PMU: the game and render threads' performance monitor counts.
-    if (work.owner_running_available)
-        VitaPmuWatch("game", work.owner_thread);
-
-    VitaPmuWatch("render", render.cpu.thread);
-    VitaPmuReport();
-#endif
     previousRender = render;
     ReportNativeRenderThreadStall();
 #ifdef AURORA_GXM
     const auto display = aurora::gxm::display_statistics();
-    std::fprintf(stderr, "MH3 native work: displayed %.1f fps, backlog %u, scenes_pending %u, display_errors %u, callback wait %.2f ms/s (core0)\n",
+    std::fprintf(stderr, "MH3 native work: displayed %.1f fps, backlog %u, scenes_pending %u, display_errors %u, callback wait %.2f ms/s (core 3)\n",
                  uint32_t(display.presented - previousDisplay.presented) / seconds, display.backlog, display.pending_scenes, display.failures,
                  (display.callback_wait_us - previousDisplay.callback_wait_us) / (1000.0 * seconds));
     // Pacing: how much each flip interval differs from the game time its frame
@@ -837,34 +782,6 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     }
 
     previousDisplay = display;
-
-    // MH3_TRACE=flips: each flip of the second, its frame's game time in ms
-    // (the camera-path trace's) and the time since the flip before in us, 30
-    // a line (the devkit's TTY cuts lines at about 930 characters).
-    static const bool flipTrace = [] {
-        const bool enabled = TraceOptions().Has("flips");
-        aurora::gxm::set_flip_trace(enabled);
-        return enabled;
-    }();
-
-    if (flipTrace) {
-        static aurora::gxm::FlipSample flips[256];
-        static uint64_t lastFlip = 0;
-        const size_t count = aurora::gxm::take_flips(flips, std::size(flips));
-
-        for (size_t first = 0; first < count; first += 30) {
-            std::string line = "MH3 flips:";
-
-            for (size_t i = first; i < std::min(count, first + 30); ++i) {
-                char item[40];
-                std::snprintf(item, sizeof(item), " %.2f/%lu", double(flips[i].game_us) / 1000.0, static_cast<unsigned long>(lastFlip ? flips[i].flip_us - lastFlip : 0));
-                line += item;
-                lastFlip = flips[i].flip_us;
-            }
-
-            std::fprintf(stderr, "%s\n", line.c_str());
-        }
-    }
 
     const auto residency = aurora::gxm::residency_statistics();
     std::fprintf(stderr,
@@ -941,8 +858,6 @@ void CompleteHostGraphics() {
     if (!initialized)
         return;
 
-    MH3_STAT(const auto completionStart = FrameProfile::Clock::now();)
-    MH3_STAT(const auto afterQueue = FrameProfile::Clock::now();)
     FlushHostEfbPokes();
 
     if (guestStream.PendingBytes())
@@ -955,77 +870,6 @@ void CompleteHostGraphics() {
     if (frameActive && displayCopyPending)
         SealDisplayFrame();
 #ifdef MH3_DEVELOPMENT
-    const auto afterTail = FrameProfile::Clock::now();
-
-    if (profile.interval) {
-        auto ns = [](auto end, auto start) {
-            return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-        };
-
-        profile.completionNs += ns(afterTail, completionStart);
-        profile.renderQueueNs += ns(afterQueue, completionStart);
-        profile.tailNs += ns(afterTail, afterQueue);
-
-        if (guestCopies > profile.measuredCopies) {
-            if (profile.previousCopy != FrameProfile::Clock::time_point{}) {
-                const auto copyNs = uint64_t(ns(afterTail, profile.previousCopy));
-                profile.minCopyNs = std::min(profile.minCopyNs, copyNs);
-                profile.maxCopyNs = std::max(profile.maxCopyNs, copyNs);
-            }
-
-            profile.previousCopy = afterTail;
-            profile.measuredCopies = guestCopies;
-        }
-
-        const auto frames = guestCopies - profile.lastCopies;
-
-        if (frames >= profile.interval) {
-            const auto wallMs = ns(afterTail, profile.started) / 1e6 / frames;
-            const auto cpuMs = double(std::clock() - profile.cpuStarted) * 1000 / CLOCKS_PER_SEC / frames;
-#ifdef __vita__
-            // Vita's libc clock is process elapsed time, including waits.
-            constexpr const char* cpuClockLabel = "Vita process elapsed";
-#else
-            constexpr const char* cpuClockLabel = "process CPU";
-#endif
-            std::fprintf(stderr,
-                         "MH3 profile: %llu display copies; %.2f ms wall/copy, %.2f ms %s/copy, "
-                         "%.2f ms GX completion/copy (%.2f ms CPU decode/submit, %.2f ms graphics tail), "
-                         "%.2f..%.2f ms copy interval, "
-                         "%llu GX commands/copy, %llu draws/copy (%llu skipped before preparation), %llu arrays/copy, %llu textures/copy, "
-                         "%llu EFB texture copies/copy (%.2f ms), %llu EFB snapshots/copy (%.2f ms), %llu EFB peeks/copy; "
-                         "last frame %u host draws + %u merged into them; %.1f texture hashes/copy, %.1f TMEM invalidations/copy\n",
-                         static_cast<unsigned long long>(frames), wallMs, cpuMs, cpuClockLabel, profile.completionNs / 1e6 / frames, profile.renderQueueNs / 1e6 / frames,
-                         profile.tailNs / 1e6 / frames, profile.minCopyNs / 1e6, profile.maxCopyNs / 1e6,
-                         static_cast<unsigned long long>((GuestGxStream::commandCount - profile.lastCommands) / frames),
-                         static_cast<unsigned long long>((GuestGxStream::drawCount - profile.lastDraws) / frames),
-                         static_cast<unsigned long long>((GuestGxStream::skippedDrawCount - profile.lastSkippedDraws) / frames),
-                         static_cast<unsigned long long>((guestArrays - profile.lastArrays) / frames), static_cast<unsigned long long>((guestTextures - profile.lastTextures) / frames),
-                         static_cast<unsigned long long>((guestTextureCopies - profile.lastTextureCopies) / frames), (guestTextureCopyNs - profile.lastTextureCopyNs) / 1e6 / frames,
-                         static_cast<unsigned long long>((guestEfbSnapshots - profile.lastEfbSnapshots) / frames), (guestEfbSnapshotNs - profile.lastEfbSnapshotNs) / 1e6 / frames,
-                         static_cast<unsigned long long>((guestEfbPeeks - profile.lastEfbPeeks) / frames), aurora_get_stats()->drawCallCount, aurora_get_stats()->mergedDrawCallCount,
-                         double(GuestGxStream::textureHashCount - profile.lastTextureHashes) / frames, double(GuestGxStream::textureInvalidateCount - profile.lastTextureInvalidates) / frames);
-            profile.lastTextureHashes = GuestGxStream::textureHashCount;
-            profile.lastTextureInvalidates = GuestGxStream::textureInvalidateCount;
-            profile.lastCopies = guestCopies;
-            profile.lastCommands = GuestGxStream::commandCount;
-            profile.lastArrays = guestArrays;
-            profile.lastTextures = guestTextures;
-            profile.lastDraws = GuestGxStream::drawCount;
-            profile.lastSkippedDraws = GuestGxStream::skippedDrawCount;
-            profile.lastTextureCopies = guestTextureCopies;
-            profile.lastEfbSnapshots = guestEfbSnapshots;
-            profile.lastEfbPeeks = guestEfbPeeks;
-            profile.lastTextureCopyNs = guestTextureCopyNs;
-            profile.lastEfbSnapshotNs = guestEfbSnapshotNs;
-            profile.renderQueueNs = profile.tailNs = profile.completionNs = 0;
-            profile.minCopyNs = UINT64_MAX;
-            profile.maxCopyNs = 0;
-            profile.started = afterTail;
-            profile.cpuStarted = std::clock();
-        }
-    }
-
     static unsigned completions = 0;
 
     if (++completions <= 3 || completions % 300 == 0)
@@ -1035,7 +879,6 @@ void CompleteHostGraphics() {
 }
 
 uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
-    MH3_STAT(++guestEfbPeeks;)
     if (!initialized || !gpuSynchronized || guestStream.PendingBytes())
         MH3_THROW(std::runtime_error("EFB color peek requires a completed GXDrawDone boundary"));
 
@@ -1047,7 +890,6 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
     if (efbPixels.empty() || efbWidth != source.width || efbHeight != source.height) {
         // Thousands of CPU peeks can follow one snapshot. New GX commands
         // discard efbPixels, so only the first peek needs the render-thread round trip.
-        MH3_STAT(const auto started = FrameProfile::Clock::now();)
         if (frameActive) {
             // The peek reads this frame's draws: render it and submit them first.
             aurora::gfx::require_frame_render();
@@ -1063,8 +905,6 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         efbPixels.resize(size_t(efbPitch) * efbHeight);
         aurora::gl::call([&] { aurora::gl::read_pixels(source.texture->gl(), 0, 0, efbWidth, efbHeight, efbPixels.data()); });
 #ifdef MH3_DEVELOPMENT
-        ++guestEfbSnapshots;
-        guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
         static unsigned snapshots = 0;
 
         if (++snapshots <= 3)

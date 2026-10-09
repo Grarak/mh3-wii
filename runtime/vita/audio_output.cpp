@@ -139,7 +139,7 @@ class AudioOutput {
                 result = port;
 
                 if (port >= 0)
-                    std::fprintf(stderr, "MH3 audio: Vita playback on core 0 at %u Hz stereo\n", rate);
+                    std::fprintf(stderr, "MH3 audio: Vita playback on core 3 at %u Hz stereo\n", rate);
             } else if (outputRate != rate) {
                 result = sceAudioOutOutput(port, nullptr);
 
@@ -243,7 +243,7 @@ void RunNative() noexcept {
     if (port < 0)
         std::fprintf(stderr, "MH3 audio: SceAudio port failed: 0x%08x; mixing without output\n", unsigned(port));
     else
-        std::fprintf(stderr, "MH3 audio: native mixer output on core 0 at %u Hz stereo, %u-frame buffers\n", unsigned(kSampleRate), unsigned(kNativeFrames));
+        std::fprintf(stderr, "MH3 audio: native mixer output on core 3 at %u Hz stereo, %u-frame buffers\n", unsigned(kSampleRate), unsigned(kNativeFrames));
 
     const auto period = std::chrono::microseconds(kNativeFrames * 1000000ull / kSampleRate);
     auto next = std::chrono::steady_clock::now();

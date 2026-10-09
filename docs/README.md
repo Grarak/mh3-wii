@@ -70,7 +70,7 @@ how to build, run (including the Vita devkit) and debug.
 
 ## Audio
 
-- [native-audio.md](native-audio.md): the game's sound engine, MIX and voices in C, the mixer on core 0, stream extraction from the disc image, port checks and measurements.
+- [native-audio.md](native-audio.md): the game's sound engine, MIX and voices in C, the mixer on core 3, stream extraction from the disc image, port checks and measurements.
 
 ## Profiling and capture
 

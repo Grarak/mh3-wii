@@ -99,7 +99,7 @@ private:
 
   InterpolationWorkerPool() {
 #ifdef __vita__
-    // Rendering stays on core 1. A helper on the same core cannot run in
+    // Rendering stays on core 0. A helper on the same core cannot run in
     // parallel with the caller and only adds dispatch/wait overhead.
     constexpr unsigned helpers = 0;
 #else

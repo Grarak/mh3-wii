@@ -381,7 +381,7 @@ std::unordered_map<const void*, FeedbackTarget> feedbackTargets;
 uint64_t feedbackRevision = 0;
 
 // The game thread, or the draw thread while it runs the frame's draw for the
-// waiting game thread (docs/pipelined-draw.md).
+// waiting game thread (docs/optimizations/threading/pipelined-draw.md).
 bool OnProducer() {
     return std::this_thread::get_id() == gameThread || PpcThread::CurrentThread() == PpcThread::Draw;
 }
@@ -1056,10 +1056,9 @@ uint64_t NextPacket(uint64_t current, uint64_t newest) {
 
 void RenderPackets() {
 #ifdef __vita__
-    // The game thread runs on core 2; the AX mix worker and the display
-    // callback on core 0.
-    if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1) < 0)
-        MH3_THROW(std::runtime_error("Render thread core 1 affinity failed"));
+    // Core 0: the game thread runs on core 2, the draw thread on core 1, the
+    // audio mixer and the display callback on core 3.
+    aurora::pin_current_thread(aurora::ThreadRole::Render);
 #endif
 #ifdef MH3_MEMCPY_CENSUS
     mh3_memcpy_census_start();
@@ -1203,7 +1202,7 @@ void RenderLoop() {
 }
 
 #ifdef __EMSCRIPTEN__
-// The web build (docs/web-build.md): WebGPU belongs to the browser's main
+// The web build (docs/optimizations/platforms/web-build.md): WebGPU belongs to the browser's main
 // thread, which shows a frame only once it returns to its event loop. The
 // render thread is a requestAnimationFrame loop there: each animation frame
 // replays the next published packet, as RenderPackets would, and its present
@@ -1529,8 +1528,8 @@ void StartNativeRenderThread() {
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
 
-    // MH3_FRAME_LIMIT=off (runtime.env): the launcher's `Framelimit:
-    // OFF` for runs started without it (benchmarks on the devkit harness).
+    // MH3_FRAME_LIMIT=off: the launcher's `Framelimit: OFF` for runs
+    // started without it (benchmarks).
     if (const char* limit = std::getenv("MH3_FRAME_LIMIT"); limit && std::strcmp(limit, "off") == 0)
         frameLimit = false;
 

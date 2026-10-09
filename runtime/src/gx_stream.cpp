@@ -51,10 +51,8 @@ std::unordered_map<uintptr_t, std::pair<uint32_t, uint32_t>>& TextureHashes() {
 uint32_t CachedTextureVersion(uintptr_t address, uint32_t size) {
     auto& entry = TextureHashes()[address];
 
-    if (entry.first != size) {
+    if (entry.first != size)
         entry = {size, TextureContentsVersion(reinterpret_cast<const void*>(address), size)};
-        ++GuestGxStream::textureHashCount;
-    }
 
     return entry.second;
 }
@@ -103,7 +101,6 @@ void GuestGxStream::InvalidateTextureHashes() {
         return;
 
     TextureHashes().clear();
-    ++textureInvalidateCount;
 }
 
 void GuestGxStream::InvalidateTextureHashes(uintptr_t address, uint64_t size) {

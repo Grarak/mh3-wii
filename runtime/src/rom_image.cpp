@@ -104,8 +104,8 @@ class File {
 };
 
 // The decoder's read-ahead worker. Vita: on the workers' core beside the DVD
-// reader that calls the decoder (core 0 is the draw thread's), below the
-// default priority so the guest worker and the reader run first.
+// reader that calls the decoder (cores 0-1 are the render and draw threads'),
+// below the default priority so the guest worker and the reader run first.
 void PinDecodeWorker() {
 #ifdef __vita__
     aurora::pin_current_thread(aurora::ThreadRole::Worker);

@@ -2,7 +2,7 @@
 // functions and native ports, each on its own CPU context and guest stack.
 // The guest worker runs the deferred effect calculation (effect_step.cpp) and
 // the split world pass (scene_world.cpp). The draw thread runs the frame's
-// draw beside the next logic step (docs/pipelined-draw.md).
+// draw beside the next logic step (docs/optimizations/threading/pipelined-draw.md).
 //
 // Work is handed over whole: a thread submits a job and later waits for it.
 // While a job runs, the submitter must not touch the guest state the job
@@ -161,9 +161,9 @@ namespace DrawThread {
 // Guest stack bytes for the draw, reserved below the worker's at boot.
 inline constexpr uint32_t kGuestStackBytes = 64 * 1024;
 
-// The overlapped draw (docs/pipelined-draw.md, MH3StartDrawOverlap in
-// game_frame.cpp) runs on the draw thread, on core 3; the guest worker runs on
-// core 0, and core 2 is the game thread's alone.
+// The overlapped draw (docs/optimizations/threading/pipelined-draw.md, MH3StartDrawOverlap in
+// game_frame.cpp) runs on the draw thread, on core 1; the guest worker runs on
+// core 3, and core 2 is the game thread's alone.
 
 // The draw thread.
 GuestThread& Thread();

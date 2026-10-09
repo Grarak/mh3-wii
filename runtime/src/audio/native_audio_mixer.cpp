@@ -1,4 +1,4 @@
-// Native AX mixer, RMHP08. Runs on the audio thread (Vita core 0): applies the
+// Native AX mixer, RMHP08. Runs on the audio thread (Vita core 3): applies the
 // game's per-tick voice changes, decodes, resamples, filters and mixes every
 // running voice into the main and aux buses, runs the aux reverb and outputs
 // 32 kHz stereo.
