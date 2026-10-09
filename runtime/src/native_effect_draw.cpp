@@ -90,8 +90,8 @@ const mh3_effect_material &Resource(uint32_t p, mh3_effect_material &scratch) {
     return scratch;
 }
 
-void TextureMaps(uint32_t strategy, uint32_t resource) {
-    LoadResource(resource);
+// Each takes the resource decoded by LoadResource.
+void ApplyTextureMaps(uint32_t strategy) {
     effect.strategy = strategy;
     FlatWrite8(strategy + 0xd0, effect.resource.texture_count);
 
@@ -104,8 +104,7 @@ void TextureMaps(uint32_t strategy, uint32_t resource) {
     }
 }
 
-void Material(uint32_t strategy, uint32_t resource, uint32_t info) {
-    LoadResource(resource);
+void ApplyMaterial(uint32_t strategy, uint32_t resource, uint32_t info) {
     effect.strategy = strategy;
     mh3_native_material_state material;
     mh3_effect_material_apply(&effect.resource, &GetNativeMaterialState(), &material);
@@ -187,6 +186,25 @@ void Channels(uint32_t strategy, uint32_t resource, uint32_t info) {
     }
 
     SetNativeMaterial(material);
+}
+
+void TextureMaps(uint32_t strategy, uint32_t resource) {
+    LoadResource(resource);
+    ApplyTextureMaps(strategy);
+}
+
+void Material(uint32_t strategy, uint32_t resource, uint32_t info) {
+    LoadResource(resource);
+    ApplyMaterial(strategy, resource, info);
+}
+
+// TextureMaps, Material and Channels, as a strategy's draw sets them up, with
+// the resource decoded once.
+void Setup(uint32_t strategy, uint32_t resource, uint32_t info) {
+    LoadResource(resource);
+    ApplyTextureMaps(strategy);
+    ApplyMaterial(strategy, resource, info);
+    Channels(strategy, resource, info);
 }
 
 uint32_t Alpha(uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t force) {
@@ -814,9 +832,7 @@ void NativeEffectDrawBillboards(CpuContext *cpu) {
     BillboardContext c{cpu, frame.Arg(3), frame.Arg(4), frame.Arg(5), 0, 0, 0, frame[0x70], frame[0x80]};
     GuestCall game{cpu};
     c.resource = FlatRead32(c.manager + 0x24) + 0x9c;
-    TextureMaps(c.strategy, c.resource);
-    Material(c.strategy, c.resource, c.info);
-    Channels(c.strategy, c.resource, c.info);
+    Setup(c.strategy, c.resource, c.info);
     float identity[12];
     mh3_draw_identity_position(identity);
     SetNativePositionMatrix(identity);
@@ -859,9 +875,7 @@ extern "C" void MH3_EffectChannels(CpuContext *c) {
 
 extern "C" void MH3_EffectSetup(CpuContext *c) {
     uint32_t strategy = c->gpr[3], resource = c->gpr[5], info = c->gpr[6];
-    TextureMaps(strategy, resource);
-    Material(strategy, resource, info);
-    Channels(strategy, resource, info);
+    Setup(strategy, resource, info);
 }
 
 extern "C" void MH3_EffectAlpha(CpuContext *c) {
@@ -891,9 +905,7 @@ extern "C" void MH3_EffectParticleState(CpuContext *c) {
 
 extern "C" void MH3_EffectBillboardSetup(CpuContext *c) {
     uint32_t strategy = c->gpr[3], info = c->gpr[4], resource = FlatRead32(c->gpr[5] + 0x24) + 0x9c;
-    TextureMaps(strategy, resource);
-    Material(strategy, resource, info);
-    Channels(strategy, resource, info);
+    Setup(strategy, resource, info);
     float identity[12];
     mh3_draw_identity_position(identity);
     SetNativePositionMatrix(identity);
@@ -1210,14 +1222,68 @@ struct FreeContext {
     uint8_t rotation_kind, cross;
 };
 
+// The particle's rotation matrix (0x800BEA64, ef_drawfreestrategy.cpp,
+// decompiled with Ghidra): about X (kind 0), Y (1) or Z (2) by that angle of
+// its rotation (ParticleRotation), or about all three (XYZ).
+void FreeRotation(uint32_t particle, uint8_t kind, float m[12]) {
+    float r[3], sx, cx, sy, cy, sz, cz;
+    EffectParticle::Rotation(particle, r);
+
+    if (kind == 0) {
+        SinCosRadHost(r[0], sx, cx);
+        const float x[12] = {1, 0, 0, 0, 0, cx, -sx, 0, 0, sx, cx, 0};
+        std::memcpy(m, x, sizeof x);
+    } else if (kind == 1) {
+        SinCosRadHost(r[1], sy, cy);
+        const float y[12] = {cy, 0, sy, 0, 0, 1, 0, 0, -sy, 0, cy, 0};
+        std::memcpy(m, y, sizeof y);
+    } else if (kind == 2) {
+        SinCosRadHost(r[2], sz, cz);
+        const float z[12] = {cz, -sz, 0, 0, sz, cz, 0, 0, 0, 0, 1, 0};
+        std::memcpy(m, z, sizeof z);
+    } else {
+        SinCosRadHost(r[0], sx, cx);
+        SinCosRadHost(r[1], sy, cy);
+        SinCosRadHost(r[2], sz, cz);
+        const float sxsy = sx * sy, cxsy = cx * sy;
+        const float xyz[12] = {cy * cz, sxsy * cz - cx * sz, cxsy * cz + sx * sz, 0,
+                               cy * sz, sxsy * sz + cx * cz, cxsy * sz - sx * cz, 0,
+                               -sy, cy * sx, cx * cy, 0};
+        std::memcpy(m, xyz, sizeof xyz);
+    }
+}
+
+// The quad's matrix (0x800BE99C): the rotation's columns scaled by the width,
+// height and width, and the pivot (a share of the size) rotated about.
+void FreeDrawMatrix(const float r[12], const float pivot[2], float width, float height, float m[12]) {
+    const float wx = width * pivot[0], hy = height * pivot[1];
+
+    for (uint32_t row = 0; row < 3; row++) {
+        const float *a = r + 4 * row;
+        const float shift = -a[0] * wx - a[1] * hy;
+        m[4 * row] = a[0] * width;
+        m[4 * row + 1] = a[1] * height;
+        m[4 * row + 2] = a[2] * width;
+        m[4 * row + 3] = row < 2 ? pivot[row] + shift : shift;
+    }
+}
+
 void FreeQuad(void *opaque, uint32_t id, const mh3_effect_particle *values, float width, float height) {
     auto &f = *static_cast<FreeContext *>(opaque);
     auto &c = f.base;
-    GuestCall game{c.cpu};
-    game.Call<0x800BEA64>({f.rotation_matrix, id, f.rotation_kind});
-    game.Call<0x800BE99C>({f.draw_matrix, f.rotation_matrix}, {f.pivot[0], f.pivot[1], width, height});
     float matrix[12];
-    ReadVector(f.draw_matrix, matrix, 12);
+
+    // Port checks on ParticleRotation run it at its guest address.
+    if (EffectParticle::PortChecked()) [[unlikely]] {
+        GuestCall game{c.cpu};
+        game.Call<0x800BEA64>({f.rotation_matrix, id, f.rotation_kind});
+        game.Call<0x800BE99C>({f.draw_matrix, f.rotation_matrix}, {f.pivot[0], f.pivot[1], width, height});
+        ReadVector(f.draw_matrix, matrix, 12);
+    } else {
+        float rotation[12];
+        FreeRotation(id, f.rotation_kind, rotation);
+        FreeDrawMatrix(rotation, f.pivot, width, height, matrix);
+    }
 
     for (uint32_t r = 0; r < 3; r++)
         matrix[4 * r + 3] += values->position[r];
@@ -1240,9 +1306,7 @@ extern "C" void MH3_EffectFreeStrategy(CpuContext *cpu) {
     auto &c = f.base;
     c.resource = FlatRead32(c.manager + 0x24) + 0x9c;
     GuestCall game{cpu};
-    TextureMaps(c.strategy, c.resource);
-    Material(c.strategy, c.resource, c.info);
-    Channels(c.strategy, c.resource, c.info);
+    Setup(c.strategy, c.resource, c.info);
     game.Call<0x800B7E14>({c.info, frame[0x10]});
     game.Call<0x800AE3C4>({c.manager, frame[0x40]});
     float view[12], local[12], matrix[12];
@@ -1328,9 +1392,7 @@ void SmallStrategy(CpuContext *cpu, bool point) {
     auto &c = s.base;
     c.resource = FlatRead32(c.manager + 0x24) + 0x9c;
     GuestCall game{cpu};
-    TextureMaps(c.strategy, c.resource);
-    Material(c.strategy, c.resource, c.info);
-    Channels(c.strategy, c.resource, c.info);
+    Setup(c.strategy, c.resource, c.info);
     game.Call<0x800B7E14>({c.info, frame[0x10]});
     game.Call<0x800AE3C4>({c.manager, frame[0x40]});
     float view[12], local[12], matrix[12];
@@ -1392,9 +1454,7 @@ extern "C" void MH3_EffectBillboardQuad(CpuContext *cpu) {
 
 extern "C" void MH3_EffectStrategySetup(CpuContext *cpu) {
     uint32_t strategy = cpu->gpr[3], info = cpu->gpr[4], resource = FlatRead32(cpu->gpr[5] + 0x24) + 0x9c;
-    TextureMaps(strategy, resource);
-    Material(strategy, resource, info);
-    Channels(strategy, resource, info);
+    Setup(strategy, resource, info);
 }
 
 extern "C" void MH3_EffectCullPadding(CpuContext *cpu) {
@@ -1467,9 +1527,7 @@ void DirectionalStrategy(CpuContext *cpu, bool screen) {
     auto &c = d.base;
     c.resource = FlatRead32(c.manager + 0x24) + 0x9c;
     GuestCall game{cpu};
-    TextureMaps(c.strategy, c.resource);
-    Material(c.strategy, c.resource, c.info);
-    Channels(c.strategy, c.resource, c.info);
+    Setup(c.strategy, c.resource, c.info);
     game.Call<0x800B7E14>({c.info, frame[0x10]});
     game.Call<0x800C8F74>({d.context, frame[0x10], c.manager});
     float view[12], local[12];
@@ -1718,9 +1776,7 @@ void StripeStrategy(CpuContext *cpu, bool smooth) {
         return;
     }
 
-    TextureMaps(strategy, resource);
-    Material(strategy, resource, info);
-    Channels(strategy, resource, info);
+    Setup(strategy, resource, info);
     SetNativePositionMatrix(combined);
     flags |= effect.resource.texture_count != 0;
     uint32_t particle = game(first_fn, {manager});
