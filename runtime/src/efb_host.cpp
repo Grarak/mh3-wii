@@ -26,7 +26,7 @@ void TraceEfbAccess(bool write, uint16_t x, uint16_t y, uint32_t value) {
     static std::map<std::tuple<bool, uint32_t, uint32_t>, EfbTraceEntry> entries;
     static auto last = Clock::now();
     const auto* cpu = TryGetCpuContext();
-    auto& entry = entries[{write, RecompMod::g_currentTranslatedExecutionAddress, cpu ? cpu->lr : 0}];
+    auto& entry = entries[{write, RecompMod::CurrentTranslatedExecutionAddress(), cpu ? cpu->lr : 0}];
     if (!entry.count++)
         entry.firstValue = value;
     entry.lastValue = value;

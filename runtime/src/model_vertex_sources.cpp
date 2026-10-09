@@ -10,9 +10,12 @@
 
 namespace {
 // Bound arrays are draw state: each thread binds its own.
-thread_local std::array<mh3_native_vertex_source, 12> bindings{};
-thread_local std::array<bool, 12> known{};
-thread_local uint64_t binding_generation = 0;
+struct VertexBindings {
+    std::array<mh3_native_vertex_source, 12> bindings{};
+    std::array<bool, 12> known{};
+    uint64_t generation = 0;
+};
+thread_local constinit VertexBindings vertexBindings{};
 struct Revision {
     uint64_t value;
     uint32_t bytes;
@@ -32,11 +35,12 @@ bool Intersects(uint32_t a, uint32_t n, uint32_t b, uint32_t m) {
     return n && m && uint64_t(a) + n > b && uint64_t(b) + m > a;
 }
 void Retire(uint32_t address, uint32_t bytes) {
+    auto& state = vertexBindings;
     for (uint32_t i = 0; i < 12; i++)
-        if (known[i]) {
-            const auto& source = bindings[i];
+        if (state.known[i]) {
+            const auto& source = state.bindings[i];
             if (Intersects(Canonical(source.resource_address), source.resource_bytes, address, bytes) || Intersects(Canonical(source.payload_address), source.payload_bytes, address, bytes))
-                known[i] = false;
+                state.known[i] = false;
         }
     auto& generations = Generations();
     for (auto it = generations.begin(); it != generations.end();) {
@@ -68,10 +72,11 @@ void MarkNativeVertexProduced(uint32_t payload, uint64_t generation) {
         throw std::runtime_error("Invalid native vertex producer generation");
     const uint32_t bytes = generations.contains(payload) ? generations.at(payload).bytes : 0;
     generations.insert_or_assign(payload, Revision{generation, bytes});
+    auto& state = vertexBindings;
     for (uint32_t i = 0; i < 12; i++)
-        if (known[i] && Canonical(bindings[i].payload_address) == payload) {
-            bindings[i].source_generation = generation;
-            generations.at(payload).bytes = bindings[i].payload_bytes;
+        if (state.known[i] && Canonical(state.bindings[i].payload_address) == payload) {
+            state.bindings[i].source_generation = generation;
+            generations.at(payload).bytes = state.bindings[i].payload_bytes;
         }
 }
 mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex_kind kind) {
@@ -93,22 +98,26 @@ mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_ver
 }
 void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& source) {
     Observe();
-    if (semantic >= 12 || !source.payload_address || binding_generation == UINT64_MAX)
+    auto& state = vertexBindings;
+    if (semantic >= 12 || !source.payload_address || state.generation == UINT64_MAX)
         throw std::runtime_error("Invalid native vertex source binding");
-    bindings[semantic] = source;
-    bindings[semantic].binding_generation = ++binding_generation;
-    known[semantic] = true;
+    state.bindings[semantic] = source;
+    state.bindings[semantic].binding_generation = ++state.generation;
+    state.known[semantic] = true;
     auto& generations = Generations();
     const auto generation = generations.find(Canonical(source.payload_address, source.payload_bytes));
     if (generation != generations.end()) {
-        bindings[semantic].source_generation = generation->second.value;
+        state.bindings[semantic].source_generation = generation->second.value;
         generation->second.bytes = source.payload_bytes;
     }
 }
 bool ReadNativeVertexSource(uint32_t semantic, mh3_native_vertex_source* out) {
-    if (semantic >= 12 || !out || !known[semantic])
+    if (semantic >= 12 || !out)
         return false;
-    *out = bindings[semantic];
+    const auto& state = vertexBindings;
+    if (!state.known[semantic])
+        return false;
+    *out = state.bindings[semantic];
     return true;
 }
 extern "C" void MH3_ModelPositionArray(CpuContext* cpu) {

@@ -99,7 +99,7 @@ void Handler(int signal, siginfo_t* info, void* context) {
                           address,
                           fault.pc,
                           fault.lr,
-                          RecompMod::g_currentTranslatedExecutionAddress,
+                          RecompMod::CurrentTranslatedExecutionAddress(),
                           cpu ? cpu->lr : 0,
                           fault.write,
                           address >= region.start && address < region.end,

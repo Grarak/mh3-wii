@@ -1,4 +1,5 @@
 #pragma once
+#include "isa/ppc_isa_thread_state.h"
 
 #include <atomic>
 #include <cstddef>
@@ -21,22 +22,20 @@ struct MemoryReservation {
 };
 
 // Diagnostic-only, read by fatal reporters (unmapped access, executable-write, CPU dumps).
-// Defined here as `inline thread_local` with a constant initializer, not `extern thread_local`
-// in the .cpp: every indirect dispatch scopes this, so an out-of-line ctor/dtor would cost two
-// un-inlinable calls plus a register spill each for three instructions of work.
-inline thread_local uint32_t g_currentTranslatedExecutionAddress = 0;
+// Shares constant-initialized TLS storage with the current CPU pointer. Inline
+// scopes let a dispatch resolve the record once for both independent fields.
 
 class ScopedTranslatedExecutionAddress {
   public:
-    explicit ScopedTranslatedExecutionAddress(uint32_t address) noexcept : previous_(g_currentTranslatedExecutionAddress) {
+    explicit ScopedTranslatedExecutionAddress(uint32_t address) noexcept : previous_(PpcThread::state.executionAddress) {
         // Address 0 means "nothing new to report" - the enclosing scope's value
         // stays visible, and the unconditional restore below keeps nesting exact.
         if (address != 0) {
-            g_currentTranslatedExecutionAddress = address;
+            PpcThread::state.executionAddress = address;
         }
     }
 
-    ~ScopedTranslatedExecutionAddress() noexcept { g_currentTranslatedExecutionAddress = previous_; }
+    ~ScopedTranslatedExecutionAddress() noexcept { PpcThread::state.executionAddress = previous_; }
 
     ScopedTranslatedExecutionAddress(const ScopedTranslatedExecutionAddress&) = delete;
     ScopedTranslatedExecutionAddress& operator=(const ScopedTranslatedExecutionAddress&) = delete;

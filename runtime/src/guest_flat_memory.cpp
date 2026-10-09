@@ -135,7 +135,7 @@ void Report(int signal, siginfo_t* info, void* context) {
                                      "translated function 0x%08x. Hardware accesses belong to a function listed in "
                                      "runtime/src/hardware_access.inc.\n",
                                      FaultWasWrite(context) ? "write" : "read", guest, Describe(guest), named ? symbol.dli_sname : "?", named ? (unsigned long)(pc - uintptr_t(symbol.dli_saddr)) : 0ul,
-                                     reinterpret_cast<void*>(pc), RecompMod::g_currentTranslatedExecutionAddress);
+                                     reinterpret_cast<void*>(pc), RecompMod::CurrentTranslatedExecutionAddress());
     if (length > 0)
         (void)!write(STDERR_FILENO, text, size_t(length) < sizeof(text) ? size_t(length) : sizeof(text) - 1);
     // An unrecognized, computed hardware pointer may bypass the translator's
