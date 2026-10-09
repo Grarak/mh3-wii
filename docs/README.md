@@ -3,6 +3,26 @@
 Start with [HANDOVER.md](../HANDOVER.md). It covers the current state and how to
 build, run and debug.
 
+## Closeout and restart — 2026-10-02
+
+Production checkpoint `c3c038f` passes the Release/NDEBUG ARM64 host build and
+a bounded quest 10057/area 6 run. Implementation agents are stopped; no partial
+texture descriptor API exists. The owned scene provider is unregistered and
+admits 0/157 real models until textures are supported. Device measurements
+predate this checkpoint; no current 60 FPS or retail RAM result is established.
+
+The current restart references are:
+
+- [HANDOVER.md](../HANDOVER.md): agent work, committed checkpoints, remaining tasks, tools and constraints.
+- [host-material-profiling.md](host-material-profiling.md), [native-material-group-publication.md](native-material-group-publication.md): exact host CPU measurements and direct publication; fewer operations did not establish a timing gain.
+- [pi5-gx-native-render-history.md](pi5-gx-native-render-history.md): original GX workers versus current owner/total CPU, counter denominators and partial verified callers.
+- [native-texture-binding-origins.md](native-texture-binding-origins.md), [native-texture-processed-host.md](native-texture-processed-host.md): actual producers, processed host uptake and the unimplemented descriptor boundary.
+- [owned-static-scene-provider.md](owned-static-scene-provider.md), [render-thread-state-evaluation.md](render-thread-state-evaluation.md): serial prototype, real corpus blockers and missing integration contracts.
+
+Topic notes record dated snapshots. Their local headings saying “current” or
+“latest” refer to the named executable/capture, unless updated here or in the
+handover. Retain historical evidence, but do not use it as a claim about HEAD.
+
 ## Current renderer and platform references
 
 - [native-renderer-status.md](native-renderer-status.md): current implementation, pending integration, threads, waits/copies, shader compilation and memory accounting. Start here for rendering status.
@@ -16,7 +36,7 @@ build, run and debug.
 - [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and historical DevKit checkpoints.
 - [vita-launcher.md](vita-launcher.md): launcher, ROM processing and startup UI scope.
 - [vita-render-investigation.md](vita-render-investigation.md), [vita-razor.md](vita-razor.md), [vita-active-play-capture.md](vita-active-play-capture.md): investigation/profiling tools and source-specific captures; older GX gameplay is historical.
-- [pi5-cortex-a9-benchmark.md](pi5-cortex-a9-benchmark.md): current native gameplay CPU/frame measurements and historical regression boundary; Pi 5 executes the Cortex-A9 build on a Cortex-A76 CPU.
+- [pi5-cortex-a9-benchmark.md](pi5-cortex-a9-benchmark.md): earlier native gameplay CPU/frame checkpoints; the newer exact GX/native comparison is linked above. Pi 5 executes the Cortex-A9 build on a Cortex-A76 CPU.
 - [aurora-dependency.md](aurora-dependency.md): maintained GLES/GXM copy and dependency setup.
 
 ## Runtime and simulation references

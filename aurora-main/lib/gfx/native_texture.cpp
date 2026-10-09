@@ -3,6 +3,7 @@
 #include <aurora/generated_texture.hpp>
 #include <aurora/native_scene_feedback.hpp>
 #include "texture_convert.hpp"
+#include "native_texture_layout.hpp"
 #include "../gxm/sampler_bias.hpp"
 #include <array>
 #include <bit>
@@ -13,8 +14,9 @@
 
 namespace aurora {
 namespace {
-// Leave space in the CDRAM arena for display surfaces, depth and offscreen
-// targets. Backend fences retain evicted in-flight storage until it is safe.
+// Budget resident texture storage separately from display/depth/offscreen
+// targets. GLES texel estimates exclude driver bookkeeping; GXM charges the
+// CDRAM image/palette layout. Backend fences retain evicted in-flight storage.
 constexpr size_t CacheBudget=48u<<20;
 using Key=std::tuple<uintptr_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,
                      uint64_t,uintptr_t,uint32_t,uint32_t,uint64_t>;
@@ -59,6 +61,20 @@ size_t rgba_allocation(const NativeTextureSource& source) {
       std::max(std::bit_ceil(source.height)>>mip,1u)*4 : ((w+7)&~size_t(7))*h*4;
   }
   return (bytes+63)&~size_t(63);
+}
+size_t offline_allocation(const gl::NativeTextureInfo& info) {
+#ifdef AURORA_GXM
+  // NativeAssets reads the complete prepared image/palette layout into CDRAM.
+  return (size_t(info.bytes)+63)&~size_t(63);
+#else
+  // GLES expands Morton palette/BC storage to RGBA. Linear prepared formats
+  // retain their native channel widths; archive padding is not GPU storage.
+  const size_t pixel=gfx::native_swizzled(info.format)?4:gfx::native_pixel_bytes(info.format);
+  size_t bytes=0;
+  for(unsigned mip=0;mip<info.mips;++mip)
+    bytes+=size_t(std::max(info.width>>mip,1u))*std::max(info.height>>mip,1u)*pixel;
+  return (bytes+63)&~size_t(63);
+#endif
 }
 }
 
@@ -133,7 +149,6 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   // A native asset already includes its immutable palette. Live palette or
   // image revisions must use their own producer payload instead.
   bool offline=source.asset && !source.mutable_source && source.original_image;
-#ifdef AURORA_GXM
   gl::NativeTextureInfo offlineInfo{};
   if(offline) {
     offlineInfo=gl::native_texture_info(source.asset);
@@ -148,11 +163,6 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
           source.palette_format==offlineInfo.sourcePaletteFormat;
     }
   }
-#else
-  // Live host rendering retains its authored producer bytes. The standalone
-  // GLES pack probe exercises offline payload layouts separately.
-  offline=false;
-#endif
   const Key key{offline?0:reinterpret_cast<uintptr_t>(source.bytes.data()),offline?source.asset:0,
     source.width,source.height,source.levels,source.format,offline?0:source.generation,
     offline?0:reinterpret_cast<uintptr_t>(source.palette.data()),offline?0:source.palette_format,
@@ -171,12 +181,10 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   }
   gl::TexturePtr texture;
   size_t allocated=rgba_allocation(source);
-#ifdef AURORA_GXM
   if(offline) {
-    allocated=(size_t(offlineInfo.bytes)+63)&~size_t(63);
+    allocated=offline_allocation(offlineInfo);
     make_room(allocated);texture=gl::native_texture_asset(source.asset);
   } else
-#endif
   {
     if(source.bytes.size()<sourceBytes) throw std::runtime_error("Native texture source is truncated");
     make_room(allocated);

@@ -7,12 +7,13 @@ and native **GXM** on Vita.
 
 - **Targets:** Vita (ARM32, Cortex-A9, GXM), arm32 Linux (armhf, Cortex-A9
   build tested on Pi 5), and arm64 Linux for development.
-- **Current migration, 2026-10-01:** game and rendering share one CPU thread;
-  legacy GX/FIFO routes remain fatal. Native startup, UI/scene/effect families,
-  dynamic materials and resident asset preparation have focused verification.
-  GPU model transforms/texgen and live shape/material routing remain in progress;
-  complete quest rendering and current FPS/RAM results are not established.
-  Busy frame slots/display queues skip rendering while logic continues.
+- **Closeout, 2026-10-02:** game and rendering share one CPU thread;
+  legacy GX/FIFO routes remain fatal. Release quest selection, direct native C
+  material groups and processed GLES textures pass focused tests and a bounded
+  host quest. Pi measurements distinguish owner CPU from the original GX
+  workers. The owned scene provider remains unregistered and the render worker
+  is not integrated. Full quest parity, retail memory peaks and 60 completed
+  display FPS on Vita remain open. Busy GPU slots skip drawing while logic continues.
   [Native renderer status](docs/native-renderer-status.md) distinguishes current
   implementation, pending gates and earlier playable evidence.
 
@@ -25,13 +26,15 @@ and open work. The `docs/` notes are listed in [docs/README.md](docs/README.md).
 ```sh
 tools/dotnet/dotnet build -c Release toolchain/translator/src/Translator.Cli
 scripts/translate.sh
-MH3_ARCH=arm64 MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON scripts/build-aurora.sh
-build/linux-arm64/MH3 --village
+MH3_ARCH=arm64 MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=OFF -DMH3_PROFILE_FRAME_POINTERS=ON' scripts/build-aurora.sh
+DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1 build/linux-arm64/MH3 --village
 ```
 
 The launch is an integration probe: unported or unsupported rendering paths
 fail explicitly. For arm32 Linux, build inside the `mh3-armhf-cross` Docker image
 (`scripts/docker-build.sh scripts/build-aurora.sh`). See HANDOVER.md.
+Enable `MH3_DEVELOPMENT` for statistics, scripted replay and captures; assertions
+follow Release/NDEBUG independently. Quest selection is also available in release.
 
 Keyboard: Space = A, Left Shift = B, WASD = left stick, arrows = D-pad,
 Enter = Plus ([controls](docs/controller-bringup.md)).
