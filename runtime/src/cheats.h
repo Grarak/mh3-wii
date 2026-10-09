@@ -1,0 +1,232 @@
+// Cheats, RMHP08: the switches the launcher sets and what their
+// implementations share. The codes come from Gecko lists for RMHE08 (the US
+// disc); every address below is the EU one, found by matching the US code
+// and data against this disc's.
+//
+// Three kinds of implementation:
+//   - writes to the game's data (save data, the player's and the monsters'
+//     work), once per logic step from Step, as the Gecko code handler wrote
+//     them once per frame;
+//   - hooks in native ports of the functions a code patched;
+//   - wrappers around translated functions that change their arguments,
+//     results or the fields they wrote.
+#pragma once
+
+#include "abi_bridge.h"
+#include "memory.h"
+
+#include <cstdint>
+
+namespace Cheats {
+
+// One per menu toggle, in the launcher's order (the table in cheats.cpp).
+enum class Id : uint16_t {
+    // Basic
+    NoDamage,
+    NoStaminaDrain,
+    // Stuff
+    GalleryClips,
+    TurnItUpTo11,
+    MapOnHud,
+    MaxHealMonsters,
+    MonsterActionRepeater,
+    // Seth@WiiPlaza
+    VillageSpeedHack,
+    VillageSnailSpeed,
+    SethInfiniteHealth,
+    SethUltraSharp,
+    SethSpeedGlide,
+    SethOxygen,
+    // Skiller
+    MorningOnLoad,
+    EveningOnLoad,
+    ResourcesZero,
+    MaxMoney,
+    SexChange,
+    InfiniteHp,
+    InfiniteStamina,
+    InfiniteAir,
+    DefenseUpgrade,
+    DefenseMax,
+    AttackUpgrade,
+    NeverLifeDrain,
+    AddDragon,
+    AddThunder,
+    AddIce,
+    AddFire,
+    AddWater,
+    NoIceWeakness,
+    NoDragonWeakness,
+    NoWaterWeakness,
+    NoThunderWeakness,
+    NoFireWeakness,
+    NeverDefenseDown,
+    NeverFelvine,
+    NeverSnowman,
+    NeverMuddy,
+    AlwaysWindproof,
+    NeverStun,
+    NeverPoison,
+    NaturalRecoveryUp,
+    PurpleHealthBar,
+    NoElementStatus,
+    FelyneSkill1,
+    FelyneSkill2,
+    FelyneSkill3,
+    FelyneSkill4,
+    PuddyFace,
+    HairStyle,
+    HairRed,
+    HairGreen,
+    HairBlue,
+    Clothing,
+    Voice,
+    EyeColor,
+    Features,
+    ClothingRed,
+    ClothingGreen,
+    ClothingBlue,
+    // Argon
+    SetPlayTime,
+    UnlimitedBarrelBombs,
+    UnlimitedColdDrink,
+    UnlimitedHotDrink,
+    LoadShots,
+    UnlimitedTraps,
+    // Doudley
+    FaceForwardStick,
+    FaceForwardDpad,
+    AntiGravity,
+    RunInMidAir,
+    MidAirDpad,
+    MidAirStick,
+    FasterWeaponUsage,
+    SnsInfiniteSlashes,
+    LanceChargeSpeed,
+    LanceChargeController,
+    Battojutsu,
+    SwitchAxeSwordMode,
+    AirAttackGreatSword,
+    AirAttackSwordAndShield,
+    AirAttackHammer,
+    AirAttackLance,
+    AirAttackLongSword,
+    AirAttackSwitchAxe,
+    AirAttackBowgun,
+    ForceGrill,
+    AllHuntingFleets,
+    CaptainCatch,
+    CaptainFourStars,
+    RedspearCatch,
+    RedspearFourStars,
+    BlackspearCatch,
+    BlackspearFourStars,
+    HalfDayVoyages,
+    ChamberlynePrize,
+    AllArenaChallenges,
+    AllFelyneHelpers,
+    MaxFarmStats,
+    InstantFarming,
+    HuntReportKills,
+    ForecastTomorrow1,
+    ForecastTomorrow2,
+    ForecastDayAfter1,
+    ForecastDayAfter2,
+    ComboListComplete,
+    QuickGestures,
+    ForceSheathe,
+    ForceUnsheathe,
+    ActionRepeater,
+    ForceEvade,
+    SleepAnywhere,
+    BackToCamp,
+    ShowMonstersOnMap,
+    FreezeMonsters,
+    SwitchAxeGaugeFull,
+    AttackUpForever,
+    DefenseUpForever,
+    SpeedBurstAlways,
+    HelmLevel255,
+    VestLevel255,
+    GlovesLevel255,
+    BeltLevel255,
+    PantsLevel255,
+    SkinTone,
+    Count
+};
+
+// Set by the launcher (or --cheat) before the game starts.
+extern bool g_on[size_t(Id::Count)];
+extern int32_t g_value[size_t(Id::Count)];
+
+inline bool On(Id id) {
+    return g_on[size_t(id)];
+}
+
+inline int32_t Value(Id id) {
+    return g_value[size_t(id)];
+}
+
+// The data writes, once per logic step before the task pass (MH3_GameFrame).
+void Step(CpuContext* ctx);
+
+// Step's parts, by what they write.
+void StepSaveData();
+void StepPlayer();
+void StepMonsters();
+
+// The game's data.
+constexpr uint32_t kSystem = 0x8065AA60; // system_w
+
+// The character's save data (the userdata), 0 before one is loaded.
+inline uint32_t UserData() {
+    return Memory::Read32(kSystem + 0x95C);
+}
+
+// Move work: the game's lists of players, monsters and other movers, each
+// entry starting with u16 0x0101 while it is in use.
+enum class Kind : uint32_t {
+    Player = 2,
+    Monster = 3,
+};
+
+constexpr uint32_t kPlayerSize = 0xB20, kMonsterSize = 0xB18;
+uint32_t MoveWork(Kind kind, uint32_t index);
+uint32_t MoveWorkCount(Kind kind);
+
+// The player work (PLW) of the hunter this console controls, 0 when there is
+// none (menus, loading).
+uint32_t LocalPlayer();
+
+// The Classic Controller's buttons, as the game keeps them (Psw+0xD6 of
+// channel 0): held this step and pressed this step.
+enum Button : uint16_t {
+    kZL = 0x4,
+    kL = 0x8,
+    kZR = 0x10,
+    kA = 0x20,
+    kB = 0x40,
+    kR = 0x80,
+    kX = 0x100,
+    kY = 0x200,
+    kRight = 0x400,
+    kLeft = 0x800,
+    kDown = 0x1000,
+    kUp = 0x2000,
+    kMinus = 0x4000,
+    kPlus = 0x8000,
+};
+
+uint16_t Held();
+uint16_t Pressed();
+
+// All of `buttons` held, at least one of them pressed this step.
+inline bool Combo(uint16_t buttons) {
+    return (Held() & buttons) == buttons && (Pressed() & buttons) != 0;
+}
+
+inline bool HeldAll(uint16_t buttons) {
+    return (Held() & buttons) == buttons;
+}
+
+} // namespace Cheats

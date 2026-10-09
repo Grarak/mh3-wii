@@ -12,6 +12,7 @@
 // The phase byte (0x8065AA83) records how far the frame got (1 started,
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
+#include "cheats.h"
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
@@ -79,6 +80,7 @@ const DevOptions& StepProbeOptions() {
     static const DevOptions options("MH3_STEP_PROBE", {"step", "settle", "all"}, DevOptions::Words::Allowed);
     return options;
 }
+
 struct Ram {
     std::vector<uint8_t> bytes;
     static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
@@ -88,10 +90,12 @@ struct Ram {
         std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
         std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
     }
+
     void Restore() const {
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
     }
+
     uint32_t Word(size_t offset) const { return uint32_t(bytes[offset]) << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]; }
     static uint32_t Address(size_t offset) { return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset) : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size); }
 };
@@ -107,10 +111,12 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
     before.Save();
     GameStep::Begin(1.0);
     runTasks();
+
     if (settle) {
         GameStep::Begin(1.0);
         runTasks();
     }
+
     whole.Save();
     before.Restore();
     GameStep::Restore(clock);
@@ -118,24 +124,31 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
     runTasks();
     GameStep::Begin(0.5);
     runTasks();
+
     if (settle) {
         GameStep::Begin(1.0);
         runTasks();
     }
+
     halves.Save();
     before.Restore();
     GameStep::Restore(clock);
 
     const std::string name = "mh3-step-probe-" + std::to_string(step) + ".txt";
     FILE* out = std::fopen(name.c_str(), "w");
+
     if (!out)
         return;
+
     std::fprintf(out, settle ? "# address before whole(2x1/30) halves(2x1/60+1/30) as u32 and f32\n" : "# address before whole(1/30) halves(2x1/60) as u32 and f32\n");
     size_t changed = 0;
+
     for (size_t i = 0; i + 4 <= before.bytes.size(); i += 4) {
         const uint32_t a = before.Word(i), b = whole.Word(i), c = halves.Word(i);
+
         if (a == b && a == c)
             continue;
+
         float fa, fb, fc;
         std::memcpy(&fa, &a, 4);
         std::memcpy(&fb, &b, 4);
@@ -143,6 +156,7 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
         std::fprintf(out, "%08x %08x %08x %08x %g %g %g\n", Ram::Address(i), a, b, c, fa, fb, fc);
         ++changed;
     }
+
     std::fclose(out);
     std::printf("MH3 step probe: step %u, %llu words changed -> %s\n", step, static_cast<unsigned long long>(changed), name.c_str());
     std::fflush(stdout);
@@ -160,6 +174,7 @@ uint32_t splitScopes[MH3_SPLIT_FAMILIES];
 #ifdef MH3_DEVELOPMENT
 uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 uint32_t mh3SplitFrame;
+
 // Set at the first frame: the Vita applies runtime.env after static
 // initialization.
 bool mh3SplitDetail = false;
@@ -167,6 +182,7 @@ void MH3FrameSplitCall(unsigned kind) {
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];
 }
+
 void MH3FrameSplitTime(unsigned family, MH3SplitClock::duration elapsed) {
     splitFamilies[family] += std::chrono::duration<double, std::milli>(elapsed).count();
     ++splitScopes[family];
@@ -188,14 +204,17 @@ struct FrameSplit {
     void Begin() {
         if (!mh3SplitFrame)
             mh3SplitDetail = ProfileOptions().Has("split");
+
         ++mh3SplitFrame;
         start = mark = Clock::now();
     }
+
     void Lap(double& bucket) {
         const auto now = Clock::now();
         bucket += Ms(now - mark);
         mark = now;
     }
+
     void End() {
         Lap(other);
         ++frames;
@@ -203,8 +222,10 @@ struct FrameSplit {
             const char* value = std::getenv("MH3_STATS");
             return !value || std::strcmp(value, "0") != 0;
         }();
+
         if (!enabled || mark - reported < std::chrono::seconds(1))
             return;
+
         std::printf("MH3 frame split: logic %.2f draw %.2f other %.2f ms/frame (%u frames); calls logic/draw: world %u/%u anim %u/%u effect %u/%u view %u/%u\n", logic / frames, draw / frames,
                     other / frames, frames, splitCalls[0][2], splitCalls[0][3], splitCalls[1][2], splitCalls[1][3], splitCalls[2][2], splitCalls[2][3], splitCalls[3][2], splitCalls[3][3]);
         const auto f = [this](unsigned family) { return splitFamilies[family] / frames; };
@@ -216,6 +237,7 @@ struct FrameSplit {
         std::printf("MH3 scene split: scene %.2f buckets %.2f setup %.2f finish %.2f post %.2f ms/frame\n", f(MH3_SPLIT_SCENE), f(MH3_SPLIT_BUCKETS), f(MH3_SPLIT_SCENE_SETUP),
                     f(MH3_SPLIT_SCENE_FINISH), f(MH3_SPLIT_POST));
         std::printf("MH3 effect split: calc %.2f draw %.2f ms/frame (calc scopes/frame %u)\n", f(MH3_SPLIT_EFFECT_CALC), f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC));
+
         if (mh3SplitDetail)
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
                         f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));
@@ -246,8 +268,10 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
     auto call = [ctx](uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
         uint32_t r = 3;
+
         for (uint32_t v : ints)
             ctx->gpr[r++] = v;
+
         InvokeIndirectCpu(fn, ctx);
         return ctx->gpr[3];
     };
@@ -263,14 +287,18 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     call(PollControllers);
     Memory::Write8(kSystem + kFramePhase, 1);
     const uint8_t boot = Memory::Read8(kSystem + kBootState);
+
     // FrameSetup already latched admission before this logic step. Completing
     // a notification during logic does not reopen a skipped frame's payload.
     const bool render = NativeGraphicsFrameShouldRender();
+
     if (uint8_t(boot - 1) <= 1) {
         call(flfntStackReset);
         call(UpdateScene);
+
         if (render)
             call(Setup2DProjection);
+
         call(MovieUpdate);
         call(NetworkResetCheck);
         Memory::Write8(kSystem + kFramePhase, 2);
@@ -279,85 +307,108 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         static const uint32_t probeAt = uint32_t(StepProbeOptions().Number("step", 0));
         static const std::vector<double> probeTicks = [] {
             std::vector<double> ticks;
+
             for (const std::string& word : StepProbeOptions().List()) {
                 char* end = nullptr;
                 const double tick = std::strtod(word.c_str(), &end);
+
                 if (end == word.c_str() || *end)
                     std::fprintf(stderr, "MH3: MH3_STEP_PROBE: '%s' is not a tick count\n", word.c_str());
                 else
                     ticks.push_back(tick);
             }
+
             return ticks;
         }();
         static size_t nextTickProbe = 0;
         ++logicSteps;
         const bool tickDue = nextTickProbe < probeTicks.size() && GameStep::Elapsed() >= probeTicks[nextTickProbe];
+
         if (tickDue)
             ++nextTickProbe;
         // all: probe the whole frame (scene update, tasks and drawing) instead
         // of the task pass alone.
         static const bool probeAll = StepProbeOptions().Has("all");
+
         if (logicSteps == probeAt || tickDue)
             ProbeStepDependence(logicSteps, [&] {
                 if (probeAll) {
                     call(flfntStackReset);
                     call(UpdateScene);
+
                     if (render)
                         call(Setup2DProjection);
+
                     call(MovieUpdate);
                 }
+
                 call(RunTasks);
+
                 if (!probeAll)
                     return;
+
                 call(GrabScreen);
                 call(ResetFade);
                 call(TickSystemTimers);
+
                 if (render) {
                     call(DrawScene);
                     call(flfntFlush);
                     call(DrawFadeOverlay);
                 }
+
                 call(TickFades);
+
                 if (render) {
                     call(DrawHud);
                     call(MovieDraw);
                 }
+
                 call(PauseHook);
                 call(OverlayHook);
             });
 #endif
         GameTasks::SkipStrapScreen();
         StepVillageBoot(ctx);
+        Cheats::Step(ctx);
         call(RunTasks);
         call(GrabScreen);
         call(ResetFade);
         call(TickSystemTimers);
         Memory::Write8(kSystem + kFramePhase, 3);
         MH3_SPLIT(logic);
+
         if (render) {
             call(DrawScene);
             {
                 MH3_SPLIT_SCOPE(MH3_SPLIT_FONT);
                 call(flfntFlush);
             }
+
             MH3_SPLIT_SCOPE(MH3_SPLIT_FADE);
             call(DrawFadeOverlay);
         }
+
         MH3_SPLIT(draw);
         call(TickFades);
+
         if (render && Memory::Read8(kSystem + kScreenGrab)) {
             Memory::Write8(kSystem + kScreenGrab, 0);
             call(RestoreGrabbedScreen);
         }
+
         MH3_SPLIT(logic);
+
         if (render) {
             {
                 MH3_SPLIT_SCOPE(MH3_SPLIT_HUD);
                 call(DrawHud);
             }
+
             MH3_SPLIT_SCOPE(MH3_SPLIT_MOVIE);
             call(MovieDraw);
         }
+
         MH3_SPLIT(draw);
         call(PauseHook);
         call(OverlayHook);
@@ -365,6 +416,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         call(StartBootTask, {BootTask, 0});
         Memory::Write8(kSystem + kBootState, 1);
     }
+
     Memory::Write8(kSystem + kFramePhase, 4);
 #ifdef MH3_DEVELOPMENT
     split.End();

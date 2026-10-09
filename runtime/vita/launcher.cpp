@@ -5,7 +5,6 @@
 #include "launcher_font.h"
 #include "launcher_screen.h"
 #include "launcher_cheats.h"
-#include "player_health.h"
 #include "village_boot.h"
 #include "field_jump.h"
 #include "disc_image.h"
@@ -44,6 +43,7 @@
 namespace VitaLauncher {
 namespace {
 constexpr uint32_t ink = 0xff28302c, paper = 0xffc8d7d8, gold = 0xff73b9de, light = 0xffe1ebed, faded = 0xff707a78;
+
 // The menu's buttons, with the values of the Vita's SCE_CTRL bits.
 namespace Button {
 constexpr uint32_t Select = 0x1, Start = 0x8, Up = 0x10, Right = 0x20, Down = 0x40, Left = 0x80, L2 = 0x100, R2 = 0x200, L1 = 0x400, R1 = 0x800, Triangle = 0x1000,
@@ -60,6 +60,7 @@ static_assert(Button::Select == SCE_CTRL_SELECT && Button::Start == SCE_CTRL_STA
 uint64_t Microseconds() {
     return sceKernelGetProcessTimeWide();
 }
+
 void Wait(unsigned microseconds) {
     sceKernelDelayThread(microseconds);
 }
@@ -67,6 +68,7 @@ void Wait(unsigned microseconds) {
 uint64_t Microseconds() {
     return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+
 void Wait(unsigned microseconds) {
     std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
 }
@@ -93,23 +95,32 @@ class Script {
   public:
     Script() {
         const char* path = std::getenv("MH3_LAUNCHER_INPUT");
+
         if (!path)
             return;
+
         std::ifstream input(path);
+
         if (!input)
             throw std::runtime_error(std::string("Cannot read MH3_LAUNCHER_INPUT ") + path);
+
         for (std::string line; std::getline(input, line);) {
             std::istringstream fields(line.substr(0, line.find('#')));
             uint64_t frame;
             std::string names;
+
             if (!(fields >> frame))
                 continue;
+
             if (!(fields >> names) || (!entries.empty() && frame < entries.back().first))
                 throw std::runtime_error("Invalid MH3_LAUNCHER_INPUT line: " + line);
+
             entries.emplace_back(frame, Buttons(names));
         }
+
         Log("input script %s, %u entries", path, unsigned(entries.size()));
     }
+
     bool Running() const { return !finished && !entries.empty(); }
     // The held buttons of this frame, or nothing once the script has ended.
     std::optional<uint32_t> Held(uint64_t frame) {
@@ -117,10 +128,12 @@ class Script {
             return std::nullopt;
         while (next < entries.size() && entries[next].first <= frame)
             held = entries[next++].second;
+
         if (next == entries.size()) {
             finished = true;
             Log("input script finished at frame %llu", (unsigned long long)frame);
         }
+
         return held;
     }
 
@@ -128,33 +141,42 @@ class Script {
     static uint32_t Buttons(const std::string& text) {
         if (text == "none")
             return 0;
+
         if (std::isdigit(uint8_t(text[0])))
             return uint32_t(std::stoul(text, nullptr, 0));
+
         static const std::pair<const char*, uint32_t> named[] = {
             {"up", Button::Up},       {"down", Button::Down},     {"left", Button::Left},         {"right", Button::Right},
             {"cross", Button::Cross}, {"circle", Button::Circle}, {"triangle", Button::Triangle}, {"square", Button::Square},
             {"start", Button::Start}, {"select", Button::Select}, {"l", Button::L2},              {"r", Button::R2}};
         uint32_t value = 0;
+
         for (size_t at = 0; at <= text.size();) {
             const size_t end = std::min(text.find('+', at), text.size());
             const auto name = text.substr(at, end - at);
             const auto found = std::find_if(std::begin(named), std::end(named), [&](const auto& n) { return name == n.first; });
+
             if (found == std::end(named))
                 throw std::runtime_error("Unknown MH3_LAUNCHER_INPUT button " + name);
+
             value |= found->second;
             at = end + 1;
         }
+
         return value;
     }
+
     std::vector<std::pair<uint64_t, uint32_t>> entries;
     size_t next = 0;
     uint32_t held = 0;
     bool finished = false;
 };
+
 Script& InputScript() {
     static Script script;
     return script;
 }
+
 bool ScriptRunning() {
     return InputScript().Running();
 }
@@ -169,26 +191,35 @@ bool Pump() {
             return false;
     return true;
 }
+
 void Rect(std::vector<Rectangle>& list, float x, float y, float w, float h, uint32_t color) {
     list.push_back({x, y, w, h, color});
 }
+
 // The controls as menu buttons; the left stick adds directions.
 uint32_t LiveButtons() {
 #ifdef __vita__
     // Port 1 first, then the handheld's port 0, as the game's input reads them
     // (SDL's Vita driver): a PS TV controller, or the devkit harness's CTRLP pad.
     SceCtrlData sample{};
+
     if (sceCtrlPeekBufferPositive2(1, &sample, 1) < 0 && sceCtrlPeekBufferPositive2(0, &sample, 1) < 0)
         return 0;
+
     uint32_t held = sample.buttons;
+
     if (sample.ly < 80)
         held |= Button::Up;
+
     if (sample.ly > 176)
         held |= Button::Down;
+
     if (sample.lx < 80)
         held |= Button::Left;
+
     if (sample.lx > 176)
         held |= Button::Right;
+
     return held;
 #else
     // The host's controls as the game's Classic Controller (docs/vita-controls.md),
@@ -200,22 +231,29 @@ uint32_t LiveButtons() {
         {MH3_CL_B, Button::Cross},     {MH3_CL_A, Button::Circle},    {MH3_CL_X, Button::Triangle},   {MH3_CL_Y, Button::Square},
         {MH3_CL_PLUS, Button::Start},  {MH3_CL_MINUS, Button::Select}, {MH3_CL_L, Button::L2},        {MH3_CL_R, Button::R2}};
     uint32_t held = 0;
+
     for (const auto& [classic, button] : map)
         if (pad.buttons & classic)
             held |= button;
     if (pad.leftY > 200)
         held |= Button::Up;
+
     if (pad.leftY < -200)
         held |= Button::Down;
+
     if (pad.leftX < -200)
         held |= Button::Left;
+
     if (pad.leftX > 200)
         held |= Button::Right;
+
     return held;
 #endif
 }
+
 // The last launcher frame; dialogs draw over it.
 std::vector<Rectangle> shown;
+
 // For the messages of development hosts, which draw them themselves.
 [[maybe_unused]] Font* messageFont = nullptr;
 #ifdef __vita__
@@ -228,17 +266,21 @@ void RunDialog(Status status, Close close) {
     RunOnRenderThread([] { aurora_set_common_dialog_active(true); }, &shown);
     const uint64_t opened = Microseconds();
     bool closing = false;
+
     while (status() != SCE_COMMON_DIALOG_STATUS_FINISHED && Pump()) {
         if (!closing && ScriptRunning() && Microseconds() - opened > 2500000) {
             Log("dialog closed by the input script");
             close();
             closing = true;
         }
+
         PresentScreen(&shown);
         Wait(8000);
     }
+
     RunOnRenderThread([] { aurora_set_common_dialog_active(false); }, &shown);
 }
+
 void Message(const std::string& text) {
     SceMsgDialogUserMessageParam user{};
     user.buttonType = SCE_MSG_DIALOG_BUTTON_TYPE_OK;
@@ -248,18 +290,23 @@ void Message(const std::string& text) {
     param.mode = SCE_MSG_DIALOG_MODE_USER_MSG;
     param.userMsgParam = &user;
     Log("message: %s", text.c_str());
+
     if (sceMsgDialogInit(&param) < 0) {
         std::fprintf(stderr, "MH3 launcher: %s\n", text.c_str());
         return;
     }
+
     RunDialog(sceMsgDialogGetStatus, sceMsgDialogClose);
     sceMsgDialogTerm();
 }
+
 // The system keyboard (SceImeDialog, part of SceCommonDialog like the message).
 void EditName(std::string& name) {
     std::array<SceWChar16, 44> initial{}, output{};
+
     for (size_t i = 0; i < std::min(name.size(), initial.size() - 1); ++i)
         initial[i] = uint8_t(name[i]);
+
     const SceWChar16 title[] = {'Q', 'u', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e', 0};
     SceImeDialogParam param{};
     sceImeDialogParamInit(&param);
@@ -269,68 +316,90 @@ void EditName(std::string& name) {
     param.maxTextLength = initial.size() - 1;
     param.initialText = initial.data();
     param.inputTextBuffer = output.data();
+
     if (const int error = sceImeDialogInit(&param); error < 0)
         throw std::runtime_error("Cannot open the quest-name keyboard (error " + std::to_string(error) + ")");
+
     Log("quest-name keyboard open");
     RunDialog(sceImeDialogGetStatus, sceImeDialogAbort);
     SceImeDialogResult result{};
     sceImeDialogGetResult(&result);
     sceImeDialogTerm();
+
     if (result.button != SCE_IME_DIALOG_BUTTON_ENTER) {
         Log("quest-name keyboard closed without a name");
         return;
     }
+
     std::string value;
+
     for (auto c : output) {
         if (!c)
             break;
+
         if (c < 32 || c > 126)
             throw std::runtime_error("Use printable Latin characters for quest names");
+
         value += char(c);
     }
+
     // Leading and trailing spaces would make names that look the same.
     value.erase(0, value.find_first_not_of(' '));
     value.erase(value.find_last_not_of(' ') + 1);
+
     if (!value.empty())
         name = std::move(value);
+
     Log("quest name: %s", name.c_str());
 }
 #else
 // A panel over the last menu frame; Cross, Circle or Start closes it.
 void Message(const std::string& text) {
     Log("message: %s", text.c_str());
+
     if (!messageFont) {
         std::fprintf(stderr, "MH3 launcher: %s\n", text.c_str());
         return;
     }
+
     auto frame = shown;
     const auto lines = messageFont->Wrap(text, 600);
     const float height = 90 + 26 * lines.size(), top = std::max(40.f, (ScreenHeight - height) / 2);
     Rect(frame, 140, top - 6, 680, height + 12, gold);
     Rect(frame, 146, top, 668, height, paper);
+
     for (size_t i = 0; i < lines.size(); ++i)
         messageFont->Text(frame, 180, top + 24 + 26 * i, lines[i], ink, 600);
+
     Rect(frame, 180, top + height - 52, 600, 2, ink);
     messageFont->Text(frame, 180, top + height - 42, "X OK", ink, 600);
     const uint64_t opened = Microseconds();
+
     // Buttons held when it opens do not close it.
     uint32_t previous = LiveButtons();
+
     while (Pump()) {
         PresentScreen(&frame);
         Wait(8000);
+
         if (ScriptRunning()) {
             if (Microseconds() - opened > 2500000) {
                 Log("dialog closed by the input script");
                 break;
             }
+
             continue;
         }
+
         const uint32_t held = LiveButtons();
+
         if (held & ~previous & (Button::Cross | Button::Circle | Button::Start))
             break;
+
         previous = held;
     }
 }
+
 // No system keyboard on a development host: the name stays as it is.
 void EditName(const std::string& name) {
     Log("quest-name keyboard: the Vita's system keyboard; the host keeps \"%s\"", name.c_str());
@@ -350,6 +419,7 @@ class Input {
         const uint64_t now = Microseconds();
         uint32_t edges = held & ~previous;
         const uint32_t directions = held & Button::Directions;
+
         if (directions) {
             if (directions != lastDirection) {
                 nextRepeat = now + 350000;
@@ -360,9 +430,12 @@ class Input {
             }
         } else
             lastDirection = 0;
+
         previous = held;
+
         if (edges)
             Log("input frame %llu buttons 0x%x", (unsigned long long)index, unsigned(edges));
+
         return edges;
     }
 
@@ -370,11 +443,13 @@ class Input {
     uint32_t previous = 0, lastDirection = 0;
     uint64_t nextRepeat = 0, frame = 0;
 };
+
 // The parchment page and its copper border.
 void Frame(std::vector<Rectangle>& rects) {
     rects.clear();
     Rect(rects, 0, 0, 960, 544, ink);
     Rect(rects, 30, 30, 900, 475, paper);
+
     // Authored geometric borders echo MH3's framed parchment quest menus.
     // Game fonts/art remain external; the launcher uses installed PVF.
     for (int x = 34; x < 926; x += 24) {
@@ -382,51 +457,69 @@ void Frame(std::vector<Rectangle>& rects) {
         Rect(rects, x, 497, 12, 4, gold);
     }
 }
+
 constexpr size_t VisibleRows = 7;
 void Draw(Font& font, const std::string& title, const std::vector<std::string>& rows, size_t selected, const std::string& detail, const std::string& footer) {
     auto& rects = shown;
     Frame(rects);
     Rect(rects, 42, 46, 876, 48, ink);
     std::string position;
+
     if (rows.size() > VisibleRows)
         position = std::to_string(selected + 1) + " / " + std::to_string(rows.size());
+
     const float positionWidth = position.empty() ? 0 : font.Width(position) + 24;
     font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  " + title, gold, 840 - positionWidth);
+
     if (!position.empty())
         font.Text(rects, 900 - font.Width(position), 58, position, light, positionWidth);
+
     const size_t first = selected >= VisibleRows ? selected - (VisibleRows - 1) : 0;
+
     for (size_t row = first; row < std::min(first + VisibleRows, rows.size()); ++row) {
         const float y = 110 + (row - first) * 43;
+
         if (row == selected) {
             Rect(rects, 54, y - 2, 848, 36, ink);
             Rect(rects, 54, y - 2, 6, 36, gold);
         }
+
         font.Text(rects, 72, y + 4, rows[row], row == selected ? gold : ink, 810);
     }
+
     // More rows above or below the visible ones.
     if (first)
         Rect(rects, 466, 100, 28, 3, faded);
+
     if (first + VisibleRows < rows.size())
         Rect(rects, 466, 411, 28, 3, faded);
+
     Rect(rects, 54, 421, 848, 2, ink);
     const auto lines = font.Wrap(detail, 820);
+
     for (size_t i = 0; i < std::min<size_t>(lines.size(), 2); ++i)
         font.Text(rects, 64, 430 + 28 * i, lines[i], ink, 820);
+
     font.Text(rects, 45, 513, footer, light, 890);
     PresentScreen(&rects);
     Wait(8000);
 }
+
 // The disc image stays in base; its metadata and the converted-asset cache live
 // in base/disc. A development install of a prepared disc directly in base is used as is.
 bool EnsureDisc(Font& font, const std::filesystem::path& base) {
     auto output = base;
+
     if (!DiscReady(output))
         output = base / "disc";
+
     std::filesystem::path iso;
+
     for (const auto& entry : std::filesystem::directory_iterator(base))
         if (entry.is_regular_file() && (entry.path().extension() == ".iso" || entry.path().extension() == ".rvz" || entry.path().extension() == ".wia")) {
             if (!iso.empty())
                 throw std::runtime_error("There is more than one disc image in " + base.string() + ". Leave only your European Monster Hunter Tri (RMHP08) ISO, RVZ or WIA there.");
+
             iso = entry.path();
         }
     if (!DiscReady(output) || (!iso.empty() && output != base)) {
@@ -445,14 +538,17 @@ bool EnsureDisc(Font& font, const std::filesystem::path& base) {
                 done = d;
                 total = std::max<uint64_t>(t, 1);
             };
+
             try {
                 ProcessDisc(iso, output, progress);
             } catch (const std::exception& e) {
                 std::lock_guard guard(mutex);
                 error = e.what();
             }
+
             finished.store(true, std::memory_order_release);
         });
+
         while (!finished.load(std::memory_order_acquire)) {
             std::string label;
             uint64_t completed, maximum;
@@ -462,6 +558,7 @@ bool EnsureDisc(Font& font, const std::filesystem::path& base) {
                 completed = done;
                 maximum = total;
             }
+
             const unsigned percent = std::min<uint64_t>(100, completed * 100 / maximum);
             auto& rects = shown;
             Frame(rects);
@@ -477,18 +574,24 @@ bool EnsureDisc(Font& font, const std::filesystem::path& base) {
             Pump();
             Wait(12000);
         }
+
         worker.join();
+
         if (!error.empty())
             throw std::runtime_error("The disc image could not be read: " + error);
+
         if (!DiscReady(output))
             throw std::runtime_error("Prepared game data did not pass validation");
     }
+
     setenv("MH3_DISC_DIR", output.string().c_str(), 1);
     Log("game data in %s", output.string().c_str());
+
     // The game's native assets open at the hand-off (StartGame); textures and
     // models convert as the game loads them (disc/cache/).
     return true;
 }
+
 // Hands the renderer over to the game. The last launcher frame stays on the
 // display while the game boots; the game's native graphics startup restarts
 // the render thread at its own size.
@@ -496,11 +599,13 @@ void StartGame(Font& font, const std::string& what) {
     Frame(shown);
     const std::string text = "Starting Monster Hunter Tri";
     font.Text(shown, (960 - font.Width(text)) / 2, 250, text, ink, 840);
+
     // Packets are newest-wins: the render thread presents this one before it stops.
     PresentScreen(&shown);
     Log("starting the game (%s) after %llu launcher frames", what.c_str(), (unsigned long long)ScreenFrames());
     HandOffScreen();
 }
+
 enum class Page {
     Main,
     Categories,
@@ -509,31 +614,69 @@ enum class Page {
     Custom,
     Templates,
     Editor,
-    Cheats
+    Cheats,
+    CheatList
 };
+
 const char* PageName(Page page) {
-    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats"};
+    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats", "Cheat list"};
     return names[unsigned(page)];
 }
+
 // A new custom quest's name (at most 43 characters).
 std::string DefaultName(const QuestCatalog::Quest& source) {
     return "Custom " + source.name.substr(0, 36);
 }
+
 const char* OnOff(bool on) {
     return on ? "ON" : "OFF";
 }
+
+// The cheats of a group, in table order.
+std::vector<size_t> GroupCheats(std::string_view group) {
+    std::vector<size_t> list;
+    const auto cheats = LauncherCheats::List();
+
+    for (size_t i = 0; i < cheats.size(); ++i)
+        if (group == cheats[i].group)
+            list.push_back(i);
+    return list;
+}
+
+// " Active: ..." for the main menu: the cheats' names, or how many.
+std::string ActiveCheats() {
+    const size_t count = LauncherCheats::EnabledCount();
+
+    if (count == 0)
+        return "";
+
+    if (count > 2)
+        return " Active: " + std::to_string(count) + " cheats.";
+
+    std::string names;
+    const auto cheats = LauncherCheats::List();
+
+    for (size_t i = 0; i < cheats.size(); ++i)
+        if (LauncherCheats::Enabled(i))
+            names += (names.empty() ? "" : ", ") + std::string(cheats[i].name);
+    return " Active: " + names + ".";
+}
 } // namespace
+
 bool Run() {
     // After the hand-off the launcher no longer draws, so errors from there on
     // go to the caller instead of a dialog.
     bool handedOff = false;
+
     // Declared out here: a development host's error message draws with it.
     std::unique_ptr<Font> font;
     struct Forget {
         ~Forget() { messageFont = nullptr; }
     } forget;
+
     try {
         StartScreen();
+
         // The empty page: messages before the menu (kubridge, game data) draw over it.
         Frame(shown);
 #ifdef __vita__
@@ -541,10 +684,12 @@ bool Run() {
         sceCommonDialogConfigParamInit(&config);
         sceCommonDialogSetConfigParam(&config);
         const uint32_t search[2]{};
+
         if (_vshKernelSearchModuleByName("kubridge", search) < 0) {
             Message("Kubridge is not installed. Install kubridge.skprx under *KERNEL in your taiHEN config.txt, then restart your PS Vita before launching Monster Hunter Tri.");
             return false;
         }
+
         sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
         sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG);
 #endif
@@ -554,8 +699,10 @@ bool Run() {
         font = std::make_unique<Font>();
         messageFont = font.get();
         const char* discDirectory = std::getenv("MH3_DISC_DIR");
+
         if (!discDirectory)
             throw std::runtime_error("MH3_DISC_DIR is not set");
+
         const auto base = std::filesystem::path(discDirectory);
         std::filesystem::create_directories(base);
         EnsureDisc(*font, base);
@@ -563,7 +710,10 @@ bool Run() {
         const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
         Page page = Page::Main;
         size_t selected = 0;
-        bool creating = false, noDamage = false, noStamina = false;
+        bool creating = false;
+        size_t cheatGroup = 0;
+        std::vector<size_t> groupCheats;
+
         // The game reads it once, at RenderInit, after the hand-off.
         bool widescreen = WidescreenSetting().value_or(true);
         SaveSlot save{};
@@ -571,6 +721,7 @@ bool Run() {
         std::vector<QuestCatalog::Quest> quests;
         std::vector<CustomQuest> custom;
         CustomQuest edit;
+
         // The editor returns to the list it came from.
         Page editorParent = Page::Main;
         QuestCatalog::Set set = QuestCatalog::Set::Village;
@@ -581,48 +732,58 @@ bool Run() {
         std::array<std::optional<std::vector<QuestCatalog::Quest>>, 3> catalogs;
         const auto catalog = [&](QuestCatalog::Set s) -> const std::vector<QuestCatalog::Quest>& {
             auto& loaded = catalogs[unsigned(s)];
+
             if (!loaded)
                 loaded = QuestCatalog::Load(s);
+
             return *loaded;
         };
+
         const auto findQuest = [&](QuestCatalog::Set s, uint16_t id) -> const QuestCatalog::Quest* {
             const auto& list = catalog(s);
             const auto found = std::find_if(list.begin(), list.end(), [&](const auto& q) { return q.id == id; });
             return found == list.end() ? nullptr : &*found;
         };
+
         const auto editorQuest = [&](uint16_t id) -> const QuestCatalog::Quest& {
             const auto found = std::find_if(editorQuests.begin(), editorQuests.end(), [&](const auto& q) { return q.id == id; });
+
             if (found == editorQuests.end())
                 throw std::runtime_error("Custom quest template is unavailable");
+
             return *found;
         };
+
         const auto refreshEditor = [&] {
             editorQuests = catalog(edit.set);
             encounters = CompositionOptions(edit);
             maps = CompositionMaps(edit);
         };
+
         Input input;
         const auto enter = [&](Page next) {
             page = next;
             selected = 0;
             Log("page %s", PageName(next));
         };
+
         const auto saveName = [&] { return "File " + std::to_string(save.file + 1) + " / Character " + std::to_string(save.character + 1); };
         const auto start = [&](const std::string& what) {
             handedOff = true;
             StartGame(*font, what);
         };
+
         Log("menu ready");
+
         while (Pump()) {
             std::string title, detail, footer = "X Select   O Back   D-pad Move";
             std::vector<std::string> rows;
+
             switch (page) {
             case Page::Main: {
                 title = "Main menu";
                 rows = {"Start game", "Quests", "Create custom quest", "Cheats", std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)")};
-                const std::string cheats = noDamage || noStamina ? std::string(" Active: ") + (noDamage ? "No damage" : "") + (noDamage && noStamina ? ", " : "") +
-                                                                       (noStamina ? "No action stamina drain" : "") + "."
-                                                                 : "";
+                const std::string cheats = ActiveCheats();
                 const std::string details[] = {"Continue through the game's title and character selection." + cheats,
                                                "Start a quest directly with an existing hunter." + cheats,
                                                "Make a hunt or capture quest from one of the game's quests.",
@@ -646,24 +807,31 @@ bool Run() {
                 break;
             case Page::Saves:
                 title = "Choose your hunter";
+
                 for (const auto& s : saves)
                     rows.push_back("File " + std::to_string(s.file + 1) + " / Character " + std::to_string(s.character + 1));
+
                 detail = "Characters of valid saves.";
                 break;
             case Page::Quests:
                 title = creating ? "Choose a hunt/capture template" : "Quest list";
+
                 for (const auto& q : quests)
                     rows.push_back(std::to_string(q.stars) + "*  " + q.name);
+
                 if (!quests.empty()) {
                     const auto& q = quests[std::min(selected, quests.size() - 1)];
                     detail = QuestCatalog::MapName(q.map) + ": " + q.goal;
                 }
+
                 footer = "X Select   O Back   D-pad Move   L / R Page";
                 break;
             case Page::Custom:
                 title = "Custom quests";
+
                 for (const auto& q : custom)
                     rows.push_back(q.name);
+
                 if (custom.empty()) {
                     detail = "No custom quests yet. Make one with Create custom quest in the main menu.";
                     footer = "O Back";
@@ -671,14 +839,17 @@ bool Run() {
                     const auto& q = custom[std::min(selected, custom.size() - 1)];
                     const auto* base = findQuest(q.set, q.base);
                     const auto* encounter = findQuest(q.set, q.encounter ? q.encounter : q.base);
+
                     if (base && encounter && !encounter->objectives.empty())
                         detail = QuestCatalog::MapName(base->map) + ": " + (q.capture ? "Capture " : "Hunt ") + std::to_string(q.count) + " " +
                                  monsterName(encounter->objectives.front().target) + ", " + std::to_string(q.stars) + "*" +
                                  (q.minutes ? ", " + std::to_string(q.minutes) + " minutes" : "") + ".";
                     else
                         detail = "Its template is not on this disc.";
+
                     footer = "X Launch   Triangle Edit   O Back   D-pad Move";
                 }
+
                 break;
             case Page::Editor: {
                 const auto& baseQuest = editorQuest(edit.base);
@@ -710,28 +881,61 @@ bool Run() {
                     detail = encounters.empty() ? "This template's map and monsters are scripted and stay as they are." : "Placement and rewards from " + encounter.name + ".";
                     footer = "Left / Right Change   O Back   D-pad Move";
                 }
+
                 break;
             }
-            case Page::Cheats:
+            case Page::Cheats: {
                 title = "Cheats";
-                rows = {std::string("No damage: ") + OnOff(noDamage), std::string("No action stamina drain: ") + OnOff(noStamina)};
-                detail = selected == 0 ? "The hunter takes no damage. For this launch." : "Running, guarding and other continuous actions cost no stamina. For this launch.";
-                footer = "X Toggle   O Back   D-pad Move";
+                const auto groups = LauncherCheats::Groups();
+
+                for (const char* group : groups) {
+                    const auto list = GroupCheats(group);
+                    const size_t on = std::count_if(list.begin(), list.end(), [](size_t i) { return LauncherCheats::Enabled(i); });
+                    rows.push_back(std::string(group) + "  (" + std::to_string(list.size()) + " codes" + (on ? ", " + std::to_string(on) + " on" : "") + ")");
+                }
+
+                if (selected == 0)
+                    detail = "The launcher's own toggles. For this launch.";
+                else
+                    detail = "Codes from the " + std::string(groups[std::min(selected, groups.size() - 1)]) + " Gecko list, ported to this disc. For this launch.";
+
                 break;
             }
+            case Page::CheatList: {
+                const auto cheats = LauncherCheats::List();
+                title = std::string("Cheats: ") + LauncherCheats::Groups()[cheatGroup];
+
+                for (size_t i : groupCheats) {
+                    const std::string value = LauncherCheats::ValueLabel(i);
+                    rows.push_back(std::string(cheats[i].name) + ": " + OnOff(LauncherCheats::Enabled(i)) + (value.empty() ? "" : "  [" + value + "]"));
+                }
+
+                const size_t cheat = groupCheats[std::min(selected, groupCheats.size() - 1)];
+                detail = cheats[cheat].detail;
+                footer = LauncherCheats::Choices(cheat) ? "X Toggle   Left / Right Value   O Back   L / R Page" : "X Toggle   O Back   D-pad Move   L / R Page";
+                break;
+            }
+            }
+
             if (rows.empty())
                 rows = {"No quests available"};
+
             selected = std::min(selected, rows.size() - 1);
             Draw(*font, title, rows, selected, detail, footer);
             const uint32_t buttons = input.Read();
+
             if (buttons & Button::Up)
                 selected = (selected + rows.size() - 1) % rows.size();
+
             if (buttons & Button::Down)
                 selected = (selected + 1) % rows.size();
+
             if (buttons & Button::L)
                 selected = selected > VisibleRows ? selected - VisibleRows : 0;
+
             if (buttons & Button::R)
                 selected = std::min(selected + VisibleRows, rows.size() - 1);
+
             if (buttons & Button::Circle) {
                 switch (page) {
                 case Page::Quests:
@@ -743,8 +947,10 @@ bool Run() {
                     break;
                 case Page::Editor:
                     enter(editorParent);
+
                     if (editorParent == Page::Custom)
                         custom = LoadCustomQuests(user);
+
                     break;
                 case Page::Saves:
                 case Page::Categories:
@@ -759,22 +965,32 @@ bool Run() {
                     enter(Page::Main);
                     selected = 3;
                     break;
+                case Page::CheatList:
+                    enter(Page::Cheats);
+                    selected = cheatGroup;
+                    break;
                 case Page::Main:
                     break;
                 }
+
                 continue;
             }
+
             try {
                 const bool accept = buttons & (Button::Cross | Button::Start);
                 const int direction = (buttons & Button::Left) ? -1 : (buttons & Button::Right) ? 1 : 0;
+
                 if (page == Page::Editor && (direction || accept)) {
                     if (selected == 0 && accept)
                         EditName(edit.name);
+
                     const auto cycle = [&](size_t index, size_t count) {
                         return (index + count + (direction ? direction : 1)) % count;
                     };
+
                     // A name nobody typed follows the quest the placement comes from.
                     const bool automaticName = edit.name == DefaultName(editorQuest(edit.encounter ? edit.encounter : edit.base));
+
                     if (selected == 1 && !encounters.empty() && !maps.empty()) {
                         const auto map = editorQuest(edit.base).map;
                         const auto found = std::find_if(maps.begin(), maps.end(), [&](auto id) { return editorQuest(id).map == map; });
@@ -784,38 +1000,62 @@ bool Run() {
                         edit.capture = false;
                         encounters = CompositionOptions(edit);
                     }
+
                     if (selected == 2 && !encounters.empty()) {
                         const auto found = std::find(encounters.begin(), encounters.end(), edit.encounter ? edit.encounter : edit.base);
                         edit.encounter = encounters[cycle(found == encounters.end() ? 0 : found - encounters.begin(), encounters.size())];
                         edit.count = editorQuest(edit.encounter).objectives.front().count;
+
                         if (edit.capture && !SupportsCapture(edit))
                             edit.capture = false;
                     }
+
                     if (automaticName)
                         edit.name = DefaultName(editorQuest(edit.encounter ? edit.encounter : edit.base));
+
                     if (selected == 3) {
                         if (!edit.capture && !SupportsCapture(edit))
                             throw std::runtime_error("No quest captures this monster with this placement, so this quest stays a hunt.");
+
                         edit.capture = !edit.capture;
                     }
+
                     if (selected == 4)
                         edit.count = std::clamp<int>(int(edit.count) + (direction ? direction : 1), 1, editorQuest(edit.encounter ? edit.encounter : edit.base).objectives.front().count);
+
                     if (selected == 5)
                         edit.minutes = std::clamp<int>(int(edit.minutes) + (direction ? direction : 1), 0, 50);
+
                     if (selected == 6)
                         edit.stars = std::clamp<int>(int(edit.stars) + (direction ? direction : 1), 1, 7);
+
                     if (selected == 7 && accept) {
                         SaveCustomQuest(user, edit);
                         Log("custom quest saved: %s (template %u, encounter %u, %u stars)", edit.name.c_str(), unsigned(edit.base), unsigned(edit.encounter), unsigned(edit.stars));
                         Message("Custom quest saved. Play it from Quests > Custom quests.");
+
                         if (editorParent == Page::Custom) {
                             custom = LoadCustomQuests(user);
                             enter(Page::Custom);
                         } else
                             enter(Page::Main);
                     }
+
                     continue;
                 }
+
+                if (page == Page::CheatList && direction) {
+                    const size_t cheat = groupCheats[selected];
+                    const size_t choices = LauncherCheats::Choices(cheat);
+
+                    if (choices) {
+                        LauncherCheats::Select(cheat, (LauncherCheats::Selected(cheat) + choices + direction) % choices);
+                        Log("cheat %s: %s", LauncherCheats::List()[cheat].name, LauncherCheats::ValueLabel(cheat).c_str());
+                    }
+
+                    continue;
+                }
+
                 if (page == Page::Custom && !custom.empty() && (buttons & Button::Triangle)) {
                     edit = custom[selected];
                     refreshEditor();
@@ -823,22 +1063,27 @@ bool Run() {
                     enter(Page::Editor);
                     continue;
                 }
+
                 if (!accept)
                     continue;
+
                 switch (page) {
                 case Page::Main:
                     if (selected == 0) {
                         start("title screen");
                         return true;
                     }
+
                     if (selected == 1) {
                         creating = false;
                         saves = ProbeSaves(user);
+
                         if (saves.empty()) {
                             Message("No hunter save was found. Quests need an existing character: choose Start game and create one through the game's own screens, "
                                     "or copy your Monster Hunter Tri save.");
                             break;
                         }
+
                         save = saves.front();
                         enter(saves.size() > 1 ? Page::Saves : Page::Categories);
                     } else if (selected == 2) {
@@ -851,6 +1096,7 @@ bool Run() {
                         SetWidescreenSetting(widescreen);
                         Log("widescreen %s", widescreen ? "on" : "off");
                     }
+
                     break;
                 case Page::Saves:
                     save = saves[selected];
@@ -863,8 +1109,10 @@ bool Run() {
                         enter(Page::Custom);
                         break;
                     }
+
                     set = QuestCatalog::Set(selected);
                     quests = catalog(set);
+
                     if (creating)
                         quests.erase(std::remove_if(quests.begin(), quests.end(), [](const auto& q) { return q.objectives.empty() || (q.objectives[0].type != 1 && q.objectives[0].type != 0x81); }),
                                      quests.end());
@@ -873,6 +1121,7 @@ bool Run() {
                 case Page::Quests:
                     if (quests.empty())
                         break;
+
                     if (creating) {
                         const auto& q = quests[selected];
                         edit = {DefaultName(q), set, q.id, q.objectives[0].count, q.objectives[0].type == 0x81, q.stars};
@@ -886,45 +1135,54 @@ bool Run() {
                         start("quest " + std::to_string(q.id) + " " + q.name + ", " + saveName());
                         return true;
                     }
+
                     break;
                 case Page::Custom:
                     if (!custom.empty()) {
                         const auto& q = custom[selected];
                         StartVillageBoot(save.file, save.character);
+
                         try {
                             ActivateCustomQuest(q);
                         } catch (...) {
                             FinishVillageBoot();
                             throw;
                         }
+
                         RequestQuestJump(q.base, q.set, -1);
                         start("custom quest " + q.name + " on template " + std::to_string(q.base) + ", " + saveName());
                         return true;
                     }
+
                     break;
                 case Page::Cheats:
-                    if (selected == 0) {
-                        noDamage = !noDamage;
-                        PlayerHealth::SetNoDamage(noDamage);
-                    } else {
-                        noStamina = !noStamina;
-                        LauncherCheats::SetNoStaminaDrain(noStamina);
-                    }
-                    Log("cheats: no damage %s, no action stamina drain %s", noDamage ? "on" : "off", noStamina ? "on" : "off");
+                    cheatGroup = selected;
+                    groupCheats = GroupCheats(LauncherCheats::Groups()[cheatGroup]);
+                    enter(Page::CheatList);
                     break;
+                case Page::CheatList: {
+                    const size_t cheat = groupCheats[selected];
+                    LauncherCheats::Enable(cheat, !LauncherCheats::Enabled(cheat));
+                    const std::string value = LauncherCheats::ValueLabel(cheat);
+                    Log("cheat %s %s%s", LauncherCheats::List()[cheat].name, LauncherCheats::Enabled(cheat) ? "on" : "off", value.empty() ? "" : (" (" + value + ")").c_str());
+                    break;
+                }
                 case Page::Editor:
                     break;
                 }
             } catch (const std::exception& error) {
                 if (handedOff)
                     throw;
+
                 Message(error.what());
             }
         }
+
         return false;
     } catch (const std::exception& error) {
         if (handedOff)
             throw;
+
         Message(error.what());
         return false;
     }
