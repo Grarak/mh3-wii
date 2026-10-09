@@ -130,6 +130,9 @@ void Start(GuestCall& game, uint32_t work, uint8_t mode, uint8_t sub) {
 }
 
 void List() {
+    if (const uint32_t plw = Cheats::LocalPlayer())
+        std::fprintf(stderr, "MH3 monster control: hunter %08x at %.1f %.1f %.1f\n", plw, F(plw + kHunterPosition), F(plw + kHunterPosition + 4), F(plw + kHunterPosition + 8));
+
     for (uint32_t i = 0, n = Cheats::MoveWorkCount(Cheats::Kind::Monster); i < n; ++i)
         if (const uint32_t m = Monster(i))
             std::fprintf(stderr, "MH3 monster control: [%u] work %08x kind %u variant %u action %u.%u state %u.%u.%u at %.1f %.1f %.1f yaw %.1f\n", i, m, Memory::Read8(m + kKind),
