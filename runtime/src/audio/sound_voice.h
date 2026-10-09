@@ -1,10 +1,13 @@
 #pragma once
 
-// The voice operations of the game's sound engine (sound_engine.cpp,
-// sound_stream.cpp): the AX calls it makes and the AXVPB fields it writes
-// and reads directly. `voice` is the AXVPB the engine keeps in its records.
-// Implemented in native_audio_api.cpp.
+// Native voices (native_audio_api.cpp): what the game's sound engine
+// (sound_engine.cpp, sound_stream.cpp), MIX and the AX entry points do to a
+// voice. `voice` is the handle the engine keeps in its records (the address
+// of what was the voice's AXVPB); the voices themselves are host records the
+// native frame driver sends to the mixer once per tick.
 #include <cstdint>
+
+struct CpuContext;
 
 namespace SoundVoice {
 
@@ -20,6 +23,9 @@ struct Adpcm {
     uint16_t gain, predScale, yn1, yn2;
 };
 
+// AXAcquireVoice: a free voice, else the oldest of the lowest priority below
+// `priority` is stolen (its drop callback runs); 0 when none.
+uint32_t Acquire(CpuContext* cpu, uint32_t priority, uint32_t callback, uint32_t context);
 void Free(uint32_t voice);                                // AXFreeVoice
 void SetState(uint32_t voice, uint32_t state);           // AXSetVoiceState
 void SetPriority(uint32_t voice, uint32_t priority);     // AXSetVoicePriority
@@ -28,6 +34,7 @@ void SetSrcRatio(uint32_t voice, float ratio);           // AXSetVoiceSrcRatio
 void SetCurrentAddr(uint32_t voice, uint32_t address);   // AXSetVoiceCurrentAddr
 void SetAdpcmLoop(uint32_t voice, uint16_t predScale, uint16_t yn1, uint16_t yn2);  // AXSetVoiceAdpcmLoop
 void SetLpf(uint32_t voice, uint16_t on, uint16_t yn1, uint16_t a0, uint16_t b0);   // AXSetVoiceLpf
+void SetLpfCoefs(uint32_t voice, uint16_t a0, uint16_t b0);                         // AXSetVoiceLpfCoefs
 void LpfCoefs(uint16_t frequency, uint16_t& a0, uint16_t& b0);                       // AXGetLpfCoefs
 
 // The engine's inlined AXSetVoiceAddr/Adpcm/Src/Type writes. SetFormat and
@@ -39,6 +46,13 @@ void SetAdpcm(uint32_t voice, const Adpcm& adpcm);
 void SetSrc(uint32_t voice, uint32_t ratio);             // 16.16, history cleared
 void SetType(uint32_t voice, uint16_t type);
 
+// MIX: the 12 (volume, delta) pairs of AXPBMIX with mixerCtrl, and the
+// input volume with its per-sample delta.
+void SetMix(uint32_t voice, const uint16_t (&mix)[24], uint32_t mixerCtrl);
+void SetVe(uint32_t voice, uint16_t volume, uint16_t delta);
+
+uint32_t Index(uint32_t voice);          // 0..95
+uint32_t Context(uint32_t voice);        // AXAcquireVoice's user context
 uint32_t State(uint32_t voice);          // 0 stopped, 1 running
 uint32_t LoopFlag(uint32_t voice);
 uint32_t CurrentAddr(uint32_t voice);

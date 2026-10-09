@@ -6,7 +6,6 @@
 #include "model_assets.h"
 #include "runtime/native/adapters/model_prepare_diagnostics.h"
 #include "native_frame_statistics.h"
-#include "audio/ax_dsp.h"
 #include "audio/native_audio.h"
 #include "audio_output_statistics.h"
 #include "audio_dma_statistics.h"
@@ -479,9 +478,6 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     static double lastTicks = ticks;
     static uint64_t lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(), lastSkipped = aurora_skipped_frame_count();
     static auto lastWaits = aurora::gfx::staging_wait_counters();
-    static auto previousAx = AxDspHle::GetMixWorkerStats();
-    static auto previousAudio = GetNativeAudioOutputStatistics();
-    static auto previousDma = GetNativeAudioDmaStatistics();
     static auto previousFeedback = ReadSceneFeedbackStats();
     static auto previousRender = ReadNativeRenderThreadStatistics();
 #ifdef AURORA_GXM
@@ -551,44 +547,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  residency.gpu_written_textures, residency.retired_texture_bytes / 1048576.0, residency.model_bytes / 1048576.0, residency.retired_model_bytes / 1048576.0,
                  residency.main_spill_bytes / 1048576.0, residency.phycont_spill_bytes / 1048576.0);
 #endif
-    if (NativeAudio::NativeAudioActive()) {
-        NativeAudio::ReportNativeAudioStatistics(seconds);
-    } else {
-    const auto ax = AxDspHle::GetMixWorkerStats();
-    const uint64_t axJobs = ax.submitted - previousAx.submitted;
-    std::fprintf(stderr, "MH3 AX: private %.1f jobs/s (%llu completed/%llu published), serial %llu rejected %llu failed %llu, snapshot %.2f KiB avg/%.2f max-ever, active PBs %u last\n",
-                 axJobs / seconds, static_cast<unsigned long long>(ax.completed - previousAx.completed), static_cast<unsigned long long>(ax.published - previousAx.published),
-                 static_cast<unsigned long long>(ax.serial - previousAx.serial), static_cast<unsigned long long>(ax.rejected - previousAx.rejected),
-                 static_cast<unsigned long long>(ax.failed - previousAx.failed), axJobs ? double(ax.totalJobBytes - previousAx.totalJobBytes) / (1024.0 * axJobs) : 0.0, ax.maxJobBytes / 1024.0,
-                 ax.lastActivePbs);
-    std::fprintf(stderr,
-                 "MH3 AX: prepare %.2f worker %.2f join %.2f publish %.2f ms/s; max-ever prepare %.3f worker %.3f join %.3f ms; storage %.3f MiB, worker %s thread %x core %d affinity %x "
-                 "core0-checked %s; reverb owner\n",
-                 double(ax.prepareNs - previousAx.prepareNs) / (1e6 * seconds), double(ax.workerNs - previousAx.workerNs) / (1e6 * seconds), double(ax.waitNs - previousAx.waitNs) / (1e6 * seconds),
-                 double(ax.publishNs - previousAx.publishNs) / (1e6 * seconds), ax.maxPrepareNs / 1e6, ax.maxWorkerNs / 1e6, ax.maxWaitNs / 1e6, ax.storageBytes / 1048576.0,
-                 ax.workerRunning ? "live" : "off", unsigned(ax.workerThread), ax.workerCore, unsigned(ax.workerAffinity), ax.core0Checked ? "yes" : "no");
-    previousAx = ax;
-    const auto audio = GetNativeAudioOutputStatistics();
-    if (audio.available) {
-        std::fprintf(stderr,
-                     "MH3 audio: %u Hz, queued %.1f frames/s, output %.1f calls/s, ring %u/%u high-water frames; underflow %llu buffers, padded %.2f ms/s, dropped %llu blocks/%llu frames, errors "
-                     "%llu, rate changes %llu\n",
-                     audio.rateHz, double(audio.queuedFrames - previousAudio.queuedFrames) / seconds, double(audio.outputCalls - previousAudio.outputCalls) / seconds, audio.currentRingFrames,
-                     audio.ringHighWaterFrames, static_cast<unsigned long long>(audio.underflowBuffers - previousAudio.underflowBuffers),
-                     audio.rateHz ? double(audio.paddedFrames - previousAudio.paddedFrames) * 1000.0 / (audio.rateHz * seconds) : 0.0,
-                     static_cast<unsigned long long>(audio.droppedBlocks - previousAudio.droppedBlocks), static_cast<unsigned long long>(audio.droppedFrames - previousAudio.droppedFrames),
-                     static_cast<unsigned long long>(audio.outputErrors - previousAudio.outputErrors), static_cast<unsigned long long>(audio.rateChanges - previousAudio.rateChanges));
-    }
-    previousAudio = audio;
-    const auto dma = GetNativeAudioDmaStatistics();
-    const uint64_t dmaBlocks = dma.completedBlocks - previousDma.completedBlocks;
-    std::fprintf(
-        stderr, "MH3 audio: DMA %s %u Hz/%u bytes, %.1f services/s %.1f blocks/s %.1f frames/s (%.2f ms/s PCM), cap hits %llu, debt %.3f ms/%.3f max-ever, period %.3f ms, service gap %.3f max-ever\n",
-        dma.enabled ? "on" : "off", dma.rateHz, dma.lengthBytes, double(dma.serviceCalls - previousDma.serviceCalls) / seconds, dmaBlocks / seconds,
-        double(dma.completedFrames - previousDma.completedFrames) / seconds, double(dma.completedDurationNs - previousDma.completedDurationNs) / (1e6 * seconds),
-        static_cast<unsigned long long>(dma.capHits - previousDma.capHits), dma.currentDebtNs / 1e6, dma.maxDebtNs / 1e6, dma.currentPeriodNs / 1e6, dma.maxServiceGapNs / 1e6);
-    previousDma = dma;
-    }
+    NativeAudio::ReportNativeAudioStatistics(seconds);
     const auto feedback = ReadSceneFeedbackStats();
     std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
                  double(feedback.allocations - previousFeedback.allocations) / seconds, double(feedback.reuses - previousFeedback.reuses) / seconds,

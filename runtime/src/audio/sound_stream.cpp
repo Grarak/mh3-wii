@@ -99,7 +99,7 @@ enum : uint32_t {
 
 // Stream info.
 enum : uint32_t {
-    kInfoMono = 0x00,        // u32, 0: the left voice is panned hard left
+    kInfoChannels = 0x00,    // u32, 0 stereo (two voices, the left one panned hard left), 1-2 mono
     kInfoFormat = 0x04,      // 0/1 ADPCM, 2/3 PCM16, 4/5 PCM8
     kInfoRate = 0x08,
     kInfoLoopStart = 0x10,   // samples
@@ -621,9 +621,11 @@ void CancelDone(uint32_t block) {
     FlatWrite8(record + kReadPending, 0);
 }
 
-// +0x14, 0x800EAF10: AX dropped one of the voices: the stream ends.
-void VoiceDropped(CpuContext* cpu, uint32_t voice) {
-    const uint32_t object = FlatRead32(voice + 0x14), record = Record(object);
+} // namespace
+
+// +0x14, 0x800EAF10: AX stole one of the voices: the stream ends.
+void SoundEngine::Stream::VoiceDropped(CpuContext* cpu, uint32_t voice, uint32_t object) {
+    const uint32_t record = Record(object);
     if (FlatRead32(record + kLeft) == voice)
         FlatWrite32(record + kLeft, 0);
     if (FlatRead32(record + kRight) == voice)
@@ -632,6 +634,8 @@ void VoiceDropped(CpuContext* cpu, uint32_t voice) {
     Set(object, kReleased);
     CancelReads(cpu, object);
 }
+
+namespace {
 
 // ---------------------------------------------------------------------------
 // Entry points.
@@ -648,7 +652,11 @@ void UpdatePort(CpuContext* cpu) {
     cpu->gpr[3] = freed;
 }
 void VoiceDroppedPort(CpuContext* cpu) {
-    VoiceDropped(cpu, cpu->gpr[4]);
+    Stream::VoiceDropped(cpu, cpu->gpr[4], SoundVoice::Context(cpu->gpr[4]));
+}
+// 0x800E9EB8: the stream voices' AX drop callback (r3 the voice).
+void VoiceCallbackPort(CpuContext* cpu) {
+    Stream::VoiceDropped(cpu, cpu->gpr[3], SoundVoice::Context(cpu->gpr[3]));
 }
 void StopPort(CpuContext* cpu) {
     Stream::Stop(cpu, cpu->gpr[3], cpu->gpr[4]);
@@ -802,7 +810,7 @@ void Start(uint32_t manager, uint32_t object) {
         SetVoiceRing(record, left, buffer);
     if (right)
         SetVoiceRing(record, right, buffer + ChannelBytes());
-    const int32_t pan = FlatRead32(info + kInfoMono) == 0 ? 0 : S16(record + kPan);
+    const int32_t pan = FlatRead32(info + kInfoChannels) == 0 ? 0 : S16(record + kPan);
     const auto start = [&](uint32_t voice, int32_t voicePan) {
         const int32_t fader = Level(S16(record + kFader)), auxC = Level(S16(record + kAuxC)), auxB = Level(S16(record + kAuxB));
         const int32_t auxA = Level(S16(record + kAuxA)), input = Level(S16(record + kVolumeOut));
@@ -830,6 +838,9 @@ void MH3_StreamUpdate(CpuContext* cpu) {
 }
 void MH3_StreamVoiceDropped(CpuContext* cpu) {
     Entry(cpu, "StreamVoiceDropped", func_800EAF10, VoiceDroppedPort);
+}
+void MH3_StreamVoiceCallback(CpuContext* cpu) {
+    VoiceCallbackPort(cpu);
 }
 void MH3_StreamStop(CpuContext* cpu) {
     Entry(cpu, "StreamStop", func_800ED07C, StopPort);
@@ -911,6 +922,7 @@ void MH3_StreamSamplesToAddress(CpuContext* cpu) {  // 0x800EE9DC (info, samples
 REGISTER_NATIVE_FUNCTION_AS(0x800EADE4, MH3_StreamTick, "StreamTick");
 REGISTER_NATIVE_FUNCTION_AS(0x800EAFAC, MH3_StreamUpdate, "StreamUpdate");
 REGISTER_NATIVE_FUNCTION_AS(0x800EAF10, MH3_StreamVoiceDropped, "StreamVoiceDropped");
+REGISTER_NATIVE_FUNCTION_AS(0x800E9EB8, MH3_StreamVoiceCallback, "StreamVoiceCallback");
 REGISTER_NATIVE_FUNCTION_AS(0x800ED07C, MH3_StreamStop, "StreamStop");
 REGISTER_NATIVE_FUNCTION_AS(0x800ED120, MH3_StreamPause, "StreamPause");
 REGISTER_NATIVE_FUNCTION_AS(0x800ED198, MH3_StreamResume, "StreamResume");

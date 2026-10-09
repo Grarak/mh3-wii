@@ -3,11 +3,12 @@
 // and a fader, all in dB x 10; MIXUpdateSettings (every 3 ms AX frame) turns
 // changed settings into AXVPB volumes, per-sample ramps and mixerCtrl bits.
 //
-// The channel records stay in guest memory with the SDK's layout so the ports
-// can be checked against the translated originals (MH3_PORT_CHECK). Remote
-// speaker sends are computed as the SDK does; the native mixer does not play
-// them.
+// The channel records stay in guest memory with the SDK's layout; the
+// volumes, ramps and mixerCtrl go to the native voices (SoundVoice) instead
+// of AXVPBs. The Wii Remote speaker sends are not computed (the native mixer
+// does not play them); MIXInit still resets their records.
 #include "sdk_mix.h"
+#include "sound_voice.h"
 
 #include "abi_bridge.h"
 #include "memory_access.h"
@@ -76,19 +77,6 @@ enum : uint32_t {
     kMixRamp = 1u << 31,     // copy the bus targets next frame
     kMixDirty = 1u << 30,
 };
-// AXVPB fields MIX writes (AXVPB + 0x28 is the AXPB).
-enum : uint32_t {
-    kVpbIndex = 0x18,
-    kVpbSync = 0x1C,
-    kVpbMixerCtrl = 0x34,
-    kVpbMix = 0x3C,         // AXPBMIX: 12 (volume, delta) pairs
-    kVpbVeVolume = 0x92,
-    kVpbVeDelta = 0x94,
-    kVpbRemoteCtrl = 0x100,
-    kVpbRemoteMix = 0x102,  // 8 (volume, delta) pairs
-};
-enum : uint32_t { kSyncMixerCtrl = 0x2, kSyncMix = 0x10, kSyncVe = 0x100, kSyncRemote = 0x3000000 };
-
 // Remote record (0x44): flags, main dB [4], aux dB [4], then 8 (current,
 // target) u16 pairs from 0x24.
 enum : uint32_t { kRemoteFlags = 0x00, kRemoteMain = 0x04, kRemoteAux = 0x14, kRemoteVolume = 0x24, kRemoteSize = 0x44 };
@@ -107,7 +95,7 @@ uint16_t Volume(int32_t db) {
 }
 
 uint32_t Channel(uint32_t voice) {
-    return FlatRead32(kChannels) + FlatRead32(voice + kVpbIndex) * kChannelSize;
+    return FlatRead32(kChannels) + SoundVoice::Index(voice) * kChannelSize;
 }
 
 // __MIXSetPan: the pan and surround pan attenuations.
@@ -190,18 +178,19 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
     return false;
 }
 
-// AXPBMIX order: L R AL AR BL BR CL CR S AS BS CS; mixerCtrl bits for the
-// volume being non-zero and for its ramp.
+// AXPBMIX order: L R AL AR BL BR CL CR S AS BS CS, as (volume, delta)
+// halfword pairs; mixerCtrl bits for the volume being non-zero and for its
+// ramp.
 struct MixSlot {
-    uint32_t slot, vpb, on, ramp;
+    uint32_t slot, pair, on, ramp;
 };
 constexpr MixSlot kMixSlots[12] = {
-    {kVL, 0x00, 0x1, 0x4},           {kVR, 0x04, 0x2, 0x4},
-    {kVAL, 0x08, 0x10000, 0x40000},  {kVAR, 0x0C, 0x20000, 0x40000},
-    {kVBL, 0x10, 0x200000, 0x800000}, {kVBR, 0x14, 0x400000, 0x800000},
-    {kVCL, 0x18, 0x4000000, 0x10000000}, {kVCR, 0x1C, 0x8000000, 0x10000000},
-    {kVS, 0x20, 0x8, 0x10},          {kVAS, 0x24, 0x80000, 0x100000},
-    {kVBS, 0x28, 0x1000000, 0x2000000}, {kVCS, 0x2C, 0x20000000, 0x40000000},
+    {kVL, 0, 0x1, 0x4},           {kVR, 1, 0x2, 0x4},
+    {kVAL, 2, 0x10000, 0x40000},  {kVAR, 3, 0x20000, 0x40000},
+    {kVBL, 4, 0x200000, 0x800000}, {kVBR, 5, 0x400000, 0x800000},
+    {kVCL, 6, 0x4000000, 0x10000000}, {kVCR, 7, 0x8000000, 0x10000000},
+    {kVS, 8, 0x8, 0x10},          {kVAS, 9, 0x80000, 0x100000},
+    {kVBS, 10, 0x1000000, 0x2000000}, {kVCS, 11, 0x20000000, 0x40000000},
 };
 
 // The per-sample ramp from current to target over `samples` samples.
@@ -218,43 +207,6 @@ void RemoteReset(uint32_t index) {
         FlatWrite32(r + i * 4, 0xFFFFFC40u);
     for (uint32_t i = 0; i < 8; ++i)
         FlatWrite16(r + kRemoteVolume + i * 4, 0);
-}
-
-// __MIXRmtUpdateSettings (0x804C5DF0): the four Wii Remote speakers' main and
-// aux sends, ramped over the remote's 18-sample frame.
-void RemoteUpdate(uint32_t index, uint32_t voice) {
-    const uint32_t r = FlatRead32(kRemotes) + index * kRemoteSize;
-    uint32_t flags = FlatRead32(r + kRemoteFlags);
-    if ((flags & 0xC0000000u) == 0)
-        return;
-    if (flags & 0x80000000u) {
-        for (uint32_t i = 0; i < 8; ++i)
-            FlatWrite16(r + kRemoteVolume + i * 4, FlatRead16(r + kRemoteVolume + i * 4 + 2));
-        flags &= 0x7FFFFFFFu;
-        FlatWrite32(r + kRemoteFlags, flags);
-    }
-    if (flags & 0x40000000u) {
-        for (uint32_t k = 0; k < 4; ++k) {
-            const int32_t main = S32(r + kRemoteMain + k * 4), aux = S32(r + kRemoteAux + k * 4);
-            FlatWrite16(r + kRemoteVolume + k * 8 + 2, Volume(main));
-            FlatWrite16(r + kRemoteVolume + k * 8 + 6, Volume((flags & (1u << k)) ? aux : main + aux));
-        }
-        flags = (flags & 0xBFFFFFFFu) | 0x80000000u;
-        FlatWrite32(r + kRemoteFlags, flags);
-    }
-    uint16_t control = 0;
-    for (uint32_t i = 0; i < 8; ++i) {
-        const uint16_t current = FlatRead16(r + kRemoteVolume + i * 4), target = FlatRead16(r + kRemoteVolume + i * 4 + 2);
-        const uint16_t delta = Delta(current, target, 18);
-        FlatWrite16(voice + kVpbRemoteMix + i * 4, current);
-        FlatWrite16(voice + kVpbRemoteMix + i * 4 + 2, delta);
-        if (current)
-            control |= uint16_t(1u << (2 * i));
-        if (delta)
-            control |= uint16_t(2u << (2 * i));
-    }
-    FlatWrite16(voice + kVpbRemoteCtrl, control);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncRemote);
 }
 
 // MIXInit (0x804C2D60).
@@ -304,21 +256,16 @@ void InitChannel(uint32_t voice, uint32_t mode, int32_t input, uint32_t auxA, ui
     ComputeBuses(c, 0);
     if (FlatRead32(kSoundMode) == 3)
         control = 0x80000000u;
-    RemoteReset(FlatRead32(voice + kVpbIndex));
-    FlatWrite16(voice + kVpbVeVolume, FlatRead16(c + kV));
-    FlatWrite16(voice + kVpbVeDelta, 0);
+    uint16_t mix[24];
     for (const MixSlot& m : kMixSlots) {
         const uint16_t v = FlatRead16(c + m.slot);
-        FlatWrite16(voice + kVpbMix + m.vpb, v);
-        FlatWrite16(voice + kVpbMix + m.vpb + 2, 0);
+        mix[m.pair * 2] = v;
+        mix[m.pair * 2 + 1] = 0;
         if (v)
             control |= m.on;
     }
-    FlatWrite32(voice + kVpbMixerCtrl, control);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncMixerCtrl | kSyncMix | kSyncVe);
-    std::memset(GuestFlat::Host(voice + kVpbRemoteMix), 0, 0x20);
-    FlatWrite16(voice + kVpbRemoteCtrl, 0);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncRemote);
+    SoundVoice::SetVe(voice, FlatRead16(c + kV), 0);
+    SoundVoice::SetMix(voice, mix, control);
 }
 
 // MIXUpdateSettings (0x804C4750), once per AX frame.
@@ -360,24 +307,21 @@ void UpdateSettings() {
         }
         if (input) {
             const uint16_t current = FlatRead16(c + kV);
-            FlatWrite16(voice + kVpbVeVolume, current);
-            FlatWrite16(voice + kVpbVeDelta, Delta(current, FlatRead16(c + kV + 2), 96));
-            FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncVe);
+            SoundVoice::SetVe(voice, current, Delta(current, FlatRead16(c + kV + 2), 96));
         }
         if (mix) {
+            uint16_t pairs[24];
             for (const MixSlot& m : kMixSlots) {
                 const uint16_t current = FlatRead16(c + m.slot), delta = Delta(current, FlatRead16(c + m.slot + 2), 96);
-                FlatWrite16(voice + kVpbMix + m.vpb, current);
-                FlatWrite16(voice + kVpbMix + m.vpb + 2, delta);
+                pairs[m.pair * 2] = current;
+                pairs[m.pair * 2 + 1] = delta;
                 if (current)
                     control |= m.on;
                 if (delta)
                     control |= m.ramp;
             }
-            FlatWrite32(voice + kVpbMixerCtrl, control);
-            FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncMixerCtrl | kSyncMix);
+            SoundVoice::SetMix(voice, pairs, control);
         }
-        RemoteUpdate(i, voice);
     }
 }
 

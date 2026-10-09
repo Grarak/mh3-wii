@@ -1,6 +1,5 @@
 #include "port_check.h"
 
-#include "audio/ax_dsp.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "gx_host.h"
@@ -46,13 +45,11 @@ struct Snapshot {
     static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
     static uint8_t* Mem2() { return Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size); }
     void Save() {
-        AxDspHle::JoinMixWorker();
         bytes.resize(Memory::kMem1Size + Memory::kMem2Size);
         std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
         std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
     }
     void Restore() const {
-        AxDspHle::JoinMixWorker();
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
     }
@@ -87,9 +84,6 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
         return;
     }
     previous = lastAny = now;
-    // The audio mix worker writes voice state into guest RAM: let it finish so
-    // the restore below does not roll its writes back (guest code starts mixes).
-    AxDspHle::JoinMixWorker();
     const CpuContext entry = *ctx;
     const GameStep::State clock = GameStep::Save();
     Snapshot before, expected;
@@ -272,7 +266,6 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
     if (!list || ++calls[kind] != after)
         return;
     constexpr uint32_t kStepCounter = 0x8065AA6C;
-    AxDspHle::JoinMixWorker();
     const CpuContext entry = *ctx;
     const GameStep::State clock = GameStep::Save();
     Snapshot start;

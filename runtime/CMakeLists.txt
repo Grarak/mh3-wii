@@ -99,7 +99,7 @@ endif()
 add_executable(MH3
   src/main.cpp src/memory.cpp ${MH3_GUEST_MEMORY_SOURCE} src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
-  src/audio/ax_mix.cpp src/audio/ax_memory.cpp src/audio/ax_sync.cpp src/audio_services.cpp src/audio_tests.cpp src/audio_dma.cpp
+  src/audio_tests.cpp src/audio_dma.cpp
   src/audio/native_audio_api.cpp src/audio/native_audio_frame.cpp src/audio/native_audio_mixer.cpp src/audio/native_audio_tests.cpp src/audio/sdk_mix.cpp src/audio/sdk_synseq.cpp src/audio/sound_engine.cpp src/audio/sound_stream.cpp
   src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/save_data.cpp src/game_tasks.cpp src/player_health.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/quest_clock.cpp src/ambient_hover.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/effect_texture.cpp src/effect_billboard.cpp src/msl_math.cpp src/texture_scroll.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
@@ -297,8 +297,7 @@ if(VITA)
   set(VITA_MAKE_FSELF_FLAGS "-a 0x2800000000000001")
   set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
   vita_create_self(eboot.bin MH3 UNSAFE NOASLR)
-  vita_create_vpk(mh3-vita.vpk MH3WII001 eboot.bin VERSION 00.01 NAME "Monster Hunter Tri"
-    FILE "${CMAKE_CURRENT_SOURCE_DIR}/../Assets/DSP/dsp_coef.bin" "dsp_coef.bin")
+  vita_create_vpk(mh3-vita.vpk MH3WII001 eboot.bin VERSION 00.01 NAME "Monster Hunter Tri")
 endif()
 
 # Game data preparation: the native model stage on every platform; on Linux,

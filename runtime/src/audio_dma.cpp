@@ -1,7 +1,6 @@
 #include "abi_bridge.h"
 #include "audio_dma.h"
 #include "audio_dma_statistics.h"
-#include "audio/ax_dsp.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -115,7 +114,6 @@ void ServiceAudioDma(CpuContext* cpu) {
         const auto rate = Rate();
         const auto period = dma.Period(rate);
         dma.elapsedNs -= period;
-        AxDspHle::JoinMixWorker();
         const auto frames = dma.length / 4;
 #ifdef MH3_HAS_AURORA
         QueueHostPcm(Memory::GetPointer(dma.address, dma.length), dma.length, rate);
@@ -130,7 +128,6 @@ void ServiceAudioDma(CpuContext* cpu) {
             try {
                 InvokeIndirectCpu(callback, cpu);
                 Memory::Write32(busy, 0);
-                AxDspHle::ServiceDeferredCallbacks();
             } catch (...) {
                 Memory::Write32(busy, 0);
                 throw;

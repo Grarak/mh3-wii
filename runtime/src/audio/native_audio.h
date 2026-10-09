@@ -1,16 +1,16 @@
 #pragma once
 
-// Native audio, RMHP08. The game's AX voices are mixed natively on an audio
-// thread (Vita core 0); there is no DSP, command list, mailbox or AI DMA.
+// Native audio, RMHP08. The game's voices are mixed natively on an audio
+// thread (Vita core 0); there is no AX, DSP, command list, mailbox or AI DMA.
 //
-// Game thread (core 2): the native AX entry points keep the guest AXVPBs as
-// the game expects them. Once per 3 ms AX frame ("tick") the native frame
-// driver (native_audio_frame.cpp) syncs the voices the game changed into a
-// command stream for the mixer, publishes the mixer's state/volume/position
-// back into the AXVPBs, and runs the game's AX frame callback (sequencer,
-// synth, MIX and sound-engine updates; guest code). The driver keeps the
-// produced ticks a little ahead of the mixer, so every change is applied at
-// its own tick; latency adapts to the game's frame time.
+// Game thread (core 2): the game's sound engine (sound_engine.cpp,
+// sound_stream.cpp) and MIX drive host voice records (native_audio_api.cpp,
+// SoundVoice). Once per 3 ms frame ("tick") the native frame driver
+// (native_audio_frame.cpp) sends the voices' changed fields to the mixer as
+// a command stream, takes the mixer's state/volume/position back, and runs
+// the engine's frame. The driver keeps the produced ticks a little ahead of
+// the mixer, so every change is applied at its own tick; latency adapts to
+// the game's frame time.
 //
 // Audio thread: NativeMixer (native_audio_mixer.cpp) applies each tick's
 // commands, decodes ADPCM/PCM16/PCM8, resamples, filters, mixes main and aux
@@ -31,9 +31,10 @@ constexpr uint32_t kTickSamples = 96;   // one AX frame, 3 ms at 32 kHz
 constexpr uint32_t kSampleRate = 32000;
 
 // ---------------------------------------------------------------------------
-// Guest layout (RVL SDK AX, 0x4302_145). All addresses were taken from the
-// disassembly; r13-relative ones were computed with Python from r13
-// 0x8079B2E0.
+// Guest layout (RVL SDK AX, 0x4302_145): the SDK state guest code still
+// reads through the AX entry points, and the AXVPB array whose addresses are
+// the voice handles. All addresses were taken from the disassembly;
+// r13-relative ones were computed with Python from r13 0x8079B2E0.
 // ---------------------------------------------------------------------------
 namespace Guest {
 enum : uint32_t {
@@ -102,7 +103,7 @@ enum : uint32_t {
     kPbSize = 0x140,
 };
 
-// AXVPB.sync bits.
+// AXVPB.sync bits: the PB groups a voice changed since the last tick.
 enum : uint32_t {
     kSyncSrcSelect = 1u << 0,
     kSyncMixerCtrl = 1u << 1,
@@ -134,9 +135,9 @@ enum : uint32_t {
 } // namespace Guest
 
 // ---------------------------------------------------------------------------
-// The mixer's voice state is the guest AXPB through its biquad (0xD6 bytes),
-// as host-endian halfwords at the guest halfword offsets: a sync copies
-// halfword ranges, as __AXSyncPB copied them into the DSP PB.
+// A voice's state is the AXPB layout through its biquad (0xD6 bytes), as
+// host-endian halfwords at the AXPB halfword offsets: a sync copies halfword
+// ranges, as __AXSyncPB copied them into the DSP PB.
 // ---------------------------------------------------------------------------
 constexpr uint32_t kPbHalfwords = 0xD6 / 2;
 
@@ -334,6 +335,13 @@ void StartAudioOutput();
 void StopAudioOutput();
 // Records the audio thread's identity (once, from that thread).
 void NoteAudioThread();
+
+// Native voices (native_audio_api.cpp), game thread: sends each voice's
+// changed groups for `tick`, stops freed voices once and takes the mixer's
+// state, envelope volume and position back; returns the voice records sent.
+uint32_t FlushVoices(CommandRing& ring, const Feedback& feedback, uint32_t tick);
+// After a mixer reset: no voice runs in the mixer.
+void ForgetMixerVoices();
 
 // Game-thread side (native_audio_frame.cpp).
 void ServiceNativeAudio(CpuContext* cpu);

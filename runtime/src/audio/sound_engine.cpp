@@ -417,15 +417,18 @@ bool SeUpdate(uint32_t& object) {
     return true;
 }
 
-// +0x14, 0x800E5F28: AX dropped the voice (r4 the AXVPB, its user context
-// the object).
-void SeVoiceDropped(uint32_t voice) {
-    const uint32_t object = FlatRead32(voice + 0x14), record = Record(object);
+} // namespace
+
+// +0x14, 0x800E5F28: AX stole the voice.
+void SoundEngine::SeVoiceDropped(uint32_t, uint32_t object) {
+    const uint32_t record = Record(object);
     FlatWrite32(record + kSeVoice, 0);
     FlatWrite32(record + kSeSample, 0);
     Clear(object, kTicking);
     Set(object, kReleased);
 }
+
+namespace {
 
 // 0x800E7880: command 3, the second level.
 void SeSetLevel2(uint32_t object, int16_t level) {
@@ -607,7 +610,11 @@ void SeUpdatePort(CpuContext* cpu) {
     cpu->gpr[3] = freed;
 }
 void SeVoiceDroppedPort(CpuContext* cpu) {
-    SeVoiceDropped(cpu->gpr[4]);
+    SeVoiceDropped(cpu->gpr[4], SoundVoice::Context(cpu->gpr[4]));
+}
+// 0x800E5738: the SE voices' AX drop callback (r3 the voice).
+void SeVoiceCallbackPort(CpuContext* cpu) {
+    SeVoiceDropped(cpu->gpr[3], SoundVoice::Context(cpu->gpr[3]));
 }
 void SeStopPort(CpuContext* cpu) {
     SeStop(cpu->gpr[4]);
@@ -813,6 +820,9 @@ void MH3_SeUpdate(CpuContext* cpu) {
 }
 void MH3_SeVoiceDropped(CpuContext* cpu) {
     Entry(cpu, "SeVoiceDropped", func_800E5F28, SeVoiceDroppedPort);
+}
+void MH3_SeVoiceCallback(CpuContext* cpu) {
+    SeVoiceCallbackPort(cpu);
 }
 void MH3_SeStop(CpuContext* cpu) {
     Entry(cpu, "SeStop", func_800E7614, SeStopPort);
@@ -1064,6 +1074,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800EDEC4, MH3_SoundResumeAll, "SoundResumeAll");
 REGISTER_NATIVE_FUNCTION_AS(0x800E62B4, MH3_SeTick, "SeTick");
 REGISTER_NATIVE_FUNCTION_AS(0x800E61CC, MH3_SeUpdate, "SeUpdate");
 REGISTER_NATIVE_FUNCTION_AS(0x800E5F28, MH3_SeVoiceDropped, "SeVoiceDropped");
+REGISTER_NATIVE_FUNCTION_AS(0x800E5738, MH3_SeVoiceCallback, "SeVoiceCallback");
 REGISTER_NATIVE_FUNCTION_AS(0x800E7614, MH3_SeStop, "SeStop");
 REGISTER_NATIVE_FUNCTION_AS(0x800E7684, MH3_SePause, "SePause");
 REGISTER_NATIVE_FUNCTION_AS(0x800E76EC, MH3_SeResume, "SeResume");

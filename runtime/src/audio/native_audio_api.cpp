@@ -1,16 +1,22 @@
-// Native AX library entry points, RMHP08 (RVL SDK AX 0x4302_145). C ports of
-// the functions decompiled from the disassembly (Ghidra plus llvm-objdump)
-// that the game, MIX, SEQ, SYN and the effect code call. They keep the guest
-// AXVPBs and voice stacks exactly as the SDK does, because the game also
-// writes AXVPB fields directly and sets their sync bits; the native frame
-// driver (native_audio_frame.cpp) syncs those into the mixer once per tick.
-// Interrupt masking is dropped: every caller, including the AX frame
-// callback, runs on the game thread.
+// Native voices, RMHP08: the game-thread voice table the sound engine, MIX
+// and the native frame driver use (SoundVoice, sound_voice.h), and the RVL
+// SDK AX entry points guest code still calls, as thin wrappers over it.
 //
-// What changed against the SDK: __AXOutInit starts the native mixer instead
-// of the DSP task and AI DMA, __AXOutQuit stops it, and registering an aux
-// callback hands a known effect (AXFX ReverbHi) to the mixer.
+// There is no AX layer underneath: a voice is a host record holding the
+// mixer's voice image (the AXPB fields the mixer reads, host-endian), the
+// sync bits of the groups written since the last tick, its priority, its
+// drop callback and owner. Once per 3 ms tick the frame driver sends the
+// changed groups to the mixer (FlushVoices, __AXSyncPB's precedence rules)
+// and takes the mixer's state, envelope volume and position back.
+//
+// Guest code identifies a voice by the address of what was its AXVPB
+// (kVpbStorage + index * kVpbSize, never dereferenced now): the engine's
+// records, SYN and the AX callbacks keep these handles. Allocation keeps the
+// SDK's rules: a free voice, else the oldest voice of the lowest priority
+// below the request is stolen and its drop callback called (the engine's two
+// callbacks natively).
 #include "native_audio.h"
+#include "sound_engine.h"
 #include "sound_voice.h"
 
 #include "abi_bridge.h"
@@ -19,7 +25,7 @@
 
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
+#include <cstring>
 
 using namespace NativeAudio;
 using namespace NativeAudio::Guest;
@@ -29,202 +35,126 @@ using MemoryInline::FlatWrite16;
 using MemoryInline::FlatWrite32;
 
 namespace NativeAudio {
-// native_audio_frame.cpp
 void StartNativeAudio(CpuContext* cpu);
 void StopNativeAudio();
 void NoteAuxCallback(uint32_t bus, uint32_t callback, uint32_t context);
-bool UseNativeAudio();
 } // namespace NativeAudio
-
-extern "C" {
-void func_80470930(CpuContext* cpu);  // __AXOutInit (translated original: DSP task, AI DMA)
-void func_80470B30(CpuContext* cpu);  // __AXOutQuit
-}
 
 namespace {
 
 constexpr uint32_t kOSRegisterVersion = 0x804CBA00;
+// The engine's voice drop callbacks (AXAcquireVoice's r4).
+constexpr uint32_t kSeVoiceCallback = 0x800E5738, kStreamVoiceCallback = 0x800E9EB8;
 
-uint32_t StackHead(uint32_t priority) {
-    return FlatRead32(kStackHeads + priority * 4);
+struct Voice {
+    uint16_t pb[kPbHalfwords];
+    uint32_t sync;        // AXVPB.sync: groups written since the last tick
+    uint32_t priority;    // 0: free
+    uint32_t callback, context;
+    int16_t prev, next;   // priority stack links (-1: none)
+    bool depop;           // stopped while running: fade out
+    // Frame driver: the tick of the state/volume/address the game last set
+    // (feedback waits until the mixer applied it) and whether the mixer was
+    // told the voice runs.
+    uint32_t stateTick, volumeTick, addressTick;
+    bool running;
+};
+
+struct Voices {
+    Voice voice[kMaxVoices];
+    int16_t head[32], tail[32];  // priority stacks, newest first; [0] the free stack
+    bool initialized;
+};
+Voices v;
+
+uint32_t Handle(uint32_t index) {
+    return kVpbStorage + index * kVpbSize;
 }
 
-// __AXRemoveFromStack, 0x8046EDD0.
-void RemoveFromStack(uint32_t voice) {
-    const uint32_t priority = FlatRead32(voice + kVpbPriority);
-    const uint32_t headSlot = kStackHeads + priority * 4, tailSlot = kStackTails + priority * 4;
-    const uint32_t head = FlatRead32(headSlot), tail = FlatRead32(tailSlot);
-    if (head == tail) {
-        FlatWrite32(tailSlot, 0);
-        FlatWrite32(headSlot, 0);
-    } else if (voice == head) {
-        const uint32_t next = FlatRead32(voice + kVpbNext);
-        FlatWrite32(headSlot, next);
-        FlatWrite32(next + kVpbPrev, 0);
-    } else if (voice == tail) {
-        const uint32_t prev = FlatRead32(voice + kVpbPrev);
-        FlatWrite32(tailSlot, prev);
-        FlatWrite32(prev + kVpbNext, 0);
+// The handle's voice; out of range handles (0, stale pointers) get none.
+Voice* At(uint32_t handle, uint32_t* index = nullptr) {
+    const uint32_t offset = handle - kVpbStorage;
+    const uint32_t i = offset / kVpbSize;
+    if (i >= kMaxVoices || offset % kVpbSize)
+        return nullptr;
+    if (index)
+        *index = i;
+    return &v.voice[i];
+}
+
+// __AXRemoveFromStack.
+void RemoveFromStack(uint32_t i) {
+    Voice& x = v.voice[i];
+    const uint32_t p = x.priority;
+    if (v.head[p] == v.tail[p]) {
+        v.head[p] = v.tail[p] = -1;
+    } else if (v.head[p] == int16_t(i)) {
+        v.head[p] = x.next;
+        v.voice[x.next].prev = -1;
+    } else if (v.tail[p] == int16_t(i)) {
+        v.tail[p] = x.prev;
+        v.voice[x.prev].next = -1;
     } else {
-        const uint32_t prev = FlatRead32(voice + kVpbPrev), next = FlatRead32(voice + kVpbNext);
-        FlatWrite32(prev + kVpbNext, next);
-        FlatWrite32(next + kVpbPrev, prev);
+        v.voice[x.prev].next = x.next;
+        v.voice[x.next].prev = x.prev;
     }
 }
 
-// Links `voice` in as the newest voice of `priority`.
-void PushToStack(uint32_t voice, uint32_t priority) {
-    const uint32_t headSlot = kStackHeads + priority * 4;
-    const uint32_t head = FlatRead32(headSlot);
-    FlatWrite32(voice + kVpbNext, head);
-    FlatWrite32(voice + kVpbPrev, 0);
-    if (head == 0) {
-        FlatWrite32(headSlot, voice);
-        FlatWrite32(kStackTails + priority * 4, voice);
-    } else {
-        FlatWrite32(head + kVpbPrev, voice);
-        FlatWrite32(headSlot, voice);
+// Links voice `i` in as the newest of `priority`.
+void PushToStack(uint32_t i, uint32_t priority) {
+    Voice& x = v.voice[i];
+    x.next = v.head[priority];
+    x.prev = -1;
+    if (v.head[priority] < 0)
+        v.tail[priority] = int16_t(i);
+    else
+        v.voice[v.head[priority]].prev = int16_t(i);
+    v.head[priority] = int16_t(i);
+}
+
+// __AXPushFreeStack.
+void PushFreeStack(uint32_t i) {
+    v.voice[i].next = v.head[0];
+    v.head[0] = int16_t(i);
+    v.voice[i].priority = 0;
+}
+
+// __AXSetPBDefault: stopped, ITD/LPF/biquad off.
+void SetPBDefault(Voice& x) {
+    x.pb[Pb::State] = 0;
+    x.pb[Pb::Itd] = 0;
+    x.pb[Pb::LpfOn] = 0;
+    x.pb[Pb::BiquadOn] = 0;
+    x.sync = kSyncPbDefault;
+}
+
+void InitVoices() {
+    std::memset(&v, 0, sizeof(v));
+    for (uint32_t p = 0; p < 32; ++p)
+        v.head[p] = v.tail[p] = -1;
+    for (uint32_t i = 0; i < kMaxVoices; ++i) {
+        SetPBDefault(v.voice[i]);
+        v.voice[i].prev = v.voice[i].next = -1;
+        PushFreeStack(i);
     }
+    v.initialized = true;
 }
 
-// __AXPushFreeStack, 0x8046EDA0.
-void PushFreeStack(uint32_t voice) {
-    FlatWrite32(voice + kVpbNext, FlatRead32(kStackHeads));
-    FlatWrite32(kStackHeads, voice);
-    FlatWrite32(voice + kVpbPriority, 0);
-}
-
-// __AXSetPBDefault, 0x804718B0.
-void SetPBDefault(uint32_t voice) {
-    FlatWrite16(voice + 0x38, 0);   // pb.state
-    FlatWrite16(voice + 0x6C, 0);   // pb.itd.flag
-    FlatWrite32(voice + kVpbSync, kSyncPbDefault);
-    FlatWrite16(voice + 0xE2, 0);   // pb.lpf.on
-    FlatWrite16(voice + 0xEA, 0);   // pb.biquad.on
-    FlatWrite16(voice + 0xFE, 0);   // pb.remote
-    FlatWrite16(voice + 0x13C, 0);  // pb.rmtIIR.on
-    for (uint32_t o = 0x132; o <= 0x13A; o += 2)
-        FlatWrite16(voice + o, 0);  // pb.rmtSrc
-}
-
-void AllocInit() {
-    FlatWrite32(kCallbackStack, 0);
-    for (uint32_t p = 0; p < 32; ++p) {
-        FlatWrite32(kStackHeads + p * 4, 0);
-        FlatWrite32(kStackTails + p * 4, 0);
+// A stolen voice's drop callback (r3 the handle).
+void Dropped(CpuContext* cpu, uint32_t i) {
+    const Voice& x = v.voice[i];
+    const uint32_t handle = Handle(i);
+    if (x.callback == kSeVoiceCallback) {
+        SoundEngine::SeVoiceDropped(handle, x.context);
+    } else if (x.callback == kStreamVoiceCallback) {
+        SoundEngine::Stream::VoiceDropped(cpu, handle, x.context);
+    } else if (x.callback) {
+        // A guest callback reads its context from the AXVPB's user context.
+        FlatWrite32(handle + kVpbUserContext, x.context);
+        GuestFrame frame(cpu, 0x30);
+        cpu->gpr[3] = handle;
+        InvokeIndirectCpu(x.callback, cpu);
     }
-}
-
-void Zero(uint32_t address, uint32_t bytes) {
-    if (bytes)
-        std::memset(GuestFlat::Host(address), 0, bytes);
-}
-
-// __AXPBInit, 0x80471920.
-void PBInit() {
-    const uint32_t count = FlatRead32(kVoiceCount);
-    const uint32_t dspPbs = FlatRead32(kDspPbs), itds = FlatRead32(kItdBuffers), vpbs = FlatRead32(kVpbs);
-    FlatWrite32(kDspCycles, 0);
-    FlatWrite32(kMaxDspCycles, FlatRead32(0x800000F8) / 0x29B);  // bus clock / 667
-    Zero(dspPbs, count * kPbSize);
-    Zero(itds, count * 0x40);
-    Zero(vpbs, count * kVpbSize);
-    for (uint32_t i = 0; i < count; ++i) {
-        const uint32_t vpb = vpbs + i * kVpbSize, dsp = dspPbs + i * kPbSize, itd = itds + i * 0x40;
-        FlatWrite32(vpb + kVpbIndex, i);
-        FlatWrite32(vpb + kVpbItdBuffer, itd);
-        SetPBDefault(vpb);
-        if (i == count - 1) {
-            FlatWrite32(dsp + 0x00, 0);
-            FlatWrite32(vpb + kVpbPb + 0x00, 0);
-        } else {
-            FlatWrite32(vpb + kVpbPb + 0x00, dsp + kPbSize);
-            FlatWrite32(dsp + 0x00, dsp + kPbSize);
-        }
-        FlatWrite32(vpb + kVpbPb + 0x04, dsp);
-        FlatWrite32(dsp + 0x04, dsp);
-        FlatWrite32(vpb + kVpbPb + 0x46, itd);
-        FlatWrite32(dsp + 0x46, itd);
-        FlatWrite32(vpb + kVpbPriority, 1);
-        PushFreeStack(vpb);
-    }
-}
-
-void VPBInit() {
-    FlatWrite32(kVoiceCount, kMaxVoices);
-    FlatWrite32(kDspPbs, kDspPbStorage);
-    FlatWrite32(kItdBuffers, kItdStorage);
-    FlatWrite32(kVpbs, kVpbStorage);
-    PBInit();
-}
-
-void VPBQuit() {
-    FlatWrite32(kDspPbs, 0);
-    FlatWrite32(kItdBuffers, 0);
-    FlatWrite32(kVpbs, 0);
-    FlatWrite32(kVoiceCount, 0);
-}
-
-void SPBInit() {
-    for (uint32_t i = 0; i < 20; ++i)
-        FlatWrite32(kSpbGlobals + i * 4, 0);
-}
-
-void AuxInit() {
-    FlatWrite32(kAuxACallback, 0);
-    FlatWrite32(kAuxBCallback, 0);
-    FlatWrite32(kAuxCCallback, 0);
-    FlatWrite32(kAuxAContext, 0);
-    FlatWrite32(kAuxBContext, 0);
-    FlatWrite32(kAuxCContext, 0);
-    FlatWrite32(kAuxIndexWrite, 0);
-    FlatWrite32(kAuxIndexRead, 1);
-    FlatWrite32(kAuxIndexCpu, 2);
-    Zero(kAuxABuffers, 0x480);
-    Zero(kAuxBBuffers, 0x480);
-    Zero(kAuxCBuffers, 0x480);
-    Zero(kAuxAClear, 3);
-    Zero(kAuxBClear, 3);
-    Zero(kAuxCClear, 3);
-}
-
-void AuxQuit() {
-    FlatWrite32(kAuxACallback, 0);
-    FlatWrite32(kAuxBCallback, 0);
-    FlatWrite32(kAuxCCallback, 0);
-}
-
-void CLInit() {
-    FlatWrite32(kMode, 0);
-    FlatWrite32(kCommandListIndex, 0);
-    FlatWrite32(kCommandListPtr, 0x806FCC00);
-    FlatWrite32(kCompressor, 1);
-    FlatWrite32(kCompressorTable, 0x80610280);
-    FlatWrite16(kCompressorRelease, 10);
-    FlatWrite16(kMasterVolume, 0x8000);
-    FlatWrite16(kAuxAReturn, 0x8000);
-    FlatWrite16(kAuxBReturn, 0x8000);
-    FlatWrite16(kAuxCReturn, 0x8000);
-}
-
-void OutInit(CpuContext* cpu, uint32_t outputMode) {
-    if (!UseNativeAudio()) {
-        cpu->gpr[3] = outputMode;
-        func_80470930(cpu);
-        return;
-    }
-    FlatWrite32(kOutputBufferMode, outputMode);
-    FlatWrite32(kUserCallback, 0);
-    StartNativeAudio(cpu);
-}
-
-void OutQuit(CpuContext* cpu) {
-    if (!UseNativeAudio()) {
-        func_80470B30(cpu);
-        return;
-    }
-    FlatWrite32(kUserCallback, 0);
-    StopNativeAudio();
 }
 
 void InitEx(CpuContext* cpu, uint32_t outputMode) {
@@ -234,12 +164,22 @@ void InitEx(CpuContext* cpu, uint32_t outputMode) {
         GuestFrame frame(cpu, 0x10);
         GuestCall{cpu}(kOSRegisterVersion, {FlatRead32(kSdkVersion)});
     }
-    AllocInit();
-    VPBInit();
-    SPBInit();
-    AuxInit();
-    CLInit();
-    OutInit(cpu, outputMode);
+    InitVoices();
+    // The SDK state guest code reads: the voice count (MIX/SYN init), the
+    // master and aux return volumes and the aux callbacks.
+    FlatWrite32(kVoiceCount, kMaxVoices);
+    FlatWrite32(kVpbs, kVpbStorage);
+    for (const uint32_t at : {kAuxACallback, kAuxBCallback, kAuxCCallback, kAuxAContext, kAuxBContext, kAuxCContext})
+        FlatWrite32(at, 0);
+    FlatWrite32(kMode, 0);
+    FlatWrite32(kCompressor, 1);
+    FlatWrite16(kMasterVolume, 0x8000);
+    FlatWrite16(kAuxAReturn, 0x8000);
+    FlatWrite16(kAuxBReturn, 0x8000);
+    FlatWrite16(kAuxCReturn, 0x8000);
+    FlatWrite32(kOutputBufferMode, outputMode);
+    FlatWrite32(kUserCallback, 0);
+    StartNativeAudio(cpu);
     FlatWrite32(kAxInitialized, 1);
 }
 
@@ -251,73 +191,277 @@ uint32_t ToUnsigned(double value) {
     return uint32_t(value);
 }
 
+// __AXSyncPB for one allocated voice at `tick`: the groups the game changed
+// go to the mixer; the fields it did not set get the mixer's state, envelope
+// volume and position back once the mixer applied the game's last write.
+void SyncVoice(CommandRing& ring, const Feedback& feedback, uint32_t applied, Voice& x, uint32_t index, uint32_t tick, uint32_t& records) {
+    const uint32_t sync = x.sync;
+    bool backState = false, backVolume = false, backAddress = false;
+    uint32_t groups = 0;
+    if (sync == 0) {
+        backState = backVolume = backAddress = true;
+    } else if (sync & kSyncAllParams) {
+        groups = kSyncAllParams;
+        x.stateTick = x.volumeTick = x.addressTick = tick;
+        x.running = x.pb[Pb::State] == 1;
+    } else {
+        groups = sync & (kSyncSrcSelect | kSyncMixerCtrl | kSyncType | kSyncMix | kSyncDpop | kSyncAdpcm | kSyncAdpcmLoop);
+        if (sync & kSyncState) {
+            groups |= kSyncState;
+            x.stateTick = tick;
+            x.running = x.pb[Pb::State] == 1;
+        } else {
+            backState = true;
+        }
+        if (sync & kSyncItdTarget)
+            groups |= kSyncItdTarget;
+        else if (sync & kSyncItd)
+            groups |= kSyncItd;
+        if (sync & kSyncVeDelta) {
+            groups |= kSyncVeDelta;
+            backVolume = true;
+        } else if (sync & kSyncVe) {
+            groups |= kSyncVe;
+            x.volumeTick = tick;
+        }
+        if ((sync & (kSyncLoop | kSyncLoopAddr | kSyncEndAddr | kSyncCurrAddr)) == 0) {
+            if (sync & kSyncAddr) {
+                groups |= kSyncAddr;
+                x.addressTick = tick;
+            } else {
+                backAddress = true;
+            }
+        } else {
+            groups |= sync & (kSyncLoop | kSyncLoopAddr | kSyncEndAddr);
+            if (sync & kSyncCurrAddr) {
+                groups |= kSyncCurrAddr;
+                x.addressTick = tick;
+            } else {
+                backAddress = true;
+            }
+        }
+        if (sync & kSyncSrcRatio)
+            groups |= kSyncSrcRatio;
+        else if (sync & kSyncSrc)
+            groups |= kSyncSrc;
+        if (sync & kSyncLpfCoef)
+            groups |= kSyncLpfCoef;
+        else if (sync & kSyncLpf)
+            groups |= kSyncLpf;
+        if (sync & kSyncBiquadCoef)
+            groups |= kSyncBiquadCoef;
+        else if (sync & kSyncBiquad)
+            groups |= kSyncBiquad;
+    }
+    if (groups) {
+        uint32_t halfwords = 0;
+        for (uint32_t bits = groups; bits; bits &= bits - 1)
+            halfwords += kSyncGroups[__builtin_ctz(bits)].count;
+        const uint32_t words = 2 + (halfwords + 1) / 2;
+        uint32_t* out = ring.Reserve(words);
+        out[0] = Header(Command::Voice, words, index, x.depop ? kFlagDepop : 0);
+        out[1] = groups;
+        uint32_t* data = out + 2;
+        uint32_t half = 0;
+        for (uint32_t bits = groups; bits; bits &= bits - 1) {
+            const SyncGroup group = kSyncGroups[__builtin_ctz(bits)];
+            for (uint32_t i = 0; i < group.count; ++i, ++half) {
+                const uint32_t value = x.pb[group.offset + i];
+                if (half & 1)
+                    data[half >> 1] |= value << 16;
+                else
+                    data[half >> 1] = value;
+            }
+        }
+        ++records;
+    }
+    if (backState && int32_t(applied - x.stateTick) > 0)
+        x.pb[Pb::State] = uint16_t(feedback.stateVolume[index].load(std::memory_order_relaxed) >> 16);
+    if (backVolume && int32_t(applied - x.volumeTick) > 0)
+        x.pb[Pb::VeVolume] = uint16_t(feedback.stateVolume[index].load(std::memory_order_relaxed));
+    if (backAddress && int32_t(applied - x.addressTick) > 0) {
+        const uint32_t address = feedback.address[index].load(std::memory_order_relaxed);
+        x.pb[Pb::CurHi] = uint16_t(address >> 16);
+        x.pb[Pb::CurLo] = uint16_t(address);
+    }
+    x.sync = 0;
+    x.depop = false;
+}
+
 } // namespace
+
+namespace NativeAudio {
+
+uint32_t FlushVoices(CommandRing& ring, const Feedback& feedback, uint32_t tick) {
+    if (!v.initialized)
+        return 0;
+    const uint32_t applied = feedback.appliedTick.load(std::memory_order_acquire);
+    uint32_t records = 0;
+    for (uint32_t i = 0; i < kMaxVoices; ++i) {
+        Voice& x = v.voice[i];
+        if (x.priority) {
+            SyncVoice(ring, feedback, applied, x, i, tick, records);
+            continue;
+        }
+        // A free voice: stop it in the mixer once.
+        if (x.running) {
+            ring.Reserve(1)[0] = Header(Command::Stop, 1, i, x.depop ? kFlagDepop : 0);
+            x.running = false;
+            x.stateTick = tick;
+        }
+        x.depop = false;
+    }
+    return records;
+}
+
+void ForgetMixerVoices() {
+    for (Voice& x : v.voice)
+        x.running = false;
+}
+
+} // namespace NativeAudio
 
 namespace SoundVoice {
 
+uint32_t Index(uint32_t voice) {
+    uint32_t index = 0;
+    At(voice, &index);
+    return index;
+}
+
+uint32_t Context(uint32_t voice) {
+    const Voice* x = At(voice);
+    return x ? x->context : 0;
+}
+
+uint32_t Acquire(CpuContext* cpu, uint32_t priority, uint32_t callback, uint32_t context) {
+    int32_t i = v.head[0];
+    if (i >= 0) {
+        v.head[0] = v.voice[i].next;
+    } else {
+        // Steal the oldest voice of the lowest priority below the request.
+        for (uint32_t p = 1; p < priority && p < 32; ++p) {
+            if (v.head[p] < 0)
+                continue;
+            i = v.tail[p];
+            if (v.head[p] == v.tail[p]) {
+                v.head[p] = v.tail[p] = -1;
+            } else {
+                v.tail[p] = v.voice[i].prev;
+                v.voice[v.tail[p]].next = -1;
+            }
+            if (v.voice[i].pb[Pb::State] == 1)
+                v.voice[i].depop = true;
+            Dropped(cpu, uint32_t(i));
+            break;
+        }
+    }
+    if (i < 0)
+        return 0;
+    Voice& x = v.voice[i];
+    PushToStack(uint32_t(i), priority);
+    x.priority = priority;
+    x.callback = callback;
+    x.context = context;
+    SetPBDefault(x);
+    return Handle(uint32_t(i));
+}
+
 void Free(uint32_t voice) {
-    RemoveFromStack(voice);
-    if (FlatRead16(voice + 0x38) == 1)
-        FlatWrite32(voice + kVpbDepop, 1);
-    SetPBDefault(voice);
-    PushFreeStack(voice);
+    uint32_t i;
+    if (!At(voice, &i) || v.voice[i].priority == 0)
+        return;
+    Voice& x = v.voice[i];
+    RemoveFromStack(i);
+    if (x.pb[Pb::State] == 1)
+        x.depop = true;
+    SetPBDefault(x);
+    PushFreeStack(i);
 }
 
 void SetState(uint32_t voice, uint32_t state) {
-    if (FlatRead16(voice + 0x38) == state)  // cmplw of the zero-extended halfword
+    Voice* x = At(voice);
+    if (!x || x->pb[Pb::State] == state)
         return;
-    FlatWrite16(voice + 0x38, uint16_t(state));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncState);
+    x->pb[Pb::State] = uint16_t(state);
+    x->sync |= kSyncState;
     if (state == 0)
-        FlatWrite32(voice + kVpbDepop, 1);
+        x->depop = true;
 }
 
 void SetPriority(uint32_t voice, uint32_t priority) {
-    RemoveFromStack(voice);
-    PushToStack(voice, priority);
-    FlatWrite32(voice + kVpbPriority, priority);
+    uint32_t i;
+    if (!At(voice, &i) || v.voice[i].priority == 0)
+        return;
+    RemoveFromStack(i);
+    PushToStack(i, priority);
+    v.voice[i].priority = priority;
 }
 
 // 0 none, 1 linear, 2-4 polyphase (coefficient set 0-2).
 void SetSrcType(uint32_t voice, uint32_t type) {
+    Voice* x = At(voice);
+    if (!x)
+        return;
     if (type == 0) {
-        FlatWrite16(voice + 0x30, 2);
+        x->pb[Pb::SrcSelect] = 2;
     } else if (type == 1) {
-        FlatWrite16(voice + 0x30, 1);
+        x->pb[Pb::SrcSelect] = 1;
     } else if (type <= 4) {
-        FlatWrite16(voice + 0x30, 0);
-        FlatWrite16(voice + 0x32, uint16_t(type - 2));
+        x->pb[Pb::SrcSelect] = 0;
+        x->pb[Pb::CoefSelect] = uint16_t(type - 2);
     }
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrcSelect);
+    x->sync |= kSyncSrcSelect;
 }
 
 // Stored as 16.16 (fmuls by 65536.0f).
 void SetSrcRatio(uint32_t voice, float ratio) {
+    Voice* x = At(voice);
+    if (!x)
+        return;
     const uint32_t fixed = ToUnsigned(double(float(65536.0f * ratio)));
-    FlatWrite16(voice + 0xD0, uint16_t(fixed));
-    FlatWrite16(voice + 0xCE, uint16_t(fixed >> 16));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrcRatio);
+    x->pb[Pb::SrcRatioHi] = uint16_t(fixed >> 16);
+    x->pb[Pb::SrcRatioLo] = uint16_t(fixed);
+    x->sync |= kSyncSrcRatio;
 }
 
 void SetCurrentAddr(uint32_t voice, uint32_t address) {
-    FlatWrite16(voice + 0xA2, uint16_t(address >> 16));
-    FlatWrite16(voice + 0xA4, uint16_t(address));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncCurrAddr);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::CurHi] = uint16_t(address >> 16);
+    x->pb[Pb::CurLo] = uint16_t(address);
+    x->sync |= kSyncCurrAddr;
 }
 
 void SetAdpcmLoop(uint32_t voice, uint16_t predScale, uint16_t yn1, uint16_t yn2) {
-    FlatWrite16(voice + 0xDC, predScale);
-    FlatWrite16(voice + 0xDE, yn1);
-    FlatWrite16(voice + 0xE0, yn2);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAdpcmLoop);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::LoopPredScale] = predScale;
+    x->pb[Pb::LoopYn1] = yn1;
+    x->pb[Pb::LoopYn2] = yn2;
+    x->sync |= kSyncAdpcmLoop;
 }
 
 void SetLpf(uint32_t voice, uint16_t on, uint16_t yn1, uint16_t a0, uint16_t b0) {
-    FlatWrite16(voice + 0xE2, on);
-    FlatWrite16(voice + 0xE4, yn1);
-    FlatWrite16(voice + 0xE6, a0);
-    FlatWrite16(voice + 0xE8, b0);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncLpf);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::LpfOn] = on;
+    x->pb[Pb::LpfYn1] = yn1;
+    x->pb[Pb::LpfA0] = a0;
+    x->pb[Pb::LpfB0] = b0;
+    x->sync |= kSyncLpf;
+}
+
+void SetLpfCoefs(uint32_t voice, uint16_t a0, uint16_t b0) {
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::LpfA0] = a0;
+    x->pb[Pb::LpfB0] = b0;
+    x->sync |= kSyncLpfCoef;
 }
 
 // c = 2 - cos(2 pi f / 32000); b0 = 32768 (c - sqrt(c^2 - 1)); a0 = 0x7FFF - b0,
@@ -332,21 +476,26 @@ void LpfCoefs(uint16_t frequency, uint16_t& a0, uint16_t& b0) {
 }
 
 void SetFormat(uint32_t voice, uint16_t loopFlag, uint16_t format) {
-    FlatWrite16(voice + 0x96, loopFlag);
-    FlatWrite16(voice + 0x98, format);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAddr);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::LoopFlag] = loopFlag;
+    x->pb[Pb::Format] = format;
+    x->sync |= kSyncAddr;
 }
 
-// The loop, end and current addresses are hi/lo halfword pairs (only
-// halfword aligned).
 void SetLoop(uint32_t voice, uint16_t loopFlag, uint32_t loop, uint32_t end, uint32_t current) {
-    FlatWrite16(voice + 0x96, loopFlag);
-    const uint32_t words[3] = {loop, end, current};
-    for (uint32_t i = 0; i < 3; ++i) {
-        FlatWrite16(voice + 0x9A + i * 4, uint16_t(words[i] >> 16));
-        FlatWrite16(voice + 0x9C + i * 4, uint16_t(words[i]));
-    }
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAddr);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::LoopFlag] = loopFlag;
+    x->pb[Pb::LoopHi] = uint16_t(loop >> 16);
+    x->pb[Pb::LoopLo] = uint16_t(loop);
+    x->pb[Pb::EndHi] = uint16_t(end >> 16);
+    x->pb[Pb::EndLo] = uint16_t(end);
+    x->pb[Pb::CurHi] = uint16_t(current >> 16);
+    x->pb[Pb::CurLo] = uint16_t(current);
+    x->sync |= kSyncAddr;
 }
 
 void SetAddr(uint32_t voice, const Addr& addr) {
@@ -355,62 +504,94 @@ void SetAddr(uint32_t voice, const Addr& addr) {
 }
 
 void SetAdpcm(uint32_t voice, const Adpcm& adpcm) {
-    for (uint32_t i = 0; i < 16; ++i)
-        FlatWrite16(voice + 0xA6 + i * 2, adpcm.coefs[i]);
-    FlatWrite16(voice + 0xC6, adpcm.gain);
-    FlatWrite16(voice + 0xC8, adpcm.predScale);
-    FlatWrite16(voice + 0xCA, adpcm.yn1);
-    FlatWrite16(voice + 0xCC, adpcm.yn2);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncAdpcm);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    std::memcpy(&x->pb[Pb::AdpcmCoefs], adpcm.coefs, sizeof(adpcm.coefs));
+    x->pb[Pb::AdpcmGain] = adpcm.gain;
+    x->pb[Pb::AdpcmPredScale] = adpcm.predScale;
+    x->pb[Pb::AdpcmYn1] = adpcm.yn1;
+    x->pb[Pb::AdpcmYn2] = adpcm.yn2;
+    x->sync |= kSyncAdpcm;
 }
 
 void SetSrc(uint32_t voice, uint32_t ratio) {
-    FlatWrite16(voice + 0xCE, uint16_t(ratio >> 16));
-    FlatWrite16(voice + 0xD0, uint16_t(ratio));
-    for (uint32_t at = 0xD2; at <= 0xDA; at += 2)
-        FlatWrite16(voice + at, 0);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncSrc);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::SrcRatioHi] = uint16_t(ratio >> 16);
+    x->pb[Pb::SrcRatioLo] = uint16_t(ratio);
+    x->pb[Pb::SrcFrac] = 0;
+    for (uint32_t i = 0; i < 4; ++i)
+        x->pb[Pb::SrcLast + i] = 0;
+    x->sync |= kSyncSrc;
 }
 
 void SetType(uint32_t voice, uint16_t type) {
-    FlatWrite16(voice + 0x3A, type);
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncType);
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::Type] = type;
+    x->sync |= kSyncType;
+}
+
+void SetMix(uint32_t voice, const uint16_t (&mix)[24], uint32_t mixerCtrl) {
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    std::memcpy(&x->pb[Pb::Mix], mix, sizeof(mix));
+    x->pb[Pb::MixerCtrlHi] = uint16_t(mixerCtrl >> 16);
+    x->pb[Pb::MixerCtrlLo] = uint16_t(mixerCtrl);
+    x->sync |= kSyncMix | kSyncMixerCtrl;
+}
+
+void SetVe(uint32_t voice, uint16_t volume, uint16_t delta) {
+    Voice* x = At(voice);
+    if (!x)
+        return;
+    x->pb[Pb::VeVolume] = volume;
+    x->pb[Pb::VeDelta] = delta;
+    x->sync |= kSyncVe;
 }
 
 uint32_t State(uint32_t voice) {
-    return FlatRead16(voice + 0x38);
+    const Voice* x = At(voice);
+    return x ? x->pb[Pb::State] : 0;
 }
 
 uint32_t LoopFlag(uint32_t voice) {
-    return FlatRead16(voice + 0x96);
+    const Voice* x = At(voice);
+    return x ? x->pb[Pb::LoopFlag] : 0;
 }
 
 uint32_t CurrentAddr(uint32_t voice) {
-    return uint32_t(FlatRead16(voice + 0xA2)) << 16 | FlatRead16(voice + 0xA4);
+    const Voice* x = At(voice);
+    return x ? uint32_t(x->pb[Pb::CurHi]) << 16 | x->pb[Pb::CurLo] : 0;
 }
 
 } // namespace SoundVoice
 
 extern "C" {
 
-// AXInit, 0x8046EA50.
+// AXInit, 0x8046EA50, and AXInitEx, 0x8046EAB0 (r3 the output buffer mode).
 void MH3_AXInit(CpuContext* cpu) {
     InitEx(cpu, 0);
 }
-
-// AXInitEx, 0x8046EAB0: r3 = output buffer mode (MH3 passes 1, triple).
 void MH3_AXInitEx(CpuContext* cpu) {
     InitEx(cpu, cpu->gpr[3]);
 }
 
 // AXQuit, 0x8046EB10.
-void MH3_AXQuit(CpuContext* cpu) {
+void MH3_AXQuit(CpuContext*) {
     if (FlatRead32(kAxInitialized) == 0)
         return;
-    OutQuit(cpu);
-    AllocInit();  // __AXAllocQuit clears the same state
-    VPBQuit();
-    AuxQuit();
+    FlatWrite32(kUserCallback, 0);
+    StopNativeAudio();
+    InitVoices();
+    FlatWrite32(kVpbs, 0);
+    FlatWrite32(kVoiceCount, 0);
+    for (const uint32_t at : {kAuxACallback, kAuxBCallback, kAuxCCallback})
+        FlatWrite32(at, 0);
     FlatWrite32(kAxInitialized, 0);
 }
 
@@ -419,106 +600,18 @@ void MH3_AXIsInit(CpuContext* cpu) {
     cpu->gpr[3] = FlatRead32(kAxInitialized);
 }
 
-// __AXGetStackHead, 0x8046EB70.
-void MH3_AXGetStackHead(CpuContext* cpu) {
-    cpu->gpr[3] = StackHead(cpu->gpr[3]);
-}
-
-// __AXServiceCallbackStack, 0x8046EB90: voices dropped for DSP time get
-// their callback and go back to the free stack. Nothing drops voices now
-// (the native mixer has no DSP cycle budget), so this normally does nothing.
-void MH3_AXServiceCallbackStack(CpuContext* cpu) {
-    GuestFrame frame(cpu, 0x20);
-    for (uint32_t voice = FlatRead32(kCallbackStack); voice; voice = FlatRead32(kCallbackStack)) {
-        FlatWrite32(kCallbackStack, FlatRead32(voice + kVpbNext1));
-        if (FlatRead32(voice + kVpbPriority) == 0)
-            continue;
-        if (const uint32_t callback = FlatRead32(voice + kVpbCallback)) {
-            cpu->gpr[3] = voice;
-            InvokeIndirectCpu(callback, cpu);
-        }
-        RemoveFromStack(voice);
-        FlatWrite32(voice + kVpbNext, FlatRead32(kStackHeads));
-        FlatWrite32(kStackHeads, voice);
-        FlatWrite32(voice + kVpbPriority, 0);
-    }
-}
-
-// __AXAllocInit, 0x8046EC40, and __AXAllocQuit, 0x8046ECF0.
-void MH3_AXAllocInit(CpuContext*) {
-    AllocInit();
-}
-void MH3_AXAllocQuit(CpuContext*) {
-    AllocInit();
-}
-
-// __AXPushFreeStack, 0x8046EDA0.
-void MH3_AXPushFreeStack(CpuContext* cpu) {
-    PushFreeStack(cpu->gpr[3]);
-}
-
-// __AXPushCallbackStack, 0x8046EDC0.
-void MH3_AXPushCallbackStack(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3];
-    FlatWrite32(voice + kVpbNext1, FlatRead32(kCallbackStack));
-    FlatWrite32(kCallbackStack, voice);
-}
-
-// __AXRemoveFromStack, 0x8046EDD0.
-void MH3_AXRemoveFromStack(CpuContext* cpu) {
-    RemoveFromStack(cpu->gpr[3]);
-}
-
 // AXFreeVoice, 0x8046EE60.
 void MH3_AXFreeVoice(CpuContext* cpu) {
     SoundVoice::Free(cpu->gpr[3]);
 }
 
-// AXAcquireVoice, 0x8046EEE0: r3 priority, r4 callback, r5 user context.
-// Takes a free voice, else steals the oldest voice of the lowest lower
-// priority (calling its callback). Returns the AXVPB or 0.
+// AXAcquireVoice, 0x8046EEE0: r3 priority, r4 drop callback, r5 user context.
 void MH3_AXAcquireVoice(CpuContext* cpu) {
     const uint32_t priority = cpu->gpr[3], callback = cpu->gpr[4], context = cpu->gpr[5];
-    uint32_t voice = FlatRead32(kStackHeads);
+    uint32_t voice;
     {
         GuestFrame frame(cpu, 0x30);
-        if (voice) {
-            FlatWrite32(kStackHeads, FlatRead32(voice + kVpbNext));
-        } else {
-            for (uint32_t p = 1; p < priority && p < 32; ++p) {
-                const uint32_t headSlot = kStackHeads + p * 4, tailSlot = kStackTails + p * 4;
-                const uint32_t head = FlatRead32(headSlot);
-                if (!head)
-                    continue;
-                const uint32_t tail = FlatRead32(tailSlot);
-                if (head == tail) {
-                    FlatWrite32(tailSlot, 0);
-                    FlatWrite32(headSlot, 0);
-                    voice = head;
-                } else if (tail) {
-                    const uint32_t prev = FlatRead32(tail + kVpbPrev);
-                    FlatWrite32(tailSlot, prev);
-                    FlatWrite32(prev + kVpbNext, 0);
-                    voice = tail;
-                }
-                if (voice) {
-                    if (FlatRead16(voice + 0x38) == 1)
-                        FlatWrite32(voice + kVpbDepop, 1);
-                    if (const uint32_t stolen = FlatRead32(voice + kVpbCallback)) {
-                        cpu->gpr[3] = voice;
-                        InvokeIndirectCpu(stolen, cpu);
-                    }
-                    break;
-                }
-            }
-        }
-        if (voice) {
-            PushToStack(voice, priority);
-            FlatWrite32(voice + kVpbPriority, priority);
-            FlatWrite32(voice + kVpbCallback, callback);
-            FlatWrite32(voice + kVpbUserContext, context);
-            SetPBDefault(voice);
-        }
+        voice = SoundVoice::Acquire(cpu, priority, callback, context);
     }
     cpu->gpr[3] = voice;
 }
@@ -528,24 +621,13 @@ void MH3_AXSetVoicePriority(CpuContext* cpu) {
     SoundVoice::SetPriority(cpu->gpr[3], cpu->gpr[4]);
 }
 
-// __AXAuxInit, 0x8046F110, and __AXAuxQuit, 0x8046F230.
-void MH3_AXAuxInit(CpuContext*) {
-    AuxInit();
-}
-void MH3_AXAuxQuit(CpuContext*) {
-    AuxQuit();
-}
-
 // AXRegisterAuxACallback/B/C, 0x8046F820/0x8046F890/0x8046F900: r3
 // callback, r4 context. The mixer runs a known effect natively.
 static void RegisterAux(uint32_t bus, uint32_t callback, uint32_t context) {
     static constexpr uint32_t kCallback[3] = {kAuxACallback, kAuxBCallback, kAuxCCallback};
     static constexpr uint32_t kContext[3] = {kAuxAContext, kAuxBContext, kAuxCContext};
-    static constexpr uint32_t kClear[3] = {kAuxAClear, kAuxBClear, kAuxCClear};
     FlatWrite32(kCallback[bus], callback);
     FlatWrite32(kContext[bus], context);
-    if (callback == 0)
-        std::memset(GuestFlat::Host(kClear[bus]), 1, 3);
     NoteAuxCallback(bus, callback, context);
 }
 void MH3_AXRegisterAuxACallback(CpuContext* cpu) {
@@ -562,11 +644,6 @@ void MH3_AXRegisterAuxCCallback(CpuContext* cpu) {
 void MH3_AXGetAuxACallback(CpuContext* cpu) {
     FlatWrite32(cpu->gpr[3], FlatRead32(kAuxACallback));
     FlatWrite32(cpu->gpr[4], FlatRead32(kAuxAContext));
-}
-
-// __AXCLInit, 0x80470390; __AXCLQuit, 0x804703E0, does nothing.
-void MH3_AXCLInit(CpuContext*) {
-    CLInit();
 }
 
 // AXSetMode 0x804703F0, AXGetMode 0x80470400, AXSetCompressor 0x80470410.
@@ -606,14 +683,6 @@ void MH3_AXSetAuxCReturnVolume(CpuContext* cpu) {
     FlatWrite16(kAuxCReturn, uint16_t(cpu->gpr[3]));
 }
 
-// __AXOutInit, 0x80470930 (r3 output buffer mode), and __AXOutQuit, 0x80470B30.
-void MH3_AXOutInit(CpuContext* cpu) {
-    OutInit(cpu, cpu->gpr[3]);
-}
-void MH3_AXOutQuit(CpuContext* cpu) {
-    OutQuit(cpu);
-}
-
 // AXRegisterCallback, 0x80470BA0: the per-frame user callback; returns the old one.
 void MH3_AXRegisterCallback(CpuContext* cpu) {
     const uint32_t old = FlatRead32(kUserCallback);
@@ -621,77 +690,41 @@ void MH3_AXRegisterCallback(CpuContext* cpu) {
     cpu->gpr[3] = old;
 }
 
-// __AXSPBInit, 0x80470E60.
-void MH3_AXSPBInit(CpuContext*) {
-    SPBInit();
-}
-
-// __AXSetPBDefault 0x804718B0, __AXVPBInit 0x804718F0, __AXPBInit 0x80471920,
-// __AXVPBQuit 0x80471BB0.
-void MH3_AXSetPBDefault(CpuContext* cpu) {
-    SetPBDefault(cpu->gpr[3]);
-}
-void MH3_AXVPBInit(CpuContext*) {
-    VPBInit();
-}
-void MH3_AXPBInit(CpuContext*) {
-    PBInit();
-}
-void MH3_AXVPBQuit(CpuContext*) {
-    VPBQuit();
-}
-
-// AXSetVoiceSrcType, 0x80471BD0: 0 none, 1 linear, 2-4 polyphase (coefficient set 0-2).
+// AXSetVoiceSrcType 0x80471BD0, AXSetVoiceState 0x80471C90,
+// AXSetVoiceCurrentAddr 0x80471D00, AXSetVoiceSrcRatio 0x80471D60 (f1),
+// AXSetVoiceAdpcmLoop 0x80471DE0 (r4 -> {pred_scale, yn1, yn2}),
+// AXSetVoiceLpf 0x80471E40 (r4 -> {on, yn1, a0, b0}), AXSetVoiceLpfCoefs
+// 0x80471EB0 (r4 a0, r5 b0), AXGetLpfCoefs 0x80471F10 (r3 cutoff, r4 -> a0,
+// r5 -> b0), AXGetMaxVoices 0x80471FD0.
 void MH3_AXSetVoiceSrcType(CpuContext* cpu) {
     SoundVoice::SetSrcType(cpu->gpr[3], cpu->gpr[4]);
 }
-
-// AXSetVoiceState, 0x80471C90.
 void MH3_AXSetVoiceState(CpuContext* cpu) {
     SoundVoice::SetState(cpu->gpr[3], cpu->gpr[4]);
 }
-
-// AXSetVoiceCurrentAddr, 0x80471D00.
 void MH3_AXSetVoiceCurrentAddr(CpuContext* cpu) {
     SoundVoice::SetCurrentAddr(cpu->gpr[3], cpu->gpr[4]);
 }
-
-// AXSetVoiceSrcRatio, 0x80471D60: f1 ratio, stored as 16.16 (fmuls by 65536.0f).
 void MH3_AXSetVoiceSrcRatio(CpuContext* cpu) {
     SoundVoice::SetSrcRatio(cpu->gpr[3], float(cpu->fpr[1].d));
 }
-
-// AXSetVoiceAdpcmLoop, 0x80471DE0: r4 points at {pred_scale, yn1, yn2}.
 void MH3_AXSetVoiceAdpcmLoop(CpuContext* cpu) {
     const uint32_t loop = cpu->gpr[4];
     SoundVoice::SetAdpcmLoop(cpu->gpr[3], FlatRead16(loop), FlatRead16(loop + 2), FlatRead16(loop + 4));
 }
-
-// AXSetVoiceLpf, 0x80471E40: r4 points at {on, yn1, a0, b0}.
 void MH3_AXSetVoiceLpf(CpuContext* cpu) {
     const uint32_t lpf = cpu->gpr[4];
     SoundVoice::SetLpf(cpu->gpr[3], FlatRead16(lpf), FlatRead16(lpf + 2), FlatRead16(lpf + 4), FlatRead16(lpf + 6));
 }
-
-// AXSetVoiceLpfCoefs, 0x80471EB0: r4 a0, r5 b0.
 void MH3_AXSetVoiceLpfCoefs(CpuContext* cpu) {
-    const uint32_t voice = cpu->gpr[3];
-    FlatWrite16(voice + 0xE6, uint16_t(cpu->gpr[4]));
-    FlatWrite16(voice + 0xE8, uint16_t(cpu->gpr[5]));
-    FlatWrite32(voice + kVpbSync, FlatRead32(voice + kVpbSync) | kSyncLpfCoef);
+    SoundVoice::SetLpfCoefs(cpu->gpr[3], uint16_t(cpu->gpr[4]), uint16_t(cpu->gpr[5]));
 }
-
-// AXGetLpfCoefs, 0x80471F10: r3 cutoff (Hz), r4 -> a0, r5 -> b0.
-// c = 2 - cos(2 pi f / 32000); b0 = 32768 (c - sqrt(c^2 - 1)); a0 = 0x7FFF - b0,
-// in the original's single-precision steps.
 void MH3_AXGetLpfCoefs(CpuContext* cpu) {
     uint16_t a0, b0;
     SoundVoice::LpfCoefs(uint16_t(cpu->gpr[3]), a0, b0);
     FlatWrite16(cpu->gpr[5], b0);
     FlatWrite16(cpu->gpr[4], a0);
 }
-
-// AXGetMaxVoices, 0x80471FD0.
 void MH3_AXGetMaxVoices(CpuContext* cpu) {
     cpu->gpr[3] = FlatRead32(kVoiceCount);
 }
@@ -702,23 +735,13 @@ REGISTER_NATIVE_FUNCTION_AS(0x8046EA50, MH3_AXInit, "AXInit");
 REGISTER_NATIVE_FUNCTION_AS(0x8046EAB0, MH3_AXInitEx, "AXInitEx");
 REGISTER_NATIVE_FUNCTION_AS(0x8046EB10, MH3_AXQuit, "AXQuit");
 REGISTER_NATIVE_FUNCTION_AS(0x8046EB60, MH3_AXIsInit, "AXIsInit");
-REGISTER_NATIVE_FUNCTION_AS(0x8046EB70, MH3_AXGetStackHead, "__AXGetStackHead");
-REGISTER_NATIVE_FUNCTION_AS(0x8046EB90, MH3_AXServiceCallbackStack, "__AXServiceCallbackStack");
-REGISTER_NATIVE_FUNCTION_AS(0x8046EC40, MH3_AXAllocInit, "__AXAllocInit");
-REGISTER_NATIVE_FUNCTION_AS(0x8046ECF0, MH3_AXAllocQuit, "__AXAllocQuit");
-REGISTER_NATIVE_FUNCTION_AS(0x8046EDA0, MH3_AXPushFreeStack, "__AXPushFreeStack");
-REGISTER_NATIVE_FUNCTION_AS(0x8046EDC0, MH3_AXPushCallbackStack, "__AXPushCallbackStack");
-REGISTER_NATIVE_FUNCTION_AS(0x8046EDD0, MH3_AXRemoveFromStack, "__AXRemoveFromStack");
 REGISTER_NATIVE_FUNCTION_AS(0x8046EE60, MH3_AXFreeVoice, "AXFreeVoice");
 REGISTER_NATIVE_FUNCTION_AS(0x8046EEE0, MH3_AXAcquireVoice, "AXAcquireVoice");
 REGISTER_NATIVE_FUNCTION_AS(0x8046F070, MH3_AXSetVoicePriority, "AXSetVoicePriority");
-REGISTER_NATIVE_FUNCTION_AS(0x8046F110, MH3_AXAuxInit, "__AXAuxInit");
-REGISTER_NATIVE_FUNCTION_AS(0x8046F230, MH3_AXAuxQuit, "__AXAuxQuit");
 REGISTER_NATIVE_FUNCTION_AS(0x8046F820, MH3_AXRegisterAuxACallback, "AXRegisterAuxACallback");
 REGISTER_NATIVE_FUNCTION_AS(0x8046F890, MH3_AXRegisterAuxBCallback, "AXRegisterAuxBCallback");
 REGISTER_NATIVE_FUNCTION_AS(0x8046F900, MH3_AXRegisterAuxCCallback, "AXRegisterAuxCCallback");
 REGISTER_NATIVE_FUNCTION_AS(0x8046F970, MH3_AXGetAuxACallback, "AXGetAuxACallback");
-REGISTER_NATIVE_FUNCTION_AS(0x80470390, MH3_AXCLInit, "__AXCLInit");
 REGISTER_NATIVE_FUNCTION_AS(0x804703F0, MH3_AXSetMode, "AXSetMode");
 REGISTER_NATIVE_FUNCTION_AS(0x80470400, MH3_AXGetMode, "AXGetMode");
 REGISTER_NATIVE_FUNCTION_AS(0x80470410, MH3_AXSetCompressor, "AXSetCompressor");
@@ -729,14 +752,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80470450, MH3_AXSetMasterVolume, "AXSetMasterVolum
 REGISTER_NATIVE_FUNCTION_AS(0x80470470, MH3_AXSetAuxAReturnVolume, "AXSetAuxAReturnVolume");
 REGISTER_NATIVE_FUNCTION_AS(0x80470480, MH3_AXSetAuxBReturnVolume, "AXSetAuxBReturnVolume");
 REGISTER_NATIVE_FUNCTION_AS(0x80470490, MH3_AXSetAuxCReturnVolume, "AXSetAuxCReturnVolume");
-REGISTER_NATIVE_FUNCTION_AS(0x80470930, MH3_AXOutInit, "__AXOutInit");
-REGISTER_NATIVE_FUNCTION_AS(0x80470B30, MH3_AXOutQuit, "__AXOutQuit");
 REGISTER_NATIVE_FUNCTION_AS(0x80470BA0, MH3_AXRegisterCallback, "AXRegisterCallback");
-REGISTER_NATIVE_FUNCTION_AS(0x80470E60, MH3_AXSPBInit, "__AXSPBInit");
-REGISTER_NATIVE_FUNCTION_AS(0x804718B0, MH3_AXSetPBDefault, "__AXSetPBDefault");
-REGISTER_NATIVE_FUNCTION_AS(0x804718F0, MH3_AXVPBInit, "__AXVPBInit");
-REGISTER_NATIVE_FUNCTION_AS(0x80471920, MH3_AXPBInit, "__AXPBInit");
-REGISTER_NATIVE_FUNCTION_AS(0x80471BB0, MH3_AXVPBQuit, "__AXVPBQuit");
 REGISTER_NATIVE_FUNCTION_AS(0x80471BD0, MH3_AXSetVoiceSrcType, "AXSetVoiceSrcType");
 REGISTER_NATIVE_FUNCTION_AS(0x80471C90, MH3_AXSetVoiceState, "AXSetVoiceState");
 REGISTER_NATIVE_FUNCTION_AS(0x80471D00, MH3_AXSetVoiceCurrentAddr, "AXSetVoiceCurrentAddr");

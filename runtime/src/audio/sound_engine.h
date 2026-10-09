@@ -157,8 +157,13 @@ void ManagerStop(CpuContext* cpu, uint32_t manager, uint32_t object);    // +0x1
 void ManagerPause(CpuContext* cpu, uint32_t manager, uint32_t object);   // +0x1C
 void ManagerResume(CpuContext* cpu, uint32_t manager, uint32_t object);  // +0x20
 
+// The managers' voice drop handlers (vtable +0x14): AX stole `voice` from
+// the sound `object`.
+void SeVoiceDropped(uint32_t voice, uint32_t object);
+
 // Stream manager methods (sound_stream.cpp).
 namespace Stream {
+void VoiceDropped(CpuContext* cpu, uint32_t voice, uint32_t object);
 void Tick(CpuContext* cpu, uint32_t manager, uint32_t object);
 bool Update(CpuContext* cpu, uint32_t manager, uint32_t& object);
 void Stop(CpuContext* cpu, uint32_t manager, uint32_t object);

@@ -12,7 +12,6 @@
 // The phase byte (0x8065AA83) records how far the frame got (1 started,
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
-#include "audio/ax_dsp.h"
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
@@ -78,13 +77,11 @@ struct Ram {
     static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
     static uint8_t* Mem2() { return Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size); }
     void Save() {
-        AxDspHle::JoinMixWorker();
         bytes.resize(Memory::kMem1Size + Memory::kMem2Size);
         std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
         std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
     }
     void Restore() const {
-        AxDspHle::JoinMixWorker();
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
     }
@@ -102,7 +99,6 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
         return v && *v == '1';
     }();
     const GameStep::State clock = GameStep::Save();
-    AxDspHle::JoinMixWorker(); // its writes to guest RAM must not race the restores
     Ram before, whole, halves;
     before.Save();
     GameStep::Begin(1.0);

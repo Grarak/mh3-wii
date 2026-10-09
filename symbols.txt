@@ -1275,3 +1275,5 @@
 800ee918 StreamAddressToBytes
 800ee964 StreamSamplesToBytes
 800ee9dc StreamSamplesToAddress
+800e5738 SeVoiceCallback
+800e9eb8 StreamVoiceCallback
