@@ -1,5 +1,8 @@
 #include "port_check.h"
 
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 #include "game_step.h"
 #include "guest_call.h"
 #include "gx_host.h"
@@ -16,23 +19,32 @@
 
 namespace PortCheck {
 
+#ifdef MH3_DEVELOPMENT
+namespace {
+// MH3_PORT_CHECK (port_check.h, docs/flags.md): port names or `all`, fuzz
+// entries (P:/E:/C:0xADDR) and the options.
+const DevOptions& Options() {
+    static const DevOptions options("MH3_PORT_CHECK", {"every", "originals", "dump", "fuzz-after", "fuzz-samples"}, DevOptions::Words::Allowed);
+    return options;
+}
+} // namespace
+#endif
+
 bool Enabled(const char* name) {
 #ifdef MH3_DEVELOPMENT
-    static const std::string list = [] {
-        const char* v = std::getenv("MH3_PORT_CHECK");
-        return std::string(v ? v : "");
-    }();
-    if (list.empty())
-        return false;
-    if (list == "all")
-        return true;
-    const std::string n = name;
-    for (size_t at = 0; (at = list.find(n, at)) != std::string::npos; at += n.size())
-        if ((at == 0 || list[at - 1] == ',') && (at + n.size() == list.size() || list[at + n.size()] == ','))
-            return true;
-    return false;
+    const DevOptions& options = Options();
+    return !options.List().empty() && (options.Listed("all") || options.Listed(name));
 #else
     (void)name;
+    return false;
+#endif
+}
+
+bool Originals() {
+#ifdef MH3_DEVELOPMENT
+    static const bool originals = Options().Has("originals");
+    return originals;
+#else
     return false;
 #endif
 }
@@ -75,10 +87,10 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     uint32_t& checks = counts[name];
     // A check copies all of RAM four times: at most one every 500 ms, and per
     // port one every 2 s, so the game keeps most of its speed and every port
-    // named gets its turn (Fuzz, and MH3_PORT_CHECK_EVERY=1, check every call).
+    // named gets its turn (Fuzz, and the `every` option, check every call).
     const auto now = std::chrono::steady_clock::now();
     auto& previous = last[name];
-    static const bool every = std::getenv("MH3_PORT_CHECK_EVERY") != nullptr;
+    static const bool every = Options().Has("every");
     if (GameStep::Ticks() != 1 || (!forced && !every && (now - lastAny < std::chrono::milliseconds(500) || now - previous < std::chrono::seconds(2)))) {
         port(ctx);
         return;
@@ -142,8 +154,8 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
             n += std::snprintf(line + n, sizeof line - n, " %02x/%02x", i < expectedGx.size() ? expectedGx[i] : 0, i < actualGx.size() ? actualGx[i] : 0);
         lines += line;
         lines += "\n";
-        // MH3_PORT_CHECK_DUMP=dir: the first few differing streams, as NAME-N-{original,port}.gx.
-        static const char* dump = std::getenv("MH3_PORT_CHECK_DUMP");
+        // dump=DIR: the first few differing streams, as NAME-N-{original,port}.gx.
+        static const char* dump = Options().Value("dump");
         static uint32_t dumped = 0;
         if (dump && dumped < 8) {
             ++dumped;
@@ -257,13 +269,17 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
 
 void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
 #ifdef MH3_DEVELOPMENT
-    static const char* list = std::getenv("MH3_PORT_FUZZ");
-    static const uint32_t after = [] {
-        const char* v = std::getenv("MH3_PORT_FUZZ_AFTER");
-        return v ? uint32_t(std::strtoul(v, nullptr, 0)) : 900u;
+    // The fuzz entries: KIND:0xADDR.
+    static const std::vector<std::string> fuzz = [] {
+        std::vector<std::string> entries;
+        for (const std::string& item : Options().List())
+            if (item.size() > 2 && item[1] == ':')
+                entries.push_back(item);
+        return entries;
     }();
+    static const uint32_t after = uint32_t(Options().Number("fuzz-after", 900));
     static std::map<char, uint32_t> calls;
-    if (!list || ++calls[kind] != after)
+    if (fuzz.empty() || ++calls[kind] != after)
         return;
     constexpr uint32_t kStepCounter = 0x8065AA6C;
     const CpuContext entry = *ctx;
@@ -273,25 +289,16 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
     GuestCall game{ctx};
     uint32_t runs = 0;
     forced = true;
-    const std::string s = list;
-    for (size_t at = 0; at < s.size();) {
-        size_t end = s.find(',', at);
-        if (end == std::string::npos)
-            end = s.size();
-        const std::string item = s.substr(at, end - at);
-        at = end + 1;
-        if (item.size() < 3 || item[0] != kind || item[1] != ':')
+    for (const std::string& item : fuzz) {
+        if (item[0] != kind)
             continue;
         const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
         if (kind == 'P') {
-            // Samples (MH3_PORT_FUZZ_SAMPLES, default 64) of the action state
+            // Samples (fuzz-samples, default 64) of the action state
             // (each in turn), the step counter and countdown, the args r4 = r5
             // (0-3) and the inputs: the command bit words (+0xE0..+0xFF), the
             // pad (+0xC8, +0xCC) and the flag bytes +6, +7.
-            static const uint32_t samples = [] {
-                const char* v = std::getenv("MH3_PORT_FUZZ_SAMPLES");
-                return v ? uint32_t(std::strtoul(v, nullptr, 0)) : 64u;
-            }();
+            static const uint32_t samples = uint32_t(Options().Number("fuzz-samples", 64));
             constexpr uint32_t kTimers[] = {0, 1, 2, 40, 400};
             constexpr uint32_t kBits[] = {0, ~0u, 0x55555555, 0xAAAAAAAA};
             for (uint32_t i = 0; i < samples; ++i) {
@@ -334,13 +341,8 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
     forced = false;
     // C: entries (with the player's hook): started once and kept, so the
     // checks see the updates of what they start.
-    for (size_t at = 0; kind == 'P' && at < s.size();) {
-        size_t end = s.find(',', at);
-        if (end == std::string::npos)
-            end = s.size();
-        const std::string item = s.substr(at, end - at);
-        at = end + 1;
-        if (item.size() < 3 || item[0] != 'C' || item[1] != ':')
+    for (const std::string& item : fuzz) {
+        if (kind != 'P' || item[0] != 'C')
             continue;
         const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
         const uint32_t zero = (entry.gpr[1] - 0x400) & ~15u; // below the stack

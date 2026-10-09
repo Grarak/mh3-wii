@@ -41,6 +41,27 @@ reported at startup (`MH3: MH3_X: unknown option`).
 `scripts/dev/run-heartbeat.sh` sets `MH3_CAPTURE=logs/runs/frames/NAME.bmp,interval=150`
 (`CAPTURE_INTERVAL` changes the interval).
 
+### `MH3_PORT_CHECK`: native ports against their originals
+
+`MH3_PORT_CHECK=NAME[,NAME...][,every][,dump=DIR][,originals][,KIND:0xADDR...][,fuzz-after=N][,fuzz-samples=N]`
+([port checks](../HANDOVER.md#native-ports-and-port-checks), `runtime/include/port_check.h`)
+
+| Item | Effect |
+| --- | --- |
+| `NAME`, `all` | the ports to check, by their registered name |
+| `every` | check every call (default: one check per 500 ms, per port one per 2 s) |
+| `dump=DIR` | the first differing GX streams, as `NAME-N-{original,port}.gx` |
+| `originals` | sound engine entry points not named run their translated originals ([native audio](native-audio.md#checking-the-engine-port)) |
+| `P:0xADDR`, `E:0xADDR`, `C:0xADDR` | fuzz: player and enemy functions called from made-up states; `C:` starts something once |
+| `fuzz-after=N` | the fuzz hooks fire on their Nth call (default 900) |
+| `fuzz-samples=N` | player fuzz samples per function (default 64) |
+
+### `MH3_RAZOR`: Vita GPU capture and live metrics
+
+`MH3_RAZOR=live=PATH[,hide-hud][,group=N][,start=N][,frames=N][,scenes][,capture=PATH][,capture-frame=N][,salvage=PATH]`.
+The items and their defaults are in [Razor](vita-razor.md);
+`scripts/vita-hardware-test.py --wait-razor` reads `live=` from `runtime.env`.
+
 ## Renamed and removed
 
 A development build names any of these that is still set at startup.
@@ -49,3 +70,9 @@ A development build names any of these that is still set at startup.
 | --- | --- |
 | `MH3_CAPTURE_PATH`, `_INTERVAL`, `_START`, `_FRAME` | `MH3_CAPTURE=PATH,interval=,start=,frame=` |
 | `MH3_AUDIO_DUMP=FILE` | `MH3_CAPTURE=audio=FILE` |
+| `MH3_PORT_CHECK_EVERY=1`, `MH3_PORT_CHECK_DUMP=DIR` | `MH3_PORT_CHECK=...,every,dump=DIR` |
+| `MH3_PORT_FUZZ=P:0xADDR,...`, `MH3_PORT_FUZZ_AFTER`, `_SAMPLES` | `MH3_PORT_CHECK=...,P:0xADDR,fuzz-after=N,fuzz-samples=N` |
+| `MH3_SOUND_ORIGINALS=1` | `MH3_PORT_CHECK=...,originals` |
+| `MH3_RAZOR_LIVE`, `_CAPTURE`, `_SALVAGE` | `MH3_RAZOR=live=,capture=,salvage=` |
+| `MH3_RAZOR_LIVE_START_FRAME`, `_LIVE_FRAMES`, `_CAPTURE_FRAME`, `_GROUP` | `MH3_RAZOR=start=,frames=,capture-frame=,group=` |
+| `MH3_RAZOR_HIDE_HUD=1`, `_SCENE_TRACE=1`, `_CPU_TRACE=1` | `MH3_RAZOR=hide-hud,scenes,cpu` |

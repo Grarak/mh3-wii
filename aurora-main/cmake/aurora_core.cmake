@@ -42,6 +42,10 @@ if (AURORA_ENABLE_GX)
         lib/gxm/razor.cpp lib/gxm/draw_memory.cpp lib/gxm/texture.cpp lib/gxm/native_assets.cpp lib/gxm/raster.cpp lib/gxm/shaders.cpp lib/gxm/shaders.S
         lib/gxm/runtime_shader.cpp)
       set_source_files_properties(lib/gxm/shaders.S PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lib/gxm/shaders.bin")
+      if(MH3_DEVELOPMENT)
+        # Razor captures and live metrics (MH3_RAZOR) are a development tool.
+        set_property(SOURCE lib/gxm/razor.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
+      endif()
       target_include_directories(aurora_core PRIVATE lib/gxm)
       target_link_libraries(aurora_core PUBLIC SceGxm_stub SceDisplay_stub SceCommonDialog_stub
         SceRazorCapture_stub_weak SceRazorHud_stub_weak ScePamgr_stub

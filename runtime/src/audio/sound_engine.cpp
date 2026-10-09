@@ -678,8 +678,7 @@ namespace SoundEngine {
 
 #ifdef MH3_DEVELOPMENT
 static bool RunOriginal(const char* name) {
-    static const bool originals = std::getenv("MH3_SOUND_ORIGINALS") != nullptr;
-    return originals && !PortCheck::Enabled(name);
+    return PortCheck::Originals() && !PortCheck::Enabled(name);
 }
 #endif
 

@@ -139,8 +139,8 @@ inline uint32_t MoveTo(uint32_t list, uint32_t node) {
 }
 
 // A registered entry point: the port, checked against the translated
-// original when MH3_PORT_CHECK names it. Development: with
-// MH3_SOUND_ORIGINALS=1 the entry points not named there run their
+// original when MH3_PORT_CHECK names it. Development: with its
+// `originals` option the entry points not named there run their
 // originals, so a named port is reached from original callers (the ports
 // call each other directly, which the checks would not see).
 void Entry(CpuContext* cpu, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));

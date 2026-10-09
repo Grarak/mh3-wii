@@ -119,6 +119,22 @@ inline void ReportRetiredVariables() {
         {"MH3_CAPTURE_START", "MH3_CAPTURE"},
         {"MH3_CAPTURE_FRAME", "MH3_CAPTURE"},
         {"MH3_AUDIO_DUMP", "MH3_CAPTURE"},
+        {"MH3_PORT_CHECK_EVERY", "MH3_PORT_CHECK"},
+        {"MH3_PORT_CHECK_DUMP", "MH3_PORT_CHECK"},
+        {"MH3_PORT_FUZZ", "MH3_PORT_CHECK"},
+        {"MH3_PORT_FUZZ_AFTER", "MH3_PORT_CHECK"},
+        {"MH3_PORT_FUZZ_SAMPLES", "MH3_PORT_CHECK"},
+        {"MH3_SOUND_ORIGINALS", "MH3_PORT_CHECK"},
+        {"MH3_RAZOR_LIVE", "MH3_RAZOR"},
+        {"MH3_RAZOR_LIVE_START_FRAME", "MH3_RAZOR"},
+        {"MH3_RAZOR_LIVE_FRAMES", "MH3_RAZOR"},
+        {"MH3_RAZOR_GROUP", "MH3_RAZOR"},
+        {"MH3_RAZOR_HIDE_HUD", "MH3_RAZOR"},
+        {"MH3_RAZOR_SCENE_TRACE", "MH3_RAZOR"},
+        {"MH3_RAZOR_CPU_TRACE", "MH3_RAZOR"},
+        {"MH3_RAZOR_CAPTURE", "MH3_RAZOR"},
+        {"MH3_RAZOR_CAPTURE_FRAME", "MH3_RAZOR"},
+        {"MH3_RAZOR_SALVAGE", "MH3_RAZOR"},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))
