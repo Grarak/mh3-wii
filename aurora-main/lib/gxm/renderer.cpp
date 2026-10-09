@@ -215,13 +215,14 @@ public:
     const auto& target = texture(state.color ? state.color : state.depth);
     return {target.width, target.height};
   }
-  void scene() {
+  void scene(const float* clearDepth = nullptr) {
     const auto [width, height] = target_size();
     if (!device.scene_active()) {
       if (state.display)
         device.begin_display();
       else
-        device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr);
+        device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr,
+                     nullptr, clearDepth);
       razor_scene_begin(gfx::current_frame(), device.current_fence().value, width, height, state.color, state.depth, state.display);
       // Stored DF32M contains coverage from the previous scene. Recreate the
       // current coverage even when the logical scissor has not changed.
@@ -389,6 +390,13 @@ public:
       return;
     if (!depthOnly && !state.display && !state.color)
       return;
+    if (depthOnly && !device.scene_active() && !state.scissorEnabled) {
+      // The scene's first operation: start it from the cleared depth instead
+      // of loading the stored one and drawing over it.
+      const float value = std::clamp(depth, 0.f, 1.f);
+      scene(&value);
+      return;
+    }
     scene();
     const auto [width, height] = target_size();
     apply_viewport(device.context(), 0, 0, width, height, 0.f, 1.f);

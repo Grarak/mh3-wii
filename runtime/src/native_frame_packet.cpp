@@ -515,9 +515,11 @@ void Draw(const Packet& p) {
     aurora::gl::set_scissor_enabled(false);
     aurora::gl::set_color_mask(true, true, true, true);
     aurora::gl::set_depth_write(true);
+    // Depth first: on the Vita a scene that starts with a full depth clear
+    // takes it from the depth surface's background instead of loading it.
+    aurora::gl::clear_depth(0.f); // native shader projection uses reversed Z
     const float black[4]{0.f, 0.f, 0.f, 1.f};
     aurora::gl::clear_color(black);
-    aurora::gl::clear_depth(0.f); // native shader projection uses reversed Z
     StateIndices applied;
     const auto forget = [&] {
         applied.fill(UINT32_MAX);
