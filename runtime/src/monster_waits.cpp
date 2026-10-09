@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of fourteen enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of fifteen enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -10,6 +10,7 @@
 //     0x801ACA48  em027 (Aptonoth)   a rest, 30-93 ticks
 //     0x801B2578  em029 (Rhenoplos)  a charge, 80 ticks
 //     0x801D91B4  em007 (Deviljho)   a charge (7.3, 7.18), at most 1000 ticks
+//     0x801482AC  kind 1 (Rathian)   a wait (0.0, 0.4), 150 ticks
 //     0x8034FA1C  em024 (Alatreon)   a flight, 300 ticks (an effect at 20 left)
 //     0x8039E9EC  em028 (Popo)       a rest, 150 or 300 ticks
 //     0x801C7570  em006 (Diablos)    an ambush from the sand, 90 ticks
@@ -301,6 +302,31 @@ void Em029ChargePort(CpuContext* ctx) {
             Memory::Write8(work + kCharging, 1);
 
         if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    }
+}
+
+// kind 1 0x801482AC: Rathian's waiting actions 0.0 and 0.4, motion 1
+// looped for 150 ticks (ended when the count goes below 0), then back to
+// the AI's waiting (0x80127FAC).
+void Em001WaitPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.Count(0x96);
+        game.Call<SetMotionLoop>({work, 1, 10, 0});
+        break;
+    case 1:
+        em.Count(em.Count() - int32_t(GameStep::Ticks()));
+
+        if (em.Count() < 0)
             game.Call<ActionDone>({work});
 
         break;
@@ -1039,6 +1065,12 @@ extern "C" void MH3_Em029Charge(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em029Charge", func_801B2578, Em029ChargePort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801B2578, MH3_Em029Charge, "Em029Charge");
+
+extern "C" void func_801482AC(CpuContext* ctx);
+extern "C" void MH3_Em001Wait(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em001Wait", func_801482AC, Em001WaitPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801482AC, MH3_Em001Wait, "Em001Wait");
 
 extern "C" void func_801D91B4(CpuContext* ctx);
 extern "C" void MH3_Em007Charge(CpuContext* ctx) {
