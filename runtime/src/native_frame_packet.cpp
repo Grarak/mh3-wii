@@ -345,6 +345,10 @@ uint32_t pacingWaits = 0;
 
 // The just-in-time starts' total delay (PaceNativeFramePacket).
 uint64_t justInTimeUs = 0;
+
+// Every pacing wait and just-in-time delay since the start (the long frame
+// report takes a frame's share).
+uint64_t pacingWaitTotalNs = 0;
 #endif
 struct FeedbackTarget {
     uint32_t width, height;
@@ -1716,6 +1720,10 @@ void TakeNativePacketSnapshotCounts(uint32_t out[3][6]) {
     std::memset(snapshotCounts, 0, sizeof snapshotCounts);
 }
 
+uint64_t NativePacingWaitTotalNs() {
+    return pacingWaitTotalNs;
+}
+
 void TakeNativePacingWait(uint64_t& ns, uint32_t& waits) {
     ns = pacingWaitNs + justInTimeUs * 1000;
     waits = pacingWaits;
@@ -1770,6 +1778,7 @@ void PaceNativeFramePacket() {
         const uint32_t delay = std::min<uint32_t>(slack - 2000, 12000);
 #ifdef MH3_DEVELOPMENT
         justInTimeUs += delay;
+        pacingWaitTotalNs += uint64_t(delay) * 1000;
 #endif
 #ifdef __vita__
         sceKernelDelayThread(delay);
@@ -1805,6 +1814,7 @@ void PaceNativeFramePacket() {
     }
 #ifdef MH3_DEVELOPMENT
     pacingWaitNs += RenderMonotonicNs() - start;
+    pacingWaitTotalNs += RenderMonotonicNs() - start;
     ++pacingWaits;
 #endif
     startJustInTime();

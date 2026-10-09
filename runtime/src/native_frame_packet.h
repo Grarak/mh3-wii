@@ -152,6 +152,9 @@ uint32_t TakeNativeRecordsBeforeDraw();
 // packet (pacing) since the previous call, and how many frames waited.
 void TakeNativePacingWait(uint64_t& ns, uint32_t& waits);
 
+// Development: every pacing wait since the start (game thread).
+uint64_t NativePacingWaitTotalNs();
+
 // Game thread: material geometry submissions and those joined to the draw
 // before them (same state, adjacent in draw order) since the last call.
 void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32_t unmerged[6]);

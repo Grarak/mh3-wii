@@ -89,7 +89,14 @@ void GuestThread::Loop() {
         cpu.gpr[1] = (stackBase_ + stackBytes_ - 16) & ~0xFu;
         Memory::Write32(cpu.gpr[1], 0);
         job_(&cpu, data_);
-        jobTime_.fetch_add(NowNs() - start, std::memory_order_relaxed);
+        const uint64_t elapsed = NowNs() - start;
+#ifdef MH3_DEVELOPMENT
+        // One job over 40 ms stalls whoever waits for it (the draw thread's
+        // scene walk, the worker's effect calculation): name the thread.
+        if (elapsed >= 40'000'000)
+            std::fprintf(stderr, "MH3 long %s job: %.1f ms\n", name_, elapsed / 1e6);
+#endif
+        jobTime_.fetch_add(elapsed, std::memory_order_relaxed);
         jobCount_.fetch_add(1, std::memory_order_relaxed);
 
         // Jobs come once a frame: park at once until the next, unless the

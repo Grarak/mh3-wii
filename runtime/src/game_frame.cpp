@@ -186,6 +186,9 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
 uint32_t splitCalls[4][5];
 double splitFamilies[MH3_SPLIT_FAMILIES];
 uint32_t splitScopes[MH3_SPLIT_FAMILIES];
+
+// Every draw thread handoff wait since the start, in microseconds.
+uint64_t handoffTotalUs = 0;
 #endif
 } // namespace
 #ifdef MH3_DEVELOPMENT
@@ -224,6 +227,7 @@ struct FrameSplit {
 
     // The totals at the frame's start, for the long frame report.
     double logicStart = 0, drawStart = 0, otherStart = 0, familiesStart[MH3_SPLIT_FAMILIES]{};
+    uint64_t pacingStartNs = 0, handoffStartUs = 0;
     static double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
     void Begin() {
         if (!mh3SplitFrame)
@@ -235,6 +239,8 @@ struct FrameSplit {
         drawStart = draw;
         otherStart = other;
         std::memcpy(familiesStart, splitFamilies, sizeof familiesStart);
+        pacingStartNs = NativePacingWaitTotalNs();
+        handoffStartUs = handoffTotalUs;
     }
 
     // A game frame over 40 ms (a stall the per-second averages hide): its own
@@ -255,8 +261,9 @@ struct FrameSplit {
 
         std::partial_sort(order, order + 4, order + MH3_SPLIT_FAMILIES,
                           [this](unsigned a, unsigned b) { return splitFamilies[a] - familiesStart[a] > splitFamilies[b] - familiesStart[b]; });
-        std::printf("MH3 long frame %u: %.1f ms (logic %.1f draw %.1f other %.1f); most: %s %.1f, %s %.1f, %s %.1f, %s %.1f ms\n", mh3SplitFrame, wall, logic - logicStart,
-                    draw - drawStart, other - otherStart, names[order[0]], splitFamilies[order[0]] - familiesStart[order[0]], names[order[1]],
+        std::printf("MH3 long frame %u: %.1f ms (logic %.1f draw %.1f other %.1f; pacing wait %.1f, draw thread handoff %.1f); most: %s %.1f, %s %.1f, %s %.1f, %s %.1f ms\n",
+                    mh3SplitFrame, wall, logic - logicStart, draw - drawStart, other - otherStart, (NativePacingWaitTotalNs() - pacingStartNs) / 1e6,
+                    (handoffTotalUs - handoffStartUs) / 1e3, names[order[0]], splitFamilies[order[0]] - familiesStart[order[0]], names[order[1]],
                     splitFamilies[order[1]] - familiesStart[order[1]], names[order[2]], splitFamilies[order[2]] - familiesStart[order[2]], names[order[3]],
                     splitFamilies[order[3]] - familiesStart[order[3]]);
     }
@@ -686,7 +693,11 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 #endif
         DrawThread::Thread().Wait();
 #ifdef MH3_DEVELOPMENT
-        prepareTiming.handoffUs += std::chrono::duration_cast<std::chrono::microseconds>(MH3SplitClock::now() - handoff).count();
+        {
+            const auto waited = std::chrono::duration_cast<std::chrono::microseconds>(MH3SplitClock::now() - handoff).count();
+            prepareTiming.handoffUs += waited;
+            handoffTotalUs += uint64_t(waited);
+        }
 #endif
         ApplyDeferredDrawCacheRetirements();
         BeginOverlappedNativeGraphicsFrame();

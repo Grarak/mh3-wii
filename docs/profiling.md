@@ -221,9 +221,12 @@ least one caller.
 Development builds report single slow frames, which the per-second averages
 hide:
 
-- `MH3 long frame N: X ms (logic, draw, other); most: ...`: a game frame over
-  40 ms, with the split families that took the most (`game_frame.cpp`). Draw
-  time outside every family is the game thread waiting for the render thread.
+- `MH3 long frame N: X ms (logic, draw, other; pacing wait, draw thread
+  handoff); most: ...`: a game frame over 40 ms, with its waits for the render
+  thread (pacing) and the draw thread (handoff) and the split families that
+  took the most (`game_frame.cpp`; the draw thread's families count too).
+- `MH3 long NAME job: X ms`: a guest worker or draw thread job over 40 ms
+  (`guest_worker.cpp`).
 - `MH3 long packet N: X ms: GPU slot wait, before tasks (count, slowest, from
   ADDRESS), draw, after tasks`: a render-thread packet over 40 ms
   (`native_frame_packet.cpp`); symbolize the task's address against the run's
