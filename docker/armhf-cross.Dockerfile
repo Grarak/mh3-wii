@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       libxfixes-dev:armhf libx11-xcb-dev:armhf libxcb1-dev:armhf libwayland-dev:armhf \
       libxkbcommon-dev:armhf libdrm-dev:armhf libgbm-dev:armhf libegl-dev:armhf libgles-dev:armhf \
       libasound2-dev:armhf libpulse-dev:armhf libudev-dev:armhf libdbus-1-dev:armhf \
+      libssl-dev:armhf \
       wayland-protocols libwayland-bin \
     && ln -sf /usr/bin/clang-21 /usr/local/bin/clang \
     && ln -sf /usr/bin/clang++-21 /usr/local/bin/clang++ \

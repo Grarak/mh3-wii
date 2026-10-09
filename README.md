@@ -61,6 +61,13 @@ MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=ON -DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' 
 scripts/docker-build.sh cmake --build build/linux-arm32 --target MH3   # later rebuilds
 ```
 
+The image carries OpenSSL for online play's TLS. An image built before it
+did needs `docker build -t mh3-armhf-cross -f docker/armhf-cross.Dockerfile
+docker`, and a build directory configured without it
+`scripts/docker-build.sh cmake -U 'OPENSSL*' build/linux-arm32` (a full
+rebuild): without OpenSSL the game's TLS sessions fail, and the community
+server with them (error 11612).
+
 Vita: `BUILD_JOBS=$(nproc) scripts/build-vita.sh` (VitaSDK, clang-21 and the
 patched `vita-elf-create`; [Vita platform](docs/vita-platform.md)).
 
