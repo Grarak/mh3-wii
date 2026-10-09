@@ -92,9 +92,10 @@ void GuestThread::Loop() {
         jobTime_.fetch_add(NowNs() - start, std::memory_order_relaxed);
         jobCount_.fetch_add(1, std::memory_order_relaxed);
 
-        // Jobs come once a frame: park at once (no spin) until the next.
+        // Jobs come once a frame: park at once until the next, unless the
+        // thread spins through its idle time (SetIdleSpin).
         finished_.Advance();
-        seen = submitted_.AwaitChange(seen, 0);
+        seen = submitted_.AwaitChange(seen, idleSpinUs_.load(std::memory_order_relaxed));
     }
 }
 

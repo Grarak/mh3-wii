@@ -394,8 +394,27 @@ bool PrepareOnDrawThread() {
 
 bool prepareLaunched = false;
 
+#ifdef MH3_DEVELOPMENT
+// MH3_PROFILE=split: the walk's job on the draw thread, the game thread's
+// part from the launch to the join, and the join's wait (MH3 scene prepare
+// line, once a second).
+struct PrepareTiming {
+    MH3SplitClock::time_point launched{};
+    std::atomic<int64_t> jobUs{0}, latencyUs{0};
+    int64_t gameUs = 0, waitUs = 0, frames = 0;
+    MH3SplitClock::time_point printed{};
+} prepareTiming;
+#endif
+
 void RunPrepareJob(CpuContext* cpu, void*) {
+#ifdef MH3_DEVELOPMENT
+    const auto start = MH3SplitClock::now();
+    prepareTiming.latencyUs.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(start - prepareTiming.launched).count(), std::memory_order_relaxed);
+#endif
     SceneQueue::PrepareGraph(cpu);
+#ifdef MH3_DEVELOPMENT
+    prepareTiming.jobUs.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(MH3SplitClock::now() - start).count(), std::memory_order_relaxed);
+#endif
 }
 
 void LaunchScenePrepare(CpuContext* cpu) {
@@ -409,6 +428,9 @@ void LaunchScenePrepare(CpuContext* cpu) {
     // Prepare's effect launch stays here (the draw thread's would not launch).
     EffectStep::Launch(*cpu);
     SetNativeFramePacketPrepareOnDraw(true);
+#ifdef MH3_DEVELOPMENT
+    prepareTiming.launched = MH3SplitClock::now();
+#endif
     DrawThread::Thread().Submit(*cpu, RunPrepareJob, nullptr);
     prepareLaunched = true;
 }
@@ -417,8 +439,31 @@ void JoinScenePrepare() {
     if (!std::exchange(prepareLaunched, false))
         return;
 
+#ifdef MH3_DEVELOPMENT
+    const auto joined = MH3SplitClock::now();
+#endif
     DrawThread::Thread().Wait();
     SetNativeFramePacketPrepareOnDraw(false);
+#ifdef MH3_DEVELOPMENT
+    if (mh3SplitDetail) {
+        using std::chrono::duration_cast;
+        using std::chrono::microseconds;
+        auto& t = prepareTiming;
+        const auto now = MH3SplitClock::now();
+        t.gameUs += duration_cast<microseconds>(joined - t.launched).count();
+        t.waitUs += duration_cast<microseconds>(now - joined).count();
+        ++t.frames;
+
+        if (now - t.printed >= std::chrono::seconds(1)) {
+            const double n = double(t.frames);
+            std::fprintf(stderr, "MH3 scene prepare: walk %.2f ms on the draw thread, %.2f ms after its launch; game side to the join %.2f ms, join wait %.2f ms per frame (%lld frames)\n",
+                         t.jobUs.exchange(0, std::memory_order_relaxed) / 1000.0 / n, t.latencyUs.exchange(0, std::memory_order_relaxed) / 1000.0 / n, t.gameUs / 1000.0 / n, t.waitUs / 1000.0 / n,
+                         (long long)t.frames);
+            t.gameUs = t.waitUs = t.frames = 0;
+            t.printed = now;
+        }
+    }
+#endif
 }
 
 // The game thread's part, which reads gameplay state directly (the HUD layers,
@@ -515,6 +560,12 @@ bool DrawOverlap() {
 
         DrawThread::Thread().SetCore(3);
         GuestWorker::Thread().SetCore(0);
+
+        // Alone on its core, the draw thread spins between its jobs (the
+        // scene walk, then the draw, each frame) instead of parking: a
+        // parked wake took 0.1-1.9 ms on the devkit, which the game thread
+        // waited out at the walk's join.
+        DrawThread::Thread().SetIdleSpin(20000);
         EffectStep::SetOverlap(true);
         SetNativeFrameOverlap(true);
         SetModelInvalidateDeferral(true);

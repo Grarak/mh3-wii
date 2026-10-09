@@ -71,6 +71,11 @@ class GuestThread {
     // The core it asks for, before it first starts.
     void SetCore(unsigned core) { core_ = core; }
 
+    // How long the thread spins for the next job before it parks (0: parks at
+    // once). Waking a parked thread on the Vita takes up to 2 ms; a thread
+    // alone on its core can spin through its idle time instead.
+    void SetIdleSpin(uint32_t us) { idleSpinUs_.store(us, std::memory_order_relaxed); }
+
     Statistics TakeStatistics();
 
   private:
@@ -80,6 +85,7 @@ class GuestThread {
 
     const char* name_;
     unsigned role_, core_;
+    std::atomic<uint32_t> idleSpinUs_{0};
     uint32_t stackBase_ = 0, stackBytes_ = 0, workArea_ = 0;
     bool started_ = false;
     pthread_t thread_{};
