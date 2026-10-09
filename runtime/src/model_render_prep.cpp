@@ -25,10 +25,14 @@
 namespace {
 constexpr uint32_t Genmode = 0x80685300, Coordinates = 0x8068530c, TextureCache = 0x80685380, PaletteCache = 0x806854a0, ShapeCache = 0x80685504, TextureSources = 0x80685510;
 constexpr uint32_t Sync = 0x80796db0, CurrentValid = 0x80796db4, PostIdentity = 0x80796db8, Pipeline = 0x80796dbc, DepthCompare = 0x80796dc8;
-void Checked(mh3_res_status status) {
-    if (status != MH3_RES_OK)
-        MH3_THROW(std::runtime_error("Deferred model preparation failed: " + std::to_string(status)));
+
+// A failed step names its function (the call's text up to its arguments).
+void CheckedStep(mh3_res_status status, const char* call) {
+    if (status != MH3_RES_OK) [[unlikely]]
+        MH3_THROW(std::runtime_error("Deferred model preparation failed in " + std::string(call, std::strcspn(call, "(")) + ": " + std::to_string(status)));
 }
+
+#define Checked(call) CheckedStep((call), #call)
 
 uint32_t Word(const uint8_t* p) {
     return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];

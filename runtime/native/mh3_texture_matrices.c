@@ -389,7 +389,24 @@ static mh3_vec3 light_look(const mh3_texture_mapping_input *in) {
     return look;
 }
 
+static mh3_res_status mapping(uint32_t mode, const mh3_texture_mapping_input *in, mh3_matrix34 *out);
+
 mh3_res_status mh3_texture_mapping(uint32_t mode, const mh3_texture_mapping_input *in, mh3_matrix34 *out) {
+    const mh3_res_status status = mapping(mode, in, out);
+
+    /* A direction of zero length (normalize: the original's PSVECNormalize
+     * gives NaNs there, which no texture coordinate survives): the identity
+     * for this frame, so no NaN reaches later checks. Seen in the two-player
+     * arena. */
+    if (status == MH3_RES_UNSUPPORTED && mode <= 4) {
+        *out = identity();
+        return MH3_RES_OK;
+    }
+
+    return status;
+}
+
+static mh3_res_status mapping(uint32_t mode, const mh3_texture_mapping_input *in, mh3_matrix34 *out) {
     mh3_matrix34 m;
     mh3_vec3 look, up, right, camlook;
     mh3_res_status status;

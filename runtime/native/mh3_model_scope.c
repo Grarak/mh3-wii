@@ -369,11 +369,10 @@ mh3_res_status mh3_model_indirect_matrices(const mh3_pack_indirect_matrix base[3
 
             for (unsigned row = 0; row < 2; row++)
                 for (unsigned col = 0; col < 3; col++) {
+                    /* Non-finite values as the original: a NaN never
+                     * raises the maximum, an infinity runs the scaling to
+                     * its limit, and the conversion below saturates. */
                     const float value = op->matrix[slot].v[row][col];
-
-                    if (!isfinite(value))
-                        return MH3_RES_UNSUPPORTED;
-
                     values[row * 3 + col] = value;
                     const float absolute = fabsf(value);
 
@@ -405,12 +404,11 @@ mh3_res_status mh3_model_indirect_matrices(const mh3_pack_indirect_matrix base[3
             matrix.scale_exponent = exponent;
 
             for (unsigned i = 0; i < 6; i++) {
+                /* fctiwz: NaN and values below the range give INT32_MIN,
+                 * values above it INT32_MAX. */
                 const float scaled = values[i] * 1024.0f;
-
-                if ((double)scaled < INT32_MIN || (double)scaled > INT32_MAX)
-                    return MH3_RES_UNSUPPORTED;
-
-                const uint32_t bits = (uint32_t)(int32_t)scaled & 2047u;
+                const int32_t word = isnan(scaled) || (double)scaled <= INT32_MIN ? INT32_MIN : (double)scaled >= INT32_MAX ? INT32_MAX : (int32_t)scaled;
+                const uint32_t bits = (uint32_t)word & 2047u;
                 matrix.coefficients[i] = (int16_t)(bits >= 1024 ? (int32_t)bits - 2048 : (int32_t)bits);
             }
 
