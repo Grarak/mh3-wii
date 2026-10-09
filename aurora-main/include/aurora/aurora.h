@@ -88,8 +88,7 @@ typedef struct {
   AuroraBackend desiredBackend;
   uint32_t msaa;
   uint16_t maxTextureAnisotropy;
-  // No VSync knob exists: GL uses swap interval 0; GXM uses next-HSync flips
-  // after the required first-display transition at VBlank.
+  // No VSync knob exists: GL uses swap interval 0; GXM flips at VBlank.
   bool startFullscreen;
   bool allowJoystickBackgroundEvents;
   bool pauseOnFocusLost;

@@ -61,13 +61,12 @@ void display_callback(const void* data) {
   frame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
   frame.width = Device::Width;
   frame.height = Device::Height;
-  // Sony requires VBlank when starting display from black. With the fixed
-  // width/format established, use the sample's next-HSync flip mode: it returns
-  // without WaitSetFrameBuf and lets libgxm retire the old buffer's sync.
-  const bool firstDisplay = g_displayPresented.load(std::memory_order_relaxed) == 0;
-  const int setResult = sceDisplaySetFrameBuf(&frame, firstDisplay ? SCE_DISPLAY_SETBUF_NEXTFRAME : SCE_DISPLAY_SETBUF_IMMEDIATE);
+  // VSync: flip at the next VBlank and wait for it, so the old buffer's sync
+  // is released only after scanout has moved on. This wait belongs to the
+  // display callback on core 0, never the game or render thread.
+  const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
   int waitResult = 0;
-  if (setResult >= 0 && firstDisplay) {
+  if (setResult >= 0) {
     const auto started = std::chrono::steady_clock::now();
     waitResult = sceDisplayWaitSetFrameBuf();
     g_displayWaitMicros.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
@@ -217,7 +216,7 @@ Device::Device() {
             "initialize display surface");
       check(sceGxmSyncObjectCreate(&m_sync[i]), "create display sync");
     }
-    std::fprintf(stderr, "Aurora GXM: VSync disabled (next-HSync flips; first display at VBlank)\n");
+    std::fprintf(stderr, "Aurora GXM: VSync on (flips at VBlank)\n");
   } catch (...) {
     release();
     throw;

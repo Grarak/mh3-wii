@@ -19,8 +19,7 @@ const SceGxmProgram* vertex_binary(uint64_t hash);
 const SceGxmProgram* fragment_binary(uint64_t hash);
 const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
 // Read on the graphics owner. Callback retirement releases display-queue
-// bookkeeping; presented counts successful flip requests (which can tear),
-// including the required first-display SetFrameBuf/Wait completion.
+// bookkeeping; presented counts successful VBlank flips (SetFrameBuf + Wait).
 struct DisplayStatistics {
   uint32_t queued = 0, retired = 0, presented = 0, failures = 0;
   uint32_t backlog = 0, pending_scenes = 0;
