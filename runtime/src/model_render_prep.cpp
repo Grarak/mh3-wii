@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "native_graphics.h"
 #include "native_frame_packet.h"
+#include "native_material_gpu.h"
 #include "runtime/native/adapters/model_material_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -216,6 +217,7 @@ struct Prep {
                 SetNativeTextureMatrix(64 + i * 3, &matrices.matrix[i].v[0][0], true, owner);
         }
         PutWord(m.At(PostIdentity, 4).data, next);
+        PublishNativeTextureSrt(srt->srt, matrices.apply, owner);
     }
     void Material() {
         const auto has = [&](mh3_material_resource_kind kind) { return (in.present & (1u << kind)) != 0; };

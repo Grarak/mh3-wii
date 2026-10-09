@@ -40,6 +40,7 @@ enum {
     MH3_SHADE_TEXGEN_MAIN_IDENTITY = 4,
     MH3_SHADE_TEXGEN_POST_IDENTITY = 8,
     MH3_SHADE_TEXGEN_INDEXED = 16,
+    MH3_SHADE_TEXGEN_POST_SRT = 32, /* material GPU: post from the role's Animated SRT */
     MH3_SHADE_FLAG_MATRIX_SELECTOR = 1,
     MH3_SHADE_FLAG_COLOR0 = 2,
     MH3_SHADE_CHANNEL_COLOR_LIGHTING = 1,
@@ -171,6 +172,89 @@ enum {
 int mh3_shade_structure_equal(const mh3_native_material_state *a, const mh3_native_material_state *b);
 int mh3_shade_structure_overlay_changes(const mh3_native_material_state *current, const mh3_native_material_state *source,
                                        uint32_t top_known, uint32_t groups);
+
+/* ---- Material uniforms in GPU memory (docs/native-material-gpu.md) ----
+ * A classified material splits into two std140 blocks:
+ *  - Material (static): baked once per classification into persistent GPU
+ *    memory. Every shading coefficient is a static factor times at most one
+ *    animated palette entry (pick); the BASIC selects/equations and the
+ *    MODULATE scale/bias are static.
+ *  - Animated: the raw values that change at run time: TEV colour registers
+ *    and konst colours, the alpha compare range, the texture LOD bias and
+ *    each texture role's post SRT. Written per draw (or kept as a default).
+ * The fragment program evaluates coefficient = static * pick(animated) from
+ * uniforms only (GXM's secondary program); the mesh vertex program builds the
+ * post texture matrix of an SRT role from scale, sin/cos and translation. */
+enum {
+    MH3_SHADE_GPU_PALETTE = 9, /* 0..3 TEV colour registers (prev, reg0..2), 4..7 konst, 8 one */
+    MH3_SHADE_GPU_ONE = 8,
+    MH3_SHADE_GPU_COEFFICIENTS = 9
+};
+/* Coefficient slots. MODULATE: w0, w1, offset, kv, kc, d, overlay.
+ * BASIC: input offsets a..d (0..3), input scales a..d (4..7), overlay (8). */
+enum {
+    MH3_SHADE_GPU_W0,
+    MH3_SHADE_GPU_W1,
+    MH3_SHADE_GPU_OFFSET,
+    MH3_SHADE_GPU_KV,
+    MH3_SHADE_GPU_KC,
+    MH3_SHADE_GPU_D,
+    MH3_SHADE_GPU_MODULATE_OVERLAY,
+    MH3_SHADE_GPU_BASIC_OFFSET = 0,
+    MH3_SHADE_GPU_BASIC_SCALE = 4,
+    MH3_SHADE_GPU_BASIC_OVERLAY = 8
+};
+/* Colour lanes read palette[index.x] (rgb, or the color_mask component in all
+ * three lanes when index.z is 1); the alpha lane reads the alpha_mask
+ * component of palette[index.y]. A static coefficient picks entry 8 (one). */
+typedef struct mh3_shade_gpu_pick {
+    float index[4];
+    float color_mask[4], alpha_mask[4];
+} mh3_shade_gpu_pick;
+typedef struct mh3_shade_gpu_material {
+    float coefficient[MH3_SHADE_GPU_COEFFICIENTS][4];
+    mh3_shade_gpu_pick pick[MH3_SHADE_GPU_COEFFICIENTS];
+    float add[4];         /* MODULATE: added to d (TEV bias) */
+    float scale[4];       /* MODULATE: s */
+    float equation[2][4]; /* BASIC colour, alpha: bias, scale, sign */
+    float select[8][4];   /* BASIC: colour inputs a..d, then alpha inputs a..d */
+    float swizzle[4];     /* BASIC: colour input i replicates its source's alpha */
+} mh3_shade_gpu_material;
+/* Post texture matrix of one texture role, built by the vertex program:
+ *   a = su cos, b = su sin, c = sv sin, d = sv cos
+ *   s' = a s - b t + (b - a tu - b tv), t' = c s + d t + (-d - c tu + d tv + 1)
+ * which is the XSI SRT matrix of 80075F00 (every flag case). Identity:
+ * (1, 1, 0, 1), (0, 0). */
+typedef struct mh3_shade_gpu_srt {
+    float scale_rotation[4]; /* su, sv, sin, cos */
+    float translation[4];    /* tu, tv, 0, 0 */
+} mh3_shade_gpu_srt;
+typedef struct mh3_shade_gpu_animated {
+    float palette[MH3_SHADE_GPU_PALETTE][4]; /* register/konst RGBA / 255; [8] = 1 */
+    float alpha_range[4];                    /* discard when alpha < x or alpha >= y */
+    float texture_bias[4];                   /* role LOD bias (GLES sampling) */
+    mh3_shade_gpu_srt srt[3];
+} mh3_shade_gpu_animated;
+/* Bake the classified material's structure. Returns 0 when a constant has
+ * two animated factors (no shader form; the caller keeps resolving on the
+ * CPU). *dynamic is set when a coefficient picks an animated entry. */
+int mh3_shade_gpu_bake(const mh3_shade_material *material, mh3_shade_gpu_material *out, uint8_t *dynamic);
+/* The animated palette (TEV colour registers, konst colours, one). */
+void mh3_shade_gpu_palette(const mh3_native_material_state *state, mh3_shade_gpu_animated *out);
+/* GX alpha compare (pixel compare/reference/operation values) as the
+ * discard interval [x, y) of the fragment programs. */
+void mh3_shade_gpu_alpha_range(const uint32_t pixel[MH3_PIXEL_FIELD_COUNT], float out[4]);
+void mh3_shade_gpu_srt_identity(mh3_shade_gpu_srt *out);
+/* SRT of one live texture SRT slot (scale/rotation/translation already
+ * defaulted by its identity flags); computes sin/cos of the rotation. */
+void mh3_shade_gpu_srt_from_slot(const mh3_pack_texture_srt *slot, mh3_shade_gpu_srt *out);
+/* Rows (3 floats each: s, t, constant) of the post matrix the vertex
+ * program builds; reference for checks. */
+void mh3_shade_gpu_srt_rows(const mh3_shade_gpu_srt *srt, float row0[3], float row1[3]);
+/* Reference evaluation of the fragment program's uniform-only part: the
+ * coefficients mh3_shade_fill would write, from the baked and animated
+ * blocks. Writes overlay, alpha_range, texture_bias and the shading union. */
+void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_gpu_material *baked, const mh3_shade_gpu_animated *animated, mh3_shade_fragment *out);
 #ifdef __cplusplus
 }
 #endif

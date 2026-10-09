@@ -14,6 +14,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
+#include <map>
 #include <cstring>
 #include <new>
 #include <thread>
@@ -129,7 +130,7 @@ struct State {
     uint32_t offset = 0;
     uint32_t size = 0;
   };
-  std::array<UniformRange, 4> uniforms{};
+  std::array<UniformRange, 8> uniforms{};
   GLuint drawFramebuffer = UINT32_MAX;
   GLuint vao = 0;
   GLuint vaoElementBuffer = UINT32_MAX;
@@ -165,6 +166,24 @@ GLuint g_shadeMeshVao = 0, g_shadeGeometryVao = 0, g_shadeGeometryVertexBuffer =
 GLuint g_shadeDrawBuffer = 0, g_shadeSceneBuffer = 0;
 std::array<uint8_t, 3> g_shadeGeometryCoordinates{};
 uint64_t g_shadeSceneRevision = UINT64_MAX;
+// Persistent uniform blocks: ranges of one UBO, aligned to the offset
+// alignment. Retired ranges are reused after the frames that may read them.
+constexpr uint32_t UniformBlockCapacity = 2u << 20;
+GLuint g_uniformBlockBuffer = 0;
+uint32_t g_uniformBlockCursor = 0;
+size_t g_uniformBlockBytes = 0;
+std::multimap<uint32_t, uint32_t> g_uniformBlockFree; // size -> offset
+struct RetiredUniformBlock {
+  uint32_t frame, offset, size;
+};
+std::vector<RetiredUniformBlock> g_uniformBlockRetired;
+// Frame-memory Material/Animated blocks uploaded when their bytes change.
+struct StreamedBlock {
+  GLuint buffer = 0;
+  const void* data = nullptr;
+  uint32_t frame = UINT32_MAX, size = 0;
+};
+StreamedBlock g_streamedMaterial, g_streamedAnimated;
 // Program -> sampler units currently assigned to u_texture0..2 and their locations.
 struct ShadedSamplers {
   std::array<GLint, 3> location{-1, -1, -1};
@@ -345,13 +364,20 @@ void shutdown() noexcept {
     for (GLuint vao : shadeVaos)
       if (vao)
         glDeleteVertexArrays(1, &vao);
-    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeDrawBuffer, g_shadeSceneBuffer};
+    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeDrawBuffer, g_shadeSceneBuffer,
+                                   g_uniformBlockBuffer, g_streamedMaterial.buffer, g_streamedAnimated.buffer};
     for (GLuint buffer : shadeBuffers)
       if (buffer)
         glDeleteBuffers(1, &buffer);
     g_shadeMeshVao = g_shadeGeometryVao = g_shadeGeometryVertexBuffer = g_shadeGeometryIndexBuffer = 0;
     g_shadeDrawBuffer = g_shadeSceneBuffer = 0;
     g_shadeSceneRevision = UINT64_MAX;
+    g_uniformBlockBuffer = 0;
+    g_uniformBlockCursor = 0;
+    g_uniformBlockBytes = 0;
+    g_uniformBlockFree.clear();
+    g_uniformBlockRetired.clear();
+    g_streamedMaterial = g_streamedAnimated = {};
     g_shadedSamplers.clear();
     for (auto& [_, fbo] : g_framebuffers) {
       glDeleteFramebuffers(1, &fbo);
@@ -1289,11 +1315,81 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   capture_native_draw("mesh", vertexCount, indexCount);
   glBindVertexArray(g_state.emptyVao);
 }
+UniformBlock create_uniform_block(const void* bytes, uint32_t size) noexcept {
+  if (!on_render_thread())
+    Log.fatal("Uniform block created outside the render thread");
+  if (!bytes || !size)
+    return {};
+  const uint32_t alignment = uint32_t(std::max(g_caps.uniformOffsetAlignment, 16));
+  const uint32_t rounded = (size + alignment - 1) / alignment * alignment;
+  const uint32_t frame = gfx::current_frame();
+  // Ranges retired three frames ago are no longer read by a queued frame.
+  for (auto it = g_uniformBlockRetired.begin(); it != g_uniformBlockRetired.end();) {
+    if (frame - it->frame >= aurora::GpuFrameRing::BufferCount + 1) {
+      g_uniformBlockFree.emplace(it->size, it->offset);
+      it = g_uniformBlockRetired.erase(it);
+    } else
+      ++it;
+  }
+  uint32_t offset;
+  if (const auto free = g_uniformBlockFree.lower_bound(rounded); free != g_uniformBlockFree.end() && free->first == rounded) {
+    offset = free->second;
+    g_uniformBlockFree.erase(free);
+  } else if (rounded <= UniformBlockCapacity - g_uniformBlockCursor) {
+    offset = g_uniformBlockCursor;
+    g_uniformBlockCursor += rounded;
+  } else
+    return {};
+  if (!g_uniformBlockBuffer) {
+    glGenBuffers(1, &g_uniformBlockBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, g_uniformBlockBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, UniformBlockCapacity, nullptr, GL_STATIC_DRAW);
+  } else
+    glBindBuffer(GL_UNIFORM_BUFFER, g_uniformBlockBuffer);
+  glBufferSubData(GL_UNIFORM_BUFFER, offset, size, bytes);
+  g_uniformBlockBytes += rounded;
+  return {nullptr, g_uniformBlockBuffer, offset, size};
+}
+void retire_uniform_block(const UniformBlock& block) noexcept {
+  if (!block.buffer || block.buffer != g_uniformBlockBuffer)
+    return;
+  const uint32_t alignment = uint32_t(std::max(g_caps.uniformOffsetAlignment, 16));
+  const uint32_t rounded = (block.size + alignment - 1) / alignment * alignment;
+  g_uniformBlockRetired.push_back({gfx::current_frame(), block.offset, rounded});
+  g_uniformBlockBytes -= rounded;
+}
+size_t uniform_block_bytes() noexcept { return g_uniformBlockBytes; }
+UniformRing create_uniform_ring(uint32_t bytes) noexcept {
+  auto* data = static_cast<uint8_t*>(std::aligned_alloc(256, (size_t(bytes) + 255) & ~size_t(255)));
+  return data ? UniformRing{data, bytes} : UniformRing{};
+}
+void destroy_uniform_ring(const UniformRing& ring) noexcept {
+  // Host memory: blocks were uploaded when bound, nothing reads it later.
+  std::free(ring.data);
+}
+GpuFence submitted_gpu_fence() noexcept { return {}; }
+
 namespace {
 GLuint shade_buffer(GLuint& buffer) {
   if (!buffer)
     glGenBuffers(1, &buffer);
   return buffer;
+}
+// Persistent blocks bind their range; frame blocks upload when changed.
+void bind_block(uint32_t binding, const UniformBlock& block, StreamedBlock& stream) {
+  if (block.buffer) {
+    bind_uniform_range(binding, block.buffer, block.offset, block.size);
+    return;
+  }
+  const uint32_t frame = gfx::current_frame();
+  if (stream.data != block.data || stream.frame != frame || stream.size != block.size) {
+    glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(stream.buffer));
+    glBufferData(GL_UNIFORM_BUFFER, block.size, block.data, GL_STREAM_DRAW);
+    stream.data = block.data;
+    stream.frame = frame;
+    stream.size = block.size;
+  }
+  bind_uniform_range(binding, stream.buffer, 0, block.size);
 }
 void bind_shaded_blocks(const ShadedBlocks& blocks) {
   if (blocks.shadeOffset % uint32_t(std::max(g_caps.uniformOffsetAlignment, 1)) != 0)
@@ -1302,10 +1398,16 @@ void bind_shaded_blocks(const ShadedBlocks& blocks) {
     throw std::runtime_error("Palette block offset violates the uniform buffer alignment");
   glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeDrawBuffer));
   glBufferData(GL_UNIFORM_BUFFER, blocks.drawBytes, blocks.draw, GL_STREAM_DRAW);
+  // Draw covers [0, shadeOffset); material-GPU draws have no Shade block.
   bind_uniform_range(0, g_shadeDrawBuffer, 0, blocks.shadeOffset);
-  bind_uniform_range(3, g_shadeDrawBuffer, blocks.shadeOffset, blocks.shadeBytes);
+  if (blocks.shadeBytes)
+    bind_uniform_range(3, g_shadeDrawBuffer, blocks.shadeOffset, blocks.shadeBytes);
   if (blocks.paletteBytes)
     bind_uniform_range(2, g_shadeDrawBuffer, blocks.paletteOffset, blocks.paletteBytes);
+  if (blocks.material.valid())
+    bind_block(4, blocks.material, g_streamedMaterial);
+  if (blocks.animated.valid())
+    bind_block(5, blocks.animated, g_streamedAnimated);
   if (blocks.sceneRevision != g_shadeSceneRevision || !g_shadeSceneBuffer) {
     glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeSceneBuffer));
     glBufferData(GL_UNIFORM_BUFFER, blocks.sceneBytes, blocks.scene, GL_STREAM_DRAW);

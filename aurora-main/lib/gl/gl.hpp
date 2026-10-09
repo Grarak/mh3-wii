@@ -335,12 +335,54 @@ void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
                       const AuroraNativeUniforms& uniforms);
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
 
+// A uniform block in GPU-visible memory. Persistent blocks (material uniforms
+// baked once, docs/native-material-gpu.md) live in a CDRAM arena allocation on
+// GXM (data) or a range of one UBO on GLES (buffer, offset). Frame blocks
+// point into the admitted frame's uniform memory (data, buffer 0): GXM reads
+// them in place, GLES uploads them when they change.
+struct UniformBlock {
+  const void* data = nullptr;
+  GLuint buffer = 0;
+  uint32_t offset = 0, size = 0;
+  [[nodiscard]] bool valid() const noexcept { return data || buffer; }
+};
+// Render thread only. Copies `bytes` into a new persistent block; an invalid
+// block when the persistent space is exhausted (the caller keeps per-draw
+// uniforms). Retiring returns the space once the GPU has completed every frame
+// submitted so far; the block must not be bound afterwards.
+UniformBlock create_uniform_block(const void* bytes, uint32_t size) noexcept;
+void retire_uniform_block(const UniformBlock& block) noexcept;
+// Persistent uniform bytes currently allocated (development statistics).
+size_t uniform_block_bytes() noexcept;
+// A producer-written uniform ring: memory another thread (the game thread)
+// writes directly and draws bind as frame blocks (UniformBlock with data).
+// GXM: one CDRAM arena chunk the GPU reads in place; GLES: host memory the
+// render thread uploads when bound. Render thread: create/destroy.
+struct UniformRing {
+  uint8_t* data = nullptr;
+  uint32_t size = 0;
+};
+UniformRing create_uniform_ring(uint32_t bytes) noexcept;
+void destroy_uniform_ring(const UniformRing& ring) noexcept;
+// Completion of the GPU work submitted so far, taken on the render thread
+// and testable on any thread. GLES readers of host memory finish at
+// submission, so its fences are always complete.
+struct GpuFence {
+  const volatile uint32_t* address = nullptr;
+  uint32_t value = 0;
+};
+GpuFence submitted_gpu_fence() noexcept;
+inline bool gpu_fence_done(const GpuFence& fence) noexcept { return !fence.address || int32_t(*fence.address - fence.value) >= 0; }
+
 // Fixed native shading programs (runtime/src/native_shader_source.cpp). Blocks:
 // Draw 0 (vertex), Scene 1, Palette 2 (mesh vertex), Shade 3 (fragment). Draw
 // and Shade share one allocation; Shade starts at shadeOffset. Scene is
 // re-uploaded only when its revision changes.
 // One per-draw allocation: Draw at 0, Shade at shadeOffset and (mesh draws)
 // Palette at paletteOffset (paletteBytes 0 = none); drawBytes covers all.
+// Material-GPU programs have no Shade (shadeBytes 0) and bind Material
+// (binding 4 / fragment BUFFER[2]) and Animated (binding 5 / fragment and
+// mesh vertex BUFFER[3]) instead.
 struct ShadedBlocks {
   const void* draw = nullptr;
   uint32_t drawBytes = 0, shadeOffset = 0, shadeBytes = 0;
@@ -348,6 +390,7 @@ struct ShadedBlocks {
   const void* scene = nullptr;
   uint32_t sceneBytes = 0;
   uint64_t sceneRevision = 0;
+  UniformBlock material, animated;
 };
 // Shader input locations 0..9 (position, normal, color0, uv0..2, PN selector,
 // role selectors 0..2) each read one compact mesh attribute by its layout

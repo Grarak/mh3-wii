@@ -70,6 +70,24 @@ static float evaluate(const mh3_shade_material *m, const mh3_shade_draw *d,
     b += d->fragment.overlay[k] * tex[1][k] * tex[2][k];
   return (dd + e[0] + e[2] * (a + (b - a) * c)) * e[1];
 }
+/* Material uniforms in GPU memory: the baked block and the animated palette
+ * resolve to the same fragment uniforms the programs would see. */
+static void check_gpu(const mh3_shade_material *m,
+                      const mh3_native_material_state *s, int alpha,
+                      unsigned k, const float tex[3][4], const float ras[4],
+                      float expect) {
+  mh3_shade_gpu_material baked;
+  mh3_shade_gpu_animated animated;
+  uint8_t dynamic = 0;
+  assert(mh3_shade_gpu_bake(m, &baked, &dynamic));
+  memset(&animated, 0, sizeof animated);
+  mh3_shade_gpu_palette(s, &animated);
+  mh3_shade_gpu_alpha_range(s->pixel.values, animated.alpha_range);
+  mh3_shade_draw d;
+  memset(&d, 0, sizeof d);
+  mh3_shade_gpu_resolve(m, &baked, &animated, &d.fragment);
+  near(evaluate(m, &d, alpha, k, tex, ras), expect);
+}
 /* The classified model and the general BASIC program must both match. */
 static void check(const mh3_shade_material *m,
                   const mh3_native_material_state *s, int alpha, unsigned k,
@@ -78,11 +96,13 @@ static void check(const mh3_shade_material *m,
   memset(&d, 0, sizeof d);
   mh3_shade_fill(m, s, &d);
   near(evaluate(m, &d, alpha, k, tex, ras), expect);
+  check_gpu(m, s, alpha, k, tex, ras, expect);
   mh3_shade_material basic = *m;
   basic.model = MH3_SHADE_BASIC;
   memset(&d, 0, sizeof d);
   mh3_shade_fill(&basic, s, &d);
   near(evaluate(&basic, &d, alpha, k, tex, ras), expect);
+  check_gpu(&basic, s, alpha, k, tex, ras, expect);
 }
 
 static void basic_texture_times_raster(void) {
@@ -349,7 +369,50 @@ static void fog(void) {
   }
 }
 
+/* The post SRT the vertex program builds equals mh3_texture_srt_calc's set
+ * matrix for every identity-flag combination (the flags default the values). */
+static void srt_rows(void) {
+  for (uint32_t flags = 1; flags < 16; flags += 2) {
+    mh3_pack_texture_srt slot;
+    memset(&slot, 0, sizeof slot);
+    slot.flags = flags;
+    slot.scale[0] = (flags & 2) ? 1.f : 1.5f;
+    slot.scale[1] = (flags & 2) ? 1.f : 0.75f;
+    slot.rotation_degrees = (flags & 4) ? 0.f : 30.f;
+    slot.translation[0] = (flags & 8) ? 0.f : 0.125f;
+    slot.translation[1] = (flags & 8) ? 0.f : -0.25f;
+    mh3_shade_gpu_srt srt;
+    mh3_shade_gpu_srt_from_slot(&slot, &srt);
+    float row0[3], row1[3];
+    mh3_shade_gpu_srt_rows(&srt, row0, row1);
+    /* XSI set matrix (80075F00 case 0, general form). */
+    const float a = slot.scale[0] * cosf(slot.rotation_degrees * 0.017453293f),
+                b = slot.scale[0] * sinf(slot.rotation_degrees * 0.017453293f),
+                c = slot.scale[1] * sinf(slot.rotation_degrees * 0.017453293f),
+                d = slot.scale[1] * cosf(slot.rotation_degrees * 0.017453293f);
+    const float tu = slot.translation[0], tv = slot.translation[1];
+    near(row0[0], a);
+    near(row0[1], -b);
+    near(row0[2], b - a * tu - b * tv);
+    near(row1[0], c);
+    near(row1[1], d);
+    near(row1[2], -d - c * tu + d * tv + 1.f);
+  }
+}
+
 int main(void) {
+  /* std140 layouts of the material-GPU blocks (Material, Animated) */
+  assert(sizeof(mh3_shade_gpu_pick) == 48);
+  assert(offsetof(mh3_shade_gpu_material, pick) == 144);
+  assert(offsetof(mh3_shade_gpu_material, add) == 144 + 9 * 48);
+  assert(offsetof(mh3_shade_gpu_material, equation) == 144 + 9 * 48 + 32);
+  assert(offsetof(mh3_shade_gpu_material, select) == 144 + 9 * 48 + 64);
+  assert(offsetof(mh3_shade_gpu_material, swizzle) == 144 + 9 * 48 + 192);
+  assert(sizeof(mh3_shade_gpu_material) == 784);
+  assert(offsetof(mh3_shade_gpu_animated, alpha_range) == 144);
+  assert(offsetof(mh3_shade_gpu_animated, srt) == 176);
+  assert(sizeof(mh3_shade_gpu_animated) == 272);
+  srt_rows();
   /* std140 offsets of the Draw block as declared in native_shader_source.cpp */
   assert(offsetof(mh3_shade_vertex, viewport) == 64);
   assert(offsetof(mh3_shade_vertex, texgen) == 144);

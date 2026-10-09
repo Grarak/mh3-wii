@@ -160,6 +160,8 @@ public:
     device.finish();
     programs.clear();
     textures.clear();
+    if (uniformChunk)
+      device.arena().free(uniformChunk, UniformChunkBytes);
   }
   GLuint name() {
     if (!nextName)
@@ -349,7 +351,16 @@ public:
       blend.colorMask = SCE_GXM_COLOR_MASK_ALL;
     }
     bind_program(program, blend);
-    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    // Material uniforms in GPU memory: persistent CDRAM blocks or the frame
+    // slot's uniforms, read in place (fragment BUFFER[2]/[3], vertex BUFFER[3]).
+    auto* context = device.context();
+    if (blocks.material.data)
+      check(sceGxmSetFragmentUniformBuffer(context, 2, blocks.material.data), "bind material block");
+    if (blocks.animated.data) {
+      check(sceGxmSetFragmentUniformBuffer(context, 3, blocks.animated.data), "bind fragment animated block");
+      check(sceGxmSetVertexUniformBuffer(context, 3, blocks.animated.data), "bind vertex animated block");
+    }
     for (const auto& [samplerName, slot] : native.samplers) {
       const auto& bound = state.textures.at(units.at(slot));
       if (!bound.texture)
@@ -412,6 +423,56 @@ public:
       }
       it = retiredPrograms.erase(it);
     }
+    for (auto it = uniformRetired.begin(); it != uniformRetired.end();) {
+      if (it->first.address && int32_t(*it->first.address - it->first.value) < 0) {
+        ++it;
+        continue;
+      }
+      uniformFree.emplace(it->second.second, it->second.first);
+      it = uniformRetired.erase(it);
+    }
+  }
+  // Persistent uniform blocks: one CDRAM arena chunk, sub-allocated in
+  // 16-byte units (GXM uniform buffer alignment). Retired ranges return to
+  // the free lists after their last scene's notification.
+  static constexpr uint32_t UniformChunkBytes = 512u << 10;
+  void* uniformChunk = nullptr;
+  uint32_t uniformCursor = 0;
+  size_t uniformBytes = 0;
+  std::multimap<uint32_t, uint32_t> uniformFree; // size -> offset
+  std::vector<std::pair<SceGxmNotification, std::pair<uint32_t, uint32_t>>> uniformRetired;
+  UniformBlock create_uniform_block(const void* bytes, uint32_t size) {
+    if (!bytes || !size)
+      return {};
+    const uint32_t rounded = (size + 15) & ~15u;
+    if (!uniformChunk) {
+      uniformChunk = device.arena().allocate(UniformChunkBytes);
+      if (!uniformChunk)
+        return {};
+    }
+    collect();
+    uint32_t offset;
+    if (const auto free = uniformFree.find(rounded); free != uniformFree.end()) {
+      offset = free->second;
+      uniformFree.erase(free);
+    } else if (rounded <= UniformChunkBytes - uniformCursor) {
+      offset = uniformCursor;
+      uniformCursor += rounded;
+    } else
+      return {};
+    auto* data = static_cast<char*>(uniformChunk) + offset;
+    std::memcpy(data, bytes, size);
+    uniformBytes += rounded;
+    return {data, 0, offset, size};
+  }
+  void retire_uniform_block(const UniformBlock& block) {
+    const auto* base = static_cast<const char*>(uniformChunk);
+    const auto* data = static_cast<const char*>(block.data);
+    if (!uniformChunk || !data || data < base || data >= base + UniformChunkBytes)
+      return;
+    const uint32_t rounded = (block.size + 15) & ~15u;
+    uniformRetired.emplace_back(device.current_fence(), std::make_pair(uint32_t(data - base), rounded));
+    uniformBytes -= rounded;
   }
   void forget_program(GLuint id) {
     const auto found = programs.find(id);
@@ -1268,6 +1329,37 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
   });
 }
 
+UniformBlock create_uniform_block(const void* bytes, uint32_t size) noexcept {
+  return guarded([&] { return renderer().create_uniform_block(bytes, size); });
+}
+void retire_uniform_block(const UniformBlock& block) noexcept {
+  guarded([&] { renderer().retire_uniform_block(block); });
+}
+size_t uniform_block_bytes() noexcept {
+  return guarded([] { return renderer().uniformBytes; });
+}
+UniformRing create_uniform_ring(uint32_t bytes) noexcept {
+  return guarded([&] {
+    auto* data = static_cast<uint8_t*>(renderer().device.arena().allocate(bytes));
+    return data ? UniformRing{data, bytes} : UniformRing{};
+  });
+}
+void destroy_uniform_ring(const UniformRing& ring) noexcept {
+  guarded([&] {
+    if (!ring.data)
+      return;
+    // Shutdown path: the GPU may still read the last frames' sections.
+    auto& r = renderer();
+    r.device.finish();
+    r.device.arena().free(ring.data, ring.size);
+  });
+}
+GpuFence submitted_gpu_fence() noexcept {
+  return guarded([] {
+    const auto fence = renderer().device.current_fence();
+    return GpuFence{fence.address, fence.value};
+  });
+}
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });
 }

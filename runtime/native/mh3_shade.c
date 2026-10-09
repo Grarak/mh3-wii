@@ -677,6 +677,242 @@ void mh3_shade_fill(const mh3_shade_material *m, const mh3_native_material_state
     alpha_range(s->pixel.values, draw->fragment.alpha_range);
 }
 
+/* ---- Material uniforms in GPU memory ---- */
+/* One constant (two factors) as static * pick: entry is the palette entry of
+ * its animated factor (MH3_SHADE_GPU_ONE when none); replicate/component
+ * select one component of that entry for every lane. */
+typedef struct {
+    float s[4];
+    uint8_t entry, replicate, component;
+} gpu_split;
+static int gpu_split_constant(const mh3_shade_constant *c, gpu_split *out) {
+    for (unsigned i = 0; i < 4; ++i)
+        out->s[i] = 1.f;
+    out->entry = MH3_SHADE_GPU_ONE;
+    out->replicate = 0;
+    out->component = 3;
+    for (unsigned f = 0; f < 2; ++f) {
+        const uint8_t kind = c->kind[f], index = c->index[f], alpha = c->alpha[f];
+        float value = 1.f;
+        int entry = -1;
+        uint8_t replicate = alpha ? 1 : 0, component = 3;
+        switch (kind) {
+        case MH3_SHADE_CONSTANT_ZERO:
+            value = 0.f;
+            break;
+        case MH3_SHADE_CONSTANT_ONE:
+            break;
+        case MH3_SHADE_CONSTANT_HALF:
+            value = 0.5f;
+            break;
+        case MH3_SHADE_CONSTANT_REGISTER:
+            entry = index & 3;
+            break;
+        case MH3_SHADE_CONSTANT_KONST: {
+            const int alpha_selector = (index & 0x80) != 0;
+            const uint8_t selector = index & 0x7f;
+            if (selector < 8)
+                value = selector ? (8 - selector) / 8.f : 1.f;
+            else if (!alpha_selector && selector >= 12 && selector < 16)
+                entry = 4 + (selector - 12);
+            else if (selector >= 16 && selector < 32) {
+                entry = 4 + ((selector - 16) & 3);
+                replicate = 1;
+                component = (uint8_t)((selector - 16) / 4);
+            } else
+                value = 0.f;
+            break;
+        }
+        default:
+            value = index / 8.f;
+            break;
+        }
+        if (entry < 0) {
+            for (unsigned i = 0; i < 4; ++i)
+                out->s[i] *= value;
+            continue;
+        }
+        if (out->entry != MH3_SHADE_GPU_ONE)
+            return 0;
+        out->entry = (uint8_t)entry;
+        out->replicate = replicate;
+        out->component = component;
+    }
+    return 1;
+}
+static void gpu_mask(float mask[4], unsigned component) {
+    for (unsigned i = 0; i < 4; ++i)
+        mask[i] = i == component ? 1.f : 0.f;
+}
+static void gpu_static_pick(mh3_shade_gpu_pick *pick) {
+    pick->index[0] = pick->index[1] = (float)MH3_SHADE_GPU_ONE;
+    pick->index[2] = pick->index[3] = 0.f;
+    gpu_mask(pick->color_mask, 3);
+    gpu_mask(pick->alpha_mask, 3);
+}
+/* Colour lanes (alpha 0) or the alpha lane (alpha 1) of coefficient k from c,
+ * scaled by sign. */
+static int gpu_lanes(mh3_shade_gpu_material *out, unsigned k, int alpha, const mh3_shade_constant *c, float sign, uint8_t *dynamic) {
+    gpu_split split;
+    if (!gpu_split_constant(c, &split))
+        return 0;
+    mh3_shade_gpu_pick *pick = &out->pick[k];
+    if (alpha) {
+        out->coefficient[k][3] = sign * split.s[3];
+        pick->index[1] = split.entry;
+        gpu_mask(pick->alpha_mask, split.replicate ? split.component : 3);
+    } else {
+        for (unsigned i = 0; i < 3; ++i)
+            out->coefficient[k][i] = sign * split.s[i];
+        pick->index[0] = split.entry;
+        pick->index[2] = split.replicate ? 1.f : 0.f;
+        gpu_mask(pick->color_mask, split.component);
+    }
+    if (split.entry != MH3_SHADE_GPU_ONE)
+        *dynamic = 1;
+    return 1;
+}
+static const mh3_shade_constant gpu_zero = {{MH3_SHADE_CONSTANT_ZERO, MH3_SHADE_CONSTANT_ONE}, {0, 0}, {0, 0}};
+int mh3_shade_gpu_bake(const mh3_shade_material *m, mh3_shade_gpu_material *out, uint8_t *dynamic) {
+    memset(out, 0, sizeof *out);
+    *dynamic = 0;
+    for (unsigned k = 0; k < MH3_SHADE_GPU_COEFFICIENTS; ++k)
+        gpu_static_pick(&out->pick[k]);
+    int ok = 1;
+    if (m->model == MH3_SHADE_MODULATE) {
+        /* modulate_fill, with each resolved constant kept as static * pick. */
+        for (int alpha = 0; alpha < 2; ++alpha) {
+            const mh3_shade_equation *e = alpha ? &m->alpha : &m->color;
+            const unsigned first = alpha ? 3 : 0, last = alpha ? 4 : 3;
+            const int swapped = !(texture_side(m, &e->input[1], alpha) && vertex_side(&e->input[2], alpha));
+            const mh3_shade_term *base = &e->input[swapped ? 2 : 1], *light = &e->input[swapped ? 1 : 2];
+            const float sign = e->subtract ? -1.f : 1.f;
+            ok &= gpu_lanes(out, MH3_SHADE_GPU_OFFSET, alpha, &base->offset, 1.f, dynamic);
+            if (!is_constant(base))
+                ok &= gpu_lanes(out, base->texture == 1 ? MH3_SHADE_GPU_W1 : MH3_SHADE_GPU_W0, alpha, &base->scale, 1.f, dynamic);
+            ok &= gpu_lanes(out, MH3_SHADE_GPU_KC, alpha, &light->offset, sign, dynamic);
+            ok &= gpu_lanes(out, MH3_SHADE_GPU_KV, alpha, is_constant(light) ? &gpu_zero : &light->scale, sign, dynamic);
+            ok &= gpu_lanes(out, MH3_SHADE_GPU_D, alpha, &e->input[3].offset, 1.f, dynamic);
+            for (unsigned i = first; i < last; ++i) {
+                out->add[i] = equation_bias(e->bias);
+                out->scale[i] = equation_scale(e->scale);
+            }
+        }
+        ok &= gpu_lanes(out, MH3_SHADE_GPU_MODULATE_OVERLAY, 0, &m->overlay_scale, 1.f, dynamic);
+        ok &= gpu_lanes(out, MH3_SHADE_GPU_MODULATE_OVERLAY, 1, &m->overlay_scale, 1.f, dynamic);
+    } else {
+        for (unsigned i = 0; i < 4; ++i)
+            for (int alpha = 0; alpha < 2; ++alpha) {
+                const mh3_shade_term *t = &(alpha ? &m->alpha : &m->color)->input[i];
+                ok &= gpu_lanes(out, MH3_SHADE_GPU_BASIC_OFFSET + i, alpha, &t->offset, 1.f, dynamic);
+                ok &= gpu_lanes(out, MH3_SHADE_GPU_BASIC_SCALE + i, alpha, &t->scale, 1.f, dynamic);
+                float *select = out->select[alpha * 4 + i];
+                if (t->source == MH3_SHADE_SOURCE_TEXTURE)
+                    select[t->texture < 3 ? t->texture : 0] = 1.f;
+                else if (t->source == MH3_SHADE_SOURCE_VERTEX)
+                    select[3] = 1.f;
+                if (!alpha)
+                    out->swizzle[i] = t->replicate_alpha ? 1.f : 0.f;
+            }
+        equation(&m->color, out->equation[0]);
+        equation(&m->alpha, out->equation[1]);
+        ok &= gpu_lanes(out, MH3_SHADE_GPU_BASIC_OVERLAY, 0, &m->overlay_scale, 1.f, dynamic);
+        ok &= gpu_lanes(out, MH3_SHADE_GPU_BASIC_OVERLAY, 1, &m->overlay_scale, 1.f, dynamic);
+    }
+    return ok;
+}
+void mh3_shade_gpu_palette(const mh3_native_material_state *s, mh3_shade_gpu_animated *out) {
+    for (unsigned j = 0; j < 4; ++j)
+        for (unsigned i = 0; i < 4; ++i) {
+            out->palette[j][i] = s->color[j].rgba[i] / 255.f;
+            out->palette[4 + j][i] = s->konst[j].rgba[i] / 255.f;
+        }
+    for (unsigned i = 0; i < 4; ++i)
+        out->palette[MH3_SHADE_GPU_ONE][i] = 1.f;
+}
+void mh3_shade_gpu_alpha_range(const uint32_t pixel[MH3_PIXEL_FIELD_COUNT], float out[4]) {
+    alpha_range(pixel, out);
+}
+void mh3_shade_gpu_srt_identity(mh3_shade_gpu_srt *out) {
+    const mh3_shade_gpu_srt identity = {{1.f, 1.f, 0.f, 1.f}, {0.f, 0.f, 0.f, 0.f}};
+    *out = identity;
+}
+void mh3_shade_gpu_srt_from_slot(const mh3_pack_texture_srt *slot, mh3_shade_gpu_srt *out) {
+    mh3_shade_gpu_srt_identity(out);
+    if (!(slot->flags & 2)) {
+        out->scale_rotation[0] = slot->scale[0];
+        out->scale_rotation[1] = slot->scale[1];
+    }
+    if (!(slot->flags & 4)) {
+        const float angle = slot->rotation_degrees * 0.01745329251994329577f;
+        out->scale_rotation[2] = sinf(angle);
+        out->scale_rotation[3] = cosf(angle);
+    }
+    if (!(slot->flags & 8)) {
+        out->translation[0] = slot->translation[0];
+        out->translation[1] = slot->translation[1];
+    }
+}
+void mh3_shade_gpu_srt_rows(const mh3_shade_gpu_srt *srt, float row0[3], float row1[3]) {
+    const float su = srt->scale_rotation[0], sv = srt->scale_rotation[1], sine = srt->scale_rotation[2], cosine = srt->scale_rotation[3];
+    const float tu = srt->translation[0], tv = srt->translation[1];
+    const float a = su * cosine, b = su * sine, c = sv * sine, d = sv * cosine;
+    row0[0] = a;
+    row0[1] = -b;
+    row0[2] = (b - a * tu) - b * tv;
+    row1[0] = c;
+    row1[1] = d;
+    row1[2] = (-d - c * tu) + d * tv + 1.f;
+}
+static void gpu_coefficient(const mh3_shade_gpu_material *m, const mh3_shade_gpu_animated *a, unsigned k, float out[4]) {
+    const mh3_shade_gpu_pick *p = &m->pick[k];
+    const float *c = a->palette[(unsigned)p->index[0]], *alpha = a->palette[(unsigned)p->index[1]];
+    float replicated = 0.f, picked = 0.f;
+    for (unsigned i = 0; i < 4; ++i) {
+        replicated += c[i] * p->color_mask[i];
+        picked += alpha[i] * p->alpha_mask[i];
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        out[i] = m->coefficient[k][i] * (p->index[2] != 0.f ? replicated : c[i]);
+    out[3] = m->coefficient[k][3] * picked;
+}
+void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_gpu_material *m, const mh3_shade_gpu_animated *a, mh3_shade_fragment *out) {
+    memset(out, 0, sizeof *out);
+    memcpy(out->texture_bias, a->texture_bias, sizeof out->texture_bias);
+    memcpy(out->alpha_range, a->alpha_range, sizeof out->alpha_range);
+    if (material->model == MH3_SHADE_MODULATE) {
+        mh3_shade_modulate *q = &out->shading.modulate;
+        gpu_coefficient(m, a, MH3_SHADE_GPU_W0, q->w0);
+        gpu_coefficient(m, a, MH3_SHADE_GPU_W1, q->w1);
+        gpu_coefficient(m, a, MH3_SHADE_GPU_OFFSET, q->offset);
+        gpu_coefficient(m, a, MH3_SHADE_GPU_KV, q->kv);
+        gpu_coefficient(m, a, MH3_SHADE_GPU_KC, q->kc);
+        gpu_coefficient(m, a, MH3_SHADE_GPU_D, q->d);
+        for (unsigned i = 0; i < 4; ++i) {
+            q->d[i] += m->add[i];
+            q->s[i] = m->scale[i];
+        }
+        gpu_coefficient(m, a, MH3_SHADE_GPU_MODULATE_OVERLAY, out->overlay);
+        return;
+    }
+    mh3_shade_basic *q = &out->shading.basic;
+    for (unsigned i = 0; i < 4; ++i) {
+        float offset[4], scale[4];
+        gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET + i, offset);
+        gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_SCALE + i, scale);
+        memcpy(q->color_input[i].offset, offset, sizeof offset);
+        memcpy(q->color_input[i].scale, scale, sizeof scale);
+        memcpy(q->alpha_input[i].offset, offset, sizeof offset);
+        memcpy(q->alpha_input[i].scale, scale, sizeof scale);
+        memcpy(q->color_input[i].select, m->select[i], sizeof q->color_input[i].select);
+        memcpy(q->alpha_input[i].select, m->select[4 + i], sizeof q->alpha_input[i].select);
+        q->color_input[i].swizzle[0] = m->swizzle[i];
+    }
+    memcpy(q->color_equation, m->equation[0], sizeof q->color_equation);
+    memcpy(q->alpha_equation, m->equation[1], sizeof q->alpha_equation);
+    gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OVERLAY, out->overlay);
+}
+
 void mh3_shade_fog(uint32_t type, const mh3_shader_fog *fog, mh3_shade_scene *scene) {
     const uint32_t kind = type & 7;
     if (!type) {

@@ -20,6 +20,10 @@
 // BUFFER[1]), Palette (mesh vertex, binding 2 / vertex BUFFER[2]) and Shade
 // (fragment, binding 3 / fragment BUFFER[0]). Draw and Shade share one per-draw
 // allocation (mh3_shade_draw); Shade's tail differs per fragment model.
+// MATERIAL_GPU programs (docs/native-material-gpu.md) replace Shade with the
+// baked Material block (binding 4 / fragment BUFFER[2]) and the Animated
+// block (binding 5 / fragment BUFFER[3], mesh vertex BUFFER[3]); coefficients
+// are static * picked animated palette entries, evaluated from uniforms only.
 #include "native_shader_source.h"
 #include <cstdlib>
 #include <string>
@@ -74,6 +78,23 @@ struct Input {
     vec4 select;
     vec4 swizzle;
 };
+#if MATERIAL_GPU
+// mh3_shade_gpu_material
+struct Pick {
+    vec4 index;
+    vec4 color_mask;
+    vec4 alpha_mask;
+};
+layout(std140) uniform Material {
+    vec4 coefficient[9];
+    Pick pick[9];
+    vec4 add;
+    vec4 scale;
+    vec4 equation[2];
+    vec4 select[8];
+    vec4 swizzle;
+} material;
+#else
 layout(std140) uniform Shade {
     vec4 texture_bias;
     vec4 overlay;
@@ -93,6 +114,30 @@ layout(std140) uniform Shade {
     vec4 alpha_equation;
 #endif
 } shade;
+#endif
+)GLSL";
+
+// mh3_shade_gpu_animated: fragment colours/alpha/bias, mesh vertex SRT.
+constexpr const char* GlslAnimated = R"GLSL(
+#if MATERIAL_GPU
+struct Srt {
+    vec4 scale_rotation;
+    vec4 translation;
+};
+layout(std140) uniform Animated {
+    vec4 palette[9];
+    vec4 alpha_range;
+    vec4 texture_bias;
+    Srt srt[3];
+} anim;
+// Post SRT of a role (mh3_shade_gpu_srt): the XSI matrix of 80075F00.
+vec2 srt2d(int role, vec2 uv) {
+    vec4 p = anim.srt[role].scale_rotation;
+    vec2 t = anim.srt[role].translation.xy;
+    float a = p.x * p.w, b = p.x * p.z, c = p.y * p.z, d = p.y * p.w;
+    return vec2(a * uv.x - b * uv.y + ((b - a * t.x) - b * t.y), c * uv.x + d * uv.y + ((-d - c * t.x) + d * t.y + 1.0));
+}
+#endif
 )GLSL";
 
 // channel: x colour light mask (LIT 2) or packed light indices (LIT 1), y alpha
@@ -198,7 +243,8 @@ out vec2 v_uv2;
 out float v_fog;
 // mode.x source: 0 model position, 1 model normal, 2 role coordinate attribute.
 // mode.y bits: 1 projective (three-row result), 2 normalize, 4 main identity,
-// 8 post identity, 16 main from the palette slot in the role selector.
+// 8 post identity, 16 main from the palette slot in the role selector, 32 post
+// from the role's Animated SRT (MATERIAL_GPU).
 vec2 texgen(int role, vec2 uv, float selector, vec3 position, vec3 normal) {
     Texgen t = draw.texgen[role];
     int bits = t.mode.y;
@@ -214,6 +260,12 @@ vec2 texgen(int role, vec2 uv, float selector, vec3 position, vec3 normal) {
         coordinate.z = 1.0;
     if ((bits & 2) != 0)
         coordinate = normalize(coordinate);
+#if MATERIAL_GPU
+    // 32: the post matrix is the role's SRT (row 2 keeps z).
+    if ((bits & 32) != 0)
+        coordinate.xy = srt2d(role, coordinate.xy);
+    else
+#endif
     if ((bits & 8) == 0)
         coordinate = vec4(coordinate, 1.0) * t.post;
     return coordinate.z != 0.0 ? coordinate.xy / coordinate.z : clamp(coordinate.xy / 2.0, -1.0, 1.0);
@@ -281,11 +333,45 @@ uniform sampler2D u_texture0;
 uniform sampler2D u_texture1;
 uniform sampler2D u_texture2;
 out vec4 frag_color;
+#if MATERIAL_GPU
+// Uniform-only: static factor times the picked animated palette entry.
+vec4 coefficient(int k) {
+#if DYNAMIC
+    Pick p = material.pick[k];
+    vec4 c = anim.palette[int(p.index.x)];
+    vec4 a = anim.palette[int(p.index.y)];
+    return material.coefficient[k] * vec4(mix(c.rgb, vec3(dot(c, p.color_mask)), p.index.z), dot(a, p.alpha_mask));
+#else
+    return material.coefficient[k];
+#endif
+}
+#define TEXTURE_BIAS anim.texture_bias
+#define ALPHA_RANGE anim.alpha_range
+#else
+#define TEXTURE_BIAS shade.texture_bias
+#define ALPHA_RANGE shade.alpha_range
+#endif
 #if !MODULATE
 vec4 source(vec4 select, vec4 t0, vec4 t1, vec4 t2) {
     return select.x * t0 + select.y * t1 + select.z * t2 + select.w * v_color0;
 }
-vec3 color_input(int i, vec4 t0, vec4 t1, vec4 t2) {
+#if MATERIAL_GPU
+vec3 color_input(int i, float swizzle, vec4 t0, vec4 t1, vec4 t2) {
+    vec4 value = source(material.select[i], t0, t1, t2);
+    return coefficient(i).rgb + coefficient(4 + i).rgb * mix(value.rgb, value.aaa, swizzle);
+}
+float alpha_input(int i, vec4 t0, vec4 t1, vec4 t2) {
+    return coefficient(i).a + coefficient(4 + i).a * source(material.select[4 + i], t0, t1, t2).a;
+}
+#define SWIZZLE0 material.swizzle.x
+#define SWIZZLE1 material.swizzle.y
+#define SWIZZLE2 material.swizzle.z
+#define SWIZZLE3 material.swizzle.w
+#define COLOR_EQUATION material.equation[0]
+#define ALPHA_EQUATION material.equation[1]
+#define OVERLAY_SCALE coefficient(8)
+#else
+vec3 color_input(int i, float swizzle, vec4 t0, vec4 t1, vec4 t2) {
     Input s = shade.color_input[i];
     vec4 value = source(s.select, t0, t1, t2);
     return s.offset.rgb + s.scale.rgb * mix(value.rgb, value.aaa, s.swizzle.x);
@@ -294,44 +380,58 @@ float alpha_input(int i, vec4 t0, vec4 t1, vec4 t2) {
     Input s = shade.alpha_input[i];
     return s.offset.a + s.scale.a * source(s.select, t0, t1, t2).a;
 }
+#define SWIZZLE0 0.0
+#define SWIZZLE1 0.0
+#define SWIZZLE2 0.0
+#define SWIZZLE3 0.0
+#define COLOR_EQUATION shade.color_equation
+#define ALPHA_EQUATION shade.alpha_equation
+#define OVERLAY_SCALE shade.overlay
+#endif
 #endif
 void main() {
     vec4 t0 = vec4(1.0), t1 = vec4(1.0), t2 = vec4(1.0);
 #if TEXTURES > 0
-    t0 = texture(u_texture0, v_uv0, shade.texture_bias.x);
+    t0 = texture(u_texture0, v_uv0, TEXTURE_BIAS.x);
 #endif
 #if TEXTURES > 1
-    t1 = texture(u_texture1, v_uv1, shade.texture_bias.y);
+    t1 = texture(u_texture1, v_uv1, TEXTURE_BIAS.y);
 #endif
 #if TEXTURES > 2
-    t2 = texture(u_texture2, v_uv2, shade.texture_bias.z);
+    t2 = texture(u_texture2, v_uv2, TEXTURE_BIAS.z);
 #endif
 #if MODULATE && PURE_MODULATE
     vec4 result;
     result.rg = clamp(t0.rg * v_color0.rg, 0.0, 1.0);
     result.ba = clamp(t0.ba * v_color0.ba, 0.0, 1.0);
 #elif MODULATE
-    vec4 base = t0 * shade.w0 + shade.offset;
-#if TEXTURES == 2
-    base += t1 * shade.w1;
-#endif
-#if OVERLAY
-    base.rgb += shade.overlay.rgb * t1.rgb * t2.rgb;
-#endif
-    vec4 result = clamp((base * (v_color0 * shade.kv + shade.kc) + shade.d) * shade.s, 0.0, 1.0);
+#if MATERIAL_GPU
+    vec4 w0 = coefficient(0), w1 = coefficient(1), offset = coefficient(2), kv = coefficient(3), kc = coefficient(4);
+    vec4 d = coefficient(5) + material.add, s = material.scale, overlay = coefficient(6);
 #else
-    vec3 b = color_input(1, t0, t1, t2);
-#if OVERLAY
-    b += shade.overlay.rgb * t1.rgb * t2.rgb;
+    vec4 w0 = shade.w0, w1 = shade.w1, offset = shade.offset, kv = shade.kv, kc = shade.kc, d = shade.d, s = shade.s, overlay = shade.overlay;
 #endif
-    vec3 color = mix(color_input(0, t0, t1, t2), b, color_input(2, t0, t1, t2));
-    color = (color_input(3, t0, t1, t2) + shade.color_equation.x + shade.color_equation.z * color) * shade.color_equation.y;
+    vec4 base = t0 * w0 + offset;
+#if TEXTURES == 2
+    base += t1 * w1;
+#endif
+#if OVERLAY
+    base.rgb += overlay.rgb * t1.rgb * t2.rgb;
+#endif
+    vec4 result = clamp((base * (v_color0 * kv + kc) + d) * s, 0.0, 1.0);
+#else
+    vec3 b = color_input(1, SWIZZLE1, t0, t1, t2);
+#if OVERLAY
+    b += OVERLAY_SCALE.rgb * t1.rgb * t2.rgb;
+#endif
+    vec3 color = mix(color_input(0, SWIZZLE0, t0, t1, t2), b, color_input(2, SWIZZLE2, t0, t1, t2));
+    color = (color_input(3, SWIZZLE3, t0, t1, t2) + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
     float alpha = mix(alpha_input(0, t0, t1, t2), alpha_input(1, t0, t1, t2), alpha_input(2, t0, t1, t2));
-    alpha = (alpha_input(3, t0, t1, t2) + shade.alpha_equation.x + shade.alpha_equation.z * alpha) * shade.alpha_equation.y;
+    alpha = (alpha_input(3, t0, t1, t2) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
     vec4 result = clamp(vec4(color, alpha), 0.0, 1.0);
 #endif
 #if ALPHA_TEST
-    if (result.a < shade.alpha_range.x || result.a >= shade.alpha_range.y)
+    if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
 #endif
 #if FOG
@@ -398,6 +498,23 @@ struct Input {
     float4 select;
     float4 swizzle;
 };
+#if MATERIAL_GPU
+struct Pick {
+    float4 index;
+    float4 color_mask;
+    float4 alpha_mask;
+};
+struct Material {
+    float4 coefficient[9];
+    Pick pick[9];
+    float4 add;
+    float4 scale;
+    float4 equation[2];
+    float4 select[8];
+    float4 swizzle;
+};
+uniform Material material : BUFFER[2];
+#else
 struct Shade {
     float4 texture_bias;
     float4 overlay;
@@ -418,6 +535,29 @@ struct Shade {
 #endif
 };
 uniform Shade shade : BUFFER[0];
+#endif
+)CG";
+
+constexpr const char* CgAnimated = R"CG(
+#if MATERIAL_GPU
+struct Srt {
+    float4 scale_rotation;
+    float4 translation;
+};
+struct Animated {
+    float4 palette[9];
+    float4 alpha_range;
+    float4 texture_bias;
+    Srt srt[3];
+};
+uniform Animated anim : BUFFER[3];
+float2 srt2d(int role, float2 uv) {
+    float4 p = anim.srt[role].scale_rotation;
+    float2 t = anim.srt[role].translation.xy;
+    float a = p.x * p.w, b = p.x * p.z, c = p.y * p.z, d = p.y * p.w;
+    return float2(a * uv.x - b * uv.y + ((b - a * t.x) - b * t.y), c * uv.x + d * uv.y + ((-d - c * t.x) + d * t.y + 1.0f));
+}
+#endif
 )CG";
 
 constexpr const char* CgVertexCommon = R"CG(
@@ -515,6 +655,11 @@ float2 texgen(int role, float2 uv, float selector, float3 position, float3 norma
         coordinate.z = 1.0f;
     if ((bits & 2) != 0)
         coordinate = normalize(coordinate);
+#if MATERIAL_GPU
+    if ((bits & 32) != 0)
+        coordinate.xy = srt2d(role, coordinate.xy);
+    else
+#endif
     if ((bits & 8) == 0)
         coordinate = mul(float4(coordinate, 1.0f), t.post);
     return coordinate.z != 0.0f ? coordinate.xy / coordinate.z : clamp(coordinate.xy / 2.0f, -1.0f, 1.0f);
@@ -560,11 +705,42 @@ void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_c
 // Texture reads take the interpolated coordinate directly; LOD bias is in the
 // texture control words, so no read depends on fragment arithmetic.
 constexpr const char* CgFragment = R"CG(
+#if MATERIAL_GPU
+float4 coefficient(int k) {
+#if DYNAMIC
+    Pick p = material.pick[k];
+    float4 c = anim.palette[int(p.index.x)];
+    float4 a = anim.palette[int(p.index.y)];
+    return material.coefficient[k] * float4(lerp(c.rgb, dot(c, p.color_mask).xxx, p.index.z), dot(a, p.alpha_mask));
+#else
+    return material.coefficient[k];
+#endif
+}
+#define ALPHA_RANGE anim.alpha_range
+#else
+#define ALPHA_RANGE shade.alpha_range
+#endif
 #if !MODULATE
 float4 source(float4 select, float4 t0, float4 t1, float4 t2, float4 v) {
     return select.x * t0 + select.y * t1 + select.z * t2 + select.w * v;
 }
-float3 color_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
+#if MATERIAL_GPU
+float3 color_input(int i, float swizzle, float4 t0, float4 t1, float4 t2, float4 v) {
+    float4 value = source(material.select[i], t0, t1, t2, v);
+    return coefficient(i).rgb + coefficient(4 + i).rgb * lerp(value.rgb, value.aaa, swizzle);
+}
+float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
+    return coefficient(i).a + coefficient(4 + i).a * source(material.select[4 + i], t0, t1, t2, v).a;
+}
+#define SWIZZLE0 material.swizzle.x
+#define SWIZZLE1 material.swizzle.y
+#define SWIZZLE2 material.swizzle.z
+#define SWIZZLE3 material.swizzle.w
+#define COLOR_EQUATION material.equation[0]
+#define ALPHA_EQUATION material.equation[1]
+#define OVERLAY_SCALE coefficient(8)
+#else
+float3 color_input(int i, float swizzle, float4 t0, float4 t1, float4 t2, float4 v) {
     Input s = shade.color_input[i];
     float4 value = source(s.select, t0, t1, t2, v);
     return s.offset.rgb + s.scale.rgb * lerp(value.rgb, value.aaa, s.swizzle.x);
@@ -573,6 +749,14 @@ float alpha_input(int i, float4 t0, float4 t1, float4 t2, float4 v) {
     Input s = shade.alpha_input[i];
     return s.offset.a + s.scale.a * source(s.select, t0, t1, t2, v).a;
 }
+#define SWIZZLE0 0.0f
+#define SWIZZLE1 0.0f
+#define SWIZZLE2 0.0f
+#define SWIZZLE3 0.0f
+#define COLOR_EQUATION shade.color_equation
+#define ALPHA_EQUATION shade.alpha_equation
+#define OVERLAY_SCALE shade.overlay
+#endif
 #endif
 float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, float v_fog : TEXCOORD3,
             uniform sampler2D u_texture0 : TEXUNIT0, uniform sampler2D u_texture1 : TEXUNIT1, uniform sampler2D u_texture2 : TEXUNIT2) : COLOR {
@@ -592,35 +776,41 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
     result.rg = saturate(t0.rg * v.rg);
     result.ba = saturate(t0.ba * v.ba);
 #elif MODULATE
+#if MATERIAL_GPU
+    float4 w0 = coefficient(0), w1 = coefficient(1), offset = coefficient(2), kv = coefficient(3), kc = coefficient(4);
+    float4 d = coefficient(5) + material.add, s = material.scale, overlay = coefficient(6);
+#else
+    float4 w0 = shade.w0, w1 = shade.w1, offset = shade.offset, kv = shade.kv, kc = shade.kc, d = shade.d, s = shade.s, overlay = shade.overlay;
+#endif
     // Keep each arithmetic chain two components wide. The float4 chain's
     // masked upper-lane uniform MAD loses B/A on the devkit; identical RG/BA
     // equations pass the isolated native Shade-buffer readback test.
-    float2 base_rg = t0.rg * shade.w0.rg + shade.offset.rg;
-    float2 base_ba = t0.ba * shade.w0.ba + shade.offset.ba;
+    float2 base_rg = t0.rg * w0.rg + offset.rg;
+    float2 base_ba = t0.ba * w0.ba + offset.ba;
 #if TEXTURES == 2
-    base_rg += t1.rg * shade.w1.rg;
-    base_ba += t1.ba * shade.w1.ba;
+    base_rg += t1.rg * w1.rg;
+    base_ba += t1.ba * w1.ba;
 #endif
 #if OVERLAY
-    base_rg += shade.overlay.rg * t1.rg * t2.rg;
-    base_ba.x += shade.overlay.b * t1.b * t2.b;
+    base_rg += overlay.rg * t1.rg * t2.rg;
+    base_ba.x += overlay.b * t1.b * t2.b;
 #endif
     float4 result;
-    result.rg = saturate((base_rg * (v.rg * shade.kv.rg + shade.kc.rg) + shade.d.rg) * shade.s.rg);
-    result.ba = saturate((base_ba * (v.ba * shade.kv.ba + shade.kc.ba) + shade.d.ba) * shade.s.ba);
+    result.rg = saturate((base_rg * (v.rg * kv.rg + kc.rg) + d.rg) * s.rg);
+    result.ba = saturate((base_ba * (v.ba * kv.ba + kc.ba) + d.ba) * s.ba);
 #else
-    float3 b = color_input(1, t0, t1, t2, v);
+    float3 b = color_input(1, SWIZZLE1, t0, t1, t2, v);
 #if OVERLAY
-    b += shade.overlay.rgb * t1.rgb * t2.rgb;
+    b += OVERLAY_SCALE.rgb * t1.rgb * t2.rgb;
 #endif
-    float3 color = lerp(color_input(0, t0, t1, t2, v), b, color_input(2, t0, t1, t2, v));
-    color = (color_input(3, t0, t1, t2, v) + shade.color_equation.x + shade.color_equation.z * color) * shade.color_equation.y;
+    float3 color = lerp(color_input(0, SWIZZLE0, t0, t1, t2, v), b, color_input(2, SWIZZLE2, t0, t1, t2, v));
+    color = (color_input(3, SWIZZLE3, t0, t1, t2, v) + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
     float alpha = lerp(alpha_input(0, t0, t1, t2, v), alpha_input(1, t0, t1, t2, v), alpha_input(2, t0, t1, t2, v));
-    alpha = (alpha_input(3, t0, t1, t2, v) + shade.alpha_equation.x + shade.alpha_equation.z * alpha) * shade.alpha_equation.y;
+    alpha = (alpha_input(3, t0, t1, t2, v) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
     float4 result = saturate(float4(color, alpha));
 #endif
 #if ALPHA_TEST
-    if (result.a < shade.alpha_range.x || result.a >= shade.alpha_range.y)
+    if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
 #endif
 #if FOG
@@ -663,20 +853,33 @@ std::string TexgenOutputs(NativeShaderVariant variant, bool cg) {
         case NativeShaderTexgen::General:
             out += "texgen(" + r + ", a_uv" + r + ", a_select" + r + ", a_position, a_normal)";
             break;
+        case NativeShaderTexgen::Srt:
+            out += "srt2d(" + r + ", affine(" + r + ", a_uv" + r + "))";
+            break;
         }
         out += ";";
     }
     return out + "\n";
 }
 std::string VertexDefines(NativeShaderVariant variant) {
-    return Define("LIT", int(variant.lighting)) + Define("LIGHTS", variant.lights);
+    return Define("LIT", int(variant.lighting)) + Define("LIGHTS", variant.lights) + Define("MATERIAL_GPU", variant.material_gpu);
 }
 bool PureModulate(NativeShaderVariant variant) {
     return variant.pure_modulate && variant.model == NativeShaderModel::Modulate && variant.textures == 1 && !variant.overlay;
 }
+// Animated picks are evaluated by MODULATE programs only: their uniform-only
+// coefficient code fits GXM's secondary program (psp2shaderperf: +0..1 cycle).
+// BASIC already needs ~100 secondary attributes; its picks would move into the
+// per-fragment program (77 -> 184 cycles), so a BASIC material with animated
+// picks gets a per-draw resolved copy of its Material block instead. The pure
+// product reads no coefficient.
+bool Dynamic(NativeShaderVariant variant) {
+    return variant.material_gpu && variant.dynamic && variant.model == NativeShaderModel::Modulate && !PureModulate(variant);
+}
 std::string FragmentDefines(NativeShaderVariant variant) {
     return Define("MODULATE", variant.model == NativeShaderModel::Modulate) + Define("TEXTURES", variant.textures) + Define("OVERLAY", variant.overlay) + Define("ALPHA_TEST", variant.alpha_test) +
-           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog) + Define("PURE_MODULATE", PureModulate(variant)) + Define("TARGET_ALPHA_ONE", variant.target_alpha_one);
+           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog) + Define("PURE_MODULATE", PureModulate(variant)) + Define("TARGET_ALPHA_ONE", variant.target_alpha_one) +
+           Define("MATERIAL_GPU", variant.material_gpu) + Define("DYNAMIC", Dynamic(variant));
 }
 } // namespace
 
@@ -684,10 +887,11 @@ NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
     const bool mesh = variant.vertex == NativeShaderVertex::Mesh;
     const auto vertex = VertexDefines(variant), fragment = FragmentDefines(variant);
     NativeShaderSources out;
-    out.glsl_vertex = std::string(GlslPrelude) + vertex + (mesh ? TexgenOutputs(variant, false) : "") + GlslScene + GlslDraw + GlslVertexCommon + (mesh ? GlslMeshVertex : GlslGeometryVertex);
-    out.glsl_fragment = std::string(GlslPrelude) + fragment + GlslScene + GlslShade + GlslFragment;
-    out.cg_vertex = std::string(CgScene) + vertex + (mesh ? TexgenOutputs(variant, true) : "") + CgDraw + CgVertexCommon + (mesh ? CgMeshVertex : CgGeometryVertex);
-    out.cg_fragment = std::string(CgScene) + fragment + CgShade + CgFragment;
+    out.glsl_vertex = std::string(GlslPrelude) + vertex + (mesh ? TexgenOutputs(variant, false) : "") + GlslScene + GlslDraw + (mesh ? GlslAnimated : "") + GlslVertexCommon +
+                      (mesh ? GlslMeshVertex : GlslGeometryVertex);
+    out.glsl_fragment = std::string(GlslPrelude) + fragment + GlslScene + GlslShade + GlslAnimated + GlslFragment;
+    out.cg_vertex = std::string(CgScene) + vertex + (mesh ? TexgenOutputs(variant, true) : "") + CgDraw + (mesh ? CgAnimated : "") + CgVertexCommon + (mesh ? CgMeshVertex : CgGeometryVertex);
+    out.cg_fragment = std::string(CgScene) + fragment + CgShade + CgAnimated + CgFragment;
 #ifdef __vita__
     // Diagnostic stage isolation; source identity changes, so a probe never
     // reuses a cached production GXP. All shader arithmetic remains float.
@@ -727,11 +931,12 @@ std::string NativeShaderVertexName(NativeShaderVariant variant) {
         return "geometry" + light;
     std::string name = "mesh" + light + "_";
     for (const auto texgen : variant.texgen)
-        name += "niag"[unsigned(texgen)];
-    return name;
+        name += "niags"[unsigned(texgen)];
+    return name + (variant.material_gpu ? "_gpu" : "");
 }
 
 std::string NativeShaderFragmentName(NativeShaderVariant variant) {
     return std::string(variant.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(variant.textures) + (variant.overlay ? "_overlay" : "") + (PureModulate(variant) ? "_pure" : "") +
-           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "") + (variant.target_alpha_one ? "_a1" : "");
+           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "") + (variant.target_alpha_one ? "_a1" : "") +
+           (variant.material_gpu ? (Dynamic(variant) ? "_gpu_dyn" : "_gpu") : "");
 }
