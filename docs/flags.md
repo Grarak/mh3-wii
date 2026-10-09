@@ -128,7 +128,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_VERIFY`: native paths against what they replace
 
-`MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table][,replay]`
+`MH3_VERIFY=[pose][,material][,cull][,prep][,prep-image][,draw-table][,replay]`
 
 | Item | Effect |
 | --- | --- |
@@ -136,6 +136,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 | `material` | every material-GPU draw compares the coefficients its program derives from the Material and Animated blocks with `mh3_shade_fill`, and the SRT rows with the post matrices |
 | `cull` | the game-side scene cull draws every model and checks each it would have rejected (`MH3 scene cull` line) |
 | `prep` | models are prepared on the game thread (the original path) and the render thread's preparation of the captured inputs is checked against it for every dispatch |
+| `prep-image` | every model material dispatch drawn from its record's compiled draw material (kept across the record's dispatches) is compared after its shape step with one built from the record's image for this dispatch alone (its own colours, channels, indirect operator and matrix selectors), by what a draw derives from each: structure, classification, fill, palette and alpha range, texgens, the lit channel and the raster (`MH3 prep image check` lines name the differing parts, with the counts every 20,000 dispatches) |
 | `draw-table` | indexed draw items resolve by address too, compared with their draw table (`MH3 draw tables` line) |
 | `replay` | the render thread compares its material and colour registers at every material geometry draw (effects, particles, layouts) with the game thread's snapshots for that draw; `MH3 replay check` lines report the first mismatches and the counts every 65,536 draws |
 

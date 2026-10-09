@@ -28,6 +28,9 @@
 enum class ModelPrepMode : uint8_t { Deferred, Verify };
 ModelPrepMode NativeModelPrepMode();
 
+// The render thread's compiled material steps of a record (model_render_prep.cpp).
+struct ModelPrepDispatch;
+
 // A material's static dispatch inputs, immutable once captured and shared
 // with the render thread: its texture and palette object records with their
 // typed bindings, and its frozen pipeline (TEV stages, swaps and the
@@ -43,6 +46,14 @@ struct ModelPrepMaterial {
 
     // Owned by their live blocks; valid while the record is (see CaptureModelPrepMaterial).
     const NativeFrozenMaterialBlock *pipeline = nullptr, *indirect = nullptr, *texgen = nullptr;
+
+    // Render thread only: the record's material steps compiled once, whose
+    // draw material its dispatches draw from (a deleted record's draw
+    // material is copied to the Render owner first if it is the current one).
+    mutable std::unique_ptr<ModelPrepDispatch> dispatch;
+
+    ModelPrepMaterial();
+    ~ModelPrepMaterial();
 };
 
 // The texture SRT inputs of a dispatch whose material has a TEXTURE_SRT
@@ -137,6 +148,11 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
 // The frozen current version of a live typed block (an ignored material's
 // replaced indirect block).
 const NativeFrozenMaterialBlock* CaptureModelPrepBlock(uint32_t address, mh3_model_material_block kind);
+
+// A guest heap created or destroyed (an area change): the material records
+// captured from its canonical range go, with their kept dispatches. Any
+// thread; the next capture releases them.
+void RetireNativeModelPrepMaterials(uint32_t address, uint32_t bytes);
 
 // Pending G3DState::Invalidate fields since the previous capture.
 uint32_t TakeNativeModelPrepInvalidate();

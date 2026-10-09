@@ -117,8 +117,39 @@ void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to);
 void CopyNativeTextureBindings(NativeOwner from, NativeOwner to);
 void CopyNativeDrawRaster(NativeOwner from, NativeOwner to);
 bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b);
+
+// An owner with nothing known: no material fields, texture bindings or
+// palettes, the default raster (a model dispatch's compile starts Shadow there).
+void ResetNativeMaterialOwner(NativeOwner owner);
+void ResetNativeTextureBindings(NativeOwner owner);
+void ResetNativeDrawRaster(NativeOwner owner);
+
+// Replaces the owner's material fields (its post state stays).
+void SetNativeMaterialOwnerState(const mh3_native_material_state& state, NativeOwner owner);
+
+// Render thread: the Render owner's material state is `draw` (a compiled
+// model dispatch's draw material, model_render_prep.cpp) from now on: its
+// publications write it and the draws read it; nothing is copied. A full
+// material restore ends the redirect.
+void RedirectNativeRenderMaterial(mh3_native_material_state* draw);
+
+// Render thread: copies a redirected material into the owner's own and ends
+// the redirect (before a partial write, or when `draw` goes; with `draw`
+// only while redirected to it).
+void OwnNativeRenderMaterial(const mh3_native_material_state* draw = nullptr);
+
+// Republishes the owner's raster from its material's pixel fields and cull
+// mode (as a skipped pixel or genmode publication would have).
+void PublishNativeMaterialRaster(NativeOwner owner);
 #ifdef MH3_DEVELOPMENT
 #include <string>
 // Empty when equal; otherwise the differing parts.
 std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b);
+
+// What a model draw derives from a material state (structure, classification,
+// fill, palette and alpha range, the texgens below the count, the channel the
+// shading lights with, the raster its publication makes from `raster`):
+// empty when a draw from `a` and one from `b` are the same; otherwise the
+// differing parts (texgen with the fields whose known bits and values differ).
+std::string CompareNativeShadeInputs(const mh3_native_material_state& a, const mh3_native_material_state& b, const mh3_raster_state& raster);
 #endif

@@ -9,6 +9,7 @@
 #include "native_frame_packet.h"
 #include "native_shade_snapshot.h"
 #include "memory.h"
+#include "model_render_prep.h"
 #include "recomp_mod_loader.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/mh3_resource_lifetime.h"
@@ -185,6 +186,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
     DropDeferredFrees(region.address, uint64_t(region.address) + region.bytes);
     PrepareWrite(region.address, region.bytes, NativeSourceEpochProducer::HeapCreate);
     RetireHeapRange(region.address, region.bytes);
+    RetireNativeModelPrepMaterials(region.address, region.bytes);
     GuestFrame frame(cpu, 0x40);
     GuestCall call{cpu};
     call(0x804C1F20, {region.address, 0x45585048, region.address + 80, region.address + region.bytes, options});
@@ -198,6 +200,7 @@ uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     DropDeferredFrees(heap.address, heap.end);
     PrepareWrite(heap.address, heap.end - heap.address, NativeSourceEpochProducer::HeapDestroy);
     RetireHeapRange(heap.address, heap.end - heap.address);
+    RetireNativeModelPrepMaterials(heap.address, heap.end - heap.address);
     GuestFrame frame(cpu, 0x40);
     GuestCall{cpu}(0x804C20E0, {address});
     return address;

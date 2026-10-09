@@ -40,7 +40,7 @@ void Changed(NativeOwner owner = NativeOwner::Game) {
 }
 
 // Render thread: bind one recorded texture to its backend unit.
-void BindBackend(const mh3_native_texture_binding& binding) {
+void BindBackend(const mh3_native_texture_binding& binding, aurora::NativeTextureMemo* memo = nullptr) {
     auto& [palettes, textures] = T(NativeOwner::Render);
     const auto& input = binding.source;
     aurora::NativeTextureSource source;
@@ -87,7 +87,13 @@ void BindBackend(const mh3_native_texture_binding& binding) {
     }
 
     const auto& sampler = binding.sampler;
-    aurora::bind_native_texture(binding.map_id, source, {sampler.wrap_s, sampler.wrap_t, sampler.min_filter, sampler.mag_filter, sampler.anisotropy, input.min_lod, input.max_lod, sampler.lod_bias});
+    const aurora::NativeTextureSampler sampling{sampler.wrap_s, sampler.wrap_t, sampler.min_filter, sampler.mag_filter, sampler.anisotropy, input.min_lod, input.max_lod, sampler.lod_bias};
+
+    if (memo)
+        aurora::bind_native_texture(binding.map_id, source, sampling, *memo);
+    else
+        aurora::bind_native_texture(binding.map_id, source, sampling);
+
     textures[binding.map_id] = {binding, true};
 }
 } // namespace
@@ -134,7 +140,7 @@ void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette, 
     Changed(owner);
 }
 
-void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner) {
+void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner, aurora::NativeTextureMemo* memo) {
     auto& [palettes, textures] = T(owner);
 
     if (binding.map_id >= textures.size())
@@ -149,7 +155,7 @@ void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner ow
         return;
     // Deferred model preparation binds the Render backend directly.
     if (owner == NativeOwner::Render)
-        BindBackend(binding);
+        BindBackend(binding, memo);
     else
         texture = {binding, true};
 
@@ -159,6 +165,11 @@ void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner ow
 void CopyNativeTextureBindings(NativeOwner from, NativeOwner to) {
     T(to) = T(from);
     Changed(to);
+}
+
+void ResetNativeTextureBindings(NativeOwner owner) {
+    T(owner) = {};
+    Changed(owner);
 }
 
 bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b) {

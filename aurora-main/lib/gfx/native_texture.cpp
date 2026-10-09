@@ -61,6 +61,10 @@ std::array<float, 8> shaderLodBias{};
 std::array<NativeTexturePortableSampling, 8> portableSampling{};
 size_t residentBytes = 0;
 uint64_t serial = 0;
+
+// Counts the cache's erases: a memo's entry is still cached while the stamp
+// it was made at is current.
+uint64_t cacheStamp = 1;
 void owner() {
   if (!gl::on_render_thread())
     AURORA_THROW(std::runtime_error("Native texture changed outside graphics owner"));
@@ -89,6 +93,7 @@ void make_room(size_t bytes) {
 
     residentBytes -= victim->second.bytes;
     cache.erase(victim);
+    ++cacheStamp;
   }
 
   // The budget exceeds GXM's CDRAM texture arena, which has no spill: also
@@ -105,6 +110,7 @@ void make_room(size_t bytes) {
       break; // the allocation reports what is resident
     residentBytes -= victim->second.bytes;
     cache.erase(victim);
+    ++cacheStamp;
   }
 }
 
@@ -290,7 +296,21 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
   return bytes;
 }
 
-void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling) {
+namespace {
+bool SameSource(const NativeTextureSource& a, const NativeTextureSource& b) {
+  return a.bytes.data() == b.bytes.data() && a.bytes.size() == b.bytes.size() && a.palette.data() == b.palette.data() && a.palette.size() == b.palette.size() &&
+         a.width == b.width && a.height == b.height && a.levels == b.levels && a.format == b.format && a.asset == b.asset && a.palette_format == b.palette_format &&
+         a.palette_entries == b.palette_entries && a.generation == b.generation && a.palette_generation == b.palette_generation && a.mutable_source == b.mutable_source &&
+         a.original_image == b.original_image && a.original_palette == b.original_palette && a.identity == b.identity && a.owner == b.owner && a.owner_bytes == b.owner_bytes;
+}
+
+bool SameSampling(const NativeTextureSampler& a, const NativeTextureSampler& b) {
+  return a.wrap_s == b.wrap_s && a.wrap_t == b.wrap_t && a.min_filter == b.min_filter && a.mag_filter == b.mag_filter && a.anisotropy == b.anisotropy && a.min_lod == b.min_lod &&
+         a.max_lod == b.max_lod && a.lod_bias == b.lod_bias;
+}
+
+// bind_native_texture; a bind that publishes a cached entry fills `memo`.
+void bind(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling, NativeTextureMemo* memo) {
   owner();
 
   if (unit >= bindings.size())
@@ -346,7 +366,16 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     shaderLodBias[unit] = portableSampling[unit].shader_bias;
 #endif
     bindings[unit] = texture;
-    gl::bind_texture(unit, texture->gl(), gl::sampler(nativeDescriptor));
+    const GLuint samplerId = gl::sampler(nativeDescriptor);
+    gl::bind_texture(unit, texture->gl(), samplerId);
+    return samplerId;
+  };
+
+  const auto remember = [&](const Entry& entry, GLuint samplerId) {
+    if (!memo)
+      return;
+
+    *memo = {source, sampling, &entry, cacheStamp, samplerId, shaderLodBias[unit], portableSampling[unit]};
   };
 
   if (feedbackRevision) {
@@ -417,7 +446,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     found->second.used = ++serial;
     found->second.owner = source.owner;
     found->second.ownerBytes = source.owner_bytes;
-    publish(found->second.texture);
+    remember(found->second, publish(found->second.texture));
     return;
   }
 
@@ -429,6 +458,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     if (!offline && it->first.bytes == key.bytes && (it->first.generation != source.generation || it->first.asset != key.asset) && it->second.texture.use_count() == 1) {
       residentBytes -= it->second.bytes;
       it = cache.erase(it);
+      ++cacheStamp;
     } else
       ++it;
   }
@@ -488,9 +518,46 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     }
   }
 
-  cache.emplace(key, Entry{texture, allocated, ++serial, source.owner, source.owner_bytes});
+  const auto [entry, inserted] = cache.try_emplace(key, Entry{texture, allocated, ++serial, source.owner, source.owner_bytes});
   residentBytes += allocated;
-  publish(texture);
+  remember(entry->second, publish(texture));
+}
+} // namespace
+
+void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling) {
+  bind(unit, source, sampling, nullptr);
+}
+
+void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling, NativeTextureMemo& memo) {
+  if (!memo.entry || memo.stamp != cacheStamp || unit >= bindings.size() || !SameSource(memo.source, source) || !SameSampling(memo.sampling, sampling)) {
+    bind(unit, source, sampling, &memo);
+    return;
+  }
+
+  owner();
+
+  // A GPU producer's target at the image's address binds its own backing.
+  const auto identity = static_cast<const uint8_t*>(source.identity ? source.identity : source.bytes.data());
+
+  if (identity && (scene_feedback_texture_version(identity, source.width, source.height) || generated_texture_version(identity, source.width, source.height))) {
+    bind(unit, source, sampling, &memo);
+    return;
+  }
+
+  logicalBindings[unit] = {source, sampling, true};
+  shaderLodBias[unit] = sampling.lod_bias;
+
+  if (!aurora_native_frame_should_render())
+    return;
+
+  auto& entry = *static_cast<Entry*>(const_cast<void*>(memo.entry));
+  entry.used = ++serial;
+  entry.owner = source.owner;
+  entry.ownerBytes = source.owner_bytes;
+  portableSampling[unit] = memo.portable;
+  shaderLodBias[unit] = memo.shader_bias;
+  bindings[unit] = entry.texture;
+  gl::bind_texture(unit, entry.texture->gl(), memo.sampler);
 }
 
 void clear_native_textures() {
@@ -500,6 +567,7 @@ void clear_native_textures() {
   shaderLodBias = {};
   portableSampling = {};
   cache.clear();
+  ++cacheStamp;
   residentBytes = 0;
   serial = 0;
 }
@@ -571,6 +639,7 @@ bool retire_native_textures(std::vector<NativeTextureOwnerRange>& ranges) {
       retiredBytes += entry.bytes;
       residentBytes -= entry.bytes;
       it = cache.erase(it);
+      ++cacheStamp;
     } else
       ++it;
   }

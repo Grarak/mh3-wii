@@ -89,6 +89,10 @@ struct MaterialOwner {
 
     // Advances whenever a post SRT's purity or parameters change.
     uint32_t srtRevision = 0;
+
+    // Render: the draw material of the compiled model dispatch the owner's
+    // material state is while set (RedirectNativeRenderMaterial).
+    mh3_native_material_state* redirect = nullptr;
 };
 
 constinit MaterialOwner owners[NativeOwnerCount]{};
@@ -97,6 +101,11 @@ MaterialOwner& M(NativeOwner owner = NativeOwner::Game) {
 }
 
 MaterialOwner& render = owners[unsigned(NativeOwner::Render)];
+
+// The owner's material state: its own, or the one it is redirected to.
+mh3_native_material_state& Mat(MaterialOwner& m) {
+    return m.redirect ? *m.redirect : m.material;
+}
 
 // Game: the material imports the draw state's raster publications.
 constinit bool rasterObserverInstalled = false, publishingMaterialRaster = false;
@@ -248,7 +257,7 @@ struct ShadeState {
 } shade;
 
 const ShadeEntry& ShadeMaterial() {
-    const auto& material = render.material;
+    const auto& material = Mat(render);
     auto& shadeStructureDirty = render.shadeStructureDirty;
 
     if (!shadeStructureDirty && shade.last)
@@ -439,7 +448,7 @@ bool FarLight(const mh3_shader_light& light) {
 // Colour-only spot lighting with clamped diffuse gets the Spot program with the
 // active light indices packed one per nibble, flagged far when all of them are.
 ShadeLighting ShadeChannels(const mh3_shade_material& shading, mh3_shade_vertex& out) {
-    const auto& material = render.material;
+    const auto& material = Mat(render);
     const auto& lightSlots = render.lightSlots;
     const auto& channel = material.channel[(shading.quality & MH3_SHADE_CHANNEL1) ? 1 : 0];
 
@@ -757,10 +766,10 @@ uint8_t ShadeSrtRoles(const mh3_shade_material& shading, mh3_shade_gpu_srt srt[3
 
         const unsigned coordinate = shading.texture_coordinate[role];
 
-        if (coordinate >= 8 || coordinate >= render.material.texgen_count)
+        if (coordinate >= 8 || coordinate >= Mat(render).texgen_count)
             continue;
 
-        const auto& texgen = render.material.texgen[coordinate];
+        const auto& texgen = Mat(render).texgen[coordinate];
 
         if (!texgen.values[MH3_TEXGEN_DUAL_TEXTURE] || texgen.values[MH3_TEXGEN_POST_MATRIX_ROW] == 61)
             continue;
@@ -796,8 +805,8 @@ std::optional<aurora::gl::UniformBlock> ShadeAnimated(const ShadeEntry& entry, c
     }
 
     mh3_shade_gpu_animated& next = a.values[a.last ^ 1];
-    mh3_shade_gpu_palette(&render.material, &next);
-    mh3_shade_gpu_alpha_range(render.material.pixel.values, next.alpha_range);
+    mh3_shade_gpu_palette(&Mat(render), &next);
+    mh3_shade_gpu_alpha_range(Mat(render).pixel.values, next.alpha_range);
     std::memcpy(next.texture_bias, bias, sizeof next.texture_bias);
     std::memcpy(next.srt, srt, sizeof next.srt);
     a.material = materialRevision;
@@ -1036,7 +1045,7 @@ void VerifyMaterialGpu(const ShadeEntry& entry, const mh3_shade_gpu_material& ma
     ++v.draws;
     mh3_shade_draw expected;
     std::memset(&expected, 0, sizeof expected);
-    mh3_shade_fill(&entry.shading, &render.material, &expected);
+    mh3_shade_fill(&entry.shading, &Mat(render), &expected);
     mh3_shade_fragment actual;
     mh3_shade_gpu_resolve(&entry.shading, &material, &values, &actual);
     const auto& e = expected.fragment;
@@ -1096,7 +1105,7 @@ void VerifyMaterialGpu(const ShadeEntry& entry, const mh3_shade_gpu_material& ma
 
             ++v.srtRoles;
             const unsigned coordinate = entry.shading.texture_coordinate[role];
-            const unsigned slot = render.material.texgen[coordinate].values[MH3_TEXGEN_POST_MATRIX_ROW] / 3u;
+            const unsigned slot = Mat(render).texgen[coordinate].values[MH3_TEXGEN_POST_MATRIX_ROW] / 3u;
             const float* post = mesh->texture_matrices[slot];
             float row0[3], row1[3];
             mh3_shade_gpu_srt_rows(&srt[role], row0, row1);
@@ -1485,7 +1494,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     for (unsigned role = 0; role < shading.textures; ++role)
         if (shading.texture_coordinate[role] < 8)
             coordinates |= uint8_t(1u << shading.texture_coordinate[role]);
-    const auto& material = render.material;
+    const auto& material = Mat(render);
 
     // The submission itself: its material is the Render owner's (checked by
     // SubmitNativeModelMesh), and the inputs read only its metadata (bounds),
@@ -1722,7 +1731,7 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
         blocks = ShadeGpuBlocks(memory, 0, *materialBlock, *animatedBlock);
     } else {
         std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
-        mh3_shade_fill(&shading, &render.material, block);
+        mh3_shade_fill(&shading, &Mat(render), block);
         blocks = ShadeBlocks(memory, shading.model, 0);
     }
 
@@ -1823,7 +1832,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
         blocks = ShadeGpuBlocks(memory, sizeof(ShadeQuad), *materialBlock, *animatedBlock);
     } else {
         std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
-        mh3_shade_fill(&shading, &render.material, block);
+        mh3_shade_fill(&shading, &Mat(render), block);
         blocks = ShadeBlocks(memory, shading.model, sizeof(ShadeQuad));
     }
 
@@ -1892,7 +1901,7 @@ const mh3_native_material_state& GetNativeMaterialState(NativeOwner owner) {
     if (owner == NativeOwner::Game)
         ObserveRasterPublications();
 
-    return M(owner).material;
+    return Mat(M(owner));
 }
 
 void SetNativeMaterial(const mh3_native_material_state& source) {
@@ -1909,7 +1918,7 @@ void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh
         return;
 
     auto& m = M(owner);
-    auto& material = m.material;
+    auto& material = Mat(m);
 
     // Only pixel groups affect raster state. Preflight the small pixel record
     // before mutation so unsupported output features retain atomic publication.
@@ -1936,7 +1945,7 @@ void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors, 
     if (owner == NativeOwner::Game)
         ObserveRasterPublications();
 
-    if (mh3_model_matrix_overlay_unchecked(&selectors, &M(owner).material))
+    if (mh3_model_matrix_overlay_unchecked(&selectors, &Mat(M(owner))))
         Changed(NATIVE_STATE_MATERIAL, owner);
 }
 
@@ -2003,7 +2012,7 @@ namespace {
 // and republishes it with the (possibly declared) cull mode.
 void PublishPixelRaster(uint32_t cull, NativeOwner owner = NativeOwner::Game) {
     auto raster = GetNativeDrawState(owner).raster;
-    Check(mh3_material_pixel_raster_unchecked(&M(owner).material.pixel, &raster), "Native material pixel raster");
+    Check(mh3_material_pixel_raster_unchecked(&Mat(M(owner)).pixel, &raster), "Native material pixel raster");
     raster.cull_mode = cull;
     PublishMaterialRaster(raster, owner);
 }
@@ -2014,7 +2023,7 @@ void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t cha
         ObserveRasterPublications();
 
     auto& m = M(owner);
-    auto& material = m.material;
+    auto& material = Mat(m);
     PublishPixelRaster((top_known & MH3_MATERIAL_TOP_CULL) ? cull : material.cull_mode, owner);
     m.shadeStructureDirty |= (top_known & MH3_MATERIAL_TOP_TEV_COUNT) && material.tev_count != tevs;
 
@@ -2022,14 +2031,18 @@ void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t cha
         Changed(NATIVE_STATE_MATERIAL, owner);
 }
 
+void PublishNativeMaterialRaster(NativeOwner owner) {
+    PublishPixelRaster(Mat(M(owner)).cull_mode, owner);
+}
+
 void OverlayNativeMaterialChannels(const mh3_pack_channel channels[2], NativeOwner owner) {
     if (owner == NativeOwner::Game)
         ObserveRasterPublications();
 
     auto& m = M(owner);
-    PublishPixelRaster(m.material.cull_mode, owner);
+    PublishPixelRaster(Mat(m).cull_mode, owner);
 
-    if (mh3_material_overlay_channels_mutation_unchecked(&m.material, channels))
+    if (mh3_material_overlay_channels_mutation_unchecked(&Mat(m), channels))
         Changed(NATIVE_STATE_MATERIAL, owner);
 }
 
@@ -2038,9 +2051,9 @@ void OverlayNativeMaterialIndirectMatrices(const mh3_pack_indirect_matrix matric
         ObserveRasterPublications();
 
     auto& m = M(owner);
-    PublishPixelRaster(m.material.cull_mode, owner);
+    PublishPixelRaster(Mat(m).cull_mode, owner);
 
-    if (mh3_material_overlay_indirect_matrices_mutation_unchecked(&m.material, matrices))
+    if (mh3_material_overlay_indirect_matrices_mutation_unchecked(&Mat(m), matrices))
         Changed(NATIVE_STATE_MATERIAL, owner);
 }
 
@@ -2236,6 +2249,8 @@ void ApplyNativeColorSnapshot(mh3_native_material_state& m, const NativeColorSna
 }
 
 void RestoreNativeColorSnapshot(const NativeColorSnapshot& snapshot) {
+    // Partial: onto the owner's own material, which takes a redirected one first.
+    OwnNativeRenderMaterial();
     auto& m = render.material;
     ApplyNativeColorSnapshot(m, snapshot);
 
@@ -2267,9 +2282,10 @@ void CaptureNativePostSnapshot(NativePostSnapshot& out) {
 }
 
 void RestoreNativeMaterialSnapshot(const NativeMaterialSnapshot& snapshot) {
-    if (!render.shadeStructureDirty && !mh3_shade_structure_equal(&render.material, &snapshot.material))
+    if (!render.shadeStructureDirty && !mh3_shade_structure_equal(&Mat(render), &snapshot.material))
         render.shadeStructureDirty = true;
 
+    render.redirect = nullptr;
     render.material = snapshot.material;
     render.depthBeforeTexture = snapshot.depthBeforeTexture;
     Changed(NATIVE_STATE_MATERIAL, NativeOwner::Render);
@@ -2316,7 +2332,7 @@ void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to) {
 
     auto& source = M(from);
     auto& target = M(to);
-    target.material = source.material;
+    Mat(target) = Mat(source);
     target.shadeStructureDirty = source.shadeStructureDirty;
     target.depthBeforeTexture = source.depthBeforeTexture;
     target.postTextureMatrices = source.postTextureMatrices;
@@ -2325,26 +2341,128 @@ void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to) {
     Changed(NATIVE_STATE_MATERIAL, to);
     Changed(NATIVE_STATE_POST, to);
 }
+
+void ResetNativeMaterialOwner(NativeOwner owner) {
+    M(owner) = {};
+    Changed(NATIVE_STATE_MATERIAL, owner);
+    Changed(NATIVE_STATE_POST, owner);
+}
+
+void RedirectNativeRenderMaterial(mh3_native_material_state* draw) {
+    if (render.redirect == draw)
+        return;
+
+    render.redirect = draw;
+    render.shadeStructureDirty = true;
+    Changed(NATIVE_STATE_MATERIAL, NativeOwner::Render);
+}
+
+void OwnNativeRenderMaterial(const mh3_native_material_state* draw) {
+    if (!render.redirect || (draw && render.redirect != draw))
+        return;
+
+    render.material = *render.redirect;
+    render.redirect = nullptr;
+}
+
+void SetNativeMaterialOwnerState(const mh3_native_material_state& state, NativeOwner owner) {
+    auto& m = M(owner);
+    Mat(m) = state;
+    m.shadeStructureDirty = true;
+    Changed(NATIVE_STATE_MATERIAL, owner);
+}
 #ifdef MH3_DEVELOPMENT
+std::string CompareNativeShadeInputs(const mh3_native_material_state& a, const mh3_native_material_state& b, const mh3_raster_state& raster) {
+    std::string diff;
+    const auto note = [&](bool differs, const char* name) {
+        if (differs)
+            diff += std::string(" ") + name;
+    };
+
+    note(mh3_shade_structure_key(&a) != mh3_shade_structure_key(&b) || !mh3_shade_structure_equal(&a, &b), "structure");
+    mh3_shade_material x, y;
+    std::memset(&x, 0, sizeof x);
+    std::memset(&y, 0, sizeof y);
+    const uint8_t qx = mh3_shade_classify(&a, &x), qy = mh3_shade_classify(&b, &y);
+    note(qx != qy || std::memcmp(&x, &y, sizeof x), "classify");
+    mh3_shade_draw fx, fy;
+    std::memset(&fx, 0, sizeof fx);
+    std::memset(&fy, 0, sizeof fy);
+    mh3_shade_fill(&x, &a, &fx);
+    mh3_shade_fill(&x, &b, &fy);
+    note(std::memcmp(&fx, &fy, sizeof fx), "fill");
+    mh3_shade_gpu_animated px, py;
+    std::memset(&px, 0, sizeof px);
+    std::memset(&py, 0, sizeof py);
+    mh3_shade_gpu_palette(&a, &px);
+    mh3_shade_gpu_palette(&b, &py);
+    mh3_shade_gpu_alpha_range(a.pixel.values, px.alpha_range);
+    mh3_shade_gpu_alpha_range(b.pixel.values, py.alpha_range);
+    note(std::memcmp(&px, &py, sizeof px), "palette");
+    note(a.texgen_count != b.texgen_count, "texgen-count");
+    uint32_t known = 0, values = 0;
+
+    for (unsigned i = 0; i < a.texgen_count && i < 8; ++i) {
+        known |= a.texgen[i].known ^ b.texgen[i].known;
+
+        for (unsigned field = 0; field < MH3_TEXGEN_FIELD_COUNT; ++field)
+            if (a.texgen[i].values[field] != b.texgen[i].values[field])
+                values |= 1u << field;
+    }
+
+    if (known || values) {
+        char text[48];
+        std::snprintf(text, sizeof text, "texgen(known %x values %x)", unsigned(known), unsigned(values));
+        note(true, text);
+    }
+
+    const unsigned channel = (x.quality & MH3_SHADE_CHANNEL1) ? 1 : 0;
+    note(a.channel_count != b.channel_count || std::memcmp(&a.channel[channel], &b.channel[channel], sizeof a.channel[channel]), "channel");
+
+    // The clip fields are not read by model draws (only material validation).
+    mh3_raster_state rx = raster, ry = raster;
+    const auto sx = mh3_material_pixel_raster(&a.pixel, &rx), sy = mh3_material_pixel_raster(&b.pixel, &ry);
+    rx.cull_mode = a.cull_mode;
+    ry.cull_mode = b.cull_mode;
+    note(sx != sy || std::memcmp(&rx, &ry, sizeof rx), "raster");
+    return diff;
+}
+
 std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b) {
     const auto& x = M(a);
     const auto& y = M(b);
     std::string result;
-    auto material = x.material, other = y.material;
+    auto material = Mat(M(a)), other = Mat(M(b));
     material.generation = other.generation = 0;
 
     if (std::memcmp(&material, &other, sizeof material)) {
-        result += " material";
+        // Each differing field and item, '+' past a's count.
+        using S = mh3_native_material_state;
+        struct Field {
+            const char* name;
+            size_t offset, size, items;
+            uint32_t count;
+        };
+
+        const Field fields[] = {{"counts", 0, offsetof(S, tev), 1, 1},
+                                {"tev", offsetof(S, tev), sizeof(S::tev[0]), 16, material.tev_count},
+                                {"color", offsetof(S, color), sizeof(S::color[0]), 4, 4},
+                                {"konst", offsetof(S, konst), sizeof(S::konst[0]), 4, 4},
+                                {"swaps", offsetof(S, swaps), sizeof(S::swaps[0]), 4, 4},
+                                {"indirect", offsetof(S, indirect), sizeof(S::indirect[0]), 4, material.indirect_count},
+                                {"indirect-matrix", offsetof(S, indirect_matrix), sizeof(S::indirect_matrix[0]), 3, 3},
+                                {"texgen", offsetof(S, texgen), sizeof(S::texgen[0]), 8, material.texgen_count},
+                                {"channel", offsetof(S, channel), sizeof(S::channel[0]), 2, material.channel_count},
+                                {"pixel", offsetof(S, pixel), sizeof(S::pixel), 1, 1},
+                                {"clip", offsetof(S, clip_mode_known), 2, 1, 1}};
         const auto* p = reinterpret_cast<const uint8_t*>(&material);
         const auto* q = reinterpret_cast<const uint8_t*>(&other);
+        result += " material";
 
-        for (size_t i = 0; i < sizeof material; ++i)
-            if (p[i] != q[i]) {
-                char text[48];
-                std::snprintf(text, sizeof text, "@%lu(%02x/%02x)", static_cast<unsigned long>(i), p[i], q[i]);
-                result += text;
-                break;
-            }
+        for (const auto& f : fields)
+            for (size_t i = 0; i < f.items; ++i)
+                if (std::memcmp(p + f.offset + i * f.size, q + f.offset + i * f.size, f.size))
+                    result += std::string(" ") + f.name + (f.items > 1 ? std::to_string(i) : "") + (i >= f.count ? "+" : "");
     }
 
     if (x.depthBeforeTexture != y.depthBeforeTexture)
@@ -2528,7 +2646,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
 
     const auto resident = ResolveNativeModelGPU(mesh);
 
-    if (mesh.material != &render.material)
+    if (mesh.material != &Mat(render))
         MH3_THROW(std::runtime_error("Model draw material is not the render owner's"));
     // Residency and demand above stay counted: a culled mesh keeps its assets.
     if (CullNativeModelMesh(mesh))

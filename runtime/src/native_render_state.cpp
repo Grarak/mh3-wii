@@ -285,6 +285,11 @@ void CopyNativeDrawRaster(NativeOwner from, NativeOwner to) {
     D(to).rasterKnown = D(from).rasterKnown;
 }
 
+void ResetNativeDrawRaster(NativeOwner owner) {
+    D(owner).drawState.raster = DrawOwner{}.drawState.raster;
+    D(owner).rasterKnown = false;
+}
+
 void CaptureNativeDrawSnapshot(NativeDrawSnapshot& out) {
     const auto& d = D();
     out.draw = d.drawState;

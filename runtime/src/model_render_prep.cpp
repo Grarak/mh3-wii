@@ -11,19 +11,27 @@
 #include "native_graphics.h"
 #include "native_frame_packet.h"
 #include "native_material_gpu.h"
+#include "native_shade_snapshot.h"
 #include "runtime/native/adapters/model_material_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
+#include "runtime/native/mh3_material_group_publication.h"
+#include "runtime/native/mh3_material_state.h"
 #include "runtime/native/mh3_model_material_prep.h"
 #include "runtime/native/mh3_model_prepare_cache.h"
 #include "runtime/native/mh3_shade.h"
+#include <aurora/native_texture.hpp>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 #include <cstdio>
 
 namespace {
@@ -51,6 +59,17 @@ void PutWord(uint8_t* p, uint32_t value) {
 
 mh3_res_span Span(const uint8_t* data, size_t size) {
     return {data, size};
+}
+
+// Aligned word compare (memcmp is a byte loop on the Vita).
+bool SameWords(const void* a, const void* b, size_t bytes) {
+    const auto* x = static_cast<const uint32_t*>(a);
+    const auto* y = static_cast<const uint32_t*>(b);
+
+    for (size_t i = 0; i < bytes / 4; i++)
+        if (x[i] != y[i])
+            return false;
+    return true;
 }
 
 ModelPrepMirror renderMirror;
@@ -82,6 +101,11 @@ constexpr bool Frozen(unsigned kind) {
 }
 
 FastMap<uint64_t, MaterialEntry> materialEntries;
+
+// Canonical heap ranges retired since the last capture (RetireNativeModelPrepMaterials).
+std::mutex retiredMaterialsLock;
+std::vector<std::pair<uint32_t, uint32_t>> retiredMaterials;
+std::atomic<bool> materialsRetired{false};
 void ReleaseRecord(const ModelPrepMaterial* record) {
     if (!record)
         return;
@@ -104,6 +128,89 @@ void CopyObjects(uint8_t* out, const uint8_t* objects, uint32_t stride) {
         if (present & (1u << i))
             std::memcpy(out + 4 + i * stride, objects + 4 + i * stride, stride);
 }
+
+} // namespace
+
+// What a record's compiled material merge depends on besides the record: the
+// genmode and resource records present, which group versions exist, the
+// pixel version and the colour versions' known fields. Zeroed first:
+// compared as words.
+struct ModelPrepDispatchKey {
+    uint8_t genmode[8];
+    uint16_t present;
+    uint8_t groups; // 1 pixel version, 2 colour version
+    uint8_t unused;
+    uint32_t color_known[8];
+    mh3_pack_pixel_inputs pixel;
+};
+
+static_assert(sizeof(ModelPrepDispatchKey) % 4 == 0);
+
+// A dispatch's inputs its material steps publish on top of its record's: the
+// colour values, the channel inputs and lights, the indirect operator and
+// front culling. Zeroed first: compared as words (the operator up to its
+// last field).
+struct ModelPrepLive {
+    mh3_pack_tev_color color[4], konst[4];
+    uint32_t light_masks[4];
+    uint8_t channels[40], ambient[4];
+    uint8_t lights_off, indirect_operator, front_cull, unused;
+    mh3_indirect_output op;
+};
+
+static_assert(offsetof(ModelPrepLive, op) % 4 == 0);
+
+// A record's material steps compiled once (Prep::Compiled): run from nothing
+// known on the Shadow owner and merged as their publications merge (the
+// prepared fields, the pixel and the colour group versions) over an all-zero
+// material, the image. With a dispatch's own live inputs, matrix selectors
+// and shape step, a draw reads the same from the image as from the Render
+// material the draws before it left (MH3_VERIFY=prep-image), so the Render
+// owner's material is redirected to the record's draw material instead of
+// merged into.
+struct ModelPrepDispatch {
+    ModelPrepDispatchKey key;
+    mh3_native_material_state image;
+
+    // The image with the live inputs `held` and the publications of the last
+    // dispatch's shape step; `built` once it holds them.
+    mh3_native_material_state draw;
+    ModelPrepLive inputs, held; // inputs: those the image holds
+    bool built = false;
+
+    // The record's texture slots as the render thread last bound them.
+    aurora::NativeTextureMemo textures[8];
+};
+
+ModelPrepMaterial::ModelPrepMaterial() = default;
+ModelPrepMaterial::~ModelPrepMaterial() {
+    if (dispatch)
+        OwnNativeRenderMaterial(&dispatch->draw);
+}
+
+namespace {
+#ifdef MH3_DEVELOPMENT
+// Render material dispatches: drawn from their record's material, records
+// compiled (first or replacing one), dispatches that ran the steps, draw
+// materials rebuilt for other live inputs and the dispatches among them that
+// published their own colours or channels; a line every 100000.
+struct DispatchCounts {
+    uint64_t applied = 0, compiled = 0, replaced = 0, run = 0, rebuilt = 0, colors = 0, channels = 0;
+} dispatchCounts;
+
+void CountDispatch(uint64_t& counter) {
+    auto& c = dispatchCounts;
+    ++counter;
+
+    if ((c.applied + c.run) % 100000)
+        return;
+
+    std::fprintf(stderr, "MH3 model dispatches: %llu drew their record's material, %llu ran the steps; %llu records compiled (%llu replacing); draw materials rebuilt %llu, with their colours %llu, channels %llu\n",
+                 static_cast<unsigned long long>(c.applied), static_cast<unsigned long long>(c.run), static_cast<unsigned long long>(c.compiled),
+                 static_cast<unsigned long long>(c.replaced), static_cast<unsigned long long>(c.rebuilt), static_cast<unsigned long long>(c.colors),
+                 static_cast<unsigned long long>(c.channels));
+}
+#endif
 
 // One dispatch's execution context.
 // Group publication sources of the Render and Shadow owners.
@@ -280,11 +387,44 @@ void TraceTextureSrt(uint32_t resource, uint32_t material, const mh3_native_text
 }
 #endif
 
+void LiveOf(const ModelPrepInputs& in, ModelPrepLive& live) {
+    std::memset(&live, 0, sizeof live);
+
+    if (in.colors) {
+        std::memcpy(live.color, in.colors->color, sizeof live.color);
+        std::memcpy(live.konst, in.colors->konst, sizeof live.konst);
+    }
+
+    std::memcpy(live.light_masks, in.light_masks, sizeof live.light_masks);
+    std::memcpy(live.channels, in.channels, sizeof live.channels);
+    std::memcpy(live.ambient, in.ambient, sizeof live.ambient);
+    live.lights_off = (in.flags & 8) != 0;
+    live.front_cull = (in.flags & 4) != 0;
+    live.indirect_operator = in.indirect_operator;
+
+    if (in.indirect_operator)
+        std::memcpy(&live.op, &in.op, sizeof live.op);
+}
+
+bool SameLive(const ModelPrepLive& a, const ModelPrepLive& b) {
+    return SameWords(&a, &b, offsetof(ModelPrepLive, op)) && (!a.indirect_operator || !std::memcmp(&a.op, &b.op, offsetof(mh3_indirect_output, light_mask) + 1));
+}
+
 struct Prep {
     NativeOwner owner;
     ModelPrepMirror& m;
     const ModelPrepInputs& in;
     const ModelPrepSrt* srt;
+
+    // Without `publish` the material steps keep only the mirror's
+    // bookkeeping, binds and depth mode and note in `raster` whether a skipped
+    // publication would have republished the raster. `top`: the top fields
+    // the genmode publications wrote.
+    bool publish = true, raster = false;
+    uint32_t top = 0;
+
+    // A compiled dispatch's texture memos (Render).
+    aurora::NativeTextureMemo* memos = nullptr;
     uint8_t& sync() { return *m.At(Sync, 1).data; }
     mh3_model_genmode Mode() {
         mh3_model_genmode mode{};
@@ -294,12 +434,19 @@ struct Prep {
 
     void PublishGenmode(bool xf) {
         mh3_model_genmode value{};
-        uint32_t top = 0;
+        uint32_t fields = 0;
         int apply = 0;
-        Checked(mh3_model_genmode_publish_counts(m.At(Genmode, 12), xf, &value, &top, &apply));
+        Checked(mh3_model_genmode_publish_counts(m.At(Genmode, 12), xf, &value, &fields, &apply));
 
-        if (apply)
-            OverlayNativeMaterialTop(top, value.texgens, value.channels, value.tevs, value.indirect, value.cull, owner);
+        if (!apply)
+            return;
+
+        top |= fields;
+
+        if (publish)
+            OverlayNativeMaterialTop(fields, value.texgens, value.channels, value.tevs, value.indirect, value.cull, owner);
+        else
+            raster = true;
     }
 
     // The captured pixel/colour group version as a material state; a group's
@@ -326,8 +473,10 @@ struct Prep {
 
         sync() = 0;
 
-        if (count)
+        if (count && publish)
             OverlayNativeModelMaterialGroup(fields, kind, count, owner);
+        else if (count)
+            raster |= kind == MH3_MODEL_MATERIAL_PIXEL;
 
         if (xf)
             PublishGenmode(true);
@@ -368,7 +517,10 @@ struct Prep {
         m.coordinate_map_known = block.texcoord_known;
         PublishGenmode(false);
         sync() = 0;
-        OverlayNativeModelMaterialGroup(block.fields, MH3_MODEL_MATERIAL_PIPELINE, 1, owner);
+
+        if (publish)
+            OverlayNativeModelMaterialGroup(block.fields, MH3_MODEL_MATERIAL_PIPELINE, 1, owner);
+
         PutWord(m.At(::Pipeline, 4).data, resource);
         m.pipeline_address = resource;
         m.pipeline_revision = generation;
@@ -378,9 +530,11 @@ struct Prep {
     void Indirect() {
         Group(in.indirect, MH3_MODEL_MATERIAL_INDIRECT);
 
-        if (!in.indirect_operator)
-            return;
+        if (in.indirect_operator && publish)
+            IndirectOperator();
+    }
 
+    void IndirectOperator() {
         mh3_pack_indirect_matrix base[3]{}, matrices[3];
 
         if (in.indirect)
@@ -414,7 +568,7 @@ struct Prep {
 
             auto binding = record.textures[i];
             binding.map_id = i;
-            BindNativeTexture(binding, owner);
+            BindNativeTexture(binding, owner, memos ? &memos[i] : nullptr);
 
             if (changed & (1u << i)) {
                 if (binding.source.width > UINT16_MAX || binding.source.height > UINT16_MAX)
@@ -432,10 +586,18 @@ struct Prep {
         }
     }
 
-    void Channels() {
+    void OverlayChannels() {
         mh3_pack_channel channels[2];
         Checked(mh3_model_channels_prepare_channels(Span(in.channels, 40), Mode().channels, in.light_masks, in.ambient, (in.flags & 8) != 0, channels));
         OverlayNativeMaterialChannels(channels, owner);
+    }
+
+    void Channels() {
+        if (publish)
+            OverlayChannels();
+        else
+            raster = true;
+
         PublishGenmode(true);
     }
 
@@ -489,8 +651,68 @@ struct Prep {
 
         Group(in.record ? in.record->texgen : nullptr, MH3_MODEL_MATERIAL_TEXGEN, true);
 
-        if (has(MH3_MAT_TEXTURE_SRT))
+        if (has(MH3_MAT_TEXTURE_SRT) && publish)
             Srt();
+    }
+
+    bool SameChannels(const ModelPrepLive& live) const {
+        return !std::memcmp(live.channels, in.channels, sizeof live.channels) && !std::memcmp(live.light_masks, in.light_masks, sizeof live.light_masks) &&
+               !std::memcmp(live.ambient, in.ambient, sizeof live.ambient) && live.lights_off == ((in.flags & 8) != 0);
+    }
+
+    // The material steps of a compiled record: the steps without their
+    // publications, then the Render owner's material is the record's draw
+    // material, rebuilt from the image when the live inputs differ from the
+    // ones it holds; the raster the skipped publications would have
+    // republished, and the texture SRT.
+    void Compiled(ModelPrepDispatch& d) {
+        publish = false;
+        memos = d.textures;
+        Material();
+        memos = nullptr;
+        publish = true;
+        ModelPrepLive live;
+        LiveOf(in, live);
+        RedirectNativeRenderMaterial(&d.draw);
+
+        if (!d.built || !SameLive(live, d.held)) {
+#ifdef MH3_DEVELOPMENT
+            ++dispatchCounts.rebuilt;
+#endif
+            SetNativeMaterialOwnerState(d.image, owner);
+            Live(d);
+            d.held = live;
+            d.built = true;
+        }
+
+        if (raster || in.indirect_operator)
+            PublishNativeMaterialRaster(owner);
+
+        if (in.present & (1u << MH3_MAT_TEXTURE_SRT))
+            Srt();
+    }
+
+    // Onto the image: the colours and channels where they differ from the
+    // image's, and the indirect operator.
+    void Live(const ModelPrepDispatch& d) {
+        if (in.colors && !(SameWords(d.inputs.color, in.colors->color, sizeof d.inputs.color) && SameWords(d.inputs.konst, in.colors->konst, sizeof d.inputs.konst))) {
+#ifdef MH3_DEVELOPMENT
+            if (owner == NativeOwner::Render)
+                ++dispatchCounts.colors;
+#endif
+            OverlayNativeModelMaterialGroup(GroupState(MH3_MODEL_MATERIAL_COLORS), MH3_MODEL_MATERIAL_COLORS, 1, owner);
+        }
+
+        if ((in.present & (1u << MH3_MAT_CHANNELS)) && !SameChannels(d.inputs)) {
+#ifdef MH3_DEVELOPMENT
+            if (owner == NativeOwner::Render)
+                ++dispatchCounts.channels;
+#endif
+            OverlayChannels();
+        }
+
+        if (in.indirect_operator)
+            IndirectOperator();
     }
 
     void PublishRows(const uint32_t rows[8]) {
@@ -549,6 +771,150 @@ struct Prep {
         out.coordinate_sizes = m.coordinate_sizes;
     }
 };
+
+// What a compiled record merges into its image: the prepared fields with
+// the top fields their genmode publications wrote, then the pixel and colour
+// group versions in `groups`.
+void MergePrepared(mh3_native_material_state& state, const mh3_native_material_state& prepared, uint32_t top, const mh3_native_material_state& groups, uint8_t present) {
+    mh3_material_state_overlay_mutation_unchecked(&state, &prepared, top);
+
+    if (present & 1)
+        mh3_material_group_publish_mutation_unchecked(&state, &groups, MH3_MODEL_MATERIAL_PIXEL, 1);
+
+    if (present & 2)
+        mh3_material_group_publish_mutation_unchecked(&state, &groups, MH3_MODEL_MATERIAL_COLORS, 1);
+}
+
+ModelPrepMirror compileMirror;
+
+void KeyOf(const ModelPrepInputs& in, ModelPrepDispatchKey& key) {
+    std::memset(&key, 0, sizeof key);
+    std::memcpy(key.genmode, in.genmode, sizeof key.genmode);
+    key.present = in.present;
+    key.groups = uint8_t((in.pixel ? 1 : 0) | (in.colors ? 2 : 0));
+
+    if (in.colors)
+        for (unsigned i = 0; i < 4; i++) {
+            key.color_known[i] = in.colors->color[i].known;
+            key.color_known[4 + i] = in.colors->konst[i].known;
+        }
+    if (in.pixel)
+        std::memcpy(&key.pixel, &in.pixel->pixel, sizeof key.pixel);
+}
+
+// Compiles the record's image for `key` (see ModelPrepDispatch).
+void Compile(const ModelPrepInputs& in, const ModelPrepDispatchKey& key, ModelPrepDispatch& d) {
+    d.key = key;
+    d.built = false;
+
+    // The steps from nothing known on the Shadow owner, without the texture
+    // SRT and the indirect operator.
+    ResetNativeMaterialOwner(NativeOwner::Shadow);
+    ResetNativeTextureBindings(NativeOwner::Shadow);
+    ResetNativeDrawRaster(NativeOwner::Shadow);
+    compileMirror = {};
+    compileMirror.Invalidate(0x7ff);
+    ModelPrepInputs steps = in;
+    steps.present &= uint16_t(~(1u << MH3_MAT_TEXTURE_SRT));
+    steps.indirect_operator = false;
+    Prep build{NativeOwner::Shadow, compileMirror, steps, nullptr};
+    build.Material();
+
+    // The group versions merge on their own, as their publications would.
+    mh3_native_material_state prepared = GetNativeMaterialState(NativeOwner::Shadow);
+    prepared.pixel.known = 0;
+
+    for (unsigned i = 0; i < 4; i++)
+        prepared.color[i].known = prepared.konst[i].known = 0;
+
+    auto& groups = groupStates[1];
+
+    if (in.pixel)
+        std::memcpy(&groups.pixel, &in.pixel->pixel, sizeof groups.pixel);
+
+    if (in.colors) {
+        std::memcpy(groups.color, in.colors->color, sizeof groups.color);
+        std::memcpy(groups.konst, in.colors->konst, sizeof groups.konst);
+    }
+
+    std::memset(&d.image, 0, sizeof d.image);
+    MergePrepared(d.image, prepared, build.top, groups, key.groups);
+    LiveOf(steps, d.inputs);
+    d.inputs.front_cull = 0;
+}
+
+// A material dispatch whose genmode record selects the counts its
+// publications read (otherwise the mirror's, left by the draws before it,
+// would) draws from its compiled record on Render.
+bool Compilable(NativeOwner owner, const ModelPrepInputs& in) {
+    return owner == NativeOwner::Render && in.material && in.record && (in.present & (1u << MH3_MAT_GENERAL_MODE)) && in.indirect == in.record->indirect;
+}
+
+// The record's compiled dispatch, compiled first when the record has none
+// for the dispatch's key.
+ModelPrepDispatch& CompiledDispatch(const ModelPrepInputs& in) {
+    ModelPrepDispatchKey key;
+    KeyOf(in, key);
+    auto& d = in.record->dispatch;
+
+    if (d && SameWords(&d->key, &key, sizeof key))
+        return *d;
+#ifdef MH3_DEVELOPMENT
+    if (d)
+        ++dispatchCounts.replaced;
+
+    ++dispatchCounts.compiled;
+#endif
+    if (!d)
+        d = std::make_unique<ModelPrepDispatch>();
+
+    Compile(in, key, *d);
+    return *d;
+}
+#ifdef MH3_DEVELOPMENT
+
+// MH3_VERIFY=prep-image: a compiled dispatch's draw material (the record's,
+// kept across its dispatches) against one built for this dispatch alone: the
+// image with the dispatch's own colours, channels, indirect operator and
+// matrix selectors on the Shadow owner, compared after the shape step by
+// what a draw derives from each (the raster from the one before the
+// dispatch); a line every 20000 dispatches.
+struct ImageCheck {
+    uint64_t checked = 0, equal = 0;
+    std::unordered_map<std::string, uint64_t> diffs;
+} imageCheck;
+
+bool ImageCheckEnabled() {
+    static const bool enabled = VerifyOptions().Has("prep-image");
+    return enabled;
+}
+
+void CheckImage(const Prep& rendered, const ModelPrepDispatch& d, const mh3_raster_state& raster) {
+    auto& c = imageCheck;
+    SetNativeMaterialOwnerState(d.image, NativeOwner::Shadow);
+    Prep image{NativeOwner::Shadow, rendered.m, rendered.in, rendered.srt};
+    image.Live(d);
+    SetNativeModelMatrixSelectors(rendered.m.selectors, NativeOwner::Shadow);
+    const std::string diff = CompareNativeShadeInputs(GetNativeMaterialState(NativeOwner::Render), GetNativeMaterialState(NativeOwner::Shadow), raster);
+    ++c.checked;
+
+    if (diff.empty())
+        ++c.equal;
+    else if (c.diffs[diff]++ < 3)
+        std::fprintf(stderr, "MH3 prep image check: material %08x present %x:%s\n", rendered.in.record->pipeline_address, rendered.in.present, diff.c_str());
+
+    if (c.checked % 20000)
+        return;
+
+    std::string top;
+
+    for (const auto& [text, count] : c.diffs)
+        top += " [" + std::to_string(count) + ":" + text + " ]";
+
+    std::fprintf(stderr, "MH3 prep image check: %llu compiled dispatches, %llu draw the same as from their image alone;%s\n", static_cast<unsigned long long>(c.checked),
+                 static_cast<unsigned long long>(c.equal), top.c_str());
+}
+#endif
 } // namespace
 
 void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block) {
@@ -638,17 +1004,6 @@ void NoteNativeModelPrepInvalidate(uint32_t fields) {
 }
 
 namespace {
-// Aligned word compare (memcmp is a byte loop on the Vita).
-bool SameWords(const void* a, const void* b, size_t bytes) {
-    const auto* x = static_cast<const uint32_t*>(a);
-    const auto* y = static_cast<const uint32_t*>(b);
-
-    for (size_t i = 0; i < bytes / 4; i++)
-        if (x[i] != y[i])
-            return false;
-    return true;
-}
-
 const uint8_t* Bytes(uint32_t address, size_t size) {
     return static_cast<const uint8_t*>(Memory::GetPointer(address, size));
 }
@@ -720,7 +1075,43 @@ const NativeFrozenMaterialBlock* CaptureModelPrepBlock(uint32_t address, mh3_mod
     return FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(address, kind));
 }
 
+void RetireNativeModelPrepMaterials(uint32_t address, uint32_t bytes) {
+    std::lock_guard guard(retiredMaterialsLock);
+    retiredMaterials.emplace_back(address, bytes);
+    materialsRetired.store(true, std::memory_order_release);
+}
+
+namespace {
+// Releases the records whose material was in a retired heap range.
+void ReleaseRetiredMaterials() {
+    std::vector<std::pair<uint32_t, uint32_t>> ranges;
+    {
+        std::lock_guard guard(retiredMaterialsLock);
+        ranges.swap(retiredMaterials);
+        materialsRetired.store(false, std::memory_order_relaxed);
+    }
+
+    materialEntries.erase_if([&](auto& item) {
+        uint32_t material;
+
+        if (mh3_source_canonical_address(item.second.material, 1, &material) != MH3_RES_OK)
+            return false;
+
+        for (const auto& [address, bytes] : ranges)
+            if (material - address < bytes) {
+                ReleaseRecord(item.second.record);
+                return true;
+            }
+
+        return false;
+    });
+}
+} // namespace
+
 void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scope& scope, ModelPrepSrtList& srts) {
+    if (materialsRetired.load(std::memory_order_acquire)) [[unlikely]]
+        ReleaseRetiredMaterials();
+
     const auto& slots = scope.selected.resource_slots;
     in.present = 0;
 
@@ -880,11 +1271,35 @@ void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPre
 
     Prep prep{owner, mirror, in, srt};
 
-    if (in.material)
-        prep.Material();
-    else if (in.indirect_operator)
-        prep.Indirect();
+    ModelPrepDispatch* compiled = Compilable(owner, in) ? &CompiledDispatch(in) : nullptr;
+#ifdef MH3_DEVELOPMENT
+    const mh3_raster_state raster = GetNativeDrawState(NativeOwner::Render).raster;
+#endif
+    if (compiled) {
+#ifdef MH3_DEVELOPMENT
+        CountDispatch(dispatchCounts.applied);
+#endif
+        prep.Compiled(*compiled);
+    } else {
+        // The steps publish onto the Render owner's own material.
+        if (owner == NativeOwner::Render)
+            OwnNativeRenderMaterial();
+
+        if (in.material) {
+#ifdef MH3_DEVELOPMENT
+            if (owner == NativeOwner::Render)
+                CountDispatch(dispatchCounts.run);
+#endif
+            prep.Material();
+        } else if (in.indirect_operator)
+            prep.Indirect();
+    }
 
     if (in.visible && shape)
         prep.Shape(direct_position, direct_normal, *shape);
+#ifdef MH3_DEVELOPMENT
+    if (compiled && ImageCheckEnabled()) [[unlikely]]
+        CheckImage(prep, *compiled, raster);
+#endif
 }
+

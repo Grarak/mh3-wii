@@ -65,6 +65,22 @@ struct NativeTexturePortableSampling {
 
 NativeTexturePortableSampling native_texture_portable_sampling(uint32_t unit);
 
+// A bind's resolution kept by its caller (a material record's texture). While
+// the same source and sampling bind through it and the cache still holds the
+// texture it resolved, a bind reuses it instead of looking it up again.
+struct NativeTextureMemo {
+  NativeTextureSource source{};
+  NativeTextureSampler sampling{};
+  const void* entry = nullptr;
+  uint64_t stamp = 0;
+  uint32_t sampler = 0;
+  float shader_bias = 0;
+  NativeTexturePortableSampling portable{};
+};
+
+// bind_native_texture through `memo`, which a full bind refreshes.
+void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling, NativeTextureMemo& memo);
+
 // Reapply logical bindings after presentation changed the backend's units.
 void restore_native_textures();
 void clear_native_textures();

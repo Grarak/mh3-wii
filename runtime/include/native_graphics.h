@@ -41,8 +41,14 @@ void SetNativeRasterObserver(NativeRasterObserver observer);
 // Skipped frames perform no GPU work, allocation, scene switch or wait.
 void ClearNativeDepthTarget();
 
+namespace aurora {
+struct NativeTextureMemo;
+}
+
 // Game: records a binding; the render thread binds the backend on restore.
-void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner = NativeOwner::Game);
+// Render: binds the backend now, through `memo` when given (a material
+// record's slot: aurora::bind_native_texture reuses its last resolution).
+void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner = NativeOwner::Game, aurora::NativeTextureMemo* memo = nullptr);
 const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit, NativeOwner owner = NativeOwner::Game);
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);
 void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette, NativeOwner owner = NativeOwner::Game);
