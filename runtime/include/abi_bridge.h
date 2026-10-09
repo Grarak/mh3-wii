@@ -863,12 +863,13 @@ class AbiTrampoline<Ret(Args...)> {
                 uint32_t argAddr = sp + 8 + static_cast<uint32_t>(stackArgIndex * 4);
                 gprIndex++;
 
-                try {
-                    return static_cast<CleanT>(Memory::Read32(argAddr));
-                } catch (const Memory::AccessViolation&) {
-                    RT_LOG(RT_TAG_RUNTIME) << "Stack parameter read failed at 0x" << std::hex << argAddr << " (SP=0x" << sp << ", argIndex=" << std::dec << (gprIndex - 1) << ")" << std::endl;
-                    throw;
-                }
+                uint32_t value;
+
+                if (Memory::TryRead32(argAddr, value))
+                    return static_cast<CleanT>(value);
+
+                RT_LOG(RT_TAG_RUNTIME) << "Stack parameter read failed at 0x" << std::hex << argAddr << " (SP=0x" << sp << ", argIndex=" << std::dec << (gprIndex - 1) << ")" << std::endl;
+                return static_cast<CleanT>(Memory::Read32(argAddr)); // raises the access violation
             }
 
             return static_cast<CleanT>(cpu->gpr[3 + gprIndex++]);

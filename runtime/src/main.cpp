@@ -460,12 +460,6 @@ int main(int argc, char** argv) {
         InvokeIndirectCpu(0x80006310, &cpu);
         std::cout << "MH3 entry returned\n";
         return 0;
-    } catch (const HostQuit&) {
-        // Out at once: the audio and render threads are still running, so no
-        // static destructors.
-        std::cerr << "MH3: window closed\n";
-        std::fflush(nullptr);
-        std::_Exit(0);
     } catch (const std::exception& error) {
         std::cerr << "MH3 runtime stopped: " << error.what() << '\n';
         SystemBridge::DumpCpuState(&GetPersistentCpuContext());

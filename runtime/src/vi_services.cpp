@@ -6,6 +6,7 @@
 #include "os_alarm.h"
 #include "controller_host.h"
 #include "recomp_mod_loader.h"
+#include "scope_exit.h"
 #include <chrono>
 #include <thread>
 #include <cstdio>
@@ -39,8 +40,11 @@ void ServiceVideoRetrace(CpuContext* cpu) {
     const auto saved = *cpu;
     const uint32_t before = Memory::Read32(saved.gpr[13] - 0x379C);
     BeginVideoRetrace();
-
-    try {
+    {
+        ScopeExit end([&] {
+            EndVideoRetrace();
+            *cpu = saved;
+        });
         cpu->msr &= ~0x8000u;
         cpu->gpr[3] = 24;
         cpu->gpr[4] = Memory::Read32(0x800000D4);
@@ -49,14 +53,8 @@ void ServiceVideoRetrace(CpuContext* cpu) {
             throw std::runtime_error("VI retrace has no valid guest OS context");
 
         InvokeIndirectCpu(0x804E6F30, cpu);
-    } catch (...) {
-        EndVideoRetrace();
-        *cpu = saved;
-        throw;
     }
 
-    EndVideoRetrace();
-    *cpu = saved;
     const uint32_t after = Memory::Read32(saved.gpr[13] - 0x379C);
 
     if (after != before + 1)

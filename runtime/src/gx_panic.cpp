@@ -66,41 +66,38 @@ _Unwind_Reason_Code NativeFrame(_Unwind_Context* context, void* value) {
 
     std::fprintf(stderr, "Guest backtrace (LR and saved caller links):\n");
 
-    try {
-        if (cpu) {
-            GuestLocation("LR", cpu->lr);
-            GuestLocation("PC", cpu->pc);
-            std::fprintf(stderr, "  SP 0x%08x, r3..r10", cpu->gpr[1]);
+    // Each frame is read only once Memory::Contains holds: nothing here fails.
+    if (cpu) {
+        GuestLocation("LR", cpu->lr);
+        GuestLocation("PC", cpu->pc);
+        std::fprintf(stderr, "  SP 0x%08x, r3..r10", cpu->gpr[1]);
 
-            for (unsigned i = 3; i <= 10; ++i)
-                std::fprintf(stderr, " %08x", cpu->gpr[i]);
+        for (unsigned i = 3; i <= 10; ++i)
+            std::fprintf(stderr, " %08x", cpu->gpr[i]);
 
-            std::fputc('\n', stderr);
-            uint32_t stack = cpu->gpr[1];
+        std::fputc('\n', stderr);
+        uint32_t stack = cpu->gpr[1];
 
-            for (unsigned depth = 0; depth < 48; ++depth) {
-                if ((stack & 3) || !Memory::Contains(stack, 4))
-                    break;
+        for (unsigned depth = 0; depth < 48; ++depth) {
+            if ((stack & 3) || !Memory::Contains(stack, 4))
+                break;
 
-                const uint32_t parent = Memory::Read32(stack);
+            const uint32_t parent = Memory::Read32(stack);
 
-                if ((parent & 3) || parent <= stack || parent - stack > 0x100000 || !Memory::Contains(parent, 8))
-                    break;
-                // PPC saves a function's incoming LR in its caller's linkage
-                // area, above the backchain, rather than at current SP + 4.
-                const uint32_t link = Memory::Read32(parent + 4);
+            if ((parent & 3) || parent <= stack || parent - stack > 0x100000 || !Memory::Contains(parent, 8))
+                break;
+            // PPC saves a function's incoming LR in its caller's linkage
+            // area, above the backchain, rather than at current SP + 4.
+            const uint32_t link = Memory::Read32(parent + 4);
 
-                if (!link)
-                    break;
+            if (!link)
+                break;
 
-                GuestLocation("caller", link);
-                stack = parent;
-            }
-        } else {
-            std::fprintf(stderr, "  No active guest CPU context\n");
+            GuestLocation("caller", link);
+            stack = parent;
         }
-    } catch (...) {
-        std::fprintf(stderr, "  Guest backtrace stopped at an unreadable frame\n");
+    } else {
+        std::fprintf(stderr, "  No active guest CPU context\n");
     }
 
     std::fprintf(stderr, "Native backtrace (symbolize addresses against this build's ELF):\n");

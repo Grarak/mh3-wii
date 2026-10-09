@@ -5,6 +5,7 @@
 #include "ios_host.h"
 #include "timebase_contract.h"
 #include "video_interface.h"
+#include "scope_exit.h"
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -33,26 +34,20 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
         throw std::runtime_error("OSSleepTicks deadline exceeds host clock range");
 
     const auto deadline = start + duration;
+    ScopeExit restore([&] { *cpu = saved; });
 
-    try {
-        do {
-            if (Memory::Read32(saved.gpr[13] - 14984))
-                throw std::runtime_error("OSSleepTicks requires runnable guest thread switching");
+    do {
+        if (Memory::Read32(saved.gpr[13] - 14984))
+            throw std::runtime_error("OSSleepTicks requires runnable guest thread switching");
 
-            pump();
-            *cpu = saved;
-
-            if (Clock::now() >= deadline)
-                break;
-
-            std::this_thread::sleep_until(std::min(deadline, Clock::now() + std::chrono::milliseconds(1)));
-        } while (true);
-    } catch (...) {
+        pump();
         *cpu = saved;
-        throw;
-    }
 
-    *cpu = saved;
+        if (Clock::now() >= deadline)
+            break;
+
+        std::this_thread::sleep_until(std::min(deadline, Clock::now() + std::chrono::milliseconds(1)));
+    } while (true);
 }
 } // namespace
 

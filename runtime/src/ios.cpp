@@ -3,6 +3,7 @@
 #include "disc_image.h"
 #include "asset_cache.h"
 #include "guest_call.h"
+#include "scope_exit.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <aurora/thread_role.hpp>
 #include <cstring>
@@ -134,8 +135,8 @@ class DiscReader {
                 continue; // answered by Break
             guard.unlock();
 
-            if (reply.failure)
-                std::rethrow_exception(reply.failure);
+            if (!reply.failure.empty())
+                throw std::runtime_error(reply.failure);
 
             if (reply.length) {
                 std::memcpy(Memory::GetPointer(reply.output, reply.length), reply.data.data(), reply.length);
@@ -201,7 +202,7 @@ class DiscReader {
         int32_t result;
         bool ready, taken = false, broken = false;
         std::vector<uint8_t> data;
-        std::exception_ptr failure;
+        std::string failure; // why the read failed
         DiscRequest request;
 #ifdef MH3_DEVELOPMENT
         Clock::time_point submitted;
@@ -238,7 +239,7 @@ class DiscReader {
 
     // Reader thread: a chunk, from the read-ahead of its request as far as
     // that has it; sets up the read-ahead of the rest of the request.
-    std::vector<uint8_t> Fetch(const Reply& reply, bool& hit) {
+    Status Fetch(const Reply& reply, bool& hit, std::vector<uint8_t>& data) {
         const uint64_t offset = reply.offset, stop = offset + reply.length;
         Ahead* ahead = nullptr;
 
@@ -249,7 +250,7 @@ class DiscReader {
                 else
                     a = {}; // the block's earlier request
             }
-        std::vector<uint8_t> data;
+        data.clear();
         hit = ahead && ahead->Size() >= reply.length;
 
         if (ahead) {
@@ -259,7 +260,8 @@ class DiscReader {
         }
 
         if (data.size() < reply.length) {
-            const auto rest = Disc().Read(offset + data.size(), uint32_t(reply.length - data.size()));
+            std::vector<uint8_t> rest;
+            MH3_RETURN_IF_ERROR(Disc().TryRead(offset + data.size(), uint32_t(reply.length - data.size()), rest));
             data.insert(data.end(), rest.begin(), rest.end());
 
             if (ahead)
@@ -270,7 +272,7 @@ class DiscReader {
             if (ahead)
                 *ahead = {};
 
-            return data;
+            return {};
         }
 
         if (!ahead) {
@@ -282,7 +284,7 @@ class DiscReader {
         }
 
         ahead->used = ++aheadUses;
-        return data;
+        return {};
     }
 
     // Reader thread, unlocked: reads the next piece of a request's rest; false
@@ -353,20 +355,17 @@ class DiscReader {
             const uint32_t length = next->length;
             guard.unlock();
             std::vector<uint8_t> data;
-            std::exception_ptr failure;
             const auto start = Clock::now();
             auto read = start;
             bool hit = false;
+            const Status fetched = Fetch(*next, hit, data);
 
-            try {
-                data = Fetch(*next, hit);
+            if (fetched.ok()) {
                 read = Clock::now();
 
                 if (auto* cache = GameAssetCache())
                     while (!cache->Converted(offset, length, std::chrono::milliseconds(20)) && !stopping) {
                     }
-            } catch (...) {
-                failure = std::current_exception();
             }
 
             guard.lock();
@@ -377,7 +376,7 @@ class DiscReader {
             (void)hit;
 #endif
             next->data = std::move(data);
-            next->failure = failure;
+            next->failure = fetched.message();
             next->ready = true;
             changed.notify_all();
         }
@@ -1714,17 +1713,10 @@ void PumpIosCompletions(CpuContext* ctx) {
             break;
 
         const CpuContext saved = *ctx;
-
-        try {
-            ctx->gpr[3] = completion->result;
-            ctx->gpr[4] = completion->argument;
-            InvokeIndirectCpu(completion->callback, ctx);
-        } catch (...) {
-            *ctx = saved;
-            throw;
-        }
-
-        *ctx = saved;
+        ScopeExit restore([&] { *ctx = saved; });
+        ctx->gpr[3] = completion->result;
+        ctx->gpr[4] = completion->argument;
+        InvokeIndirectCpu(completion->callback, ctx);
     }
 }
 

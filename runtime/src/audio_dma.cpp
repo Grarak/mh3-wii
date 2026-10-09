@@ -1,6 +1,7 @@
 #include "abi_bridge.h"
 #include "audio_dma.h"
 #include "audio_dma_statistics.h"
+#include "scope_exit.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -143,16 +144,8 @@ void ServiceAudioDma(CpuContext* cpu) {
 
         if (callback) {
             Memory::Write32(busy, 1);
-
-            try {
-                InvokeIndirectCpu(callback, cpu);
-                Memory::Write32(busy, 0);
-            } catch (...) {
-                Memory::Write32(busy, 0);
-                throw;
-            }
-
-            Memory::Write32(busy, 0);
+            ScopeExit idle([&] { Memory::Write32(busy, 0); });
+            InvokeIndirectCpu(callback, cpu);
         }
 
         *cpu = saved;

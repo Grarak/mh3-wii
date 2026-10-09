@@ -670,8 +670,13 @@ void ServiceHostGraphicsEvents() {
 
     PollHostGraphicsEvents();
 
-    if (quitRequested)
-        throw HostQuit();
+    // Out at once: the audio and render threads are still running, so no
+    // static destructors.
+    if (quitRequested) {
+        std::fputs("MH3: window closed\n", stderr);
+        std::fflush(nullptr);
+        std::_Exit(0);
+    }
 }
 
 void CompleteHostGraphics() {
