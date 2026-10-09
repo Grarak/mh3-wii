@@ -157,6 +157,20 @@ void mh3_shade_fill(const mh3_shade_material *material, const mh3_native_materia
 void mh3_shade_fog(uint32_t type, const mh3_shader_fog *fog, mh3_shade_scene *scene);
 /* Structural hash input for classification caches: equal keys classify equally. */
 uint64_t mh3_shade_structure_key(const mh3_native_material_state *state);
+/* Trusted classification input comparisons, with no hashing, candidate state,
+ * padding or uniform comparisons. Restore compares complete effective inputs;
+ * publication compares only the selected authored writes before mutation.
+ * Swap values are consumed only with a complete four-component known mask.
+ * Count0 uses stage0, matching the classifier's effective one-stage fallback. */
+enum {
+    MH3_SHADE_STRUCTURE_PIXEL = 1,
+    MH3_SHADE_STRUCTURE_TEV = 2,
+    MH3_SHADE_STRUCTURE_SWAPS = 4,
+    MH3_SHADE_STRUCTURE_ALL = 7
+};
+int mh3_shade_structure_equal(const mh3_native_material_state *a, const mh3_native_material_state *b);
+int mh3_shade_structure_overlay_changes(const mh3_native_material_state *current, const mh3_native_material_state *source,
+                                       uint32_t top_known, uint32_t groups);
 #ifdef __cplusplus
 }
 #endif

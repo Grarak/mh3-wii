@@ -45,6 +45,9 @@ constexpr uint64_t Bit(unsigned field) {
 // Logical material state, one copy per thread: the game thread records draws
 // against its copy; the render thread restores snapshots into its own.
 thread_local constinit mh3_native_material_state material{};
+// Classification identity is separate from snapshot/uniform publication.
+// The game and render owners retain independent dirtiness across restoration.
+thread_local constinit bool shadeStructureDirty = true;
 thread_local constinit mh3_native_fog fogSource{};
 thread_local constinit mh3_shader_fog preparedFog{};
 thread_local constinit bool fogKnown = false, depthBeforeTexture = false;
@@ -116,9 +119,13 @@ struct ShadeState {
     uint64_t sceneMemoryUpload = 0;
 } shade;
 const mh3_shade_material& ShadeMaterial() {
-    const uint64_t key = mh3_shade_structure_key(&material);
-    if (shade.last && key == shade.lastKey)
+    if (!shadeStructureDirty && shade.last)
         return *shade.last;
+    const uint64_t key = mh3_shade_structure_key(&material);
+    if (shade.last && key == shade.lastKey) {
+        shadeStructureDirty = false;
+        return *shade.last;
+    }
     auto [entry, inserted] = shade.materials.try_emplace(key);
     if (inserted) {
         const uint8_t quality = mh3_shade_classify(&material, &entry->second);
@@ -131,6 +138,7 @@ const mh3_shade_material& ShadeMaterial() {
     }
     shade.lastKey = key;
     shade.last = &entry->second;
+    shadeStructureDirty = false;
     return entry->second;
 }
 const mh3_shade_scene& ShadeScene(uint64_t& upload) {
@@ -432,8 +440,13 @@ void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh
             SetNativeRaster(raster);
         }
     }
+    const uint32_t structure = kind == MH3_MODEL_MATERIAL_PIXEL ? MH3_SHADE_STRUCTURE_PIXEL :
+        kind == MH3_MODEL_MATERIAL_PIPELINE ? MH3_SHADE_STRUCTURE_TEV | MH3_SHADE_STRUCTURE_SWAPS : 0;
+    const bool structureChanged = !shadeStructureDirty && structure &&
+        mh3_shade_structure_overlay_changes(&material, &source, 0, structure);
     if (mh3_material_group_publish_mutation_unchecked(&material, &source, kind, count))
         Changed(NATIVE_STATE_MATERIAL);
+    shadeStructureDirty |= structureChanged;
 }
 void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors) {
     Owner();
@@ -475,8 +488,11 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
         Export scoped;
         SetNativeRaster(raster);
     }
+    const bool structureChanged = !shadeStructureDirty &&
+        mh3_shade_structure_overlay_changes(&material, &source, top_known, MH3_SHADE_STRUCTURE_ALL);
     if (mh3_material_state_overlay_mutation_unchecked(&material, &source, top_known))
         Changed(NATIVE_STATE_MATERIAL);
+    shadeStructureDirty |= structureChanged;
 }
 namespace {
 // A patch without a pixel record keeps the material's pixel-derived raster
@@ -497,6 +513,7 @@ void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t cha
     Owner();
     ObserveRasterPublications();
     PublishPixelRaster((top_known & MH3_MATERIAL_TOP_CULL) ? cull : material.cull_mode);
+    shadeStructureDirty |= (top_known & MH3_MATERIAL_TOP_TEV_COUNT) && material.tev_count != tevs;
     if (mh3_material_overlay_top_mutation_unchecked(&material, top_known, texgens, channels, tevs, indirect, cull))
         Changed(NATIVE_STATE_MATERIAL);
 }
@@ -600,6 +617,8 @@ void CaptureNativePostSnapshot(NativePostSnapshot& out) {
 void RestoreNativeMaterialSnapshot(const NativeMaterialSnapshot& snapshot) {
     Owner();
     ObserveRasterPublications();
+    if (!shadeStructureDirty && !mh3_shade_structure_equal(&material, &snapshot.material))
+        shadeStructureDirty = true;
     material = snapshot.material;
     depthBeforeTexture = snapshot.depthBeforeTexture;
     Changed(NATIVE_STATE_MATERIAL);
@@ -663,6 +682,7 @@ void ClearNativeMaterialPrograms() {
     shade.programs.clear();
     shade.materials.clear();
     shade.last = nullptr;
+    shadeStructureDirty = true;
     ClearNativeModelGPU();
     if (rasterObserverInstalled)
         SetNativeRasterObserver(nullptr);

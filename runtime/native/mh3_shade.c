@@ -1,4 +1,5 @@
 #include "mh3_shade.h"
+#include <assert.h>
 #include <math.h>
 #include <string.h>
 
@@ -706,6 +707,94 @@ void mh3_shade_fog(uint32_t type, const mh3_shader_fog *fog, mh3_shade_scene *sc
     scene->fog_shape[3] = 0.f;
 }
 
+/* Keep equality, overlay dirtiness and hashing on this declared input schema.
+ * The classifier reads neither TEV clamp nor the other indirect recipe bytes. */
+#define STRUCTURE_BIT(n) (UINT64_C(1) << (n))
+#define TEV_STRUCTURE_MASK (((STRUCTURE_BIT(7) - 1) | STRUCTURE_BIT(MH3_TEV_COLOR_OUTPUT)) | \
+    ((STRUCTURE_BIT(7) - 1) << MH3_TEV_ALPHA_A) | STRUCTURE_BIT(MH3_TEV_ALPHA_OUTPUT) | \
+    (STRUCTURE_BIT(MH3_TEV_KONST_ALPHA + 1) - STRUCTURE_BIT(MH3_TEV_TEXTURE_MAP)) | STRUCTURE_BIT(MH3_TEV_INDIRECT_MATRIX))
+#define PIXEL_STRUCTURE_MASK (STRUCTURE_BIT(MH3_PIXEL_ALPHA_COMPARE0) | STRUCTURE_BIT(MH3_PIXEL_ALPHA_COMPARE1) | STRUCTURE_BIT(MH3_PIXEL_ALPHA_OPERATION))
+_Static_assert(sizeof(mh3_pack_tev_pass) == 9, "TEV field layout");
+_Static_assert(offsetof(mh3_pack_tev_stage, indirect_add_previous) - offsetof(mh3_pack_tev_stage, color) == 33, "TEV field order");
+static unsigned structure_stages(uint32_t count) {
+    return count ? (count < 16 ? count : 16) : 1;
+}
+static uint32_t structure_tev_word(const mh3_pack_tev_stage *t, unsigned word) {
+    const mh3_pack_tev_pass *p;
+    if (word < 4) {
+        p = word < 2 ? &t->color : &t->alpha;
+        return !(word & 1) ? p->a | p->b << 8 | p->c << 16 | (uint32_t)p->d << 24 :
+            p->operation | p->bias << 8 | p->scale << 16 | (uint32_t)p->output << 24;
+    }
+    if (word == 4)
+        return t->texture_map | t->texture_coordinate << 8 | t->raster_channel << 16 | (uint32_t)t->konst_color << 24;
+    return t->konst_alpha | t->texture_swap << 8 | t->raster_swap << 16 | (uint32_t)t->indirect_matrix << 24;
+}
+static uint32_t structure_swap_word(const mh3_pack_swap_table *swap) {
+    return swap->rgba[0] | swap->rgba[1] << 8 | swap->rgba[2] << 16 | (uint32_t)swap->rgba[3] << 24;
+}
+int mh3_shade_structure_equal(const mh3_native_material_state *a, const mh3_native_material_state *b) {
+    assert(a && b);
+    if (a == b)
+        return 1;
+    if (a->tev_count != b->tev_count)
+        return 0;
+    for (unsigned i = 0; i < structure_stages(a->tev_count); ++i)
+        for (unsigned word = 0; word < 6; ++word)
+            if (structure_tev_word(&a->tev[i], word) != structure_tev_word(&b->tev[i], word))
+                return 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        const int complete = (a->swaps[i].known & 15) == 15;
+        if (complete != ((b->swaps[i].known & 15) == 15) ||
+            (complete && structure_swap_word(&a->swaps[i]) != structure_swap_word(&b->swaps[i])))
+            return 0;
+    }
+    return a->pixel.values[MH3_PIXEL_ALPHA_COMPARE0] == b->pixel.values[MH3_PIXEL_ALPHA_COMPARE0] &&
+           a->pixel.values[MH3_PIXEL_ALPHA_COMPARE1] == b->pixel.values[MH3_PIXEL_ALPHA_COMPARE1] &&
+           a->pixel.values[MH3_PIXEL_ALPHA_OPERATION] == b->pixel.values[MH3_PIXEL_ALPHA_OPERATION];
+}
+int mh3_shade_structure_overlay_changes(const mh3_native_material_state *current, const mh3_native_material_state *source,
+                                       uint32_t top_known, uint32_t groups) {
+    assert(current && source && !(groups & ~MH3_SHADE_STRUCTURE_ALL));
+    if (current == source)
+        return 0;
+    if ((top_known & MH3_MATERIAL_TOP_TEV_COUNT) && current->tev_count != source->tev_count)
+        return 1;
+    if (groups & MH3_SHADE_STRUCTURE_TEV)
+        for (unsigned i = 0; i < structure_stages(current->tev_count); ++i) {
+            uint64_t pending = source->tev[i].known & TEV_STRUCTURE_MASK;
+            const uint8_t *to = (const uint8_t *)&current->tev[i].color;
+            const uint8_t *from = (const uint8_t *)&source->tev[i].color;
+            while (pending) {
+                const unsigned field = (unsigned)__builtin_ctzll(pending);
+                if (to[field] != from[field])
+                    return 1;
+                pending &= pending - 1;
+            }
+        }
+    if (groups & MH3_SHADE_STRUCTURE_SWAPS)
+        for (unsigned i = 0; i < 4; ++i) {
+            const uint32_t known = source->swaps[i].known & 15;
+            const int complete = (current->swaps[i].known & 15) == 15;
+            const int next_complete = ((current->swaps[i].known | known) & 15) == 15;
+            if (complete != next_complete)
+                return 1;
+            if (complete)
+                for (unsigned field = 0; field < 4; ++field)
+                    if ((known & (1u << field)) && current->swaps[i].rgba[field] != source->swaps[i].rgba[field])
+                        return 1;
+        }
+    if (groups & MH3_SHADE_STRUCTURE_PIXEL) {
+        uint64_t pending = source->pixel.known & PIXEL_STRUCTURE_MASK;
+        while (pending) {
+            const unsigned field = (unsigned)__builtin_ctzll(pending);
+            if (current->pixel.values[field] != source->pixel.values[field])
+                return 1;
+            pending &= pending - 1;
+        }
+    }
+    return 0;
+}
 uint64_t mh3_shade_structure_key(const mh3_native_material_state *s) {
     /* FNV-1a over the fields classification reads. */
     uint64_t h = 1469598103934665603ull;
@@ -715,19 +804,20 @@ uint64_t mh3_shade_structure_key(const mh3_native_material_state *s) {
         h *= 1099511628211ull;                                                                                                                                                                         \
     } while (0)
     MIX(s->tev_count);
-    for (unsigned i = 0; i < s->tev_count && i < 16; ++i) {
-        const mh3_pack_tev_stage *t = &s->tev[i];
-        const mh3_pack_tev_pass *p[2] = {&t->color, &t->alpha};
-        for (unsigned j = 0; j < 2; ++j) {
-            MIX(p[j]->a | p[j]->b << 8 | p[j]->c << 16 | (uint32_t)p[j]->d << 24);
-            MIX(p[j]->operation | p[j]->bias << 8 | p[j]->scale << 16 | (uint32_t)p[j]->output << 24);
-        }
-        MIX(t->texture_map | t->texture_coordinate << 8 | t->raster_channel << 16 | (uint32_t)t->konst_color << 24);
-        MIX(t->konst_alpha | t->texture_swap << 8 | t->raster_swap << 16 | (uint32_t)t->indirect_matrix << 24);
+    for (unsigned i = 0; i < structure_stages(s->tev_count); ++i) {
+        for (unsigned word = 0; word < 6; ++word)
+            MIX(structure_tev_word(&s->tev[i], word));
     }
-    for (unsigned i = 0; i < 4; ++i)
-        MIX(s->swaps[i].rgba[0] | s->swaps[i].rgba[1] << 8 | s->swaps[i].rgba[2] << 16 | (uint32_t)s->swaps[i].rgba[3] << 24);
+    for (unsigned i = 0; i < 4; ++i) {
+        const int complete = (s->swaps[i].known & 15) == 15;
+        MIX(complete);
+        if (complete)
+            MIX(structure_swap_word(&s->swaps[i]));
+    }
     MIX(s->pixel.values[MH3_PIXEL_ALPHA_COMPARE0] | s->pixel.values[MH3_PIXEL_ALPHA_COMPARE1] << 8 | s->pixel.values[MH3_PIXEL_ALPHA_OPERATION] << 16);
 #undef MIX
     return h;
 }
+#undef PIXEL_STRUCTURE_MASK
+#undef TEV_STRUCTURE_MASK
+#undef STRUCTURE_BIT
