@@ -534,7 +534,16 @@ struct Prep {
         mh3_model_texcoord_sizes sizes{};
         uint8_t written = 0;
         int apply = 0;
-        Checked(mh3_model_coordinate_prepare(m.At(Coordinates, 108), count, m.coordinate_map_known, &m.map_sizes, &m.coordinate_sizes, &sizes, &written, &apply));
+        const mh3_res_status status = mh3_model_coordinate_prepare(m.At(Coordinates, 108), count, m.coordinate_map_known, &m.map_sizes, &m.coordinate_sizes, &sizes, &written, &apply);
+
+        // A coordinate may read a map whose size this mirror never learned: a
+        // compile starts from nothing, and a material may read a map only the
+        // draws before it bound. The sizes stay as they are (no draw reads
+        // them) and the next coordinate step tries again.
+        if (status == MH3_RES_ABSENT)
+            return;
+
+        CheckedStep(status, "mh3_model_coordinate_prepare");
 
         if (apply)
             m.coordinate_sizes = sizes;

@@ -1428,7 +1428,14 @@ void PrepareNativeModelCoordinateSizes(uint32_t count) {
     mh3_model_texcoord_sizes sizes{};
     uint8_t written = 0;
     int apply = 0;
-    Checked(mh3_model_coordinate_prepare(Mutable(coordinate_cache, 108), count, coordinate_map_known, &map_sizes, &coordinate_sizes, &sizes, &written, &apply));
+    const mh3_res_status status = mh3_model_coordinate_prepare(Mutable(coordinate_cache, 108), count, coordinate_map_known, &map_sizes, &coordinate_sizes, &sizes, &written, &apply);
+
+    // A coordinate reading a map no draw bound yet keeps its size, as on the
+    // render thread (model_render_prep.cpp).
+    if (status == MH3_RES_ABSENT)
+        return;
+
+    Checked(status);
 
     if (apply)
         coordinate_sizes = sizes;
