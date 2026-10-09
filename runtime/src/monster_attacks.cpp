@@ -1,5 +1,5 @@
 // Monster attacks with counts per call, RMHP08. C reconstructions (decompiled
-// with Ghidra) of five enemy actions that count their calls at +0x20 while a
+// with Ghidra) of six enemy actions that count their calls at +0x20 while a
 // motion is before or past a frame, which the enemy update calls once per
 // step:
 //
@@ -11,6 +11,9 @@
 //   0x80188548              the Ludroth kinds' (em016/017/021) spit: the
 //                           blend from motion channel 0 to 1 grows by 0.1 a
 //                           call once the motion is past frame 114 / 174
+//   0x8014DE50              Rathian's and Rathalos' dive (7.37): its moves
+//                           spread over a count of calls (the watch pass of
+//                           docs/monster-control.md found it)
 //
 // At 120 steps a second the sounds and sparks came four times as often and
 // the blend took a quarter of the time. The counts take the step's whole
@@ -445,6 +448,107 @@ void LudrothSpitPort(CpuContext* ctx) {
     }
 }
 
+// kind 1/2 0x8014DE50: Rathian's and Rathalos' dive (motion 0xDB). It
+// steers at the target before frame 110; over frames 60-100 it sets the
+// sinking speed (+0x314, the target's height left, at most 0) and the
+// forward speed (+0x318, the distance left less 100 × its size, at least
+// 30) to what is left over the count (+0x20: 40 frames over the motion's
+// rate, so the ticks the window lasts) and moves by them (0x801355E8); from
+// frame 150 it flies back to where it started (+0x1B0) over the ticks to
+// frame 200, facing its start yaw (+0x32C). The original counts the calls,
+// so at short steps it covered the same way in fewer ticks: here the count
+// goes down by the step's ticks (the moves are taken over the step's
+// length: shell_motion.cpp).
+void Em001DivePort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x40);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, diff = frame[0x08], step = frame[0x14];
+    const auto countDown = [&] { em.Count(em.Count() - int32_t(GameStep::Ticks())); };
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        Memory::Write8(work + 6, 0);
+        game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
+        game.Call<0x80130628>({work});
+        game.Call<Em004Prepare>({work});
+        em.SetMotion(0xDB, 6, 0);
+        game.Call<RoarVoice0>({work, 0, 0x1F});
+        game.Call<0x80041EA4>({work + 0x1B0, work + 0x188}); // the start
+        Memory::Write16(work + 0x32C, uint16_t(Memory::Read32(work + kAngles + 4)));
+        game.Call<0x8013545C>({work});
+        game.Call<0x8012F948>({work});
+        em.Count(int16_t(int32_t(40.0f / game.F1())));
+        break;
+    case 1:
+        game.Call<0x8012CF84>({work});
+        game.Call<0x80128C5C>({work, 0});
+
+        if (em.At(110.0f, 2))
+            game.Call<0x80133CB4>({work, 0x300});
+
+        if (em.At(60.0f, 3, 100.0f)) {
+            if (em.Count() > 0) {
+                const float count = float(em.Count());
+                Memory::WriteFloat32(work + 0x310, 0.0f);
+                game.Call<ChangeScale>({work});
+                const float size = game.F1();
+                game.Call<0x801302AC>({work});
+                const float height = (game.F1() - 100.0f) * size;
+                const float sink = (Memory::ReadFloat32(work + 0x370) - Memory::ReadFloat32(work + 0x18C) + height) / count;
+                Memory::WriteFloat32(work + 0x314, sink > 0.0f ? 0.0f : sink);
+                const uint32_t angle = game.Call<0x80050AF4>({work + 0x188, work + 0x36C}) & 0xFFFF;
+
+                if (((angle - Memory::Read32(work + kAngles + 4) + 0x4000) & 0xFFFF) < 0x8000) {
+                    game.Call<ChangeScale>({work});
+                    const float near = 100.0f * game.F1();
+                    game.Call<0x80050FE4>({work + 0x36C, work + 0x188});
+                    const float forward = (game.F1() - near) / count;
+                    Memory::WriteFloat32(work + 0x318, forward <= 30.0f ? 30.0f : forward);
+                } else
+                    Memory::WriteFloat32(work + 0x318, 30.0f);
+
+                game.Call<0x801302AC>({work}); // f1 passes on
+                game.Call<0x801355E8>({work, work + kAngles});
+            }
+
+            countDown();
+        }
+
+        if (em.At(150.0f, 1)) {
+            em.NextState();
+            game.Call<0x8012F948>({work});
+            const float rate = game.F1();
+            game.Call<0x8012F950>({work});
+            em.Count(int16_t(int32_t((200.0f - game.F1()) / rate)));
+        }
+
+        break;
+    case 2: {
+        const uint32_t yaw = game.Call<0x80133E14>({Memory::Read16(work + 0x32C), Memory::Read32(work + kAngles + 4) & 0xFFFF, 0x300});
+        Memory::Write32(work + kAngles + 4, yaw & 0xFFFF);
+        game.Call<0x80135448>({work});
+
+        if (const int32_t count = em.Count(); count > 0) {
+            game.Call<0x80050D04>({diff, work + 0x1B0, work + 0x188});
+            game.Call<0x800ADA24>({step, diff}, {double(float(count))});
+            game.Call<0x80041EA4>({work + 0x310, step});
+            game.Call<0x8013547C>({work});
+        }
+
+        countDown();
+
+        if (em.Ended())
+            game.Call<0x80128048>({work});
+
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 } // namespace
 
 extern "C" void func_8014BBA4(CpuContext* ctx);
@@ -476,3 +580,9 @@ extern "C" void MH3_LudrothSpit(CpuContext* ctx) {
     PortCheck::Call(ctx, "LudrothSpit", func_80188548, LudrothSpitPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80188548, MH3_LudrothSpit, "LudrothSpit");
+
+extern "C" void func_8014DE50(CpuContext* ctx);
+extern "C" void MH3_Em001Dive(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em001Dive", func_8014DE50, Em001DivePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8014DE50, MH3_Em001Dive, "Em001Dive");
