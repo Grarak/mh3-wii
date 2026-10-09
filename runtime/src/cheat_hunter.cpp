@@ -697,6 +697,16 @@ extern "C" void MH3_CheatSharpness(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x802786D8, MH3_CheatSharpness, "CheatSharpness");
 
+namespace {
+
+// The shot starting with Rapidfire's 6 (its player work, 0 for none), and
+// whether +7 takes the 6 too: set before func_80287A30 runs, used by its
+// call of FieldActionFlags right after the start's stores.
+uint32_t g_rapidShot = 0;
+bool g_rapidCount = false;
+
+} // namespace
+
 // 0x80287A30 (plw, ...): the bowgun's shot. A shot takes one round of the
 // loaded ones (and one of the pouch, 0x80272E94) unless +6 is set; +5 0 starts
 // it. Infinite ammo (Bully, US 0x80287DA0, EU 0x80287E04) reloads the clip
@@ -714,30 +724,25 @@ extern "C" void MH3_CheatBowgunShot(CpuContext* ctx) {
     const bool rapid = (On(Id::RapidFire) && first != 0 && Memory::Read16(first) == 0x0101) || (On(Id::RapidFireHold) && holding);
 
     // The start stores the code's 6 in +7 where the original stores its 0:
-    // without a kind (r7) or without the ammo's data (0x80279478).
-    bool rapidCount = false;
-
+    // without a kind (r7) or without the ammo's data (0x80279478). The same
+    // call goes on past the start (to state 2), so the 6 goes in at the
+    // start's next call, MH3_CheatActionFlags.
     if (rapid && state == 0) {
         const uint32_t kind = ctx->gpr[7] & 0xFF;
         const auto f1 = ctx->fpr[1], f2 = ctx->fpr[2];
 
         {
             GuestFrame frame(ctx, 0x10);
-            rapidCount = kind == 0 || GuestCall{ctx}.Call<0x80279478>({plw, Memory::Read8(plw + 0x26C)}) == 0;
+            g_rapidCount = kind == 0 || GuestCall{ctx}.Call<0x80279478>({plw, Memory::Read8(plw + 0x26C)}) == 0;
         }
 
         ctx->fpr[1] = f1;
         ctx->fpr[2] = f2;
+        g_rapidShot = plw;
     }
 
     func_80287A30(ctx);
-
-    if (rapid && state == 0 && Memory::Read8(plw + 5) == 1) {
-        Memory::Write8(plw + 6, 6);
-
-        if (rapidCount)
-            Memory::Write8(plw + 7, 6);
-    }
+    g_rapidShot = 0;
 
     const bool shot = loaded != 0 && Memory::Read8(plw + kAmmoLoaded) == loaded - 1 && Read16s(plw + kAmmoPouch) != 0;
 
@@ -748,6 +753,28 @@ extern "C" void MH3_CheatBowgunShot(CpuContext* ctx) {
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80287A30, MH3_CheatBowgunShot, "CheatBowgunShot");
+
+// FieldActionFlags (0x80275B68, plw, ...): the action's flags. The bowgun's
+// shot calls it (0x80287B54, 0x80287B6C) right after its start stored 0 in
+// +6 and +7, before anything reads them: Rapidfire's 6 goes there.
+extern "C" void func_80275B68(CpuContext* ctx);
+
+extern "C" void MH3_CheatActionFlags(CpuContext* ctx) {
+    const uint32_t plw = ctx->gpr[3];
+
+    if (g_rapidShot == plw && (ctx->lr == 0x80287B58 || ctx->lr == 0x80287B70)) {
+        Memory::Write8(plw + 6, 6);
+
+        if (g_rapidCount)
+            Memory::Write8(plw + 7, 6);
+
+        g_rapidShot = 0;
+    }
+
+    func_80275B68(ctx);
+}
+
+REGISTER_NATIVE_FUNCTION_AS(0x80275B68, MH3_CheatActionFlags, "CheatActionFlags");
 
 // 0x8027EE6C (equipment, &data, &...): the equipment's data; the weapon's
 // stats (func_80273B78, from 0x80273C34) read its attack at +0xA. Weapon max
