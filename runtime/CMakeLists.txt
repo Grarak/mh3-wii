@@ -488,9 +488,11 @@ if(VITA)
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
     vita/vita_controller.cpp vita/nand_recover.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
-  # pthread-embedded fixes: leaking mutex semaphores, polling waits.
+  # pthread-embedded fixes: leaking mutex semaphores, polling waits, new
+  # threads off the game thread's core.
   target_sources(MH3 PRIVATE vita/pthread_embedded.c)
-  target_link_options(MH3 PRIVATE "-Wl,--wrap=pte_osSemaphorePost" "-Wl,--wrap=pte_cancellable_wait")
+  target_link_options(MH3 PRIVATE "-Wl,--wrap=pte_osSemaphorePost" "-Wl,--wrap=pte_cancellable_wait"
+    "-Wl,--wrap=pte_osThreadCreate")
 
   # newlib: an exited thread's reclaimed reent closed descriptors 0-2.
   target_sources(MH3 PRIVATE vita/newlib_reent.c)

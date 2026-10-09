@@ -559,9 +559,6 @@ void MH3StartDrawOverlap() {
     if (!DrawThread::Thread().Available())
         MH3_THROW(std::runtime_error("Draw thread without a guest stack or work area"));
 
-    DrawThread::Thread().SetCore(3);
-    GuestWorker::Thread().SetCore(0);
-
     // The draw thread spins 1 ms after a job, which catches the next of a
     // burst (the scene draw shortly after the walk), then parks: spinning
     // through all its idle time kept its core busy for nothing and starved

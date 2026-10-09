@@ -68,9 +68,6 @@ class GuestThread {
     // statistics: for another thread that only needs the job's results.
     void Await() const;
 
-    // The core it asks for, before it first starts.
-    void SetCore(unsigned core) { core_ = core; }
-
     // How long the thread spins for the next job before it parks (0: parks at
     // once). Waking a parked thread on the Vita takes up to 2 ms; a thread
     // alone on its core can spin through its idle time instead.
@@ -164,8 +161,9 @@ namespace DrawThread {
 // Guest stack bytes for the draw, reserved below the worker's at boot.
 inline constexpr uint32_t kGuestStackBytes = 64 * 1024;
 
-// The overlapped draw (docs/pipelined-draw.md) puts the draw thread on core 3
-// and the guest worker on core 0 (MH3StartDrawOverlap, game_frame.cpp).
+// The overlapped draw (docs/pipelined-draw.md, MH3StartDrawOverlap in
+// game_frame.cpp) runs on the draw thread, on core 3; the guest worker runs on
+// core 0, and core 2 is the game thread's alone.
 
 // The draw thread.
 GuestThread& Thread();

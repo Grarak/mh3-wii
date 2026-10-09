@@ -4,8 +4,12 @@
 
 /* platform/vita/pte_types.h, pte_generic_osal.h */
 typedef SceUID pte_osSemaphoreHandle;
+typedef SceUID pte_osThreadHandle;
+typedef int (*pte_osThreadEntryPoint)(void *params);
 enum { PTE_OS_OK = 0, PTE_OS_TIMEOUT = 3 };
 typedef int pte_osResult;
+extern pte_osResult __real_pte_osThreadCreate(pte_osThreadEntryPoint entryPoint, int stackSize, int initialPriority, void *argv,
+                                              pte_osThreadHandle *handle);
 extern pte_osResult __real_pte_osSemaphorePost(pte_osSemaphoreHandle handle, int count);
 extern pte_osResult pte_osSemaphorePend(pte_osSemaphoreHandle handle, unsigned int *timeoutMsecs);
 
@@ -57,4 +61,20 @@ int __wrap_pte_cancellable_wait(pte_osSemaphoreHandle handle, unsigned int *time
     default:
         return EINVAL;
     }
+}
+
+/* Core 2 is the game thread's alone (user, 2026-10-07). pte creates its
+ * threads with the default affinity, any user core (0-2), and the asset
+ * conversion workers, guest threads and samplers ran there now and then: a
+ * new thread starts on cores 0-1 instead. A thread that pins itself
+ * (aurora::pin_current_thread, GuestThread) still moves. */
+pte_osResult __wrap_pte_osThreadCreate(pte_osThreadEntryPoint entryPoint, int stackSize, int initialPriority, void *argv,
+                                       pte_osThreadHandle *handle)
+{
+    const pte_osResult result = __real_pte_osThreadCreate(entryPoint, stackSize, initialPriority, argv, handle);
+
+    if (result == PTE_OS_OK)
+        sceKernelChangeThreadCpuAffinityMask(*handle, SCE_KERNEL_CPU_MASK_USER_0 | SCE_KERNEL_CPU_MASK_USER_1);
+
+    return result;
 }
