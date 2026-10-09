@@ -776,10 +776,14 @@ gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept;
 // this mask in the caller's program-cache identity.
 // A compact layout selects GPU model transforms/texgen with direct attributes.
 // It uses the regular compact matrix uniform layout, not final CPU STQ/positions.
+// A separate compact-source certificate may prove projective Q identically zero.
+// Preserve the vertex zero-Q clamp and emit its unprojected XY directly; both Q
+// masks must participate in the caller's program-cache identity.
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices=false,
                                         u8 nativeZeroLodBiasMask=0,bool approximateNative=true,
                                         const gl::MeshLayout* nativeMeshLayout=nullptr,
-                                        u8 nativeNonzeroProjectiveMask=0) noexcept;
+                                        u8 nativeNonzeroProjectiveMask=0,
+                                        u8 nativeZeroProjectiveMask=0) noexcept;
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept;
 void notify_copy_texture_created() noexcept;
 

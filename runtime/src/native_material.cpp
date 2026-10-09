@@ -46,6 +46,7 @@ struct ModelProgramKey {
     ProgramKey material;
     std::array<uint32_t,13> layout{};
     uint8_t nonzeroProjection=0;
+    uint8_t zeroProjection=0;
 };
 struct ModelProgramOrder {
     bool operator()(const ModelProgramKey& a,const ModelProgramKey& b) const {
@@ -53,7 +54,8 @@ struct ModelProgramOrder {
         if(compare(a.material,b.material)) return true;
         if(compare(b.material,a.material)) return false;
         if(a.layout!=b.layout) return a.layout<b.layout;
-        return a.nonzeroProjection<b.nonzeroProjection;
+        if(a.nonzeroProjection!=b.nonzeroProjection) return a.nonzeroProjection<b.nonzeroProjection;
+        return a.zeroProjection<b.zeroProjection;
     }
 };
 std::map<ModelProgramKey,aurora::gl::ProgramPtr,ModelProgramOrder> modelPrograms;
@@ -538,7 +540,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     for(unsigned i=0;i<8;++i) if(modelState.info.sampledTextures.test(i)) {
         (void)Texture(i);if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
-    ModelProgramKey key{{config,zeroBias},{},inputs.nonzero_projective_mask};
+    ModelProgramKey key{{config,zeroBias},{},inputs.nonzero_projective_mask,inputs.zero_projective_mask};
     key.layout[0]=resident.layout->stride;
     for(unsigned i=0;i<resident.layout->attributes.size();++i) {
         const auto& a=resident.layout->attributes[i];
@@ -546,7 +548,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     }
     auto program=modelPrograms.find(key);
     if(program==modelPrograms.end()) {
-        auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask);
+        auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask,inputs.zero_projective_mask);
         description.origin="runtime/src/native_material.cpp:SubmitNativeModelMesh asset="+std::to_string(mesh.asset_id)+
             " model="+std::to_string(mesh.model_id)+" shape="+std::to_string(mesh.shape_id);
         program=modelPrograms.emplace(key,std::make_shared<aurora::gl::Program>(std::move(description))).first;

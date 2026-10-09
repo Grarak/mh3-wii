@@ -76,6 +76,26 @@ static int nonzero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_te
     const float error=64*FLT_EPSILON*fmaxf(1,magnitude);
     return isfinite(lo)&&isfinite(hi)&&isfinite(error)&&(lo>error || hi < -error);
 }
+/* Certify the actual vertex equation, not a cancelling composed float row.
+ * Packed positions come from finite offline values and validated finite bounds;
+ * integer normalized colors cannot contain NaN/Inf. Unknown UV/normal ranges
+ * and normalization remain on the conditional fragment path. */
+static int zero_q(const mh3_resolved_mesh_submit *mesh,const mh3_model_gpu_texgen *gen) {
+    if(!gen->projection || gen->normalize || !gen->post_identity) return 0;
+    for(unsigned c=0;c<4;c++) if(gen->main.v[2][c]!=0) return 0;
+    if(gen->source_row==0) {
+        for(unsigned c=0;c<3;c++) if(!isfinite(mesh->mesh.bounds_min[c]) ||
+            !isfinite(mesh->mesh.bounds_max[c]) || mesh->mesh.bounds_min[c]>mesh->mesh.bounds_max[c]) return 0;
+        return 1;
+    }
+    if(gen->source_row==2) {
+        for(unsigned i=0;i<mesh->layout.count;i++) if(mesh->layout.attributes[i].semantic==2) {
+            const unsigned format=mesh->layout.attributes[i].format;
+            return format==4 || format==7;
+        }
+    }
+    return 0;
+}
 mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
     uint8_t mask,int normal_required,float near_z,float far_z,mh3_model_gpu_inputs *out) {
     if(!mesh||!out||!mesh->palette||!mesh->projection||!mesh->material||mesh->layout.count>16||
@@ -131,6 +151,7 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh,
             }
         }
         if(nonzero_q(mesh,gen)) result.nonzero_projective_mask|=1u<<i;
+        else if(zero_q(mesh,gen)) result.zero_projective_mask|=1u<<i;
     }
     result.texcoord_mask=mask;*out=result;return MH3_RES_OK;
 }

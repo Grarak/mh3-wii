@@ -3,6 +3,7 @@
 #include <aurora/native_texture.hpp>
 #include "native_graphics.h"
 #include "../../runtime/native/mh3_material_state.h"
+#include "../../runtime/native/mh3_model_gpu_inputs.h"
 #include "../../runtime/native/adapters/model_gpu_bridge.h"
 #include <fstream>
 #include <vector>
@@ -116,6 +117,56 @@ void ResidentProbe(const char* path) {
     unsigned white=0;
     for(size_t i=0;i<pixels.size();i+=4) if(pixels[i]>250&&pixels[i+1]>250&&pixels[i+2]>250) ++white;
     Require(white>100,"resident runtime model produced no useful coverage");
+    // A direct exactly-zero Q row and a composed identity-post recipe have
+    // identical vertex equations. Only the direct recipe is certified. Compare
+    // the complete texture image, including the existing zero-Q XY clamp.
+    Texture();state=Plain();state.texgen_count=1;
+    state.tev[0].known=MH3_MATERIAL_TEV_MASK;
+    state.tev[0].color={15,15,15,8,0,0,0,1,0};state.tev[0].alpha={7,7,7,4,0,0,0,1,0};
+    state.swaps[0]={15,{0,1,2,3}};
+    state.texgen[0].known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;
+    auto& texgen=state.texgen[0];texgen.values[MH3_TEXGEN_PROJECTION]=1;
+    texgen.values[MH3_TEXGEN_SOURCE_ROW]=0;texgen.values[MH3_TEXGEN_MATRIX_ROW]=30;
+    texgen.values[MH3_TEXGEN_POST_MATRIX_ROW]=61;
+    palette.texture_valid=1;palette.texture[0]={{{0,0,0,1.5f},{0,0,0,1},{0,0,0,0}}};
+    mh3_model_gpu_inputs inputs{};
+    Require(mh3_model_gpu_prepare(&draw,1,0,0,1,&inputs)==MH3_RES_OK && inputs.zero_projective_mask==1,
+        "resident direct zero-Q certificate missing");
+    const float clear[]{0,0,0,1};aurora::gl::clear_color(clear);
+    SubmitNativeModelMesh(draw);
+    std::vector<uint8_t> certified(pixels.size());
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,certified.data());
+    unsigned green=0;
+    for(size_t i=0;i<certified.size();i+=4) if(certified[i]<2 && certified[i+1]>250 && certified[i+2]<2) ++green;
+    Require(green==white,"certified zero-Q changed resident texture/coverage");
+    float identityPost[8][12]={{1,0,0,0,0,1,0,0,0,0,1,0}};
+    draw.texture_matrices=identityPost;draw.texture_matrix_known=1;
+    texgen.values[MH3_TEXGEN_DUAL_TEXTURE]=1;texgen.values[MH3_TEXGEN_POST_MATRIX_ROW]=0;
+    Require(mh3_model_gpu_prepare(&draw,1,0,0,1,&inputs)==MH3_RES_OK && inputs.zero_projective_mask==0,
+        "composed zero-Q bypassed conservative proof");
+    aurora::gl::clear_color(clear);SubmitNativeModelMesh(draw);
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,pixels.data());
+    Require(pixels==certified,"certified and fallback zero-Q pixels differ");
+    // Varying coordinates also exercise interpolation and saturation at +/-1.
+    const float tx=6.f/(draw.mesh.bounds_max[0]-draw.mesh.bounds_min[0]);
+    const float tz=6.f/(draw.mesh.bounds_max[2]-draw.mesh.bounds_min[2]);
+    palette.texture[0]={{{tx,0,0,-.5f*(draw.mesh.bounds_min[0]+draw.mesh.bounds_max[0])*tx},
+                        {0,0,tz,-.5f*(draw.mesh.bounds_min[2]+draw.mesh.bounds_max[2])*tz},
+                        {0,0,0,0}}};
+    texgen.values[MH3_TEXGEN_DUAL_TEXTURE]=0;texgen.values[MH3_TEXGEN_POST_MATRIX_ROW]=61;
+    aurora::gl::clear_color(clear);SubmitNativeModelMesh(draw);
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,certified.data());
+    bool hasRed=false,hasGreen=false;
+    for(size_t i=0;i<certified.size();i+=4) {
+        hasRed|=certified[i]>100 && certified[i+1]<2;
+        hasGreen|=certified[i]<2 && certified[i+1]>250;
+    }
+    Require(hasRed&&hasGreen,"varying zero-Q fixture failed to exercise texture coordinates");
+    texgen.values[MH3_TEXGEN_DUAL_TEXTURE]=1;texgen.values[MH3_TEXGEN_POST_MATRIX_ROW]=0;
+    aurora::gl::clear_color(clear);SubmitNativeModelMesh(draw);
+    aurora::gl::read_pixels(target.texture->gl(),0,0,target.width,target.height,pixels.data());
+    Require(pixels==certified,"varying/saturated zero-Q pixels differ from fallback");
+    std::printf("Resident zero-Q passed: certified/fallback %u green pixels, identical constant/varying/saturated framebuffers\n",green);
     ++draw.resident_generation;
     Failure([&]{SubmitNativeModelMesh(draw);},"Stale or unregistered");
     suppressed=true;SubmitNativeModelMesh(draw);suppressed=false;

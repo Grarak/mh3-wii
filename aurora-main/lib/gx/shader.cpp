@@ -973,7 +973,7 @@ static std::string native_float_op(const TevOp& op,std::string_view a,std::strin
 }
 
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices,
-                                        u8 nativeZeroLodBiasMask,bool approximateNative,const gl::MeshLayout* nativeMeshLayout,u8 nativeNonzeroProjectiveMask) noexcept {
+                                        u8 nativeZeroLodBiasMask,bool approximateNative,const gl::MeshLayout* nativeMeshLayout,u8 nativeNonzeroProjectiveMask,u8 nativeZeroProjectiveMask) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
@@ -981,6 +981,8 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
   // for reference probes; material properties never trigger an exact fallback.
   const bool nativeFloat=nativeVertices && approximateNative;
   const bool compact = nativeMeshLayout != nullptr;
+  CHECK(!(nativeZeroProjectiveMask & nativeNonzeroProjectiveMask),"Projective Q certificates overlap");
+  CHECK(!nativeZeroProjectiveMask || compact,"Zero projective Q requires a compact source certificate");
   if (compact) {
     CHECK(nativeVertices && config.lineMode==0,"Compact models require native triangle equations");
     gfx::validate_mesh_layout(*nativeMeshLayout);
@@ -1295,7 +1297,8 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     }
     const auto& tcg = config.tcgs[i];
     const bool hardwareProjection=nativeVertices && (nativeNonzeroProjectiveMask & (1u<<i));
-    if (tcg.type == GX_TG_MTX3x4) {
+    const bool zeroProjection=compact && (nativeZeroProjectiveMask & (1u<<i));
+    if (tcg.type == GX_TG_MTX3x4 && !zeroProjection) {
       vtxOutAttrs += varying(hardwareProjection?"vec4":"vec3", fmt::format("tex{}_uvw", i));
     } else {
       vtxOutAttrs += varying("vec2", fmt::format("tex{}_uv", i));
@@ -1393,7 +1396,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    }}",
           i);
     }
-    if (tcg.type == GX_TG_MTX3x4) {
+    if (tcg.type == GX_TG_MTX3x4 && !zeroProjection) {
       vtxXfrAttrs += hardwareProjection?
           fmt::format("\n    out.tex{0}_uvw = vec4(tc{0}_proj.xy, 0.0, tc{0}_proj.z);",i):
           fmt::format("\n    out.tex{0}_uvw = tc{0}_proj.xyz;", i);
