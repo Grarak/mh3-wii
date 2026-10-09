@@ -7,8 +7,9 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 include(../generated/build_shards/shards.cmake)
 add_executable(MH3
-  src/main.cpp src/memory.cpp src/os_boot.cpp src/abi_bridge.cpp
+  src/main.cpp src/memory.cpp src/os_boot.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp
+  src/device_tests.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})

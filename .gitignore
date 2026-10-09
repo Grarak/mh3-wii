@@ -5,6 +5,7 @@ tools/
 generated/
 build/
 logs/
+saves/
 **/bin/
 **/obj/
 __pycache__/

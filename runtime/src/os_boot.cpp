@@ -43,3 +43,18 @@ extern "C" void MH3_SetInterruptMask(CpuContext* ctx) {
     ctx->gpr[3] = 0;
 }
 REGISTER_NATIVE_FUNCTION(0x804D1460, MH3_SetInterruptMask);
+
+// __OSInitMemoryProtection configures MI registers and PPC BAT mappings.
+// Host RAM access is already checked by memory.cpp. Retain the guest interrupt
+// bindings and shutdown-list registration, which are independently observable.
+extern "C" void MH3_OSInitMemoryProtection(CpuContext* ctx) {
+    if (Memory::Read32(0x80797830)) return;
+    Memory::Write32(0x800000C4, Memory::Read32(0x800000C4) | 0xF0000000);
+    for (uint32_t i = 0; i < 5; ++i)
+        Memory::Write32(0x80003040 + i * 4, 0x804D1E30);
+    ctx->gpr[3] = 0x8061DCC0;
+    InvokeIndirectCpu(0x804D2870, ctx); // OSRegisterShutdownFunction
+    Memory::Write32(0x800000C4, Memory::Read32(0x800000C4) & ~0x08000000u);
+    Memory::Write32(0x80797830, 1);
+}
+REGISTER_NATIVE_FUNCTION(0x804D2490, MH3_OSInitMemoryProtection);

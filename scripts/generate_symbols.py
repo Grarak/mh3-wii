@@ -23,6 +23,15 @@ def main():
     by_sel = {s["index"] + 1: s for s in text}
     symbols = {0x80006310: "__start", 0x804CB5A0: "OSExceptionInit",
                0x804CB930: "OSDefaultExceptionHandler"}
+    for line in (ROOT / "symbols.txt").read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        address, name = line.split(maxsplit=1)
+        address = int(address, 16)
+        if address % 4 or not any(int(s["address"], 16) <= address < int(s["address"], 16) + s["bytes"] for s in text):
+            raise ValueError(f"Verified function lies outside executable sections: {line}")
+        symbols[address] = name
     for section in text:
         for pos in range(0, section["bytes"] - 8, 4):
             word, following = struct.unpack_from(">II", dol, section["file_offset"] + pos)
