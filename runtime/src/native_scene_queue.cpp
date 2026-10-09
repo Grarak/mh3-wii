@@ -429,8 +429,12 @@ void Finish(GuestCall& call, bool split) {
 
 namespace SceneQueue {
 void Prepare(CpuContext* cpu) {
-    MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
     EffectStep::Launch(*cpu);
+    PrepareGraph(cpu);
+}
+
+void PrepareGraph(CpuContext* cpu) {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
     PrepareSingle(cpu);
     Flatten();
 }

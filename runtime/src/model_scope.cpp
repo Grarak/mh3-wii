@@ -1170,10 +1170,13 @@ bool SameOwnerRecord(const NativeModelOwner& a, const NativeModelOwner& b) {
 std::shared_ptr<const NativeModelNodeViews> FindNativeModelNodeViews(uint32_t model) {
     // The game thread's passes while no draw runs beside them (the overlapped
     // draw's traverse follows its wait, game_frame.cpp), which may attach
-    // tables; the guest worker's run beside the game thread's catalog changes.
-    const bool game = PpcThread::CurrentThread() == PpcThread::Game;
+    // tables, and the draw thread's while it walks the scene graph beside the
+    // game thread's layers (MH3_PROFILE=parallel-prepare); the guest worker's
+    // run beside the game thread's catalog changes.
+    const unsigned thread = PpcThread::CurrentThread();
+    const bool game = thread == PpcThread::Game;
 
-    if (!game || DrawThread::Thread().Pending()) {
+    if (game ? DrawThread::Thread().Pending() : !(thread == PpcThread::Draw && NativeFramePacketPrepareOnDraw())) {
 #ifdef MH3_DEVELOPMENT
         ++nodeViewLookups[game ? 2 : 1];
 #endif

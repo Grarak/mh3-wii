@@ -143,6 +143,11 @@ struct CpuContext;
 namespace FrameDraw {
 void SetSceneHandoff(void (*handoff)());
 bool RunDeferredScene(CpuContext* cpu);
+
+// MH3_PROFILE=parallel-prepare (docs/pipelined-draw.md): when set, a single
+// view's scene hands off first and `launch` starts its graph walk
+// (SceneQueue::PrepareGraph) on the draw thread, beside the layers after it.
+void SetScenePrepareLaunch(void (*launch)(CpuContext* cpu));
 } // namespace FrameDraw
 
 // The single view's scene draw split at the bucket draw (native_scene_queue.cpp):
@@ -152,4 +157,7 @@ bool RunDeferredScene(CpuContext* cpu);
 namespace SceneQueue {
 void Prepare(CpuContext* cpu);
 void DrawPrepared(CpuContext* cpu);
+
+// Prepare without the effect launch: the graph walk and the flattened buckets.
+void PrepareGraph(CpuContext* cpu);
 } // namespace SceneQueue

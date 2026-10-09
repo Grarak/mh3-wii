@@ -87,7 +87,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,census]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]][,draw-thread][,draw-inline][,parallel-prepare][,census]`
 
 | Item | Effect |
 | --- | --- |
@@ -104,6 +104,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |
 | `draw-thread` | the 3D scene draws on the draw thread while the game thread waits (stage 1 of the [pipelined draw](pipelined-draw.md)) instead of beside the next logic step |
 | `draw-inline` | the whole frame draws on the game thread, as before the [pipelined draw](pipelined-draw.md); without it (and without `draw-thread`) every build overlaps the draw with the next logic step |
+| `parallel-prepare` | the scene graph walk (traverse, view and skinning passes, the root's view matrices) runs on the draw thread beside the game thread's layers after the scene ([pipelined draw](pipelined-draw.md)) |
 | `census` | every 240 frames, the `MH3 draw census` lines: per frame, the model draws, the skinned palette-batch draws, the distinct index ranges and meshes (a mesh split into palette batches draws once per batch), runs of draws sharing program, material and asset, and the ten assets with the most draws |
 
 ### `MH3_VERIFY`: native paths against what they replace

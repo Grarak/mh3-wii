@@ -134,6 +134,7 @@ void Layers(GuestCall& call, uint32_t first, uint32_t end) {
 // The split draw (docs/pipelined-draw.md): the scene, with the preview
 // camera's setup and reset around it, is left to the draw thread.
 void (*sceneHandoff)() = nullptr;
+void (*scenePrepareLaunch)(CpuContext* cpu) = nullptr;
 
 struct DeferredScene {
     bool pending = false, twoPlayers = false, preview = false, prepared = false;
@@ -147,11 +148,19 @@ void Scene(GuestCall& call, uint32_t r13, bool preview) {
         // next logic step changes, and sets the camera's state the scene
         // starts from); the draw thread draws its buckets.
         const bool prepared = !twoPlayers && !preview;
+        deferredScene = {true, twoPlayers, preview, prepared};
+
+        // The draw thread walks the graph from the handoff's state while the
+        // game thread draws the layers after the scene.
+        if (prepared && scenePrepareLaunch) {
+            sceneHandoff();
+            scenePrepareLaunch(call.cpu);
+            return;
+        }
 
         if (prepared)
             SceneQueue::Prepare(call.cpu);
 
-        deferredScene = {true, twoPlayers, preview, prepared};
         sceneHandoff();
         return;
     }
@@ -217,6 +226,10 @@ void DrawFrame(CpuContext* cpu) {
 namespace FrameDraw {
 void SetSceneHandoff(void (*handoff)()) {
     sceneHandoff = handoff;
+}
+
+void SetScenePrepareLaunch(void (*launch)(CpuContext* cpu)) {
+    scenePrepareLaunch = launch;
 }
 
 bool RunDeferredScene(CpuContext* cpu) {

@@ -327,6 +327,18 @@ void RequireGame() {
         MH3_THROW(std::runtime_error("Frame packet recorded outside the game thread"));
 }
 
+// The draw thread's scene graph walk beside the game thread's recording.
+std::atomic<bool> prepareOnDraw{false};
+
+// Records come from one producer at a time: not from the draw thread while it
+// walks the scene graph beside the game thread.
+void RequireRecorder() {
+#ifdef MH3_DEVELOPMENT
+    if (prepareOnDraw.load(std::memory_order_relaxed) && PpcThread::CurrentThread() == PpcThread::Draw)
+        MH3_THROW(std::runtime_error("Frame packet recorded during the draw thread's scene prepare"));
+#endif
+}
+
 // Without exceptions (release builds) a render-thread failure stops the game
 // where it happens, and nothing comes here.
 void RethrowFailure() {
@@ -431,6 +443,7 @@ StateIndices CaptureState(bool usesPost = true) {
 }
 
 void Push(Kind kind, uint32_t payload, bool textured = false) {
+    RequireRecorder();
     recording->records.push_back({kind, textured, payload, CaptureState()});
 }
 #ifdef MH3_DEVELOPMENT
@@ -514,6 +527,7 @@ bool AppendGeometry(AuroraNativeMaterialGeometry& previous, const AuroraNativeMa
 }
 
 Feedback& PushFeedback(Kind kind) {
+    RequireRecorder();
     auto& p = *recording;
 
     if (p.feedbackCount == p.feedback.size())
@@ -1047,6 +1061,8 @@ bool AllocateNativeMaterialGeometry(uint32_t vertices, uint32_t indices, AuroraN
 }
 
 void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
+    RequireRecorder();
+
     if (!NativeFramePacketRecording())
         return;
 
@@ -1448,6 +1464,14 @@ void BeginNativeFramePacketTail() {
 void EndNativeFramePacketTail() {
     if (recording && recording->tailBegin != SIZE_MAX)
         recording->tailEnd = recording->records.size();
+}
+
+void SetNativeFramePacketPrepareOnDraw(bool running) {
+    prepareOnDraw.store(running, std::memory_order_release);
+}
+
+bool NativeFramePacketPrepareOnDraw() {
+    return prepareOnDraw.load(std::memory_order_acquire);
 }
 
 void PublishNativeFramePacket(std::string capture) {
