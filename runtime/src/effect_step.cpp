@@ -880,7 +880,11 @@ extern "C" void MH3_EffectSystemRetireEffect(CpuContext* ctx) {
     // Overlapped, the draw thread may still be drawing the previous frame's
     // effects from their emitter and particle lists, which retirement frees
     // for reuse (an area change retires them all): wait for that scene first.
-    if (overlap && !OnDrawThread() && DrawThread::Thread().Pending()) {
+    // Only an active effect (+0xC life status 1) is retired; for any other
+    // the call changes nothing and returns false. Those are nearly all of
+    // them (the Jhen fight: about 30 calls a second, none for an active
+    // effect), and each waited for the whole draw, ~5 ms on the devkit.
+    if (overlap && !OnDrawThread() && DrawThread::Thread().Pending() && MemoryInline::FlatRead32(effect + 0xC) == 1) {
         DrawThread::Thread().Wait();
 #ifdef MH3_DEVELOPMENT
         ++retireDrawWaits;

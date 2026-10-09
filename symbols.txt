@@ -204,6 +204,13 @@
 800ab8e4 ParticleManagerRetireParticle
 800ad130 ParticleAddPosition
 800a5c6c EffectSystemRetireEffect
+800a5df0 EffectSystemRetireEffectAll
+800a5af4 EffectSystemCreateEffect
+800a4b5c EffectRetireParticleAll
+800a48d0 EffectRetireEmitter
+800a684c EmitterRetireParticleManager
+800a4a1c ReferencedObjectDestroy
+800a4a80 ActivityListToClosing
 8009df14 AnimCurveExecuteU8
 8009f8c0 AnimCurveExecuteF32
 800a035c AnimCurveExecuteRotate
