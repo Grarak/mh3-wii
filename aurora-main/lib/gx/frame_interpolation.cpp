@@ -91,16 +91,15 @@ private:
   static constexpr size_t kChunk = 16;
 
   InterpolationWorkerPool() {
-    const unsigned hardware = std::thread::hardware_concurrency();
-    // The caller helps too. Cap the helpers: tasks are short memcpy+math, so dispatch
-    // overhead and memory bandwidth dominate past a few threads.
-    const unsigned helpers = hardware > 2 ? std::min(hardware - 1,
 #ifdef __vita__
-                                                    1u
+    // Rendering stays on core 1. A helper on the same core cannot run in
+    // parallel with the caller and only adds dispatch/wait overhead.
+    constexpr unsigned helpers = 0;
 #else
-                                                    6u
+    const unsigned hardware = std::thread::hardware_concurrency();
+    // The caller helps too. Cap short memcpy+math tasks to limit overhead.
+    const unsigned helpers = hardware > 2 ? std::min(hardware - 1, 6u) : 0;
 #endif
-                                                    ) : 0;
     m_workers.reserve(helpers);
     for (unsigned i = 0; i < helpers; ++i) {
       m_workers.emplace_back([this] { worker_loop(); });

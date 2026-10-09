@@ -160,7 +160,11 @@ private:
         work.notify_one();
     }
     void Run() {
-        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+        // FIFO decoding, geometry preparation and batching are rendering work.
+        aurora::pin_current_thread(aurora::ThreadRole::Render);
+#ifdef __vita__
+        std::fprintf(stderr, "MH3 GX worker: thread 0x%08x pinned to render core 1\n", unsigned(sceKernelGetThreadId()));
+#endif
         std::unique_lock lock(mutex);
         for (;;) {
             work.wait(lock, [&] { return stop || !queue.empty(); });
