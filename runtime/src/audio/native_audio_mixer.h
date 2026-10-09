@@ -9,13 +9,19 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace NativeAudio {
 
 class Reverb;
 
+struct PcmSample;
+
 struct Voice {
     uint16_t pb[kPbHalfwords];
+    PcmSample* pcm;   // the decoded copy it plays from, if any (Mixer::PlayDecoded)
     bool fading;      // stopped with depop: one more tick fading out
     bool published;   // feedback needs one more publication after stopping
 };
@@ -43,7 +49,12 @@ class Mixer {
     void ResetVoices();
     void ProcessVoice(Voice& voice, bool fade);
     uint32_t Decode(Voice& voice, int16_t* out, uint32_t count);
+    uint32_t DecodeFromMemory(Voice& voice, int16_t* out, uint32_t count);
+    uint32_t PlayDecoded(Voice& voice, int16_t* out, uint32_t count);
+    PcmSample* FindDecoded(const Voice& voice);
+    void ForgetDecoded(uint32_t end);
     uint8_t ByteAt(uint32_t address) const;
+    const uint8_t* BytesAt(uint32_t address, uint32_t bytes) const;
 
     CommandRing ring_;
     Feedback feedback_;
@@ -63,9 +74,33 @@ class Mixer {
     uint16_t mode_ = 0;
     std::unique_ptr<Reverb> aux_[3];
 
+    // Bank samples' ADPCM decoded to PCM16 as voices play them, by end
+    // address, and the end addresses whose data changed under a voice (a
+    // stream's ring), which always decode from memory.
+    std::unordered_map<uint32_t, std::unique_ptr<PcmSample>> decoded_;
+    std::unordered_set<uint32_t> rewritten_;
+    size_t decodedBytes_ = 0;
+
     uint32_t rendered_ = 0;  // ticks mixed so far
     alignas(16) int16_t tick_[kTickSamples * 2];
     uint32_t tickPosition_ = kTickSamples;
+};
+
+// A bank sample decoded to PCM16 from the first frame a voice played on,
+// frame by frame as far as voices got (the ADPCM history carries on from the
+// last decoded frame).
+struct PcmSample {
+    uint32_t base = 0, end = 0;  // nibble addresses: the first frame, the last sample
+    uint32_t check = 0;          // SampleCheck of the ADPCM bytes and coefficients
+    uint32_t frames = 0;         // frames decoded
+    int32_t yn1 = 0, yn2 = 0;    // the history after them
+    uint32_t lastUse = 0;        // the tick a voice last played it
+    const uint8_t* data = nullptr;  // the ADPCM bytes from `base` on
+    uint16_t coefs[16] = {};
+    std::vector<int16_t> pcm;    // every sample to `end`; the first frames * 14 decoded
+
+    uint32_t Index(uint32_t address) const { return ((address - base) >> 4) * 14 + (address & 0xF) - 2; }
+    uint32_t Address(uint32_t index) const { return base + index / 14 * 16 + index % 14 + 2; }
 };
 
 // The native 4-tap ReverbHi (AXFX ReverbHiExp) on native delay lines.
@@ -73,8 +108,13 @@ class Reverb {
   public:
     explicit Reverb(const ReverbConfig& config);
     void Process(int32_t* left, int32_t* right, int32_t* surround);
+    void Prefetch() const;
+    void SetGains(const float gains[4]);
 
   private:
+    void ProcessSamples(int32_t* left, int32_t* right, int32_t* surround);
+    void Clear();
+
     struct Line {
         std::unique_ptr<float[]> samples;
         uint32_t length = 0;
@@ -87,6 +127,12 @@ class Reverb {
     ReverbConfig config_;
     Line early_[3], preDelay_[3], comb_[3][3], allpass_[3][2], last_[3];
     float lowpass_[3] = {};
+    bool heard_[3] = {};  // the channel had input since the reverb started
+    bool idle_ = false;   // skipped at an output gain of 0
+
+    // The longest block of a tick that runs stage by stage: no line is
+    // shorter and no early tap reads what the block wrote (Reverb::Reverb).
+    uint32_t block_ = 0;
 };
 
 } // namespace NativeAudio

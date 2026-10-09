@@ -68,6 +68,10 @@ struct PendingAux {
     bool pending = false;
     AuxKind kind = AuxKind::None;
     ReverbConfig config{};
+
+    // The registered reverb's state and the gains last sent from it.
+    uint32_t context = 0;
+    float gains[4]{};
 };
 
 struct Driver {
@@ -102,20 +106,51 @@ void EmitGlobals(CommandRing& ring) {
     g.globalsSent = true;
 }
 
+// The AXFX_REVERBHI_EXP gains the guest's callback reads live (crosstalk,
+// level, output gain, send gain): the game may set them after registering.
+void ReadReverbGains(uint32_t state, float gains[4]) {
+    gains[0] = LoadFloat(state + 0x12C);
+    gains[1] = LoadFloat(state + 0x134);
+    gains[2] = LoadFloat(state + 0x140);
+    gains[3] = LoadFloat(state + 0x144);
+}
+
 void EmitAux(CommandRing& ring) {
     for (uint32_t bus = 0; bus < 3; ++bus) {
         PendingAux& aux = g.aux[bus];
 
-        if (!aux.pending)
+        if (!aux.pending) {
+            if (aux.kind != AuxKind::ReverbHi)
+                continue;
+
+            float gains[4];
+            ReadReverbGains(aux.context, gains);
+
+            if (std::memcmp(gains, aux.gains, sizeof(gains)) == 0)
+                continue;
+
+            uint32_t* out = ring.Reserve(6);
+            out[0] = Header(Command::Aux, 6, bus);
+            out[1] = uint32_t(AuxKind::ReverbGains);
+            std::memcpy(out + 2, gains, sizeof(gains));
+            std::memcpy(aux.gains, gains, sizeof(gains));
+
+            if (static uint32_t reported; reported < 16 && ++reported)
+                std::fprintf(stderr, "MH3 audio: aux %c reverb gains: crosstalk %.3f, level %.3f, output %.3f, send %.3f\n", 'A' + bus, double(gains[0]), double(gains[1]),
+                             double(gains[2]), double(gains[3]));
+
             continue;
+        }
 
         const uint32_t words = 2 + (aux.kind == AuxKind::ReverbHi ? kReverbConfigWords : 0);
         uint32_t* out = ring.Reserve(words);
         out[0] = Header(Command::Aux, words, bus);
         out[1] = uint32_t(aux.kind);
 
-        if (aux.kind == AuxKind::ReverbHi)
+        if (aux.kind == AuxKind::ReverbHi) {
             std::memcpy(out + 2, &aux.config, sizeof(aux.config));
+            ReadReverbGains(aux.context, aux.gains);
+        }
 
         aux.pending = false;
     }
@@ -252,6 +287,7 @@ void NoteAuxCallback(uint32_t bus, uint32_t callback, uint32_t context) {
     aux.kind = AuxKind::None;
 
     if (callback == kAxfxReverbHiCallback && context) {
+        aux.context = context;
         aux.config = SnapshotReverb(context);
 
         if (ValidReverb(aux.config) && (FlatRead32(context + 0x10C) & 1) == 0)
@@ -312,18 +348,22 @@ void ReportNativeAudioStatistics(double seconds) {
         return;
 
     static Driver previous;
-    static uint64_t previousRenderNs = 0, previousRendered = 0, previousFrozen = 0, previousLate = 0;
+    static uint64_t previousRenderNs = 0, previousRendered = 0, previousFrozen = 0, previousLate = 0, previousUnderruns = 0;
     MixerStatistics& s = GetMixer().Statistics();
     const uint64_t renderNs = s.renderNs.load(std::memory_order_relaxed);
     const uint64_t rendered = s.renderedTicks.load(std::memory_order_relaxed);
     const uint64_t frozen = s.frozenTicks.load(std::memory_order_relaxed);
     const uint64_t late = s.lateTicks.load(std::memory_order_relaxed);
+    const uint64_t underruns = s.underruns.load(std::memory_order_relaxed);
     const double mixerMs = double(renderNs - previousRenderNs) / (1e6 * seconds);
+    const uint64_t fromMemory = s.memorySamples.exchange(0, std::memory_order_relaxed), decoded = s.decodedSamples.exchange(0, std::memory_order_relaxed);
+    const double decodedShare = fromMemory + decoded ? 100.0 * double(decoded) / double(fromMemory + decoded) : 0.0;
     std::fprintf(stderr,
                  "MH3 audio: native mixer %.2f ms/s (%.1f%% of a core), %.1f ticks/s, padded %.2f ms/s (game behind), late %.1f ticks/s, voices %u active/%u peak, "
-                 "thread %d core %d affinity %x\n",
+                 "underruns %llu (longest mix %u us), ADPCM %.0f%% played decoded (%u KiB), thread %d core %d affinity %x\n",
                  mixerMs, mixerMs / 10.0, double(rendered - previousRendered) / seconds, double(frozen - previousFrozen) * 3.0 / seconds, double(late - previousLate) / seconds,
-                 s.activeVoices.load(std::memory_order_relaxed), s.peakVoices.load(std::memory_order_relaxed), s.thread.load(std::memory_order_relaxed),
+                 s.activeVoices.load(std::memory_order_relaxed), s.peakVoices.load(std::memory_order_relaxed), static_cast<unsigned long long>(underruns - previousUnderruns),
+                 s.longestMixUs.exchange(0, std::memory_order_relaxed), decodedShare, s.decodedKiB.load(std::memory_order_relaxed), s.thread.load(std::memory_order_relaxed),
                  s.core.load(std::memory_order_relaxed), unsigned(s.affinity.load(std::memory_order_relaxed)));
     std::fprintf(stderr, "MH3 audio: game thread voices %.2f ms/s, sound frame %.2f ms/s, service %.2f ms/s; %.1f ticks/s produced, lead %u ticks, %.1f voice updates/tick, ring %.1f KiB high-water\n",
                  double(g.syncNs - previous.syncNs) / (1e6 * seconds), double(g.callbackNs - previous.callbackNs) / (1e6 * seconds),
@@ -338,6 +378,7 @@ void ReportNativeAudioStatistics(double seconds) {
     previousRendered = rendered;
     previousFrozen = frozen;
     previousLate = late;
+    previousUnderruns = underruns;
 }
 
 } // namespace NativeAudio

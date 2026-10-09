@@ -4,6 +4,7 @@
 #include "../src/audio/native_audio_mixer.h"
 #include <aurora/thread_role.hpp>
 #include <psp2/audioout.h>
+#include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <algorithm>
 #include <array>
@@ -214,6 +215,11 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
 // Native mixer output: one core-0 thread mixes 12 ms (four AX ticks) at a time
 // and hands it to SceAudio, whose blocking output call is the audio clock.
 // Nothing else runs on this thread; the game thread never waits for it.
+//
+// The BGM port converts the 32 kHz mix in the system, inside the output call
+// on this thread. Converting to 48 kHz here for the MAIN port (a 3-phase
+// 24-tap polyphase filter, NEON) cost the devkit about 2.5 times the system's
+// conversion.
 namespace NativeAudio {
 namespace {
 constexpr uint32_t kNativeFrames = 384;  // a multiple of 64 (SceAudio) and 96 (one tick)
@@ -223,6 +229,14 @@ alignas(64) int16_t nativeBuffers[2][kNativeFrames * 2];
 
 void RunNative() noexcept {
     aurora::pin_current_thread(aurora::ThreadRole::Worker);  // core 0, mask 0x10000
+
+    // Above the default priority of every other thread: core 0 also runs the
+    // guest worker's effect jobs, and the Vita does not share a core between
+    // threads of equal priority, so a buffer waited out a job and played
+    // late about once a second (mixes ending 13-22 ms after the previous
+    // buffer started, which plays 12 ms). The mix itself takes ~1 ms of it.
+    constexpr int DefaultPriority = 0x10000100;  // SCE_KERNEL_DEFAULT_PRIORITY_USER
+    sceKernelChangeThreadPriority(sceKernelGetThreadId(), DefaultPriority - 16);
     NoteAudioThread();
     const int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, kNativeFrames, kSampleRate, SCE_AUDIO_OUT_MODE_STEREO);
 
@@ -235,12 +249,28 @@ void RunNative() noexcept {
     auto next = std::chrono::steady_clock::now();
     unsigned side = 0;
 
+    MixerStatistics& statistics = GetMixer().Statistics();
+    SceUInt64 returned = 0; // when the last output call returned: the previous buffer started playing
+
     while (!nativeStop.load(std::memory_order_relaxed)) {
         MixerRender(nativeBuffers[side], kNativeFrames);
+
+        // The buffer that started playing at `returned` lasts one period: a
+        // mix that ends later leaves a gap (an underrun).
+        if (returned) {
+            const SceUInt64 spent = sceKernelGetProcessTimeWide() - returned;
+
+            if (spent > SceUInt64(period.count()))
+                statistics.underruns.fetch_add(1, std::memory_order_relaxed);
+
+            if (spent > statistics.longestMixUs.load(std::memory_order_relaxed))
+                statistics.longestMixUs.store(uint32_t(spent), std::memory_order_relaxed);
+        }
 
         if (port >= 0) {
             // Returns once the previous buffer is playing: this one is next.
             const int result = sceAudioOutOutput(port, nativeBuffers[side]);
+            returned = sceKernelGetProcessTimeWide();
 
             if (result < 0) {
                 std::fprintf(stderr, "MH3 audio: native output failed: 0x%08x\n", unsigned(result));

@@ -318,7 +318,9 @@ struct ReverbConfig {
     float allpassGain, lowpassCoef, crosstalk, level, outGain, sendGain;
 };
 
-enum class AuxKind : uint32_t { None = 0, ReverbHi = 1 };
+// ReverbGains: crosstalk, level, output and send gain (floats), the settings
+// the game may change while the effect runs.
+enum class AuxKind : uint32_t { None = 0, ReverbHi = 1, ReverbGains = 2 };
 constexpr uint32_t kReverbConfigWords = sizeof(ReverbConfig) / 4;
 
 // Mixer -> game: what the "DSP" did to each voice, as __AXSyncPB copied it
@@ -334,7 +336,17 @@ struct Feedback {
 // reads them once a second.
 struct MixerStatistics {
     std::atomic<uint64_t> renderNs{0}, renderedTicks{0}, frozenTicks{0}, lateTicks{0}, outputFrames{0};
+
+    // Buffers the output thread had not mixed when the previous one finished
+    // playing (the gap is audible), and the longest mix between two outputs.
+    std::atomic<uint64_t> underruns{0};
+    std::atomic<uint32_t> longestMixUs{0};
     std::atomic<uint32_t> activeVoices{0}, peakVoices{0};
+
+    // ADPCM samples decoded from guest memory and played from decoded
+    // copies, and the copies' size.
+    std::atomic<uint64_t> memorySamples{0}, decodedSamples{0};
+    std::atomic<uint32_t> decodedKiB{0};
     std::atomic<int> thread{-1}, core{-1};
     std::atomic<uint32_t> affinity{0};
 };
@@ -345,6 +357,7 @@ Mixer& GetMixer();
 // Audio thread entry: renders `frames` interleaved stereo frames (left,
 // right) into `out`, a whole tick at a time internally.
 void MixerRender(int16_t* out, uint32_t frames);
+
 
 // Platform output (runtime/src/audio_output.cpp, runtime/vita/audio_output.cpp).
 // Starts the thread that pulls MixerRender at the device rate; idempotent.
