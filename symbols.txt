@@ -667,3 +667,15 @@
 # Paired-single matrix library (ported in runtime/src/mtx.cpp).
 804c62c0 PSMTXCopy
 804c6300 PSMTXConcat
+804c6f20 PSMTXMultVec
+804c6560 PSMTXInverse
+# NW4R accessor chains (ported in runtime/src/nw4r_accessors.cpp).
+800a8c5c EmitterResBody
+800adeb4 ResEmitterPtclTrackTable
+80070124 ResRefChecked
+80097dfc ResOffsetToPtr
+80097f7c ResDicAtOffset14
+80062978 StoreAlignedPtr
+8005d210 StoreAlignedPtr2
+80041ea4 Vec3Copy
+8009e8b8 AnimCurveBlendU8

@@ -88,11 +88,92 @@ void ConcatArray(uint32_t a, uint32_t srcBase, uint32_t dstBase, uint32_t count,
     }
 }
 
+// The packed-double form of the translated code (PPC_Ps* helpers), for the
+// ports that mirror it instruction by instruction.
+double LoadPacked(uint32_t address) { return PpcPackPairedInline(LoadFloat(address), LoadFloat(address + 4)); }
+double LoadPacked1(uint32_t address) { return PpcPackPairedInline(LoadFloat(address), 1.0f); }
+void StorePacked(uint32_t address, double v) {
+    StoreFloat(address, PpcGetPs0Inline(v));
+    StoreFloat(address + 4, PpcGetPs1Inline(v));
+}
+void StorePacked1(uint32_t address, double v) { StoreFloat(address, PpcGetPs0Inline(v)); }
+double Broadcast(uint32_t address) { return PPC_PsFromScalarInline(MemoryInline::FlatReadFloat32(address)); }
+
+// PSMTXMultVec(m, src, dst): dst = m * (src, 1). Per row, ps_mul the row's
+// first pair by (x, y), ps_madd its second by (z, 1), ps_sum0 the lanes.
+void MultVec(uint32_t m, uint32_t src, uint32_t dst) {
+    const double xy = LoadPacked(src), z1 = LoadPacked1(src + 8);
+    double out[3];
+    for (unsigned r = 0; r < 3; ++r) {
+        const double sum = PPC_PsMaddInline(LoadPacked(m + 16 * r + 8), z1, PPC_PsMulInline(LoadPacked(m + 16 * r), xy));
+        out[r] = double(float(double(PpcGetPs0Inline(sum)) + PpcGetPs1Inline(sum)));
+    }
+    for (unsigned r = 0; r < 3; ++r) StoreFloat(dst + 4 * r, float(out[r]));
+}
+
+// PSMTXInverse(src, inv): the 3x3 part by cofactors over the determinant
+// (fres plus one Newton step), the translation by -inv3x3 * t. Returns 0,
+// writing nothing, for a zero determinant.
+uint32_t Inverse(uint32_t src, uint32_t inv) {
+    const double f0 = LoadPacked1(src), f1 = LoadPacked(src + 4), f2 = LoadPacked1(src + 0x10);
+    const double f3 = LoadPacked(src + 0x14), f4 = LoadPacked1(src + 0x20), f5 = LoadPacked(src + 0x24);
+    double f6 = PPC_PsMerge10Inline(f1, f0);
+    double f7 = PPC_PsMerge10Inline(f3, f2);
+    double f8 = PPC_PsMerge10Inline(f5, f4);
+    double f11 = PPC_PsMulInline(f3, f6);
+    double f13 = PPC_PsMulInline(f5, f7);
+    f11 = PPC_PsMsubInline(f1, f7, f11);
+    double f12 = PPC_PsMulInline(f1, f8);
+    f13 = PPC_PsMsubInline(f3, f8, f13);
+    double f10 = PPC_PsMulInline(f3, f4);
+    f12 = PPC_PsMsubInline(f5, f6, f12);
+    f7 = PPC_PsMulInline(f0, f13);
+    double f9 = PPC_PsMulInline(f0, f5);
+    f8 = PPC_PsMulInline(f1, f2);
+    f7 = PPC_PsMaddInline(f2, f12, f7);
+    f6 = PPC_PsSubInline(f6, f6);
+    f10 = PPC_PsMsubInline(f2, f5, f10);
+    f7 = PPC_PsMaddInline(f4, f11, f7);
+    f9 = PPC_PsMsubInline(f1, f4, f9);
+    f8 = PPC_PsMsubInline(f0, f3, f8);
+    // ps_cmpo0: equal only when ordered and equal.
+    if (PpcGetPs0Inline(f7) == PpcGetPs0Inline(f6)) return 0;
+
+    double r0 = PPC_Fres(f7);
+    f6 = PPC_PsAddInline(r0, r0);
+    double f5b = PPC_PsMulInline(f7, r0);
+    r0 = PPC_PsNmsubInline(r0, f5b, f6);
+    const double t1 = Broadcast(src + 0xC), t2 = Broadcast(src + 0x1C), t3 = Broadcast(src + 0x2C);
+    f13 = PPC_PsMuls0Inline(f13, r0);
+    f12 = PPC_PsMuls0Inline(f12, r0);
+    f11 = PPC_PsMuls0Inline(f11, r0);
+    StorePacked(inv, PPC_PsMerge00Inline(f13, f12));
+    StorePacked(inv + 0x10, PPC_PsMerge11Inline(f13, f12));
+    double t = PPC_PsMulInline(f13, t1);
+    f10 = PPC_PsMuls0Inline(f10, r0);
+    f9 = PPC_PsMuls0Inline(f9, r0);
+    t = PPC_PsMaddInline(f12, t2, t);
+    StorePacked1(inv + 0x20, f10);
+    f8 = PPC_PsMuls0Inline(f8, r0);
+    t = PPC_PsNmaddInline(f11, t3, t);
+    StorePacked1(inv + 0x24, f9);
+    double u = PPC_PsMulInline(f10, t1);
+    StorePacked1(inv + 0x28, f8);
+    u = PPC_PsMaddInline(f9, t2, u);
+    StorePacked(inv + 0x08, PPC_PsMerge00Inline(f11, t));
+    u = PPC_PsNmaddInline(f8, t3, u);
+    StorePacked(inv + 0x18, PPC_PsMerge11Inline(f11, t));
+    StorePacked1(inv + 0x2C, u);
+    return 1;
+}
+
 } // namespace
 
 extern "C" void func_804C62C0(CpuContext* ctx);
 extern "C" void func_804C6300(CpuContext* ctx);
 extern "C" void func_804C63D0(CpuContext* ctx);
+extern "C" void func_804C6560(CpuContext* ctx);
+extern "C" void func_804C6F20(CpuContext* ctx);
 
 // With MH3_PORT_CHECK naming the port, each call runs the original too and
 // compares the output matrices (registers from the current context).
@@ -136,3 +217,32 @@ extern "C" void MH3_PSMTXConcatArray(CpuContext* ctx) {
     ConcatArrayChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[13]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804C63D0, MH3_PSMTXConcatArray, "PSMTXConcatArray");
+
+static void MultVecPort(CpuContext* p) { MultVec(p->gpr[3], p->gpr[4], p->gpr[5]); }
+static void MultVecChecked(uint32_t r1, uint32_t r3, uint32_t r4, uint32_t r5) {
+    MH3_MTX_CHECK("PSMTXMultVec", func_804C6F20, MultVecPort, r5, 12, c->gpr[1] = r1, c->gpr[3] = r3, c->gpr[4] = r4,
+                  c->gpr[5] = r5);
+    MultVec(r3, r4, r5);
+}
+extern "C" void MH3_PSMTXMultVec(CpuContext* ctx) { MultVecChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]); }
+REGISTER_NATIVE_FUNCTION_AS(0x804C6F20, MH3_PSMTXMultVec, "PSMTXMultVec");
+
+static void InversePort(CpuContext* p) { p->gpr[3] = Inverse(p->gpr[3], p->gpr[4]); }
+static uint32_t InverseChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("PSMTXInverse");
+    if (check) [[unlikely]] {
+        CpuContext* c = TryGetCpuContext();
+        c->gpr[1] = r1;
+        c->gpr[3] = r3;
+        c->gpr[4] = r4;
+        PortCheck::RunOutput(c, "PSMTXInverse", func_804C6560, InversePort, {{r4, 0x30}});
+        return c->gpr[3];
+    }
+#else
+    (void)r1;
+#endif
+    return Inverse(r3, r4);
+}
+extern "C" void MH3_PSMTXInverse(CpuContext* ctx) { ctx->gpr[3] = InverseChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]); }
+REGISTER_NATIVE_FUNCTION_AS(0x804C6560, MH3_PSMTXInverse, "PSMTXInverse");
