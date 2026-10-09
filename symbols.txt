@@ -43,6 +43,7 @@
 # 0x80292A40, which calls 0x80293568. The latter can call 0x80293AE0 to
 # normalize a three-component vector (f0/f1, then scale through 0x80051454).
 80292a40 LandSweepTriangleTraversal
+80292524 LandSweepTriangleCandidateFilter
 80293568 LandSweepTriangleContact
 80293ae0 LandSweepNormalizeVector
 # The PAL Walk through Walls Gecko patch changes the lfs at 0x802951CC
@@ -71,6 +72,12 @@
 # returned angle to single precision.
 80050aa4 PlanarDirectionToHeading16
 80464488 ForceSingleAngleWrapper
+804685ec Atan2TailWrapper
+80464be0 Atan2DoubleCore
+80050d04 VectorSubtractWrapper
+80052278 VectorDotProductPaired
+80051f44 VectorScaleWrapper
+80296dc8 PointInTriangle3D
 # Calls an inlined one-instruction leaf and returns the original r3 pointer.
 802955a8 SweepCollisionIdentityLeaf
 # A second active ground probe stores a surface ID at actor +1268.
