@@ -246,6 +246,32 @@ void MultVec(uint32_t m, uint32_t src, uint32_t dst) {
 // (fres plus one Newton step), the translation by -inv3x3 * t. Returns 0,
 // writing nothing, for a zero determinant.
 uint32_t Inverse(uint32_t src, uint32_t inv) {
+#ifdef MH3_MTX_NEON
+    // The same cofactors, determinant and translation products in the same
+    // order, on plain floats (the rows' NEON lanes): the paired forms check
+    // each pair for a NaN (a compare and status-register move per
+    // operation). The reciprocal is a division, not fres and one Newton
+    // step: the results can differ in the last bits.
+    const float32x4_t r0 = LoadRow(src), r1 = LoadRow(src + 16), r2 = LoadRow(src + 32);
+    const float m00 = vgetq_lane_f32(r0, 0), m01 = vgetq_lane_f32(r0, 1), m02 = vgetq_lane_f32(r0, 2), tx = vgetq_lane_f32(r0, 3);
+    const float m10 = vgetq_lane_f32(r1, 0), m11 = vgetq_lane_f32(r1, 1), m12 = vgetq_lane_f32(r1, 2), ty = vgetq_lane_f32(r1, 3);
+    const float m20 = vgetq_lane_f32(r2, 0), m21 = vgetq_lane_f32(r2, 1), m22 = vgetq_lane_f32(r2, 2), tz = vgetq_lane_f32(r2, 3);
+    const float c00 = m11 * m22 - m21 * m12, c01 = m21 * m02 - m01 * m22, c02 = m01 * m12 - m11 * m02;
+    const float det = m20 * c02 + (m10 * c01 + m00 * c00);
+
+    // ps_cmpo0 with m02 - m02: equal only for a zero determinant and a finite m02.
+    if (det == m02 - m02)
+        return 0;
+
+    const float r = 1.0f / det;
+    const float i00 = c00 * r, i01 = c01 * r, i02 = c02 * r;
+    const float i10 = (m12 * m20 - m22 * m10) * r, i11 = (m22 * m00 - m02 * m20) * r, i12 = (m02 * m10 - m12 * m00) * r;
+    const float i20 = (m10 * m21 - m11 * m20) * r, i21 = (m01 * m20 - m00 * m21) * r, i22 = (m00 * m11 - m01 * m10) * r;
+    StoreRow(inv, float32x4_t{i00, i01, i02, -(i02 * tz + (i01 * ty + i00 * tx))});
+    StoreRow(inv + 16, float32x4_t{i10, i11, i12, -(i12 * tz + (i11 * ty + i10 * tx))});
+    StoreRow(inv + 32, float32x4_t{i20, i21, i22, -(i22 * tz + (i21 * ty + i20 * tx))});
+    return 1;
+#else
     const double f0 = LoadPacked1(src), f1 = LoadPacked(src + 4), f2 = LoadPacked1(src + 0x10);
     const double f3 = LoadPacked(src + 0x14), f4 = LoadPacked1(src + 0x20), f5 = LoadPacked(src + 0x24);
     double f6 = PPC_PsMerge10Inline(f1, f0);
@@ -298,6 +324,7 @@ uint32_t Inverse(uint32_t src, uint32_t inv) {
     StorePacked(inv + 0x18, PPC_PsMerge11Inline(f11, t));
     StorePacked1(inv + 0x2C, u);
     return 1;
+#endif
 }
 
 } // namespace
