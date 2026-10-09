@@ -27,12 +27,16 @@ class SpinSignal {
   public:
     uint32_t Load() const noexcept { return value_.load(std::memory_order_acquire); }
 
-    // Advances the counter and wakes the waiter if it is parked.
-    void Advance() noexcept {
+    // Advances the counter and wakes the waiter if it is parked; whether it
+    // was (on the Vita; a timed wait elsewhere).
+    bool Advance() noexcept {
         value_.fetch_add(1, std::memory_order_seq_cst);
 #ifdef __vita__
-        if (sleeping_.exchange(false, std::memory_order_seq_cst))
-            sceKernelSignalSema(sema_, 1);
+        if (!sleeping_.exchange(false, std::memory_order_seq_cst))
+            return false;
+
+        sceKernelSignalSema(sema_, 1);
+        return true;
 #else
         value_.notify_one();
 
@@ -40,7 +44,10 @@ class SpinSignal {
         if (sleeping_.load(std::memory_order_seq_cst) && sleeping_.exchange(false, std::memory_order_seq_cst)) {
             std::lock_guard lock(mutex_);
             wake_.notify_one();
+            return true;
         }
+
+        return false;
 #endif
     }
 

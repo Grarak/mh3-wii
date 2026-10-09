@@ -61,6 +61,9 @@ class GuestThread {
     // True from Submit until the job finishes.
     bool Pending() const;
 
+    // Whether the last Submit had to wake the thread from parking.
+    bool LastSubmitWoke() const { return lastSubmitWoke_; }
+
     // Waits (spinning) for the submitted job without the submitter's
     // statistics: for another thread that only needs the job's results.
     void Await() const;
@@ -84,7 +87,7 @@ class GuestThread {
     unsigned role_, core_;
     std::atomic<uint32_t> idleSpinUs_{0};
     uint32_t stackBase_ = 0, stackBytes_ = 0, workArea_ = 0;
-    bool started_ = false;
+    bool started_ = false, lastSubmitWoke_ = false;
     pthread_t thread_{};
 
     // Written by the submitter before it publishes a submission, read by the

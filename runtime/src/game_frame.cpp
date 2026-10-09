@@ -340,13 +340,15 @@ void SceneHandoff() {
 bool prepareLaunched = false;
 
 #ifdef MH3_DEVELOPMENT
-// MH3_PROFILE=split: the walk's job on the draw thread, the game thread's
-// part from the launch to the join, and the join's wait (MH3 scene prepare
-// line, once a second).
+// The walk's job on the draw thread, the game thread's part from the launch
+// to the join, and the join's wait (MH3 scene prepare line, once a second;
+// a few clock reads a frame, so every development build).
 struct PrepareTiming {
     MH3SplitClock::time_point launched{};
-    std::atomic<int64_t> jobUs{0}, latencyUs{0};
-    int64_t gameUs = 0, waitUs = 0, frames = 0;
+    std::atomic<int64_t> jobUs{0}, lastLatencyUs{0};
+    int64_t latencyUs[2] = {}, launches[2] = {}; // by whether the launch woke the parked draw thread
+    bool woke = false;
+    int64_t gameUs = 0, waitUs = 0, handoffUs = 0, frames = 0;
     MH3SplitClock::time_point printed{};
 } prepareTiming;
 #endif
@@ -354,7 +356,7 @@ struct PrepareTiming {
 void RunPrepareJob(CpuContext* cpu, void*) {
 #ifdef MH3_DEVELOPMENT
     const auto start = MH3SplitClock::now();
-    prepareTiming.latencyUs.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(start - prepareTiming.launched).count(), std::memory_order_relaxed);
+    prepareTiming.lastLatencyUs.store(std::chrono::duration_cast<std::chrono::microseconds>(start - prepareTiming.launched).count(), std::memory_order_relaxed);
 #endif
     SceneQueue::PrepareGraph(cpu);
 #ifdef MH3_DEVELOPMENT
@@ -377,6 +379,9 @@ void LaunchScenePrepare(CpuContext* cpu) {
     prepareTiming.launched = MH3SplitClock::now();
 #endif
     DrawThread::Thread().Submit(*cpu, RunPrepareJob, nullptr);
+#ifdef MH3_DEVELOPMENT
+    prepareTiming.woke = DrawThread::Thread().LastSubmitWoke();
+#endif
     prepareLaunched = true;
 }
 
@@ -390,21 +395,28 @@ void JoinScenePrepare() {
     DrawThread::Thread().Wait();
     SetNativeFramePacketPrepareOnDraw(false);
 #ifdef MH3_DEVELOPMENT
-    if (mh3SplitDetail) {
+    {
         using std::chrono::duration_cast;
         using std::chrono::microseconds;
         auto& t = prepareTiming;
         const auto now = MH3SplitClock::now();
+        t.latencyUs[t.woke] += t.lastLatencyUs.load(std::memory_order_relaxed);
+        ++t.launches[t.woke];
         t.gameUs += duration_cast<microseconds>(joined - t.launched).count();
         t.waitUs += duration_cast<microseconds>(now - joined).count();
         ++t.frames;
 
         if (now - t.printed >= std::chrono::seconds(1)) {
             const double n = double(t.frames);
-            std::fprintf(stderr, "MH3 scene prepare: walk %.2f ms on the draw thread, %.2f ms after its launch; game side to the join %.2f ms, join wait %.2f ms per frame (%lld frames)\n",
-                         t.jobUs.exchange(0, std::memory_order_relaxed) / 1000.0 / n, t.latencyUs.exchange(0, std::memory_order_relaxed) / 1000.0 / n, t.gameUs / 1000.0 / n, t.waitUs / 1000.0 / n,
-                         (long long)t.frames);
-            t.gameUs = t.waitUs = t.frames = 0;
+            std::fprintf(stderr,
+                         "MH3 scene prepare: walk %.2f ms on the draw thread, starting %.2f ms after its launch (%.2f ms in %lld launches waking it, %.2f ms in %lld with it spinning); "
+                         "game side to the join %.2f ms, join wait %.2f ms, handoff wait %.2f ms per frame (%lld frames)\n",
+                         t.jobUs.exchange(0, std::memory_order_relaxed) / 1000.0 / n, (t.latencyUs[0] + t.latencyUs[1]) / 1000.0 / n,
+                         t.launches[1] ? t.latencyUs[1] / 1000.0 / double(t.launches[1]) : 0.0, (long long)t.launches[1],
+                         t.launches[0] ? t.latencyUs[0] / 1000.0 / double(t.launches[0]) : 0.0, (long long)t.launches[0], t.gameUs / 1000.0 / n, t.waitUs / 1000.0 / n,
+                         t.handoffUs / 1000.0 / n, (long long)t.frames);
+            t.gameUs = t.waitUs = t.handoffUs = t.frames = 0;
+            t.latencyUs[0] = t.latencyUs[1] = t.launches[0] = t.launches[1] = 0;
             t.printed = now;
         }
     }
@@ -631,7 +643,13 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 
         // The overlapped draw started before the first frame began
         // (MH3StartDrawOverlap).
+#ifdef MH3_DEVELOPMENT
+        const auto handoff = MH3SplitClock::now();
+#endif
         DrawThread::Thread().Wait();
+#ifdef MH3_DEVELOPMENT
+        prepareTiming.handoffUs += std::chrono::duration_cast<std::chrono::microseconds>(MH3SplitClock::now() - handoff).count();
+#endif
         ApplyDeferredDrawCacheRetirements();
         BeginOverlappedNativeGraphicsFrame();
         GameSideSection(ctx, render);

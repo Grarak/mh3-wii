@@ -141,7 +141,7 @@ void GuestThread::Submit(const CpuContext& seed, Job job, void* data) {
     seed_ = seed;
     job_ = job;
     data_ = data;
-    submitted_.Advance();
+    lastSubmitWoke_ = submitted_.Advance();
 }
 
 // Whether the counter of finished jobs is still short of `target` (both count
