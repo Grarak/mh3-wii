@@ -127,3 +127,11 @@ A development build names any of these that is still set at startup.
 | `MH3_WRITE_WATCH_LIST=FILE`, `MH3_WRITE_WATCH_MS=N` | `MH3_WRITE_WATCH=list=FILE,ms=N` |
 | `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |
 | `MH3_PROFILE_FRAMES=N`, `MH3_MODEL_SPLIT=1`, `MH3_RENDER_SYNC=1` | `MH3_PROFILE=frames=N,split,sync` |
+
+Removed on 2026-10-03 with the code behind them (git history keeps them):
+
+- A/B switches of finished work: `MH3_ANIM_WHOLE_FRAMES` (animation at whole
+  frames), `MH3_EFFECT_TICK_CURVES` (effect curves at whole ticks),
+  `MH3_STEP_COUNTER_RAW` (the step counter counting steps), `MH3_FIELD_WAIT`
+  (the field jump's 30-step wait), `MH3_NATIVE_MODEL_DRAW=0` (the translated
+  model draw walk; `MH3_PORT_CHECK=G3dDrawOpaXlu` still compares it).

@@ -291,23 +291,6 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
     game.Call<InitAnmResult>({result});
     for (uint32_t i = 0; i < 6; ++i)
         Memory::Write32(channel(i, kPrevFrame), Memory::Read32(channel(i, kFrame)));
-#ifdef MH3_DEVELOPMENT
-    // MH3_ANIM_WHOLE_FRAMES=1 (debugging): the channels are shown at whole
-    // frames; their exact frames are kept here and restored before advancing.
-    static const bool wholeFrames = std::getenv("MH3_ANIM_WHOLE_FRAMES") != nullptr;
-    static std::unordered_map<uint64_t, float> exact;
-    if (wholeFrames)
-        for (uint32_t i = 0; i < 6; ++i) {
-            const uint32_t anim = game.Call<ChannelAnim>({self, i});
-            if (!anim)
-                continue;
-            game.Virtual<kGetFrame>(anim);
-            const float shown = game.F1();
-            const auto it = exact.find(uint64_t(self) << 8 | i);
-            if (it != exact.end() && std::floor(it->second) == shown)
-                game.Virtual<kSetFrame>(anim, {}, {it->second});
-        }
-#endif
     if (Memory::Read8(self + kSkipAdvance) == 0) {
         game.Virtual<kUpdateFrame>(channelSet);
     } else {
@@ -315,18 +298,6 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         Memory::Write8(self + kSkipAdvance, 0);
         state.roots = {};
     }
-#ifdef MH3_DEVELOPMENT
-    if (wholeFrames)
-        for (uint32_t i = 0; i < 6; ++i) {
-            const uint32_t anim = game.Call<ChannelAnim>({self, i});
-            if (!anim)
-                continue;
-            game.Virtual<kGetFrame>(anim);
-            const float frameNow = game.F1();
-            exact[uint64_t(self) << 8 | i] = frameNow;
-            game.Virtual<kSetFrame>(anim, {}, {std::floor(frameNow)});
-        }
-#endif
     BlendChannels(game, self);
 
     const float zero = 0.0f; // f32 at r2-30312 (0x807988F8)

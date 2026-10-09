@@ -173,14 +173,6 @@ void NativeDraw(CpuContext* cpu) {
 
 void RunDraw(CpuContext* cpu) {
 #ifdef MH3_DEVELOPMENT
-    static const bool native = [] {
-        const char* setting = std::getenv("MH3_NATIVE_MODEL_DRAW");
-        return !setting || setting[0] != '0';
-    }();
-    if (!native) {
-        func_80078B00(cpu);
-        return;
-    }
     if (PortCheck::Enabled("G3dDrawOpaXlu")) {
         PortCheck::Run(cpu, "G3dDrawOpaXlu", func_80078B00, NativeDraw);
         return;

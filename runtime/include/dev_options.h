@@ -144,6 +144,11 @@ inline void ReportRetiredVariables() {
         {"MH3_PROFILE_FRAMES", "MH3_PROFILE"},
         {"MH3_MODEL_SPLIT", "MH3_PROFILE"},
         {"MH3_RENDER_SYNC", "MH3_PROFILE"},
+        {"MH3_ANIM_WHOLE_FRAMES", nullptr},
+        {"MH3_EFFECT_TICK_CURVES", nullptr},
+        {"MH3_STEP_COUNTER_RAW", nullptr},
+        {"MH3_FIELD_WAIT", nullptr},
+        {"MH3_NATIVE_MODEL_DRAW", nullptr},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))

@@ -67,17 +67,6 @@ const Site* Find(uint32_t pc) {
     return it != std::end(kSites) && it->pc == pc ? it : nullptr;
 }
 
-// MH3_STEP_COUNTER_RAW=1 (debugging): the counter counts steps and every read
-// is the counter itself, as the original.
-bool Raw() {
-#ifdef MH3_DEVELOPMENT
-    static const bool raw = std::getenv("MH3_STEP_COUNTER_RAW") != nullptr;
-    return raw;
-#else
-    return false;
-#endif
-}
-
 } // namespace
 
 extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc) {
@@ -87,7 +76,7 @@ extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc)
     const uint32_t ticks = GameStep::Ticks();
     // A player's step counter (PLW+0x20, advanced a tick at a time by
     // player_timers.cpp) is read through the PLW, so its sites (kind 2) name it.
-    if (!site || ticks == 1 || site->kind == 0 || Raw())
+    if (!site || ticks == 1 || site->kind == 0)
         return counter;
     if (site->kind == 1 && !IsCounter(address))
         return counter;
@@ -104,7 +93,7 @@ bool StepCounter::Every(uint32_t n, uint32_t k) {
     const uint32_t counter = Memory::Read32(kCounter), ticks = GameStep::Ticks();
     if (n == 0)
         return counter == k; // the guest's divwu by 0 gives 0: counter - 0 * 0
-    if (ticks == 1 || Raw())
+    if (ticks == 1)
         return counter % n == k;
     // Whether a value in (counter - ticks, counter] is k mod n.
     return (counter % n + n - k % n) % n < ticks;
@@ -113,8 +102,7 @@ bool StepCounter::Every(uint32_t n, uint32_t k) {
 // RunTasks: the counter advances by the ticks of this step (RunTasks adds 1).
 extern "C" void func_800416F8(CpuContext* ctx);
 extern "C" void MH3_RunTasks(CpuContext* ctx) {
-    if (!Raw())
-        Memory::Write32(kCounter, Memory::Read32(kCounter) + GameStep::Ticks() - 1);
+    Memory::Write32(kCounter, Memory::Read32(kCounter) + GameStep::Ticks() - 1);
     func_800416F8(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800416F8, MH3_RunTasks, "RunTasks");

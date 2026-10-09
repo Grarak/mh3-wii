@@ -90,14 +90,7 @@ struct Jump {
 };
 
 Jump& State() {
-    static Jump jump = [] {
-        Jump j;
-#ifdef MH3_DEVELOPMENT
-        if (const char* v = std::getenv("MH3_FIELD_WAIT"))
-            j.wait = uint32_t(std::strtoul(v, nullptr, 0));
-#endif
-        return j;
-    }();
+    static Jump jump;
     return jump;
 }
 
