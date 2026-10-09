@@ -17,7 +17,7 @@ namespace {
 
 constexpr uint32_t kSeqInitialized = 0x80797928, kSeqList = 0x8079792C;
 constexpr uint32_t kSynVoices = 0x80797948, kSynInitialized = 0x8079794C, kSynList = 0x80797950, kSynVoiceCount = 0x80797954;
-constexpr uint32_t kSynVoiceStorage = 0x80759CE8, kSynVoiceSize = 0x94, kSynVoiceSynth = 0x08;
+constexpr uint32_t kSynVoiceStorage = 0x80759CE8, kSynVoiceSize = 0x94, kSynVoiceSynth = 0x08;  // SYNInit
 constexpr uint32_t kAxInitialized = 0x80797388, kAxVoiceCount = 0x807974A4;
 
 } // namespace
@@ -64,16 +64,12 @@ void MH3_SYNQuit(CpuContext*) {
 }
 
 // SYNRunAudioFrame (0x804DF7C0): services every synth voice, then runs each
-// synth's queued MIDI input.
+// synth's queued MIDI input. A voice gets a synth only from a synth's
+// note-on, so with no synth listed there is nothing to do; the voices are
+// not scanned every frame.
 void MH3_SYNRunAudioFrame(CpuContext*) {
-    if (FlatRead32(kSynInitialized) == 0)
-        return;
-    const uint32_t voices = FlatRead32(kSynVoices), count = FlatRead32(kSynVoiceCount);
-    for (uint32_t i = 0; i < count; ++i)
-        if (FlatRead32(voices + i * kSynVoiceSize + kSynVoiceSynth))
-            throw std::runtime_error("SYN synth voices are not ported (MH3 creates no synth)");
-    if (FlatRead32(kSynList))
-        throw std::runtime_error("SYN MIDI input is not ported (MH3 creates no synth)");
+    if (FlatRead32(kSynInitialized) && FlatRead32(kSynList))
+        throw std::runtime_error("SYN synths are not ported (MH3 creates none)");
 }
 
 } // extern "C"

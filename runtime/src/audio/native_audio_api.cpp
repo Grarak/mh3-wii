@@ -63,9 +63,34 @@ struct Voice {
 struct Voices {
     Voice voice[kMaxVoices];
     int16_t head[32], tail[32];  // priority stacks, newest first; [0] the free stack
+    uint32_t dirty[kMaxVoices / 32];  // voices the next flush visits
+    const Feedback* feedback;        // the mixer's, once the first tick is flushed
     bool initialized;
 };
 Voices v;
+
+// Marks `bits` changed; the next flush sends them.
+void Touch(Voice& x, uint32_t bits) {
+    x.sync |= bits;
+    const uint32_t i = uint32_t(&x - v.voice);
+    v.dirty[i >> 5] |= 1u << (i & 31);
+}
+
+// The mixer's state, envelope volume and position of a voice the game has
+// not set since (the mixer applied its last write), read when asked.
+void Refresh(Voice& x) {
+    if (!v.feedback)
+        return;
+    const uint32_t i = uint32_t(&x - v.voice);
+    const uint32_t applied = v.feedback->appliedTick.load(std::memory_order_acquire);
+    if (!(x.sync & kSyncState) && int32_t(applied - x.stateTick) > 0)
+        x.pb[Pb::State] = uint16_t(v.feedback->stateVolume[i].load(std::memory_order_relaxed) >> 16);
+    if (!(x.sync & (kSyncAddr | kSyncCurrAddr)) && int32_t(applied - x.addressTick) > 0) {
+        const uint32_t address = v.feedback->address[i].load(std::memory_order_relaxed);
+        x.pb[Pb::CurHi] = uint16_t(address >> 16);
+        x.pb[Pb::CurLo] = uint16_t(address);
+    }
+}
 
 uint32_t Handle(uint32_t index) {
     return kVpbStorage + index * kVpbSize;
@@ -125,7 +150,8 @@ void SetPBDefault(Voice& x) {
     x.pb[Pb::Itd] = 0;
     x.pb[Pb::LpfOn] = 0;
     x.pb[Pb::BiquadOn] = 0;
-    x.sync = kSyncPbDefault;
+    x.sync = 0;
+    Touch(x, kSyncPbDefault);
 }
 
 void InitVoices() {
@@ -191,8 +217,8 @@ uint32_t ToUnsigned(double value) {
     return uint32_t(value);
 }
 
-// __AXSyncPB for one allocated voice at `tick`: the groups the game changed
-// go to the mixer; the fields it did not set get the mixer's state, envelope
+// __AXSyncPB for one changed voice at `tick`: the groups the game changed go
+// to the mixer; the fields it did not set get the mixer's state, envelope
 // volume and position back once the mixer applied the game's last write.
 void SyncVoice(CommandRing& ring, const Feedback& feedback, uint32_t applied, Voice& x, uint32_t index, uint32_t tick, uint32_t& records) {
     const uint32_t sync = x.sync;
@@ -295,21 +321,26 @@ namespace NativeAudio {
 uint32_t FlushVoices(CommandRing& ring, const Feedback& feedback, uint32_t tick) {
     if (!v.initialized)
         return 0;
+    v.feedback = &feedback;
     const uint32_t applied = feedback.appliedTick.load(std::memory_order_acquire);
     uint32_t records = 0;
-    for (uint32_t i = 0; i < kMaxVoices; ++i) {
-        Voice& x = v.voice[i];
-        if (x.priority) {
-            SyncVoice(ring, feedback, applied, x, i, tick, records);
-            continue;
+    for (uint32_t w = 0; w < kMaxVoices / 32; ++w) {
+        for (uint32_t bits = v.dirty[w]; bits; bits &= bits - 1) {
+            const uint32_t i = w * 32 + uint32_t(__builtin_ctz(bits));
+            Voice& x = v.voice[i];
+            if (x.priority) {
+                SyncVoice(ring, feedback, applied, x, i, tick, records);
+                continue;
+            }
+            // A freed voice: stop it in the mixer once.
+            if (x.running) {
+                ring.Reserve(1)[0] = Header(Command::Stop, 1, i, x.depop ? kFlagDepop : 0);
+                x.running = false;
+                x.stateTick = tick;
+            }
+            x.depop = false;
         }
-        // A free voice: stop it in the mixer once.
-        if (x.running) {
-            ring.Reserve(1)[0] = Header(Command::Stop, 1, i, x.depop ? kFlagDepop : 0);
-            x.running = false;
-            x.stateTick = tick;
-        }
-        x.depop = false;
+        v.dirty[w] = 0;
     }
     return records;
 }
@@ -350,6 +381,7 @@ uint32_t Acquire(CpuContext* cpu, uint32_t priority, uint32_t callback, uint32_t
                 v.tail[p] = v.voice[i].prev;
                 v.voice[v.tail[p]].next = -1;
             }
+            Refresh(v.voice[i]);
             if (v.voice[i].pb[Pb::State] == 1)
                 v.voice[i].depop = true;
             Dropped(cpu, uint32_t(i));
@@ -373,6 +405,7 @@ void Free(uint32_t voice) {
         return;
     Voice& x = v.voice[i];
     RemoveFromStack(i);
+    Refresh(x);
     if (x.pb[Pb::State] == 1)
         x.depop = true;
     SetPBDefault(x);
@@ -381,10 +414,13 @@ void Free(uint32_t voice) {
 
 void SetState(uint32_t voice, uint32_t state) {
     Voice* x = At(voice);
-    if (!x || x->pb[Pb::State] == state)
+    if (!x)
+        return;
+    Refresh(*x);
+    if (x->pb[Pb::State] == state)
         return;
     x->pb[Pb::State] = uint16_t(state);
-    x->sync |= kSyncState;
+    Touch(*x, kSyncState);
     if (state == 0)
         x->depop = true;
 }
@@ -411,7 +447,7 @@ void SetSrcType(uint32_t voice, uint32_t type) {
         x->pb[Pb::SrcSelect] = 0;
         x->pb[Pb::CoefSelect] = uint16_t(type - 2);
     }
-    x->sync |= kSyncSrcSelect;
+    Touch(*x, kSyncSrcSelect);
 }
 
 // Stored as 16.16 (fmuls by 65536.0f).
@@ -422,7 +458,7 @@ void SetSrcRatio(uint32_t voice, float ratio) {
     const uint32_t fixed = ToUnsigned(double(float(65536.0f * ratio)));
     x->pb[Pb::SrcRatioHi] = uint16_t(fixed >> 16);
     x->pb[Pb::SrcRatioLo] = uint16_t(fixed);
-    x->sync |= kSyncSrcRatio;
+    Touch(*x, kSyncSrcRatio);
 }
 
 void SetCurrentAddr(uint32_t voice, uint32_t address) {
@@ -431,7 +467,7 @@ void SetCurrentAddr(uint32_t voice, uint32_t address) {
         return;
     x->pb[Pb::CurHi] = uint16_t(address >> 16);
     x->pb[Pb::CurLo] = uint16_t(address);
-    x->sync |= kSyncCurrAddr;
+    Touch(*x, kSyncCurrAddr);
 }
 
 void SetAdpcmLoop(uint32_t voice, uint16_t predScale, uint16_t yn1, uint16_t yn2) {
@@ -441,7 +477,7 @@ void SetAdpcmLoop(uint32_t voice, uint16_t predScale, uint16_t yn1, uint16_t yn2
     x->pb[Pb::LoopPredScale] = predScale;
     x->pb[Pb::LoopYn1] = yn1;
     x->pb[Pb::LoopYn2] = yn2;
-    x->sync |= kSyncAdpcmLoop;
+    Touch(*x, kSyncAdpcmLoop);
 }
 
 void SetLpf(uint32_t voice, uint16_t on, uint16_t yn1, uint16_t a0, uint16_t b0) {
@@ -452,7 +488,7 @@ void SetLpf(uint32_t voice, uint16_t on, uint16_t yn1, uint16_t a0, uint16_t b0)
     x->pb[Pb::LpfYn1] = yn1;
     x->pb[Pb::LpfA0] = a0;
     x->pb[Pb::LpfB0] = b0;
-    x->sync |= kSyncLpf;
+    Touch(*x, kSyncLpf);
 }
 
 void SetLpfCoefs(uint32_t voice, uint16_t a0, uint16_t b0) {
@@ -461,7 +497,7 @@ void SetLpfCoefs(uint32_t voice, uint16_t a0, uint16_t b0) {
         return;
     x->pb[Pb::LpfA0] = a0;
     x->pb[Pb::LpfB0] = b0;
-    x->sync |= kSyncLpfCoef;
+    Touch(*x, kSyncLpfCoef);
 }
 
 // c = 2 - cos(2 pi f / 32000); b0 = 32768 (c - sqrt(c^2 - 1)); a0 = 0x7FFF - b0,
@@ -481,7 +517,7 @@ void SetFormat(uint32_t voice, uint16_t loopFlag, uint16_t format) {
         return;
     x->pb[Pb::LoopFlag] = loopFlag;
     x->pb[Pb::Format] = format;
-    x->sync |= kSyncAddr;
+    Touch(*x, kSyncAddr);
 }
 
 void SetLoop(uint32_t voice, uint16_t loopFlag, uint32_t loop, uint32_t end, uint32_t current) {
@@ -495,7 +531,7 @@ void SetLoop(uint32_t voice, uint16_t loopFlag, uint32_t loop, uint32_t end, uin
     x->pb[Pb::EndLo] = uint16_t(end);
     x->pb[Pb::CurHi] = uint16_t(current >> 16);
     x->pb[Pb::CurLo] = uint16_t(current);
-    x->sync |= kSyncAddr;
+    Touch(*x, kSyncAddr);
 }
 
 void SetAddr(uint32_t voice, const Addr& addr) {
@@ -512,7 +548,7 @@ void SetAdpcm(uint32_t voice, const Adpcm& adpcm) {
     x->pb[Pb::AdpcmPredScale] = adpcm.predScale;
     x->pb[Pb::AdpcmYn1] = adpcm.yn1;
     x->pb[Pb::AdpcmYn2] = adpcm.yn2;
-    x->sync |= kSyncAdpcm;
+    Touch(*x, kSyncAdpcm);
 }
 
 void SetSrc(uint32_t voice, uint32_t ratio) {
@@ -524,7 +560,7 @@ void SetSrc(uint32_t voice, uint32_t ratio) {
     x->pb[Pb::SrcFrac] = 0;
     for (uint32_t i = 0; i < 4; ++i)
         x->pb[Pb::SrcLast + i] = 0;
-    x->sync |= kSyncSrc;
+    Touch(*x, kSyncSrc);
 }
 
 void SetType(uint32_t voice, uint16_t type) {
@@ -532,7 +568,7 @@ void SetType(uint32_t voice, uint16_t type) {
     if (!x)
         return;
     x->pb[Pb::Type] = type;
-    x->sync |= kSyncType;
+    Touch(*x, kSyncType);
 }
 
 void SetMix(uint32_t voice, const uint16_t (&mix)[24], uint32_t mixerCtrl) {
@@ -542,7 +578,7 @@ void SetMix(uint32_t voice, const uint16_t (&mix)[24], uint32_t mixerCtrl) {
     std::memcpy(&x->pb[Pb::Mix], mix, sizeof(mix));
     x->pb[Pb::MixerCtrlHi] = uint16_t(mixerCtrl >> 16);
     x->pb[Pb::MixerCtrlLo] = uint16_t(mixerCtrl);
-    x->sync |= kSyncMix | kSyncMixerCtrl;
+    Touch(*x, kSyncMix | kSyncMixerCtrl);
 }
 
 void SetVe(uint32_t voice, uint16_t volume, uint16_t delta) {
@@ -551,12 +587,15 @@ void SetVe(uint32_t voice, uint16_t volume, uint16_t delta) {
         return;
     x->pb[Pb::VeVolume] = volume;
     x->pb[Pb::VeDelta] = delta;
-    x->sync |= kSyncVe;
+    Touch(*x, kSyncVe);
 }
 
 uint32_t State(uint32_t voice) {
-    const Voice* x = At(voice);
-    return x ? x->pb[Pb::State] : 0;
+    Voice* x = At(voice);
+    if (!x)
+        return 0;
+    Refresh(*x);
+    return x->pb[Pb::State];
 }
 
 uint32_t LoopFlag(uint32_t voice) {
@@ -565,8 +604,11 @@ uint32_t LoopFlag(uint32_t voice) {
 }
 
 uint32_t CurrentAddr(uint32_t voice) {
-    const Voice* x = At(voice);
-    return x ? uint32_t(x->pb[Pb::CurHi]) << 16 | x->pb[Pb::CurLo] : 0;
+    Voice* x = At(voice);
+    if (!x)
+        return 0;
+    Refresh(*x);
+    return uint32_t(x->pb[Pb::CurHi]) << 16 | x->pb[Pb::CurLo];
 }
 
 } // namespace SoundVoice
