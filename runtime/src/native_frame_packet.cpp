@@ -342,6 +342,9 @@ uint64_t sequence = 0;
 #ifdef MH3_DEVELOPMENT
 uint64_t pacingWaitNs = 0;
 uint32_t pacingWaits = 0;
+
+// The just-in-time starts' total delay (PaceNativeFramePacket).
+uint64_t justInTimeUs = 0;
 #endif
 struct FeedbackTarget {
     uint32_t width, height;
@@ -1060,18 +1063,34 @@ void ReportMemcpyCensus() {
 // the render thread consumes packets as fast as it submits frames and the game
 // thread, waiting for consumption, steps once per frame drawn. A GPU stuck for
 // 100 ms falls back to the skip.
+// The just-in-time game frame (limiter on): a packet that waits here for a
+// GPU slot was made too early, and its input is that much older at the flip.
+// The smallest such wait over the last 32 packets (about half a second) is
+// slack the game thread can spend before it starts its next frame (reading
+// input later) without the GPU running dry (PaceNativeFramePacket).
+std::array<uint32_t, 32> gpuSlotWaitsUs{};
+uint32_t gpuSlotWaitIndex = 0;
+std::atomic<uint32_t> gpuSlackUs{0};
+
+void NoteGpuSlotWait(uint32_t us) {
+    gpuSlotWaitsUs[gpuSlotWaitIndex++ % gpuSlotWaitsUs.size()] = us;
+    gpuSlackUs.store(*std::min_element(gpuSlotWaitsUs.begin(), gpuSlotWaitsUs.end()), std::memory_order_relaxed);
+}
+
 void WaitForGpuFrameSlot() {
     const auto start = std::chrono::steady_clock::now();
 
     while (aurora::gl::gpu_frame_pending() && !stopping.load(std::memory_order_relaxed)) {
         if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(100))
-            return;
+            break;
 #ifdef __vita__
         sceKernelDelayThread(200);
 #else
         std::this_thread::sleep_for(std::chrono::microseconds(200));
 #endif
     }
+
+    NoteGpuSlotWait(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()));
 }
 
 void RenderPackets() {
@@ -1698,10 +1717,11 @@ void TakeNativePacketSnapshotCounts(uint32_t out[3][6]) {
 }
 
 void TakeNativePacingWait(uint64_t& ns, uint32_t& waits) {
-    ns = pacingWaitNs;
+    ns = pacingWaitNs + justInTimeUs * 1000;
     waits = pacingWaits;
     pacingWaitNs = 0;
     pacingWaits = 0;
+    justInTimeUs = 0;
 }
 
 void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32_t unmerged[6]) {
@@ -1735,11 +1755,36 @@ void PaceNativeFramePacket() {
     const auto released = [next] { return paced ? completed.load(std::memory_order_acquire) + 2 >= next : SlotReleased(next); };
     const auto ready = [&] { return released() && SlotFree(next); };
 
+    // The slack the render thread measured (WaitForGpuFrameSlot), less a 2 ms
+    // margin for the frame's variation, at most 12 ms: the frame starts and
+    // reads its input that much later, still in time for its GPU slot.
+    const auto startJustInTime = [] {
+        if (!paced)
+            return;
+
+        const uint32_t slack = gpuSlackUs.load(std::memory_order_relaxed);
+
+        if (slack <= 2000)
+            return;
+
+        const uint32_t delay = std::min<uint32_t>(slack - 2000, 12000);
+#ifdef MH3_DEVELOPMENT
+        justInTimeUs += delay;
+#endif
+#ifdef __vita__
+        sceKernelDelayThread(delay);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(delay));
+#endif
+    };
+
     // Loaded before the check: a take after the check moves the signal on.
     uint32_t seen = takenSignal.Load();
 
-    if (ready())
+    if (ready()) {
+        startJustInTime();
         return;
+    }
 #ifdef MH3_DEVELOPMENT
     const uint64_t start = RenderMonotonicNs();
     uint64_t report = start + 2'000'000'000;
@@ -1762,6 +1807,7 @@ void PaceNativeFramePacket() {
     pacingWaitNs += RenderMonotonicNs() - start;
     ++pacingWaits;
 #endif
+    startJustInTime();
 }
 
 void BeginNativeFramePacket(bool render) {
