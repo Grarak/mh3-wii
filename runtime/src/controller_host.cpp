@@ -136,7 +136,7 @@ ClassicControllerSample ReadLiveController() {
     return ReadVitaController();
 #elif defined(MH3_HAS_AURORA)
     // The keyboard and the first SDL gamepad, as the Classic Controller on
-    // channel 0 (docs/controller-bringup.md, docs/vita-controls.md).
+    // channel 0 (docs/wpad-bridge.md, docs/vita-controls.md).
     sample.connected = true;
     if (!SDL_WasInit(SDL_INIT_VIDEO))
         return sample;
