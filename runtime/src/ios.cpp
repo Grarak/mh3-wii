@@ -200,14 +200,21 @@ class DiscReader {
     // Its reply is answered now, as the drive's at the end of the transfer,
     // but leaves guest memory alone: the canceled block's data goes unused.
     // The reader finishes a transfer it started and drops it.
+    //
+    // The read in flight is the first reply not broken yet: an earlier
+    // canceled read can still be in transfer ahead of it. Answering that one
+    // again gave the DVD library a second reply, and the real reply of the
+    // read canceled now then finished the next command early (capcom.tpl in
+    // the village's all_reset, bound before its read: a TPL version panic).
     void Break() {
         Deliver();
         std::lock_guard guard(lock);
+        const auto flight = std::find_if(replies.begin(), replies.end(), [](const Reply& reply) { return !reply.broken; });
 
-        if (replies.empty() || replies.front().ready || !replies.front().length)
+        if (flight == replies.end() || flight->ready || !flight->length)
             return;
 
-        Reply& reply = replies.front();
+        Reply& reply = *flight;
         reply.broken = true;
         reply.ready = !reply.taken;
         completions.push_back({reply.callback, reply.result, reply.argument});
