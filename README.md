@@ -14,8 +14,9 @@ disc completions, and audio DMA. Boot now renders the Nintendo wrist-strap scree
 with a frame capture. It creates and reopens the NAND system file, six character-save slots, network
 data, and save banner. All five initial RSO prologs now execute as compiled native code. Startup prints
 the media version, renders the Capcom logo, and enters THP movie playback.
-Exact preserved partition bytes now satisfy reads into disc padding. Movie
-playback remains unverified: boot reports unimplemented SPR 922/923 writes. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
+Exact preserved partition bytes now satisfy reads into disc padding. Locked-cache DMA now moves the decoded movie buffers into RAM, and a Metal
+frame capture verifies the opening movie’s underwater scene. Title-menu input
+and gameplay remain unverified. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
 channel conversion pass tests; real boot opens SDL audio and executes DMA and
 AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.

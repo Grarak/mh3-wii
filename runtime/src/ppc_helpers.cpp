@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <limits>
 
@@ -43,6 +44,34 @@ std::array<uint32_t, 2048> g_sprShadow{};
 uint32_t g_reservationAddr = 0;
 bool g_hasReservation = false;
 const auto g_timeBaseStart = std::chrono::steady_clock::now();
+
+// DMAU/DMAL layout follows Broadway's locked-cache DMA registers, also
+// documented by Dolphin's Gekko.h. The original LCLoad/LCStore instructions
+// remain translated. Transfers complete synchronously in this native runtime;
+// there is no pending queue or hardware transfer latency.
+void TransferLockedCache(uint32_t lower) {
+    if (!(lower & 2u)) return;
+    const uint32_t upper = g_sprShadow[922];
+    const uint32_t memoryAddress = upper & ~31u;
+    const uint32_t cacheAddress = 0xE0000000u | (lower & 0x3FFE0u);
+    uint32_t blocks = ((upper & 31u) << 2) | ((lower >> 2) & 3u);
+    if (!blocks) blocks = 128;
+    const uint32_t size = blocks * 32;
+    // DMA uses physical RAM addresses. MMIO/EFB transfers and cache ranges
+    // outside our allocated 16 KiB require their own implementation.
+    if (memoryAddress >= 0x20000000u)
+        throw std::runtime_error("Locked-cache DMA requires a physical RAM address");
+    auto* memory = Memory::GetPointer(memoryAddress, size);
+    auto* cache = Memory::GetPointer(cacheAddress, size);
+    const bool load = (lower & 16u) != 0;
+    if (!load) RecompMod::CheckExecutableWrite(memoryAddress, size, 0);
+    std::memcpy(load ? cache : memory, load ? memory : cache, size);
+    static unsigned traced = 0;
+    if (std::getenv("MH3_TRACE_ERRORS") && traced++ < 3)
+        RT_LOG(RT_TAG_RUNTIME) << "Locked-cache DMA " << (load ? "load " : "store ")
+            << size << " bytes, RAM " << std::hex << memoryAddress << ", cache "
+            << cacheAddress << std::dec << std::endl;
+}
 
 uint64_t GetTimeBase() {
     const auto elapsed = std::chrono::steady_clock::now() - g_timeBaseStart;
@@ -467,6 +496,8 @@ extern "C" uint32_t PPC_ReadSpr(uint32_t spr)
         case 269: return PPC_Mftbu();
         case 287: return kBroadwayPvr; // PVR
         case 920: return cpu ? cpu->hid2 : 0u;
+        case 922:
+        case 923: return shadowValue();
         case 1008: return cpu ? cpu->hid0 : 0u;
         case 1009: return cpu ? cpu->hid1 : 0u;
         case 1011: return shadowValue(); // spr3f3 in TRK save block
@@ -505,7 +536,12 @@ extern "C" void PPC_WriteSpr(uint32_t spr, uint32_t value)
         case 22: break; // DEC - fallthrough to shadow
         case 26: if (cpu) cpu->srr0 = value; return;
         case 27: if (cpu) cpu->srr1 = value; return;
-        case 920: if (cpu) cpu->hid2 = value; return;
+        case 920: if (cpu) cpu->hid2 = value & ~0x0F000000u; return; // DMA queue is empty
+        case 922: break;
+        case 923:
+            TransferLockedCache(value);
+            value &= ~2u; // Clear trigger only after the transfer succeeds.
+            break;
         case 1008: if (cpu) cpu->hid0 = value; return;
         case 1009: if (cpu) cpu->hid1 = value; return;
         case 1011: break;
