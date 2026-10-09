@@ -25,6 +25,7 @@ public:
   SceGxmContext* context() const noexcept { return m_context; }
   SceGxmShaderPatcher* patcher() const noexcept { return m_patcher; }
   CdramArena& arena() noexcept { return *m_arena; }
+  bool scene_active() const noexcept { return m_inScene; }
   void begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color,
              const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync = nullptr);
   void end();

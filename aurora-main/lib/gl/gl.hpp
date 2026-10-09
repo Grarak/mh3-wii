@@ -1,8 +1,8 @@
 #pragma once
 
-// Native OpenGL ES 3.0 backend. One render thread owns the context; every GL
-// call runs there, in the order the tasks were posted. Objects created on
-// other threads carry their metadata immediately and receive their GL name
+// Renderer interface, implemented by GLES or native GXM. One render thread
+// owns the context and executes tasks in posting order. Objects created on
+// other threads carry their metadata immediately and receive their GPU name
 // when the creation task runs, which always precedes any task using them.
 
 #ifdef AURORA_GXM
@@ -144,7 +144,7 @@ public:
   Program(const Program&) = delete;
   Program& operator=(const Program&) = delete;
 
-  // Render thread only. Compiles on first use; returns 0 if that failed.
+  // Render thread only. GLES compiles on first use; GXM patches embedded GXP.
   GLuint get() noexcept;
   [[nodiscard]] const std::string& label() const noexcept { return m_desc.label; }
   [[nodiscard]] uint64_t vertex_hash() const noexcept { return m_vertexHash; }

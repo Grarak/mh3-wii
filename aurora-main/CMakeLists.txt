@@ -6,6 +6,15 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+option(AURORA_GXM "Use the native PS Vita GXM renderer" ${VITA})
+if(AURORA_GXM)
+  if(NOT VITA)
+    message(FATAL_ERROR "AURORA_GXM requires a Vita toolchain")
+  endif()
+  # Vita ELF conversion rejects GOT relocations from position-independent code.
+  set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
+  enable_language(ASM)
+endif()
 
 option(AURORA_ENABLE_GX "Enable GX implementation and OpenGL ES renderer" ON)
 option(AURORA_ENABLE_DVD "Enable DVD implementation backed by nod" OFF)  # TODO: need to fix tests

@@ -375,7 +375,7 @@ bool create_window(AuroraBackend backend) {
   }
 #endif
   (void)backend;
-#ifdef AURORA_ENABLE_GX
+#if defined(AURORA_ENABLE_GX) && !defined(AURORA_GXM)
   // The renderer is OpenGL ES 3.0; the EFB lives in textures, so the window needs no depth/stencil.
   flags |= SDL_WINDOW_OPENGL;
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
@@ -401,6 +401,11 @@ bool create_window(AuroraBackend backend) {
   if (height < 480) {
     height = 480;
   }
+#ifdef AURORA_GXM
+  flags = SDL_WINDOW_FULLSCREEN;
+  width = 960;
+  height = 544;
+#endif
 
   const Sint32 posX = g_config.hasWindowPosition ? g_config.windowPosX : SDL_WINDOWPOS_CENTERED;
   const Sint32 posY = g_config.hasWindowPosition ? g_config.windowPosY : SDL_WINDOWPOS_CENTERED;

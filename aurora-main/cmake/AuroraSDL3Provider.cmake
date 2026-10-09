@@ -133,6 +133,12 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
         include("${CMAKE_CURRENT_LIST_DIR}/AuroraLibUSB.cmake")
       endif ()
     endif ()
+    if(AURORA_GXM)
+      set(SDL_OPENGL OFF CACHE BOOL "Aurora owns native GXM" FORCE)
+      set(SDL_OPENGLES OFF CACHE BOOL "Aurora owns native GXM" FORCE)
+      set(VIDEO_VITA_PIB OFF CACHE BOOL "Disable SDL GLES surface creation" FORCE)
+      set(VIDEO_VITA_PVR OFF CACHE BOOL "Disable SDL GLES surface creation" FORCE)
+    endif()
 
     include(FetchContent)
     # Source fixes for the vendored SDL (see AuroraSDL3Patches.cmake). A freshly
