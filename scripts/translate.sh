@@ -10,8 +10,9 @@ mkdir -p logs generated
 python3 scripts/inspect_disc.py
 python3 scripts/generate_symbols.py
 "$dotnet_bin" "$translator" generate-data-init --project recomp.yml 2>&1 | tee logs/data-init.log
+python3 scripts/prepare_rso_translation.py
 "$dotnet_bin" "$translator" translate-recursive 0x80006310 \
-    --project recomp.yml --outdir generated/functions \
+    --project build/recomp-analysis.yml --outdir generated/functions \
     --output-metadata generated/translation.json --threads 8 --prune-stale 2>&1 | tee logs/translate.log
 "$dotnet_bin" "$translator" emit-build-shards --project recomp.yml \
     --base-metadata generated/translation.json --base-functions-dir generated/functions \

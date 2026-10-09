@@ -5,8 +5,9 @@ but it is not playable yet.** The current boot prints the original Revolution OS
 initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
 function, passes video-interface initialization, and sends GX initialization
 commands to Aurora Metal. It completes three initial display copies and a Metal GPU completion wait,
-delivers the first VI retrace, and loads the first RSO module. Execution then
-stops at that module’s untranslated entry point (`0x8081A8A4`).
+delivers the first VI retrace, and executes the first RSO module’s compiled
+prolog and constructors. Execution then stops during game initialization at an
+unimplemented locked-cache access (`0xE0000000`).
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -18,7 +19,7 @@ WiiCompiled checkout is unchanged. The derived source is under GPLv3; see
 - European disc ID `RMHP08`, extracted from the supplied RVZ.
 - DOL SHA-256 `db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162`.
 - Entry `0x80006310`, r13 `0x8079B2E0`, r2 `0x8079FF60`, verified from boot instructions.
-- Over 19,000 statically translated functions; translator reports zero unsupported
+- Over 20,000 statically translated functions; translator reports zero unsupported
   instructions and zero invalid SSA functions. This is not proof of full-game coverage.
 - Function discovery uses 758 executable SEL exports, 72 verified compiler
   save/restore thunks, and speculative standard stack-frame starts.
@@ -230,5 +231,7 @@ state, and asynchronous STM presentation controls enqueue completions.
 The boot FST is installed in reserved high MEM1, excluded from the advertised
 arenas. DVD command-status polling now pumps IOS completions without reentering
 the callback pump. MH3 successfully reads `mh3.sel` and `01/hbm_data.rso`, then
-calls the latter's prolog at `0x8081A8A4` (module base `0x808196E0`). That code has
-not been statically translated yet, so runtime dispatch stops explicitly.
+calls the latter's compiled prolog at `0x8081A8A4` (module base `0x808196E0`).
+The offline linker matches the original loader byte for byte, and a runtime
+check verifies linked text before dispatch. See [RSO bring-up](docs/rso-bringup.md)
+for the fixed-address binding and its current limits.
