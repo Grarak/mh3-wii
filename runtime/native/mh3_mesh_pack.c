@@ -165,6 +165,13 @@ mh3_pack_status mh3_mesh_pack_material(const mh3_mesh_pack *p,uint32_t i,mh3_pac
         if (bank>2 || (bank!=1 && addr>255) || (bank==1 && addr>65535) ||
             (bank==0 && (mask>0xffffff || le32(v+8)>0xffffff)) || (bank!=0 && mask!=UINT32_MAX)) return MH3_PACK_INVALID;
     }
+    if (le32(p->metadata.data+4)==2) {
+        mh3_pack_native_material native;
+        mh3_pack_status status=mh3_mesh_pack_material_native(p,i,&native);
+        if (status) return status;
+    } else {
+        for (w=84;w<128;w+=4) if (le32(r+w)) return MH3_PACK_UNSUPPORTED;
+    }
     return MH3_PACK_OK;
 }
 
@@ -260,7 +267,7 @@ mh3_pack_status mh3_mesh_pack_matrix_node(const mh3_pack_recipes *p,uint32_t i,i
     *out=signed_word(le32(p->bytes.data+(size_t)at)); return MH3_PACK_OK;
 }
 
-mh3_pack_status mh3_mesh_pack_open_metadata(mh3_pack_span metadata,mh3_mesh_pack *out) {
+static mh3_pack_status open_metadata_validated(mh3_pack_span metadata,mh3_mesh_pack *out) {
     uint32_t i,t,bytes,previous=128,component_total=0,binding_total=0;
     uint32_t model_ends[4]={0,0,0,0};
     mh3_pack_status s;
@@ -268,7 +275,7 @@ mh3_pack_status mh3_mesh_pack_open_metadata(mh3_pack_span metadata,mh3_mesh_pack
     memset(out,0,sizeof(*out));
     if (!fits(metadata,0,128)) return MH3_PACK_RANGE;
     if (memcmp(metadata.data,"M3MP",4)) return MH3_PACK_INVALID;
-    if (le32(metadata.data+4)!=1) return MH3_PACK_UNSUPPORTED;
+    if (le32(metadata.data+4)!=1 && le32(metadata.data+4)!=2) return MH3_PACK_UNSUPPORTED;
     bytes=le32(metadata.data+8);
     if (bytes<128 || bytes>metadata.size || bytes&63) return MH3_PACK_RANGE;
     out->metadata=metadata; out->metadata.size=bytes;
@@ -361,6 +368,16 @@ mh3_pack_status mh3_mesh_pack_open_metadata(mh3_pack_span metadata,mh3_mesh_pack
     }
     if (component_total!=out->counts[MH3_PACK_COMPONENTS]) return MH3_PACK_INVALID;
     return MH3_PACK_OK;
+}
+
+/* Publish a pack only after all tables and typed payloads are validated. */
+mh3_pack_status mh3_mesh_pack_open_metadata(mh3_pack_span metadata,mh3_mesh_pack *out) {
+    mh3_mesh_pack validated;
+    mh3_pack_status status;
+    if (!out) return MH3_PACK_INVALID;
+    status=open_metadata_validated(metadata,&validated);
+    if (status==MH3_PACK_OK) *out=validated;
+    return status;
 }
 
 mh3_pack_status mh3_mesh_pack_bind_gpu(mh3_mesh_pack *p,mh3_pack_span gpu) {

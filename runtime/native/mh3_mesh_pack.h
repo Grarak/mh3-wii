@@ -1,6 +1,6 @@
 #ifndef MH3_MESH_PACK_H
 #define MH3_MESH_PACK_H
-/* External M3MP v1 CPU metadata + GPU-ready payload. Unwired prototype.
+/* External M3MP v1/v2 CPU metadata + GPU-ready payload. Unwired prototype.
  * The owner reads the GPU payload straight into mapped CDRAM, then binds it.
  * All returned pointers borrow the corresponding caller-owned byte spans. */
 #include <stddef.h>
@@ -77,7 +77,8 @@ typedef struct {
 } mh3_pack_model;
 
 /* Open and validate metadata once, without reading GPU buffers. All table and
- * attribute references are checked. This deliberately accepts no I/O callback. */
+ * attribute references are checked. Output is untouched on failure.
+ * This deliberately accepts no I/O callback. */
 mh3_pack_status mh3_mesh_pack_open_metadata(mh3_pack_span metadata, mh3_mesh_pack *out);
 mh3_pack_status mh3_mesh_pack_bind_gpu(mh3_mesh_pack *pack, mh3_pack_span gpu);
 mh3_pack_status mh3_mesh_pack_model(const mh3_mesh_pack *pack, uint32_t index, mh3_pack_model *out);
@@ -90,6 +91,81 @@ mh3_pack_status mh3_mesh_pack_material(const mh3_mesh_pack *pack, uint32_t index
 mh3_pack_status mh3_mesh_pack_binding(const mh3_mesh_pack *pack, uint32_t index, mh3_pack_binding *out);
 mh3_pack_status mh3_mesh_pack_state_write(const mh3_mesh_pack *pack, uint32_t material_index,
                                          uint32_t index, mh3_pack_state_write *out);
+/* M3MP v2 typed immutable resource inputs. These do not reconstruct inherited
+ * pass state, animation/replacement values or the selected shader layout.
+ * A clear known bit means the corresponding value must come from a typed live
+ * producer. Source register writes are diagnostic provenance, never a renderer
+ * command stream. V1 returns UNSUPPORTED. Outputs remain untouched on failure. */
+typedef struct {
+    uint32_t flags, srt_flags, texture_matrix_mode, tev_count, texgen_count;
+    int32_t light_set_reference, fog_reference, indirect_light_reference[3];
+    uint32_t indirect_method[3];
+    mh3_pack_span bytes;
+} mh3_pack_native_material;
+typedef struct {
+    uint32_t flags, map_mode, effect_flags;
+    int32_t camera_reference, light_reference;
+    float scale[2], rotation_degrees, translation[2], effect_matrix[12];
+} mh3_pack_texture_srt;
+typedef struct {
+    uint8_t material_source, ambient_source, lighting, diffuse, attenuation, light_mask;
+} mh3_pack_channel_control;
+enum {
+    MH3_CHANNEL_MATERIAL_COLOR=1u<<0, MH3_CHANNEL_MATERIAL_ALPHA=1u<<1,
+    MH3_CHANNEL_AMBIENT_COLOR=1u<<2, MH3_CHANNEL_AMBIENT_ALPHA=1u<<3,
+    MH3_CHANNEL_CONTROL_COLOR=1u<<4, MH3_CHANNEL_CONTROL_ALPHA=1u<<5
+};
+typedef struct {
+    uint32_t flags, raw_color_control, raw_alpha_control;
+    uint8_t material_color[4], ambient_color[4];
+    mh3_pack_channel_control color, alpha;
+} mh3_pack_channel;
+typedef struct { uint8_t a,b,c,d,operation,bias,scale,clamp,output; } mh3_pack_tev_pass;
+typedef struct {
+    uint64_t known;
+    mh3_pack_tev_pass color, alpha;
+    uint8_t texture_map, texture_coordinate, raster_channel, raster_swap, texture_swap, konst_color, konst_alpha;
+    uint8_t indirect_stage, indirect_format, indirect_bias, indirect_alpha, indirect_matrix;
+    uint8_t indirect_wrap_s, indirect_wrap_t, indirect_original_lod, indirect_add_previous;
+} mh3_pack_tev_stage;
+enum {
+    MH3_TEV_COLOR_A, MH3_TEV_COLOR_B, MH3_TEV_COLOR_C, MH3_TEV_COLOR_D,
+    MH3_TEV_COLOR_OPERATION, MH3_TEV_COLOR_BIAS, MH3_TEV_COLOR_SCALE, MH3_TEV_COLOR_CLAMP, MH3_TEV_COLOR_OUTPUT,
+    MH3_TEV_ALPHA_A, MH3_TEV_ALPHA_B, MH3_TEV_ALPHA_C, MH3_TEV_ALPHA_D,
+    MH3_TEV_ALPHA_OPERATION, MH3_TEV_ALPHA_BIAS, MH3_TEV_ALPHA_SCALE, MH3_TEV_ALPHA_CLAMP, MH3_TEV_ALPHA_OUTPUT,
+    MH3_TEV_TEXTURE_MAP, MH3_TEV_TEXTURE_COORDINATE, MH3_TEV_RASTER_CHANNEL,
+    MH3_TEV_RASTER_SWAP, MH3_TEV_TEXTURE_SWAP, MH3_TEV_KONST_COLOR, MH3_TEV_KONST_ALPHA,
+    MH3_TEV_INDIRECT_STAGE, MH3_TEV_INDIRECT_FORMAT, MH3_TEV_INDIRECT_BIAS, MH3_TEV_INDIRECT_ALPHA,
+    MH3_TEV_INDIRECT_MATRIX, MH3_TEV_INDIRECT_WRAP_S, MH3_TEV_INDIRECT_WRAP_T,
+    MH3_TEV_INDIRECT_ORIGINAL_LOD, MH3_TEV_INDIRECT_ADD_PREVIOUS, MH3_TEV_FIELD_COUNT
+};
+enum {
+    MH3_PIXEL_ALPHA_COMPARE0, MH3_PIXEL_ALPHA_REFERENCE0, MH3_PIXEL_ALPHA_COMPARE1, MH3_PIXEL_ALPHA_REFERENCE1, MH3_PIXEL_ALPHA_OPERATION,
+    MH3_PIXEL_DEPTH_TEST, MH3_PIXEL_DEPTH_COMPARE, MH3_PIXEL_DEPTH_WRITE, MH3_PIXEL_BLEND_ENABLE, MH3_PIXEL_LOGIC_ENABLE,
+    MH3_PIXEL_BLEND_SUBTRACT, MH3_PIXEL_BLEND_SOURCE, MH3_PIXEL_BLEND_DESTINATION, MH3_PIXEL_LOGIC_OPERATION,
+    MH3_PIXEL_COLOR_WRITE, MH3_PIXEL_ALPHA_WRITE, MH3_PIXEL_DITHER, MH3_PIXEL_DESTINATION_ALPHA_ENABLE, MH3_PIXEL_DESTINATION_ALPHA,
+    MH3_PIXEL_DEPTH_TEXTURE_OPERATION, MH3_PIXEL_DEPTH_TEXTURE_FORMAT, MH3_PIXEL_DEPTH_TEXTURE_BIAS, MH3_PIXEL_FIELD_COUNT
+};
+typedef struct {
+    uint64_t known;
+    uint32_t values[MH3_PIXEL_FIELD_COUNT];
+    /* 0 unresolved, 1 unconditional resource alpha/blend disabled,
+     * 2 conditional resource alpha/blend disabled, 3 resource blend/logic/subtract.
+     * This is not a GXM pass type or permission to change alpha semantics. */
+    uint32_t classification;
+} mh3_pack_pixel_inputs;
+enum {
+    MH3_TEXGEN_PROJECTION, MH3_TEXGEN_INPUT_AB11, MH3_TEXGEN_FUNCTION, MH3_TEXGEN_SOURCE_ROW,
+    MH3_TEXGEN_EMBOSS_SOURCE, MH3_TEXGEN_EMBOSS_LIGHT, MH3_TEXGEN_MATRIX_ROW,
+    MH3_TEXGEN_POST_MATRIX_ROW, MH3_TEXGEN_NORMALIZE, MH3_TEXGEN_DUAL_TEXTURE, MH3_TEXGEN_FIELD_COUNT
+};
+typedef struct { uint32_t known; uint8_t values[MH3_TEXGEN_FIELD_COUNT]; } mh3_pack_texgen;
+mh3_pack_status mh3_mesh_pack_material_native(const mh3_mesh_pack *pack, uint32_t material_index, mh3_pack_native_material *out);
+mh3_pack_status mh3_mesh_pack_texture_srt(const mh3_pack_native_material *material, uint32_t slot, mh3_pack_texture_srt *out);
+mh3_pack_status mh3_mesh_pack_channel(const mh3_pack_native_material *material, uint32_t channel, mh3_pack_channel *out);
+mh3_pack_status mh3_mesh_pack_tev(const mh3_pack_native_material *material, uint32_t stage, mh3_pack_tev_stage *out);
+mh3_pack_status mh3_mesh_pack_pixel(const mh3_pack_native_material *material, mh3_pack_pixel_inputs *out);
+mh3_pack_status mh3_mesh_pack_texgen(const mh3_pack_native_material *material, uint32_t slot, mh3_pack_texgen *out);
 mh3_pack_status mh3_mesh_pack_recipes(const mh3_mesh_pack *pack, uint32_t model_index, mh3_pack_recipes *out);
 mh3_pack_status mh3_mesh_pack_recipe(const mh3_pack_recipes *recipes, uint32_t index, mh3_pack_recipe *out);
 mh3_pack_status mh3_mesh_pack_weight(const mh3_pack_recipes *recipes, uint32_t index, mh3_pack_weight *out);
