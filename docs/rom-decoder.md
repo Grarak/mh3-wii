@@ -28,8 +28,9 @@ LZMA stream decodes straight into its group buffer, which serves as the
 dictionary, so a large dictionary size costs no memory. AES-128 (32-bit
 tables built at compile time) and SHA-1 are local.
 
-`-DMH3_ROM_DECODER=OFF` (Linux) leaves decoding out; only a decrypted ISO can
-be read then. The nod Rust bridge it replaced is no longer built.
+Every build decodes; there is no option to leave the decoder out. The nod
+Rust bridge it replaced was removed from the repository (git history keeps
+it).
 
 ## Vita runtime helpers
 

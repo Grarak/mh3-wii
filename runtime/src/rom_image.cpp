@@ -8,9 +8,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
-#ifdef MH3_HAS_ROM_DECODER
 #include "../vita/rom_decoder.h"
-#endif
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
@@ -119,7 +117,6 @@ class RomImage::Source {
     Status Open(const std::filesystem::path& path) {
         MH3_RETURN_IF_ERROR(file.Open(path));
         size = file.size;
-#ifdef MH3_HAS_ROM_DECODER
         std::array<uint8_t, 0x100> header{};
         MH3_RETURN_IF_ERROR(file.Read(0, header.data(), header.size()));
 
@@ -139,34 +136,22 @@ class RomImage::Source {
             return Status::Error(reinterpret_cast<const char*>(error.data()));
 
         size = mh3_rom_size(decoder, 0);
-#endif
         return {};
     }
 
     ~Source() {
-#ifdef MH3_HAS_ROM_DECODER
         mh3_rom_close(decoder);
-#endif
     }
 
     bool Decoded() const {
-#ifdef MH3_HAS_ROM_DECODER
         return decoder != nullptr;
-#else
-        return false;
-#endif
     }
 
     uint64_t FlatBytes() const {
-#ifdef MH3_HAS_ROM_DECODER
         return mh3_rom_size(decoder, 1);
-#else
-        return 0;
-#endif
     }
 
     Status Read(uint64_t at, uint8_t* bytes, size_t count, bool flat) const {
-#ifdef MH3_HAS_ROM_DECODER
         if (decoder) {
             std::array<uint8_t, 512> error{};
 
@@ -175,15 +160,12 @@ class RomImage::Source {
 
             return {};
         }
-#endif
-        (void)flat;
+
         return file.Read(at, bytes, count);
     }
 
   private:
-#ifdef MH3_HAS_ROM_DECODER
     void* decoder = nullptr;
-#endif
 };
 
 RomImage::RomImage() = default;

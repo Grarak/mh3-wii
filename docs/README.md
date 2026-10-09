@@ -64,6 +64,7 @@ how to build, run (including the Vita devkit) and debug.
 
 ## Profiling and capture
 
+- [vita-baseline.md](vita-baseline.md): the devkit's Alatreon-fight baseline (2026-10-04): game thread, its breakdown, GPU.
 - [profiling.md](profiling.md): the statistics lines, Vita CPU profiles (flat or with stack snapshots), offline callers, build setup, Pi and VM profiling.
 - [vita-razor.md](vita-razor.md): Vita GPU captures with Sony Razor and the last measurement.
 - [hdmi-audio-capture.md](hdmi-audio-capture.md): the devkit's HDMI video and audio capture.

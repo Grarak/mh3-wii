@@ -449,41 +449,33 @@ if(NOT VITA)
 endif()
 
 # Disc images (ISO, RVZ, WIA) decode with the native decoder
-# (src/rom_decoder.cpp, docs/rom-decoder.md). Linux may leave decoding out
-# (MH3_ROM_DECODER=OFF): then only a decrypted ISO (nodtool convert --decrypt)
-# can be read.
-option(MH3_ROM_DECODER "Decode ISO/RVZ/WIA disc images on Linux (the Vita always decodes)" ON)
+# (src/rom_decoder.cpp, docs/rom-decoder.md) in every build.
+if(NOT TARGET libzstd_static)
+  message(FATAL_ERROR "The ROM decoder needs Aurora's zstd (AURORA_CACHE_USE_ZSTD=ON)")
+endif()
 
-if(VITA OR MH3_ROM_DECODER)
-  if(NOT TARGET libzstd_static)
-    message(FATAL_ERROR "The ROM decoder needs Aurora's zstd (AURORA_CACHE_USE_ZSTD=ON)")
+# libbzip2 1.0.8 and the 7-Zip LZMA SDK decoders, unmodified (third_party/).
+file(GLOB rom_decoder_bzip2 CONFIGURE_DEPENDS third_party/bzip2/*.c)
+add_library(mh3_rom_decoder STATIC src/rom_decoder.cpp ${rom_decoder_bzip2}
+  third_party/lzma/LzmaDec.c third_party/lzma/Lzma2Dec.c)
+target_include_directories(mh3_rom_decoder PRIVATE third_party/bzip2 third_party/lzma)
+target_compile_definitions(mh3_rom_decoder PRIVATE BZ_NO_STDIO)
+set_source_files_properties(${rom_decoder_bzip2} PROPERTIES COMPILE_OPTIONS -w)
+target_link_libraries(mh3_rom_decoder PRIVATE libzstd_static)
+target_link_libraries(MH3 PRIVATE mh3_rom_decoder)
+
+if(VITA)
+  # The EABI memory helpers (__aeabi_memcpy and the others). As an object on
+  # the link line they win over newlib's slower archive members
+  # (docs/rom-decoder.md#vita-runtime-helpers).
+  target_sources(MH3 PRIVATE vita/aeabi_memory.c)
+  set_source_files_properties(vita/aeabi_memory.c PROPERTIES COMPILE_OPTIONS -fno-builtin)
+
+  # Native code even under ThinLTO: the code generator emits these calls
+  # after LTO has dropped the bitcode definitions nothing referenced yet.
+  if(NOT MH3_DEVELOPMENT)
+    set_property(SOURCE vita/aeabi_memory.c APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
   endif()
-
-  # libbzip2 1.0.8 and the 7-Zip LZMA SDK decoders, unmodified (third_party/).
-  file(GLOB rom_decoder_bzip2 CONFIGURE_DEPENDS third_party/bzip2/*.c)
-  add_library(mh3_rom_decoder STATIC src/rom_decoder.cpp ${rom_decoder_bzip2}
-    third_party/lzma/LzmaDec.c third_party/lzma/Lzma2Dec.c)
-  target_include_directories(mh3_rom_decoder PRIVATE third_party/bzip2 third_party/lzma)
-  target_compile_definitions(mh3_rom_decoder PRIVATE BZ_NO_STDIO)
-  set_source_files_properties(${rom_decoder_bzip2} PROPERTIES COMPILE_OPTIONS -w)
-  target_link_libraries(mh3_rom_decoder PRIVATE libzstd_static)
-  target_link_libraries(MH3 PRIVATE mh3_rom_decoder)
-
-  if(VITA)
-    # The EABI memory helpers (__aeabi_memcpy and the others). As an object on
-    # the link line they win over newlib's slower archive members
-    # (docs/rom-decoder.md#vita-runtime-helpers).
-    target_sources(MH3 PRIVATE vita/aeabi_memory.c)
-    set_source_files_properties(vita/aeabi_memory.c PROPERTIES COMPILE_OPTIONS -fno-builtin)
-
-    # Native code even under ThinLTO: the code generator emits these calls
-    # after LTO has dropped the bitcode definitions nothing referenced yet.
-    if(NOT MH3_DEVELOPMENT)
-      set_property(SOURCE vita/aeabi_memory.c APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
-    endif()
-  endif()
-
-  set_property(SOURCE src/rom_image.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
 endif()
 
 if(MH3_WRITE_WATCH)

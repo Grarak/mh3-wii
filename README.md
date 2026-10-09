@@ -70,10 +70,8 @@ and linked with ThinLTO and needs lld (without `MH3_BUILD_DIR` the
 build goes to `build/linux-<arch>`). Assertions follow Release/NDEBUG
 independently. Configure and build logs go to `logs/aurora-*.log`.
 
-Build options: disc images decode with the native decoder
-([docs/rom-decoder.md](docs/rom-decoder.md)); `-DMH3_ROM_DECODER=OFF` leaves
-it out (only a decrypted ISO from `nodtool convert --decrypt` can then be
-read).
+Disc images decode with the native decoder in every build
+([docs/rom-decoder.md](docs/rom-decoder.md)).
 `MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
 packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
 `../Vita3K/external/stb` or `STB_INCLUDE_DIR`).
