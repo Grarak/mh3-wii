@@ -10,6 +10,8 @@
 //
 //   target N              the monster work index the commands act on (0)
 //   kind K                target the first monster of kind K (+3)
+//   await K               hold the next commands until a monster of kind K
+//                         is in play, then target it
 //   act MODE SUB          start that action now
 //   every TICKS MODE SUB  start it every TICKS ticks of game time (30 a
 //                         second); `every off` stops
@@ -80,6 +82,7 @@ struct Control {
     std::deque<std::string> queue; // read, not run yet
     uint32_t wait = 0; // ticks before the next command runs
     float hunter[3] = {}; // `hunter save`
+    int32_t awaitKind = -1; // `await`: the kind the commands wait for
     bool saved = false;
     uint32_t poll = 0;
     uint32_t target = 0;
@@ -109,6 +112,15 @@ float F(uint32_t a) {
 uint32_t Monster(uint32_t index) {
     const uint32_t work = Cheats::MoveWork(Cheats::Kind::Monster, index);
     return work && Memory::Read16(work + kInUse) == 0x0101 ? work : 0;
+}
+
+// The index of the first monster of `kind` in play, or -1.
+int32_t OfKind(uint32_t kind) {
+    for (uint32_t i = 0, n = Cheats::MoveWorkCount(Cheats::Kind::Monster); i < n; ++i)
+        if (const uint32_t m = Monster(i); m && Memory::Read8(m + kKind) == kind)
+            return int32_t(i);
+
+    return -1;
 }
 
 void Start(GuestCall& game, uint32_t work, uint8_t mode, uint8_t sub) {
@@ -147,12 +159,10 @@ void Run(GuestCall& game, Control& c, const std::string& line) {
     if (word == "target" && in >> a)
         c.target = a;
     else if (word == "kind" && in >> a) {
-        for (uint32_t i = 0, n = Cheats::MoveWorkCount(Cheats::Kind::Monster); i < n; ++i)
-            if (const uint32_t m = Monster(i); m && Memory::Read8(m + kKind) == a) {
-                c.target = i;
-                break;
-            }
-    }
+        if (const int32_t i = OfKind(a); i >= 0)
+            c.target = uint32_t(i);
+    } else if (word == "await" && in >> a)
+        c.awaitKind = int32_t(a);
     else if (word == "act" && in >> a >> b) {
         if (need())
             Start(game, work, uint8_t(a), uint8_t(b));
@@ -257,7 +267,17 @@ void Step([[maybe_unused]] CpuContext* ctx) {
     const uint32_t ticks = GameStep::Ticks();
     c.wait = c.wait > ticks ? c.wait - ticks : 0;
 
-    while (!c.queue.empty() && c.wait == 0) {
+    if (c.awaitKind >= 0) {
+        const int32_t i = OfKind(uint32_t(c.awaitKind));
+
+        if (i < 0)
+            return;
+
+        c.target = uint32_t(i);
+        c.awaitKind = -1;
+    }
+
+    while (!c.queue.empty() && c.wait == 0 && c.awaitKind < 0) {
         const std::string line = std::move(c.queue.front());
         c.queue.pop_front();
         Run(game, c, line);

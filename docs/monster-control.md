@@ -107,6 +107,7 @@ command run is echoed (`MH3 monster control: act 2 5`).
 | --- | --- |
 | `target N` | the monster work index the commands act on (default 0, the first large monster) |
 | `kind K` | target the first monster of kind K (work +3, the monster list's id: 10 Jaggi) |
+| `await K` | hold the next commands until a monster of kind K is in play, then target it (a file written before the start begins with it) |
 | `act MODE SUB` | start that action now, as the AI would |
 | `every TICKS MODE SUB` | start it now and every TICKS ticks of game time (30 a second); `every off` stops |
 | `ai off`, `ai on` | off: the monster picks no action of its own (the starts of its AI's pick, 0x8013C4BC, are dropped); it waits until a command starts one, and an action's own follow-ups and its end still run |
