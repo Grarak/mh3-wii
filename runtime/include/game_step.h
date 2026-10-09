@@ -73,5 +73,8 @@ void SetOverlap(bool enabled);
 #ifdef MH3_DEVELOPMENT
 // MH3_TRACE=particles: child emissions an Effect::Calc found queued.
 void NoteQueuedChildren(uint32_t count);
+
+// Effect retirements that waited for the overlapped draw, since the last call.
+uint32_t TakeRetireDrawWaits();
 #endif
 } // namespace EffectStep

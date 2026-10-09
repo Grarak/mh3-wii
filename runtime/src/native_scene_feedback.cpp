@@ -582,8 +582,16 @@ extern "C" void MH3_NativeGrabScreen(CpuContext *cpu) {
     if (call.Call<0x800582D4>({0}) == 2)
         return;
 
-    if (NativeGraphicsFrameShouldRender())
-        Require(RecordNativeSceneClone(Identity(FlatRead32(0x8066d2b0)), Identity(FlatRead32(0x8066d2ac))), "GrabScreen source was not captured");
+    // Overlapped, logic runs while the draw thread still records the previous
+    // packet (the scene this grab copies): the clone joins the next packet.
+    if (NativeGraphicsFrameShouldRender()) {
+        const void *destination = Identity(FlatRead32(0x8066d2b0)), *source = Identity(FlatRead32(0x8066d2ac));
+
+        if (NativeGraphicsLogicPhase())
+            QueueNativeSceneClone(destination, source);
+        else
+            Require(RecordNativeSceneClone(destination, source), "GrabScreen source was not captured");
+    }
 
     FlatWrite8(0x8065b2c8, 2);
 }

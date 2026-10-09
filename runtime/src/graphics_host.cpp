@@ -440,6 +440,12 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
 // thread publishes it; frame begin only latches admission.
 bool frameOverlap = false, overlapAdmitted = false, overlapPacketBegun = false, overlapSubmitted = false;
 
+// Scene clones the game asked for during the overlapped logic step (the
+// transition screen grab, native_scene_feedback.cpp): the previous packet is
+// still the draw thread's then, so they are recorded as the next one begins,
+// after the scene they copy.
+std::vector<std::pair<const void*, const void*>> pendingClones;
+
 void SetNativeFrameOverlap(bool enabled) {
     frameOverlap = enabled;
 }
@@ -449,6 +455,20 @@ void BeginOverlappedNativeGraphicsFrame() {
     MH3_STAT(BeginNativeFrameStatistics();)
     BeginNativeFramePacket(overlapAdmitted);
     overlapPacketBegun = true;
+
+    for (const auto& [destination, source] : pendingClones)
+        if (NativeFramePacketRecording() && !RecordNativeSceneClone(destination, source))
+            MH3_THROW(std::runtime_error("GrabScreen source was not captured"));
+
+    pendingClones.clear();
+}
+
+bool NativeGraphicsLogicPhase() {
+    return initialized && frameOverlap && PpcThread::CurrentThread() == PpcThread::Game && !overlapPacketBegun;
+}
+
+void QueueNativeSceneClone(const void* destination, const void* source) {
+    pendingClones.emplace_back(destination, source);
 }
 
 void NativeFrameSubmittedToDraw() {

@@ -263,8 +263,8 @@ struct FrameSplit {
 
         // The draw thread's scenes, and the game thread's waits for them at the handoff.
         if (const auto draw = DrawThread::Thread().TakeStatistics(); draw.jobs)
-            std::printf("MH3 draw thread: %.2f scenes/frame, %.2f ms/frame of scenes, game waited %.2f ms/frame (%llu waits)\n", double(draw.jobs) / frames, draw.jobNs / 1e6 / frames,
-                        draw.waitNs / 1e6 / frames, static_cast<unsigned long long>(draw.waits));
+            std::printf("MH3 draw thread: %.2f scenes/frame, %.2f ms/frame of scenes, game waited %.2f ms/frame (%llu waits, %u of them effect retirements)\n", double(draw.jobs) / frames,
+                        draw.jobNs / 1e6 / frames, draw.waitNs / 1e6 / frames, static_cast<unsigned long long>(draw.waits), EffectStep::TakeRetireDrawWaits());
         MH3PrintWorldSplit(frames);
 
         if (mh3SplitDetail) {

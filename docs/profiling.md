@@ -59,7 +59,11 @@ pair's unwind registration (`scripts/vita-check-unwind.py`) before it starts.
 count (`--ready-copies`, default 300 frames):
 
 - **Flat** (no `--cpu-registers`): Sony's DTrace sampler at 997 Hz, PC only.
-  Use this in Alatreon.
+  Use this in Alatreon. The harness asks for no user-stack backtrace
+  (`--stack-depth 0`): Sony's USTACK returns no callers from the profile timer
+  anyway, and with the 32-frame default about a third of the runs froze the
+  console as the sampler started (three of nine on 2026-10-05; then six of six
+  clean at depth 0).
 - **With stack snapshots** (`--cpu-registers --cpu-stack-bytes N`): a second
   stream of registers and N bytes of stack at 199 Hz for offline caller
   recovery. Snapshots can freeze the Vita: in Alatreon, 8 KiB snapshots froze

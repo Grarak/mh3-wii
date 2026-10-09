@@ -137,6 +137,13 @@ void EndNativeGraphicsFrame();
 // empty packet the end then publishes.
 void SetNativeFrameOverlap(bool enabled);
 void BeginOverlappedNativeGraphicsFrame();
+
+// The game thread's overlapped logic step, before its packet begins: the
+// draw thread may still be recording the previous packet, so a record made
+// now must wait for the next one (QueueNativeSceneClone records a scene clone
+// as it begins).
+bool NativeGraphicsLogicPhase();
+void QueueNativeSceneClone(const void* destination, const void* source);
 void NativeFrameSubmittedToDraw();
 bool EndOverlappedNativeGraphicsFrame();
 

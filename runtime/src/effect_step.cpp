@@ -761,6 +761,9 @@ struct Deferral {
 };
 
 bool overlap = false;
+#ifdef MH3_DEVELOPMENT
+uint32_t retireDrawWaits = 0; // EffectStep::TakeRetireDrawWaits
+#endif
 
 bool OnDrawThread() {
     return PpcThread::CurrentThread() == PpcThread::Draw;
@@ -796,6 +799,12 @@ void NoteQueuedChildren(uint32_t count) {
 void SetOverlap(bool enabled) {
     overlap = enabled;
 }
+#ifdef MH3_DEVELOPMENT
+
+uint32_t TakeRetireDrawWaits() {
+    return std::exchange(retireDrawWaits, 0u);
+}
+#endif
 
 void Defer(bool enabled) {
     // Overlapped: the previous step's calls may still run beside the draw
@@ -867,6 +876,16 @@ extern "C" void MH3_EffectSystemRetireEffect(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     GuestWorker::NoteShared("effect retirement");
 #endif
+
+    // Overlapped, the draw thread may still be drawing the previous frame's
+    // effects from their emitter and particle lists, which retirement frees
+    // for reuse (an area change retires them all): wait for that scene first.
+    if (overlap && !OnDrawThread() && DrawThread::Thread().Pending()) {
+        DrawThread::Thread().Wait();
+#ifdef MH3_DEVELOPMENT
+        ++retireDrawWaits;
+#endif
+    }
 
     if (deferral.launched) {
         EffectStep::Join(ctx);
