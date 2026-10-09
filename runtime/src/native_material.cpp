@@ -40,10 +40,12 @@ std::array<mh3_shader_light,8> preparedLights{};
 struct TextureMatrix {std::array<float,12> values{};bool known=false,matrix3x4=false;};
 std::array<TextureMatrix,10> textureMatrices{};
 std::array<TextureMatrix,20> postTextureMatrices{};
-struct BaseSuffix {uint8_t actual=0,portable=0;uint64_t hash=0;bool known=false;};
+struct BaseSuffix {uint8_t actual=0,portable=0;uint64_t hash=0;bool known=false;
+    aurora::gl::ProgramPtr program;};
 struct ModelSuffix {
     std::array<uint32_t,17> layout{};
     uint8_t actual=0,portable=0,nonzero=0,zero=0;uint64_t hash=0;bool known=false;
+    aurora::gl::ProgramPtr program;
 };
 struct PreparedMaterial {ShaderConfig config;ShaderInfo info;mh3_material_requirements requirements{};
     uint64_t configHash=0;bool configHashKnown=false;BaseSuffix baseSuffix;ModelSuffix modelSuffix;};
@@ -79,6 +81,9 @@ struct PreparationCounters {
     uint64_t needs=0,dirtyLookups=0,baseHits=0,fullPreparations=0,baseEvictions=0;
     uint64_t modelHits=0,modelMisses=0,configHashes=0,suffixHashes=0;
 } preparationCounters;
+struct ProgramCounters {
+    uint64_t baseMemoHits=0,modelMemoHits=0,baseLookups=0,modelLookups=0,configComparisons=0,suffixReplacements=0;
+} programCounters;
 bool rasterObserverInstalled=false,publishingMaterialRaster=false;
 struct ProgramKey {ShaderConfig config;uint8_t zeroBias;uint8_t portableZeroBias=0;};
 struct ModelProgramKey {
@@ -125,6 +130,7 @@ ProgramLookup MaterialLookup(PreparedMaterial& state,uint8_t actual,uint8_t port
     auto& suffix=state.baseSuffix;
     if(!suffix.known || suffix.actual!=actual || suffix.portable!=portable) {
         ++preparationCounters.suffixHashes;
+        if(suffix.program) ++programCounters.suffixReplacements;
         suffix={actual,portable,Lookup(state.config,ConfigDigest(state),actual,portable).hash,true};
     }
     return {state.config,actual,portable,suffix.hash};
@@ -135,6 +141,7 @@ ModelProgramLookup ModelLookup(PreparedMaterial& state,uint8_t actual,uint8_t po
     if(!suffix.known || suffix.layout!=layout || suffix.actual!=actual || suffix.portable!=portable ||
        suffix.nonzero!=nonzero || suffix.zero!=zero) {
         ++preparationCounters.suffixHashes;
+        if(suffix.program) ++programCounters.suffixReplacements;
         suffix={layout,actual,portable,nonzero,zero,
             Lookup(state.config,ConfigDigest(state),actual,portable,layout,nonzero,zero).hash,true};
     }
@@ -145,8 +152,9 @@ struct ProgramHash {
     template<typename Key> size_t operator()(const Key& key) const noexcept {return size_t(key.hash);}
 };
 bool Equal(const ProgramKey& key,const ProgramLookup& view) {
-    return key.zeroBias==view.zeroBias && key.portableZeroBias==view.portableZeroBias &&
-        std::memcmp(&key.config,&view.config,sizeof key.config)==0;
+    if(key.zeroBias!=view.zeroBias || key.portableZeroBias!=view.portableZeroBias) return false;
+    ++programCounters.configComparisons;
+    return std::memcmp(&key.config,&view.config,sizeof key.config)==0;
 }
 struct ProgramEqual {
     using is_transparent=void;
@@ -174,6 +182,32 @@ struct ModelProgramEqual {
 // The digest indexes candidates; complete equality remains collision safe.
 std::unordered_map<HashedProgramKey<ProgramKey>,aurora::gl::ProgramPtr,ProgramHash,ProgramEqual> programs;
 std::unordered_map<HashedProgramKey<ModelProgramKey>,aurora::gl::ProgramPtr,ProgramHash,ModelProgramEqual> modelPrograms;
+template<typename Factory> const aurora::gl::ProgramPtr& MaterialProgram(
+    PreparedMaterial& state,const ProgramLookup& lookup,Factory&& create) {
+    // MaterialLookup updated this exact suffix immediately before selection.
+    // A retained pointer belongs to this immutable config and suffix; no map
+    // candidate or hash-only identity decision is made on this path.
+    auto& memo=state.baseSuffix.program;
+    if(memo) {++programCounters.baseMemoHits;return memo;}
+    ++programCounters.baseLookups;
+    auto entry=programs.find(lookup);
+    if(entry==programs.end())
+        entry=programs.emplace(HashedProgramKey<ProgramKey>{{state.config,lookup.zeroBias,lookup.portableZeroBias},
+            lookup.hash},create()).first;
+    memo=entry->second;return memo;
+}
+template<typename Factory> const aurora::gl::ProgramPtr& ModelProgram(
+    PreparedMaterial& state,const ModelProgramLookup& lookup,Factory&& create) {
+    auto& memo=state.modelSuffix.program;
+    if(memo) {++programCounters.modelMemoHits;return memo;}
+    ++programCounters.modelLookups;
+    auto entry=modelPrograms.find(lookup);
+    if(entry==modelPrograms.end())
+        entry=modelPrograms.emplace(HashedProgramKey<ModelProgramKey>{{{state.config,lookup.material.zeroBias,
+            lookup.material.portableZeroBias},lookup.layout,lookup.nonzeroProjection,lookup.zeroProjection},
+            lookup.hash},create()).first;
+    memo=entry->second;return memo;
+}
 struct PortableCapture {uint8_t zeroBias=0;bool active=false;
     std::array<aurora::NativeTexturePortableSampling,8> routes{};};
 PortableCapture PortableSampling(const ShaderInfo& info,uint8_t actualZeroBias) {
@@ -677,6 +711,14 @@ void ClearMaterialPreparations() {
     // Cumulative owner statistics survive graphics teardown. Retained vector
     // capacities are still included in the reported fixed CPU storage.
 }
+void ClearMaterialProgramMemos() {
+    const auto clear=[](PreparedMaterial& state) {
+        state.baseSuffix.program.reset();state.modelSuffix.program.reset();
+    };
+    clear(unprepared);
+    for(auto& entry:basePreparations) clear(entry.state);
+    for(auto& variant:modelVariants) clear(variant.state);
+}
 const mh3_native_texture_binding& Texture(unsigned unit) {
     const auto* binding=GetNativeTextureBinding(unit);
     if(!binding) throw std::runtime_error("Native material texture "+std::to_string(unit)+" has no typed producer");
@@ -872,8 +914,7 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     }
     const auto portable=PortableSampling(ActivePrepared().info,zeroBias);
     const auto lookup=MaterialLookup(ActivePrepared(),zeroBias,portable.zeroBias);
-    auto iterator=programs.find(lookup);
-    if(iterator==programs.end()) {
+    const auto& program=MaterialProgram(ActivePrepared(),lookup,[&] {
         // Always use the user-selected float native equations. The generator's
         // exact mode exists only for independent reference probes.
         auto description=aurora::gx::build_shader_description(ActivePrepared().config,true,zeroBias,true);
@@ -883,14 +924,12 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
             description.portableVertex=counterpart.vertex;description.portableFragment=counterpart.fragment;
             description.portableOrigin=PortableOrigin(portable,ActivePrepared().info);
         }
-        auto program=std::make_shared<aurora::gl::Program>(std::move(description));
-        iterator=programs.emplace(HashedProgramKey<ProgramKey>{{ActivePrepared().config,zeroBias,portable.zeroBias},lookup.hash},
-                                 std::move(program)).first;
-    }
+        return std::make_shared<aurora::gl::Program>(std::move(description));
+    });
     AuroraNativeUniforms uniforms{};
     if(!aurora_allocate_native_uniforms(ActivePrepared().info.uniformSize,&uniforms)) return;
     WriteUniforms(ActivePrepared(),uniforms);
-    aurora_submit_native_material_geometry(&geometry,iterator->second->get(),&uniforms);
+    aurora_submit_native_material_geometry(&geometry,program->get(),&uniforms);
 }
 void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     Owner();if(!mesh.index_count) return;
@@ -922,8 +961,7 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     const auto layout=ModelLayout(*resident.layout);
     const auto lookup=ModelLookup(modelState,zeroBias,portable.zeroBias,layout,
                              inputs.nonzero_projective_mask,inputs.zero_projective_mask);
-    auto program=modelPrograms.find(lookup);
-    if(program==modelPrograms.end()) {
+    const auto& program=ModelProgram(modelState,lookup,[&] {
         auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask,inputs.zero_projective_mask);
         description.origin="runtime/src/native_material.cpp:SubmitNativeModelMesh asset="+std::to_string(mesh.asset_id)+
             " model="+std::to_string(mesh.model_id)+" shape="+std::to_string(mesh.shape_id);
@@ -933,14 +971,12 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
             description.portableVertex=counterpart.vertex;description.portableFragment=counterpart.fragment;
             description.portableOrigin=PortableOrigin(portable,modelState.info);
         }
-        program=modelPrograms.emplace(HashedProgramKey<ModelProgramKey>{{{config,zeroBias,portable.zeroBias},layout,
-            inputs.nonzero_projective_mask,inputs.zero_projective_mask},lookup.hash},
-            std::make_shared<aurora::gl::Program>(std::move(description))).first;
-    }
+        return std::make_shared<aurora::gl::Program>(std::move(description));
+    });
     AuroraNativeUniforms uniforms{};
     if(!aurora_allocate_native_uniforms(modelState.info.uniformSize,&uniforms)) return;
     WriteUniforms(modelState,uniforms,&inputs,mesh.texcoord_sizes);
-    const auto programID=program->second->get();
+    const auto programID=program->get();
     aurora::gl::draw_native_mesh(*resident.buffer,*resident.layout,resident.mesh->vertex_offset,
         resident.mesh->vertex_count,resident.mesh->index_offset+mesh.first_index*2,mesh.index_count,
         programID,uniforms);
@@ -961,8 +997,15 @@ void GetNativeMaterialPreparationStatistics(uint64_t statistics[12]) {
         basePreparations.capacity()*sizeof(BasePreparation)+modelVariants.capacity()*sizeof(ModelVariant)};
     std::copy(values.begin(),values.end(),statistics);
 }
+void GetNativeMaterialProgramStatistics(uint64_t statistics[6]) {
+    Owner();if(!statistics) return;
+    const std::array<uint64_t,6> values{programCounters.baseMemoHits,programCounters.modelMemoHits,
+        programCounters.baseLookups,programCounters.modelLookups,programCounters.configComparisons,
+        programCounters.suffixReplacements};
+    std::copy(values.begin(),values.end(),statistics);
+}
 void ClearNativeMaterialPrograms() {
-    Owner();programs.clear();modelPrograms.clear();ClearNativeModelGPU();
+    Owner();ClearMaterialProgramMemos();programs.clear();modelPrograms.clear();ClearNativeModelGPU();
     ClearMaterialPreparations();
     if(rasterObserverInstalled) SetNativeRasterObserver(nullptr);
     rasterObserverInstalled=false;
