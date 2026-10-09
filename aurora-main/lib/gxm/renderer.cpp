@@ -467,6 +467,19 @@ Texture::~Texture() {
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
 }
+bool render_target_reusable(const Texture& texture) noexcept {
+  return guarded([&] {
+    const auto& entry = renderer().entry(texture.gl());
+    return !entry.pins && entry.storage->in_cdram() && entry.storage->gpu_idle();
+  });
+}
+bool render_target_allocation_available(size_t bytes) noexcept {
+  return guarded([&] {
+    auto& r = renderer();
+    r.pool.collect();
+    return r.device.arena().can_allocate(bytes);
+  });
+}
 void open_native_texture_pack(const char* path) noexcept {
   call([path = std::string(path)] {
     auto& assets = renderer().assets;

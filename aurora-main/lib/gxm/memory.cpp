@@ -93,6 +93,13 @@ void* MappedArena::allocate(size_t bytes) {
   m_highWater = std::max(m_highWater, m_used);
   return static_cast<char*>(m_memory.data()) + offset;
 }
+bool MappedArena::can_allocate(size_t bytes) const noexcept {
+  if (!bytes) return false;
+  bytes = aligned(bytes, 64);
+  std::lock_guard lock(m_mutex);
+  for (const auto& block : m_free) if (block.second >= bytes) return true;
+  return false;
+}
 void MappedArena::free(void* pointer, size_t bytes) noexcept {
   if (!pointer || bytes == 0) return;
   bytes = (bytes + 63) & ~size_t(63);

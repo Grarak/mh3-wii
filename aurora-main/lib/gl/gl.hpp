@@ -91,6 +91,13 @@ using TexturePtr = std::shared_ptr<Texture>;
 
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format,
                           std::string_view label) noexcept;
+// Owner only; never submits or waits. Reuse also requires exclusive shared
+// ownership. GXM checks the texture's latest actual GPU use, not a frame slot;
+// ordered host GL draws may overwrite after earlier queued consumers.
+bool render_target_reusable(const Texture& texture) noexcept;
+// Owner only; poll completed retirements and check one exact backing block.
+// This query does not close a scene, submit work, or wait.
+bool render_target_allocation_available(size_t bytes) noexcept;
 struct NativeTextureInfo {
   Format format;
   uint32_t width, height, mips, bytes;

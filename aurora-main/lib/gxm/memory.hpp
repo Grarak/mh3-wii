@@ -39,6 +39,7 @@ class MappedArena {
 public:
   explicit MappedArena(size_t bytes, MappedMemory::Kind kind = MappedMemory::Kind::Cdram);
   void* allocate(size_t bytes);
+  bool can_allocate(size_t bytes) const noexcept;
   void free(void* pointer, size_t bytes) noexcept;
   size_t used() const noexcept;
   size_t high_water() const noexcept;

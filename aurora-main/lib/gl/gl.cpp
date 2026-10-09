@@ -433,6 +433,46 @@ TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
 }
 
+bool render_target_reusable(const Texture& texture) noexcept {
+  if (!on_render_thread()) Log.fatal("GL target reuse queried outside the game thread");
+  const auto id = texture.gl();
+  GLint active = -1;
+  bool sampled = false;
+  for (unsigned unit = 0; unit < g_state.textures.size(); ++unit) {
+    auto bound = g_state.textures[unit];
+    if (bound == UINT32_MAX) {
+      if (active < 0) glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+      glActiveTexture(GL_TEXTURE0 + unit);
+      GLint actual = 0;
+      glGetIntegerv(GL_TEXTURE_BINDING_2D, &actual);
+      bound = GLuint(actual);
+    }
+    sampled |= bound == id;
+  }
+  if (active >= 0) glActiveTexture(GLenum(active));
+  if (sampled) return false;
+  GLint framebuffer = 0;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+  if (framebuffer) {
+    GLint type = 0, attached = 0;
+    for (const GLenum attachment : {GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT}) {
+      glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
+                                           GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+      if (type != GL_TEXTURE) continue;
+      glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
+                                           GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &attached);
+      if (GLuint(attached) == id) return false;
+    }
+  }
+  // One context orders every earlier consumer before the later overwrite.
+  // No client wait or physical completion is needed on this backend.
+  return true;
+}
+bool render_target_allocation_available(size_t bytes) noexcept {
+  if (!on_render_thread()) Log.fatal("GL target allocation queried outside the game thread");
+  return bytes != 0;
+}
+
 void open_native_texture_pack(const char* path) noexcept {
   call([path=std::string(path)]{
     if(g_nativeTextureArchive)throw std::runtime_error("Host native texture pack already open");

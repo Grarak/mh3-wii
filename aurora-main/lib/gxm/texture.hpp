@@ -56,6 +56,9 @@ public:
   SceGxmOutputRegisterFormat output_format() const noexcept;
   bool in_cdram() const noexcept;
   bool has_gpu_use() const noexcept { return m_lastUse.address || m_gpuWritten; }
+  bool gpu_idle() const noexcept {
+    return !aurora::gpu_notification_pending(m_lastUse.address, m_lastUse.value);
+  }
   void pin(bool pinned) noexcept { m_pinned = pinned; }
   void note_gpu_use(bool writes = false) noexcept {
     m_lastUse = m_pool.m_device.current_fence();
