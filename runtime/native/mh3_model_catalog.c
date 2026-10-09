@@ -406,6 +406,22 @@ mh3_res_status mh3_source_resolve_model(const mh3_source_tracker *t,const mh3_mo
 void *mh3_model_copy_bytes(void *destination,const void *source,size_t bytes) {
     return bytes?memmove(destination,source,bytes):destination;
 }
+mh3_res_status mh3_source_catalog_live(const mh3_source_tracker *tracker,const mh3_model_catalog *catalog,int *out) {
+    if(!tracker || !catalog || !out || tracker->count>tracker->capacity || (tracker->count && !tracker->ranges)) return MH3_RES_INVALID;
+    for(size_t j=0;j<tracker->count;j++)
+        if(tracker->ranges[j].partition_offset>UINT64_MAX-tracker->ranges[j].bytes) return MH3_RES_INVALID;
+    int live=0;
+    for(uint32_t i=0;i<catalog->model_count;i++) {
+        mh3_catalog_model model;
+        if(mh3_model_catalog_model(catalog,i,&model)!=MH3_PACK_OK || model.partition_offset>UINT64_MAX-model.file_bytes) return MH3_RES_INVALID;
+        for(size_t j=0;j<tracker->count;j++) {
+            const mh3_source_range *range=&tracker->ranges[j];
+            if(range->bytes && model.file_bytes && range->partition_offset<model.partition_offset+model.file_bytes &&
+               model.partition_offset<range->partition_offset+range->bytes) live=1;
+        }
+    }
+    *out=live;return MH3_RES_OK;
+}
 mh3_res_status mh3_source_canonical_address(uint32_t address,uint32_t bytes,uint32_t *out) {
     if(!out) return MH3_RES_INVALID;
     const uint32_t high=address&0xc0000000u,physical=address&0x3fffffffu;

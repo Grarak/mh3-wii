@@ -134,6 +134,10 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog,const mh
     r.pack=pack;r.resident_handle=handle;r.resident_generation=resident_generation;
     r.model_id=model.model_id;r.shape_id=shape_id;r.asset_id=resource.asset_id;
     r.mesh_index=resource.pack_index;r.index_count=r.mesh.index_count;
+    /* CPU admission retains scalar ranges only. GPU-only eviction/reload must
+     * never leave borrowed allocation pointers in the catalogue cache. The
+     * backend resolves its current resident mesh after frame admission. */
+    r.mesh.vertices=(mh3_pack_span){NULL,0};r.mesh.indices=(mh3_pack_span){NULL,0};
     mh3_prepared_mesh prepared;memset(&prepared,0,sizeof prepared);
     prepared.immutable=r;prepared.normal_required=(uint8_t)normal;
     *out=prepared;return MH3_PACK_OK;

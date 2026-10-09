@@ -22,6 +22,9 @@ void RecordNativeTypedMaterialCopy(uint32_t destination,uint32_t source,uint32_t
 void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* catalog,
                              uintptr_t resident_handle,uint64_t resident_generation);
 void UnregisterNativeModelPack(uintptr_t resident_handle);
+/* Conservative demand-loader pin: certified owners, copied typed material
+ * groups, or any tracked partial source receipt keep metadata alive. */
+bool NativeModelPackHasLiveSources(uintptr_t resident_handle);
 struct NativeModelOwner {
     const mh3_mesh_pack* pack;
     const mh3_model_catalog* catalog;

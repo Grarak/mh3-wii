@@ -95,6 +95,10 @@ mh3_res_status mh3_source_record_copy(mh3_source_tracker *tracker,uint32_t desti
                                      uint32_t source,uint32_t bytes,uint64_t generation);
 mh3_res_status mh3_source_retire(mh3_source_tracker *tracker,uint32_t address,uint32_t bytes);
 int mh3_source_intersects(const mh3_source_tracker *tracker,uint32_t address,uint32_t bytes);
+/* Conservative demand-loader pin: any tracked source interval belonging to a
+ * catalog file is live, including partial files without a certified model. */
+mh3_res_status mh3_source_catalog_live(const mh3_source_tracker *tracker,
+    const mh3_model_catalog *catalog,int *out);
 mh3_res_status mh3_source_resolve(const mh3_source_tracker *tracker,uint32_t address,
                                  uint32_t bytes,mh3_source_identity *out);
 /* Require full file coverage at the derived BRRES base, not just a magic word or

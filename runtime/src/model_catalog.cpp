@@ -2,6 +2,7 @@
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include <array>
@@ -286,11 +287,23 @@ void UnregisterNativeModelPack(uintptr_t handle) {
     }
     throw std::runtime_error("Unknown native model resident handle");
 }
+bool NativeModelPackHasLiveSources(uintptr_t handle) {
+    for(const auto& owner:owners) if(owner.second.owner.resident_handle==handle) return true;
+    for(const auto& block:live_blocks) if(block.second.resident_handle==handle) return true;
+    for(const auto& pack:packs) if(pack.handle==handle) {
+        int live=0;Checked(mh3_source_catalog_live(&tracker,pack.catalog,&live));return live!=0;
+    }
+    return false;
+}
 NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
     Initialize();
     model_address=Canonical(model_address,16);
     const auto cached=owners.find(model_address);
     if(cached!=owners.end()) return cached->second.owner;
+    mh3_source_identity identity{};
+    const auto source_status=mh3_source_resolve(&tracker,model_address,16,&identity);
+    if(source_status==MH3_RES_OK) EnsureNativeModelAssets(identity.partition_offset,16);
+    else if(source_status!=MH3_RES_ABSENT) Checked(source_status);
     for(const auto& p:packs) {
         mh3_source_owner certificate{};
         const auto status=mh3_source_owner_certify(&tracker,p.catalog,model_address,&certificate);
@@ -395,6 +408,7 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_m
     Initialize();address=Canonical(address,1);const auto key=LiveKey(address,kind);
     const auto cached=live_blocks.find(key);if(cached!=live_blocks.end()) return cached->second;
     mh3_source_identity identity{};Checked(mh3_source_resolve(&tracker,address,1,&identity));
+    EnsureNativeModelAssets(identity.partition_offset,1);
     for(const auto& pack:packs) {
         const auto origin=pack.origins.find(std::make_pair(identity.partition_offset,uint32_t(kind)));
         if(origin==pack.origins.end()) continue;

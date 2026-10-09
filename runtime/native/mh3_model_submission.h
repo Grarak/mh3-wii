@@ -35,6 +35,7 @@ typedef struct mh3_resolved_mesh_submit {
      * coordinate dimensions are distinct state, never interchangeable guesses. */
     const mh3_model_texcoord_sizes *texcoord_sizes;
     uint32_t first_index, index_count;
+    const mh3_pack_palette_batch *palette_batch; /* admitted typed batch; null for rigid */
 } mh3_resolved_mesh_submit;
 /* Admit once per resident generation. Metadata-only packs may have both GPU
  * spans absent; actual submission must resolve the validated resident mesh.
