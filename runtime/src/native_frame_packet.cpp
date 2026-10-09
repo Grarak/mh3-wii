@@ -336,6 +336,11 @@ bool synchronous = false;
 // PaceNativeFramePacket. Latched at the render thread's start.
 bool frameLimit = true;
 bool paced = true;
+
+// Game thread: whether a loading screen drew the frame being paced, and when
+// its next frame may start without the limiter.
+bool loadingFrame = false;
+std::chrono::steady_clock::time_point loadingNext;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
 
@@ -1767,9 +1772,32 @@ void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32
 // takenSignal, which the render thread advances at each take and completion. The park is
 // bounded and the loop re-checks, so a slot freed by a completion alone is
 // seen within the bound, and a stall reports itself.
+void NoteNativeLoadingFrame() {
+    loadingFrame = true;
+}
+
 void PaceNativeFramePacket() {
     if (synchronous || !running.load(std::memory_order_relaxed))
         return;
+
+    // Without the limiter a loading screen spun at ~600 frames a second, its
+    // draw table preparation each frame and the render thread taking the CPU
+    // the asset cache's conversions need: a Jhen Mohran load took 49.9 s
+    // instead of 9.9. Its frames keep the 60 Hz pace.
+    if (!paced && std::exchange(loadingFrame, false)) {
+        constexpr auto period = std::chrono::microseconds(16667);
+        const auto now = std::chrono::steady_clock::now();
+
+        if (loadingNext > now && loadingNext - now <= period) {
+#ifdef __vita__
+            sceKernelDelayThread(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(loadingNext - now).count()));
+#else
+            std::this_thread::sleep_until(loadingNext);
+#endif
+        }
+
+        loadingNext = std::max(now, loadingNext) + period;
+    }
 
     const uint64_t next = sequence + 1;
     const auto released = [next] { return paced ? completed.load(std::memory_order_acquire) + 2 >= next : SlotReleased(next); };
