@@ -26,6 +26,8 @@
 // are static * picked animated palette entries, evaluated from uniforms only.
 #include "native_shader_source.h"
 #include <cstdlib>
+#include <set>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -835,12 +837,12 @@ std::string Define(const char* name, int value) {
     return std::string("#define ") + name + " " + std::to_string(value) + "\n";
 }
 // One statement per role; TEXGEN_OUTPUTS expands inside the mesh main().
-std::string TexgenOutputs(NativeShaderVariant variant, bool cg) {
+std::string TexgenOutputs(const NativeShaderVertexKey& key, bool cg) {
     std::string out = "#define TEXGEN_OUTPUTS";
     for (unsigned role = 0; role < 3; ++role) {
         const auto r = std::to_string(role);
         out += " v_uv" + r + " = ";
-        switch (variant.texgen[role]) {
+        switch (key.texgen[role]) {
         case NativeShaderTexgen::None:
             out += cg ? "float2(0.0f, 0.0f)" : "vec2(0.0)";
             break;
@@ -861,10 +863,10 @@ std::string TexgenOutputs(NativeShaderVariant variant, bool cg) {
     }
     return out + "\n";
 }
-std::string VertexDefines(NativeShaderVariant variant) {
-    return Define("LIT", int(variant.lighting)) + Define("LIGHTS", variant.lights) + Define("MATERIAL_GPU", variant.material_gpu);
+std::string VertexDefines(const NativeShaderVertexKey& key) {
+    return Define("LIT", int(key.lighting)) + Define("LIGHTS", key.lights) + Define("MATERIAL_GPU", key.material_gpu);
 }
-bool PureModulate(NativeShaderVariant variant) {
+bool PureModulate(const NativeShaderVariant& variant) {
     return variant.pure_modulate && variant.model == NativeShaderModel::Modulate && variant.textures == 1 && !variant.overlay;
 }
 // Animated picks are evaluated by MODULATE programs only: their uniform-only
@@ -873,29 +875,140 @@ bool PureModulate(NativeShaderVariant variant) {
 // per-fragment program (77 -> 184 cycles), so a BASIC material with animated
 // picks gets a per-draw resolved copy of its Material block instead. The pure
 // product reads no coefficient.
-bool Dynamic(NativeShaderVariant variant) {
+bool Dynamic(const NativeShaderVariant& variant) {
     return variant.material_gpu && variant.dynamic && variant.model == NativeShaderModel::Modulate && !PureModulate(variant);
 }
-std::string FragmentDefines(NativeShaderVariant variant) {
-    return Define("MODULATE", variant.model == NativeShaderModel::Modulate) + Define("TEXTURES", variant.textures) + Define("OVERLAY", variant.overlay) + Define("ALPHA_TEST", variant.alpha_test) +
-           Define("FOG", variant.fog) + Define("LINEAR_FOG", variant.fog && variant.linear_fog) + Define("PURE_MODULATE", PureModulate(variant)) + Define("TARGET_ALPHA_ONE", variant.target_alpha_one) +
-           Define("MATERIAL_GPU", variant.material_gpu) + Define("DYNAMIC", Dynamic(variant));
+std::string FragmentDefines(const NativeShaderFragmentKey& key) {
+    return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
+           Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
+           Define("DYNAMIC", key.dynamic);
+}
+std::string GlslVertex(const NativeShaderVertexKey& key) {
+    const bool mesh = key.vertex == NativeShaderVertex::Mesh;
+    return std::string(GlslPrelude) + VertexDefines(key) + (mesh ? TexgenOutputs(key, false) : "") + GlslScene + GlslDraw + (mesh ? GlslAnimated : "") + GlslVertexCommon +
+           (mesh ? GlslMeshVertex : GlslGeometryVertex);
+}
+std::string GlslFragmentSource(const NativeShaderFragmentKey& key) {
+    return std::string(GlslPrelude) + FragmentDefines(key) + GlslScene + GlslShade + GlslAnimated + GlslFragment;
+}
+[[noreturn]] void Invalid(const char* message) {
+    throw std::invalid_argument(std::string("Native shader variant outside the bank domain: ") + message);
 }
 } // namespace
 
+NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant) {
+    NativeShaderVertexKey key;
+    key.vertex = variant.vertex;
+    key.lighting = variant.lighting;
+    key.material_gpu = variant.material_gpu;
+    if (variant.lighting == NativeShaderLighting::Spot) {
+        if (variant.lights > NativeShaderMaxLights)
+            Invalid("more than eight spot lights");
+        key.lights = variant.lights;
+    }
+    if (variant.vertex == NativeShaderVertex::Mesh)
+        for (unsigned role = 0; role < 3; ++role) {
+            if (variant.texgen[role] == NativeShaderTexgen::Srt && !variant.material_gpu)
+                Invalid("an SRT texgen without material uniforms");
+            key.texgen[role] = variant.texgen[role];
+        }
+    return key;
+}
+
+NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& variant) {
+    if (variant.textures > NativeShaderMaxTextures)
+        Invalid("more than three texture roles");
+    NativeShaderFragmentKey key;
+    key.model = variant.model;
+    key.textures = variant.textures;
+    key.overlay = variant.overlay;
+    key.alpha_test = variant.alpha_test;
+    key.fog = variant.fog;
+    key.linear_fog = variant.fog && variant.linear_fog;
+    key.pure_modulate = PureModulate(variant);
+    key.target_alpha_one = variant.target_alpha_one;
+    key.material_gpu = variant.material_gpu;
+    key.dynamic = Dynamic(variant);
+    return key;
+}
+
+// Every value of every variant field: the image of the key functions over all
+// valid variants. A key the runtime classifies is always one of these.
+std::vector<NativeShaderVertexKey> NativeShaderVertexKeys() {
+    std::set<NativeShaderVertexKey> seen;
+    std::vector<NativeShaderVertexKey> keys;
+    NativeShaderVariant v;
+    for (unsigned vertex = 0; vertex < NativeShaderVertexCount; ++vertex)
+        for (unsigned lighting = 0; lighting < NativeShaderLightingCount; ++lighting)
+            for (unsigned lights = 0; lights <= NativeShaderMaxLights; ++lights)
+                for (unsigned gpu = 0; gpu < 2; ++gpu)
+                    for (unsigned t0 = 0; t0 < NativeShaderTexgenCount; ++t0)
+                        for (unsigned t1 = 0; t1 < NativeShaderTexgenCount; ++t1)
+                            for (unsigned t2 = 0; t2 < NativeShaderTexgenCount; ++t2) {
+                                v.vertex = NativeShaderVertex(vertex);
+                                v.lighting = NativeShaderLighting(lighting);
+                                v.lights = uint8_t(lights);
+                                v.material_gpu = gpu != 0;
+                                v.texgen[0] = NativeShaderTexgen(t0);
+                                v.texgen[1] = NativeShaderTexgen(t1);
+                                v.texgen[2] = NativeShaderTexgen(t2);
+                                const bool srt = v.texgen[0] == NativeShaderTexgen::Srt || v.texgen[1] == NativeShaderTexgen::Srt || v.texgen[2] == NativeShaderTexgen::Srt;
+                                if (srt && !v.material_gpu && v.vertex == NativeShaderVertex::Mesh)
+                                    continue; // rejected by NativeShaderVertexKeyOf
+                                const auto key = NativeShaderVertexKeyOf(v);
+                                if (seen.insert(key).second)
+                                    keys.push_back(key);
+                            }
+    return keys;
+}
+
+std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
+    std::set<NativeShaderFragmentKey> seen;
+    std::vector<NativeShaderFragmentKey> keys;
+    NativeShaderVariant v;
+    for (unsigned model = 0; model < NativeShaderModelCount; ++model)
+        for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
+            for (unsigned flags = 0; flags < 256; ++flags) {
+                v.model = NativeShaderModel(model);
+                v.textures = uint8_t(textures);
+                v.overlay = flags & 1;
+                v.alpha_test = flags & 2;
+                v.fog = flags & 4;
+                v.linear_fog = flags & 8;
+                v.pure_modulate = flags & 16;
+                v.target_alpha_one = flags & 32;
+                v.material_gpu = flags & 64;
+                v.dynamic = flags & 128;
+                const auto key = NativeShaderFragmentKeyOf(v);
+                if (seen.insert(key).second)
+                    keys.push_back(key);
+            }
+    return keys;
+}
+
+std::string NativeShaderCgVertex(const NativeShaderVertexKey& key) {
+    const bool mesh = key.vertex == NativeShaderVertex::Mesh;
+    return std::string(CgScene) + VertexDefines(key) + (mesh ? TexgenOutputs(key, true) : "") + CgDraw + (mesh ? CgAnimated : "") + CgVertexCommon + (mesh ? CgMeshVertex : CgGeometryVertex);
+}
+
+std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key) {
+    return std::string(CgScene) + FragmentDefines(key) + CgShade + CgAnimated + CgFragment;
+}
+
 NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
-    const bool mesh = variant.vertex == NativeShaderVertex::Mesh;
-    const auto vertex = VertexDefines(variant), fragment = FragmentDefines(variant);
+    const auto vertex = NativeShaderVertexKeyOf(variant);
+    const auto fragment = NativeShaderFragmentKeyOf(variant);
     NativeShaderSources out;
-    out.glsl_vertex = std::string(GlslPrelude) + vertex + (mesh ? TexgenOutputs(variant, false) : "") + GlslScene + GlslDraw + (mesh ? GlslAnimated : "") + GlslVertexCommon +
-                      (mesh ? GlslMeshVertex : GlslGeometryVertex);
-    out.glsl_fragment = std::string(GlslPrelude) + fragment + GlslScene + GlslShade + GlslAnimated + GlslFragment;
-    out.cg_vertex = std::string(CgScene) + vertex + (mesh ? TexgenOutputs(variant, true) : "") + CgDraw + (mesh ? CgAnimated : "") + CgVertexCommon + (mesh ? CgMeshVertex : CgGeometryVertex);
-    out.cg_fragment = std::string(CgScene) + fragment + CgShade + CgAnimated + CgFragment;
-#ifdef __vita__
+    out.glsl_vertex = GlslVertex(vertex);
+    out.glsl_fragment = GlslFragmentSource(fragment);
+    out.cg_vertex = NativeShaderCgVertex(vertex);
+    out.cg_fragment = NativeShaderCgFragment(fragment);
+#if defined(__vita__) && defined(MH3_DEVELOPMENT)
     // Diagnostic stage isolation; source identity changes, so a probe never
-    // reuses a cached production GXP. All shader arithmetic remains float.
+    // reuses a banked or cached production GXP (it compiles at runtime, a
+    // reported bank miss). All shader arithmetic remains float.
     if (const char* probe = std::getenv("MH3_GXM_SHADE_PROBE")) {
+        const bool mesh = variant.vertex == NativeShaderVertex::Mesh;
         std::string result;
         if (std::string(probe) == "blue")
             result = "float4(0.0f, 0.0f, 1.0f, 1.0f)";
@@ -922,21 +1035,31 @@ NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
     return out;
 }
 
-std::string NativeShaderVertexName(NativeShaderVariant variant) {
-    static constexpr const char* lighting[] = {"", "_spot", "_lit"};
-    std::string light = lighting[unsigned(variant.lighting)];
-    if (variant.lighting == NativeShaderLighting::Spot)
-        light += std::to_string(variant.lights);
-    if (variant.vertex != NativeShaderVertex::Mesh)
-        return "geometry" + light;
+std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
+    static constexpr const char* lighting[NativeShaderLightingCount] = {"", "_spot", "_lit"};
+    static constexpr char texgens[] = "niags";
+    static_assert(sizeof(texgens) - 1 == NativeShaderTexgenCount);
+    std::string light = lighting[unsigned(key.lighting)];
+    if (key.lighting == NativeShaderLighting::Spot)
+        light += std::to_string(key.lights);
+    if (key.vertex != NativeShaderVertex::Mesh)
+        return "geometry" + light + (key.material_gpu ? "_gpu" : "");
     std::string name = "mesh" + light + "_";
-    for (const auto texgen : variant.texgen)
-        name += "niags"[unsigned(texgen)];
-    return name + (variant.material_gpu ? "_gpu" : "");
+    for (const auto texgen : key.texgen)
+        name += texgens[unsigned(texgen)];
+    return name + (key.material_gpu ? "_gpu" : "");
+}
+
+std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
+    return std::string(key.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
+           (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
+           (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
+}
+
+std::string NativeShaderVertexName(NativeShaderVariant variant) {
+    return NativeShaderVertexName(NativeShaderVertexKeyOf(variant));
 }
 
 std::string NativeShaderFragmentName(NativeShaderVariant variant) {
-    return std::string(variant.model == NativeShaderModel::Modulate ? "modulate" : "basic") + "_t" + std::to_string(variant.textures) + (variant.overlay ? "_overlay" : "") + (PureModulate(variant) ? "_pure" : "") +
-           (variant.alpha_test ? "_alpha" : "") + (variant.fog ? (variant.linear_fog ? "_fog_linear" : "_fog") : "") + (variant.target_alpha_one ? "_a1" : "") +
-           (variant.material_gpu ? (Dynamic(variant) ? "_gpu_dyn" : "_gpu") : "");
+    return NativeShaderFragmentName(NativeShaderFragmentKeyOf(variant));
 }
