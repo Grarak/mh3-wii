@@ -401,6 +401,21 @@ const Caps& caps() noexcept {
 bool on_render_thread() noexcept {
   return g_context != nullptr && std::this_thread::get_id() == g_context->threadId;
 }
+void release_context() noexcept {
+  if (!on_render_thread())
+    Log.fatal("GL context released outside its owner");
+  glFlush();
+  if (!SDL_GL_MakeCurrent(g_context->window, nullptr))
+    Log.fatal("GL context release failed: {}", SDL_GetError());
+  g_context->threadId = {};
+}
+void acquire_context() noexcept {
+  if (!g_context || g_context->threadId != std::thread::id{})
+    Log.fatal("GL context acquired while another thread owns it");
+  if (!SDL_GL_MakeCurrent(g_context->window, g_context->context))
+    Log.fatal("GL context acquisition failed: {}", SDL_GetError());
+  g_context->threadId = std::this_thread::get_id();
+}
 
 void post(Task task) noexcept {
   if (!g_context)

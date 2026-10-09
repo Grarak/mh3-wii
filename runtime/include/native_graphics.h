@@ -62,12 +62,14 @@ void ClearNativeMaterialPrograms();
 // visible dimensions, with no guest FIFO or XFB allocation/initialization.
 void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets = true);
 
-// The game thread owns both frame admission and submission. Begin polls GPU
-// completion once, before draw preparation or CDRAM writes. Always end the
-// logical frame, even when drawing is skipped; neither boundary waits.
+// The game thread records each frame into a packet; the render thread draws
+// and presents it (native_frame_packet.h). Begin admits recording unless the
+// window cannot present; it never waits on the GPU. Always end the logical
+// frame, even when drawing is skipped. On the render thread, ShouldRender and
+// Cancel refer to the frame being drawn.
 bool BeginNativeGraphicsFrame();
 bool NativeGraphicsFrameShouldRender();
-// Cancel presentation after temporary residency pressure. Recorded scenes are
-// sealed without a GPU wait; their frame slot remains leased until completion.
 void CancelNativeGraphicsFrame();
 void EndNativeGraphicsFrame();
+// The game thread or the render thread: each owns its logical draw state.
+bool OnNativeGraphicsThread();

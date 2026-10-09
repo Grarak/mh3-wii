@@ -6,10 +6,14 @@
 #include <string>
 #include <unordered_map>
 #include <array>
+#include <mutex>
 
 namespace {
 std::unordered_map<uint32_t, mh3_native_texture_binding> objects;
 std::unordered_map<uint32_t, mh3_native_palette_source> palettes;
+// The render thread reads texture revisions while binding; the game thread
+// produces them. Only these two maps are shared.
+std::mutex generationLock;
 std::unordered_map<uint32_t, uint64_t> generations;
 std::unordered_map<uint32_t, uint64_t> initialized_generations;
 std::unordered_map<uint32_t, mh3_matrix_binding> matrix_sources;
@@ -29,20 +33,26 @@ uint32_t Resource(uint32_t reference) {
 } // namespace
 
 uint64_t ReadNativeTextureGeneration(uint32_t payload) {
+    std::lock_guard lock(generationLock);
     const auto found = generations.find(payload);
     return found == generations.end() ? 0 : found->second;
 }
 bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation) {
+    std::lock_guard lock(generationLock);
     const auto found = initialized_generations.find(payload);
-    return generation && found != initialized_generations.end() && found->second == generation && ReadNativeTextureGeneration(payload) == generation;
+    const auto current = generations.find(payload);
+    return generation && found != initialized_generations.end() && found->second == generation && current != generations.end() && current->second == generation;
 }
 void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
     if (!payload || !generation)
         throw std::runtime_error("Native texture producer requires address and generation");
-    auto& previous = generations[payload];
-    if (generation < previous)
-        throw std::runtime_error("Native texture producer generation went backwards");
-    previous = generation;
+    {
+        std::lock_guard lock(generationLock);
+        auto& previous = generations[payload];
+        if (generation < previous)
+            throw std::runtime_error("Native texture producer generation went backwards");
+        previous = generation;
+    }
     for (auto& item : objects)
         if (item.second.source.payload_address == payload)
             mh3_texture_source_updated(&item.second.source, generation);
@@ -98,6 +108,7 @@ void InitializeNativeTextureSource(uint32_t reference, bool palette) {
     if (resource_generation == UINT64_MAX)
         throw std::runtime_error("Native texture resource revision overflow");
     MarkNativeTextureProduced(payload, ++resource_generation);
+    std::lock_guard lock(generationLock);
     initialized_generations.insert_or_assign(payload, resource_generation);
 }
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette) {

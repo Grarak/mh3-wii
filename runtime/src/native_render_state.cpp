@@ -1,5 +1,6 @@
 // Direct application render state. No GX calls, packets, register banks or FIFO.
 #include "native_graphics.h"
+#include "native_shade_snapshot.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
@@ -14,23 +15,20 @@ struct NormalMatrix {
     std::array<float, 9> values;
     bool known = false;
 };
-std::array<NormalMatrix, 10> normalMatrices{};
-std::array<int32_t, 4> scissor{};
-bool viewportKnown = false, scissorKnown = false, rasterKnown = false;
-NativeRasterObserver rasterObserver = nullptr;
-mh3_draw_state drawState = [] {
-    mh3_draw_state s{};
-    mh3_draw_identity_position(s.position);
-    s.projection[0] = s.projection[5] = s.projection[10] = s.projection[15] = 1;
-    s.viewport[2] = 640;
-    s.viewport[3] = 448;
-    s.viewport[5] = 1;
-    s.raster = {0, 1, 0, 3, 1, 3, 1, 0, 1, 1};
-    return s;
-}();
+// Logical state, one copy per thread: the game thread records against its
+// copy; the render thread restores snapshots into its own and applies them.
+thread_local constinit std::array<NormalMatrix, 10> normalMatrices{};
+thread_local constinit std::array<int32_t, 4> scissor{};
+thread_local constinit bool viewportKnown = false, scissorKnown = false, rasterKnown = false;
+thread_local constinit NativeRasterObserver rasterObserver = nullptr;
+thread_local constinit mh3_draw_state drawState = {
+    {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}, {0, 0, 640, 448, 0, 1}, 0, {0, 1, 0, 3, 1, 3, 1, 0, 1, 1}};
 void RequireOwner() {
-    if (!aurora::gl::on_render_thread())
+    if (!OnNativeGraphicsThread())
         throw std::runtime_error("Native render state changed outside context owner");
+}
+void Changed() {
+    ++nativeStateRevision[NATIVE_STATE_DRAW];
 }
 std::array<float, 2> TargetScale() {
     const auto size = aurora::vi::configured_fb_size();
@@ -56,11 +54,13 @@ void SetNativeProjection(const float matrix[16], bool perspective) {
     RequireOwner();
     std::memcpy(drawState.projection, matrix, sizeof(drawState.projection));
     drawState.perspective = perspective;
+    Changed();
 }
 void SetNativePositionMatrix(const float matrix[12]) {
     RequireOwner();
     PublishNativeModelPositionMatrix(0, matrix);
     std::memcpy(drawState.position, matrix, sizeof(drawState.position));
+    Changed();
 }
 void SetNativeNormalMatrix(uint32_t selector, const float matrix[9]) {
     RequireOwner();
@@ -94,11 +94,7 @@ void SetNativeViewport(float x, float y, float width, float height, float near_z
         throw std::runtime_error("Negative native viewport");
     std::memcpy(drawState.viewport, values, sizeof(values));
     viewportKnown = true;
-    if (!NativeGraphicsFrameShouldRender())
-        return;
-    const auto scale = TargetScale();
-    aurora::gl::set_viewport(std::lround(x * scale[0]), std::lround(y * scale[1]), std::lround(width * scale[0]), std::lround(height * scale[1]), 1.f - std::clamp(std::max(near_z, far_z), 0.f, 1.f),
-                             1.f - std::clamp(std::min(near_z, far_z), 0.f, 1.f));
+    Changed();
 }
 bool GetNativeScissor(int32_t out[4]) {
     RequireOwner();
@@ -115,18 +111,16 @@ void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height) {
         throw std::runtime_error("Negative native scissor");
     scissor = {x, y, width, height};
     scissorKnown = true;
-    if (!NativeGraphicsFrameShouldRender())
-        return;
-    const auto scale = TargetScale();
-    const int32_t left = std::floor(x * scale[0]), top = std::floor(y * scale[1]);
-    const int32_t right = std::ceil((double(x) + width) * scale[0]), bottom = std::ceil((double(y) + height) * scale[1]);
-    aurora::gl::set_scissor_enabled(true);
-    aurora::gl::set_scissor(left, top, right - left, bottom - top);
+    Changed();
 }
-static void SetRaster(const mh3_raster_state& raster, bool publish) {
-    RequireOwner();
+namespace {
+void CheckRaster(const mh3_raster_state& raster) {
     if (raster.blend_mode > 3 || raster.src_factor > 7 || raster.dst_factor > 7 || raster.depth_compare > 7 || raster.cull_mode > 3 || raster.logic_op > 15)
         throw std::runtime_error("Native raster state is outside its typed domain");
+    if (raster.blend_mode == 2 && raster.logic_op != 3 && raster.logic_op != 5)
+        throw std::runtime_error("Native bitwise logic operation requires a framebuffer material");
+}
+aurora::gl::RasterState BackendRaster(const mh3_raster_state& raster) {
     aurora::gl::RasterState out;
     // Source color factors read destination color; destination factors read
     // source color. Alpha uses the corresponding alpha factor on each side.
@@ -156,36 +150,67 @@ static void SetRaster(const mh3_raster_state& raster, bool publish) {
         out.depthFunc = GL_NEVER;
         out.depthWrite = false;
     }
-    if (raster.blend_mode == 2 && raster.logic_op != 3) {
-        if (raster.logic_op == 5) {
-            out.colorMask = {false, false, false, false};
-        } else
-            throw std::runtime_error("Native bitwise logic operation requires a framebuffer material");
-    }
+    if (raster.blend_mode == 2 && raster.logic_op == 5)
+        out.colorMask = {false, false, false, false};
+    return out;
+}
+void SetRaster(const mh3_raster_state& raster, bool publish) {
+    RequireOwner();
+    CheckRaster(raster);
     drawState.raster = raster;
     rasterKnown = true;
+    Changed();
     if (publish && rasterObserver)
         rasterObserver(raster);
-    if (NativeGraphicsFrameShouldRender())
-        aurora::gl::apply_raster_state(out);
 }
+// Render thread: apply the logical viewport, scissor and raster to the backend.
+void ApplyRenderState() {
+    if (!NativeGraphicsFrameShouldRender())
+        return;
+    // Convert logical rectangles again because the target may have resized.
+    const auto scale = TargetScale();
+    if (viewportKnown) {
+        const auto& v = drawState.viewport;
+        aurora::gl::set_viewport(std::lround(v[0] * scale[0]), std::lround(v[1] * scale[1]), std::lround(v[2] * scale[0]), std::lround(v[3] * scale[1]),
+                                 1.f - std::clamp(std::max(v[4], v[5]), 0.f, 1.f), 1.f - std::clamp(std::min(v[4], v[5]), 0.f, 1.f));
+    }
+    if (scissorKnown) {
+        const auto [x, y, width, height] = scissor;
+        const int32_t left = std::floor(x * scale[0]), top = std::floor(y * scale[1]);
+        const int32_t right = std::ceil((double(x) + width) * scale[0]), bottom = std::ceil((double(y) + height) * scale[1]);
+        aurora::gl::set_scissor_enabled(true);
+        aurora::gl::set_scissor(left, top, right - left, bottom - top);
+    } else
+        aurora::gl::set_scissor_enabled(false);
+    if (rasterKnown)
+        aurora::gl::apply_raster_state(BackendRaster(drawState.raster));
+}
+} // namespace
 void SetNativeRaster(const mh3_raster_state& raster) {
     SetRaster(raster, true);
 }
 
 void RestoreNativeRenderState() {
     RequireOwner();
-    if (!NativeGraphicsFrameShouldRender())
-        return;
     // Frame clearing and presentation use their own backend state. Reapply
-    // the application's last published values, including skipped-frame writes.
-    // Convert logical rectangles again because the target may have resized.
-    if (viewportKnown) {
-        const auto& v = drawState.viewport;
-        SetNativeViewport(v[0], v[1], v[2], v[3], v[4], v[5]);
-    }
-    if (scissorKnown)
-        SetNativeScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
-    if (rasterKnown)
-        SetRaster(drawState.raster, false);
+    // the render thread's last restored values.
+    ApplyRenderState();
+}
+void CaptureNativeDrawSnapshot(NativeDrawSnapshot& out) {
+    out.draw = drawState;
+    out.scissor = scissor;
+    out.viewportKnown = viewportKnown;
+    out.scissorKnown = scissorKnown;
+    out.rasterKnown = rasterKnown;
+}
+void RestoreNativeDrawSnapshot(const NativeDrawSnapshot& snapshot) {
+    RequireOwner();
+    // The material snapshot carries its own raster import; do not publish.
+    drawState = snapshot.draw;
+    scissor = snapshot.scissor;
+    viewportKnown = snapshot.viewportKnown;
+    scissorKnown = snapshot.scissorKnown;
+    rasterKnown = snapshot.rasterKnown;
+    Changed();
+    ApplyRenderState();
 }

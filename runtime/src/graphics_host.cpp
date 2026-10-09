@@ -1,6 +1,7 @@
 #include "gx_host.h"
 #include "gx_panic.h"
 #include "native_graphics.h"
+#include "native_frame_packet.h"
 #include "model_assets.h"
 #include "native_frame_statistics.h"
 #include "audio/ax_dsp.h"
@@ -43,6 +44,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <memory>
+#include <mutex>
 #include <string>
 #if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_DEVELOPMENT)
 #include "gx/gx.hpp"
@@ -138,6 +140,8 @@ FrameProfile profile;
 #endif
 void ShutdownGraphics() {
     if (initialized) {
+        // Drain the render thread; it hands the graphics context back.
+        StopNativeRenderThread();
         MH3_STAT(if (GuestGxStream::commandCount)
                      std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
                                   static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures),
@@ -345,12 +349,13 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
-    if (!aurora::gl::on_render_thread())
-        throw std::runtime_error("Native graphics task called outside the game thread");
-    task();
+    // Runs on the render thread before the draws of the current frame.
+    QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, std::move(task));
 }
 
 void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets) {
+    if (NativeRenderThreadRunning())
+        throw std::runtime_error("Native graphics initialized twice");
     if (initialized && !aurora::gl::on_render_thread())
         throw std::runtime_error("Native graphics initialized outside the game thread");
     if (!aurora_configure_native_target(width, height))
@@ -360,6 +365,8 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
     InitializeGraphics(1, argv, load_native_assets);
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Native graphics initialized outside the game thread");
+    // From here the render thread alone talks to the graphics API.
+    StartNativeRenderThread();
 }
 
 bool BeginNativeGraphicsFrame() {
@@ -371,45 +378,39 @@ bool BeginNativeGraphicsFrame() {
     // this returns zero without a clock read when live CPU tracing is inactive.
     razorNativeFrameStarted = aurora::gxm::razor_begin_cpu_work();
 #endif
-    const auto frame = aurora::gfx::current_frame() + 1;
-    if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
-        const auto path = capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
-        aurora_request_frame_capture(frame, path.c_str());
-    }
-    if (!aurora_begin_native_frame())
-        return false;
-    const auto& color = aurora::gpu::g_frameBuffer;
-    const auto& depth = aurora::gpu::g_depthBuffer;
-    aurora::gl::bind_framebuffer(color.texture->gl(), depth.texture->gl());
-    aurora::gl::set_viewport(0, 0, color.width, color.height, 0.f, 1.f);
-    aurora::gl::set_scissor_enabled(false);
-    aurora::gl::set_color_mask(true, true, true, true);
-    aurora::gl::set_depth_write(true);
-    const float black[4]{0.f, 0.f, 0.f, 1.f};
-    aurora::gl::clear_color(black);
-    aurora::gl::clear_depth(0.f); // native shader projection uses reversed Z
-    RestoreNativeRenderState();
-    return true;
+    BeginNativeFramePacket(aurora_native_window_presentable());
+    return NativeFramePacketRecording();
 }
 
 bool NativeGraphicsFrameShouldRender() {
-    return initialized && aurora_native_frame_should_render();
+    if (!initialized)
+        return false;
+    if (NativeRenderThreadRunning() && !aurora::gl::on_render_thread())
+        return NativeFramePacketRecording();
+    return aurora_native_frame_should_render();
 }
 void CancelNativeGraphicsFrame() {
     if (!initialized)
         throw std::runtime_error("Native frame canceled before graphics startup");
-    aurora_cancel_native_frame();
+    if (NativeRenderThreadRunning() && !aurora::gl::on_render_thread())
+        CancelNativeFramePacket();
+    else
+        aurora_cancel_native_frame();
 }
 
 void EndNativeGraphicsFrame() {
-    MH3_STAT(const bool rendered = aurora_native_frame_should_render();)
+    MH3_STAT(const bool rendered = NativeFramePacketRecording();)
 #ifdef __vita__
     // Close before presentation's heartbeat flushes/stops live collection.
     // This span excludes presentation and the subsequent frame-pacer sleep.
     aurora::gxm::razor_end_cpu_work(razorNativeFrameStarted);
     razorNativeFrameStarted = 0;
 #endif
-    aurora_end_native_frame();
+    std::string capture;
+    const auto frame = NativeFramePacketSequence();
+    if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
+        capture = (capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp")).string();
+    PublishNativeFramePacket(std::move(capture));
     MH3_STAT(EndNativeFrameStatistics(rendered);)
     ++guestCopies;
 }
@@ -422,6 +423,23 @@ template void SubmitGuestGxFixed<1>(const uint8_t*);
 template void SubmitGuestGxFixed<2>(const uint8_t*);
 template void SubmitGuestGxFixed<4>(const uint8_t*);
 
+#ifdef MH3_DEVELOPMENT
+// The render thread owns the feedback pool; it copies the counters after a
+// frame and the game thread reports the last copy.
+aurora::SceneFeedbackStats ReadSceneFeedbackStats() {
+    static std::mutex lock;
+    static aurora::SceneFeedbackStats latest;
+    if (!NativeRenderThreadRunning())
+        return aurora::scene_feedback_stats();
+    QueueNativeGraphicsTask(NativeTaskOrder::AfterDraws, [] {
+        const auto stats = aurora::scene_feedback_stats();
+        std::lock_guard guard(lock);
+        latest = stats;
+    });
+    std::lock_guard guard(lock);
+    return latest;
+}
+#endif
 // Development stats default on; MH3_STATS=0 disables the once-per-second line.
 // Game speed is retrace periods the frame pacer stepped (frames * budget)
 // versus the nominal VI rate, since the game logic is fixed-step per frame;
@@ -446,7 +464,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     static auto previousAx = AxDspHle::GetMixWorkerStats();
     static auto previousAudio = GetNativeAudioOutputStatistics();
     static auto previousDma = GetNativeAudioDmaStatistics();
-    static auto previousFeedback = aurora::scene_feedback_stats();
+    static auto previousFeedback = ReadSceneFeedbackStats();
 #ifdef AURORA_GXM
     static auto previousDisplay = aurora::gxm::display_statistics();
 #endif
@@ -519,7 +537,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         double(dma.completedFrames - previousDma.completedFrames) / seconds, double(dma.completedDurationNs - previousDma.completedDurationNs) / (1e6 * seconds),
         static_cast<unsigned long long>(dma.capHits - previousDma.capHits), dma.currentDebtNs / 1e6, dma.maxDebtNs / 1e6, dma.currentPeriodNs / 1e6, dma.maxServiceGapNs / 1e6);
     previousDma = dma;
-    const auto feedback = aurora::scene_feedback_stats();
+    const auto feedback = ReadSceneFeedbackStats();
     std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
                  double(feedback.allocations - previousFeedback.allocations) / seconds, double(feedback.reuses - previousFeedback.reuses) / seconds,
                  static_cast<unsigned long long>(feedback.evictions - previousFeedback.evictions),
@@ -831,55 +849,31 @@ int RunGraphicsCheck(int argc, char** argv) {
     if (base.x != 640 || base.y != 448 || visible.x != 640 || visible.y != 448)
         throw std::runtime_error("Native target retained legacy scratch rows or accepted zero dimensions");
     if (!aurora::gl::on_render_thread())
-        throw std::runtime_error("Native context is not owned by the game thread");
-    bool inlineTask = false;
-    aurora::gl::post([&] { inlineTask = aurora::gl::on_render_thread(); });
-    if (!inlineTask)
-        throw std::runtime_error("Native task was queued to another CPU thread");
-    const auto& target = aurora::gpu::g_frameBuffer;
-    unsigned rendered = 0, skipped = 0, slotsSeen = 0;
-    std::array<const uint8_t*, 3> slotMemory{};
-    const float color[4]{20.f / 255.f, 40.f / 255.f, 80.f / 255.f, 1.f};
+        throw std::runtime_error("Native context is not owned by the initializing thread");
+    StartNativeRenderThread();
+    if (aurora::gl::on_render_thread())
+        throw std::runtime_error("Game thread kept the graphics context");
+    bool taskOnRenderThread = false;
+    QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [&] { taskOnRenderThread = aurora::gl::on_render_thread(); });
+    unsigned recorded = 0;
     for (unsigned frame = 0; frame < 30; ++frame) {
         ServiceHostGraphicsEvents();
-        const auto slot = aurora_native_frame_slot();
-        if (BeginNativeGraphicsFrame()) {
-            const auto memory = aurora::native_draw_memory();
-            if (slot >= slotMemory.size() || memory.vertices.empty() || memory.uniforms.empty() || memory.indices.empty()
-#ifndef __vita__
-                || memory.attributes.empty()
-#endif
-            )
-                throw std::runtime_error("Native rendered frame has no bounded draw slot");
-            if (slotMemory[slot] && slotMemory[slot] != memory.uniforms.data())
-                throw std::runtime_error("Native frame slot allocation changed across reuse");
-            for (unsigned other = 0; other < slotMemory.size(); ++other)
-                if (other != slot && slotMemory[other] == memory.uniforms.data())
-                    throw std::runtime_error("Native frame slots alias mutable draw data");
-            slotMemory[slot] = memory.uniforms.data();
-            slotsSeen |= 1u << slot;
-            aurora::gl::clear_color(color);
-            ++rendered;
-        } else {
-            const auto memory = aurora::native_draw_memory();
-            if (!memory.vertices.empty() || !memory.uniforms.empty() || !memory.indices.empty() || !memory.attributes.empty())
-                throw std::runtime_error("Skipped frame exposes writable GPU draw data");
-            ++skipped;
-        }
-        const bool submitted = NativeGraphicsFrameShouldRender();
+        if (BeginNativeGraphicsFrame())
+            ++recorded;
         EndNativeGraphicsFrame();
-        if (aurora_native_frame_slot() != (submitted ? (slot + 1) % 3 : slot))
-            throw std::runtime_error("Native frame ring rotation does not match submission");
     }
-    // This diagnostic alone consumes a GPU result to validate pixel accuracy.
+    StopNativeRenderThread();
+    if (!aurora::gl::on_render_thread())
+        throw std::runtime_error("Render thread did not return the graphics context");
+    if (!taskOnRenderThread)
+        throw std::runtime_error("Graphics task did not run on the render thread");
+    // This diagnostic alone consumes a GPU result: the frame clear is black.
+    const auto& target = aurora::gpu::g_frameBuffer;
     uint8_t pixel[4]{};
     aurora::gl::read_pixels(target.texture->gl(), 0, 0, 1, 1, pixel);
-    if (std::abs(int(pixel[0]) - 20) > 1 || std::abs(int(pixel[1]) - 40) > 1 || std::abs(int(pixel[2]) - 80) > 1 || pixel[3] != 255)
+    if (recorded && (pixel[0] > 1 || pixel[1] > 1 || pixel[2] > 1 || pixel[3] != 255))
         throw std::runtime_error("Native renderer clear/present pixel validation failed");
-    std::fprintf(stderr,
-                 "MH3 renderer check: 30 logical native frames, game-thread owner, inline tasks, "
-                 "%u rendered, %u skipped before preparation, slot mask %u, stable separate draw allocations, "
-                 "pixel %u,%u,%u,%u; no GX calls\n",
-                 rendered, skipped, slotsSeen, pixel[0], pixel[1], pixel[2], pixel[3]);
+    std::fprintf(stderr, "MH3 renderer check: 30 logical native frames, %u recorded, render thread owner, tasks on the render thread, pixel %u,%u,%u,%u; no GX calls\n", recorded,
+                 pixel[0], pixel[1], pixel[2], pixel[3]);
     return 0;
 }

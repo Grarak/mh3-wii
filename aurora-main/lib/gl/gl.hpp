@@ -51,6 +51,10 @@ void call(Task task) noexcept;
 // Wait until every task posted so far has run and the GPU has finished it.
 void finish() noexcept;
 bool on_render_thread() noexcept;
+// Move context ownership between threads: the owner releases the context,
+// then the next owner makes it current on itself. Never while a frame is open.
+void release_context() noexcept;
+void acquire_context() noexcept;
 
 struct FormatInfo {
   GLenum internalFormat;

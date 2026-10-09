@@ -11,7 +11,7 @@
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_material_prep.h"
 #include "frame_split.h"
-#include "native_shade_snapshot.h"
+#include "native_frame_packet.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -314,16 +314,16 @@ void PrepareNativeModelMaterial(uint32_t reference, uint32_t control, uint32_t s
     Checked(mh3_model_material_prepare_scope(&scope, control, op, ignore, PrepareStep, &context));
 }
 namespace {
-// One model mesh draw split at the shading boundary. Prepare (material scope,
-// shape matrix selection, row selectors) leaves the typed shading inputs in a
-// snapshot; execute rebuilds the matrix palette from the pose and submits.
+// One model mesh draw split at the shading boundary. The game thread prepares
+// it (material scope, shape matrix selection, row selectors) and records it in
+// the frame packet with its shading state; the render thread rebuilds the
+// matrix palette from the copied pose and submits.
 struct ModelItem {
     NativeModelOwner owner;
     const mh3_prepared_mesh* prepared;
     mh3_matrix_runtime_storage storage;
     mh3_shape_matrix_input input;
     uint32_t pose;
-    NativeShadeSnapshot shade;
     mh3_model_texcoord_sizes coordinate_sizes;
 };
 // Pose arrays as the draw found them: copied once per binding and pass.
@@ -333,14 +333,33 @@ struct ModelPose {
     size_t offset[3];
     mh3_matrix_sources layout;
 };
-struct ModelCapture {
-    bool active = false;
+// Items and poses of one frame packet, indexed by its exchange slot: the game
+// thread fills the producer's store, the render thread reads the consumer's.
+struct ModelStore {
     std::vector<ModelItem> items;
     std::vector<ModelPose> poses;
-    size_t itemCount = 0, poseCount = 0;
-} capture;
-uint32_t CapturePose(const uint32_t addresses[3], const mh3_matrix_sources& sources) {
-    for (size_t i = capture.poseCount; i-- > 0;)
+    // Poses are shared only within one model draw: a later view pass may
+    // rewrite the same matrix arrays.
+    size_t itemCount = 0, poseCount = 0, poseShared = 0;
+    uint64_t sequence = UINT64_MAX;
+};
+std::array<ModelStore, 3> stores;
+// Frames that are not recorded still prepare (guest/selector side effects).
+ModelStore scratch;
+ModelStore& Store() {
+    if (!NativeGraphicsFrameShouldRender()) {
+        scratch.itemCount = scratch.poseCount = scratch.poseShared = 0;
+        return scratch;
+    }
+    auto& store = stores.at(NativeFramePacketSlot());
+    if (store.sequence != NativeFramePacketSequence()) {
+        store.sequence = NativeFramePacketSequence();
+        store.itemCount = store.poseCount = store.poseShared = 0;
+    }
+    return store;
+}
+uint32_t CapturePose(ModelStore& capture, const uint32_t addresses[3], const mh3_matrix_sources& sources) {
+    for (size_t i = capture.poseCount; i-- > capture.poseShared;)
         if (!std::memcmp(capture.poses[i].address, addresses, sizeof capture.poses[i].address))
             return uint32_t(i);
     if (capture.poseCount == capture.poses.size())
@@ -371,7 +390,7 @@ mh3_matrix_sources PoseSources(const ModelPose& pose) {
             tables[i]->bytes.data = pose.bytes.data() + pose.offset[i];
     return sources;
 }
-bool PrepareModelItem(ModelItem& item, uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
+bool PrepareModelItem(ModelStore& capture, ModelItem& item, uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
     if (!Resource(reference))
         return false;
     uint32_t shape = 0;
@@ -400,7 +419,7 @@ bool PrepareModelItem(ModelItem& item, uint32_t reference, uint32_t direct_posit
     Checked(mh3_matrix_runtime_shape(&MH3NativeResourceMemory(), &locations, reference, direct_position, direct_normal, &item.storage, &item.input, &ignored));
     if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
-    item.pose = CapturePose(binding.address, sources);
+    item.pose = CapturePose(capture, binding.address, sources);
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     if (item.input.matrix_id >= 0) {
         // Row selectors depend on the shape's matrix sources, not pose values.
@@ -428,13 +447,11 @@ bool PrepareModelItem(ModelItem& item, uint32_t reference, uint32_t direct_posit
     // Publish the producer's row/dual fields once. Palette batches consume the
     // owner's material directly; they do not submit a full material copy.
     ApplyNativeModelSelectors();
-    CaptureNativeShadeSnapshot(item.shade);
     if (item.input.matrix_id < 0)
         Memory::Write8(locations.current_valid, 0);
     return true;
 }
-void ExecuteModelItem(const ModelItem& item) {
-    RestoreNativeShadeSnapshot(item.shade);
+void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
     const auto& prepared = *item.prepared;
     const auto& owner = item.owner;
     const auto sources = PoseSources(capture.poses[item.pose]);
@@ -458,9 +475,14 @@ void ExecuteModelItem(const ModelItem& item) {
     }
     const auto& material = GetNativeMaterialState();
     float post[8][12]{};
-    for (uint32_t i = 0; i < 8; i++)
-        if (item.shade.postKnown & (1u << i))
-            std::memcpy(post[i], item.shade.post[i].data(), sizeof post[i]);
+    uint8_t postKnown = 0, post3x4 = 0;
+    for (uint32_t i = 0; i < 8; i++) {
+        bool matrix3x4 = false;
+        if (GetNativeTextureMatrix(64 + i * 3, post[i], &matrix3x4)) {
+            postKnown |= uint8_t(1u << i);
+            post3x4 |= uint8_t(matrix3x4 ? 1u << i : 0);
+        }
+    }
     auto submit_one = [&](uint32_t batch_index) {
         mh3_resolved_mesh_submit submit{};
         if (prepared.palette_batch_count) {
@@ -481,8 +503,8 @@ void ExecuteModelItem(const ModelItem& item) {
         submit.material = &material;
         submit.projection = GetNativeDrawState().projection;
         submit.texture_matrices = post;
-        submit.texture_matrix_known = item.shade.postKnown;
-        submit.texture_matrix_3x4 = item.shade.post3x4;
+        submit.texture_matrix_known = postKnown;
+        submit.texture_matrix_3x4 = post3x4;
         submit.texcoord_sizes = &item.coordinate_sizes;
         SubmitNativeModelMesh(submit);
     };
@@ -492,39 +514,27 @@ void ExecuteModelItem(const ModelItem& item) {
     else
         submit_one(0);
 }
-ModelItem& NextModelItem() {
-    if (capture.itemCount == capture.items.size())
-        capture.items.emplace_back();
-    return capture.items[capture.itemCount];
-}
 } // namespace
 
 void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
-    const bool deferred = capture.active;
-    if (!deferred)
-        capture.itemCount = capture.poseCount = 0;
-    auto& item = NextModelItem();
-    if (!PrepareModelItem(item, reference, direct_position, direct_normal))
+    auto& capture = Store();
+    if (capture.itemCount == capture.items.size())
+        capture.items.emplace_back();
+    auto& item = capture.items[capture.itemCount];
+    if (!PrepareModelItem(capture, item, reference, direct_position, direct_normal))
         return;
     item.coordinate_sizes = coordinate_sizes;
-    ++capture.itemCount;
-    if (!deferred) {
-        ExecuteModelItem(item);
-        capture.itemCount = capture.poseCount = 0;
-    }
+    if (&capture == &scratch)
+        return;
+    RecordNativeModelDraw(uint32_t(capture.itemCount++));
 }
-void BeginNativeModelCapture() {
-    if (capture.active)
-        throw std::runtime_error("Nested native model capture");
-    capture.active = true;
-    capture.itemCount = capture.poseCount = 0;
+void BeginNativeModelDraw() {
+    auto& capture = Store();
+    capture.poseShared = capture.poseCount;
 }
-void EndNativeModelCapture() {
-    MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_EXECUTE);
-    capture.active = false;
-    for (size_t i = 0; i < capture.itemCount; ++i)
-        ExecuteModelItem(capture.items[i]);
-    capture.itemCount = capture.poseCount = 0;
+void ExecuteNativeModelDraw(uint32_t slot, uint32_t item) {
+    const auto& capture = stores.at(slot);
+    ExecuteModelItem(capture, capture.items.at(item));
 }
 
 extern "C" void MH3_ModelMaterialScope(CpuContext* cpu) {

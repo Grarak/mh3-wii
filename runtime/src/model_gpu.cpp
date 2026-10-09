@@ -84,7 +84,8 @@ void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t han
         if (mh3_mesh_pack_mesh(&bound, i, &next.meshes[i]) != MH3_PACK_OK)
             throw std::runtime_error("Invalid resident model mesh");
     residents.emplace(handle, std::move(next));
-    pack = bound;
+    // Only the GPU span changes; the game thread keeps reading the metadata.
+    pack.gpu = bound.gpu;
 }
 void UnregisterNativeModelGPU(uintptr_t handle, uint64_t generation) {
     Owner();

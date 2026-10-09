@@ -1,5 +1,6 @@
 // ABI adapters for the typed NW4R effects C producers. No GX calls/FIFO writes.
 #include "native_effect_draw.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -226,7 +227,7 @@ void ParticleState(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32
 }
 void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2] = nullptr, uint32_t size_code = 0, bool point = false, bool strip = false) {
     AuroraNativeMaterialGeometry geometry{};
-    if (!aurora_allocate_native_material_geometry(4, 6, &geometry))
+    if (!AllocateNativeMaterialGeometry(4, 6, geometry))
         return;
     const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
     const auto &material = GetNativeMaterialState();
@@ -608,7 +609,7 @@ extern "C" void MH3_NativeMoviePlanes(CpuContext *c) {
     int16_t draw_width = int16_t(c->gpr[10]), draw_height = int16_t(FlatRead32(c->gpr[1] + 8));
     mh3_effect_movie_quad(int16_t(c->gpr[6]), int16_t(c->gpr[7]), draw_width, draw_height, int16_t(FlatRead32(0x806d6b9c)), &q);
     AuroraNativeMaterialGeometry geometry{};
-    if (!aurora_allocate_native_material_geometry(4, 6, &geometry))
+    if (!AllocateNativeMaterialGeometry(4, 6, geometry))
         return;
     const float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     const uint8_t white[4] = {255, 255, 255, 255};

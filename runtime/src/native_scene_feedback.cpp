@@ -2,6 +2,7 @@
 // snapshots; guest texture addresses are identities, never readback buffers.
 #include "abi_bridge.h"
 #include "guest_call.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "memory.h"
 #include "../native/mh3_scene_feedback.h"
@@ -32,7 +33,8 @@ bool Capture(const mh3_scene_capture_plan &plan) {
     parameters.box_filter = plan.box_filter;
     for (uint32_t i = 0; i < 4; i++)
         parameters.source[i] = plan.source[i];
-    return aurora::publish_scene_capture(Identity(plan.identity), parameters);
+    RecordNativeSceneCapture(Identity(plan.identity), parameters);
+    return true;
 }
 void State(const mh3_scene_quad_plan &plan, bool bind = true) {
     SetNativeProjection(plan.projection, false);
@@ -46,7 +48,7 @@ void State(const mh3_scene_quad_plan &plan, bool bind = true) {
     binding.source.format = plan.format;
     binding.source.levels = 1;
     binding.source.mutable_source = 1;
-    binding.source.generation = aurora::scene_feedback_texture_version(Identity(plan.identity), plan.width, plan.height);
+    binding.source.generation = NativeSceneFeedbackVersion(Identity(plan.identity), plan.width, plan.height);
     binding.map_id = 0;
     binding.sampler.min_filter = binding.sampler.mag_filter = 1;
     if (!bind || !NativeGraphicsFrameShouldRender())
@@ -60,7 +62,7 @@ void Emit(const mh3_scene_quad_plan &plan) {
     if (!NativeGraphicsFrameShouldRender())
         return;
     AuroraNativeMaterialGeometry geometry{};
-    if (!aurora_allocate_native_material_geometry(4, 6, &geometry))
+    if (!AllocateNativeMaterialGeometry(4, 6, geometry))
         return;
     for (uint32_t i = 0; i < 4; i++) {
         auto &v = geometry.vertices[i];
@@ -155,7 +157,7 @@ void GlareBrightPass(uint32_t self) {
         const auto &level = plan.levels[i];
         parameters.levels.push_back({level.source_width, level.source_height, level.width, level.height});
     }
-    aurora::publish_scene_glare(Identity(plan.identity), parameters);
+    RecordNativeSceneGlare(Identity(plan.identity), parameters);
     if (plan.level_count) {
         mh3_scene_quad_plan state;
         Require(mh3_scene_capture_quad(input.identity, plan.width, plan.height, input.projection_width, input.projection_height, 255, 0, &GetNativeDrawState(), &GetNativeMaterialState(), &state),
@@ -316,7 +318,7 @@ extern "C" void MH3_NativeTemporalFeedback(CpuContext *cpu) {
     if (!plan.enabled)
         return;
     FlatWrite32(self + 0x34, plan.frames);
-    const bool history = aurora::scene_feedback_texture_version(Identity(plan.capture.identity), plan.capture.width, plan.capture.height) != 0;
+    const bool history = NativeSceneFeedbackVersion(Identity(plan.capture.identity), plan.capture.width, plan.capture.height) != 0;
     /* CPU counters still advance across skipped frames. The first admitted
      * capture initializes GPU history before any previous-image draw exists. */
     State(plan.initial, false);
@@ -347,7 +349,7 @@ extern "C" void MH3_NativeFeedbackThreshold(CpuContext *cpu) {
         binding.source.format = 4;
         binding.source.levels = 1;
         binding.source.mutable_source = 1;
-        binding.source.generation = aurora::scene_feedback_texture_version(Identity(input.identity), binding.source.width, binding.source.height);
+        binding.source.generation = NativeSceneFeedbackVersion(Identity(input.identity), binding.source.width, binding.source.height);
         binding.sampler.min_filter = binding.sampler.mag_filter = 1;
         if (NativeGraphicsFrameShouldRender()) {
             Require(binding.source.generation != 0, "Feedback threshold sampled unpublished history");
@@ -427,7 +429,7 @@ extern "C" void MH3_NativeGrabScreen(CpuContext *cpu) {
     if (call.Call<0x800582D4>({0}) == 2)
         return;
     if (NativeGraphicsFrameShouldRender())
-        Require(aurora::clone_scene_feedback_texture(Identity(FlatRead32(0x8066d2b0)), Identity(FlatRead32(0x8066d2ac))), "GrabScreen source was not captured");
+        Require(RecordNativeSceneClone(Identity(FlatRead32(0x8066d2b0)), Identity(FlatRead32(0x8066d2ac))), "GrabScreen source was not captured");
     FlatWrite8(0x8065b2c8, 2);
 }
 extern "C" void MH3_NativeSceneEffects(CpuContext *cpu) {
@@ -512,7 +514,7 @@ extern "C" void MH3_NativeDemoQuad(CpuContext *cpu) {
         return;
     BindNativeTexture(binding);
     AuroraNativeMaterialGeometry geometry{};
-    if (!aurora_allocate_native_material_geometry(4, 6, &geometry))
+    if (!AllocateNativeMaterialGeometry(4, 6, geometry))
         return;
     for (unsigned i = 0; i < 4; i++) {
         auto &v = geometry.vertices[i];

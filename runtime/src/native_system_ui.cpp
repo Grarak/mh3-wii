@@ -2,6 +2,7 @@
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "../native/mh3_system_ui.h"
 #include "../native/mh3_material_state.h"
@@ -55,7 +56,7 @@ void Submit(const mh3_system_ui_vertex* source, uint32_t count) {
     if (!NativeGraphicsFrameShouldRender())
         return;
     AuroraNativeMaterialGeometry geometry{};
-    if (!aurora_allocate_native_material_geometry(count, count / 4 * 6, &geometry))
+    if (!AllocateNativeMaterialGeometry(count, count / 4 * 6, geometry))
         return;
     if (layout_coordinates) {
         std::vector<mh3_system_ui_vertex> transformed(source, source + count);
@@ -648,7 +649,7 @@ void DebugQuad(CpuContext* cpu, unsigned mode, bool hbm = false) {
         }
         if (NativeGraphicsFrameShouldRender()) {
             AuroraNativeMaterialGeometry geometry{};
-            if (aurora_allocate_native_material_geometry(4, 6, &geometry)) {
+            if (AllocateNativeMaterialGeometry(4, 6, geometry)) {
                 Checked(mh3_system_ui_lines(&GetNativeDrawState(), points, 2, float(uint8_t(cpu->gpr[3])) / 6, &geometry));
                 SubmitNativeMaterialGeometry(geometry);
             }
@@ -776,7 +777,7 @@ extern "C" void MH3_HBMOutline(CpuContext* cpu) {
     mh3_system_ui_quad(points, origin, size, 1, nullptr, 0, nullptr);
     points[4] = points[0];
     AuroraNativeMaterialGeometry geometry{};
-    if (aurora_allocate_native_material_geometry(16, 24, &geometry)) {
+    if (AllocateNativeMaterialGeometry(16, 24, geometry)) {
         Checked(mh3_system_ui_lines(&GetNativeDrawState(), points, 5, 1, &geometry));
         SubmitNativeMaterialGeometry(geometry);
     }

@@ -1,15 +1,20 @@
 // Thin application display ABI boundaries. State uses the native renderer;
 // the original SDK entry points remain fatal guards.
 #include "abi_bridge.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "gl/gl.hpp"
 #include <stdexcept>
 
 void ClearNativeDepthTarget() {
-    if (!aurora::gl::on_render_thread())
+    if (!OnNativeGraphicsThread())
         throw std::runtime_error("Native depth clear called outside graphics owner");
-    if (NativeGraphicsFrameShouldRender())
+    if (!NativeGraphicsFrameShouldRender())
+        return;
+    if (aurora::gl::on_render_thread())
         aurora::gl::clear_depth_full_target(0.f);
+    else
+        RecordNativeDepthClear();
 }
 
 extern "C" void MH3_HomeButtonInitializeRendering(CpuContext*) {

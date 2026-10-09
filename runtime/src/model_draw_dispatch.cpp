@@ -137,7 +137,7 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
     const Model model(resource);
     GuestFrame frame(cpu, 0x80);
     Submit submit{{cpu}, model, replacement, frame[0x10], frame[0x14], frame[0x18], frame[0x20]};
-    BeginNativeModelCapture();
+    BeginNativeModelDraw();
     if (sorted)
         Checked(mh3_model_draw_sorted_read(&model.value, count, options, ReadRecord, &stream, Submit::Emit, &submit, nullptr));
     else {
@@ -152,7 +152,6 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
         }
         Checked(mh3_model_draw_walk(&model.value, model.Stream(stream), visibility, options, Submit::Emit, &submit, nullptr));
     }
-    EndNativeModelCapture();
 }
 uint32_t Collect(const Model& model, uint32_t position, uint32_t stream, uint32_t replacement) {
     const mh3_model_draw_collection input{

@@ -642,6 +642,10 @@ bool aurora_configure_native_target(uint32_t width, uint32_t height) {
 }
 bool aurora_begin_native_frame() { return aurora::begin_native_frame(); }
 bool aurora_native_frame_should_render() { return aurora::g_nativeFrame.should_render(); }
+bool aurora_native_window_presentable() {
+  aurora::window::pump_events();
+  return aurora::window::is_presentable() && !aurora::window::is_paused();
+}
 void aurora_cancel_native_frame() { aurora::cancel_native_frame(); }
 uint32_t aurora_native_frame_slot() {
 #ifdef AURORA_ENABLE_GX

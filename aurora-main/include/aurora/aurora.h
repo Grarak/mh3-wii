@@ -162,6 +162,9 @@ bool aurora_configure_native_target(uint32_t width, uint32_t height);
 // game frame without waiting. Logic still advances; always call end, including
 // after a skipped frame. Cancellation can close admission but never reopen it.
 bool aurora_begin_native_frame();
+// Main thread: pump window events, then report whether a frame can present.
+// A host that renders on another thread polls this before recording a frame.
+bool aurora_native_window_presentable();
 bool aurora_native_frame_should_render();
 // Seal any recorded GPU work without presenting. The current mutable slot
 // retains its completion lease; CPU state continues until the normal end.

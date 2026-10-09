@@ -28,8 +28,10 @@ std::map<uint32_t, Region> regions;
 std::unordered_map<uint32_t, std::vector<uint32_t>> positions;
 uint64_t pose_revision = 0;
 mh3_model_matrix_selectors selectors{};
-mh3_model_palette matrix_palette{};
-uint64_t matrix_palette_revision = 0;
+// Loaded matrix slots, one copy per thread: UI/effect producers load them on
+// the game thread; model draws rebuild them on the render thread.
+thread_local constinit mh3_model_palette matrix_palette{};
+thread_local constinit uint64_t matrix_palette_revision = 0;
 #ifdef MH3_DEVELOPMENT
 struct PoseTrace {
     FILE* file = nullptr;

@@ -1,6 +1,7 @@
 #include "model_assets.h"
 #include "../native/adapters/model_catalog_bridge.h"
 #include "../native/adapters/model_gpu_bridge.h"
+#include "native_frame_packet.h"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -31,7 +33,10 @@ struct Assets {
     bool gpuRegistered = false, catalogRegistered = false;
     uintptr_t handle() const { return reinterpret_cast<uintptr_t>(this); }
 };
+// The game thread admits and evicts packs; the render thread makes them GPU
+// resident while drawing. The lock covers the maps and use clocks they share.
 struct Manager {
+    std::mutex lock;
     std::filesystem::path indexPath;
     std::vector<uint8_t> index;
     uint32_t packCount = 0, packOffset = 0, sourceCount = 0, sourceOffset = 0;
@@ -75,15 +80,21 @@ void Read(std::ifstream& file, const std::filesystem::path& path, void* destinat
     if (bytes && !file.read(static_cast<char*>(destination), bytes))
         Error(path, "truncated read");
 }
-void Retire(Assets& loaded) {
+void RetireCatalog(Assets& loaded) {
     if (loaded.catalogRegistered) {
         UnregisterNativeModelPack(loaded.handle());
         loaded.catalogRegistered = false;
     }
+}
+void RetireGPU(Assets& loaded) {
     if (loaded.gpuRegistered) {
         UnregisterNativeModelGPU(loaded.handle(), loaded.generation);
         loaded.gpuRegistered = false;
     }
+}
+void Retire(Assets& loaded) {
+    RetireCatalog(loaded);
+    RetireGPU(loaded);
 }
 const uint8_t* PackRecord(const Manager& m, uint32_t index) {
     return m.index.data() + m.packOffset + size_t(index) * 32;
@@ -167,6 +178,7 @@ void OpenIndex(Manager& m, const std::filesystem::path& path) {
     m.stats.index_bytes = m.index.size();
 }
 bool EvictOne(Manager& m, uintptr_t keep) {
+    std::unique_lock lock(m.lock);
     auto candidate = m.loaded.end();
     for (auto it = m.loaded.begin(); it != m.loaded.end(); ++it) {
         const auto& asset = *it->second;
@@ -177,14 +189,21 @@ bool EvictOne(Manager& m, uintptr_t keep) {
     }
     if (candidate == m.loaded.end())
         return false;
-    auto& asset = *candidate->second;
-    Retire(asset);
-    m.stats.metadata_bytes -= asset.metadata.size();
-    m.stats.identity_bytes -= asset.identity.size();
-    m.handles.erase(asset.handle());
+    std::shared_ptr<Assets> retired = std::move(candidate->second);
     m.loaded.erase(candidate);
+    lock.unlock();
+    RetireCatalog(*retired);
+    m.stats.metadata_bytes -= retired->metadata.size();
+    m.stats.identity_bytes -= retired->identity.size();
     --m.stats.admitted_packs;
     ++m.stats.evictions;
+    // Frames already recorded may still draw this pack: the render thread
+    // releases its GPU span and memory after them.
+    QueueNativeGraphicsTask(NativeTaskOrder::AfterDraws, [&m, retired] {
+        std::lock_guard relock(m.lock);
+        RetireGPU(*retired);
+        m.handles.erase(retired->handle());
+    });
     return true;
 }
 void ReserveCPU(Manager& m, size_t metadataBytes, size_t identityBytes, const std::filesystem::path& path) {
@@ -271,12 +290,14 @@ std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, 
 }
 void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
     Trace("insert metadata owner", index);
+    std::unique_lock lock(m.lock);
     const auto [entry, inserted] = m.loaded.emplace(index, std::move(next));
     if (!inserted)
         throw std::runtime_error("Native model source pack already admitted");
     auto& asset = *entry->second;
+    m.handles.emplace(asset.handle(), &asset);
+    lock.unlock();
     try {
-        m.handles.emplace(asset.handle(), &asset);
         if (eagerGPU) {
             const auto cost = NativeModelGPUAllocationBytes(asset.pack.gpu_bytes);
             if (cost > MaxGPUBytes || NativeModelGPUResidentBytes() > MaxGPUBytes - cost)
@@ -291,10 +312,12 @@ void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerG
         asset.catalogRegistered = true;
     } catch (...) {
         Retire(asset);
+        std::lock_guard relock(m.lock);
         m.handles.erase(asset.handle());
         m.loaded.erase(entry);
         throw;
     }
+    std::lock_guard relock(m.lock);
     asset.lastUse = ++m.clock;
     m.stats.metadata_bytes += asset.metadata.size();
     m.stats.identity_bytes += asset.identity.size();
@@ -339,10 +362,13 @@ void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
         throw std::runtime_error(reason.str());
     }
     const uint32_t index = Word(SourceRecord(m, source) + 12);
-    const auto found = m.loaded.find(index);
-    if (found != m.loaded.end()) {
-        found->second->lastUse = ++m.clock;
-        return;
+    {
+        std::lock_guard lock(m.lock);
+        const auto found = m.loaded.find(index);
+        if (found != m.loaded.end()) {
+            found->second->lastUse = ++m.clock;
+            return;
+        }
     }
     const auto* record = PackRecord(m, index);
     const std::string name(reinterpret_cast<const char*>(m.index.data() + Word(record)), Word(record + 4));
@@ -350,10 +376,8 @@ void EnsureNativeModelAssets(uint64_t offset, uint32_t bytes) {
     auto asset = OpenPack(m, path, index);
     Admit(m, index, std::move(asset), false);
 }
-void ObserveNativeModelAssetDemand(uintptr_t handle, uint64_t epoch) {
-    if (!manager)
-        return;
-    auto& m = *manager;
+namespace {
+void ObserveDemand(Manager& m, uintptr_t handle, uint64_t epoch) {
     auto& asset = Find(m, handle, epoch);
     const uint32_t frame = NativeModelGPUFrameSerial();
     if (!m.frameKnown || frame != m.demandFrame) {
@@ -370,13 +394,21 @@ void ObserveNativeModelAssetDemand(uintptr_t handle, uint64_t epoch) {
     asset.lastDemandFrame = frame;
     asset.lastUse = ++m.clock;
 }
+} // namespace
+void ObserveNativeModelAssetDemand(uintptr_t handle, uint64_t epoch) {
+    if (!manager)
+        return;
+    std::lock_guard lock(manager->lock);
+    ObserveDemand(*manager, handle, epoch);
+}
 bool EnsureNativeModelAssetGPU(uintptr_t handle, uint64_t epoch) {
     // Direct native renderer probes retain their own GPU owner/pack lifetime.
     if (!manager)
         return true;
     auto& m = *manager;
+    std::lock_guard lock(m.lock);
     auto& asset = Find(m, handle, epoch);
-    ObserveNativeModelAssetDemand(handle, epoch);
+    ObserveDemand(m, handle, epoch);
     if (asset.gpuRegistered)
         return true;
     const size_t cost = NativeModelGPUAllocationBytes(asset.pack.gpu_bytes);
@@ -394,6 +426,7 @@ bool EnsureNativeModelAssetGPU(uintptr_t handle, uint64_t epoch) {
 NativeModelAssetStats ReadNativeModelAssetStats() {
     if (!manager)
         return {};
+    std::lock_guard lock(manager->lock);
     auto result = manager->stats;
     result.gpu_bytes = NativeModelGPUResidentBytes();
     return result;

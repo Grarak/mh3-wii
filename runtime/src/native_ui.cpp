@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "../native/mh3_ui.h"
 #include "../native/mh3_system_ui.h"
@@ -94,7 +95,7 @@ void RestoreWorld(GuestCall& call) {
 bool Allocate(mh3_ui_primitive primitive, uint32_t count, AuroraNativeGeometry& geometry) {
     uint32_t vertices, indices;
     Checked(mh3_ui_geometry_counts(primitive, count, &vertices, &indices));
-    return indices && aurora_allocate_native_geometry(vertices, indices, &geometry);
+    return indices && AllocateNativeGeometry(vertices, indices, geometry);
 }
 void DrawVertices(mh3_ui_primitive primitive, const mh3_ui_vertex* vertices, uint32_t count, bool textured, float width = 1) {
     if (!NativeGraphicsFrameShouldRender())
@@ -107,7 +108,7 @@ void DrawVertices(mh3_ui_primitive primitive, const mh3_ui_vertex* vertices, uin
     if (!Allocate(primitive, count, geometry))
         return;
     Checked(mh3_ui_build_vertices(&GetNativeDrawState(), primitive, vertices, count, width, &geometry));
-    aurora_submit_native_geometry(&geometry, textured);
+    SubmitNativeGeometry(geometry, textured);
 }
 void SetupPrimitive(GuestCall& call, uint32_t flags, uint32_t texture, uint32_t palette, const float* overrideMatrix = nullptr) {
     uiFlags = flags;
@@ -479,7 +480,7 @@ extern "C" void MH3_DrawShape(CpuContext* cpu) {
     AuroraNativeGeometry geometry{};
     if (Allocate(primitive, count, geometry)) {
         Checked(mh3_ui_build_stream(&GetNativeDrawState(), primitive, &stream, Memory::Read8(Shape + 5) / 6.f, &geometry));
-        aurora_submit_native_geometry(&geometry, (flags & 2) != 0);
+        SubmitNativeGeometry(geometry, (flags & 2) != 0);
     }
     RestoreWorld(call);
 }
@@ -572,7 +573,7 @@ extern "C" void MH3_DrawUISprites(CpuContext* cpu) {
             for (unsigned i = 0; i < 6; ++i)
                 quadGeometry.indices[i] += uint16_t(quadIndex * 4);
         }
-        aurora_submit_native_geometry(&geometry, true);
+        SubmitNativeGeometry(geometry, true);
     }
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800489C8, MH3_DrawUISprites, "DrawUISprites");
@@ -744,7 +745,7 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
             AuroraNativeGeometry geometry{};
             if (Allocate(MH3_UI_QUADS, count * 4, geometry)) {
                 Checked(mh3_ui_build_glyphs(&GetNativeDrawState(), Span(records, size_t(largest + 1) * 84), Span(indexAddress, count * 2), count, &geometry));
-                aurora_submit_native_geometry(&geometry, true);
+                SubmitNativeGeometry(geometry, true);
             }
         }
     }
