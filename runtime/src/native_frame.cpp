@@ -5,6 +5,7 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "native_graphics.h"
+#include "runtime/native/adapters/model_pose_bridge.h"
 #include <stdexcept>
 
 // GXInit only created the FIFO and initial GPU state, then cleared/copied both
@@ -15,6 +16,8 @@ extern "C" void MH3_NativeGraphicsInit(CpuContext* cpu) {
     if (!mode || !Memory::Contains(mode, 60))
         throw std::runtime_error("Native graphics startup has no render mode");
     InitializeNativeGraphics(Memory::Read16(mode + 4), Memory::Read16(mode + 6));
+    // Verified __GXInitRevisionBits enables XF DUALTEX in the original init.
+    PublishNativeModelDualTexture(true);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8003FD30, MH3_NativeGraphicsInit, "NativeGraphicsInit");
 

@@ -58,6 +58,7 @@ target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_upda
 set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_lifetime.c)
+target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
 target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
