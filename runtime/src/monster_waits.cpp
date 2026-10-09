@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of thirty-eight enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of forty enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -19,7 +19,8 @@
 //     0x8035F378, 0x8035F560  kind 35 (Bnahabra) waits, 90 ticks
 //     sleeps of 1800 ticks: 0x80148ED0 kinds 1/2, 0x80155EBC 3, 0x8015E39C 8,
 //                 0x80170BB0 12/14, 0x801777D8 15, 0x80183F00 16/17, 0x801BC230 6,
-//                 0x801CB6F8 5, 0x80379A0C 19, 0x801D7C5C 7
+//                 0x801CB6F8 5, 0x80379A0C 19, 0x801D7C5C 7, 0x80195DE4 18,
+//                 0x801C6014 4
 //     0x801B1228  kind 30 (Felyne)   a rest, 150 or 250 ticks and up to 63 more
 //     0x801B1708  kind 30 (Felyne)   a run, at most 60 or 150 ticks (15 when near)
 //     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
@@ -608,8 +609,11 @@ void Em030RunPort(CpuContext* ctx) {
 // steps a second the original woke after half the game time.
 struct SleepMotions {
     uint8_t lie, lieFlags, sleep, sleepFlags, wake, wakeFlags;
-    float rate;     // 0x80132280's f1
-    uint32_t every; // and its r5
+    float rate;               // 0x80132280's f1
+    uint32_t every;           // and its r5
+    uint32_t done = ActionDone; // what ends it
+    void (*start)(GuestCall&, uint32_t) = nullptr; // the set-up, before the lying motion (else SetUp 0)
+    void (*after)(GuestCall&, uint32_t) = nullptr; // more set-up after it
 };
 
 void Sleep(CpuContext* ctx, const SleepMotions& m) {
@@ -620,8 +624,17 @@ void Sleep(CpuContext* ctx, const SleepMotions& m) {
     switch (em.State()) {
     case 0:
         em.State(1);
-        game.Call<Em::SetUp>({work, 0});
+
+        if (m.start)
+            m.start(game, work);
+        else
+            game.Call<Em::SetUp>({work, 0});
+
         em.SetMotion(m.lie, m.lieFlags, 0);
+
+        if (m.after)
+            m.after(game, work);
+
         break;
     case 1:
         if (em.Ended()) {
@@ -644,7 +657,7 @@ void Sleep(CpuContext* ctx, const SleepMotions& m) {
         break;
     case 3:
         if (em.Ended())
-            game.Call<ActionDone>({work});
+            game(m.done, {work});
 
         break;
     }
@@ -688,6 +701,34 @@ void Em019SleepPort(CpuContext* ctx) {
 
 void Em007SleepPort(CpuContext* ctx) {
     Sleep(ctx, {0x28, 2, 0x6E, 4, 0x70, 4, 0.6f, 5});
+}
+
+// kind 18 0x80195DE4: Gobul's, flags +0x359 and +0x35B set and 0x8012CF84
+// each step, set up with kind 4, 0x80130390/0x80130450 and 0x801321FC, ended
+// through 0x80128158.
+void Em018SleepPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const uint32_t work = ctx->gpr[3];
+    Memory::Write8(work + 0x359, 1);
+    Memory::Write8(work + 0x35B, 1);
+    game.Call<0x8012CF84>({work});
+    ctx->gpr[3] = work;
+    Sleep(ctx, {0xCC, 0, 0xCF, 0, 0xCD, 0, 0.4f, 15, 0x80128158, [](GuestCall& g, uint32_t w) { g.Call<Em::SetUp>({w, 4}); },
+                [](GuestCall& g, uint32_t w) {
+                    g.Call<0x80130390>({w}); // f1 passes on
+                    g.Call<0x80130450>({w});
+                    g.Call<0x801321FC>({w});
+                }});
+}
+
+// kind 4 0x801C6014: Gigginox', set up with its carried scale and 0x80130724
+// (work, 1), ended through 0x801281F8.
+void Em004SleepPort(CpuContext* ctx) {
+    Sleep(ctx, {0xEB, 4, 0xDD, 10, 0xDF, 6, 0.6f, 10, 0x801281F8, [](GuestCall& g, uint32_t w) {
+                    g.Call<0x801302AC>({w}); // f1: the carried scale, for SetScale
+                    g.Call<SetScale>({w});
+                    g.Call<0x80130724>({w, 1});
+                }});
 }
 
 // kind 35 0x8035F378 and 0x8035F560 (motion flags 4 or 0): Bnahabra
@@ -1791,6 +1832,18 @@ extern "C" void MH3_Em007Sleep(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em007Sleep", func_801D7C5C, Em007SleepPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801D7C5C, MH3_Em007Sleep, "Em007Sleep");
+
+extern "C" void func_80195DE4(CpuContext* ctx);
+extern "C" void MH3_Em018Sleep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em018Sleep", func_80195DE4, Em018SleepPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80195DE4, MH3_Em018Sleep, "Em018Sleep");
+
+extern "C" void func_801C6014(CpuContext* ctx);
+extern "C" void MH3_Em004Sleep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em004Sleep", func_801C6014, Em004SleepPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801C6014, MH3_Em004Sleep, "Em004Sleep");
 
 extern "C" void func_8035F378(CpuContext* ctx);
 extern "C" void MH3_Em035Wait(CpuContext* ctx) {
