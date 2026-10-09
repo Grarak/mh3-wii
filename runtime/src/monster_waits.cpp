@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of fifteen enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of seventeen enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -11,6 +11,8 @@
 //     0x801B2578  em029 (Rhenoplos)  a charge, 80 ticks
 //     0x801D91B4  em007 (Deviljho)   a charge (7.3, 7.18), at most 1000 ticks
 //     0x801482AC  kind 1 (Rathian)   a wait (0.0, 0.4), 150 ticks
+//     0x80159054  kind 3 (Qurupeco)  a move, at least 10 or 20 ticks
+//     0x8015898C  kind 3 (Qurupeco)  a backward hop, 22 or 30 ticks
 //     0x8034FA1C  em024 (Alatreon)   a flight, 300 ticks (an effect at 20 left)
 //     0x8039E9EC  em028 (Popo)       a rest, 150 or 300 ticks
 //     0x801C7570  em006 (Diablos)    an ambush from the sand, 90 ticks
@@ -328,6 +330,135 @@ void Em001WaitPort(CpuContext* ctx) {
 
         if (em.Count() < 0)
             game.Call<ActionDone>({work});
+
+        break;
+    }
+}
+
+// kind 3 0x80159054 (r4 0-5): Qurupeco's move of a set distance (300,
+// -250, -100 with at most 800 left, -1600, -500, 1500 through 0x80134068),
+// motion 8 and voice 4; it lasts at least 10 or 20 ticks (the count at
+// +0x20, down to 0) and until the move is done (0x80134178, turning at
+// 0x80 or 0x40), then its end motion or a follow-up (4.7, 7.7).
+void Em003MovePort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const uint8_t kind = uint8_t(ctx->gpr[4]);
+    const auto setUp = [&](float distance, uint32_t flags, int32_t ticks) {
+        game.Call<TurnSetUp>({work, flags}, {double(distance)});
+
+        if (ticks)
+            em.Count(ticks);
+    };
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        game.Call<0x80130D40>({work, uint32_t(-12)}); // stamina (+0x8A0) less 12
+        em.SetMotion(8, 4, 0);
+        game.Call<RoarVoice>({work, 0, 4, 3});
+        em.Count(0);
+
+        switch (kind) {
+        case 1:
+            setUp(-250.0f, 0x10, 10);
+            break;
+        case 2:
+            setUp(-100.0f, 0, 0);
+
+            if (Memory::ReadFloat32(work + 0x378) >= 800.0f)
+                Memory::WriteFloat32(work + 0x378, 800.0f);
+
+            break;
+        case 3:
+            setUp(-1600.0f, 0x10, 0);
+            break;
+        case 4:
+            setUp(-500.0f, 0x10, 10);
+            break;
+        case 5:
+            setUp(1500.0f, 0x10, 20);
+            break;
+        default:
+            setUp(300.0f, 0x10, 20);
+            break;
+        }
+
+        break;
+    case 1:
+        // The count down by the step's ticks, to 0 (the original's 1 a call).
+        em.Count(std::max(em.Count() - int32_t(GameStep::Ticks()), 0));
+
+        if (game.Call<TurnStep>({work, 0, kind == 0 ? 0x80u : 0x40u}) == 1 && em.Count() <= 0) {
+            em.NextState();
+            Memory::Write8(work + 6, 0);
+
+            if (kind == 2)
+                em.SetMotion(0x40, 4, 0);
+            else if (kind == 3 || kind == 4) {
+                game.Call<0x80129788>({work, 0});
+                game.Call<0x80128AD4>({work, kind == 3 ? 4u : 7u, 7});
+            } else {
+                game.Call<0x80129788>({work, 0});
+                em.SetMotion(9, 4, 0);
+            }
+        }
+
+        break;
+    case 2:
+        if (kind == 2 && Memory::Read8(work + 6) == 0 && em.At(120.0f, 1)) {
+            Memory::Write8(work + 6, 1);
+            game.Call<0x80129788>({work, 0});
+        }
+
+        if (em.Ended())
+            game.Call<ActionDone>({work});
+
+        break;
+    }
+}
+
+// kind 3 0x8015898C (r4 0-2): Qurupeco's backward hop, motion 0x1B: the
+// speed -20 (-22 for 1 and 2) easing by 0.3 (0.15) a tick (0x8013562C, by
+// the step already), at most 0, for 22 (30) ticks; then 4.1 or its end.
+void Em003BackstepPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const uint8_t kind = uint8_t(ctx->gpr[4]);
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 3});
+        em.SetMotion(0x1B, 6, 0);
+        game.Call<0x8013545C>({work});
+
+        if (kind == 1 || kind == 2) {
+            Memory::WriteFloat32(work + 0x318, -22.0f);
+            Memory::WriteFloat32(work + 0x324, 0.15f);
+            em.Count(0x1E);
+        } else if (kind == 0) {
+            Memory::WriteFloat32(work + 0x318, -20.0f);
+            Memory::WriteFloat32(work + 0x324, 0.3f);
+            em.Count(0x16);
+        }
+
+        break;
+    case 1:
+        game.Call<0x8013562C>({work, work + 0x1BC});
+
+        if (Memory::ReadFloat32(work + 0x318) > 0.0f)
+            Memory::WriteFloat32(work + 0x318, 0.0f);
+
+        if (CountDown(em)) {
+            if (kind == 0 || kind == 2)
+                game.Call<0x80128AD4>({work, 4, 1});
+            else
+                game.Call<0x80128110>({work});
+        }
 
         break;
     }
@@ -1071,6 +1202,18 @@ extern "C" void MH3_Em001Wait(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em001Wait", func_801482AC, Em001WaitPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801482AC, MH3_Em001Wait, "Em001Wait");
+
+extern "C" void func_80159054(CpuContext* ctx);
+extern "C" void MH3_Em003Move(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em003Move", func_80159054, Em003MovePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80159054, MH3_Em003Move, "Em003Move");
+
+extern "C" void func_8015898C(CpuContext* ctx);
+extern "C" void MH3_Em003Backstep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em003Backstep", func_8015898C, Em003BackstepPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8015898C, MH3_Em003Backstep, "Em003Backstep");
 
 extern "C" void func_801D91B4(CpuContext* ctx);
 extern "C" void MH3_Em007Charge(CpuContext* ctx) {
