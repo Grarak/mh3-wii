@@ -11,9 +11,9 @@ native **GXM** (`aurora-main/lib/gxm`). Dawn, WebGPU and Vulkan are not built.
 `runtime/src/graphics_host.cpp` selects `BACKEND_OPENGLES` on Linux and
 `BACKEND_GXM` on Vita and rejects an unexpected backend.
 
-The current migration owns the graphics context on the game thread, core 2
-on Vita. Backend tasks execute there directly; no application render worker or
-GX queue remains. GX compatibility APIs/FIFO routes panic. Native rendering
+The runtime's render thread owns the graphics context (core 1 on Vita) and
+replays frame packets recorded by the game thread; backend tasks execute on
+it. No GX queue remains; GX compatibility APIs/FIFO routes panic. Native rendering
 reuses pure material equations and typed resource helpers from the tree,
 without restoring GX submission. See [native renderer status](native-renderer-status.md)
 for current integration, waits, texture formats and memory limits. The old

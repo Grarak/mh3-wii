@@ -7,8 +7,11 @@
 // and selector byte, so the shaders never select or convert attributes.
 // Every fragment texture read uses its varying unmodified (independent reads on
 // SGX); projective roles are divided per vertex and LOD bias is sampler state on
-// GXM. Both backends render vertically flipped with GL depth, as Aurora's
-// aur_position: (x, -y, 2z - w, w) from GX clip space. Fog eye depth is linear in eye space, so it is computed per vertex and
+// GXM. Both use GL depth from GX clip space: (x, y, 2z - w, w). GLES also
+// negates y (Aurora's aur_position) because its render targets are bottom-up;
+// GXM's viewport already maps y downward, so its programs keep y (as the old
+// converted programs did), which also keeps the guest's winding for culling.
+// Fog eye depth is linear in eye space, so it is computed per vertex and
 // interpolated exactly; the fragment only applies the curve.
 //
 // Blocks: Draw (vertex, binding 0 / vertex BUFFER[0]), Scene (both, binding 1 /
@@ -521,7 +524,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
     v_fog = fog_distance(projected);
     projected.xy += projected.w * draw.viewport.zw;
     TEXGEN_OUTPUTS
-    v_position = float4(projected.x, -projected.y, 2.0f * projected.z - projected.w, projected.w);
+    v_position = float4(projected.x, projected.y, 2.0f * projected.z - projected.w, projected.w);
 }
 )CG";
 
@@ -536,7 +539,7 @@ void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_c
     v_uv0 = affine(a_uv0);
     v_uv1 = affine(a_uv1);
     v_uv2 = affine(a_uv2);
-    v_position = float4(p.x, -p.y, p.z, p.w);
+    v_position = float4(p.x, p.y, p.z, p.w);
 }
 )CG";
 

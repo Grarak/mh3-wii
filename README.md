@@ -7,15 +7,12 @@ and native **GXM** on Vita.
 
 - **Targets:** Vita (ARM32, Cortex-A9, GXM), arm32 Linux (armhf, Cortex-A9
   build tested on Pi 5), and arm64 Linux for development.
-- **Closeout, 2026-10-02:** game and rendering share one CPU thread;
-  legacy GX/FIFO routes remain fatal. Release quest selection, direct native C
-  material groups and processed GLES textures pass focused tests and a bounded
-  host quest. Pi measurements distinguish owner CPU from the original GX
-  workers. The owned scene provider remains unregistered and the render worker
-  is not integrated. Full quest parity, retail memory peaks and 60 completed
-  display FPS on Vita remain open. Busy GPU slots skip drawing while logic continues.
-  [Native renderer status](docs/native-renderer-status.md) distinguishes current
-  implementation, pending gates and earlier playable evidence.
+- **Status, 2026-10-03:** a render thread draws frame packets recorded by
+  the game thread, with fixed hand-written shaders instead of TEV. The Pi runs
+  Alatreon at full speed (game thread 143–146 fps moving). The Vita devkit
+  completes a scripted quest at ~10 fps with correct geometry, but shaded 3D
+  draws lose their blue channel. See [HANDOVER.md](HANDOVER.md) and
+  [renderer status](docs/native-renderer-status.md).
 
 ## Build
 

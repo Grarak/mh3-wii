@@ -1,61 +1,83 @@
 # Notes
 
-Start with [HANDOVER.md](../HANDOVER.md). It covers the current state and how to
-build, run and debug.
+Start with [HANDOVER.md](../HANDOVER.md): current state, next steps, and how to
+build, run (including the Vita devkit) and debug.
 
-## Closeout and restart — 2026-10-02
+Topic notes below are dated. Notes describing removed systems (TEV shader
+generation, capture and the GXP bank audits, offline asset preparation, the
+single-owner renderer and its Pi/Vita measurements, render-thread planning)
+were deleted on 2026-10-03; they remain in git history.
 
-Production checkpoint `c3c038f` passes the Release/NDEBUG ARM64 host build and
-a bounded quest 10057/area 6 run. Implementation agents are stopped; no partial
-texture descriptor API exists. The owned scene provider is unregistered and
-admits 0/157 real models until textures are supported. Device measurements
-predate this checkpoint; no current 60 FPS or retail RAM result is established.
+## Renderer and platform
 
-The current restart references are:
+- [native-renderer-status.md](native-renderer-status.md): what works on each platform, the open Vita colour fault, shaders and memory limits. Start here.
+- [native-render-plan.md](native-render-plan.md): fixed shading models, frame packets, render thread, model instances and the measured Pi game/render split.
+- [frame-state-slot-exchange.md](frame-state-slot-exchange.md): the three-slot exchange the frame packets use.
+- [vita-launcher.md](vita-launcher.md): launcher, reading the disc image in place and load-time texture/model conversion.
+- [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and earlier devkit checkpoints.
+- [vita-native-cdram-capacity.md](vita-native-cdram-capacity.md): CDRAM budgets.
+- [vita-runtime-shaders.md](vita-runtime-shaders.md): the devkit's runtime Cg compiler and cache.
+- [native-material-state.md](native-material-state.md), [native-material-group-publication.md](native-material-group-publication.md), [native-material-unchecked-publication.md](native-material-unchecked-publication.md), [native-material-update-origins.md](native-material-update-origins.md): typed material state and how it is published.
+- [native-resident-model-rendering.md](native-resident-model-rendering.md), [native-model-assets.md](native-model-assets.md), [native-model-draw-dispatch.md](native-model-draw-dispatch.md), [vita-model-conversion.md](vita-model-conversion.md), [vita-indexed-model-packs.md](vita-indexed-model-packs.md): converted models and their draw path.
+- [vita-native-assets.md](vita-native-assets.md), [vita-native-texture-formats.md](vita-native-texture-formats.md), [native-texture-processed-host.md](native-texture-processed-host.md), [native-texture-binding-origins.md](native-texture-binding-origins.md): texture formats and binding.
+- [native-scene-queue.md](native-scene-queue.md), [native-ui-port.md](native-ui-port.md), [native-system-ui-port.md](native-system-ui-port.md), [native-effects-port.md](native-effects-port.md), [native-scene-feedback.md](native-scene-feedback.md): application family ports.
+- [native-gx-coverage.md](native-gx-coverage.md), [native-effects-coverage.md](native-effects-coverage.md), [native-system-ui-coverage.md](native-system-ui-coverage.md), [native-startup-coverage.md](native-startup-coverage.md): caller coverage audits.
+- [native-resource-lifetime.md](native-resource-lifetime.md): native copy/fill/heap producers and resource retirement.
+- [owned-static-scene-provider.md](owned-static-scene-provider.md): unregistered serial scene prototype (superseded in practice by the model-instance path).
 
-- [HANDOVER.md](../HANDOVER.md): agent work, committed checkpoints, remaining tasks, tools and constraints.
-- [host-material-profiling.md](host-material-profiling.md), [native-material-group-publication.md](native-material-group-publication.md): exact host CPU measurements and direct publication; fewer operations did not establish a timing gain.
-- [pi5-gx-native-render-history.md](pi5-gx-native-render-history.md): original GX workers versus current owner/total CPU, counter denominators and partial verified callers.
-- [native-texture-binding-origins.md](native-texture-binding-origins.md), [native-texture-processed-host.md](native-texture-processed-host.md): actual producers, processed host uptake and the unimplemented descriptor boundary.
-- [owned-static-scene-provider.md](owned-static-scene-provider.md), [render-thread-state-evaluation.md](render-thread-state-evaluation.md): serial prototype, real corpus blockers and missing integration contracts.
+## Profiling and capture
 
-Topic notes record dated snapshots. Their local headings saying “current” or
-“latest” refer to the named executable/capture, unless updated here or in the
-handover. Retain historical evidence, but do not use it as a claim about HEAD.
+- [vita-native-profiling.md](vita-native-profiling.md), [vita-native-stack-profiling.md](vita-native-stack-profiling.md), [vita-razor.md](vita-razor.md): Vita CPU and GPU profiling.
+- [pi5-arm32-callstack-unwind.md](pi5-arm32-callstack-unwind.md): recovering ARM32 callers.
+- [hdmi-audio-capture.md](hdmi-audio-capture.md): the devkit HDMI video/audio capture.
+- [aurora-dependency.md](aurora-dependency.md): the maintained Aurora copy.
 
-## Current renderer and platform references
+## Audio
 
-- [native-renderer-status.md](native-renderer-status.md): current implementation, pending integration, threads, waits/copies, shader compilation and memory accounting. Start here for rendering status.
-- [native-gx-coverage.md](native-gx-coverage.md): remaining-caller audit scope; registration does not prove semantic or game coverage.
-- [native-renderer-batch.md](native-renderer-batch.md): native backend probes, shader estimates and dated integration checkpoints.
-- [native-resident-model-rendering.md](native-resident-model-rendering.md), [vita-model-conversion.md](vita-model-conversion.md): compact external models and prepared typed metadata; GPU/live-producer integration remains separate.
-- [vita-native-assets.md](vita-native-assets.md), [vita-texture-format-evaluation.md](vita-texture-format-evaluation.md), [vita-pvrt-evaluation.md](vita-pvrt-evaluation.md): installed asset support and offline format assessments. Assessment bytes are not runtime residency or proof of installation.
-- [native-material-state.md](native-material-state.md): persistent material mapping and explicit unsupported semantics.
-- [native-resource-lifetime.md](native-resource-lifetime.md): native copy/fill/heap producers, source retirement, exact address coverage and remaining inline-write boundaries.
-- [native-scene-queue.md](native-scene-queue.md), [native-ui-port.md](native-ui-port.md), [native-system-ui-port.md](native-system-ui-port.md), [native-effects-port.md](native-effects-port.md), [native-scene-feedback.md](native-scene-feedback.md): application family ports and focused evidence.
-- [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and historical DevKit checkpoints.
-- [vita-launcher.md](vita-launcher.md): launcher, ROM processing and startup UI scope.
-- [vita-render-investigation.md](vita-render-investigation.md), [vita-razor.md](vita-razor.md), [vita-active-play-capture.md](vita-active-play-capture.md): investigation/profiling tools and source-specific captures; older GX gameplay is historical.
-- [pi5-cortex-a9-benchmark.md](pi5-cortex-a9-benchmark.md): earlier native gameplay CPU/frame checkpoints; the newer exact GX/native comparison is linked above. Pi 5 executes the Cortex-A9 build on a Cortex-A76 CPU.
-- [aurora-dependency.md](aurora-dependency.md): maintained GLES/GXM copy and dependency setup.
+- [vita-native-audio-worker-design.md](vita-native-audio-worker-design.md), [ax-private-memory-cost.md](ax-private-memory-cost.md), [vita-audio-output-evaluation.md](vita-audio-output-evaluation.md), [vita-streaming-audio-tempo.md](vita-streaming-audio-tempo.md), [vita-soundtouch-streaming-experiment.md](vita-soundtouch-streaming-experiment.md): AX worker and output experiments (SoundTouch is not integrated; AX gets replaced after rendering).
 
-## Runtime and simulation references
+## Runtime and simulation
 
 - [module-inventory.md](module-inventory.md): the disc's RSO modules and field layout.
 - [slow-path-access.md](slow-path-access.md): the memory-access survey behind the flat guest memory.
-- [variable-step.md](variable-step.md): simulation systems scaled by step length and remaining whole-tick behavior. Its gameplay probes need a playable source snapshot.
+- [variable-step.md](variable-step.md): systems scaled by the step length and remaining whole-tick behaviour.
+- [release-quest-selection.md](release-quest-selection.md): quest shortcuts in release builds.
+
+## Specialised notes
+
+Focused investigations and checks, dated:
+[active gameplay](native-active-gameplay.md),
+[dispatch freshness](native-dispatch-freshness.md),
+[feedback target churn](native-feedback-target-churn.md) and
+[reuse](native-feedback-target-reuse.md),
+[field resource loading](native-field-resource-loading.md),
+[finite validation](native-finite-validation.md),
+[fsqrt warnings](native-fsqrt-warning-trace.md),
+[GLES state checks](native-gles-state-checks.md),
+[GPU texture revisions](native-gpu-texture-revisions.md),
+[model resource archives](native-model-resource-archives.md),
+[model transform check](native-model-transform-check.md),
+[model view floats](native-model-view-floats.md),
+[particle draw state](native-particle-draw-state.md),
+[preparation corners](native-preparation-corners.md),
+[model assembler](native-preparation-model-assembler.md),
+[preparation writers](native-preparation-writer.md),
+[renderer batch probes](native-renderer-batch.md),
+[equipment model coverage](vita-equipment-model-coverage.md),
+[model inspection](vita-model-inspection.md),
+[Vita helper audit](vita-native-helper-audit.md),
+[Rust async CFI](vita-rust-async-cfi.md),
+[texture format evaluation](vita-texture-format-evaluation.md),
+[PVRTC evaluation](vita-pvrt-evaluation.md),
+[armhf Wayland dependencies](pi5-armhf-wayland-dependencies.md).
 
 ## Historical bring-up notes
 
-These were written on the earlier macOS/Metal
-build; the mechanisms they describe mostly still exist, but paths, build
-steps and status may be out of date:
-
-- [nand-bringup.md](nand-bringup.md): NAND save storage.
-- [rso-bringup.md](rso-bringup.md): static RSO binding. All overlays are now translated (`scripts/translate.sh`).
-- [function-discovery.md](function-discovery.md) and [switch-bringup.md](switch-bringup.md): translator discovery.
-- [graphics-bringup.md](graphics-bringup.md) and [efb-color-bringup.md](efb-color-bringup.md): GX and EFB.
-- [audio-bringup.md](audio-bringup.md): audio.
-- [controller-bringup.md](controller-bringup.md) and [usb-hid-bringup.md](usb-hid-bringup.md): input.
-- [village-startup.md](village-startup.md): the `--village` shortcut.
-- [gameplay-debugging.md](gameplay-debugging.md): input replay and the Dolphin reference setup.
+Written on the earlier macOS/Metal build; mechanisms mostly still exist, but
+paths, build steps and status may be out of date:
+[nand](nand-bringup.md), [RSO](rso-bringup.md),
+[function discovery](function-discovery.md), [switch tables](switch-bringup.md),
+[graphics](graphics-bringup.md), [EFB colour](efb-color-bringup.md),
+[audio](audio-bringup.md), [controller](controller-bringup.md),
+[USB HID](usb-hid-bringup.md), [village startup](village-startup.md),
+[gameplay debugging](gameplay-debugging.md).

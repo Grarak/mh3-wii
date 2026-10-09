@@ -228,7 +228,7 @@ not represent Vita performance. Vita release source checks and the decoder's
 Vita clang codec build passed. No launcher display/controller test on physical
 hardware has been performed in this work. End-to-end gameplay remains subject
 to the current native rendering migration described in
-[vita-render-investigation.md](vita-render-investigation.md).
+vita-render-investigation.md.
 
 The updated production texture stage converted all 8,562 resources in an isolated
 host output in 2.34 seconds with 35,000 KiB peak RSS. Its complete tag map matched
