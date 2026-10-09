@@ -2,6 +2,7 @@
 #include "fatal.h"
 #include "disc_image.h"
 #include "fs_status.h"
+#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -371,6 +372,32 @@ Status LoadCustomQuests(const std::filesystem::path& user, std::vector<CustomQue
         return Status::Error("filesystem error: directory iterator cannot advance: " + error.message());
 
     std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+    return {};
+}
+
+// Development (--quest-monster): quest `id`'s first large monster replaced by
+// `monster` (its id in the game's monster list), with every objective that
+// targeted the old one, in the copy of the quest file the disc serves. The
+// arena quests make a debug pit for any monster.
+Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster) {
+    auto& disc = GameDiscImage();
+    std::vector<uint8_t> edited = disc.ReadFile(QuestPath(set));
+    size_t at = 0;
+    MH3_RETURN_IF_ERROR(Entry(edited, id, at));
+
+    if (edited[at + 0x317] != 1 || !edited[at + 0x314])
+        return Status::Error("The quest has no large monster to replace");
+
+    const uint8_t old = edited[at + 0x314];
+    edited[at + 0x314] = monster;
+
+    for (const size_t objectives : {size_t(0x330), size_t(0x394)})
+        for (size_t k = 0; k < 3; ++k)
+            if (Word(edited, at + objectives + 8 * k + 4) >> 16 == old)
+                PutHalf(edited, at + objectives + 8 * k + 4, monster);
+
+    std::fprintf(stderr, "MH3 quest %u: large monster %u replaced by %u\n", unsigned(id), unsigned(old), unsigned(monster));
+    disc.SetFileOverride(QuestPath(set), std::move(edited));
     return {};
 }
 

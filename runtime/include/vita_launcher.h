@@ -32,6 +32,10 @@ Status QuestCompositionOptions(std::span<const uint8_t> source, uint16_t base, s
 Status CompositionOptions(const CustomQuest& quest, std::vector<uint16_t>& options);
 Status CompositionMaps(const CustomQuest& quest, std::vector<uint16_t>& maps);
 Status EditQuestFile(std::span<const uint8_t> source, const CustomQuest& quest, std::vector<uint8_t>& edited);
+
+// Development: quest `id`'s first large monster (and its objectives) replaced
+// by `monster`, a monster list id (--quest-monster).
+Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster);
 Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& quest);
 
 // The valid custom quests of user, by name; invalid records are skipped.

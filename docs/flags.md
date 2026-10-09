@@ -150,14 +150,17 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,draw-writes][,particles]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles]`
 
 | Item | Effect |
 | --- | --- |
 | `input` | once per tick of game time: the sticks and game keys as the game read them, the field camera's yaw and pitch, player 0's position and facing, steps and key repeats since the last line ([variable step](variable-step.md#7-input-from-the-host-to-the-game)) |
 | `draw-pages[=N]` | Linux hosts: from frame body N (default 1500), for 30 frames, the guest RAM pages each draw touches (MEM1/MEM2 protected, first access per page recorded) against those the next frame's logic writes; prints the conflicts per pair, by logic phase, and their writers and draw readers (`MH3 draw pages` lines). What a draw running beside the next logic step would have to snapshot or wait for. Slow while recording |
 | `monsters` | once a second, each monster's move work, its in-use word and its position (`MH3 monsters` lines; field_camera.cpp) |
-| `monster-steps=N` | every logic step, monster N's position, the step's length and ticks, its MHchar's position, model offset and first three channels (previous and new frame, rate, end, weight), and the world translation of the scene root's models within 4000 units (`MH3 monster step` lines, tagged with the frame packet, which is the `MH3_CAPTURE` frame number) |
+| `monster-steps=N` | every logic step, monster N's position, angles (+0x1BC) and turn goal (+0x37C), the step's length and ticks, its MHchar's position, model offset and first three channels (previous and new frame, rate, end, weight), and the world translation of the scene root's models within 4000 units (`MH3 monster step` lines, tagged with the frame packet, which is the `MH3_CAPTURE` frame number) |
+| `monster-spins` | every logic step, each monster whose yaw (+0x1C0) turns more than 2000 units a tick: its work words, the turn, the step's scale and ticks and its motion (a spin added once a step turns the same per step at any step length) |
+| `hit-shapes` | each (monster, body part, caller) of EnemyPartShape the first time, with the part's joints and mode and the monster's motion: an attack's hit parts appear from the attack check as it starts |
+| `actions` | each (group, variant) EnemyActionTable looks up, once, with its action table word and caller |
 | `draw-writes` | the game thread's heap frees and memory fills while the overlapped draw runs beside it; when the draw meets a model whose draw virtual is gone, the `MH3 draw of a dead model` line and the recorded writes over it (`MH3 draw-side` lines) |
 | `particles` | every third tick of game time, an `MH3 particles` line per particle manager with live particles (its emitter resource, the count, their mean age and life in ticks, the summed alpha of the first colour) and one with the emitter emissions, child curves (each run or gated off between ticks) and queued child emissions since the last; and an `MH3 effect emitter` line for every emitter the game looks up by name (each effect it creates: the name, the emitter data and the return addresses of five frames up). Compares effects at fixed and variable steps (`MH3_VARIABLE_STEP=0`) |
 

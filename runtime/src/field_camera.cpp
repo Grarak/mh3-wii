@@ -200,6 +200,9 @@ void ReportMonsters(GuestCall& game) {
                          GameStep::Ticks(), F(m + kMovePosition), F(m + kMovePosition + 4), F(m + kMovePosition + 8));
             std::fprintf(stderr, " char %08x pos %.1f %.1f %.1f offset %.1f %.1f %.1f flags %x", c, F(c + 4), F(c + 8), F(c + 12), F(c + 0x10), F(c + 0x14), F(c + 0x18), R32(c + 0x4C));
 
+            // The work's angles (s32[3] at +0x1BC, monster_attacks.cpp) and its turn goal (+0x37C).
+            std::fprintf(stderr, " rot %d %d %d goal %04x", int32_t(R32(m + 0x1BC)), int32_t(R32(m + 0x1C0)), int32_t(R32(m + 0x1C4)), Memory::Read16(m + 0x37C));
+
             for (uint32_t i = 0; i < 3; ++i)
                 std::fprintf(stderr, " ch%u %.2f>%.2f r%.2f e%.1f w%.2f", i, F(c + 0x8C + 4 * i), F(c + 0x74 + 4 * i), F(c + 0x5C + 4 * i), F(c + 0xA4 + 4 * i), F(c + 0xD4 + 4 * i));
 
@@ -219,6 +222,36 @@ void ReportMonsters(GuestCall& game) {
             }
 
             std::fprintf(stderr, "\n");
+        }
+    }
+
+    // monster-spins: every step, each monster whose yaw (+0x1C0) turns more
+    // than 2000 units (11 degrees) a tick: a spin added once a step instead of
+    // by the step's game time turns the same per step at any step length.
+    static const bool spins = TraceOptions().Has("monster-spins");
+
+    if (spins) {
+        static uint32_t lastYaw[16]{};
+        static uint32_t lastWork[16]{};
+        const uint32_t n = std::min<uint32_t>(Cheats::MoveWorkCount(Cheats::Kind::Monster), 16);
+
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t m = Cheats::MoveWork(Cheats::Kind::Monster, i);
+
+            if (!m || !Memory::Read16(m))
+                continue;
+
+            const uint32_t yaw = R32(m + 0x1C0);
+            const int32_t turn = int32_t(int16_t(uint16_t(yaw - lastYaw[i])));
+
+            if (lastWork[i] == m && GameStep::Scale() > 0 && std::abs(turn) / GameStep::Scale() > 2000) {
+                const uint32_t c = m + kMoveChar;
+                std::fprintf(stderr, "MH3 monster spin: [%u] work %08x words %08x %08x %08x turn %d scale %.3f ticks %u motion %.2f>%.2f r%.2f e%.1f\n", i, m, R32(m + 4), R32(m + 8),
+                             R32(m + 0x10), turn, GameStep::Scale(), GameStep::Ticks(), F(c + 0x8C), F(c + 0x74), F(c + 0x5C), F(c + 0xA4));
+            }
+
+            lastYaw[i] = yaw;
+            lastWork[i] = m;
         }
     }
 

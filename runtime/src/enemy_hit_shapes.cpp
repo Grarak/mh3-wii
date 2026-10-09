@@ -25,6 +25,13 @@
 #include "port_check.h"
 
 #include <cstdint>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+
+#include <cstdio>
+#include <set>
+#include <tuple>
+#endif
 
 namespace {
 
@@ -148,6 +155,23 @@ static uint32_t PartShapeChecked(uint32_t r1, uint32_t r3, uint32_t r4, uint32_t
 }
 
 extern "C" void MH3_EnemyPartShape(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=hit-shapes: each (monster, part, caller) the first time, with
+    // the monster's motion (channel 0: frame, rate, end) then: an attack's hit
+    // parts appear from the attack check's caller as the attack starts.
+    static const bool traced = TraceOptions().Has("hit-shapes");
+
+    if (traced) {
+        static std::set<std::tuple<uint32_t, uint32_t, uint32_t>> seen;
+        const uint32_t em = ctx->gpr[3], part = ctx->gpr[4], caller = ctx->lr;
+
+        if (seen.insert({em, part, caller}).second) {
+            const uint32_t c = em + 0x24;
+            std::fprintf(stderr, "MH3 hit shape: em %08x part %08x (joints %d %d mode %u) from %08x, motion %.2f r%.2f e%.1f\n", em, part, int16_t(MemoryInline::FlatRead16(part)),
+                         int16_t(MemoryInline::FlatRead16(part + 2)), MemoryInline::FlatRead16(part + 4), caller, ReadFloat(c + 0x74), ReadFloat(c + 0x5C), ReadFloat(c + 0xA4));
+        }
+    }
+#endif
     ctx->gpr[3] = PartShapeChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8029D8F8, MH3_EnemyPartShape, "EnemyPartShape");

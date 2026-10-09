@@ -15,6 +15,12 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+
+#include <cstdio>
+#include <set>
+#endif
 
 #include <cstdint>
 
@@ -116,6 +122,20 @@ static uint32_t ActionTableChecked([[maybe_unused]] uint32_t r1, uint32_t r3, ui
 }
 
 extern "C" void MH3_EnemyActionTable(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=actions: each (group, variant) the game looks up, once, with
+    // its action table word (the monsters' attack and action tables).
+    static const bool traced = TraceOptions().Has("actions");
+
+    if (traced) {
+        static std::set<uint32_t> seen;
+
+        if (seen.insert((ctx->gpr[3] & 0xFF) << 8 | (ctx->gpr[4] & 0xFF)).second) {
+            const uint32_t word = ActionTable(ctx->gpr[3], ctx->gpr[4]);
+            std::fprintf(stderr, "MH3 action table: group %u variant %u -> %08x (lr %08x)\n", unsigned(ctx->gpr[3] & 0xFF), unsigned(ctx->gpr[4] & 0xFF), word, unsigned(ctx->lr));
+        }
+    }
+#endif
     ctx->gpr[3] = ActionTableChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80140C64, MH3_EnemyActionTable, "EnemyActionTable");

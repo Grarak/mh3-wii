@@ -19,7 +19,9 @@
 #include <sstream>
 #include <filesystem>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
+#include <strings.h>
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "vita_launcher.h"
@@ -137,6 +139,8 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 Moga Woods free roam from the village; --spawn\n"
                                "                                 moves the hunter there (arena pit: 0,300,0), or\n"
                                "                                 into the area's exit to area n\n"
+                               "  --quest-monster <name|id>      (development, with --quest) replace the quest's large monster\n"
+                               "                                 (any monster in the arena pit: --quest 9004 --spawn 0,300,0)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
                                "                                 the launcher's list by its name (\"InfHP\"; with its\n"
@@ -187,6 +191,7 @@ void StartQuestBoot(int argc, char** argv) {
     using QuestCatalog::Set;
     const std::string_view id = argv[2];
     int area = -1;
+    std::string monster;
 
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
@@ -194,6 +199,8 @@ void StartQuestBoot(int argc, char** argv) {
 
         if (option == "--area" && i + 1 < argc)
             area = std::stoi(argv[++i]);
+        else if (option == "--quest-monster" && i + 1 < argc)
+            monster = argv[++i];
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
             RequestQuestExit(std::stoi(argv[++i] + 5));
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
@@ -224,6 +231,26 @@ void StartQuestBoot(int argc, char** argv) {
 
         if (!found)
             MH3_THROW(std::runtime_error("No quest " + std::string(id) + "; see --list"));
+#ifdef MH3_DEVELOPMENT
+        // --quest-monster NAME|ID: the quest's large monster replaced (any
+        // monster in the arena pit: --quest 9004 --spawn 0,300,0).
+        if (!monster.empty()) {
+            const auto names = QuestCatalog::MonsterNames();
+            uint32_t chosen = 0;
+
+            for (uint32_t m = 1; m < names.size() && !chosen; ++m)
+                if (strcasecmp(names[m].c_str(), monster.c_str()) == 0)
+                    chosen = m;
+
+            if (!chosen && std::isdigit(static_cast<unsigned char>(monster[0])))
+                chosen = uint32_t(std::stoul(monster));
+
+            if (!chosen || chosen > 255)
+                MH3_THROW(std::runtime_error("No monster " + monster));
+
+            CheckStatus(VitaLauncher::ReplaceQuestMonster(set, uint16_t(quest), uint8_t(chosen)));
+        }
+#endif
     }
 
     RequestQuestJump(quest, set, area);
