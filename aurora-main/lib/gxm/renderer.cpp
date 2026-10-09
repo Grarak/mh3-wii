@@ -746,7 +746,7 @@ void own_context(RenderContext& context) {
   info.size = sizeof(info);
 
   if (sceKernelGetThreadInfo(sceKernelGetThreadId(), &info) < 0 || !info.stack || !info.stackSize)
-    throw std::runtime_error("GXM context owner has no stack range");
+    AURORA_THROW(std::runtime_error("GXM context owner has no stack range"));
 
   context.stackLow = reinterpret_cast<uintptr_t>(info.stack);
   context.stackHigh = context.stackLow + info.stackSize;

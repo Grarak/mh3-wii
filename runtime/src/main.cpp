@@ -284,7 +284,7 @@ int main(int argc, char** argv) {
             const std::string_view value = equals == std::string_view::npos ? std::string_view() : cheat.substr(equals + 1);
 
             if (!LauncherCheats::EnableByName(name, value))
-                throw std::runtime_error("Unknown cheat or value: " + std::string(cheat));
+                MH3_THROW(std::runtime_error("Unknown cheat or value: " + std::string(cheat)));
 
             std::cerr << "MH3: cheat " << cheat << "\n";
             std::copy(argv + i + 2, argv + argc, argv + i);

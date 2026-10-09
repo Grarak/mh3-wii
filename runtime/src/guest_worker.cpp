@@ -2,6 +2,7 @@
 // and guest stack, running jobs the game thread hands it.
 #include "guest_worker.h"
 
+#include "fatal.h"
 #include "isa/ppc_isa_context.h"
 #include "memory.h"
 #include "spin_signal.h"
@@ -127,7 +128,7 @@ void Start() {
     pthread_attr_destroy(&attributes);
 
     if (failed)
-        throw std::runtime_error("Cannot start the guest worker");
+        MH3_THROW(std::runtime_error("Cannot start the guest worker"));
 
     while (!hostKnown.load(std::memory_order_acquire))
         std::this_thread::yield();
@@ -159,10 +160,10 @@ bool Available() {
 
 void Submit(const CpuContext& game, Job work, void* data) {
     if (!stackBase)
-        throw std::runtime_error("Guest worker: no guest stack");
+        MH3_THROW(std::runtime_error("Guest worker: no guest stack"));
 
     if (Pending())
-        throw std::runtime_error("Guest worker: a job is still pending");
+        MH3_THROW(std::runtime_error("Guest worker: a job is still pending"));
 
     if (!started)
         Start();
