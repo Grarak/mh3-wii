@@ -2,9 +2,11 @@
 #include "gx_panic.h"
 #include "native_graphics.h"
 #include "model_assets.h"
+#include "native_frame_statistics.h"
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
+#include "gxm/device.hpp"
 #endif
 #include "memory.h"
 #include "game_step.h"
@@ -317,6 +319,7 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height,bool load_native_a
 
 bool BeginNativeGraphicsFrame() {
     if (!initialized) throw std::runtime_error("Native frame began before graphics startup");
+    MH3_STAT(BeginNativeFrameStatistics();)
     const auto frame = aurora::gfx::current_frame() + 1;
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
         const auto path = capturePath.parent_path() /
@@ -343,7 +346,9 @@ bool NativeGraphicsFrameShouldRender() {
 }
 
 void EndNativeGraphicsFrame() {
+    MH3_STAT(const bool rendered = aurora_native_frame_should_render();)
     aurora_end_native_frame();
+    MH3_STAT(EndNativeFrameStatistics(rendered);)
     ++guestCopies;
 }
 
@@ -358,8 +363,8 @@ template void SubmitGuestGxFixed<4>(const uint8_t*);
 // Development stats default on; MH3_STATS=0 disables the once-per-second line.
 // Game speed is retrace periods the frame pacer stepped (frames * budget)
 // versus the nominal VI rate, since the game logic is fixed-step per frame;
-// game FPS counts display copies; host
-// FPS counts frames submitted to the presentation backend.
+// Logical FPS counts complete game steps. Submitted FPS counts presentation
+// requests; on GXM a separate counter measures completed display flips.
 void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nominalHz) {
 #ifdef __vita__
     ReportVitaMemory();
@@ -375,23 +380,46 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     static double lastTicks = ticks;
     static uint64_t lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
                     lastSkipped = aurora_skipped_frame_count();
+    static auto lastWaits = aurora::gfx::staging_wait_counters();
+#ifdef AURORA_GXM
+    static auto previousDisplay = aurora::gxm::display_statistics();
+#endif
     const auto now = Clock::now();
     const double seconds = std::chrono::duration<double>(now - last).count();
     if (seconds < 1.0) return;
     const uint64_t presents = aurora_presented_frame_count(), skipped = aurora_skipped_frame_count();
     const double tickHz = (ticks - lastTicks) / seconds;
     std::fprintf(stderr,
-        "MH3 stats: game speed %.1f%% (%.1f/%.1f Hz paced), game %.1f fps (display copies), host %.1f fps (presents), "
-        "%.1f fps skipped, %lld frames in flight, NI %s\n",
+        "MH3 stats: game speed %.1f%% (%.1f/%.1f Hz paced), logical %.1f fps, submitted %.1f fps, "
+        "%.1f fps skipped, logical_total=%llu, NI %s\n",
         100.0 * tickHz / nominalHz, tickHz, nominalHz, (guestCopies - lastCopies) / seconds,
         (presents - lastPresents) / seconds, (skipped - lastSkipped) / seconds,
-        static_cast<long long>(guestCopies - presents - skipped), g_mkwHostNiActive ? "set" : "clear");
+        static_cast<unsigned long long>(guestCopies.load()), g_mkwHostNiActive ? "set" : "clear");
+    const auto work = TakeNativeFrameStatistics();
+    std::fprintf(stderr, "MH3 native work: admitted render %.1f fps, frame %.3f ms avg/%.3f max, rendered %.3f ms avg/%.3f max (%llu/%llu frames)\n",
+        work.window_ns ? 1e9 * double(work.rendered_frames) / double(work.window_ns) : 0.0,
+        work.measured_frames ? work.frame_wall_ns / (1e6 * work.measured_frames) : 0.0,
+        work.frame_wall_max_ns / 1e6,
+        work.rendered_measured_frames ? work.rendered_wall_ns / (1e6 * work.rendered_measured_frames) : 0.0,
+        work.rendered_wall_max_ns / 1e6, static_cast<unsigned long long>(work.rendered_frames),
+        static_cast<unsigned long long>(work.logical_frames));
+    if (work.owner_running_available && work.window_ns)
+        std::fprintf(stderr, "MH3 native work: owner CPU %.1f%%, thread %d core %d affinity %x (scheduled execution; window %.3f s)\n",
+            1e5 * double(work.owner_running_us) / double(work.window_ns), work.owner_thread, work.owner_core,
+            unsigned(work.owner_affinity), double(work.window_ns) / 1e9);
+    else std::fprintf(stderr, "MH3 native work: owner CPU unavailable\n");
+#ifdef AURORA_GXM
+    const auto display = aurora::gxm::display_statistics();
+    std::fprintf(stderr, "MH3 native work: displayed %.1f fps, backlog %u, scenes_pending %u, display_errors %u, callback wait %.2f ms/s (core0)\n",
+        uint32_t(display.presented - previousDisplay.presented) / seconds, display.backlog, display.pending_scenes,
+        display.failures, (display.callback_wait_us - previousDisplay.callback_wait_us) / (1000.0 * seconds));
+    previousDisplay = display;
+#endif
     const auto high = aurora::gfx::staging_high_water();
     std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %llu idx %llu uniform %llu storage %llu (KiB)\n",
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
                  static_cast<unsigned long long>(high[0] >> 10), static_cast<unsigned long long>(high[2] >> 10),
                  static_cast<unsigned long long>(high[1] >> 10), static_cast<unsigned long long>(high[3] >> 10));
-    static std::array<uint64_t, 4> lastWaits{};
     const auto waits = aurora::gfx::staging_wait_counters();
     std::fprintf(stderr, "MH3 waits: GX staging %.2f ms/s (%llu waits), render total Finish %.2f ms/s (%llu calls)\n",
                  double(waits[0] - lastWaits[0]) / (1000.0 * seconds),

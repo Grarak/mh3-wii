@@ -23,6 +23,8 @@ namespace aurora::gxm {
 namespace {
 std::atomic<Device*> g_frameDevice{nullptr};
 std::atomic<uint32_t> g_displayQueued{0}, g_displayCompleted{0};
+std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
+std::atomic<uint64_t> g_displayWaitMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 bool g_commonDialogActive = false;
 struct DisplayData { void* address; };
@@ -36,10 +38,15 @@ void display_callback(const void* data) {
   frame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
   frame.width = Device::Width;
   frame.height = Device::Height;
-  sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
+  const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
   // Sony's sync object can release the old buffer only after the actual flip.
   // This wait belongs to the display callback on core 0, never the game thread.
-  sceDisplayWaitSetFrameBuf();
+  const auto started = std::chrono::steady_clock::now();
+  const int waitResult = sceDisplayWaitSetFrameBuf();
+  g_displayWaitMicros.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
+  if (setResult >= 0 && waitResult >= 0) g_displayPresented.fetch_add(1, std::memory_order_relaxed);
+  else g_displayFailures.fetch_add(1, std::memory_order_relaxed);
   g_displayCompleted.fetch_add(1, std::memory_order_release);
 }
 void* host_alloc(void*, unsigned bytes) { return std::malloc(bytes); }
@@ -92,6 +99,9 @@ Device::Device(bool /*vsync*/) {
     *m_notification = m_sceneSerial;
     g_displayQueued.store(0, std::memory_order_relaxed);
     g_displayCompleted.store(0, std::memory_order_relaxed);
+    g_displayPresented.store(0, std::memory_order_relaxed);
+    g_displayFailures.store(0, std::memory_order_relaxed);
+    g_displayWaitMicros.store(0, std::memory_order_relaxed);
     g_frameDevice.store(this, std::memory_order_release);
     m_memory.reserve(7);
     auto allocate = [&](unsigned bytes, MappedMemory::Kind kind, const char* name) -> MappedMemory& {
@@ -230,6 +240,18 @@ bool Device::frame_pending() const noexcept {
 bool gpu_frame_pending() noexcept {
   const auto* device = g_frameDevice.load(std::memory_order_acquire);
   return device && device->frame_pending();
+}
+DisplayStatistics display_statistics() noexcept {
+  DisplayStatistics result;
+  result.retired = g_displayCompleted.load(std::memory_order_acquire);
+  result.queued = g_displayQueued.load(std::memory_order_acquire);
+  result.presented = g_displayPresented.load(std::memory_order_relaxed);
+  result.failures = g_displayFailures.load(std::memory_order_relaxed);
+  result.callback_wait_us = g_displayWaitMicros.load(std::memory_order_relaxed);
+  result.backlog = result.queued - result.retired;
+  const auto* device = g_frameDevice.load(std::memory_order_acquire);
+  if (device) result.pending_scenes = device->pending_scenes();
+  return result;
 }
 void Device::flip() {
   end();

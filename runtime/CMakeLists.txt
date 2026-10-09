@@ -52,7 +52,7 @@ target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_res
   native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
 target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
 target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
-  native/mh3_model_submission.c)
+  native/mh3_model_submission.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
 target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_updates.c
   native/mh3_model_gpu_inputs.c src/model_material_prep.cpp native/mh3_model_material_prep.c)
 set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
@@ -61,6 +61,7 @@ set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model
 target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_lifetime.c)
 target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
 target_sources(MH3 PRIVATE src/native_startup_textures.cpp native/mh3_startup_textures.c)
+target_sources(MH3 PRIVATE src/native_system_fatal.cpp native/mh3_system_fatal.c)
 target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
@@ -111,7 +112,7 @@ add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
-    src/native_material.cpp src/model_gpu.cpp src/model_assets.cpp src/character_material.cpp)
+    src/native_material.cpp src/model_gpu.cpp src/model_assets.cpp src/native_frame_statistics.cpp src/character_material.cpp)
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()
@@ -127,12 +128,18 @@ if(TARGET aurora::core)
   endif()
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_render_state.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
+  set_source_files_properties(src/native_display_utilities.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_texture_state.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/model_gpu.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_material.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
   if(NOT VITA)
+    add_executable(mh3_native_frame_statistics_check
+      ../tests/native/test_native_frame_statistics.cpp src/native_frame_statistics.cpp)
+    target_include_directories(mh3_native_frame_statistics_check PRIVATE include)
+    target_compile_features(mh3_native_frame_statistics_check PRIVATE cxx_std_20)
+    add_test(NAME mh3_native_frame_statistics_check COMMAND mh3_native_frame_statistics_check)
     add_executable(mh3_native_geometry_check EXCLUDE_FROM_ALL
       "${MH3_AURORA_ROOT}/tests/native_geometry_check.cpp"
       src/native_render_state.cpp native/mh3_draw_state.c)

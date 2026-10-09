@@ -1141,6 +1141,11 @@ int RunTranslateRecursive(string[] argsTail)
                     index,
                     eligible = component.All(address =>
                         !residentTranslationExclusions.Contains(address) &&
+                        // AS registrations retain the original translated
+                        // body, but dispatch still selects the native
+                        // CpuContext ABI. Its precise register contract does
+                        // not make that boundary callable without context.
+                        !nativeGuestEffects.Contracts.ContainsKey(address) &&
                         !localGuestAbiContracts[address].HasFullSynchronizationFence &&
                         GuestStateLivenessAnalyzer.CanDeconstructWithoutContext(canonicalGuestFunctions[address]) &&
                         (!directlyCalledGuestFunctions.Contains(address) ||
