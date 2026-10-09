@@ -25,6 +25,7 @@
 // keep a precise call boundary; MH3_PORT_CHECK=Name checks a port on every
 // call (the return register, or the written memory).
 #include "abi_bridge.h"
+#include "g3d_native.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -104,6 +105,8 @@ void VecSubtract(uint32_t out, uint32_t a, uint32_t b) {
 }
 
 } // namespace
+
+uint32_t G3dNative::ResDicAtOffset14(uint32_t mdl, uint32_t index) { return DicAtOffset14(mdl, index); }
 
 // A port returning r3 from r3 (and r4), checked with RunPure.
 #ifdef MH3_DEVELOPMENT

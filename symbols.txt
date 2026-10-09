@@ -649,9 +649,9 @@
 8008c09c AnmChrRotationFormatDispatch
 8008d660 AnmChrGetAnmResult
 800606bc AnmChrBlendGetResult
-# g3d NodeTree bytecode: world matrices (0x80074180 the recursive variant), view matrices, draw opa/xlu.
+# g3d NodeTree bytecode: world matrices (0x80074180 the NodeMix skinning pass), view matrices, draw opa/xlu.
 80073830 G3dCalcWorld
-80074180 G3dCalcWorldRecursive
+80074180 G3dCalcSkinning
 80071cac G3dCalcView
 80078b00 G3dDrawOpaXlu
 800d7814 WorldMtxNodeStepMayaScale
@@ -665,6 +665,7 @@
 800be424 EffectDrawFreeStrategy
 80501ab4 MTX34RotXYZFIdx
 80501a10 MTX34MultTrans
+805019bc MTX34Scale
 804c63d0 PSMTXConcatArray
 80471590 AXSyncPBs
 # ResAnmChr key helpers (ported in runtime/src/anm_chr_keys.cpp): the hermite blend, a

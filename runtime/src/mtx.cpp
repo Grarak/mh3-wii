@@ -14,6 +14,7 @@
 // translated code and let callers keep a precise call boundary (the
 // registered bodies only read r1, r3-r6 and r13).
 #include "abi_bridge.h"
+#include "g3d_native.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -433,3 +434,36 @@ extern "C" void MH3_WorldMtxNodeStepMayaScale(CpuContext* ctx) {
                                    ctx->gpr[8]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800D7814, MH3_WorldMtxNodeStepMayaScale, "WorldMtxNodeStepMayaScale");
+
+// 0x805019BC (MTX34Scale, nw4r::math): out = m * Scale(s), each row's
+// (x, y) pair by (sx, sy) and its (z, t) pair by (sz, 1).
+namespace {
+
+void ApplyScale(uint32_t out, uint32_t m, uint32_t s) {
+    const PpcPairVec xy = LoadPair(s), z1{1.0f, LoadFloat(s + 8)};
+    const Matrix a(m);
+    for (unsigned r = 0; r < 3; ++r) {
+        StorePair(out + 16 * r, Mul(a.p[2 * r], xy));
+        StorePair(out + 16 * r + 8, Mul(a.p[2 * r + 1], z1));
+    }
+}
+
+} // namespace
+
+extern "C" void func_805019BC(CpuContext* ctx);
+static void ApplyScalePort(CpuContext* p) { ApplyScale(p->gpr[3], p->gpr[4], p->gpr[5]); }
+static void ApplyScaleChecked(uint32_t r1, uint32_t out, uint32_t m, uint32_t s) {
+    MH3_MTX_CHECK("MTX34Scale", func_805019BC, ApplyScalePort, out, 0x30, c->gpr[1] = r1, c->gpr[3] = out,
+                  c->gpr[4] = m, c->gpr[5] = s);
+    ApplyScale(out, m, s);
+}
+extern "C" void MH3_MTX34Scale(CpuContext* ctx) { ApplyScaleChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]); }
+REGISTER_NATIVE_FUNCTION_AS(0x805019BC, MH3_MTX34Scale, "MTX34Scale");
+
+void G3dNative::MtxCopy(uint32_t src, uint32_t dst) { Copy(src, dst); }
+void G3dNative::MtxConcat(uint32_t a, uint32_t b, uint32_t ab) { Concat(a, b, ab); }
+void G3dNative::MtxApplyScale(uint32_t out, uint32_t m, uint32_t s) { ApplyScale(out, m, s); }
+uint32_t G3dNative::WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale,
+                                              uint32_t flags, uint32_t node) {
+    return ::WorldMtxNodeStepMayaScale(world, worldScale, parent, scale, flags, node);
+}
