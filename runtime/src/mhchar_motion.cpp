@@ -449,6 +449,46 @@ REGISTER_NATIVE_FUNCTION_AS(0x800E19D4, MH3_MHcharRootMotion, "MHcharRootMotion"
 
 namespace {
 
+// Mode 0's last window ahead per channel (a few slots by the channel's
+// address; a slot another channel took just starts afresh): the step (its game
+// time), the frame the window started at and the frames it covered.
+struct AheadWindow {
+    uint32_t self = 0;
+    double step = -1;
+    float frame = 0, from = 0, to = 0;
+};
+
+std::array<AheadWindow, 64> aheadWindows;
+
+// Mode 0 over the advance ahead predicts the next advance from this step's
+// length, so at varying sub-tick steps the windows of consecutive steps
+// overlapped (the next step shorter: the event fired again) or left gaps (it
+// longer: the event never fired): a walking hunter's footstep dust came two or
+// three times a step on the Pi5 at ~11 steps a tick, and footsteps without
+// any between. The windows tile instead: one continues where the channel's
+// window of the step before ended (unless the frame went back: a new motion
+// or a reset); the checks of one step share its window. At equal steps the
+// window is the original's.
+void TileAhead(uint32_t self, float frame, float& from, float& to) {
+    AheadWindow& last = aheadWindows[(self * 2654435761u) >> 26];
+    const double step = GameStep::Elapsed();
+
+    if (last.self == self && last.step == step && last.frame == frame) {
+        from = last.from;
+        to = last.to;
+        return;
+    }
+
+    const bool previousStep = std::fabs(last.step - (step - GameStep::Scale())) <= 1e-6 * std::max(1.0, step);
+    const bool continues = last.self == self && previousStep && last.frame <= frame && last.to > last.frame;
+
+    if (continues)
+        from = last.to;
+
+    to = std::max(to, from);
+    last = {self, step, frame, from, to};
+}
+
 // MHchar frame check (0x800E1740; enemies call it through em_frame_check
 // 0x8012F980, the hunter through Pl_frame_check 0x8026A378): whether channel
 // 0's motion meets `frame` (f1) over an advance from `from` to `to`, by mode
@@ -496,6 +536,13 @@ uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, doub
 
         to = next;
         reached = passedEnd ? double(last) : to;
+
+        if (mode == 0 && !wrapped && next > from) {
+            float start = float(from), stop = next;
+            TileAhead(self, float(from), start, stop);
+            from = start;
+            to = stop;
+        }
     } else {
         from = F32(self + kPrevFrame);
         to = reached = F32(self + kFrame);
