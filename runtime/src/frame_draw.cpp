@@ -9,11 +9,25 @@
 // 11. Then the UI sprites in front and 0x80048828. MH3_PROFILE=split times
 // the 2D layers and the UI parts (the layers and ui figures of the MH3 draw
 // split line); MH3_PORT_CHECK=DrawFrame checks the port.
+//
+// The 2D layers (0x8004925C, DrawLayers(first, end)): each layer is a list
+// of draw entries (the table at 0x8066C3B8; an entry's function at +0, an
+// active byte at +4, its argument byte at +5, its data from +8, the next
+// entry at +0x28), and the active ones' functions run as function(argument,
+// data); layers 8 and 9 flush the fonts first. With MH3_PROFILE=split the
+// MH3 layer split line shows the time of each entry function and of the
+// font flush (0x8005CA08).
 #include "abi_bridge.h"
 #include "frame_split.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
+#ifdef MH3_DEVELOPMENT
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <string>
+#endif
 
 namespace {
 
@@ -45,6 +59,67 @@ enum : uint32_t {
     CalcRootView = 0x80082D40,
     EndFrameDraw = 0x80048828,
 };
+
+constexpr uint32_t kLayerLists = 0x8066C3B8;
+enum : uint32_t {
+    kEntryActive = 0x04, // u8: 1 when drawn
+    kEntryArgument = 0x05, // u8
+    kEntryData = 0x08,
+    kEntryNext = 0x28,
+};
+
+constexpr uint32_t FontFlush = 0x8005CA08;
+#ifdef MH3_DEVELOPMENT
+// Per entry function: its time and calls (MH3 layer split line).
+struct LayerTime {
+    uint32_t function = 0, calls = 0;
+    double ms = 0;
+};
+
+std::array<LayerTime, 48> layerTimes{};
+#endif
+
+// A layer's call: the font flush or an entry function.
+void Timed(GuestCall& call, uint32_t function, std::initializer_list<uint32_t> arguments) {
+#ifdef MH3_DEVELOPMENT
+    const bool timed = mh3SplitDetail;
+    const auto start = timed ? MH3SplitClock::now() : MH3SplitClock::time_point{};
+#endif
+    call(function, arguments);
+#ifdef MH3_DEVELOPMENT
+    if (!timed)
+        return;
+
+    const double ms = std::chrono::duration<double, std::milli>(MH3SplitClock::now() - start).count();
+
+    for (LayerTime& t : layerTimes) {
+        if (t.function == function || t.function == 0) {
+            t.function = function;
+            t.ms += ms;
+            ++t.calls;
+            break;
+        }
+    }
+#endif
+}
+
+void DrawLayersPort(CpuContext* cpu) {
+    const int32_t first = int32_t(cpu->gpr[3]), end = int32_t(cpu->gpr[4]);
+    GuestFrame frame(cpu, 0x20);
+    GuestCall call{cpu};
+
+    for (int32_t layer = first; layer < end; ++layer) {
+        uint32_t entry = Memory::Read32(kLayerLists + 4 * uint32_t(layer));
+
+        if (uint32_t(layer - 8) <= 1)
+            Timed(call, FontFlush, {});
+
+        for (; entry; entry = Memory::Read32(entry + kEntryNext)) {
+            if (Memory::Read8(entry + kEntryActive) == 1)
+                Timed(call, Memory::Read32(entry), {Memory::Read8(entry + kEntryArgument), entry + kEntryData});
+        }
+    }
+}
 
 void Layers(GuestCall& call, uint32_t first, uint32_t end) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_LAYERS);
@@ -108,3 +183,29 @@ extern "C" void MH3_DrawFrame(CpuContext* cpu) {
     PortCheck::Call(cpu, "DrawFrame", func_80049308, DrawFrame);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80049308, MH3_DrawFrame, "DrawFrame");
+
+extern "C" void func_8004925C(CpuContext* cpu);
+extern "C" void MH3_DrawLayers(CpuContext* cpu) {
+    PortCheck::Call(cpu, "DrawLayers", func_8004925C, DrawLayersPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8004925C, MH3_DrawLayers, "DrawLayers");
+
+#ifdef MH3_DEVELOPMENT
+void MH3PrintLayerSplit(unsigned frames) {
+    auto sorted = layerTimes;
+    std::sort(sorted.begin(), sorted.end(), [](const LayerTime& a, const LayerTime& b) { return a.ms > b.ms; });
+    std::string line = "MH3 layer split (ms/frame, calls/frame):";
+    char part[64];
+
+    for (const LayerTime& t : sorted) {
+        if (!t.function || !frames)
+            break;
+
+        std::snprintf(part, sizeof part, " %08x %.2f (%.1f)", t.function, t.ms / frames, double(t.calls) / frames);
+        line += part;
+    }
+
+    std::printf("%s\n", line.c_str());
+    layerTimes = {};
+}
+#endif

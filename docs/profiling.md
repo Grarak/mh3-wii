@@ -35,7 +35,9 @@ harness records as `[TTY0]` lines in `RUN/console.txt`.
 
 Mean packet wall time is not CPU time; use the `CPU` lines for scheduled
 execution and a profile for hotspots. `MH3_PROFILE=split` adds per-draw split
-timers (`MH3 model split`): two clock reads per draw. The split timers read
+timers (`MH3 model split`): two clock reads per draw, and the `MH3 g3d split`
+(scene processes by task), `MH3 field split` (the field update's calls) and
+`MH3 layer split` (each 2D layer entry function, the HUD's parts) lines. The split timers read
 `sceKernelGetProcessTimeWide` on the Vita. Avoid `steady_clock` in hot code
 there: it is a `gettimeofday` system call. The startup line
 `MH3 Vita clock read cost` reports the clocks: `steady_clock` about 6 µs,
