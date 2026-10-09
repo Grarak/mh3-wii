@@ -132,6 +132,7 @@ merged or removed in a second pass.
 | `MH3_STEP_SCALE` | `s`: every variable step is s ticks long | development | remove |
 | `MH3_RAM_DUMP` | `FIRST,COUNT`: MEM1+MEM2 to `mh3-ram-<frame>.bin` after COUNT frames from FIRST | development | into `MH3_CAPTURE` |
 | `MH3_TRACE_PLAYER` | player 0's position and motion by game time | development | remove |
+| `MH3_TRACE_INPUT` | once per tick of game time: the sticks and game keys as the game read them, the field camera's yaw and pitch, player 0's position and facing, steps and key repeats since the last line ([variable step](variable-step.md#7-input-from-the-host-to-the-game)) | development | with `MH3_TRACE_PLAYER` into one trace tool |
 | `MH3_RENDER_PREP` | model preparation: `0` game thread, `1` (default) render thread, `2` both, checked | all (`2`: development) | `2` into `MH3_VERIFY` |
 | `MH3_DRAW_TABLE` | draw items: `1` (default) through the model's draw table, `0` by address, `2` both, compared | all (`2`: development) | `2` into `MH3_VERIFY` |
 | `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file | all | keep or remove after its A/B |

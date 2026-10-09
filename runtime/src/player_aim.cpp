@@ -16,7 +16,7 @@
 // step that is the amount: the original.
 //
 // Unverified in play: checked against the original at the stock step through
-// the player port fuzz only (MH3_PORT_FUZZ=P:0x8027A5E0, 64 states), never
+// the player port fuzz only (MH3_PORT_CHECK=P:0x8027A5E0, 64 states), never
 // played with a bowgun or at a variable step.
 #include "game_step.h"
 #include "guest_call.h"
