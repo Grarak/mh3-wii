@@ -242,10 +242,11 @@ static void movie(void) {
     inherited.cull_mode = 2;
     inherited.indirect_count = 1;
     mh3_effect_movie_material(&inherited, &m);
-    assert(m.cull_mode == 2 && m.indirect_count == 1 && m.tev_count == 4);
-    assert(m.texgen[0].values[MH3_TEXGEN_PROJECTION] == 0 && m.texgen[1].values[MH3_TEXGEN_PROJECTION] == 0);
-    assert(m.color[1].rgba[0] == -90 && m.color[1].rgba[2] == -114 && m.konst[1].rgba[3] == 182);
-    assert(m.tev[0].texture_map == 1 && m.tev[1].texture_map == 2 && m.tev[2].texture_map == 0 && m.tev[3].color.a == 1);
+    assert(m.cull_mode == 2 && m.indirect_count == 1 && m.tev_count == 1 && m.texgen_count == 1);
+    assert(m.texgen[0].values[MH3_TEXGEN_PROJECTION] == 0 && m.texgen[0].values[MH3_TEXGEN_SOURCE_ROW] == 5);
+    /* colour = the converted YUV texture (map 0), alpha = 0 */
+    assert(m.tev[0].texture_map == 0 && m.tev[0].texture_coordinate == 0 && m.tev[0].color.b == 8 && m.tev[0].color.c == 12);
+    assert(m.tev[0].color.a == 15 && m.tev[0].color.d == 15 && m.tev[0].alpha.d == 7 && m.pixel.values[MH3_PIXEL_ALPHA_WRITE] == 0);
     mh3_effect_movie_restore(&m, &m);
     assert(m.tev_count == 1 && m.texgen_count == 1 && m.pixel.values[MH3_PIXEL_ALPHA_WRITE] == 0 && m.pixel.values[MH3_PIXEL_LOGIC_OPERATION] == 15);
 }

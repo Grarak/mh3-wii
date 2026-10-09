@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "../native/mh3_effect_draw.h"
 #include "../native/mh3_particle_draw_state.h"
+#include <aurora/native_texture.hpp>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -591,20 +592,23 @@ extern "C" void MH3_NativeMovieRestore(CpuContext *) {
     SetNativeRaster(raster);
 }
 extern "C" void MH3_NativeMoviePlanes(CpuContext *c) {
-    const uint32_t addresses[3] = {c->gpr[3], c->gpr[4], c->gpr[5]};
-    uint32_t width = uint16_t(c->gpr[8]), height = uint16_t(c->gpr[9]);
-    for (uint32_t i = 0; i < 3; i++) {
-        mh3_native_texture_binding binding{};
-        binding.source.payload_address = binding.source.resource_address = addresses[i];
-        binding.source.format = 1;
-        binding.source.width = i ? width / 2 : width;
-        binding.source.height = i ? height / 2 : height;
-        binding.source.levels = 1;
-        binding.source.mutable_source = 1;
-        binding.source.generation = movie_generation;
-        binding.map_id = i;
-        BindNativeTexture(binding);
-    }
+    // The original binds the Y, U and V I8 planes to maps 0..2 and converts
+    // them in four TEV stages. The decoder's planes are contiguous (Y, U, V):
+    // bind them as one YUV texture, converted to RGB when it is created.
+    const uint32_t y = c->gpr[3], u = c->gpr[4], v = c->gpr[5];
+    const uint32_t width = uint16_t(c->gpr[8]), height = uint16_t(c->gpr[9]);
+    if (u != y + width * height || v != u + width * height / 4)
+        throw std::runtime_error("Movie planes are not contiguous");
+    mh3_native_texture_binding binding{};
+    binding.source.payload_address = binding.source.resource_address = y;
+    binding.source.format = aurora::NativeTextureFormatYuv420;
+    binding.source.width = width;
+    binding.source.height = height;
+    binding.source.levels = 1;
+    binding.source.mutable_source = 1;
+    binding.source.generation = movie_generation;
+    binding.map_id = 0;
+    BindNativeTexture(binding);
     mh3_effect_quad q;
     int16_t draw_width = int16_t(c->gpr[10]), draw_height = int16_t(FlatRead32(c->gpr[1] + 8));
     mh3_effect_movie_quad(int16_t(c->gpr[6]), int16_t(c->gpr[7]), draw_width, draw_height, int16_t(FlatRead32(0x806d6b9c)), &q);

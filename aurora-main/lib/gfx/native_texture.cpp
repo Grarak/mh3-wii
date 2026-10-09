@@ -5,10 +5,12 @@
 #include "texture_convert.hpp"
 #include "native_texture_layout.hpp"
 #include "../gxm/sampler_bias.hpp"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <tuple>
 #include <stdexcept>
 
@@ -84,11 +86,71 @@ size_t offline_allocation(const gl::NativeTextureInfo& info) {
   return (bytes + 63) & ~size_t(63);
 #endif
 }
+// NativeTextureFormatYuv420 -> linear RGBA8. The THP player's four TEV stages
+// (C0 = (-90, 0, -114, 135), K0 = (0, 0, 226, 88), K1 = (179, 0, 0, 182),
+// K2 = (255, 0, 255)) compute, with GX's konst weights (k + (k >> 7)) / 256:
+//   R = Y + 2 (180 V / 256 - 90)
+//   G = Y + 135 - (88 U + 183 V) / 256     (alpha path, selected by K2)
+//   B = Y + 2 (227 U / 256 - 114)
+// each clamped to 0..255. A 2x2 block of Y shares one U and V sample.
+void convert_yuv420(const uint8_t* planes, uint32_t width, uint32_t height, uint8_t* out) {
+  struct Tables {
+    int16_t red[256], green_u[256], green_v[256], blue[256];
+    uint8_t clamp[1024];
+  };
+  static const Tables tables = [] {
+    Tables t{};
+    for (int i = 0; i < 256; ++i) {
+      t.red[i] = int16_t(2 * ((i * 180 + 128) >> 8) - 180);
+      t.green_u[i] = int16_t((i * 88 + 128) >> 8);
+      t.green_v[i] = int16_t((i * 183 + 128) >> 8);
+      t.blue[i] = int16_t(2 * ((i * 227 + 128) >> 8) - 228);
+    }
+    for (int i = 0; i < 1024; ++i)
+      t.clamp[i] = uint8_t(std::clamp(i - 384, 0, 255));
+    return t;
+  }();
+  const uint8_t* clamp = tables.clamp + 384;
+  const uint32_t chromaWidth = width / 2, lumaTiles = width / 8, chromaTiles = chromaWidth / 8;
+  const uint8_t* luma = planes;
+  const uint8_t* blue = planes + size_t(width) * height;
+  const uint8_t* red = blue + size_t(chromaWidth) * (height / 2);
+  for (uint32_t y = 0; y < height; ++y) {
+    // I8 tiles are 8x4 texels, 32 bytes, row-major across the plane.
+    const uint8_t* lumaRow = luma + size_t(y >> 2) * lumaTiles * 32 + (y & 3) * 8;
+    const uint32_t cy = y >> 1;
+    const size_t chromaRow = size_t(cy >> 2) * chromaTiles * 32 + (cy & 3) * 8;
+    uint8_t* row = out + size_t(y) * width * 4;
+    for (uint32_t tile = 0; tile < lumaTiles; ++tile) {
+      const uint8_t* l = lumaRow + tile * 32;
+      // Eight luma texels use four chroma texels: half of a chroma tile row.
+      const size_t c = chromaRow + (tile >> 1) * 32 + (tile & 1) * 4;
+      for (uint32_t i = 0; i < 4; ++i) {
+        const int u = blue[c + i], v = red[c + i];
+        const int r = tables.red[v], g = 135 - tables.green_u[u] - tables.green_v[v], b = tables.blue[u];
+        for (uint32_t k = 0; k < 2; ++k) {
+          const int luminance = l[2 * i + k];
+          uint8_t* p = row + (tile * 8 + 2 * i + k) * 4;
+          p[0] = clamp[luminance + r];
+          p[1] = clamp[luminance + g];
+          p[2] = clamp[luminance + b];
+          p[3] = 255;
+        }
+      }
+    }
+  }
+}
 } // namespace
 
 size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t height, uint32_t levels) {
   if (!width || !height || width > 4096 || height > 4096 || !levels || levels > std::bit_width(std::max(width, height)))
     throw std::runtime_error("Invalid native texture dimensions");
+  if (format == NativeTextureFormatYuv420) {
+    // Whole 8x4 I8 tiles in all three planes.
+    if (width % 16 || height % 8 || levels != 1)
+      throw std::runtime_error("Invalid native YUV texture dimensions");
+    return size_t(width) * height * 3 / 2;
+  }
   uint32_t tileWidth = 4, tileHeight = 4, tileBytes = 32;
   switch (format) {
   case 0:
@@ -247,6 +309,17 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     if (source.bytes.size() < sourceBytes)
       throw std::runtime_error("Native texture source is truncated");
     make_room(allocated);
+    if (source.format == NativeTextureFormatYuv420) {
+      // One movie frame per generation.
+      const std::unique_ptr<uint8_t[]> rgba(new uint8_t[size_t(source.width) * source.height * 4]);
+      convert_yuv420(source.bytes.data(), source.width, source.height, rgba.get());
+      texture = gl::create_texture(source.width, source.height, 1, gl::Format::RGBA8, "Native movie frame");
+      gl::upload_texture(*texture, 0, 0, 0, source.width, source.height, rgba.get(), source.width * 4);
+      cache.emplace(key, Entry{texture, allocated, ++serial});
+      residentBytes += allocated;
+      publish(texture);
+      return;
+    }
     gfx::ConvertedTexture converted;
     if (indexed) {
       if (source.palette_format > 2 || !source.palette_entries || source.palette_entries > 16384 || source.palette.size() < size_t(source.palette_entries) * 2)

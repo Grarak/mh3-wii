@@ -23,6 +23,12 @@ struct NativeTextureSampler {
   float min_lod = 0, max_lod = 0;
   float lod_bias = 0;
 };
+// Not a GX format: a THP movie frame, three GX I8 planes stored contiguously
+// (Y width x height, then U and V at half width and height; width a multiple
+// of 16, height of 8, one level). Bound as one RGBA texture: the planes are
+// converted with the THP player's YUV->RGB TEV matrix when the texture is
+// created, since the fixed native shading programs cannot express it.
+inline constexpr uint32_t NativeTextureFormatYuv420 = 0x1000;
 size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t height, uint32_t levels);
 void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampler);
 // Bias left for the shader after native sampler bias. Read on the graphics

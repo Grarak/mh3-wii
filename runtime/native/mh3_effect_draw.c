@@ -342,19 +342,20 @@ static void movie_stage(mh3_pack_tev_stage *s, uint8_t coord, uint8_t map, mh3_p
     s->konst_color = kc;
     s->konst_alpha = ka;
 }
+/* The original (0x804353E0) converts the Y, U and V planes (maps 0..2) to RGB
+ * in four TEV stages with C0 = (-90, 0, -114, 135), K0 = (0, 0, 226, 88),
+ * K1 = (179, 0, 0, 182) and K2 = (255, 0, 255, 128); the green channel comes
+ * from the alpha path. The fixed native shading programs cannot express that,
+ * so the planes are bound as one YUV texture (NativeTextureFormatYuv420)
+ * converted with the same matrix, and one stage passes it through:
+ * colour = texture, alpha = 0 (as the last original stage; alpha is not
+ * written). */
 void mh3_effect_movie_material(const mh3_native_material_state *inherited, mh3_native_material_state *out) {
     mh3_native_material_state m = *inherited;
-    m.texgen_count = 2;
+    m.texgen_count = 1;
     m.channel_count = 0;
-    m.tev_count = 4;
-    movie_stage(&m.tev[0], 1, 1, (mh3_pack_tev_pass){15, 8, 14, 2, 0, 0, 0, 0, 0}, (mh3_pack_tev_pass){7, 4, 6, 1, 1, 0, 0, 0, 0}, 12, 28);
-    movie_stage(&m.tev[1], 1, 2, (mh3_pack_tev_pass){15, 8, 14, 0, 0, 0, 1, 0, 0}, (mh3_pack_tev_pass){7, 4, 6, 0, 1, 0, 0, 0, 0}, 13, 29);
-    movie_stage(&m.tev[2], 0, 0, (mh3_pack_tev_pass){15, 8, 12, 0, 0, 0, 0, 1, 0}, (mh3_pack_tev_pass){4, 7, 7, 0, 0, 0, 0, 1, 0}, m.tev[2].konst_color, m.tev[2].konst_alpha);
-    movie_stage(&m.tev[3], 255, 255, (mh3_pack_tev_pass){1, 0, 14, 15, 0, 0, 0, 1, 0}, (mh3_pack_tev_pass){7, 7, 7, 7, 0, 0, 0, 1, 0}, 14, m.tev[3].konst_alpha);
-    m.color[1] = (mh3_pack_tev_color){15, {-90, 0, -114, 135}};
-    m.konst[0] = (mh3_pack_tev_color){15, {0, 0, 226, 88}};
-    m.konst[1] = (mh3_pack_tev_color){15, {179, 0, 0, 182}};
-    m.konst[2] = (mh3_pack_tev_color){15, {255, 0, 255, 128}};
+    m.tev_count = 1;
+    movie_stage(&m.tev[0], 0, 0, (mh3_pack_tev_pass){15, 8, 12, 15, 0, 0, 0, 1, 0}, (mh3_pack_tev_pass){7, 7, 7, 7, 0, 0, 0, 1, 0}, m.tev[0].konst_color, m.tev[0].konst_alpha);
     m.swaps[0] = (mh3_pack_swap_table){15, {0, 1, 2, 3}};
     pixel(&m.pixel, MH3_PIXEL_DEPTH_TEST, 1);
     pixel(&m.pixel, MH3_PIXEL_DEPTH_COMPARE, 7);
