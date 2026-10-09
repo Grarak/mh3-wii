@@ -766,6 +766,13 @@ struct BindGroupRanges {
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept;
 gfx::PipelinePtr build_pipeline(const PipelineConfig& config, gl::ProgramPtr program) noexcept;
 gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept;
+// Pure material equation generator. Native mode has direct vertex attributes
+// and normalized texture coordinates; it does not consume GX state or bytes.
+// Each set bit certifies that texture unit's sampler LOD bias is exactly zero.
+// Keep dynamic bias for all units by default; callers must include this mask
+// in their program-cache identity when specializing native materials.
+gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices=false,
+                                        u8 nativeZeroLodBiasMask=0) noexcept;
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept;
 void notify_copy_texture_created() noexcept;
 

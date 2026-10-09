@@ -148,6 +148,9 @@ struct ProgramDesc {
   std::vector<std::pair<std::string, int>> samplers;
   // Uniform block name -> binding point.
   std::vector<std::pair<std::string, int>> blocks;
+  // Direct interleaved AuroraNativeMaterialVertex attributes, already projected
+  // and with texture coordinates prepared by the native application producer.
+  bool nativeMaterialVertices = false;
 };
 
 class Program {
@@ -231,6 +234,8 @@ void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances)
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted
 // CDRAM allocation directly; GLES uploads the host allocation into VBOs.
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept;
+void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
+                                  const AuroraNativeUniforms& uniforms) noexcept;
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
 
 // Render thread only: blit `source` into the window with the letterboxed

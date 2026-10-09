@@ -65,6 +65,7 @@ struct State {
 State g_state;
 ProgramPtr g_nativePrograms[2];
 GLuint g_nativeVao = 0, g_nativeVertexBuffer = 0, g_nativeIndexBuffer = 0;
+GLuint g_materialVao=0,g_materialVertexBuffer=0,g_materialIndexBuffer=0,g_materialUniformBuffer=0;
 
 struct FramebufferKey {
   GLuint color;
@@ -207,6 +208,11 @@ void shutdown() noexcept {
     if (g_nativeVertexBuffer) glDeleteBuffers(1, &g_nativeVertexBuffer);
     if (g_nativeIndexBuffer) glDeleteBuffers(1, &g_nativeIndexBuffer);
     g_nativeVao = g_nativeVertexBuffer = g_nativeIndexBuffer = 0;
+    if(g_materialVao) glDeleteVertexArrays(1,&g_materialVao);
+    if(g_materialVertexBuffer) glDeleteBuffers(1,&g_materialVertexBuffer);
+    if(g_materialIndexBuffer) glDeleteBuffers(1,&g_materialIndexBuffer);
+    if(g_materialUniformBuffer) glDeleteBuffers(1,&g_materialUniformBuffer);
+    g_materialVao=g_materialVertexBuffer=g_materialIndexBuffer=g_materialUniformBuffer=0;
     for (auto& [_, fbo] : g_framebuffers) {
       glDeleteFramebuffers(1, &fbo);
     }
@@ -794,6 +800,35 @@ void main() { native_output = native_color; }
                geometry.indices, GL_STREAM_DRAW);
   glDrawElements(GL_TRIANGLES, geometry.index_count, GL_UNSIGNED_SHORT, nullptr);
   // The recorded/native generic draw VAO has its own element-buffer binding.
+  glBindVertexArray(g_state.emptyVao);
+}
+void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
+                                  const AuroraNativeUniforms& uniforms) noexcept {
+  if(!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+  use_program(program);
+  if(!g_materialVao) {
+    glGenVertexArrays(1,&g_materialVao);
+    glGenBuffers(1,&g_materialVertexBuffer);glGenBuffers(1,&g_materialIndexBuffer);glGenBuffers(1,&g_materialUniformBuffer);
+    glBindVertexArray(g_materialVao);glBindBuffer(GL_ARRAY_BUFFER,g_materialVertexBuffer);
+    const auto attribute=[](unsigned location,int components,GLenum type,bool normalized,size_t offset) {
+      glVertexAttribPointer(location,components,type,normalized,sizeof(AuroraNativeMaterialVertex),reinterpret_cast<void*>(offset));
+      glEnableVertexAttribArray(location);
+    };
+    attribute(0,4,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,position));
+    attribute(1,3,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,view_position));
+    attribute(2,3,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,normal));
+    attribute(3,4,GL_UNSIGNED_BYTE,true,offsetof(AuroraNativeMaterialVertex,color));
+    attribute(4,4,GL_UNSIGNED_BYTE,true,offsetof(AuroraNativeMaterialVertex,color)+4);
+    for(unsigned i=0;i<8;++i) attribute(i+5,3,GL_FLOAT,false,offsetof(AuroraNativeMaterialVertex,texcoord)+i*12);
+  } else glBindVertexArray(g_materialVao);
+  glBindBuffer(GL_ARRAY_BUFFER,g_materialVertexBuffer);
+  glBufferData(GL_ARRAY_BUFFER,size_t(geometry.vertex_count)*sizeof(*geometry.vertices),geometry.vertices,GL_STREAM_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,g_materialIndexBuffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,size_t(geometry.index_count)*2,geometry.indices,GL_STREAM_DRAW);
+  glBindBuffer(GL_UNIFORM_BUFFER,g_materialUniformBuffer);
+  glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
+  bind_uniform_range(0,g_materialUniformBuffer,0,uniforms.size);
+  glDrawElements(GL_TRIANGLES,geometry.index_count,GL_UNSIGNED_SHORT,nullptr);
   glBindVertexArray(g_state.emptyVao);
 }
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {

@@ -9,7 +9,11 @@
 namespace {
 aurora::Module Log("aurora::native_geometry");
 uint32_t frame = UINT32_MAX;
-size_t vertexCursor = 0, indexCursor = 0;
+size_t vertexCursor = 0, indexCursor = 0, uniformCursor = 0;
+void reset_frame() {
+  const auto current=aurora::gfx::current_frame();
+  if(current!=frame) {frame=current;vertexCursor=indexCursor=uniformCursor=0;}
+}
 
 template <class Geometry>
 int allocate(uint32_t vertices, uint32_t indices, Geometry* out) {
@@ -19,7 +23,7 @@ int allocate(uint32_t vertices, uint32_t indices, Geometry* out) {
   if (!aurora::gl::on_render_thread()) Log.fatal("Geometry allocated outside game thread");
   if (vertices > 65536) return 0;
   const auto current = aurora::gfx::current_frame();
-  if (current != frame) { frame = current; vertexCursor = indexCursor = 0; }
+  reset_frame();
   const auto memory = aurora::native_draw_memory();
   const size_t start = (vertexCursor + 15) & ~size_t(15);
   const uint64_t vertexBytes = uint64_t(vertices) * sizeof(*out->vertices);
@@ -43,6 +47,39 @@ extern "C" int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indic
 extern "C" int aurora_allocate_native_material_geometry(uint32_t vertices, uint32_t indices,
                                                         AuroraNativeMaterialGeometry* out) {
   return allocate(vertices, indices, out);
+}
+
+extern "C" int aurora_allocate_native_uniforms(uint32_t bytes,AuroraNativeUniforms* out) {
+  if(!out) return 0;
+  *out={};
+  if(!bytes || !aurora_native_frame_should_render()) return 0;
+  if(!aurora::gl::on_render_thread()) Log.fatal("Uniforms allocated outside game thread");
+  reset_frame();
+  const auto memory=aurora::native_draw_memory();
+  const size_t start=(uniformCursor+255)&~size_t(255);
+  if(start>memory.uniforms.size() || bytes>memory.uniforms.size()-start) return 0;
+  *out={memory.uniforms.data()+start,uint32_t(start),bytes,frame,aurora_native_frame_slot()};
+  uniformCursor=start+bytes;
+  return 1;
+}
+
+extern "C" void aurora_submit_native_material_geometry(const AuroraNativeMaterialGeometry* geometry,
+                                                        uint32_t program,const AuroraNativeUniforms* uniforms) {
+  if(!aurora_native_frame_should_render()) return;
+  if(!aurora::gl::on_render_thread()) Log.fatal("Material submitted outside game thread");
+  const auto memory=aurora::native_draw_memory();
+  const auto valid=[](const void* pointer,uint64_t size,const auto& span) {
+    const auto at=reinterpret_cast<uintptr_t>(pointer),base=reinterpret_cast<uintptr_t>(span.data());
+    return at>=base && at-base<=span.size() && size<=span.size()-(at-base);
+  };
+  if(!geometry || !uniforms || !program || geometry->frame!=aurora::gfx::current_frame() ||
+     geometry->slot!=aurora_native_frame_slot() || uniforms->frame!=geometry->frame || uniforms->slot!=geometry->slot ||
+     !valid(geometry->vertices,uint64_t(geometry->vertex_count)*sizeof(*geometry->vertices),memory.vertices) ||
+     !valid(geometry->indices,uint64_t(geometry->index_count)*2,memory.indices) ||
+     !valid(uniforms->data,uniforms->size,memory.uniforms) ||
+     reinterpret_cast<uintptr_t>(uniforms->data)-reinterpret_cast<uintptr_t>(memory.uniforms.data())!=uniforms->offset)
+    Log.fatal("Native material exceeds its owning frame memory");
+  aurora::gl::draw_native_material_geometry(*geometry,program,*uniforms);
 }
 
 extern "C" void aurora_submit_native_geometry(const AuroraNativeGeometry* geometry,

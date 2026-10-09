@@ -45,6 +45,7 @@ struct NativeProgram {
   std::vector<std::pair<std::string, int>> samplers;
   std::map<std::string, std::array<float, 4>> uniforms;
   bool buffer0 = false;
+  bool nativeMaterialVertices = false;
 };
 struct State {
   RasterState raster;
@@ -474,10 +475,29 @@ GLuint Program::get() noexcept {
     if (m_program) return m_program;
     auto& r = renderer();
     NativeProgram native;
+    native.nativeMaterialVertices=m_desc.nativeMaterialVertices;
     auto& shared = r.patchedPrograms[{m_vertexHash, m_fragmentHash}];
     native.program = shared.lock();
     if (!native.program) {
-      native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
+      if(m_desc.nativeMaterialVertices) {
+        constexpr uint16_t stride=sizeof(AuroraNativeMaterialVertex);
+        const VertexInput inputs[]{
+          {"a_native_position",SCE_GXM_ATTRIBUTE_FORMAT_F32,4,0,stride,0},
+          {"a_native_view_position",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,16,stride,0},
+          {"a_native_normal",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,28,stride,0},
+          {"a_native_color0",SCE_GXM_ATTRIBUTE_FORMAT_U8N,4,136,stride,0},
+          {"a_native_color1",SCE_GXM_ATTRIBUTE_FORMAT_U8N,4,140,stride,0},
+          {"a_native_tex0",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,40,stride,0},
+          {"a_native_tex1",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,52,stride,0},
+          {"a_native_tex2",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,64,stride,0},
+          {"a_native_tex3",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,76,stride,0},
+          {"a_native_tex4",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,88,stride,0},
+          {"a_native_tex5",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,100,stride,0},
+          {"a_native_tex6",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,112,stride,0},
+          {"a_native_tex7",SCE_GXM_ATTRIBUTE_FORMAT_F32,3,124,stride,0}};
+        static_assert(stride==144 && offsetof(AuroraNativeMaterialVertex,color)==136);
+        native.program=std::make_shared<PatchedProgram>(r.device,m_vertexHash,m_fragmentHash,SCE_GXM_INDEX_FORMAT_U16,inputs);
+      } else native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
       shared = native.program;
     }
     if (m_usesAlphaReferences) native.uniforms.emplace("aur_alpha_refs", m_alphaReferences);
@@ -597,6 +617,20 @@ void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) n
     check(sceGxmSetVertexStream(r.device.context(), 0, geometry.vertices), "bind native vertex attributes");
     check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16,
                     geometry.indices, geometry.index_count), "draw native triangles");
+  });
+}
+void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,GLuint program,
+                                  const AuroraNativeUniforms& uniforms) noexcept {
+  if(!aurora::native_frame_drawing_allowed() || !geometry.index_count) return;
+  guarded([&] {
+    auto& r=renderer();
+    if(!r.programs.at(program).nativeMaterialVertices)
+      throw std::runtime_error("Native material draw has a different vertex layout");
+    r.state.uniformOffset=uniforms.offset;r.state.uniformBytes=uniforms.size;r.state.uniformValid=true;
+    r.prepare(program);
+    check(sceGxmSetVertexStream(r.device.context(),0,geometry.vertices),"bind native material attributes");
+    check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
+                    geometry.indices,geometry.index_count),"draw native material triangles");
   });
 }
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {

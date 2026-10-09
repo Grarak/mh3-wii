@@ -937,7 +937,8 @@ static std::string rename_members(std::string s, std::string_view from0, std::st
   return replace_token(replace_token(std::move(s), from0, to0), from1, to1);
 }
 
-gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept {
+gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices,
+                                        u8 nativeZeroLodBiasMask) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
@@ -1059,6 +1060,16 @@ gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept {
       "\n    vec3 nrm_tmp = vec4f({}, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];"
       "\n    vec3 mv_nrm = select(nrm_tmp, normalize(nrm_tmp), dot(nrm_tmp, nrm_tmp) > 1e-10);",
       vtx_attr(config, GX_VA_NRM));
+  if(nativeVertices) {
+    CHECK(config.lineMode==0,"Native geometry already expands lines and points");
+    vtxInAttrs.clear();
+    vtxXfrAttrsPre =
+      "\n    vec3 mv_pos = native_view_position;"
+      "\n    vec3 mv_nrm = native_normal;"
+      "\n    vec4 in_clr0 = native_color0;"
+      "\n    vec4 in_clr1 = native_color1;"
+      "\n    out.pos = vec4(native_position.xy, 0.5 * (native_position.z + native_position.w), native_position.w);";
+  }
 
   uniBufAttrs += "\n    mat4 proj;";
   // Only the matrix slots this shader can read are uploaded, in compacted order; see UniformMatrixLayout.
@@ -1217,6 +1228,18 @@ gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept {
       vtxOutAttrs += varying("vec3", fmt::format("tex{}_uvw", i));
     } else {
       vtxOutAttrs += varying("vec2", fmt::format("tex{}_uv", i));
+    }
+    if(nativeVertices) {
+      if(tcg.type==GX_TG_MTX3x4) {
+        vtxXfrAttrs+=fmt::format("\n    out.tex{0}_uvw = native_tex{0};",i);
+        fragmentFnPre+=fmt::format(
+          "\n    vec2 tex{0}_uv = in.tex{0}_uvw.xy;"
+          "\n    if(in.tex{0}_uvw.z != 0.0) tex{0}_uv /= in.tex{0}_uvw.z;",i);
+      } else {
+        vtxXfrAttrs+=fmt::format("\n    out.tex{0}_uv = native_tex{0}.xy;",i);
+        fragmentFnPre+=fmt::format("\n    vec2 tex{0}_uv = in.tex{0}_uv;",i);
+      }
+      continue;
     }
     if (tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
       vtxXfrAttrs += fmt::format("\n    vec4 tc{} = vec4f({}, 1.0, 1.0);", i,
@@ -1508,13 +1531,22 @@ gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept {
     }
     if (uvIn.empty()) {
       // No indirect texturing
-      const auto fixedUv = fixed_texcoord_name(static_cast<u32>(textureDependency.texCoordId));
-      uvIn = fmt::format("vec2f(tev_s24_fixed_vec2i({0})) / (ubuf.tex{1}_size_bias.xy * 128.0)", fixedUv,
-                         textureDependency.texMapId);
+      if(nativeVertices) {
+        uvIn=fmt::format("tex{}_uv",textureDependency.texCoordId);
+      } else {
+        const auto fixedUv = fixed_texcoord_name(static_cast<u32>(textureDependency.texCoordId));
+        uvIn = fmt::format("vec2f(tev_s24_fixed_vec2i({0})) / (ubuf.tex{1}_size_bias.xy * 128.0)", fixedUv,
+                           textureDependency.texMapId);
+      }
     }
-    fragmentFnPre +=
-        fmt::format("\n    vec4 sampled{0} = texture(tex{1}, {2}, ubuf.tex{1}_size_bias.z);", i,
-                    textureDependency.texMapId, uvIn);
+    if (nativeVertices && (nativeZeroLodBiasMask & (1u << textureDependency.texMapId))) {
+      fragmentFnPre += fmt::format("\n    vec4 sampled{0} = texture(tex{1}, {2});", i,
+                                  textureDependency.texMapId, uvIn);
+    } else {
+      fragmentFnPre +=
+          fmt::format("\n    vec4 sampled{0} = texture(tex{1}, {2}, ubuf.tex{1}_size_bias.z);", i,
+                      textureDependency.texMapId, uvIn);
+    }
   }
 
   // in.pos.z is the host NDC z (forward: 0=near/1=far; reversed: 1=near/0=far post-fix), but this
@@ -1987,7 +2019,7 @@ layout(std140) uniform Ubuf {{
       rename_members(fmt::format("{}{}\n{}", fragmentFnPre, fragmentFn, fragmentReturn), "in.pos", "gl_FragCoord",
                      "in.", "v_");
 
-  const auto vertexSource = fmt::format(R"""({0}
+  auto vertexSource = fmt::format(R"""({0}
 uniform highp usampler2D vbuf;
 uniform highp usampler2D abuf;
 {1}{2}
@@ -1996,6 +2028,17 @@ void main() {{{3}
 }}
 )""",
                                         uniformBlock, VertexHelpers, vertexVaryings, vertexMain);
+  if(nativeVertices) {
+    std::string attributes=
+      "layout(location=0) in vec4 native_position;\n"
+      "layout(location=1) in vec3 native_view_position;\n"
+      "layout(location=2) in vec3 native_normal;\n"
+      "layout(location=3) in vec4 native_color0;\n"
+      "layout(location=4) in vec4 native_color1;\n";
+    for(unsigned i=0;i<8;++i)
+      attributes+=fmt::format("layout(location={}) in vec3 native_tex{};\n",i+5,i);
+    vertexSource=fmt::format("{}{}{}\nvoid main() {{{}\n}}\n",uniformBlock,attributes,vertexVaryings,vertexMain);
+  }
   const auto fragmentSource = fmt::format(R"""({0}{1}{2}
 layout(location = 0) out vec4 frag_color;
 {3}
@@ -2007,16 +2050,22 @@ void main() {{{4}
                                           fragmentMain);
 
   gl::ProgramDesc desc{
-      .label = fmt::format("GX Shader {:x}", hash),
+      .label = fmt::format("{} Shader {:x}", nativeVertices?"Native material":"GX",hash),
       .vertex = gl::vertex_source(vertexSource),
       .fragment = gl::fragment_source(fragmentSource),
       .blocks = {{"Ubuf", 0}},
+      .nativeMaterialVertices = nativeVertices,
   };
   for (u32 i = 0; i < MaxTextures; ++i) {
     desc.samplers.emplace_back(fmt::format("tex{}", i), static_cast<int>(i));
   }
-  desc.samplers.emplace_back("vbuf", static_cast<int>(gfx::VertexBufferUnit));
-  desc.samplers.emplace_back("abuf", static_cast<int>(gfx::StorageBufferUnit));
-  return std::make_shared<gl::Program>(std::move(desc));
+  if(!nativeVertices) {
+    desc.samplers.emplace_back("vbuf", static_cast<int>(gfx::VertexBufferUnit));
+    desc.samplers.emplace_back("abuf", static_cast<int>(gfx::StorageBufferUnit));
+  }
+  return desc;
+}
+gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept {
+  return std::make_shared<gl::Program>(build_shader_description(config));
 }
 } // namespace aurora::gx

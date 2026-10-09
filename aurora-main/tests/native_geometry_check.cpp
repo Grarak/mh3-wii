@@ -5,6 +5,8 @@
 #include <aurora/native_texture.hpp>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
+#include "gx/gx.hpp"
+#include "gx/shader_info.hpp"
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -41,6 +43,44 @@ void pixel(unsigned x,unsigned y,const std::array<uint8_t,4>& expected) {
     throw std::runtime_error("native geometry pixel mismatch");
   }
 }
+aurora::gx::ShaderConfig material_config() {
+  using namespace aurora::gx;
+  ShaderConfig config;
+  config.attrs[GX_VA_POS]={GX_DIRECT,3,GX_F32};
+  config.attrs[GX_VA_NRM]={GX_DIRECT,3,GX_F32};
+  config.attrs[GX_VA_CLR0]={GX_DIRECT,4,GX_RGBA8};
+  config.attrs[GX_VA_TEX0]={GX_DIRECT,2,GX_F32};
+  config.colorChannels[0].matSrc=GX_SRC_VTX;
+  config.colorChannels[GX_ALPHA0].matSrc=GX_SRC_VTX;
+  config.tevStageCount=1;config.numTexGens=1;
+  auto& stage=config.tevStages[0];
+  stage.texMapId=GX_TEXMAP0;stage.texCoordId=GX_TEXCOORD0;stage.channelId=GX_COLOR0A0;
+  stage.colorPass={GX_CC_ZERO,GX_CC_TEXC,GX_CC_RASC,GX_CC_ZERO};
+  stage.alphaPass={GX_CA_ZERO,GX_CA_TEXA,GX_CA_RASA,GX_CA_ZERO};
+  return config;
+}
+void material_quad(GLuint program,const aurora::gx::ShaderInfo& info) {
+  AuroraNativeMaterialGeometry geometry{};
+  AuroraNativeUniforms uniforms{};
+  require(aurora_allocate_native_material_geometry(4,6,&geometry),"material allocation failed");
+  require(aurora_allocate_native_uniforms(info.uniformSize,&uniforms),"material uniforms allocation failed");
+  std::memset(uniforms.data,0,uniforms.size);
+  size_t at=144+48*(info.matrixLayout.postexCount+info.matrixLayout.nrmCount);
+  const float texture[4]{4,4,0,0};
+  for(unsigned i=0;i<2;++i) {std::memcpy(static_cast<uint8_t*>(uniforms.data)+at,texture,16);at+=16;}
+  require(at<=uniforms.size,"fixture material uniforms exceed layout");
+  std::memset(geometry.vertices,0,4*sizeof(*geometry.vertices));
+  const float positions[4][2]{{-.08f,-.6f},{.08f,-.6f},{.08f,-.4f},{-.08f,-.4f}};
+  for(unsigned i=0;i<4;++i) {
+    auto& vertex=geometry.vertices[i];
+    vertex.position[0]=positions[i][0];vertex.position[1]=positions[i][1];
+    vertex.position[2]=.8f;vertex.position[3]=1;
+    vertex.normal[0]=1;vertex.texcoord[0][0]=vertex.texcoord[0][1]=.5f;vertex.texcoord[0][2]=1;
+    const uint8_t color[]{255,128,255,255};std::memcpy(vertex.color[0],color,4);
+  }
+  const uint16_t indices[]{0,1,2,0,2,3};std::memcpy(geometry.indices,indices,sizeof(indices));
+  aurora_submit_native_material_geometry(&geometry,program,&uniforms);
+}
 }
 int main(int argc,char** argv) {
   try {
@@ -56,6 +96,19 @@ int main(int argc,char** argv) {
     require(info.initializationStatus==AURORA_INITIALIZATION_SUCCESS,"graphics initialization failed");
     struct Shutdown { ~Shutdown(){aurora_shutdown();} } shutdown;
     aurora_set_frameskip(true);
+    const auto materialConfig=material_config();
+    const auto materialInfo=aurora::gx::build_shader_info(materialConfig);
+    auto materialDescription=aurora::gx::build_shader_description(materialConfig,true,1);
+    require(materialDescription.vertex.find("uniform highp usampler2D vbuf")==std::string::npos,
+            "native material retained vertex word fetch binding");
+    require(materialDescription.fragment.find("tex0_fixed_uv")==std::string::npos,
+            "native ordinary texture retained fixed-point UV reconstruction");
+    require(materialDescription.fragment.find("texture(tex0, tex0_uv);")!=std::string::npos,
+            "zero-bias native sample retained dynamic bias");
+    const auto biasedDescription=aurora::gx::build_shader_description(materialConfig,true);
+    require(biasedDescription.fragment.find("texture(tex0, tex0_uv, ubuf.tex0_size_bias.z)")!=std::string::npos,
+            "unspecialized native sample lost sampler bias");
+    auto materialProgram=std::make_shared<aurora::gl::Program>(std::move(materialDescription));
     require(aurora::native_texture_source_size(14,9,9,1)==128,"CMPR tile size mismatch");
     require(aurora::native_texture_source_size(6,4,4,3)==192,"small mip tile size mismatch");
     std::array<uint8_t,64> texels{};
@@ -109,6 +162,7 @@ int main(int argc,char** argv) {
         // Preserve this application binding across the present pass; the next
         // frame deliberately draws before issuing another texture bind.
         aurora::bind_native_texture(0,source,{});
+        material_quad(materialProgram->get(),materialInfo);
       } else {
         AuroraNativeGeometry unavailable{};
         require(!aurora_allocate_native_geometry(4,6,&unavailable),"skipped frame exposed draw memory");
@@ -119,10 +173,12 @@ int main(int argc,char** argv) {
     pixel(0,0,{20,40,80,255});
     pixel(16,16,{255,0,0,255});
     pixel(48,16,{128,128,64,255});
-    pixel(32,48,{0,255,0,255});
+    pixel(32,40,{0,255,0,255});
+    pixel(32,48,{128,128,64,255});
     pixel(16,48,{0,0,255,255});
     pixel(48,48,{255,0,0,255});
     std::printf("Native geometry passed: %u frames, slot mask %u, solid/texture/depth pixels, image/palette revisions\n",rendered,slots);
+    materialProgram.reset();
     return 0;
   } catch (const std::exception& error) {
     std::fprintf(stderr,"Native geometry check failed: %s\n",error.what());
