@@ -162,7 +162,11 @@ int main(int argc, char** argv) {
         Memory::Write32(0x8000002C, 0x23);
         Memory::Write32(0x80000030, 0x807B1CC0); // __ArenaLo, from OSInit
         Memory::Write32(0x80000034, arenaHi);
-        Memory::Write32(0x800000CC, 1); // PAL
+        // TV mode EuRGB60 (PAL console set to 60 Hz). MH3's logic assumes 60 Hz
+        // retraces in every region (RenderInit's frame rate is 60.0 / vcnt), and
+        // VIInit reports format 5 for this value, so RenderInit picks the 480-line
+        // 60 Hz mode instead of the 574-line PAL50 one.
+        Memory::Write32(0x800000CC, 5);
         Memory::Write32(0x800000F8, 243000000);
         Memory::Write32(0x800000FC, 729000000);
         // This disc's TMD requests IOS55 (system title 00000001-00000037).
