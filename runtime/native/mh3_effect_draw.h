@@ -29,7 +29,8 @@ void mh3_effect_color(uint8_t source,const uint8_t colors[4][4],uint8_t out[3]);
 uint8_t mh3_effect_alpha(uint8_t source,const uint8_t colors[4][4]);
 void mh3_effect_register_colors(const mh3_effect_material *material,
                                const uint8_t colors[4][4],uint8_t tev[3][4],uint8_t konst[4][4]);
-/* NW4R effect texture resource differs from g3d TEX0. */
+/* NW4R effect texture resource differs from g3d TEX0. An authored mip count
+ * of zero means a base-only image: effective levels=1 and max_lod=0. */
 mh3_res_status mh3_effect_texture_read(mh3_res_span resource,uint32_t address,
                                       uint32_t map,uint32_t wrap_s,uint32_t wrap_t,
                                       mh3_native_texture_binding *binding,mh3_native_palette_source *palette);

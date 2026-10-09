@@ -67,9 +67,13 @@ mh3_res_status mh3_effect_texture_read(mh3_res_span r,uint32_t address,uint32_t 
     if(!out||!palette||!r.data||r.size<0x24)return MH3_RES_RANGE;
     mh3_native_texture_binding b;mh3_native_palette_source p;memset(&b,0,sizeof(b));memset(&p,0,sizeof(p));
     b.source.resource_address=address;b.source.width=be16(r.data+4);b.source.height=be16(r.data+6);b.source.format=r.data[0xc];
-    b.source.levels=r.data[0x14];b.source.max_lod=(float)b.source.levels-1.0f;b.source.payload_address=be32(r.data+0x1c);
+    /* 800C7D44 enables mipmaps only when the authored count is >1. A count
+     * of zero is a valid base-only resource; its requested max LOD (-1) was
+     * clamped to zero by the original sampler initializer. */
+    b.source.levels=r.data[0x14]?r.data[0x14]:1u;
+    b.source.max_lod=fminf((float)b.source.levels-1.0f,10.0f);b.source.payload_address=be32(r.data+0x1c);
     b.sampler.wrap_s=ws;b.sampler.wrap_t=wt;b.sampler.min_filter=r.data[0x15];b.sampler.mag_filter=r.data[0x16];b.sampler.lod_bias=bef(r.data+0x18);b.map_id=b.tlut_id=map;
-    if(!b.source.width||!b.source.height||!b.source.levels||!b.source.payload_address||ws>2||wt>2)return MH3_RES_INVALID;
+    if(!b.source.width||!b.source.height||!b.source.payload_address||ws>2||wt>2)return MH3_RES_INVALID;
     if(b.source.format>=8&&b.source.format<=10){b.source.indexed=1;p.resource_address=address;p.payload_address=be32(r.data+0x20);p.format=r.data[0xd];p.entries=be16(r.data+0xe);if(!p.payload_address||!p.entries)return MH3_RES_INVALID;}
     else if(b.source.format>6&&b.source.format!=14)return MH3_RES_UNSUPPORTED;
     *out=b;*palette=p;return MH3_RES_OK;

@@ -19,6 +19,19 @@ static void material(void){
 static void texture(void){
     uint8_t bytes[0x24]={};put16(bytes+4,16);put16(bytes+6,8);bytes[0xc]=9;bytes[0xd]=2;put16(bytes+0xe,256);bytes[0x14]=3;bytes[0x15]=5;bytes[0x16]=1;put32(bytes+0x1c,0x81000000);put32(bytes+0x20,0x81001000);
     mh3_native_texture_binding binding;mh3_native_palette_source palette;assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0x81002000,2,2,1,&binding,&palette)==MH3_RES_OK);assert(binding.source.indexed&&binding.source.max_lod==2&&binding.map_id==2&&binding.sampler.wrap_s==2);assert(palette.entries==256&&palette.format==2&&palette.payload_address==0x81001000);
+    /* Live 19001/area1 exposed an authored zero mip count on a base-only IA8
+     * image. This synthetic header contains no extracted game bytes. */
+    put16(bytes+4,224);put16(bytes+6,448);put32(bytes+8,224u*448u*2u);bytes[0xc]=3;bytes[0x14]=0;bytes[0x15]=bytes[0x16]=1;
+    assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0x81002000,0,0,0,&binding,&palette)==MH3_RES_OK);
+    assert(binding.source.width==224&&binding.source.height==448&&binding.source.format==3&&!binding.source.indexed);
+    assert(binding.source.levels==1&&binding.source.min_lod==0&&binding.source.max_lod==0&&binding.source.payload_address==0x81000000);
+    assert(binding.sampler.min_filter==1&&binding.sampler.mag_filter==1&&palette.payload_address==0&&palette.entries==0);
+    bytes[0x14]=1;assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0,0,0,0,&binding,&palette)==MH3_RES_OK&&binding.source.levels==1&&binding.source.max_lod==0);
+    bytes[0x14]=12;assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0,0,0,0,&binding,&palette)==MH3_RES_OK&&binding.source.levels==12&&binding.source.max_lod==10);
+    const mh3_native_texture_binding before=binding;const mh3_native_palette_source before_palette=palette;
+    put32(bytes+0x1c,0);assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0,0,0,0,&binding,&palette)==MH3_RES_INVALID);assert(!memcmp(&binding,&before,sizeof(binding))&&!memcmp(&palette,&before_palette,sizeof(palette)));
+    put32(bytes+0x1c,0x81000000);assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)-1},0,0,0,0,&binding,&palette)==MH3_RES_RANGE);assert(!memcmp(&binding,&before,sizeof(binding))&&!memcmp(&palette,&before_palette,sizeof(palette)));
+    assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0,0,3,0,&binding,&palette)==MH3_RES_INVALID);assert(!memcmp(&binding,&before,sizeof(binding))&&!memcmp(&palette,&before_palette,sizeof(palette)));
     bytes[0xc]=7;assert(mh3_effect_texture_read((mh3_res_span){bytes,sizeof(bytes)},0,0,0,0,&binding,&palette)==MH3_RES_UNSUPPORTED);
     mh3_effect_texture_transform t={{1,1},{0,0},{1,1},{0,0},0,0,0,0};float post[12],m[12];mh3_draw_identity_position(post);mh3_effect_texture_matrix(&t,0,1,post,m);near(m[0],1);near(m[5],1);near(m[3],0);
     t.rotation=1;mh3_effect_texture_matrix(&t,1,0,post,m);near(m[0],0);near(m[1],-1);near(m[3],1);near(m[4],1);near(m[7],0);

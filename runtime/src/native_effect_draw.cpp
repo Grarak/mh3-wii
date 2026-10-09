@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "../native/mh3_effect_draw.h"
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -145,7 +146,14 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu){
         int32_t map=int32_t(FlatRead32(strategy+0xd4+4*slot));if(map<0)continue;if(map>=8)throw std::runtime_error("Effect texture map exceeds native material layout");
         uint32_t texture=FlatRead32(particle+0x88+4*slot);if(!texture)continue;uint32_t cache=strategy+0x30*slot,params=particle+8*slot,wrap=FlatRead16(particle+0x94),ws=(wrap>>(4*slot))&3,wt=(wrap>>(4*slot+2))&3;
         if(force||FlatRead32(cache+4)!=texture||FlatRead32(cache+0x18)!=ws||FlatRead32(cache+0x1c)!=wt){
-            mh3_native_texture_binding binding;mh3_native_palette_source palette;Require(mh3_effect_texture_read(Span(texture,0x24),texture,uint32_t(map),ws,wt,&binding,&palette),"Invalid effect texture source");
+            mh3_native_texture_binding binding;mh3_native_palette_source palette;
+            const auto status=mh3_effect_texture_read(Span(texture,0x24),texture,uint32_t(map),ws,wt,&binding,&palette);
+            if(status!=MH3_RES_OK){
+                char message[256];std::snprintf(message,sizeof(message),
+                    "Invalid effect texture source: resource=%08x slot=%u map=%d status=%d size=%ux%u format=%u mip_count=%u image=%08x wrap=%u,%u",
+                    texture,slot,map,int(status),uint32_t(FlatRead16(texture+4)),uint32_t(FlatRead16(texture+6)),uint32_t(FlatRead8(texture+0xc)),uint32_t(FlatRead8(texture+0x14)),FlatRead32(texture+0x1c),ws,wt);
+                throw std::runtime_error(message);
+            }
             if(binding.source.indexed)BindNativePalette(uint32_t(map),palette);BindNativeTexture(binding);FlatWrite32(cache+4,texture);FlatWrite32(cache+0x18,ws);FlatWrite32(cache+0x1c,wt);changed=1;
         }
         uint32_t mirror=(FlatRead8(particle+0x96)>>(2*slot))&3;mh3_effect_texture_transform t{};
