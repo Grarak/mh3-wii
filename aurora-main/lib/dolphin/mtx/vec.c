@@ -81,9 +81,11 @@ f32 C_VECMag(const Vec* v) {
 f32 PSVECMag(const Vec* v) {
   f32 sqmag;
   sqmag = PSVECSquareMag(v);
+
   if (sqmag == 0.0f) {
     return 0.0f;
   }
+
   return sqmag * ppc_rsqrte(sqmag);
 }
 
@@ -135,6 +137,7 @@ void C_VECHalfAngle(const Vec* a, const Vec* b, Vec* half) {
     VECNormalize(&hTmp, half);
     return;
   }
+
   *half = hTmp;
 }
 
@@ -184,8 +187,10 @@ f32 C_VECDistance(const Vec* a, const Vec* b) {
 f32 PSVECDistance(const Vec* a, const Vec* b) {
   f32 sqdist;
   sqdist = PSVECSquareDistance(a, b);
+
   if (sqdist == 0.0f) {
     return 0.0f;
   }
+
   return sqdist * ppc_rsqrte(sqdist);
 }

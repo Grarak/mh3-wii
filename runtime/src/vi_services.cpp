@@ -21,6 +21,7 @@ auto nextRetrace = Clock::now();
 Clock::time_point AdvanceRetraceDeadline(Clock::time_point deadline, Clock::time_point now, Clock::duration period) {
     if (now < deadline)
         return deadline;
+
     return deadline + period * ((now - deadline) / period + 1);
 }
 } // namespace
@@ -28,6 +29,7 @@ Clock::time_point AdvanceRetraceDeadline(Clock::time_point deadline, Clock::time
 void ServiceVideoRetrace(CpuContext* cpu) {
     ServiceHostController(cpu);
     const auto now = Clock::now();
+
     if (now < nextRetrace)
         return;
     // Keep the VI phase fixed. The old "now + period" reset inserted a fresh
@@ -37,23 +39,29 @@ void ServiceVideoRetrace(CpuContext* cpu) {
     const auto saved = *cpu;
     const uint32_t before = Memory::Read32(saved.gpr[13] - 0x379C);
     BeginVideoRetrace();
+
     try {
         cpu->msr &= ~0x8000u;
         cpu->gpr[3] = 24;
         cpu->gpr[4] = Memory::Read32(0x800000D4);
+
         if (!cpu->gpr[4] || !Memory::Contains(cpu->gpr[4], 0x2C8))
             throw std::runtime_error("VI retrace has no valid guest OS context");
+
         InvokeIndirectCpu(0x804E6F30, cpu);
     } catch (...) {
         EndVideoRetrace();
         *cpu = saved;
         throw;
     }
+
     EndVideoRetrace();
     *cpu = saved;
     const uint32_t after = Memory::Read32(saved.gpr[13] - 0x379C);
+
     if (after != before + 1)
         throw std::runtime_error("VI handler did not deliver a retrace");
+
     if (after <= 3)
         std::fprintf(stderr, "MH3 VI retrace delivered: %u\n", after);
 #if defined(MH3_DEVELOPMENT) && !defined(NDEBUG)
@@ -64,6 +72,7 @@ void ServiceVideoRetrace(CpuContext* cpu) {
         RecompMod::VerifyExecutableRanges();
 #endif
 }
+
 extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
     std::this_thread::sleep_until(nextRetrace);
 #ifdef MH3_HAS_AURORA
@@ -81,6 +90,7 @@ void RunVideoTimingSelfTests() {
     const auto start = Clock::time_point{};
     const auto period = std::chrono::milliseconds(20);
     const auto deadline = start + period;
+
     if (AdvanceRetraceDeadline(deadline, start + std::chrono::milliseconds(19), period) != deadline || AdvanceRetraceDeadline(deadline, deadline, period) != start + period * 2 ||
         AdvanceRetraceDeadline(deadline, start + std::chrono::milliseconds(105), period) != start + period * 6)
         throw std::runtime_error("VI deadline phase/catch-up regression");

@@ -27,6 +27,7 @@ static gfx::port_capture::DrawState s_captureSource;
 void set_capture_callers(const uint32_t* callers) {
   std::copy_n(callers, s_captureSource.callers.size(), s_captureSource.callers.begin());
 }
+
 void set_capture_display_list(uint32_t address, uint32_t offset) {
   s_captureSource.displayList = address;
   s_captureSource.displayListOffset = offset;
@@ -36,6 +37,7 @@ using IndexBuffer = std::vector<u16>;
 
 static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount) {
   size_t writePos = 0;
+
   if (prim == GX_QUADS) {
     // GX renders a three-vertex remainder as a triangle. One/two are ignored.
     const u32 completeVertices = static_cast<u32>(vtxCount) & ~3u;
@@ -53,6 +55,7 @@ static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount
       buf[writePos++] = idx3;
       buf[writePos++] = idx0;
     }
+
     if (vtxCount % 4u == 3u) {
       buf[writePos++] = static_cast<u16>(completeVertices);
       buf[writePos++] = static_cast<u16>(completeVertices + 1u);
@@ -61,17 +64,20 @@ static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount
   } else if (prim == GX_TRIANGLES) {
     const u32 completeVertices = (static_cast<u32>(vtxCount) / 3u) * 3u;
     buf.resize(completeVertices);
+
     for (u32 v = 0; v < completeVertices; ++v) {
       buf[writePos++] = v;
     }
   } else if (prim == GX_TRIANGLEFAN) {
     const u32 indexCount = vtxCount < 3 ? 0u : (static_cast<u32>(vtxCount) - 2u) * 3u;
     buf.resize(indexCount);
+
     for (u32 v = 0; indexCount != 0 && v < vtxCount; ++v) {
       if (v < 3) {
         buf[writePos++] = v;
         continue;
       }
+
       buf[writePos++] = 0;
       buf[writePos++] = static_cast<u16>(v - 1);
       buf[writePos++] = v;
@@ -79,11 +85,13 @@ static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount
   } else if (prim == GX_TRIANGLESTRIP) {
     const u32 indexCount = vtxCount < 3 ? 0u : (static_cast<u32>(vtxCount) - 2u) * 3u;
     buf.resize(indexCount);
+
     for (u32 v = 0; indexCount != 0 && v < vtxCount; ++v) {
       if (v < 3) {
         buf[writePos++] = v;
         continue;
       }
+
       if ((v & 1) == 0) {
         buf[writePos++] = static_cast<u16>(v - 2);
         buf[writePos++] = static_cast<u16>(v - 1);
@@ -91,6 +99,7 @@ static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount
         buf[writePos++] = static_cast<u16>(v - 1);
         buf[writePos++] = static_cast<u16>(v - 2);
       }
+
       buf[writePos++] = v;
     }
   } else if (prim == GX_LINES || prim == GX_LINESTRIP || prim == GX_POINTS) {
@@ -98,6 +107,7 @@ static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount
     writePos = 6;
   } else
     UNLIKELY FATAL("unsupported primitive type {}", static_cast<u32>(prim));
+
   CHECK(writePos == buf.size(), "index template size mismatch ({} != {})", writePos, buf.size());
   return static_cast<u32>(writePos);
 }
@@ -105,6 +115,7 @@ static u32 prepare_idx_template(IndexBuffer& buf, GXPrimitive prim, u16 vtxCount
 // Empty/incomplete draws consume FIFO bytes but cannot produce a primitive.
 static bool has_complete_primitive(GXPrimitive prim, u16 count) {
   if (prim == GX_POINTS) return count >= 1;
+
   if (prim == GX_LINES || prim == GX_LINESTRIP) return count >= 2;
   return count >= 3;
 }
@@ -145,17 +156,21 @@ inline T unaligned_load(const T* ptr) {
 
 static inline u16 read_u16(const u8* ptr, bool bigEndian) {
   const u16 val = unaligned_load(reinterpret_cast<const u16*>(ptr));
+
   if (bigEndian) {
     return bswap(val);
   }
+
   return val;
 }
 
 static inline u32 read_u32(const u8* ptr, bool bigEndian) {
   const u32 val = unaligned_load(reinterpret_cast<const u32*>(ptr));
+
   if (bigEndian) {
     return bswap(val);
   }
+
   return val;
 }
 
@@ -223,6 +238,7 @@ static GXPixelFmt decode_pixel_fmt(u32 peCtrl, u32 cmode1) {
 
 static inline u64 read_u64(const u8* ptr, bool bigEndian) {
   u64 loaded;
+
   // Unaligned-safe load
   memcpy(&loaded, ptr, sizeof(u64));
 
@@ -251,25 +267,32 @@ static std::optional<TexBpRegMapping> decode_tex_bp_reg(u32 regId) {
     if (regId == mode0Ids[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Mode0};
     }
+
     if (regId == mode1Ids[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Mode1};
     }
+
     if (regId == image0Ids[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Image0};
     }
+
     if (regId == image1Ids[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Image1};
     }
+
     if (regId == image2Ids[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Image2};
     }
+
     if (regId == image3Ids[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Image3};
     }
+
     if (regId == tlutIds[i]) {
       return TexBpRegMapping{.texMapId = i, .kind = TexBpRegMapping::Kind::Tlut};
     }
   }
+
   return std::nullopt;
 }
 
@@ -311,14 +334,17 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
     // Position matrices (0x0000 - 0x0077)
     u32 mtxIdx = addr / 12;
     u32 startOffset = addr % 12;
+
     // We only support full writes to matrices
     XF_REQUIRE(mtxIdx < MaxPnMtx, "XF: PosMtx copy oob; mtxIdx={}", mtxIdx);
     XF_REQUIRE(startOffset == 0 && len == 12, "XF: PosMtx sub-copy unsupported: offs={}, len={}", startOffset, len);
     auto& mtx = g_gxState.pnMtx[mtxIdx].pos;
     f32* flat = reinterpret_cast<f32*>(&mtx);
+
     for (u32 i = 0; i < len; i++) {
       flat[i] = read_f32(data + i * 4, bigEndian);
     }
+
     g_gxState.stateDirty = true;
     return true;
   } else if (addr < 0x0F0) {
@@ -333,9 +359,11 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
     // Determine if 2x4 or 3x4 from count
     auto& mtx = g_gxState.texMtxs[mtxIdx];
     f32* flat = reinterpret_cast<f32*>(&mtx);
+
     for (u32 i = 0; i < len; i++) {
       flat[i] = read_f32(data + i * 4, bigEndian);
     }
+
     g_gxState.stateDirty = true;
     return true;
   } else if (addr >= 0x400 && addr < 0x45A) {
@@ -343,19 +371,23 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
     u32 nrmBase = addr - 0x400;
     u32 mtxIdx = nrmBase / 9;
     u32 startOffset = nrmBase % 9;
+
     // We only support full writes to matrices
     XF_REQUIRE(mtxIdx < MaxPnMtx, "XF: NrmMtx copy oob; mtxIdx={}", mtxIdx);
     XF_REQUIRE(startOffset == 0 && len == 9, "XF: NrmMtx sub-copy unsupported: offs={}, len={}", startOffset, len);
     auto& mtx = g_gxState.pnMtx[mtxIdx].nrm;
     f32* flat = reinterpret_cast<f32*>(&mtx);
+
     for (u32 i = 0; i < len; i++) {
       u32 xfIdx = i;
       u32 row = xfIdx / 3;
       u32 col = xfIdx % 3;
+
       if (row < 3) {
         flat[row * 4 + col] = read_f32(data + i * 4, bigEndian);
       }
     }
+
     g_gxState.stateDirty = true;
     return true;
   } else if (addr >= 0x500 && addr < 0x5F0) {
@@ -367,9 +399,11 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
     XF_REQUIRE(startOffset == 0 && len == 12, "XF: PTTexMtx sub-copy unsupported: offs={}, len={}", startOffset, len);
     auto& mtx = g_gxState.ptTexMtxs[mtxIdx];
     f32* flat = reinterpret_cast<f32*>(&mtx);
+
     for (u32 i = 0; i < len; i++) {
       flat[startOffset + i] = read_f32(data + i * 4, bigEndian);
     }
+
     g_gxState.stateDirty = true;
     return true;
   } else if (addr >= 0x600 && addr < 0x680) {
@@ -381,10 +415,12 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
     XF_REQUIRE(startOffset + len <= 0x10,
                "XF: Light copy that crosses across light boundaries unsupported: offs={}, len={}", startOffset, len);
     auto& light = g_gxState.lights[lightIdx];
+
     for (u32 i = 0; i < len; i++) {
       u32 field = startOffset + i;
       f32 val = read_f32(data + i * 4, bigEndian);
       u32 ival = read_u32(data + i * 4, bigEndian);
+
       switch (field) {
       case 3: // Color (packed u32)
         light.color = unpack_color(ival);
@@ -429,10 +465,12 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
         break; // padding (0-2)
       }
     }
+
     g_gxState.preparedLightsDirty = true;
     g_gxState.stateDirty = true;
     return true;
   }
+
   return false;
 }
 
@@ -489,6 +527,7 @@ static bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
 
 uint32_t process(const u8* data, u32 size, bool bigEndian) {
   aurora_legacy_gx_panic("aurora::gx::fifo::process");
+
   // Everything decoded here mutates renderer state (GX state, the recorded command lists and the mapped staging buffers), so take the renderer GPU mutex once for the whole drain rather than once per draw command.
   std::lock_guard gpuLock(aurora::renderer_gpu_mutex());
   u32 pos = 0;
@@ -497,6 +536,7 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
     const u32 commandStart = pos;
     u8 cmd = data[pos++];
     u8 opcode = cmd & CP_OPCODE_MASK;
+
     // Log.warn("Processing opcode {:02x} at pos {} (size {})", opcode, pos - 1, size);
 
     switch (opcode) {
@@ -540,22 +580,28 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
       auto const& array = g_gxState.arrays[arrayType];
       const u32 byteOffset = srcArrayIdx * array.stride;
       const u32 byteCount = static_cast<u32>(len) * 4u;
+
       if (array.data == nullptr || array.stride == 0 || byteOffset + byteCount > array.size) {
         static u32 invalidIndexedXfLogCount = 0;
+
         if (invalidIndexedXfLogCount < 16) {
           Log.warn("Skipping indexed XF load with invalid source array: array={} idx={} stride={} offset={} bytes={} "
                    "size={} dst=0x{:04X}",
                    arrayType, srcArrayIdx, array.stride, byteOffset, byteCount, array.size, dstAddr);
           ++invalidIndexedXfLogCount;
         }
+
         break;
       }
+
       u8* srcData = ((u8*)array.data) + byteOffset;
+
       if (!copy_xf_data(dstAddr, srcData, len, bigEndian)) {
 #ifndef NDEBUG
         Log.debug("Unimplemented indexed XF load (opcode 0x{:02X}, dstAddr=0x{:04X})", opcode, dstAddr);
 #endif
       }
+
       break;
     }
 
@@ -572,6 +618,7 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
       for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
         g_gxState.arrays[i].cachedRange = {};
       }
+
       // A merged draw retains its previous array uploads. Force a new draw so
       // handle_draw_unmerged observes the invalidation and uploads fresh data.
       // Pipeline configuration itself did not change.
@@ -583,6 +630,7 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
       if (!handle_aurora(data, pos, size, bigEndian)) {
         return size;
       }
+
       break;
     }
 
@@ -596,25 +644,30 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
         }
       } else {
         static u32 unknownLogCount = 0;
+
         if (unknownLogCount < 16) {
           // Hex dump surrounding bytes for debugging
           u32 dumpStart = (pos > 17) ? pos - 17 : 0;
           u32 dumpEnd = (pos + 16 < size) ? pos + 16 : size;
           std::string hex;
+
           for (u32 i = dumpStart; i < dumpEnd; i++) {
             if (i == pos - 1)
               hex += fmt::format("[{:02x}]", data[i]);
             else
               hex += fmt::format(" {:02x}", data[i]);
           }
+
           Log.warn("  hex dump (pos {}-{}):{}", dumpStart, dumpEnd - 1, hex);
           Log.warn("command_processor: unknown opcode 0x{:02X} at pos {}", cmd, pos - 1);
           ++unknownLogCount;
         }
       }
+
       break;
     }
   }
+
   return size;
 }
 
@@ -638,22 +691,27 @@ static u8 normal_frac_bits(GXCompType type) {
 
 static void refresh_copy_filter_flags() {
   bool aa = false;
+
   for (const auto& sample : g_gxState.copyFilterSamplePattern) {
     aa |= sample[0] != 6 || sample[1] != 6;
   }
+
   g_gxState.copyFilterAa = aa;
 
   static constexpr std::array<u8, 7> DefaultVFilter{0, 0, 21, 22, 21, 0, 0};
   bool vf = false;
+
   for (size_t i = 0; i < DefaultVFilter.size(); ++i) {
     vf |= g_gxState.copyFilterVFilter[i] != DefaultVFilter[i];
   }
+
   g_gxState.copyFilterVf = vf;
 }
 
 // BP register handler - decodes BP (RAS/pixel engine) register writes and updates g_gxState
 static void handle_bp(u32 value, bool bigEndian) {
   u32 regId = (value >> 24) & 0xFF;
+
   // Mask off the register ID from the value for field extraction
   // (the regId is stored in bits 24-31, data is in bits 0-23)
 
@@ -662,18 +720,23 @@ static void handle_bp(u32 value, bool bigEndian) {
     return;
   } else {
     const u32 ssMask = g_gxState.bpRegCache[0xFE];
+
     // A preceding 0xFE write is rare; the common path only has to prove the mask is already wide open.
     if (ssMask != 0x00FFFFFF) UNLIKELY {
       g_gxState.bpRegCache[0xFE] = 0x00FFFFFF;
     }
+
     const u32 merged = (g_gxState.bpRegCache[regId] & ~ssMask) | (value & ssMask);
     value = (regId << 24) | (merged & 0x00FFFFFF);
+
     if (g_gxState.bpRegCache[regId] == value) return;
     g_gxState.bpRegCache[regId] = value;
   }
+
   // TEV color combiner stages (0xC0, 0xC2, 0xC4, ... 0xDE)
   if (regId >= 0xC0 && regId <= 0xDE && (regId & 1) == 0) {
     u32 stage = (regId - 0xC0) / 2;
+
     if (stage < MaxTevStages) {
       auto& s = g_gxState.tevStages[stage];
       s.colorPass.d = static_cast<GXTevColorArg>(bp_get(value, 4, 0));
@@ -682,6 +745,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       s.colorPass.a = static_cast<GXTevColorArg>(bp_get(value, 4, 12));
       s.colorOp.clamp = bp_get(value, 1, 19) != 0;
       s.colorOp.outReg = static_cast<GXTevRegID>(bp_get(value, 2, 22));
+
       if (bp_get(value, 2, 16) == 3) {
         // Bias==3 means compare mode: reconstruct GXTevOp enum (8 + 3-bit hw value)
         u32 hwOp = bp_get(value, 1, 18) | (bp_get(value, 2, 20) << 1);
@@ -694,14 +758,17 @@ static void handle_bp(u32 value, bool bigEndian) {
         s.colorOp.bias = static_cast<GXTevBias>(bp_get(value, 2, 16));
         s.colorOp.scale = static_cast<GXTevScale>(bp_get(value, 2, 20));
       }
+
       mark_pipeline_state_dirty();
     }
+
     return;
   }
 
   // TEV alpha combiner stages (0xC1, 0xC3, 0xC5, ... 0xDF)
   if (regId >= 0xC1 && regId <= 0xDF && (regId & 1) == 1) {
     u32 stage = (regId - 0xC1) / 2;
+
     if (stage < MaxTevStages) {
       auto& s = g_gxState.tevStages[stage];
       s.tevSwapRas = static_cast<GXTevSwapSel>(bp_get(value, 2, 0));
@@ -712,6 +779,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       s.alphaPass.a = static_cast<GXTevAlphaArg>(bp_get(value, 3, 13));
       s.alphaOp.clamp = bp_get(value, 1, 19) != 0;
       s.alphaOp.outReg = static_cast<GXTevRegID>(bp_get(value, 2, 22));
+
       if (bp_get(value, 2, 16) == 3) {
         u32 hwOp = bp_get(value, 1, 18) | (bp_get(value, 2, 20) << 1);
         s.alphaOp.op = static_cast<GXTevOp>(hwOp + 8);
@@ -722,8 +790,10 @@ static void handle_bp(u32 value, bool bigEndian) {
         s.alphaOp.bias = static_cast<GXTevBias>(bp_get(value, 2, 16));
         s.alphaOp.scale = static_cast<GXTevScale>(bp_get(value, 2, 20));
       }
+
       mark_pipeline_state_dirty();
     }
+
     return;
   }
 
@@ -732,11 +802,13 @@ static void handle_bp(u32 value, bool bigEndian) {
   case 0x00: {
     g_gxState.numTexGens = bp_get(value, 4, 0);
     g_gxState.numChans = bp_get(value, 3, 4);
+
     // genMode owns the same numTexGens/numChans that XF 0x3F/0x09 decode, so the XF cache can no longer vouch for those two slots.
     g_gxState.invalidateXfReg(0x3F);
     g_gxState.invalidateXfReg(0x09);
     g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
     u32 hwCull = bp_get(value, 2, 14);
+
     // Swap front/back to match GX convention
     switch (hwCull) {
     case GX_CULL_FRONT:
@@ -749,6 +821,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       g_gxState.cullMode = static_cast<GXCullMode>(hwCull);
       break;
     }
+
     g_gxState.numIndStages = bp_get(value, 3, 16);
     mark_pipeline_state_dirty();
     break;
@@ -760,10 +833,12 @@ static void handle_bp(u32 value, bool bigEndian) {
   case 0x03:
   case 0x04: {
     const size_t first = static_cast<size_t>(regId - 0x01) * 6;
+
     for (size_t i = 0; i < 6; ++i) {
       const size_t sample = first + i;
       g_gxState.copyFilterSamplePattern[sample / 2][sample % 2] = static_cast<u8>(bp_get(value, 4, i * 4));
     }
+
     refresh_copy_filter_flags();
     break;
   }
@@ -792,6 +867,7 @@ static void handle_bp(u32 value, bool bigEndian) {
   case 0x1E:
   case 0x1F: {
     u32 stage = regId - 0x10;
+
     if (stage < MaxTevStages) {
       auto& s = g_gxState.tevStages[stage];
       s.indTexStage = static_cast<GXIndTexStageID>(bp_get(value, 2, 0));
@@ -805,6 +881,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       s.indTexAddPrev = bp_get(value, 1, 20) != 0;
       mark_pipeline_state_dirty();
     }
+
     break;
   }
 
@@ -840,10 +917,12 @@ static void handle_bp(u32 value, bool bigEndian) {
       g_gxState.indStages[0].scaleS = static_cast<GXIndTexScale>(bp_get(value, 4, 0));
       g_gxState.indStages[0].scaleT = static_cast<GXIndTexScale>(bp_get(value, 4, 4));
     }
+
     if (MaxIndStages > 1) {
       g_gxState.indStages[1].scaleS = static_cast<GXIndTexScale>(bp_get(value, 4, 8));
       g_gxState.indStages[1].scaleT = static_cast<GXIndTexScale>(bp_get(value, 4, 12));
     }
+
     mark_pipeline_state_dirty();
     break;
   }
@@ -852,10 +931,12 @@ static void handle_bp(u32 value, bool bigEndian) {
       g_gxState.indStages[2].scaleS = static_cast<GXIndTexScale>(bp_get(value, 4, 0));
       g_gxState.indStages[2].scaleT = static_cast<GXIndTexScale>(bp_get(value, 4, 4));
     }
+
     if (MaxIndStages > 3) {
       g_gxState.indStages[3].scaleS = static_cast<GXIndTexScale>(bp_get(value, 4, 8));
       g_gxState.indStages[3].scaleT = static_cast<GXIndTexScale>(bp_get(value, 4, 12));
     }
+
     mark_pipeline_state_dirty();
     break;
   }
@@ -866,6 +947,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       g_gxState.indStages[i].texMapId = static_cast<GXTexMapID>(bp_get(value, 3, i * 6));
       g_gxState.indStages[i].texCoordId = static_cast<GXTexCoordID>(bp_get(value, 3, i * 6 + 3));
     }
+
     mark_pipeline_state_dirty();
     break;
   }
@@ -891,23 +973,29 @@ static void handle_bp(u32 value, bool bigEndian) {
       auto& s = g_gxState.tevStages[stage0];
       s.texMapId = static_cast<GXTexMapID>(bp_get(value, 3, 0));
       s.texCoordId = static_cast<GXTexCoordID>(bp_get(value, 3, 3));
+
       // bit 6 = tex enable
       if (!bp_get(value, 1, 6)) {
         s.texMapId = GX_TEXMAP_NULL;
       }
+
       u32 chanHw = bp_get(value, 3, 7);
       s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
     }
+
     if (stage1 < MaxTevStages) {
       auto& s = g_gxState.tevStages[stage1];
       s.texMapId = static_cast<GXTexMapID>(bp_get(value, 3, 12));
       s.texCoordId = static_cast<GXTexCoordID>(bp_get(value, 3, 15));
+
       if (!bp_get(value, 1, 18)) {
         s.texMapId = GX_TEXMAP_NULL;
       }
+
       u32 chanHw = bp_get(value, 3, 19);
       s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
     }
+
     mark_pipeline_state_dirty();
     break;
   }
@@ -942,6 +1030,7 @@ static void handle_bp(u32 value, bool bigEndian) {
     } else {
       g_gxState.blendMode = GX_BM_NONE;
     }
+
     mark_pipeline_state_dirty();
     break;
   }
@@ -993,11 +1082,13 @@ static void handle_bp(u32 value, bool bigEndian) {
     break;
   case 0x65: {
     const auto idx = bp_get(value, 10, 0);
+
     if (idx < MaxTluts) {
       auto& slot = g_gxState.loadedTluts[idx];
       slot.loadTlut0 = g_gxState.bpRegCache[0x64];
       slot.numEntries = static_cast<u16>(bp_get(value, 10, 10) + 1);
     }
+
     break;
   }
   case 0x68:
@@ -1025,9 +1116,11 @@ static void handle_bp(u32 value, bool bigEndian) {
   case 0xFC:
   case 0xFD: {
     u32 kselIdx = regId - 0xF6;
+
     // Swap table entries (packed into pairs of ksel registers)
     if (kselIdx < MaxTevSwap * 2) {
       u32 swapIdx = kselIdx / 2;
+
       if (kselIdx & 1) {
         g_gxState.tevSwapTable[swapIdx].blue = static_cast<GXTevColorChan>(bp_get(value, 2, 0));
         g_gxState.tevSwapTable[swapIdx].alpha = static_cast<GXTevColorChan>(bp_get(value, 2, 2));
@@ -1036,17 +1129,21 @@ static void handle_bp(u32 value, bool bigEndian) {
         g_gxState.tevSwapTable[swapIdx].green = static_cast<GXTevColorChan>(bp_get(value, 2, 2));
       }
     }
+
     // K color/alpha selection for 2 stages per register
     u32 stage0 = kselIdx * 2;
     u32 stage1 = kselIdx * 2 + 1;
+
     if (stage0 < MaxTevStages) {
       g_gxState.tevStages[stage0].kcSel = static_cast<GXTevKColorSel>(bp_get(value, 5, 4));
       g_gxState.tevStages[stage0].kaSel = static_cast<GXTevKAlphaSel>(bp_get(value, 5, 9));
     }
+
     if (stage1 < MaxTevStages) {
       g_gxState.tevStages[stage1].kcSel = static_cast<GXTevKColorSel>(bp_get(value, 5, 14));
       g_gxState.tevStages[stage1].kaSel = static_cast<GXTevKAlphaSel>(bp_get(value, 5, 19));
     }
+
     mark_pipeline_state_dirty();
     break;
   }
@@ -1065,6 +1162,7 @@ static void handle_bp(u32 value, bool bigEndian) {
     g_gxState.stateDirty = true;
     break;
   }
+
   // FOG1 (0xEF): B mantissa (24-bit)
   case 0xEF: {
     g_gxState.fog.fog1Raw = value;
@@ -1075,6 +1173,7 @@ static void handle_bp(u32 value, bool bigEndian) {
     g_gxState.stateDirty = true;
     break;
   }
+
   // FOG2 (0xF0): B shift/exponent (5-bit)
   case 0xF0: {
     g_gxState.fog.fog2Raw = value;
@@ -1099,6 +1198,7 @@ static void handle_bp(u32 value, bool bigEndian) {
     const u32 fogProj = bp_get(value, 1, 20);
     GXFogType fogType = static_cast<GXFogType>(fogFunc | (fogProj << 3));
     g_gxState.fog.type = fogType;
+
     // Decode C parameter (same partial float encoding as A)
     u32 c_mant = bp_get(value, 11, 0);
     u32 c_exp = bp_get(value, 8, 11);
@@ -1120,6 +1220,7 @@ static void handle_bp(u32 value, bool bigEndian) {
         static_cast<float>(b) / 255.f,
         1.f,
     };
+
     g_gxState.stateDirty = true;
     break;
   }
@@ -1142,6 +1243,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       // K color register (8-bit components)
       if (idx < GX_MAX_KCOLOR) {
         auto& kc = g_gxState.kcolors[idx];
+
         if (isRA) {
           kc[0] = static_cast<float>(bp_get(value, 8, 0)) / 255.f;  // R
           kc[3] = static_cast<float>(bp_get(value, 8, 12)) / 255.f; // A
@@ -1149,35 +1251,46 @@ static void handle_bp(u32 value, bool bigEndian) {
           kc[2] = static_cast<float>(bp_get(value, 8, 0)) / 255.f;  // B
           kc[1] = static_cast<float>(bp_get(value, 8, 12)) / 255.f; // G
         }
+
         g_gxState.stateDirty = true;
       }
     } else {
       // TEV color register (11-bit signed components)
       if (idx < MaxTevRegs) {
         auto& cr = g_gxState.colorRegs[idx];
+
         if (isRA) {
           // 11-bit signed: sign-extend from 11 bits
           s32 r = bp_get(value, 11, 0);
+
           if (r & 0x400)
             r |= ~0x7FF; // sign extend
           s32 a = bp_get(value, 11, 12);
+
           if (a & 0x400)
             a |= ~0x7FF;
+
           cr[0] = static_cast<float>(r) / 255.f;
           cr[3] = static_cast<float>(a) / 255.f;
         } else {
           s32 b = bp_get(value, 11, 0);
+
           if (b & 0x400)
             b |= ~0x7FF;
+
           s32 g = bp_get(value, 11, 12);
+
           if (g & 0x400)
             g |= ~0x7FF;
+
           cr[2] = static_cast<float>(b) / 255.f;
           cr[1] = static_cast<float>(g) / 255.f;
         }
+
         g_gxState.stateDirty = true;
       }
     }
+
     break;
   }
 
@@ -1198,9 +1311,11 @@ static void handle_bp(u32 value, bool bigEndian) {
 
     // Decode one packed matrix column: [m[0][column], m[1][column]].
     s32 col0 = bp_get(value, 11, 0);
+
     if (col0 & 0x400)
       col0 |= ~0x7FF; // sign-extend from 11 bits
     s32 col1 = bp_get(value, 11, 11);
+
     if (col1 & 0x400)
       col1 |= ~0x7FF;
 
@@ -1212,11 +1327,13 @@ static void handle_bp(u32 value, bool bigEndian) {
     // hardware ignores the third column's top bit, leaving 5 bits for adjScale = scaleExp + 17.
     u32 scaleBits = bp_get(value, 2, 22);
     u32 shift = column * 2;
+
     if (column == 2) {
       info.adjScaleRaw = (info.adjScaleRaw & ~(1u << shift)) | ((scaleBits & 1u) << shift);
     } else {
       info.adjScaleRaw = (info.adjScaleRaw & ~(3u << shift)) | (scaleBits << shift);
     }
+
     info.scaleExp = static_cast<s8>(info.adjScaleRaw) - 17;
 
     g_gxState.stateDirty = true;
@@ -1244,6 +1361,7 @@ static void handle_bp(u32 value, bool bigEndian) {
     u32 coordIdx = (regId - 0x30) / 2;
     bool isT = (regId & 1) != 0;
     auto& tcs = g_gxState.texCoordScales[coordIdx];
+
     if (isT) {
       tcs.scaleT = static_cast<u16>(bp_get(value, 16, 0));
       tcs.biasT = bp_get(value, 1, 16) != 0;
@@ -1255,6 +1373,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       tcs.lineOffset = bp_get(value, 1, 18) != 0;
       tcs.pointOffset = bp_get(value, 1, 19) != 0;
     }
+
     g_gxState.stateDirty = true;
     break;
   }
@@ -1276,9 +1395,11 @@ static void handle_bp(u32 value, bool bigEndian) {
   }
   case 0x4E: {
     const u32 iScale = bp_get(value, 9, 0);
+
     if (iScale != 0) {
       g_gxState.dispCopyYScale = 256.f / static_cast<float>(iScale);
     }
+
     break;
   }
   case 0x4F: {
@@ -1350,33 +1471,42 @@ static void handle_bp(u32 value, bool bigEndian) {
     if (const auto mapping = decode_tex_bp_reg(regId); mapping.has_value()) {
       auto& slot = g_gxState.loadedTextures[mapping->texMapId];
       bool changed = false;
+
       switch (mapping->kind) {
       case TexBpRegMapping::Kind::Mode0:
         changed = slot.mode0 != value;
+
         if (changed) {
           slot.mode0 = value;
         }
+
         break;
       case TexBpRegMapping::Kind::Mode1:
         changed = slot.mode1 != value;
+
         if (changed) {
           slot.mode1 = value;
         }
+
         break;
       case TexBpRegMapping::Kind::Image0:
         changed = slot.image0 != value;
+
         if (changed) {
           slot.image0 = value;
           slot.mWidth = 0;
           slot.mHeight = 0;
           slot.mFormat = gfx::InvalidTextureFormat;
         }
+
         break;
       case TexBpRegMapping::Kind::Image3:
         changed = slot.image3 != value;
+
         if (changed) {
           slot.image3 = value;
         }
+
         break;
       case TexBpRegMapping::Kind::Tlut:
         // TLUT region's TMEM offset
@@ -1386,6 +1516,7 @@ static void handle_bp(u32 value, bool bigEndian) {
         // GXTexRegion regs
         break;
       }
+
       if (changed) {
         g_gxState.stateDirty = true;
       }
@@ -1394,6 +1525,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       Log.debug("Unhandled BP register 0x{:02X} (value 0x{:06X})", regId, value & 0xFFFFFF);
 #endif
     }
+
     break;
   }
 }
@@ -1420,6 +1552,7 @@ static bool cp_register_write_unchanged(u8 addr, u32 value) {
   if (s_cpRegisterCacheValid[addr] && s_cpRegisterCache[addr] == value) {
     return true;
   }
+
   s_cpRegisterCacheValid[addr] = true;
   s_cpRegisterCache[addr] = value;
   return false;
@@ -1447,9 +1580,11 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
     vd[GX_VA_NRM] = static_cast<GXAttrType>(bp_get(value, 2, 11));
     vd[GX_VA_CLR0] = static_cast<GXAttrType>(bp_get(value, 2, 13));
     vd[GX_VA_CLR1] = static_cast<GXAttrType>(bp_get(value, 2, 15));
+
     for (int attr = GX_VA_PNMTXIDX; attr <= GX_VA_CLR1; ++attr) {
       svd[attr] = vd[attr];
     }
+
     mark_pipeline_state_dirty();
     g_gxState.clearVtxSizeCache();
     break;
@@ -1467,9 +1602,11 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
     vd[GX_VA_TEX5] = static_cast<GXAttrType>(bp_get(value, 2, 10));
     vd[GX_VA_TEX6] = static_cast<GXAttrType>(bp_get(value, 2, 12));
     vd[GX_VA_TEX7] = static_cast<GXAttrType>(bp_get(value, 2, 14));
+
     for (int attr = GX_VA_TEX0; attr <= GX_VA_TEX7; ++attr) {
       svd[attr] = vd[attr];
     }
+
     mark_pipeline_state_dirty();
     g_gxState.clearVtxSizeCache();
     break;
@@ -1478,11 +1615,13 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
   // Matrix index A (0x30)
   case 0x30: {
     g_gxState.currentPnMtx = bp_get(value, 6, 0) / 3;
+
     for (u32 i = 0; i < 4 && i < MaxTexCoord; i++) {
       auto texMtx = static_cast<GXTexMtx>(bp_get(value, 6, 6 + i * 6));
       assert(texMtx >= 0 && texMtx <= GXTexMtx::GX_IDENTITY);
       g_gxState.tcgs[i].mtx = texMtx;
     }
+
     // Same matrix indices as XF 0x18, written from a different bank.
     g_gxState.invalidateXfReg(0x18);
     mark_pipeline_state_dirty();
@@ -1496,6 +1635,7 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
       assert(texMtx >= 0 && texMtx <= GXTexMtx::GX_IDENTITY);
       g_gxState.tcgs[i + 4].mtx = texMtx;
     }
+
     // Same matrix indices as XF 0x19, written from a different bank.
     g_gxState.invalidateXfReg(0x19);
     mark_pipeline_state_dirty();
@@ -1511,11 +1651,13 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
       vf.attrs[GX_VA_POS].type = static_cast<GXCompType>(bp_get(value, 3, 1));
       vf.attrs[GX_VA_POS].frac = static_cast<u8>(bp_get(value, 5, 4));
       vf.attrs[GX_VA_NRM].type = static_cast<GXCompType>(bp_get(value, 3, 10));
+
       if (bp_get(value, 1, 31) != 0) {
         vf.attrs[GX_VA_NRM].cnt = GX_NRM_NBT3;
       } else {
         vf.attrs[GX_VA_NRM].cnt = bp_get(value, 1, 9) != 0 ? GX_NRM_NBT : GX_NRM_XYZ;
       }
+
       vf.attrs[GX_VA_NRM].frac = normal_frac_bits(vf.attrs[GX_VA_NRM].type);
       vf.attrs[GX_VA_CLR0].cnt = static_cast<GXCompCnt>(bp_get(value, 1, 13));
       vf.attrs[GX_VA_CLR0].type = static_cast<GXCompType>(bp_get(value, 3, 14));
@@ -1529,6 +1671,7 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
       mark_pipeline_state_dirty();
       g_gxState.clearVtxSizeCache();
     }
+
     // VAT B registers (0x80-0x87)
     else if (addr >= 0x80 && addr <= 0x87) {
       u32 fmt = addr - 0x80;
@@ -1544,10 +1687,12 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
       vf.attrs[GX_VA_TEX3].frac = static_cast<u8>(bp_get(value, 5, 22));
       vf.attrs[GX_VA_TEX4].cnt = static_cast<GXCompCnt>(bp_get(value, 1, 27));
       vf.attrs[GX_VA_TEX4].type = static_cast<GXCompType>(bp_get(value, 3, 28));
+
       // TEX4 frac is in VAT C
       mark_pipeline_state_dirty();
       g_gxState.clearVtxSizeCache();
     }
+
     // VAT C registers (0x90-0x97)
     else if (addr >= 0x90 && addr <= 0x97) {
       u32 fmt = addr - 0x90;
@@ -1565,22 +1710,27 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
       mark_pipeline_state_dirty();
       g_gxState.clearVtxSizeCache();
     }
+
     // Array base addresses (0xA0-0xAF)
     else if (addr >= 0xA0 && addr <= 0xAF) {
       Log.error("CP_REG_ARRAYBASE_ID is not supported on Aurora. Use GX_LOAD_AURORA_ARRAYBASE instead.");
     }
+
     // Array strides (0xB0-0xBF)
     else if (addr >= 0xB0 && addr <= 0xBF) {
       u32 attrIdx = addr - 0xB0 + GX_VA_POS;
+
       if (attrIdx < GX_VA_MAX_ATTR) {
         auto& array = g_gxState.arrays[attrIdx];
         const auto newStride = static_cast<u8>(value);
+
         if (array.stride != newStride) {
           array.stride = newStride;
           mark_pipeline_state_dirty();
         }
       }
     }
+
     break;
   }
 }
@@ -1599,6 +1749,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
   u32 count = ((header >> 16) & 0xFFFF) + 1;
   u32 addr = header & 0xFFFF;
   u32 dataBytes = count * 4;
+
   // Log.warn("  xf: addr {:04x} count {} dataBytes {} pos {} -> {}", addr, count, dataBytes, pos, pos + dataBytes);
   if (size - pos < dataBytes) UNLIKELY {
       CHECK(false, "XF data read overrun: need {} bytes at pos {}", dataBytes, pos);
@@ -1615,6 +1766,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
     u32 xfAddr = addr - 0x1000;
     bool viewportUpdated = false;
     bool projectionUpdated = false;
+
     for (u32 i = 0; i < count; i++) {
       u32 reg = xfAddr + i;
       u32 val = read_u32(xfData + i * 4, bigEndian);
@@ -1622,7 +1774,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
       // Skip register writes that decode to state we already hold.
       const bool cacheable = reg < g_gxState.xfRegCache.size();
       const bool unchanged = cacheable && g_gxState.xfRegMatches(reg, val);
+
       if (cacheable) g_gxState.storeXfReg(reg, val);
+
       // Viewport (0x1A-0x1F) and projection (0x20-0x26) keep their unconditional apply below; only the banks that already had skip semantics and the TexGen bank drop out here.
       if (unchanged && (reg <= 0x19 || reg >= 0x3F)) continue;
 
@@ -1668,6 +1822,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
       case 0x11: {
         // Channel control registers
         u32 chanId = reg - 0x0E;
+
         if (chanId < MaxColorChannels) {
           auto& chan = g_gxState.colorChannelConfig[chanId];
           chan.matSrc = static_cast<GXColorSrc>(bp_get(val, 1, 0));
@@ -1676,6 +1831,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
           chan.ambSrc = static_cast<GXColorSrc>(bp_get(val, 1, 6));
           chan.diffFn = static_cast<GXDiffuseFn>(bp_get(val, 2, 7));
           u32 lightsHi = bp_get(val, 4, 11);
+
           switch (bp_get(val, 2, 9)) {
           case 1:
             chan.attnFn = GX_AF_SPEC;
@@ -1689,10 +1845,12 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
             chan.attnFn = GX_AF_NONE;
             break;
           }
+
           u32 lightMask = lightsLo | (lightsHi << 4);
           g_gxState.colorChannelState[chanId].lightMask = GX::LightMask{lightMask};
           mark_pipeline_state_dirty();
         }
+
         break;
       }
       case 0x12:
@@ -1702,11 +1860,13 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
       case 0x18: {
         // Matrix index A: PnMtx + TexCoord0-3 matrix indices
         g_gxState.currentPnMtx = bp_get(val, 6, 0) / 3;
+
         for (u32 i = 0; i < 4 && i < MaxTexCoord; i++) {
           auto texMtx = static_cast<GXTexMtx>(bp_get(val, 6, 6 + i * 6));
           assert(texMtx >= 0 && texMtx <= GXTexMtx::GX_IDENTITY);
           g_gxState.tcgs[i].mtx = texMtx;
         }
+
         mark_pipeline_state_dirty();
         break;
       }
@@ -1715,6 +1875,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
         for (u32 i = 0; i < 4 && (i + 4) < MaxTexCoord; i++) {
           g_gxState.tcgs[i + 4].mtx = static_cast<GXTexMtx>(bp_get(val, 6, i * 6));
         }
+
         mark_pipeline_state_dirty();
         break;
       }
@@ -1739,11 +1900,13 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
       case 0x26: {
         // Projection: 6 params + type at XF 0x1020-0x1026
         const u32 projOff = reg - 0x20;
+
         if (projOff < g_gxState.xfProjection.size()) {
           g_gxState.xfProjection[projOff] = read_f32(xfData + i * 4, bigEndian);
         } else {
           g_gxState.projType = static_cast<GXProjectionType>(val);
         }
+
         projectionUpdated = true;
         break;
       }
@@ -1756,6 +1919,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
         // TexGen config (0x40-0x4F) and post-transform (0x50-0x5F)
         if (reg >= 0x40 && reg <= 0x4F) {
           u32 tcIdx = reg - 0x40;
+
           if (tcIdx < MaxTexCoord) {
             auto& tcg = g_gxState.tcgs[tcIdx];
             bool proj = bp_get(val, 1, 1) != 0;
@@ -1780,10 +1944,12 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
             if (srcRow < 13) {
               tcg.src = rowToSrc[srcRow];
             }
+
             mark_pipeline_state_dirty();
           }
         } else if (reg >= 0x50 && reg <= 0x5F) {
           u32 tcIdx = reg - 0x50;
+
           if (tcIdx < MaxTexCoord) {
             g_gxState.tcgs[tcIdx].postMtx = static_cast<GXPTTexMtx>(bp_get(val, 6, 0) + 64);
             g_gxState.tcgs[tcIdx].normalize = bp_get(val, 1, 8) != 0;
@@ -1794,12 +1960,15 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
           Log.debug("Unhandled XF register 0x{:04X} (value 0x{:08X})", reg, val);
 #endif
         }
+
         break;
       }
     }
+
     if (viewportUpdated) {
       apply_xf_viewport();
     }
+
     if (projectionUpdated) {
       apply_xf_projection();
     }
@@ -1811,13 +1980,16 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
 static void handle_draw_overrun(u8 cmd, u16 vtxCount, u32 vtxSize, u32 totalVtxBytes, const u8* data, const u32& pos,
                                 u32 size) {
   static u32 truncatedDrawLogCount = 0;
+
   if (truncatedDrawLogCount >= 64) {
     if (truncatedDrawLogCount == 64) {
       Log.warn("suppressing further truncated draw diagnostics");
     }
+
     ++truncatedDrawLogCount;
     return;
   }
+
   ++truncatedDrawLogCount;
 
   // Hex dump around the draw command for debugging
@@ -1825,12 +1997,14 @@ static void handle_draw_overrun(u8 cmd, u16 vtxCount, u32 vtxSize, u32 totalVtxB
   u32 dumpStart = (cmdPos > 16) ? cmdPos - 16 : 0;
   u32 dumpEnd = (cmdPos + 32 < size) ? cmdPos + 32 : size;
   std::string hex;
+
   for (u32 i = dumpStart; i < dumpEnd; i++) {
     if (i == cmdPos)
       hex += fmt::format("[{:02x}]", data[i]);
     else
       hex += fmt::format(" {:02x}", data[i]);
   }
+
   Log.warn("  hex dump around truncated draw cmd (pos {}-{}):{}", dumpStart, dumpEnd - 1, hex);
   const auto fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
   const auto& vtxFmt = g_gxState.vtxFmts[fmt];
@@ -1855,9 +2029,11 @@ static void handle_draw_overrun(u8 cmd, u16 vtxCount, u32 vtxSize, u32 totalVtxB
 static u32 calculate_last_vtx_size(GXVtxFmt fmt) {
   u32 vtxSize = 0;
   const auto& vtxFmt = g_gxState.vtxFmts[fmt];
+
   for (int i = GX_VA_PNMTXIDX; i <= GX_VA_TEX7; ++i) {
     const auto attr = static_cast<GXAttr>(i);
     const auto& attrFmt = vtxFmt.attrs[i];
+
     switch (g_gxState.vtxDesc[i]) {
     case GX_NONE:
       break;
@@ -1876,6 +2052,7 @@ static u32 calculate_last_vtx_size(GXVtxFmt fmt) {
 
   g_gxState.lastVtxFmt = fmt;
   g_gxState.lastVtxSize = vtxSize;
+
   // The format is selected by the draw opcode, without a register write.
   // Even equal-stride formats may decode bytes differently, so do not merge
   // into a draw using the previous format's shader and uniform layout.
@@ -1897,8 +2074,10 @@ static inline bool frame_interpolation_identity_needed() noexcept {
 static uint32_t matrix_index_prefix_size(GXVtxFmt fmt) noexcept {
   const auto& vtxFmt = g_gxState.vtxFmts[fmt];
   uint32_t size = 0;
+
   for (int i = GX_VA_PNMTXIDX; i < GX_VA_POS; ++i) {
     const auto attr = static_cast<GXAttr>(i);
+
     switch (g_gxState.vtxDesc[i]) {
     case GX_NONE:
       break;
@@ -1914,6 +2093,7 @@ static uint32_t matrix_index_prefix_size(GXVtxFmt fmt) noexcept {
       break;
     }
   }
+
   return size;
 }
 
@@ -1925,6 +2105,7 @@ static HashType draw_geometry_signature(GXVtxFmt fmt, const uint8_t* vertices,
 
   // Matrix-index bytes select an instance's current XF palette slots, so they are deliberately excluded from mesh identity.
   const uint32_t matrixPrefix = std::min(matrix_index_prefix_size(fmt), vtxStride);
+
   if (matrixPrefix == 0) {
     // Most draws have no direct matrix-index prefix.
     hasher.update(vertices, static_cast<size_t>(vtxCount) * vtxStride);
@@ -1940,6 +2121,7 @@ static HashType draw_geometry_signature(GXVtxFmt fmt, const uint8_t* vertices,
     if (g_gxState.vtxDesc[i] != GX_INDEX8 && g_gxState.vtxDesc[i] != GX_INDEX16) {
       continue;
     }
+
     const auto& array = g_gxState.arrays[i];
     const auto attribute = static_cast<uint32_t>(i);
     const auto source = reinterpret_cast<uintptr_t>(array.data);
@@ -1947,6 +2129,7 @@ static HashType draw_geometry_signature(GXVtxFmt fmt, const uint8_t* vertices,
     hasher.update(source);
     hasher.update(array.stride);
   }
+
   return static_cast<HashType>(hasher.digest());
 }
 
@@ -1961,13 +2144,17 @@ static uint16_t pn_mtx_mask(const uint8_t* vertices, uint16_t vtxCount,
   if (g_gxState.vtxDesc[GX_VA_PNMTXIDX] != GX_DIRECT) {
     return static_cast<uint16_t>(1u << std::min<uint32_t>(g_gxState.currentPnMtx, MaxPnMtx - 1));
   }
+
   uint16_t mask = 0;
+
   for (uint16_t vertex = 0; vertex < vtxCount; ++vertex) {
     const uint32_t matrixIndex = vertices[static_cast<size_t>(vertex) * vtxStride] / 3u;
+
     if (matrixIndex < MaxPnMtx) {
       mask |= static_cast<uint16_t>(1u << matrixIndex);
     }
   }
+
   return mask;
 }
 
@@ -1985,15 +2172,18 @@ static PnMtxUsage pn_mtx_usage(const uint8_t* vertices, uint16_t vtxCount,
   Hasher topologyHasher;
   topologyHasher.update(vtxCount);
   uint16_t mask = 0;
+
   for (uint16_t vertex = 0; vertex < vtxCount; ++vertex) {
     // GX matrix-index attributes precede every other vertex attribute and are always one byte.
     const uint8_t rawMatrixIndex = vertices[static_cast<size_t>(vertex) * vtxStride];
     topologyHasher.update(rawMatrixIndex);
     const uint32_t matrixIndex = rawMatrixIndex / 3u;
+
     if (matrixIndex < MaxPnMtx) {
       mask |= static_cast<uint16_t>(1u << matrixIndex);
     }
   }
+
   return {
       .mask = mask,
       .topologySignature = static_cast<HashType>(topologyHasher.digest()),
@@ -2017,6 +2207,7 @@ static const CachedIndexTemplate& cached_index_template(GXPrimitive prim, u16 vt
   static std::array<CachedIndexTemplate, CacheSize> cache{};
   const u32 key = (static_cast<u32>(underlying(prim)) << 16) | vtxCount;
   auto& entry = cache[(key ^ (key >> 9)) & (CacheSize - 1)];
+
   if (entry.valid && entry.prim == prim && entry.vtxCount == vtxCount) LIKELY {
     return entry;
   }
@@ -2034,20 +2225,25 @@ static ArrayRef<u16> offset_index_template(const CachedIndexTemplate& indexTempl
                                            u16 vtxStart) {
   // Grow-only: resizing down and back up made every merge zero-fill the buffer before the transform immediately overwrote it.
   const size_t count = indexTemplate.indices.size();
+
   if (handle_draw_idx_buf.size() < count) {
     handle_draw_idx_buf.resize(count);
   }
+
   const u16* src = indexTemplate.indices.data();
   u16* dst = handle_draw_idx_buf.data();
+
   for (size_t i = 0; i < count; ++i) {
     dst[i] = static_cast<u16>(src[i] + vtxStart);
   }
+
   return {dst, count};
 }
 
 struct CachedPipelineState {
   gfx::PipelineRef ref = 0;
   HashType configHash = 0;
+
   // Carried here so the draw can be recorded without keeping the PipelineConfig that produced it alive; it is the only field of the config the draw itself still needs.
   u32 dstAlpha = UINT32_MAX;
   ShaderInfo shaderInfo{};
@@ -2060,10 +2256,12 @@ static const CachedPipelineState& cached_pipeline_state(const PipelineConfig& co
     PipelineConfig config{};
     CachedPipelineState state{};
   };
+
   static std::array<Entry, CacheSize> cache{};
 
   const HashType hash = xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX));
   auto& entry = cache[hash & (CacheSize - 1)];
+
   if (entry.valid && entry.state.configHash == hash &&
       std::memcmp(&entry.config, &config, sizeof(config)) == 0) LIKELY {
     return entry.state;
@@ -2077,6 +2275,7 @@ static const CachedPipelineState& cached_pipeline_state(const PipelineConfig& co
       .dstAlpha = config.dstAlpha,
       .shaderInfo = build_shader_info(config.shaderConfig),
   };
+
   return entry.state;
 }
 
@@ -2089,10 +2288,12 @@ static const CachedPipelineState& resolve_pipeline_state(GXPrimitive prim, GXVtx
     GXPrimitive prim = static_cast<GXPrimitive>(0);
     GXVtxFmt fmt = static_cast<GXVtxFmt>(0);
   };
+
   static Memo memo{};
 
   const u32 sampleCount = gfx::get_sample_count();
   const u32 generation = g_gxState.pipelineStateGeneration;
+
   if (memo.state != nullptr && memo.generation == generation && memo.sampleCount == sampleCount &&
       memo.prim == prim && memo.fmt == fmt) LIKELY {
     return *memo.state;
@@ -2100,6 +2301,7 @@ static const CachedPipelineState& resolve_pipeline_state(GXPrimitive prim, GXVtx
 
   PipelineConfig config{};
   populate_pipeline_config(config, prim, fmt);
+
   // cached_pipeline_state hands back a reference into a fixed direct-mapped table, so the address stays valid; the entry it points at can only be rewritten by another call to that function, and every such call goes through this miss path and replaces the memo in the same breath.
   const CachedPipelineState& state = cached_pipeline_state(config);
   memo = Memo{
@@ -2109,28 +2311,34 @@ static const CachedPipelineState& resolve_pipeline_state(GXPrimitive prim, GXVtx
       .prim = prim,
       .fmt = fmt,
   };
+
   return state;
 }
 
 static bool admit_draw(GXPrimitive prim, GXVtxFmt fmt, u16 count, uint32_t vertexBytes, bool merged = false) {
   const auto& indexTemplate = cached_index_template(prim, count);
   gfx::StagingSizes demand{vertexBytes, 0, indexTemplate.indices.size() * sizeof(u16), 0};
+
   if (merged) return gfx::staging_has_space(demand);
   const auto& info = resolve_pipeline_state(prim, fmt).shaderInfo;
   demand[1] = gfx::staging_uniform_bytes(info.uniformSize);
+
   if (frame_interpolation_identity_needed() && frame_interpolation_replay_safe())
     demand[1] *= 1 + MaxInterpolatedFrames;
+
   for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
     if ((g_gxState.vtxDesc[i] == GX_INDEX8 || g_gxState.vtxDesc[i] == GX_INDEX16) &&
         g_gxState.arrays[i].cachedRange.size == 0)
       demand[3] += gfx::staging_storage_bytes(g_gxState.arrays[i].size);
   }
+
   return gfx::staging_has_space(demand);
 }
 
 bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
                      uint32_t vertexBytes) {
   aurora_legacy_gx_panic("aurora::gx::fifo::submit_raw_draw");
+
   if (vertices == nullptr || vtxCount == 0 || vertexBytes == 0) {
     return false;
   }
@@ -2143,6 +2351,7 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
   drain();
 
   u32 vtxSize;
+
   if (g_gxState.lastVtxFmt == fmt) LIKELY {
     vtxSize = g_gxState.lastVtxSize;
   } else UNLIKELY {
@@ -2150,13 +2359,16 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
   }
 
   const u32 expectedVertexBytes = static_cast<u32>(vtxCount) * vtxSize;
+
   if (expectedVertexBytes == 0 || expectedVertexBytes != vertexBytes) {
     static uint32_t rawVertexSizeMismatchCount = 0;
+
     if (rawVertexSizeMismatchCount++ < 64) {
       Log.warn("raw draw vertex-size mismatch prim={} fmt={} count={} cached_stride={} expected={} supplied={}",
                static_cast<uint32_t>(prim), static_cast<uint32_t>(fmt), vtxCount, vtxSize,
                expectedVertexBytes, vertexBytes);
     }
+
     return false;
   }
 
@@ -2164,13 +2376,16 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
 
   // This entry point bypasses process(), so it owns the renderer lock itself.
   std::unique_lock gpuLock(aurora::renderer_gpu_mutex());
+
   if (!admit_draw(prim, fmt, vtxCount, vertexBytes)) {
     gpuLock.unlock();
     gfx::split_staging_batch();
     gpuLock.lock();
+
     if (!admit_draw(prim, fmt, vtxCount, vertexBytes))
       throw gfx::StagingCapacityError("Raw draw does not fit after capacity submission");
   }
+
   const gfx::Range vertRange = gfx::push_verts(vertices, vertexBytes);
   const bool interpolationIdentityActive = frame_interpolation_identity_needed();
   const PnMtxUsage matrixUsage = interpolationIdentityActive
@@ -2191,10 +2406,12 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   if (pos + 2 > size) {
     return false;
   }
+
   u16 vtxCount = read_u16(data + pos, bigEndian);
   pos += 2;
 
   u32 vtxSize;
+
   if (g_gxState.lastVtxFmt == fmt) LIKELY {
     vtxSize = g_gxState.lastVtxSize;
   } else UNLIKELY {
@@ -2202,6 +2419,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   u32 totalVtxBytes = vtxCount * vtxSize;
+
   if (pos + totalVtxBytes > size) UNLIKELY {
     handle_draw_overrun(cmd, vtxCount, vtxSize, totalVtxBytes, data, pos, size);
     return false;
@@ -2214,11 +2432,13 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   DrawData* mergeTarget = nullptr;
+
   // Decide admission before allocating anything. The merged path needs only
   // vertices and indices; it must not resolve pipelines or upload arrays.
   // Try to merge with previous draw call
   if (!g_gxState.stateDirty) LIKELY {
     auto* lastDraw = gfx::get_last_draw_command<DrawData>();
+
     // Expanded lines/points have different vertex interpretation even with one instance.
     // Triangle-list output has no restart index; index 65535 is usable.
     // Overflow would address earlier vertices instead of the appended geometry.
@@ -2229,10 +2449,12 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
       mergeTarget = lastDraw;
     }
   }
+
   if (!admit_draw(prim, fmt, vtxCount, totalVtxBytes, mergeTarget != nullptr)) throw gfx::StagingBatchFull{};
   const uint8_t* vertices = data + pos;
   gfx::Range vertRange = gfx::push_verts(vertices, totalVtxBytes);
   pos += totalVtxBytes;
+
   if (auto* lastDraw = mergeTarget) {
       const auto& indexTemplate = cached_index_template(prim, vtxCount);
       const auto indices = offset_index_template(indexTemplate, lastDraw->vtxCount);
@@ -2250,10 +2472,12 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
       lastDraw->indexCount += numIndices;
       ++lastDraw->capture.primitives;
       ++gfx::g_mergedDrawCallCount;
+
       // This primitive now renders through the draw we merged into, so its palette slots belong to that draw's interpolation snapshot as well.
       if (s_lastDrawRecordedInterpolation) UNLIKELY {
         extend_interpolation_draw(pn_mtx_mask(vertices, vtxCount, vtxSize));
       }
+
       return true;
   }
 
@@ -2279,19 +2503,25 @@ static gfx::Range upload_vertex_array(const void* data, uint32_t size) {
     HashType hash;
     bool operator==(const Key&) const = default;
   };
+
   struct KeyHash {
     size_t operator()(const Key& key) const noexcept { return static_cast<size_t>(key.hash); }
   };
+
   static FastMap<Key, gfx::Range, KeyHash> uploads;
   static uint64_t uploadsEpoch = UINT64_MAX;
+
   if (uploadsEpoch != gfx::staging_epoch()) {
     uploads.clear();
     uploadsEpoch = gfx::staging_epoch();
   }
+
   const Key key{data, size, xxh3_hash_s(data, size, reinterpret_cast<uintptr_t>(data))};
+
   if (const auto it = uploads.find(key); it != uploads.end()) {
     return it->second;
   }
+
   const auto range = gfx::push_storage(static_cast<const uint8_t*>(data), size);
   uploads.emplace(key, range);
   return range;
@@ -2307,6 +2537,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
     // Leave stateDirty alone: the next draw re-resolving its pipeline is the safe direction, and nothing about this draw reached the GPU.
     return;
   }
+
   // Callers hold the renderer GPU mutex for the whole drain (process() and submit_raw_draw); taking it again per draw only cost a recursive re-entry.
   const auto& indexTemplate = cached_index_template(prim, vtxCount);
   const u32 numIndices = indexTemplate.indexCount;
@@ -2315,11 +2546,14 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
 
   // Build pipeline, bind groups, and push draw command
   BindGroupRanges ranges{};
+
   for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
     if (g_gxState.vtxDesc[i] != GX_INDEX8 && g_gxState.vtxDesc[i] != GX_INDEX16) {
       continue;
     }
+
     auto& array = g_gxState.arrays[i];
+
     if (array.cachedRange.size > 0) {
       ranges.vaRanges[i - GX_VA_POS] = array.cachedRange;
     } else {
@@ -2340,6 +2574,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
 
   // Draw-identity hashing only feeds frame interpolation, and only for perspective draws: build_uniform reads the identity exclusively past its `!perspective || frame_interpolation_fps() == 0` early-out.
   FrameInterpolationDrawIdentity drawIdentity{};
+
   if (interpolationIdentityActive) UNLIKELY {
     const HashType drawShape = static_cast<HashType>(vtxCount) |
                                (static_cast<HashType>(underlying(prim)) << 16) |
@@ -2356,12 +2591,14 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
         .matrixTopology = matrixTopologySignature,
     };
   }
+
   const auto uniformRanges =
       build_uniform(info, vertRange.offset, ranges, drawIdentity, interpolationIdentityActive,
                     usedPnMtxMask);
   s_lastDrawRecordedInterpolation = interpolationIdentityActive;
 
   uint32_t instanceCount = 1;
+
   if (prim == GX_LINES) {
     instanceCount = vtxCount / 2;
   } else if (prim == GX_LINESTRIP) {
@@ -2369,6 +2606,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
   } else if (prim == GX_POINTS) {
     instanceCount = vtxCount;
   }
+
   gfx::push_draw_command(DrawData{
       .pipeline = pipeline,
       .vertRange = vertRange,
@@ -2385,10 +2623,12 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
         if (!gfx::port_capture::enabled()) return gfx::port_capture::DrawState{};
         auto capture = s_captureSource;
         capture.frame = gfx::current_frame();
+
         for (u32 i = 0; i < MaxTextures; ++i) {
           if (info.sampledTextures[i] || info.sampledIndTextures[i])
             capture.textureSources[i] = g_gxState.textures[i].texObj.texObjId;
         }
+
         const auto& alpha = g_gxState.alphaCompare;
         capture.alphaCompare = alpha.ref0 | (alpha.ref1 << 8) |
                                (uint32_t(alpha.comp0) << 16) | (uint32_t(alpha.comp1) << 19) |
@@ -2424,6 +2664,7 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
   if (pos + 2 > size) {
     return false;
   }
+
   u16 subCmd = read_u16(data + pos, bigEndian);
   pos += 2;
 
@@ -2474,10 +2715,12 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
 
     auto& array = g_gxState.arrays[attrIdx];
     const auto newData = reinterpret_cast<void*>(arrayAddr);
+
     if (array.data != newData || array.size != arraySize || array.le != le) {
       array.data = newData;
       array.size = arraySize;
       array.le = le;
+
       // Only drop the cached upload when the backing array actually changes.
       array.cachedRange = {};
       mark_pipeline_state_dirty();
@@ -2499,11 +2742,13 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
     pos += 4;
     next.tlut = static_cast<GXTlut>(read_u32(data + pos, bigEndian));
     pos += 4;
+
     if (data[pos] != 0) {
       next.flags |= 1u;
     } else {
       next.flags &= ~1u;
     }
+
     pos += 1;
     next.texObjId = read_u32(data + pos, bigEndian);
     pos += 4;
@@ -2514,6 +2759,7 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
                          slot.mFormat != next.mFormat || slot.tlut != next.tlut || slot.flags != next.flags ||
                          slot.texObjId != next.texObjId || slot.texDataVersion != next.texDataVersion;
     slot = next;
+
     if (changed) {
       g_gxState.stateDirty = true;
     }
@@ -2561,12 +2807,15 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
 
   else {
     static u32 unknownAuroraLogCount = 0;
+
     if (unknownAuroraLogCount < 16) {
       Log.warn("Unknown Aurora subcommand: {:04X}; stopping FIFO decode", subCmd);
       ++unknownAuroraLogCount;
     }
+
     return false;
   }
+
   return true;
 }
 

@@ -39,8 +39,10 @@ inline static void __GDWrite(u8 data) {
 
 inline static void GDWrite_data(const void* data, u32 length) {
     GDOverflowCheck(length);
+
     // The compiler realizes this is memcpy, trust.
     const u8* dataPtr = static_cast<const u8*>(data);
+
     for (u32 i = 0; i < length; i++) {
         __GDWrite(dataPtr[i]);
     }

@@ -2,6 +2,7 @@
 #include "ios_host.h"
 
 extern "C" void func_80528B90(CpuContext*);
+
 // MH3's keyboard setup spins directly on a stack completion flag after this
 // SDK call (0x8056C994), with no scheduler/device-service call in the loop.
 // Deliver the real queued open/version/enumeration callbacks at this boundary.
@@ -13,6 +14,7 @@ extern "C" void MH3_HIDInitAsync(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80528B90, MH3_HIDInitAsync, "MH3_HIDInitAsync");
 
 extern "C" void func_80528D40(CpuContext*);
+
 // Keyboard teardown has the matching stack-flag wait at 0x8056CB60.
 // Shutdown cancels the outstanding enumeration, then its SDK callback closes
 // the IOS handle and invokes the caller's completion. Deliver that chain before

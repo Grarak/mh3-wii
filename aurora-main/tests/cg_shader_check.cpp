@@ -39,17 +39,21 @@ void check(bool value, const char* message) { if (!value) throw std::runtime_err
 void has(const std::string& source, const char* expected) {
   check(source.find(expected) != source.npos, expected);
 }
+
 template <class Function> void rejects(Function function) {
   try { function(); } catch (const std::runtime_error&) { return; }
   throw std::runtime_error("unsupported input was accepted");
 }
+
 std::string read(const char* path) {
   std::ifstream file(path); check(bool(file), "cannot read shader input");
   return {std::istreambuf_iterator<char>(file), {}};
 }
+
 void write(const char* path, const std::string& source) {
   std::ofstream file(path); file << source; check(bool(file), "cannot write shader output");
 }
+
 void unit_checks() {
   const auto v = convert(vertex, Stage::Vertex), f = convert(fragment, Stage::Fragment);
   has(v, "a_position_in : POSITION"); has(v, "a_uv_in : TEXCOORD0"); has(v, "a_color_in : COLOR0");
@@ -126,17 +130,21 @@ void main() {
   rejects([] { convert("uniform sampler2D src; out vec4 color; void main(){color=texture(src,vec2(0.0);}", Stage::Fragment); });
   rejects([] { convert("uniform sampler2D src; out vec4 color; void main(){color=texelFetch(src,ivec2(0),1);}", Stage::Fragment); });
 }
+
 void capture_checks(const char* path) {
   check(setenv("AURORA_PORT_CAPTURE", path, 1) == 0, "cannot set capture directory");
   using aurora::gfx::port_capture::shader;
   shader("direct \"geometry\"", vertex, fragment, "test/generator.cpp:42 model=7");
   std::filesystem::path first;
+
   for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(path) / "shaders"))
     if (entry.path().extension() == ".cg") { first = entry.path(); break; }
   check(!first.empty(), "capture produced no Cg");
   const auto timestamp = std::filesystem::last_write_time(first);
+
   for (unsigned i = 0; i < 100; ++i)
     shader("direct \"geometry\"", vertex, fragment, "test/generator.cpp:42 model=7");
+
   check(std::filesystem::last_write_time(first) == timestamp, "repeated shader rewrote Cg");
   shader("second origin", vertex, fragment, "test/other.cpp:8");
   auto second = fragment; second.replace(second.find("< 1u"), 4, "< 2u");
@@ -145,6 +153,7 @@ void capture_checks(const char* path) {
   shader("unsupported", vertex, unsupported, "test/unsupported");
   shader("unsupported", vertex, unsupported, "test/unsupported");
 }
+
 void portable_capture_checks(const char* path) {
   check(setenv("AURORA_PORT_CAPTURE",path,1)==0,"cannot set portable capture directory");
   check(setenv("AURORA_PORT_CAPTURE_DRAW_INTERVAL","1",1)==0,"cannot set complete portable capture interval");
@@ -169,6 +178,7 @@ void portable_capture_checks(const char* path) {
   draw.program=102;native_draw("mesh",draw);native_draw("mesh",draw);
 }
 } // namespace
+
 int main(int argc, char** argv) {
   try {
     if (argc == 5 && std::string(argv[1]) == "--convert") {

@@ -81,6 +81,7 @@ enum : uint32_t {
     kPressed = 4,
     kReleased = 6,
 };
+
 // Classic and Nunchuk sets also have a d-pad set (the stick as directions).
 enum : uint32_t {
     kDirs = 8,
@@ -88,6 +89,7 @@ enum : uint32_t {
     kDirsPressed = 12,
     kDirsReleased = 14,
 };
+
 // The repeat output and its count, by set.
 constexpr uint32_t kRemoteRepeat = 8, kClassicRepeat = 0x22, kNunchukRepeat = 0x22, kGcRepeat = 0x18;
 
@@ -131,6 +133,7 @@ enum : uint32_t {
 uint16_t R16(uint32_t a) {
     return Memory::Read16(a);
 }
+
 void W16(uint32_t a, uint32_t v) {
     Memory::Write16(a, uint16_t(v));
 }
@@ -138,6 +141,7 @@ void W16(uint32_t a, uint32_t v) {
 // The game's bits for the device bits in `held`, through a 16-entry map.
 uint16_t MapButtons(uint32_t held, uint32_t map) {
     uint16_t bits = 0;
+
     for (uint32_t i = 0; i < 16; ++i)
         if (held & R16(map + 2 * i))
             bits |= R16(kGameBits + 2 * i);
@@ -161,12 +165,16 @@ void Repeat(uint32_t count, uint32_t out, T held, T previous) {
         else
             W16(a, v);
     };
+
     write(out, 0);
+
     if (previous != held) {
         W16(count, 0);
         return;
     }
+
     const uint32_t ticks = R16(count) + GameStep::Ticks();
+
     if (ticks > 12) {
         W16(count, std::min<uint32_t>(ticks - 3, 12));
         write(out, held);
@@ -190,22 +198,28 @@ static void PadReadWiiPort(CpuContext* ctx) {
     const uint32_t classic = pad + kClassic, remote = pad + kRemote, nunchuk = pad + kNunchuk;
     W16(classic + kPrevious, R16(classic + kHeld));
     W16(classic + kDirsPrevious, R16(classic + kDirs));
+
     if (game(Memory::Read32(kSystem + kInputSource), {kSystem}) == 1) {
         game.Call<PadCleared>({channel});
         return;
     }
+
     Memory::Write32(pad + kProbe, game.Call<WPADProbe>({channel, pad + kDevice}));
+
     if (channel == 0) {
         Memory::Write32(kLastProbe, Memory::Read32(pad + kProbe));
         Memory::Write32(kLastDevice, Memory::Read32(pad + kDevice));
     }
+
     const auto probe = [&] {
         return int32_t(Memory::Read32(pad + kProbe));
     };
+
     if (probe() == -2 || game.Call<IsNetworkBusy>() == 1) {
         game.Call<PadDisconnected>({channel});
         return;
     }
+
     const auto status = [&] {
         switch (Memory::Read32(pad + kDevice)) {
         case 1:
@@ -216,6 +230,7 @@ static void PadReadWiiPort(CpuContext* ctx) {
             return pad + kCoreStatus;
         }
     };
+
     if (probe() == 0) {
         game.Call<WPADRead>({channel, status()});
         game.Call<WPADClampStick>({channel, status(), 2});
@@ -235,6 +250,7 @@ static void PadReadWiiPort(CpuContext* ctx) {
         W16(classic + 0x14, 0);
         game.Call<ClassicSticks>({channel, pad, 0});
     }
+
     PressesAndReleases(classic, kHeld, kPrevious, kPressed, kReleased);
     PressesAndReleases(classic, kDirs, kDirsPrevious, kDirsPressed, kDirsReleased);
     Repeat<uint16_t>(classic + kClassicRepeat + 2, classic + kClassicRepeat, R16(classic + kHeld), R16(classic + kPrevious));
@@ -243,19 +259,25 @@ static void PadReadWiiPort(CpuContext* ctx) {
     W16(remote + kPrevious, R16(remote + kHeld));
     W16(nunchuk + kPrevious, R16(nunchuk + kHeld));
     W16(nunchuk + kDirsPrevious, R16(nunchuk + kDirs));
+
     if (probe() == 0) {
         const uint32_t info = kSystem + kInfoWait + channel, pending = kSystem + kInfoPending + channel;
+
         if (Memory::Read8(pending) == 1 && int8_t(Memory::Read8(info)) == 120) {
             game.Call<WPADGetInfoAsync>({channel, kInfo + channel * 0x18, InfoCallback});
             Memory::Write8(pending, 0);
         }
+
         const int8_t wait = int8_t(Memory::Read8(info));
+
         if (wait > 0)
             Memory::Write8(info, uint8_t(wait - int8_t(std::min<uint32_t>(GameStep::Ticks(), uint32_t(wait)))));
+
         W16(remote + kHeld, MapButtons(R16(status()), kRemoteMap));
     } else {
         W16(remote + kHeld, 0);
     }
+
     PressesAndReleases(remote, kHeld, kPrevious, kPressed, kReleased);
     Repeat<uint16_t>(remote + kRemoteRepeat + 2, remote + kRemoteRepeat, R16(remote + kHeld), R16(remote + kPrevious));
 
@@ -263,6 +285,7 @@ static void PadReadWiiPort(CpuContext* ctx) {
     // accelerometer history of both.
     const uint32_t index = (Memory::Read8(pad + kHistoryIndex) + 1) & 15;
     Memory::Write8(pad + kHistoryIndex, uint8_t(index));
+
     if (probe() == 0 && Memory::Read32(pad + kDevice) == 1) {
         W16(nunchuk + kHeld, R16(remote + kHeld));
         W16(nunchuk + kPrevious, R16(remote + kPrevious));
@@ -281,12 +304,15 @@ static void PadReadWiiPort(CpuContext* ctx) {
         W16(nunchuk + 0x16, 0);
         W16(nunchuk + 0x14, 0);
         const uint32_t zero = Memory::Read32(kFloatZero);
+
         for (uint32_t axis = 0; axis < 3; ++axis) {
             Memory::Write32(pad + kRemoteHistory + index * 12 + axis * 4, zero);
             Memory::Write32(pad + kNunchukHistory + index * 12 + axis * 4, zero);
         }
+
         game.Call<NunchukStick>({channel, pad});
     }
+
     PressesAndReleases(nunchuk, kHeld, kPrevious, kPressed, kReleased);
     PressesAndReleases(nunchuk, kDirs, kDirsPrevious, kDirsPressed, kDirsReleased);
     Repeat<uint16_t>(nunchuk + kNunchukRepeat + 2, nunchuk + kNunchukRepeat, R16(nunchuk + kHeld), R16(nunchuk + kPrevious));
@@ -303,6 +329,7 @@ static void PadReadGcPort(CpuContext* ctx) {
     W16(gc + kPrevious, R16(gc + kHeld));
     W16(gc + kDirsPrevious, R16(gc + kDirs));
     W16(gc + 0x1C, uint32_t(int32_t(int8_t(game.Call<GcError>({channel})))));
+
     if (R16(gc + 0x1C) == 0) {
         W16(gc + kHeld, MapButtons(game.Call<GcButtons>({channel}) & 0xFFFF, kGcMap));
         game.Call<GcSticks>({channel, gc, 12});
@@ -314,6 +341,7 @@ static void PadReadGcPort(CpuContext* ctx) {
         W16(gc + 0x16, 0);
         W16(gc + 0x14, 0);
     }
+
     PressesAndReleases(gc, kHeld, kPrevious, kPressed, kReleased);
     PressesAndReleases(gc, kDirs, kDirsPrevious, kDirsPressed, kDirsReleased);
     Repeat<uint16_t>(gc + kGcRepeat + 2, gc + kGcRepeat, R16(gc + kHeld), R16(gc + kPrevious));
@@ -328,14 +356,17 @@ static void PadGameKeysPort(CpuContext* ctx) {
     W16(keys + kPrevious, R16(keys + kHeld));
     W16(keys + kDirsPrevious, R16(keys + kDirs));
     Memory::Write8(keys + kKeyStickPrevious, Memory::Read8(keys + kKeyStick));
+
     for (uint32_t offset : std::initializer_list<uint32_t>{kHeld, kDirs, kDirsPressed, kDirsReleased, 0x10, 0x12, kKeyDegrees, kKeyMagnitude})
         W16(keys + offset, 0);
+
     Memory::Write8(keys + kKeyStickDirs, 0);
     Memory::Write8(keys + kKeyStick, 0);
     W16(keys + kKeyRepeat, 0);
     Memory::Write8(keys + kKeyStickRepeat, 0);
 
     uint32_t device = 0, sources = 0;
+
     if (Memory::Read32(pad + kProbe) == 0) {
         switch (Memory::Read32(pad + kDevice)) {
         case 1:
@@ -352,7 +383,9 @@ static void PadGameKeysPort(CpuContext* ctx) {
             break;
         }
     }
+
     Memory::Write8(keys + kKeyDevice, uint8_t(device));
+
     if (device == 0) {
         W16(keys + kKeyRepeat + 2, 0);
         W16(keys + kKeyStickRepeat + 1, 0);
@@ -362,27 +395,35 @@ static void PadGameKeysPort(CpuContext* ctx) {
     const auto locked = [&](uint32_t bit) {
         return Memory::Read8(keys + kKeyLocks + bit) != 0;
     };
+
     // A key whose lock is running keeps its last state.
     for (uint32_t i = 0; i < 17; ++i) {
         const uint32_t which = R16(sources + i * 4), mask = R16(sources + i * 4 + 2);
         const uint32_t bit = R16(kKeySources + i * 4), value = R16(kKeySources + i * 4 + 2);
+
         if (mask == 0)
             continue;
+
         if (locked(bit)) {
             W16(keys + kHeld, R16(keys + kHeld) | (R16(keys + kPrevious) & (1u << bit)));
             continue;
         }
+
         uint32_t held = 0;
+
         if (device == 1)
             held = R16(pad + (which == 0 ? kNunchuk : kRemote));
         else if (device == 2)
             held = R16(pad + (which == 0 ? kRemote : kClassic));
         else
             held = R16(pad + kRemote);
+
         if (held & mask)
             W16(keys + kHeld, R16(keys + kHeld) | value);
     }
+
     const uint32_t stickSet = device == 1 ? pad + kNunchuk : device == 2 ? pad + kClassic : 0;
+
     if (stickSet) {
         // Both sets keep the stick's d-pad, direction, tilt and bits at the
         // same offsets.
@@ -391,6 +432,7 @@ static void PadGameKeysPort(CpuContext* ctx) {
         W16(keys + kKeyMagnitude, R16(stickSet + 0x1C));
         Memory::Write8(keys + kKeyStickDirs, Memory::Read8(stickSet + 0x20));
     }
+
     W16(keys + kDirs, R16(keys + kDirs) & 0x3C00);
     PressesAndReleases(keys, kDirs, kDirsPrevious, kDirsPressed, kDirsReleased);
     Memory::Write8(keys + kKeyStick, Memory::Read8(keys + kKeyStick) | (Memory::Read8(keys + kKeyStickDirs) & 0xF));
@@ -401,33 +443,43 @@ static void PadGameKeysPort(CpuContext* ctx) {
     if (Memory::Read8(keys + kKeyStickAsDpad) == 1 && (R16(keys + kHeld) & 0xF) == 0) {
         const uint32_t stick = Memory::Read8(keys + kKeyStick) & 0xF;
         uint32_t dpad = 0;
+
         if (stick & 1)
             dpad |= 0x2000;
+
         if (stick & 2)
             dpad |= 0x1000;
+
         if (stick & 4)
             dpad |= 0x800;
+
         if (stick & 8)
             dpad |= 0x400;
+
         for (uint32_t i = 0; i < 17; ++i) {
             const uint32_t mask = R16(sources + i * 4 + 2);
             const uint32_t bit = R16(kKeySources + i * 4), value = R16(kKeySources + i * 4 + 2);
+
             if (mask != 0 && !locked(bit) && (dpad & mask))
                 W16(keys + kHeld, R16(keys + kHeld) | value);
         }
     }
+
     Repeat<uint16_t>(keys + kKeyRepeat + 2, keys + kKeyRepeat, R16(keys + kHeld), R16(keys + kPrevious));
 
     // A key that changed is locked for its mode's count of ticks (the
     // original: steps); a running lock counts down.
     const uint32_t mode = Memory::Read8(keys + kKeyLockMode);
+
     for (uint32_t bit = 0; bit < 16; ++bit) {
         const uint32_t lock = keys + kKeyLocks + bit;
+
         if ((R16(keys + kPrevious) & (1u << bit)) != (R16(keys + kHeld) & (1u << bit)))
             Memory::Write8(lock, Memory::Read8(keys + kKeyLockReload + mode * 16 + bit));
         else if (const uint32_t left = Memory::Read8(lock))
             Memory::Write8(lock, uint8_t(left - std::min(left, GameStep::Ticks())));
     }
+
     PressesAndReleases(keys, kHeld, kPrevious, kPressed, kReleased);
     game.Call<SetKeyLocks>({channel, game.Call<GetOnlineMode>() == 1 ? 0u : 1u});
 }

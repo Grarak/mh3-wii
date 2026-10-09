@@ -17,10 +17,12 @@ typedef enum {
     MH3_PACK_RANGE = -3,
     MH3_PACK_ALIGNMENT = -4
 } mh3_pack_status;
+
 typedef struct {
     const uint8_t *data;
     size_t size;
 } mh3_pack_span;
+
 typedef enum {
     MH3_PACK_MODELS,
     MH3_PACK_NODES,
@@ -32,18 +34,22 @@ typedef enum {
     MH3_PACK_COMPONENTS,
     MH3_PACK_TABLE_COUNT
 } mh3_pack_table;
+
 typedef struct {
     mh3_pack_span metadata, gpu;
     uint32_t gpu_file_offset, gpu_bytes, counts[8], offsets[8], data_offset;
 } mh3_mesh_pack;
+
 typedef struct {
     uint16_t semantic, offset;
     uint8_t format, components;
 } mh3_pack_attribute;
+
 typedef struct {
     uint32_t count, stride, flags;
     mh3_pack_attribute attributes[16];
 } mh3_pack_layout;
+
 typedef struct {
     uint32_t asset_id, model_id, source_id, flags, layout_index, vertex_count, index_count;
     uint32_t vertex_offset, vertex_bytes, index_offset, index_bytes;
@@ -52,6 +58,7 @@ typedef struct {
     float bounds_min[3], bounds_max[3], center[3];
     mh3_pack_span vertices, indices;
 } mh3_pack_mesh;
+
 /* V3 indexed matrix batches. Source IDs are indices into the certified live
  * position/normal/environment arrays. A clear known bit preserves the actual
  * inherited slot; UINT16_MAX marks that absence, never an identity matrix.
@@ -64,10 +71,12 @@ enum {
     MH3_MESH_INDEXED_PALETTE = 8u,
     MH3_LAYOUT_MATRIX_MASK_SHIFT = 8u
 };
+
 typedef struct {
     uint32_t count;
     mh3_pack_span bytes;
 } mh3_pack_palette_batches;
+
 typedef struct {
     uint32_t first_index, index_count;
     uint16_t position_known, normal_known, texture_known;
@@ -75,20 +84,24 @@ typedef struct {
     uint8_t texture_identity_mask, texture_position_mask;
     uint16_t position_source[10], normal_source[10], texture_source[10];
 } mh3_pack_palette_batch;
+
 mh3_pack_status mh3_mesh_pack_palette_batches(const mh3_mesh_pack *pack, uint32_t mesh_index, mh3_pack_palette_batches *out);
 mh3_pack_status mh3_mesh_pack_palette_batch(const mh3_pack_palette_batches *batches, uint32_t index, mh3_pack_palette_batch *out);
 typedef struct {
     uint32_t mesh_index, first_index, index_count, flags;
     float bounds_min[3], bounds_max[3], centroid[3];
 } mh3_pack_component;
+
 typedef struct {
     uint32_t mesh_index, material_index, node_index, phase, priority, source_order, asset_id, flags;
 } mh3_pack_draw;
+
 typedef struct {
     uint32_t model_id, source_id, matrix_id, flags, billboard_mode;
     int32_t parent_index, first_child_index;
     float bind_model_matrix[12], inverse_bind_model_matrix[12], srt[9], bounds[6];
 } mh3_pack_node;
+
 typedef struct {
     uint32_t asset_id, model_id, source_id, flags, cull_mode, texgen_count, channel_count;
     uint32_t tev_count, indirect_count, depth_compare_before_texture;
@@ -96,19 +109,23 @@ typedef struct {
     uint32_t state_offset, state_count, binding_first, binding_count, shader_pipeline_id;
     const char *name;
 } mh3_pack_material;
+
 typedef struct {
     uint32_t material_index, texture_id, map_id, tlut_id, wrap_s, wrap_t, min_filter, mag_filter;
     float lod_bias;
     uint32_t anisotropy, bias_clamp, edge_lod, flags;
     const char *texture_name, *palette_name;
 } mh3_pack_binding;
+
 typedef struct {
     uint32_t bank, address, value, mask;
 } mh3_pack_state_write;
+
 typedef struct {
     uint32_t command_count, weight_count, matrix_count;
     mh3_pack_span bytes;
 } mh3_pack_recipes;
+
 /* NW4R recipe opcodes: 2=calc(node,parent matrix), 3=weighted matrix,
  * 5=envelope(matrix,node), 6=duplicate(destination matrix,source matrix).
  * Weight ranges are present only for opcode 3. Matrix-to-node IDs are local
@@ -116,10 +133,12 @@ typedef struct {
 typedef struct {
     uint32_t opcode, destination_or_node, source_or_parent, weight_first, weight_count;
 } mh3_pack_recipe;
+
 typedef struct {
     uint32_t matrix_id;
     float weight;
 } mh3_pack_weight;
+
 typedef struct {
     uint32_t id, source_offset, node_first, node_count, mesh_first, mesh_count;
     uint32_t material_first, material_count, draw_first, draw_count, revision, flags;
@@ -156,14 +175,17 @@ typedef struct {
     uint32_t indirect_method[3];
     mh3_pack_span bytes;
 } mh3_pack_native_material;
+
 typedef struct {
     uint32_t flags, map_mode, effect_flags;
     int32_t camera_reference, light_reference;
     float scale[2], rotation_degrees, translation[2], effect_matrix[12];
 } mh3_pack_texture_srt;
+
 typedef struct {
     uint8_t material_source, ambient_source, lighting, diffuse, attenuation, light_mask;
 } mh3_pack_channel_control;
+
 enum {
     MH3_CHANNEL_MATERIAL_COLOR = 1u << 0,
     MH3_CHANNEL_MATERIAL_ALPHA = 1u << 1,
@@ -172,14 +194,17 @@ enum {
     MH3_CHANNEL_CONTROL_COLOR = 1u << 4,
     MH3_CHANNEL_CONTROL_ALPHA = 1u << 5
 };
+
 typedef struct {
     uint32_t flags, raw_color_control, raw_alpha_control;
     uint8_t material_color[4], ambient_color[4];
     mh3_pack_channel_control color, alpha;
 } mh3_pack_channel;
+
 typedef struct {
     uint8_t a, b, c, d, operation, bias, scale, clamp, output;
 } mh3_pack_tev_pass;
+
 typedef struct {
     uint64_t known;
     mh3_pack_tev_pass color, alpha;
@@ -187,6 +212,7 @@ typedef struct {
     uint8_t indirect_stage, indirect_format, indirect_bias, indirect_alpha, indirect_matrix;
     uint8_t indirect_wrap_s, indirect_wrap_t, indirect_original_lod, indirect_add_previous;
 } mh3_pack_tev_stage;
+
 enum {
     MH3_TEV_COLOR_A,
     MH3_TEV_COLOR_B,
@@ -224,6 +250,7 @@ enum {
     MH3_TEV_INDIRECT_ADD_PREVIOUS,
     MH3_TEV_FIELD_COUNT
 };
+
 enum {
     MH3_PIXEL_ALPHA_COMPARE0,
     MH3_PIXEL_ALPHA_REFERENCE0,
@@ -249,6 +276,7 @@ enum {
     MH3_PIXEL_DEPTH_TEXTURE_BIAS,
     MH3_PIXEL_FIELD_COUNT
 };
+
 typedef struct {
     uint64_t known;
     uint32_t values[MH3_PIXEL_FIELD_COUNT];
@@ -257,6 +285,7 @@ typedef struct {
      * This is not a GXM pass type or permission to change alpha semantics. */
     uint32_t classification;
 } mh3_pack_pixel_inputs;
+
 enum {
     MH3_TEXGEN_PROJECTION,
     MH3_TEXGEN_INPUT_AB11,
@@ -270,10 +299,12 @@ enum {
     MH3_TEXGEN_DUAL_TEXTURE,
     MH3_TEXGEN_FIELD_COUNT
 };
+
 typedef struct {
     uint32_t known;
     uint8_t values[MH3_TEXGEN_FIELD_COUNT];
 } mh3_pack_texgen;
+
 /* M3MT v2 constants. Known masks identify individual RGBA components, swap
  * mappings, indirect fields or six row-major coefficients + scale exponent.
  * Coefficients represent signed fixed point /1024; exponent is applied once. */
@@ -281,19 +312,23 @@ typedef struct {
     uint32_t known;
     int16_t rgba[4];
 } mh3_pack_tev_color;
+
 typedef struct {
     uint32_t known;
     uint8_t rgba[4];
 } mh3_pack_swap_table;
+
 typedef struct {
     uint32_t known;
     uint8_t coordinate, map, scale_s, scale_t;
 } mh3_pack_indirect_stage;
+
 typedef struct {
     uint32_t known;
     int16_t coefficients[6];
     int32_t scale_exponent;
 } mh3_pack_indirect_matrix;
+
 mh3_pack_status mh3_mesh_pack_tev_color(const mh3_pack_native_material *material, uint32_t index, int konst, mh3_pack_tev_color *out);
 mh3_pack_status mh3_mesh_pack_swap_table(const mh3_pack_native_material *material, uint32_t index, mh3_pack_swap_table *out);
 mh3_pack_status mh3_mesh_pack_indirect_stage(const mh3_pack_native_material *material, uint32_t index, mh3_pack_indirect_stage *out);

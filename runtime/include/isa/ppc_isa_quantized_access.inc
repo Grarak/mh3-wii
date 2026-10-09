@@ -14,6 +14,7 @@ template <uint32_t W, uint32_t I>
 MKW_PPC_NO_INLINE MKW_PPC_COLD inline double PsqLCurrentGqr(uint32_t addr)
 {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) [[unlikely]] std::abort();
     return PPC_PsqLStateFallback<W, I, false>(cpu->gqr[I], addr);
 }
@@ -22,9 +23,11 @@ template <uint32_t W, uint32_t I>
 MKW_PPC_NO_INLINE MKW_PPC_COLD inline void PsqStCurrentGqr(uint32_t addr, double value)
 {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) [[unlikely]] std::abort();
     PPC_PsqStStateFallback<W, I, false>(cpu->gqr[I], addr, value);
 }
+
 template <typename T>
 inline T PpcReadUnpairedPsqInline(uint32_t addr)
 {
@@ -158,6 +161,7 @@ inline void PpcStorePairPsqFloatFastInline(uint32_t addr, double value)
         PpcStorePairPsqFloatToHostInline(GuestFlat::Host(addr), value);
         return;
     }
+
     MKW_PSQ_MEM::PsqStore<uint64_t>(
         addr, PpcStorePairPsqFloatBitsPackedInline(PpcBitCastToU64Inline(value)));
 }
@@ -165,14 +169,17 @@ inline void PpcStorePairPsqFloatFastInline(uint32_t addr, double value)
 inline uint8_t PpcQuantizePsqU8Scale61Inline(float value)
 {
     const float scaled = value * 0.125f;
+
     if (!(scaled > 0.0f))
     {
         return 0;
     }
+
     if (scaled >= 255.0f)
     {
         return 255;
     }
+
     return static_cast<uint8_t>(scaled);
 }
 
@@ -189,6 +196,7 @@ inline uint16_t PpcQuantizePairPsqU8Scale61PackedInline(double value)
     const __m128i lanes32 = _mm_cvttps_epi32(clamped);
     const __m128i lanes16 = _mm_packs_epi32(lanes32, lanes32);
     const __m128i lanes8 = _mm_packus_epi16(lanes16, lanes16);
+
     // Native lane 0 is ps1 and lane 1 is ps0. Packing to the low uint16_t
     // therefore produces the guest-order numeric value (ps0 << 8) | ps1.
     return static_cast<uint16_t>(_mm_cvtsi128_si32(lanes8));
@@ -251,6 +259,7 @@ inline void PpcStorePairPsqQuantizedFastInline(uint32_t addr, double value, uint
 {
     PPC_FPR fpr{};
     fpr.d = value;
+
     if constexpr (std::is_same_v<QuantizedType, uint8_t>)
     {
         if (scale == 61u)
@@ -288,6 +297,7 @@ inline void PpcStoreSinglePsqQuantizedFastInline(uint32_t addr, double value, ui
 {
     PPC_FPR fpr{};
     fpr.d = value;
+
     if constexpr (std::is_signed_v<QuantizedType>)
     {
         const auto first = static_cast<std::make_unsigned_t<QuantizedType>>(
@@ -344,6 +354,7 @@ inline double PpcLoadSinglePsqQuantizedResolvedInline(uint8_t* resolvedHost, uin
 {
     using UnsignedType = std::make_unsigned_t<SignedType>;
     UnsignedType value;
+
     if constexpr (sizeof(UnsignedType) == 1) value = MKW_PSQ_MEM::ReadResolved8(resolvedHost, offset, addr);
     else if constexpr (sizeof(UnsignedType) == 2) value = MKW_PSQ_MEM::ReadResolved16(resolvedHost, offset, addr);
     else value = MKW_PSQ_MEM::ReadResolved32(resolvedHost, offset, addr);
@@ -359,6 +370,7 @@ inline void PpcStorePairPsqFloatResolvedInline(uint8_t* resolvedHost, uint32_t o
         PpcStorePairPsqFloatToHostInline(resolvedHost + offset, value);
         return;
     }
+
     MKW_PSQ_MEM::PsqStore<uint64_t>(
         addr, PpcStorePairPsqFloatBitsPackedInline(PpcBitCastToU64Inline(value)));
 }
@@ -367,6 +379,7 @@ template <typename QuantizedType>
 inline void PpcStorePairPsqQuantizedResolvedInline(uint8_t* resolvedHost, uint32_t offset, uint32_t addr, double value, uint32_t scale)
 {
     PPC_FPR fpr{}; fpr.d = value;
+
     if constexpr (std::is_same_v<QuantizedType, uint8_t>)
     {
         if (scale == 61u)
@@ -375,12 +388,15 @@ inline void PpcStorePairPsqQuantizedResolvedInline(uint8_t* resolvedHost, uint32
             return;
         }
     }
+
     using Unsigned = std::make_unsigned_t<QuantizedType>;
     const auto quantize = [scale](float lane) -> Unsigned {
         return static_cast<Unsigned>(static_cast<QuantizedType>(PpcScaleAndClampPsqInline<QuantizedType>(lane, scale)));
     };
+
     const Unsigned first = quantize(fpr.paired.ps0);
     const Unsigned second = quantize(fpr.paired.ps1);
+
     if constexpr (sizeof(QuantizedType) == 1)
         MKW_PSQ_MEM::WriteResolved16(resolvedHost, offset, addr, (static_cast<uint16_t>(first) << 8) | second);
     else if constexpr (sizeof(QuantizedType) == 2)
@@ -401,6 +417,7 @@ inline void PpcStoreSinglePsqQuantizedResolvedInline(uint8_t* resolvedHost, uint
     PPC_FPR fpr{}; fpr.d = value;
     using Unsigned = std::make_unsigned_t<QuantizedType>;
     const Unsigned first = static_cast<Unsigned>(static_cast<QuantizedType>(PpcScaleAndClampPsqInline<QuantizedType>(fpr.paired.ps0, scale)));
+
     if constexpr (sizeof(QuantizedType) == 1) MKW_PSQ_MEM::WriteResolved8(resolvedHost, offset, addr, first);
     else if constexpr (sizeof(QuantizedType) == 2) MKW_PSQ_MEM::WriteResolved16(resolvedHost, offset, addr, first);
     else MKW_PSQ_MEM::WriteResolved32(resolvedHost, offset, addr, first);
@@ -517,6 +534,7 @@ inline void PpcStorePairPsqQuantizedStackInline(uint32_t addr, double value, uin
 {
     PPC_FPR fpr{};
     fpr.d = value;
+
     if constexpr (std::is_same_v<QuantizedType, uint8_t>)
     {
         if (scale == 61u)
@@ -555,6 +573,7 @@ inline void PpcStoreSinglePsqQuantizedStackInline(uint32_t addr, double value, u
 {
     PPC_FPR fpr{};
     fpr.d = value;
+
     if constexpr (std::is_signed_v<QuantizedType>)
     {
         const auto first = static_cast<std::make_unsigned_t<QuantizedType>>(
@@ -577,6 +596,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline double PPC_PsqLGeneric(uint32_t gqr, uint3
 {
     static_assert(W <= 1u, "psq load W must be 0 or 1");
     static_assert(I < 8u, "psq load GQR index must be 0..7");
+
     if constexpr (W == 0u)
     {
         switch (gqr & 0xFFFF0000u)
@@ -599,6 +619,7 @@ return PpcLoadPairPsqIntegerFastInline<int16_t>(addr);
     {
         const uint32_t type = (gqr >> 16) & 0x7u;
         const uint32_t scale = (gqr >> 24) & 0x3Fu;
+
         switch (type)
         {
         case 0u:
@@ -628,12 +649,14 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLInline(CpuContext* cpu, uint32_t addr)
 {
     static_assert(W <= 1u, "psq load W must be 0 or 1");
     static_assert(I < 8u, "psq load GQR index must be 0..7");
+
     if (!cpu) [[unlikely]]
     {
         std::abort();
     }
 
     const uint32_t gqr = cpu->gqr[I];
+
     if constexpr (W == 0u)
     {
         // Paired float requires type 0 *and* load scale 0 (the pair path in the
@@ -670,6 +693,7 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLGqrInline(uint32_t gqrValue, uint32_t addr)
 {
     static_assert(W <= 1u, "psq load W must be 0 or 1");
     static_assert(I < 8u, "psq load GQR index must be 0..7");
+
     if constexpr (W == 0u)
     {
         // Paired float requires type 0 *and* load scale 0 (the pair path in the
@@ -701,6 +725,7 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLGqrInline(CpuContext* cpu, uint32_t gqrValue
     {
         std::abort();
     }
+
     return PPC_PsqLGqrInline<W, I>(gqrValue, addr);
 }
 
@@ -751,6 +776,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline double PPC_PsqLStackGeneric(uint32_t gqr, 
 {
     static_assert(W <= 1u, "psq stack load W must be 0 or 1");
     static_assert(I < 8u, "psq stack load GQR index must be 0..7");
+
     if constexpr (W == 0u)
     {
         switch (gqr & 0xFFFF0000u)
@@ -773,6 +799,7 @@ return PpcLoadPairPsqIntegerStackInline<int16_t>(addr);
     {
         const uint32_t type = (gqr >> 16) & 0x7u;
         const uint32_t scale = (gqr >> 24) & 0x3Fu;
+
         switch (type)
         {
         case 0u:
@@ -802,12 +829,14 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLStackInline(CpuContext* cpu, uint32_t addr)
 {
     static_assert(W <= 1u, "psq stack load W must be 0 or 1");
     static_assert(I < 8u, "psq stack load GQR index must be 0..7");
+
     if (!cpu) [[unlikely]]
     {
         std::abort();
     }
 
     const uint32_t gqr = cpu->gqr[I];
+
     if constexpr (W == 0u)
     {
         // Paired float requires type 0 *and* load scale 0 (the pair path in the
@@ -880,6 +909,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline void PPC_PsqStGeneric(uint32_t gqr, uint32
 {
     static_assert(W <= 1u, "psq store W must be 0 or 1");
     static_assert(I < 8u, "psq store GQR index must be 0..7");
+
     if constexpr (W == 0u)
     {
         switch (gqr & 0x0000FFFFu)
@@ -910,6 +940,7 @@ PpcStorePairPsqQuantizedFastInline<uint8_t>(addr, value, 61u);
     {
         const uint32_t type = gqr & 0x7u;
         const uint32_t scale = (gqr >> 8) & 0x3Fu;
+
         switch (type)
         {
         case 0u:
@@ -943,12 +974,14 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStInline(CpuContext* cpu, uint32_t addr, double
 {
     static_assert(W <= 1u, "psq store W must be 0 or 1");
     static_assert(I < 8u, "psq store GQR index must be 0..7");
+
     if (!cpu) [[unlikely]]
     {
         std::abort();
     }
 
     const uint32_t gqr = cpu->gqr[I];
+
     if constexpr (W == 0u)
     {
         // Paired float requires store type 0 *and* store scale 0, matching the
@@ -985,6 +1018,7 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStGqrInline(uint32_t gqrValue, uint32_t addr, d
 {
     static_assert(W <= 1u, "psq store W must be 0 or 1");
     static_assert(I < 8u, "psq store GQR index must be 0..7");
+
     if constexpr (W == 0u)
     {
         // Paired float requires store type 0 *and* store scale 0, matching the
@@ -1015,6 +1049,7 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStGqrInline(CpuContext* cpu, uint32_t gqrValue,
     {
         std::abort();
     }
+
     PPC_PsqStGqrInline<W, I>(gqrValue, addr, value);
 }
 
@@ -1072,6 +1107,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline void PPC_PsqStStackGeneric(uint32_t gqr, u
 {
     static_assert(W <= 1u, "psq stack store W must be 0 or 1");
     static_assert(I < 8u, "psq stack store GQR index must be 0..7");
+
     if constexpr (W == 0u)
     {
         switch (gqr & 0x0000FFFFu)
@@ -1102,6 +1138,7 @@ PpcStorePairPsqQuantizedStackInline<uint8_t>(addr, value, 61u);
     {
         const uint32_t type = gqr & 0x7u;
         const uint32_t scale = (gqr >> 8) & 0x3Fu;
+
         switch (type)
         {
         case 0u:
@@ -1135,12 +1172,14 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStStackInline(CpuContext* cpu, uint32_t addr, d
 {
     static_assert(W <= 1u, "psq stack store W must be 0 or 1");
     static_assert(I < 8u, "psq stack store GQR index must be 0..7");
+
     if (!cpu) [[unlikely]]
     {
         std::abort();
     }
 
     const uint32_t gqr = cpu->gqr[I];
+
     if constexpr (W == 0u)
     {
         // Paired float requires store type 0 *and* store scale 0, matching the
@@ -1179,6 +1218,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline double PPC_PsqLStateFallback(uint32_t gqr,
     static_assert(W <= 1u && I < 8u);
     const uint32_t type = (gqr >> 16) & 0x7u;
     const uint32_t scale = (gqr >> 24) & 0x3Fu;
+
     if constexpr (W == 0u)
     {
         switch (type)
@@ -1212,6 +1252,7 @@ template <uint32_t W, uint32_t I, bool Stack>
 MKW_PPC_FORCE_INLINE double PPC_PsqLStateInline(uint32_t gqr, uint32_t addr)
 {
     static_assert(W <= 1u && I < 8u);
+
     switch (gqr & 0xFFFF0000u)
     {
     case 0x00000000u:
@@ -1240,6 +1281,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline void PPC_PsqStStateFallback(uint32_t gqr, 
     static_assert(W <= 1u && I < 8u);
     const uint32_t type = gqr & 0x7u;
     const uint32_t scale = (gqr >> 8) & 0x3Fu;
+
     if constexpr (W == 0u)
     {
         switch (type)
@@ -1270,6 +1312,7 @@ template <uint32_t W, uint32_t I, bool Stack>
 MKW_PPC_FORCE_INLINE void PPC_PsqStStateInline(uint32_t gqr, uint32_t addr, double value)
 {
     static_assert(W <= 1u && I < 8u);
+
     switch (gqr & 0xFFFFu)
     {
     case 0x0000u:
@@ -1303,9 +1346,11 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLResolvedStateInline(
     uint32_t gqr, uint8_t* resolvedHost, uint32_t offset, uint32_t addr)
 {
     static_assert(W <= 1u && I < 8u);
+
     if (!resolvedHost) [[unlikely]] return PPC_PsqLStateInline<W, I, false>(gqr, addr);
     const uint32_t type = (gqr >> 16) & 0x7u;
     const uint32_t scale = (gqr >> 24) & 0x3Fu;
+
     if constexpr (W == 0u)
     {
         switch (type)
@@ -1337,13 +1382,16 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStResolvedStateInline(
     uint32_t gqr, uint8_t* resolvedHost, uint32_t offset, uint32_t addr, double value)
 {
     static_assert(W <= 1u && I < 8u);
+
     if (!resolvedHost) [[unlikely]]
     {
         PPC_PsqStStateInline<W, I, false>(gqr, addr, value);
         return;
     }
+
     const uint32_t type = gqr & 0x7u;
     const uint32_t scale = (gqr >> 8) & 0x3Fu;
+
     if constexpr (W == 0u)
     {
         switch (type)
@@ -1435,6 +1483,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline double PPC_PsqLResolvedGeneric(
     } else {
         const uint32_t type = (gqr >> 16) & 7u;
         const uint32_t scale = (gqr >> 24) & 0x3Fu;
+
         switch (type) {
         case 0u: return PpcLoadSinglePsqFloatResolvedInline(resolvedHost, offset, addr);
         case 4u: return PpcLoadSinglePsqQuantizedResolvedInline<uint8_t>(resolvedHost, offset, addr, scale);
@@ -1455,6 +1504,7 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLResolvedInline(CpuContext* cpu, uint8_t* res
 {
     if (!resolvedHost) [[unlikely]] return PsqLCurrentGqr<W, I>(addr);
     const uint32_t gqr = cpu->gqr[I];
+
     if constexpr (W == 0u) {
         // Paired float: load type 0 with load scale 0.
         if ((gqr & 0xFFFF0000u) == 0x00000000u) [[likely]]
@@ -1464,6 +1514,7 @@ MKW_PPC_FORCE_INLINE double PPC_PsqLResolvedInline(CpuContext* cpu, uint8_t* res
         if (((gqr >> 16) & 7u) == 0u) [[likely]]
             return PpcLoadSinglePsqFloatResolvedInline(resolvedHost, offset, addr);
     }
+
     return PPC_PsqLResolvedGeneric<W, I>(gqr, resolvedHost, offset, addr);
 }
 
@@ -1534,6 +1585,7 @@ MKW_PPC_NO_INLINE MKW_PPC_COLD inline void PPC_PsqStResolvedGeneric(
     } else {
         const uint32_t type = gqr & 7u;
         const uint32_t scale = (gqr >> 8) & 0x3Fu;
+
         switch (type) {
         case 0u: PpcStoreSinglePsqFloatResolvedInline(resolvedHost, offset, addr, value); return;
         case 4u: PpcStoreSinglePsqQuantizedResolvedInline<uint8_t>(resolvedHost, offset, addr, value, scale); return;
@@ -1554,6 +1606,7 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStResolvedInline(CpuContext* cpu, uint8_t* reso
 {
     if (!resolvedHost) [[unlikely]] { PsqStCurrentGqr<W, I>(addr, value); return; }
     const uint32_t gqr = cpu->gqr[I];
+
     if constexpr (W == 0u) {
         // Paired float: store type 0 with store scale 0.
         if ((gqr & 0xFFFFu) == 0x0000u) [[likely]] {
@@ -1567,6 +1620,7 @@ MKW_PPC_FORCE_INLINE void PPC_PsqStResolvedInline(CpuContext* cpu, uint8_t* reso
             return;
         }
     }
+
     PPC_PsqStResolvedGeneric<W, I>(gqr, resolvedHost, offset, addr, value);
 }
 

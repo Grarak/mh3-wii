@@ -12,11 +12,14 @@ struct TargetAlpha {
     if (writesAlpha && !preservesOne)
       invalidate();
   }
+
   void clear(bool writesAlpha, float alpha, bool fullTarget) noexcept {
     if (!writesAlpha)
       return;
+
     one = alpha == 1.f && (fullTarget || one);
   }
+
   void copy(bool sourceOne, bool fullTarget) noexcept {
     one = sourceOne && (fullTarget || one);
   }
@@ -28,6 +31,7 @@ inline bool target_alpha_one_eligible(bool rgba8, bool display, const TargetAlph
                                       bool blend, const std::array<bool, 4>& mask) noexcept {
   return rgba8 && !display && alpha.one && !blend && mask[0] && mask[1] && mask[2] && !mask[3];
 }
+
 inline bool target_alpha_one_expand(bool eligible, bool fixedProgram, bool preservesOne, bool replacesDepth) noexcept {
   return eligible && fixedProgram && preservesOne && !replacesDepth;
 }

@@ -9,6 +9,7 @@ void Check(bool ok, const char* message) {
     if (!ok)
         throw std::runtime_error(std::string(message) + ": " + SDL_GetError());
 }
+
 SDL_JoystickID Attach() {
     SDL_VirtualJoystickDesc desc{};
     SDL_INIT_INTERFACE(&desc);
@@ -25,6 +26,7 @@ SDL_JoystickID Attach() {
     return id;
 }
 } // namespace
+
 int main() {
     try {
         unsetenv("MH3_INPUT_FILE");
@@ -47,6 +49,7 @@ int main() {
         SDL_UpdateJoysticks();
         auto state = ReadHostController();
         Check(state.buttons == 0x6010, "Classic A, down, L trigger mapping");
+
         // Full diagonals: the full report length (452 past the play) split over both axes.
         Check(state.leftX == 380 && state.leftY == 380 && state.rightX == -380 && state.rightY == -380, "stick ranges and Y inversion");
         Check(state.triggerL == 255 && state.triggerR == 0, "analog trigger mapping");

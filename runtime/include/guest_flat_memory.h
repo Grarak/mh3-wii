@@ -76,7 +76,9 @@ inline uint8_t* HostPointer(uint32_t address, size_t length) noexcept {
     // Physical addresses read through the cached alias.
     if (address >> 30 == 0)
         address |= 0x80000000u;
+
     uint32_t size;
+
     switch (address >> 28) {
     case 0x8:
     case 0xC:
@@ -92,9 +94,12 @@ inline uint8_t* HostPointer(uint32_t address, size_t length) noexcept {
     default:
         return nullptr;
     }
+
     const uint32_t offset = address & 0x0FFFFFFFu;
+
     if (length == 0 || offset >= size || length > size - offset || !g_mapped)
         return nullptr;
+
     return Host(address);
 }
 

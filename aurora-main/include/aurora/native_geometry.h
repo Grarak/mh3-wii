@@ -27,12 +27,14 @@ typedef struct AuroraNativeMaterialVertex {
   float position[4], view_position[3], normal[3], texcoord[8][3];
   uint8_t color[2][4];
 } AuroraNativeMaterialVertex;
+
 typedef struct AuroraNativeMaterialGeometry {
   AuroraNativeMaterialVertex* vertices;
   uint16_t* indices;
   uint32_t vertex_count, index_count;
   uint32_t frame, slot;
 } AuroraNativeMaterialGeometry;
+
 typedef struct AuroraNativeUniforms {
   void* data;
   uint32_t offset, size, frame, slot;
@@ -45,6 +47,7 @@ typedef struct AuroraNativeDrawStats {
   uint64_t vertex_high_water, uniform_high_water, index_high_water;
   uint64_t capacity_cancellations;
 } AuroraNativeDrawStats;
+
 AuroraNativeDrawStats aurora_native_draw_stats(void);
 
 // Borrow a disjoint range from the admitted frame's existing draw memory.
@@ -55,6 +58,7 @@ int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indices, AuroraN
 int aurora_allocate_native_material_geometry(uint32_t vertices, uint32_t indices, AuroraNativeMaterialGeometry* out);
 int aurora_allocate_native_uniforms(uint32_t bytes, AuroraNativeUniforms* out);
 void aurora_submit_native_material_geometry(const AuroraNativeMaterialGeometry* geometry, uint32_t program, const AuroraNativeUniforms* uniforms);
+
 // Submit using the backend's current target, viewport, raster and sampler 0.
 // texture_modulate selects sampled RGBA * vertex RGBA; zero selects vertex RGBA.
 void aurora_submit_native_geometry(const AuroraNativeGeometry* geometry, int texture_modulate);

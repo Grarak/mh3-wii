@@ -22,6 +22,7 @@ extern "C" {
 typedef struct {
     float min[3], max[3];
 } mh3_cull_box;
+
 /* View-space half spaces: inside where p[0]x + p[1]y + p[2]z + p[3] >= 0. */
 typedef struct {
     float plane[4][4];

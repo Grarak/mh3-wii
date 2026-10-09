@@ -5,13 +5,17 @@ function(aurora_vita_replace file old new)
   set(_old "${old}")
   set(_new "${new}")
   string(FIND "${_source}" "${_new}" _patched)
+
   if(NOT _patched EQUAL -1)
     return()
   endif()
+
   string(FIND "${_source}" "${_old}" _anchor)
+
   if(_anchor EQUAL -1)
     message(FATAL_ERROR "Review the Vita dependency patch for ${_file}")
   endif()
+
   string(REPLACE "${_old}" "${_new}" _source "${_source}")
   file(WRITE "${_file}" "${_source}")
 endfunction()

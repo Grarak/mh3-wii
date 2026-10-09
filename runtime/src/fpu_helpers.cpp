@@ -13,9 +13,11 @@ constexpr uint32_t kFpscrReadOnlySummaryMask = 0x60000000u;
 double RoundNearestEven(double value) {
     const double floor_value = std::floor(value);
     const double frac = value - floor_value;
+
     if (frac < 0.5) {
         return floor_value;
     }
+
     if (frac > 0.5) {
         return floor_value + 1.0;
     }
@@ -63,6 +65,7 @@ extern "C" void PPC_Mtfsf(uint32_t fieldMask, double source) {
 
         cpu->fpscr = (cpu->fpscr & ~mask) | (incoming & mask);
     }
+
     MkwApplyHostNiMode(cpu->fpscr);
 }
 
@@ -97,6 +100,7 @@ extern "C" void PPC_Mtfsfi(uint32_t field, uint32_t value) {
     field &= 7u;
     const uint32_t shift = (7u - field) * 4u;
     uint32_t mask = 0xFu << shift;
+
     if (field == 0) {
         mask &= ~kFpscrReadOnlySummaryMask;
     }
@@ -121,6 +125,7 @@ extern "C" double PPC_Fctiw(double value) {
     const uint32_t rn = CurrentCpuContext()->fpscr & 0x3u;
 
     double rounded = value;
+
     switch (rn) {
     case 0:
         rounded = RoundNearestEven(value);

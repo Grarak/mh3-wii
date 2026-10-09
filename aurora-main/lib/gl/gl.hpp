@@ -44,11 +44,14 @@ const Caps& caps() noexcept;
 
 // Queue `task` behind already posted work; runs inline on the render thread.
 void post(Task task) noexcept;
+
 // Post `task` and block until it has run. Runs inline on the render thread.
 void call(Task task) noexcept;
+
 // Wait until every task posted so far has run and the GPU has finished it.
 void finish() noexcept;
 bool on_render_thread() noexcept;
+
 // Move context ownership between threads: the owner releases the context,
 // then the next owner makes it current on itself. Never while a frame is open.
 void release_context() noexcept;
@@ -63,6 +66,7 @@ struct FormatInfo {
   bool depth;
   bool filterable;
 };
+
 const FormatInfo& format_info(Format format) noexcept;
 
 // A GL name shared between the owning object (any thread) and the render
@@ -89,13 +93,16 @@ public:
 private:
   Name* m_name;
 };
+
 using TexturePtr = std::shared_ptr<Texture>;
 
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept;
+
 // Owner only; never submits or waits. Reuse also requires exclusive shared
 // ownership. GXM checks the texture's latest actual GPU use, not a frame slot;
 // ordered host GL draws may overwrite after earlier queued consumers.
 bool render_target_reusable(const Texture& texture) noexcept;
+
 // Owner only; poll completed retirements and check one exact backing block.
 // This query does not close a scene, submit work, or wait.
 bool render_target_allocation_available(size_t bytes) noexcept;
@@ -108,14 +115,18 @@ struct NativeTextureInfo {
   uint32_t sourcePaletteEntries = 0, sourcePaletteFormat = 0, sourceFormat = 0;
   bool sourceProvenance = false;
 };
+
 // Adds a native texture pack; any thread. Packs hold disjoint asset ID ranges.
 void open_native_texture_pack(const char* path) noexcept;
+
 // Called for an asset no open pack holds; it opens the pack that holds it.
 void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept;
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
+
 // Reads an immutable offline payload directly into a fresh CDRAM allocation.
 // The queued read precedes every draw using the returned texture.
 TexturePtr native_texture_asset(uint32_t asset) noexcept;
+
 // Uploads `data` (rows of `bytesPerRow`, tightly following each other) into
 // the given region. The bytes are copied before returning.
 void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* data, uint32_t bytesPerRow) noexcept;
@@ -139,6 +150,7 @@ struct SamplerDesc {
            lodBias == rhs.lodBias;
   }
 };
+
 // Render thread only: the cached sampler object for `desc`.
 GLuint sampler(const SamplerDesc& desc) noexcept;
 inline constexpr SamplerDesc NearestClamp{};
@@ -160,9 +172,11 @@ struct MeshAttribute {
   MeshAttributeFormat format = MeshAttributeFormat::F32;
   bool operator==(const MeshAttribute&) const = default;
 };
+
 struct MeshLayout {
   uint16_t stride = 0;
   std::vector<MeshAttribute> attributes;
+
   // PN bit0, texture matrix selectors0..7 bits1..8. A missing bit uses the
   // inherited uniform matrix even when another lane shares its packed input.
   uint16_t matrixIndexMask = 0;
@@ -171,24 +185,31 @@ struct MeshLayout {
 
 struct ProgramDesc {
   std::string label;
+
   // Development shader capture/cache provenance; never part of GPU state.
   std::string origin;
   std::string vertex;
   std::string fragment;
+
   // Host capture can retain GLES pixels/hashes while compiling the counterpart
   // selected by the authoritative admitted GXM sampler policy.
   std::string portableVertex, portableFragment, portableOrigin;
+
   // Sampler uniform name -> texture unit.
   std::vector<std::pair<std::string, int>> samplers;
+
   // Uniform block name -> binding point.
   std::vector<std::pair<std::string, int>> blocks;
+
   // Direct interleaved AuroraNativeMaterialVertex attributes, already projected
   // and with texture coordinates prepared by the native application producer.
   bool nativeMaterialVertices = false;
   MeshLayout nativeMeshLayout;
+
   // GXM: vertex/fragment are hand-written Cg for draw_shaded_* (no GLSL
   // conversion); blocks name BUFFER indices, vertex attributes bind per draw.
   bool cg = false;
+
   // Fixed fragment computes original discard first, then outputs A=1. GXM
   // may expand RGB-only writes only while its target is certified A=1.
   bool preservesTargetAlphaOne = false;
@@ -216,6 +237,7 @@ private:
   const uint8_t* m_data = nullptr;
   uint32_t m_bytes = 0;
 };
+
 // Context-owner queries. Retirement polls completion and never waits; backing
 // pending the GPU notification remains part of the physical model budget.
 size_t native_mesh_allocation_bytes(uint32_t bytes);
@@ -247,6 +269,7 @@ private:
   GLuint m_program = 0;
   bool m_failed = false;
 };
+
 using ProgramPtr = std::shared_ptr<Program>;
 
 
@@ -279,11 +302,13 @@ struct OffscreenState {
     GLuint buffer = 0;
     uint32_t offset = 0, size = 0;
   };
+
   std::array<UniformRange, 4> uniforms{};
   GLuint framebuffer = 0, color = 0, depth = 0, program = 0, vertexArray = 0, arrayBuffer = 0, activeTexture = 0;
   int scissorEnabled = 0;
   bool rasterValid = false, uniformValid = false;
 };
+
 OffscreenState save_offscreen_state() noexcept;
 void restore_offscreen_state(const OffscreenState& state) noexcept;
 
@@ -298,8 +323,10 @@ void bind_texture(uint32_t unit, GLuint texture, GLuint sampler) noexcept;
 void bind_uniform_range(uint32_t binding, GLuint buffer, uint32_t offset, uint32_t size) noexcept;
 void set_color_mask(bool r, bool g, bool b, bool a) noexcept;
 void set_depth_write(bool enabled) noexcept;
+
 // Forget cached bindings, e.g. after code that touched GL state directly.
 void invalidate_state() noexcept;
+
 // Empty vertex array for attribute-less draws; binds its element buffer.
 void bind_draw_vao(GLuint indexBuffer) noexcept;
 
@@ -315,14 +342,17 @@ void write_buffer(GLuint buffer, bool indices, const void* bytes, size_t size) n
 void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY, int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept;
 void clear_color(const float* color) noexcept;
 void clear_depth(float depth) noexcept;
+
 // Full current-target depth clear, independent of the application's scissor
 // and depth-write mask. Retains backend state and never switches render targets.
 void clear_depth_full_target(float depth) noexcept;
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
+
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted
 // CDRAM allocation directly; GLES uploads the host allocation into VBOs.
 void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) noexcept;
 void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry, GLuint program, const AuroraNativeUniforms& uniforms) noexcept;
+
 // Immutable resident U16 triangle payload; only the small uniform block is
 // uploaded per draw. Byte offsets are relative to this buffer's file range.
 void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount, GLuint program,
@@ -340,14 +370,17 @@ struct UniformBlock {
   uint32_t offset = 0, size = 0;
   [[nodiscard]] bool valid() const noexcept { return data || buffer; }
 };
+
 // Render thread only. Copies `bytes` into a new persistent block; an invalid
 // block when the persistent space is exhausted (the caller keeps per-draw
 // uniforms). Retiring returns the space once the GPU has completed every frame
 // submitted so far; the block must not be bound afterwards.
 UniformBlock create_uniform_block(const void* bytes, uint32_t size) noexcept;
 void retire_uniform_block(const UniformBlock& block) noexcept;
+
 // Persistent uniform bytes currently allocated (development statistics).
 size_t uniform_block_bytes() noexcept;
+
 // A producer-written uniform ring: memory another thread (the game thread)
 // writes directly and draws bind as frame blocks (UniformBlock with data).
 // GXM: one CDRAM arena chunk the GPU reads in place; GLES: host memory the
@@ -356,8 +389,10 @@ struct UniformRing {
   uint8_t* data = nullptr;
   uint32_t size = 0;
 };
+
 UniformRing create_uniform_ring(uint32_t bytes) noexcept;
 void destroy_uniform_ring(const UniformRing& ring) noexcept;
+
 // Completion of the GPU work submitted so far, taken on the render thread
 // and testable on any thread. GLES readers of host memory finish at
 // submission, so its fences are always complete.
@@ -365,6 +400,7 @@ struct GpuFence {
   const volatile uint32_t* address = nullptr;
   uint32_t value = 0;
 };
+
 GpuFence submitted_gpu_fence() noexcept;
 inline bool gpu_fence_done(const GpuFence& fence) noexcept { return !fence.address || int32_t(*fence.address - fence.value) >= 0; }
 
@@ -386,6 +422,7 @@ struct ShadedBlocks {
   uint64_t sceneRevision = 0;
   UniformBlock material, animated;
 };
+
 // Shader input locations 0..9 (position, normal, color0, uv0..2, PN selector,
 // role selectors 0..2) each read one compact mesh attribute by its layout
 // location, or one byte lane of a U8 selector attribute; -1 leaves it unbound.
@@ -394,6 +431,7 @@ struct ShadedMeshInputs {
   std::array<int8_t, 10> lane{};
   bool operator==(const ShadedMeshInputs&) const = default;
 };
+
 // u_texture0..2 read the native texture units (GX map IDs) given per draw.
 void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
                       GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits);
@@ -404,12 +442,16 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
 // Render thread only: blit `source` into the window with the letterboxed
 // viewport and swap. Rows are stored top-down, so the blit flips.
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept;
+
 // Nonblocking GPU completion check used for frameskip, independent of CPU tasks.
 bool gpu_frame_pending() noexcept;
+
 // Seal the current native scene and protect its mutable slot without a flip.
 void discard_native_frame() noexcept;
+
 // Slot 0..2 selected for the next rendered frame. Skipping does not rotate it.
 uint32_t native_frame_slot() noexcept;
+
 // Render thread only: window framebuffer size in pixels.
 std::pair<uint32_t, uint32_t> drawable_size() noexcept;
 

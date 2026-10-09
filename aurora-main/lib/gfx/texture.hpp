@@ -9,10 +9,12 @@ namespace aurora::gfx {
 constexpr uint32_t max_texture_mip_count(uint32_t width, uint32_t height) noexcept {
   uint32_t dimension = std::max(width, height);
   uint32_t count = 1;
+
   while (dimension > 1) {
     dimension >>= 1;
     ++count;
   }
+
   return count;
 }
 
@@ -76,17 +78,21 @@ struct GXTexObj_ {
     constexpr GXTexFilter kHwToGxFilter[8] = {
         GX_NEAR, GX_NEAR_MIP_NEAR, GX_NEAR_MIP_LIN, GX_NEAR, GX_LINEAR, GX_LIN_MIP_NEAR, GX_LIN_MIP_LIN, GX_NEAR,
     };
+
     return kHwToGxFilter[get_bits(mode0, 3, 5)];
   }
+
   GXTexFilter mag_filter() const noexcept { return get_bits(mode0, 1, 4) != 0 ? GX_LINEAR : GX_NEAR; }
   GXBool has_mips() const noexcept { return (flags & 1u) != 0 ? GX_TRUE : GX_FALSE; }
   u32 mip_count() const noexcept {
     if (!has_mips()) {
       return 1;
     }
+
     const u32 requested = std::max<u32>(static_cast<u32>(max_lod()) + 1, 1u);
     return std::min(requested, aurora::gfx::max_texture_mip_count(width(), height()));
   }
+
   GXBool do_edge_lod() const noexcept { return get_bits(mode0, 1, 8) == 0 ? GX_TRUE : GX_FALSE; }
   float lod_bias() const noexcept { return static_cast<float>(static_cast<int8_t>(get_bits(mode0, 8, 9))) / 32.0f; }
   GXAnisotropy max_aniso() const noexcept { return static_cast<GXAnisotropy>(get_bits(mode0, 2, 19)); }
@@ -98,6 +104,7 @@ struct GXTexObj_ {
   bool no_cache() const noexcept { return (flags & 0x80) != 0; }
   void set_no_cache(bool value) noexcept { flags = value ? flags | 0x80 : flags & ~0x80; }
 };
+
 static_assert(sizeof(GXTexObj_) <= sizeof(GXTexObj), "GXTexObj too small!");
 struct GXTlutObj_ {
   u32 tlut = 0;
@@ -113,6 +120,7 @@ struct GXTlutObj_ {
   bool no_cache() const noexcept { return (flags & 0x80) != 0; }
   void set_no_cache(bool value) noexcept { flags = value ? flags | 0x80 : flags & ~0x80; }
 };
+
 static_assert(sizeof(GXTlutObj_) <= sizeof(GXTlutObj), "GXTlutObj too small!");
 
 namespace aurora::gfx {

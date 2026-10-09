@@ -14,13 +14,16 @@ struct NativeTextureLevel {
   size_t offset;
   uint32_t width, height, pitch;
 };
+
 struct NativeTextureLayout {
   std::vector<NativeTextureLevel> levels;
   size_t image_bytes = 0, palette_offset = 0, palette_bytes = 0, total_bytes = 0;
 };
+
 constexpr size_t texture_align(size_t value, size_t alignment = 64) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
+
 constexpr uint32_t native_pixel_bytes(gl::Format f) {
   switch (f) {
   case gl::Format::R8:
@@ -43,28 +46,38 @@ constexpr uint32_t native_pixel_bytes(gl::Format f) {
     return 0;
   }
 }
+
 constexpr uint32_t native_block_bytes(gl::Format f) {
   return f == gl::Format::BC1 || f == gl::Format::BC4_RRRR ? 8 : f == gl::Format::BC3 || f == gl::Format::BC5_GRRR ? 16 : 0;
 }
+
 constexpr uint32_t native_palette_entries(gl::Format f) {
   return f == gl::Format::P4_ABGR ? 16 : f == gl::Format::P8_ABGR ? 256 : 0;
 }
+
 constexpr bool native_swizzled(gl::Format f) {
   return native_block_bytes(f) || native_palette_entries(f);
 }
+
 inline NativeTextureLayout native_texture_layout(uint32_t width, uint32_t height, uint32_t mips, gl::Format f) {
   if (!width || !height || width > 4096 || height > 4096 || !mips || mips > uint32_t(std::bit_width(std::max(width, height))) || (f == gl::Format::Depth32F && mips != 1))
     throw std::runtime_error("Invalid native texture dimensions/mips");
+
   const uint32_t block = native_block_bytes(f), palette = native_palette_entries(f), pixel = native_pixel_bytes(f);
+
   if (!block && !palette && !pixel)
     throw std::runtime_error("Unknown native texture layout");
+
   if (native_swizzled(f) && (!std::has_single_bit(width) || !std::has_single_bit(height)))
     throw std::runtime_error("Native swizzled assets require power-of-two dimensions");
+
   NativeTextureLayout out;
+
   for (uint32_t l = 0; l < mips; l++) {
     const uint32_t w = std::max(width >> l, 1u), h = std::max(height >> l, 1u);
     uint32_t pitch = 0;
     size_t advance;
+
     if (block)
       advance = size_t(std::max(w / 4, 1u)) * std::max(h / 4, 1u) * block;
     else if (palette)
@@ -75,16 +88,20 @@ inline NativeTextureLayout native_texture_layout(uint32_t width, uint32_t height
                 : l + 1 < mips            ? size_t(std::max(std::bit_ceil(width) >> l, 8u)) * std::max(std::bit_ceil(height) >> l, 1u) * pixel
                                           : size_t(pitch) * h;
     }
+
     out.levels.push_back({out.image_bytes, w, h, pitch});
     out.image_bytes += advance;
   }
+
   if (palette) {
     out.palette_offset = texture_align(out.image_bytes);
     out.palette_bytes = palette * 4;
   }
+
   out.total_bytes = palette ? out.palette_offset + out.palette_bytes : out.image_bytes;
   return out;
 }
+
 // File tags are stable independently of renderer enum values. Version1 uses1..3.
 inline gl::Format native_texture_format(uint32_t tag) {
   switch (tag) {

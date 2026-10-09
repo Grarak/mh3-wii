@@ -24,6 +24,7 @@ struct DDSPixelFormat {
   uint32_t bBitMask;
   uint32_t aBitMask;
 };
+
 static_assert(sizeof(DDSPixelFormat) == 32);
 
 struct DDSHeader {
@@ -42,6 +43,7 @@ struct DDSHeader {
   uint32_t caps4;
   uint32_t reserved2;
 };
+
 static_assert(sizeof(DDSHeader) == 124);
 
 struct DDSHeaderDX10 {
@@ -51,6 +53,7 @@ struct DDSHeaderDX10 {
   uint32_t arraySize;
   uint32_t miscFlags2;
 };
+
 static_assert(sizeof(DDSHeaderDX10) == 20);
 
 constexpr uint32_t kDDSMagic = 0x20534444; // "DDS"
@@ -67,6 +70,7 @@ bool write_binary_file(const std::filesystem::path& path, ArrayRef<uint8_t> data
   }
 
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
+
   if (!out) {
     return false;
   }
@@ -77,11 +81,13 @@ bool write_binary_file(const std::filesystem::path& path, ArrayRef<uint8_t> data
 
 std::optional<ByteBuffer> read_binary_file(const std::filesystem::path& path) noexcept {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
+
   if (!file) {
     return std::nullopt;
   }
 
   const auto size = static_cast<size_t>(file.tellg());
+
   if (size == 0) {
     return std::nullopt;
   }
@@ -89,6 +95,7 @@ std::optional<ByteBuffer> read_binary_file(const std::filesystem::path& path) no
   ByteBuffer bytes{size};
   file.seekg(0, std::ios::beg);
   file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+
   if (!file) {
     return std::nullopt;
   }
@@ -100,12 +107,15 @@ bool validate_dds_header(const DDSHeader& header) noexcept {
   if (header.size != sizeof(DDSHeader) || header.ddspf.size != sizeof(DDSPixelFormat)) {
     return false;
   }
+
   if (header.width == 0 || header.height == 0) {
     return false;
   }
+
   if ((header.caps2 & (0x00000200 | 0x00200000)) != 0) { // Unsupported
     return false;
   }
+
   return true;
 }
 
@@ -128,18 +138,24 @@ std::optional<ParsedDDSLayout> resolve_dds_layout(ArrayRef<uint8_t> bytes, const
     if (header.ddspf.fourCC != 0x30315844) {
       return std::nullopt;
     }
+
     if (bytes.size() < out.dataOffset + sizeof(DDSHeaderDX10)) {
       return std::nullopt;
     }
+
     const auto* dx10 = reinterpret_cast<const DDSHeaderDX10*>(bytes.data() + out.dataOffset);
     out.dataOffset += sizeof(DDSHeaderDX10);
+
     if (dx10->resourceDimension != 3 || dx10->arraySize != 1) {
       return std::nullopt;
     }
+
     const auto bgra = resolve_dx10_format(dx10->dxgiFormat);
+
     if (!bgra.has_value()) {
       return std::nullopt;
     }
+
     out.bgra = *bgra;
     return out;
   }
@@ -148,6 +164,7 @@ std::optional<ParsedDDSLayout> resolve_dds_layout(ArrayRef<uint8_t> bytes, const
     if (header.ddspf.rBitMask == 0x000000FF && header.ddspf.gBitMask == 0x0000FF00 && header.ddspf.bBitMask == 0x00FF0000 && header.ddspf.aBitMask == 0xFF000000) {
       return out;
     }
+
     if (header.ddspf.rBitMask == 0x00FF0000 && header.ddspf.gBitMask == 0x0000FF00 && header.ddspf.bBitMask == 0x000000FF && header.ddspf.aBitMask == 0xFF000000) {
       out.bgra = true;
       return out;
@@ -163,33 +180,39 @@ std::optional<ConvertedTexture> parse_dds_bytes(ArrayRef<uint8_t> bytes) noexcep
   }
 
   const uint32_t magic = *reinterpret_cast<const uint32_t*>(bytes.data());
+
   if (magic != kDDSMagic) {
     return std::nullopt;
   }
 
   const auto* header = reinterpret_cast<const DDSHeader*>(bytes.data() + sizeof(uint32_t));
+
   if (!validate_dds_header(*header)) {
     return std::nullopt;
   }
 
   const auto parsedLayout = resolve_dds_layout(bytes, *header);
+
   if (!parsedLayout.has_value()) {
     return std::nullopt;
   }
 
   const uint32_t mipCount = 1u;
   const auto expectedSize = calc_texture_size(gl::Format::RGBA8, header->width, header->height, mipCount);
+
   if (expectedSize == 0 || parsedLayout->dataOffset + expectedSize > bytes.size()) {
     return std::nullopt;
   }
 
   ByteBuffer data{static_cast<size_t>(expectedSize)};
   std::memcpy(data.data(), bytes.data() + parsedLayout->dataOffset, static_cast<size_t>(expectedSize));
+
   if (parsedLayout->bgra) {
     for (size_t i = 0; i + 3 < data.size(); i += 4) {
       std::swap(data.data()[i], data.data()[i + 2]);
     }
   }
+
   return ConvertedTexture{
       .format = gl::Format::RGBA8,
       .width = header->width,
@@ -201,9 +224,11 @@ std::optional<ConvertedTexture> parse_dds_bytes(ArrayRef<uint8_t> bytes) noexcep
 
 std::optional<ConvertedTexture> load_dds_file(const std::filesystem::path& path) noexcept {
   const auto bytes = read_binary_file(path);
+
   if (!bytes.has_value()) {
     return std::nullopt;
   }
+
   return parse_dds_bytes(*bytes);
 }
 
@@ -225,6 +250,7 @@ ByteBuffer encode_rgba8_dds(uint32_t width, uint32_t height, ArrayRef<uint8_t> p
       .bBitMask = 0x00FF0000,
       .aBitMask = 0xFF000000,
   };
+
   header.caps = 0x00001000;
 
   ByteBuffer bytes{sizeof(uint32_t) + sizeof(DDSHeader) + pixels.size()};

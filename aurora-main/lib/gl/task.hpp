@@ -26,16 +26,20 @@ class Task {
         } else {
             *reinterpret_cast<D**>(m_storage) = new D(std::forward<F>(f));
         }
+
         m_ops = &kOps<D>;
     }
+
     Task(Task&& other) noexcept { take(other); }
     Task& operator=(Task&& other) noexcept {
         if (this != &other) {
             reset();
             take(other);
         }
+
         return *this;
     }
+
     Task(const Task&) = delete;
     Task& operator=(const Task&) = delete;
     ~Task() { reset(); }
@@ -51,10 +55,12 @@ class Task {
 
     struct Ops {
       void (*invoke)(void* storage);
+
       // Moves the callable from `from` into the empty `to` and ends `from`.
       void (*relocate)(void* to, void* from) noexcept;
       void (*destroy)(void* storage) noexcept;
     };
+
     template <typename D>
     static D& callable(void* storage) noexcept {
         if constexpr (kInline<D>)
@@ -62,6 +68,7 @@ class Task {
         else
             return **reinterpret_cast<D**>(storage);
     }
+
     template <typename D>
     static constexpr Ops kOps{
         [](void* storage) { std::move(callable<D>(storage))(); },
@@ -88,6 +95,7 @@ class Task {
             other.m_ops = nullptr;
         }
     }
+
     void reset() noexcept {
         if (m_ops != nullptr) {
             m_ops->destroy(m_storage);

@@ -13,19 +13,24 @@ void Check(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
 }
+
 void Word(std::vector<uint8_t>& b, size_t at, uint32_t v) {
     for (unsigned i = 0; i < 4; ++i)
         b.at(at + i) = v >> (24 - i * 8);
 }
+
 uint32_t ReadWord(const std::vector<uint8_t>& b, size_t at) {
     return uint32_t(b.at(at)) << 24 | uint32_t(b.at(at + 1)) << 16 | uint32_t(b.at(at + 2)) << 8 | b.at(at + 3);
 }
+
 void Save(const std::filesystem::path& p, const std::vector<uint8_t>& b) {
     std::ofstream f(p, std::ios::binary);
     f.write(reinterpret_cast<const char*>(b.data()), b.size());
+
     if (!f)
         throw std::runtime_error("test fixture write");
 }
+
 std::vector<uint8_t> Quest() {
     std::vector<uint8_t> q(16 + 0x4c0);
     Word(q, 0, 0x4f4d4f4d);
@@ -39,6 +44,7 @@ std::vector<uint8_t> Quest() {
     q[16 + 0x8b] = 1;
     return q;
 }
+
 void SaveTests(const std::filesystem::path& root) {
     std::vector<uint8_t> file(0x14000);
     Word(file, 0, 1);
@@ -57,6 +63,7 @@ void SaveTests(const std::filesystem::path& root) {
     Check(!VitaLauncher::ValidSave(file, 1), "short file must be rejected");
     Check(std::filesystem::file_size(dir / "data04") == 0x14000, "probe must not change the save");
 }
+
 void QuestTests() {
     const auto original = Quest();
     VitaLauncher::CustomQuest custom{"Own quest", QuestCatalog::Set::Village, 1060, 1, true, 7};
@@ -67,20 +74,24 @@ void QuestTests() {
     Check(edited[16 + 0x8b] == original[16 + 0x8b] && edited[16 + 0x335] == 20, "template map/monster retained");
     custom.count = 3;
     bool impossible = false;
+
     try {
         VitaLauncher::EditQuestFile(original, custom);
     } catch (const std::exception&) {
         impossible = true;
     }
+
     Check(impossible, "unsupported additional spawns rejected");
     auto bad = original;
     Word(bad, 8, 0xfffffff0);
     bool caught = false;
+
     try {
         VitaLauncher::EditQuestFile(bad, custom);
     } catch (const std::exception&) {
         caught = true;
     }
+
     Check(caught, "bad quest extent rejected");
     auto multiple = original;
     Word(multiple, 16 + 0x334, (20u << 16) | 2);
@@ -90,12 +101,15 @@ void QuestTests() {
     Check(fewer[16 + 0x337] == 1 && fewer[16 + 0x39b] == 1 && fewer[16 + 0x13b] == 25, "smaller authored objective and live time limit");
     custom.stars = 8;
     caught = false;
+
     try {
         VitaLauncher::EditQuestFile(original, custom);
     } catch (const std::exception&) {
         caught = true;
     }
+
     Check(caught, "star bucket overflow rejected");
+
     // Two independently authored encounters on one ordinary map. Donor primary
     // rewards move with its monster; unsupported old subquests are removed.
     constexpr size_t extent = 0x4c0, first = 24, second = first + extent;
@@ -106,6 +120,7 @@ void QuestTests() {
     Word(composition, 12, extent);
     Word(composition, 16, second);
     Word(composition, 20, extent);
+
     for (size_t at : {first, second}) {
         Word(composition, at + 0x310, 0x300c5);
         composition[at + 0x8b] = 2;
@@ -113,6 +128,7 @@ void QuestTests() {
         Word(composition, at + 0x330, 1);
         Word(composition, at + 0x394, 1);
     }
+
     Word(composition, first + 0x2c, 1060u << 16);
     composition[first + 0x314] = 20;
     Word(composition, first + 0x334, (20u << 16) | 1);
@@ -137,15 +153,18 @@ void QuestTests() {
     Check(composed[first + 0x8c] == 0 && composed[first + 0xb5] == 0 && composed[first + 0xde] == 'C', "subquest text cleared; completion text preserved");
     composition[second + 0x8b] = 3;
     caught = false;
+
     try {
         VitaLauncher::EditQuestFile(composition, custom);
     } catch (const std::exception&) {
         caught = true;
     }
+
     Check(caught, "monster from incompatible map rejected");
     Word(composition, first + 0x310, 0x30105);
     Check(VitaLauncher::QuestCompositionOptions(composition, 1060).empty(), "scripted quest composition excluded");
 }
+
 void DiscTests(const std::filesystem::path& root) {
     const auto disc = root / "disc";
     std::filesystem::create_directories(disc / "sys");
@@ -155,6 +174,7 @@ void DiscTests(const std::filesystem::path& root) {
     Word(boot, 0x420, 0x3000 / 4);
     Word(boot, 0x424, 0x3400 / 4);
     const auto quest = Quest();
+
     // Root/05/quest00_eng.bin and its raw DVD byte range.
     std::vector<uint8_t> fst(36 + 20);
     Word(fst, 0, 0x01000000);
@@ -166,6 +186,7 @@ void DiscTests(const std::filesystem::path& root) {
     Word(fst, 32, quest.size());
     std::copy_n("05\0quest00_eng.bin\0", 19, fst.begin() + 36);
     Word(boot, 0x428, fst.size() / 4);
+
     // FST is aligned to its boot header's size units.
     fst.resize((fst.size() + 3) & ~size_t(3));
     Word(boot, 0x428, fst.size() / 4);
@@ -183,18 +204,22 @@ void DiscTests(const std::filesystem::path& root) {
         std::ofstream layout(disc / "disc-layout.txt");
         layout << "mh3-partition-v1\n";
     }
+
     DiscImage image(disc);
     const auto edited = VitaLauncher::EditQuestFile(quest, {"Own quest", QuestCatalog::Set::Village, 1060, 1, false, 3});
     image.SetFileOverride("05/quest00_eng.bin", edited);
     Check(image.Read(0x4000 + 16, 9) == std::vector<uint8_t>(edited.begin() + 16, edited.begin() + 25), "partial raw DVD read must see custom quest");
     Check(image.ReadFile("05/quest00_eng.bin") == edited, "full quest read override");
     bool caught = false;
+
     try {
         image.SetFileOverride("05/quest00_eng.bin", {0});
     } catch (const std::exception&) {
         caught = true;
     }
+
     Check(caught, "resized overlay rejected");
+
     // A real decrypted ISO sector and partition metadata, processed through
     // the production bounded reader/extractor. Empty texture inventory is valid.
     constexpr size_t partitionAt = 0x50000, dataAt = 0x70000;
@@ -218,59 +243,74 @@ void DiscTests(const std::filesystem::path& root) {
         DiscImage processed(root / "processed");
         Check(processed.ReadFile("05/quest00_eng.bin") == quest, "processed partition exact bytes");
     }
+
     std::filesystem::resize_file(root / "game.iso", iso.size() + 0x8000);
     Check(!VitaLauncher::DiscReady(root / "processed"), "a changed disc image must not be ready");
     std::filesystem::resize_file(root / "game.iso", iso.size());
     Check(VitaLauncher::DiscReady(root / "processed"), "the restored disc image is ready again");
 }
 } // namespace
+
 int main(int argc, char** argv) {
     try {
         if (argc == 3 && std::string_view(argv[1]) == "--disc-ready") {
             return VitaLauncher::DiscReady(argv[2]) ? 0 : 1;
         }
+
         if (argc == 3 && std::string_view(argv[1]) == "--prepare-textures") {
             VitaLauncher::PrepareTextures(argv[2], [](const std::string&, uint64_t, uint64_t) {});
             Check(VitaLauncher::DiscReady(argv[2]), "prepared external texture readiness");
             return 0;
         }
+
         if (argc == 3 && std::string_view(argv[1]) == "--quest-audit") {
             setenv("MH3_DISC_DIR", argv[2], 1);
             unsigned combinations = 0;
+
             for (unsigned set = 0; set < 3; ++set) {
                 const auto file = GameDiscImage().ReadFile("05/quest0" + std::to_string(set == 2 ? 3 : set) + "_eng.bin");
+
                 for (unsigned i = 0; i < ReadWord(file, 4); ++i) {
                     const size_t at = ReadWord(file, 8 + i * 8);
                     const uint16_t id = ReadWord(file, at + 0x2c) >> 16;
                     const auto options = VitaLauncher::QuestCompositionOptions(file, id);
+
                     for (uint16_t donor : options) {
                         size_t source = 0;
+
                         for (unsigned j = 0; j < ReadWord(file, 4); ++j)
                             if ((ReadWord(file, ReadWord(file, 8 + j * 8) + 0x2c) >> 16) == donor)
                                 source = ReadWord(file, 8 + j * 8);
                         VitaLauncher::CustomQuest q{"Own encounter", QuestCatalog::Set(set), id, uint16_t(ReadWord(file, source + 0x334)), false, file[at + 0x8a]};
                         q.encounter = donor;
                         q.minutes = 25;
+
                         for (unsigned capture = 0; capture < 2; ++capture) {
                             q.capture = capture;
+
                             if (capture && !VitaLauncher::SupportsCapture(q))
                                 continue;
+
                             const auto edited = VitaLauncher::EditQuestFile(file, q);
                             Check(edited.size() == file.size(), "authored composition preserves complete disc extent");
                             Check(ReadWord(edited, at + 0x330) == ReadWord(edited, at + 0x394) && ReadWord(edited, at + 0x334) == ReadWord(edited, at + 0x398),
                                   "authored composition summary/live objective match");
                             Check(std::equal(file.begin() + source + 0x314, file.begin() + source + 0x31c, edited.begin() + at + 0x314), "authored placement transferred exactly");
+
                             if (donor != id)
                                 Check(ReadWord(edited, at + 0x338) == 0 && ReadWord(edited, at + 0x3f4) == 0, "authored composition clears unsupported subobjective");
+
                             ++combinations;
                         }
                     }
                 }
             }
+
             Check(combinations > 0, "external disc has composable quest encounters");
             std::cout << "Authored quest composition audit passed: " << combinations << " configurations\n";
             return 0;
         }
+
         if (argc == 4 && std::string_view(argv[1]) == "--process") {
             std::string last;
             VitaLauncher::ProcessDisc(argv[2], argv[3], [&](const std::string& phase, uint64_t done, uint64_t total) {
@@ -282,8 +322,10 @@ int main(int argc, char** argv) {
             Check(VitaLauncher::DiscReady(argv[3]), "processed external disc readiness");
             return 0;
         }
+
         if (argc != 2)
             throw std::runtime_error("temporary directory argument required");
+
         const std::filesystem::path root = std::filesystem::path(argv[1]) / ("launcher-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root);
         SaveTests(root / "user");

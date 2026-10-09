@@ -51,10 +51,13 @@ constexpr float kBaseSpeed = 20.0f, kCruiseDistance = 500.0f, kAccel = 0.5f;
 int32_t Truncate(float v) {
     if (std::isnan(v))
         return INT32_MIN;
+
     if (v >= 2147483648.0f)
         return INT32_MAX;
+
     if (v < -2147483648.0f)
         return INT32_MIN;
+
     return int32_t(v);
 }
 
@@ -71,6 +74,7 @@ static void GroupShuttle(CpuContext* ctx) {
         const float speed = float(Memory::Read16(speedAt));
 
         int32_t extra = 0, cruise = Truncate(kCruiseDistance / speed);
+
         if (frame.Arg(6)) {
             extra = int32_t(call.Call<Rand>({1}) & 0xFFFF) % 5;
             const int32_t roll = int32_t(call.Call<Rand>({1}) & 0xFFFF);
@@ -87,6 +91,7 @@ static void GroupShuttle(CpuContext* ctx) {
             const float z = Memory::ReadFloat32(member + kMemberZ);
             Memory::WriteFloat32(member + kMemberZ, sign > 0 ? z + amount * scale : z - amount * scale);
         };
+
         auto nextSpeed = [&] {
             Memory::Write16(speedAt, uint16_t(Truncate(kBaseSpeed + float(extra))));
         };
@@ -102,6 +107,7 @@ static void GroupShuttle(CpuContext* ctx) {
             Memory::Write32(countAt, uint32_t(count));
             const float step = kAccel * float(count);
             move(step);
+
             if (step >= speed) {
                 Memory::Write8(stateAt, state + 1);
                 const uint32_t target = frame[8];
@@ -109,6 +115,7 @@ static void GroupShuttle(CpuContext* ctx) {
                 call.Call<DistanceXZ>({member + 4, target});
                 Memory::Write32(countAt, uint32_t(Truncate(float(cruise) + call.F1() / speed)));
             }
+
             break;
         }
         case 2:
@@ -116,10 +123,12 @@ static void GroupShuttle(CpuContext* ctx) {
             move(speed);
             const int32_t count = int32_t(Memory::Read32(countAt)) - ticks;
             Memory::Write32(countAt, uint32_t(count));
+
             if (count < 1) {
                 Memory::Write8(stateAt, state + 1);
                 Memory::Write32(countAt, 0);
             }
+
             break;
         }
         case 3:
@@ -128,8 +137,10 @@ static void GroupShuttle(CpuContext* ctx) {
             Memory::Write32(countAt, uint32_t(count));
             const float step = speed - kAccel * float(count);
             move(step);
+
             if (step <= 0.0f) {
                 Memory::Write32(countAt, 0);
+
                 if (state == 3) {
                     Memory::Write8(stateAt, 4);
                     nextSpeed();
@@ -138,14 +149,17 @@ static void GroupShuttle(CpuContext* ctx) {
                     result = 1;
                 }
             }
+
             break;
         }
         default:
             break;
         }
     }
+
     ctx->gpr[3] = result;
 }
+
 extern "C" void func_80368DCC(CpuContext* ctx);
 
 extern "C" void MH3_GroupShuttle(CpuContext* ctx) {

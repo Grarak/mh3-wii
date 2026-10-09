@@ -14,20 +14,24 @@ typedef struct mh3_native_texture_source {
     uint64_t generation;
     uint8_t indexed, mutable_source;
 } mh3_native_texture_source;
+
 typedef struct mh3_native_sampler {
     uint32_t wrap_s, wrap_t, min_filter, mag_filter, anisotropy;
     float lod_bias;
     uint8_t bias_clamp, edge_lod;
 } mh3_native_sampler;
+
 typedef struct mh3_native_texture_binding {
     mh3_native_texture_source source;
     mh3_native_sampler sampler;
     uint32_t map_id, tlut_id;
 } mh3_native_texture_binding;
+
 typedef struct mh3_native_palette_source {
     uint32_t resource_address, payload_address, format, entries;
     uint64_t generation;
 } mh3_native_palette_source;
+
 typedef struct mh3_native_material_state {
     uint32_t texgen_count, channel_count, tev_count, indirect_count, cull_mode;
     int32_t light_set_reference, fog_reference;
@@ -46,6 +50,7 @@ typedef struct mh3_native_material_state {
     uint8_t clip_mode_known, clip_disabled;
     uint64_t generation;
 } mh3_native_material_state;
+
 /* Load-time typed assembly; v1 material payloads cannot supply constants. */
 mh3_pack_status mh3_material_state_read(const mh3_mesh_pack *pack, uint32_t material_index, mh3_native_material_state *out);
 /* Explicit producer generations: changed only by create/update/rebind actions.
@@ -76,6 +81,7 @@ typedef struct mh3_native_fog {
     uint8_t range_enabled;
     uint16_t range_center, range_adjust[10];
 } mh3_native_fog;
+
 mh3_res_status mh3_fog_read(mh3_res_span record, mh3_native_fog *out);
 mh3_res_status mh3_fog_range_table(uint16_t width, const float projection[16], uint16_t out[10]);
 mh3_res_status mh3_fog_range_store(mh3_res_mut_span record, uint16_t center, const uint16_t values[10]);
@@ -91,6 +97,7 @@ typedef struct mh3_native_camera {
     float viewport[6];
     uint32_t scissor[4], scissor_offset[2];
 } mh3_native_camera;
+
 mh3_res_status mh3_camera_read(mh3_res_span record, mh3_native_camera *out);
 mh3_res_status mh3_camera_prepare_projection(mh3_native_camera *camera);
 mh3_res_status mh3_camera_prepare_view(mh3_native_camera *camera);
@@ -117,6 +124,7 @@ typedef struct {
     mh3_res_mut_span channel, current_matrix, texture_sources, post_texture;
     mh3_res_mut_span vertex_descriptor, fog, light_cache, view_sources, sync;
 } mh3_model_cache_storage;
+
 mh3_res_status mh3_model_cache_invalidate(mh3_model_cache_storage storage, uint32_t flags);
 
 typedef struct mh3_native_light_slots {
@@ -126,23 +134,27 @@ typedef struct mh3_native_light_slots {
     uint32_t diffuse_color, diffuse_alpha, specular_color, specular_alpha;
     mh3_rgba8 ambient;
 } mh3_native_light_slots;
+
 /* The channel preparation consumer needs only these authored values. */
 typedef struct mh3_native_light_selection {
     uint32_t masks[4];
     mh3_rgba8 ambient;
 } mh3_native_light_selection;
+
 /* Exact typed slot mutations from one selection. Written lights can retain
  * identical contents; changed bits include all raw light fields. */
 typedef struct mh3_native_light_delta {
     uint8_t lights_written, lights_changed, source_ids_changed;
     uint8_t valid_changed, masks_changed, ambient_changed;
 } mh3_native_light_delta;
+
 /* Native reconstruction of LightState's slot reuse/eviction and masks. */
 mh3_res_status mh3_light_slots_initial(const mh3_light *lights, size_t count, mh3_native_light_slots *out);
 mh3_res_status mh3_light_slots_select(const mh3_light *lights, size_t count, const mh3_light_set *set, const mh3_rgba8 *ambient, size_t ambient_count, mh3_native_light_slots *slots);
 enum {
     MH3_LIGHT_STATE_BYTES = 0x2a2c
 };
+
 /* Serialized LightState compatibility at the verified offsets. Import keeps
  * capacity/address fields and unused source slots, exactly like8007AFD0.
  * ApplyView8007B104 uses MAX(source count,capacity), not MIN. */

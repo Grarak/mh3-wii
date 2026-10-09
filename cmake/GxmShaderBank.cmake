@@ -24,9 +24,11 @@ function(mh3_gxm_shader_bank target xxhash_dir)
   find_program(MH3_ZSTD zstd REQUIRED)
   find_program(MH3_DOCKER docker REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
   if(NOT EXISTS "${VITA_SONY_HOST_TOOLS}/bin/psp2cgc.exe")
     message(FATAL_ERROR "The GXM shader bank needs psp2cgc.exe; set VITA_SONY_HOST_TOOLS")
   endif()
+
   set(sources
     "${root}/scripts/vita_shader_bank.cpp"
     "${root}/runtime/src/native_shader_source.cpp"
@@ -56,18 +58,22 @@ function(mh3_gxm_shader_bank target xxhash_dir)
     COMMENT "Building the GXM shader bank generator (host)"
     VERBATIM)
   set(mode)
+
   if(BANK_PREFLIGHT)
     set(mode --preflight)
   endif()
+
   add_custom_command(OUTPUT "${dir}/sources/manifest.tsv"
     COMMAND "${generator}" "${dir}/sources" "${root}/aurora-main/lib/gxm/utility" ${mode}
     DEPENDS "${generator}" ${utility}
     COMMENT "Writing the GXM shader bank sources"
     VERBATIM)
   set(cache)
+
   if(GXM_SHADER_BANK_CACHE)
     set(cache --cache "${GXM_SHADER_BANK_CACHE}")
   endif()
+
   set(outputs "${dir}/shader_bank_tables.cpp" "${dir}/shader_bank.bin" "${dir}/shader_bank.S" "${dir}/shader_bank.json")
   add_custom_command(OUTPUT ${outputs}
     COMMAND "${Python3_EXECUTABLE}" "${root}/scripts/vita-shader-bank.py" "${dir}/sources" "${dir}" --sdk "${VITA_SONY_HOST_TOOLS}" ${cache}

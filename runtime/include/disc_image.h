@@ -10,6 +10,7 @@
 
 class DiscFile;
 class RomImage;
+
 // Read-only decrypted partition view. Extracted mode preserves the original
 // file checks; disc-layout.txt selects a single exact partition with sys
 // metadata, read from partition.bin or in place from the disc image named by
@@ -20,11 +21,13 @@ class DiscImage {
     ~DiscImage();
     std::vector<uint8_t> Read(uint64_t offset, uint32_t length) const;
     std::vector<uint8_t> ReadFile(const std::string& name) const;
+
     // Launcher quest overlays preserve lengths and apply to partial DVD reads.
     void SetFileOverride(const std::string& name, std::vector<uint8_t> bytes);
     std::vector<std::string> FileNames() const;
     uint64_t FileOffset(const std::string& name) const;
     uint32_t FileSize(const std::string& name) const;
+
     // Without a prepared native texture map, the game's image hands reads to
     // the load-time asset cache (asset_cache.h), which patches its own tags.
     bool HasNativeTextureMap() const { return hasTextureMap; }
@@ -39,6 +42,7 @@ class DiscImage {
         uint64_t offset, size;
         std::filesystem::path path;
     };
+
     std::vector<Extent> extents;
     std::map<std::string, std::pair<uint64_t, uint32_t>> fileEntries;
     std::unique_ptr<DiscFile> partition;
@@ -54,6 +58,7 @@ class DiscImage {
         uint64_t offset;
         std::array<uint8_t, 4> bytes;
     };
+
     std::vector<NativeTexturePatch> nativeTexturePatches;
     void ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const;
     void Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify = true);

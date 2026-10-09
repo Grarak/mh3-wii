@@ -15,11 +15,13 @@ int main() {
   assert(entries.size() == 2);
   assert(entries.at({1, 0}).first == 10 && entries.at({1, 0}).second == a);
   assert(entries.at({2, 1}).first == 20 && entries.at({2, 1}).second == b);
+
   // A later record replaces the program; the same hash with another stage is another program.
   pack += shader_pack::encode(1, 0, 11, c.data(), c.size());
   pack += shader_pack::encode(1, 2, 12, c.data(), c.size());
   entries = shader_pack::parse(pack, 2, 1 << 20);
   assert(entries.size() == 3 && entries.at({1, 0}).first == 11 && entries.at({1, 0}).second == c && entries.at({1, 2}).first == 12);
+
   // A truncated tail (interrupted append) and anything after a bad record are ignored.
   auto truncated = pack + shader_pack::encode(3, 0, 30, b.data(), b.size()).substr(0, 40);
   assert(shader_pack::parse(truncated, 2, 1 << 20).size() == 3);

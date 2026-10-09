@@ -19,21 +19,27 @@ inline uint32_t CanonicalizeGxMainRamAddress(uint32_t addr) noexcept {
     if (addr < 0x01800000u) {
         return addr;
     }
+
     if (addr >= Memory::kMem2PhysicalBase && addr < Memory::kMem2PhysicalEnd) {
         return addr;
     }
+
     if (addr >= 0x80000000u && addr < 0x81800000u) {
         return addr - 0x80000000u;
     }
+
     if (addr >= Memory::kMem2CachedBase && addr < Memory::kMem2CachedEnd) {
         return addr - 0x80000000u;
     }
+
     if (addr >= 0xC0000000u && addr < 0xC1800000u) {
         return addr - 0xC0000000u;
     }
+
     if (addr >= Memory::kMem2UncachedBase && addr < Memory::kMem2UncachedEnd) {
         return addr - 0xC0000000u;
     }
+
     return addr;
 }
 
@@ -63,17 +69,22 @@ inline uint64_t GenerationForRange(uint32_t addr, uint32_t nbytes) noexcept {
     if (nbytes == 0) {
         return kUntracked;
     }
+
     const uint64_t start = static_cast<uint64_t>(CanonicalizeGxMainRamAddress(addr));
     const uint64_t end = start + static_cast<uint64_t>(nbytes);
+
     if (end <= start || end > kTrackedSpan) {
         return kUntracked;
     }
+
     const size_t firstGranule = static_cast<size_t>(start >> kGranuleShift);
     const size_t lastGranule = static_cast<size_t>((end - 1) >> kGranuleShift);
     uint64_t folded = 0;
+
     for (size_t granule = firstGranule; granule <= lastGranule; ++granule) {
         folded += g_generations[granule].load(std::memory_order_relaxed);
     }
+
     // Never collide with the "untracked" sentinel.
     return folded == kUntracked ? folded - 1u : folded;
 }
@@ -85,14 +96,18 @@ inline void NotifyWrite(uint32_t addr, uint32_t size) noexcept {
     if (size == 0) {
         return;
     }
+
     const uint64_t start = static_cast<uint64_t>(CanonicalizeGxMainRamAddress(addr));
     const uint64_t end = start + static_cast<uint64_t>(size);
+
     if (end <= start || start >= kTrackedSpan) {
         return;
     }
+
     const uint64_t clampedEnd = end < kTrackedSpan ? end : kTrackedSpan;
     const size_t firstGranule = static_cast<size_t>(start >> kGranuleShift);
     const size_t lastGranule = static_cast<size_t>((clampedEnd - 1) >> kGranuleShift);
+
     for (size_t granule = firstGranule; granule <= lastGranule; ++granule) {
         g_generations[granule].fetch_add(1u, std::memory_order_relaxed);
     }
@@ -112,15 +127,20 @@ inline bool HostRangeToGuest(const void* hostBase, uint64_t hostSize, uint32_t g
     if (hostBase == nullptr || hostPtr == nullptr || size == 0) {
         return false;
     }
+
     const uintptr_t base = reinterpret_cast<uintptr_t>(hostBase);
     const uintptr_t ptr = reinterpret_cast<uintptr_t>(hostPtr);
+
     if (ptr < base) {
         return false;
     }
+
     const uint64_t offset = static_cast<uint64_t>(ptr - base);
+
     if (offset >= hostSize || static_cast<uint64_t>(size) > hostSize - offset) {
         return false;
     }
+
     outAddr = guestBase + static_cast<uint32_t>(offset);
     return true;
 }

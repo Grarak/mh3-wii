@@ -31,6 +31,7 @@ using HashType = XXH64_hash_t;
 static inline HashType xxh3_hash_s(const void* input, size_t len, HashType seed = 0) {
   return static_cast<HashType>(XXH3_64bits_withSeed(input, len, seed));
 }
+
 template <typename T>
 static inline HashType xxh3_hash(const T& input, HashType seed = 0) {
   // Validate that the type has no padding bytes, which can easily cause
@@ -59,6 +60,7 @@ inline uint64_t guest_write_generation(const void* data, size_t size) noexcept {
   if (g_guestWriteGenerationHook == nullptr || data == nullptr || size == 0) {
     return kGuestWriteUntracked;
   }
+
   return g_guestWriteGenerationHook(data, size);
 }
 
@@ -66,6 +68,7 @@ inline void notify_guest_write(const void* data, size_t size) noexcept {
   if (g_guestWriteNotifyHook == nullptr || data == nullptr || size == 0) {
     return;
   }
+
   g_guestWriteNotifyHook(data, size);
 }
 
@@ -106,16 +109,19 @@ public:
       free(m_data);
     }
   }
+
   ByteBuffer(ByteBuffer&& rhs) noexcept : m_data(rhs.m_data), m_length(rhs.m_length), m_capacity(rhs.m_capacity), m_owned(rhs.m_owned) {
     rhs.m_data = nullptr;
     rhs.m_length = 0;
     rhs.m_capacity = 0;
     rhs.m_owned = true;
   }
+
   ByteBuffer& operator=(ByteBuffer&& rhs) noexcept {
     if (m_data != nullptr && m_owned) {
       free(m_data);
     }
+
     m_data = rhs.m_data;
     m_length = rhs.m_length;
     m_capacity = rhs.m_capacity;
@@ -126,6 +132,7 @@ public:
     rhs.m_owned = true;
     return *this;
   }
+
   ByteBuffer(ByteBuffer const&) = delete;
   ByteBuffer& operator=(ByteBuffer const&) = delete;
   operator ArrayRef<uint8_t>() const noexcept { return {m_data, m_length}; }
@@ -162,6 +169,7 @@ public:
     if (m_data != nullptr && m_owned) {
       free(m_data);
     }
+
     m_data = nullptr;
     m_length = 0;
     m_capacity = 0;
@@ -191,30 +199,39 @@ private:
       clear();
       return;
     }
+
     const size_t zeroBegin = m_length;
+
     if (m_data == nullptr) {
       if (zeroed) {
         m_data = static_cast<uint8_t*>(calloc(1, size));
       } else {
         m_data = static_cast<uint8_t*>(malloc(size));
       }
+
       m_owned = true;
       m_capacity = size;
+
       // calloc already cleared the whole allocation.
       return;
     }
+
     if (size > m_capacity) {
       if (!m_owned) {
         abort();
       }
+
       // Exponential expansion to avoid O(n^2) time complexity.
       size_t capacity = size;
+
       if (capacity < m_capacity * 2) {
         capacity = m_capacity * 2;
       }
+
       m_data = static_cast<uint8_t*>(realloc(m_data, capacity));
       m_capacity = capacity;
     }
+
     if (zeroed && size > zeroBegin) {
       memset(m_data + zeroBegin, 0, size - zeroBegin);
     }
@@ -284,20 +301,25 @@ bool resume_frame();
 // already prepared palette conversions still run. Forced captures must be
 // requested before early draw skipping. GXM also checks GPU scene completion.
 void set_frameskip(bool enabled) noexcept;
+
 // The current frame must render (a new copy texture, a requested capture).
 void require_frame_render() noexcept;
+
 // Decide (once) and return whether the current frame is skipped.
 bool frame_skipped() noexcept;
+
 // Rendered frames posted to the render thread and not yet presented.
 void frame_render_posted() noexcept;
 void frame_render_finished() noexcept;
 void count_skipped_frame() noexcept;
 uint64_t skipped_frame_count() noexcept;
 void abort_frame() noexcept;
+
 // Hands the recorded staging data to the render thread.
 void end_frame();
 void end_batch();
 uint32_t current_frame() noexcept;
+
 // Advance a directly submitted frame without allocating GX staging or passes.
 void advance_native_frame() noexcept;
 NativeDrawMemory native_draw_memory(unsigned slot);
@@ -335,6 +357,7 @@ void render(SealedFrame& frame, int32_t interpolatedFrame = -1, bool finalize = 
 // into, so it may only run with the producer excluded, inside the seal prologue.
 void expire_bind_group_cache() noexcept;
 void after_submit() noexcept;
+
 // `persistentCopy` marks resolves whose destination outlives the frame with no re-issue path, so
 // the pass waits for its pipelines instead of dropping draws that would be baked in permanently.
 void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth, Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat = GX_TF_RGBA8,
@@ -344,6 +367,7 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
 // Submit the passes recorded so far (with their staging batch) to the render
 // thread. The caller resumes recording with resume_frame().
 void flush_recording();
+
 // Keep the EFB contents at the next begin_frame() instead of clearing them.
 void preserve_next_efb_frame() noexcept;
 
@@ -356,6 +380,7 @@ void clear_caches() noexcept;
 namespace tex_palette_conv {
 struct ConvRequest;
 } // namespace tex_palette_conv
+
 void queue_palette_conv(tex_palette_conv::ConvRequest req);
 
 Range push_verts(const uint8_t* data, size_t length);
@@ -363,25 +388,30 @@ template <typename T>
 static Range push_verts(ArrayRef<T> data) {
   return push_verts(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(T));
 }
+
 Range push_indices(const uint8_t* data, size_t length);
 template <typename T>
 static Range push_indices(ArrayRef<T> data) {
   return push_indices(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(T));
 }
+
 Range push_uniform(const uint8_t* data, size_t length);
 template <typename T>
 static Range push_uniform(const T& data) {
   return push_uniform(reinterpret_cast<const uint8_t*>(&data), sizeof(T));
 }
+
 Range push_storage(const uint8_t* data, size_t length);
 template <typename T>
 static Range push_storage(ArrayRef<T> data) {
   return push_storage(reinterpret_cast<const uint8_t*>(data.data()), data.size() * sizeof(T));
 }
+
 template <typename T>
 static Range push_storage(const T& data) {
   return push_storage(reinterpret_cast<const uint8_t*>(&data), sizeof(T));
 }
+
 std::pair<ByteBuffer, Range> map_verts(size_t length);
 std::pair<ByteBuffer, Range> map_indices(size_t length);
 std::pair<ByteBuffer, Range> map_uniform(size_t length);
@@ -397,11 +427,13 @@ DrawData* get_last_draw_command();
 
 template <typename PipelineConfig>
 PipelineRef pipeline_ref(const PipelineConfig& config);
+
 // Render thread: binds the pipeline's program and fixed-function state.
 // `currentPipeline` is the caller's per-pass dedupe slot.
 bool bind_pipeline(PipelineRef ref, PipelineRef& currentPipeline, bool requireReady = false);
 
 inline constexpr uint32_t MaxBoundTextures = 8;
+
 // Texture unit layout of every GX program: textures 0-7, then the word buffers.
 inline constexpr uint32_t VertexBufferUnit = 8;
 inline constexpr uint32_t StorageBufferUnit = 9;
@@ -409,6 +441,7 @@ struct TextureBinding {
   TextureHandle ref;
   gl::SamplerDesc sampler;
 };
+
 // The textures of one GX draw. Immutable once cached; `glSamplers` is filled
 // lazily on the render thread.
 struct TextureBindGroup {
@@ -416,6 +449,7 @@ struct TextureBindGroup {
   mutable std::array<GLuint, MaxBoundTextures> glSamplers{};
   mutable bool samplersResolved = false;
 };
+
 BindGroupRef bind_group_ref(TextureBindGroup&& group);
 const TextureBindGroup* find_bind_group(BindGroupRef id);
 
@@ -425,6 +459,7 @@ GLuint uniform_buffer() noexcept;
 uint32_t align_uniform(uint32_t value);
 uint64_t staging_uniform_bytes(uint64_t bytes);
 uint64_t staging_storage_bytes(uint64_t bytes);
+
 // Admission does not allocate. A false result requires a producer-side split.
 // Oversized operations fail before mutating the current draw/pass.
 bool staging_has_space(const StagingSizes& demand);
@@ -434,13 +469,16 @@ uint64_t staging_epoch() noexcept;
 StagingSizes staging_usage() noexcept;
 StagingSizes staging_high_water() noexcept;
 uint64_t staging_split_count() noexcept;
+
 // Cumulative render FIFO staging wait and total native Device::finish time,
 // in microseconds, followed by their respective call counts.
 std::array<uint64_t, 4> staging_wait_counters() noexcept;
+
 // Internal integration-test seam: never increases the physical allocation.
 void set_staging_capacity_limits_for_testing(const StagingSizes& limits);
 
 Vec2<uint32_t> get_render_target_size() noexcept;
+
 // Same value as get_render_target_size() outside a render pass, but never
 // touches the frame worker's render-pass list, so it is safe off-thread.
 Vec2<uint32_t> get_frame_buffer_size() noexcept;

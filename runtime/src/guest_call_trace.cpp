@@ -22,6 +22,7 @@ struct TraceState {
         if (!options.List().empty())
             file = std::fopen(options.List().front().c_str(), "w");
     }
+
     ~TraceState() {
         if (file)
             std::fclose(file);
@@ -36,8 +37,10 @@ TraceState& State() {
 
 void MkwTraceCall(uint32_t from, uint32_t to, uint32_t site) {
     TraceState& state = State();
+
     if (!state.file)
         return;
+
     if (!state.gateOpen.load(std::memory_order_relaxed)) {
         if ((state.gateChecks.fetch_add(1, std::memory_order_relaxed) & 255u) == 255u) {
             if (std::FILE* marker = std::fopen(state.gate, "r")) {
@@ -45,13 +48,18 @@ void MkwTraceCall(uint32_t from, uint32_t to, uint32_t site) {
                 state.gateOpen.store(true, std::memory_order_relaxed);
             }
         }
+
         if (!state.gateOpen.load(std::memory_order_relaxed))
             return;
     }
+
     const unsigned n = state.count.fetch_add(1, std::memory_order_relaxed);
+
     if (n >= 500000)
         return;
+
     std::fprintf(state.file, "%08x,%08x,%08x\n", from, to, site);
+
     if ((n & 255u) == 255u)
         std::fflush(state.file);
 }

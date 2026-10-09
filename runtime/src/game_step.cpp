@@ -25,6 +25,7 @@ bool variable = false;
 void SetVariable(bool enabled) {
     variable = enabled;
 }
+
 bool Variable() {
     return variable;
 }
@@ -43,12 +44,15 @@ void Begin(double s) {
 double Scale() {
     return scale;
 }
+
 uint32_t Ticks() {
     return ticks;
 }
+
 double Elapsed() {
     return elapsed;
 }
+
 double Fraction() {
     return clock;
 }

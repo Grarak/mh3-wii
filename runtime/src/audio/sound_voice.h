@@ -17,6 +17,7 @@ struct Addr {
     uint16_t loopFlag, format;
     uint32_t loop, end, current;
 };
+
 // AXPBADPCM: 8 coefficient pairs, gain and the decoder state.
 struct Adpcm {
     uint16_t coefs[16];

@@ -10,6 +10,7 @@ namespace VitaLauncher {
 struct SaveSlot {
     unsigned file, character;
 };
+
 std::vector<SaveSlot> ProbeSaves(const std::filesystem::path& user);
 bool ValidSave(std::span<const uint8_t> bytes, unsigned character);
 struct CustomQuest {
@@ -23,6 +24,7 @@ struct CustomQuest {
     uint16_t encounter = 0; // Authored monster placement on the same ordinary map.
     uint16_t minutes = 0;   // Zero preserves the original time limit.
 };
+
 std::vector<uint16_t> QuestCompositionOptions(std::span<const uint8_t> source, uint16_t base);
 std::vector<uint16_t> CompositionOptions(const CustomQuest& quest);
 std::vector<uint16_t> CompositionMaps(const CustomQuest& quest);
@@ -32,15 +34,19 @@ std::vector<CustomQuest> LoadCustomQuests(const std::filesystem::path& user);
 bool SupportsCapture(const CustomQuest& quest);
 void ActivateCustomQuest(const CustomQuest& quest);
 using Progress = std::function<void(const std::string&, uint64_t, uint64_t)>;
+
 // Extracts the disc metadata (sys/, ticket, TMD, certificates) of an ISO/RVZ
 // and records the image in rom.txt; the game partition is read from the image
 // in place, and textures and models are converted when the game loads them.
 // The input is always read-only. Publication happens only after validation.
 void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress);
+
 // The metadata is present and matches partition.bin or the recorded image.
 bool DiscReady(const std::filesystem::path& output);
+
 // Whole-disc conversion (development tools): native-textures.bin and its tag map.
 void PrepareTextures(const std::filesystem::path& root, const Progress& progress);
+
 // Whole-disc conversion (development tools): native-models/ packs and index.
 bool ModelsReady(const std::filesystem::path& root);
 void PrepareModels(const std::filesystem::path& root, const Progress& progress);

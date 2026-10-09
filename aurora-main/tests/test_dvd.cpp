@@ -170,11 +170,13 @@ protected:
 // Returns the entry number and fills fileName, or returns -1 if none found.
 static s32 findFirstRootFile(char* fileName, size_t fileNameSize) {
   DVDDir dir{};
+
   if (!DVDOpenDir("/", &dir))
     return -1;
 
   DVDDirEntry dirent{};
   s32 fileEntry = -1;
+
   while (DVDReadDir(&dir, &dirent)) {
     if (!dirent.isDir) {
       fileEntry = static_cast<s32>(dirent.entryNum);
@@ -182,6 +184,7 @@ static s32 findFirstRootFile(char* fileName, size_t fileNameSize) {
       break;
     }
   }
+
   DVDCloseDir(&dir);
   return fileEntry;
 }
@@ -205,10 +208,12 @@ TEST_F(DVDDiscTest, OpenDirRoot) {
 
   DVDDirEntry dirent{};
   BOOL hasEntry = DVDReadDir(&dir, &dirent);
+
   if (hasEntry) {
     EXPECT_NE(dirent.name, nullptr);
     EXPECT_GT(std::strlen(dirent.name), 0u);
   }
+
   DVDCloseDir(&dir);
 }
 
@@ -222,6 +227,7 @@ TEST_F(DVDDiscTest, ChangeDirRoot) {
 TEST_F(DVDDiscTest, OpenCloseFile) {
   char fileName[256] = {};
   s32 fileEntry = findFirstRootFile(fileName, sizeof(fileName));
+
   if (fileEntry < 0) {
     GTEST_SKIP() << "No files in root directory";
   }
@@ -238,6 +244,7 @@ TEST_F(DVDDiscTest, OpenCloseFile) {
 
 TEST_F(DVDDiscTest, ReadFile) {
   char fileName[256] = {};
+
   if (findFirstRootFile(fileName, sizeof(fileName)) < 0) {
     GTEST_SKIP() << "No files in root directory";
   }
@@ -256,6 +263,7 @@ TEST_F(DVDDiscTest, ReadFile) {
 
 TEST_F(DVDDiscTest, ReadAsync) {
   char fileName[256] = {};
+
   if (findFirstRootFile(fileName, sizeof(fileName)) < 0) {
     GTEST_SKIP() << "No files in root directory";
   }
@@ -276,12 +284,14 @@ TEST_F(DVDDiscTest, DiskID) {
   DVDDiskID* id = DVDGetCurrentDiskID();
   ASSERT_NE(id, nullptr);
   bool hasGameName = false;
+
   for (int i = 0; i < 4; i++) {
     if (id->gameName[i] != '\0') {
       hasGameName = true;
       break;
     }
   }
+
   EXPECT_TRUE(hasGameName);
 }
 

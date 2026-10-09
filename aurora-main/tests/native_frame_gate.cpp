@@ -29,11 +29,13 @@ int main() {
     assert(frame.active());
     assert(frame.should_render() == render);
     assert(!frame.drawing_allowed());
+
     if (render) { ++renders; payload.fill(logicTicks); }
     else ++skips;
     frame.end();
     assert(!frame.active() && !frame.should_render());
   }
+
   assert(logicTicks == 100 && renders == 0 && skips == 100 && polls == 100);
   assert(payload == previousPayload);
 
@@ -99,23 +101,29 @@ int main() {
   aurora::GpuFrameRing ring;
   volatile unsigned retired = 0;
   std::array<std::array<uint32_t, 8>, aurora::GpuFrameRing::BufferCount> buffers{};
+
   for (unsigned serial = 1; serial != 4; ++serial) {
     assert(ring.slot() == serial - 1 && !ring.pending());
     buffers[ring.slot()].fill(serial);
     ring.record_scene(&retired, serial);
     ring.advance();
   }
+
   const auto outstanding = buffers;
+
   for (unsigned tick = 0; tick != 50; ++tick) {
     assert(!frame.begin(true, true, [&] { return ring.pending(); }));
     ++logicTicks;
+
     if (frame.should_render()) {
       buffers[ring.slot()].fill(4);
       ring.record_scene(&retired, 4);
       ring.advance();
     }
+
     frame.end();
   }
+
   assert(ring.slot() == 0 && buffers == outstanding);
   retired = 1;
   assert(!ring.pending()); // Slot 0 ready; slots 1/2 can still be in flight.

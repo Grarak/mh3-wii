@@ -33,18 +33,21 @@ namespace {
 void require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
 }
+
 // Compare the admitted no-bias path with the authored biased lookup over a
 // complete framebuffer. Derivatives vary from magnification to minification;
 // point and linear filters must each agree before bias may be omitted.
 void single_mip_bias_probe() {
   namespace gl=aurora::gl;
   std::array<uint8_t,256> tiled{};
+
   for(unsigned y=0;y<8;++y) for(unsigned x=0;x<8;++x) {
     const unsigned tile=(y/4)*2+x/4,index=(y%4)*4+x%4,at=tile*64;
     tiled[at+index*2]=255;tiled[at+index*2+1]=uint8_t(x*31);
     tiled[at+32+index*2]=uint8_t(y*31);
     tiled[at+33+index*2]=((x^y)&1)?255:0;
   }
+
   aurora::NativeTextureSource source;
   source.bytes=tiled;source.width=source.height=8;source.format=6;
   auto target=gl::create_texture(64,64,1,gl::Format::RGBA8,"single-mip bias comparison");
@@ -80,11 +83,13 @@ void main() { fixture_color=texture(tex0,fixture_uv); }
   gl::Program independent(desc);
   std::vector<uint8_t> reference(64*64*4),actual(reference.size());
   unsigned comparisons=0;
+
   for(unsigned filter=0;filter<6;++filter) for(float bias:{-4.f,-.0625f,.03125f,2.f,4.125f}) {
     aurora::NativeTextureSampler sampler;
     sampler.min_filter=filter;sampler.mag_filter=filter&1;sampler.lod_bias=bias;
     aurora::bind_native_texture(0,source,sampler);
     require(aurora::native_texture_shader_lod_bias(0)==0,"ineffective single-mip bias was retained");
+
     for(float scale:{.25f,1.f,16.f,256.f}) {
       gl::uniform4(authored.get(),"fixture_options",scale,0,0,0);
       gl::uniform4(authored.get(),"fixture_bias",bias,0,0,0);gl::draw_fullscreen(authored.get());
@@ -93,11 +98,13 @@ void main() { fixture_color=texture(tex0,fixture_uv); }
       gl::read_pixels(target->gl(),0,0,64,64,actual.data());
       require(actual==reference,"single-mip independent pixels differ from authored bias");++comparisons;
     }
+
     sampler.mag_filter^=1;aurora::bind_native_texture(0,source,sampler);
     require(aurora::native_texture_shader_lod_bias(0)==bias,"unequal min/mag filters lost authored bias");
     sampler.mag_filter^=1;sampler.anisotropy=1;aurora::bind_native_texture(0,source,sampler);
     require(aurora::native_texture_shader_lod_bias(0)==bias,"anisotropic filtering lost authored bias");
   }
+
   // A biased LOD can cross the min/mag boundary even with only one mip. This
   // negative pixel control would fail if the admission tested only mip count.
   aurora::NativeTextureSampler unequal;
@@ -112,6 +119,7 @@ void main() { fixture_color=texture(tex0,fixture_uv); }
   require(glGetError()==GL_NO_ERROR,"single-mip bias probe emitted a GLES error");
   std::printf("Single-mip bias passed: %u identical complete framebuffers; unequal filters and anisotropy retain bias\n",comparisons);
 }
+
 void check_state_restore(unsigned frame) {
   GLint oldViewport[4]{},oldScissor[4]{};
   glGetIntegerv(GL_VIEWPORT,oldViewport);glGetIntegerv(GL_SCISSOR_BOX,oldScissor);
@@ -147,12 +155,14 @@ void check_state_restore(unsigned frame) {
   require(!afterDepthWrite && mask[0] && mask[1] && mask[2] && !mask[3],
           "native raster from suppressed frame was lost");
 }
+
 void quad(float left, float right, float bottom, float top, float z,
           const std::array<uint8_t,4>& color, bool textured) {
   AuroraNativeGeometry geometry{};
   require(aurora_allocate_native_geometry(4,6,&geometry), "native allocation failed");
   const float positions[4][2]{{left,bottom},{right,bottom},{right,top},{left,top}};
   const float uv[4][2]{{0,0},{1,0},{1,1},{0,1}};
+
   for (unsigned i=0;i<4;++i) {
     auto& vertex=geometry.vertices[i];
     vertex.position[0]=positions[i][0];vertex.position[1]=positions[i][1];
@@ -160,19 +170,23 @@ void quad(float left, float right, float bottom, float top, float z,
     std::memcpy(vertex.uv,uv[i],sizeof(vertex.uv));
     std::memcpy(vertex.color,color.data(),sizeof(vertex.color));
   }
+
   const uint16_t indices[]{0,1,2,0,2,3};
   std::memcpy(geometry.indices,indices,sizeof(indices));
   aurora_submit_native_geometry(&geometry,textured);
 }
+
 void pixel(unsigned x,unsigned y,const std::array<uint8_t,4>& expected) {
   uint8_t actual[4]{};
   aurora::gl::read_pixels(aurora::gpu::g_frameBuffer.texture->gl(),x,y,1,1,actual);
+
   for (unsigned i=0;i<4;++i) if (std::abs(int(actual[i])-int(expected[i]))>1) {
     std::fprintf(stderr,"pixel %u,%u: %u,%u,%u,%u expected %u,%u,%u,%u\n",x,y,
       actual[0],actual[1],actual[2],actual[3],expected[0],expected[1],expected[2],expected[3]);
     throw std::runtime_error("native geometry pixel mismatch");
   }
 }
+
 aurora::gx::ShaderConfig material_config() {
   using namespace aurora::gx;
   ShaderConfig config;
@@ -189,6 +203,7 @@ aurora::gx::ShaderConfig material_config() {
   stage.alphaPass={GX_CA_ZERO,GX_CA_TEXA,GX_CA_RASA,GX_CA_ZERO};
   return config;
 }
+
 void material_quad(GLuint program,const aurora::gx::ShaderInfo& info) {
   AuroraNativeMaterialGeometry geometry{};
   AuroraNativeUniforms uniforms{};
@@ -197,13 +212,16 @@ void material_quad(GLuint program,const aurora::gx::ShaderInfo& info) {
   std::memset(uniforms.data,0,uniforms.size);
   size_t at=144+48*(info.matrixLayout.postexCount+info.matrixLayout.nrmCount);
   float texture[4]{4,4,0,0};
+
   for(unsigned i=0;i<2;++i) {
     texture[2]=i?aurora::native_texture_shader_lod_bias(0):0;
     std::memcpy(static_cast<uint8_t*>(uniforms.data)+at,texture,16);at+=16;
   }
+
   require(at<=uniforms.size,"fixture material uniforms exceed layout");
   std::memset(geometry.vertices,0,4*sizeof(*geometry.vertices));
   const float positions[4][2]{{-.08f,-.6f},{.08f,-.6f},{.08f,-.4f},{-.08f,-.4f}};
+
   for(unsigned i=0;i<4;++i) {
     auto& vertex=geometry.vertices[i];
     vertex.position[0]=positions[i][0];vertex.position[1]=positions[i][1];
@@ -212,10 +230,12 @@ void material_quad(GLuint program,const aurora::gx::ShaderInfo& info) {
     vertex.texcoord[0][1]=i>=2?1.f:0.f;vertex.texcoord[0][2]=1;
     const uint8_t color[]{255,128,255,255};std::memcpy(vertex.color[0],color,4);
   }
+
   const uint16_t indices[]{0,1,2,0,2,3};std::memcpy(geometry.indices,indices,sizeof(indices));
   aurora_submit_native_material_geometry(&geometry,program,&uniforms);
 }
 }
+
 int main(int argc,char** argv) {
   try {
     const std::string path=argc>1?argv[1]:"/tmp/mh3-native-geometry-check";
@@ -248,15 +268,19 @@ int main(int argc,char** argv) {
             "exact native reference was approximated");
     for(unsigned guard=0;guard<4;++guard) {
       auto guarded=materialConfig;
+
       if(guard==0) {guarded.alphaCompare.comp0=GX_GREATER;guarded.alphaCompare.ref0=128;}
       if(guard==1) guarded.tevStages[0].colorOp.clamp=false;
+
       if(guard==2) guarded.tevStages[0].colorOp.op=GX_TEV_COMP_RGB8_GT;
+
       if(guard==3) guarded.tevStages[0].colorPass.d=GX_CC_C0;
       const auto description=aurora::gx::build_shader_description(guarded,true,1);
       require(description.fragment.find("prev = tev_overflow_vec4f(prev)")==std::string::npos,
               "native material silently fell back to integer emulation");
       aurora::gl::Program checked(description);checked.get();
     }
+
     auto rejectConfig=materialConfig;rejectConfig.alphaCompare.op=GX_AOP_XOR;
     const auto rejectDescription=aurora::gx::build_shader_description(rejectConfig,true,1);
     require(rejectDescription.fragment.find("discard;")!=std::string::npos,
@@ -273,10 +297,13 @@ int main(int argc,char** argv) {
     auto materialProgram=std::make_shared<aurora::gl::Program>(std::move(materialDescription));
     auto exactProgram=std::make_shared<aurora::gl::Program>(exactDescription);
     auto biasedProgram=std::make_shared<aurora::gl::Program>(biasedDescription);
+
     for(int code=0;code<64;++code)
       require(aurora::gxm::sampler_bias_encoding(float(code-31)/8)==code,"GXM bias encoding mismatch");
+
     for(float bias:{-4.f,4.125f,.0625f,-.0625f})
       require(aurora::gxm::sampler_bias_encoding(bias)==-1,"GXM bias silently rounded");
+
     auto samplerA=aurora::gl::NearestClamp,samplerB=samplerA;
     samplerB.lodBias=1;
     require(!(samplerA==samplerB),"sampler cache ignores LOD bias");
@@ -289,6 +316,7 @@ int main(int argc,char** argv) {
         texels[32+i*2]=255;texels[33+i*2]=64;
       }
     };
+
     fill(64);
     aurora::NativeTextureSource source;
     source.bytes=texels;source.width=source.height=4;source.format=6;
@@ -298,9 +326,11 @@ int main(int argc,char** argv) {
     indexed.bytes=indices;indexed.palette=palette;indexed.width=indexed.height=8;
     indexed.format=8;indexed.palette_format=1;indexed.palette_entries=16;
     unsigned rendered=0,slots=0;
+
     for (unsigned frame=0;frame<12;++frame) {
       aurora_update();
       const bool draw=aurora_begin_native_frame();
+
       if (draw) {
         slots|=1u<<aurora_native_frame_slot();++rendered;
         const auto& target=aurora::gpu::g_frameBuffer;
@@ -314,16 +344,19 @@ int main(int argc,char** argv) {
         aurora::gl::apply_raster_state(raster);
         const float clear[]{20.f/255,40.f/255,80.f/255,1};
         aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
+
         if(frame==0) {
           single_mip_bias_probe();
           aurora::gl::bind_framebuffer(target.texture->gl(),aurora::gpu::g_depthBuffer.texture->gl());
           aurora::gl::set_viewport(0,0,64,64,0,1);aurora::gl::apply_raster_state(raster);
           std::array<uint8_t,192> mipBytes{};
+
           for(unsigned mip=0;mip<3;++mip) for(unsigned texel=0;texel<16;++texel) {
             auto* p=mipBytes.data()+64*mip;
             p[texel*2]=255;p[texel*2+1]=mip==0?255:0;
             p[32+texel*2]=mip==1?255:0;p[33+texel*2]=mip==2?255:0;
           }
+
           aurora::NativeTextureSource mipSource;
           mipSource.bytes=mipBytes;mipSource.width=mipSource.height=4;mipSource.levels=3;mipSource.format=6;
           aurora::NativeTextureSampler mipSampler;
@@ -345,15 +378,19 @@ int main(int argc,char** argv) {
                   "portable route rounded an unrepresentable authored bias");
           aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
         }
+
         quad(-.9f,-.1f,.1f,.9f,0,{255,0,0,255},false);
+
         if(rendered==2) {fill(128);source.generation=2;}
         // Deliberately mutate the staging bytes without publishing a new
         // revision: sampling must retain revision 2, with no content inspection.
         if(rendered==3) fill(0);
+
         if(rendered<=2) aurora::bind_native_texture(0,source,{});
         quad(.1f,.9f,.1f,.9f,0,{255,128,255,255},true);
         quad(-.9f,.9f,-.9f,-.1f,.5f,{0,255,0,255},false);
         quad(-.9f,.9f,-.9f,-.1f,-.5f,{0,0,255,255},false);
+
         // Two versions of one palette in the same frame must retain separate
         // sampled images; publishing the second cannot overwrite the first.
         palette[0]=0;palette[1]=31;indexed.palette_generation=rendered*2;
@@ -362,6 +399,7 @@ int main(int argc,char** argv) {
         palette[0]=248;palette[1]=0;++indexed.palette_generation;
         aurora::bind_native_texture(0,indexed,{});
         quad(.1f,.9f,-.9f,-.1f,.75f,{255,255,255,255},true);
+
         // Preserve this application binding across the present pass; the next
         // frame deliberately draws before issuing another texture bind.
         aurora::bind_native_texture(0,source,{});
@@ -371,6 +409,7 @@ int main(int argc,char** argv) {
         aurora::gl::clear_depth(0);
         material_quad(exactProgram->get(),materialInfo);
         aurora::gl::read_pixels(target.texture->gl(),32,48,1,1,exact);
+
         for(unsigned channel=0;channel<4;++channel)
           require(std::abs(int(approximate[channel])-int(exact[channel]))<=1,
                   "native float/reference material differs by more than one byte step");
@@ -378,8 +417,10 @@ int main(int argc,char** argv) {
         AuroraNativeGeometry unavailable{};
         require(!aurora_allocate_native_geometry(4,6,&unavailable),"skipped frame exposed draw memory");
       }
+
       aurora_end_native_frame();
     }
+
     require(rendered>0 && slots==7,"did not exercise all three draw slots");
     pixel(0,0,{20,40,80,255});
     pixel(16,16,{255,0,0,255});

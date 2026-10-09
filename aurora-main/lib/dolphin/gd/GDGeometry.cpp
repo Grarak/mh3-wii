@@ -65,12 +65,14 @@ void GDSetVtxDescv(const GXVtxDescList* attrPtr) {
                 norm = attrPtr->type;
                 nnorms = 1;
             }
+
             break;
         case GX_VA_NBT:
             if (attrPtr->type != GX_NONE) {
                 norm = attrPtr->type;
                 nnorms = 2;
             }
+
             break;
         case GX_VA_CLR0:
             col0 = attrPtr->type;
@@ -182,6 +184,7 @@ void GDSetVtxAttrFmtv(GXVtxFmt vtxfmt, const GXVtxAttrFmtList* list) {
         case GX_VA_NRM:
         case GX_VA_NBT:
             nrmType = list->type;
+
             if (list->cnt == GX_NRM_NBT3) {
                 nrmCnt = GX_NRM_NBT;
                 nrmIdx3 = 1;
@@ -189,6 +192,7 @@ void GDSetVtxAttrFmtv(GXVtxFmt vtxfmt, const GXVtxAttrFmtList* list) {
                 nrmCnt = list->cnt;
                 nrmIdx3 = 0;
             }
+
             break;
         case GX_VA_CLR0:
             c0Cnt = list->cnt;
@@ -247,6 +251,7 @@ void GDSetVtxAttrFmtv(GXVtxFmt vtxfmt, const GXVtxAttrFmtList* list) {
 
 void GDSetArraySized(GXAttr attr, void* base_ptr, u32 size, u8 stride, bool le) {
   s32 cpAttr;
+
   if (attr == GX_VA_NBT) {
     cpAttr = 1;
   } else {
@@ -390,6 +395,7 @@ void GDSetTexCoordGen(GXTexCoordID dst_coord, GXTexGenType func, GXTexGenSrc src
         } else {
             tgType = 3;
         }
+
         break;
     default:
         ASSERTMSGLINE(495, 0, "GDSetTexCoordGen: invalid texgen function");

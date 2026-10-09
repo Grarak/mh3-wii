@@ -52,6 +52,7 @@ enum : uint32_t {
     kShellListenerDir = 36,
     kShellSlots = 60, // [32] of 80 bytes
 };
+
 // Shell sound slot.
 enum : uint32_t {
     kSlotPosition = 4,
@@ -107,10 +108,12 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
         Memory::Write8(self + kAreaPrev, Memory::Read8(self + kAreaNow));
         const uint8_t area = uint8_t(game.Call<GetNowAreaNo>());
         Memory::Write8(self + kAreaNow, area);
+
         if (Memory::Read32(Memory::Read32(kSeWork) + kSeShell) == 0)
             game.Call<ClearMapSounds>({0});
         else if (Memory::Read8(self + kAreaPrev) != area)
             game.Call<ChangeArea>();
+
         return;
     }
 
@@ -118,26 +121,35 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
     player += int32_t(int8_t(game.Call<MyPlayerIndex>())) * kMoveWorkStride;
     const uint32_t table = game.Call<MapSoundTable>();
     uint32_t shell;
+
     if (table == 0) {
         shell = Memory::Read32(Memory::Read32(kSeWork) + kSeShell);
+
         if (shell == 0)
             game.Call<ClearMapSounds>({0});
+
         if (shell == 0)
             return;
+
         game.Call<Vec3Copy>({shell + kShellListener, self + 4});
         game.Call<Vec3Copy>({shell + kShellListenerDir, self + 28});
     } else {
         if (Memory::Read32(table) == 0 || Memory::Read32(table + 4) == 0)
             return;
+
         shell = Memory::Read32(Memory::Read32(kSeWork) + kSeShell);
+
         if (shell == 0)
             return;
+
         if (int32_t(game.Call<ShellFind>({Memory::Read32(shell + kShellId)})) == -1)
             return;
+
         game.Call<Vec3Copy>({shell + kShellListener, self + 4});
         game.Call<Vec3Copy>({shell + kShellListenerDir, self + 28});
 
         const uint8_t area = Memory::Read8(self + kAreaNow);
+
         if (area == 0 && uint8_t(game.Call<MapKind>({uint8_t(game.Call<GetNowMapNo>())})) == 1 && uint8_t(game.Call<AmbienceMuted>()) == 0) {
             const float y = Memory::ReadFloat32(kAmbienceY);
             game.Call<Vec3Copy>({pos, game.Call<Vec3Set>({left}, {Memory::ReadFloat32(kAmbienceLeftX), y, Memory::ReadFloat32(kAmbienceLeftZ)})});
@@ -148,33 +160,43 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
 
         const uint32_t ticks = GameStep::Ticks();
         uint32_t source = table + kSources;
+
         for (int32_t i = 0; i < int32_t(Memory::Read32(table + 4)); ++i, source += kSourceSize) {
             const uint8_t state = Memory::Read8(source + kState);
+
             if (state == 0)
                 continue;
+
             if (Memory::Read8(source + kArea) != area) {
                 Memory::Write8(source + kState, 1);
                 Memory::Write16(source + kCountdown, 0);
                 continue;
             }
+
             if (state == 2)
                 continue;
 
             const int16_t countdown = int16_t(Memory::Read16(source + kCountdown));
+
             if (countdown > 0) {
                 // The original: countdown - 1 per step.
                 Memory::Write16(source + kCountdown, uint16_t(countdown - int16_t(std::min<uint32_t>(ticks, uint32_t(countdown)))));
+
                 if (Memory::Read8(source + kSuppressed) != 0 || Memory::Read8(source + kFollows) != 1)
                     continue;
+
                 const uint8_t index = Memory::Read8(source + kLoopHandle);
                 uint32_t slot = 0;
+
                 if (index != 255)
                     slot = game.Call<LoopHandle>({shell, index});
+
                 if (index == 255 || slot == 0 || Memory::Read32(slot + kSlotVoice) == 0 || game.Call<VoicePlaying>({Memory::Read32(slot + kSlotVoice)}) == 0) {
                     game.Call<ReleaseLoopHandle>({Memory::Read8(source + kLoopHandle)});
                     Memory::Write8(source + kLoopHandle, 255);
                     continue;
                 }
+
                 const uint32_t listener = uint8_t(game.Call<OnlineMode>()) == 2 && player != 0 ? player + 0x3C : shell + kShellListener;
                 game.Call<ClampToBox>({source + kBoxMin, source + kBoxMax, listener, pos});
                 game.Call<Vec3Copy>({slot + kSlotPosition, pos});
@@ -183,18 +205,25 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
             }
 
             Memory::Write16(source + kCountdown, uint16_t(Memory::Read32(source + kInterval)));
+
             if (Memory::Read8(source + kSuppressed) != 0)
                 continue;
+
             if (uint8_t(game.Call<MapKind>({uint8_t(game.Call<GetNowMapNo>())})) == 22) { // arena
                 const uint32_t id = Memory::Read32(source + kSoundId);
+
                 if (game.Call<ArenaQuestA>() == 0 && id == 4)
                     continue;
+
                 if (game.Call<ArenaMonsterAlive>({0}) == 0 && game.Call<ArenaMonsterAlive>({1}) == 0 && game.Call<ArenaMonsterAlive>({2}) == 0 && id == 5)
                     continue;
+
                 if (game.Call<ArenaQuestB>() == 0 && id == 13)
                     continue;
             }
+
             const uint32_t slot = game.Call<ShellAllocSlot>({shell, Memory::Read32(source + kSoundId)});
+
             if (slot) {
                 Memory::Write8(slot + 1, 3);
                 Memory::Write8(slot + 2, 2);
@@ -203,6 +232,7 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
                 Memory::Write32(slot + 48, 0xFFFFFFFF);
                 Memory::Write32(slot + 52, 0xFFFFFFFF);
                 Memory::Write32(slot + 56, 0);
+
                 if (Memory::Read8(source + kFollows) == 0) {
                     game.Call<Vec3Copy>({slot + kSlotPosition, source + kPosition});
                     CopyWords(slot + kSlotPrevPosition, slot + kSlotPosition, 3);
@@ -212,12 +242,14 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
                     CopyWords(slot + kSlotPrevPosition, slot + kSlotPosition, 3);
                     Memory::Write8(source + kLoopHandle, 255);
                     const uint8_t handle = uint8_t(game.Call<AllocLoopHandle>());
+
                     if (handle != 255) {
                         Memory::Write32(Memory::Read32(kSeWork) + kSeLoopHandles + handle * 4, slot);
                         Memory::Write8(source + kLoopHandle, handle);
                     }
                 }
             }
+
             if (Memory::Read32(source + kInterval) == 0)
                 Memory::Write8(source + kState, 2);
         }
@@ -225,12 +257,14 @@ static void MapSoundUpdatePort(CpuContext* ctx) {
 
     for (uint32_t i = 0; i < 32; ++i) {
         const uint32_t slot = shell + kShellSlots + i * 80;
+
         if (Memory::Read8(slot) != 0 && uint8_t(Memory::Read8(slot + 1) - 3) < 2) {
             game.Call<ShellSlotUpdate>({shell, slot});
             game.Call<ShellSlotFinish>({slot});
         }
     }
 }
+
 extern "C" void func_800DFE30(CpuContext* ctx);
 extern "C" void MH3_MapSoundUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "MapSoundUpdate", func_800DFE30, MapSoundUpdatePort);

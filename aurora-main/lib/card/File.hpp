@@ -34,6 +34,7 @@ class File {
       uint16_t m_reserved2;
       uint32_t m_commentAddr;
     };
+
     RawData raw;
   };
 #pragma pack(pop)

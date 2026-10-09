@@ -29,9 +29,11 @@ struct GameController {
       .leftTriggerActivationZone = 31150,
       .rightTriggerActivationZone = 31150,
   };
+
   uint16_t m_vid = 0;
   uint16_t m_pid = 0;
   std::array<PADButtonMapping, PAD_BUTTON_COUNT> m_buttonMapping{};
+
   // Secondary binding per GC button; not persisted in .controller files, the
   // runtime re-applies it from its own config whenever a controller attaches.
   std::array<PADButtonMapping, PAD_BUTTON_COUNT> m_altButtonMapping{};
@@ -42,6 +44,7 @@ struct GameController {
   constexpr bool operator==(const GameController& other) const {
     return m_controller == other.m_controller && m_index == other.m_index;
   }
+
   uint8_t m_ledRed = 0xFF;
   uint8_t m_ledGreen = 0xFF;
   uint8_t m_ledBlue = 0xFF;

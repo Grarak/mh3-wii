@@ -10,6 +10,7 @@ struct NativeAudioOutputStatistics {
     uint32_t rateHz = 0, currentRingFrames = 0, ringHighWaterFrames = 0;
     bool available = false;
 };
+
 // Owner calls only; the live Vita instance snapshots its existing ring mutex.
 // Other backends report unavailable. Counters are cumulative per sink lifetime.
 NativeAudioOutputStatistics GetNativeAudioOutputStatistics();

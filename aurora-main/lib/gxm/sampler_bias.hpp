@@ -6,6 +6,7 @@ namespace aurora::gxm {
 constexpr int sampler_bias_encoding(float bias) noexcept {
   if (!(bias >= -3.875f && bias <= 4.f))
     return -1;
+
   const float eighths = bias * 8.f;
   const int integer = static_cast<int>(eighths);
   return float(integer) == eighths ? integer + 31 : -1;

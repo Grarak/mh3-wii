@@ -25,5 +25,6 @@ const SRAM g_SRAM =
      0x00, 0x00,
      0x00, 0x00
 }};
+
 // clang-format on
 } // namespace aurora::card

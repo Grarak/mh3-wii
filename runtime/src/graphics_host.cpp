@@ -75,6 +75,7 @@ namespace aurora::gx::fifo {
 void init();
 uint32_t process(const uint8_t*, uint32_t, bool);
 } // namespace aurora::gx::fifo
+
 namespace {
 void BeginHostGraphicsFrame();
 bool initialized = false;
@@ -93,6 +94,7 @@ bool efbBgra = false;
 bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 bool displayWidescreen = false;
+
 // Every host renders for the Vita's display; other hosts scale it into their window.
 constexpr uint32_t DisplayWidth = 960, DisplayHeight = 544;
 #ifdef __vita__
@@ -101,26 +103,34 @@ static_assert(DisplayWidth == aurora::gxm::Device::Width && DisplayHeight == aur
 AuroraNativeTargetAspect DisplayAspect(bool widescreen) {
     return widescreen ? AURORA_NATIVE_TARGET_FILL : AURORA_NATIVE_TARGET_FIT;
 }
+
 // Event polling and all graphics submission belong to the game thread.
 
 void FlushHostEfbPokes() {
     if (!efbDirty)
         return;
+
     if (!gpuSynchronized)
         throw std::runtime_error("EFB pokes require a completed framebuffer");
     // Queued on the render thread behind every earlier draw, ahead of later ones.
     const uint32_t width = efbMaxX - efbMinX, height = efbMaxY - efbMinY;
     std::vector<uint8_t> rect(size_t(width) * height * 4);
+
     for (uint32_t row = 0; row < height; ++row)
         std::memcpy(rect.data() + size_t(row) * width * 4, efbPixels.data() + size_t(efbMinY + row) * efbPitch + efbMinX * 4, size_t(width) * 4);
+
     aurora::gl::write_texture(aurora::gpu::g_frameBuffer.texture, 0, efbMinX, efbMinY, width, height, std::move(rect), width * 4);
+
     // GXDrawDone is a synchronization point, not a Wii EFB clear. The next
     // host frame must retain the CPU's pixels for subsequent GXCopyTex/draws.
     if (!frameActive)
         aurora::gfx::preserve_next_efb_frame();
+
     efbDirty = false;
 }
+
 std::atomic<uint64_t> guestCopies{0}; // logical frames, counted on the game thread
+
 // Stats (MH3_STATS line, MH3_PROFILE frames= profile, GX counters) are built
 // only with MH3_DEVELOPMENT; MH3_STAT(...) compiles its argument away otherwise.
 #ifdef MH3_DEVELOPMENT
@@ -142,6 +152,7 @@ struct FrameProfile {
     Clock::time_point previousCopy{};
     std::clock_t cpuStarted = std::clock();
 };
+
 FrameProfile profile;
 #else
 #define MH3_STAT(...)
@@ -167,6 +178,7 @@ void ShutdownGraphics() {
     }
 }
 } // namespace
+
 void OpenNativeAssets() {
     const char* discRoot = std::getenv("MH3_DISC_DIR");
     const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
@@ -194,10 +206,12 @@ void OpenNativeAssets() {
         });
     LoadNativeModelAssets(nativeRoot ? nativeRoot : discRoot);
 }
+
 namespace {
 void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     if (initialized)
         return;
+
     const char* userRoot = std::getenv("MH3_USER_DIR");
     const auto graphicsRoot = (userRoot ? std::filesystem::path(userRoot) : "saves") / "graphics";
     std::filesystem::create_directories(graphicsRoot / "cache");
@@ -226,6 +240,7 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     // larger: pair it with MH3_RENDER_SCALE to render at that resolution.
     if (const char* v = std::getenv("MH3_WINDOW_SCALE")) {
         const int n = std::atoi(v);
+
         if (n > 1) {
             config.windowWidth *= n;
             config.windowHeight *= n;
@@ -235,10 +250,13 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     config.msaa = 1;
     config.maxTextureAnisotropy = 1;
     const auto info = aurora_initialize(argc, argv, &config);
+
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
+
     initialized = true;
     std::atexit(ShutdownGraphics);
+
     if (loadNativeAssets)
         OpenNativeAssets();
 #ifdef MH3_DEVELOPMENT
@@ -246,6 +264,7 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     // whatever the window size (captures are at that size).
     if (const char* v = std::getenv("MH3_RENDER_SCALE")) {
         const float n = std::strtof(v, nullptr);
+
         if (n > 0)
             VISetFrameBufferScale(n);
     }
@@ -254,6 +273,7 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     if (const uint64_t interval = ProfileOptions().Number("frames", 0)) {
         if (interval > UINT32_MAX)
             throw std::runtime_error("MH3_PROFILE frames= must be a 32-bit number");
+
         profile.interval = static_cast<uint32_t>(interval);
         profile.started = FrameProfile::Clock::now();
         profile.cpuStarted = std::clock();
@@ -265,17 +285,21 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     aurora_set_frameskip(true);
 #ifdef MH3_DEVELOPMENT
     const char* frameskip = std::getenv("MH3_FRAMESKIP");
+
     if (frameskip && frameskip[0] == '0')
         aurora_set_frameskip(false);
     // MH3_CAPTURE=PATH[,interval=N[,start=N]|,frame=N]: frame dumps (BMP).
     // With interval, every Nth frame (from frame `start`) as PATH-<frame>.bmp;
     // otherwise frame `frame` (default 30) as PATH.
     const DevOptions& capture = CaptureOptions();
+
     if (!capture.List().empty()) {
         const char* path = capture.List().front().c_str();
+
         if (const uint64_t interval = capture.Number("interval", 0)) {
             if (interval >= UINT32_MAX)
                 throw std::runtime_error("MH3_CAPTURE interval must be between 1 and 4294967294");
+
             captureInterval = static_cast<uint32_t>(interval);
             capturePath = path;
             captureStart = uint32_t(capture.Number("start", 0));
@@ -290,10 +314,12 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
 void SealDisplayFrame() {
     // Aurora advances its frame index while sealing, before capture encoding.
     const auto frame = aurora::gfx::current_frame() + 1;
+
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
         const auto path = capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
         aurora_request_frame_capture(frame, path.c_str());
     }
+
     { aurora_end_frame(); }
     frameActive = false;
     displayCopyPending = false;
@@ -312,13 +338,18 @@ namespace {
 void BeginHostGraphicsFrame() {
     if (frameActive)
         return;
+
     if (hasBegunFrame)
         aurora::gfx::preserve_next_efb_frame();
+
     frameActive = aurora_begin_frame();
     hasBegunFrame = true;
+
     if (!frameActive)
         throw std::runtime_error("Aurora could not begin the guest GX frame");
+
     const auto frame = aurora::gfx::current_frame() + 1;
+
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
         aurora::gfx::require_frame_render();
 }
@@ -339,6 +370,7 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
+
     // Runs on the render thread before the draws of the current frame.
     QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, std::move(task));
 }
@@ -353,7 +385,9 @@ void SetNativeDisplayWidescreen(bool widescreen) {
 #endif
     if (widescreen == displayWidescreen)
         return;
+
     displayWidescreen = widescreen;
+
     // Before startup, InitializeNativeGraphics applies it.
     if (initialized)
         QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [aspect = DisplayAspect(widescreen)] { aurora_set_native_target_aspect(aspect); });
@@ -362,15 +396,19 @@ void SetNativeDisplayWidescreen(bool widescreen) {
 void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_assets) {
     if (NativeRenderThreadRunning())
         throw std::runtime_error("Native graphics initialized twice");
+
     if (initialized && !aurora::gl::on_render_thread())
         throw std::runtime_error("Native graphics initialized outside the game thread");
+
     if (!aurora_configure_native_target(width, height))
         throw std::runtime_error("Native graphics target has zero dimensions");
+
     aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
     aurora_set_native_target_aspect(DisplayAspect(displayWidescreen));
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv, load_native_assets);
+
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Native graphics initialized outside the game thread");
     // From here the render thread alone talks to the graphics API.
@@ -380,6 +418,7 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
 bool BeginNativeGraphicsFrame() {
     if (!initialized)
         throw std::runtime_error("Native frame began before graphics startup");
+
     MH3_STAT(BeginNativeFrameStatistics();)
 #ifdef __vita__
     // Include admission and logical work on skipped frames. Razor is opt-in;
@@ -393,13 +432,17 @@ bool BeginNativeGraphicsFrame() {
 bool NativeGraphicsFrameShouldRender() {
     if (!initialized)
         return false;
+
     if (NativeRenderThreadRunning() && !aurora::gl::on_render_thread())
         return NativeFramePacketRecording();
+
     return aurora_native_frame_should_render();
 }
+
 void CancelNativeGraphicsFrame() {
     if (!initialized)
         throw std::runtime_error("Native frame canceled before graphics startup");
+
     if (NativeRenderThreadRunning() && !aurora::gl::on_render_thread())
         CancelNativeFramePacket();
     else
@@ -416,8 +459,10 @@ void EndNativeGraphicsFrame() {
 #endif
     std::string capture;
     const auto frame = NativeFramePacketSequence();
+
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
         capture = (capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp")).string();
+
     PublishNativeFramePacket(std::move(capture));
     MH3_STAT(EndNativeFrameStatistics(rendered);)
     ++guestCopies;
@@ -427,6 +472,7 @@ template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data) {
     GX_HLE_FIFO_WriteBytesInline(data, N);
 }
+
 template void SubmitGuestGxFixed<1>(const uint8_t*);
 template void SubmitGuestGxFixed<2>(const uint8_t*);
 template void SubmitGuestGxFixed<4>(const uint8_t*);
@@ -437,8 +483,10 @@ template void SubmitGuestGxFixed<4>(const uint8_t*);
 aurora::SceneFeedbackStats ReadSceneFeedbackStats() {
     static std::mutex lock;
     static aurora::SceneFeedbackStats latest;
+
     if (!NativeRenderThreadRunning())
         return aurora::scene_feedback_stats();
+
     QueueNativeGraphicsTask(NativeTaskOrder::AfterDraws, [] {
         const auto stats = aurora::scene_feedback_stats();
         std::lock_guard guard(lock);
@@ -462,8 +510,10 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         const char* value = std::getenv("MH3_STATS");
         return !value || std::strcmp(value, "0") != 0;
     }();
+
     if (!enabled || !initialized)
         return;
+
     using Clock = std::chrono::steady_clock;
     static auto last = Clock::now();
     static double lastTicks = ticks;
@@ -476,8 +526,10 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
 #endif
     const auto now = Clock::now();
     const double seconds = std::chrono::duration<double>(now - last).count();
+
     if (seconds < 1.0)
         return;
+
     const uint64_t presents = aurora_presented_frame_count(), skipped = aurora_skipped_frame_count();
     const double tickHz = (ticks - lastTicks) / seconds;
     std::fprintf(stderr,
@@ -496,6 +548,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      work.owner_thread, work.owner_core, unsigned(work.owner_affinity), double(work.window_ns) / 1e9);
     else
         std::fprintf(stderr, "MH3 native work: owner CPU unavailable\n");
+
     if (const auto scene = TakeNativeSceneCullStatistics(); scene.models)
         std::fprintf(stderr, "MH3 scene cull: %llu of %llu scene models culled, %llu tested (untested: %llu class, %llu callback, %llu no table, %llu unbounded), check %llu/%llu mismatches\n",
                      static_cast<unsigned long long>(scene.culled), static_cast<unsigned long long>(scene.models), static_cast<unsigned long long>(scene.tested),
@@ -514,6 +567,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     const auto render = ReadNativeRenderThreadStatistics();
     const uint64_t renderWindow = render.sampled_at_ns >= previousRender.sampled_at_ns ? render.sampled_at_ns - previousRender.sampled_at_ns : 0;
     const bool sameRenderThread = render.cpu.thread >= 0 && render.cpu.thread == previousRender.cpu.thread;
+
     if (renderWindow && sameRenderThread && render.counters_available && previousRender.counters_available && render.packets >= previousRender.packets &&
         render.draw_packets >= previousRender.draw_packets && render.packet_wall_ns >= previousRender.packet_wall_ns && render.draw_packet_wall_ns >= previousRender.draw_packet_wall_ns) {
         const auto packets = render.packets - previousRender.packets, drawPackets = render.draw_packets - previousRender.draw_packets;
@@ -532,12 +586,14 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         }
     } else
         std::fprintf(stderr, "MH3 native work: render replay unavailable\n");
+
     if (renderWindow && sameRenderThread && render.cpu.available && previousRender.cpu.available && render.cpu.running_us >= previousRender.cpu.running_us)
         std::fprintf(stderr, "MH3 native work: render CPU %.1f%%, thread %d core %d affinity %x (scheduled execution; window %.3f s)\n",
                      1e5 * double(render.cpu.running_us - previousRender.cpu.running_us) / double(renderWindow), render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity),
                      double(renderWindow) / 1e9);
     else
         std::fprintf(stderr, "MH3 native work: render CPU unavailable, thread %d core %d affinity %x\n", render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity));
+
     previousRender = render;
     ReportNativeRenderThreadStall();
 #ifdef AURORA_GXM
@@ -567,11 +623,14 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  feedback.last_call_bytes / 1048576.0, static_cast<unsigned long long>(feedback.untracked_sizes));
     for (uint32_t i = 0; i < feedback.size_count; ++i) {
         const auto& size = feedback.sizes[i];
+
         if (i < previousFeedback.size_count && size.allocations == previousFeedback.sizes[i].allocations)
             continue;
+
         std::fprintf(stderr, "MH3 feedback: target %ux%u, %llu allocations/%llu reuses total, %.3f MiB/%u currently pooled\n", size.width, size.height,
                      static_cast<unsigned long long>(size.allocations), static_cast<unsigned long long>(size.reuses), size.pool_bytes / 1048576.0, size.pool_targets);
     }
+
     previousFeedback = feedback;
     const auto high = aurora::gfx::staging_high_water();
     std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %llu idx %llu uniform %llu storage %llu (KiB)\n", static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
@@ -596,7 +655,9 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
 void ServiceHostGraphicsEvents() {
     if (!initialized)
         return;
+
     PollHostGraphicsEvents();
+
     if (quitRequested)
         throw HostQuit();
 }
@@ -604,9 +665,11 @@ void ServiceHostGraphicsEvents() {
 void CompleteHostGraphics() {
     if (!initialized)
         return;
+
     MH3_STAT(const auto completionStart = FrameProfile::Clock::now();)
     MH3_STAT(const auto afterQueue = FrameProfile::Clock::now();)
     FlushHostEfbPokes();
+
     if (guestStream.PendingBytes())
         throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
     // Native submissions execute inline on the game thread and return while
@@ -618,23 +681,29 @@ void CompleteHostGraphics() {
         SealDisplayFrame();
 #ifdef MH3_DEVELOPMENT
     const auto afterTail = FrameProfile::Clock::now();
+
     if (profile.interval) {
         auto ns = [](auto end, auto start) {
             return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
         };
+
         profile.completionNs += ns(afterTail, completionStart);
         profile.renderQueueNs += ns(afterQueue, completionStart);
         profile.tailNs += ns(afterTail, afterQueue);
+
         if (guestCopies > profile.measuredCopies) {
             if (profile.previousCopy != FrameProfile::Clock::time_point{}) {
                 const auto copyNs = uint64_t(ns(afterTail, profile.previousCopy));
                 profile.minCopyNs = std::min(profile.minCopyNs, copyNs);
                 profile.maxCopyNs = std::max(profile.maxCopyNs, copyNs);
             }
+
             profile.previousCopy = afterTail;
             profile.measuredCopies = guestCopies;
         }
+
         const auto frames = guestCopies - profile.lastCopies;
+
         if (frames >= profile.interval) {
             const auto wallMs = ns(afterTail, profile.started) / 1e6 / frames;
             const auto cpuMs = double(std::clock() - profile.cpuStarted) * 1000 / CLOCKS_PER_SEC / frames;
@@ -681,7 +750,9 @@ void CompleteHostGraphics() {
             profile.cpuStarted = std::clock();
         }
     }
+
     static unsigned completions = 0;
+
     if (++completions <= 3 || completions % 300 == 0)
         std::fprintf(stderr, "MH3 graphics boundary %u: game-thread submission complete\n", completions);
 #endif
@@ -692,9 +763,12 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
     MH3_STAT(++guestEfbPeeks;)
     if (!initialized || !gpuSynchronized || guestStream.PendingBytes())
         throw std::runtime_error("EFB color peek requires a completed GXDrawDone boundary");
+
     const auto& source = aurora::gpu::g_frameBuffer;
+
     if (!source.texture)
         throw std::runtime_error("EFB color texture is unavailable");
+
     if (efbPixels.empty() || efbWidth != source.width || efbHeight != source.height) {
         // Thousands of CPU peeks can follow one snapshot. New GX commands
         // discard efbPixels, so only the first peek needs the render-thread round trip.
@@ -702,9 +776,11 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         if (frameActive) {
             // The peek reads this frame's draws: render it and submit them first.
             aurora::gfx::require_frame_render();
+
             if (!aurora_flush_draws())
                 throw std::runtime_error("EFB peek could not resume the in-progress frame");
         }
+
         efbWidth = source.width;
         efbHeight = source.height;
         efbBgra = false; // The EFB is RGBA8, rows top-down.
@@ -715,24 +791,31 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
         ++guestEfbSnapshots;
         guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
         static unsigned snapshots = 0;
+
         if (++snapshots <= 3)
             std::fprintf(stderr, "MH3 EFB color snapshot %u: %ux%u, format %u\n", snapshots, efbWidth, efbHeight, guestStream.PixelFormat());
 #endif
     }
+
     auto [logicalWidth, logicalHeight] = aurora::vi::configured_fb_size();
+
     if (!logicalWidth || !logicalHeight) {
         logicalWidth = efbWidth;
         logicalHeight = efbHeight;
     }
+
     if (x >= logicalWidth || y >= logicalHeight)
         throw std::runtime_error("EFB peek outside configured framebuffer");
+
     const uint32_t sx = uint64_t(2 * x + 1) * efbWidth / (2 * logicalWidth);
     const uint32_t sy = uint64_t(2 * y + 1) * efbHeight / (2 * logicalHeight);
     const auto* pixel = efbPixels.data() + sy * efbPitch + sx * 4;
     const uint32_t color = (uint32_t(pixel[3]) << 24) | (uint32_t(pixel[efbBgra ? 2 : 0]) << 16) | (uint32_t(pixel[1]) << 8) | pixel[efbBgra ? 0 : 2];
     uint32_t alphaRead = 0;
+
     if (!ReadGxRegister(0xCC001008, 2, alphaRead))
         throw std::runtime_error("PE alpha-read register unavailable");
+
     return ConvertEfbArgb(color, guestStream.PixelFormat(), alphaRead & 3);
 }
 
@@ -744,36 +827,48 @@ void WriteHostEfbColor(uint16_t x, uint16_t y, uint32_t value) {
     ReadGxRegister(0xCC001000, 2, depth);
     ReadGxRegister(0xCC001004, 2, destinationAlpha);
     static bool traced = false;
+
     if (!traced) {
         std::fprintf(stderr, "MH3 EFB poke state: blend=%04x alpha=%04x depth=%04x destinationAlpha=%04x\n", blend, alpha, depth, destinationAlpha);
         traced = true;
     }
+
     if ((blend & 0x803) || ((depth & 1) && ((depth >> 1) & 7) != 7))
         throw std::runtime_error("Unsupported EFB poke blending/logic/depth comparison");
+
     const unsigned a = value >> 24, threshold = alpha & 255;
     const bool compares[]{false, a<threshold, a == threshold, a <= threshold, a> threshold, a != threshold, a >= threshold, true};
+
     if (!compares[(alpha >> 8) & 7])
         return;
+
     if (destinationAlpha & 256)
         value = (value & 0xFFFFFF) | ((destinationAlpha & 255) << 24);
+
     value = ConvertEfbArgb(value, guestStream.PixelFormat(), 2);
     auto [width, height] = aurora::vi::configured_fb_size();
+
     if (!width || !height) {
         width = efbWidth;
         height = efbHeight;
     }
+
     const uint32_t x0 = uint64_t(x) * efbWidth / width, x1 = uint64_t(x + 1) * efbWidth / width;
     const uint32_t y0 = uint64_t(y) * efbHeight / height, y1 = uint64_t(y + 1) * efbHeight / height;
+
     if (!(blend & 0x18))
         return;
+
     for (uint32_t row = y0; row < y1; ++row)
         for (uint32_t col = x0; col < x1; ++col) {
             auto* pixel = efbPixels.data() + row * efbPitch + col * 4;
+
             if (blend & 8) {
                 pixel[efbBgra ? 2 : 0] = (value >> 16) & 255;
                 pixel[1] = (value >> 8) & 255;
                 pixel[efbBgra ? 0 : 2] = value & 255;
             }
+
             if (blend & 16)
                 pixel[3] = value >> 24;
         }
@@ -788,6 +883,7 @@ void WriteHostEfbColor(uint16_t x, uint16_t y, uint32_t value) {
         efbMaxX = std::max(efbMaxX, x1);
         efbMaxY = std::max(efbMaxY, y1);
     }
+
     efbDirty = true;
 }
 
@@ -798,59 +894,83 @@ int RunEfbCheck(int argc, char** argv) {
     } shutdown;
     const auto& target = aurora::gpu::g_frameBuffer;
     const bool bgra = false;
+
     for (unsigned pass = 0; pass < 2; ++pass) {
         const uint32_t expected = pass ? 0xFFABCDEF : 0xFF123456;
         uint8_t pixels[16];
+
         for (unsigned i = 0; i < 4; ++i) {
             pixels[i * 4] = bgra ? expected & 255 : (expected >> 16) & 255;
             pixels[i * 4 + 1] = (expected >> 8) & 255;
             pixels[i * 4 + 2] = bgra ? (expected >> 16) & 255 : expected & 255;
             pixels[i * 4 + 3] = 255;
         }
+
         aurora::gl::write_texture(target.texture, 0, 0, 0, 2, 2, pixels, 8);
         efbPixels.clear();
         WriteGxRegister(0xCC001008, 2, 1);
+
         for (auto address : {0x08000000u, 0x88000004u, 0xC8001004u}) {
             uint32_t value;
+
             if (!ReadEfbColor32(address, value) || value != expected)
                 throw std::runtime_error("GLES EFB color/row/alias check failed");
         }
+
         WriteGxRegister(0xCC001008, 2, 0);
         uint32_t value;
+
         if (!ReadEfbColor32(0xC8000000, value) || value != (expected & 0xFFFFFF))
             throw std::runtime_error("GLES EFB alpha-read check failed");
     }
+
     WriteGxRegister(0xCC001008, 2, 1);
     WriteGxRegister(0xCC001002, 2, 0x18);
     WriteGxRegister(0xCC001006, 2, 0x700);
     WriteGxRegister(0xCC001000, 2, 0x1F);
+
     if (!WriteEfbColor32(0xC8001004, 0xFF336699) || ReadHostEfbColor(1, 1) != 0xFF336699)
         throw std::runtime_error("EFB poke/peek coherence failed");
+
     FlushHostEfbPokes();
     efbPixels.clear();
+
     if (ReadHostEfbColor(1, 1) != 0xFF336699 || ReadHostEfbColor(0, 0) != 0xFFABCDEF)
         throw std::runtime_error("GLES EFB dirty-rectangle upload failed");
+
     frameActive = aurora_begin_frame();
+
     if (!frameActive)
         throw std::runtime_error("EFB preservation check could not begin a frame");
+
     gpuSynchronized = false;
     const auto beforeFence = aurora::gfx::current_frame();
     aurora::gfx::split_staging_batch();
+
     if (aurora::gfx::current_frame() != beforeFence)
         throw std::runtime_error("Staging capacity split incorrectly advanced the display frame");
+
     CompleteHostGraphics();
+
     if (!frameActive || aurora::gfx::current_frame() != beforeFence)
         throw std::runtime_error("GXDrawDone incorrectly presented an intermediate pass");
+
     efbPixels.clear();
+
     if (ReadHostEfbColor(1, 1) != 0xFF336699)
         throw std::runtime_error("GXDrawDone lost the in-progress EFB");
+
     displayCopyPending = true; // Exercise the completed-frame branch of the fence.
     CompleteHostGraphics();
+
     if (frameActive || aurora::gfx::current_frame() != beforeFence + 1)
         throw std::runtime_error("Completed display frame was not presented");
+
     efbPixels.clear();
+
     if (ReadHostEfbColor(1, 1) != 0xFF336699)
         throw std::runtime_error("CPU EFB pixels were lost across a host frame boundary");
+
     std::puts("MH3 GLES EFB color readback/poke check passed");
     return 0;
 }
@@ -858,39 +978,53 @@ int RunEfbCheck(int argc, char** argv) {
 int RunGraphicsCheck(int argc, char** argv) {
     if (!aurora_configure_native_target(640, 448) || aurora_configure_native_target(0, 448))
         throw std::runtime_error("Native target dimensions were not validated");
+
     InitializeGraphics(argc, argv);
     struct Shutdown {
         ~Shutdown() { ShutdownGraphics(); }
     } shutdown;
     const auto base = aurora::vi::configured_fb_size();
     const auto visible = aurora::vi::visible_fb_size();
+
     if (base.x != 640 || base.y != 448 || visible.x != 640 || visible.y != 448)
         throw std::runtime_error("Native target retained legacy scratch rows or accepted zero dimensions");
+
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Native context is not owned by the initializing thread");
+
     StartNativeRenderThread();
+
     if (aurora::gl::on_render_thread())
         throw std::runtime_error("Game thread kept the graphics context");
+
     bool taskOnRenderThread = false;
     QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [&] { taskOnRenderThread = aurora::gl::on_render_thread(); });
     unsigned recorded = 0;
+
     for (unsigned frame = 0; frame < 30; ++frame) {
         ServiceHostGraphicsEvents();
+
         if (BeginNativeGraphicsFrame())
             ++recorded;
+
         EndNativeGraphicsFrame();
     }
+
     StopNativeRenderThread();
+
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Render thread did not return the graphics context");
+
     if (!taskOnRenderThread)
         throw std::runtime_error("Graphics task did not run on the render thread");
     // This diagnostic alone consumes a GPU result: the frame clear is black.
     const auto& target = aurora::gpu::g_frameBuffer;
     uint8_t pixel[4]{};
     aurora::gl::read_pixels(target.texture->gl(), 0, 0, 1, 1, pixel);
+
     if (recorded && (pixel[0] > 1 || pixel[1] > 1 || pixel[2] > 1 || pixel[3] != 255))
         throw std::runtime_error("Native renderer clear/present pixel validation failed");
+
     std::fprintf(stderr, "MH3 renderer check: 30 logical native frames, %u recorded, render thread owner, tasks on the render thread, pixel %u,%u,%u,%u; no GX calls\n", recorded,
                  pixel[0], pixel[1], pixel[2], pixel[3]);
     return 0;

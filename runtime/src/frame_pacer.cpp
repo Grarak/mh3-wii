@@ -56,14 +56,17 @@ enum : int32_t {
 };
 
 using Clock = std::chrono::steady_clock;
+
 // Deadline of the current frame (fixed step) or start of the current step
 // (variable step), and game time so far in retrace periods (stats, input).
 Clock::time_point frameEnd;
 bool started = false;
 double pacedTicks = 0;
 uint64_t pacedFrames = 0;
+
 // Longest variable step; a longer stall (loading, debugger) is not caught up.
 constexpr auto kMaxStep = std::chrono::milliseconds(100);
+
 // Game time a slow host may still catch up on; older debt is dropped.
 constexpr auto kMaxDebt = std::chrono::milliseconds(100);
 
@@ -83,6 +86,7 @@ enum : uint32_t {
 void SetViFlag(uint32_t sda, uint8_t value) {
     if (Memory::Read8(sda + uint32_t(kViFlagCurrent)) == value)
         return;
+
     Memory::Write8(sda + uint32_t(kViFlagCurrent), value);
     Memory::Write32(sda + uint32_t(kViChanged), Memory::Read32(sda + uint32_t(kViChanged)) | 0x20);
 }
@@ -91,8 +95,10 @@ struct Guest {
     CpuContext* cpu;
     uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
         uint32_t r = 3;
+
         for (uint32_t v : ints)
             cpu->gpr[r++] = v;
+
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
@@ -106,19 +112,25 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     auto at = [sda](int32_t offset) {
         return sda + uint32_t(offset);
     };
+
     // Guest stack frame below the caller's (keep the back chain aligned).
     ctx->gpr[1] = (saved.gpr[1] - 0x20) & ~0xFu;
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
     Guest os{ctx};
+
     // OSSleepTicks keeps pumping audio, alarms, IOS and VI callbacks while waiting.
     auto sleepUntil = [&](Clock::time_point t) {
         const auto now = Clock::now();
+
         if (now >= t)
             return;
+
         const uint64_t ticks = TimeBaseContract::NanosecondsToTicks(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(t - now).count()));
         os(OSSleepTicks, {uint32_t(ticks >> 32), uint32_t(ticks)});
     };
+
     const auto period = std::chrono::nanoseconds(VideoRetracePeriodNs());
+
     // Each step advances the game by the host time the previous one took, with
     // no fixed rate.
     bool variableStep = true;
@@ -134,14 +146,17 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         return !(v && v[0] == '0');
     }();
     variableStep = variable;
+
     if (forcedVcnt > 0)
         Memory::Write32(at(kRetracesPerFrame), uint32_t(forcedVcnt));
 #endif
     // 0x8003F588, an inlined getter. SetSystemVcnt clamps it to >= 1.
     const int32_t budget = std::max<int32_t>(1, int32_t(Memory::Read32(at(kRetracesPerFrame))));
     const auto now = Clock::now();
+
     if (!started)
         frameEnd = now - budget * period;
+
     started = true;
     GameStep::SetVariable(variableStep);
     double stepTicks; // game time of the step that just ran, in retraces
@@ -149,6 +164,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         const auto step = std::min<Clock::duration>(now - frameEnd, kMaxStep);
         frameEnd = now;
         stepTicks = std::chrono::duration<double>(step) / period;
+
         // The next step is assumed to take as long as this one.
         double next = std::max(stepTicks, 1e-3) / 2;
 #ifdef MH3_DEVELOPMENT
@@ -158,34 +174,41 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
             const char* v = std::getenv("MH3_STEP_SCALE");
             return v ? std::atof(v) : 0.0;
         }();
+
         if (forcedScale > 0)
             next = forcedScale;
 #endif
         GameStep::Begin(next);
+
         // No wait: only deliver the device work due (audio, alarms, IOS, VI).
         const CpuContext frame = *ctx;
         PumpDevices(ctx);
         *ctx = frame;
     } else {
         frameEnd += budget * period;
+
         if (now - frameEnd > kMaxDebt)
             frameEnd = now; // too far behind: drop the debt
         stepTicks = budget;
         GameStep::Begin(budget / 2.0);
+
         // Flip one retrace before the end, as the original does.
         sleepUntil(frameEnd - period);
     }
 
     os(VISetNextFrameBuffer, {Memory::Read32(at(kNextFrameBuffer))});
+
     if (Memory::Read8(at(kBlackPending))) {
         os(VISetBlack, {0});
         Memory::Write8(at(kBlackPending), 0);
     }
+
     if (Memory::Read8(at(kWidemodeFlag))) {
         os(ApplyWidemode, {Memory::Read8(at(kWidemodeParam))});
         Memory::Write8(at(kWidemodeFlag), 0);
         Memory::Write8(at(kWidemodeParam), 0xFF);
     }
+
     os(VIFlush);
     SetViFlag(sda, Memory::Read8(at(kViFlag)));
     const uint32_t back = Memory::Read32(at(kBackBufferIndex)) ^ 1;
@@ -195,8 +218,10 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
 
     if (!variableStep)
         sleepUntil(frameEnd);
+
     pacedTicks += stepTicks;
     ++pacedFrames;
+
     // Input record/playback is indexed by game time in 30 Hz frames (2 retraces),
     // so a recording replays in real time at any logic rate.
     SetInputFrame(uint64_t(pacedTicks / 2));
@@ -206,30 +231,37 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // `count` frames starting at paced frame `first` (offline state diffing).
     static const auto ramDump = [] {
         std::pair<uint64_t, uint64_t> range{0, 0};
+
         if (const char* v = std::getenv("MH3_RAM_DUMP")) {
             char* end = nullptr;
             range.first = std::strtoull(v, &end, 10);
             range.second = *end == ',' ? std::strtoull(end + 1, nullptr, 10) : 1;
         }
+
         return range;
     }();
+
     // MH3_TRACE_PLAYER: log player 0's position and motion frame every paced
     // frame, against game time in 30 Hz frames (logic-rate comparisons).
     static const bool tracePlayer = std::getenv("MH3_TRACE_PLAYER") != nullptr;
+
     if (tracePlayer) {
         const uint32_t table = Memory::Read32(0x8065AB04); // move work table
         const uint32_t plw = table ? Memory::Read32(table + 16 + 2 * 4) : 0;
+
         if (plw && Memory::Read8(plw)) {
             const uint32_t chr = Memory::Read32(plw + 0x13C); // MHchar
             std::fprintf(stderr, "MH3 player: t=%.1f pos %.2f %.2f %.2f motion %u frame %.2f rate %.2f\n", pacedTicks / 2, Memory::ReadFloat32(plw + 0x3C), Memory::ReadFloat32(plw + 0x40),
                          Memory::ReadFloat32(plw + 0x44), chr ? Memory::Read16(chr + 0x54) : 0, chr ? Memory::ReadFloat32(chr + 0x78) : 0.0f, chr ? Memory::ReadFloat32(chr + 0x60) : 0.0f);
         }
     }
+
     // MH3_TRACE_INPUT: once per tick of game time, the input as the game read
     // it and what it moved: the field camera's yaw and pitch (current and
     // target), player 0's position and facing, and how many steps since the
     // last line reported a key repeat (comparing step modes by game time).
     static const bool traceInput = std::getenv("MH3_TRACE_INPUT") != nullptr;
+
     if (traceInput) {
         constexpr uint32_t kPad = 0x8065B7D0;    // Psw, channel 0 (0x350 bytes a channel)
         constexpr uint32_t kCamera = 0x806BDC60; // field camera work
@@ -239,6 +271,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         padRepeats += Memory::Read16(kPad + 0xF8) != 0;  // Classic repeat buttons (0x8065B8C8)
         keyRepeats += Memory::Read16(kPad + 0x2D4) != 0; // game key repeat (0x8065BAA4)
         const int64_t tick = int64_t(GameStep::Elapsed());
+
         if (tick != lastTick) {
             lastTick = tick;
             const uint32_t table = Memory::Read32(0x8065AB04);
@@ -256,8 +289,10 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
             steps = padRepeats = keyRepeats = 0;
         }
     }
+
     if (ramDump.first && pacedFrames >= ramDump.first && pacedFrames < ramDump.first + ramDump.second) {
         const std::string name = "mh3-ram-" + std::to_string(pacedFrames) + ".bin";
+
         if (FILE* f = std::fopen(name.c_str(), "wb")) {
             std::fwrite(Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size), 1, Memory::kMem1Size, f);
             std::fwrite(Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size), 1, Memory::kMem2Size, f);
@@ -286,6 +321,7 @@ extern "C" void MH3_CountRetrace(CpuContext* ctx) {
     auto at = [sda](int32_t offset) {
         return sda + uint32_t(offset);
     };
+
     Memory::Write32(at(kRetracesThisFrame), Memory::Read32(at(kRetracesThisFrame)) + 1);
     ctx->gpr[1] = (saved.gpr[1] - 0x10) & ~0xFu;
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);

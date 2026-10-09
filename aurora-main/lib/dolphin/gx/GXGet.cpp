@@ -119,6 +119,7 @@ GXBool GXGetTexObjMipMap(GXTexObj* tex_obj) {
 u32 GXGetTexObjTlut(const GXTexObj* tex_obj) {
   aurora_legacy_gx_panic("GXGetTexObjTlut");
 }
+
 // TODO GXGetTlutObjData
 // TODO GXGetTlutObjFmt
 // TODO GXGetTlutObjNumEntries

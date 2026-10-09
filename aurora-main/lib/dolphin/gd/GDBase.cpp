@@ -22,6 +22,7 @@ void GDPadCurr32(void) {
     uintptr_t n;
 
     n = (uintptr_t)__GDCurrentDL->ptr & 0x1F;
+
     if (n != 0) {
         for (; n < 32; n = n + 1) {
             __GDWrite(0);

@@ -55,6 +55,7 @@ enum : uint32_t {
     kAngleB = 0x80,     // u32[]
     kLength = 0x88,     // f32[]
 };
+
 enum : uint32_t {
     kSetSize = 0x24,
     kReach = 0x04,
@@ -126,14 +127,17 @@ struct Vec {
     Vec operator-(const Vec& o) const { return {x - o.x, y - o.y, z - o.z}; }
     Vec operator*(float k) const { return {x * k, y * k, z * k}; }
 };
+
 Vec Load(uint32_t a) {
     return {Memory::ReadFloat32(a), Memory::ReadFloat32(a + 4), Memory::ReadFloat32(a + 8)};
 }
+
 void Store(uint32_t a, const Vec& v) {
     Memory::WriteFloat32(a, v.x);
     Memory::WriteFloat32(a + 4, v.y);
     Memory::WriteFloat32(a + 8, v.z);
 }
+
 float F(uint32_t a) {
     return Memory::ReadFloat32(a);
 }
@@ -147,11 +151,13 @@ static void YureChain(CpuContext* ctx) {
         // Setting up (state 0) runs the original.
         const uint32_t w = ctx->gpr[3], index = ctx->gpr[5];
         const uint32_t chain = w + index * 0x90 + ((ctx->gpr[4] & 0xFF) ? 0x674 : 0x590);
+
         if (Memory::Read8(chain + kState) != 1) {
             func_802AC4E8(ctx);
             return;
         }
     }
+
     GuestFrame frame{ctx, 1072};
     GuestCall call{ctx};
     const uint32_t work = frame.Arg(3), part = frame.Arg(6);
@@ -159,6 +165,7 @@ static void YureChain(CpuContext* ctx) {
     const uint32_t chain = work + frame.Arg(5) * 0x90 + (player ? 0x674 : 0x590);
     uint32_t sets = frame.Arg(27), anchors = frame.Arg(28);
     const uint32_t enemy = player ? 0 : work;
+
     if (!player) {
         sets = kEnemySets;
         anchors = kEnemyAnchors;
@@ -166,11 +173,15 @@ static void YureChain(CpuContext* ctx) {
         auto stop = [&] {
             Memory::Write8(chain + kState, 0);
         };
+
         if (!(call.Call<Ready>({work}) & 0xFF))
             return stop();
+
         if ((call.Call<DemoBusy>() & 0xFF) || call.Call<DemoState4>())
             return stop();
+
         const uint32_t parts = Memory::Read32(work + 0x13C);
+
         for (uint32_t k = 0; k < 7; ++k)
             if (!Memory::Read8(parts + k * 0x164 + 0x38) || !Memory::Read8(parts + k + 0x9C0))
                 return stop();
@@ -182,28 +193,35 @@ static void YureChain(CpuContext* ctx) {
             anchors = kPart4Anchors;
         }
     }
+
     const uint32_t count = Memory::Read32(chain + kCount);
+
     if (!count)
         return;
 
     auto set = [&] {
         return sets + Memory::Read8(chain + kSet) * kSetSize;
     };
+
     auto anchorJoint = [&] {
         return uint32_t(Memory::Read8(anchors + Memory::Read8(chain + kAnchor) * 14 + 3));
     };
+
     auto charParts = [&] {
         return Memory::Read32(work + 0x13C);
     };
 
     float scale, spring, damping, pull, gravity;
+
     if (!player) {
         call.Call<EnemyJointMtx>({enemy, anchorJoint(), frame[sAnchorMtx]});
         call.Call<MtxTranslation>({frame[sAnchorMtx], frame[sAnchor]});
+
         for (uint32_t i = 0; i < count; ++i) {
             call.Call<EnemyJointPos>({enemy, Memory::Read32(chain + kJoints + 4 * i), frame[sJoints] + 12 * i});
             Memory::WriteFloat32(frame[sLengths] + 4 * i, F(chain + kLength + 4 * i) + F(set() + 4 * i));
         }
+
         call.Call<MtxCopy>({frame[sInverse], frame[sAnchorMtx]});
         call.Call<EnemyScale>({enemy});
         scale = call.F1();
@@ -211,6 +229,7 @@ static void YureChain(CpuContext* ctx) {
         const bool shaken = Memory::Read8(enemy + 0x1E2) == 2;
         damping = F(t + kDamping);
         pull = F(t + kPull);
+
         if (Memory::Read8(chain + kMode) == 2) {
             spring = F(t + (shaken ? kSpringShaken : kSpring));
             gravity = 0.0f;
@@ -221,13 +240,16 @@ static void YureChain(CpuContext* ctx) {
     } else {
         call.Call<CharJointMtx>({charParts() + 4, anchorJoint(), frame[sAnchorMtx]});
         call.Call<CharJointPos>({charParts() + 4, Memory::Read32(chain + kRootJoint), frame[sAnchor]});
+
         for (uint32_t i = 0; i < count; ++i) {
             call.Call<CharJointPos>({charParts() + part * 0x164 + 4, Memory::Read32(chain + kJoints + 4 * i), frame[sJoints] + 12 * i});
             Memory::WriteFloat32(frame[sLengths] + 4 * i, F(chain + kLength + 4 * i) + F(set() + 4 * i));
         }
+
         scale = 1.0f;
         const uint32_t t = set();
         spring = F(t + kSpring);
+
         if (Memory::Read8(work + 9) == 3) {
             damping = 2.0f * F(t + kDamping);
             pull = 0.5f * F(t + kPull);
@@ -252,6 +274,7 @@ static void YureChain(CpuContext* ctx) {
     const uint32_t root = chain + kRoot;
     Store(root, Load(frame[sJoints]));
     const uint8_t mode = Memory::Read8(chain + kMode);
+
     if (mode == 1) {
         const uint32_t node = chain + kNode, velocity = chain + kVelocity, target = chain + kTarget;
         Store(node, Load(node) + Load(velocity) * s);
@@ -262,8 +285,10 @@ static void YureChain(CpuContext* ctx) {
         Store(target, Load(root) + Load(frame[sRot]) * (length * scale));
         call.Call<ClampReach>({target, node}, {scale * F(set() + kReach)});
         Store(frame[sDir], Load(node) - Load(root));
+
         if (magnitude(frame[sDir], Magnitude2) > kTiny)
             call.Call<Normalize>({frame[sDir], frame[sDir]});
+
         Store(node, Load(root) + Load(frame[sDir]) * length);
         Store(velocity, Load(velocity) + (Load(target) - Load(node)) * (spring * s));
         Store(velocity, Load(velocity) * damp);
@@ -279,6 +304,7 @@ static void YureChain(CpuContext* ctx) {
         Store(chain + kLastAnchor, Load(frame[sAnchor]));
         return;
     }
+
     if (mode == 2) {
         const uint32_t node = chain + kNode, velocity = chain + kVelocity;
         Store(root, Load(frame[sAnchor]));
@@ -287,10 +313,12 @@ static void YureChain(CpuContext* ctx) {
         const Vec back = (Load(root) - Load(node)) * (spring * s);
         Store(velocity, Load(velocity) * damp + back);
         Store(frame[sDir], (Load(chain + kLastAnchor) - Load(root)) * 0.1f);
+
         if (magnitude(frame[sDir], Magnitude) > 50.0f) {
             call.Call<Normalize>({frame[sDir], frame[sDir]});
             Store(frame[sDir], Load(frame[sDir]) * 50.0f);
         }
+
         Store(velocity, Load(velocity) + Load(frame[sDir]));
         Store(chain + kLastAnchor, Load(root));
         return;
@@ -307,15 +335,21 @@ static void YureChain(CpuContext* ctx) {
         call.Call<ClampReach>({prev, node}, {scale * (10.0f + length)});
         Store(frame[sDir], Load(prev) - Load(node));
         const float stretch = magnitude(frame[sDir], Magnitude);
+
         if (stretch > kTiny)
             call.Call<Normalize>({frame[sDir], frame[sDir]});
+
         Store(accel, Load(accel) + Load(frame[sDir]) * (spring * (stretch - scale * length)));
         Store(velocity, Load(velocity) * damp + Load(accel) * s);
+
         if (i == 0 && player)
             Store(prev, Load(prev) + (Load(frame[sAnchor]) - Load(chain + kLastAnchor)));
+
         Store(frame[sDir], Load(node) - Load(prev));
+
         if (magnitude(frame[sDir], Magnitude) > kTiny)
             call.Call<Normalize>({frame[sDir], frame[sDir]});
+
         const uint32_t out = frame[sOut] + 12 * i;
         Store(out, Load(frame[sDir]) * (scale * length));
         Store(node, Load(prev) + Load(out));
@@ -329,6 +363,7 @@ static void YureChain(CpuContext* ctx) {
             call.Call<EnemyJointMtx>({enemy, anchorJoint(), frame[sInverse]});
             call.Call<EnemyJointPos>({enemy, Memory::Read8(kPlaneJoints + plane), frame[sPlanePoint]});
         }
+
         call.Call<ToMhVec>({frame[sPlaneN], kPlanes + plane * 24});
         call.Call<RotateVec>({frame[sRot], frame[sInverse], frame[sPlaneN]});
         call.Call<Normalize>({frame[sPlane], frame[sRot]});
@@ -337,6 +372,7 @@ static void YureChain(CpuContext* ctx) {
         Store(frame[sPlanePoint], Load(frame[sPlanePoint]) + Load(frame[sPlaneAt]));
         call.Call<Dot>({frame[sPlanePoint], frame[sPlane]});
         Memory::WriteFloat32(frame[sPlane] + 12, call.F1());
+
         for (uint32_t i = 0; i < count; ++i) {
             const uint32_t node = chain + kNode + 12 * i;
             Store(frame[sPlaneProbe], Load(node));
@@ -346,15 +382,19 @@ static void YureChain(CpuContext* ctx) {
             Store(frame[sDir], Load(frame[sPlaneProbe]) - Load(frame[sPlanePoint]));
             call.Call<Dot>({frame[sPlane], frame[sDir]});
             const float height = call.F1(), least = F(frame[sPlaneProbe] + 12);
+
             if (height < least) {
                 Store(frame[sDir], Load(frame[sPlane]) * (least - height));
                 Store(node, Load(node) + Load(frame[sDir]));
             }
         }
     }
+
     Store(chain + kLastAnchor, Load(frame[sAnchor]));
+
     if (player)
         return;
+
     for (uint32_t i = 0; i < count; ++i) {
         if (Memory::Read8(chain + kMode) == 3) {
             call.Call<NodeHeading>({chain, frame[sAnchorMtx], chain + kAngleB + 4 * i, i});

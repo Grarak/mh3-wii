@@ -12,12 +12,14 @@
 namespace aurora::gxm {
 
 void check(int result, const char* operation);
+
 // Game-thread toggle. Common dialogs render into the next admitted display
 // surface after its application scene ends, using the same display sync.
 void set_common_dialog_active(bool active) noexcept;
 const SceGxmProgram* vertex_binary(uint64_t hash);
 const SceGxmProgram* fragment_binary(uint64_t hash);
 const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
+
 // Read on the graphics owner. Callback retirement releases display-queue
 // bookkeeping; presented counts successful flip requests (which can tear),
 // including the required first-display SetFrameBuf/Wait completion.
@@ -26,6 +28,7 @@ struct DisplayStatistics {
   uint32_t backlog = 0, pending_scenes = 0;
   uint64_t callback_wait_us = 0;
 };
+
 DisplayStatistics display_statistics() noexcept;
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
@@ -48,6 +51,7 @@ public:
     end();
     return current_fence();
   }
+
   bool frame_pending() const noexcept;
   uint32_t pending_scenes() const noexcept { return m_notification ? m_sceneSerial - *m_notification : 0; }
   unsigned frame_slot() const noexcept { return m_frames.slot(); }
@@ -59,6 +63,7 @@ public:
 private:
   void release() noexcept;
   bool m_initialized = false, m_inScene = false;
+
   // Slot 0 is owned by this application context for ordered scene retirement.
   volatile unsigned* m_notification = nullptr;
   uint32_t m_sceneSerial = 0;
@@ -83,6 +88,7 @@ struct VertexInput {
   SceGxmAttributeFormat format;
   uint16_t components, offset, stride, stream;
 };
+
 class PatchedProgram {
 public:
   PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash, SceGxmIndexFormat indices = SCE_GXM_INDEX_FORMAT_U16, std::span<const VertexInput> inputs = {});

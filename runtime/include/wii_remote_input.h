@@ -33,6 +33,7 @@ void ConfigureSdlHints(bool enabled);
 
 // Classifies a gamepad by the name SDL's Wii driver reports for it.
 Kind KindForName(const char* gamepadName);
+
 // Classification of the SDL gamepad currently assigned to a game port.
 Kind KindForPort(uint32_t port);
 const char* KindLabel(Kind kind);
@@ -60,9 +61,11 @@ struct KpadSample {
 // and the console never disconnects for that, so the gap is papered over with
 // neutral input instead of a "communications interrupted" prompt.
 Kind EffectiveKind(uint32_t chan);
+
 // True when the game reads `chan` through KPAD: a Wii Remote alone, with a
 // Nunchuk or with a Classic Controller (live or within the swap grace period).
 bool IsRemoteChannel(uint32_t chan);
+
 // Reads the current state of the remote on `chan`; false when IsRemoteChannel
 // is false. During the swap grace period the sample is neutral.
 bool ReadKpadSample(uint32_t chan, KpadSample& sample);
@@ -83,11 +86,14 @@ bool ReadAccelDebug(uint32_t chan, float sdlG[3], float kpadAcc[3]);
 // Poll() then collects samples for about a second and stores the difference to
 // the ideal (0, 1, 0) g in Config.toml.
 void StartAccelCalibration(uint32_t chan);
+
 // Forgets the stored correction.
 void ClearAccelCalibration();
 bool IsAccelCalibrating();
+
 // 0..1 while a calibration is collecting samples.
 float AccelCalibrationProgress();
+
 // Outcome of the last calibration attempt for the overlay, or nullptr.
 const char* AccelCalibrationMessage();
 
@@ -100,12 +106,16 @@ void HideRemotesFromPad(PADStatus* statuses, uint32_t count);
 // own. Poll() runs once per PADRead and, while no Wii controller is present,
 // periodically forces SDL to re-enumerate HIDAPI by toggling the driver hint.
 void Poll();
+
 // Forces one re-enumeration right now (settings overlay "Rescan now").
 void RescanNow();
+
 // True while Poll() is looking for a remote (no Wii controller connected).
 bool IsScanning();
+
 // True where looking means periodic rescans; elsewhere Poll() waits for hotplug.
 bool PeriodicRescanEnabled();
+
 // Rescans issued since a Wii controller was last seen.
 uint32_t ScanCount();
 

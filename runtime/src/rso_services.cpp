@@ -31,6 +31,7 @@ struct Module {
     const RawDispatchRecord* records = nullptr;
     unsigned count = 0;
 };
+
 Module modules[]{
     {"hbm_data.rso", HbmBinding::Base, HbmBinding::Text, HbmBinding::Size, 0x8081A8A4, HbmBinding::Checksum},
     {"com_data.rso", ComBinding::Base, ComBinding::Text, ComBinding::Size, 0x8086907C, ComBinding::Checksum},
@@ -68,11 +69,14 @@ Module modules[]{
     {"map11.rso", Map11FieldBinding::Base, Map11FieldBinding::Text, Map11FieldBinding::Size, Map11FieldBinding::Prolog, Map11FieldBinding::Checksum, false, Map11FieldBinding::Records,
      Map11FieldBinding::Count},
 };
+
 uint64_t TextChecksum(uint32_t text, uint32_t size) {
     const auto* bytes = Memory::GetPointer(text, size);
     uint64_t checksum = 0xCBF29CE484222325ULL;
+
     for (uint32_t i = 0; i < size; ++i)
         checksum = (checksum ^ bytes[i]) * 0x100000001B3ULL;
+
     return checksum;
 }
 } // namespace
@@ -87,6 +91,7 @@ void RecompMod::CheckRsoExecution(uint32_t address) {
         // The prolog verifies the new image before entering any translated code.
         if (address == module.prolog)
             return;
+
         throw std::runtime_error(std::string("Execution of unlinked ") + module.name + " at " + std::to_string(address));
     }
 }
@@ -95,19 +100,25 @@ void RecompMod::CheckRsoExecution(uint32_t address) {
 static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint32_t text, uint32_t size, uint64_t expected) {
     if (cpu->gpr[3] != base)
         throw std::runtime_error(std::string(name) + " loaded at an uncompiled address");
+
     if (TextChecksum(text, size) != expected)
         throw std::runtime_error(std::string(name) + " linked text differs from static translation");
+
     Module* profile = nullptr;
+
     for (auto& module : modules) {
         if (module.base == base && module.text == text && module.size == size && module.checksum == expected)
             profile = &module;
         else if (module.active && text < module.text + module.size && module.text < text + size)
             throw std::runtime_error("Cannot activate overlapping RSO lifetimes");
     }
+
     if (!profile)
         throw std::runtime_error("RSO binding has no lifetime profile");
+
     RecompMod::RegisterExecutableRange(text, text + size, name);
     profile->active = true;
+
     if (std::string_view(name) == "map_village.rso")
         FinishVillageBoot();
     // The map's loading screen: extract the audio streams it played before.
@@ -119,6 +130,7 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint3
 
 bool RecompMod::TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu) {
     Module* owner = nullptr;
+
     for (auto& module : modules)
         if (module.active && address >= module.text && address < module.text + module.size) {
             owner = &module;
@@ -126,29 +138,37 @@ bool RecompMod::TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu) {
         }
     if (owner && !owner->records)
         return false;
+
     if (!owner) {
         // The field maps (mapNN.rso) all load at one base with the prolog at
         // the same place: the linked text tells them apart.
         Module* candidate = nullptr;
+
         for (auto& module : modules) {
             if (!module.records || address != module.prolog || cpu->gpr[3] != module.base)
                 continue;
+
             if (!candidate)
                 candidate = &module;
+
             if (TextChecksum(module.text, module.size) == module.checksum) {
                 candidate = &module;
                 break;
             }
         }
+
         if (candidate) {
             VerifyModule(cpu, candidate->name, candidate->base, candidate->text, candidate->size, candidate->checksum);
             owner = candidate;
         }
     }
+
     if (!owner)
         return false;
+
     const auto* end = owner->records + owner->count;
     const auto* record = std::lower_bound(owner->records, end, address, [](const RawDispatchRecord& candidate, uint32_t target) { return candidate.address < target; });
+
     if (record != end && record->address == address)
         return TryDispatchRawCpuTarget(record, cpu);
     // An active overlay must never fall through to an overlapping boot image.
@@ -160,8 +180,10 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     const auto saved = *cpu;
     auto& demo = modules[3];
     auto& overlay = modules[5];
+
     if (demo.active || overlay.active)
         throw std::runtime_error("Overlay tests require an unloaded runtime");
+
     struct Restore {
         CpuContext* cpu;
         CpuContext saved;
@@ -175,15 +197,19 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     } restore{cpu, saved, demo, overlay};
     cpu->gpr[3] = Base;
     demo.active = true;
+
     if (RecompMod::TryDispatchRsoOverlay(Prolog, cpu))
         throw std::runtime_error("Village overlay intercepted the active demo image");
+
     demo.active = false;
     bool rejected = false;
+
     try {
         RecompMod::TryDispatchRsoOverlay(Prolog, cpu);
     } catch (const std::runtime_error&) {
         rejected = true;
     }
+
     if (!rejected || overlay.active)
         throw std::runtime_error("Overlay accepted an unverified image");
     // Exercise the generated register-global-object leaf under an active overlay
@@ -198,21 +224,27 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     const bool dispatched = RecompMod::TryDispatchRsoOverlay(Text, cpu);
     const bool correct = Memory::Read32(chain) == node && Memory::Read32(node) == 0x11223344 && Memory::Read32(node + 4) == 0xB6 && Memory::Read32(node + 8) == 0xA5;
     Memory::Write32(chain, oldChain);
+
     if (!dispatched || !correct)
         throw std::runtime_error("Overlay dispatch selected the wrong compiled image");
+
     overlay.active = false;
     cpu->gpr[3] = QuestFieldBinding::Base;
     modules[2].active = true;
     const bool stoleLobby = RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu);
     modules[2].active = false;
+
     if (stoleLobby)
         throw std::runtime_error("Field quest overlay intercepted active lobby code");
+
     rejected = false;
+
     try {
         RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu);
     } catch (const std::runtime_error&) {
         rejected = true;
     }
+
     if (!rejected || modules[6].active)
         throw std::runtime_error("Field quest overlay accepted an unverified image");
 }
@@ -220,6 +252,7 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
 extern "C" void func_804DB614(CpuContext*);
 extern "C" void MH3_RSOUnlink(CpuContext* cpu) {
     Module* unloading = nullptr;
+
     for (auto& module : modules)
         if (module.active && module.base == cpu->gpr[3])
             unloading = &module;
@@ -228,14 +261,18 @@ extern "C" void MH3_RSOUnlink(CpuContext* cpu) {
     if (unloading && (Memory::Read32(unloading->base) || Memory::Read32(unloading->base + 4))) {
         if (!unloading->active || TextChecksum(unloading->text, unloading->size) != unloading->checksum)
             throw std::runtime_error(std::string("Cannot unlink unverified ") + unloading->name);
+
         unloading->active = false;
         RecompMod::UnregisterExecutableRange(unloading->text, unloading->text + unloading->size);
     } else
         unloading = nullptr;
+
     func_804DB614(cpu);
+
     if (unloading) {
         if (cpu->gpr[3] != 1)
             throw std::runtime_error("RSO unlink did not complete");
+
         std::cerr << "MH3 RSO: unlinked " << unloading->name << " static binding\n";
     }
 }

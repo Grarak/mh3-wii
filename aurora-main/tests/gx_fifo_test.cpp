@@ -96,6 +96,7 @@ TEST(GXLighting, SpotCoefficientsAndPositionGetterMatchRevolutionSdk) {
 
 TEST(EfbRamEncoderContract, Z24X8WritesNativeFourByFourArGbPlanes) {
   std::array<u8, 4 * 4 * 4> rgba{};
+
   for (u32 i = 0; i < 16; ++i) {
     rgba[i * 4 + 0] = static_cast<u8>(0x10 + i); // high Z
     rgba[i * 4 + 1] = static_cast<u8>(0x40 + i); // middle Z
@@ -167,6 +168,7 @@ static std::vector<u8> xf_cmd(u16 addr, std::initializer_list<u32> values) {
     bytes.push_back(static_cast<u8>((value >> 8) & 0xFF));
     bytes.push_back(static_cast<u8>(value & 0xFF));
   }
+
   return bytes;
 }
 
@@ -180,11 +182,13 @@ TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
     aurora::gx::set_frame_interpolation_fps(0);
     aurora::gx::begin_frame_interpolation();
   };
+
   const auto buildFrame = [](const aurora::gx::ShaderInfo& info, aurora::HashType signatureBase,
                              bool perspective, bool reverse = false) {
     aurora::gx::begin_frame_interpolation();
     aurora::gx::BindGroupRanges ranges{};
     uint32_t interpolatedUniforms = 0;
+
     for (uint32_t i = 0; i < 8; ++i) {
       const uint32_t signatureOffset = reverse ? 7 - i : i;
       const aurora::gx::FrameInterpolationDrawIdentity identity{
@@ -192,11 +196,13 @@ TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
           .pipeline = signatureBase,
           .texture = 1,
       };
+
       const auto uniforms = aurora::gx::build_uniform(info, 0, ranges, identity, perspective);
       interpolatedUniforms += static_cast<uint32_t>(std::count_if(
           uniforms.interpolated.begin(), uniforms.interpolated.end(),
           [](const aurora::gfx::Range& range) { return range.size != 0; }));
     }
+
     aurora::gx::finalize_frame_interpolation();
     return interpolatedUniforms;
   };
@@ -251,20 +257,24 @@ TEST(FrameInterpolationContract, RequiresStablePerspectiveDrawSequence) {
     aurora::gx::begin_frame_interpolation();
     aurora::gx::BindGroupRanges ranges{};
     uint32_t interpolatedUniforms = 0;
+
     for (uint32_t i = 0; i < 8; ++i) {
       const aurora::gx::FrameInterpolationDrawIdentity identity{
           .combined = geometryEpoch + i,
           .pipeline = 42,
           .texture = 7,
       };
+
       const auto uniforms = aurora::gx::build_uniform(info, 0, ranges, identity, true);
       interpolatedUniforms += static_cast<uint32_t>(std::count_if(
           uniforms.interpolated.begin(), uniforms.interpolated.end(),
           [](const aurora::gfx::Range& range) { return range.size != 0; }));
     }
+
     aurora::gx::finalize_frame_interpolation();
     return interpolatedUniforms;
   };
+
   EXPECT_EQ(buildDeformedFrame(400), 0u);
   EXPECT_EQ(buildDeformedFrame(500), 8u);
   EXPECT_TRUE(aurora::gx::has_interpolated_frame());
@@ -278,11 +288,13 @@ TEST(FrameInterpolationContract, DecomposesRotationScaleAndTranslation) {
       {0.0f, 1.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 0.0f},
   };
+
   const aurora::Mat3x4<float> current{
       {0.0f, -2.0f, 0.0f, 10.0f},
       {2.0f, 0.0f, 0.0f, 20.0f},
       {0.0f, 0.0f, 2.0f, 30.0f},
   };
+
   aurora::Mat3x4<float> midpoint{};
   ASSERT_TRUE(aurora::gx::interpolate_transform_midpoint(previous, current, midpoint));
 
@@ -314,16 +326,19 @@ TEST(FrameInterpolationContract, IndexedPaletteInterpolationPreservesSharedSeams
       {0.0f, 1.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 0.0f},
   };
+
   const aurora::Mat3x4<float> quarterTurn{
       {0.0f, -1.0f, 0.0f, 0.0f},
       {1.0f, 0.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 0.0f},
   };
+
   const aurora::Mat3x4<float> translatedPrevious{
       {1.0f, 0.0f, 0.0f, 1.0f},
       {0.0f, 1.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 0.0f},
   };
+
   const aurora::Mat3x4<float> translatedCurrent{
       {1.0f, 0.0f, 0.0f, 0.0f},
       {0.0f, 1.0f, 0.0f, 1.0f},
@@ -353,9 +368,11 @@ TEST(FrameInterpolationContract, IndexedPaletteInterpolationPreservesSharedSeams
   // interpolation has to keep them coincident; a rigid decompose would pull them apart.
   const auto rotatedSeam = transformPoint(rotatedMidpoint, {1.0f, 0.0f, 0.0f});
   const auto translatedSeam = transformPoint(translatedMidpoint, {0.0f, 0.0f, 0.0f});
+
   for (size_t component = 0; component < rotatedSeam.size(); ++component) {
     EXPECT_FLOAT_EQ(rotatedSeam[component], translatedSeam[component]);
   }
+
   EXPECT_FLOAT_EQ(rotatedSeam[0], 0.5f);
   EXPECT_FLOAT_EQ(rotatedSeam[1], 0.5f);
 
@@ -366,6 +383,7 @@ TEST(FrameInterpolationContract, IndexedPaletteInterpolationPreservesSharedSeams
       {0.0f, 1.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 0.0f},
   };
+
   aurora::Mat3x4<float> shearedMidpoint{};
   ASSERT_TRUE(aurora::gx::interpolate_indexed_transform(
       identity, sheared, 0.5f, shearedMidpoint));
@@ -387,6 +405,7 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
       .texture = 0x9abc,
       .matrixTopology = 0xdef0,
   };
+
   const aurora::Mat4x4<float> projection{};
   const auto matrixAt = [](float x) {
     return aurora::Mat3x4<float>{
@@ -395,6 +414,7 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
         {0.0f, 0.0f, 1.0f, 0.0f},
     };
   };
+
   const auto recordFrame = [&](const aurora::gx::FrameInterpolationDrawIdentity& drawIdentity,
                                float slot0X, float slot1X,
                                std::array<uint8_t, uniformSize>& source) {
@@ -462,11 +482,13 @@ TEST(FrameInterpolationContract, IndexedPaletteHistoryKeepsAbsoluteVertexSlots) 
   std::array<uint8_t, uniformSize> changedSource{};
   aurora::gx::begin_frame_interpolation();
   const auto changedRanges = recordFrame(changedTopology, 91.0f, 9.0f, changedSource);
+
   // Staging may reserve a copy for sibling matching; the correctness contract
   // is that an unmatched topology receives the current pose unchanged.
   const auto expectedCurrent = changedSource;
   aurora::gx::finalize_frame_interpolation();
   EXPECT_EQ(changedSource, expectedCurrent);
+
   if (changedRanges[0].size != 0) {
     // No replacement range also correctly selects the original current uniform.
     ASSERT_EQ(changedRanges[0].size, uniformSize);
@@ -486,11 +508,13 @@ TEST(FrameInterpolationContract, RepeatedDrawsMatchByTransformInsteadOfDrawOrder
       {0.0f, 1.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 1000.0f},
   };
+
   const aurora::Mat3x4<float> right{
       {1.0f, 0.0f, 0.0f, 500.0f},
       {0.0f, 1.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 1.0f, 1000.0f},
   };
+
   const aurora::Mat3x4<float> currentRight{
       {0.9998f, 0.0f, 0.02f, 496.0f},
       {0.0f, 1.0f, 0.0f, 1.0f},
@@ -591,6 +615,7 @@ TEST(TevTexcoordStateContract, DirectStageFeedsFollowingAddPrevInFixedPoint) {
   EXPECT_FALSE(zeroTexgenInfo.sampledTexCoords.any());
   EXPECT_TRUE(zeroTexgenInfo.sampledTextures.test(0));
   EXPECT_FALSE(zeroTexgenInfo.sampledTextures.test(1));
+
   // WGSL must likewise avoid producing a regular-texture UV expression for
   // stage 1: tex1_size_bias is intentionally absent from this uniform layout.
   const auto zeroTexgenDependency = aurora::gx::tev_stage_texture_dependency(config, 1);
@@ -662,6 +687,7 @@ TEST(TevRegisterLivenessContract, PacksOneUniformWhenBothHalvesNeedInitialValue)
   const auto info = aurora::gx::build_shader_info(config);
   EXPECT_TRUE(info.loadsTevRegRgb.test(GX_TEVREG0));
   EXPECT_TRUE(info.loadsTevRegAlpha.test(GX_TEVREG0));
+
   // The final allocation is alignment-rounded, so adding one register need
   // not increase it. Verify actual packing with a distinct following K color.
   const auto savedReg = g_gxState.colorRegs[GX_TEVREG0];
@@ -712,6 +738,7 @@ TEST_F(GXFifoTest, BlendMode_None) {
   auto bytes = capture_fifo();
 
   reset_gx_state();
+
   // Pre-set to something else to prove the decode works
   g_gxState.blendMode = GX_BM_BLEND;
   decode_fifo(bytes);
@@ -1082,16 +1109,19 @@ TEST_F(GXFifoTest, TevOp_Modulate_Stage0) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[0];
+
   // Modulate: color = ZERO, TEXC, RASC, ZERO (stage 0 uses RASC/RASA)
   EXPECT_EQ(s.colorPass.a, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.b, GX_CC_TEXC);
   EXPECT_EQ(s.colorPass.c, GX_CC_RASC);
   EXPECT_EQ(s.colorPass.d, GX_CC_ZERO);
+
   // Modulate: alpha = ZERO, TEXA, RASA, ZERO
   EXPECT_EQ(s.alphaPass.a, GX_CA_ZERO);
   EXPECT_EQ(s.alphaPass.b, GX_CA_TEXA);
   EXPECT_EQ(s.alphaPass.c, GX_CA_RASA);
   EXPECT_EQ(s.alphaPass.d, GX_CA_ZERO);
+
   // Op = ADD, bias = ZERO, scale = 1, clamp = true, outReg = TEVPREV
   EXPECT_EQ(s.colorOp.op, GX_TEV_ADD);
   EXPECT_EQ(s.colorOp.bias, GX_TB_ZERO);
@@ -1132,11 +1162,13 @@ TEST_F(GXFifoTest, TevOp_Replace) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[0];
+
   // Replace: color = ZERO, ZERO, ZERO, TEXC
   EXPECT_EQ(s.colorPass.a, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.b, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.c, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.d, GX_CC_TEXC);
+
   // Replace: alpha = ZERO, ZERO, ZERO, TEXA
   EXPECT_EQ(s.alphaPass.a, GX_CA_ZERO);
   EXPECT_EQ(s.alphaPass.b, GX_CA_ZERO);
@@ -1152,11 +1184,13 @@ TEST_F(GXFifoTest, TevOp_Decal) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[0];
+
   // Decal: color = RASC, TEXC, TEXA, ZERO
   EXPECT_EQ(s.colorPass.a, GX_CC_RASC);
   EXPECT_EQ(s.colorPass.b, GX_CC_TEXC);
   EXPECT_EQ(s.colorPass.c, GX_CC_TEXA);
   EXPECT_EQ(s.colorPass.d, GX_CC_ZERO);
+
   // Decal: alpha = ZERO, ZERO, ZERO, RASA
   EXPECT_EQ(s.alphaPass.a, GX_CA_ZERO);
   EXPECT_EQ(s.alphaPass.b, GX_CA_ZERO);
@@ -1172,11 +1206,13 @@ TEST_F(GXFifoTest, TevOp_Blend) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[0];
+
   // Blend: color = RASC, ONE, TEXC, ZERO
   EXPECT_EQ(s.colorPass.a, GX_CC_RASC);
   EXPECT_EQ(s.colorPass.b, GX_CC_ONE);
   EXPECT_EQ(s.colorPass.c, GX_CC_TEXC);
   EXPECT_EQ(s.colorPass.d, GX_CC_ZERO);
+
   // Blend: alpha = ZERO, TEXA, RASA, ZERO
   EXPECT_EQ(s.alphaPass.a, GX_CA_ZERO);
   EXPECT_EQ(s.alphaPass.b, GX_CA_TEXA);
@@ -1192,11 +1228,13 @@ TEST_F(GXFifoTest, TevOp_PassClr) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[0];
+
   // PassClr: color = ZERO, ZERO, ZERO, RASC
   EXPECT_EQ(s.colorPass.a, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.b, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.c, GX_CC_ZERO);
   EXPECT_EQ(s.colorPass.d, GX_CC_RASC);
+
   // PassClr: alpha = ZERO, ZERO, ZERO, RASA
   EXPECT_EQ(s.alphaPass.a, GX_CA_ZERO);
   EXPECT_EQ(s.alphaPass.b, GX_CA_ZERO);
@@ -1246,6 +1284,7 @@ TEST_F(GXFifoTest, TevColorOp_CompareR8GT) {
 
   auto& s = g_gxState.tevStages[0];
   EXPECT_EQ(s.colorOp.op, GX_TEV_COMP_R8_GT);
+
   // Decoder normalizes compare mode: bias=ZERO, scale=SCALE_1
   EXPECT_EQ(s.colorOp.bias, GX_TB_ZERO);
   EXPECT_EQ(s.colorOp.scale, GX_CS_SCALE_1);
@@ -1272,6 +1311,7 @@ TEST_F(GXFifoTest, TevAlphaOp_CompareRGB8GT) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[0];
+
   // GX_TEV_COMP_RGB8_GT is the same enum value for alpha as GX_TEV_COMP_A8_GT
   EXPECT_EQ(s.alphaOp.op, GX_TEV_COMP_RGB8_GT);
   EXPECT_EQ(s.alphaOp.bias, GX_TB_ZERO);
@@ -1312,6 +1352,7 @@ TEST_F(GXFifoTest, TevAlphaOp_CompareA8EQ) {
   decode_fifo(bytes);
 
   auto& s = g_gxState.tevStages[1];
+
   // For alpha, GX_TEV_COMP_RGB8_EQ maps to A8_EQ
   EXPECT_EQ(s.alphaOp.op, GX_TEV_COMP_RGB8_EQ);
   EXPECT_EQ(s.alphaOp.outReg, GX_TEVREG2);
@@ -1404,6 +1445,7 @@ TEST_F(GXFifoTest, TevKColorSel_DoesNotCorruptSwapTable) {
   EXPECT_EQ(g_gxState.tevSwapTable[0].green, GX_CH_GREEN);
   EXPECT_EQ(g_gxState.tevSwapTable[0].blue, GX_CH_BLUE);
   EXPECT_EQ(g_gxState.tevSwapTable[0].alpha, GX_CH_ALPHA);
+
   // K color selection should still be set
   EXPECT_EQ(g_gxState.tevStages[0].kcSel, GX_TEV_KCSEL_K0);
 }
@@ -1675,6 +1717,7 @@ TEST_F(GXFifoTest, ClearVtxDesc_ClearsAll) {
   GXSetVtxDesc(GX_VA_TEX5, GX_INDEX8);
   GXSetVtxDesc(GX_VA_TEX6, GX_DIRECT);
   GXSetVtxDesc(GX_VA_TEX7, GX_DIRECT);
+
   // Discard the dirty state from above
   aurora::gx::fifo::clear_buffer();
 
@@ -1683,10 +1726,12 @@ TEST_F(GXFifoTest, ClearVtxDesc_ClearsAll) {
   auto bytes = flush_and_capture();
 
   reset_gx_state();
+
   // Pre-fill g_gxState with non-zero to prove decode clears them
   for (int i = 0; i < GX_VA_MAX_ATTR; ++i) {
     g_gxState.vtxDesc[i] = GX_INDEX16;
   }
+
   decode_fifo(bytes);
 
   // After GXClearVtxDesc: POS = GX_DIRECT, everything else = GX_NONE
@@ -1955,6 +2000,7 @@ TEST_F(GXFifoTest, SetArray_Pos_EncodesAuroraArrayBaseAndStride) {
       EXPECT_EQ(bytes[offset + i], static_cast<u8>((value >> (56 - i * 8)) & 0xFF));
     }
   };
+
   const auto expect_be32 = [&](size_t offset, u32 value) {
     for (size_t i = 0; i < 4; ++i) {
       EXPECT_EQ(bytes[offset + i], static_cast<u8>((value >> (24 - i * 8)) & 0xFF));
@@ -2221,6 +2267,7 @@ TEST_F(GXFifoTest, RawDrawPreservesHorizontalXzQuadVertices) {
     vertices.push_back(static_cast<u8>(bits >> 8));
     vertices.push_back(static_cast<u8>(bits));
   };
+
   const auto append_vertex = [&](float x, float y, float z, u8 s, u8 t) {
     append_f32_be(x);
     append_f32_be(y);
@@ -2244,6 +2291,7 @@ static void append_test_draw(std::vector<u8>& fifo, GXPrimitive primitive, u16 c
   fifo.push_back(static_cast<u8>(primitive) | static_cast<u8>(GX_VTXFMT0));
   fifo.push_back(static_cast<u8>(count >> 8));
   fifo.push_back(static_cast<u8>(count));
+
   for (u16 vertex = 0; vertex < count; ++vertex) {
     fifo.push_back(static_cast<u8>(vertex));
   }
@@ -2508,9 +2556,11 @@ TEST_F(GXFifoTest, DestroyCopyTex_RemovesActiveCopyTextureAndCacheEntriesForPoin
 
   EXPECT_FALSE(gxState().copyTextures.contains(imageA));
   EXPECT_TRUE(gxState().copyTextures.contains(imageB));
+
   for (const auto& [key, _] : gxState().copyTextureCache) {
     EXPECT_NE(key.dest, imageA);
   }
+
   EXPECT_EQ(gxState().copyTextureCache.size(), 1u);
 }
 
@@ -2727,6 +2777,7 @@ TEST_F(GXFifoTest, LoadNrmMtxImm_ArbitraryValues) {
   decode_fifo(bytes);
 
   auto& decoded = g_gxState.pnMtx[0].nrm;
+
   // 3x3 portion should round-trip
   EXPECT_FLOAT_EQ(decoded.m0[0], 0.5f);
   EXPECT_FLOAT_EQ(decoded.m0[1], -0.5f);
@@ -2737,6 +2788,7 @@ TEST_F(GXFifoTest, LoadNrmMtxImm_ArbitraryValues) {
   EXPECT_FLOAT_EQ(decoded.m2[0], -0.6f);
   EXPECT_FLOAT_EQ(decoded.m2[1], 0.2f);
   EXPECT_FLOAT_EQ(decoded.m2[2], 0.9f);
+
   // Translation column is NOT written by the encoder, so it stays zeroed
   EXPECT_FLOAT_EQ(decoded.m0[3], 0.0f);
   EXPECT_FLOAT_EQ(decoded.m1[3], 0.0f);
@@ -2776,8 +2828,10 @@ TEST_F(GXFifoTest, LoadNrmMtxImm_Isolation) {
 
   // Slot 0 nrm should have our values
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].nrm.m0[0], 11.0f);
+
   // Slot 0 pos should remain zeroed (nrm write doesn't touch pos)
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].pos.m0[0], 0.0f);
+
   // Slot 1 nrm should remain zeroed
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[1].nrm.m0[0], 0.0f);
 }
@@ -2809,6 +2863,7 @@ TEST_F(GXFifoTest, LoadNrmMtxImm_WithPosMtx) {
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].pos.m0[3], 5.0f);
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].pos.m1[3], 10.0f);
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].pos.m2[3], 15.0f);
+
   // Normal matrix
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].nrm.m0[0], 0.5f);
   EXPECT_FLOAT_EQ(g_gxState.pnMtx[0].nrm.m1[1], 0.5f);
@@ -2926,6 +2981,7 @@ TEST_F(GXFifoTest, LoadTexMtx3x4_Isolation) {
   decode_fifo(bytes);
 
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[0].m0[0], 50.0f);
+
   // Slot 1 should remain zeroed
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[1].m0[0], 0.0f);
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[1].m1[1], 0.0f);
@@ -2949,6 +3005,7 @@ TEST_F(GXFifoTest, LoadTexMtx2x4_Identity) {
   decode_fifo(bytes);
 
   auto& decoded = g_gxState.texMtxs[0];
+
   // First two rows should round-trip
   EXPECT_FLOAT_EQ(decoded.m0[0], 1.0f);
   EXPECT_FLOAT_EQ(decoded.m0[1], 0.0f);
@@ -2958,6 +3015,7 @@ TEST_F(GXFifoTest, LoadTexMtx2x4_Identity) {
   EXPECT_FLOAT_EQ(decoded.m1[1], 1.0f);
   EXPECT_FLOAT_EQ(decoded.m1[2], 0.0f);
   EXPECT_FLOAT_EQ(decoded.m1[3], 0.0f);
+
   // Third row not written by 2x4, should be zeroed
   EXPECT_FLOAT_EQ(decoded.m2[0], 0.0f);
   EXPECT_FLOAT_EQ(decoded.m2[1], 0.0f);
@@ -2969,6 +3027,7 @@ TEST_F(GXFifoTest, LoadTexMtx2x4_ArbitraryValues) {
   aurora::Mat3x4<float> mtx{};
   mtx.m0[0] = 0.5f;  mtx.m0[1] = -1.0f; mtx.m0[2] = 0.25f; mtx.m0[3] = 100.0f;
   mtx.m1[0] = 3.0f;  mtx.m1[1] = 0.0f;  mtx.m1[2] = -2.5f; mtx.m1[3] = -50.0f;
+
   // Row 2 values should be ignored by the encoder
   mtx.m2[0] = 999.0f;
 
@@ -2987,6 +3046,7 @@ TEST_F(GXFifoTest, LoadTexMtx2x4_ArbitraryValues) {
   EXPECT_FLOAT_EQ(decoded.m1[1], 0.0f);
   EXPECT_FLOAT_EQ(decoded.m1[2], -2.5f);
   EXPECT_FLOAT_EQ(decoded.m1[3], -50.0f);
+
   // Row 2 should be zeroed (only 8 floats written)
   EXPECT_FLOAT_EQ(decoded.m2[0], 0.0f);
 }
@@ -3024,6 +3084,7 @@ TEST_F(GXFifoTest, LoadTexMtx2x4_Isolation) {
 
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[0].m0[0], 10.0f);
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[0].m1[1], 20.0f);
+
   // Slot 1 should remain zeroed
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[1].m0[0], 0.0f);
   EXPECT_FLOAT_EQ(g_gxState.texMtxs[1].m1[1], 0.0f);
@@ -3094,6 +3155,7 @@ TEST_F(GXFifoTest, GetProjectionAndScissorShadowState) {
   for (size_t i = 0; i < 7; ++i) {
     EXPECT_FLOAT_EQ(outProj[i], proj[i]);
   }
+
   EXPECT_EQ(left, 16u);
   EXPECT_EQ(top, 24u);
   EXPECT_EQ(width, 320u);
@@ -3220,23 +3282,28 @@ TEST_F(GXFifoTest, LoadLightObjImm_Light0_BasicColor) {
   EXPECT_TRUE(g_gxState.preparedLightsDirty);
 
   auto& light = g_gxState.lights[0];
+
   // Color
   EXPECT_NEAR(light.color[0], 255.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(light.color[1], 128.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(light.color[2], 64.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(light.color[3], 255.f / 255.f, 1.f / 255.f);
+
   // Position
   EXPECT_FLOAT_EQ(light.pos[0], 100.0f);
   EXPECT_FLOAT_EQ(light.pos[1], 200.0f);
   EXPECT_FLOAT_EQ(light.pos[2], 300.0f);
+
   // Direction (GXInitLightDir negates)
   EXPECT_FLOAT_EQ(light.dir[0], 0.0f);
   EXPECT_FLOAT_EQ(light.dir[1], 1.0f);
   EXPECT_FLOAT_EQ(light.dir[2], 0.0f);
+
   // Cosine attenuation
   EXPECT_FLOAT_EQ(light.cosAtt[0], 1.0f);
   EXPECT_FLOAT_EQ(light.cosAtt[1], 0.0f);
   EXPECT_FLOAT_EQ(light.cosAtt[2], 0.0f);
+
   // Distance attenuation
   EXPECT_FLOAT_EQ(light.distAtt[0], 1.0f);
   EXPECT_FLOAT_EQ(light.distAtt[1], 0.0f);
@@ -3322,12 +3389,14 @@ TEST_F(GXFifoTest, LoadLightObjImm_SpotLight) {
   EXPECT_FLOAT_EQ(light.pos[0], 10.0f);
   EXPECT_FLOAT_EQ(light.pos[1], 20.0f);
   EXPECT_FLOAT_EQ(light.pos[2], 30.0f);
+
   // GX_SP_COS with cutoff=45: cr = cos(45 * pi / 180)
   // a0 = -cr/(1-cr), a1 = 1/(1-cr), a2 = 0
   float cr = std::cos(45.0f * M_PIF / 180.0f);
   EXPECT_FLOAT_EQ(light.cosAtt[0], -cr / (1.0f - cr));
   EXPECT_FLOAT_EQ(light.cosAtt[1], 1.0f / (1.0f - cr));
   EXPECT_FLOAT_EQ(light.cosAtt[2], 0.0f);
+
   // GX_DA_MEDIUM with refDist=100, refBright=0.5:
   // k0 = 1, k1 = 0.5*(1-b)/(b*d), k2 = 0.5*(1-b)/(b*d*d)
   EXPECT_FLOAT_EQ(light.distAtt[0], 1.0f);
@@ -3687,6 +3756,7 @@ TEST_F(GXFifoTest, ChanAmbColor_Color0A0_Compound) {
   EXPECT_NEAR(stateC.ambColor[1], 160.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(stateC.ambColor[2], 240.f / 255.f, 1.f / 255.f);
   EXPECT_NEAR(stateC.ambColor[3], 128.f / 255.f, 1.f / 255.f);
+
   // ALPHA0 shares the same XF register as COLOR0, so should match
   auto& stateA = g_gxState.colorChannelState[GX_ALPHA0];
   EXPECT_NEAR(stateA.ambColor[0], 80.f / 255.f, 1.f / 255.f);
@@ -3722,6 +3792,7 @@ TEST_F(GXFifoTest, Fog_PerspLin_Typical) {
 
   // Should produce 5 BP writes (0xEE-0xF2): 5 * 5 = 25 bytes
   ASSERT_EQ(bytes.size(), 25u);
+
   // Verify BP opcodes and register IDs
   EXPECT_EQ(bytes[0], 0x61);
   EXPECT_EQ(bytes[1], 0xEE);
@@ -3849,11 +3920,13 @@ TEST_F(GXFifoTest, IndTexMtx0_HalfScale) {
       {0.5f, 0.0f, 0.0f},
       {0.0f, 0.5f, 0.0f},
   };
+
   GXSetIndTexMtx(GX_ITM_0, mtx, 0);
   auto bytes = capture_fifo();
 
   // Should produce 3 BP writes: 3 * 5 = 15 bytes
   ASSERT_EQ(bytes.size(), 15u);
+
   // Verify BP opcodes and register IDs (0x06, 0x07, 0x08 for matrix 0)
   EXPECT_EQ(bytes[0], 0x61);
   EXPECT_EQ(bytes[1], 0x06);
@@ -3866,6 +3939,7 @@ TEST_F(GXFifoTest, IndTexMtx0_HalfScale) {
   decode_fifo(bytes);
 
   const auto& info = g_gxState.indTexMtxs[0];
+
   // 11-bit fixed-point (1/1024) precision
   float tol = 1.0f / 1024.0f;
   EXPECT_NEAR(info.mtx.m0.x, 0.5f, tol);
@@ -3883,6 +3957,7 @@ TEST_F(GXFifoTest, IndTexMtx1_FractionalWithScale) {
       {0.5f, 0.25f, -0.125f},
       {-0.5f, 0.75f, 0.0f},
   };
+
   GXSetIndTexMtx(GX_ITM_1, mtx, 3);
   auto bytes = capture_fifo();
 
@@ -3912,6 +3987,7 @@ TEST_F(GXFifoTest, IndTexMtx2_NegativeScale) {
       {0.0f, 0.0f, 0.0f},
       {0.0f, 0.0f, 0.0f},
   };
+
   GXSetIndTexMtx(GX_ITM_2, mtx, -5);
   auto bytes = capture_fifo();
 
@@ -3939,6 +4015,7 @@ TEST_F(GXFifoTest, IndTexMtxDynamicAliases_MapToSameSlotsAsSdk) {
       {0.25f, 0.0f, 0.0f},
       {0.0f, 0.25f, 0.0f},
   };
+
   f32 mtxT[2][3] = {
       {0.5f, 0.0f, 0.0f},
       {0.0f, 0.5f, 0.0f},
@@ -3974,10 +4051,12 @@ TEST_F(GXFifoTest, IndTexMtx0_Isolation) {
       {0.5f, 0.0f, 0.0f},
       {0.0f, 0.5f, 0.0f},
   };
+
   f32 mtx1[2][3] = {
       {-1.0f, 0.0f, 0.0f},
       {0.0f, -1.0f, 0.0f},
   };
+
   GXSetIndTexMtx(GX_ITM_0, mtx0, 1);
   GXSetIndTexMtx(GX_ITM_1, mtx1, -2);
   auto bytes = capture_fifo();
@@ -3986,10 +4065,12 @@ TEST_F(GXFifoTest, IndTexMtx0_Isolation) {
   decode_fifo(bytes);
 
   float tol = 1.0f / 1024.0f;
+
   // Matrix 0
   EXPECT_NEAR(g_gxState.indTexMtxs[0].mtx.m0.x, 0.5f, tol);
   EXPECT_NEAR(g_gxState.indTexMtxs[0].mtx.m1.y, 0.5f, tol);
   EXPECT_EQ(g_gxState.indTexMtxs[0].scaleExp, 1);
+
   // Matrix 1
   EXPECT_NEAR(g_gxState.indTexMtxs[1].mtx.m0.x, -1.0f, tol);
   EXPECT_NEAR(g_gxState.indTexMtxs[1].mtx.m1.y, -1.0f, tol);
@@ -4142,10 +4223,12 @@ TEST_F(GXFifoTest, DispCopyYScaleHelpers_MatchIdentityScale) {
 
 TEST_F(GXFifoTest, CopyFilter_EncodesAndDecodesAaAndVerticalFilter) {
   u8 samples[12][2] = {};
+
   for (size_t i = 0; i < 12; ++i) {
     samples[i][0] = static_cast<u8>((i * 2) & 0x0f);
     samples[i][1] = static_cast<u8>((i * 2 + 1) & 0x0f);
   }
+
   u8 vfilter[7] = {1, 2, 3, 4, 5, 6, 7};
 
   GXSetCopyFilter(GX_TRUE, samples, GX_TRUE, vfilter);
@@ -4164,10 +4247,12 @@ TEST_F(GXFifoTest, CopyFilter_EncodesAndDecodesAaAndVerticalFilter) {
 
   EXPECT_TRUE(g_gxState.copyFilterAa);
   EXPECT_TRUE(g_gxState.copyFilterVf);
+
   for (size_t i = 0; i < 12; ++i) {
     EXPECT_EQ(g_gxState.copyFilterSamplePattern[i][0], samples[i][0]);
     EXPECT_EQ(g_gxState.copyFilterSamplePattern[i][1], samples[i][1]);
   }
+
   for (size_t i = 0; i < 7; ++i) {
     EXPECT_EQ(g_gxState.copyFilterVFilter[i], vfilter[i]);
   }
@@ -4185,10 +4270,12 @@ TEST_F(GXFifoTest, CopyFilter_DisabledUsesSdkFallbackCoefficients) {
 
   EXPECT_FALSE(g_gxState.copyFilterAa);
   EXPECT_FALSE(g_gxState.copyFilterVf);
+
   for (const auto& sample : g_gxState.copyFilterSamplePattern) {
     EXPECT_EQ(sample[0], 6u);
     EXPECT_EQ(sample[1], 6u);
   }
+
   const std::array<u8, 7> expectedVFilter{0, 0, 21, 22, 21, 0, 0};
   EXPECT_EQ(g_gxState.copyFilterVFilter, expectedVFilter);
 }
@@ -4378,6 +4465,7 @@ TEST_F(GXFifoTest, CopyTexRetainsInternalResolutionInGpuCopyAndGuestDimensionsIn
 
 TEST_F(GXFifoTest, CopyTexUsesExactRationalScaledEdgesBeforeClearing) {
   std::array<u8, 32 * 32 * 4> image{};
+
   // float32 evaluates 7 * (62 / 14) just below 31. Without stabilizing
   // the rational copy edges, floor() expands this clear to begin at x/y 30.
   aurora::gfx::testing::set_framebuffer_sizes(14, 14, 62, 62);
@@ -4400,6 +4488,7 @@ TEST_F(GXFifoTest, CopyTexUsesExactRationalScaledEdgesBeforeClearing) {
 
 TEST_F(GXFifoTest, CopyTexClearDoesNotOverlapFractionalLeftEdge) {
   std::array<u8, 152 * 114 * 4> image{};
+
   // MKW split-screen scratch-copy geometry from the regression capture: the scaled source edge is
   // x=492.975, so flooring clears column 492 while the matching viewport rasterizes from 493.
   aurora::gfx::testing::set_framebuffer_sizes(640, 528, 939, 528);
@@ -4618,6 +4707,7 @@ TEST_F(GXFifoTest, CopyTexSameFrameSampledTargetGetsFreshHostTexture) {
       .height = 64,
       .format = GX_TF_RGBA8,
   };
+
   const auto& first = gxState().copyTextures.at(image.data());
   ASSERT_TRUE(first.handle);
   const auto* firstHandle = first.handle.get();
@@ -4648,6 +4738,7 @@ TEST_F(GXFifoTest, CopyTexSameTargetDifferentShapeRetiresHistoricalCacheEntry) {
       .height = 456,
       .format = GX_TF_RGB565,
   };
+
   const auto& fullCopy = gxState().copyTextureCache.at(fullKey);
   ASSERT_TRUE(fullCopy.handle);
   const auto* fullHandle = fullCopy.handle.get();
@@ -4662,6 +4753,7 @@ TEST_F(GXFifoTest, CopyTexSameTargetDifferentShapeRetiresHistoricalCacheEntry) {
       .height = 228,
       .format = GX_TF_RGBA8,
   };
+
   const auto& halfCopy = gxState().copyTextureCache.at(halfKey);
   ASSERT_TRUE(halfCopy.handle);
 
@@ -4979,6 +5071,7 @@ TEST_F(GXFifoTest, LoadPTTexMtx_LastSlot) {
   EXPECT_FLOAT_EQ(decoded.m0[0], 42.0f);
   EXPECT_FLOAT_EQ(decoded.m1[1], 43.0f);
   EXPECT_FLOAT_EQ(decoded.m2[2], 44.0f);
+
   // Other elements should be zero (from reset)
   EXPECT_FLOAT_EQ(decoded.m0[1], 0.0f);
   EXPECT_FLOAT_EQ(decoded.m2[3], 0.0f);
@@ -4999,6 +5092,7 @@ TEST_F(GXFifoTest, LoadPTTexMtx_Isolation) {
 
   // Slot 0 should have our values
   EXPECT_FLOAT_EQ(g_gxState.ptTexMtxs[0].m0[0], 99.0f);
+
   // Slot 1 should remain zeroed
   EXPECT_FLOAT_EQ(g_gxState.ptTexMtxs[1].m0[0], 0.0f);
   EXPECT_FLOAT_EQ(g_gxState.ptTexMtxs[1].m1[1], 0.0f);

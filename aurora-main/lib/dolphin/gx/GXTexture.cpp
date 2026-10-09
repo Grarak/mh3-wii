@@ -29,6 +29,7 @@ u32 next_tex_obj_id() {
   if (sNextTexObjId == 0) {
     FATAL("texObj ID overflow");
   }
+
   return sNextTexObjId++;
 }
 
@@ -36,6 +37,7 @@ u32 next_tlut_obj_id() {
   if (sNextTlutObjId == 0) {
     FATAL("tlutObj ID overflow");
   }
+
   return sNextTlutObjId++;
 }
 
@@ -69,6 +71,7 @@ u32 next_repointed_tlut_data_version() {
   if (sNextRepointedTlutDataVersion == 0x7FFFFFFFu) {
     sNextRepointedTlutDataVersion = 0;
   }
+
   return 0x80000000u | ++sNextRepointedTlutDataVersion;
 }
 
@@ -88,8 +91,10 @@ std::pair<u32, u32> resolve_tlut_identity(const void* data, GXTlutFmt format, u1
       .format = static_cast<u32>(format),
       .entries = entries,
   };
+
   auto [it, inserted] = sTlutIdentities.try_emplace(key);
   auto& record = it->second;
+
   if (inserted) {
     record.objId = next_tlut_obj_id();
     record.dataVersion = 1;
@@ -97,12 +102,14 @@ std::pair<u32, u32> resolve_tlut_identity(const void* data, GXTlutFmt format, u1
   } else if (record.digest != digest) {
     // Same buffer, different palette: invalidate everything keyed on this ID.
     record.digest = digest;
+
     if (record.dataVersion >= 0x7FFFFFFFu) {
       record.dataVersion = 1;
     } else {
       ++record.dataVersion;
     }
   }
+
   return {record.objId, record.dataVersion};
 }
 
@@ -132,6 +139,7 @@ void init_texobj_common(GXTexObj_& obj, const void* data, u16 width, u16 height,
   SET_REG_FIELD(0, obj.mode0, 2, 0, wrapS);
   SET_REG_FIELD(0, obj.mode0, 2, 2, wrapT);
   SET_REG_FIELD(0, obj.mode0, 1, 4, 1);
+
   if (mipmap) {
     obj.flags |= 1;
     obj.mode0 = (obj.mode0 & 0xFFFFFF1F) | 0xC0;
@@ -141,6 +149,7 @@ void init_texobj_common(GXTexObj_& obj, const void* data, u16 width, u16 height,
   } else {
     obj.mode0 = (obj.mode0 & 0xFFFFFF1F) | 0x80;
   }
+
   SET_REG_FIELD(0, obj.image0, 10, 0, static_cast<u32>(width - 1));
   SET_REG_FIELD(0, obj.image0, 10, 10, static_cast<u32>(height - 1));
   SET_REG_FIELD(0, obj.image0, 4, 20, format & 0xF);

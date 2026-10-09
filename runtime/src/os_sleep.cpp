@@ -23,26 +23,35 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
     const auto saved = *cpu;
     const auto ticks = (uint64_t(cpu->gpr[3]) << 32) | cpu->gpr[4];
     const auto duration = TimeBaseContract::TicksToDuration(ticks);
+
     if (ticks && duration == std::chrono::nanoseconds::zero())
         throw std::runtime_error("OSSleepTicks duration exceeds host clock range");
+
     const auto start = Clock::now();
+
     if (duration > Clock::time_point::max() - start)
         throw std::runtime_error("OSSleepTicks deadline exceeds host clock range");
+
     const auto deadline = start + duration;
+
     try {
         do {
             if (Memory::Read32(saved.gpr[13] - 14984))
                 throw std::runtime_error("OSSleepTicks requires runnable guest thread switching");
+
             pump();
             *cpu = saved;
+
             if (Clock::now() >= deadline)
                 break;
+
             std::this_thread::sleep_until(std::min(deadline, Clock::now() + std::chrono::milliseconds(1)));
         } while (true);
     } catch (...) {
         *cpu = saved;
         throw;
     }
+
     *cpu = saved;
 }
 } // namespace
@@ -81,9 +90,12 @@ void RunSleepSelfTests(CpuContext* cpu) {
         cpu->gpr[14] = 0;
         cpu->lr = 0;
     });
+
     if (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(5) || calls < 2 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678)
         throw std::runtime_error("Sleep timing/pumping/CPU preservation failed");
+
     bool rejected = false;
+
     try {
         SleepTicks(cpu, [&] {
             cpu->lr = 0;
@@ -92,17 +104,22 @@ void RunSleepSelfTests(CpuContext* cpu) {
     } catch (const std::runtime_error&) {
         rejected = true;
     }
+
     if (!rejected || cpu->lr != 0x5678)
         throw std::runtime_error("Sleep exception restoration failed");
+
     Memory::Write32(pending, 1);
     rejected = false;
+
     try {
         SleepTicks(cpu, [&] { ++calls; });
     } catch (const std::runtime_error&) {
         rejected = true;
     }
+
     if (!rejected)
         throw std::runtime_error("Sleep skipped a runnable thread");
+
     Memory::Write32(pending, oldPending);
     *cpu = original;
 }

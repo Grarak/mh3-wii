@@ -47,12 +47,14 @@
 struct NativeMaterialGpuRef {
     uint32_t index = 0;
 };
+
 // Any thread. Classifies and bakes the structure of `state` the first time it
 // is seen and returns its record, valid for the session (records are never
 // evicted; a quest uses a few dozen). The render thread uploads the Material
 // block at the record's first draw. Returns none when the table (4096) is
 // full: draw such materials without references.
 NativeMaterialGpuRef AcquireNativeMaterialGpu(const mh3_native_material_state& state);
+
 // What a writer of the record's Animated sections needs (immutable).
 struct NativeMaterialGpuInfo {
     bool valid = false;
@@ -60,12 +62,14 @@ struct NativeMaterialGpuInfo {
     bool dynamic = false;     // a coefficient picks an animated palette entry
     bool cpu_resolve = false; // BASIC with picks: the render thread reads the palette back
     uint8_t model = 0, textures = 0, alpha_test = 0;
+
     // Texture role -> texture coordinate generator (0xff unused). The role's
     // post SRT is the SRT slot its generator's post matrix row selects
     // (texgen POST_MATRIX_ROW / 3).
     uint8_t texture_coordinate[3]{0xff, 0xff, 0xff};
     uint64_t structure_key = 0;
 };
+
 NativeMaterialGpuInfo DescribeNativeMaterialGpu(NativeMaterialGpuRef material);
 
 // ---- Animated sections ----
@@ -73,18 +77,21 @@ NativeMaterialGpuInfo DescribeNativeMaterialGpu(NativeMaterialGpuRef material);
 struct NativeMaterialGpuAnimatedRef {
     uint32_t value = UINT32_MAX;
 };
+
 // Any thread: a persistent section with these values (e.g. a material
 // record's own colours, alpha compare, LOD bias and SRT); uploaded by the
 // render thread at first use. Release returns it after the render thread's
 // next EndNativeMaterialGpuPacket; no item recorded later may use it.
 NativeMaterialGpuAnimatedRef CreateNativeMaterialGpuAnimated(const mh3_shade_gpu_animated& values);
 void ReleaseNativeMaterialGpuAnimated(NativeMaterialGpuAnimatedRef animated);
+
 // Producer ring (8 segments of 64 KiB, 240 sections each): GPU-visible memory
 // the game thread writes directly (CDRAM on the Vita, no packet copy).
 // Begin: game thread, before the first write of packet `sequence`; reuses the
 // segment of the packet 8 sequences earlier once the render thread ended it
 // (or a later packet) and the GPU completed it, waiting otherwise.
 void BeginNativeMaterialGpuPacket(uint64_t sequence);
+
 // Game thread: a write-only section of the current packet (fill all of it);
 // *animated identifies it for the packet item. On the Vita it is
 // write-combined CDRAM: build the section in a local struct and copy it with
@@ -92,6 +99,7 @@ void BeginNativeMaterialGpuPacket(uint64_t sequence);
 // (before the first EndNativeMaterialGpuPacket) or the segment is full: keep
 // the values another way for that draw.
 mh3_shade_gpu_animated* WriteNativeMaterialGpuAnimated(NativeMaterialGpuAnimatedRef* animated);
+
 // Render thread: after the draws of packet `sequence` were submitted (also
 // creates the ring and retires released persistent sections). Mandatory for
 // every rendered packet: Begin stops waiting for an unended segment after 1 s
@@ -123,4 +131,5 @@ struct NativeMaterialGpuStatistics {
     uint64_t ring_waits = 0, ring_full = 0, ring_timeouts = 0;
     size_t persistent_bytes = 0;
 };
+
 NativeMaterialGpuStatistics ReadNativeMaterialGpuStatistics();

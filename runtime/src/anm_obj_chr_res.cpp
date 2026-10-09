@@ -41,11 +41,13 @@ enum : uint32_t {
     kEnd = 0xC,
     kPolicy = 0x10,
 };
+
 constexpr uint32_t kGetAnmResult = 0x8008D660; // ResAnmChr::GetAnmResult(res, result, node, frame)
 
 float F32(uint32_t address) {
     return MemoryInline::FlatReadFloat32(address);
 }
+
 uint32_t Bits(float value) {
     uint32_t bits;
     std::memcpy(&bits, &value, 4);
@@ -57,12 +59,14 @@ bool ValidPointer(uint32_t p) {
     return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u || (p & 0xFF800000u) == 0xC1000000u ||
            (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
 }
+
 // nw4r::db::Panic (0x80501130, g3d_anmchr.cpp) halts the game; so does the port.
 [[noreturn]] void Panic(const char* what, uint32_t line, uint32_t value) {
     char text[128];
     std::snprintf(text, sizeof text, "NW4R panic (g3d_anmchr.cpp:%u): %s (%08x)", line, what, value);
     throw std::runtime_error(text);
 }
+
 void CheckPointer(uint32_t p, uint32_t line) {
     if (!ValidPointer(p)) [[unlikely]]
         Panic("Pointer Error", line, p);
@@ -73,6 +77,7 @@ float PolicyFrame(GuestCall& game, uint32_t control, float frame) {
     game(Memory::Read32(control + kPolicy), {}, {F32(control + kStart), F32(control + kEnd), frame});
     return game.F1();
 }
+
 void SetControlFrame(GuestCall& game, uint32_t control, float frame) {
     Memory::WriteFloat32(control + kFrame, PolicyFrame(game, control, frame));
 }
@@ -83,10 +88,13 @@ void UpdateCache(GuestCall& game, uint32_t self) {
     CheckPointer(cache, 1327);
     const float frame = F32(self + kFrameCtrl + kFrame);
     const uint32_t count = Memory::Read32(self + kCount), bindings = Memory::Read32(self + kBindings);
+
     for (uint32_t i = 0; i < count; ++i) {
         const uint32_t binding = MemoryInline::FlatRead16(bindings + 2 * i);
+
         if (binding & 0x8000)
             continue;
+
         const uint32_t node = binding & 0x3FFF;
         game.Call<kGetAnmResult>({self + kRes, cache + kResultBytes * node, node}, {frame});
     }
@@ -94,9 +102,11 @@ void UpdateCache(GuestCall& game, uint32_t self) {
 
 void SetFrame(GuestCall& game, uint32_t self, float frame) {
     CheckPointer(self, 1049);
+
     if (!std::isfinite(frame)) [[unlikely]]
         Panic("Floating Point Value Error frame", 1050, Bits(frame));
     SetControlFrame(game, self + kFrameCtrl, frame);
+
     if (Memory::Read32(self + kCache))
         UpdateCache(game, self);
 }
@@ -104,27 +114,33 @@ void SetFrame(GuestCall& game, uint32_t self, float frame) {
 void UpdateFrame(GuestCall& game, uint32_t self, uint32_t r2, uint32_t r13) {
     CheckPointer(self, 1096);
     const uint32_t control = self + kFrameCtrl;
+
     if (F32(control + kRate) == F32(r2 - 32088)) // 0.0f
         return;
     // FrameCtrl::UpdateFrm: frame + rate * smBaseUpdateRate, each rounded to single.
     const float advance = F32(control + kRate) * F32(r13 - 31928);
     SetControlFrame(game, control, F32(control + kFrame) + advance);
+
     if (Memory::Read32(self + kCache))
         UpdateCache(game, self);
 }
 
 uint32_t GetResult(GuestCall& game, uint32_t self, uint32_t result, uint32_t index) {
     CheckPointer(self, 1297);
+
     if (int32_t(index) > int32_t(Memory::Read32(self + kCount)) - 1) [[unlikely]]
         Panic("Failed assertion idx < count", 1298, index);
     CheckPointer(result, 1299);
     const uint32_t binding = MemoryInline::FlatRead16(Memory::Read32(self + kBindings) + 2 * index);
+
     if (binding & 0xC000) {
         MemoryInline::FlatWrite32(result, 0);
         return result;
     }
+
     if (const uint32_t cache = Memory::Read32(self + kCache))
         return cache + kResultBytes * binding;
+
     game.Call<kGetAnmResult>({self + kRes, result, binding}, {F32(self + kFrameCtrl + kFrame)});
     return result;
 }
@@ -136,15 +152,18 @@ void SetFramePort(CpuContext* ctx) {
     GuestCall game{ctx};
     SetFrame(game, frame.Arg(3), float(ctx->fpr[1].d));
 }
+
 void GetFramePort(CpuContext* ctx) {
     CheckPointer(ctx->gpr[3], 1064);
     ctx->fpr[1].d = F32(ctx->gpr[3] + kFrameCtrl + kFrame);
 }
+
 void UpdateFramePort(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     UpdateFrame(game, frame.Arg(3), frame.Arg(2), frame.Arg(13));
 }
+
 void GetResultPort(CpuContext* ctx) {
     uint32_t out;
     {
@@ -152,13 +171,16 @@ void GetResultPort(CpuContext* ctx) {
         GuestCall game{ctx};
         out = GetResult(game, frame.Arg(3), frame.Arg(4), frame.Arg(5));
     }
+
     ctx->gpr[3] = out;
 }
+
 void UpdateCachePort(CpuContext* ctx) {
     GuestFrame frame(ctx, 32);
     GuestCall game{ctx};
     UpdateCache(game, frame.Arg(3));
 }
+
 void ControlSetFramePort(CpuContext* ctx) {
     float stored;
     {
@@ -167,8 +189,10 @@ void ControlSetFramePort(CpuContext* ctx) {
         SetControlFrame(game, frame.Arg(3), float(ctx->fpr[1].d));
         stored = F32(frame.Arg(3) + kFrame);
     }
+
     ctx->fpr[1].d = stored;
 }
+
 void ControlUpdateFrmPort(CpuContext* ctx) {
     const uint32_t control = ctx->gpr[3];
     ctx->fpr[1].d = F32(control + kFrame) + F32(control + kRate) * F32(ctx->gpr[13] - 31928);
@@ -179,16 +203,20 @@ void ControlUpdateFrmPort(CpuContext* ctx) {
 
 uint32_t AnmObjChrResResultAt(GuestCall& game, uint32_t anim, uint32_t result, uint32_t index, float frame) {
     CheckPointer(anim, 1049);
+
     if (!std::isfinite(frame)) [[unlikely]]
         Panic("Floating Point Value Error frame", 1050, Bits(frame));
     CheckPointer(result, 1299);
+
     if (int32_t(index) > int32_t(Memory::Read32(anim + kCount)) - 1) [[unlikely]]
         Panic("Failed assertion idx < count", 1298, index);
     const uint32_t binding = MemoryInline::FlatRead16(Memory::Read32(anim + kBindings) + 2 * index);
+
     if (binding & 0xC000) {
         MemoryInline::FlatWrite32(result, 0);
         return result;
     }
+
     const float at = PolicyFrame(game, anim + kFrameCtrl, frame);
     game.Call<kGetAnmResult>({anim + kRes, result, binding}, {at});
     return result;

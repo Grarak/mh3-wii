@@ -16,18 +16,22 @@ const mh3_res_memory& LiveMemory() {
                                        {Memory::GetPointer(0xe0000000, 0x4000), 0x4000}};
     return memory;
 }
+
 const mh3_res_memory& ResourceMemory() {
     return LiveMemory();
 }
+
 uint32_t Result(mh3_res_status status, uint32_t value) {
     if (status != MH3_RES_OK) {
         char message[96];
         std::snprintf(message, sizeof message, "Native model resource access failed (%d)", int(status));
         throw std::runtime_error(message);
     }
+
     return value;
 }
 } // namespace
+
 const mh3_res_memory& MH3NativeResourceMemory() {
     return ResourceMemory();
 }
@@ -51,8 +55,10 @@ static void MdlNodePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_NODES, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNode(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlNode");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlNode", PortCheck::Returns::Gpr3, func_80097F14, MdlNodePort);
     else
@@ -66,8 +72,10 @@ static void MdlPositionIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlPositionInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlPositionInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlPositionInt", PortCheck::Returns::Gpr3, func_8009802C, MdlPositionIntPort);
     else
@@ -81,8 +89,10 @@ static void MdlPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlPosition(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlPosition");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlPosition", PortCheck::Returns::Gpr3, func_80098094, MdlPositionPort);
     else
@@ -96,8 +106,10 @@ static void MdlNormalIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_NORMALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNormalInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlNormalInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlNormalInt", PortCheck::Returns::Gpr3, func_80098144, MdlNormalIntPort);
     else
@@ -111,8 +123,10 @@ static void MdlNormalPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_NORMALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNormal(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlNormal");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlNormal", PortCheck::Returns::Gpr3, func_800981AC, MdlNormalPort);
     else
@@ -126,8 +140,10 @@ static void MdlColorIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_COLORS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlColorInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlColorInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlColorInt", PortCheck::Returns::Gpr3, func_8009825C, MdlColorIntPort);
     else
@@ -141,8 +157,10 @@ static void MdlColorPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_COLORS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlColor(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlColor");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlColor", PortCheck::Returns::Gpr3, func_800982C4, MdlColorPort);
     else
@@ -156,8 +174,10 @@ static void MdlTexCoordIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_TEXCOORDS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlTexCoordInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlTexCoordInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlTexCoordInt", PortCheck::Returns::Gpr3, func_800983E0, MdlTexCoordIntPort);
     else
@@ -171,8 +191,10 @@ static void MdlTexCoordPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_TEXCOORDS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlTexCoord(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlTexCoord");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlTexCoord", PortCheck::Returns::Gpr3, func_80098448, MdlTexCoordPort);
     else
@@ -186,8 +208,10 @@ static void MdlFurPositionIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurPositionInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlFurPositionInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlFurPositionInt", PortCheck::Returns::Gpr3, func_80098680, MdlFurPositionIntPort);
     else
@@ -201,8 +225,10 @@ static void MdlFurPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurPosition(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlFurPosition");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlFurPosition", PortCheck::Returns::Gpr3, func_800986E8, MdlFurPositionPort);
     else
@@ -216,8 +242,10 @@ static void MdlMaterialIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_MATERIALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlMaterialInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlMaterialInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlMaterialInt", PortCheck::Returns::Gpr3, func_800987FC, MdlMaterialIntPort);
     else
@@ -231,8 +259,10 @@ static void MdlMaterialPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_MATERIALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlMaterial(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlMaterial");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlMaterial", PortCheck::Returns::Gpr3, func_80098864, MdlMaterialPort);
     else
@@ -246,8 +276,10 @@ static void MdlShapeIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_SHAPES, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlShapeInt(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlShapeInt");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlShapeInt", PortCheck::Returns::Gpr3, func_80098914, MdlShapeIntPort);
     else
@@ -261,8 +293,10 @@ static void MdlShapePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_SHAPES, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlShape(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlShape");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlShape", PortCheck::Returns::Gpr3, func_8009897C, MdlShapePort);
     else
@@ -276,8 +310,10 @@ static void MdlNodeCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_NODES, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNodeCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlNodeCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlNodeCount", PortCheck::Returns::Gpr3, func_80097FE4, MdlNodeCountPort);
     else
@@ -291,8 +327,10 @@ static void MdlPositionCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_POSITIONS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlPositionCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlPositionCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlPositionCount", PortCheck::Returns::Gpr3, func_800980FC, MdlPositionCountPort);
     else
@@ -306,8 +344,10 @@ static void MdlNormalCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_NORMALS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNormalCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlNormalCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlNormalCount", PortCheck::Returns::Gpr3, func_80098214, MdlNormalCountPort);
     else
@@ -321,8 +361,10 @@ static void MdlColorCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_COLORS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlColorCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlColorCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlColorCount", PortCheck::Returns::Gpr3, func_8009832C, MdlColorCountPort);
     else
@@ -336,8 +378,10 @@ static void MdlTexCoordCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_TEXCOORDS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlTexCoordCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlTexCoordCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlTexCoordCount", PortCheck::Returns::Gpr3, func_800984B0, MdlTexCoordCountPort);
     else
@@ -351,8 +395,10 @@ static void MdlFurVectorCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_VECTORS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurVectorCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlFurVectorCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlFurVectorCount", PortCheck::Returns::Gpr3, func_800985CC, MdlFurVectorCountPort);
     else
@@ -366,8 +412,10 @@ static void MdlFurPositionCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_POSITIONS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurPositionCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlFurPositionCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlFurPositionCount", PortCheck::Returns::Gpr3, func_80098750, MdlFurPositionCountPort);
     else
@@ -381,8 +429,10 @@ static void MdlMaterialCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_MATERIALS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlMaterialCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlMaterialCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlMaterialCount", PortCheck::Returns::Gpr3, func_800988CC, MdlMaterialCountPort);
     else
@@ -396,8 +446,10 @@ static void MdlShapeCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_SHAPES, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlShapeCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MdlShapeCount");
+
     if (check)
         PortCheck::RunPure(cpu, "MdlShapeCount", PortCheck::Returns::Gpr3, func_800989E4, MdlShapeCountPort);
     else
@@ -411,8 +463,10 @@ static void ShpRefPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpRef(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpRef");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpRef", PortCheck::Returns::Gpr3, func_800773FC, ShpRefPort);
     else
@@ -426,8 +480,10 @@ static void ShpRefConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpRefConst(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpRefConst");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpRefConst", PortCheck::Returns::Gpr3, func_800776D8, ShpRefConstPort);
     else
@@ -441,8 +497,10 @@ static void MatRefConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MatRefConst(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MatRefConst");
+
     if (check)
         PortCheck::RunPure(cpu, "MatRefConst", PortCheck::Returns::Gpr3, func_80077630, MatRefConstPort);
     else
@@ -456,8 +514,10 @@ static void TagRefConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRefConst(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagRefConst");
+
     if (check)
         PortCheck::RunPure(cpu, "TagRefConst", PortCheck::Returns::Gpr3, func_80099578, TagRefConstPort);
     else
@@ -471,8 +531,10 @@ static void TagRefPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRef(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagRef");
+
     if (check)
         PortCheck::RunPure(cpu, "TagRef", PortCheck::Returns::Gpr3, func_800997A4, TagRefPort);
     else
@@ -486,8 +548,10 @@ static void ResDictionaryCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_dictionary_count(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ResDictionaryCount(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ResDictionaryCount");
+
     if (check)
         PortCheck::RunPure(cpu, "ResDictionaryCount", PortCheck::Returns::Gpr3, func_800696C8, ResDictionaryCountPort);
     else
@@ -501,8 +565,10 @@ static void ShpVisiblePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_visible(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpVisible(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpVisible");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpVisible", PortCheck::Returns::Gpr3, func_800776A8, ShpVisiblePort);
     else
@@ -516,8 +582,10 @@ static void NodeVisiblePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_node_visible(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_NodeVisible(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("NodeVisible");
+
     if (check)
         PortCheck::RunPure(cpu, "NodeVisible", PortCheck::Returns::Gpr3, func_80078968, NodeVisiblePort);
     else
@@ -531,8 +599,10 @@ static void NodeIdPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_word(&ResourceMemory(), cpu->gpr[3], 0x0c, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_NodeId(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("NodeId");
+
     if (check)
         PortCheck::RunPure(cpu, "NodeId", PortCheck::Returns::Gpr3, func_8005D0B4, NodeIdPort);
     else
@@ -546,8 +616,10 @@ static void ShpParentPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_parent(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpParent(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpParent");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpParent", PortCheck::Returns::Gpr3, func_80099464, ShpParentPort);
     else
@@ -561,8 +633,10 @@ static void ShpPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_array(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpPosition(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpPosition");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpPosition", PortCheck::Returns::Gpr3, func_800999D8, ShpPositionPort);
     else
@@ -576,8 +650,10 @@ static void ShpNormalPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_array(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpNormal(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpNormal");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpNormal", PortCheck::Returns::Gpr3, func_80099A4C, ShpNormalPort);
     else
@@ -591,8 +667,10 @@ static void ShpColorPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_color(&ResourceMemory(), cpu->gpr[3], cpu->gpr[4], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpColor(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpColor");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpColor", PortCheck::Returns::Gpr3, func_80099ABC, ShpColorPort);
     else
@@ -606,8 +684,10 @@ static void ShpTexCoordPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_texcoord(&ResourceMemory(), cpu->gpr[3], cpu->gpr[4], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpTexCoord(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpTexCoord");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpTexCoord", PortCheck::Returns::Gpr3, func_80099B74, ShpTexCoordPort);
     else
@@ -621,8 +701,10 @@ static void ShpFurPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_array(&ResourceMemory(), cpu->gpr[3], 13, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpFurPosition(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpFurPosition");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpFurPosition", PortCheck::Returns::Gpr3, func_80099C14, ShpFurPositionPort);
     else
@@ -636,8 +718,10 @@ static void ShpSetupTagConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 0, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpSetupTagConst(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpSetupTagConst");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpSetupTagConst", PortCheck::Returns::Gpr3, func_80099604, ShpSetupTagConstPort);
     else
@@ -651,8 +735,10 @@ static void ShpSetupTagPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 0, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpSetupTag(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpSetupTag");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpSetupTag", PortCheck::Returns::Gpr3, func_80099810, ShpSetupTagPort);
     else
@@ -666,8 +752,10 @@ static void ShpPrimitiveTagConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 1, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpPrimitiveTagConst(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpPrimitiveTagConst");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpPrimitiveTagConst", PortCheck::Returns::Gpr3, func_8009A15C, ShpPrimitiveTagConstPort);
     else
@@ -681,8 +769,10 @@ static void ShpPrimitiveTagPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 1, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpPrimitiveTag(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpPrimitiveTag");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpPrimitiveTag", PortCheck::Returns::Gpr3, func_80099E5C, ShpPrimitiveTagPort);
     else
@@ -696,8 +786,10 @@ static void TagDisplayListPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_tag_list(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagDisplayList(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagDisplayList");
+
     if (check)
         PortCheck::RunPure(cpu, "TagDisplayList", PortCheck::Returns::Gpr3, func_8009974C, TagDisplayListPort);
     else
@@ -711,8 +803,10 @@ static void ShpSetupDisplayListPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_setup(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpSetupDisplayList(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpSetupDisplayList");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpSetupDisplayList", PortCheck::Returns::Gpr3, func_80099710, ShpSetupDisplayListPort);
     else
@@ -726,8 +820,10 @@ static void TagBufferSizePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_word(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagBufferSize(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagBufferSize");
+
     if (check)
         PortCheck::RunPure(cpu, "TagBufferSize", PortCheck::Returns::Gpr3, func_80099E38, TagBufferSizePort);
     else
@@ -741,8 +837,10 @@ static void TagCommandSizePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_word(&ResourceMemory(), cpu->gpr[3], 4, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagCommandSize(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagCommandSize");
+
     if (check)
         PortCheck::RunPure(cpu, "TagCommandSize", PortCheck::Returns::Gpr3, func_8009A07C, TagCommandSizePort);
     else
@@ -756,8 +854,10 @@ static void ShpRelativeModelPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_offset(&ResourceMemory(), cpu->gpr[3], std::bit_cast<int32_t>(cpu->gpr[4]), 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpRelativeModel(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ShpRelativeModel");
+
     if (check)
         PortCheck::RunPure(cpu, "ShpRelativeModel", PortCheck::Returns::Gpr3, func_800994A0, ShpRelativeModelPort);
     else
@@ -771,8 +871,10 @@ static void TagRelativeBytesPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_offset(&ResourceMemory(), cpu->gpr[3], std::bit_cast<int32_t>(cpu->gpr[4]), 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRelativeBytes(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagRelativeBytes");
+
     if (check)
         PortCheck::RunPure(cpu, "TagRelativeBytes", PortCheck::Returns::Gpr3, func_80099788, TagRelativeBytesPort);
     else
@@ -786,8 +888,10 @@ static void ResDictionaryValidPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_valid(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ResDictionaryValid(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("ResDictionaryValid");
+
     if (check)
         PortCheck::RunPure(cpu, "ResDictionaryValid", PortCheck::Returns::Gpr3, func_80062918, ResDictionaryValidPort);
     else
@@ -801,8 +905,10 @@ static void MatValidPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_valid(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MatValid(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("MatValid");
+
     if (check)
         PortCheck::RunPure(cpu, "MatValid", PortCheck::Returns::Gpr3, func_80077744, MatValidPort);
     else
@@ -816,8 +922,10 @@ static void TagValidPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_valid(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagValid(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagValid");
+
     if (check)
         PortCheck::RunPure(cpu, "TagValid", PortCheck::Returns::Gpr3, func_800995F0, TagValidPort);
     else
@@ -831,8 +939,10 @@ static void TagRefUncheckedConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRefUncheckedConst(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagRefUncheckedConst");
+
     if (check)
         PortCheck::RunPure(cpu, "TagRefUncheckedConst", PortCheck::Returns::Gpr3, func_800995DC, TagRefUncheckedConstPort);
     else
@@ -846,8 +956,10 @@ static void TagRefUncheckedPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRefUnchecked(CpuContext* cpu) {
     static const bool check = PortCheck::Enabled("TagRefUnchecked");
+
     if (check)
         PortCheck::RunPure(cpu, "TagRefUnchecked", PortCheck::Returns::Gpr3, func_80099808, TagRefUncheckedPort);
     else

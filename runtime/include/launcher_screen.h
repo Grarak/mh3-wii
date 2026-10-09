@@ -8,22 +8,28 @@
 
 namespace VitaLauncher {
 constexpr uint32_t ScreenWidth = 960, ScreenHeight = 544;
+
 // A filled rectangle in screen pixels, origin top left; color is 0xAABBGGRR.
 struct Rectangle {
     float x, y, w, h;
     uint32_t color;
 };
+
 // Creates the renderer at the screen size and starts its render thread. No
 // game texture or model assets are opened: the disc may not be ready yet.
 void StartScreen();
+
 // One frame: the rectangles in order, or only the black clear when null.
 // Never waits for the GPU; a frame the renderer cannot take is skipped.
 void PresentScreen(const std::vector<Rectangle>* rectangles);
+
 // Frames presented so far (the game's logical frame count starts after them).
 uint64_t ScreenFrames();
+
 // Runs task on the render thread and returns once it ran, presenting
 // background (or black frames) meanwhile. A failing task throws here.
 void RunOnRenderThread(std::function<void()> task, const std::vector<Rectangle>* background = nullptr);
+
 // Ends the launcher's use of the renderer: stops the render thread, which
 // hands the graphics context back to the calling thread, and opens the game's
 // native assets (MH3_DISC_DIR). The last frame stays on the display until the

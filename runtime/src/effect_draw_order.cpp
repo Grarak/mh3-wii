@@ -51,6 +51,7 @@ void DrawInfoCopy(uint32_t to, uint32_t from) {
     FlatWrite32(to + 0x64, FlatRead32(from + 0x64));
     FlatWrite32(to + 0x68, FlatRead32(from + 0x68));
     FlatWrite8(to + 0x6C, FlatRead8(from + 0x6C));
+
     for (uint32_t k = 0x70; k < 0x98; k += 4) // 0x70..0x88, then the VEC3 at 0x8C
         FlatWrite32(to + k, FlatRead32(from + k));
     FlatWrite32(to + 0x98, FlatRead32(from + 0x98));
@@ -69,6 +70,7 @@ void DrawMtx(CpuContext* cpu, uint32_t manager) {
 
 void BillboardStrategyDraw(CpuContext* cpu, uint32_t strategy, uint32_t info, uint32_t manager) {
     const uint32_t body = FlatRead32(manager + 0x24) + 0x9C;
+
     switch (FlatRead8(body + 0xAD)) {
     case 0:
     case 3:
@@ -88,12 +90,15 @@ void BillboardStrategyDraw(CpuContext* cpu, uint32_t strategy, uint32_t info, ui
 
 void ManagerDraw(CpuContext* cpu, uint32_t manager, uint32_t info) {
     const uint32_t resource = FlatRead32(manager + 0x24);
+
     if ((FlatRead16(resource + 8 + 0x94) & 0x400) || (FlatRead32(FlatRead32(manager + 0x20) + 0x20) & 2))
         return;
+
     GuestFrame frame(cpu, 0x110);
     const uint32_t copy = frame[0x48], matrix = frame[0x18], position = frame[0x08];
     DrawInfoCopy(copy, info);
     const float offset = FlatReadFloat32(resource + 0x9C + 0xB4);
+
     if (FlatReadFloat32(0x8079856C) != offset) {
         GuestCall{cpu}.Call<0x800A9508>({FlatRead32(manager + 0x20), matrix}); // EmitterCalcGlobalMtx
         // The emitter's position (Vec3Set 0x80041EF0 from its global matrix)
@@ -102,11 +107,14 @@ void ManagerDraw(CpuContext* cpu, uint32_t manager, uint32_t info) {
         FlatWrite32(position + 4, FlatRead32(matrix + 0x1C));
         FlatWrite32(position + 8, FlatRead32(matrix + 0x2C));
         FlatWriteFloat32(copy + 0x88, offset);
+
         for (uint32_t k = 0; k < 12; k += 4)
             FlatWrite32(copy + 0x8C + k, FlatRead32(position + k));
     }
+
     const uint32_t strategy = FlatRead32(manager + 0x2C);
     const uint32_t fn = FlatRead32(FlatRead32(strategy) + 0xC);
+
     if (fn == 0x800B9AE4)
         BillboardStrategyDraw(cpu, strategy, copy, manager);
     else
@@ -115,9 +123,11 @@ void ManagerDraw(CpuContext* cpu, uint32_t manager, uint32_t info) {
 
 void DrawOrderDraw(CpuContext* cpu, uint32_t effect, uint32_t info) {
     const uint32_t list = effect + 0x94;
+
     for (uint32_t m = ListNext(list, 0); m; m = ListNext(list, m)) {
         DrawMtx(cpu, m);
         const uint32_t fn = FlatRead32(FlatRead32(m + 0x1C) + 0x1C);
+
         if (fn == 0x800ADF3C)
             ManagerDraw(cpu, m, info);
         else
@@ -128,8 +138,10 @@ void DrawOrderDraw(CpuContext* cpu, uint32_t effect, uint32_t info) {
 void EffectDraw(CpuContext* cpu, uint32_t effect, uint32_t info) {
     if (FlatRead32(effect + 0x54) & 2)
         return;
+
     const uint32_t order = FlatRead32(effect + 0xA0);
     const uint32_t fn = FlatRead32(FlatRead32(order) + 0x10);
+
     if (fn == 0x800A3A08)
         DrawOrderDraw(cpu, effect, info);
     else
@@ -139,18 +151,23 @@ void EffectDraw(CpuContext* cpu, uint32_t effect, uint32_t info) {
 void EffectDrawPort(CpuContext* cpu) {
     EffectDraw(cpu, cpu->gpr[3], cpu->gpr[4]);
 }
+
 void DrawOrderDrawPort(CpuContext* cpu) {
     DrawOrderDraw(cpu, cpu->gpr[4], cpu->gpr[5]);
 }
+
 void DrawMtxPort(CpuContext* cpu) {
     DrawMtx(cpu, cpu->gpr[3]);
 }
+
 void ManagerDrawPort(CpuContext* cpu) {
     ManagerDraw(cpu, cpu->gpr[3], cpu->gpr[4]);
 }
+
 void DrawInfoCopyPort(CpuContext* cpu) {
     DrawInfoCopy(cpu->gpr[3], cpu->gpr[4]);
 }
+
 void BillboardStrategyDrawPort(CpuContext* cpu) {
     BillboardStrategyDraw(cpu, cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }

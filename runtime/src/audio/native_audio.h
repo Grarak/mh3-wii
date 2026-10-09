@@ -197,6 +197,7 @@ enum : uint32_t {
 struct SyncGroup {
     uint8_t offset, count;
 };
+
 constexpr SyncGroup kSyncGroups[32] = {
     {Pb::SrcSelect, 2}, {Pb::MixerCtrlHi, 2}, {Pb::State, 1}, {Pb::Type, 1}, {Pb::Mix, 24}, {Pb::Itd, 7}, {Pb::ItdTarget, 2}, {Pb::Dpop, 12},
     {Pb::VeVolume, 2},  {Pb::VeDelta, 1},     {Pb::LoopFlag, 8}, {Pb::LoopFlag, 1}, {Pb::LoopHi, 2}, {Pb::EndHi, 2}, {Pb::CurHi, 2}, {Pb::AdpcmCoefs, 20},
@@ -218,20 +219,25 @@ enum class Command : uint8_t {
     Aux = 5,      // [hdr bus][kind][parameters...]
     Reset = 6,    // [hdr]: stop every voice, drop every effect
 };
+
 enum : uint32_t { kFlagDepop = 1 };
 
 inline uint32_t Header(Command type, uint32_t words, uint32_t voice = 0, uint32_t flags = 0) {
     return uint32_t(type) | voice << 8 | flags << 16 | words << 24;
 }
+
 inline Command HeaderType(uint32_t header) {
     return Command(header & 0xFF);
 }
+
 inline uint32_t HeaderVoice(uint32_t header) {
     return (header >> 8) & 0xFF;
 }
+
 inline uint32_t HeaderFlags(uint32_t header) {
     return (header >> 16) & 0xFF;
 }
+
 inline uint32_t HeaderWords(uint32_t header) {
     return header >> 24;
 }
@@ -248,18 +254,22 @@ class CommandRing {
     uint32_t* Reserve(uint32_t words) {
         uint32_t position = pending_ & kMask;
         const uint32_t toEnd = kWords - position;
+
         if (words > toEnd) {
             if (Free() < toEnd + words)
                 return nullptr;
+
             data_[position] = Header(Command::Pad, 0) | (toEnd << 8);  // pad length in the voice/flags/words bits
             pending_ += toEnd;
             position = 0;
         } else if (Free() < words) {
             return nullptr;
         }
+
         pending_ += words;
         return &data_[position];
     }
+
     void Publish() { head_.store(pending_, std::memory_order_release); }
     uint32_t Used() const { return pending_ - tail_.load(std::memory_order_acquire); }
 
@@ -267,15 +277,20 @@ class CommandRing {
     const uint32_t* Peek() {
         const uint32_t head = head_.load(std::memory_order_acquire);
         uint32_t tail = tail_.load(std::memory_order_relaxed);
+
         while (tail != head) {
             const uint32_t* record = &data_[tail & kMask];
+
             if (HeaderType(*record) != Command::Pad)
                 return record;
+
             tail += *record >> 8;
             tail_.store(tail, std::memory_order_release);
         }
+
         return nullptr;
     }
+
     void Pop(uint32_t words) { tail_.store(tail_.load(std::memory_order_relaxed) + words, std::memory_order_release); }
     void Clear() {
         pending_ = 0;
@@ -302,6 +317,7 @@ struct ReverbConfig {
     uint32_t lastLength[3], lastPos[3];
     float allpassGain, lowpassCoef, crosstalk, level, outGain, sendGain;
 };
+
 enum class AuxKind : uint32_t { None = 0, ReverbHi = 1 };
 constexpr uint32_t kReverbConfigWords = sizeof(ReverbConfig) / 4;
 
@@ -329,10 +345,12 @@ Mixer& GetMixer();
 // Audio thread entry: renders `frames` interleaved stereo frames (left,
 // right) into `out`, a whole tick at a time internally.
 void MixerRender(int16_t* out, uint32_t frames);
+
 // Platform output (runtime/src/audio_output.cpp, runtime/vita/audio_output.cpp).
 // Starts the thread that pulls MixerRender at the device rate; idempotent.
 void StartAudioOutput();
 void StopAudioOutput();
+
 // Records the audio thread's identity (once, from that thread).
 void NoteAudioThread();
 
@@ -340,6 +358,7 @@ void NoteAudioThread();
 // changed groups for `tick`, stops freed voices once and takes the mixer's
 // state, envelope volume and position back; returns the voice records sent.
 uint32_t FlushVoices(CommandRing& ring, const Feedback& feedback, uint32_t tick);
+
 // After a mixer reset: no voice runs in the mixer.
 void ForgetMixerVoices();
 

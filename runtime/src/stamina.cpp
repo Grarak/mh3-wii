@@ -50,21 +50,27 @@ bool Is(GuestCall& game, uint32_t fn, uint32_t plw, uint32_t arg) {
 void Change(GuestCall& game, uint32_t plw, int16_t delta) {
     if (noStaminaDrain && delta < 0)
         return;
+
     if (game.Call<MasterCheck>({plw}) == 0)
         return;
+
     if (delta < 0) {
         if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB))
             delta = int16_t(delta * 3);
+
         const int32_t steps = int32_t(Memory::Read32(plw + kSteps));
+
         if (delta == -1) {
             if (Is(game, SkillCheck, plw, kSkillHalve) && (steps & 1) != 0)
                 return;
         } else if (Is(game, SkillCheck, plw, kSkillHalve)) {
             delta = int16_t(delta / 2);
         }
+
         if (Is(game, SkillCheck, plw, kSkillDouble) && steps % 5 == 0)
             delta = int16_t(delta * 2);
     }
+
     game.Call<SetConditionState>({plw, uint32_t(int32_t(delta))});
 }
 
@@ -73,16 +79,23 @@ void Change(GuestCall& game, uint32_t plw, int16_t delta) {
 void Drain(GuestCall& game, uint32_t plw) {
     if (noStaminaDrain)
         return;
+
     int16_t delta = -1;
+
     if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB))
         delta = -3;
+
     uint16_t skipMask = Is(game, SkillCheck, plw, kSkillHalve) ? 1 : 0;
+
     if (Is(game, CatSkillCheck, plw, kCatSkillEvenOnly))
         skipMask = skipMask != 0 ? 3 : 1;
+
     if (skipMask != 0 && (Memory::Read32(plw + kSteps) & skipMask) != 0)
         return;
+
     if (Is(game, SkillCheck, plw, kSkillDouble) && int32_t(Memory::Read32(plw + kSteps)) % 5 == 0)
         delta = int16_t(delta * 2);
+
     game.Call<SetConditionState>({plw, uint32_t(int32_t(delta))});
 }
 
@@ -91,14 +104,17 @@ template <typename F>
 void PerTick(uint32_t plw, F once) {
     const uint32_t ticks = GameStep::Ticks();
     const uint32_t steps = Memory::Read32(plw + kSteps);
+
     for (uint32_t t = 0; t < ticks; ++t) {
         Memory::Write32(plw + kSteps, steps - (ticks - 1 - t));
         once();
     }
+
     Memory::Write32(plw + kSteps, steps);
 }
 
 } // namespace
+
 void LauncherCheats::SetNoStaminaDrain(bool enabled) {
     noStaminaDrain = enabled;
 }

@@ -52,5 +52,6 @@ private:
   size_t m_used = 0;
   size_t m_highWater = 0;
 };
+
 using CdramArena = MappedArena;
 } // namespace aurora::gxm

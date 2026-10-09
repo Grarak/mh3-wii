@@ -24,6 +24,7 @@ void write_data_grow(const void* data, uint32_t length);
 
 inline void write_data(const void* data, const uint32_t length) {
   aurora_legacy_gx_panic("aurora::gx::fifo::write_data");
+
   if (!detail::sInDisplayList)
     LIKELY {
       if (detail::sBufferSize + length <= detail::sBufferCapacity)
@@ -42,6 +43,7 @@ inline void write_data(const void* data, const uint32_t length) {
 
 inline void write_u8(const uint8_t val) {
   aurora_legacy_gx_panic("aurora::gx::fifo::write_u8");
+
   if (!detail::sInDisplayList)
     LIKELY {
       if (detail::sBufferSize < detail::sBufferCapacity)

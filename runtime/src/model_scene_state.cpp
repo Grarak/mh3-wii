@@ -18,29 +18,36 @@ namespace {
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
     throw std::runtime_error("Native scene input failed: " + std::to_string(status));
 }
+
 inline void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK) [[unlikely]]
         CheckedFailed(status);
 }
+
 uint32_t Resource(uint32_t reference) {
     uint32_t result = 0;
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &result));
     return result;
 }
+
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
+
 mh3_res_span Bytes(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
+
 mh3_native_camera Camera(uint32_t resource) {
     mh3_native_camera camera; // mh3_camera_read writes every field
     Checked(mh3_camera_read(Bytes(resource, 268), &camera));
     return camera;
 }
+
 void StoreCamera(uint32_t resource, const mh3_native_camera& camera) {
     Checked(mh3_camera_store_matrices(Mutable(resource, 116), &camera));
 }
+
 // The preparations compute a matrix only while its valid flag (8 view, 128
 // projection) is clear, and then set it: an unchanged flags word means the
 // record already holds what a store would write.
@@ -48,15 +55,18 @@ void StorePreparedCamera(uint32_t resource, const mh3_native_camera& camera, uin
     if (camera.flags != flags)
         StoreCamera(resource, camera);
 }
+
 void StoreFloats(uint32_t destination, const float* data, size_t count) {
     for (size_t i = 0; i < count; ++i)
         Memory::WriteFloat32(destination + uint32_t(i * 4), data[i]);
 }
+
 void ApplyScissor(const mh3_native_camera& camera) {
     int32_t rectangle[4];
     Checked(mh3_camera_effective_scissor(&camera, rectangle));
     SetNativeScissor(rectangle[0], rectangle[1], rectangle[2], rectangle[3]);
 }
+
 // Imported light sets by LightState address (game thread). revision advances
 // whenever the slots' lights, source IDs or valid mask may change (an import
 // or a selection of another set); reselecting the current set changes only
@@ -65,9 +75,11 @@ struct LightSlots {
     mh3_native_light_slots slots;
     uint64_t revision;
 };
+
 FastMap<uint32_t, LightSlots> light_slots;
 uint64_t light_revision = 0;
 } // namespace
+
 void RestoreNativeModelCamera() {
     // 802BDCF4 ->800473FC ->ScnRoot::GetCamera, not an inherited backend
     // projection. MyPlayerIndex is the signed byte8065AA87 (800CF3E8).
@@ -81,9 +93,11 @@ void RestoreNativeModelCamera() {
     const uint32_t flags = camera.flags;
     Checked(mh3_camera_prepare_projection(&camera));
     StorePreparedCamera(resource, camera, flags);
+
     // 800E47B8 explicitly submits perspective, independent of CameraData.type.
     SetNativeProjection(camera.projection, true);
 }
+
 extern "C" void MH3_RestoreModelCamera(CpuContext*) {
     RestoreNativeModelCamera();
 }
@@ -92,6 +106,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800E47B8, MH3_RestoreModelCamera, "RestoreModelCam
 extern "C" void MH3_CameraProject(CpuContext* cpu) {
     if (!cpu->gpr[4])
         return;
+
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
     const uint32_t flags = camera.flags;
@@ -124,6 +139,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800754A4, MH3_CameraProjection, "CameraProjection"
 extern "C" void MH3_CameraPrepareProjection(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
     auto camera = Camera(resource);
+
     // Original helper recalculates unconditionally.
     camera.flags &= ~128u;
     Checked(mh3_camera_prepare_projection(&camera));
@@ -133,8 +149,10 @@ REGISTER_NATIVE_FUNCTION_AS(0x80075E3C, MH3_CameraPrepareProjection, "CameraPrep
 extern "C" void MH3_CameraApplyViewport(CpuContext* cpu) {
     const auto camera = Camera(Resource(cpu->gpr[3]));
     auto y = camera.viewport[1];
+
     if (Memory::Read8(0x8068a7e0) && !(camera.flags & 256))
         y -= 0.5f;
+
     SetNativeViewport(camera.viewport[0], y, camera.viewport[2], camera.viewport[3], camera.viewport[4], camera.viewport[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80075740, MH3_CameraApplyViewport, "CameraApplyViewport");
@@ -160,8 +178,10 @@ extern "C" void MH3_FogRange(CpuContext* cpu) {
     const uint32_t resource = Resource(cpu->gpr[3]);
     float projection[16];
     uint16_t table[10];
+
     for (uint32_t i = 0; i < 16; i++)
         projection[i] = Memory::ReadFloat32(cpu->gpr[6] + i * 4);
+
     Checked(mh3_fog_range_table(uint16_t(cpu->gpr[4]), projection, table));
     Checked(mh3_fog_range_store(Mutable(resource, 48), uint16_t(cpu->gpr[5]), table));
 }
@@ -176,6 +196,7 @@ extern "C" void MH3_FogSelect(CpuContext* cpu) {
     mh3_native_fog fog{};
     int apply = 0;
     Checked(mh3_fog_state_select(Mutable(cpu->gpr[3], 1544), cpu->gpr[4], &fog, &apply));
+
     if (apply)
         SetNativeFog(fog);
 }
@@ -184,10 +205,13 @@ REGISTER_NATIVE_FUNCTION_AS(0x80088200, MH3_FogSelect, "FogSelect");
 extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
     const uint32_t state = cpu->gpr[3], setting = cpu->gpr[4];
     const uint16_t count = Memory::Read16(setting), sets = Memory::Read16(setting + 2);
+
     if (count > 128 || sets > 128)
         throw std::runtime_error("Native LightSetting capacity exceeds128");
+
     mh3_matrix34 view{};
     Checked(mh3_scene_view_matrix(Bytes(0x80688d94, 52 + 32 * 48), &view));
+
     // Imported straight into the state's entry (a failed import stops the run).
     auto& entry = light_slots[state];
     Checked(mh3_light_state_import(Mutable(state, MH3_LIGHT_STATE_BYTES), count, sets, count ? Bytes(Memory::Read32(setting + 4), size_t(count) * 68) : mh3_res_span{},
@@ -199,21 +223,27 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x8008551C, MH3_ModelLightSetting, "ModelLightSetting");
 const mh3_native_light_slots& SelectNativeModelLightSet(uint32_t state, uint32_t set_id) {
     const auto found = light_slots.find(state);
+
     if (found == light_slots.end())
         throw std::runtime_error("LightState selection has no typed import producer");
+
     auto& entry = found->second;
     const auto bytes = Mutable(state, MH3_LIGHT_STATE_BYTES);
+
     // mh3_light_state_select decodes and reassigns slots only for a set other
     // than the one selected last (LightState +0x10); see its no-set path too.
     if (set_id < 128 && Memory::Read32(state + 16) != set_id)
         entry.revision = ++light_revision;
+
     Checked(mh3_light_state_select(bytes, set_id, &entry.slots));
     SetNativeModelLightSelection(entry.slots, &entry, entry.revision);
     return entry.slots;
 }
+
 extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
     const auto& slots = SelectNativeModelLightSet(cpu->gpr[3], cpu->gpr[4]);
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
+
     for (uint32_t i = 0; i < 4; i++)
         if (cpu->gpr[5 + i])
             Memory::Write32(cpu->gpr[5 + i], masks[i]);
@@ -232,13 +262,16 @@ void InvalidateNativeModelCaches(uint32_t fields) {
                                           Mutable(0x80685504, 12), Mutable(0x80796db4, 1),  Mutable(0x80685510, 32), Mutable(0x80796db8, 4), Mutable(0x80796dc8, 4),
                                           Mutable(0x80685d60, 4),  Mutable(0x80686378, 28), Mutable(0x80685530, 12), Mutable(0x80796db0, 1)};
     Checked(mh3_model_cache_invalidate(storage, fields));
+
     // The render thread's deferred preparation mirrors these caches.
     NoteNativeModelPrepInvalidate(fields);
+
     if (fields & 1024) {
         const uint32_t absent[]{0, 0, 0};
         StoreNativeModelMatrixSources(0x80685530, absent);
     }
 }
+
 extern "C" void MH3_ModelInvalidate(CpuContext* cpu) {
     InvalidateNativeModelCaches(cpu->gpr[3]);
 }
@@ -260,8 +293,10 @@ extern "C" void MH3_ModelTextureObject(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x800976C0, MH3_ModelTextureObject, "ModelTextureObject");
 extern "C" void MH3_ModelPaletteObject(CpuContext* cpu) {
     const uint32_t info = Resource(cpu->gpr[3]), objects = Resource(cpu->gpr[5]), slot = Memory::Read32(info + 16);
+
     if (slot >= 8)
         throw std::runtime_error("Native material palette slot outside0..7");
+
     const auto palette = ReadNativeResPalette(cpu->gpr[4]);
     StoreNativePaletteObject(objects + 4 + slot * 12, palette);
     Checked(mh3_texture_info_store_source(Mutable(info, 16), palette.resource_address, 1));
@@ -272,6 +307,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80097990, MH3_ModelPaletteObject, "ModelPaletteObj
 extern "C" void MH3_ModelTextureReplace(CpuContext* cpu) {
     const uint32_t objects = Resource(cpu->gpr[3]), palettes = Resource(cpu->gpr[4]), result = cpu->gpr[5];
     const auto texture_mask = Memory::Read8(result), palette_mask = Memory::Read8(result + 1);
+
     for (uint32_t i = 0; i < 8; i++) {
         if (texture_mask & (1u << i)) {
             const uint32_t object = objects + 4 + i * 32;
@@ -281,6 +317,7 @@ extern "C" void MH3_ModelTextureReplace(CpuContext* cpu) {
             binding.tlut_id = i;
             StoreNativeTextureObject(object, binding);
         }
+
         if (palette_mask & (1u << i))
             StoreNativePaletteObject(palettes + 4 + i * 12, ReadNativeResPalette(result + 0x24 + i * 4));
     }
@@ -293,24 +330,31 @@ REGISTER_NATIVE_FUNCTION_AS(0x80085EAC, MH3_ModelTextureSelect, "ModelTextureSel
 void SelectNativeModelTextureObjects(uint32_t state, uint32_t objects) {
     uint8_t changed = 0;
     Checked(mh3_resource_objects_cache(Mutable(state, 257), Bytes(objects, 260), 0, &changed));
+
     for (uint32_t i = 0; i < 8; i++) {
         int present = 0;
         Checked(mh3_resource_objects_present(Bytes(objects, 260), i, 0, &present));
+
         if (!present)
             continue;
+
         auto binding = ReadNativeTextureObject(objects + 4 + i * 32);
         binding.map_id = i;
+
         // Producer generation can change without changing CPU object bytes.
         // The backend checks explicit identity/revision, never texture content.
         BindNativeTexture(binding);
+
         if (changed & (1u << i)) {
             if (binding.source.width > UINT16_MAX || binding.source.height > UINT16_MAX)
                 throw std::runtime_error("Native G3D texture dimensions exceed coordinate cache");
+
             Checked(mh3_texture_scale_size(Mutable(0x8068530c, 36), i, uint16_t(binding.source.width), uint16_t(binding.source.height)));
             PublishNativeModelMapSize(i, uint16_t(binding.source.width), uint16_t(binding.source.height));
         }
     }
 }
+
 extern "C" void MH3_ModelPaletteSelect(CpuContext* cpu) {
     SelectNativeModelPaletteObjects(cpu->gpr[3], Resource(cpu->gpr[4]));
 }
@@ -318,17 +362,22 @@ REGISTER_NATIVE_FUNCTION_AS(0x800860A8, MH3_ModelPaletteSelect, "ModelPaletteSel
 void SelectNativeModelPaletteObjects(uint32_t state, uint32_t objects) {
     uint8_t changed = 0;
     Checked(mh3_resource_objects_cache(Mutable(state, 98), Bytes(objects, 100), 1, &changed));
+
     for (uint32_t i = 0; i < 8; i++) {
         int present = 0;
         Checked(mh3_resource_objects_present(Bytes(objects, 100), i, 1, &present));
+
         if (present)
             BindNativePalette(i, ReadNativePaletteObject(objects + 4 + i * 12));
     }
+
     Checked(mh3_texture_cache_palette_changed(Mutable(0x80685380, 257), changed));
 }
+
 extern "C" void MH3_ModelDepthCompare(CpuContext* cpu) {
     int apply = 0;
     Checked(mh3_depth_compare_cache(Mutable(cpu->gpr[3], 5), Mutable(0x80796db0, 1), uint8_t(cpu->gpr[4]) != 0, &apply));
+
     if (apply)
         SetNativeDepthCompareBeforeTexture(uint8_t(cpu->gpr[4]) != 0);
 }

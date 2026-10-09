@@ -9,6 +9,7 @@ FetchContent_Declare(libusb
   URL "https://github.com/libusb/libusb/releases/download/v${AURORA_LIBUSB_VERSION}/libusb-${AURORA_LIBUSB_VERSION}.tar.bz2"
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
+
 # Upstream ships no CMakeLists.txt, so this only populates the source tree.
 FetchContent_MakeAvailable(libusb)
 

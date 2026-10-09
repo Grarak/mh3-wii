@@ -31,18 +31,21 @@ std::optional<ConvertedTexture> load_png_file(const std::filesystem::path& path)
   PngStructs structs{};
 
   structs.file = std::move(std::ifstream(path, std::ifstream::in | std::ifstream::binary));
+
   if (!structs.file) {
     Log.error("failed to open file: {}", fs_path_to_string(path));
     return std::nullopt;
   }
 
   structs.pStruct = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+
   if (!structs.pStruct) {
     Log.error("png_create_read_struct failed");
     return std::nullopt;
   }
 
   structs.pInfo = png_create_info_struct(structs.pStruct);
+
   if (!structs.pInfo) {
     Log.error("png_create_info_struct failed");
     return std::nullopt;

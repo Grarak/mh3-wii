@@ -30,11 +30,13 @@ function(_aurora_sdl3_select_target)
       return()
     endif ()
   endif ()
+
   message(FATAL_ERROR "No SDL3 target found (looked for SDL3::SDL3 and SDL3::SDL3-static)")
 endfunction()
 
 # ── Auto: resolve provider based on platform availability ──
 set(_aurora_sdl3_provider "${AURORA_SDL3_PROVIDER}")
+
 if (_aurora_sdl3_provider STREQUAL "auto")
   # Prebuilt SDL3 packages are available for Windows (MSVC and MinGW)
   if (WIN32)
@@ -43,12 +45,14 @@ if (_aurora_sdl3_provider STREQUAL "auto")
     set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL ON)
     find_package(SDL3 QUIET)
     set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL OFF)
+
     if (SDL3_FOUND)
       set(_aurora_sdl3_provider "system")
     else ()
       set(_aurora_sdl3_provider "vendor")
     endif ()
   endif ()
+
   set(AURORA_SDL3_PROVIDER "${_aurora_sdl3_provider}" CACHE STRING "" FORCE)
   message(STATUS "aurora: SDL3 auto-resolved provider: ${_aurora_sdl3_provider}")
 endif ()
@@ -56,11 +60,13 @@ endif ()
 if (_aurora_sdl3_provider STREQUAL "system")
   # ── System: find_package(SDL3) ──
   message(STATUS "aurora: Using system SDL3 (provider=system)")
+
   if (NOT SDL3_FOUND)
     set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL ON)
     find_package(SDL3 REQUIRED)
     set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL OFF)
   endif ()
+
   _aurora_sdl3_select_target()
 
 elseif (_aurora_sdl3_provider STREQUAL "package")
@@ -87,6 +93,7 @@ elseif (_aurora_sdl3_provider STREQUAL "package")
         "Official SDL3 packages: https://github.com/libsdl-org/SDL/releases")
     endif ()
   endif ()
+
   message(STATUS "aurora: Fetching prebuilt SDL3 package from ${AURORA_SDL3_PACKAGE_URL}")
 
   include(FetchContent)
@@ -102,6 +109,7 @@ elseif (_aurora_sdl3_provider STREQUAL "package")
     "${sdl3_prebuilt_SOURCE_DIR}"
   )
   file(GLOB _sdl3_subdirs "${sdl3_prebuilt_SOURCE_DIR}/SDL3-*")
+
   foreach (_sd IN LISTS _sdl3_subdirs)
     list(APPEND _sdl3_search_paths
       "${_sd}/cmake"
@@ -127,12 +135,15 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
       set(SDL_STATIC OFF CACHE BOOL "Build SDL3 static library" FORCE)
       set(SDL_SHARED ON CACHE BOOL "Build SDL3 shared library" FORCE)
     endif ()
+
     if (WIN32)
       set(SDL_LIBC ON CACHE BOOL "Use the system C library" FORCE)
+
       if (AURORA_SDL3_LIBUSB)
         include("${CMAKE_CURRENT_LIST_DIR}/AuroraLibUSB.cmake")
       endif ()
     endif ()
+
     if(AURORA_GXM)
       # Compile-only CMake probes see this declaration, but libc lacks it.
       set(HAVE_SIGACTION OFF CACHE INTERNAL "Vita has no sigaction" FORCE)
@@ -143,14 +154,17 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
     endif()
 
     include(FetchContent)
+
     # Source fixes for the vendored SDL (see AuroraSDL3Patches.cmake). A freshly
     # downloaded tarball is patched by the PATCH_COMMAND; a tree handed in through
     # FETCHCONTENT_SOURCE_DIR_SDL skips the download steps, so patch it here.
     set(_aurora_sdl3_patches "${CMAKE_CURRENT_LIST_DIR}/AuroraSDL3Patches.cmake")
     include("${_aurora_sdl3_patches}")
+
     if (DEFINED FETCHCONTENT_SOURCE_DIR_SDL AND EXISTS "${FETCHCONTENT_SOURCE_DIR_SDL}")
       aurora_sdl3_apply_patches("${FETCHCONTENT_SOURCE_DIR_SDL}")
     endif ()
+
     FetchContent_Declare(SDL
       URL "https://github.com/libsdl-org/SDL/releases/download/release-${AURORA_SDL3_VERSION}/SDL3-${AURORA_SDL3_VERSION}.tar.gz"
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE
@@ -158,6 +172,7 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
       EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(SDL)
+
     if(VITA AND AURORA_GXM)
       include("${CMAKE_CURRENT_LIST_DIR}/AuroraVitaDependencyPatches.cmake")
       aurora_patch_vita_sdl("${sdl_SOURCE_DIR}")
@@ -165,6 +180,7 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
   else ()
     message(STATUS "aurora: Using existing SDL3")
   endif ()
+
   _aurora_sdl3_select_target()
 
 else ()

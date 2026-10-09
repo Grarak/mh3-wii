@@ -7,6 +7,7 @@
 
 namespace aurora::gxm {
 class Device;
+
 // The renderer owns one binding state. Draw payloads are borrowed from the
 // active staging slot; only the immutable numeric-ID stream is allocated here.
 class DrawMemory {
@@ -18,6 +19,7 @@ public:
   void bind(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes);
   SceGxmNotification completion_fence();
   void bind_uniform_range(uint32_t offset, uint32_t bytes);
+
   // Shaded draws: vertex BUFFER[0] draw, [1] scene, [2] draw + paletteOffset
   // (paletteBytes 0 = none); fragment BUFFER[0] draw + shadeOffset (shadeBytes
   // 0 = none: material-GPU programs), [1] scene.

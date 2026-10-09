@@ -40,11 +40,13 @@ std::mutex g_mutex;
 
 Params make_params(uint32_t srcWidth, uint32_t srcHeight, const FrameMapping& mapping) noexcept {
   Params params{};
+
   if (mapping.viewportPolicy == AURORA_VIEWPORT_NATIVE) {
     return params;
   }
 
   const auto logicalSize = mapping.logicalSize;
+
   if (logicalSize.x == 0 || logicalSize.y == 0 || srcWidth == 0 || srcHeight == 0) {
     return params;
   }
@@ -83,9 +85,11 @@ void request_snapshot() noexcept {
 
 bool read_latest(uint16_t x, uint16_t y, uint32_t& z) noexcept {
   std::lock_guard lock{g_mutex};
+
   if (x >= g_latest.width || y >= g_latest.height || g_latest.data.empty()) {
     return false;
   }
+
   z = g_latest.data[static_cast<size_t>(y) * g_latest.width + x] & 0x00ffffffu;
   return true;
 }
@@ -100,21 +104,27 @@ void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t
   const auto now = Clock::now();
   {
     std::lock_guard lock{g_mutex};
+
     if (!g_snapshotRequested || now < g_nextSnapshotTime) {
       return;
     }
+
     g_snapshotRequested = false;
     g_nextSnapshotTime = now + SnapshotInterval;
   }
 
   const auto dstSize = mapping.logicalSize;
+
   if (!depth || !g_program || dstSize.x == 0 || dstSize.y == 0 || width == 0 || height == 0) {
     return;
   }
+
   const GLuint program = g_program->get();
+
   if (program == 0) {
     return;
   }
+
   if (!g_target || g_target->width != dstSize.x || g_target->height != dstSize.y) {
     g_target = gl::create_texture(dstSize.x, dstSize.y, 1, gl::Format::RGBA8, "Depth Peek");
   }
@@ -132,9 +142,11 @@ void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t
   // Synchronous, but limited to DepthPeekSnapshotHz and a logical-size target.
   std::vector<uint32_t> data(static_cast<size_t>(dstSize.x) * dstSize.y);
   gl::read_pixels(g_target->gl(), 0, 0, dstSize.x, dstSize.y, data.data());
+
   for (auto& value : data) {
     value &= 0x00ffffffu; // little-endian RGBA bytes: r = low, g = mid, b = high
   }
+
   std::lock_guard lock{g_mutex};
   g_latest.width = dstSize.x;
   g_latest.height = dstSize.y;

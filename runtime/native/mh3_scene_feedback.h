@@ -11,6 +11,7 @@ typedef struct mh3_scene_capture_plan {
     float source[4]; /* logical top-left x,y,width,height */
     uint8_t box_filter;
 } mh3_scene_capture_plan;
+
 typedef struct mh3_scene_quad_plan {
     float projection[16], position[12], vertices[4][3], uv[4][2];
     uint8_t color[4];
@@ -18,6 +19,7 @@ typedef struct mh3_scene_quad_plan {
     mh3_native_material_state material;
     uint32_t identity, width, height, format;
 } mh3_scene_quad_plan;
+
 typedef struct mh3_temporal_feedback_input {
     uint32_t identity, frames;
     uint16_t screen_width, screen_height;
@@ -25,12 +27,14 @@ typedef struct mh3_temporal_feedback_input {
     uint8_t enabled, mode, alpha, amount, threshold_mode, threshold_alpha, threshold_gray, subtract_scale;
     uint8_t tint[3];
 } mh3_temporal_feedback_input;
+
 typedef struct mh3_temporal_feedback_plan {
     uint32_t frames;
     uint8_t enabled, draw_previous, draw_threshold;
     mh3_scene_capture_plan capture;
     mh3_scene_quad_plan initial, previous, threshold;
 } mh3_temporal_feedback_plan;
+
 /* A disabled input sets only frames, enabled and the draw flags; a failed
  * prepare leaves the plan untouched. */
 int mh3_scene_temporal_prepare(const mh3_temporal_feedback_input *input, const mh3_draw_state *draw, const mh3_native_material_state *material, mh3_temporal_feedback_plan *out);
@@ -44,13 +48,16 @@ typedef struct mh3_scene_glare_input {
     int16_t start_width, start_height;
     float darken, brighten, projection_width, projection_height;
 } mh3_scene_glare_input;
+
 enum {
     MH3_SCENE_GLARE_LEVELS = 16
 };
+
 typedef struct mh3_scene_glare_level {
     uint16_t source_width, source_height, width, height;
     int16_t draw_width, draw_height;
 } mh3_scene_glare_level;
+
 typedef struct mh3_scene_glare_plan {
     uint32_t identity, level_count;
     uint16_t width, height;
@@ -58,6 +65,7 @@ typedef struct mh3_scene_glare_plan {
     float low_threshold, high_threshold, darken, brighten, shift_scale;
     mh3_scene_glare_level levels[MH3_SCENE_GLARE_LEVELS];
 } mh3_scene_glare_plan;
+
 int mh3_scene_glare_prepare(const mh3_scene_glare_input *input, mh3_scene_glare_plan *out);
 /* Float material policy: authored threshold/boost equations without TEV byte
  * quantization. This reference never reads any GPU pixel. */
@@ -79,6 +87,7 @@ typedef struct mh3_scene_cpu_ops {
     int (*sample_shape)(void *, int16_t, int16_t, uint8_t[4]);
     float (*float_call)(void *, uint32_t, const uint32_t *, unsigned, const float *, unsigned);
 } mh3_scene_cpu_ops;
+
 int mh3_scene_equipment_update(const mh3_scene_cpu_ops *ops, uint32_t owner, uint32_t work, uint32_t slot, uint32_t scratch);
 int mh3_scene_inner_color_menu(const mh3_scene_cpu_ops *ops, uint32_t self, uint32_t scratch);
 int mh3_scene_equipment_color_menu(const mh3_scene_cpu_ops *ops, uint32_t self, uint32_t scratch);

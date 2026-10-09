@@ -11,24 +11,30 @@ typedef enum {
     MH3_LIFETIME_INVALID,
     MH3_LIFETIME_BOUNDS
 } mh3_lifetime_status;
+
 typedef struct {
     uint32_t address, bytes;
 } mh3_lifetime_range;
+
 typedef struct {
     uint32_t address, begin, end, options, free_head, free_tail, used_head, used_tail;
 } mh3_lifetime_expheap;
+
 typedef struct {
     uint16_t state, settings;
     uint32_t size, previous, next;
 } mh3_lifetime_expblock;
+
 typedef struct {
     uint32_t address, value;
 } mh3_lifetime_link_write;
+
 typedef struct {
     mh3_lifetime_range retired;
     uint32_t region_begin, region_end;
     mh3_lifetime_link_write links[2];
 } mh3_lifetime_free_plan;
+
 typedef enum {
     MH3_LIFETIME_COPY_UNCHANGED,
     MH3_LIFETIME_COPY_SOURCE,

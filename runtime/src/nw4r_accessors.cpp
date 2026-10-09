@@ -51,65 +51,87 @@ uint32_t EmitterResBody(uint32_t r) {
     const uint32_t a = r + Read32(r + 4) + 8;
     return a + Read32(a) + 4;
 }
+
 uint32_t NumPtclTrack(uint32_t r) {
     return MemoryInline::FlatRead16(EmitterResBody(r));
 }
+
 uint32_t NumPtclInitTrack(uint32_t r) {
     return MemoryInline::FlatRead16(EmitterResBody(r) + 2);
 }
+
 uint32_t PtclTrackTable(uint32_t r) {
     return EmitterResBody(r) + 4;
 }
+
 uint32_t GetPtclTrack(uint32_t r, uint32_t index) {
     const uint32_t body = EmitterResBody(r);
     const uint32_t i = index & 0xFFFF;
+
     if (i >= MemoryInline::FlatRead16(body))
         Panic("ptcl track index out of range", index);
+
     return Read32(body + 4 + 4 * i);
 }
+
 uint32_t RefChecked(uint32_t r) {
     const uint32_t v = Read32(r);
+
     if (!v)
         Panic("null resource reference", r);
+
     return v;
 }
+
 uint32_t Aligned(uint32_t p) {
     if (p & 3)
         Panic("misaligned resource pointer", p);
+
     return p;
 }
+
 uint32_t OffsetToPtr(uint32_t r, uint32_t offset) {
     return offset ? Aligned(Read32(r) + offset) : 0;
 }
+
 uint32_t DicAtOffset14(uint32_t r, uint32_t index) {
     const uint32_t dic = OffsetToPtr(r, Read32(RefChecked(r) + 0x14));
+
     if (!dic)
         return Aligned(0);
+
     const int32_t i = int32_t(index);
+
     if (!(i >= 0 && i <= int32_t(Read32(dic + 4)) - 1))
         Panic("idx is out of bounds", index);
+
     const uint32_t offset = Read32(dic + (index + 1) * 16 + 0x14);
     return Aligned(offset ? dic + offset : 0);
 }
+
 void StoreAligned(uint32_t r, uint32_t p) {
     MemoryInline::FlatWrite32(r, p);
     Aligned(p);
 }
+
 void Vec3Copy(uint32_t dst, uint32_t src) {
     for (uint32_t k = 0; k < 12; k += 4)
         MemoryInline::FlatWriteFloat32(dst + k, MemoryInline::FlatReadFloat32(src + k));
 }
+
 float LoadFloat(uint32_t a) {
     const uint32_t bits = Read32(a);
     float f;
     std::memcpy(&f, &bits, 4);
     return f;
 }
+
 void StoreFloat(uint32_t a, float f) {
     uint32_t bits;
     std::memcpy(&bits, &f, 4);
     MemoryInline::FlatWrite32(a, bits);
 }
+
 void VecSubtract(uint32_t out, uint32_t a, uint32_t b) {
     // PpcPairVec keeps ps0 in lane1; the z pair's ps1 is the psq_l W=1 1.0.
     const PpcPairVec xy = PpcSubPairInline(PpcPairVec{LoadFloat(a + 4), LoadFloat(a)}, PpcPairVec{LoadFloat(b + 4), LoadFloat(b)});

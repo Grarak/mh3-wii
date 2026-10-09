@@ -73,6 +73,7 @@ template <uint32_t I>
 double PsqLoad1(uint32_t gqr, uint32_t address) {
     return PPC_PsqLGqrInline<1u, I>(gqr, address);
 }
+
 template <uint32_t I>
 double PsqLoadScalar(uint32_t gqr, uint32_t address) {
     return PPC_PsToScalarInline(PsqLoad1<I>(gqr, address));
@@ -122,6 +123,7 @@ double Hermite(uint32_t r2, double v0, double t0, double v1, double t1, double s
 // frame as the walk compares it (Walk) and a key's frame that way (Raw).
 struct TrackBase {
     uint32_t anm, scratch, scratch2, gqr2, gqr3, gqr6, gqr7;
+
     // scale * value + offset, the value a u16 through GQR3 (0x8008B780, 0x8008BF6C).
     double ScaledU16(uint32_t address) const {
         const double value = ThroughSingle(scratch2, PsqLoadScalar<3u>(gqr3, address));
@@ -140,6 +142,7 @@ struct Fvs48 : TrackBase {
         PsqStore1<6u>(gqr6, scratch, frame);
         return int16_t(MemoryInline::FlatRead16(scratch));
     }
+
     int32_t Raw(uint32_t key) const { return int16_t(MemoryInline::FlatRead16(key)); }
 };
 
@@ -153,15 +156,18 @@ struct Fvs32 : TrackBase {
         MemoryInline::FlatWriteRam16(scratch, uint16_t((MemoryInline::FlatRead32(key) >> 12) & 0xFFF));
         return ScaledU16(scratch);
     }
+
     double Slope(uint32_t key) const {
         const int32_t slope = int32_t(MemoryInline::FlatRead32(key) << 20) >> 20;
         MemoryInline::FlatWriteRam16(scratch, uint16_t(slope));
         return PsqLoadScalar<6u>(gqr6, scratch);
     }
+
     uint32_t Walk(double frame) const {
         PsqStore1<2u>(gqr2, scratch, ThroughSingle(scratch, frame));
         return MemoryInline::FlatRead8(scratch);
     }
+
     uint32_t Raw(uint32_t key) const { return MemoryInline::FlatRead8(key); }
 };
 
@@ -181,6 +187,7 @@ template <typename Track>
 double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
     if (!ValidPointer(anm))
         Panic("NW4R:Pointer Error pAnm is not valid", anm);
+
     const uint32_t scratch = r1 - 8;
     Track t;
     static_cast<TrackBase&>(t) = TrackBase{anm, scratch, r1 - 16, Gqr(2), Gqr(3), Gqr(6), Gqr(7)};
@@ -189,6 +196,7 @@ double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
 
     if (frame <= t.Frame(first))
         return t.Value(first);
+
     if (t.Frame(last) <= frame)
         return t.Value(last);
 
@@ -200,12 +208,14 @@ double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
     estimate = PpcFmulsInline(MemoryInline::FlatReadFloat32(anm + kInvSpan), estimate);
     PsqStore1<3u>(t.gqr3, scratch, ThroughSingle(scratch, estimate));
     const uint32_t index = MemoryInline::FlatRead16(scratch);
+
     if (int32_t(index) > int32_t(count) - 1)
         Panic("estimatePos is out of bounds", index);
 
     // Walk to the key at or before the frame.
     const auto walk = t.Walk(frame);
     uint32_t key = t.Key(index);
+
     if (walk < t.Raw(key)) {
         do
             key -= Track::kSize;
@@ -219,12 +229,15 @@ double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
 
     if (frame == t.Frame(key))
         return t.Value(key);
+
     const uint32_t next = key + Track::kSize;
     const double v0 = t.Value(key), t0 = t.Slope(key);
     const double v1 = t.Value(next), t1 = t.Slope(next);
     const double f0 = t.Frame(key), f1 = t.Frame(next);
+
     if (!(f0 <= frame && frame <= f1))
         Panic("frame is out of bounds", 0);
+
     const double d = static_cast<double>(PpcForceSingleValueInline(frame - f0));
     const double span = static_cast<double>(PpcForceSingleValueInline(f1 - f0));
     const double s = PpcFmulsInline(d, PPC_PsToScalarInline(Reciprocal(span)));
@@ -239,20 +252,24 @@ double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
 float Pow2(int e) {
     return std::bit_cast<float>(uint32_t(127 + e) << 23);
 }
+
 // A GQR's load factor (2^-scale) and store factor (2^scale), scales 6-bit signed.
 float LoadFactor(uint32_t gqr) {
     const int scale = int(gqr >> 24 & 0x3F);
     return Pow2(scale < 32 ? -scale : 64 - scale);
 }
+
 float StoreFactor(uint32_t gqr) {
     const int scale = int(gqr >> 8 & 0x3F);
     return Pow2(scale < 32 ? scale : scale - 64);
 }
+
 // psq_st to an integer type: scale, clamp and truncate.
 template <typename T>
 T Quantize(float value, float factor) {
     return T(std::clamp(value * factor, float(std::numeric_limits<T>::min()), float(std::numeric_limits<T>::max())));
 }
+
 float Madd(float a, float b, float c) {
     return float(double(a) * double(b) + double(c));
 }
@@ -263,6 +280,7 @@ bool LeanGqrs(uint32_t gqr2, uint32_t gqr3, uint32_t gqr6, uint32_t gqr7) {
     auto type = [](uint32_t gqr, uint32_t t) {
         return (gqr >> 16 & 7) == t && (gqr & 7) == t;
     };
+
     return type(gqr2, 4) && type(gqr3, 5) && type(gqr6, 7) && type(gqr7, 7);
 }
 
@@ -308,10 +326,12 @@ template <>
 struct Lean<Fvs48> {
     using Type = LeanFvs48;
 };
+
 template <>
 struct Lean<Fvs32> {
     using Type = LeanFvs32;
 };
+
 template <>
 struct Lean<Fvs96> {
     using Type = LeanFvs96;
@@ -321,9 +341,11 @@ template <typename Track>
 double EvaluateLean(uint32_t r2, uint32_t anm, float frame, const CpuContext& cpu) {
     if (!ValidPointer(anm))
         Panic("NW4R:Pointer Error pAnm is not valid", anm);
+
     typename Lean<Track>::Type t;
     LeanBase& b = t;
     b.anm = anm;
+
     if constexpr (!std::is_same_v<Track, Fvs96>) {
         b.scale = MemoryInline::FlatReadFloat32(anm + kScale);
         b.offset = MemoryInline::FlatReadFloat32(anm + kOffset);
@@ -331,23 +353,28 @@ double EvaluateLean(uint32_t r2, uint32_t anm, float frame, const CpuContext& cp
         b.s16Load6 = LoadFactor(cpu.gqr[6]), b.s16Store6 = StoreFactor(cpu.gqr[6]);
         b.s16Load7 = LoadFactor(cpu.gqr[7]);
     }
+
     b.u16Load = LoadFactor(cpu.gqr[3]), b.u16Store = StoreFactor(cpu.gqr[3]);
     const uint32_t count = MemoryInline::FlatRead16(anm + kKeyCount);
     const uint32_t first = t.Key(0), last = t.Key(count - 1);
 
     const float firstFrame = t.Frame(first);
+
     if (frame <= firstFrame)
         return t.Value(first);
+
     if (t.Frame(last) <= frame)
         return t.Value(last);
 
     const float estimate = MemoryInline::FlatReadFloat32(anm + kInvSpan) * ((frame - firstFrame) * (float(count) * b.u16Load));
     const uint32_t index = Quantize<uint16_t>(estimate, b.u16Store);
+
     if (int32_t(index) > int32_t(count) - 1)
         Panic("estimatePos is out of bounds", index);
 
     const auto walk = t.Walk(frame);
     uint32_t key = t.Key(index);
+
     if (walk < t.Raw(key)) {
         do
             key -= Track::kSize;
@@ -360,14 +387,18 @@ double EvaluateLean(uint32_t r2, uint32_t anm, float frame, const CpuContext& cp
     }
 
     const float f0 = t.Frame(key);
+
     if (frame == f0)
         return t.Value(key);
+
     const uint32_t next = key + Track::kSize;
     const float v0 = t.Value(key), t0 = t.Slope(key);
     const float v1 = t.Value(next), t1 = t.Slope(next);
     const float f1 = t.Frame(next);
+
     if (!(f0 <= frame && frame <= f1))
         Panic("frame is out of bounds", 0);
+
     const float d = frame - f0;
     const float s = d * (1.0f / (f1 - f0));
 
@@ -389,6 +420,7 @@ double EvaluateFast(const CpuContext& cpu, uint32_t r1, uint32_t r2, uint32_t an
     if (!LeanGqrs(cpu.gqr[2], cpu.gqr[3], cpu.gqr[6], cpu.gqr[7])) [[unlikely]] {
 #ifdef MH3_DEVELOPMENT
         static bool logged = false;
+
         if (!logged) {
             logged = true;
             std::fprintf(stderr, "MH3 anm keys: GQRs %08x %08x %08x %08x not the lean types, Gekko path\n", cpu.gqr[2], cpu.gqr[3], cpu.gqr[6], cpu.gqr[7]);
@@ -396,6 +428,7 @@ double EvaluateFast(const CpuContext& cpu, uint32_t r1, uint32_t r2, uint32_t an
 #endif
         return Evaluate<Track>(r1, r2, anm, frame);
     }
+
     const double lean = EvaluateLean<Track>(r2, anm, float(frame), cpu);
     return lean;
 }
@@ -488,9 +521,12 @@ struct ResultPort {
     float Key(uint32_t format, uint32_t data, bool constant) const {
         if (constant)
             return Load(data);
+
         const uint32_t track = node + MemoryInline::FlatRead32(data);
+
         if (!ValidPointer(track))
             Panic("NW4R:Pointer Error pAnm is not valid", track);
+
         switch (format) {
         case 1:
             return float(EvaluateFast<Fvs32>(*ctx, r1, r2, track, frame));
@@ -500,11 +536,13 @@ struct ResultPort {
             return float(EvaluateFast<Fvs96>(*ctx, r1, r2, track, frame));
         }
     }
+
     // Three components from data (format 0 constant f32s, 1-3 keys, constant
     // bits from `constantBit` up), returning the data past them.
     uint32_t Vector(uint32_t format, uint32_t data, uint32_t constantBit, float out[3]) const {
         for (int i = 0; i < 3; ++i, data += 4)
             out[i] = format == 0 ? Load(data) : Key(format, data, flags & constantBit << i);
+
         return data;
     }
 
@@ -519,9 +557,11 @@ struct ResultPort {
     float Baked(uint32_t format, uint32_t data, bool constant) const {
         if (constant)
             return Load(data);
+
         const uint32_t track = node + MemoryInline::FlatRead32(data); // 0x8008B0DC
         if (!ValidPointer(track))
             Panic("NW4R:Pointer Error pAnm is not valid", track);
+
         auto value = [&](uint32_t i) {
             switch (format) {
             case 4:
@@ -532,17 +572,24 @@ struct ResultPort {
                 return Load(track + 4 * i);
             }
         };
+
         const float zero = Load(r2 - 0x7BD0);
+
         if (frame <= zero)
             return value(0);
+
         const uint32_t index = Quantize<uint16_t>(float(frame), StoreFactor(ctx->gqr[3]));
         const uint32_t count = MemoryInline::FlatRead16(frames);
+
         if (index >= count)
             return value(count);
+
         const float t = float(frame - double(index));
         const float v = value(index);
+
         if (t == zero)
             return v;
+
         return Madd(t, value((index + 1) & 0xFFFF) - v, v);
     }
 
@@ -558,25 +605,31 @@ struct ResultPort {
     uint32_t Scale(uint32_t result, uint32_t data) const {
         const uint32_t format = flags >> 25 & 3;
         float s[3];
+
         if (flags & 0x10) {
             s[0] = s[1] = s[2] = format == 0 ? Load(data) : Key(format, data, flags & 0x2000);
             data += 4;
         } else {
             data = Vector(format, data, 0x2000, s);
         }
+
         for (int i = 0; i < 3; ++i)
             Store(result + kResultScale + 4 * i, s[i]);
+
         return data;
     }
+
     // 0x8008C09C.
     uint32_t Rotate(uint32_t result, uint32_t data) const {
         const uint32_t format = flags >> 27 & 7;
         float r[3];
+
         if (format <= 3) {
             data = Vector(format, data, 0x10000, r);
         } else if (format <= 6 && (ctx->gqr[3] & 7) == 5) {
             for (int i = 0; i < 3; ++i)
                 r[i] = Baked(format, data + 4 * i, flags & 0x10000u << i);
+
             data += 12;
         } else if (format <= 6) { // GQR3 not u16: the originals
             for (int i = 0; i < 3; ++i, data += 4)
@@ -584,32 +637,42 @@ struct ResultPort {
         } else {
             Panic("NW4R:Internal error ResAnmChrNodeData rotation format", flags);
         }
+
         const float k = Load(r2 - 0x7BAC); // 256/360
         G3dNative::MtxRotXYZFIdx(result + kResultMtx, k * r[0], k * r[1], k * r[2], r2);
+
         for (int i = 0; i < 3; ++i)
             Store(result + kResultRotate + 4 * i, r[i]);
+
         MemoryInline::FlatWrite32(result, MemoryInline::FlatRead32(result) | 0x80000000u);
         return data;
     }
+
     // 0x8008CF90, into the matrix's translation column.
     void Translate(uint32_t result, uint32_t data) const {
         float t[3];
         Vector(flags >> 30, data, 0x80000, t);
+
         for (int i = 0; i < 3; ++i)
             Store(result + kResultMtx + 0xC + 0x10 * i, t[i]);
     }
+
     void UnitScale(uint32_t result) const {
         const float one = Load(r2 - 0x7BB8);
+
         for (int i = 0; i < 3; ++i)
             Store(result + kResultScale + 4 * i, one);
     }
+
     void Identity(uint32_t result) const { // 0x80050538 (PSMTXIdentity)
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 4; ++col)
                 Store(result + kResultMtx + 0x10 * row + 4 * col, row == col ? 1.0f : 0.0f);
     }
+
     void ZeroTranslation(uint32_t result) const {
         const float zero = Load(r2 - 0x7BD0);
+
         for (int i = 0; i < 3; ++i)
             Store(result + kResultMtx + 0xC + 0x10 * i, zero);
     }
@@ -619,13 +682,18 @@ struct ResultPort {
 uint32_t NodeData(uint32_t data, uint32_t index) {
     const uint32_t offset = MemoryInline::FlatRead32(data + 0x10);
     const uint32_t dic = offset ? data + offset : 0;
+
     if (dic & 3)
         Panic("NW4R:Failed assertion ptr is not aligned", dic);
+
     if (!dic)
         return 0;
+
     const int32_t i = int32_t(index);
+
     if (!(i >= 0 && i <= int32_t(MemoryInline::FlatRead32(dic + 4)) - 1))
         Panic("idx is out of bounds", index);
+
     const uint32_t entry = MemoryInline::FlatRead32(dic + (index + 1) * 16 + 0x14);
     return entry ? dic + entry : 0;
 }
@@ -633,23 +701,32 @@ uint32_t NodeData(uint32_t data, uint32_t index) {
 void GetAnmResult(CpuContext* ctx) {
     const uint32_t anm = ctx->gpr[3], result = ctx->gpr[4], index = ctx->gpr[5];
     const double frame = ctx->fpr[1].d;
+
     if (!ValidPointer(anm))
         Panic("NW4R:Pointer Error this is not valid", anm);
+
     if (!ValidPointer(result))
         Panic("NW4R:Pointer Error pResult is not valid", result);
+
     if (!std::isfinite(frame))
         Panic("NW4R:Floating Point Value Error frame", 0);
+
     const uint32_t data = MemoryInline::FlatRead32(anm);
+
     if (!data)
         Panic("NW4R:Failed assertion IsValid()", anm);
+
     const uint32_t node = NodeData(data, index);
+
     if (!ValidPointer(node))
         Panic("NW4R:Pointer Error nodeData is not valid", node);
+
     const uint32_t flags = MemoryInline::FlatRead32(node + 4);
     MemoryInline::FlatWrite32(result, flags & 0x1FFF);
 
     const ResultPort p{ctx, ctx->gpr[1], ctx->gpr[2], node, flags, data + 0x20, frame};
     const uint32_t first = node + 8;
+
     switch (flags >> 22 & 7) {
     case 0:
         p.UnitScale(result), p.Identity(result);
@@ -699,6 +776,7 @@ extern "C" void MH3_AnmChrGetAnmResult(CpuContext* ctx) {
 #endif
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("AnmChrGetAnmResult");
+
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "AnmChrGetAnmResult", func_8008D660, GetAnmResultPort);
         return;

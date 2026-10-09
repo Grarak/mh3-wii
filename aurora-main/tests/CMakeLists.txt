@@ -14,6 +14,7 @@ target_compile_features(cg_shader_tests PRIVATE cxx_std_20)
 target_link_libraries(cg_shader_tests PRIVATE xxhash)
 add_test(NAME cg_shader_tests COMMAND cg_shader_tests)
 find_package(Python3 COMPONENTS Interpreter QUIET)
+
 if (Python3_Interpreter_FOUND)
   add_test(NAME cg_shader_capture_tests COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/test_vita_cg.py $<TARGET_FILE:cg_shader_tests>)
@@ -83,6 +84,7 @@ if (AURORA_ENABLE_GX)
   gtest_discover_tests(gx_fifo_tests)
 
   option(AURORA_BUILD_GPU_TESTS "Build renderer pixel tests requiring a graphics device" OFF)
+
   if (AURORA_BUILD_GPU_TESTS)
     add_executable(gx_readback_tests gpu_readback_test.cpp)
     target_compile_features(gx_readback_tests PRIVATE cxx_std_20)

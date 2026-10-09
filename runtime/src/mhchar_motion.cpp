@@ -78,6 +78,7 @@ enum : uint32_t {
     kSetWeight = 0x48,
     kGetWeight = 0x4C,
 };
+
 constexpr uint32_t kZero = 0x807988F8, kOne = 0x807988FC; // f32 0 and 1 (r2-30312, r2-30308)
 
 float F32(uint32_t address) {
@@ -91,6 +92,7 @@ struct Partial {
     uint8_t count = 0;
     double used = 0;
 };
+
 // A channel's root-node translation at the frame its last motion window ended
 // on: the next window starts there.
 struct RootSample {
@@ -98,20 +100,24 @@ struct RootSample {
     float frame = 0, end = 0;
     std::array<float, 3> at{};
 };
+
 struct Counters {
     Partial pause, hold;
     std::array<RootSample, 6> roots;
 };
+
 std::unordered_map<uint32_t, Counters> counters;
 
 // Spends up to `time` ticks on the u8 count at `address`; returns the time
 // left over once it has run out (0 while it still runs).
 double Spend(uint32_t address, Partial& partial, double time) {
     uint8_t count = Memory::Read8(address);
+
     if (count != partial.count)
         partial.used = 0;
     while (count > 0 && time > 0) {
         const double need = 1.0 - partial.used;
+
         if (time >= need) {
             time -= need;
             partial.used = 0;
@@ -121,6 +127,7 @@ double Spend(uint32_t address, Partial& partial, double time) {
             time = 0;
         }
     }
+
     Memory::Write8(address, count);
     partial.count = count;
     return count > 0 ? 0 : time;
@@ -140,6 +147,7 @@ std::array<float, 3> RootAt(GuestCall& game, uint32_t self, uint32_t anim, float
 // `known` is the translation at `from` when the caller has it.
 std::array<float, 3> RootDelta(GuestCall& game, uint32_t self, uint32_t anim, float from, float to, uint32_t result, uint32_t out, const std::array<float, 3>* known, std::array<float, 3>* atTo) {
     game.Call<InitAnmResult>({result});
+
     if (Memory::Read32(anim) == kAnmObjChrResVtable) {
         // Setting an AnmObjChrRes's frame re-evaluates its whole result cache,
         // twice per window here (there and back) for the one root node: the
@@ -149,18 +157,24 @@ std::array<float, 3> RootDelta(GuestCall& game, uint32_t self, uint32_t anim, fl
             game.Call<ResultTranslation>({AnmObjChrResResultAt(game, anim, result, root, frame), out});
             return std::array<float, 3>{F32(out), F32(out + 4), F32(out + 8)};
         };
+
         const std::array<float, 3> a = known ? *known : at(from);
         const std::array<float, 3> b = at(to);
+
         if (atTo)
             *atTo = b;
+
         return {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
     }
+
     game.Virtual<kGetFrame>(anim);
     const float frame = game.F1();
     const std::array<float, 3> a = known ? *known : RootAt(game, self, anim, from, result, out);
     const std::array<float, 3> b = RootAt(game, self, anim, to, result, out);
+
     if (atTo)
         *atTo = b;
+
     game.Virtual<kSetFrame>(anim, {}, {frame});
     return {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
 }
@@ -170,6 +184,7 @@ std::array<float, 3> RootDelta(GuestCall& game, uint32_t self, uint32_t anim, fl
 // of range panics (the original does that through 0x80501130).
 uint32_t Channel(GuestCall& game, uint32_t self, uint32_t i) {
     const uint32_t set = Memory::Read32(self + kChannelSet);
+
     if (i >= Memory::Read32(set + 0x18)) [[unlikely]]
         return game.Call<ChannelAnim>({self, i});
     return Memory::Read32(Memory::Read32(set + 0x1C) + 4 * i);
@@ -181,6 +196,7 @@ uint32_t Channel(GuestCall& game, uint32_t self, uint32_t i) {
 void Weigh(GuestCall& game, uint32_t self, uint32_t first, float share) {
     const float zero = F32(kZero);
     float total = zero;
+
     for (uint32_t ch = first; ch < first + 3; ++ch)
         if (Channel(game, self, ch))
             total += F32(self + kWeight + 4 * ch);
@@ -204,35 +220,46 @@ void Weigh(GuestCall& game, uint32_t self, uint32_t first, float share) {
 void BlendChannels(GuestCall& game, uint32_t self) {
     if (!Memory::Read32(self + kChannelSet))
         return;
+
     const float zero = F32(kZero), one = F32(kOne);
     float old = zero; // the old motion's share
     if (Channel(game, self, 3)) {
         const float left = F32(self + kBlendLeft) - F32(self + kRate) * float(GameStep::Scale());
         Memory::WriteFloat32(self + kBlendLeft, left);
+
         if (left <= zero) {
             Memory::WriteFloat32(self + kBlendLeft, zero);
+
             for (uint32_t ch = 0; ch < 3; ++ch) {
                 const uint32_t anim = game.Virtual<kDetach>(Memory::Read32(self + kChannelSet), {ch + 3});
                 Memory::Write32(self + kFadingTag + 4 * ch, 0);
                 bool kept = false;
+
                 for (uint32_t k = 0; k < 16 && anim; ++k)
                     kept |= Memory::Read32(self + kKeptAnims + 4 * k) == anim;
+
                 if (anim && !kept)
                     game.Call<ReleaseAnim>({anim});
+
                 if (const uint32_t now = Channel(game, self, ch))
                     game.Virtual<kSetRate>(now, {}, {F32(self + kRate + 4 * ch)});
             }
+
             Memory::Write32(self + kFlags, Memory::Read32(self + kFlags) & ~3u);
             Weigh(game, self, 0, one);
             return;
         }
+
         const float length = F32(self + kBlendLength);
+
         if (!(left > length)) {
             game.Call<Hermite>({}, {left / length, zero, zero, zero, one, one, zero});
             old = game.F1();
         }
+
         Weigh(game, self, 3, old);
     }
+
     Weigh(game, self, 0, one - old);
 }
 
@@ -243,6 +270,7 @@ static void MHcharChannelBlendPort(CpuContext* ctx) {
     GuestCall game{ctx};
     BlendChannels(game, frame.Arg(3));
 }
+
 extern "C" void func_800E1EB4(CpuContext* ctx);
 extern "C" void MH3_MHcharChannelBlend(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharChannelBlend", func_800E1EB4, MHcharChannelBlendPort);
@@ -256,11 +284,14 @@ static void MHcharRootMotionDeltaPort(CpuContext* ctx) {
     GuestCall game{ctx};
     const uint32_t anim = game.Call<ChannelAnim>({self, channelIndex});
     std::array<float, 3> d{};
+
     if (anim)
         d = RootDelta(game, self, anim, from, to, frame[0x2C], frame[0x14], nullptr, nullptr);
+
     for (uint32_t k = 0; k < 3; ++k)
         Memory::WriteFloat32(out + k * 4, d[k]);
 }
+
 extern "C" void func_800E1D2C(CpuContext* ctx);
 extern "C" void MH3_MHcharRootMotionDelta(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharRootMotionDelta", func_800E1D2C, MHcharRootMotionDeltaPort);
@@ -270,6 +301,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800E1D2C, MH3_MHcharRootMotionDelta, "MHcharRootMo
 static void MHcharRootMotionPort(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     const uint32_t self = saved.gpr[3];
+
     // Guest frame as the original's (0xB0): VEC3s at sp+8/+20/+32, result
     // buffer at sp+44; below it the root delta's result buffer and VEC3.
     const uint32_t sp = (saved.gpr[1] - 0x110) & ~0xFu;
@@ -283,10 +315,12 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
     };
 
     const uint32_t channelSet = Memory::Read32(self + kChannelSet);
+
     if (!channelSet || !game.Call<ChannelAnim>({self, 0})) {
         *ctx = saved;
         return;
     }
+
     // The pause (hit stop) and hold counters count ticks of game time (the
     // original: 1 per step), to the exact time within the step: the animation
     // only advances for the part of the step after the pause, and the
@@ -295,18 +329,24 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
     Counters& state = counters[self];
     const bool pausing = Memory::Read8(self + kPauseSteps) != 0;
     const double animated = pausing ? Spend(self + kPauseSteps, state.pause, step) : step;
+
     if (animated <= 0) {
         *ctx = saved;
         return;
     }
+
     // The part of the step after a pause: the animation's base rate is the
     // step's length, so it advances by that part here.
     const float stepRate = F32(kAnimationBaseRate);
+
     if (animated != step)
         Memory::WriteFloat32(kAnimationBaseRate, float(stepRate * (animated / step)));
+
     game.Call<InitAnmResult>({result});
+
     for (uint32_t i = 0; i < 6; ++i)
         Memory::Write32(channel(i, kPrevFrame), Memory::Read32(channel(i, kFrame)));
+
     if (Memory::Read8(self + kSkipAdvance) == 0) {
         game.Virtual<kUpdateFrame>(channelSet);
     } else {
@@ -314,18 +354,24 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         Memory::Write8(self + kSkipAdvance, 0);
         state.roots = {};
     }
+
     BlendChannels(game, self);
 
     const float zero = 0.0f; // f32 at r2-30312 (0x807988F8)
     for (uint32_t k = 0; k < 3; ++k)
         Memory::WriteFloat32(sum + k * 4, zero);
+
     const float baseRate = F32(kAnimationBaseRate);
+
     for (uint32_t i = 0; i < 6; ++i) {
         const uint32_t anim = game.Call<ChannelAnim>({self, i});
+
         if (!anim)
             continue;
+
         game.Virtual<kGetFrame>(anim);
         Memory::WriteFloat32(channel(i, kFrame), game.F1());
+
         if (F32(channel(i, kFrame)) > F32(channel(i, kEndFrame))) {
             if (F32(channel(i, kLoopFrame)) < zero) {
                 Memory::WriteFloat32(channel(i, kFrame), F32(channel(i, kEndFrame)));
@@ -335,6 +381,7 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
                 Memory::WriteFloat32(channel(i, kFrame), game.F1());
             }
         }
+
         // Frames the channel advanced this step (the original: rate alone),
         // measured, as the original's, one nominal step (rate) ahead of the
         // frame: [frame + rate - span, frame + rate]. Consecutive windows then
@@ -344,12 +391,15 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         game.Virtual<kGetFrame>(anim);
         const float frame = game.F1();
         float from = span == rate ? frame : frame + (rate - span), to = frame + rate;
+
         if (to >= F32(channel(i, kEndFrame))) {
             to = frame;
             from = frame - span;
         }
+
         if (from < zero)
             from = zero;
+
         if (to < zero)
             to = zero;
         // The translation at `from` is the last window's end when this window
@@ -360,25 +410,33 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         std::array<float, 3> atTo;
         const std::array<float, 3> d = RootDelta(game, self, anim, from, to, rootResult, rootOut, joined ? &root.at : nullptr, &atTo);
         root = {anim, to, end, atTo};
+
         for (uint32_t k = 0; k < 3; ++k)
             Memory::WriteFloat32(delta + k * 4, d[k]);
+
         game.Virtual<kGetWeight>(channelSet, {i});
         game.Call<VecScale>({scaled, delta}, {game.F1()});
         game.Call<VecAdd>({sum, scaled});
     }
+
     Memory::WriteFloat32(kAnimationBaseRate, stepRate);
     const bool holding = Memory::Read8(self + kHoldSteps) != 0;
     const double moved = holding ? Spend(self + kHoldSteps, state.hold, animated) : animated;
+
     if (moved > 0 && (Memory::Read32(self + kFlags) & 2) == 0) { // 0x800E19BC, inlined
         // After a hold ends within the step, only the motion of the rest of it.
         const float part = moved == animated ? 1.0f : float(moved / animated);
+
         for (uint32_t k = 0; k < 3; ++k)
             Memory::WriteFloat32(sum + k * 4, F32(sum + k * 4) * F32(self + kScale + k * 4) * part);
+
         game.Call<RotVecZXY>({sum, self + kRotation});
         game.Call<VecAdd>({self + kPosition, sum});
     }
+
     *ctx = saved;
 }
+
 extern "C" void func_800E19D4(CpuContext* ctx);
 extern "C" void MH3_MHcharRootMotion(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharRootMotion", func_800E19D4, MHcharRootMotionPort);

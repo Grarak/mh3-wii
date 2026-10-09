@@ -20,8 +20,10 @@ if (NOT DEFINED VITASDK)
     if (NOT DEFINED ENV{VITASDK})
         message(FATAL_ERROR "VITASDK is not set")
     endif()
+
     set(VITASDK "$ENV{VITASDK}")
 endif()
+
 set(VITASDK "${VITASDK}" CACHE PATH "Path to the Vita SDK")
 
 set(CMAKE_SYSTEM_NAME Generic)

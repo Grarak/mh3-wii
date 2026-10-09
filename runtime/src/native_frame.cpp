@@ -13,9 +13,12 @@
 // viewport and clears the color/depth target once admission succeeds.
 extern "C" void MH3_NativeGraphicsInit(CpuContext* cpu) {
     const auto mode = Memory::Read32(cpu->gpr[13] - 0x46B8);
+
     if (!mode || !Memory::Contains(mode, 60))
         throw std::runtime_error("Native graphics startup has no render mode");
+
     InitializeNativeGraphics(Memory::Read16(mode + 4), Memory::Read16(mode + 6));
+
     // Verified __GXInitRevisionBits enables XF DUALTEX in the original init.
     PublishNativeModelDualTexture(true);
 }
@@ -29,17 +32,22 @@ extern "C" void MH3_NativeDisplaySetup(CpuContext* cpu) {
     GuestCall call{cpu};
     const auto sda = frame.Arg(13);
     const auto mode = Memory::Read32(sda - 0x46B8);
+
     if (!mode || !Memory::Contains(mode, 60))
         throw std::runtime_error("Native display setup has no render mode");
+
     const auto index = Memory::Read32(sda - 0x46A4);
+
     if (index > 1)
         throw std::runtime_error("Boot VI framebuffer index exceeds its compatibility pair");
+
     call(0x804E85E0, {mode});
     call(0x804E9130, {Memory::Read32(sda - 0x46B0 + index * 4)});
     Memory::Write32(sda - 0x46A4, index ^ 1);
     Memory::Write32(sda - 0x46A8, Memory::Read32(sda - 0x46B0 + (index ^ 1) * 4));
     call(0x804E9010);
     call(0x804E8050);
+
     if (Memory::Read32(mode) & 1)
         call(0x804E8050);
 }

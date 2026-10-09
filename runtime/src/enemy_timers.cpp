@@ -46,6 +46,7 @@ namespace {
 int32_t S16(uint32_t address) {
     return int16_t(Memory::Read16(address));
 }
+
 void S16(uint32_t address, int32_t value) {
     Memory::Write16(address, uint16_t(value));
 }
@@ -53,6 +54,7 @@ void S16(uint32_t address, int32_t value) {
 // Counts up by the step's ticks while below `cap`, stopping at it.
 void CountUp(uint32_t address, int32_t cap) {
     const int32_t steps = S16(address);
+
     if (steps < cap)
         S16(address, std::min(steps + int32_t(GameStep::Ticks()), cap));
 }
@@ -77,11 +79,14 @@ void StepsTo7FFF(CpuContext* ctx) {
 
 void CycleAndCountdown(CpuContext* ctx) {
     const uint32_t self = ctx->gpr[3];
+
     // The original: + 1, back to 0 at 50.
     const uint32_t cycle = Memory::Read16(self + 0x33C), next = cycle + GameStep::Ticks();
     Memory::Write16(self + 0x33C, uint16_t(next < 50 ? next : cycle < 50 ? next % 50 : 0));
+
     // The original: - 1 while above 0.
     const int32_t countdown = S16(self + 0x338);
+
     if (countdown > 0)
         S16(self + 0x338, std::max(countdown - int32_t(GameStep::Ticks()), 0));
 }
@@ -93,8 +98,10 @@ void SlowCheckWhileCounting(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3);
+
     if (S16(self + 0x94C) <= 0)
         return;
+
     if (StepCounter::Every(32))
         game.Call<0x80133A24>({self, kSystem});
     // Read again: the call may change it (and leave it at 0, which the
@@ -108,11 +115,14 @@ void CheckWhileCounting(CpuContext* ctx) {
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3);
     const int32_t countdown = S16(self + 0x812);
+
     if (countdown > 0) {
         S16(self + 0x812, std::max(countdown - int32_t(GameStep::Ticks()), 0));
+
         if (StepCounter::Every(32, 8))
             game.Call<0x80133874>({self, kSystem});
     }
+
     if (S16(self + 0x812) <= 0)
         S16(self + 0x814, 0);
 }
@@ -121,10 +131,13 @@ void PeriodicCheck(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3);
+
     if (game.Call<0x8012E13C>({Memory::Read8(self + 485), Memory::Read8(self + 486)}) != 1)
         return;
+
     if (!StepCounter::Every(32))
         return;
+
     game.Call<0x80135A54>({self});
     game.Call<0x80107868>({self, Memory::Read32(self + 516)});
 }
@@ -133,8 +146,10 @@ void EveryNScaled(CpuContext* ctx) {
     GuestFrame frame(ctx, 32);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3), arg = frame.Arg(4);
+
     if (!StepCounter::Every(uint32_t(int32_t(int16_t(frame.Arg(5))))))
         return;
+
     const float amount = float(float(int32_t(Memory::Read32(self + 0x7A4))) * ctx->fpr[1].d);
     game.Call<0x8011E6BC>({self, arg, uint32_t(int32_t(amount))});
 }
@@ -143,8 +158,10 @@ void EveryNScaledU16(CpuContext* ctx) {
     GuestFrame frame(ctx, 32);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3), arg = uint32_t(int32_t(int16_t(frame.Arg(4))));
+
     if (!StepCounter::Every(uint32_t(int32_t(int16_t(frame.Arg(5))))))
         return;
+
     const float amount = float(float(Memory::Read16(self + 0x8A0)) * ctx->fpr[1].d);
     game.Call<0x80130BD0>({self, arg, uint32_t(int32_t(amount)) & 0xFFFF});
 }
@@ -156,8 +173,10 @@ void PeriodicEffect(CpuContext* ctx) {
     GuestFrame frame(ctx, 32);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3), offset = frame[8];
+
     if (game.Call<0x8012ECC4>({self}) != 1 || !StepCounter::Every(32))
         return;
+
     Memory::WriteFloat32(offset, 0.0f);
     Memory::WriteFloat32(offset + 4, 0.0f);
     Memory::WriteFloat32(offset + 8, float(Height));
@@ -168,6 +187,7 @@ void TimedAction(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
     const uint32_t self = frame.Arg(3);
+
     switch (Memory::Read8(self + 5)) {
     case 0:
         Memory::Write8(self + 5, 1);
@@ -181,8 +201,10 @@ void TimedAction(CpuContext* ctx) {
         const int32_t left = int32_t(Memory::Read32(self + 0x20));
         const int32_t now = std::max(left - int32_t(GameStep::Ticks()), std::min(left - 1, -1));
         Memory::Write32(self + 0x20, uint32_t(now));
+
         if (now < 0)
             game.Call<0x80127FAC>({self, uint32_t(left)});
+
         break;
     }
     }
@@ -196,9 +218,11 @@ void RetargetEvery32(CpuContext* ctx) {
     const auto u8 = [&](uint32_t offset) {
         return Memory::Read8(self + offset);
     };
+
     const auto set = [&](uint32_t offset, uint32_t value) {
         Memory::Write8(self + offset, uint8_t(value));
     };
+
     const auto alive = [&] {
         return game.Call<0x8012D090>({self}) == 0;
     };                                                         // em_die_ck
@@ -206,12 +230,15 @@ void RetargetEvery32(CpuContext* ctx) {
         const uint32_t pick = game.Call<0x800CEF20>({0}) & 15; // ran_suu
         game.Call<0x8012CF18>({self, pick, 0});
     };
+
     const auto newTarget = [&] {
         set(827, 255);
         roll();
         game.Call<0x80130790>({self, 0, 0});
     };
+
     game.Call<0x8035ED3C>({self});
+
     if (u8(10) != 1) {
         // The original: (steps & 31) == +2, never for +2 of 32 or more.
         if (alive() && u8(484) != 1 && u8(2) < 32 && StepCounter::Every(32, u8(2))) {
@@ -228,19 +255,25 @@ void RetargetEvery32(CpuContext* ctx) {
                     newTarget();
             }
         }
+
         if (u8(2099) == 1)
             game.Call<0x8012C364>({33, u8(481)});
+
         if (alive()) {
             if (u8(1085) == 1 && u8(829) != 1) {
                 roll();
+
                 if (u8(831) < 3)
                     set(831, 0);
             }
+
             if ((u8(1083) == 0 || u8(1083) == 5) && u8(1084) == 0 && u8(484) != 1 && u8(485) != 12) {
                 if (game.Call<0x8035E880>({u8(481)}) == 1) {
                     set(831, 0);
+
                     if (u8(1083) == 0)
                         roll();
+
                     game.Call<0x8035EB04>({self, 0});
                 } else {
                     game.Call<0x80130790>({self, 0, 0});
@@ -248,6 +281,7 @@ void RetargetEvery32(CpuContext* ctx) {
             }
         }
     }
+
     set(829, u8(1085));
 }
 
@@ -259,20 +293,24 @@ void Sight(CpuContext* ctx) {
     const auto u8 = [&](uint32_t offset) {
         return Memory::Read8(self + offset);
     };
+
     const uint32_t eye = frame[8], target = frame[20], look = frame[32], mtx = frame[56];
     constexpr uint32_t kPlayerSize = 2848;
     game.Call<0x80050570>({mtx});
     const uint32_t players = game.Call<0x800CFB34>({2}) & 0xFFFF; // get_move_work_max
     uint32_t player = game.Call<0x800CFAF4>({2});                 // get_move_work_adrs
     Memory::Write8(self + 910, 0);
+
     if (uint8_t(u8(485) - 11) <= 1)
         return;
+
     if (game.Call<0x8012F368>({self, 0}) == 1 || u8(504) == 1)
         return; // em_sleep_ck
     // The eye: the joint 0x80126478 names (its world matrix's position and
     // facing), or 50 above +392 with the facing at +448.
     const uint32_t joint = game.Call<0x80126478>({self});
     uint32_t facing;
+
     if (Memory::Read32(joint) == 0xFFFFFFFF) {
         game.Call<CopyVec>({eye, self + 392});
         Memory::WriteFloat32(eye + 4, Memory::ReadFloat32(eye + 4) + 50.0f);
@@ -281,8 +319,10 @@ void Sight(CpuContext* ctx) {
         game.Call<0x80135994>({self, Memory::Read32(joint), mtx}); // get_joint_wmat_em
         for (uint32_t k = 0; k < 3; ++k)
             Memory::Write32(eye + 4 * k, Memory::Read32(mtx + 12 + 16 * k));
+
         facing = game.Call<0x80050EC4>({mtx});
     }
+
     if (int16_t(Memory::Read16(self + 2326)) > 0)
         return;
     // The original: on the steps where (steps & 1) == (+2 & 1).
@@ -290,32 +330,44 @@ void Sight(CpuContext* ctx) {
         for (uint32_t i = 0; i < players; ++i, player += kPlayerSize) {
             if (Memory::Read8(player) == 0 || game.Call<0x8012D20C>({Memory::Read8(player + 8)}) != 0)
                 continue;
+
             if (game.Call<0x8012D118>({self, player}) == 0)
                 continue;
+
             const float range = Memory::ReadFloat32(self + 1108 + 4 * i);
+
             if (!(range >= 0.0f))
                 continue;
+
             game.Call<CopyVec>({target, player + 60});
             Memory::WriteFloat32(target + 4, Memory::ReadFloat32(target + 4) + 100.0f);
+
             if (!(Memory::Read32(self + 456) & 0x8000) && game.Call<0x80131514>({self, joint, eye, target, facing}, {range}) != 1)
                 continue;
+
             Memory::Write8(self + 910, uint8_t(u8(910) | (1u << i)));
             game.Call<0x80131908>({self, i & 0xFF});
         }
     }
+
     if (game.Call<0x8011E6A4>({self, 4}) == 0 || game.Call<0x8012D204>({self}) == 0)
         return;
+
     if (game.Call<0x8011E6A4>({self, 8}) == 0 && u8(482) == 4)
         return;
+
     if (!(u8(908) & 2))
         return;
     // The joint's 22-byte record, with 10012 in its last half-word.
     for (uint32_t k = 0; k < 20; k += 4)
         Memory::Write32(look + k, Memory::Read32(joint + k));
+
     Memory::Write16(look + 20, 10012);
+
     for (uint32_t entry = 0x806A6AA0, j = 0; j < 8; ++j, entry += 20) {
         if (Memory::Read8(entry + 19) != 1 || Memory::Read8(entry + 18) != u8(481))
             continue;
+
         if (game.Call<0x80131688>({look, eye, entry, facing}, {Memory::ReadFloat32(entry + 12)}) == 1) {
             game.Call<0x80131770>({self, 1});
             return;

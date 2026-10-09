@@ -27,32 +27,43 @@ public:
 
     DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None) : variable_(variable) {
         const char* text = std::getenv(variable);
+
         if (!text)
             return;
+
         set_ = *text != 0;
         const std::string_view all(text);
+
         for (size_t at = 0; at < all.size();) {
             size_t end = all.find(',', at);
+
             if (end == std::string_view::npos)
                 end = all.size();
+
             const std::string_view item = all.substr(at, end - at);
             at = end + 1;
+
             if (item.empty())
                 continue;
+
             const size_t equals = item.find('=');
             const std::string_view name = item.substr(0, equals);
             bool listed = false;
+
             for (const std::string_view k : known)
                 listed |= k == name;
+
             if (equals != std::string_view::npos) {
                 if (!listed)
                     Unknown(item);
+
                 options_.emplace_back(std::string(name), std::string(item.substr(equals + 1)));
             } else if (listed) {
                 flags_.emplace_back(item);
             } else {
                 if (words == Words::None)
                     Unknown(item);
+
                 words_.emplace_back(item);
             }
         }
@@ -67,6 +78,7 @@ public:
                 return true;
         return false;
     }
+
     // The value of name=value (the last one given), or nullptr.
     const char* Value(std::string_view name) const {
         for (auto it = options_.rbegin(); it != options_.rend(); ++it)
@@ -74,19 +86,25 @@ public:
                 return it->second.c_str();
         return nullptr;
     }
+
     // A numeric value (decimal, or 0x hexadecimal), or `fallback` when absent.
     uint64_t Number(std::string_view name, uint64_t fallback) const {
         const char* value = Value(name);
+
         if (!value)
             return fallback;
+
         char* end = nullptr;
         const unsigned long long parsed = std::strtoull(value, &end, 0);
+
         if (end == value || *end || *value == '-') {
             std::fprintf(stderr, "MH3: %s: %.*s=%s is not a number; using %llu\n", variable_, int(name.size()), name.data(), value, static_cast<unsigned long long>(fallback));
             return fallback;
         }
+
         return parsed;
     }
+
     // The bare words that are not flags, in order.
     const std::vector<std::string>& List() const { return words_; }
     bool Listed(std::string_view word) const {
@@ -167,9 +185,11 @@ inline void ReportRetiredVariables() {
         {"MH3_SLOW_PATH_TRACE", nullptr},
         {"MH3_AUDIO_TRACE", nullptr},
     };
+
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))
             continue;
+
         if (retired.family)
             std::fprintf(stderr, "MH3: %s is ignored; it is now part of %s (docs/flags.md)\n", retired.name, retired.family);
         else

@@ -146,12 +146,15 @@ constexpr uint32_t kResetShape = 0x8079C9E0;
 float F(uint32_t address) {
     return Memory::ReadFloat32(address);
 }
+
 void WF(uint32_t address, float value) {
     Memory::WriteFloat32(address, value);
 }
+
 uint32_t R32(uint32_t a) {
     return Memory::Read32(a);
 }
+
 void W32(uint32_t a, uint32_t v) {
     Memory::Write32(a, v);
 }
@@ -176,10 +179,13 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     const auto act = [&](uint32_t kind, uint32_t action) {
         return game.Call<ActionCheck>({plw, kind, action});
     };
+
     if (Memory::Read8(plw) == 0 || (game.Call<GetOnlineMode>() & 0xFF) == 2)
         return;
+
     game.Call<CameraFollowMode>({cam, plw});
     Memory::Write8(cam + kFlags, 0);
+
     switch (game.Call<OptionConfig>({Memory::Read8(plw + kPlwPlayer), 8}) & 0xFF) {
     case 1:
         Memory::Write8(cam + kFlags, Memory::Read8(cam + kFlags) | 2);
@@ -191,7 +197,9 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
         Memory::Write8(cam + kFlags, Memory::Read8(cam + kFlags) | 3);
         break;
     }
+
     const uint32_t view = Memory::Read8(cam + kView);
+
     if (view != 0xFF && view != 2 && view != 3) {
         game.Call<CameraPosition>({frame[92]});
         game.Call<VecCopy>({frame[128], frame[92]});
@@ -201,13 +209,17 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
         W32(cam + kYaw, yaw);
         W32(cam + kYawTarget, yaw);
     }
+
     if (Memory::Read8(cam + kTargetMode) != 0)
         game.Call<CameraTargetMode>({cam, plw});
+
     game.Call<VecCopy>({player, plw + kPlwPosition});
+
     if (game.Call<CameraClimbMode>({cam}) == 1) {
         W32(cam + kRow, kRowClimb);
     } else {
         game.Call<CameraPitchInput>({cam, cam, plw});
+
         if (game.Call<PlCarried>({plw}) == 1)
             W32(cam + kRow, kRowCarried);
         else if (Memory::Read8(plw + kPlwState) == 3)
@@ -217,6 +229,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
         else
             W32(cam + kRow, kRows + Memory::Read8(cam + kDistance) * 28);
     }
+
     game.Call<CameraYawInput>({cam, cam, plw});
 
     // Entering view 2: a reset blend, and the distance row nearest the
@@ -230,14 +243,17 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
         float best = F(kNearest);
         const float height = F(frame[108]);
         uint32_t row = 0;
+
         for (uint32_t i = 1; i <= 4; ++i) {
             const float diff = F(kRows + 4 + 28 * i) - height;
             const float d = diff * diff;
+
             if (best > d) {
                 row = i;
                 best = d;
             }
         }
+
         if (Memory::Read8(plw + kPlwState) == 3) {
             const uint32_t pitch = game.Call<AngleX>({frame[104]});
             W32(cam + kPitch, pitch);
@@ -252,6 +268,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     uint32_t pitchShift = 2;
     Memory::Write8(cam + kLookUp, 0);
     const bool manual = Memory::Read8(cam + kManualPitch) != 0 || Memory::Read8(cam + kPitchHold) != 0;
+
     if ((game.Call<OptionConfig>({Memory::Read8(plw + kPlwPlayer), 10}) & 0xFF) == 1 && Memory::Read8(cam + kPitchSnap) == 1) {
         pitchShift = 3;
     } else if (game.Call<LookingUp>({plw}) != 0) {
@@ -259,47 +276,58 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
             Memory::Write8(cam + kLookUp, 1);
             const uint32_t step = uint32_t(GameStep::Share(Memory::Read8(cam + kFast) == 0 ? 48 : 144));
             const uint32_t pitch = R32(cam + kPitchTarget);
+
             if (int16_t(pitch) < -0x1000) {
                 W32(cam + kPitchTarget, pitch + step);
+
                 if (int16_t(pitch + step) > -0x1000) {
                     W32(cam + kPitchTarget, 0xF000);
                     Memory::Write8(cam + kLookUp, 2);
                 }
             } else {
                 W32(cam + kPitchTarget, pitch - step);
+
                 if (int16_t(pitch - step) < -0x1000) {
                     W32(cam + kPitchTarget, 0xF000);
                     Memory::Write8(cam + kLookUp, 2);
                 }
             }
         }
+
         W32(cam + kTiltTarget, 0);
     } else {
         if (!manual) {
             const uint32_t step = uint32_t(GameStep::Share(Memory::Read8(cam + kFast) == 0 ? 10 : 30));
             const uint32_t pitch = R32(cam + kPitchTarget);
             const int16_t angle = int16_t(pitch);
+
             if (angle > 0 && angle < 2560) {
                 W32(cam + kPitchTarget, pitch - step);
+
                 if (int16_t(pitch - step) <= 0)
                     W32(cam + kPitchTarget, 0);
             } else if (angle < 0 && angle > -2560) {
                 W32(cam + kPitchTarget, pitch + step);
+
                 if (int16_t(pitch + step) >= 0)
                     W32(cam + kPitchTarget, 0);
             }
         }
+
         if (act(0, 27) == 0 && act(1, 18) == 0 && Memory::Read8(plw + kPlwAction) != 4)
             W32(cam + kTiltTarget, 0);
     }
+
     W32(cam + kPitch, R32(cam + kPitch) + (game.Call<CameraAngleEase>({R32(cam + kPitchTarget), R32(cam + kPitch), pitchShift}) & 0xFFFF));
     W32(cam + kYaw, R32(cam + kYaw) + game.Call<CameraAngleEase>({R32(cam + kYawTarget), R32(cam + kYaw), 2}));
     W32(cam + kTilt, R32(cam + kTilt) + game.Call<CameraAngleEase>({R32(cam + kTiltTarget), R32(cam + kTilt), 5}));
+
     // A snap is done once the angle is within 256 of it.
     if (Memory::Read8(cam + kYawSnap) != 0 && ((Memory::Read16(cam + kYawSnap + 1) - R32(cam + kYaw)) & 0xFFFF) - 256 > 65024) {
         Memory::Write8(cam + kYawSnap, 0);
         Memory::Write16(cam + kYawSnap + 1, 0);
     }
+
     if (Memory::Read8(cam + kPitchSnap) != 0 && ((Memory::Read16(cam + kPitchSnap + 2) - R32(cam + kPitch)) & 0xFFFF) - 256 > 65024) {
         Memory::Write8(cam + kPitchSnap, 0);
         Memory::Write16(cam + kPitchSnap + 2, 0);
@@ -313,6 +341,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     W32(cam + kTargetWanted, R32(player));
     W32(cam + kTargetWanted + 8, R32(player + 8));
     float easeTarget, easeEye;
+
     if (act(0, 6) != 0 || act(0, 7) != 0) {
         const uint32_t row = R32(cam + kRow);
         WF(offset + 4, F(row + 4) - F(kSitDrop));
@@ -328,22 +357,29 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     } else {
         const uint32_t row = R32(cam + kRow);
         W32(offset + 4, R32(row + 4));
+
         if (Memory::Read8(plw + kPlwState) == 3)
             W32(offset + 4, act(1, 21) == 1 ? R32(kHeightSwim) : zero);
+
         W32(offset + 8, R32(R32(cam + kRow) + 8));
+
         if (act(1, 21) == 1)
             WF(cam + kTargetWanted + 4, F(kHeightSwim) + F(player + 4));
         else if (game.Call<PlStateCheck>({plw, 2}) == 1)
             WF(cam + kTargetWanted + 4, F(kHeightState) + F(player + 4));
         else
             WF(cam + kTargetWanted + 4, F(player + 4) + F(R32(cam + kRow) + 16));
+
         easeTarget = F(kEaseTarget);
     }
+
     easeEye = F(kEaseEye);
+
     if (game.Call<CameraEvent>({plw, 0}) == 1) {
         W32(cam + kYawTarget, (R32(plw + kPlwYaw) + 0x8000) & 0xFFFF);
         Memory::Write8(cam + kDistance, 2);
     }
+
     if (game.Call<CameraEvent>({plw, 1}) == 1) {
         game.Call<JointPosition>({plw, 1, player});
         game.Call<VecSet>({local}, {F(kZero), F(kJointUp), F(kBack)});
@@ -355,25 +391,31 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     // Swimming pitch and the settle timer, in whole ticks.
     const auto settleDown = [&](int32_t floor) {
         const int32_t left = int16_t(Memory::Read16(cam + kSettle));
+
         if (left <= floor)
             return false;
+
         Memory::Write16(cam + kSettle, uint16_t(std::max(left - int32_t(GameStep::Ticks()), floor)));
         return true;
     };
+
     if (Memory::Read8(plw + kPlwState) == 3) {
         if (int16_t(Memory::Read16(cam + kSettle)) == 0) {
             Memory::Write16(cam + kSettle, 1);
             W32(cam + kPitch, 0xF000);
             W32(cam + kPitchTarget, act(0, 151) == 1 ? 0 : R32(cam + kPitch));
         }
+
         if (act(1, 20) != 0) {
             if (game.Call<FrameCheck>({plw, 0}, {F(kSwimFrame), F(kZero)}) != 0 && int8_t(Memory::Read8(cam + kPitchRamp)) == 0)
                 W32(cam + kPitchTarget, 0);
+
             Memory::Write16(cam + kSettle, 5);
         } else if (act(1, 21) != 0) {
             W32(cam + kPitchTarget, 0);
             Memory::Write16(cam + kSettle, 10);
         }
+
         if (settleDown(1)) {
             easeEye = F(kEaseSwimEye);
             easeTarget = F(kEaseSwimTarget);
@@ -381,11 +423,13 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
             easeEye = F(kOne);
             easeTarget = easeEye;
         }
+
         game.Call<RotX>({offset, R32(cam + kPitch) + R32(cam + kTilt)});
     } else if (settleDown(0)) {
         easeEye = F(kEaseSit);
         easeTarget = easeEye;
     }
+
     game.Call<RotY>({offset, R32(cam + kYaw)});
     game.Call<VecAdd>({frame[32], offset, player});
     game.Call<VecCopy>({cam + kEyeWanted, frame[32]});
@@ -394,23 +438,30 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
 
     // The target and eye ease toward their wanted heights over this step.
     W32(cam + kTarget, R32(cam + kTargetWanted));
+
     if (Memory::Read8(cam + kInstant) == 2)
         W32(cam + kTarget + 4, R32(cam + kTargetWanted + 4));
     else
         EaseHeight(cam + kTarget + 4, cam + kTargetWanted + 4, easeTarget);
+
     W32(cam + kTarget + 8, R32(cam + kTargetWanted + 8));
     W32(cam + kEye, R32(cam + kEyeWanted));
+
     if (Memory::Read8(cam + kInstant) == 2)
         W32(cam + kEye + 4, R32(cam + kEyeWanted + 4));
     else
         EaseHeight(cam + kEye + 4, cam + kEyeWanted + 4, easeEye);
+
     W32(cam + kEye + 8, R32(cam + kEyeWanted + 8));
+
     if (Memory::Read8(cam + kPush) != 0)
         game.Call<CameraPush>({cam});
+
     game.Call<VecAddInPlace>({cam + kEye, cam + kShakeEye});
     game.Call<VecAddInPlace>({cam + kTarget, cam + kShakeTarget});
     game.Call<CameraShake>({cam, plw});
     game.Call<CameraLimit>({cam, cam, plw});
+
     if (game.Call<CameraEvent>({plw, 3}) == 1) {
         game.Call<VecCopy>({cam + kEye, cam + kOldEye});
         game.Call<VecCopy>({cam + kTarget, cam + kOldTarget});
@@ -419,6 +470,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     // A reset blends from the old eye and target: each tick keeps t of the
     // old position (t falls to 0 over the 19 ticks); a step keeps t^s.
     uint8_t reset = Memory::Read8(cam + kReset);
+
     if (reset == 1) {
         game.Call<CameraPosition>({frame[20]});
         game.Call<VecCopy>({cam + kOldEye, frame[20]});
@@ -426,18 +478,22 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
         game.Call<VecCopy>({cam + kOldTarget, frame[8]});
         Memory::Write8(cam + kReset, uint8_t(reset + 1));
     }
+
     if (reset == 1 || reset == 2) {
         const int32_t left = int16_t(Memory::Read16(cam + kResetLeft));
         game.Call<ResetCurve>({uint32_t(left)}, {F(cam + kResetRate), F(kResetShape)});
         float keep = game.F1();
         const double s = GameStep::Scale();
+
         if (s != 1.0 && keep > 0.0f)
             keep = float(std::pow(double(keep), s));
+
         const int32_t next = left - int32_t(GameStep::Ticks());
         Memory::Write16(cam + kResetLeft, uint16_t(next > 0 ? next : 0));
         game.Call<Lerp>({cam + kEye, cam + kOldEye, cam + kEye}, {keep});
         game.Call<Lerp>({cam + kTarget, cam + kOldTarget, cam + kTarget}, {keep});
     }
+
     game.Call<VecCopy>({cam + kOldEye, cam + kEye});
     game.Call<VecCopy>({cam + kOldTarget, cam + kTarget});
     game.Call<CameraSet>({0, cam + kEye, cam + kTarget}, {F(cam + kFovA), F(cam + kFovB)});

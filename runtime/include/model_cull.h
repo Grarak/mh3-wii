@@ -14,5 +14,6 @@ bool CullNativeModelMesh(const mh3_resolved_mesh_submit& mesh);
 struct NativeModelCullStatistics {
     uint64_t draws = 0, culled = 0;
 };
+
 // Counts since the previous call (render thread).
 NativeModelCullStatistics TakeNativeModelCullStatistics();

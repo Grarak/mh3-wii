@@ -49,8 +49,10 @@ void SinCosRadHost(double radians, float& sine, float& cosine) {
     constexpr uint32_t kTable = 0x805744A0;
     const float index = float(radians) * MemoryInline::FlatReadFloat32(0x8079FF60 - 31528); // 256 / 2 pi
     float magnitude = std::fabs(index);
+
     while (magnitude >= 65536.0f)
         magnitude -= 65536.0f;
+
     const uint32_t whole = uint32_t(magnitude);
     const float fraction = magnitude - float(whole & 0xFFFF);
     const uint32_t entry = kTable + 16 * (whole & 0xFF);
@@ -58,12 +60,14 @@ void SinCosRadHost(double radians, float& sine, float& cosine) {
     cosine = float(PPC_Fmadds(MemoryInline::FlatReadFloat32(entry + 12), fraction, MemoryInline::FlatReadFloat32(entry + 4)));
     sine = index < 0.0f ? -s : s;
 }
+
 static void SinCosRadPort(CpuContext* ctx) {
     float sine, cosine;
     SinCosRadHost(ctx->fpr[1].d, sine, cosine);
     Memory::WriteFloat32(ctx->gpr[4], cosine);
     Memory::WriteFloat32(ctx->gpr[3], sine);
 }
+
 extern "C" void func_8009C7C4(CpuContext* ctx);
 extern "C" void MH3_SinCosRad(CpuContext* ctx) {
     PortCheck::Call(ctx, "SinCosRad", func_8009C7C4, SinCosRadPort);

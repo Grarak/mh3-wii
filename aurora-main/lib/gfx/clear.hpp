@@ -11,6 +11,7 @@ struct DrawData {
   bool clearColor = true;
   bool clearAlpha = true;
   bool clearDepth = true;
+
   // False: clear within the pass's current scissor.
   bool useScissor = false;
   ClipRect scissor{};

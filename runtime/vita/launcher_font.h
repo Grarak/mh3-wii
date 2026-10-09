@@ -16,6 +16,7 @@ class Font {
     ~Font();
     void Text(std::vector<Rectangle>& rects, float x, float y, std::string_view text, uint32_t color, float maxWidth = 880);
     float Width(std::string_view text);
+
     // Splits text into lines of at most width pixels at spaces and '\n'.
     std::vector<std::string> Wrap(std::string_view text, float width);
 
@@ -24,6 +25,7 @@ class Font {
         std::vector<Rectangle> runs;
         float advance;
     };
+
     struct Source;
     Glyph& Get(unsigned character);
     std::unique_ptr<Source> source;

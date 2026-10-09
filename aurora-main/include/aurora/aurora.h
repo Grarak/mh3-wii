@@ -82,12 +82,14 @@ typedef struct {
   const char* appName;
   const char* userPath;
   const char* cachePath;
+
   // Read-only application resources. Defaults to SDL_GetBasePath(), which is
   // where release builds place initial_pipeline_cache.db.
   const char* resourcesPath;
   AuroraBackend desiredBackend;
   uint32_t msaa;
   uint16_t maxTextureAnisotropy;
+
   // No VSync knob exists: GL uses swap interval 0; GXM uses next-HSync flips
   // after the required first-display transition at VBlank.
   bool startFullscreen;
@@ -96,6 +98,7 @@ typedef struct {
   bool allowTextureReplacements;
   bool allowTextureDumps;
   bool disableCopyFilter;
+
   // When false, Aurora centers the first window. When true, windowPosX/Y are restored verbatim,
   // including negative coordinates on monitors left of or above the primary display.
   bool hasWindowPosition;
@@ -140,12 +143,14 @@ typedef struct {
   SDL_Window* window;
   AuroraWindowSize windowSize;
   AuroraInitializationStatus initializationStatus;
+
   // On failure, owned by SDL on the calling thread. Copy before another SDL call.
   const char* initializationError;
 } AuroraInfo;
 
 AuroraInfo aurora_initialize(int argc, char* argv[], const AuroraConfig* config);
 void aurora_shutdown();
+
 // Enable the Vita system-dialog overlay on submitted display frames. Call on
 // the graphics owner thread between dialog initialization and termination.
 // Other backends ignore this toggle.
@@ -153,10 +158,12 @@ void aurora_set_common_dialog_active(bool active);
 const AuroraEvent* aurora_update();
 bool aurora_begin_frame();
 void aurora_end_frame();
+
 // Set the native target's base dimensions before initialization or at a frame
 // boundary. These dimensions do not reserve GX's extra EFB scratch rows.
 // Invalid zero dimensions leave the configuration unchanged.
 bool aurora_configure_native_target(uint32_t width, uint32_t height);
+
 // How the native target covers the display surface. FIT keeps the base
 // dimensions' aspect, centered (bars on other surfaces). FILL sizes the target
 // to the whole surface and scales the base dimensions per axis, so a game's
@@ -168,46 +175,58 @@ typedef enum {
   AURORA_NATIVE_TARGET_FILL = 1,
   AURORA_NATIVE_TARGET_ASPECT_16_9 = 2,
 } AuroraNativeTargetAspect;
+
 void aurora_set_native_target_aspect(AuroraNativeTargetAspect aspect);
+
 // Size the native target for a display surface of width x height (the aspect
 // rules above apply to it) whatever the window size; presentation scales the
 // target into the window, keeping its aspect. 0 x 0 follows the window again.
 // Same thread rules as aurora_set_native_target_aspect.
 void aurora_set_native_surface_size(uint32_t width, uint32_t height);
+
 // Direct native rendering: call begin before preparing any draws or writing
 // their mapped GPU payload. False skips all drawing/clears/present for this
 // game frame without waiting. Logic still advances; always call end, including
 // after a skipped frame. Cancellation can close admission but never reopen it.
 bool aurora_begin_native_frame();
+
 // Main thread: pump window events, then report whether a frame can present.
 // A host that renders on another thread polls this before recording a frame.
 bool aurora_native_window_presentable();
 bool aurora_native_frame_should_render();
+
 // Seal any recorded GPU work without presenting. The current mutable slot
 // retains its completion lease; CPU state continues until the normal end.
 void aurora_cancel_native_frame();
+
 // The three display and mutable draw slots rotate only on rendered frames.
 uint32_t aurora_native_frame_slot();
 void aurora_end_native_frame();
 typedef void (*AuroraFrameWorkerWaitCallback)();
+
 // Called from the producer thread at bounded intervals while Aurora waits for
 // the asynchronous frame worker. The callback must not enter Aurora.
 void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callback);
 void aurora_wait_for_frame_worker();
 bool aurora_wait_for_frame_worker_for(uint32_t timeoutMicros);
+
 // Absolute schedule for the next sealed frame, on steady_clock: baseNanos anchors the group and
 // intervalNanos is the period, so slot k of N+1 fires at base + k*interval/(N+1). Zeros clear it.
 void aurora_set_present_schedule(uint64_t baseNanos, uint64_t intervalNanos);
+
 // Reports whether the frame about to be sealed met its display boundary. Interpolation sizes its
 // slot group from this, backing off after misses. Only paced presents may report.
 void aurora_report_producer_paced(bool paced);
 void aurora_request_frame_capture(uint32_t frame, const char* outputPath);
 bool aurora_flush_efb_copies_to_ram();
 bool aurora_flush_efb_copy_to_ram(void* dest);
+
 // Submits the draws recorded so far and resumes the same frame without clearing the EFB.
 bool aurora_flush_draws();
+
 // Blocks until the render thread and the GPU have finished all submitted work.
 void aurora_wait_for_gpu_idle();
+
 // Frames the render thread has swapped to the window so far.
 // Frameskip: poll GPU completion before native draw preparation. GXM reads its
 // latest scene notification; GLES uses a zero-timeout fence poll. Off by default.

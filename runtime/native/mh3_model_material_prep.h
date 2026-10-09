@@ -11,11 +11,13 @@ typedef struct mh3_model_genmode {
     uint8_t texgens, channels, tevs, indirect;
     uint32_t cull, flags;
 } mh3_model_genmode;
+
 enum {
     MH3_GENMODE_BP = 1,
     MH3_GENMODE_XF = 2,
     MH3_GENMODE_SELECTED = 4
 };
+
 mh3_res_status mh3_model_genmode_read(mh3_res_span resource, mh3_model_genmode *out);
 mh3_res_status mh3_model_genmode_select(mh3_res_mut_span cache, mh3_res_span resource); /* 80086244 */
 /* BP changes TEV/indirect counts and cull. XF additionally publishes the
@@ -29,6 +31,7 @@ typedef struct mh3_model_material_misc {
     uint8_t depth_before_texture, indirect_method[3];
     int8_t light_reference, fog_reference, normal_map_light[3];
 } mh3_model_material_misc;
+
 mh3_res_status mh3_model_material_misc_read(mh3_res_span resource, mh3_model_material_misc *out);
 
 /* Complete XF channel-register producers. Color writes replace RGBA even

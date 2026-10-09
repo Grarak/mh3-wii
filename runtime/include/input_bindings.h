@@ -49,6 +49,7 @@ bool InputBlocked() noexcept;
 void Apply(PADStatus* statuses) noexcept;
 
 std::string GetExpression(uint32_t port, size_t control) noexcept;
+
 // Returns false and fills error if the text does not parse; the binding is
 // left unchanged in that case.
 bool SetExpression(uint32_t port, size_t control, const std::string& text, std::string& error) noexcept;

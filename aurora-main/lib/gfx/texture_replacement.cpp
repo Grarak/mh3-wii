@@ -46,6 +46,7 @@ struct TlutMetadata {
   uint32_t format = 0;
   uint16_t entries = 0;
   bool valid = false;
+
   // Object the palette was registered from. GXLoadTlut consumes the registration, so this is what
   // lets the same object be loaded into more than one hardware slot.
   const GXTlutObj* source = nullptr;
@@ -80,11 +81,13 @@ bool iequals_ascii(std::string_view lhs, std::string_view rhs) noexcept {
   if (lhs.size() != rhs.size()) {
     return false;
   }
+
   for (size_t i = 0; i < lhs.size(); ++i) {
     if (std::tolower(static_cast<unsigned char>(lhs[i])) != std::tolower(static_cast<unsigned char>(rhs[i]))) {
       return false;
     }
   }
+
   return true;
 }
 
@@ -92,19 +95,23 @@ bool is_relative_to(const std::filesystem::path& path, const std::filesystem::pa
   if (root.empty()) {
     return false;
   }
+
   auto pathIt = path.begin();
   auto rootIt = root.begin();
+
   for (; rootIt != root.end(); ++rootIt, ++pathIt) {
     if (pathIt == path.end() || !iequals_ascii(fs_path_to_string(*pathIt), fs_path_to_string(*rootIt))) {
       return false;
     }
   }
+
   return true;
 }
 
 bool is_sidecar_mip(std::string_view stem) noexcept {
   constexpr std::string_view tag = "_mip";
   size_t i = stem.size();
+
   while (i > 0 && stem[i - 1] >= '0' && stem[i - 1] <= '9') {
     --i;
   }
@@ -120,9 +127,12 @@ std::optional<uint64_t> parse_hex(std::string_view text) noexcept {
   if (text.empty()) {
     return std::nullopt;
   }
+
   uint64_t value = 0;
+
   for (const char ch : text) {
     value <<= 4;
+
     if (ch >= '0' && ch <= '9') {
       value |= static_cast<uint64_t>(ch - '0');
     } else if (ch >= 'a' && ch <= 'f') {
@@ -133,6 +143,7 @@ std::optional<uint64_t> parse_hex(std::string_view text) noexcept {
       return std::nullopt;
     }
   }
+
   return value;
 }
 
@@ -145,23 +156,28 @@ std::optional<uint32_t> parse_u32(std::string_view text, int base = 10) noexcept
   const auto* begin = text.data();
   const auto* end = begin + text.size();
   const auto [ptr, ec] = std::from_chars(begin, end, value, base);
+
   if (ec != std::errc{} || ptr != end) {
     return std::nullopt;
   }
+
   return value;
 }
 
 std::optional<std::pair<uint32_t, uint32_t>> parse_dimensions(std::string_view text) noexcept {
   const size_t sep = text.find('x');
+
   if (sep == std::string_view::npos) {
     return std::nullopt;
   }
 
   const auto width = parse_u32(text.substr(0, sep));
   const auto height = parse_u32(text.substr(sep + 1));
+
   if (!width.has_value() || !height.has_value()) {
     return std::nullopt;
   }
+
   return std::pair{*width, *height};
 }
 
@@ -184,12 +200,14 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
   const auto& tlut = s_loadedTluts[obj.tlut];
   const uint32_t textureSize = texture_base_level_size(obj);
   const auto* textureData = static_cast<const uint8_t*>(obj.data);
+
   if (!tlut.valid || textureData == nullptr || textureSize == 0) {
     return std::nullopt;
   }
 
   uint32_t minIndex = 0xffff;
   uint32_t maxIndex = 0;
+
   switch (obj.format()) {
   case GX_TF_C4:
     for (uint32_t i = 0; i < textureSize; ++i) {
@@ -198,6 +216,7 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
       minIndex = std::min({minIndex, lowNibble, highNibble});
       maxIndex = std::max({maxIndex, lowNibble, highNibble});
     }
+
     break;
   case GX_TF_C8:
     for (uint32_t i = 0; i < textureSize; ++i) {
@@ -205,6 +224,7 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
       minIndex = std::min(minIndex, index);
       maxIndex = std::max(maxIndex, index);
     }
+
     break;
   case GX_TF_C14X2:
     for (uint32_t i = 0; i + sizeof(uint16_t) <= textureSize; i += sizeof(uint16_t)) {
@@ -214,6 +234,7 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
       minIndex = std::min(minIndex, index);
       maxIndex = std::max(maxIndex, index);
     }
+
     break;
   default:
     return std::nullopt;
@@ -221,9 +242,11 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
 
   size_t tlutSize = 2 * (static_cast<size_t>(maxIndex) + 1 - minIndex);
   const size_t tlutOffset = 2 * static_cast<size_t>(minIndex);
+
   if (tlutOffset + tlutSize > tlut.data.size()) {
     return std::nullopt;
   }
+
   return XXH64(tlut.data.data() + tlutOffset, tlutSize, 0);
 }
 
@@ -251,12 +274,15 @@ RuntimeTextureKey build_runtime_key(const GXTexObj_& obj) noexcept {
   };
 
   const uint32_t textureSize = texture_base_level_size(obj);
+
   if (obj.data != nullptr && textureSize != 0) {
     key.textureHash = XXH64(obj.data, textureSize, 0);
   }
+
   if (key.hasTlut) {
     key.tlutHash = compute_referenced_tlut_hash(obj).value_or(0);
   }
+
   return key;
 }
 
@@ -264,11 +290,13 @@ std::string format_replacement_filename(const RuntimeTextureKey& key) {
   if (key.hasTlut) {
     return fmt::format("tex1_{}x{}_{:016x}_{:016x}_{}.dds", key.width, key.height, key.textureHash, key.tlutHash, key.format);
   }
+
   return fmt::format("tex1_{}x{}_{:016x}_{}.dds", key.width, key.height, key.textureHash, key.format);
 }
 
 std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view filename) noexcept {
   const size_t dot = filename.rfind('.');
+
   if (dot == std::string_view::npos) {
     return std::nullopt;
   }
@@ -279,6 +307,7 @@ std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view fil
 
   const std::string_view stem = filename.substr(0, dot);
   constexpr std::string_view prefix = "tex1_";
+
   if (!stem.starts_with(prefix)) {
     return std::nullopt;
   }
@@ -287,66 +316,83 @@ std::optional<RuntimeTextureKey> parse_replacement_filename(std::string_view fil
   size_t partCount = 0;
   size_t offset = 0;
   bool consumedAll = false;
+
   while (offset <= stem.size() && partCount < parts.size()) {
     const size_t next = stem.find('_', offset);
     parts[partCount++] = stem.substr(offset, next == std::string_view::npos ? stem.size() - offset : next - offset);
+
     if (next == std::string_view::npos) {
       consumedAll = true;
       break;
     }
+
     offset = next + 1;
   }
+
   if (!consumedAll || partCount < 4 || partCount > 6 || parts[0] != "tex1") {
     return std::nullopt;
   }
 
   const auto dimensions = parse_dimensions(parts[1]);
+
   if (!dimensions.has_value()) {
     return std::nullopt;
   }
 
   size_t index = 2;
+
   if (parts[index] == "m") {
     ++index;
   }
 
   size_t remaining = partCount - index;
+
   if (remaining != 2 && remaining != 3) {
     return std::nullopt;
   }
 
   uint64_t textureHash = 0;
+
   if (parts[index] == "$") {
     textureHash = kReplacementWildcardTextureHash;
   } else {
     const auto parsedTex = parse_hex(parts[index]);
+
     if (!parsedTex.has_value()) {
       return std::nullopt;
     }
+
     textureHash = *parsedTex;
   }
 
   auto formatPart = parts[partCount - 1];
+
   if (formatPart == "arb") {
     formatPart = parts[partCount - 2];
     remaining -= 1;
   }
+
   const auto format = parse_u32(formatPart);
+
   if (!format.has_value()) {
     return std::nullopt;
   }
 
   uint64_t tlutHash = 0;
   const bool hasTlut = remaining == 3;
+
   if (hasTlut) {
     const std::string_view tlutPart = parts[index + 1];
+
     if (tlutPart == "$") {
       tlutHash = kReplacementWildcardTlutHash;
     } else {
       const auto parsedTlutHash = parse_hex(tlutPart);
+
       if (!parsedTlutHash.has_value()) {
         return std::nullopt;
       }
+
       tlutHash = *parsedTlutHash;
     }
   }
@@ -376,10 +422,12 @@ constexpr bool isUnsupportedTextureFormat(const ConvertedTexture& texture) {
 
 std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& entry) noexcept {
   auto base = load_texture_file(entry.path);
+
   if (!base.has_value()) {
     Log.warn("texture_replacement: failed to load texture {}", fs_path_to_string(entry.path));
     return std::nullopt;
   }
+
   if (isUnsupportedTextureFormat(base.value())) {
     Log.warn("texture_replacement: failed to load texture {} due to unsupported format: {}", fs_path_to_string(entry.path), static_cast<uint32_t>(base->format));
     return std::nullopt;
@@ -387,8 +435,10 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
 
   std::vector<ConvertedTexture> more;
   std::error_code ec;
+
   for (uint32_t mipLevel = 1;; ++mipLevel) {
     const auto mipPath = entry.path.parent_path() / fmt::format("{}_mip{}{}", fs_path_to_string(entry.path.stem()), mipLevel, fs_path_to_string(entry.path.extension()));
+
     if (!std::filesystem::is_regular_file(mipPath, ec)) {
       break;
     }
@@ -397,6 +447,7 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
     const uint32_t ew = std::max(base->width >> mipLevel, 1u);
     const uint32_t eh = std::max(base->height >> mipLevel, 1u);
     const bool ok = lvl.has_value() && lvl->format == base->format && lvl->width == ew && lvl->height == eh;
+
     if (!ok) {
       if (!lvl.has_value()) {
         Log.warn("texture_replacement: could not load mip {}", fs_path_to_string(mipPath));
@@ -406,6 +457,7 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
 
       break;
     }
+
     more.push_back(std::move(*lvl));
   }
 
@@ -415,6 +467,7 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
 
   const uint32_t mips = 1u + static_cast<uint32_t>(more.size());
   const uint64_t n = calc_texture_size(base->format, base->width, base->height, mips);
+
   if (n == 0) {
     return std::nullopt;
   }
@@ -426,18 +479,22 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
     if (o + d.size() > n) {
       return false;
     }
+
     std::memcpy(dst + o, d.data(), d.size());
     o += d.size();
     return true;
   };
+
   if (!append(base->data)) {
     return std::nullopt;
   }
+
   for (const auto& mip : more) {
     if (!append(mip.data)) {
       return std::nullopt;
     }
   }
+
   if (o != n) {
     return std::nullopt;
   }
@@ -464,6 +521,7 @@ void evict_replacement_cache_if_needed() noexcept {
     s_replacementLru.pop_back();
 
     const auto it = s_replacementCache.find(key);
+
     if (it == s_replacementCache.end()) {
       continue;
     }
@@ -488,11 +546,13 @@ void build_index() noexcept {
   if (!ensure_directory(s_replacementRoot)) {
     return;
   }
+
   if (g_config.allowTextureDumps && !ensure_directory(s_dumpRoot)) {
     return;
   }
 
   std::error_code ec;
+
   for (std::filesystem::recursive_directory_iterator it(s_replacementRoot, std::filesystem::directory_options::skip_permission_denied | std::filesystem::directory_options::follow_directory_symlink,
                                                         ec);
        it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
@@ -519,6 +579,7 @@ void build_index() noexcept {
     }
 
     const auto parsed = parse_replacement_filename(fs_path_to_string(path.filename()));
+
     if (!parsed.has_value()) {
       continue;
     }
@@ -537,6 +598,7 @@ const ReplacementIndexEntry* find_replacement_path(const RuntimeTextureKey& key)
   if (key.hasTlut) {
     RuntimeTextureKey tlutWildcardKey = key;
     tlutWildcardKey.tlutHash = kReplacementWildcardTlutHash;
+
     if (const auto it = s_replacementIndex.find(tlutWildcardKey); it != s_replacementIndex.end()) {
       return &it->second;
     }
@@ -544,6 +606,7 @@ const ReplacementIndexEntry* find_replacement_path(const RuntimeTextureKey& key)
 
   RuntimeTextureKey textureWildcardKey = key;
   textureWildcardKey.textureHash = kReplacementWildcardTextureHash;
+
   if (const auto it = s_replacementIndex.find(textureWildcardKey); it != s_replacementIndex.end()) {
     return &it->second;
   }
@@ -553,6 +616,7 @@ const ReplacementIndexEntry* find_replacement_path(const RuntimeTextureKey& key)
 
 const gfx::TextureHandle* find_cached_replacement(const RuntimeTextureKey& key) noexcept {
   const auto cached = s_replacementCache.find(key);
+
   if (cached == s_replacementCache.end()) {
     return nullptr;
   }
@@ -563,6 +627,7 @@ const gfx::TextureHandle* find_cached_replacement(const RuntimeTextureKey& key) 
 
 gfx::TextureHandle load_replacement_texture(const RuntimeTextureKey& key, const ReplacementIndexEntry& entry) noexcept {
   const auto replacement = load_replacement(entry);
+
   if (!replacement.has_value()) {
     s_failedKeys.insert(key);
     return {};
@@ -590,11 +655,14 @@ bool dump_editable_texture_dds(const RuntimeTextureKey& key, const GXTexObj_& ob
   const uint32_t texHeight = obj.height();
 
   ConvertedTexture pixels;
+
   if (is_palette_format(obj.format())) {
     const TlutMetadata* tlut = get_loaded_tlut(obj);
+
     if (tlut == nullptr) {
       return false;
     }
+
     pixels = convert_texture_palette(obj.format(), texWidth, texHeight, 1, texData, static_cast<GXTlutFmt>(tlut->format), tlut->entries, {tlut->data.data(), tlut->data.size()});
   } else {
     pixels = convert_texture(obj.format(), texWidth, texHeight, 1, texData);
@@ -618,6 +686,7 @@ bool report_missing_key(const RuntimeTextureKey& key, const GXTexObj_& obj) noex
   if (g_config.allowTextureDumps) {
     dump_editable_texture_dds(key, obj);
   }
+
   return true;
 }
 
@@ -631,9 +700,11 @@ void shutdown() noexcept {
   s_failedKeys.clear();
   s_reportedMisses.clear();
   s_pendingTluts.clear();
+
   for (auto& tlut : s_loadedTluts) {
     tlut = {};
   }
+
   s_replacementLru.clear();
   s_replacementCacheBytes = 0;
   s_replacementRoot.clear();
@@ -646,6 +717,7 @@ void register_tlut(const GXTlutObj* obj, const void* data, GXTlutFmt format, uin
   if (!g_config.allowTextureReplacements) {
     return;
   }
+
   if (obj == nullptr || data == nullptr) {
     return;
   }
@@ -653,6 +725,7 @@ void register_tlut(const GXTlutObj* obj, const void* data, GXTlutFmt format, uin
   // A registration is only consumed by a matching load_tlut, and the map is keyed by a guest address
   // the game may free and reuse, so a table this large means stale entries: drop them wholesale.
   constexpr size_t kMaxPendingTluts = 4096;
+
   if (s_pendingTluts.size() >= kMaxPendingTluts && !s_pendingTluts.contains(obj)) {
     s_pendingTluts.clear();
   }
@@ -674,6 +747,7 @@ void load_tlut(const GXTlutObj* obj, uint32_t idx) noexcept {
   if (!g_config.allowTextureReplacements) {
     return;
   }
+
   if (idx >= s_loadedTluts.size()) {
     return;
   }
@@ -692,6 +766,7 @@ void load_tlut(const GXTlutObj* obj, uint32_t idx) noexcept {
     if (!loaded.valid || loaded.source != obj) {
       continue;
     }
+
     s_loadedTluts[idx] = {
         .size = loaded.size,
         .format = loaded.format,
@@ -700,6 +775,7 @@ void load_tlut(const GXTlutObj* obj, uint32_t idx) noexcept {
         .source = loaded.source,
         .data = loaded.data.clone(),
     };
+
     return;
   }
 
@@ -714,6 +790,7 @@ std::optional<TextureHandle> find_replacement(const GXTexObj_& obj) noexcept {
 
   const RuntimeTextureKey key = build_runtime_key(obj);
   const auto* path = find_replacement_path(key);
+
   if (path == nullptr) {
     report_missing_key(key, obj);
     return std::nullopt;
@@ -728,6 +805,7 @@ std::optional<TextureHandle> find_replacement(const GXTexObj_& obj) noexcept {
   }
 
   auto handle = load_replacement_texture(key, *path);
+
   if (!handle) {
     return std::nullopt;
   }

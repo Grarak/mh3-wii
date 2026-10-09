@@ -17,11 +17,13 @@ typedef struct {
     mh3_frame_state_exchange *owner;
     uint32_t index;
 } mh3_frame_state_producer;
+
 typedef struct {
     mh3_frame_state_exchange *owner;
     uint32_t index, valid;
     uint64_t generation;
 } mh3_frame_state_consumer;
+
 struct mh3_frame_state_exchange {
     uint32_t middle, lifecycle;
     void *payload[3];
@@ -30,6 +32,7 @@ struct mh3_frame_state_exchange {
     mh3_frame_state_producer *producer;
     mh3_frame_state_consumer *consumer;
 };
+
 typedef enum {
     MH3_FRAME_STATE_OK = 0,
     MH3_FRAME_STATE_EMPTY,

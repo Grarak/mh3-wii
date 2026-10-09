@@ -15,8 +15,10 @@ struct TextureConversion {
     aurora::gfx::NativeTextureRecord record; // offset is assigned by the pack writer
     std::vector<uint8_t> payload;
 };
+
 // One parsed texture of the source file at fileOffset (data is the whole file).
 TextureConversion ConvertTexture(const TextureInventory::Texture& texture, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path);
+
 // A version 2 native texture pack holding IDs firstId..firstId+count-1, added in order.
 class TexturePackWriter {
   public:
@@ -34,6 +36,7 @@ struct ModelSource {
     uint32_t container, bytes, offset, id;
     std::string name;
 };
+
 // Every MDL0 of a source file, by (container, name); IDs are left 0.
 std::vector<ModelSource> ListModels(std::span<const uint8_t> data);
 struct TextureRow {
@@ -42,10 +45,12 @@ struct TextureRow {
     uint32_t container, offset, bytes, id, width, height;
     TextureRow(uint64_t fileOffset, const TextureInventory::Texture& texture);
 };
+
 struct ModelConversion {
     std::vector<uint8_t> pack, identity;
     uint32_t metadataBytes = 0, gpuBytes = 0;
 };
+
 // Converts one source file's models into a native model pack. Holds a ~30 MiB
 // workspace; false (logged) when the source cannot be converted.
 class ModelConverter {

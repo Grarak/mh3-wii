@@ -10,6 +10,7 @@ namespace aurora::gfx::port_capture {
 bool enabled() noexcept;
 void schedule(uint32_t frame, uint32_t regions, uint32_t draws, uint32_t transitionsBefore, uint32_t transitionsAfter) noexcept;
 void pass(uint32_t frame, uint32_t index, const void* color, const void* depth, const void* resolve, const void* snapshot, uint32_t width, uint32_t height, uint32_t commands) noexcept;
+
 // Kept with the recorded draw, so merged batches and render-thread replay
 // retain the producer's frame and guest origin.
 struct DrawState {
@@ -20,9 +21,11 @@ struct DrawState {
   uint32_t primitives = 1;
   uint32_t displayList = 0, displayListOffset = 0;
   std::array<uint32_t, 4> callers{};
+
   // Guest texture addresses on the Wii FIFO path, captured before state changes.
   std::array<uint32_t, 8> textureSources{};
 };
+
 enum DrawFlags : uint32_t {
   DepthCompare = 1,
   DepthWrite = 2,
@@ -33,6 +36,7 @@ enum DrawFlags : uint32_t {
   ZTexture = 64,
   DepthFunctionShift = 8,
 };
+
 void draw(const DrawState& state, uint64_t vertexHash, uint64_t fragmentHash, uint32_t vertices, uint32_t indices, uint32_t instances, bool discard, bool depthReplace,
           const std::array<const void*, 8>& textures) noexcept;
 // Native backend calls record execution separately from eager shader creation.
@@ -43,9 +47,11 @@ struct NativeDraw {
   bool rasterKnown = true, display = false;
   std::array<uint32_t, 8> textures{};
 };
+
 void native_program(uint32_t id, uint64_t vertexHash, uint64_t fragmentHash, bool discard, bool depthReplace, std::string_view label, const std::array<uint64_t, 2>& portableHashes = {},
                     std::string_view portableOrigin = {}) noexcept;
 void native_draw(std::string_view kind, const NativeDraw& draw) noexcept;
+
 // Runtime mesh provenance follows its actual native_draw row. Stable offline
 // IDs and explicit producer generations identify every use of a shared shader;
 // the program's first source origin alone cannot identify all later objects.
@@ -54,13 +60,16 @@ struct NativeMeshSource {
   uint64_t residentGeneration = 0, sourceGeneration = 0, poseGeneration = 0, materialGeneration = 0;
   uint32_t layoutFlags = 0;
 };
+
 void native_mesh_source(const NativeMeshSource& source) noexcept;
+
 // Actual GLSL/draw hashes are retained; Cg uses Vita-normalized alpha hashes.
 // Optional origin identifies the producer/program when supplied by a caller.
 struct ShaderCapture {
   std::array<uint64_t, 2> portableHashes{};
   std::string originFile;
 };
+
 ShaderCapture shader(std::string_view label, std::string_view vertex, std::string_view fragment, std::string_view origin = {}, std::string_view portableVertex = {},
                      std::string_view portableFragment = {}, std::string_view portableOrigin = {}) noexcept;
 void texture(const void* id, bool create, uint32_t width, uint32_t height, uint32_t mips, uint32_t format, uint32_t bytesPerPixel, std::string_view label = {}) noexcept;

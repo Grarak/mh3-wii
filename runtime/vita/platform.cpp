@@ -33,21 +33,27 @@ unsigned int _sceUserMainThreadStackSize = 2 * 1024 * 1024;
 
 void InitializeVitaPlatform(int& argc, char**& argv) {
     aurora::pin_current_thread(aurora::ThreadRole::Game);
+
     // SceAppMgr supplies an empty argv[0], the SELF path and its own options.
     // Preserve the game's option/value pairs and give the shared parser a
     // conventional argv[0]. This also identifies debug launches from host0.
     static char program[] = "MH3";
     static std::vector<char*> arguments;
     arguments = {program};
+
     for (int i = 0; i < argc; ++i) {
         if (!argv[i] || !argv[i][0])
             continue;
+
         const std::string_view value(argv[i]);
+
         if (value.ends_with("eboot.bin")) {
             arguments[0] = argv[i];
             continue;
         }
+
         bool launchOption = false;
+
         for (const char* option : {"-budget", "-memsize", "-phcontmemsize", "-la_type", "-titleid", "-param", "-exit_to"}) {
             if (value == option) {
                 launchOption = true;
@@ -55,10 +61,13 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
                 break;
             }
         }
+
         if (launchOption || value == "-livearea_off" || value == "-nonsuspendable" || value == "-usecdlg")
             continue;
+
         arguments.push_back(argv[i]);
     }
+
     argc = arguments.size();
     arguments.push_back(nullptr);
     argv = arguments.data();
@@ -70,10 +79,13 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     // stalled host0 link no longer blocks every thread that logs. Whole lines.
     std::setvbuf(stderr, nullptr, _IOLBF, 1024);
     std::fprintf(stderr, "MH3 Vita: main thread core 2, heap 112 MiB, argv0=%s\n", argc ? argv[0] : "");
+
     for (int i = 1; i < argc; ++i)
         std::fprintf(stderr, "MH3 Vita: argv[%d]=%s\n", i, argv[i]);
+
     SceKernelFreeMemorySizeInfo memory{};
     memory.size = sizeof(memory);
+
     if (sceKernelGetFreeMemorySize(&memory) >= 0)
         std::fprintf(stderr, "MH3 Vita: free main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB before guest RAM\n", memory.size_user / 1048576.0, memory.size_cdram / 1048576.0,
                      memory.size_phycont / 1048576.0);
@@ -97,10 +109,13 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
         volatile uint64_t sink = 0;
         const auto cost = [&](auto read) {
             const uint64_t start = sceKernelGetProcessTimeWide();
+
             for (int i = 0; i < calls; ++i)
                 sink = read();
+
             return double(sceKernelGetProcessTimeWide() - start) * 1000.0 / calls;
         };
+
         const double steady = cost([] { return uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()); });
         const double process = cost([] { return uint64_t(sceKernelGetProcessTimeWide()); });
         const double processLow = cost([] { return uint64_t(sceKernelGetProcessTimeLow()); });
@@ -115,14 +130,18 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
 void ReportVitaMemory() {
     static uint64_t last = 0, peakMain = 0, peakCdram = 0, peakPhycont = 0;
     const uint64_t now = sceKernelGetProcessTimeWide();
+
     if (last && now - last < 1000000)
         return;
+
     last = now;
     static bool budgetAvailable = true;
+
     if (budgetAvailable) {
         SceAppMgrBudgetInfo info{};
         info.size = sizeof(info);
         const int result = sceAppMgrGetBudgetInfo(&info);
+
         if (result >= 0 && info.total_user_rw_mem && info.free_user_rw <= info.total_user_rw_mem && info.free_extra_mem <= info.total_extra_mem && info.free_cdram_mem <= info.total_cdram_mem &&
             info.free_phycont_mem <= info.total_phycont_mem) {
             const uint64_t main = uint64_t(info.total_user_rw_mem) - info.free_user_rw + uint64_t(info.total_extra_mem) - info.free_extra_mem;
@@ -135,13 +154,17 @@ void ReportVitaMemory() {
                          peakMain / 1048576.0, cdram / 1048576.0, peakCdram / 1048576.0, phycont / 1048576.0, peakPhycont / 1048576.0);
             if (main >= 365000000)
                 throw std::runtime_error("Vita main RAM exceeds the 365 MB port limit");
+
             return;
         }
+
         budgetAvailable = false;
         std::fprintf(stderr, "MH3 Vita: per-app budget unavailable (0x%08x); reporting free partitions only\n", unsigned(result));
     }
+
     SceKernelFreeMemorySizeInfo memory{};
     memory.size = sizeof(memory);
+
     if (sceKernelGetFreeMemorySize(&memory) >= 0)
         std::fprintf(stderr, "MH3 Vita free: main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB\n", memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
 }

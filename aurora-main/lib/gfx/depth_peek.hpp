@@ -19,6 +19,7 @@ struct FrameMapping {
   Vec2<uint32_t> logicalSize{};
   AuroraViewportPolicy viewportPolicy = AURORA_VIEWPORT_FIT;
 };
+
 FrameMapping capture_frame_mapping() noexcept;
 
 // Render thread.

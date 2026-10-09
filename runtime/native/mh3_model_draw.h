@@ -33,6 +33,7 @@ typedef struct {
     const uint32_t *materials, *shapes, *nodes;
     uint32_t material_count, shape_count, node_count;
 } mh3_model_draw_entries;
+
 /* mh3_model_draw_walk that takes the IDs `entries` holds from them instead of
  * the model's dictionaries (NULL: the dictionaries for all). */
 mh3_res_status mh3_model_draw_walk_entries(const mh3_res_model *model, size_t bytecode, mh3_res_span visibility, uint32_t options, const mh3_model_draw_entries *entries,

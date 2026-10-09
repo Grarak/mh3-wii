@@ -26,6 +26,7 @@ extern "C" __declspec(noinline) Result15 INTERNAL_CALL recurse(
         return callee(0x80398be8u, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
                       30, pointer, 0x44000088u, salt, 0x80124d08u);
     }
+
     auto nested = recurse(depth - 1, pointer, salt);
     return callee(nested.r1, nested.r3, nested.r4, nested.r5, nested.r6,
                   nested.r7, nested.r8, nested.r9, nested.r10, nested.r11,
@@ -35,13 +36,16 @@ extern "C" __declspec(noinline) Result15 INTERNAL_CALL recurse(
 
 int main() {
     constexpr uint32_t expected = 0x802f12ccu;
+
     for (uint32_t i = 0; i < 1000000; ++i) {
         const auto result = recurse(4, expected, i);
+
         if (result.r31 != expected) {
             std::printf("mismatch iteration=%u expected=%08X actual=%08X\n", i, expected, result.r31);
             return 1;
         }
     }
+
     std::puts("statefree regcall+sret proof passed");
     return 0;
 }

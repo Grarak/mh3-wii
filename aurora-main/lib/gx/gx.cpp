@@ -40,9 +40,11 @@ namespace {
 
 static GXState make_default_gx_state() {
   GXState state{};
+
   for (size_t i = 0; i < state.tcgs.size(); ++i) {
     state.tcgs[i].src = static_cast<GXTexGenSrc>(GX_TG_TEX0 + i);
   }
+
   return state;
 }
 
@@ -84,6 +86,7 @@ struct TextureResolveIdentity {
                     identity.flags);
   }
 };
+
 static std::array<TextureResolveIdentity, MaxTextures> s_lastTextureResolveIdentity{};
 static std::array<bool, MaxTextures> s_lastTextureResolveIdentityValid{};
 
@@ -91,6 +94,7 @@ struct TextureResolveIdentityCacheEntry {
   bool valid = false;
   size_t hash = 0;
   u64 copyTextureRevision = 0;
+
   // Revision this binding was last proved good at.
   u64 validationRevision = 0;
   TextureResolveIdentity identity{};
@@ -141,6 +145,7 @@ struct CachedTextureEntry {
   u32 texDataVersion = 0;
   u32 tlutObjId = 0;
   u32 tlutDataVersion = 0;
+
   // Revision the underlying source bytes were last proved good at.
   u64 validationRevision = 0;
 };
@@ -230,23 +235,28 @@ struct TexObjSourceKeyMemo {
     u32 texObjId = 0;
     Key key{};
   };
+
   std::array<Slot, 8> slots{};
 
   [[nodiscard]] bool matches(u32 texObjId, const Key& key) const {
     const auto& slot = slots[texObjId & (slots.size() - 1)];
     return slot.texObjId == texObjId && slot.key == key;
   }
+
   void store(u32 texObjId, const Key& key) {
     auto& slot = slots[texObjId & (slots.size() - 1)];
     slot.texObjId = texObjId;
     slot.key = key;
   }
+
   void forget(u32 texObjId) {
     auto& slot = slots[texObjId & (slots.size() - 1)];
+
     if (slot.texObjId == texObjId) {
       slot.texObjId = 0;
     }
   }
+
   void reset() {
     for (auto& slot : slots) {
       slot.texObjId = 0;
@@ -261,6 +271,7 @@ void record_tex_obj_source_key(u32 texObjId, const StaticTextureKey& key) noexce
   if (s_texObjSourceKeyMemo.matches(texObjId, key)) {
     return;
   }
+
   s_texObjSourceKeys[texObjId] = key;
   s_texObjSourceKeyMemo.store(texObjId, key);
 }
@@ -269,6 +280,7 @@ void record_tex_obj_palette_source_key(u32 texObjId, const StaticPaletteTextureK
   if (s_texObjPaletteSourceKeyMemo.matches(texObjId, key)) {
     return;
   }
+
   s_texObjPaletteSourceKeys[texObjId] = key;
   s_texObjPaletteSourceKeyMemo.store(texObjId, key);
 }
@@ -293,10 +305,12 @@ static std::array<StaticSourceFrontCacheEntry, 256> s_staticSourceFrontCache;
 
 static gfx::TextureHandle lookup_static_source_front_cache(const StaticTextureKey& key, size_t hash) noexcept {
   const auto& entry = s_staticSourceFrontCache[hash & (s_staticSourceFrontCache.size() - 1)];
+
   if (entry.valid && entry.validationRevision == s_staticTextureCacheValidationRevision && entry.hash == hash &&
       entry.key == key) {
     return entry.handle;
   }
+
   return {};
 }
 
@@ -322,6 +336,7 @@ static u32 static_texture_data_size(const StaticTextureKey& key) noexcept {
   if (key.data == nullptr || key.width == 0 || key.height == 0 || key.mips == 0) {
     return 0;
   }
+
   return GXGetTexBufferSize(static_cast<u16>(key.width), static_cast<u16>(key.height), key.format,
                             key.mips > 1 ? GX_TRUE : GX_FALSE, static_cast<u8>(key.mips - 1));
 }
@@ -330,6 +345,7 @@ static u64 digest_source_bytes(const void* data, size_t size) noexcept {
   if (data == nullptr || size == 0) {
     return 0;
   }
+
   return static_cast<u64>(xxh3_hash_s(data, size));
 }
 
@@ -337,6 +353,7 @@ static bool source_matches_digest(const void* data, size_t size, u64 digest, u32
   if (data == nullptr || size != expectedSize) {
     return false;
   }
+
   return digest_source_bytes(data, size) == digest;
 }
 
@@ -346,16 +363,20 @@ static bool validate_static_texture_source_entry(const StaticTextureKey& key,
   if (entry.validationRevision == s_staticTextureCacheValidationRevision) {
     return true;
   }
+
   const u32 dataSize = static_texture_data_size(key);
   const u64 generation = guest_write_generation(key.data, dataSize);
+
   if (dataSize == entry.sourceSize && guest_write_generation_matches(entry.sourceGeneration, generation)) {
     entry.validationRevision = s_staticTextureCacheValidationRevision;
     note_texture_cache_stamp();
     return true;
   }
+
   if (!source_matches_digest(key.data, dataSize, entry.digest, entry.sourceSize)) {
     return false;
   }
+
   entry.sourceGeneration = generation;
   entry.validationRevision = s_staticTextureCacheValidationRevision;
   note_texture_cache_stamp();
@@ -367,6 +388,7 @@ static bool validate_static_palette_texture_source_entry(const StaticPaletteText
   if (entry.validationRevision == s_staticTextureCacheValidationRevision) {
     return true;
   }
+
   const u32 textureDataSize = static_texture_data_size(key.texture);
   const size_t tlutDataSize = static_cast<size_t>(key.tlutEntries) * sizeof(u16);
   const u64 textureGeneration = guest_write_generation(key.texture.data, textureDataSize);
@@ -378,12 +400,15 @@ static bool validate_static_palette_texture_source_entry(const StaticPaletteText
     const bool textureOk =
         source_matches_digest(key.texture.data, textureDataSize, entry.textureDigest, entry.textureSize);
     const bool tlutOk = source_matches_digest(key.tlutData, tlutDataSize, entry.tlutDigest, entry.tlutSize);
+
     if (!textureOk || !tlutOk) {
       return false;
     }
+
     entry.textureGeneration = textureGeneration;
     entry.tlutGeneration = tlutGeneration;
   }
+
   entry.validationRevision = s_staticTextureCacheValidationRevision;
   note_texture_cache_stamp();
   return true;
@@ -461,8 +486,10 @@ void clear_texture_dependency(u32 texObjId, u32 tlutObjId) {
   if (texObjId == 0 || tlutObjId == 0) {
     return;
   }
+
   if (auto it = s_tlutObjectCaches.find(tlutObjId); it != s_tlutObjectCaches.end()) {
     it->second.staticTextureUsers.erase(texObjId);
+
     if (!it->second.tlutTexture.handle && it->second.dynamicPaletteTextures.empty() &&
         it->second.staticTextureUsers.empty()) {
       s_tlutObjectCaches.erase(it);
@@ -476,6 +503,7 @@ void store_cached_texture(const GXTexObj_& obj, gfx::TextureHandle handle, u32 t
   }
 
   auto& entry = s_textureObjectCaches[obj.texObjId];
+
   if (entry.tlutObjId != tlutObjId) {
     clear_texture_dependency(obj.texObjId, entry.tlutObjId);
   }
@@ -494,32 +522,41 @@ void store_cached_texture(const GXTexObj_& obj, gfx::TextureHandle handle, u32 t
 
 gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
   const size_t tlutSize = static_cast<size_t>(tlut.numEntries) * sizeof(u16);
+
   if (tlut.tlutObjId != 0) {
     auto& cache = s_tlutObjectCaches[tlut.tlutObjId];
     auto& cached = cache.tlutTexture;
+
     if (cached.handle && cached.tlutDataVersion == tlut.tlutDataVersion) {
       if (cached.validationRevision == s_staticTextureCacheValidationRevision) {
         return cached.handle;
       }
+
       // GXInvalidateTexAll: the guest may have rewritten this palette in place without re-running GXInitTlutObj, which is the only thing that moves tlutDataVersion.
       bool stillValid = true;
+
       if (tlut.data != nullptr) {
         const u64 generation = guest_write_generation(tlut.data, tlutSize);
+
         if (!guest_write_generation_matches(cached.generation, generation)) {
           stillValid = digest_source_bytes(tlut.data, tlutSize) == cached.digest;
           cached.generation = generation;
         }
       }
+
       if (stillValid) {
         cached.validationRevision = s_staticTextureCacheValidationRevision;
         note_texture_cache_stamp();
         return cached.handle;
       }
     }
+
     cache.dynamicPaletteTextures.clear();
+
     for (const u32 texObjId : cache.staticTextureUsers) {
       s_textureObjectCaches.erase(texObjId);
     }
+
     cache.staticTextureUsers.clear();
   }
 
@@ -536,6 +573,7 @@ gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
     cache.tlutTexture.validationRevision = s_staticTextureCacheValidationRevision;
     note_texture_cache_stamp();
   }
+
   return handle;
 }
 
@@ -545,12 +583,15 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
 #ifdef AURORA_GXM
   if (obj.format() & AURORA_NATIVE_TEXTURE_FORMAT_BIT) {
     const u32 id = obj.texDataVersion;
+
     if (auto it = s_nativeAssetTextures.find(id); it != s_nativeAssetTextures.end()) {
       it->second.frame = gfx::current_frame();
       return it->second.handle;
     }
+
     const auto info = gl::native_texture_info(id);
     const u32 bytes = (info.bytes + 63u) & ~63u;
+
     // Retain cold textures until the cache needs room. Only cache-owned
     // handles can be retired: frame N-1 and cached draw bindings keep their
     // own references. Live frames may temporarily exceed this soft budget;
@@ -558,15 +599,19 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
     while (s_nativeAssetBytes + bytes > kNativeAssetCacheBudget || s_nativeAssetTextures.size() >= 256) {
       auto oldest = s_nativeAssetTextures.end();
       const u32 frame = gfx::current_frame();
+
       for (auto it = s_nativeAssetTextures.begin(); it != s_nativeAssetTextures.end(); ++it) {
         if (it->second.handle.use_count() != 1) continue;
+
         if (oldest == s_nativeAssetTextures.end() || frame - it->second.frame > frame - oldest->second.frame)
           oldest = it;
       }
+
       if (oldest == s_nativeAssetTextures.end()) break;
       s_nativeAssetBytes -= oldest->second.bytes;
       s_nativeAssetTextures.erase(oldest);
     }
+
     CHECK(info.width == obj.width() && info.height == obj.height(), "Native asset dimensions disagree with GX binding");
     const u32 original = obj.format() & 15;
     auto handle = std::make_shared<gfx::TextureRef>(gl::native_texture_asset(id),
@@ -583,6 +628,7 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   if (canCacheUpload && obj.texObjId != 0) {
     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
       const auto& entry = it->second;
+
       if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == 0 &&
           entry.validationRevision == s_staticTextureCacheValidationRevision) {
         return entry.handle;
@@ -593,22 +639,27 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   const bool canUseSourceCache = canCacheUpload && obj.data != nullptr;
   const StaticTextureKey sourceKey = canUseSourceCache ? make_static_texture_key(obj) : StaticTextureKey{};
   const size_t sourceHash = canUseSourceCache ? FastHashValue(sourceKey) : 0;
+
   if (canUseSourceCache) {
     if (auto handle = lookup_static_source_front_cache(sourceKey, sourceHash)) {
       if (obj.texObjId != 0) {
         record_tex_obj_source_key(obj.texObjId, sourceKey);
       }
+
       return handle;
     }
+
     if (auto it = s_staticTextureSourceCache.find(sourceKey); it != s_staticTextureSourceCache.end()) {
       if (!validate_static_texture_source_entry(sourceKey, it->second)) {
         s_staticTextureSourceCache.erase(it);
         clear_static_source_front_cache();
       } else {
         const auto& handle = it->second.handle;
+
         if (obj.texObjId != 0) {
           record_tex_obj_source_key(obj.texObjId, sourceKey);
         }
+
         store_static_source_front_cache(sourceKey, sourceHash, handle);
         return handle;
       }
@@ -616,6 +667,7 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   }
 
   gfx::TextureHandle handle;
+
   if (const auto replacement = gfx::texture_replacement::find_replacement(obj); replacement.has_value()) {
     handle = *replacement;
   } else {
@@ -631,20 +683,25 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
     handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),
                                         {static_cast<const uint8_t*>(obj.data), dataSize}, false, nameStr);
   }
+
   if (canCacheUpload) {
     store_cached_texture(obj, handle);
+
     if (canUseSourceCache) {
       if (s_staticTextureSourceCache.size() >= 512) {
         s_staticTextureSourceCache.erase_if([](const auto& item) { return item.second.handle.use_count() <= 1; });
         clear_static_source_front_cache();
       }
+
       s_staticTextureSourceCache[sourceKey] = make_static_texture_source_entry(sourceKey, handle);
       store_static_source_front_cache(sourceKey, sourceHash, handle);
+
       if (obj.texObjId != 0) {
         record_tex_obj_source_key(obj.texObjId, sourceKey);
       }
     }
   }
+
   return handle;
 }
 
@@ -653,6 +710,7 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
   if (obj.texObjId != 0) {
     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
       const auto& entry = it->second;
+
       if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == tlut.tlutObjId &&
           entry.tlutDataVersion == tlut.tlutDataVersion &&
           entry.validationRevision == s_staticTextureCacheValidationRevision) {
@@ -671,16 +729,19 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
         s_staticPaletteTextureSourceCache.erase(it);
       } else {
         const auto& handle = it->second.handle;
+
         if (obj.texObjId != 0) {
           store_cached_texture(obj, handle, tlut.tlutObjId, tlut.tlutDataVersion);
           record_tex_obj_palette_source_key(obj.texObjId, sourceKey);
         }
+
         return handle;
       }
     }
   }
 
   gfx::TextureHandle handle;
+
   if (const auto replacement = gfx::texture_replacement::find_replacement(obj); replacement.has_value()) {
     handle = *replacement;
   } else {
@@ -693,23 +754,29 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
     if (converted.data.empty()) {
       return {};
     }
+
     handle =
         gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), GX_TF_RGBA8_PC,
                                    {converted.data.data(), converted.data.size()}, false, "GX Static Palette Texture");
     handle->hasArbitraryMips = converted.hasArbitraryMips;
   }
+
   if (!obj.no_cache() && !tlut.no_cache()) {
     store_cached_texture(obj, handle, tlut.tlutObjId, tlut.tlutDataVersion);
+
     if (canUseSourceCache) {
       if (s_staticPaletteTextureSourceCache.size() >= 256) {
         s_staticPaletteTextureSourceCache.erase_if([](const auto& item) { return item.second.handle.use_count() <= 1; });
       }
+
       s_staticPaletteTextureSourceCache[sourceKey] = make_static_palette_texture_source_entry(sourceKey, handle);
+
       if (obj.texObjId != 0) {
         record_tex_obj_palette_source_key(obj.texObjId, sourceKey);
       }
     }
   }
+
   return handle;
 }
 
@@ -718,15 +785,19 @@ gfx::TextureHandle resolve_dynamic_palette_texture(const GXTexObj_& obj, const G
 
   const auto tlutHandle = get_tlut_texture(tlut);
   auto& tlutCache = s_tlutObjectCaches[tlut.tlutObjId];
+
   if (tlutCache.dynamicPaletteTextures.size() >= 32) {
     tlutCache.dynamicPaletteTextures.erase_if([](const auto& item) { return item.second.handle.use_count() <= 1; });
   }
+
   auto& entry = tlutCache.dynamicPaletteTextures[make_dynamic_palette_key(obj, source)];
+
   if (!entry.handle) {
     // Use source size instead of target (logical) size
     entry.handle = gfx::new_conv_texture(source.handle->size.width, source.handle->size.height, GX_TF_RGBA8,
                                          "GX Dynamic Palette Texture");
   }
+
   if (entry.sourceRevision != source.revision || entry.tlutDataVersion != tlut.tlutDataVersion) {
     gfx::queue_palette_conv({
         .variant = obj.format() == GX_TF_C4 ? gfx::tex_palette_conv::Variant::FromFloat4
@@ -738,6 +809,7 @@ gfx::TextureHandle resolve_dynamic_palette_texture(const GXTexObj_& obj, const G
     entry.sourceRevision = source.revision;
     entry.tlutDataVersion = tlut.tlutDataVersion;
   }
+
   return entry.handle;
 }
 
@@ -745,9 +817,11 @@ u32 resolved_format_for_handle(const gfx::TextureHandle& handle) {
   if (!handle) {
     return GX_TF_RGBA8;
   }
+
   if (handle->gxFormat != gfx::InvalidTextureFormat) {
     return handle->gxFormat;
   }
+
   return GX_TF_RGBA8_PC;
 }
 } // namespace
@@ -772,10 +846,12 @@ struct ScissorRect {
 std::array<ScissorRange, 9> compute_scissor_ranges(s32 start, s32 end, s32 offset, s32 efbDim, u32& count) noexcept {
   std::array<ScissorRange, 9> ranges{};
   count = 0;
+
   for (s32 extraOff = -4096; extraOff <= 4096; extraOff += 1024) {
     const s32 newOff = offset + extraOff;
     const s32 newStart = std::clamp(start - newOff, 0, efbDim);
     const s32 newEnd = std::clamp(end - newOff + 1, 0, efbDim);
+
     if (newStart < newEnd && count < ranges.size()) {
       ranges[count++] = {
           .offset = newOff,
@@ -784,6 +860,7 @@ std::array<ScissorRange, 9> compute_scissor_ranges(s32 start, s32 end, s32 offse
       };
     }
   }
+
   return ranges;
 }
 
@@ -828,6 +905,7 @@ ScissorRect best_scissor_rect(const gfx::ClipRect& logicalScissor, const gfx::Vi
   u32 yCount = 0;
   const auto xRanges = compute_scissor_ranges(left, right, g_gxState.scissorOffsetX, efbWidth, xCount);
   const auto yRanges = compute_scissor_ranges(top, bottom, g_gxState.scissorOffsetY, efbHeight, yCount);
+
   if (xCount == 0 || yCount == 0) {
     return {
         .rect = {1000, 1000, 1, 1},
@@ -837,6 +915,7 @@ ScissorRect best_scissor_rect(const gfx::ClipRect& logicalScissor, const gfx::Vi
   }
 
   std::optional<ScissorRect> best;
+
   for (u32 x = 0; x < xCount; ++x) {
     for (u32 y = 0; y < yCount; ++y) {
       const ScissorRect candidate{
@@ -850,6 +929,7 @@ ScissorRect best_scissor_rect(const gfx::ClipRect& logicalScissor, const gfx::Vi
           .xOff = xRanges[x].offset,
           .yOff = yRanges[y].offset,
       };
+
       if (!best) {
         best = candidate;
         continue;
@@ -857,6 +937,7 @@ ScissorRect best_scissor_rect(const gfx::ClipRect& logicalScissor, const gfx::Vi
 
       const int candidateViewportArea = scissor_viewport_area(candidate, logicalViewport);
       const int bestViewportArea = scissor_viewport_area(*best, logicalViewport);
+
       if (candidateViewportArea > bestViewportArea ||
           (candidateViewportArea == bestViewportArea && scissor_area(candidate) > scissor_area(*best))) {
         best = candidate;
@@ -870,18 +951,22 @@ ScissorRect best_scissor_rect(const gfx::ClipRect& logicalScissor, const gfx::Vi
 float logical_to_target_x(float value) noexcept {
   const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
   const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
+
   if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
     return value;
   }
+
   return value * static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
 }
 
 float logical_to_target_y(float value) noexcept {
   const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
   const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
+
   if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
     return value;
   }
+
   return value * static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
 }
 
@@ -952,6 +1037,7 @@ gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcep
 
   const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
   const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
+
   if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
     return logicalViewport;
   }
@@ -975,6 +1061,7 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept 
 
   const auto [logicalFbWidth, logicalFbHeight] = logical_fb_size();
   const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
+
   if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
     return logicalScissor;
   }
@@ -993,6 +1080,7 @@ void set_render_viewport(const gfx::Viewport& viewport) noexcept {
   if (viewport == g_gxState.renderViewport) {
     return;
   }
+
   g_gxState.renderViewport = viewport;
   g_gxState.stateDirty = true;
   gfx::set_viewport(viewport);
@@ -1015,17 +1103,20 @@ void evict_texture_object(u32 texObjId) noexcept {
     clear_texture_dependency(texObjId, it->second.tlutObjId);
     s_textureObjectCaches.erase(it);
   }
+
   if (const auto it = s_texObjSourceKeys.find(texObjId); it != s_texObjSourceKeys.end()) {
     s_staticTextureSourceCache.erase(it->second);
     s_texObjSourceKeys.erase(it);
     s_texObjSourceKeyMemo.forget(texObjId);
     clear_static_source_front_cache();
   }
+
   if (const auto it = s_texObjPaletteSourceKeys.find(texObjId); it != s_texObjPaletteSourceKeys.end()) {
     s_staticPaletteTextureSourceCache.erase(it->second);
     s_texObjPaletteSourceKeys.erase(it);
     s_texObjPaletteSourceKeyMemo.forget(texObjId);
   }
+
   // If there is a loaded slot with this ID, mark it as no_cache to avoid inserting it when it's resolved.
   // This also handles the case where the texture was created, loaded, and immediately destroyed before we resolved it.
   for (auto& obj : g_gxState.loadedTextures) {
@@ -1040,14 +1131,17 @@ void evict_tlut_object(u32 tlutObjId) noexcept {
   if (const auto it = s_tlutObjectCaches.find(tlutObjId); it != s_tlutObjectCaches.end()) {
     for (const u32 texObjId : it->second.staticTextureUsers) {
       s_textureObjectCaches.erase(texObjId);
+
       if (const auto keyIt = s_texObjPaletteSourceKeys.find(texObjId); keyIt != s_texObjPaletteSourceKeys.end()) {
         s_staticPaletteTextureSourceCache.erase(keyIt->second);
         s_texObjPaletteSourceKeys.erase(keyIt);
         s_texObjPaletteSourceKeyMemo.forget(texObjId);
       }
     }
+
     s_tlutObjectCaches.erase(it);
   }
+
   // If there is a loaded slot with this ID, mark it as no_cache to avoid inserting it when it's resolved.
   // This also handles the case where the texture was created, loaded, and immediately destroyed before we resolved it.
   for (auto& obj : g_gxState.loadedTluts) {
@@ -1065,17 +1159,21 @@ constexpr size_t kTexObjSourceKeySoftLimit = 2048;
 
 static void prune_idle_texture_caches() noexcept {
   const u64 revision = s_staticTextureCacheValidationRevision;
+
   // An idle entry stays idle, so there is nothing to gain from sweeping on every bump (six a frame).
   if (revision % (kTextureCacheIdleRevisions / 2) != 0) {
     return;
   }
+
   if (s_textureObjectCaches.size() >= kTextureObjectCacheSoftLimit) {
     std::vector<std::pair<u32, u32>> retired;
+
     for (const auto& [texObjId, entry] : s_textureObjectCaches) {
       if (revision - entry.validationRevision > kTextureCacheIdleRevisions) {
         retired.emplace_back(texObjId, entry.tlutObjId);
       }
     }
+
     for (const auto& [texObjId, tlutObjId] : retired) {
       clear_texture_dependency(texObjId, tlutObjId);
       s_textureObjectCaches.erase(texObjId);
@@ -1097,6 +1195,7 @@ static void prune_idle_texture_caches() noexcept {
     s_texObjSourceKeys.erase_if([](const auto& item) { return !s_textureObjectCaches.contains(item.first); });
     s_texObjSourceKeyMemo.reset();
   }
+
   if (s_texObjPaletteSourceKeys.size() >= kTexObjSourceKeySoftLimit) {
     s_texObjPaletteSourceKeys.erase_if([](const auto& item) { return !s_textureObjectCaches.contains(item.first); });
     s_texObjPaletteSourceKeyMemo.reset();
@@ -1111,6 +1210,7 @@ void invalidate_static_texture_cache() noexcept {
 
   ++s_staticTextureCacheValidationRevision;
   s_textureCacheStamps = 0;
+
   if (s_staticTextureCacheValidationRevision == 0) {
     // Unreachable with a 64-bit counter, but if it ever wraps, no stamped revision may survive into the reused revision.
     s_staticTextureCacheValidationRevision = 1;
@@ -1123,6 +1223,7 @@ void invalidate_static_texture_cache() noexcept {
     s_texObjSourceKeyMemo.reset();
     s_texObjPaletteSourceKeyMemo.reset();
     clear_static_source_front_cache();
+
     for (auto& entry : s_textureResolveIdentityCache) {
       entry.valid = false;
       entry.binding.reset();
@@ -1144,6 +1245,7 @@ void clear_copy_texture_cache() noexcept {
   prune_copy_texture_pool(nullptr);
   mark_copy_texture_cache_changed();
   clear_display_copy_cache();
+
   for (auto& [_, cache] : s_tlutObjectCaches) {
     cache.dynamicPaletteTextures.clear();
   }
@@ -1169,24 +1271,29 @@ void evict_copy_texture(const void* dest) noexcept {
   // At most a few copies share a destination, so a vector holds their identities.
   std::vector<const void*> sourceIdentities;
   bool changed = false;
+
   if (const auto it = g_gxState.copyTextures.find(dest); it != g_gxState.copyTextures.end()) {
     if (it->second.handle) {
       sourceIdentities.push_back(it->second.handle.get());
     }
+
     g_gxState.copyTextures.erase(it);
     changed = true;
   }
+
   for (auto it = g_gxState.copyTextureCache.begin(); it != g_gxState.copyTextureCache.end();) {
     if (it->first.dest == dest) {
       if (it->second.handle) {
         sourceIdentities.push_back(it->second.handle.get());
       }
+
       g_gxState.copyTextureCache.erase(it++);
       changed = true;
     } else {
       ++it;
     }
   }
+
   if (!sourceIdentities.empty()) {
     for (auto& [_, cache] : s_tlutObjectCaches) {
       for (auto it = cache.dynamicPaletteTextures.begin(); it != cache.dynamicPaletteTextures.end();) {
@@ -1199,7 +1306,9 @@ void evict_copy_texture(const void* dest) noexcept {
       }
     }
   }
+
   prune_copy_texture_pool(dest);
+
   if (changed) {
     mark_copy_texture_cache_changed();
   }
@@ -1207,6 +1316,7 @@ void evict_copy_texture(const void* dest) noexcept {
 
 static void mark_copy_texture_cache_changed() noexcept {
   ++s_copyTextureStateRevision;
+
   if (s_copyTextureStateRevision == 0) {
     s_copyTextureStateRevision = 1;
     s_lastNoCopyResolveRevision.fill(0);
@@ -1230,6 +1340,7 @@ void mark_copy_texture_sampled(const void* copyDest, GXState::CopyTextureRef& co
       .height = copyRef.height,
       .format = copyRef.format,
   };
+
   if (auto it = g_gxState.copyTextureCache.find(key); it != g_gxState.copyTextureCache.end() &&
       it->second.handle == copyRef.handle) {
     it->second.lastSampledFrame = frame;
@@ -1255,10 +1366,13 @@ GXState::CopyTextureRef* find_cached_copy_texture(const void* copyDest, const GX
       .height = obj.height(),
       .format = static_cast<GXTexFmt>(obj.format() & ~AURORA_NATIVE_TEXTURE_FORMAT_BIT),
   };
+
   auto cached = g_gxState.copyTextureCache.find(key);
+
   if (cached == g_gxState.copyTextureCache.end() || !cached->second) {
     return nullptr;
   }
+
   mark_copy_texture_sampled(copyDest, cached->second);
   return &cached->second;
 }
@@ -1273,10 +1387,12 @@ GXState::CopyTextureRef* find_copy_texture_for_texobj(const GXTexObj_& obj) noex
   }
 
   const auto exact = g_gxState.copyTextures.find(obj.data);
+
   if (exact != g_gxState.copyTextures.end() && copy_ref_matches_texobj(exact->second, obj)) {
     mark_copy_texture_sampled(obj.data, exact->second);
     return &exact->second;
   }
+
   // A guest allocation can be recycled while an old GPU-only EFB copy still exists.
   return nullptr;
 }
@@ -1291,6 +1407,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     GXTexObj_ obj = g_gxState.loadedTextures[i];
     auto& textureBind = g_gxState.textures[i];
     const TextureResolveIdentity identity = make_texture_resolve_identity(obj);
+
     // obj is unchanged between here and the memo checks below, so the two former can_cache_static_texture_upload(obj) calls are one value.
     const bool canCacheUpload = can_cache_static_texture_upload(obj);
     const bool sameResolvedTexture = canCacheUpload && s_lastTextureResolveIdentityValid[i] &&
@@ -1299,6 +1416,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     if (sameResolvedTexture && s_lastNoCopyResolveRevision[i] == s_copyTextureStateRevision) {
       continue;
     }
+
     // Native assets already have a stable ID and their own residency cache.
     // The legacy identity memo owns strong references with no idle expiry;
     // putting native assets there prevents the residency cache from evicting
@@ -1310,8 +1428,10 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     const StaticTextureKey staticSourceKey =
         canUseStaticSourceKey ? make_static_texture_key(obj) : StaticTextureKey{};
     const size_t identityHash = canUseStaticSourceKey ? FastHashValue(identity) : 0;
+
     if (canUseStaticSourceKey) {
       const auto& entry = s_textureResolveIdentityCache[identityHash & (s_textureResolveIdentityCache.size() - 1)];
+
       if (entry.valid && entry.hash == identityHash && entry.copyTextureRevision == s_copyTextureStateRevision &&
           entry.validationRevision == s_staticTextureCacheValidationRevision && entry.identity == identity &&
           entry.binding) {
@@ -1326,6 +1446,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
         continue;
       }
     }
+
     if (canUseStaticSourceKey && textureBind.ref && s_lastStaticSourceResolveKeyValid[i] &&
         s_lastStaticSourceResolveKey[i] == staticSourceKey &&
         s_lastStaticSourceNoCopyRevision[i] == s_copyTextureStateRevision) {
@@ -1339,11 +1460,13 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     }
 
     GXState::CopyTextureRef* copyRef = find_copy_texture_for_texobj(obj);
+
     if (sameResolvedTexture) {
       if (copyRef == nullptr) {
         s_lastNoCopyResolveRevision[i] = s_copyTextureStateRevision;
         continue;
       }
+
       if (!is_palette_format(obj.format()) && textureBind.ref == copyRef->handle) {
         s_lastNoCopyResolveRevision[i] = 0;
         continue;
@@ -1351,10 +1474,13 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     }
 
     gfx::TextureHandle handle;
+
     if (is_palette_format(obj.format())) {
       const auto tlutIdx = static_cast<size_t>(obj.tlut);
+
       if (tlutIdx < g_gxState.loadedTluts.size()) {
         const auto& tlut = g_gxState.loadedTluts[tlutIdx];
+
         if (tlut.data != nullptr) {
           if (copyRef != nullptr) {
             handle = resolve_dynamic_palette_texture(obj, *copyRef, tlut);
@@ -1371,12 +1497,14 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
 
     obj.mFormat = resolved_format_for_handle(handle);
     textureBind = gfx::TextureBind{obj, std::move(handle)};
+
     // The per-texmap memo below lets a later draw reuse this binding without touching guest memory again, including for no_cache textures that never reach any of the stamped caches above, so it has to count as a stamp.
     note_texture_cache_stamp();
     s_lastTextureResolveIdentity[i] = identity;
     s_lastTextureResolveIdentityValid[i] = true;
     s_lastNoCopyResolveRevision[i] = (copyRef == nullptr) ? s_copyTextureStateRevision : 0;
     s_lastStaticSourceResolveKeyValid[i] = canUseStaticSourceKey && copyRef == nullptr;
+
     if (s_lastStaticSourceResolveKeyValid[i]) {
       s_lastStaticSourceResolveKey[i] = staticSourceKey;
       s_lastStaticSourceNoCopyRevision[i] = s_copyTextureStateRevision;
@@ -1405,11 +1533,13 @@ static inline GLenum to_blend_factor(GXBlendFactor fac, bool isDst, bool alphaCo
     if (alphaComponent) {
       return isDst ? GL_SRC_ALPHA : GL_DST_ALPHA;
     }
+
     return isDst ? GL_SRC_COLOR : GL_DST_COLOR;
   case GX_BL_INVSRCCLR: // + GX_BL_INVDSTCLR
     if (alphaComponent) {
       return isDst ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE_MINUS_DST_ALPHA;
     }
+
     return isDst ? GL_ONE_MINUS_SRC_COLOR : GL_ONE_MINUS_DST_COLOR;
   case GX_BL_SRCALPHA:
     return GL_SRC_ALPHA;
@@ -1469,6 +1599,7 @@ struct BlendComponent {
 static inline void set_blend_state(gl::RasterState& state, GXBlendMode mode, GXBlendFactor srcFac,
                                    GXBlendFactor dstFac, GXLogicOp op, GXPixelFmt pixelFmt, u32 dstAlpha) {
   BlendComponent color;
+
   switch (mode) {
     DEFAULT_FATAL("unsupported blend mode {}", underlying(mode));
   case GX_BM_NONE:
@@ -1478,6 +1609,7 @@ static inline void set_blend_state(gl::RasterState& state, GXBlendMode mode, GXB
       srcFac = remove_dst_alpha_usage(srcFac);
       dstFac = remove_dst_alpha_usage(dstFac);
     }
+
     color = {GL_FUNC_ADD, to_blend_factor(srcFac, false, false), to_blend_factor(dstFac, true, false)};
     break;
   case GX_BM_SUBTRACT:
@@ -1501,9 +1633,12 @@ static inline void set_blend_state(gl::RasterState& state, GXBlendMode mode, GXB
       color = {GL_MAX, GL_ONE, GL_ONE};
       break;
     }
+
     break;
   }
+
   BlendComponent alpha;
+
   if (dstAlpha != UINT32_MAX) {
     alpha = {GL_FUNC_ADD, GL_CONSTANT_ALPHA, GL_ZERO};
   } else if (mode == GX_BM_BLEND) {
@@ -1511,16 +1646,19 @@ static inline void set_blend_state(gl::RasterState& state, GXBlendMode mode, GXB
   } else {
     alpha = color;
   }
+
   state.colorEquation = color.operation;
   state.srcColor = color.srcFactor;
   state.dstColor = color.dstFactor;
   state.alphaEquation = alpha.operation;
   state.srcAlpha = alpha.srcFactor;
   state.dstAlpha = alpha.dstFactor;
+
   // One/Zero with Add is a plain write, so skip blending altogether.
   const auto isReplace = [](const BlendComponent& c) {
     return c.operation == GL_FUNC_ADD && c.srcFactor == GL_ONE && c.dstFactor == GL_ZERO;
   };
+
   state.blend = !(isReplace(color) && isReplace(alpha));
 }
 
@@ -1540,6 +1678,7 @@ gfx::PipelinePtr build_pipeline(const PipelineConfig& config, gl::ProgramPtr pro
   set_blend_state(state, config.blendMode, config.blendFacSrc, config.blendFacDst, config.blendOp, config.pixelFmt,
                   config.dstAlpha);
   state.colorMask = {config.colorUpdate, config.colorUpdate, config.colorUpdate, config.alphaUpdate};
+
   // Aurora's geometry uses clockwise front faces in WebGPU's y-down framebuffer. Every GL pass
   // renders vertically flipped, which reverses the winding, so GL sees those faces as CCW:
   // the GL default front face.
@@ -1557,6 +1696,7 @@ gfx::PipelinePtr build_pipeline(const PipelineConfig& config, gl::ProgramPtr pro
   case GX_CULL_NONE:
     break;
   }
+
   return std::make_shared<gfx::Pipeline>(gfx::Pipeline{
       .program = std::move(program),
       .raster = state,
@@ -1625,6 +1765,7 @@ u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept {
     default:
       break;
     }
+
     break;
   case GX_VA_NRM:
     switch (cnt) {
@@ -1636,6 +1777,7 @@ u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept {
     default:
       break;
     }
+
     break;
   case GX_VA_CLR0:
   case GX_VA_CLR1:
@@ -1656,24 +1798,29 @@ u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept {
     default:
       break;
     }
+
     break;
   default:
     break;
   }
+
   Log.fatal("comp_cnt_count: Unsupported attr/cnt {} {}", attr, cnt);
 }
 
 static u8 index_attr_size(GXAttr attr, GXCompCnt cnt, GXAttrType type) noexcept {
   const u8 indexSize = type == GX_INDEX16 ? 2 : 1;
+
   if (attr == GX_VA_NRM && cnt == GX_NRM_NBT3) {
     return indexSize * 3;
   }
+
   return indexSize;
 }
 
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
 
   const auto& vtxFmt = g_gxState.vtxFmts[fmt];
+
   // GX applies integer logic ops in the PE after fog.
   config.shaderConfig.fogType = effective_pipeline_fog_type(
       g_gxState.fog.type, g_gxState.zTextureOp, g_gxState.zCompLocBeforeTex,
@@ -1681,14 +1828,17 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shaderConfig.fogRangeAdjust =
       config.shaderConfig.fogType != GX_FOG_NONE && (g_gxState.fogRange[0] & (1u << 10)) != 0;
   u8 vtxOffset = 0;
+
   for (int i = GX_VA_PNMTXIDX; i <= GX_VA_TEX7; ++i) {
     const auto attr = static_cast<GXAttr>(i);
     const auto type = g_gxState.vtxDesc[i];
     auto& mapping = config.shaderConfig.attrs[i];
+
     if (type == GX_NONE) {
       mapping = {};
       continue;
     }
+
     const auto& attrFmt = vtxFmt.attrs[i];
     const auto cnt = comp_cnt_count(attr, attrFmt.cnt);
     mapping = AttrConfig{
@@ -1701,6 +1851,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
         .le = false,
         .nrmIndexCount = static_cast<u8>(attr == GX_VA_NRM && attrFmt.cnt == GX_NRM_NBT3 ? 3 : 1),
     };
+
     switch (type) {
     case GX_DIRECT: {
       vtxOffset += comp_type_size(attr, attrFmt.type) * cnt;
@@ -1720,7 +1871,9 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
       Log.fatal("populate_pipeline_config: Invalid vertex type {}", type);
     }
   }
+
   config.shaderConfig.vtxStride = vtxOffset;
+
   if (primitive == GX_LINES) {
     config.shaderConfig.lineMode = 1;
   } else if (primitive == GX_LINESTRIP) {
@@ -1730,24 +1883,32 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   } else {
     config.shaderConfig.lineMode = 0;
   }
+
   config.shaderConfig.dualTexEnabled = (g_gxState.dualTex & 1u) != 0;
   config.shaderConfig.tevSwapTable = g_gxState.tevSwapTable;
+
   for (u8 i = 0; i < g_gxState.numTevStages; ++i) {
     config.shaderConfig.tevStages[i] = g_gxState.tevStages[i];
   }
+
   config.shaderConfig.tevStageCount = g_gxState.numTevStages;
   config.shaderConfig.numTexGens = g_gxState.numTexGens;
+
   if (g_gxState.zTextureOp != GX_ZT_DISABLE && !g_gxState.zCompLocBeforeTex) {
     config.shaderConfig.zTexture = (g_gxState.zTextureBias & 0x00FFFFFFu) |
                                     ((static_cast<u32>(g_gxState.zTextureFmt) & 0x3u) << 24) |
                                     ((static_cast<u32>(g_gxState.zTextureOp) & 0x3u) << 26);
   }
+
   for (u8 i = 0; i < g_gxState.numIndStages; ++i) {
     config.shaderConfig.indStages[i] = g_gxState.indStages[i];
   }
+
   config.shaderConfig.numIndStages = g_gxState.numIndStages;
+
   for (u8 i = 0; i < MaxColorChannels; ++i) {
     const auto& cc = g_gxState.colorChannelConfig[i];
+
     if (cc.lightingEnabled) {
       config.shaderConfig.colorChannels[i] = cc;
     } else {
@@ -1757,16 +1918,21 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
       };
     }
   }
+
   for (u8 i = 0; i < MaxTexCoord; ++i) {
     config.shaderConfig.tcgs[i].src = static_cast<GXTexGenSrc>(GX_TG_TEX0 + i);
   }
+
   for (u8 i = 0; i < g_gxState.numTexGens; ++i) {
     config.shaderConfig.tcgs[i] = g_gxState.tcgs[i];
   }
+
   config.shaderConfig.alphaCompare = {};
+
   if (g_gxState.alphaCompare) {
     config.shaderConfig.alphaCompare = g_gxState.alphaCompare;
   }
+
   // The remaining fields are assigned in place.
   config.version = GXPipelineConfigVersion;
   config.msaaSamples = gfx::get_sample_count();
@@ -1789,19 +1955,24 @@ static TextureBindGroupCacheKey make_texture_bind_group_cache_key(const ShaderIn
       .sampledTextures = info.sampledTextures.to_ullong(),
       .sampledIndTextures = info.sampledIndTextures.to_ullong(),
   };
+
   for (u32 i = 0; i < MaxTextures; ++i) {
     if (!info.sampledTextures[i] && !info.sampledIndTextures[i]) {
       continue;
     }
+
     const auto& tex = g_gxState.textures[i];
+
     if (!tex) {
       continue;
     }
+
     const u32 refState = (tex.ref->isReplacement ? 1u : 0u) | (tex.ref->hasArbitraryMips ? 2u : 0u) |
                          (tex.ref->mipCount << 8);
     set_texture_bind_group_cache_slot(key, i, tex.ref->texture.get(), tex.texObj.mode0,
                                       tex.texObj.mode1, refState);
   }
+
   return key;
 }
 
@@ -1819,8 +1990,10 @@ static GXBindGroups build_bind_groups_uncached(const ShaderInfo& info) noexcept 
   }
 
   gfx::TextureBindGroup group;
+
   for (u32 i = 0; i < MaxTextures; ++i) {
     const auto& tex = g_gxState.textures[i];
+
     if (tex && (info.sampledTextures[i] || info.sampledIndTextures[i])) {
       group.textures[i] = {
           .ref = tex.ref,
@@ -1828,6 +2001,7 @@ static GXBindGroups build_bind_groups_uncached(const ShaderInfo& info) noexcept 
       };
     }
   }
+
   const auto ref = gfx::bind_group_ref(std::move(group));
   return {
       .textureBindGroup = ref,
@@ -1849,12 +2023,14 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
     TextureBindGroupCacheKey key{};
     GXBindGroups bindGroups{};
   };
+
   static std::array<Entry, CacheSize> cache{};
 
   const auto key = make_texture_bind_group_cache_key(info);
   const HashType hash = hash_texture_bind_group_cache_key(key);
   const u32 frame = gfx::current_frame();
   auto& entry = cache[hash & (CacheSize - 1)];
+
   if (entry.valid && entry.frame == frame && entry.hash == hash && entry.key == key) {
     return entry.bindGroups;
   }
@@ -1878,6 +2054,7 @@ void shutdown() noexcept {
   for (auto& item : g_gxState.textures) {
     item.ref.reset();
   }
+
   s_textureObjectCaches.clear();
   s_tlutObjectCaches.clear();
   s_staticTextureSourceCache.clear();
@@ -1887,11 +2064,13 @@ void shutdown() noexcept {
   s_texObjSourceKeyMemo.reset();
   s_texObjPaletteSourceKeyMemo.reset();
   clear_static_source_front_cache();
+
   // The resolve identity cache holds texture references too; it is revision gated rather than cleared during normal operation, so it has to be dropped explicitly here.
   for (auto& entry : s_textureResolveIdentityCache) {
     entry.valid = false;
     entry.binding.reset();
   }
+
   s_lastTextureResolveIdentityValid.fill(false);
   s_lastStaticSourceResolveKeyValid.fill(false);
   g_gxState.loadedTextures.fill({});
@@ -1941,6 +2120,7 @@ static GLenum gl_min_filter(bool linear, MipFilter mip) {
   case MipFilter::Linear:
     return linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR;
   }
+
   return GL_NEAREST;
 }
 
@@ -1962,6 +2142,7 @@ aurora::gl::SamplerDesc aurora::gfx::TextureBind::get_descriptor() const noexcep
   const auto [magLinear, _] = gl_filter_mode(texObj.mag_filter());
   float minLod = texObj.min_lod();
   float maxLod = texObj.max_lod();
+
   if (ref && ref->isReplacement) {
     minLinear = true;
     mipFilter = MipFilter::Linear;
@@ -1973,10 +2154,13 @@ aurora::gl::SamplerDesc aurora::gfx::TextureBind::get_descriptor() const noexcep
     minLod = 0.f;
     maxLod = 0.f;
   }
+
   u16 maxAnisotropy = gl_aniso(texObj.max_aniso());
+
   if (maxAnisotropy > 1 && !(magLinear && minLinear && mipFilter == MipFilter::Linear)) {
     maxAnisotropy = 1;
   }
+
   // Integer and float32 textures are not filterable in GLES 3.0.
   const bool filterable = !ref || aurora::gl::format_info(ref->format).filterable;
   return {

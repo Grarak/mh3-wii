@@ -63,12 +63,15 @@ struct Plw {
 // arrived (snapped). The original compares with the full per-step rate.
 bool TurnToward(const Plw& p, uint32_t angle, uint32_t wanted, uint32_t rate, uint32_t* difference = nullptr) {
     const uint32_t diff = (p.U32(wanted) - p.U32(angle)) & 0xFFFF;
+
     if (difference)
         *difference = diff;
+
     if (((diff + rate) & 0xFFFF) < rate * 2) {
         p.W32(angle, p.U32(wanted));
         return true;
     }
+
     p.W32(angle, (diff < 0x8000 ? p.U32(angle) + rate : p.U32(angle) - rate) & 0xFFFF);
     return false;
 }
@@ -77,6 +80,7 @@ bool TurnToward(const Plw& p, uint32_t angle, uint32_t wanted, uint32_t rate, ui
 // small positive lean ends at 0, a negative one wraps past it).
 void LeanBack(const Plw& p, uint32_t back) {
     const uint32_t lean = p.U16(kLean);
+
     if (int32_t(lean + back) <= int32_t(back * 2))
         p.W16(kLean, 0);
     else if (lean < 0x8000)
@@ -87,6 +91,7 @@ void LeanBack(const Plw& p, uint32_t back) {
 
 void ClampLean(const Plw& p) {
     const uint32_t lean = p.U16(kLean);
+
     if (((lean + 0x10000 - 0xA00) & 0xFFFF) <= 0xEC00)
         p.W16(kLean, lean < 0x8000 ? 0xA00 : 0xF600);
 }
@@ -110,6 +115,7 @@ static void PlayerTurnPort(CpuContext* ctx) {
     };
 
     int32_t yawRate = 4004, pitchRate = 1820;
+
     if (p.U8(kWeaponOut) == 1 && p.U8(kState) == 1 && p.U16(kSubState) <= 1) {
         yawRate = 2548;
     } else if (act(1, 1) || act(1, 5)) {
@@ -126,6 +132,7 @@ static void PlayerTurnPort(CpuContext* ctx) {
     } else if (act(1, 4)) {
         yawRate = 0;
     }
+
     if (game.Call<MasterCheck>({p.base}) == 1 && act(0, 22) && game.Call<TurnLocked>({p.base}) == 1)
         pitchRate = 0;
 
@@ -134,11 +141,15 @@ static void PlayerTurnPort(CpuContext* ctx) {
     auto blend = [&](uint32_t mode, int32_t amount) {
         game.Call<AddTurnBlend>({p.base, mode, Share(amount)});
     };
+
     uint32_t diff = 0;
+
     if (TurnToward(p, kYaw, kWantedYaw, Share(yawRate), &diff)) {
         LeanBack(p, Share(768));
+
         if (((diff + 256) & 0xFFFF) < 512) {
             const int16_t turn = int16_t(p.U16(kTurnBlend));
+
             if (turn > 0)
                 blend(1, -5);
             else if (turn < 0)
@@ -153,21 +164,26 @@ static void PlayerTurnPort(CpuContext* ctx) {
         p.W16(kLean, p.U16(kLean) + Share(lean));
         blend(0, 10);
     }
+
     ClampLean(p);
     TurnToward(p, kPitch, kWantedPitch, Share(pitchRate));
 
     // Turning in place: the turn blend weights a pair of motion channels.
     if (!(motion - 119 < 2 || motion == 101 || motion == 115))
         return;
+
     const int16_t turn = int16_t(p.U16(kTurnBlend));
+
     if (turn == 0) {
         game.Call<SetChannelWeight>({p.base, 0}, {Memory::ReadFloat32(kOne)});
         game.Call<SetChannelWeight>({p.base, 1}, {Memory::ReadFloat32(kZero)});
         return;
     }
+
     const float amount = float(turn);
     float weight = Memory::ReadFloat32(kBlendPerUnit) * amount;
     uint32_t turnMotion = savedR30;
+
     if (turn > 0) {
         switch (motion) {
         case 101:
@@ -198,8 +214,10 @@ static void PlayerTurnPort(CpuContext* ctx) {
             turnMotion = 130;
             break;
         }
+
         weight *= Memory::ReadFloat32(kMinusOne);
     }
+
     game.Call<BlendFrame>({p.base}, {amount});
     const int16_t blendFrame = int16_t(int32_t(game.F1()));
     game.Call<SetChannelMotion>({p.base, 1, turnMotion, 0, uint32_t(int32_t(blendFrame))});
@@ -211,25 +229,31 @@ static void VillagePlayerTurnPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     const Plw p{frame.Arg(3)};
+
     if (game.Call<MasterCheck>({p.base}) == 0) {
         p.W16(kLean, 0);
         return;
     }
+
     int32_t rate = 4004;
     const uint16_t sub = p.U16(kSubState);
+
     if (p.U8(kState) == 1)
         rate = sub == 1 || sub == 4 ? 1820 : sub == 2 ? 1456 : 4004;
     else if (p.U8(kState) == 12)
         rate = sub == 2 || sub == 5 ? 1820 : sub == 3 ? 1456 : 4004;
+
     const uint32_t motion = game.Call<MotionNo>({p.base}) & 0xFFFF;
     const int32_t lean = motion == 3 || motion == 53 ? 128 : motion == 4 ? 160 : 0;
     uint32_t diff = 0;
+
     if (TurnToward(p, kYaw, kWantedYaw, Share(rate), &diff))
         LeanBack(p, Share(768));
     else if (diff < 0x8000)
         p.W16(kLean, p.U16(kLean) - Share(lean));
     else
         p.W16(kLean, p.U16(kLean) + Share(lean));
+
     ClampLean(p);
 }
 

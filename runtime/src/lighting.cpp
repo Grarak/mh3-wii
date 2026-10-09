@@ -12,15 +12,18 @@ void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
         throw std::runtime_error("Native light input failed: " + std::to_string(status));
 }
+
 mh3_res_mut_span Record(uint32_t address) {
     return {Memory::GetPointer(address, MH3_LIGHT_RECORD_BYTES), MH3_LIGHT_RECORD_BYTES};
 }
+
 mh3_light Read(uint32_t address) {
     const auto record = Record(address);
     mh3_light light{};
     Checked(mh3_light_read({record.data, record.size}, &light));
     return light;
 }
+
 void Store(uint32_t address, const mh3_light& light) {
     Checked(mh3_light_store(Record(address), &light));
 }
@@ -92,6 +95,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8007A7CC, MH3_LightShininess, "LightShininess");
 extern "C" void MH3_LightGetPosition(CpuContext* cpu) {
     if (!cpu->gpr[4])
         return;
+
     const auto light = Read(cpu->gpr[3]);
     Checked(mh3_light_store_vector({Memory::GetPointer(cpu->gpr[4], 12), 12}, &light.position));
 }
@@ -99,6 +103,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8007A82C, MH3_LightGetPosition, "LightGetPosition"
 extern "C" void MH3_LightGetDirection(CpuContext* cpu) {
     if (!cpu->gpr[4])
         return;
+
     const auto light = Read(cpu->gpr[3]);
     const auto direction = mh3_light_ray_direction(&light);
     Checked(mh3_light_store_vector({Memory::GetPointer(cpu->gpr[4], 12), 12}, &direction));
@@ -107,6 +112,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8007A848, MH3_LightGetDirection, "LightGetDirectio
 extern "C" void MH3_LightGetColor(CpuContext* cpu) {
     if (!cpu->gpr[4])
         return;
+
     const auto light = Read(cpu->gpr[3]);
     std::memcpy(Memory::GetPointer(cpu->gpr[4], 4), &light.color, 4);
 }
@@ -122,8 +128,10 @@ REGISTER_NATIVE_FUNCTION_AS(0x8007A878, MH3_LightApplyView, "LightApplyView");
 extern "C" void MH3_LightSettingDefaults(CpuContext* cpu) {
     const auto count = uint16_t(cpu->gpr[6]);
     const auto sets = uint16_t(cpu->gpr[8]);
+
     if (!count || count > MH3_LIGHT_MAX || !sets || sets > MH3_LIGHT_SET_MAX)
         throw std::runtime_error("Native light setting count exceeds the scene allocation");
+
     Checked(mh3_light_setting_store_defaults(
         {Memory::GetPointer(cpu->gpr[3], 16), 16}, {Memory::GetPointer(cpu->gpr[4], size_t(count) * MH3_LIGHT_RECORD_BYTES), size_t(count) * MH3_LIGHT_RECORD_BYTES},
         {Memory::GetPointer(cpu->gpr[5], size_t(count) * 4), size_t(count) * 4},

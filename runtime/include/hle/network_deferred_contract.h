@@ -66,9 +66,11 @@ template <typename Work, typename Launcher>
 StartOutcome StartPrepared(Preparation<Work> &&preparation, Launcher &&launcher) {
     const PreparationState state = preparation.State();
     const int32_t failureResult = preparation.FailureResult();
+
     if (state == PreparationState::NotApplicable) {
         return StartOutcome::NotApplicable();
     }
+
     if (state == PreparationState::Error) {
         return StartOutcome::Immediate(failureResult);
     }
@@ -92,6 +94,7 @@ void RunWorker(Work work, Resolver &&resolver, Publish &&publish, PublishFailure
         std::forward<Publish>(publish)(std::move(completion));
     } catch (...) {
         const std::exception_ptr error = std::current_exception();
+
         try {
             std::forward<PublishFailure>(publishFailure)(std::move(work), error);
         } catch (...) {
@@ -114,12 +117,14 @@ Worker *DetachOrRelease(std::unique_ptr<Worker> worker, OnDetachFailure &&onDeta
     } catch (...) {
         const std::exception_ptr error = std::current_exception();
         Worker *const runningWorker = worker.release();
+
         try {
             std::forward<OnDetachFailure>(onDetachFailure)(error);
         } catch (...) {
             // Diagnostics must not turn containment of a running worker into a
             // second failure path.
         }
+
         return runningWorker;
     }
 }
@@ -163,12 +168,15 @@ inline constexpr ProbeDisposition ClassifyProbe(bool socketIdentityIsCurrent, in
     if (!socketIdentityIsCurrent) {
         return ProbeDisposition::StaleSocket;
     }
+
     if (pollResult < 0) {
         return ProbeDisposition::PollError;
     }
+
     if (pollResult > 0) {
         return ProbeDisposition::SocketReady;
     }
+
     return deadlineExpired ? ProbeDisposition::TimedOut : ProbeDisposition::Pending;
 }
 

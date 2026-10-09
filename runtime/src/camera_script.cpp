@@ -43,6 +43,7 @@ struct PathPose {
         for (int i = 0; i < 8; ++i)
             v[i] = Memory::ReadFloat32(script + kOffsets[i]);
     }
+
     void Write(uint32_t script) const {
         for (int i = 0; i < 8; ++i)
             Memory::WriteFloat32(script + kOffsets[i], v[i]);
@@ -63,13 +64,16 @@ static void CameraScriptInterpolatePort(CpuContext* ctx) {
     const uint32_t script = ctx->gpr[4];
     const int16_t left = int16_t(Memory::Read16(script + kLeft));
     const int16_t total = int16_t(Memory::Read16(script + kTotal));
+
     // The countdown runs after this call: it has counted every tick before this
     // step, so this step's time is ticks + fraction - 1 past `left`.
     const double pending = Pending();
+
     if (total < 1 || pending == 0.0) {
         func_802BD3A0(ctx);
         return;
     }
+
     const double now = std::clamp(double(left) - pending, 0.0, double(total));
     const int32_t scale = std::max(1, std::min(256, 32767 / total));
     Memory::Write16(script + kLeft, uint16_t(int16_t(std::lround(now * scale))));
@@ -90,31 +94,39 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
     const uint32_t script = ctx->gpr[4];
     const int16_t frame = int16_t(Memory::Read16(script + kFrame));
     const double pending = Pending();
+
     if (pending == 0.0) {
         func_802BD938(ctx);
         return;
     }
+
     const CpuContext entry = *ctx;
     const double position = std::max(0.0, double(frame) + pending);
     const int32_t low = int32_t(std::floor(position));
     const float blend = float(position - low);
+
     // Evaluate at the counted frame for the result (done or not), then at the
     // two frames around the position for the pose.
     auto evaluate = [&](int32_t at, PathPose* pose) {
         *ctx = entry;
         Memory::Write16(script + kFrame, uint16_t(int16_t(at)));
         func_802BD938(ctx);
+
         if (pose)
             pose->Read(script);
+
         return ctx->gpr[3];
     };
+
     const uint32_t result = evaluate(frame, nullptr);
     const CpuContext after = *ctx;
     PathPose a, b;
     evaluate(low, &a);
     evaluate(low + 1, &b);
+
     for (int i = 0; i < 8; ++i)
         a.v[i] += (b.v[i] - a.v[i]) * blend;
+
     a.Write(script);
     Memory::Write16(script + kFrame, uint16_t(frame));
     *ctx = after;

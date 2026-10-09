@@ -14,31 +14,38 @@ namespace {
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
     throw std::runtime_error("Native texture matrix input failed: " + std::to_string(status));
 }
+
 inline void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK) [[unlikely]]
         CheckedFailed(status);
 }
+
 mh3_res_span Bytes(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
+
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
+
 uint32_t Resource(uint32_t reference) {
     uint32_t resource = 0;
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &resource));
     return resource;
 }
+
 mh3_matrix34 Matrix(uint32_t address) {
     mh3_matrix34 m{};
     Checked(mh3_matrix_read34({Bytes(address, 48), 1, 48, 1}, 0, &m));
     return m;
 }
+
 void StoreMatrix(uint32_t destination, const mh3_matrix34& m) {
     for (uint32_t r = 0; r < 3; r++)
         for (uint32_t c = 0; c < 4; c++)
             Memory::WriteFloat32(destination + (r * 4 + c) * 4, m.v[r][c]);
 }
+
 mh3_pack_texture_srt Srt(uint32_t address, uint32_t flags) {
     mh3_pack_texture_srt s{};
     s.flags = flags;
@@ -61,12 +68,15 @@ REGISTER_NATIVE_FUNCTION_AS(0x80075F00, MH3_CalcTextureSrt, "CalcTextureSrt");
 
 extern "C" void MH3_CalcTextureSrtXsi(CpuContext* cpu) {
     const auto srt = Srt(cpu->gpr[5], cpu->gpr[6]);
+
     if (!(srt.flags & 1))
         throw std::runtime_error("XSI texture SRT lacks the existence flag");
+
     if (((srt.flags >> 1) & 7) == 7) {
         cpu->gpr[3] = 0;
         return;
     }
+
     auto matrix = Matrix(cpu->gpr[3]);
     Checked(mh3_texture_srt_calc(&srt, 1, cpu->gpr[4] != 0, &matrix));
     StoreMatrix(cpu->gpr[3], matrix);
@@ -83,35 +93,46 @@ void LoadNativeModelTextureSrt(uint32_t resource) {
     Checked(mh3_texture_srt_read_for_prepare(Bytes(resource, 0x248), &srt));
     mh3_matrix34 maps[8]{};
     uint32_t sources[8]{};
+
     // The constructor defines these exact built-in mapping functions. Custom
     // slots may change their callback and type at runtime; reject those until
     // their own typed native producer is implemented.
     constexpr uint32_t functions[]{0x800850a0, 0x80084694, 0x80084a78, 0x80084694, 0x80084c00};
     constexpr uint32_t kinds[]{0, 1, 2, 1, 1};
+
     for (uint32_t i = 0; i < 8; i++) {
         const auto& slot = srt.slot[i];
+
         if (!(slot.flags & 1) || !slot.map_mode)
             continue;
+
         const uint32_t mode = slot.map_mode, entry = 0x80685560 + mode * 8;
         const uint32_t builtin = mode < 5 ? mode : 0;
+
         if (Memory::Read32(entry) != functions[builtin] || Memory::Read32(entry + 4) != kinds[builtin])
             throw std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode));
+
         if (builtin) {
             mh3_texture_mapping_input input{};
             Checked(mh3_texture_mapping_read(Mutable(0x80688d94, 0x1a34), Bytes(0x80686368, MH3_LIGHT_STATE_BYTES), builtin, slot.camera_reference, slot.light_reference, &input));
             Checked(mh3_texture_mapping(builtin, &input, &maps[i]));
         } else
             Checked(mh3_texture_mapping(0, nullptr, &maps[i]));
+
         sources[i] = kinds[builtin];
     }
+
     mh3_texture_matrices matrices{};
     uint32_t next = 0;
     Checked(mh3_texture_matrices_prepare(&srt, maps, sources, Memory::Read32(0x80796db8), &matrices, &next));
+
     for (uint32_t i = 0; i < 8; i++) {
         Memory::Write32(0x80685510 + i * 4, matrices.source[i]);
+
         if (matrices.apply & (1u << i))
             SetNativeTextureMatrix(64 + i * 3, &matrices.matrix[i].v[0][0], true);
     }
+
     Memory::Write32(0x80796db8, next);
 }
 

@@ -52,6 +52,7 @@ MtxPtr MTXPushInv(MTXStack* sPtr, const Mtx m) {
     assert(m && "MTXPushInv():  NULL MtxPtr 'm' ");
 
     MTXInverse(m, mInv);
+
     if (sPtr->stackPtr == NULL) {
         sPtr->stackPtr = sPtr->stackBase;
         MTXCopy(mInv, sPtr->stackPtr);
@@ -72,6 +73,7 @@ MtxPtr MTXPushInvXpose(MTXStack* sPtr, const Mtx m) {
 
     MTXInverse(m, mIT);
     MTXTranspose(mIT, mIT);
+
     if (sPtr->stackPtr == NULL) {
         sPtr->stackPtr = sPtr->stackBase;
         MTXCopy(mIT, sPtr->stackPtr);

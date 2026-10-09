@@ -21,9 +21,11 @@ void begin(size_t v, size_t u, size_t i) {
   assert(gate.begin(true, true, [] { return ring.pending(); }));
 }
 }
+
 namespace aurora::gfx {
 uint32_t current_frame() noexcept { return fixture::frame; }
 }
+
 namespace aurora {
 AuroraConfig g_config{};
 void log_internal(AuroraLogLevel, const char*, const char*, unsigned int) noexcept { std::abort(); }
@@ -35,16 +37,19 @@ NativeDrawMemory native_draw_memory() noexcept {
           {fixture::indices.data(), fixture::indexBytes}, {}};
 }
 }
+
 namespace aurora::gl {
 bool on_render_thread() noexcept { return true; }
 void draw_native_geometry(const AuroraNativeGeometry&, bool) noexcept { ++fixture::submitted; }
 void draw_native_material_geometry(const AuroraNativeMaterialGeometry&, GLuint,
                                    const AuroraNativeUniforms&) noexcept { ++fixture::submitted; }
 }
+
 bool aurora_native_frame_should_render() { return fixture::gate.should_render(); }
 uint32_t aurora_native_frame_slot() { return fixture::ring.slot(); }
 void aurora_cancel_native_frame() {
   ++fixture::cancellations;
+
   // An earlier submitted scene remains attached to the current lease.
   fixture::ring.record_scene(&fixture::completed, fixture::serial);
   fixture::gate.cancel();

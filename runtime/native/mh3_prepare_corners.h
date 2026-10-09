@@ -16,9 +16,11 @@ typedef enum {
     MH3_CORNERS_IO = -4,
     MH3_CORNERS_ROLLBACK = -5
 } mh3_corners_status;
+
 typedef struct {
     uint32_t left, right, height;
 } mh3_corner_tree_node;
+
 typedef struct {
     uint8_t *vertices;
     size_t vertex_bytes;
@@ -30,11 +32,13 @@ typedef struct {
     uint32_t batch_count;
     mh3_prepare_sink indices;
 } mh3_corner_workspace;
+
 typedef struct {
     mh3_pack_layout layout;
     uint32_t vertex_count, index_count, batch_count, matrix_mask;
     float bounds_min[3], bounds_max[3], center[3];
 } mh3_prepared_corners;
+
 /* First validates complete CP/VAT grammar and declared totals, then writes
  * exact F32/U8N + raw normalized U8 matrix groups. Unified vertices preserve
  * first occurrence using a capped AVL byte-equality table; no hashing.

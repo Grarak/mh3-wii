@@ -19,68 +19,87 @@ constexpr uint32_t genmode = 0x80685300, sync_address = 0x80796db0;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
     throw std::runtime_error("Native material preparation failed: " + std::to_string(status));
 }
+
 inline void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK) [[unlikely]]
         CheckedFailed(status);
 }
+
 uint32_t Resource(uint32_t reference, bool required = false) {
     uint32_t resource = 0;
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, required, &resource));
     return resource;
 }
+
 mh3_res_span Bytes(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
+
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
     return {GuestRange(address, size), size};
 }
+
 void Publish(const mh3_native_material_state& patch, uint32_t top = 0) {
     OverlayNativeMaterial(patch, top);
 }
+
 void PublishGenMode(uint32_t address, bool xf) {
     mh3_model_genmode value{};
     uint32_t top = 0;
     int apply = 0;
     Checked(mh3_model_genmode_publish_counts(Mutable(address, 12), xf, &value, &top, &apply));
+
     if (apply)
         OverlayNativeMaterialTop(top, value.texgens, value.channels, value.tevs, value.indirect, value.cull);
 }
+
 void Group(CpuContext* cpu, mh3_model_material_block kind, bool xf) {
     const uint32_t address = Resource(cpu->gpr[3]);
+
     if (!address)
         return;
+
     mh3_model_genmode mode{};
     Checked(mh3_model_genmode_read(Bytes(genmode, 12), &mode));
     const uint32_t count = kind == MH3_MODEL_MATERIAL_INDIRECT ? mode.indirect : kind == MH3_MODEL_MATERIAL_TEXGEN ? mode.texgens : 1;
     const auto* fields = count ? &ReadNativeLiveMaterialBlockView(address, kind).fields : nullptr;
+
     // The original consumes SyncGX even for a zero-count group. This is now
     // CPU compatibility only; all typed state survives skipped GPU frames.
     if (!xf)
         PublishGenMode(genmode, false);
+
     Memory::Write8(sync_address, 0);
+
     if (count)
         OverlayNativeModelMaterialGroup(*fields, kind, count);
+
     if (xf)
         PublishGenMode(genmode, true);
 }
+
 void ChannelControl(CpuContext* cpu, bool force_off) {
     mh3_native_material_state patch{};
     Checked(mh3_model_channel_control(&patch, cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], force_off));
     Publish(patch);
 }
+
 void ChannelColor(CpuContext* cpu, bool ambient) {
     mh3_native_material_state patch{};
     Checked(mh3_model_channel_color(&patch, cpu->gpr[3], GuestRange(cpu->gpr[4], 4), ambient));
     Publish(patch);
 }
+
 mh3_model_material_misc Misc(uint32_t reference) {
     mh3_model_material_misc misc{};
     Checked(mh3_model_material_misc_read(Bytes(Resource(reference, true), 12), &misc));
     return misc;
 }
 } // namespace
+
 extern "C" void MH3_ModelGenModeLoad(CpuContext* cpu) {
     const uint32_t address = Resource(cpu->gpr[3]);
+
     if (address)
         Checked(mh3_model_genmode_select(Mutable(genmode, 12), Bytes(address, 8)));
 }
@@ -99,12 +118,15 @@ extern "C" void MH3_ModelGenModeXF(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80086FF8, MH3_ModelGenModeXF, "ModelGenModeXF");
 extern "C" void MH3_ModelMiscLoad(CpuContext* cpu) {
     const uint32_t address = Resource(cpu->gpr[3]);
+
     if (!address)
         return;
+
     mh3_model_material_misc misc{};
     Checked(mh3_model_material_misc_read(Bytes(address, 12), &misc));
     int apply = 0;
     Checked(mh3_depth_compare_cache(Mutable(0x80796dc8, 5), Mutable(sync_address, 1), misc.depth_before_texture, &apply));
+
     if (apply)
         SetNativeDepthCompareBeforeTexture(misc.depth_before_texture);
 }
@@ -113,6 +135,7 @@ extern "C" void MH3_ModelCurrentFog(CpuContext* cpu) {
     mh3_native_fog fog{};
     int apply = 0;
     Checked(mh3_fog_state_select(Mutable(0x80685d60, 1544), cpu->gpr[3], &fog, &apply));
+
     if (apply)
         SetNativeFog(fog);
 }
@@ -120,6 +143,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800881F0, MH3_ModelCurrentFog, "ModelCurrentFog");
 extern "C" void MH3_ModelCurrentLights(CpuContext* cpu) {
     const auto& slots = SelectNativeModelLightSet(0x80686368, cpu->gpr[3]);
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
+
     for (unsigned i = 0; i < 4; i++)
         if (cpu->gpr[4 + i])
             Memory::Write32(cpu->gpr[4 + i], masks[i]);
@@ -145,8 +169,10 @@ extern "C" void MH3_ModelTexgenLoad(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80087148, MH3_ModelTexgenLoad, "ModelTexgenLoad");
 extern "C" void MH3_ModelChannelsLoad(CpuContext* cpu) {
     const uint32_t address = Resource(cpu->gpr[3]);
+
     if (!address)
         return;
+
     mh3_model_genmode mode{};
     Checked(mh3_model_genmode_read(Bytes(genmode, 12), &mode));
     const uint32_t masks[]{cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7]};

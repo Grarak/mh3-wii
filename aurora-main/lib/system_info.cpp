@@ -31,6 +31,7 @@ private:
 
   T* value = nullptr;
 };
+
 typedef LONG NTSTATUS, *PNTSTATUS;
 extern "C" NTSYSAPI NTSTATUS NTAPI RtlGetVersion(PRTL_OSVERSIONINFOEXW lpVersionInformation);
 #elif __APPLE__
@@ -127,6 +128,7 @@ std::string GetCpuModel() {
     reinterpret_cast<BYTE*>(value),
     &size);
   RegCloseKey(key);
+
   if (queried != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
     Log.error("Unable to read the processor name");
     return Unknown;
@@ -148,6 +150,7 @@ std::string GetOSVersion() {
   RTL_OSVERSIONINFOEXW info = {};
   info.dwOSVersionInfoSize = sizeof(info);
   auto result = RtlGetVersion(&info);
+
   if (result != 0) {
     Log.error("RtlGetVersion failed");
     return Unknown;
@@ -173,6 +176,7 @@ static void LogGpus() {
   for (UINT i = 0;;i++) {
     ComPtr<IDXGIAdapter1> adapter;
     result = factory->EnumAdapters1(i, adapter.Put());
+
     if (result == DXGI_ERROR_NOT_FOUND)
       break;
 
@@ -193,6 +197,7 @@ void LogMisc() {
 static std::string sysCtlToString(const char* name) {
   size_t length;
   auto err = sysctlbyname(name, nullptr, &length, nullptr, 0);
+
   if (err) {
     Log.error("sysctlbyname failed: %d", err);
     return Unknown;
@@ -201,6 +206,7 @@ static std::string sysCtlToString(const char* name) {
   std::string value;
   value.resize(length);
   err = sysctlbyname(name, value.data(), &length, nullptr, 0);
+
   if (err) {
     Log.error("second sysctlbyname failed: %d", err);
     return Unknown;
@@ -220,6 +226,7 @@ uint64_t GetMemoryAmount() {
   uint64_t result;
   size_t size = sizeof(result);
   const auto err = sysctlbyname("hw.memsize", &result, &size, nullptr, 0);
+
   if (err) {
     Log.error("sysctlbyname failed: %d", err);
     return 0;
@@ -253,11 +260,13 @@ static void ltrim(std::string &s) {
     return !std::isspace(ch);
   }));
 }
+
 static void rtrim(std::string &s) {
     s.erase(std::ranges::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
         return !std::isspace(ch);
     }).base(), s.end());
 }
+
 inline std::string trim(std::string str) {
   ltrim(str);
   rtrim(str);
@@ -266,6 +275,7 @@ inline std::string trim(std::string str) {
 
 std::string GetCpuModel() {
   std::ifstream cpuInfo("/proc/cpuinfo");
+
   if (!cpuInfo)
   {
     Log.error("Failed to open /proc/cpuinfo");
@@ -277,6 +287,7 @@ std::string GetCpuModel() {
     std::getline(cpuInfo, line);
 
     const auto colon = line.find(':');
+
     if (colon == std::string::npos) {
       continue;
     }
@@ -301,11 +312,13 @@ uint64_t GetMemoryAmount() {
 
 std::string GetOSVersion() {
   auto path = "/etc/os-release";
+
   if (!std::filesystem::exists(path)) {
     path = "/usr/lib/os-release";
   }
 
   std::ifstream releaseInfo(path);
+
   if (!releaseInfo)
   {
     Log.error("Failed to open /etc/os-release or /usr/lib/os-release");
@@ -319,6 +332,7 @@ std::string GetOSVersion() {
     std::getline(releaseInfo, line);
 
     const auto split = line.find('=');
+
     if (split == std::string::npos) {
       continue;
     }

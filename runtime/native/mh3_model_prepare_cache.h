@@ -10,6 +10,7 @@ typedef struct mh3_model_scope_recipe {
     mh3_model_material_bindings replacements;
     mh3_model_material_scope scope;
 } mh3_model_scope_recipe;
+
 /* Only structural pointers are memoized. Group contents and render state are
  * consumed through their live producers on every scope execution. */
 int mh3_model_scope_recipe_matches(const mh3_model_scope_recipe *, uint64_t, uint32_t, const mh3_model_material_bindings *);

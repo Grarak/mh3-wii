@@ -12,12 +12,15 @@ uint8_t mh3_sc_aspect_ratio(int found, uint8_t stored) {
 mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferences, const mh3_render_mode defaults[3], mh3_render_mode *current) {
     if (!preferences || !defaults || !current)
         return MH3_RES_INVALID;
+
     mh3_render_preferences selection = *preferences;
     selection.component_cable = 1;
     mh3_render_configuration selected = {0};
     const mh3_res_status status = mh3_render_mode_select(&selection, defaults, NULL, &selected);
+
     if (status != MH3_RES_OK)
         return status;
+
     current->vi_width = selected.mode.vi_width;
     current->vi_x_origin = selected.mode.vi_x_origin;
     return MH3_RES_OK;
@@ -26,13 +29,16 @@ mh3_res_status mh3_render_mode_widescreen(const mh3_render_preferences *preferen
 static uint16_t read16(const uint8_t *p) {
     return (uint16_t)((uint16_t)p[0] << 8 | p[1]);
 }
+
 static uint32_t read32(const uint8_t *p) {
     return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
 }
+
 static void write16(uint8_t *p, uint16_t v) {
     p[0] = (uint8_t)(v >> 8);
     p[1] = (uint8_t)v;
 }
+
 static void write32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
     p[1] = (uint8_t)(v >> 16);
@@ -43,6 +49,7 @@ static void write32(uint8_t *p, uint32_t v) {
 mh3_res_status mh3_render_mode_read(mh3_res_span record, mh3_render_mode *out) {
     if (!out || !record.data || record.size < MH3_RENDER_MODE_BYTES)
         return MH3_RES_RANGE;
+
     const uint8_t *p = record.data;
     mh3_render_mode mode;
     mode.tv_mode = read32(p);
@@ -91,6 +98,7 @@ mh3_res_status mh3_render_mode_store(mh3_res_mut_span record, const mh3_render_m
 mh3_res_status mh3_render_mode_crop(mh3_render_mode *mode, uint16_t horizontal, uint16_t vertical) {
     if (!mode || !mode->xfb_height)
         return MH3_RES_INVALID;
+
     const mh3_render_mode original = *mode;
     const uint32_t h = (uint32_t)horizontal * 2;
     const uint32_t v = (uint32_t)(vertical & 0x7fff) * 2;
@@ -109,9 +117,11 @@ mh3_res_status mh3_render_mode_crop(mh3_render_mode *mode, uint16_t horizontal, 
 mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences, const mh3_render_mode defaults[3], const mh3_render_mode *custom, mh3_render_configuration *out) {
     if (!preferences || !out || (!custom && !defaults))
         return MH3_RES_INVALID;
+
     mh3_render_configuration result = {0};
     result.pal = 0;
     result.widescreen = preferences->widescreen == 1;
+
     if (custom) {
         uint8_t geometry[2], tail[3];
         memcpy(geometry, out->mode.reserved_geometry, 2);
@@ -121,6 +131,7 @@ mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences,
         memcpy(result.mode.reserved_tail, tail, 3);
     } else {
         uint16_t overscan = 16;
+
         if (preferences->progressive == 1 && preferences->component_cable == 1) {
             result.mode = defaults[MH3_MODE_PROGRESSIVE];
         } else if (preferences->tv_format == 0 || preferences->tv_format == 5) {
@@ -132,9 +143,12 @@ mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences,
         } else {
             return MH3_RES_UNSUPPORTED;
         }
+
         mh3_res_status status = mh3_render_mode_crop(&result.mode, 0, overscan);
+
         if (status != MH3_RES_OK)
             return status;
+
         if (preferences->progressive == 1 && preferences->component_cable == 1) {
             if (preferences->tv_format != 0)
                 result.mode.tv_mode = 0x16;
@@ -148,6 +162,7 @@ mh3_res_status mh3_render_mode_select(const mh3_render_preferences *preferences,
             result.mode.vi_height = defaults[MH3_MODE_PAL].vi_height;
         }
     }
+
     *out = result;
     return MH3_RES_OK;
 }

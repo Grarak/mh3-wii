@@ -81,6 +81,7 @@ void C_QUATNormalize(const Quaternion* src, Quaternion* unit) {
   assert(unit && "QUATNormalize():  NULL QuaternionPtr 'unit' ");
 
   mag = (src->x * src->x) + (src->y * src->y) + (src->z * src->z) + (src->w * src->w);
+
   if (mag >= 0.00001f) {
     mag = 1.0f / sqrtf(mag);
 
@@ -99,6 +100,7 @@ void C_QUATInverse(const Quaternion* src, Quaternion* inv) {
   assert(inv && "QUATInverse():  NULL QuaternionPtr 'inv' ");
 
   mag = (src->x * src->x) + (src->y * src->y) + (src->z * src->z) + (src->w * src->w);
+
   if (mag == 0.0f) {
     mag = 1.0f;
   }
@@ -157,6 +159,7 @@ void C_QUATMakeClosest(const Quaternion* q, const Quaternion* qto, Quaternion* r
   assert(r && "QUATMakeClosest():  NULL QuaternionPtr 'r' ");
 
   dot = (q->x * qto->x) + (q->y * qto->y) + (q->z * qto->z) + (q->w * qto->w);
+
   if (dot < 0.0f) {
     r->x = -q->x;
     r->y = -q->y;
@@ -196,6 +199,7 @@ void C_QUATMtx(Quaternion* r, const Mtx m) {
   assert(m && "QUATMtx():  NULL MtxPtr 'm' ");
 
   tr = m[0][0] + m[1][1] + m[2][2];
+
   if (tr > 0.0f) {
     s = sqrtf(tr + 1.0f);
     r->w = s * 0.5f;
@@ -206,6 +210,7 @@ void C_QUATMtx(Quaternion* r, const Mtx m) {
     r->z = (m[1][0] - m[0][1]) * s;
   } else  {
     i = 0;
+
     if (m[1][1] > m[0][0]) {
       i = 1;
     }

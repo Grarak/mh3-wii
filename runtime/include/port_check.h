@@ -16,9 +16,11 @@
 
 namespace PortCheck {
 bool Enabled(const char* name);
+
 // The `originals` option: the sound engine's entry points not named run their
 // translated originals, so a named port is reached from original callers.
 bool Originals();
+
 // Runs original(ctx) and port(ctx) from the same state, reports differences,
 // and leaves the port's result in place.
 void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));
@@ -32,6 +34,7 @@ enum class Returns {
     Gpr3,
     Fpr1
 };
+
 void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*));
 
 // For ports whose only guest writes (besides their stack frames) are a few
@@ -41,6 +44,7 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 struct Region {
     uint32_t address, bytes;
 };
+
 void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs);
 
 // MH3_PORT_CHECK=...,P:0xADDR,E:0xADDR,... (development): ports the game rarely

@@ -10,6 +10,7 @@ typedef struct mh3_ui_vertex {
     float position[3], uv[2];
     uint8_t color[4];
 } mh3_ui_vertex;
+
 typedef enum mh3_ui_primitive {
     MH3_UI_POINTS,
     MH3_UI_LINES,
@@ -19,16 +20,19 @@ typedef enum mh3_ui_primitive {
     MH3_UI_TRIANGLE_STRIP,
     MH3_UI_TRIANGLE_FAN
 } mh3_ui_primitive;
+
 typedef enum mh3_ui_position_format {
     MH3_UI_POSITION_I16_2,
     MH3_UI_POSITION_FLOAT_2,
     MH3_UI_POSITION_FLOAT_3
 } mh3_ui_position_format;
+
 typedef enum mh3_ui_uv_format {
     MH3_UI_UV_NONE,
     MH3_UI_UV_FLOAT,
     MH3_UI_UV_I16
 } mh3_ui_uv_format;
+
 /* These are CPU arrays, not GPU payloads. The adapter supplies checked spans;
  * native attributes are written directly into the admitted frame allocation. */
 typedef struct mh3_ui_stream {
@@ -40,9 +44,11 @@ typedef struct mh3_ui_stream {
     float uv_scale[2], uv_matrix[12];
     uint8_t transform_uv;
 } mh3_ui_stream;
+
 typedef struct mh3_ui_texture_header {
     uint32_t width, height, format, payload_address, wrap_s, wrap_t;
 } mh3_ui_texture_header;
+
 mh3_res_status mh3_ui_texture_header_read(mh3_res_span header, mh3_ui_texture_header *out);
 
 mh3_res_status mh3_ui_geometry_counts(mh3_ui_primitive primitive, uint32_t count, uint32_t *vertices, uint32_t *indices);

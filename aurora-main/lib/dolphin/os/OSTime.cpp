@@ -82,6 +82,7 @@ static int GetLeapDays(int year) {
     if (year < 1) {
         return 0;
     }
+
     return (year + 3) / 4 - (year - 1) / 100 + (year - 1) / 400;
 }
 
@@ -105,9 +106,11 @@ static void GetDates(int days, OSCalendarTime* td) {
     td->yday = days;
 
     md = IsLeapYear(year) ? LeapYearDays : YearDays;
+
     for (month = MONTH_MAX; days < md[--month];) {
         ;
     }
+
     td->mon = month;
     td->mday = days - md[month] + 1;
 }
@@ -118,6 +121,7 @@ void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* td) {
     OSTime d;
 
     d = ticks % OS_SEC_TO_TICKS(1);    
+
     if (d < 0) {
         d += OS_SEC_TO_TICKS(1);
         ASSERT(0 <= d);
@@ -136,6 +140,7 @@ void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* td) {
 
     days = (OS_TICKS_TO_SEC(ticks) / SECS_IN_DAY) + BIAS;    
     secs = OS_TICKS_TO_SEC(ticks) % SECS_IN_DAY;
+
     if (secs < 0) {
         days -= 1;
         secs += SECS_IN_DAY;

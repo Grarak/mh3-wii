@@ -27,6 +27,7 @@ namespace {
 // most this many ticks past the last tick the game produced; after that it
 // outputs silence without advancing until the game catches up.
 constexpr uint32_t kFreezeTicks = 50;
+
 // Sample-rate ratios are 16.16; 8x bounds one tick's source reads.
 constexpr uint32_t kMaxRatio = 8u << 16;
 constexpr uint32_t kMaxSource = kTickSamples * 8 + 2;
@@ -46,11 +47,14 @@ struct SrcTables {
     SrcTables() {
         constexpr double kPi = 3.14159265358979323846;
         constexpr double kCutoff[3] = {0.5, 0.75, 1.0};
+
         for (int p = 0; p < 128; ++p) {
             const double t = p / 128.0;
             const double x[4] = {-(1 + t), -t, 1 - t, 2 - t};
+
             for (int set = 0; set < 3; ++set) {
                 double h[4], sum = 0;
+
                 for (int k = 0; k < 4; ++k) {
                     const double a = kPi * kCutoff[set] * x[k];
                     const double sinc = std::fabs(a) < 1e-12 ? 1.0 : std::sin(a) / a;
@@ -58,9 +62,11 @@ struct SrcTables {
                     h[k] = sinc * window;
                     sum += h[k];
                 }
+
                 for (int k = 0; k < 4; ++k)
                     polyphase[set][p][k] = int32_t(std::lround(h[k] / sum * 16384.0));
             }
+
             linear[p][0] = 0;
             linear[p][1] = int32_t(std::lround((1.0 - t) * 16384.0));
             linear[p][2] = int32_t(std::lround(t * 16384.0));
@@ -68,6 +74,7 @@ struct SrcTables {
         }
     }
 };
+
 const SrcTables kSrc;
 
 // mixerCtrl bus k (two bits each: enable, ramp) -> its PB volume pair.
@@ -79,17 +86,22 @@ uint64_t NowNs() {
 
 void MixAdd(int32_t* out, const int16_t* in, uint16_t& volume, int16_t delta) {
     uint16_t v = volume;
+
     if (delta == 0) {
         if (v == 0)
             return;
+
         for (uint32_t i = 0; i < kTickSamples; ++i)
             out[i] += Clamp16((int32_t(in[i]) * int32_t(v)) >> 15);
+
         return;
     }
+
     for (uint32_t i = 0; i < kTickSamples; ++i) {
         out[i] += Clamp16((int32_t(in[i]) * int32_t(v)) >> 15);
         v = uint16_t(v + delta);
     }
+
     volume = v;
 }
 
@@ -97,6 +109,7 @@ void MixAdd(int32_t* out, const int16_t* in, uint16_t& volume, int16_t delta) {
 void Ramp(uint16_t* out, uint16_t from, uint16_t to) {
     float current = from;
     const float step = (float(to) - float(from)) / float(kTickSamples);
+
     for (uint32_t i = 0; i < kTickSamples; ++i) {
         current += step;
         out[i] = uint16_t(current);
@@ -110,6 +123,7 @@ Mixer::Mixer() {
         std::memset(v.pb, 0, sizeof(v.pb));
         v.fading = v.published = false;
     }
+
     for (uint32_t i = 0; i < kMaxVoices; ++i) {
         feedback_.stateVolume[i].store(0, std::memory_order_relaxed);
         feedback_.address[i].store(0, std::memory_order_relaxed);
@@ -140,11 +154,15 @@ void Mixer::ResetVoices() {
         feedback_.stateVolume[i].store(0, std::memory_order_relaxed);
         feedback_.address[i].store(0, std::memory_order_relaxed);
     }
+
     for (auto& aux : aux_)
         aux.reset();
+
     masterVolume_ = lastMasterVolume_ = 0x8000;
+
     for (uint32_t a = 0; a < 3; ++a)
         auxReturn_[a] = lastAuxReturn_[a] = 0x8000;
+
     mode_ = 0;
 }
 
@@ -155,6 +173,7 @@ inline uint8_t Mixer::ByteAt(uint32_t address) const {
         const uint32_t offset = address & 0x03FFFFFFu;
         return offset < mem2Size_ ? mem2_[offset] : 0;
     }
+
     const uint32_t offset = address & 0x01FFFFFFu;
     return offset < mem1Size_ ? mem1_[offset] : 0;
 }
@@ -162,17 +181,20 @@ inline uint8_t Mixer::ByteAt(uint32_t address) const {
 void Mixer::Render(int16_t* out, uint32_t frames) {
     const uint64_t start = NowNs();
     const uint32_t total = frames;
+
     while (frames) {
         if (tickPosition_ == kTickSamples) {
             RenderTick(tick_);
             tickPosition_ = 0;
         }
+
         const uint32_t n = std::min(frames, kTickSamples - tickPosition_);
         std::memcpy(out, tick_ + tickPosition_ * 2, n * 2 * sizeof(int16_t));
         out += n * 2;
         frames -= n;
         tickPosition_ += n;
     }
+
     statistics_.renderNs.fetch_add(NowNs() - start, std::memory_order_relaxed);
     statistics_.outputFrames.fetch_add(total, std::memory_order_relaxed);
 }
@@ -180,12 +202,15 @@ void Mixer::Render(int16_t* out, uint32_t frames) {
 uint32_t Mixer::ApplyCommands(uint32_t tick) {
     uint32_t applied = 0;
     bool any = false;
+
     while (const uint32_t* record = ring_.Peek()) {
         const uint32_t header = record[0];
+
         switch (HeaderType(header)) {
         case Command::Tick:
             if (int32_t(record[1] - tick) > 0)
                 goto done;
+
             applied = record[1] + 1;
             any = true;
             break;
@@ -194,10 +219,12 @@ uint32_t Mixer::ApplyCommands(uint32_t tick) {
             break;
         case Command::Stop: {
             Voice& v = voices_[HeaderVoice(header)];
+
             if (v.pb[Pb::State] == 1) {
                 v.fading = (HeaderFlags(header) & kFlagDepop) != 0;
                 v.published = true;
             }
+
             v.pb[Pb::State] = 0;
             break;
         }
@@ -217,6 +244,7 @@ uint32_t Mixer::ApplyCommands(uint32_t tick) {
         case Command::Pad:
             break;
         }
+
         ring_.Pop(HeaderWords(header));
     }
 done:
@@ -230,23 +258,28 @@ void Mixer::ApplyVoice(const uint32_t* record) {
     uint32_t groups = record[1];
     const uint32_t* data = record + 2;
     uint32_t half = 0;
+
     while (groups) {
         const uint32_t bit = uint32_t(__builtin_ctz(groups));
         groups &= groups - 1;
         const SyncGroup g = kSyncGroups[bit];
+
         for (uint32_t i = 0; i < g.count; ++i, ++half)
             v.pb[g.offset + i] = uint16_t(data[half >> 1] >> ((half & 1) * 16));
     }
+
     if (v.pb[Pb::State] == 1)
         v.fading = false;
     else if (wasRunning)
         v.fading = (HeaderFlags(header) & kFlagDepop) != 0;
+
     v.published = true;
 }
 
 void Mixer::ApplyAux(uint32_t bus, const uint32_t* record) {
     if (bus >= 3)
         return;
+
     if (AuxKind(record[1]) == AuxKind::ReverbHi) {
         ReverbConfig config;
         std::memcpy(&config, record + 2, sizeof(config));
@@ -265,17 +298,21 @@ uint32_t Mixer::Decode(Voice& voice, int16_t* out, uint32_t count) {
     const bool loop = pb[Pb::LoopFlag] != 0;
     bool stopped = false;
     uint32_t i = 0;
+
     if ((format & 3) == 0) {
         // ADPCM: nibble addresses; a header byte (predictor, scale) starts
         // every 16 nibbles.
         uint32_t ps = pb[Pb::AdpcmPredScale] & 0x7F;
         int32_t yn1 = int16_t(pb[Pb::AdpcmYn1]), yn2 = int16_t(pb[Pb::AdpcmYn2]);
         const bool stream = pb[Pb::Type] == 1;
+
         while (i < count) {
             const uint8_t byte = ByteAt(cur >> 1);
             int32_t nibble = (cur & 1) ? (byte & 0xF) : (byte >> 4);
+
             if (nibble >= 8)
                 nibble -= 16;
+
             const uint32_t ci = (ps >> 4) & 7;
             const int32_t c1 = int16_t(pb[Pb::AdpcmCoefs + ci * 2]), c2 = int16_t(pb[Pb::AdpcmCoefs + ci * 2 + 1]);
             int32_t value = nibble * (1 << (ps & 0xF)) + ((0x400 + c1 * yn1 + c2 * yn2) >> 11);
@@ -285,6 +322,7 @@ uint32_t Mixer::Decode(Voice& voice, int16_t* out, uint32_t count) {
             out[i++] = int16_t(value);
             ++cur;
             uint32_t step = 2;
+
             if ((end & 0xF) == 0 && cur == end) {
                 cur = start + 1;
             } else if ((end & 0xF) == 1 && cur == end - 1) {
@@ -294,20 +332,26 @@ uint32_t Mixer::Decode(Voice& voice, int16_t* out, uint32_t count) {
                 cur += 2;
                 step += 2;
             }
+
             if (cur == end + step - 1) {
                 cur = start;
+
                 if (!loop) {
                     stopped = true;
                     break;
                 }
+
                 ps = pb[Pb::LoopPredScale] & 0x7F;
+
                 if (!stream) {
                     yn1 = int16_t(pb[Pb::LoopYn1]);
                     yn2 = int16_t(pb[Pb::LoopYn2]);
                 }
             }
+
             cur &= 0xBFFFFFFFu;
         }
+
         pb[Pb::AdpcmPredScale] = uint16_t(ps);
         pb[Pb::AdpcmYn1] = uint16_t(yn1);
         pb[Pb::AdpcmYn2] = uint16_t(yn2);
@@ -318,48 +362,63 @@ uint32_t Mixer::Decode(Voice& voice, int16_t* out, uint32_t count) {
         const uint32_t gainScale = (format >> 4) & 3;
         const uint32_t shift = gainScale == 1 ? 0 : gainScale == 2 ? 16 : 11;
         const int32_t gain = int16_t(pb[Pb::AdpcmGain]);
+
         while (i < count) {
             int32_t raw;
+
             if (pcm16) {
                 const uint32_t b = cur * 2;
                 raw = int16_t(uint16_t(ByteAt(b) << 8 | ByteAt(b + 1)));
             } else {
                 raw = ByteAt(cur);
             }
+
             out[i++] = int16_t((gain * raw) >> shift);
             ++cur;
+
             if (cur == end + 1) {
                 cur = start;
+
                 if (!loop) {
                     stopped = true;
                     break;
                 }
             }
+
             cur &= 0xBFFFFFFFu;
         }
     }
+
     pb[Pb::CurHi] = uint16_t(cur >> 16);
     pb[Pb::CurLo] = uint16_t(cur);
+
     if (stopped) {
         pb[Pb::State] = 0;
         std::fill(out + i, out + count, int16_t(0));
     }
+
     return i;
 }
 
 void Mixer::ProcessVoice(Voice& voice, bool fade) {
     uint16_t* pb = voice.pb;
     uint32_t ratio = uint32_t(pb[Pb::SrcRatioHi]) << 16 | pb[Pb::SrcRatioLo];
+
     if (ratio > kMaxRatio)
         ratio = kMaxRatio;
+
     const uint32_t srcType = pb[Pb::SrcSelect];
     alignas(16) int16_t source[4 + kMaxSource];
+
     for (uint32_t k = 0; k < 4; ++k)
         source[k] = int16_t(pb[Pb::SrcLast + k]);
+
     uint32_t frac = pb[Pb::SrcFrac];
     alignas(16) int16_t samples[kTickSamples];
+
     if (srcType >= 2) {
         Decode(voice, samples, kTickSamples);
+
         for (uint32_t k = 0; k < 4; ++k)
             pb[Pb::SrcLast + k] = uint16_t(samples[kTickSamples - 4 + k]);
     } else {
@@ -367,6 +426,7 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
         Decode(voice, source + 4, need);
         const auto& table = srcType == 0 ? kSrc.polyphase[std::min<uint32_t>(pb[Pb::CoefSelect], 2)] : kSrc.linear;
         uint32_t consumed = 0;
+
         for (uint32_t i = 0; i < kTickSamples; ++i) {
             frac += ratio;
             consumed += frac >> 16;
@@ -375,7 +435,9 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
             const int32_t* c = table[frac >> 9];
             samples[i] = int16_t(Clamp16((w[0] * c[0] + w[1] * c[1] + w[2] * c[2] + w[3] * c[3] + 0x2000) >> 14));
         }
+
         pb[Pb::SrcFrac] = uint16_t(frac);
+
         for (uint32_t k = 0; k < 4; ++k)
             pb[Pb::SrcLast + k] = uint16_t(source[consumed + k]);
     }
@@ -383,6 +445,7 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
     // Volume envelope: a 16-bit volume (0x8000 = unity) stepped per sample.
     uint16_t ve = pb[Pb::VeVolume];
     const int16_t veDelta = int16_t(pb[Pb::VeDelta]);
+
     if (veDelta == 0) {
         if (ve != 0x8000)
             for (uint32_t i = 0; i < kTickSamples; ++i)
@@ -392,22 +455,28 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
             samples[i] = int16_t(Clamp16((int32_t(samples[i]) * int32_t(ve)) >> 15));
             ve = uint16_t(ve + veDelta);
         }
+
         pb[Pb::VeVolume] = ve;
     }
+
     if (pb[Pb::LpfOn]) {
         const int32_t a0 = pb[Pb::LpfA0], b0 = pb[Pb::LpfB0];
         int32_t y = int16_t(pb[Pb::LpfYn1]);
+
         for (uint32_t i = 0; i < kTickSamples; ++i) {
             y = Clamp16((a0 * samples[i] + b0 * y) >> 15);
             samples[i] = int16_t(y);
         }
+
         pb[Pb::LpfYn1] = uint16_t(y);
     }
+
     if (pb[Pb::BiquadOn]) {
         const int32_t b0 = int16_t(pb[Pb::BiquadB0]), b1 = int16_t(pb[Pb::BiquadB1]), b2 = int16_t(pb[Pb::BiquadB2]);
         const int32_t a1 = int16_t(pb[Pb::BiquadA1]), a2 = int16_t(pb[Pb::BiquadA2]);
         int32_t xn1 = int16_t(pb[Pb::BiquadXn1]), xn2 = int16_t(pb[Pb::BiquadXn2]);
         int32_t yn1 = int16_t(pb[Pb::BiquadYn1]), yn2 = int16_t(pb[Pb::BiquadYn2]);
+
         for (uint32_t i = 0; i < kTickSamples; ++i) {
             const int32_t x = samples[i];
             int64_t acc = int64_t(b0) * x + int64_t(b1) * xn1 + int64_t(b2) * xn2 + int64_t(a1) * yn1 + int64_t(a2) * yn2;
@@ -420,11 +489,13 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
             yn1 = y;
             samples[i] = int16_t(y);
         }
+
         pb[Pb::BiquadXn1] = uint16_t(xn1);
         pb[Pb::BiquadXn2] = uint16_t(xn2);
         pb[Pb::BiquadYn1] = uint16_t(yn1);
         pb[Pb::BiquadYn2] = uint16_t(yn2);
     }
+
     if (fade)
         for (uint32_t i = 0; i < kTickSamples; ++i)
             samples[i] = int16_t(int32_t(samples[i]) * int32_t(kTickSamples - 1 - i) / int32_t(kTickSamples));
@@ -435,12 +506,14 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
     const uint32_t control = uint32_t(pb[Pb::MixerCtrlHi]) << 16 | pb[Pb::MixerCtrlLo];
     uint32_t enabled = 0, ramped = 0;
     static constexpr uint32_t kGroupShift[4] = {0, 16, 21, 26};
+
     for (uint32_t group = 0; group < 4; ++group) {
         const uint32_t bits = control >> kGroupShift[group];
         const uint32_t lr = (bits & 4) ? 3u : 0u, s = (bits & 0x10) ? 4u : 0u;
         enabled |= ((bits & 3) | lr | ((bits & 8) >> 1) | s) << (3 * group);
         ramped |= (lr | s) << (3 * group);
     }
+
     if (mode_ == 0)
         enabled &= ~4u;  // stereo: the main surround bus is not heard
     for (uint32_t a = 0; a < 3; ++a)
@@ -458,26 +531,32 @@ void Mixer::ProcessVoice(Voice& voice, bool fade) {
 void Mixer::RenderTick(int16_t* out) {
     const uint32_t produced = produced_.load(std::memory_order_acquire);
     const int32_t ahead = int32_t(rendered_ - produced);
+
     if (ahead >= int32_t(kFreezeTicks)) {
         std::memset(out, 0, kTickSamples * 2 * sizeof(int16_t));
         statistics_.frozenTicks.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+
     if (ahead >= 0)
         statistics_.lateTicks.fetch_add(1, std::memory_order_relaxed);
+
     const uint32_t applied = ApplyCommands(rendered_);
 
     std::memset(bus_, 0, sizeof(bus_));
     uint32_t active = 0;
+
     for (uint32_t i = 0; i < kMaxVoices; ++i) {
         Voice& v = voices_[i];
         const bool running = v.pb[Pb::State] == 1;
+
         if (running || v.fading) {
             ++active;
             ProcessVoice(v, !running);
             v.fading = false;
             v.published = true;
         }
+
         if (v.published) {
             feedback_.stateVolume[i].store(uint32_t(v.pb[Pb::State]) << 16 | v.pb[Pb::VeVolume], std::memory_order_relaxed);
             feedback_.address[i].store(uint32_t(v.pb[Pb::CurHi]) << 16 | v.pb[Pb::CurLo], std::memory_order_relaxed);
@@ -489,6 +568,7 @@ void Mixer::RenderTick(int16_t* out) {
     for (uint32_t a = 0; a < 3; ++a) {
         if (!aux_[a])
             continue;
+
         int32_t* l = bus_[3 + 3 * a];
         int32_t* r = bus_[4 + 3 * a];
         int32_t* s = bus_[5 + 3 * a];
@@ -496,6 +576,7 @@ void Mixer::RenderTick(int16_t* out) {
         uint16_t ramp[kTickSamples];
         Ramp(ramp, lastAuxReturn_[a], auxReturn_[a]);
         lastAuxReturn_[a] = auxReturn_[a];
+
         for (uint32_t i = 0; i < kTickSamples; ++i) {
             bus_[0][i] += int32_t((int64_t(l[i]) * ramp[i]) >> 15);
             bus_[1][i] += int32_t((int64_t(r[i]) * ramp[i]) >> 15);
@@ -507,12 +588,15 @@ void Mixer::RenderTick(int16_t* out) {
     Ramp(master, lastMasterVolume_, masterVolume_);
     lastMasterVolume_ = masterVolume_;
     const bool fold = mode_ != 0;
+
     for (uint32_t i = 0; i < kTickSamples; ++i) {
         int64_t l = bus_[0][i], r = bus_[1][i];
+
         if (fold) {
             l += bus_[2][i] / 2;
             r += bus_[2][i] / 2;
         }
+
         out[i * 2] = int16_t(Clamp16(int32_t(std::clamp<int64_t>((l * master[i]) >> 15, -0x8000, 0x7FFF))));
         out[i * 2 + 1] = int16_t(Clamp16(int32_t(std::clamp<int64_t>((r * master[i]) >> 15, -0x8000, 0x7FFF))));
     }
@@ -521,10 +605,12 @@ void Mixer::RenderTick(int16_t* out) {
     // field waiting for this tick then reads at least this tick's values.
     if (applied)
         feedback_.appliedTick.store(applied, std::memory_order_release);
+
     ++rendered_;
     feedback_.renderedTicks.store(rendered_, std::memory_order_release);
     statistics_.renderedTicks.fetch_add(1, std::memory_order_relaxed);
     statistics_.activeVoices.store(active, std::memory_order_relaxed);
+
     if (active > statistics_.peakVoices.load(std::memory_order_relaxed))
         statistics_.peakVoices.store(active, std::memory_order_relaxed);
 }
@@ -539,25 +625,33 @@ void Mixer::RenderTick(int16_t* out) {
 Reverb::Reverb(const ReverbConfig& config) : config_(config) {
     for (uint32_t c = 0; c < 3; ++c) {
         early_[c].Allocate(config.earlyLength);
+
         if (config.preDelayLength)
             preDelay_[c].Allocate(config.preDelayLength);
+
         for (uint32_t k = 0; k < 3; ++k)
             comb_[c][k].Allocate(config.combLength[k]);
+
         for (uint32_t k = 0; k < 2; ++k)
             allpass_[c][k].Allocate(config.allpassLength[k]);
+
         last_[c].Allocate(config.lastLength[c]);
     }
+
     auto clampPosition = [](uint32_t& position, uint32_t length) {
         if (position >= length)
             position = 0;
     };
+
     for (uint32_t k = 0; k < 3; ++k) {
         clampPosition(config_.earlyTaps[k], config_.earlyLength);
         clampPosition(config_.combPos[k], config_.combLength[k]);
         clampPosition(config_.lastPos[k], config_.lastLength[k]);
     }
+
     for (uint32_t k = 0; k < 2; ++k)
         clampPosition(config_.allpassPos[k], config_.allpassLength[k]);
+
     clampPosition(config_.preDelayPos, config_.preDelayLength);
 }
 
@@ -568,8 +662,10 @@ void Reverb::Process(int32_t* left, int32_t* right, int32_t* surround) {
     const float wetScale = 0.6f * s.level, cross = 0.5f * s.crosstalk;
     const float g = s.allpassGain;
     auto advance = [](uint32_t& position, uint32_t length) { position = position + 1 < length ? position + 1 : 0; };
+
     for (uint32_t i = 0; i < kTickSamples; ++i) {
         float wet[3];
+
         for (uint32_t c = 0; c < 3; ++c) {
             const float x = float(io[c][i]);
             float* e = early_[c].samples.get();
@@ -577,19 +673,24 @@ void Reverb::Process(int32_t* left, int32_t* right, int32_t* surround) {
             const float sum = s.earlyGains[0] * e[s.earlyTaps[0]] + s.earlyGains[1] * e[s.earlyTaps[1]] + s.earlyGains[2] * tap2;
             e[s.earlyTaps[2]] = x;
             float delayed = x;
+
             if (s.preDelayLength) {
                 float* p = preDelay_[c].samples.get() + s.preDelayPos;
                 delayed = *p;
                 *p = x;
             }
+
             float combs = 0.0f;
+
             for (uint32_t k = 0; k < 3; ++k) {
                 float* p = comb_[c][k].samples.get() + s.combPos[k];
                 const float y = *p;
                 combs += y;
                 *p = delayed + y * s.combGains[k];
             }
+
             float through = combs;
+
             for (uint32_t k = 0; k < 2; ++k) {
                 float* p = allpass_[c][k].samples.get() + s.allpassPos[k];
                 const float y = *p;
@@ -597,6 +698,7 @@ void Reverb::Process(int32_t* left, int32_t* right, int32_t* surround) {
                 *p = v;
                 through = y - v * g;
             }
+
             lowpass_[c] = coefRest * through + coef * lowpass_[c];
             float* p = last_[c].samples.get() + s.lastPos[c];
             const float y = *p;
@@ -605,6 +707,7 @@ void Reverb::Process(int32_t* left, int32_t* right, int32_t* surround) {
             advance(s.lastPos[c], s.lastLength[c]);
             wet[c] = (y - v * g) * wetScale + sum;
         }
+
         const float out0 = wet[0] + (wet[1] + wet[2]) * cross;
         const float out1 = wet[1] + (wet[0] + wet[2]) * cross;
         const float out2 = wet[2] + (wet[0] + wet[1]) * cross;
@@ -612,12 +715,16 @@ void Reverb::Process(int32_t* left, int32_t* right, int32_t* surround) {
         left[i] = toInt(out0 * s.outGain);
         right[i] = toInt(out1 * s.outGain);
         surround[i] = toInt(out2 * s.outGain);
+
         for (uint32_t k = 0; k < 3; ++k)
             advance(s.earlyTaps[k], s.earlyLength);
+
         if (s.preDelayLength)
             advance(s.preDelayPos, s.preDelayLength);
+
         for (uint32_t k = 0; k < 3; ++k)
             advance(s.combPos[k], s.combLength[k]);
+
         for (uint32_t k = 0; k < 2; ++k)
             advance(s.allpassPos[k], s.allpassLength[k]);
     }

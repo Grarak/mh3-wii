@@ -11,6 +11,7 @@ void WriteHex(uint32_t address, std::string_view hex) {
     const auto digit = [](char c) {
         return c <= '9' ? c - '0' : c - 'A' + 10;
     };
+
     for (size_t i = 0; i < hex.size(); i += 2)
         Memory::Write8(address + i / 2, (digit(hex[i]) << 4) | digit(hex[i + 1]));
 }

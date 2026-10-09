@@ -15,6 +15,7 @@ namespace {
 std::atomic<float> g_presentAspectCorrection{1.f};
 std::mutex g_renderModeMutex;
 std::optional<Vec2<uint32_t>> g_nativeTargetSize;
+
 // render_mode_size_locked() as of the last change (width in the low half):
 // the native renderer reads it for every draw, without the mode lock.
 std::atomic<uint64_t> g_renderModeSize{640 | uint64_t(528) << 32};
@@ -38,13 +39,16 @@ float calculate_present_aspect_correction(const GXRenderModeObj& rm) noexcept {
 
 Vec2<uint32_t> render_mode_size_locked() noexcept {
   if (g_nativeTargetSize) return *g_nativeTargetSize;
+
   if (!g_renderMode) {
     return {640, 528};
   }
+
   // GX has a fixed 640x528 EFB workspace. Games can configure a narrower visible framebuffer, but
   // effects such as MKW's DOF use the remaining EFB area as scratch.
   return {std::max<uint32_t>(g_renderMode->fbWidth, 640), std::max<uint32_t>(g_renderMode->efbHeight, 528)};
 }
+
 void publish_render_mode_size_locked() noexcept {
   const auto size = render_mode_size_locked();
   g_renderModeSize.store(size.x | uint64_t(size.y) << 32, std::memory_order_release);
@@ -63,18 +67,22 @@ void configure(const GXRenderModeObj* rm) noexcept {
     std::lock_guard lock(g_renderModeMutex);
     const auto oldSize = render_mode_size_locked();
     g_nativeTargetSize.reset();
+
     if (rm == nullptr) {
       g_renderMode.reset();
     } else {
       g_renderMode = *rm;
       g_presentAspectCorrection.store(calculate_present_aspect_correction(*rm), std::memory_order_release);
     }
+
     if (rm == nullptr) {
       g_presentAspectCorrection.store(1.f, std::memory_order_release);
     }
+
     publish_render_mode_size_locked();
     sizeChanged = render_mode_size_locked() != oldSize;
   }
+
   // Never hold the mode lock across a resize request or a renderer callback.
   if (sizeChanged) {
     window::request_frame_buffer_resize();
@@ -93,6 +101,7 @@ bool configure_native(uint32_t width, uint32_t height) noexcept {
     publish_render_mode_size_locked();
     changed = oldSize != *g_nativeTargetSize;
   }
+
   // Safe before initialization: the request is deferred until a window exists.
   if (changed) window::request_frame_buffer_resize();
   return true;
@@ -104,10 +113,13 @@ Vec2<uint32_t> configured_fb_size() noexcept {
 
 Vec2<uint32_t> visible_fb_size() noexcept {
   std::lock_guard lock(g_renderModeMutex);
+
   if (g_nativeTargetSize) return *g_nativeTargetSize;
+
   if (!g_renderMode) {
     return {640, 528};
   }
+
   return {g_renderMode->fbWidth, g_renderMode->efbHeight};
 }
 
@@ -125,6 +137,7 @@ void VIConfigurePan(u16 xOrg, u16 yOrg, u16 width, u16 height) {
   (void)width;
   (void)height;
 }
+
 u32 VIGetTvFormat() { return 0; }
 void VIFlush() {}
 

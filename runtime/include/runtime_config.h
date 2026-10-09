@@ -56,14 +56,17 @@ struct RuntimeUserConfig {
     std::optional<bool> audioMuted;
     std::optional<bool> audioMixWorker;
     std::optional<bool> attenuateMusicWhenMediaPlays;
+
     // Real Wii Remotes (with or without Nunchuk / Classic Controller) and Wii U Pro
     // Controllers paired over Bluetooth, driven by SDL's HIDAPI Wii driver. The driver
     // is opt-in on SDL's side, so this decides whether the runtime turns it on.
     std::optional<bool> wiiRemotes;
+
     // Keep re-enumerating Bluetooth HID devices while no Wii controller is connected
     // (Dolphin's "continuous scanning"), so a remote that dropped or was switched on
     // after launch shows up without restarting.
     std::optional<bool> wiiContinuousScan;
+
     // Accelerometer zero-point correction for the Bluetooth Wii Remote, in g and in
     // SDL's sensor frame (x right, y out of the button face, z towards the user).
     // SDL's Wii driver falls back to a nominal zero point when its read of the
@@ -72,21 +75,25 @@ struct RuntimeUserConfig {
     std::optional<double> wiiAccelOffsetX;
     std::optional<double> wiiAccelOffsetY;
     std::optional<double> wiiAccelOffsetZ;
+
     // Debugging aid: append every KPAD sample of the Bluetooth remote (raw and
     // corrected accelerometer, buttons) to wii_accel_trace.csv next to Config.toml.
     std::optional<bool> wiiAccelTrace;
     std::optional<bool> networkEnabled;
     std::optional<bool> discordPresenceEnabled;
+
     // The application ID of the WiiCompiled Discord application. This is only
     // used by the base product; Retro Rewind supplies its own ID through the
     // standard Dolphin /dev/dolphin interface.
     std::optional<std::string> discordClientId;
     std::optional<std::string> nandRoot;
     std::optional<std::string> dvdRoot;
+
     // The one canonical Retro Rewind installation, owned and updated by the frontend. Setup records
     // it here instead of copying the pack, so an asset-only update is visible on the next launch.
     std::optional<std::string> retroRewindRoot;
     std::vector<std::string> overlayRoots;
+
     // Controller mappings use Wii/GameCube button names as keys and up to two
     // comma-separated SDL-style physical button names ("south", or
     // "dpad_up,left_shoulder") as values; pressing either bound button counts.
@@ -127,13 +134,17 @@ inline constexpr int kPortableSearchDepth = 4;
 
 inline std::string Trim(std::string_view text) {
     size_t begin = 0;
+
     while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) {
         ++begin;
     }
+
     size_t end = text.size();
+
     while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
         --end;
     }
+
     return std::string(text.substr(begin, end - begin));
 }
 
@@ -141,12 +152,15 @@ inline std::string RemoveComment(std::string_view line) {
     bool inSingle = false;
     bool inDouble = false;
     bool escaped = false;
+
     for (size_t i = 0; i < line.size(); ++i) {
         const char ch = line[i];
+
         if (inDouble && ch == '\\' && !escaped) {
             escaped = true;
             continue;
         }
+
         if (ch == '\'' && !inDouble) {
             inSingle = !inSingle;
         } else if (ch == '"' && !inSingle && !escaped) {
@@ -154,8 +168,10 @@ inline std::string RemoveComment(std::string_view line) {
         } else if (ch == '#' && !inSingle && !inDouble) {
             return std::string(line.substr(0, i));
         }
+
         escaped = false;
     }
+
     return std::string(line);
 }
 
@@ -184,6 +200,7 @@ inline bool IsSupportedDisplayMode(std::string_view value) {
         "borderless",
         "exclusive",
     };
+
     return std::find(values.begin(), values.end(), value) != values.end();
 }
 
@@ -196,15 +213,19 @@ inline bool IsSupportedFrameInterpolationFps(uint32_t value) {
 inline std::optional<std::filesystem::path> ExecutableDirectory() {
 #ifdef _WIN32
     std::wstring buffer(MAX_PATH, L'\0');
+
     for (;;) {
         const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+
         if (length == 0) {
             return std::nullopt;
         }
+
         if (length < buffer.size() - 1) {
             buffer.resize(length);
             return std::filesystem::path(buffer).parent_path();
         }
+
         buffer.resize(buffer.size() * 2);
     }
 #elif defined(__APPLE__)
@@ -215,15 +236,19 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
     // the buffer until the result no longer fills it completely, the same doubling strategy as
     // the Windows branch above uses for GetModuleFileNameW.
     std::string buffer(256, '\0');
+
     for (;;) {
         const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size());
+
         if (length < 0) {
             return std::nullopt;
         }
+
         if (static_cast<size_t>(length) < buffer.size()) {
             buffer.resize(static_cast<size_t>(length));
             return std::filesystem::path(buffer).parent_path();
         }
+
         buffer.resize(buffer.size() * 2);
     }
 #endif
@@ -235,21 +260,29 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
 inline const std::optional<std::filesystem::path>& PortableRootDirectory() {
     static const std::optional<std::filesystem::path> root = []() -> std::optional<std::filesystem::path> {
         const auto executableDirectory = ExecutableDirectory();
+
         if (!executableDirectory) {
             return std::nullopt;
         }
+
         std::filesystem::path current = *executableDirectory;
+
         for (int level = 0; level <= kPortableSearchDepth; ++level) {
             std::error_code ec;
+
             if (std::filesystem::is_regular_file(current / kPortableMarkerFileName, ec)) {
                 return current;
             }
+
             const auto parent = current.parent_path();
+
             if (parent.empty() || parent == current) {
                 break;
             }
+
             current = parent;
         }
+
         return std::nullopt;
     }();
     return root;
@@ -261,6 +294,7 @@ inline std::filesystem::path ApplicationDataDirectory() {
     }
 #ifdef _WIN32
     PWSTR rawPath = nullptr;
+
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &rawPath)) && rawPath) {
         const std::filesystem::path directory = std::filesystem::path(rawPath) / kApplicationDirectoryName;
         CoTaskMemFree(rawPath);
@@ -274,6 +308,7 @@ inline std::filesystem::path ApplicationDataDirectory() {
     if (const char* xdgDataHome = std::getenv("XDG_DATA_HOME"); xdgDataHome && *xdgDataHome) {
         return std::filesystem::path(xdgDataHome) / kApplicationDirectoryName;
     }
+
     if (const char* home = std::getenv("HOME"); home && *home) {
         return std::filesystem::path(home) / ".local" / "share" / kApplicationDirectoryName;
     }
@@ -289,14 +324,17 @@ inline void EnsureConfigFile() {
     const std::filesystem::path path = ResolveConfigPath();
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
+
     if (ec || std::filesystem::exists(path, ec)) {
         return;
     }
 
     std::ofstream output(path);
+
     if (!output) {
         return;
     }
+
     output << "# WiiCompiled user configuration\n"
               "# Set paths.dvd_root to an extracted Mario Kart Wii DATA directory.\n\n"
               "[video]\n"
@@ -355,44 +393,55 @@ inline std::optional<T> FindConfigValue(const toml::value& document, std::string
 
 inline std::optional<uint32_t> FindConfigUint(const toml::value& document, std::string_view section, std::string_view key) {
     const auto value = FindConfigValue<int64_t>(document, section, key);
+
     if (!value || *value < 0 || static_cast<uint64_t>(*value) > UINT32_MAX) {
         return std::nullopt;
     }
+
     return static_cast<uint32_t>(*value);
 }
 
 inline std::optional<int32_t> FindConfigInt(const toml::value& document, std::string_view section, std::string_view key) {
     const auto value = FindConfigValue<int64_t>(document, section, key);
+
     if (!value || *value < INT32_MIN || *value > INT32_MAX) {
         return std::nullopt;
     }
+
     return static_cast<int32_t>(*value);
 }
 
 inline std::optional<float> FindConfigFloat(const toml::value& document, std::string_view section, std::string_view key) {
     std::optional<double> value = FindConfigValue<double>(document, section, key);
+
     if (!value) {
         if (const auto integer = FindConfigValue<int64_t>(document, section, key)) {
             value = static_cast<double>(*integer);
         }
     }
+
     if (!value || !std::isfinite(*value) || *value < -static_cast<double>(std::numeric_limits<float>::max()) || *value > static_cast<double>(std::numeric_limits<float>::max())) {
         return std::nullopt;
     }
+
     return static_cast<float>(*value);
 }
 
 inline void AppendOverlayRoots(RuntimeUserConfig& config, const std::string& roots) {
     size_t begin = 0;
+
     while (begin < roots.size()) {
         const size_t end = roots.find(';', begin);
         std::string root = Trim(std::string_view(roots).substr(begin, end - begin));
+
         if (!root.empty()) {
             config.overlayRoots.push_back(std::move(root));
         }
+
         if (end == std::string::npos) {
             break;
         }
+
         begin = end + 1;
     }
 }
@@ -404,11 +453,13 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     static constexpr std::array<std::string_view, 12> buttonKeys = {
         "a", "b", "x", "y", "start", "z", "l", "r", "up", "down", "left", "right",
     };
+
     for (size_t index = 0; index < buttonKeys.size(); ++index) {
         config.controllerButtons[index] = FindConfigValue<std::string>(document, "controller", buttonKeys[index]);
     }
 
     config.rumbleEnabled = FindConfigValue<bool>(document, "controller", "rumble");
+
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
     }
@@ -425,15 +476,19 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.forceAspect169 = FindConfigValue<bool>(document, "video", "force_16_9");
     config.windowPosX = FindConfigInt(document, "video", "window_x");
     config.windowPosY = FindConfigInt(document, "video", "window_y");
+
     if (auto value = FindConfigUint(document, "video", "window_width"); value && *value != 0) {
         config.windowWidth = *value;
     }
+
     if (auto value = FindConfigUint(document, "video", "window_height"); value && *value != 0) {
         config.windowHeight = *value;
     }
+
     if (auto value = FindConfigFloat(document, "video", "resolution_multiplier"); value && IsSupportedResolutionMultiplier(*value)) {
         config.resolutionMultiplier = *value;
     }
+
     if (auto value = FindConfigValue<std::string>(document, "video", "graphics_api")) {
         if (IsSupportedGraphicsApi(*value)) {
             config.graphicsApi = *value;
@@ -441,20 +496,25 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
             std::cerr << "[runtime] Unknown video.graphics_api=\"" << *value << "\", using the automatic backend" << std::endl;
         }
     }
+
     if (auto value = FindConfigValue<std::string>(document, "video", "display_mode"); value && IsSupportedDisplayMode(*value)) {
         config.displayMode = *value;
     }
+
     if (auto value = FindConfigUint(document, "video", "frame_interpolation_fps")) {
         const uint32_t migrated = *value == 240u ? 180u : *value;
+
         if (IsSupportedFrameInterpolationFps(migrated)) {
             config.frameInterpolationFps = migrated;
         }
     }
+
     config.skipUnreadyPipelines = FindConfigValue<bool>(document, "video", "skip_unready_pipelines");
     config.disableCopyFilter = FindConfigValue<bool>(document, "video", "disable_copy_filter");
     config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
     config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
     config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
+
     if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths"); value && (*value & ~0x10u) == 0) {
         config.disabledPostProcessingPaths = *value & 0x10u;
     }
@@ -463,6 +523,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         auto value = FindConfigFloat(document, "audio", key);
         return value && *value >= 0.0f && *value <= 1.0f ? value : std::nullopt;
     };
+
     config.audioVolume = readVolume("volume");
     config.audioMusicVolume = readVolume("music_volume");
     config.audioSoundEffectsVolume = readVolume("sound_effects_volume");
@@ -484,9 +545,11 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.nandRoot = FindConfigValue<std::string>(document, "paths", "nand_root");
     config.dvdRoot = FindConfigValue<std::string>(document, "paths", "dvd_root");
     config.retroRewindRoot = FindConfigValue<std::string>(document, "paths", "retro_rewind_root");
+
     if (auto roots = FindConfigValue<std::vector<std::string>>(document, "paths", "overlay_roots")) {
         for (auto& root : *roots) {
             root = Trim(root);
+
             if (!root.empty()) {
                 config.overlayRoots.push_back(std::move(root));
             }
@@ -538,10 +601,12 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
     std::ifstream input(path);
     std::vector<std::string> lines;
     std::string line;
+
     while (std::getline(input, line)) {
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
+
         lines.push_back(std::move(line));
     }
 
@@ -549,14 +614,18 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
     const std::string normalizedKey = Trim(key);
     size_t sectionStart = lines.size();
     size_t sectionEnd = lines.size();
+
     for (size_t i = 0; i < lines.size(); ++i) {
         const std::string trimmed = Trim(RemoveComment(lines[i]));
+
         if (trimmed.size() >= 2 && trimmed.front() == '[' && trimmed.back() == ']') {
             const std::string found = Trim(std::string_view(trimmed).substr(1, trimmed.size() - 2));
+
             if (sectionStart != lines.size()) {
                 sectionEnd = i;
                 break;
             }
+
             if (found == normalizedSection) {
                 sectionStart = i;
             }
@@ -564,23 +633,28 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
     }
 
     const std::string replacement = normalizedKey + " = " + std::string(value);
+
     if (sectionStart == lines.size()) {
         if (!lines.empty() && !lines.back().empty()) {
             lines.emplace_back();
         }
+
         lines.emplace_back("[" + normalizedSection + "]");
         lines.push_back(replacement);
     } else {
         bool replaced = false;
+
         for (size_t i = sectionStart + 1; i < sectionEnd; ++i) {
             const std::string uncommented = Trim(RemoveComment(lines[i]));
             const size_t equals = uncommented.find('=');
+
             if (equals != std::string::npos && Trim(std::string_view(uncommented).substr(0, equals)) == normalizedKey) {
                 lines[i] = replacement;
                 replaced = true;
                 break;
             }
         }
+
         if (!replaced) {
             // Append after the section's last real line rather than after the blank line that
             // separates it from the next header: this file is edited by hand and by the host
@@ -588,25 +662,32 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
             // the next section. The host writer (Launcher/WiiCompiled.Setup/RuntimeConfiguration.cs)
             // applies exactly this rule.
             size_t insertAt = sectionEnd;
+
             while (insertAt > sectionStart + 1 && Trim(lines[insertAt - 1]).empty()) {
                 --insertAt;
             }
+
             lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt), replacement);
         }
     }
 
     std::error_code ec;
+
     if (path.has_parent_path()) {
         std::filesystem::create_directories(path.parent_path(), ec);
     }
+
     std::ofstream output(path, std::ios::trunc);
+
     if (!output) {
         std::cerr << "[runtime-config] Unable to write " << PathToUtf8(path) << std::endl;
         return false;
     }
+
     for (const auto& outputLine : lines) {
         output << outputLine << '\n';
     }
+
     return static_cast<bool>(output);
 }
 
@@ -625,6 +706,7 @@ inline bool SetWindowSize(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) {
         return false;
     }
+
     Mutable().windowWidth = width;
     Mutable().windowHeight = height;
     const bool wroteWidth = WriteSetting("video", "window_width", std::to_string(width));
@@ -644,6 +726,7 @@ inline bool SetFrameInterpolationFps(uint32_t value) {
     if (!IsSupportedFrameInterpolationFps(value)) {
         return false;
     }
+
     Mutable().frameInterpolationFps = value;
     return WriteSetting("video", "frame_interpolation_fps", std::to_string(value));
 }
@@ -652,6 +735,7 @@ inline bool SetDisplayMode(std::string value) {
     if (!IsSupportedDisplayMode(value)) {
         return false;
     }
+
     Mutable().displayMode = value;
     return WriteSetting("video", "display_mode", FormatString(value));
 }
@@ -682,6 +766,7 @@ inline bool SetControllerButton(size_t index, std::string value) {
     if (index >= kControllerButtonKeys.size()) {
         return false;
     }
+
     Mutable().controllerButtons[index] = value;
     return WriteSetting("controller", kControllerButtonKeys[index], FormatString(value));
 }
@@ -786,6 +871,7 @@ inline bool WindowPosition(int32_t& x, int32_t& y) {
     if (!Get().windowPosX || !Get().windowPosY) {
         return false;
     }
+
     x = *Get().windowPosX;
     y = *Get().windowPosY;
     return true;
@@ -885,12 +971,14 @@ inline bool SetWiiAccelOffset(const std::array<double, 3>& offset) {
     Mutable().wiiAccelOffsetZ = offset[2];
     bool ok = true;
     const char* keys[3] = {"wii_accel_offset_x", "wii_accel_offset_y", "wii_accel_offset_z"};
+
     for (size_t i = 0; i < 3; ++i) {
         // Always a float literal, so a whole-number offset does not come back as a TOML integer.
         std::ostringstream formatted;
         formatted << std::fixed << std::setprecision(4) << offset[i];
         ok = WriteSetting("controller", keys[i], formatted.str()) && ok;
     }
+
     return ok;
 }
 
@@ -951,9 +1039,11 @@ inline std::string DvdRoot(std::string fallback = "") {
 // never to the process working directory (docs/WHEELWIZARD_CONTRACT.md).
 inline std::filesystem::path ResolveRelativeTo(const std::filesystem::path& base, const std::string& value) {
     std::filesystem::path path = PathFromUtf8(value);
+
     if (path.is_relative()) {
         path = base / path;
     }
+
     return path.lexically_normal();
 }
 
@@ -989,62 +1079,81 @@ inline void LogLoadedConfig() {
         const auto& config = Get();
         const auto configPath = ResolveConfigPath();
         std::cout << "[runtime-config] " << PathToUtf8(configPath);
+
         if (!std::filesystem::exists(configPath)) {
             std::cout << " not found; using built-in defaults";
         } else {
             std::cout << " loaded";
+
             if (config.widescreen) {
                 std::cout << " widescreen=" << (*config.widescreen ? "true" : "false");
             }
+
             if (config.windowWidth || config.windowHeight) {
                 std::cout << " window=" << config.windowWidth.value_or(0) << "x" << config.windowHeight.value_or(0);
             }
+
             if (config.resolutionMultiplier) {
                 std::cout << " resolution_multiplier=" << *config.resolutionMultiplier;
             }
+
             if (config.dvdRoot) {
                 std::cout << " dvd_root=" << *config.dvdRoot;
             }
+
             if (config.graphicsApi) {
                 std::cout << " graphics_api=" << *config.graphicsApi;
             }
+
             if (config.frameInterpolationFps) {
                 std::cout << " frame_interpolation_fps=" << *config.frameInterpolationFps;
             }
+
             if (config.skipUnreadyPipelines) {
                 std::cout << " skip_unready_pipelines=" << (*config.skipUnreadyPipelines ? "true" : "false");
             }
+
             if (config.disableCopyFilter) {
                 std::cout << " disable_copy_filter=" << (*config.disableCopyFilter ? "true" : "false");
             }
+
             if (config.showFps) {
                 std::cout << " show_fps=" << (*config.showFps ? "true" : "false");
             }
+
             if (config.textureReplacements) {
                 std::cout << " texture_replacements=" << (*config.textureReplacements ? "true" : "false");
             }
+
             if (config.textureDumps) {
                 std::cout << " texture_dumps=" << (*config.textureDumps ? "true" : "false");
             }
+
             if (config.audioVolume) {
                 std::cout << " audio_volume=" << *config.audioVolume;
             }
+
             if (config.audioMuted) {
                 std::cout << " audio_muted=" << (*config.audioMuted ? "true" : "false");
             }
+
             if (config.networkEnabled) {
                 std::cout << " network_enabled=" << (*config.networkEnabled ? "true" : "false");
             }
+
             if (config.discordPresenceEnabled) {
                 std::cout << " discord_enabled=" << (*config.discordPresenceEnabled ? "true" : "false");
             }
+
             if (config.nandRoot) {
                 std::cout << " nand_root=" << *config.nandRoot;
             }
+
             if (config.retroRewindRoot) {
                 std::cout << " retro_rewind_root=" << *config.retroRewindRoot;
             }
         }
+
         std::cout << std::endl;
         return true;
     }();

@@ -47,6 +47,7 @@ struct NativeModelOwner {
     uintptr_t resident_handle;
     uint64_t resident_generation, source_generation;
 };
+
 NativeModelOwner ResolveNativeModelOwner(uint32_t model_address);
 mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, uint32_t resource_address, bool material);
 /* Per-model draw tables (built by model_scope.cpp): the resolved material
@@ -84,6 +85,7 @@ struct NativeMaterialBlockDefaults {
     mh3_model_material_block kind;
     uint64_t source_generation;
 };
+
 /* Origin/default scope only. The current producer must separately certify live
  * mutations and supply typed overrides. actual_block may be a proven copy;
  * no packed-list inspection, pointer/name guesses or bind-time hashing. */
@@ -99,6 +101,7 @@ struct NativeFrozenMaterialBlock {
     uint8_t texcoord_map[8];
     uint8_t texcoord_known;
 };
+
 /* Deleter of frozen copies: deletes after the render thread finished the
  * packet being recorded (immediately while no render thread runs). */
 void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block);
@@ -109,6 +112,7 @@ struct NativeMaterialGroupVersion {
     mh3_pack_pixel_inputs pixel;
     mh3_pack_tev_color color[4], konst[4];
 };
+
 /* The same deferred deleter for group versions; batched per packet. */
 void ReleaseNativeMaterialGroupVersion(const NativeMaterialGroupVersion* version);
 /* The immutable copy a live block owns for its current version (game thread).
@@ -125,19 +129,23 @@ class NativeSharedCopy {
         Reset(nullptr);
         return *this;
     }
+
     ~NativeSharedCopy() { Reset(nullptr); }
     const T* get() const { return block_; }
     void Reset(const T* block) {
         if (block_ && block_ != block)
             Release(block_);
+
         block_ = block;
     }
+
     // The block generation the copy was last confirmed against.
     uint64_t generation = 0;
 
   private:
     const T* block_ = nullptr;
 };
+
 using NativeFrozenCopy = NativeSharedCopy<NativeFrozenMaterialBlock, ReleaseNativeFrozenMaterialBlock>;
 using NativeGroupCopy = NativeSharedCopy<NativeMaterialGroupVersion, ReleaseNativeMaterialGroupVersion>;
 struct NativeLiveMaterialBlock {
@@ -146,14 +154,18 @@ struct NativeLiveMaterialBlock {
     mh3_model_material_block kind;
     uintptr_t resident_handle;
     uint64_t resident_generation, origin_offset, source_generation;
+
     // The frozen copy of fields.generation, made on demand.
     mutable NativeFrozenCopy frozen;
+
     // Pixel and colour blocks: the group version draws reference.
     mutable NativeGroupCopy group;
+
     // Typed writes may update this node in place (any publication, and a new
     // block or owner over its bytes, clears it).
     bool writable = false;
 };
+
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
 /* Game thread. The live block a typed producer may update in place: its
  * fields, fields.generation (NextNativeMaterialRevision) and guest bytes, with

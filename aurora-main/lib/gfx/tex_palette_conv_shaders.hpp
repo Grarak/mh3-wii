@@ -67,6 +67,7 @@ struct Program {
   std::string_view fragment;
   const char* label;
 };
+
 // Indexed by tex_palette_conv::Variant.
 inline constexpr std::array Programs{
     Program{ShaderDirect, "TexPaletteConv Direct"},

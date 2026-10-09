@@ -26,12 +26,15 @@ static inline uint32_t load_partial(const uint8_t *src, size_t size)
 {
     uint32_t out = 0;
     size_t at = 0;
+
     if (size & 2) {
         out = *(const half_t *)src;
         at = 2;
     }
+
     if (size & 1)
         out |= (uint32_t)src[at] << (at * 8);
+
     return out;
 }
 
@@ -41,12 +44,15 @@ static inline uint32_t load_end_partial(const uint8_t *src, size_t size)
     const uint8_t *from = src + WORD - size;
     uint32_t out = 0;
     size_t at = 0;
+
     if (size & 1) {
         out = (uint32_t)from[0] << ((WORD - size) * 8);
         at = 1;
     }
+
     if (size & 2)
         out |= (uint32_t)*(const half_t *)(from + at) << ((WORD - size + at) * 8);
+
     return out;
 }
 
@@ -57,11 +63,13 @@ static inline void copy_forward(uint8_t *dest, const uint8_t *src, size_t n)
         SCALAR
         for (uint8_t *end = dest + head; dest < end;)
             *dest++ = *src++;
+
         n -= head;
         const size_t words = n & ~(size_t)MASK;
         word_t *d = (word_t *)dest;
         word_t *const end = (word_t *)(dest + words);
         const size_t offset = (uintptr_t)src & MASK;
+
         if (__builtin_expect(offset == 0, 1)) {
             const word_t *s = (const word_t *)src;
             SCALAR
@@ -78,13 +86,16 @@ static inline void copy_forward(uint8_t *dest, const uint8_t *src, size_t n)
                 *d++ = prev >> shift | cur << (32 - shift);
                 prev = cur;
             }
+
             const uint32_t cur = load_partial((const uint8_t *)(s + 1), offset);
             *d = prev >> shift | cur << (32 - shift);
         }
+
         dest += words;
         src += words;
         n -= words;
     }
+
     SCALAR
     for (uint8_t *end = dest + n; dest < end;)
         *dest++ = *src++;
@@ -94,16 +105,19 @@ static inline void copy_backward(uint8_t *dest, const uint8_t *src, size_t n)
 {
     dest += n;
     src += n;
+
     if (n >= THRESHOLD) {
         const size_t tail = (uintptr_t)dest & MASK;
         SCALAR
         for (uint8_t *start = dest - tail; start < dest;)
             *--dest = *--src;
+
         n -= tail;
         const size_t words = n & ~(size_t)MASK;
         word_t *d = (word_t *)dest;
         word_t *const start = (word_t *)(dest - words);
         const size_t offset = (uintptr_t)src & MASK;
+
         if (__builtin_expect(offset == 0, 1)) {
             const word_t *s = (const word_t *)src;
             SCALAR
@@ -119,13 +133,16 @@ static inline void copy_backward(uint8_t *dest, const uint8_t *src, size_t n)
                 *--d = prev << (32 - shift) | cur >> shift;
                 prev = cur;
             }
+
             const uint32_t cur = load_end_partial((const uint8_t *)(s - 1), WORD - offset);
             *--d = prev << (32 - shift) | cur >> shift;
         }
+
         dest -= words;
         src -= words;
         n -= words;
     }
+
     SCALAR
     for (uint8_t *start = dest - n; start < dest;)
         *--dest = *--src;
@@ -138,15 +155,18 @@ static inline void set_bytes(uint8_t *s, uint8_t c, size_t n)
         SCALAR
         for (uint8_t *end = s + head; s < end;)
             *s++ = c;
+
         n -= head;
         const size_t words = n & ~(size_t)MASK;
         const uint32_t broadcast = c * 0x01010101u;
         SCALAR
         for (word_t *w = (word_t *)s, *end = (word_t *)(s + words); w < end;)
             *w++ = broadcast;
+
         s += words;
         n -= words;
     }
+
     SCALAR
     for (uint8_t *end = s + n; s < end;)
         *s++ = c;
@@ -161,8 +181,10 @@ void __aeabi_memcpy4(void *dest, const void *src, size_t n)
 {
     word_t *d = dest;
     const word_t *s = src;
+
     for (; n >= 4; n -= 4)
         *d++ = *s++;
+
     __aeabi_memcpy(d, s, n);
 }
 
@@ -190,8 +212,10 @@ void __aeabi_memset4(void *dest, size_t n, int c)
 {
     word_t *d = dest;
     const uint32_t broadcast = (uint8_t)c * 0x01010101u;
+
     for (; n >= 4; n -= 4)
         *d++ = broadcast;
+
     __aeabi_memset(d, n, (uint8_t)c);
 }
 

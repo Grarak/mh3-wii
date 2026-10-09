@@ -108,8 +108,10 @@ float VecMag(uint32_t v) {
                                       PpcPackPairedInline(MemoryInline::FlatReadFloat32(v), MemoryInline::FlatReadFloat32(v + 4)));
     const double z = PPC_PsFromScalarInline(MemoryInline::FlatReadFloat32(v + 8));
     const double sq = PPC_PsToScalarInline(PPC_PsSum0Inline(PPC_PsMaddInline(z, z, xy), xy, xy));
+
     if (sq == 0.0)
         return float(sq);
+
     const double e = PPC_Frsqrte(sq);
     const double refine = PPC_Fnmsubs(PpcFmulsInline(e, e), sq, 3.0); // 3 - e*e*sq
     return float(PpcFmulsInline(sq, PpcFmulsInline(refine, PpcFmulsInline(e, 0.5))));
@@ -118,8 +120,10 @@ float VecMag(uint32_t v) {
 float VecMagWrapper(uint32_t lr, uint32_t v) {
     const float mag = VecMag(v);
     const double s = GameStep::Scale();
+
     if (s != 1.0 && std::find(std::begin(kStepLengthCalls), std::end(kStepLengthCalls), lr) != std::end(kStepLengthCalls))
         return float(mag * s);
+
     return mag;
 }
 
@@ -144,11 +148,13 @@ extern "C" void MH3_ShellRateAddG(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x802AB3B8, MH3_ShellRateAddG, "ShellRateAddG");
 
 extern "C" void func_80073FCC(CpuContext* ctx);
+
 // The registered body names only r1, r3, r4 and lr, so callers keep a precise
 // call boundary; MH3_PORT_CHECK=VecAddInPlace checks the written vector.
 static void VecAddInPlaceChecked([[maybe_unused]] uint32_t r1, uint32_t lr, uint32_t out, uint32_t add) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("VecAddInPlace");
+
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -161,6 +167,7 @@ static void VecAddInPlaceChecked([[maybe_unused]] uint32_t r1, uint32_t lr, uint
 #endif
     VecAddInPlace(lr, out, add);
 }
+
 extern "C" void MH3_VecAddInPlace(CpuContext* ctx) {
     VecAddInPlaceChecked(ctx->gpr[1], ctx->lr, ctx->gpr[3], ctx->gpr[4]);
 }
@@ -176,10 +183,12 @@ static void EnemyAddVelocityPort(CpuContext* ctx) {
     ctx->gpr[3] = enemy + kEnemyPosition;
     ctx->gpr[4] = enemy + kEnemyVelocity;
 }
+
 extern "C" void func_8013547C(CpuContext* ctx);
 extern "C" void MH3_EnemyAddVelocity(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("EnemyAddVelocity");
+
     if (check) [[unlikely]] {
         PortCheck::RunOutput(ctx, "EnemyAddVelocity", func_8013547C, EnemyAddVelocityPort, {{ctx->gpr[3] + kEnemyPosition, 12}});
         return;
@@ -193,6 +202,7 @@ extern "C" void func_80050F88(CpuContext* ctx);
 static double VecMagWrapperChecked(uint32_t lr, uint32_t v) {
 #ifdef MH3_DEVELOPMENT
     static const bool check = PortCheck::Enabled("VecMagWrapper");
+
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[3] = v;
@@ -203,6 +213,7 @@ static double VecMagWrapperChecked(uint32_t lr, uint32_t v) {
 #endif
     return VecMagWrapper(lr, v);
 }
+
 extern "C" void MH3_VecMagWrapper(CpuContext* ctx) {
     ctx->fpr[1].d = VecMagWrapperChecked(ctx->lr, ctx->gpr[3]);
 }
@@ -212,13 +223,18 @@ extern "C" void func_802E77EC(CpuContext* ctx);
 extern "C" void MH3_PlayerTintPulse(CpuContext* ctx) {
     const uint32_t work = ctx->gpr[3];
     uint16_t before[2];
+
     for (int i = 0; i < 2; ++i)
         before[i] = Memory::Read16(work + kTintPhases[i]);
+
     func_802E77EC(ctx);
+
     if (GameStep::Scale() == 1.0)
         return;
+
     for (int i = 0; i < 2; ++i) {
         const uint16_t after = Memory::Read16(work + kTintPhases[i]);
+
         if (after == 0 || after == before[i])
             continue; // ended, or not advancing
         const int32_t advance = uint16_t(after - before[i]);

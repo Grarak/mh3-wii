@@ -55,6 +55,7 @@ namespace aurora {
 void log_internal(AuroraLogLevel level, const char* module, const char* message, unsigned int len) noexcept {
   fprintf(stderr, "[%d] %s: %.*s\n", static_cast<int>(level), module, len, message);
 }
+
 void Module::show_fatal_dialog(const char*, std::string_view) noexcept {}
 } // namespace aurora
 
@@ -113,6 +114,7 @@ void evict_texture_object(u32 texObjId) noexcept {
     }
   }
 }
+
 void evict_tlut_object(u32 tlutObjId) noexcept {
   for (auto& obj : g_gxState.loadedTluts) {
     if (obj.tlutObjId == tlutObjId) {
@@ -120,14 +122,18 @@ void evict_tlut_object(u32 tlutObjId) noexcept {
     }
   }
 }
+
 void invalidate_static_texture_cache() noexcept {
   for (auto& texture : g_gxState.textures) {
     texture.reset();
   }
+
   g_gxState.stateDirty = true;
 }
+
 void evict_copy_texture(const void* dest) noexcept {
   g_gxState.copyTextures.erase(dest);
+
   for (auto it = g_gxState.copyTextureCache.begin(); it != g_gxState.copyTextureCache.end();) {
     if (it->first.dest == dest) {
       g_gxState.copyTextureCache.erase(it++);
@@ -136,6 +142,7 @@ void evict_copy_texture(const void* dest) noexcept {
     }
   }
 }
+
 void set_display_copy_present_source() noexcept {}
 void shutdown() noexcept {}
 Vec2<uint32_t> logical_fb_size() noexcept { return s_logicalFbSize; }
@@ -151,6 +158,7 @@ gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcep
       .zfar = logicalViewport.zfar,
   };
 }
+
 gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept {
   const auto mapped = map_logical_viewport({
       .left = static_cast<float>(logicalScissor.x),
@@ -166,21 +174,25 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept 
   const auto bottom = static_cast<int32_t>(std::ceil(mapped.top + mapped.height));
   return {left, top, right - left, bottom - top};
 }
+
 MappedRenderState map_logical_render_state() noexcept {
   return {
       .viewport = map_logical_viewport(g_gxState.logicalViewport),
       .scissor = map_logical_scissor(g_gxState.logicalScissor),
   };
 }
+
 void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
   g_gxState.logicalViewport = viewport;
   set_render_viewport(map_logical_viewport(viewport));
 }
+
 void set_render_viewport(const gfx::Viewport& viewport) noexcept { g_gxState.renderViewport = viewport; }
 void set_logical_scissor(const gfx::ClipRect& scissor) noexcept {
   g_gxState.logicalScissor = scissor;
   set_render_scissor(map_logical_scissor(scissor));
 }
+
 void set_render_scissor(const gfx::ClipRect& scissor) noexcept { g_gxState.renderScissor = scissor; }
 } // namespace aurora::gx
 
@@ -189,6 +201,7 @@ namespace aurora::gx {
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
   // No-op for tests
 }
+
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept { return {}; }
 void resolve_sampled_textures(const ShaderInfo& info) noexcept {}
 u8 color_channel(GXChannelID id) noexcept { return 0; }
@@ -196,6 +209,7 @@ u8 comp_type_size(GXAttr attr, GXCompType type) noexcept {
   if (!s_useRealVertexFormatHelpers) {
     return 0;
   }
+
   switch (attr) {
   case GX_VA_PNMTXIDX:
   case GX_VA_TEX0MTXIDX:
@@ -237,10 +251,12 @@ u8 comp_type_size(GXAttr attr, GXCompType type) noexcept {
     }
   }
 }
+
 u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept {
   if (!s_useRealVertexFormatHelpers) {
     return 0;
   }
+
   switch (attr) {
   case GX_VA_PNMTXIDX:
   case GX_VA_TEX0MTXIDX:
@@ -280,12 +296,14 @@ Range push_verts(const uint8_t* data, size_t length) {
   s_lastPushedVertices.assign(data, data + length);
   return {};
 }
+
 Range push_indices(const uint8_t* data, size_t length) {
   CHECK(length % sizeof(uint16_t) == 0, "unaligned test index upload");
   s_lastPushedIndices.resize(length / sizeof(uint16_t));
   std::memcpy(s_lastPushedIndices.data(), data, length);
   return {};
 }
+
 Range push_uniform(const uint8_t* data, size_t length) { return {}; }
 Range push_storage(const uint8_t* data, size_t length) { return {}; }
 std::pair<ByteBuffer, Range> map_uniform(size_t length) {
@@ -295,9 +313,11 @@ std::pair<ByteBuffer, Range> map_uniform(size_t length) {
           Range{static_cast<uint32_t>(s_uniformAllocations.size() - 1),
                 static_cast<uint32_t>(length)}};
 }
+
 std::pair<ByteBuffer, Range> copy_uniform(Range source) {
   return map_uniform(source.size);
 }
+
 uint32_t align_uniform(uint32_t value) { return (value + 255u) & ~255u; }
 uint64_t staging_uniform_bytes(uint64_t value) { return staging_padded(value, 256); }
 uint64_t staging_storage_bytes(uint64_t value) { return staging_padded(value, 256); }
@@ -307,6 +327,7 @@ void split_staging_batch() { throw StagingCapacityError("Unexpected split in FIF
 Vec2<uint32_t> get_render_target_size() noexcept { return s_renderTargetSize; }
 Vec2<uint32_t> get_frame_buffer_size() noexcept { return s_renderTargetSize; }
 uint32_t current_frame() noexcept { return s_currentFrame; }
+
 // The command processor keys its resolved-pipeline memo on this. The test build never changes
 // render targets, so a fixed single-sample target matches what pipeline_ref would produce.
 uint32_t get_sample_count() noexcept { return 1; }
@@ -324,24 +345,30 @@ void reset_vertex_push_record() noexcept {
   s_trackDrawCommands = false;
   g_mergedDrawCallCount = 0;
 }
+
 const std::vector<uint8_t>& last_pushed_vertices() noexcept {
   return s_lastPushedVertices;
 }
+
 const std::vector<uint16_t>& last_pushed_indices() noexcept {
   return s_lastPushedIndices;
 }
+
 void reset_uniform_allocations() noexcept {
   s_uniformAllocations.clear();
 }
+
 const std::vector<uint8_t>& uniform_allocation(size_t index) noexcept {
   CHECK(index < s_uniformAllocations.size(), "uniform test allocation {} out of range {}", index,
         s_uniformAllocations.size());
   return s_uniformAllocations[index];
 }
+
 void use_draw_command_tracking(bool enabled) noexcept {
   s_trackDrawCommands = enabled;
   s_lastGxDraw.reset();
 }
+
 void use_real_vertex_format_helpers(bool enabled) noexcept {
   s_useRealVertexFormatHelpers = enabled;
 }
@@ -353,20 +380,24 @@ template <>
 PipelineRef pipeline_ref<clear::PipelineConfig>(const clear::PipelineConfig& config) {
   return 0;
 }
+
 template <>
 void push_draw_command<clear::DrawData>(clear::DrawData data) {
   // No-op
 }
+
 template <>
 PipelineRef pipeline_ref<gx::PipelineConfig>(const gx::PipelineConfig& config) {
   return 0;
 }
+
 template <>
 void push_draw_command<gx::DrawData>(gx::DrawData data) {
   if (s_trackDrawCommands) {
     s_lastGxDraw = std::move(data);
   }
 }
+
 template <>
 gx::DrawData* get_last_draw_command() {
   return s_trackDrawCommands && s_lastGxDraw.has_value() ? &*s_lastGxDraw : nullptr;
@@ -419,18 +450,22 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
                                     ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept {
   return {};
 }
+
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
                                      const char* label) noexcept {
   return {};
 }
+
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   return std::make_shared<TextureRef>(wgpu::Texture{}, wgpu::TextureView{}, wgpu::TextureView{},
                                       wgpu::Extent3D{width, height, 1}, wgpu::TextureFormat::RGBA8Unorm, 1, gxFormat);
 }
+
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   return std::make_shared<TextureRef>(wgpu::Texture{}, wgpu::TextureView{}, wgpu::TextureView{},
                                       wgpu::Extent3D{width, height, 1}, wgpu::TextureFormat::RGBA8Unorm, 1, gxFormat);
 }
+
 void write_texture(const TextureRef& ref, ArrayRef<uint8_t> data) noexcept {}
 void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                   Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
@@ -457,6 +492,7 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
   record.persistentCopy = persistentCopy;
   testing::s_resolvePassRecords.push_back(std::move(record));
 }
+
 void queue_palette_conv(tex_palette_conv::ConvRequest req) {}
 void begin_offscreen(uint32_t width, uint32_t height) {}
 void end_offscreen() {}
@@ -483,6 +519,7 @@ bool read_latest(uint16_t x, uint16_t y, uint32_t& z) noexcept {
   if (x >= s_width || y >= s_height || s_data.empty()) {
     return false;
   }
+
   z = s_data[static_cast<size_t>(y) * s_width + x] & 0x00ffffffu;
   return true;
 }

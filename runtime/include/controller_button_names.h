@@ -91,9 +91,11 @@ inline constexpr auto kNativeButtons = std::to_array<NativeButtonItem>({
 
 inline std::string TrimToken(std::string_view token) {
     const size_t begin = token.find_first_not_of(" \t");
+
     if (begin == std::string_view::npos) {
         return {};
     }
+
     const size_t end = token.find_last_not_of(" \t");
     return std::string(token.substr(begin, end - begin + 1));
 }
@@ -122,45 +124,58 @@ inline const GameCubeButtonItem* FindGameCubeButton(std::string_view configKey) 
 inline uint16_t GameCubeMaskFromKeys(std::string_view keys) {
     uint16_t mask = 0;
     size_t begin = 0;
+
     while (begin <= keys.size()) {
         const size_t comma = keys.find(',', begin);
         const std::string_view token = keys.substr(begin, comma == std::string_view::npos ? std::string_view::npos : comma - begin);
+
         if (const GameCubeButtonItem* item = FindGameCubeButton(token)) {
             mask |= static_cast<uint16_t>(item->padButton);
         }
+
         if (comma == std::string_view::npos) {
             break;
         }
+
         begin = comma + 1;
     }
+
     return mask;
 }
 
 inline std::string GameCubeKeysFromMask(uint16_t mask) {
     std::string keys;
+
     for (const auto& item : kGameCubeButtons) {
         if ((mask & static_cast<uint16_t>(item.padButton)) == 0) {
             continue;
         }
+
         if (!keys.empty()) {
             keys += ',';
         }
+
         keys += item.configKey;
     }
+
     return keys;
 }
 
 inline std::string GameCubeLabelsFromMask(uint16_t mask) {
     std::string labels;
+
     for (const auto& item : kGameCubeButtons) {
         if ((mask & static_cast<uint16_t>(item.padButton)) == 0) {
             continue;
         }
+
         if (!labels.empty()) {
             labels += " + ";
         }
+
         labels += item.label;
     }
+
     return labels.empty() ? std::string("None") : labels;
 }
 

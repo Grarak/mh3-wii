@@ -15,6 +15,7 @@ File::File(const char* filename) {
   std::memset(m_filename, 0, std::size(m_filename));
   std::strncpy(m_filename, filename, std::size(m_filename) - 1);
 }
+
 void File::swapEndian() {
   m_modifiedTime = bswap(m_modifiedTime);
   m_iconAddress = bswap(m_iconAddress);

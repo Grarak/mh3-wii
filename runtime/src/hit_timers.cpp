@@ -35,10 +35,12 @@ enum : uint32_t {
     kFirst = 0x50,     // f32
     kSecond = 0x54,    // f32
 };
+
 enum : uint32_t {
     kFlagMotions = 0x100,
     kFlagOwnerSpeed = 0x200
 };
+
 enum : uint32_t {
     kPlayerSpeed = 0x358,
     kEnemySpeed = 0x80,
@@ -71,18 +73,23 @@ static void HitTimerStep(CpuContext* ctx) {
         auto run = [&]() -> uint32_t {
             if (!Memory::Read8(w + kActive))
                 return 0;
+
             if ((flags & kFlagMotions) && (kind == 0 || kind == 1 || kind == 3)) {
                 const uint32_t fn = kind == 0 ? PlayerMotion : kind == 1 ? EnemyMotion : NpcMotion;
                 const uint16_t motion = uint16_t(call(fn, {owner}));
                 bool playing = false;
+
                 for (uint32_t i = 0; i < 4; ++i)
                     playing |= motion == Memory::Read16(w + kMotions + 2 * i);
+
                 if (!playing) {
                     Memory::Write8(w + kActive, 0);
                     return 0;
                 }
             }
+
             float amount = kFrames;
+
             if (flags & kFlagOwnerSpeed) {
                 if (kind == 1)
                     amount = F(owner + kEnemySpeed);
@@ -91,30 +98,38 @@ static void HitTimerStep(CpuContext* ctx) {
                 else if (kind == 3)
                     amount = F(owner + kNpcSpeed);
             }
+
             amount = float(amount * GameStep::Scale());
 
             const float delay = F(w + kDelay);
+
             if (!(delay <= 0.0f)) {
                 if (delay > 0.0f) {
                     const float left = delay - amount;
                     Memory::WriteFloat32(w + kDelay, left <= 0.0f ? 0.0f : left);
                 }
+
                 return 0;
             }
+
             const float time = F(w + kTime);
+
             if (!(time > 0.0f)) {
                 Memory::Write8(w + kActive, 0);
                 return 0;
             }
+
             Memory::WriteFloat32(w + kTime, time - amount);
             const uint8_t phases = Memory::Read8(w + kPhases);
             const float first = F(w + kFirst);
+
             if (first > 0.0f) {
                 if (!(phases & 1)) {
                     Memory::Write8(w + kPhases, phases | 1);
                 } else {
                     const float left = first - amount;
                     Memory::WriteFloat32(w + kFirst, left);
+
                     if (left <= 0.0f) {
                         Memory::WriteFloat32(w + kFirst, 0.0f);
                         Memory::Write8(w + kPhases, phases | 2);
@@ -122,6 +137,7 @@ static void HitTimerStep(CpuContext* ctx) {
                 }
             } else {
                 const float second = F(w + kSecond);
+
                 if (second > 0.0f) {
                     if (!(phases & 2)) {
                         Memory::Write8(w + kPhases, phases | 2);
@@ -131,12 +147,16 @@ static void HitTimerStep(CpuContext* ctx) {
                     }
                 }
             }
+
             return 1;
         };
+
         result = run();
     }
+
     ctx->gpr[3] = result;
 }
+
 extern "C" void func_80299F5C(CpuContext* ctx);
 
 extern "C" void MH3_HitTimerStep(CpuContext* ctx) {

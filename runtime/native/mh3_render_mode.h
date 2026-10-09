@@ -10,6 +10,7 @@ extern "C" {
 enum {
     MH3_RENDER_MODE_BYTES = 60
 };
+
 enum {
     MH3_MODE_NTSC,
     MH3_MODE_PROGRESSIVE,

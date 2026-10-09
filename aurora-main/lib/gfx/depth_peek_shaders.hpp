@@ -32,6 +32,7 @@ void main() {
     frag_color = vec4(uvec4(z & 0xffu, (z >> 8u) & 0xffu, z >> 16u, 255u)) / 255.0;
 }
 )";
+
 // Each destination pixel packs its 24-bit GX depth into RGB bytes.
 inline std::string fragment_body() {
   std::string source(FragmentShader);

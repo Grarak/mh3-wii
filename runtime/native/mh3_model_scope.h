@@ -12,6 +12,7 @@ typedef struct mh3_model_material_scope {
     uint16_t replacement_mask;
     mh3_model_material_bindings selected;
 } mh3_model_material_scope;
+
 mh3_res_status mh3_model_material_bindings_read(mh3_res_span swaps, mh3_model_material_bindings *out);
 /* ShpState's12-byte CPU descriptor comparison record. This compatibility
  * copy is not a decoder or a renderer vertex declaration. */
@@ -43,11 +44,13 @@ typedef enum mh3_model_material_action {
     MH3_MATERIAL_PREP_TEXGEN,
     MH3_MATERIAL_PREP_SRT
 } mh3_model_material_action;
+
 typedef struct mh3_model_material_step {
     mh3_model_material_action action;
     uint32_t resource_address, indirect_operator;
     uint8_t force_light_off;
 } mh3_model_material_step;
+
 typedef mh3_res_status (*mh3_model_material_prepare_step)(void *owner, const mh3_model_material_step *step);
 /* 80076220: exact CPU ordering. The typed consumer owns fog/light outputs,
  * imported texture objects and typed material fields. A nonzero operator must

@@ -13,6 +13,7 @@ enum class CustomEvent {
   RefreshSurface,
   End,
 };
+
 static Uint32 operator+(Uint32 lhs, CustomEvent rhs) { return lhs + static_cast<Uint32>(rhs); }
 
 // On Android in particular, we need to hold a mutex around critical areas like surface creation

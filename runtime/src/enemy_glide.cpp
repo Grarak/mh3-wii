@@ -40,6 +40,7 @@ enum : uint32_t {
     kPassed = 0x786,   // u8
     kPassFrom = 0x788, // VEC3
 };
+
 // Motion table (r5).
 enum : uint32_t {
     kTurnMotion = 0x00,   // u16, then u32 x3 of its start
@@ -49,6 +50,7 @@ enum : uint32_t {
     kSpeedCap = 0x24,     // f32
     kSlowCap = 0x28,      // f32
 };
+
 enum : uint32_t {
     kNoPitch = 1,
     kFastGain = 2,
@@ -73,21 +75,27 @@ enum : uint32_t {
 float F(uint32_t a) {
     return Memory::ReadFloat32(a);
 }
+
 void SetF(uint32_t a, float v) {
     Memory::WriteFloat32(a, v);
 }
+
 void Sub(uint32_t out, uint32_t a, uint32_t b) {
     for (uint32_t k = 0; k < 12; k += 4)
         SetF(out + k, F(a + k) - F(b + k));
 }
+
 // fctiwz: toward zero, saturating.
 int32_t Truncate(double v) {
     if (std::isnan(v))
         return INT32_MIN;
+
     if (v >= 2147483648.0)
         return INT32_MAX;
+
     if (v < -2147483648.0)
         return INT32_MIN;
+
     return int32_t(v);
 }
 
@@ -106,9 +114,11 @@ static void EnemyGlide(CpuContext* ctx) {
         Memory::Write8(e + kGliding, 1);
         Sub(toTarget, e + kTarget, e + kPosition);
         const uint8_t passed = Memory::Read8(e + kPassed);
+
         if (passed == 0) {
             Sub(fromPass, e + kTarget, e + kPassFrom);
             call.Call<VecDot>({toTarget, fromPass});
+
             if (call.F1() < 0.0f) {
                 Memory::Write8(e + kPassed, passed + 1);
                 turn = 0;
@@ -118,19 +128,24 @@ static void EnemyGlide(CpuContext* ctx) {
         } else if (passed == 1) {
             turn = 0;
         }
+
         float bend = 0.0f;
+
         if (turn != 0)
             bend = 360.0f * float(int16_t(turn)) / 65536.0f / 90.0f;
+
         call.Call<BlendToward>({e}, {bend, 0.05f});
 
         const float lean = std::fabs(F(e + kLean));
         uint32_t rate = 128, roll = 0;
+
         if (!(lean <= 0.1f)) {
             const float over = lean - 0.1f;
             rate = uint32_t(Truncate(128.0f + 1664.0f * over));
             SetF(e + kSpeed, F(e + kSpeed) - 1.7f * over * scale);
             const int32_t tilt = int32_t(rate & 0xFFFF) * 10;
             roll = tilt > 0x3000 ? 0x3000 : uint32_t(tilt) & 0xFFFF;
+
             if (F(e + kLean) > 0.0f)
                 roll = (0u - roll) & 0xFFFF;
         }
@@ -144,6 +159,7 @@ static void EnemyGlide(CpuContext* ctx) {
 
         const uint32_t step = uint32_t(GameStep::Share(int32_t(rate & 0xFFFF)));
         const uint32_t yaw = Memory::Read32(e + kYaw);
+
         if (F(e + kLean) < 0.0f)
             Memory::Write32(e + kYaw, int32_t(turn) < int32_t(0x10000 - step) ? yaw - step : yaw + turn);
         else
@@ -153,24 +169,31 @@ static void EnemyGlide(CpuContext* ctx) {
         const uint32_t now = (Memory::Read32(e + kRoll) + 0x8000) & 0xFFFF;
         const uint32_t goalBiased = roll + 0x8000, goal = goalBiased & 0xFFFF;
         uint32_t next;
+
         if (now < goal) {
             next = now + rollStep;
+
             if ((next & 0xFFFF) > goal)
                 next = goalBiased;
         } else {
             next = now - rollStep;
+
             if ((next & 0xFFFF) < goal)
                 next = goalBiased;
         }
+
         Memory::Write32(e + kRoll, (next & 0xFFFF) - 0x8000);
 
         const uint16_t glide = Memory::Read16(table + kGlideMotion);
+
         if (glide == uint16_t(call.Call<MotionNo>({e}))) {
             if (call.Call<MotionEnded>({e}) == 1) {
                 call.Call<StartMotion>({e, Memory::Read16(table + kTurnMotion), Memory::Read32(table + 4), Memory::Read32(table + 8), Memory::Read32(table + 12)});
                 call.Call<StartMotionDone>({e});
             }
+
             const float speed = F(e + kSpeed);
+
             if (speed < F(table + kSpeedCap))
                 SetF(e + kSpeed, speed + (flags & kFastGain ? 1.6f : 0.8f) * scale);
         } else if (F(e + kSpeed) <= F(table + kSlowCap)) {
@@ -183,10 +206,13 @@ static void EnemyGlide(CpuContext* ctx) {
             const uint32_t speed = uint32_t(Truncate(ctx->fpr[1].d));
             call.Call<MotionSpeedSet>({e, Memory::Read16(table + kSpeedMotions), Memory::Read16(table + kSpeedMotions + 2), speed}, {F(e + kLean)});
         }
+
         result = Memory::Read8(e + kPassed) != 0;
     }
+
     ctx->gpr[3] = result;
 }
+
 extern "C" void func_80135064(CpuContext* ctx);
 
 extern "C" void MH3_EnemyGlide(CpuContext* ctx) {

@@ -47,24 +47,31 @@ const auto g_timeBaseStart = std::chrono::steady_clock::now();
 void TransferLockedCache(uint32_t lower) {
     if (!(lower & 2u))
         return;
+
     const uint32_t upper = g_sprShadow[922];
     const uint32_t memoryAddress = upper & ~31u;
     const uint32_t cacheAddress = 0xE0000000u | (lower & 0x3FFE0u);
     uint32_t blocks = ((upper & 31u) << 2) | ((lower >> 2) & 3u);
+
     if (!blocks)
         blocks = 128;
+
     const uint32_t size = blocks * 32;
+
     // DMA uses physical RAM addresses. MMIO/EFB transfers and cache ranges
     // outside our allocated 16 KiB require their own implementation.
     if (memoryAddress >= 0x20000000u)
         throw std::runtime_error("Locked-cache DMA requires a physical RAM address");
+
     auto* memory = Memory::GetPointer(memoryAddress, size);
     auto* cache = Memory::GetPointer(cacheAddress, size);
     const bool load = (lower & 16u) != 0;
+
     if (!load) {
         RecompMod::CheckExecutableWrite(memoryAddress, size, 0);
         RetireNativeResourceOwner(memoryAddress, size, NativeSourceEpochProducer::LockedCacheDma);
     }
+
     std::memcpy(load ? cache : memory, load ? memory : cache, size);
 }
 
@@ -105,8 +112,10 @@ inline void WarnOnce(std::bitset<N>& warned, uint32_t spr, const char* op) {
         if (warned.test(spr)) {
             return;
         }
+
         warned.set(spr);
     }
+
     RT_LOG(RT_TAG_RUNTIME) << "PPC_" << op << " unhandled SPR " << spr << " (defaulting to 0)" << std::endl;
 }
 
@@ -134,6 +143,7 @@ extern "C" uint32_t PPC_UpdateCarryAdd(uint32_t lhs, uint32_t rhs, uint32_t carr
     const uint64_t sum = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + static_cast<uint64_t>(carryIn & 1u);
     const uint32_t carryOut = static_cast<uint32_t>((sum >> 32) & 1u);
     CpuContext* cpu = TryGetCpuContext();
+
     if (cpu) {
         cpu->xer = (cpu->xer & ~0x20000000u) | (carryOut << 29);
         return cpu->xer;
@@ -146,6 +156,7 @@ extern "C" uint32_t PPC_UpdateCarrySub(uint32_t lhs, uint32_t rhs) {
     // Carry flag is set when no borrow occurs (i.e., lhs >= rhs).
     const uint32_t carryOut = lhs >= rhs ? 1u : 0u;
     CpuContext* cpu = TryGetCpuContext();
+
     if (cpu) {
         cpu->xer = (cpu->xer & ~0x20000000u) | (carryOut << 29);
         return cpu->xer;
@@ -164,6 +175,7 @@ extern "C" uint32_t PPC_UpdateCarryShiftRight(uint32_t value, uint32_t shift) {
         carryOut = isNegative ? 1u : 0u;
     } else {
         const uint32_t sh = shift & 31u;
+
         if (sh != 0 && isNegative) {
             const uint32_t mask = (1u << sh) - 1u;
             carryOut = (value & mask) ? 1u : 0u;
@@ -171,6 +183,7 @@ extern "C" uint32_t PPC_UpdateCarryShiftRight(uint32_t value, uint32_t shift) {
     }
 
     CpuContext* cpu = TryGetCpuContext();
+
     if (cpu) {
         cpu->xer = (cpu->xer & ~0x20000000u) | (carryOut << 29);
         return cpu->xer;
@@ -181,14 +194,17 @@ extern "C" uint32_t PPC_UpdateCarryShiftRight(uint32_t value, uint32_t shift) {
 
 extern "C" uint32_t PPC_GetCarry() {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return 0;
     }
+
     return (cpu->xer >> 29) & 1u;
 }
 
 static void UpdateOverflow(uint32_t result, bool overflow) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return;
     }
@@ -198,6 +214,7 @@ static void UpdateOverflow(uint32_t result, bool overflow) {
     } else {
         cpu->xer &= ~0x40000000u; // Clear OV, preserve SO.
     }
+
     (void)result;
 }
 
@@ -205,9 +222,11 @@ static uint32_t AddWithXer(uint32_t lhs, uint32_t rhs, uint32_t carryIn, bool up
     const uint64_t wide = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + static_cast<uint64_t>(carryIn & 1u);
     const uint32_t result = static_cast<uint32_t>(wide);
     const bool overflow = ((~(lhs ^ rhs) & (lhs ^ result)) & 0x80000000u) != 0;
+
     if (updateCarry) {
         PPC_UpdateCarryAdd(lhs, rhs, carryIn);
     }
+
     UpdateOverflow(result, overflow);
     return result;
 }
@@ -217,13 +236,16 @@ static uint32_t SubfWithXer(uint32_t subtrahend, uint32_t minuend, uint32_t carr
     const uint64_t wide = static_cast<uint64_t>(rhs) + static_cast<uint64_t>(minuend) + static_cast<uint64_t>(extended ? (carryIn & 1u) : 1u);
     const uint32_t result = static_cast<uint32_t>(wide);
     const bool overflow = (((minuend ^ subtrahend) & (minuend ^ result)) & 0x80000000u) != 0;
+
     if (updateCarry) {
         CpuContext* cpu = TryGetCpuContext();
         const uint32_t carryOut = static_cast<uint32_t>((wide >> 32) & 1u);
+
         if (cpu) {
             cpu->xer = (cpu->xer & ~0x20000000u) | (carryOut << 29);
         }
     }
+
     UpdateOverflow(result, overflow);
     return result;
 }
@@ -231,33 +253,43 @@ static uint32_t SubfWithXer(uint32_t subtrahend, uint32_t minuend, uint32_t carr
 extern "C" uint32_t PPC_Addo(uint32_t lhs, uint32_t rhs) {
     return AddWithXer(lhs, rhs, 0, false);
 }
+
 extern "C" uint32_t PPC_Addco(uint32_t lhs, uint32_t rhs) {
     return AddWithXer(lhs, rhs, 0, true);
 }
+
 extern "C" uint32_t PPC_Addeo(uint32_t lhs, uint32_t rhs) {
     return AddWithXer(lhs, rhs, PPC_GetCarry(), true);
 }
+
 extern "C" uint32_t PPC_Addmeo(uint32_t value) {
     return AddWithXer(value, 0xFFFFFFFFu, PPC_GetCarry(), true);
 }
+
 extern "C" uint32_t PPC_Addzeo(uint32_t value) {
     return AddWithXer(value, 0, PPC_GetCarry(), true);
 }
+
 extern "C" uint32_t PPC_Subfo(uint32_t subtrahend, uint32_t minuend) {
     return SubfWithXer(subtrahend, minuend, 0, false, false);
 }
+
 extern "C" uint32_t PPC_Subfco(uint32_t subtrahend, uint32_t minuend) {
     return SubfWithXer(subtrahend, minuend, 0, false, true);
 }
+
 extern "C" uint32_t PPC_Subfeo(uint32_t subtrahend, uint32_t minuend) {
     return SubfWithXer(subtrahend, minuend, PPC_GetCarry(), true, true);
 }
+
 extern "C" uint32_t PPC_Subfmeo(uint32_t value) {
     return SubfWithXer(value, 0xFFFFFFFFu, PPC_GetCarry(), true, true);
 }
+
 extern "C" uint32_t PPC_Subfzeo(uint32_t value) {
     return SubfWithXer(value, 0, PPC_GetCarry(), true, true);
 }
+
 extern "C" uint32_t PPC_Nego(uint32_t value) {
     return SubfWithXer(value, 0, 0, false, false);
 }
@@ -272,11 +304,13 @@ extern "C" uint32_t PPC_Mullwo(uint32_t lhs, uint32_t rhs) {
 extern "C" uint32_t PPC_Divwo(uint32_t lhs, uint32_t rhs) {
     const int32_t dividend = static_cast<int32_t>(lhs);
     const int32_t divisor = static_cast<int32_t>(rhs);
+
     if (divisor == 0 || (dividend == std::numeric_limits<int32_t>::min() && divisor == -1)) {
         const uint32_t result = dividend < 0 ? 0xFFFFFFFFu : 0u;
         UpdateOverflow(result, true);
         return result;
     }
+
     const uint32_t result = static_cast<uint32_t>(dividend / divisor);
     UpdateOverflow(result, false);
     return result;
@@ -287,6 +321,7 @@ extern "C" uint32_t PPC_Divwuo(uint32_t lhs, uint32_t rhs) {
         UpdateOverflow(0, true);
         return 0;
     }
+
     const uint32_t result = lhs / rhs;
     UpdateOverflow(result, false);
     return result;
@@ -294,14 +329,17 @@ extern "C" uint32_t PPC_Divwuo(uint32_t lhs, uint32_t rhs) {
 
 static void LoadString(uint32_t rD, uint32_t addr, uint32_t byteCount) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return;
     }
 
     uint32_t reg = rD & 31u;
     uint32_t current = 0;
+
     for (uint32_t i = 0; i < byteCount; ++i) {
         current = (current << 8) | Memory::Read8(addr + i);
+
         if ((i & 3u) == 3u) {
             cpu->gpr[reg] = current;
             reg = (reg + 1u) & 31u;
@@ -310,6 +348,7 @@ static void LoadString(uint32_t rD, uint32_t addr, uint32_t byteCount) {
     }
 
     const uint32_t partial = byteCount & 3u;
+
     if (partial != 0) {
         cpu->gpr[reg] = current << ((4u - partial) * 8u);
     }
@@ -317,14 +356,17 @@ static void LoadString(uint32_t rD, uint32_t addr, uint32_t byteCount) {
 
 static void StoreString(uint32_t rS, uint32_t addr, uint32_t byteCount) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return;
     }
 
     uint32_t reg = rS & 31u;
+
     for (uint32_t i = 0; i < byteCount; ++i) {
         const uint32_t shift = 24u - ((i & 3u) * 8u);
         Memory::Write8(addr + i, static_cast<uint8_t>(cpu->gpr[reg] >> shift));
+
         if ((i & 3u) == 3u) {
             reg = (reg + 1u) & 31u;
         }
@@ -334,13 +376,16 @@ static void StoreString(uint32_t rS, uint32_t addr, uint32_t byteCount) {
 extern "C" void PPC_Lswi(uint32_t rD, uint32_t addr, uint32_t byteCount) {
     LoadString(rD, addr, byteCount == 0 ? 32u : byteCount);
 }
+
 extern "C" void PPC_Lswx(uint32_t rD, uint32_t addr) {
     CpuContext* cpu = TryGetCpuContext();
     LoadString(rD, addr, cpu ? (cpu->xer & 0x7Fu) : 0u);
 }
+
 extern "C" void PPC_Stswi(uint32_t rS, uint32_t addr, uint32_t byteCount) {
     StoreString(rS, addr, byteCount == 0 ? 32u : byteCount);
 }
+
 extern "C" void PPC_Stswx(uint32_t rS, uint32_t addr) {
     CpuContext* cpu = TryGetCpuContext();
     StoreString(rS, addr, cpu ? (cpu->xer & 0x7Fu) : 0u);
@@ -356,19 +401,23 @@ extern "C" uint32_t PPC_Stwcx(uint32_t addr, uint32_t value) {
     CpuContext* cpu = TryGetCpuContext();
     const bool success = g_hasReservation && g_reservationAddr == addr;
     g_hasReservation = false;
+
     if (success) {
         Memory::Write32(addr, value);
     }
+
     if (cpu) {
         const uint32_t so = (cpu->xer >> 31) & 1u;
         const uint32_t cr0 = (success ? 0x2u : 0u) | so;
         cpu->cr = (cpu->cr & 0x0FFFFFFFu) | (cr0 << 28);
     }
+
     return success ? 1u : 0u;
 }
 
 extern "C" uint32_t PPC_Mcrfs(uint32_t dstField, uint32_t srcField) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return 0;
     }
@@ -407,6 +456,7 @@ extern "C" void PPC_Ecowx(uint32_t addr, uint32_t value) {
 
 extern "C" uint32_t PPC_Mcrxr(uint32_t crField) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return 0;
     }
@@ -427,6 +477,7 @@ extern "C" uint32_t PPC_ReadSpr(uint32_t spr) {
         if (spr < g_sprShadow.size()) {
             return g_sprShadow[spr];
         }
+
         return 0u;
     };
 
@@ -486,6 +537,7 @@ extern "C" void PPC_WriteSpr(uint32_t spr, uint32_t value) {
         if (cpu) {
             cpu->gqr[spr - 912u] = value;
         }
+
         return;
     }
 
@@ -493,28 +545,34 @@ extern "C" void PPC_WriteSpr(uint32_t spr, uint32_t value) {
     case 8:
         if (cpu)
             cpu->lr = value;
+
         return;
     case 9:
         if (cpu)
             cpu->ctr = value;
+
         return;
     case 1:
         if (cpu)
             cpu->xer = value;
+
         return;
     case 22:
         break; // DEC - fallthrough to shadow
     case 26:
         if (cpu)
             cpu->srr0 = value;
+
         return;
     case 27:
         if (cpu)
             cpu->srr1 = value;
+
         return;
     case 920:
         if (cpu)
             cpu->hid2 = value & ~0x0F000000u;
+
         return; // DMA queue is empty
     case 922:
         break;
@@ -525,10 +583,12 @@ extern "C" void PPC_WriteSpr(uint32_t spr, uint32_t value) {
     case 1008:
         if (cpu)
             cpu->hid0 = value;
+
         return;
     case 1009:
         if (cpu)
             cpu->hid1 = value;
+
         return;
     case 1011:
         break;
@@ -556,6 +616,7 @@ extern "C" uint32_t PPC_Cntlzw(uint32_t value) {
     if (value == 0) {
         return 32u;
     }
+
     return static_cast<uint32_t>(__builtin_clz(value));
 }
 
@@ -564,6 +625,7 @@ extern "C" uint32_t PPC_Cntlzw(uint32_t value) {
 // exist only for the !hasDest lifter path and must not re-implement them.
 extern "C" uint32_t PPC_CrSetBit(uint32_t bitIndex, uint32_t value) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return 0;
     }
@@ -574,6 +636,7 @@ extern "C" uint32_t PPC_CrSetBit(uint32_t bitIndex, uint32_t value) {
 
 extern "C" uint32_t PPC_CrLogical(uint32_t op, uint32_t bt, uint32_t ba, uint32_t bb) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return 0;
     }
@@ -584,6 +647,7 @@ extern "C" uint32_t PPC_CrLogical(uint32_t op, uint32_t bt, uint32_t ba, uint32_
 
 extern "C" uint32_t PPC_Mcrf(uint32_t dstField, uint32_t srcField) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return 0;
     }
@@ -794,6 +858,7 @@ extern "C" void PPC_StoreHalfwordByteReverse(uint32_t addr, uint32_t value) {
 // to the same isa runtime-GQR dispatch so the two can never drift.
 extern "C" double PPC_PsqL(uint32_t addr, uint32_t w, uint32_t i) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         std::abort(); // CpuContext must never be null in PPC_PsqL
     }
@@ -804,11 +869,13 @@ extern "C" double PPC_PsqL(uint32_t addr, uint32_t w, uint32_t i) {
 
 extern "C" void PPC_PsqSt(uint32_t addr, double value, uint32_t w, uint32_t i) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         std::abort();
     }
 
     const uint32_t gqr = cpu->gqr[i & 7];
+
     if (w == 0) {
         PPC_PsqStStateFallback<0u, 0u, false>(gqr, addr, value);
     } else {
@@ -820,9 +887,11 @@ extern "C" void PPC_PsqSt(uint32_t addr, double value, uint32_t w, uint32_t i) {
 // Sets the specified CR field based on comparing two double values.
 extern "C" void PPC_Fcmp(uint32_t crField, double a, double b) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return;
     }
+
     SetCRFloat(cpu, crField & 7, a, b);
 }
 
@@ -833,9 +902,11 @@ extern "C" void PPC_Fcmp(uint32_t crField, double a, double b) {
 // state ever becomes observable, these four need to diverge.
 extern "C" void PPC_PsCmpo0(uint32_t crField, double a, double b) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return;
     }
+
     SetCRFloat(cpu, crField & 7, PpcGetPs0Inline(a), PpcGetPs0Inline(b));
 }
 
@@ -845,9 +916,11 @@ extern "C" void PPC_PsCmpu0(uint32_t crField, double a, double b) {
 
 extern "C" void PPC_PsCmpo1(uint32_t crField, double a, double b) {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         return;
     }
+
     SetCRFloat(cpu, crField & 7, PpcGetPs1Inline(a), PpcGetPs1Inline(b));
 }
 

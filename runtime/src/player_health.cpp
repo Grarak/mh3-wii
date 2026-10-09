@@ -21,6 +21,7 @@ enum : uint32_t {
     kMaxHealth = 0x372,
     kRedHealth = 0x376
 };
+
 constexpr uint8_t kActionDown = 8;
 enum : uint32_t {
     Pl_master_ck = 0x8026FE38,  // (PLW*) -> non-zero for the player this console controls
@@ -47,22 +48,32 @@ static void PlAddHealthPort(CpuContext* ctx) {
     {
         GuestFrame frame{ctx, 16};
         GuestCall game{ctx};
+
         if (!game.Call<Pl_master_ck>({player}))
             return;
+
         if (game.Call<PlInEventDemo>({0}) == 1 && amount < 0)
             return;
     }
+
     if (Memory::Read8(player + kActionGroup) == kActionDown)
         return;
+
     if (noDamage && amount < 0)
         return;
+
     int16_t health = int16_t(Read16s(player + kHealth) + amount);
+
     if (health <= 0)
         health = 0;
+
     const int16_t maxHealth = Read16s(player + kMaxHealth);
+
     if (health >= maxHealth)
         health = maxHealth;
+
     Memory::Write16(player + kHealth, uint16_t(health));
+
     if (Read16s(player + kRedHealth) < health)
         Memory::Write16(player + kRedHealth, uint16_t(health));
 }

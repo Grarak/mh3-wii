@@ -52,9 +52,11 @@ extern "C" void func_800AB460(CpuContext* ctx);
     std::snprintf(text, sizeof text, "NW4R panic: %s (%08x)", what, value);
     throw std::runtime_error(text);
 }
+
 bool Alive(uint32_t particle) {
     return FlatRead32(particle + 0x0C) == kLifeAlive;
 }
+
 uint32_t LinkOffset(uint32_t manager) {
     return FlatRead16(manager + 0x42);
 }
@@ -65,8 +67,10 @@ uint32_t LinkOffset(uint32_t manager) {
 // negated for a negative index.
 float SinFIdx(float fidx) {
     float a = std::fabs(fidx);
+
     while (a > 65536.0f)
         a -= 65536.0f;
+
     const uint32_t whole = a >= 65535.0f ? 65535u : uint32_t(a);
     const float fraction = a - float(whole);
     const uint32_t entry = 0x805744A0 + 16 * (whole & 0xFF);
@@ -81,43 +85,59 @@ namespace EffectParticle {
 uint32_t First(uint32_t manager) {
     return FlatRead32(manager + 0x38);
 }
+
 uint32_t Last(uint32_t manager) {
     return FlatRead32(manager + 0x3C);
 }
+
 uint32_t Next(uint32_t manager, uint32_t particle) {
     return FlatRead32(particle + LinkOffset(manager) + 4);
 }
+
 uint32_t Prev(uint32_t manager, uint32_t particle) {
     return FlatRead32(particle + LinkOffset(manager));
 }
+
 uint32_t FirstAlive(uint32_t manager) {
     const uint32_t link = LinkOffset(manager) + 4;
     uint32_t p = First(manager);
+
     while (p && !Alive(p))
         p = FlatRead32(p + link);
+
     return p;
 }
+
 uint32_t NextAlive(uint32_t manager, uint32_t particle) {
     const uint32_t link = LinkOffset(manager) + 4;
     uint32_t p = FlatRead32(particle + link);
+
     while (p && !Alive(p))
         p = FlatRead32(p + link);
+
     return p;
 }
+
 uint32_t LastAlive(uint32_t manager) {
     const uint32_t link = LinkOffset(manager);
     uint32_t p = Last(manager);
+
     while (p && !Alive(p))
         p = FlatRead32(p + link);
+
     return p;
 }
+
 uint32_t PrevAlive(uint32_t manager, uint32_t particle) {
     const uint32_t link = LinkOffset(manager);
     uint32_t p = FlatRead32(particle + link);
+
     while (p && !Alive(p))
         p = FlatRead32(p + link);
+
     return p;
 }
+
 FirstFunction NativeFirst(uint32_t guest) {
     switch (guest) {
     case 0x800C8AE4:
@@ -130,6 +150,7 @@ FirstFunction NativeFirst(uint32_t guest) {
         return nullptr;
     }
 }
+
 NextFunction NativeNext(uint32_t guest) {
     switch (guest) {
     case 0x800C8D1C:
@@ -146,17 +167,23 @@ NextFunction NativeNext(uint32_t guest) {
 void ColorRgb(uint32_t particle, uint32_t layer, uint32_t index, uint8_t out[3]) {
     if (layer > 1)
         Panic("particle colour layer > 1", layer);
+
     if (index > 1)
         Panic("particle colour index > 1", index);
+
     const uint32_t color = particle + 0x20 + layer * 8 + index * 4;
+
     for (uint32_t k = 0; k < 3; ++k)
         out[k] = FlatRead8(color + k);
 }
+
 uint8_t ColorAlpha(uint32_t particle, uint32_t layer, uint32_t index) {
     if (layer > 1)
         Panic("particle colour layer > 1", layer);
+
     if (index > 1)
         Panic("particle colour index > 1", index);
+
     return FlatRead8(particle + 0x23 + layer * 8 + index * 4);
 }
 
@@ -166,13 +193,16 @@ uint8_t ColorAlpha(uint32_t particle, uint32_t layer, uint32_t index) {
 uint32_t AlphaFlicker(uint32_t particle) {
     const uint32_t body = FlatRead32(FlatRead32(particle + 0xC8) + 0x24) + 8;
     const uint8_t mode = FlatRead8(body + 0x105);
+
     if (mode == 0)
         return 0xFF;
+
     const uint32_t base = FlatRead16(body + 0x106);
     const int32_t random = int32_t(FlatRead8(body + 0x108) * base) * int8_t(FlatRead8(particle + 0x99));
     const uint32_t sum = base + uint32_t(random / 12700);
     const int32_t period = int32_t(sum > 0xFFFF ? 0xFFFF : sum & 0xFFFF);
     const int32_t age = int32_t(FlatRead16(particle + 0xDC)) - 1;
+
     if (period == 0) {
         // The original divides by zero (no trap, an undefined quotient): keep
         // whatever its translation computes.
@@ -186,9 +216,11 @@ uint32_t AlphaFlicker(uint32_t particle) {
         *cpu = saved;
         return result;
     }
+
     const int32_t phase = int32_t(uint32_t(age - (age / period) * period) & 0xFFFF);
     const int32_t amplitude = FlatRead8(body + 0x109);
     int32_t value;
+
     switch (mode) {
     case 1:
         value = phase * 2 > period ? int16_t(3 * amplitude + -(amplitude * phase * 4) / period + 128) : int16_t((128 - amplitude) + (amplitude * phase * 4) / period);
@@ -216,21 +248,27 @@ uint32_t AlphaFlicker(uint32_t particle) {
     default:
         Panic("alpha flicker mode", mode);
     }
+
     if (value < 0)
         value = 0;
+
     if (value > 255)
         value = 255;
+
     return uint32_t(value) & 0xFF;
 }
 
 void ModulateColors(uint32_t manager, uint32_t particle, uint8_t primary[4], uint8_t secondary[4]) {
     const uint8_t mode = FlatRead8(manager + 0x6C);
+
     if (mode != 1 && mode != 2)
         return;
+
     const auto scale = [&](uint8_t color[4]) {
         for (uint32_t k = 0; k < 4; ++k)
             color[k] = uint8_t((color[k] * FlatRead8(manager + 0x6D + k) + 128) >> 8);
     };
+
     if (mode == 2 && !(FlatReadFloat32(manager + 0x78) < FlatReadFloat32(0x807985A0))) {
         // Fade by the distance of the particle (in the manager's draw frame,
         // the matrix 0x800AE68C left at 0x806969E8) from the centre +0x7C:
@@ -249,36 +287,45 @@ void ModulateColors(uint32_t manager, uint32_t particle, uint8_t primary[4], uin
             game.Call<0x80050F88>({moved});
             distance = float(cpu->fpr[1].d);
         }
+
         *cpu = saved;
         const float range = FlatReadFloat32(manager + 0x78);
+
         if (!(distance > range)) {
             const float product = FlatReadFloat32(0x807985A4) * distance;
             const int32_t t = int32_t(product / range);
             uint32_t weight[4];
+
             for (uint32_t k = 0; k < 4; ++k) {
                 const int32_t from = FlatRead8(manager + 0x71 + k), to = FlatRead8(manager + 0x6D + k);
                 weight[k] = uint32_t((from << 8) + t * (to - from)) & 0xFFFF;
             }
+
             for (uint8_t* color : {primary, secondary})
                 for (uint32_t k = 0; k < 4; ++k)
                     color[k] = uint8_t((color[k] * weight[k] + 128) >> 16);
             return;
         }
     }
+
     scale(primary);
     scale(secondary);
 }
 
 void Rotation(uint32_t particle, float out[3]) {
     const float step = FlatReadFloat32(0x807985F4);
+
     for (uint32_t k = 0; k < 3; ++k) {
         out[k] = FlatReadFloat32(particle + 0x40 + 4 * k);
+
         if (const uint8_t random = FlatRead8(particle + 0x9A + k)) {
             const float add = step * float(random);
             out[k] = out[k] + add;
         }
     }
+
     const uint32_t manager = FlatRead32(particle + 0xC8);
+
     for (uint32_t k = 0; k < 3; ++k)
         out[k] = out[k] + FlatReadFloat32(manager + 0x60 + 4 * k);
 }
@@ -319,10 +366,12 @@ struct Checks {
     bool any = listLast || listPrev || listLastAlive || listPrevAlive || listFirstAlive || listNextAlive || strategyFirst || strategyLast || strategyNext || strategyPrev || colorRgb ||
                colorAlpha || alphaFlicker || modulate || rotation || rotationOffset;
 };
+
 const Checks& Checked() {
     static const Checks checks;
     return checks;
 }
+
 // The original and the port of a function returning r3, from r3 (and r4).
 uint32_t Pure(const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), uint32_t r3, uint32_t r4 = 0, uint32_t r5 = 0) {
     CpuContext* c = TryGetCpuContext();
@@ -336,61 +385,80 @@ uint32_t Pure(const char* name, void (*original)(CpuContext*), void (*port)(CpuC
 void ListLastPort(CpuContext* c) {
     c->gpr[3] = Last(c->gpr[3]);
 }
+
 void ListPrevPort(CpuContext* c) {
     c->gpr[3] = Prev(c->gpr[3], c->gpr[4]);
 }
+
 void ListLastAlivePort(CpuContext* c) {
     c->gpr[3] = LastAlive(c->gpr[3]);
 }
+
 void ListPrevAlivePort(CpuContext* c) {
     c->gpr[3] = PrevAlive(c->gpr[3], c->gpr[4]);
 }
+
 void ListFirstAlivePort(CpuContext* c) {
     c->gpr[3] = FirstAlive(c->gpr[3]);
 }
+
 void ListNextAlivePort(CpuContext* c) {
     c->gpr[3] = NextAlive(c->gpr[3], c->gpr[4]);
 }
+
 void ColorRgbPort(CpuContext* c) {
     uint8_t rgb[3];
     ColorRgb(c->gpr[3], c->gpr[4], c->gpr[5], rgb);
+
     for (uint32_t k = 0; k < 3; ++k)
         FlatWrite8(c->gpr[6] + k, rgb[k]);
 }
+
 void ColorAlphaPort(CpuContext* c) {
     c->gpr[3] = ColorAlpha(c->gpr[3], c->gpr[4], c->gpr[5]);
 }
+
 void AlphaFlickerPort(CpuContext* c) {
     c->gpr[3] = AlphaFlicker(c->gpr[3]);
 }
+
 void ModulateColorsAt(uint32_t manager, uint32_t particle, uint32_t primary, uint32_t secondary) {
     uint8_t a[4], b[4];
+
     for (uint32_t k = 0; k < 4; ++k) {
         a[k] = FlatRead8(primary + k);
         b[k] = FlatRead8(secondary + k);
     }
+
     ModulateColors(manager, particle, a, b);
+
     for (uint32_t k = 0; k < 4; ++k) {
         FlatWrite8(primary + k, a[k]);
         FlatWrite8(secondary + k, b[k]);
     }
 }
+
 void ModulateColorsPort(CpuContext* c) {
     ModulateColorsAt(c->gpr[3], c->gpr[4], c->gpr[5], c->gpr[6]);
 }
+
 void RotationAt(uint32_t particle, uint32_t out) {
     float rotation[3];
     Rotation(particle, rotation);
+
     for (uint32_t k = 0; k < 3; ++k)
         FlatWriteFloat32(out + 4 * k, rotation[k]);
 }
+
 void RotationPort(CpuContext* c) {
     RotationAt(c->gpr[3], c->gpr[4]);
 }
+
 void RotationOffsetAt(uint32_t manager, uint32_t out) {
     for (uint32_t k = 0; k < 3; ++k)
         FlatWriteFloat32(out + 4 * k, FlatReadFloat32(out + 4 * k) + FlatReadFloat32(manager + 0x60 + 4 * k));
 }
+
 void RotationOffsetPort(CpuContext* c) {
     RotationOffsetAt(c->gpr[3], c->gpr[5]);
 }
@@ -402,6 +470,7 @@ uint32_t ListLastChecked(uint32_t manager) {
 #endif
     return Last(manager);
 }
+
 uint32_t ListPrevChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().listPrev) [[unlikely]]
@@ -409,6 +478,7 @@ uint32_t ListPrevChecked(uint32_t manager, uint32_t particle) {
 #endif
     return Prev(manager, particle);
 }
+
 uint32_t ListLastAliveChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().listLastAlive) [[unlikely]]
@@ -416,6 +486,7 @@ uint32_t ListLastAliveChecked(uint32_t manager) {
 #endif
     return LastAlive(manager);
 }
+
 uint32_t ListPrevAliveChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().listPrevAlive) [[unlikely]]
@@ -423,6 +494,7 @@ uint32_t ListPrevAliveChecked(uint32_t manager, uint32_t particle) {
 #endif
     return PrevAlive(manager, particle);
 }
+
 uint32_t ListFirstAliveChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().listFirstAlive) [[unlikely]]
@@ -430,6 +502,7 @@ uint32_t ListFirstAliveChecked(uint32_t manager) {
 #endif
     return FirstAlive(manager);
 }
+
 uint32_t ListNextAliveChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().listNextAlive) [[unlikely]]
@@ -437,6 +510,7 @@ uint32_t ListNextAliveChecked(uint32_t manager, uint32_t particle) {
 #endif
     return NextAlive(manager, particle);
 }
+
 uint32_t StrategyFirstChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().strategyFirst) [[unlikely]]
@@ -444,6 +518,7 @@ uint32_t StrategyFirstChecked(uint32_t manager) {
 #endif
     return FirstAlive(manager);
 }
+
 uint32_t StrategyLastChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().strategyLast) [[unlikely]]
@@ -451,6 +526,7 @@ uint32_t StrategyLastChecked(uint32_t manager) {
 #endif
     return LastAlive(manager);
 }
+
 uint32_t StrategyNextChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().strategyNext) [[unlikely]]
@@ -458,6 +534,7 @@ uint32_t StrategyNextChecked(uint32_t manager, uint32_t particle) {
 #endif
     return NextAlive(manager, particle);
 }
+
 uint32_t StrategyPrevChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().strategyPrev) [[unlikely]]
@@ -465,6 +542,7 @@ uint32_t StrategyPrevChecked(uint32_t manager, uint32_t particle) {
 #endif
     return PrevAlive(manager, particle);
 }
+
 uint32_t ColorAlphaChecked(uint32_t particle, uint32_t layer, uint32_t index) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().colorAlpha) [[unlikely]]
@@ -472,6 +550,7 @@ uint32_t ColorAlphaChecked(uint32_t particle, uint32_t layer, uint32_t index) {
 #endif
     return ColorAlpha(particle, layer, index);
 }
+
 uint32_t AlphaFlickerChecked(uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().alphaFlicker) [[unlikely]]
@@ -479,6 +558,7 @@ uint32_t AlphaFlickerChecked(uint32_t particle) {
 #endif
     return AlphaFlicker(particle);
 }
+
 void ColorRgbChecked(uint32_t particle, uint32_t layer, uint32_t index, uint32_t out) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().colorRgb) [[unlikely]] {
@@ -490,9 +570,11 @@ void ColorRgbChecked(uint32_t particle, uint32_t layer, uint32_t index, uint32_t
 #endif
     uint8_t rgb[3];
     ColorRgb(particle, layer, index, rgb);
+
     for (uint32_t k = 0; k < 3; ++k)
         FlatWrite8(out + k, rgb[k]);
 }
+
 void ModulateColorsChecked(uint32_t manager, uint32_t particle, uint32_t primary, uint32_t secondary) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().modulate) [[unlikely]] {
@@ -504,6 +586,7 @@ void ModulateColorsChecked(uint32_t manager, uint32_t particle, uint32_t primary
 #endif
     ModulateColorsAt(manager, particle, primary, secondary);
 }
+
 void RotationChecked(uint32_t particle, uint32_t out) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().rotation) [[unlikely]] {
@@ -515,6 +598,7 @@ void RotationChecked(uint32_t particle, uint32_t out) {
 #endif
     RotationAt(particle, out);
 }
+
 void RotationOffsetChecked(uint32_t manager, uint32_t particle, uint32_t out) {
 #ifdef MH3_DEVELOPMENT
     if (Checked().rotationOffset) [[unlikely]] {

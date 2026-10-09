@@ -43,11 +43,13 @@ typedef enum mh3_material_group {
     MH3_MATERIAL_PIXEL,
     MH3_MATERIAL_CLIP
 } mh3_material_group;
+
 typedef struct mh3_material_diagnostic {
     mh3_material_group group;
     uint32_t index;
     uint64_t fields;
 } mh3_material_diagnostic;
+
 enum {
     MH3_MATERIAL_SUPPORT_CLIP_DISABLED = 1u << 0,
     MH3_MATERIAL_SUPPORT_DITHER = 1u << 1,
@@ -55,6 +57,7 @@ enum {
     MH3_MATERIAL_SUPPORT_DEPTH_TEXTURE = 1u << 3,
     MH3_MATERIAL_SUPPORT_ALL = (1u << 4) - 1
 };
+
 /* Explicit shader dependencies, not defaults. A zero mask means unconsumed.
  * Capability bits are promises from the selected backend, never inferred. */
 typedef struct mh3_material_requirements {
@@ -63,6 +66,7 @@ typedef struct mh3_material_requirements {
     uint32_t supported_features;
     uint8_t require_clip;
 } mh3_material_requirements;
+
 /* Unknown fields (including their bytes and padding) survive. All checks
  * finish before destination mutation. Clip is copied only when src knows it. */
 mh3_res_status mh3_material_state_overlay(mh3_native_material_state *destination, const mh3_native_material_state *source, uint32_t top_known);
@@ -109,6 +113,7 @@ typedef struct mh3_material_requirement_proof {
     mh3_material_requirements checked;
     uint8_t capabilities_known;
 } mh3_material_requirement_proof;
+
 mh3_res_status mh3_material_state_require_begin(mh3_material_requirement_proof *proof, const mh3_native_material_state *state, mh3_material_diagnostic *diagnostic);
 mh3_res_status mh3_material_state_require_step(mh3_material_requirement_proof *proof, const mh3_native_material_state *state, const mh3_material_requirements *requirements,
                                                mh3_material_diagnostic *diagnostic);
@@ -123,9 +128,11 @@ mh3_res_status mh3_material_pixel_raster_unchecked(const mh3_pack_pixel_inputs *
 typedef struct mh3_shader_light {
     float position[4], direction[4], color[4], angular[4], distance[4];
 } mh3_shader_light;
+
 typedef struct mh3_shader_fog {
     float color[4], a, b, c, b_shift, range_base[4], range_k[12];
 } mh3_shader_fog;
+
 mh3_res_status mh3_material_prepare_light(const mh3_light *source, mh3_shader_light *out);
 /* Perspective writes A/B/C/shift; orthographic preserves out->b/b_shift,
  * exactly as the original producer does. Viewport width is logical pixels. */

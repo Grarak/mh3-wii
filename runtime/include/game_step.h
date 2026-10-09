@@ -12,18 +12,23 @@ namespace GameStep {
 // tick rate instead of following the step length.
 void SetVariable(bool enabled);
 bool Variable();
+
 // Starts a logic step of `scale` ticks: sets NW4R's animation base rate and the
 // game's steps-per-second float, and advances the tick clock.
 void Begin(double scale);
 double Scale();
+
 // Whole ticks of game time that elapse in this step (0 at short steps, more
 // than 1 at long ones). Anything the game counts in whole steps (integer
 // timers, nw4r::ef emitters) advances by this instead of by one.
 uint32_t Ticks();
+
 // Fraction of a tick elapsed past the last whole tick (0 at the stock step).
 double Fraction();
+
 // Ticks of game time elapsed since boot, up to and including this step.
 double Elapsed();
+
 // This step's share of an integer amount the game applies once per tick: the
 // amount times the step length, rounded so that the shares of consecutive
 // steps add up to amount * ticks elapsed (exactly `amount` at the stock step).
@@ -37,6 +42,7 @@ struct State {
     double elapsed;
     std::any effects;
 };
+
 State Save();
 void Restore(const State& state);
 

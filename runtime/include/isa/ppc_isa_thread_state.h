@@ -11,5 +11,6 @@ struct State {
     CpuContext* context = nullptr;
     uint32_t executionAddress = 0;
 };
+
 inline constinit State state{};
 } // namespace PpcThread

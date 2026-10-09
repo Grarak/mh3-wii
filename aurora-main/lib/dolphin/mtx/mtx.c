@@ -22,6 +22,7 @@ void C_MTXIdentity(Mtx m) {
 void C_MTXCopy(const Mtx src, Mtx dst) {
   assert(src && "MTXCopy():  NULL MtxPtr 'src' ");
   assert(dst && "MTXCopy():  NULL MtxPtr 'dst' ");
+
   if (src != dst) {
     dst[0][0] = src[0][0];
     dst[0][1] = src[0][1];
@@ -112,6 +113,7 @@ void C_MTXTranspose(const Mtx src, Mtx xPose) {
   m[2][1] = src[1][2];
   m[2][2] = src[2][2];
   m[2][3] = 0;
+
   if (m == mTmp) {
     C_MTXCopy(mTmp, xPose);
   }
@@ -130,6 +132,7 @@ u32 C_MTXInverse(const Mtx src, Mtx inv) {
   } else {
     m = inv;
   }
+
   det = ((((src[2][1] * (src[0][2] * src[1][0]))
         + ((src[2][2] * (src[0][0] * src[1][1]))
          + (src[2][0] * (src[0][1] * src[1][2]))))
@@ -139,6 +142,7 @@ u32 C_MTXInverse(const Mtx src, Mtx inv) {
   if (0 == det) {
     return 0;
   }
+
   det = 1 / det;
   m[0][0] = (det * +((src[1][1] * src[2][2]) - (src[2][1] * src[1][2])));
   m[0][1] = (det * -((src[0][1] * src[2][2]) - (src[2][1] * src[0][2])));
@@ -159,6 +163,7 @@ u32 C_MTXInverse(const Mtx src, Mtx inv) {
   if (m == mTmp) {
     C_MTXCopy(mTmp, inv);
   }
+
   return 1;
 }
 
@@ -175,6 +180,7 @@ u32 C_MTXInvXpose(const Mtx src, Mtx invX) {
   } else {
     m = invX;
   }
+
   det = ((((src[2][1] * (src[0][2] * src[1][0]))
         + ((src[2][2] * (src[0][0] * src[1][1]))
         +  (src[2][0] * (src[0][1] * src[1][2]))))
@@ -184,6 +190,7 @@ u32 C_MTXInvXpose(const Mtx src, Mtx invX) {
   if (0 == det) {
     return 0;
   }
+
   det = 1 / det;
   m[0][0] = (det * +((src[1][1] * src[2][2]) - (src[2][1] * src[1][2])));
   m[0][1] = (det * -((src[1][0] * src[2][2]) - (src[2][0] * src[1][2])));
@@ -204,6 +211,7 @@ u32 C_MTXInvXpose(const Mtx src, Mtx invX) {
   if (m == mTmp) {
     C_MTXCopy(mTmp, invX);
   }
+
   return 1;
 }
 
@@ -414,6 +422,7 @@ void C_MTXRotRad(Mtx m, char axis, f32 rad) {
 
 void C_MTXRotTrig(Mtx m, char axis, f32 sinA, f32 cosA) {
   assert(m && "MTXRotTrig():  NULL MtxPtr 'm' ");
+
   switch(axis) {
   case 'x':
   case 'X':
@@ -509,6 +518,7 @@ void C_MTXReorder(const Mtx src, ROMtx dst)
 {
   u32 i;
   u32 j;
+
   for (i = 0; i < 3; i++) {
     for (j = 0; j < 4; j++) {
       dst[j][i] = src[i][j];

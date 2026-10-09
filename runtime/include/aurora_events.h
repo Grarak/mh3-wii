@@ -20,6 +20,7 @@ void ConfigureMkwDynamicAspect(bool widescreen, bool forceAspect169, uint32_t su
 void SetMkwForceAspect169(bool enabled);
 bool MkwForceAspect169Requested();
 void UpdateMkwDynamicAspectSurface(uint32_t surfaceWidth, uint32_t surfaceHeight);
+
 // Arms the "keep EGG::Frustum's projection scale" flag on every screen that
 // renders to a fixed-size offscreen target. Cheap and idempotent; called from
 // the GX viewport path so it beats bakes that never cross a frame boundary.
@@ -39,16 +40,21 @@ inline void Flush(bool force = false) {
     if (!sizeDirty && !positionDirty) {
         return;
     }
+
     constexpr auto kSaveDelay = std::chrono::milliseconds(300);
+
     if (!force && std::chrono::steady_clock::now() - changedAt < kSaveDelay) {
         return;
     }
+
     if (sizeDirty && width != 0 && height != 0) {
         RuntimeConfigFile::SetWindowSize(width, height);
     }
+
     if (positionDirty) {
         RuntimeConfigFile::SetWindowPosition(x, y);
     }
+
     sizeDirty = false;
     positionDirty = false;
 }
@@ -76,6 +82,7 @@ inline void ProcessAuroraEvents(const AuroraEvent* events) {
     }
 
     bool surfaceChanged = false;
+
     for (const AuroraEvent* event = events; event->type != AURORA_NONE; ++event) {
         switch (event->type) {
         case AURORA_WINDOW_MOVED:
@@ -85,6 +92,7 @@ inline void ProcessAuroraEvents(const AuroraEvent* events) {
                 WindowPlacementPersistence::positionDirty = true;
                 WindowPlacementPersistence::changedAt = std::chrono::steady_clock::now();
             }
+
             break;
         case AURORA_WINDOW_RESIZED:
             if (aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED && event->windowSize.width != 0 && event->windowSize.height != 0) {
@@ -93,6 +101,7 @@ inline void ProcessAuroraEvents(const AuroraEvent* events) {
                 WindowPlacementPersistence::sizeDirty = true;
                 WindowPlacementPersistence::changedAt = std::chrono::steady_clock::now();
             }
+
             surfaceChanged = true;
             break;
         case AURORA_DISPLAY_SCALE_CHANGED:
@@ -115,6 +124,7 @@ inline void ProcessAuroraEvents(const AuroraEvent* events) {
         // apply it immediately after the next frame has been prepared.
         g_mkwDynamicAspectSurfacePending.store(true, std::memory_order_release);
     }
+
     settings_overlay::HandleEvents(events);
 }
 
@@ -134,6 +144,7 @@ inline bool BeginAuroraFrame() {
     if (!aurora_begin_frame()) {
         return false;
     }
+
     ApplyPendingMkwDynamicAspectSurface();
     return true;
 }

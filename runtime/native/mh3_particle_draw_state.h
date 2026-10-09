@@ -13,12 +13,14 @@ typedef struct mh3_particle_directional_scene {
     mh3_effect_quad canonical[2];
     uint8_t screen_facing, plane_count, rotation_kind, size_kind, stretch;
 } mh3_particle_directional_scene;
+
 typedef struct mh3_particle_directional_record {
     float position[3], direction[3], movement[3], width, height;
     /* sine/cosine of NEGATIVE resolved particle rotation, by X/Y/Z axis.
      * An unused or zero-angle axis supplies {0,1}. */
     float sincos[3][2];
 } mh3_particle_directional_record;
+
 typedef struct mh3_particle_directional_output {
     float history[3], matrix[12];
     mh3_effect_quad quads[2];

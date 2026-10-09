@@ -12,5 +12,6 @@ struct FixedShaderSource {
   std::string vertex;   // gl::vertex_source(...), as passed to ProgramDesc
   std::string fragment; // gl::fragment_source(...), as passed to ProgramDesc
 };
+
 std::vector<FixedShaderSource> fixed_shader_sources();
 } // namespace aurora::gfx

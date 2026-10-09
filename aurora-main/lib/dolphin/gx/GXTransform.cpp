@@ -5,6 +5,7 @@
 
 static inline void CacheProjectionVector(const f32* ptr, GXProjectionType type) {
   __gx->projType = type;
+
   for (int i = 0; i < 6; ++i) {
     __gx->projMtx[i] = ptr[i + 1];
   }
