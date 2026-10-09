@@ -89,6 +89,10 @@ MaterialOwner& render = owners[unsigned(NativeOwner::Render)];
 constinit bool rasterObserverInstalled = false, publishingMaterialRaster = false;
 void Changed(NativeStateComponent component, NativeOwner owner = NativeOwner::Game) {
     ++nativeStateRevision[unsigned(owner)][component];
+    // The colour values are part of the material: any material change may
+    // have changed them too.
+    if (component == NATIVE_STATE_MATERIAL)
+        ++nativeStateRevision[unsigned(owner)][NATIVE_STATE_COLORS];
 }
 void Check(mh3_res_status status, const char* operation) {
     if (status != MH3_RES_OK)
@@ -1312,6 +1316,56 @@ void CaptureNativeMaterialSnapshot(NativeMaterialSnapshot& out) {
     ObserveRasterPublications();
     out.material = game.material;
     out.depthBeforeTexture = game.depthBeforeTexture;
+}
+void SetNativeMaterialColor(bool konst, uint32_t index, const uint8_t rgba[4]) {
+    ObserveRasterPublications();
+    auto& reg = konst ? game.material.konst[index & 3] : game.material.color[index & 3];
+    if (reg.known == 15 && reg.rgba[0] == rgba[0] && reg.rgba[1] == rgba[1] && reg.rgba[2] == rgba[2] && reg.rgba[3] == rgba[3])
+        return;
+    // As a whole-material publication of the same register: no raster or
+    // shader structure depends on it.
+    reg.known = 15;
+    for (unsigned k = 0; k < 4; ++k)
+        reg.rgba[k] = rgba[k];
+    ++nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_COLORS];
+}
+bool SetNativeMaterialAlphaReferences(uint32_t reference0, uint32_t reference1, uint32_t compare0, uint32_t compare1, uint32_t operation) {
+    ObserveRasterPublications();
+    auto& pixel = game.material.pixel;
+    constexpr uint64_t structure = Bit(MH3_PIXEL_ALPHA_COMPARE0) | Bit(MH3_PIXEL_ALPHA_COMPARE1) | Bit(MH3_PIXEL_ALPHA_OPERATION);
+    // The comparison is shader structure: a change takes the full publication.
+    if ((pixel.known & structure) != structure || pixel.values[MH3_PIXEL_ALPHA_COMPARE0] != compare0 || pixel.values[MH3_PIXEL_ALPHA_COMPARE1] != compare1 ||
+        pixel.values[MH3_PIXEL_ALPHA_OPERATION] != operation)
+        return false;
+    constexpr uint64_t references = Bit(MH3_PIXEL_ALPHA_REFERENCE0) | Bit(MH3_PIXEL_ALPHA_REFERENCE1);
+    if ((pixel.known & references) == references && pixel.values[MH3_PIXEL_ALPHA_REFERENCE0] == reference0 && pixel.values[MH3_PIXEL_ALPHA_REFERENCE1] == reference1)
+        return true;
+    pixel.known |= references;
+    pixel.values[MH3_PIXEL_ALPHA_REFERENCE0] = reference0;
+    pixel.values[MH3_PIXEL_ALPHA_REFERENCE1] = reference1;
+    ++nativeStateRevision[unsigned(NativeOwner::Game)][NATIVE_STATE_COLORS];
+    return true;
+}
+void CaptureNativeColorSnapshot(NativeColorSnapshot& out) {
+    const auto& m = game.material;
+    std::memcpy(out.color.data(), m.color, sizeof out.color);
+    std::memcpy(out.konst.data(), m.konst, sizeof out.konst);
+    out.alphaReference = {m.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0], m.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1]};
+    out.alphaKnown = uint32_t((m.pixel.known >> MH3_PIXEL_ALPHA_REFERENCE0) & 1) | uint32_t((m.pixel.known >> MH3_PIXEL_ALPHA_REFERENCE1) & 1) << 1;
+}
+void ApplyNativeColorSnapshot(mh3_native_material_state& m, const NativeColorSnapshot& snapshot) {
+    std::memcpy(m.color, snapshot.color.data(), sizeof snapshot.color);
+    std::memcpy(m.konst, snapshot.konst.data(), sizeof snapshot.konst);
+    m.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0] = snapshot.alphaReference[0];
+    m.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1] = snapshot.alphaReference[1];
+    m.pixel.known = (m.pixel.known & ~(Bit(MH3_PIXEL_ALPHA_REFERENCE0) | Bit(MH3_PIXEL_ALPHA_REFERENCE1))) | (uint64_t(snapshot.alphaKnown & 1) << MH3_PIXEL_ALPHA_REFERENCE0) |
+                    (uint64_t(snapshot.alphaKnown >> 1 & 1) << MH3_PIXEL_ALPHA_REFERENCE1);
+}
+void RestoreNativeColorSnapshot(const NativeColorSnapshot& snapshot) {
+    auto& m = render.material;
+    ApplyNativeColorSnapshot(m, snapshot);
+    // Not shader structure; the Animated palette and alpha range are rebuilt.
+    Changed(NATIVE_STATE_MATERIAL, NativeOwner::Render);
 }
 void CaptureNativeLightingSnapshot(NativeLightingSnapshot& out) {
     out.lights = game.lightSlots;

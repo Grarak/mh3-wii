@@ -435,7 +435,6 @@ void mh3_effect_material_vertices(const mh3_draw_state *d, const mh3_effect_quad
     static const uint8_t white[4] = {255, 255, 255, 255};
     for (uint32_t i = 0; i < 4; i++) {
         AuroraNativeMaterialVertex *v = out + i;
-        memset(v, 0, sizeof(*v));
         AuroraNativeVertex clip;
         mh3_draw_vertex(d, q->position[i], uv[i], white, &clip);
         memcpy(v->position, clip.position, 16);
@@ -444,6 +443,10 @@ void mh3_effect_material_vertices(const mh3_draw_state *d, const mh3_effect_quad
         memcpy(v->normal, in->normal, 12);
         memcpy(v->color, in->color, 8);
         for (uint32_t slot = 0; slot < 8; slot++) {
+            if (in->unused_coordinates & (1u << slot)) {
+                memset(v->texcoord[slot], 0, sizeof(v->texcoord[slot]));
+                continue;
+            }
             const float *m = in->texture_matrix[slot];
             float source[3] = {uv[i][0], uv[i][1], 0};
             if (in->position_source[slot])

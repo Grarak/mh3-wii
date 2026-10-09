@@ -1386,3 +1386,17 @@
 80044ab8 RumbleStopAll
 804d2ba0 OSShutdownSystem
 803a91f0 QuestResetTimeBase
+# NW4R ef particle accessors the draw strategies call per particle (effect_particle.cpp).
+800ab0bc ParticleColorRgb
+800ab284 ParticleColorAlpha
+800ab460 ParticleAlphaFlicker
+800ae70c ParticleManagerModulateColor
+800b56fc ParticleManagerRotationOffset
+800b9624 ParticleListFirstAlive
+800b8dac ParticleListNextAlive
+800c8aac DrawStrategyGetFirstFunc
+800c8ac8 DrawStrategyGetNextFunc
+800c8ae4 DrawStrategyFirstAlive
+800c8c00 DrawStrategyLastAlive
+800c8d1c DrawStrategyNextAlive
+800c8e48 DrawStrategyPrevAlive

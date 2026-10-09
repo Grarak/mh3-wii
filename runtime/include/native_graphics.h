@@ -55,6 +55,16 @@ void SetNativeMaterial(const mh3_native_material_state& material);
 // failures leave the material unchanged. Runs on skipped logical frames too.
 void OverlayNativeMaterial(const mh3_native_material_state& patch, uint32_t top_known = 0);
 const mh3_native_material_state& GetNativeMaterialState(NativeOwner owner = NativeOwner::Game);
+// Per-draw colour values of the Game material without a whole-material
+// publication (effect particles; the frame packet captures them as their own
+// small component, NATIVE_STATE_COLORS): TEV colour register index (0..3) or
+// konst colour index, set known with these components. Equal to publishing a
+// copy of the material with only that register changed.
+void SetNativeMaterialColor(bool konst, uint32_t index, const uint8_t rgba[4]);
+// The two alpha-compare references, when the material's comparisons and
+// operation are known and equal to these (otherwise false: nothing changed,
+// publish the whole material instead).
+bool SetNativeMaterialAlphaReferences(uint32_t reference0, uint32_t reference1, uint32_t compare0, uint32_t compare1, uint32_t operation);
 // The owner's selected model light slots (the last SetNativeModelLights or restore).
 const mh3_native_light_slots& GetNativeModelLights(NativeOwner owner = NativeOwner::Game);
 // Explicit current-matrix producer: updates row/dual fields directly and marks

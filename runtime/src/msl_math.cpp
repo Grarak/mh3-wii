@@ -45,19 +45,24 @@ REGISTER_NATIVE_FUNCTION_AS(0x80464488, MH3_Atan2f, "atan2f");
 // wrapped below 65536 and cut to an index into the 256 entries {sin, cos,
 // dsin, dcos} at 0x805744A0; each value interpolated with the fraction (the
 // paired-single madd, one rounding) and the sine negated for a negative angle.
-static void SinCosRadPort(CpuContext* ctx) {
+void SinCosRadHost(double radians, float& sine, float& cosine) {
     constexpr uint32_t kTable = 0x805744A0;
-    const float index = float(ctx->fpr[1].d) * Memory::ReadFloat32(0x8079FF60 - 31528); // 256 / 2 pi
+    const float index = float(radians) * MemoryInline::FlatReadFloat32(0x8079FF60 - 31528); // 256 / 2 pi
     float magnitude = std::fabs(index);
     while (magnitude >= 65536.0f)
         magnitude -= 65536.0f;
     const uint32_t whole = uint32_t(magnitude);
     const float fraction = magnitude - float(whole & 0xFFFF);
     const uint32_t entry = kTable + 16 * (whole & 0xFF);
-    const float sine = float(PPC_Fmadds(Memory::ReadFloat32(entry + 8), fraction, Memory::ReadFloat32(entry + 0)));
-    const float cosine = float(PPC_Fmadds(Memory::ReadFloat32(entry + 12), fraction, Memory::ReadFloat32(entry + 4)));
+    const float s = float(PPC_Fmadds(MemoryInline::FlatReadFloat32(entry + 8), fraction, MemoryInline::FlatReadFloat32(entry + 0)));
+    cosine = float(PPC_Fmadds(MemoryInline::FlatReadFloat32(entry + 12), fraction, MemoryInline::FlatReadFloat32(entry + 4)));
+    sine = index < 0.0f ? -s : s;
+}
+static void SinCosRadPort(CpuContext* ctx) {
+    float sine, cosine;
+    SinCosRadHost(ctx->fpr[1].d, sine, cosine);
     Memory::WriteFloat32(ctx->gpr[4], cosine);
-    Memory::WriteFloat32(ctx->gpr[3], index < 0.0f ? -sine : sine);
+    Memory::WriteFloat32(ctx->gpr[3], sine);
 }
 extern "C" void func_8009C7C4(CpuContext* ctx);
 extern "C" void MH3_SinCosRad(CpuContext* ctx) {

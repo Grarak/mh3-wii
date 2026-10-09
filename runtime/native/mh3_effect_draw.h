@@ -78,6 +78,8 @@ void mh3_effect_draw_billboards(const mh3_effect_billboard *draw, float minimum_
 typedef struct mh3_effect_vertex_inputs {
     float texture_matrix[8][12], normal[3];
     uint8_t position_source[8], color[2][4];
+    /* Bit n set: no stage reads texture coordinate n; it is written as zero. */
+    uint8_t unused_coordinates;
 } mh3_effect_vertex_inputs;
 void mh3_effect_material_vertices(const mh3_draw_state *draw, const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, AuroraNativeMaterialVertex out[4]);
 void mh3_effect_expand_point(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);

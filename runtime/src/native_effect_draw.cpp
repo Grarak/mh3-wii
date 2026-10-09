@@ -1,5 +1,6 @@
 // ABI adapters for the typed NW4R effects C producers. No GX calls/FIFO writes.
 #include "native_effect_draw.h"
+#include "effect_particle.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "guest_call.h"
@@ -7,6 +8,7 @@
 #include "../native/mh3_effect_draw.h"
 #include "../native/mh3_particle_draw_state.h"
 #include <aurora/native_texture.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -23,8 +25,10 @@ using MemoryInline::FlatWriteFloat32;
 
 struct EffectInputs {
     mh3_effect_material resource{};
-    float texture_matrix[8][12]{};
-    bool position_source[8]{};
+    uint32_t resource_address = 0; // the guest settings decoded into resource
+    // Texture matrices and sources of the draw (texture setup writes them),
+    // the vertex producer's inputs as they are, with no per-quad copy.
+    mh3_effect_vertex_inputs vertex{};
     uint32_t strategy = 0;
     uint8_t line_size = 0, point_size = 0;
 } effect;
@@ -54,6 +58,15 @@ void StoreColor(uint32_t p, const uint8_t in[4]) {
 }
 void LoadResource(uint32_t p) {
     Require(mh3_effect_material_read(Span(p, 0xac), &effect.resource), "Invalid NW4R effect draw resource");
+    effect.resource_address = p;
+}
+// The decoded settings of a resource: the draw's own, or decoded now (the
+// resources are immutable while their effect draws).
+const mh3_effect_material &Resource(uint32_t p, mh3_effect_material &scratch) {
+    if (p == effect.resource_address)
+        return effect.resource;
+    Require(mh3_effect_material_read(Span(p, 0xac), &scratch), "Invalid live effect color selectors");
+    return scratch;
 }
 
 void TextureMaps(uint32_t strategy, uint32_t resource) {
@@ -63,8 +76,8 @@ void TextureMaps(uint32_t strategy, uint32_t resource) {
     for (uint32_t i = 0; i < 3; i++)
         FlatWrite32(strategy + 0xd4 + 4 * i, uint32_t(int32_t(effect.resource.texture_maps[i])));
     for (uint32_t i = 0; i < 8; i++) {
-        mh3_draw_identity_position(effect.texture_matrix[i]);
-        effect.position_source[i] = false;
+        mh3_draw_identity_position(effect.vertex.texture_matrix[i]);
+        effect.vertex.position_source[i] = 0;
     }
 }
 void Material(uint32_t strategy, uint32_t resource, uint32_t info) {
@@ -147,6 +160,10 @@ uint32_t Alpha(uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t
         return 0;
     FlatWrite32(strategy + 0xb0, a);
     FlatWrite32(strategy + 0xb4, a); // original caches reference0 in both slots
+    // The comparison and operation come from the resource Material() applied:
+    // only the references change, as their own small state component.
+    if (SetNativeMaterialAlphaReferences(a, FlatRead8(particle + 0x98), FlatRead8(resource + 2), FlatRead8(resource + 3), FlatRead8(resource + 4)))
+        return 1;
     mh3_native_material_state material = GetNativeMaterialState();
     auto &p = material.pixel;
     const uint32_t fields[5] = {MH3_PIXEL_ALPHA_COMPARE0, MH3_PIXEL_ALPHA_REFERENCE0, MH3_PIXEL_ALPHA_OPERATION, MH3_PIXEL_ALPHA_COMPARE1, MH3_PIXEL_ALPHA_REFERENCE1};
@@ -158,7 +175,11 @@ uint32_t Alpha(uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t
     SetNativeMaterial(material);
     return 1;
 }
-uint32_t Colors(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t force) {
+// The colour inputs (strategy +0xB8 used RGB, +0xBC used alpha, of colour
+// layer/index i / 2, i % 2) at strategy +0xC0.., as DrawStrategySetupTevColors
+// (0x800C745C) leaves them. With port checks on, through the checked natives
+// at their guest addresses.
+void ColorInputsGuest(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32_t resource) {
     GuestCall game{cpu};
     for (uint32_t i = 0; i < 4; i++)
         if (FlatRead8(strategy + 0xb8 + i))
@@ -185,13 +206,50 @@ uint32_t Colors(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32_t 
             if (used)
                 game.Call<0x800AE70C>({manager, particle, strategy + 0xc0 + 8 * pair, strategy + 0xc4 + 8 * pair});
         }
-    mh3_effect_material m;
-    Require(mh3_effect_material_read(Span(resource, 0xac), &m), "Invalid live effect color selectors");
-    uint8_t inputs[4][4], tev[3][4], konst[4][4];
+}
+void ColorInputs(uint32_t strategy, uint32_t particle, uint32_t resource, uint8_t inputs[4][4]) {
     for (uint32_t i = 0; i < 4; i++)
         CopyColor(strategy + 0xc0 + 4 * i, inputs[i]);
+    bool alpha_used = false;
+    for (uint32_t i = 0; i < 4; i++) {
+        if (FlatRead8(strategy + 0xb8 + i))
+            EffectParticle::ColorRgb(particle, i / 2, i % 2, inputs[i]);
+        alpha_used |= FlatRead8(strategy + 0xbc + i) != 0;
+    }
+    uint32_t scale = 255;
+    if (alpha_used && FlatRead8(resource + 0x71))
+        scale = EffectParticle::AlphaFlicker(particle) & 255;
+    for (uint32_t i = 0; i < 4; i++)
+        if (FlatRead8(strategy + 0xbc + i)) {
+            uint32_t a = EffectParticle::ColorAlpha(particle, i / 2, i % 2);
+            if (scale != 255)
+                a = (a * scale + 128) >> 8;
+            inputs[i][3] = uint8_t(a);
+        }
+    const uint32_t manager = FlatRead32(particle + 0xc8);
+    if (FlatRead8(manager + 0x6c))
+        for (uint32_t pair = 0; pair < 2; pair++) {
+            bool used = false;
+            for (uint32_t i = 2 * pair; i < 2 * pair + 2; i++)
+                used |= FlatRead8(strategy + 0xb8 + i) || FlatRead8(strategy + 0xbc + i);
+            if (used)
+                EffectParticle::ModulateColors(manager, particle, inputs[2 * pair], inputs[2 * pair + 1]);
+        }
+    for (uint32_t i = 0; i < 4; i++)
+        StoreColor(strategy + 0xc0 + 4 * i, inputs[i]);
+}
+uint32_t Colors(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t force) {
+    uint8_t inputs[4][4];
+    if (EffectParticle::PortChecked()) [[unlikely]] {
+        ColorInputsGuest(cpu, strategy, particle, resource);
+        for (uint32_t i = 0; i < 4; i++)
+            CopyColor(strategy + 0xc0 + 4 * i, inputs[i]);
+    } else
+        ColorInputs(strategy, particle, resource, inputs);
+    mh3_effect_material scratch;
+    const mh3_effect_material &m = Resource(resource, scratch);
+    uint8_t tev[3][4], konst[4][4];
     mh3_effect_register_colors(&m, inputs, tev, konst);
-    mh3_native_material_state material = GetNativeMaterialState();
     uint32_t changed = 0;
     for (uint32_t i = 0; i < 7; i++) {
         if (!m.rgb_sources[i + 1] && !m.alpha_sources[i + 1])
@@ -202,15 +260,11 @@ uint32_t Colors(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32_t 
         CopyColor(cache, previous);
         if (force || std::memcmp(previous, value, 4)) {
             StoreColor(cache, value);
-            auto &reg = i < 3 ? material.color[i + 1] : material.konst[i - 3];
-            reg.known = 15;
-            for (uint32_t k = 0; k < 4; k++)
-                reg.rgba[k] = value[k];
+            // Only this register changes: its own small state component.
+            SetNativeMaterialColor(i >= 3, i < 3 ? i + 1 : i - 3, value);
             changed = 1;
         }
     }
-    if (changed)
-        SetNativeMaterial(material);
     return changed;
 }
 void ParticleState(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32_t resource, uint32_t info, uint32_t force) {
@@ -232,11 +286,11 @@ void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2]
         return;
     const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
     const auto &material = GetNativeMaterialState();
-    mh3_effect_vertex_inputs input{};
-    std::memcpy(input.texture_matrix, effect.texture_matrix, sizeof(input.texture_matrix));
-    for (uint32_t i = 0; i < 8; i++)
-        input.position_source[i] = effect.position_source[i];
+    mh3_effect_vertex_inputs &input = effect.vertex;
+    // The stages read only the resource's texture coordinates (0..count-1).
+    input.unused_coordinates = uint8_t(0xff << std::max<uint32_t>(effect.resource.texture_count, 1));
     input.normal[0] = 1;
+    input.normal[1] = input.normal[2] = 0;
     float normal_matrix[9];
     if (GetNativeNormalMatrix(0, normal_matrix)) {
         for (uint32_t r = 0; r < 3; r++)
@@ -274,13 +328,27 @@ void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2]
 struct BillboardContext {
     CpuContext *cpu;
     uint32_t strategy, info, manager, resource, first_fn, next_fn, rotation_out, sine_out;
+    // The strategy's iteration functions as native functions, when known.
+    EffectParticle::FirstFunction first_native = nullptr;
+    EffectParticle::NextFunction next_native = nullptr;
+    void Resolve() {
+        // With port checks on, the strategy calls them at their guest addresses.
+        if (EffectParticle::PortChecked())
+            return;
+        first_native = EffectParticle::NativeFirst(first_fn);
+        next_native = EffectParticle::NativeNext(next_fn);
+    }
 };
 uint32_t First(void *opaque) {
     auto &c = *static_cast<BillboardContext *>(opaque);
+    if (c.first_native)
+        return c.first_native(c.manager);
     return GuestCall{c.cpu}(c.first_fn, {c.manager});
 }
 uint32_t Next(void *opaque, uint32_t p) {
     auto &c = *static_cast<BillboardContext *>(opaque);
+    if (c.next_native)
+        return c.next_native(c.manager, p);
     return GuestCall{c.cpu}(c.next_fn, {c.manager, p});
 }
 void ReadParticle(void *opaque, uint32_t p, mh3_effect_particle *out) {
@@ -293,17 +361,22 @@ void ReadParticle(void *opaque, uint32_t p, mh3_effect_particle *out) {
     ReadVector(owner + 0x58, out->manager_scale, 2);
     out->emitter_flags = FlatRead16(FlatRead32(owner + 0x24) + 0x9c);
 }
+// ParticleRotation (0x800B5518) z, with port checks on at its guest address.
+float RotationZ(CpuContext *cpu, uint32_t particle, uint32_t scratch) {
+    if (EffectParticle::PortChecked()) [[unlikely]] {
+        GuestCall{cpu}.Call<0x800B5518>({particle, scratch});
+        return FlatReadFloat32(scratch + 8);
+    }
+    float rotation[3];
+    EffectParticle::Rotation(particle, rotation);
+    return rotation[2];
+}
 void OrientParticle(void *opaque, uint32_t p, mh3_effect_particle *out) {
     auto &c = *static_cast<BillboardContext *>(opaque);
-    GuestCall game{c.cpu};
-    game.Call<0x800B5518>({p, c.rotation_out});
-    out->rotation = FlatReadFloat32(c.rotation_out + 8);
+    out->rotation = RotationZ(c.cpu, p, c.rotation_out);
     out->cosine = 1;
-    if (out->rotation != 0) {
-        game.Call<0x8009C7C4>({c.sine_out, c.sine_out + 4}, {-out->rotation});
-        out->sine = FlatReadFloat32(c.sine_out);
-        out->cosine = FlatReadFloat32(c.sine_out + 4);
-    }
+    if (out->rotation != 0)
+        SinCosRadHost(-out->rotation, out->sine, out->cosine);
 }
 void Prepare(void *opaque, uint32_t p, int first) {
     auto &c = *static_cast<BillboardContext *>(opaque);
@@ -390,16 +463,13 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu) {
             }
         }
         float sine = 0, cosine = 1;
-        if (t.rotation != 0) {
-            game.Call<0x8009C7C4>({frame[0x10], frame[0x14]}, {t.rotation});
-            sine = FlatReadFloat32(frame[0x10]);
-            cosine = FlatReadFloat32(frame[0x14]);
-        }
+        if (t.rotation != 0)
+            SinCosRadHost(t.rotation, sine, cosine);
         float post[12];
         ReadVector(info + 0x30, post, 12);
-        mh3_effect_texture_matrix(&t, sine, cosine, post, effect.texture_matrix[map]);
-        effect.position_source[map] = t.position_source;
-        SetNativeTextureMatrix(t.position_source ? 3 * uint32_t(map) + 0x40 : 3 * uint32_t(map) + 0x1e, effect.texture_matrix[map], t.position_source);
+        mh3_effect_texture_matrix(&t, sine, cosine, post, effect.vertex.texture_matrix[map]);
+        effect.vertex.position_source[map] = t.position_source;
+        SetNativeTextureMatrix(t.position_source ? 3 * uint32_t(map) + 0x40 : 3 * uint32_t(map) + 0x1e, effect.vertex.texture_matrix[map], t.position_source);
         if (force) {
             mh3_native_material_state material = GetNativeMaterialState();
             auto &gen = material.texgen[map];
@@ -439,6 +509,7 @@ void NativeEffectDrawBillboards(CpuContext *cpu) {
     uint32_t order = FlatRead16(c.resource) & 0x800;
     c.first_fn = game.Virtual<0x10>(c.strategy, {order});
     c.next_fn = game.Virtual<0x14>(c.strategy, {order});
+    c.Resolve();
     mh3_effect_billboard_source source{&c, First, Next, ReadParticle, Prepare, OrientParticle, SubmitBillboard};
     mh3_effect_draw_billboards(&draw, FlatReadFloat32(0x80798600), &source);
 }
@@ -741,6 +812,7 @@ extern "C" void MH3_EffectFreeStrategy(CpuContext *cpu) {
     uint32_t order = FlatRead16(c.resource) & 0x800;
     c.first_fn = game.Virtual<0x10>(c.strategy, {order});
     c.next_fn = game.Virtual<0x14>(c.strategy, {order});
+    c.Resolve();
     mh3_effect_billboard_source source{&f, First, Next, ReadParticle, Prepare, nullptr, nullptr};
     mh3_effect_draw_particles(FlatReadFloat32(0x80798654), &source, FreeQuad);
 }
@@ -808,6 +880,7 @@ void SmallStrategy(CpuContext *cpu, bool point) {
     uint32_t order = FlatRead16(c.resource) & 0x800;
     c.first_fn = game.Virtual<0x10>(c.strategy, {order});
     c.next_fn = game.Virtual<0x14>(c.strategy, {order});
+    c.Resolve();
     mh3_effect_billboard_source source{&s, First, Next, ReadParticle, PrepareSmall, nullptr, nullptr};
     source.width_only = point;
     mh3_effect_draw_particles(FlatReadFloat32(0x80798600), &source, DrawSmall);
@@ -834,14 +907,11 @@ extern "C" void MH3_EffectBillboardQuad(CpuContext *cpu) {
     draw.axis_y[1] = -sy * cosine;
     float position[3];
     ReadVector(particle + 0xac, position, 3);
-    GuestCall game{cpu};
-    game.Call<0x800B5518>({particle, frame[0x10]});
-    float angle = FlatReadFloat32(frame[0x18]), sn = 0, cs = 1;
-    if (angle != 0) {
-        game.Call<0x8009C7C4>({frame[0x20], frame[0x24]}, {-angle});
-        sn = FlatReadFloat32(frame[0x20]);
-        cs = FlatReadFloat32(frame[0x24]);
-    }
+    float rotation[3];
+    EffectParticle::Rotation(particle, rotation);
+    float angle = rotation[2], sn = 0, cs = 1;
+    if (angle != 0)
+        SinCosRadHost(-angle, sn, cs);
     mh3_effect_quad q;
     mh3_effect_billboard_quad(&draw, position, width, height, angle, sn, cs, &q);
     Emit(q, frame.Arg(7) != 0);
@@ -885,14 +955,11 @@ mh3_particle_directional_record CaptureDirectionalParticle(DirectionalContext &d
         game.Call<0x800A7F64>({id, d.movement_out});
         ReadVector(d.movement_out, record.movement, 3);
     }
-    game.Call<0x800B5518>({id, d.rotation_out});
     float angles[3];
-    ReadVector(d.rotation_out, angles, 3);
+    EffectParticle::Rotation(id, angles);
     for (uint32_t axis = 0; axis < 3; axis++)
-        if ((d.scene.rotation_kind > 2 || d.scene.rotation_kind == axis) && angles[axis] != 0) {
-            game.Call<0x8009C7C4>({d.sincos_out, d.sincos_out + 4}, {-double(angles[axis])});
-            ReadVector(d.sincos_out, record.sincos[axis], 2);
-        }
+        if ((d.scene.rotation_kind > 2 || d.scene.rotation_kind == axis) && angles[axis] != 0)
+            SinCosRadHost(-double(angles[axis]), record.sincos[axis][0], record.sincos[axis][1]);
     game(d.direction_fn, {d.direction_out, d.context, id});
     ReadVector(d.direction_out, record.direction, 3);
     return record;
@@ -963,6 +1030,7 @@ void DirectionalStrategy(CpuContext *cpu, bool screen) {
     uint32_t order = FlatRead16(c.resource) & 0x800;
     c.first_fn = game.Virtual<0x10>(c.strategy, {order});
     c.next_fn = game.Virtual<0x14>(c.strategy, {order});
+    c.Resolve();
     d.scene.pivot[0] = float(int8_t(FlatRead8(c.resource + 0xa9))) / 100;
     d.scene.pivot[1] = float(int8_t(FlatRead8(c.resource + 0xaa))) / 100;
     d.scene.rotation_kind = FlatRead8(c.resource + 0xaf);
@@ -995,10 +1063,14 @@ struct RibbonContext {
 };
 uint32_t RibbonFirst(void *opaque) {
     auto &r = *static_cast<RibbonContext *>(opaque);
+    if (const auto first = EffectParticle::NativeFirst(r.first_fn))
+        return first(r.manager);
     return GuestCall{r.cpu}(r.first_fn, {r.manager});
 }
 uint32_t RibbonNext(void *opaque, uint32_t p) {
     auto &r = *static_cast<RibbonContext *>(opaque);
+    if (const auto next = EffectParticle::NativeNext(r.next_fn))
+        return next(r.manager, p);
     return GuestCall{r.cpu}(r.next_fn, {r.manager, p});
 }
 void RibbonPair(void *opaque, uint32_t p, int origin, float out[2][3]) {

@@ -9,6 +9,7 @@
 #include "model_render_prep.h"
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
+#include "port_check.h"
 #endif
 #include <aurora/aurora.h>
 #include "gl/gl.hpp"
@@ -87,6 +88,7 @@ struct Packet {
     Pool<NativeLightingSnapshot> lighting;
     Pool<NativePostSnapshot> posts;
     Pool<NativeTextureSnapshot> textures;
+    Pool<NativeColorSnapshot> colors;
     std::unique_ptr<uint8_t[]> vertices{new uint8_t[VertexArenaBytes]}, indices{new uint8_t[IndexArenaBytes]};
     size_t vertexCursor = 0, indexCursor = 0;
     void Reset(uint64_t next, bool admitted) {
@@ -103,6 +105,7 @@ struct Packet {
         lighting.Reset();
         posts.Reset();
         textures.Reset();
+        colors.Reset();
         vertexCursor = indexCursor = 0;
     }
 };
@@ -241,6 +244,8 @@ Packet& ProducerPacket() {
 #ifdef MH3_DEVELOPMENT
 // Per component: draw records, captures (revision advanced) and stored copies.
 uint32_t snapshotCounts[3][NATIVE_STATE_COMPONENTS];
+// Material geometry submissions, and those appended to the previous draw.
+uint32_t geometrySubmitted, geometryMerged;
 #endif
 template <class T, void (*Capture)(T&)>
 uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
@@ -269,15 +274,91 @@ uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
     pool.current = pool.count++;
     return pool.current;
 }
-void Push(Kind kind, uint32_t payload, bool textured = false) {
+StateIndices CaptureState(bool usesPost = true) {
     auto& p = *recording;
-    Record record{kind, textured, payload, {}};
-    record.state[NATIVE_STATE_DRAW] = Component<NativeDrawSnapshot, CaptureNativeDrawSnapshot>(p.draws, NATIVE_STATE_DRAW);
-    record.state[NATIVE_STATE_MATERIAL] = Component<NativeMaterialSnapshot, CaptureNativeMaterialSnapshot>(p.materials, NATIVE_STATE_MATERIAL);
-    record.state[NATIVE_STATE_LIGHTING] = Component<NativeLightingSnapshot, CaptureNativeLightingSnapshot>(p.lighting, NATIVE_STATE_LIGHTING);
-    record.state[NATIVE_STATE_POST] = Component<NativePostSnapshot, CaptureNativePostSnapshot>(p.posts, NATIVE_STATE_POST);
-    record.state[NATIVE_STATE_TEXTURES] = Component<NativeTextureSnapshot, CaptureNativeTextureSnapshot>(p.textures, NATIVE_STATE_TEXTURES);
-    p.records.push_back(record);
+    StateIndices state;
+    state[NATIVE_STATE_DRAW] = Component<NativeDrawSnapshot, CaptureNativeDrawSnapshot>(p.draws, NATIVE_STATE_DRAW);
+    state[NATIVE_STATE_MATERIAL] = Component<NativeMaterialSnapshot, CaptureNativeMaterialSnapshot>(p.materials, NATIVE_STATE_MATERIAL);
+    state[NATIVE_STATE_LIGHTING] = Component<NativeLightingSnapshot, CaptureNativeLightingSnapshot>(p.lighting, NATIVE_STATE_LIGHTING);
+    // Pre-transformed material geometry reads no post matrix: it takes the
+    // current copy without capturing a changed one (the next draw that reads
+    // them captures it).
+    if (usesPost || !p.posts.valid || p.posts.diverged)
+        state[NATIVE_STATE_POST] = Component<NativePostSnapshot, CaptureNativePostSnapshot>(p.posts, NATIVE_STATE_POST);
+    else
+        state[NATIVE_STATE_POST] = p.posts.current;
+    state[NATIVE_STATE_TEXTURES] = Component<NativeTextureSnapshot, CaptureNativeTextureSnapshot>(p.textures, NATIVE_STATE_TEXTURES);
+    state[NATIVE_STATE_COLORS] = Component<NativeColorSnapshot, CaptureNativeColorSnapshot>(p.colors, NATIVE_STATE_COLORS);
+    return state;
+}
+void Push(Kind kind, uint32_t payload, bool textured = false) {
+    recording->records.push_back({kind, textured, payload, CaptureState()});
+}
+#ifdef MH3_DEVELOPMENT
+// MH3_PORT_CHECK=EffectBatch (development): checks that the state a material
+// geometry draw is replayed with (its draw, material + colour, lighting and
+// texture snapshots, shared with the draws batched with it) is the complete
+// Game state at its submission, which an unbatched, fully copied draw would
+// have captured.
+void CheckBatchedState(const Packet& p, const StateIndices& state) {
+    static const bool enabled = PortCheck::Enabled("EffectBatch");
+    if (!enabled)
+        return;
+    static uint64_t checks = 0, mismatches = 0;
+    ++checks;
+    std::string differs;
+    NativeMaterialSnapshot material, replayed = p.materials.items[state[NATIVE_STATE_MATERIAL]];
+    CaptureNativeMaterialSnapshot(material);
+    ApplyNativeColorSnapshot(replayed.material, p.colors.items[state[NATIVE_STATE_COLORS]]);
+    if (!BytesEqual(&material.material, &replayed.material, sizeof material.material) || material.depthBeforeTexture != replayed.depthBeforeTexture)
+        differs += " material";
+    NativeDrawSnapshot draw;
+    CaptureNativeDrawSnapshot(draw);
+    const auto& drawn = p.draws.items[state[NATIVE_STATE_DRAW]];
+    if (!BytesEqual(&draw.draw, &drawn.draw, sizeof draw.draw) || draw.scissor != drawn.scissor || draw.viewportKnown != drawn.viewportKnown || draw.scissorKnown != drawn.scissorKnown ||
+        draw.rasterKnown != drawn.rasterKnown)
+        differs += " draw";
+    NativeLightingSnapshot lighting;
+    CaptureNativeLightingSnapshot(lighting);
+    const auto& lit = p.lighting.items[state[NATIVE_STATE_LIGHTING]];
+    if (!BytesEqual(&lighting.lights, &lit.lights, sizeof lighting.lights) || !BytesEqual(&lighting.preparedLights, &lit.preparedLights, sizeof lighting.preparedLights) ||
+        !BytesEqual(&lighting.fog, &lit.fog, sizeof lighting.fog) || !BytesEqual(&lighting.preparedFog, &lit.preparedFog, sizeof lighting.preparedFog) || lighting.fogKnown != lit.fogKnown)
+        differs += " lighting";
+    // Field by field: the bindings have padding the producers leave unset.
+    NativeTextureSnapshot textures;
+    CaptureNativeTextureSnapshot(textures);
+    const auto& recorded = p.textures.items[state[NATIVE_STATE_TEXTURES]];
+    bool sameTextures = textures.valid == recorded.valid && !std::memcmp(textures.palettes.data(), recorded.palettes.data(), sizeof textures.palettes);
+    for (unsigned unit = 0; unit < 8 && sameTextures; ++unit) {
+        if (!(textures.valid >> unit & 1))
+            continue;
+        const auto &x = textures.textures[unit], &y = recorded.textures[unit];
+        const auto &a = x.source, &b = y.source;
+        sameTextures = a.resource_address == b.resource_address && a.payload_address == b.payload_address && a.asset_id == b.asset_id && a.format == b.format && a.width == b.width &&
+                       a.height == b.height && a.levels == b.levels && a.min_lod == b.min_lod && a.max_lod == b.max_lod && a.generation == b.generation && a.indexed == b.indexed &&
+                       a.mutable_source == b.mutable_source && x.sampler.wrap_s == y.sampler.wrap_s && x.sampler.wrap_t == y.sampler.wrap_t && x.sampler.min_filter == y.sampler.min_filter &&
+                       x.sampler.mag_filter == y.sampler.mag_filter && x.sampler.anisotropy == y.sampler.anisotropy && x.sampler.lod_bias == y.sampler.lod_bias &&
+                       x.sampler.bias_clamp == y.sampler.bias_clamp && x.sampler.edge_lod == y.sampler.edge_lod && x.map_id == y.map_id && x.tlut_id == y.tlut_id;
+    }
+    if (!sameTextures)
+        differs += " textures";
+    if (!differs.empty() && ++mismatches <= 20)
+        std::printf("MH3 port check: EffectBatch replays draw %llu with other state:%s\n", static_cast<unsigned long long>(checks), differs.c_str());
+    else if (differs.empty() && (checks & (checks - 1)) == 0)
+        std::printf("MH3 port check: EffectBatch matches the original (%llu draws, %llu with other state)\n", static_cast<unsigned long long>(checks), static_cast<unsigned long long>(mismatches));
+}
+#endif
+// Appends next to previous when it directly follows it in both arenas and the
+// combined draw stays within 16-bit indices: one triangle list, same order.
+bool AppendGeometry(AuroraNativeMaterialGeometry& previous, const AuroraNativeMaterialGeometry& next) {
+    if (previous.vertices + previous.vertex_count != next.vertices || previous.indices + previous.index_count != next.indices || previous.vertex_count + next.vertex_count > 65536)
+        return false;
+    const auto base = uint16_t(previous.vertex_count);
+    for (uint32_t i = 0; i < next.index_count; ++i)
+        next.indices[i] = uint16_t(next.indices[i] + base);
+    previous.vertex_count += next.vertex_count;
+    previous.index_count += next.index_count;
+    return true;
 }
 Feedback& PushFeedback(Kind kind) {
     auto& p = *recording;
@@ -346,8 +427,14 @@ void Restore(const Packet& p, const StateIndices& state, StateIndices& applied) 
         RestoreNativeTextureSnapshot(p.textures.items[state[NATIVE_STATE_TEXTURES]]);
         forget = true;
     }
+    bool material = false;
     if (applied[NATIVE_STATE_MATERIAL] != state[NATIVE_STATE_MATERIAL]) {
         RestoreNativeMaterialSnapshot(p.materials.items[state[NATIVE_STATE_MATERIAL]]);
+        forget = material = true;
+    }
+    // The colour values replace the material snapshot's copies of them.
+    if (material || applied[NATIVE_STATE_COLORS] != state[NATIVE_STATE_COLORS]) {
+        RestoreNativeColorSnapshot(p.colors.items[state[NATIVE_STATE_COLORS]]);
         forget = true;
     }
     applied = state;
@@ -575,8 +662,30 @@ bool AllocateNativeMaterialGeometry(uint32_t vertices, uint32_t indices, AuroraN
 void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     if (!NativeFramePacketRecording())
         return;
-    recording->materialGeometry.push_back(geometry);
-    Push(Kind::MaterialGeometry, uint32_t(recording->materialGeometry.size() - 1));
+    auto& p = *recording;
+    const StateIndices state = CaptureState(false);
+#ifdef MH3_DEVELOPMENT
+    ++geometrySubmitted;
+    CheckBatchedState(p, state);
+#endif
+    // Batching: geometry drawn with exactly the state of the draw before it
+    // (the same draw, material, colour, lighting and texture snapshots; its post
+    // matrices are not read) joins that draw. Primitive order within one draw
+    // is submission order, so blending and depth results are unchanged.
+    if (!p.records.empty()) {
+        const auto& last = p.records.back();
+        if (last.kind == Kind::MaterialGeometry && last.state[NATIVE_STATE_DRAW] == state[NATIVE_STATE_DRAW] && last.state[NATIVE_STATE_MATERIAL] == state[NATIVE_STATE_MATERIAL] &&
+            last.state[NATIVE_STATE_LIGHTING] == state[NATIVE_STATE_LIGHTING] && last.state[NATIVE_STATE_TEXTURES] == state[NATIVE_STATE_TEXTURES] &&
+            last.state[NATIVE_STATE_COLORS] == state[NATIVE_STATE_COLORS] &&
+            AppendGeometry(p.materialGeometry[last.payload], geometry)) {
+#ifdef MH3_DEVELOPMENT
+            ++geometryMerged;
+#endif
+            return;
+        }
+    }
+    p.materialGeometry.push_back(geometry);
+    p.records.push_back({Kind::MaterialGeometry, false, uint32_t(p.materialGeometry.size() - 1), state});
 }
 void SubmitNativeGeometry(const AuroraNativeGeometry& geometry, bool textured) {
     if (!NativeFramePacketRecording() || !geometry.index_count)
@@ -592,7 +701,7 @@ void RecordNativeModelDraw(uint32_t item, bool deferred) {
         // The render thread prepares this item into its draw, material,
         // texture and post-matrix state (lighting stays the game's).
         auto& p = *recording;
-        p.draws.diverged = p.materials.diverged = p.posts.diverged = p.textures.diverged = true;
+        p.draws.diverged = p.materials.diverged = p.posts.diverged = p.textures.diverged = p.colors.diverged = true;
     }
 }
 void RecordNativeDepthClear() {
@@ -752,10 +861,15 @@ void ReportNativeRenderThreadStall() {
         std::fprintf(stderr, "MH3 render thread: no progress for %u reports in %s of packet %llu, step %u (game sequence %llu)\n", reports, stages[stage < 7 ? stage : 0],
                      static_cast<unsigned long long>(packet), step, static_cast<unsigned long long>(sequence));
 }
-void TakeNativePacketSnapshotCounts(uint32_t out[3][5]) {
-    static_assert(sizeof snapshotCounts == sizeof(uint32_t[3][5]));
+void TakeNativePacketSnapshotCounts(uint32_t out[3][6]) {
+    static_assert(sizeof snapshotCounts == sizeof(uint32_t[3][6]));
     std::memcpy(out, snapshotCounts, sizeof snapshotCounts);
     std::memset(snapshotCounts, 0, sizeof snapshotCounts);
+}
+void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged) {
+    submitted = geometrySubmitted;
+    merged = geometryMerged;
+    geometrySubmitted = geometryMerged = 0;
 }
 #endif
 void BeginNativeFramePacket(bool render) {

@@ -18,6 +18,10 @@ enum NativeStateComponent : unsigned {
     NATIVE_STATE_LIGHTING,
     NATIVE_STATE_POST,
     NATIVE_STATE_TEXTURES,
+    // The material's colour values (NativeColorSnapshot): a material change
+    // advances it too; SetNativeMaterialColor and SetNativeMaterialAlpha-
+    // References advance only it.
+    NATIVE_STATE_COLORS,
     NATIVE_STATE_COMPONENTS
 };
 extern constinit uint32_t nativeStateRevision[NativeOwnerCount][NATIVE_STATE_COMPONENTS];
@@ -33,6 +37,16 @@ struct NativeMaterialSnapshot {
     mh3_native_material_state material;
     bool depthBeforeTexture;
 };
+// The values a draw changes without changing the material (effect particles):
+// TEV colour registers, konst colours and the two alpha-compare references.
+// Restored after the material snapshot, whose copies of them it replaces.
+// No padding: snapshots are compared bytewise.
+struct NativeColorSnapshot {
+    std::array<mh3_pack_tev_color, 4> color, konst;
+    std::array<uint32_t, 2> alphaReference;
+    uint32_t alphaKnown; // bit 0: reference 0, bit 1: reference 1
+};
+static_assert(sizeof(NativeColorSnapshot) == 2 * 4 * sizeof(mh3_pack_tev_color) + 12);
 struct NativeLightingSnapshot {
     mh3_native_light_slots lights;
     std::array<mh3_shader_light, 8> preparedLights;
@@ -55,12 +69,17 @@ void CaptureNativeMaterialSnapshot(NativeMaterialSnapshot& out);
 void CaptureNativeLightingSnapshot(NativeLightingSnapshot& out);
 void CaptureNativePostSnapshot(NativePostSnapshot& out);
 void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out);
+void CaptureNativeColorSnapshot(NativeColorSnapshot& out);
 // Render thread: restore into the logical state and apply it to the backend.
 void RestoreNativeDrawSnapshot(const NativeDrawSnapshot& snapshot);
 void RestoreNativeMaterialSnapshot(const NativeMaterialSnapshot& snapshot);
 void RestoreNativeLightingSnapshot(const NativeLightingSnapshot& snapshot);
 void RestoreNativePostSnapshot(const NativePostSnapshot& snapshot);
 void RestoreNativeTextureSnapshot(const NativeTextureSnapshot& snapshot);
+// After the material snapshot of the same draw, if any.
+void RestoreNativeColorSnapshot(const NativeColorSnapshot& snapshot);
+// The colour values into a material, as the restore does.
+void ApplyNativeColorSnapshot(mh3_native_material_state& material, const NativeColorSnapshot& snapshot);
 // Drop the render thread's backend texture bindings so the next texture
 // restore rebinds every unit (after the backend changed its own bindings).
 void ForgetNativeTextureBindings();
