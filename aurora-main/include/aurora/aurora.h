@@ -149,6 +149,10 @@ void aurora_shutdown();
 const AuroraEvent* aurora_update();
 bool aurora_begin_frame();
 void aurora_end_frame();
+// Set the native target's base dimensions before initialization or at a frame
+// boundary. These dimensions do not reserve GX's extra EFB scratch rows.
+// Invalid zero dimensions leave the configuration unchanged.
+bool aurora_configure_native_target(uint32_t width, uint32_t height);
 // Direct native rendering: call begin before preparing any draws or writing
 // their mapped GPU payload. False skips all drawing/clears/present for this
 // game frame without waiting. Logic still advances; always call end, including

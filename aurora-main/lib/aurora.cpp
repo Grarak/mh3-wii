@@ -14,6 +14,7 @@
 #include "gfx/depth_peek.hpp"
 #include "gl/device.hpp"
 #include "gl/gl.hpp"
+#include "dolphin/vi/vi_internal.hpp"
 #endif
 
 #include "input.hpp"
@@ -607,6 +608,16 @@ void aurora_shutdown() { aurora::shutdown(); }
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }
+bool aurora_configure_native_target(uint32_t width, uint32_t height) {
+#ifdef AURORA_ENABLE_GX
+  if (aurora::g_nativeFrame.active()) aurora::Log.fatal("Native target changed during a frame");
+  if (aurora::gl::initialized() && !aurora::gl::on_render_thread())
+    aurora::Log.fatal("Native target configured outside the game thread");
+  return aurora::vi::configure_native(width, height);
+#else
+  return width && height;
+#endif
+}
 bool aurora_begin_native_frame() { return aurora::begin_native_frame(); }
 bool aurora_native_frame_should_render() { return aurora::g_nativeFrame.should_render(); }
 uint32_t aurora_native_frame_slot() {

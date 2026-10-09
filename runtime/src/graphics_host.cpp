@@ -294,10 +294,20 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     task();
 }
 
-bool BeginNativeGraphicsFrame() {
+void InitializeNativeGraphics(uint32_t width, uint32_t height) {
+    if (initialized && !aurora::gl::on_render_thread())
+        throw std::runtime_error("Native graphics initialized outside the game thread");
+    if (!aurora_configure_native_target(width, height))
+        throw std::runtime_error("Native graphics target has zero dimensions");
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
+    if (!aurora::gl::on_render_thread())
+        throw std::runtime_error("Native graphics initialized outside the game thread");
+}
+
+bool BeginNativeGraphicsFrame() {
+    if (!initialized) throw std::runtime_error("Native frame began before graphics startup");
     const auto frame = aurora::gfx::current_frame() + 1;
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
         const auto path = capturePath.parent_path() /
@@ -628,8 +638,14 @@ int RunEfbCheck(int argc, char** argv) {
 }
 
 int RunGraphicsCheck(int argc, char** argv) {
+    if (!aurora_configure_native_target(640, 448) || aurora_configure_native_target(0, 448))
+        throw std::runtime_error("Native target dimensions were not validated");
     InitializeGraphics(argc, argv);
     struct Shutdown { ~Shutdown() { ShutdownGraphics(); } } shutdown;
+    const auto base = aurora::vi::configured_fb_size();
+    const auto visible = aurora::vi::visible_fb_size();
+    if (base.x != 640 || base.y != 448 || visible.x != 640 || visible.y != 448)
+        throw std::runtime_error("Native target retained legacy scratch rows or accepted zero dimensions");
     if (!aurora::gl::on_render_thread())
         throw std::runtime_error("Native context is not owned by the game thread");
     bool inlineTask = false;

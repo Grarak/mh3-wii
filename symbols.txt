@@ -109,6 +109,9 @@
 8003fa48 ApplyWidemode
 # Picks the render mode from the TV format (assert string "RenderInit: invalid TV format").
 8003f794 RenderInit
+8003fd30 NativeGraphicsInit
+8003fe88 NativeCompletionSetup
+8003fe94 NativeDisplaySetup
 # Returns the TV format: 0 NTSC, 1 PAL (50 Hz), 5 EuRGB60.
 804e9360 VIGetTvFormat
 804e9130 VISetNextFrameBuffer

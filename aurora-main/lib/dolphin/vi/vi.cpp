@@ -14,6 +14,7 @@ std::optional<GXRenderModeObj> g_renderMode;
 namespace {
 std::atomic<float> g_presentAspectCorrection{1.f};
 std::mutex g_renderModeMutex;
+std::optional<Vec2<uint32_t>> g_nativeTargetSize;
 
 float calculate_present_aspect_correction(const GXRenderModeObj& rm) noexcept {
   if (rm.viWidth == 0 || rm.viHeight == 0) {
@@ -33,6 +34,7 @@ float calculate_present_aspect_correction(const GXRenderModeObj& rm) noexcept {
 }
 
 Vec2<uint32_t> render_mode_size_locked() noexcept {
+  if (g_nativeTargetSize) return *g_nativeTargetSize;
   if (!g_renderMode) {
     return {640, 528};
   }
@@ -53,6 +55,7 @@ void configure(const GXRenderModeObj* rm) noexcept {
   {
     std::lock_guard lock(g_renderModeMutex);
     const auto oldSize = render_mode_size_locked();
+    g_nativeTargetSize.reset();
     if (rm == nullptr) {
       g_renderMode.reset();
     } else {
@@ -70,12 +73,29 @@ void configure(const GXRenderModeObj* rm) noexcept {
   }
 }
 
+bool configure_native(uint32_t width, uint32_t height) noexcept {
+  if (!width || !height) return false;
+  bool changed;
+  {
+    std::lock_guard lock(g_renderModeMutex);
+    const auto oldSize = render_mode_size_locked();
+    g_nativeTargetSize = Vec2<uint32_t>{width, height};
+    g_renderMode.reset();
+    g_presentAspectCorrection.store(1.f, std::memory_order_release);
+    changed = oldSize != *g_nativeTargetSize;
+  }
+  // Safe before initialization: the request is deferred until a window exists.
+  if (changed) window::request_frame_buffer_resize();
+  return true;
+}
+
 Vec2<uint32_t> configured_fb_size() noexcept {
   return render_mode_size();
 }
 
 Vec2<uint32_t> visible_fb_size() noexcept {
   std::lock_guard lock(g_renderModeMutex);
+  if (g_nativeTargetSize) return *g_nativeTargetSize;
   if (!g_renderMode) {
     return {640, 528};
   }
