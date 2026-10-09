@@ -14,7 +14,7 @@
 //   0x80293AEC (from, to, f1 radius, out, u8 layers, u16 flag mask, u8 area
 //     or 0xFF, u16 skip mask) -> r3: the sweep from `from` to `to`. Its
 //     record (to +0, from +0xC, radius +0x18, |to - from| +0x1C, two u16 0)
-//     goes to the per-triangle test 0x8029459C (kept translated) for each
+//     goes to the per-triangle test 0x8029459C for each
 //     candidate in the grid cells the sweep's box (the segment lengthened by
 //     the radius at both ends) covers that 0x802962C4 lets through. Without
 //     `out` the first hit returns 1; with it, the hits are listed at
@@ -26,6 +26,15 @@
 //     (0 taken as 0x20 and stored) meet the flag mask, its +4 bits miss the
 //     skip mask, its +7 bits miss the area's mask (0x806BD45C + area), and it
 //     is in neither the tested list nor the first taken entries at 0x806AED00.
+//   0x8029459C LandSweepTriangle (record, triangle, collect) -> 1 when the
+//     sweep touches the triangle: `from` in front of its plane and `to`
+//     within the radius of it, the sphere's leading point (the centre
+//     moved by the radius against the normal) crossing the plane inside the
+//     triangle. Collecting, recorded as a hit (centre `from`, flags as below,
+//     the distance travelled to the contact at 0x806AE4B8). The path where
+//     the crossing falls outside (the edges as capsules, 0x802908A4) stays
+//     translated: the port runs the original then, which recomputes from
+//     the start (nothing before it writes).
 //   0x80292524 LandSweepTriangleCandidateFilter (sweep record, triangle,
 //     point) -> 1 when the sphere touches the triangle, recorded as hit
 //     count 0x80797018 (at most 9): the triangle (0x806AE0F8, 0x3C each, the
@@ -41,7 +50,7 @@
 // edge distances compared squared (no square root); the normalizing and
 // dividing done with reciprocal (square root) estimates and one Newton step;
 // the edge tests' sign without normalizing the cross product.
-// MH3_PORT_CHECK=LandSweepQuery,LandSweepTriangleCounts,
+// MH3_PORT_CHECK=LandSweepQuery,LandSweepTriangle,LandSweepTriangleCounts,
 // LandSweepTriangleCandidateFilter,tolerance=1e-3 checks them against the
 // originals.
 #include "abi_bridge.h"
@@ -71,7 +80,7 @@ constexpr uint32_t kHitFlags = 0x806AE4EC;
 constexpr uint32_t kHitEdge = 0x806AE4F8;
 constexpr uint32_t kHitContacts = 0x806AE3C8;
 constexpr uint32_t kHitPlanePoints = 0x806AE440;
-constexpr uint32_t kSweepFloats = 0x806AE4B8; // 10 floats cleared per sweep
+constexpr uint32_t kSweepFloats = 0x806AE4B8; // 10 floats cleared per sweep: hit distances
 constexpr uint32_t kSweepBytes = 0x806AE0E8;  // 10 bytes cleared per sweep
 constexpr uint32_t kTriangleBytes = 0x3C;
 constexpr int kMaxHits = 9;
@@ -352,6 +361,63 @@ void CandidateFilterPort(CpuContext* cpu) {
     cpu->gpr[3] = CandidateFilter(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 
+// ---- 0x8029459C ----
+
+// 1 or 0 as the original returns, or -1 when the crossing falls outside the
+// triangle (the original's capsule path).
+int SweepTriangleFast(uint32_t record, uint32_t triangle, uint32_t collect) {
+    const int n = int8_t(MemoryInline::FlatRead8(kHitCount));
+
+    if (n >= kMaxHits)
+        return 0;
+
+    const V3 from = Load(record + 0xC), to = Load(record), v0 = Load(triangle + 8), normal = Load(triangle + 0x2C);
+
+    if (!(Dot(from - v0, normal) >= 0.0f))
+        return 0;
+
+    const float distance = Dot(to - v0, normal), radius = ReadF(record + 0x18);
+    uint8_t flags = distance > 0.0f ? 0 : 1;
+
+    if (!(distance <= radius))
+        return 0;
+
+    if (distance < -radius)
+        flags |= 2;
+
+    // 0x80290C8C: where the leading point's move crosses the plane.
+    const V3 down = normal * -radius, start = from + down, move = (to + down) - start;
+    const float t = (Dot(normal, v0) - Dot(normal, start)) * Recip(Dot(normal, move));
+
+    if (t < 0.0f || t > 1.0f)
+        return -1;
+
+    const V3 hit = start + move * t;
+
+    if (!PointInTriangle(hit, triangle + 8, normal))
+        return -1;
+
+    if (!(collect & 0xFF))
+        return 1;
+
+    Record(n, triangle, from, flags, hit);
+    MemoryInline::FlatWrite8(kHitEdge + n, 0);
+    MemoryInline::FlatWriteFloat32(kSweepFloats + n * 4, Length(hit - start));
+    MemoryInline::FlatWrite8(kHitCount, uint8_t(n + 1));
+    return 1;
+}
+
+extern "C" void func_8029459C(CpuContext* cpu);
+
+void SweepTrianglePort(CpuContext* cpu) {
+    const int hit = SweepTriangleFast(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
+
+    if (hit >= 0)
+        cpu->gpr[3] = uint32_t(hit);
+    else
+        func_8029459C(cpu);
+}
+
 // ---- 0x80293AEC ----
 
 struct Layer {
@@ -493,7 +559,12 @@ void SweepQuery(CpuContext* cpu) {
                         if (!TriangleCounts(triangle, inTested, flagMask, skipMask, taken, area))
                             continue;
 
-                        if (game.Call<SweepTriangle>({record, triangle, collect}) != 0) {
+                        int hit = SweepTriangleFast(record, triangle, collect);
+
+                        if (hit < 0)
+                            hit = int(game.Call<SweepTriangle>({record, triangle, collect}));
+
+                        if (hit != 0) {
                             if (!collect) {
                                 cpu->gpr[3] = 1;
                                 return;
@@ -532,6 +603,14 @@ extern "C" void MH3_LandSweepTriangleCandidateFilter(CpuContext* cpu) {
         CandidateFilterPort(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80292524, MH3_LandSweepTriangleCandidateFilter, "LandSweepTriangleCandidateFilter");
+
+extern "C" void MH3_LandSweepTriangle(CpuContext* cpu) {
+    if (PortCheck::Enabled("LandSweepTriangle"))
+        PortCheck::Run(cpu, "LandSweepTriangle", func_8029459C, SweepTrianglePort);
+    else
+        SweepTrianglePort(cpu);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8029459C, MH3_LandSweepTriangle, "LandSweepTriangle");
 
 extern "C" void func_80293AEC(CpuContext* cpu);
 extern "C" void MH3_LandSweepQuery(CpuContext* cpu) {
