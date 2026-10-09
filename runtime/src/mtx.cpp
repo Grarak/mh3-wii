@@ -506,7 +506,38 @@ uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t
     const uint32_t nodeFlags = MemoryInline::FlatRead32(node);
     const bool unitScale = (flags & 0x80000000u) != 0;
     const float sx = LoadFloat(scale), sy = LoadFloat(scale + 4), sz = LoadFloat(scale + 8);
+#ifdef MH3_MTX_NEON
+    // The rows in NEON registers: the paired forms check each pair for a NaN
+    // (a compare and status-register move per operation).
+    if ((nodeFlags & 6) != 0) {
+        std::memcpy(GuestFlat::Host(world), GuestFlat::Host(parent), 0x30);
+    } else if ((nodeFlags & 0x20) != 0) {
+        // MultTrans: the translation (m2 vz + m0 vx) + (m3 + m1 vy) per row.
+        const float tx = LoadFloat(node + 0x28), ty = LoadFloat(node + 0x38), tz = LoadFloat(node + 0x48);
+        const float32x4_t t = unitScale ? float32x4_t{tx, ty, tz, 1.0f} : float32x4_t{sx * tx, sy * ty, sz * tz, 1.0f};
 
+        for (unsigned r = 0; r < 3; ++r) {
+            const float32x4_t row = LoadRow(parent + 16 * r);
+            const float32x4_t terms = vmulq_f32(row, t);
+            const float32x2_t pairs = vadd_f32(vget_high_f32(terms), vget_low_f32(terms));
+            StoreRow(world + 16 * r, vsetq_lane_f32(vget_lane_f32(vpadd_f32(pairs, pairs), 0), row, 3));
+        }
+    } else {
+        // parent * local, the local translation scaled unless bit 31.
+        float32x4_t n[3]{LoadRow(node + 0x1C), LoadRow(node + 0x2C), LoadRow(node + 0x3C)};
+
+        if (!unitScale) {
+            n[0] = vsetq_lane_f32(vgetq_lane_f32(n[0], 3) * sx, n[0], 3);
+            n[1] = vsetq_lane_f32(vgetq_lane_f32(n[1], 3) * sy, n[1], 3);
+            n[2] = vsetq_lane_f32(vgetq_lane_f32(n[2], 3) * sz, n[2], 3);
+        }
+
+        const float32x2_t unit = LoadUnit(0x807963C8u);
+
+        for (unsigned r = 0; r < 3; ++r)
+            StoreRow(world + 16 * r, ConcatRow<false>(LoadRow(parent + 16 * r), n, unit));
+    }
+#else
     if ((nodeFlags & 6) != 0) {
         Copy(parent, world);
     } else if ((nodeFlags & 0x20) != 0) {
@@ -524,6 +555,7 @@ uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t
 
         ConcatMatrices(Matrix(parent), local).Store(world);
     }
+#endif
 
     if ((nodeFlags & 8) != 0) {
         flags |= 0x40000000u;
@@ -637,6 +669,11 @@ void G3dNative::MtxApplyScale(uint32_t out, uint32_t m, uint32_t s) {
 }
 
 uint32_t G3dNative::WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale, uint32_t flags, uint32_t node) {
+#ifdef MH3_DEVELOPMENT
+    // G3dCalcWorld's calls, checked too.
+    if (PortCheck::Enabled("WorldMtxNodeStepMayaScale")) [[unlikely]]
+        return WorldStepChecked(TryGetCpuContext()->gpr[1], world, worldScale, parent, scale, flags, node);
+#endif
     return ::WorldMtxNodeStepMayaScale(world, worldScale, parent, scale, flags, node);
 }
 

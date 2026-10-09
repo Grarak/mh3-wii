@@ -200,10 +200,19 @@ class GuestFrame {
     uint32_t Arg(int gpr) const { return gpr_[gpr]; }
 
   private:
-    // NEON: the compiler turns a plain copy (even __builtin_memcpy_inline,
-    // once it splits the array) back into a memcpy call.
+    // The compiler turns a plain copy (even __builtin_memcpy_inline, once it
+    // splits the array) back into a memcpy call. AArch32: integer load and
+    // store multiples, not NEON: the copies are read back by integer loads
+    // (Arg(), the caller's registers), which on the Cortex-A9 wait for a
+    // NEON store to the same words to leave its queue.
     static void Copy(uint32_t (&to)[32], const uint32_t (&from)[32]) {
-#if defined(__ARM_NEON)
+#if defined(__arm__)
+        const uint32_t* src = from;
+        uint32_t* dst = to;
+
+        for (int i = 0; i < 8; ++i)
+            asm volatile("ldm %0!, {r2, r3, r12, lr}\n\tstm %1!, {r2, r3, r12, lr}" : "+r"(src), "+r"(dst) : : "r2", "r3", "r12", "lr", "memory");
+#elif defined(__ARM_NEON)
         uint32x4_t v[8];
 
         for (int i = 0; i < 8; ++i)

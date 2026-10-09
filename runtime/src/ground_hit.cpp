@@ -27,6 +27,13 @@
 //
 // MH3_PORT_CHECK=GroundHitPointInTriangle,GetGroundHit2,HitGroundComon
 // checks each call against the original.
+//
+// With NEON, a candidate's point-in-triangle test runs its four signed
+// areas (the triangle's and the point's against each edge) in the lanes of
+// one register, on the corners loaded and byte-swapped in one go, and the
+// candidate loop reads the triangles through their host pointers: the same
+// products, differences and comparisons as the original, without the scalar
+// compare and status-register move per area.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -34,6 +41,11 @@
 
 #include <bit>
 #include <cstdint>
+#include <cstring>
+#if defined(__ARM_NEON) && !defined(MH3_WRITE_WATCH)
+#include <arm_neon.h>
+#define MH3_GROUND_NEON 1
+#endif
 
 namespace {
 
@@ -170,23 +182,102 @@ uint32_t CandidateList(uint32_t ground, uint32_t cellX, uint32_t layer, uint32_t
 // 0x8029628C: whether the triangle is among the first `count` taken.
 bool Taken(uint32_t triangle, int count) {
     for (int i = 0; i < count; ++i)
-        if (Memory::Read32(kTaken + 4 * i) == triangle)
+        if (MemoryInline::FlatRead32(kTaken + 4 * i) == triangle)
             return true;
     return false;
 }
 
+// Whether the triangle's normal points up (b > 0), on the float's bits: an
+// integer compare instead of a float one and its status-register move.
+bool FacesUp(uint32_t triangle) {
+    return MemoryInline::FlatRead32(triangle + kNormal + 4) - 1 < 0x7F800000u;
+}
+
+// Starts loading the next candidate (its header, corners and normal span two
+// cache lines) while this one is tested.
+void PrefetchNext(uint32_t list) {
+    const uint32_t next = MemoryInline::FlatRead32(list + 4);
+
+    if (next != 0xFFFFFFFF) {
+        __builtin_prefetch(GuestFlat::Host(next));
+        __builtin_prefetch(GuestFlat::Host(next + 0x3B));
+    }
+}
+
 // The flags, with 0 stored as 0x20 the first time.
 uint16_t Flags(uint32_t triangle) {
-    if (Memory::Read16(triangle + kFlags) == 0)
-        Memory::Write16(triangle + kFlags, 0x20);
+    const uint16_t flags = MemoryInline::FlatRead16(triangle + kFlags);
 
-    return Memory::Read16(triangle + kFlags);
+    if (flags != 0)
+        return flags;
+
+    Memory::Write16(triangle + kFlags, 0x20);
+    return 0x20;
+}
+
+#if MH3_GROUND_NEON
+// The point as x and z lanes.
+struct Probe {
+    float32x2_t x, z;
+};
+
+Probe ProbeOf(Point p) {
+    return {vdup_n_f32(p.x), vdup_n_f32(p.z)};
+}
+
+// Lanes (a, a, b, c), (b, b, c, a) and (c, p, p, p) of the corners a, b, c
+// (lanes 0-2 of v) and the point: the four signed areas' operands.
+struct Operands {
+    float32x4_t a, b, c;
+};
+
+Operands OperandsOf(float32x4_t v, float32x2_t p) {
+    const float32x2_t lo = vget_low_f32(v), hi = vget_high_f32(v);
+    return {vcombine_f32(vdup_lane_f32(lo, 0), vext_f32(lo, hi, 1)), vcombine_f32(vdup_lane_f32(lo, 1), vtrn_f32(hi, lo).val[0]),
+            vcombine_f32(vtrn_f32(hi, p).val[0], p)};
+}
+
+// Inside on the triangle's corners: SignedArea of (a, b, c), (a, b, p),
+// (b, c, p) and (c, a, p) in lanes 0-3, then Classify's sign tests.
+bool Contains(uint32_t triangle, Probe p) {
+    // x0 x1 x2 and z0 z1 z2 in lanes 0-2 (lane 3: the normal's a and c).
+    const uint32x4x3_t corners = vld3q_u32(reinterpret_cast<const uint32_t*>(GuestFlat::Host(triangle + kVertices)));
+    const float32x4_t xs = vreinterpretq_f32_u8(vrev32q_u8(vreinterpretq_u8_u32(corners.val[0])));
+    const float32x4_t zs = vreinterpretq_f32_u8(vrev32q_u8(vreinterpretq_u8_u32(corners.val[2])));
+    const Operands x = OperandsOf(xs, p.x), z = OperandsOf(zs, p.z);
+    float32x4_t ps = vmulq_f32(vsubq_f32(x.b, x.a), vsubq_f32(z.c, z.a));
+    const float32x4_t qs = vmulq_f32(vsubq_f32(x.c, x.a), vsubq_f32(z.b, z.a));
+
+    // Products one unit in the last place apart (or equal) count as equal.
+    const uint32x4_t apart = vsubq_u32(vreinterpretq_u32_f32(ps), vreinterpretq_u32_f32(qs));
+    ps = vbslq_f32(vcleq_u32(vaddq_u32(apart, vdupq_n_u32(1)), vdupq_n_u32(2)), qs, ps);
+    const float32x4_t areas = vsubq_f32(ps, qs);
+
+    // Bytes 0-3: area > 0 per lane; 4-7: area < 0.
+    const uint16x4_t above = vmovn_u32(vcgtq_f32(areas, vdupq_n_f32(0.0f)));
+    const uint16x4_t below = vmovn_u32(vcltq_f32(areas, vdupq_n_f32(0.0f)));
+    const uint64_t signs = vget_lane_u64(vreinterpret_u64_u8(vmovn_u16(vcombine_u16(above, below))), 0);
+
+    if (signs & 0xFF)
+        return (signs & 0xFFFFFF0000000000ull) == 0;
+
+    if (signs & 0xFF00000000ull)
+        return (signs & 0xFFFFFF00ull) == 0;
+
+    return false;
+}
+#else
+using Probe = Point;
+
+Probe ProbeOf(Point p) {
+    return p;
 }
 
 bool Contains(uint32_t triangle, Point p) {
     const Point v[3] = {Corner(triangle + kVertices), Corner(triangle + kVertices + 12), Corner(triangle + kVertices + 24)};
     return Inside(v, p);
 }
+#endif
 
 // The triangle's plane height at the point, in the original's order.
 float Height(uint32_t triangle, uint32_t pos) {
@@ -221,21 +312,23 @@ void GetGroundHit2(CpuContext* cpu) {
         heights[0] = Memory::ReadFloat32(pos + 4);
         call(GridCandidates, {pos, ground, frame[8], frame[12]});
         const uint32_t cellX = Memory::Read32(frame[8]), cellZ = Memory::Read32(frame[12]);
-        const Point p{Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)};
+        const Probe p = ProbeOf({Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)});
         const uint8_t areaMask = Memory::Read8(kAreaMasks + area);
         int count = 0;
 
         for (uint32_t layer = 0; layer < Memory::Read32(ground + kLayers) && count < kMaxTaken; ++layer) {
             for (uint32_t list = CandidateList(ground, cellX, layer, cellZ);; list += 4) {
-                const uint32_t triangle = Memory::Read32(list);
+                const uint32_t triangle = MemoryInline::FlatRead32(list);
 
                 if (triangle == 0xFFFFFFFF)
                     break;
 
-                if (areaMask & Memory::Read8(triangle + kAreaBits))
+                PrefetchNext(list);
+
+                if (areaMask & MemoryInline::FlatRead8(triangle + kAreaBits))
                     continue;
 
-                if (!(mask & Flags(triangle)) || Memory::ReadFloat32(triangle + kNormal + 4) <= 0.0f || Taken(triangle, count) || !Contains(triangle, p))
+                if (!(mask & Flags(triangle)) || !FacesUp(triangle) || Taken(triangle, count) || !Contains(triangle, p))
                     continue;
 
                 Memory::Write32(kTaken + 4 * count, triangle);
@@ -312,20 +405,22 @@ void HitGroundComon(CpuContext* cpu) {
             const uint32_t heights = frame[16], records = frame[36];
             call(GridCandidates, {pos, ground, frame[8], frame[12]});
             const uint32_t cellX = Memory::Read32(frame[8]), cellZ = Memory::Read32(frame[12]);
-            const Point p{Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)};
+            const Probe p = ProbeOf({Memory::ReadFloat32(pos), Memory::ReadFloat32(pos + 8)});
             const uint8_t areaMask = Memory::Read8(kAreaMasks + area);
             int count = 0;
 
             for (uint32_t layer = 0; layer < Memory::Read32(ground + kLayers) && count < kMaxTaken; ++layer) {
                 for (uint32_t list = CandidateList(ground, cellX, layer, cellZ);; list += 4) {
-                    const uint32_t triangle = Memory::Read32(list);
+                    const uint32_t triangle = MemoryInline::FlatRead32(list);
 
                     if (triangle == 0xFFFFFFFF)
                         break;
 
+                    PrefetchNext(list);
                     const uint16_t flags = Flags(triangle);
 
-                    if (!(mask & flags) || (areaMask & Memory::Read8(triangle + kAreaBits)) || (skipMask & Memory::Read16(triangle + kSkipBits)) ||
+                    if (!(mask & flags) || (areaMask & MemoryInline::FlatRead8(triangle + kAreaBits)) ||
+                        (skipMask & MemoryInline::FlatRead16(triangle + kSkipBits)) ||
                         Taken(triangle, count) || !Contains(triangle, p))
                         continue;
 
