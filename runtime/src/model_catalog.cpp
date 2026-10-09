@@ -1,7 +1,7 @@
 // Disc/guest address ownership boundary. Lookup algorithms and byte copies are
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
-#include "fast_map.h"
+#include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
 #include "model_assets.h"

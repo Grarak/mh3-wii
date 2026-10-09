@@ -1,6 +1,6 @@
 // Game-side visibility of scene-queue models (scene_cull.h).
 #include "scene_cull.h"
-#include "fast_map.h"
+#include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
 #include "model_assets.h"

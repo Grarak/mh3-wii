@@ -2,7 +2,7 @@
 // serialized updates live in portable C. Backend receives ordinary records;
 // no guest rendering functions, GX calls or source command lists are used.
 #include "abi_bridge.h"
-#include "fast_map.h"
+#include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"

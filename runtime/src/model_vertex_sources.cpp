@@ -1,6 +1,6 @@
 // Pure array binding ABI: retain typed source provenance instead of GXSetArray.
 #include "abi_bridge.h"
-#include "fast_map.h"
+#include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"

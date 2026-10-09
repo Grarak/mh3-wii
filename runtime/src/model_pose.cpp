@@ -1,7 +1,7 @@
 // Thin RMHP08 ABI and owned producer registry. C11 owns resource/selector
 // semantics; no guest function, GX, FIFO or vertex expansion is performed.
 #include "abi_bridge.h"
-#include "fast_map.h"
+#include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"

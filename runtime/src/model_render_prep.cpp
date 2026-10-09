@@ -2,7 +2,7 @@
 // original 80076220 step order and the 800879DC/80087B34 shape setup exactly,
 // against a host mirror of the G3DState caches and the given owner's state.
 #include "model_render_prep.h"
-#include "fast_map.h"
+#include <aurora/fast_map.h>
 #include "memory.h"
 #include "native_graphics.h"
 #include "native_frame_packet.h"
