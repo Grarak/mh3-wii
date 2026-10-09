@@ -2176,6 +2176,7 @@ struct Verify {
     ModelPrepMirror mirror;
     ModelPrepSrtList srts;
     uint64_t dispatches = 0, mismatches = 0, reported = 0;
+    std::map<std::string, uint64_t> kinds; // mismatching dispatches by part (without details)
 } verify;
 
 void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
@@ -2226,7 +2227,7 @@ void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
     std::string diff = CompareNativeMaterialOwners(NativeOwner::Game, NativeOwner::Shadow);
 
     if (!EqualNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow))
-        diff += " textures";
+        diff += " textures" + CompareNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow);
 
     if (std::memcmp(&GetNativeDrawState(NativeOwner::Game).raster, &GetNativeDrawState(NativeOwner::Shadow).raster, sizeof(mh3_raster_state)))
         diff += " raster";
@@ -2267,6 +2268,15 @@ void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
 
     if (!diff.empty()) {
         ++verify.mismatches;
+        std::string kind;
+
+        for (size_t at = 0; at < diff.size(); ++at)
+            if (diff[at] != '(')
+                kind += diff[at];
+            else if ((at = diff.find(')', at)) == std::string::npos)
+                break;
+
+        ++verify.kinds[kind];
 
         if (verify.reported++ < 40)
             std::fprintf(stderr, "MH3 render prep verify: dispatch %llu material %08x shape %08x flags %x:%s\n", static_cast<unsigned long long>(verify.dispatches), scope.material_address,
@@ -2275,6 +2285,15 @@ void DispatchVerify(const NativeModelDispatch& d, const Resolved* r) {
 
     if (verify.dispatches % 5000 == 0)
         std::fprintf(stderr, "MH3 render prep verify: %llu dispatches, %llu mismatches\n", static_cast<unsigned long long>(verify.dispatches), static_cast<unsigned long long>(verify.mismatches));
+
+    if (verify.dispatches % 50000 == 0) {
+        std::string kinds;
+
+        for (const auto& [kind, count] : verify.kinds)
+            kinds += " [" + std::to_string(count) + ":" + kind + " ]";
+
+        std::fprintf(stderr, "MH3 render prep verify kinds:%s\n", kinds.c_str());
+    }
 }
 #endif
 void Dispatch(const NativeModelDispatch& d, const Resolved* r) {

@@ -148,6 +148,7 @@ void PublishNativeMaterialRaster(NativeOwner owner);
 #include <string>
 // Empty when equal; otherwise the differing parts.
 std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b);
+std::string CompareNativeTextureBindings(NativeOwner a, NativeOwner b);
 
 // What a model draw derives from a material state (structure, classification,
 // fill, palette and alpha range, the texgens below the count, the channel the

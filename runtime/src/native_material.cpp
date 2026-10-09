@@ -2476,8 +2476,16 @@ std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b) {
         const auto& p = x.postTextureMatrices[i];
         const auto& q = y.postTextureMatrices[i];
 
-        if (p.known != q.known || (p.known && (p.matrix3x4 != q.matrix3x4 || std::memcmp(p.values.data(), q.values.data(), 48))))
-            result += " post" + std::to_string(i);
+        if (p.known != q.known || (p.known && (p.matrix3x4 != q.matrix3x4 || std::memcmp(p.values.data(), q.values.data(), 48)))) {
+            float most = 0;
+
+            for (unsigned j = 0; j < 12; ++j)
+                most = std::max(most, std::fabs(p.values[j] - q.values[j]));
+
+            char detail[64];
+            std::snprintf(detail, sizeof detail, "(known %d/%d, max %g)", int(p.known), int(q.known), double(most));
+            result += " post" + std::to_string(i) + detail;
+        }
     }
 
     return result;
