@@ -735,6 +735,7 @@
 804c6300 PSMTXConcat
 804c6f20 PSMTXMultVec
 804c6560 PSMTXInverse
+804c6d90 C_MTXLightPerspective
 # NW4R accessor chains (ported in runtime/src/nw4r_accessors.cpp).
 800a8c5c EmitterResBody
 800adeb4 ResEmitterPtclTrackTable
@@ -795,6 +796,9 @@
 80073fcc VecAddInPlace
 80051430 VecAdd3
 80051488 VecScale3
+80053370 MtxCopyWords
+80053340 MtxCopyWrapper
+80050538 MtxIdentityWrapper
 # nw4r::ef::DrawBillboardStrategy::Draw (0x800B9E5C) and its helpers (effect_billboard.cpp)
 800b9e5c DrawBillboard
 800ba244 DrawBillboardQuad
