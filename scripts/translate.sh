@@ -18,3 +18,9 @@ python3 scripts/prepare_rso_translation.py
     --base-metadata generated/translation.json --base-functions-dir generated/functions \
     --native-source-dir runtime/src --out generated/build_shards 2>&1 | tee logs/shards.log
 python3 scripts/translate_rso_overlays.py 2>&1 | tee logs/rso-overlays.log
+
+python3 scripts/translate_rso_overlays.py --profile quest_field 2>&1 | tee logs/quest-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile enemy_field 2>&1 | tee logs/enemy-field-translate.log
+
+python3 scripts/translate_rso_overlays.py --profile map01_field 2>&1 | tee logs/map01-field-translate.log

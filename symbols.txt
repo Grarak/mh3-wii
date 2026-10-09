@@ -87,3 +87,6 @@
 809f19cc OverlayKindDispatch
 809f1b48 OverlayKindZeroHandler
 809f25b4 OverlayKindOneIntersectionHandler
+80040bfc LoadFieldModuleSet
+80040e4c LoadMapOverlayById
+800405fc LoadRsoImage

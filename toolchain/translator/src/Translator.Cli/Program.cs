@@ -391,6 +391,12 @@ int RunTranslateRecursive(string[] argsTail)
     }
 
     var startAddr = ParseAddress(argsTail[0]);
+    var maxInstructions = OptionValue(argsTail, "--max-instructions") is { } instructionLimit
+        ? ParseInt(instructionLimit) : TranslationOptions.Default.MaxInstructions;
+    var maxBytes = OptionValue(argsTail, "--max-bytes") is { } byteLimit
+        ? ParseInt(byteLimit) : TranslationOptions.Default.MaxBytes;
+    if (maxInstructions <= 0 || maxBytes <= 0)
+        throw new ArgumentException("Disassembly limits must be positive.");
     var allowUnsupportedInstructions = RequireProject().Translation.AllowUnsupportedInstructions;
     var outDir = OptionValue(argsTail, "--outdir") ?? RequireProject().Output.Functions;
     var outputMetadataPath = OptionValue(argsTail, "--output-metadata");
@@ -720,6 +726,8 @@ int RunTranslateRecursive(string[] argsTail)
         {
             var options = WithProjectFrontEndPolicy(new TranslationOptions(
                 work.Name,
+                MaxInstructions: maxInstructions,
+                MaxBytes: maxBytes,
                 KnownFunctionEntryPoints: knownBaseFunctionEntryPoints),
                 RequireProject().Translation);
             return translator.Value.Discover(work.Address, options);
@@ -763,8 +771,8 @@ int RunTranslateRecursive(string[] argsTail)
             baseWork[work.Address] = (
                 work.Name,
                 outputPath,
-                TranslationOptions.Default.MaxInstructions,
-                TranslationOptions.Default.MaxBytes,
+                maxInstructions,
+                maxBytes,
                 allowUnsupportedInstructions);
         }
 
@@ -3602,6 +3610,8 @@ static (string? Positional, CommandOption[] Options)? CommandSpec(string command
         new("--outdir", "path"),
         new("--output-metadata", "path"),
         new("--production-source-bundle", "path"),
+        new("--max-instructions", "N"),
+        new("--max-bytes", "N"),
         new("--threads", "N"),
         new("--no-function-files"),
         new("--prune-stale")
