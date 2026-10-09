@@ -202,8 +202,11 @@ public static class RuntimeNativeGuestEffectAnalyzer
             flags |= GuestCallBoundaryFlags.RequiresCompleteContext;
 
         // Passing or aliasing the context hides arbitrary architectural access.
+        // Copies (`saved = *ctx`, `*ctx = saved`) and brace initialization (`Helper h{ctx}`) too.
         if (Regex.IsMatch(body, $@"(?:\(|,)\s*{escapedName}\s*(?:,|\))", RegexOptions.CultureInvariant) ||
-            Regex.IsMatch(body, $@"[=&]\s*{escapedName}\s*;", RegexOptions.CultureInvariant))
+            Regex.IsMatch(body, $@"[=&]\s*{escapedName}\s*;", RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(body, $@"\*\s*{escapedName}\b(?!\s*->)", RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(body, $@"\{{\s*{escapedName}\s*[,}}]", RegexOptions.CultureInvariant))
             flags |= GuestCallBoundaryFlags.RequiresCompleteContext;
 
         flags |= AnalyzeBoundaryFlags(body);

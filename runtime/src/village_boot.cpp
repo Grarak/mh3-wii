@@ -68,6 +68,7 @@ void FinishVillageBoot() {
 
 ClassicControllerSample ReadGameController() {
     const auto before = navigator.state;
+    HoldInputPlayback(before == State::Navigating);
     const auto input = ReadHostController();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
     const auto output = navigator.Update(input, uint64_t(std::max<int64_t>(elapsed, 0)));

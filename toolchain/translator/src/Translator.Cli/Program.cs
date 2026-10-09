@@ -58,6 +58,14 @@ if (functionMap is not null)
 {
     GuestSaveRestoreThunks.Current = GuestSaveRestoreThunks.FromFunctionMap(functionMap);
 }
+if (project?.Translation.LoadHooksPath is { } loadHooksPath)
+{
+    Translator.Core.Lifting.GuestLoadHooks.Current = Translator.Core.Lifting.GuestLoadHooks.Load(loadHooksPath);
+}
+if (project?.Translation.TickSitesPath is { } tickSitesPath)
+{
+    Translator.Core.Lifting.GuestLoadHooks.TickSites = Translator.Core.Lifting.GuestLoadHooks.Load(tickSitesPath);
+}
 var root = project?.WorkspaceRoot ?? Directory.GetCurrentDirectory();
 var preferCachedInputs = HasFlag(tail, "--prefer-cached-inputs");
 var dolFile = new Lazy<DolFile>(LoadDol);

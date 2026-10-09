@@ -14,6 +14,7 @@ namespace {
 std::optional<ClassicControllerSample> testSample;
 #ifdef MH3_DEVELOPMENT
 uint64_t inputFrame = 0;
+bool playbackHeld = false;
 
 // Frame-indexed input logs for repeatable runs. Each line is
 // "frame buttons(hex) lx ly rx ry": the sample in effect from that paced
@@ -50,7 +51,20 @@ std::optional<ClassicControllerSample> PlaybackInput() {
         return result;
     }();
     static size_t next = 0;
-    const uint64_t frame = inputFrame;
+    // While held (the village shortcut still navigating), the log does not
+    // reach its next entry; it resumes from there, later by the time held.
+    static uint64_t delay = 0;
+    uint64_t frame = inputFrame - delay;
+    if (playbackHeld && next < entries.size() && entries[next].frame != 0 && entries[next].frame <= frame) {
+        delay += frame - (entries[next].frame - 1);
+        frame = entries[next].frame - 1;
+    }
+    static uint64_t reportedDelay = 0;
+    if (!playbackHeld && delay != reportedDelay) {
+        std::fprintf(stderr, "MH3 input playback: held %llu frames for the village shortcut\n",
+                     (unsigned long long)(delay - reportedDelay));
+        reportedDelay = delay;
+    }
     while (next < entries.size() && entries[next].frame <= frame) ++next;
     if (next == entries.size()) {
         static bool reported = false;
@@ -65,6 +79,7 @@ std::optional<ClassicControllerSample> PlaybackInput() {
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample) { testSample = sample; }
 #ifdef MH3_DEVELOPMENT
 void SetInputFrame(uint64_t frame) { inputFrame = frame; }
+void HoldInputPlayback(bool hold) { playbackHeld = hold; }
 ClassicControllerSample ReadHostController() {
     if (testSample) return *testSample;
     if (auto played = PlaybackInput()) return *played;
@@ -74,6 +89,7 @@ ClassicControllerSample ReadHostController() {
 }
 #else
 void SetInputFrame(uint64_t) {}
+void HoldInputPlayback(bool) {}
 ClassicControllerSample ReadHostController() {
     if (testSample) return *testSample;
     return ReadLiveController();

@@ -1,0 +1,140 @@
+#include "port_check.h"
+
+#include "audio/ax_dsp.h"
+#include "game_step.h"
+#include "memory.h"
+
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+namespace PortCheck {
+
+bool Enabled(const char* name) {
+#ifdef MH3_DEVELOPMENT
+    static const std::string list = [] {
+        const char* v = std::getenv("MH3_PORT_CHECK");
+        return std::string(v ? v : "");
+    }();
+    if (list.empty()) return false;
+    if (list == "all") return true;
+    const std::string n = name;
+    for (size_t at = 0; (at = list.find(n, at)) != std::string::npos; at += n.size())
+        if ((at == 0 || list[at - 1] == ',') && (at + n.size() == list.size() || list[at + n.size()] == ','))
+            return true;
+    return false;
+#else
+    (void)name;
+    return false;
+#endif
+}
+
+#ifdef MH3_DEVELOPMENT
+namespace {
+
+struct Snapshot {
+    std::vector<uint8_t> bytes;
+    static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
+    static uint8_t* Mem2() { return Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size); }
+    void Save() {
+        bytes.resize(Memory::kMem1Size + Memory::kMem2Size);
+        std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
+        std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
+    }
+    void Restore() const {
+        std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
+        std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
+    }
+    static uint32_t Address(size_t offset) {
+        return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset)
+                                          : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size);
+    }
+};
+
+uint32_t Word(const std::vector<uint8_t>& b, size_t i) {
+    return uint32_t(b[i]) << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3];
+}
+
+} // namespace
+#endif
+
+void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+#ifdef MH3_DEVELOPMENT
+    static std::set<std::string> reported;
+    static std::map<std::string, uint32_t> counts;
+    static std::map<std::string, std::chrono::steady_clock::time_point> last;
+    static std::chrono::steady_clock::time_point lastAny;
+    uint32_t& checks = counts[name];
+    // A check copies all of RAM four times: at most one every 500 ms, and per
+    // port one every 2 s, so the game keeps most of its speed and every port
+    // named gets its turn.
+    const auto now = std::chrono::steady_clock::now();
+    auto& previous = last[name];
+    if (GameStep::Ticks() != 1 || now - lastAny < std::chrono::milliseconds(500) ||
+        now - previous < std::chrono::seconds(2)) {
+        port(ctx);
+        return;
+    }
+    previous = lastAny = now;
+    // The audio mix worker writes voice state into guest RAM: let it finish so
+    // the restore below does not roll its writes back (guest code starts mixes).
+    AxDspHle::JoinMixWorker();
+    const CpuContext entry = *ctx;
+    const GameStep::State clock = GameStep::Save();
+    Snapshot before, expected;
+    before.Save();
+    original(ctx);
+    const CpuContext originalCtx = *ctx;
+    expected.Save();
+    before.Restore();
+    GameStep::Restore(clock);
+    *ctx = entry;
+    port(ctx);
+
+    Snapshot actual;
+    actual.Save();
+    const uint32_t sp = entry.gpr[1];
+    size_t differences = 0;
+    std::string lines;
+    for (size_t i = 0; i + 4 <= actual.bytes.size(); i += 4) {
+        if (i % 4096 == 0 && std::memcmp(&expected.bytes[i], &actual.bytes[i], 4096) == 0) {
+            i += 4096 - 4;
+            continue;
+        }
+        const uint32_t a = Word(expected.bytes, i), b = Word(actual.bytes, i);
+        if (a == b) continue;
+        const uint32_t address = Snapshot::Address(i);
+        // Callee stack frames, and the LR save word the callee stores in the caller's.
+        if (address < sp + 8 && address >= sp - 0x10000) continue;
+        if (++differences <= 32) {
+            char line[96];
+            std::snprintf(line, sizeof line, "  %08x original %08x port %08x before %08x\n", address, a, b,
+                          Word(before.bytes, i));
+            lines += line;
+        }
+    }
+    if (ctx->gpr[1] != originalCtx.gpr[1] || ctx->gpr[2] != originalCtx.gpr[2] || ctx->gpr[13] != originalCtx.gpr[13])
+        lines += "  stack/sda registers differ after return\n";
+    ++checks;
+    if (differences || !lines.empty()) {
+        const std::string key = name + std::string(":") + lines.substr(0, lines.find('\n'));
+        if (reported.insert(key).second)
+            std::printf("MH3 port check: %s differs from the original (check %u, %zu words):\n%s", name, checks,
+                        differences, lines.c_str());
+    } else if ((checks & (checks - 1)) == 0) {
+        std::printf("MH3 port check: %s matches the original (%u checks)\n", name, checks);
+    }
+    std::fflush(stdout);
+#else
+    (void)name;
+    (void)original;
+    port(ctx);
+#endif
+}
+
+} // namespace PortCheck

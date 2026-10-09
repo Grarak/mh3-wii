@@ -77,6 +77,9 @@ public static class PpcFloatCallSemantics
                target.Equals("PPC_Fnmadds", StringComparison.OrdinalIgnoreCase) ||
                target.Equals("PPC_Fnmsubs", StringComparison.OrdinalIgnoreCase) ||
                target.Equals("PPC_Fcmp", StringComparison.OrdinalIgnoreCase) ||
-               target.Equals("PPC_PsFromScalar", StringComparison.OrdinalIgnoreCase);
+               target.Equals("PPC_PsFromScalar", StringComparison.OrdinalIgnoreCase) ||
+               // Float tick sites (Lifting/GuestLoadHooks): a scalar in, a scalar out.
+               target.Equals("MH3_EaseDivisor", StringComparison.OrdinalIgnoreCase) ||
+               target.Equals("MH3_PerStep", StringComparison.OrdinalIgnoreCase);
     }
 }

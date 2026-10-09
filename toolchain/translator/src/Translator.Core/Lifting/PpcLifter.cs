@@ -650,7 +650,13 @@ public sealed partial class PpcLifter
             case "lfs" when operands.Count == 2:
                 {
                     var (offset, reg) = ParseDisplacement(operands[1]);
-                    return DFormLoad(operands[0], reg, offset, 4);
+                    var load = DFormLoad(operands[0], reg, offset, 4);
+                    if (GuestLoadHooks.TickSites.FloatHelper(ins.Address) is not { } helper)
+                        return load;
+                    return new List<IrInstruction>(load)
+                    {
+                        new IrCall(operands[0], helper, new[] { IrValue.Register(operands[0]) })
+                    };
                 }
 
             case "lfsu" when operands.Count == 2:
@@ -816,7 +822,19 @@ public sealed partial class PpcLifter
             case "lwz" when operands.Count == 2:
                 {
                     var (offset, reg) = ParseDisplacement(operands[1]);
-                    return DFormLoad(operands[0], reg, offset, 4);
+                    if (GuestLoadHooks.Current.Contains(ins.Address))
+                    {
+                        return new[]
+                        {
+                            new IrCall(operands[0], GuestLoadHooks.Helper, new[]
+                            {
+                                reg == "r0" ? IrValue.Imm(0) : IrValue.Register(reg),
+                                IrValue.Imm(offset),
+                                IrValue.Imm(ins.Address)
+                            })
+                        };
+                    }
+                    return TickLoad(ins.Address, operands[0], DFormLoad(operands[0], reg, offset, 4));
                 }
 
             case "stw" when operands.Count == 2:
@@ -912,7 +930,7 @@ public sealed partial class PpcLifter
                         new IrBinary(operands[0], IrValue.Register(operands[0]), IrValue.Imm(16), "shl"),
                         new IrBinary(operands[0], IrValue.Register(operands[0]), IrValue.Imm(16), "sar")
                     };
-                    return instructions;
+                    return TickLoad(ins.Address, operands[0], instructions);
                 }
 
             case "lhau":
@@ -941,7 +959,7 @@ public sealed partial class PpcLifter
             case "lhz" when operands.Count == 2:
                 {
                     var (offset, reg) = ParseDisplacement(operands[1]);
-                    return DFormLoad(operands[0], reg, offset, 2);
+                    return TickLoad(ins.Address, operands[0], DFormLoad(operands[0], reg, offset, 2));
                 }
 
             case "lhzu" when operands.Count == 2:
@@ -958,7 +976,7 @@ public sealed partial class PpcLifter
             case "lbz" when operands.Count == 2:
                 {
                     var (offset, reg) = ParseDisplacement(operands[1]);
-                    return DFormLoad(operands[0], reg, offset, 1);
+                    return TickLoad(ins.Address, operands[0], DFormLoad(operands[0], reg, offset, 1));
                 }
 
             case "lbzu" when operands.Count == 2:
@@ -2683,6 +2701,17 @@ private static int SignExtend16(int value)
         var temp = $"{source}_{tag}";
         instructions.Add(new IrAssign(temp, IrValue.Register(source)));
         return temp;
+    }
+
+    // A tick site (GuestLoadHooks.TickSites): the loaded value passes through MH3_TickLoad(value, pc).
+    private static IReadOnlyList<IrInstruction> TickLoad(uint address, string dest, IReadOnlyList<IrInstruction> load)
+    {
+        if (!GuestLoadHooks.TickSites.Contains(address))
+            return load;
+        return new List<IrInstruction>(load)
+        {
+            new IrCall(dest, GuestLoadHooks.TickHelper, new[] { IrValue.Register(dest), IrValue.Imm(address) })
+        };
     }
 
     private static IReadOnlyList<IrInstruction> DFormLoad(string dest, string baseReg, int offset, int size)

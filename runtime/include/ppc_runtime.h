@@ -12,3 +12,11 @@
 #include "isa/ppc_isa_int.h"
 #include "isa/ppc_isa_float.h"
 #include "isa/ppc_isa_quantized.h"
+
+// Guest lwz instructions listed in translation.load_hooks_path load through
+// the runtime (step_counter.cpp): base + offset is the guest address, pc the
+// instruction.
+extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc);
+extern "C" double MH3_EaseDivisor(double d);
+extern "C" double MH3_PerStep(double amount);
+extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc);

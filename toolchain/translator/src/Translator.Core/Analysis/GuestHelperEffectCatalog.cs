@@ -89,7 +89,10 @@ public static class GuestHelperEffectCatalog
         "PPC_PsMerge11", "PPC_PsMsub", "PPC_PsMul", "PPC_PsMuls0", "PPC_PsMuls1",
         "PPC_PsNabs", "PPC_PsNeg", "PPC_PsNmadd", "PPC_PsNmsub", "PPC_PsRes",
         "PPC_PsRsqrte", "PPC_PsSel", "PPC_PsSub", "PPC_PsSum0", "PPC_PsSum1",
-        "PPC_Mftb", "PPC_Mftbu", "PPC_TrapWord"
+        "PPC_Mftb", "PPC_Mftbu", "PPC_TrapWord",
+        // Runtime-answered guest loads (Lifting/GuestLoadHooks): read guest memory only;
+        // tick-site adjustments of loaded values touch no guest state at all.
+        "MH3_HookedLoad32", "MH3_TickLoad", "MH3_EaseDivisor", "MH3_PerStep"
     };
 
     private static readonly string[] XerReadWriteHelpers =

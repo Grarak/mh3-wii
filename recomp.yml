@@ -24,6 +24,10 @@ translation:
   entry_points:
     - 0x80006310
   allow_unsupported_instructions: false
+  # Step counter reads answered in game time (scripts/step_counter_sites.py).
+  load_hooks_path: runtime/src/step_counter_sites.inc
+  # Step counters and countdowns advanced by the ticks of each step (tick_sites.cpp).
+  tick_sites_path: runtime/src/tick_sites.inc
 
 # Mario Kart's address-specific native registrations must not be used for MH3.
 runtime:

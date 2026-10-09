@@ -12,6 +12,8 @@ struct ClassicControllerSample {
 ClassicControllerSample ReadHostController();
 // The frame index of the input logs (the frame pacer's frame count).
 void SetInputFrame(uint64_t frame);
+// Holds MH3_INPUT_PLAYBACK before its next entry (while the village shortcut drives input).
+void HoldInputPlayback(bool hold);
 // SDL keyboard/gamepad, or MH3_INPUT_FILE.
 ClassicControllerSample ReadLiveController();
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample);

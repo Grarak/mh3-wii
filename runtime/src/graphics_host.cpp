@@ -245,13 +245,14 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 // versus the nominal VI rate, since the game logic is fixed-step per frame;
 // game FPS counts display copies; host
 // FPS counts frames the render thread actually swapped.
-void ReportHostSpeed([[maybe_unused]] uint64_t ticks, [[maybe_unused]] double nominalHz) {
+void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nominalHz) {
 #ifdef MH3_DEVELOPMENT
     static const bool enabled = std::getenv("MH3_STATS") != nullptr;
     if (!enabled || !initialized) return;
     using Clock = std::chrono::steady_clock;
     static auto last = Clock::now();
-    static uint64_t lastTicks = ticks, lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
+    static double lastTicks = ticks;
+    static uint64_t lastCopies = guestCopies, lastPresents = aurora_presented_frame_count(),
                     lastSkipped = aurora_skipped_frame_count();
     const auto now = Clock::now();
     const double seconds = std::chrono::duration<double>(now - last).count();

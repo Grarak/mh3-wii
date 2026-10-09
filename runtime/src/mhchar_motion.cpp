@@ -1,0 +1,141 @@
+// MHchar root motion, RMHP08. C reconstruction of the character model's
+// per-step animation update (0x800E19D4, called by MHchar::move 0x800E078C),
+// decompiled with Ghidra (scripts/dol2elf.py -> ELF import).
+//
+// MHchar plays up to six NW4R g3d animation channels. Each step it saves the
+// channel frames, advances them (the channel set's UpdateFrame; NW4R adds
+// rate * FrameCtrl::smBaseUpdateRate per channel), wraps channels past their
+// end to the loop start, and sums each channel's root-motion displacement,
+// weighted by its blend weight, into the character position.
+//
+// The original measures the displacement over `rate` frames, the channel's
+// nominal per-step advance, starting at the new frame (one step ahead), so
+// characters moved the same distance per step at any step length. Here it
+// spans rate * smBaseUpdateRate, the frames the animation actually advanced,
+// ending the same one nominal step ahead, so consecutive windows join up. This
+// is identical at the stock 1/30 s step (base rate 1.0) and makes movement
+// follow game time at any step length.
+#include "game_step.h"
+#include "port_check.h"
+#include "guest_call.h"
+
+#include <algorithm>
+
+namespace {
+
+constexpr uint32_t kAnimationBaseRate = 0x80793628; // f32 nw4r::g3d::FrameCtrl::smBaseUpdateRate
+
+// MHchar fields (this = the MHchar).
+enum : uint32_t {
+    kPosition = 0x04,      // VEC3
+    kScale = 0x1C,         // VEC3: root motion scale
+    kRotation = 0x28,      // rotation applied to root motion (rotVecZXY)
+    kFlags = 0x4C,         // u32: bit 2 = no root motion
+    kRate = 0x5C,          // f32[6]: channel frames per step (speed * 2.0)
+    kFrame = 0x74,         // f32[6]
+    kPrevFrame = 0x8C,     // f32[6]: frames before this step
+    kEndFrame = 0xA4,      // f32[6]
+    kLoopFrame = 0xBC,     // f32[6]: < 0 = hold the last frame
+    kSkipAdvance = 0xF0,   // u8: frames were just set; don't advance this step
+    kPauseSteps = 0xF1,    // u8: steps to skip entirely (hit stop)
+    kHoldSteps = 0xF2,     // u8: steps to advance without moving
+    kChannelSet = 0x160,   // channel set object (AnmObj with per-channel weights)
+};
+
+enum : uint32_t {
+    ChannelAnim = 0x800E1C90,       // (this, channel) -> AnmObj* or 0
+    ChannelBlend = 0x800E1EB4,      // (this)
+    RootMotionDelta = 0x800E1D2C,   // (this, out VEC3*, channel; f1 from, f2 to)
+    InitAnmResult = 0x800610CC,     // (buffer)
+    VecScale = 0x80051F44,          // (out, in; f1 scale)
+    VecAdd = 0x80073FCC,            // (inout, add)
+    RotVecZXY = 0x80051278,         // (inout VEC3*, rotation)
+};
+
+// AnmObj virtual slots.
+enum : uint32_t { kSetFrame = 0x1C, kGetFrame = 0x20, kUpdateFrame = 0x24, kGetWeight = 0x4C };
+
+float F32(uint32_t address) { return Memory::ReadFloat32(address); }
+
+} // namespace
+
+static void MHcharRootMotionPort(CpuContext* ctx) {
+    const CpuContext saved = *ctx;
+    const uint32_t self = saved.gpr[3];
+    // Guest frame as the original's (0xB0): VEC3s at sp+8/+20/+32, result buffer at sp+44.
+    const uint32_t sp = (saved.gpr[1] - 0xB0) & ~0xFu;
+    ctx->gpr[1] = sp;
+    Memory::Write32(sp, saved.gpr[1]);
+    GuestCall game{ctx};
+    const uint32_t scaled = sp + 8, delta = sp + 20, sum = sp + 32, result = sp + 44;
+    auto channel = [&](uint32_t i, uint32_t field) { return self + field + i * 4; };
+
+    const uint32_t channelSet = Memory::Read32(self + kChannelSet);
+    if (!channelSet || !game(ChannelAnim, {self, 0})) {
+        *ctx = saved;
+        return;
+    }
+    // The pause (hit stop) and hold counters are in steps; they count whole
+    // ticks of game time (the original: 1 per step).
+    const uint32_t ticks = GameStep::Ticks();
+    if (const uint8_t pause = Memory::Read8(self + kPauseSteps)) {
+        Memory::Write8(self + kPauseSteps, uint8_t(pause - std::min<uint32_t>(ticks, pause)));
+        *ctx = saved;
+        return;
+    }
+    game(InitAnmResult, {result});
+    for (uint32_t i = 0; i < 6; ++i) Memory::Write32(channel(i, kPrevFrame), Memory::Read32(channel(i, kFrame)));
+    if (Memory::Read8(self + kSkipAdvance) == 0) game.Virtual(channelSet, kUpdateFrame);
+    else Memory::Write8(self + kSkipAdvance, 0);
+    game(ChannelBlend, {self});
+
+    const float zero = 0.0f; // f32 at r2-30312 (0x807988F8)
+    for (uint32_t k = 0; k < 3; ++k) Memory::WriteFloat32(sum + k * 4, zero);
+    const float baseRate = F32(kAnimationBaseRate);
+    for (uint32_t i = 0; i < 6; ++i) {
+        const uint32_t anim = game(ChannelAnim, {self, i});
+        if (!anim) continue;
+        game.Virtual(anim, kGetFrame);
+        Memory::WriteFloat32(channel(i, kFrame), game.F1());
+        if (F32(channel(i, kFrame)) > F32(channel(i, kEndFrame))) {
+            if (F32(channel(i, kLoopFrame)) < zero) {
+                Memory::WriteFloat32(channel(i, kFrame), F32(channel(i, kEndFrame)));
+            } else {
+                game.Virtual(anim, kSetFrame, {}, {F32(channel(i, kLoopFrame))});
+                game.Virtual(anim, kGetFrame);
+                Memory::WriteFloat32(channel(i, kFrame), game.F1());
+            }
+        }
+        // Frames the channel advanced this step (the original: rate alone),
+        // measured, as the original's, one nominal step (rate) ahead of the
+        // frame: [frame + rate - span, frame + rate]. Consecutive windows then
+        // join up at any step length.
+        const float rate = F32(channel(i, kRate));
+        const float span = rate * baseRate;
+        game.Virtual(anim, kGetFrame);
+        const float frame = game.F1();
+        float from = span == rate ? frame : frame + (rate - span), to = frame + rate;
+        if (to >= F32(channel(i, kEndFrame))) {
+            to = frame;
+            from = frame - span;
+        }
+        if (from < zero) from = zero;
+        if (to < zero) to = zero;
+        game(RootMotionDelta, {self, delta, i}, {from, to});
+        game.Virtual(channelSet, kGetWeight, {i});
+        game(VecScale, {scaled, delta}, {game.F1()});
+        game(VecAdd, {sum, scaled});
+    }
+    if (const uint8_t hold = Memory::Read8(self + kHoldSteps)) {
+        Memory::Write8(self + kHoldSteps, uint8_t(hold - std::min<uint32_t>(ticks, hold)));
+    } else if ((Memory::Read32(self + kFlags) & 2) == 0) { // 0x800E19BC, inlined
+        for (uint32_t k = 0; k < 3; ++k)
+            Memory::WriteFloat32(sum + k * 4, F32(sum + k * 4) * F32(self + kScale + k * 4));
+        game(RotVecZXY, {sum, self + kRotation});
+        game(VecAdd, {self + kPosition, sum});
+    }
+    *ctx = saved;
+}
+extern "C" void func_800E19D4(CpuContext* ctx);
+extern "C" void MH3_MHcharRootMotion(CpuContext* ctx) { PortCheck::Call(ctx, "MHcharRootMotion", func_800E19D4, MHcharRootMotionPort); }
+REGISTER_NATIVE_FUNCTION_AS(0x800E19D4, MH3_MHcharRootMotion, "MHcharRootMotion");

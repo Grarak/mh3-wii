@@ -102,7 +102,20 @@ constexpr bool IsGpuFifoAddress(uint32_t addr) {
 // Page protections can't cover this: an MMIO write must reach GX HLE with its value or be
 // reported, and a fault record can't carry the value, so this mask/compare sits in front of
 // every flat store instead.
+#ifdef MH3_WRITE_WATCH
+// Debug build (MH3_WRITE_WATCH): guest stores into [start, start + length)
+// also take the slow path, which reports the translated function doing them.
+inline uint32_t g_writeWatchStart = 0, g_writeWatchLength = 0;
+MKW_MEMORY_FORCE_INLINE bool WriteWatched(uint32_t address) {
+    return address - g_writeWatchStart < g_writeWatchLength;
+}
+void RecordWatchedWrite(uint32_t address, uint32_t size, uint64_t value, const void* hostCaller);
+#endif
+
 MKW_MEMORY_FORCE_INLINE bool FlatWriteNeedsPolicy(uint32_t address) {
+#ifdef MH3_WRITE_WATCH
+    if (WriteWatched(address)) return true;
+#endif
     return (address & 0xFE000000u) == 0xCC000000u;  // 0xCC000000..0xCDFFFFFF
 }
 
@@ -371,6 +384,9 @@ MKW_MEMORY_FORCE_INLINE bool TryReadGuestScalar(uint32_t address, T& outValue) {
 template <typename T>
 MKW_MEMORY_FORCE_INLINE bool TryWriteGuestScalar(uint32_t address, T value) {
     static_assert(sizeof(T) >= 1 && sizeof(T) <= kMaxFastScalarSize);
+#ifdef MH3_WRITE_WATCH
+    if (WriteWatched(address)) [[unlikely]] return false;
+#endif
     // A mixed executable/data 1 MiB page zeroes the coarse writable bias even though most of
     // its 4 KiB sub-pages are plain data; MKW's THP buffers share such a page with .text, which
     // used to force ~15% of total CPU through the cold path. The sparse sub-page tier below

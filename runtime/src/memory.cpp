@@ -144,9 +144,16 @@ uintptr_t g_fullWritablePageBias[kPageCount]{};
 const SparseWritablePageTable* g_sparseWritablePageTables[kPageCount]{};
 uint8_t g_deferredReadCoveredPages[kPageCount]{};
 bool ResolveDeferredReads(uint32_t, size_t) { return false; }
+#ifdef MH3_WRITE_WATCH
+#define WATCH(a, size, bits) \
+    if (WriteWatched(a) || WriteWatched(a + (size) - 1)) \
+        RecordWatchedWrite(a, size, bits, __builtin_return_address(0));
+#else
+#define WATCH(a, size, bits)
+#endif
 #define SCALAR(bits, type) \
 type Read##bits##Slow(uint32_t a) { return read<type>(a); } \
-void Write##bits##Slow(uint32_t a, type v) { write(a, v); }
+void Write##bits##Slow(uint32_t a, type v) { WATCH(a, sizeof(type), v) write(a, v); }
 SCALAR(8, uint8_t)
 SCALAR(16, uint16_t)
 SCALAR(32, uint32_t)
@@ -154,8 +161,16 @@ SCALAR(64, uint64_t)
 #undef SCALAR
 float ReadFloat32Slow(uint32_t a) { auto bits = read<uint32_t>(a); float v; std::memcpy(&v, &bits, 4); return v; }
 double ReadFloat64Slow(uint32_t a) { auto bits = read<uint64_t>(a); double v; std::memcpy(&v, &bits, 8); return v; }
-void WriteFloat32Slow(uint32_t a, double v) { write(a, ConvertPpcDoubleToSingleBits(v)); }
-void WriteFloat64Slow(uint32_t a, double v) { uint64_t bits; std::memcpy(&bits, &v, 8); write(a, bits); }
+void WriteFloat32Slow(uint32_t a, double v) {
+    WATCH(a, 4, ConvertPpcDoubleToSingleBits(v))
+    write(a, ConvertPpcDoubleToSingleBits(v));
+}
+void WriteFloat64Slow(uint32_t a, double v) {
+    uint64_t bits; std::memcpy(&bits, &v, 8);
+    WATCH(a, 8, bits)
+    write(a, bits);
+}
+#undef WATCH
 template<class T> T ReadResolvedFallback(uint32_t a) { return read<T>(a); }
 template<class T> void WriteResolvedFallback(uint32_t a, T v) { write(a, v); }
 #define INSTANTIATE(type) \

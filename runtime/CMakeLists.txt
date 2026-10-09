@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 project(MH3Recompiled LANGUAGES CXX ASM)
 option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrumentation" OFF)
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
+option(MH3_WRITE_WATCH "Debug: report the guest code storing to MH3_WRITE_WATCH=start,length (rebuilds all generated code)" OFF)
 option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinations and log host accesses" OFF)
 # Development-only runtime features, compiled out of release builds: MH3_STATS
 # speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE_* frame
@@ -34,7 +35,7 @@ add_executable(MH3
   src/main.cpp src/memory.cpp src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
   src/audio/ax_mix.cpp src/audio/ax_memory.cpp src/audio_services.cpp src/audio_tests.cpp src/audio_dma.cpp
-  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/movie_draw.cpp src/reset_fade.cpp
+  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
@@ -77,6 +78,11 @@ if(TARGET aurora::core)
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
+endif()
+
+if(MH3_WRITE_WATCH)
+  target_sources(MH3 PRIVATE src/write_watch.cpp)
+  target_compile_definitions(MH3 PRIVATE MH3_WRITE_WATCH=1)
 endif()
 
 # MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it

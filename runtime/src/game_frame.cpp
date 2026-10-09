@@ -12,8 +12,18 @@
 // The phase byte (0x8065AA83) records how far the frame got (1 started,
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
+#include "audio/ax_dsp.h"
+#include "game_step.h"
 #include "memory.h"
 #include <initializer_list>
+#ifdef MH3_DEVELOPMENT
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+#endif
 
 namespace {
 
@@ -49,6 +59,73 @@ enum : uint32_t {
     OverlayHook = 0x800D298C,
 };
 
+#ifdef MH3_DEVELOPMENT
+// MH3_STEP_PROBE=N: before logic step N, find state that counts steps rather
+// than time. From one RAM snapshot the task pass runs once with a 1/30 s step,
+// then (restored) twice with 1/60 s steps; RAM is restored before the real
+// step. Every changed word goes to mh3-step-probe-N.txt with both deltas:
+// time-based state changes about equally, step-based state about twice as much
+// over the two half steps. Host-side effects of the extra passes (audio, GX,
+// DVD requests) are not undone, so probe in a steady scene.
+struct Ram {
+    std::vector<uint8_t> bytes;
+    static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
+    static uint8_t* Mem2() { return Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size); }
+    void Save() {
+        bytes.resize(Memory::kMem1Size + Memory::kMem2Size);
+        std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
+        std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
+    }
+    void Restore() const {
+        std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
+        std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
+    }
+    uint32_t Word(size_t offset) const {
+        return uint32_t(bytes[offset]) << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3];
+    }
+    static uint32_t Address(size_t offset) {
+        return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset)
+                                          : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size);
+    }
+};
+
+template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
+    const GameStep::State clock = GameStep::Save();
+    AxDspHle::JoinMixWorker(); // its writes to guest RAM must not race the restores
+    Ram before, whole, halves;
+    before.Save();
+    GameStep::Begin(1.0);
+    runTasks();
+    whole.Save();
+    before.Restore();
+    GameStep::Restore(clock);
+    GameStep::Begin(0.5);
+    runTasks();
+    GameStep::Begin(0.5);
+    runTasks();
+    halves.Save();
+    before.Restore();
+    GameStep::Restore(clock);
+
+    const std::string name = "mh3-step-probe-" + std::to_string(step) + ".txt";
+    FILE* out = std::fopen(name.c_str(), "w");
+    if (!out) return;
+    std::fprintf(out, "# address before whole(1/30) halves(2x1/60) as u32 and f32\n");
+    size_t changed = 0;
+    for (size_t i = 0; i + 4 <= before.bytes.size(); i += 4) {
+        const uint32_t a = before.Word(i), b = whole.Word(i), c = halves.Word(i);
+        if (a == b && a == c) continue;
+        float fa, fb, fc;
+        std::memcpy(&fa, &a, 4); std::memcpy(&fb, &b, 4); std::memcpy(&fc, &c, 4);
+        std::fprintf(out, "%08x %08x %08x %08x %g %g %g\n", Ram::Address(i), a, b, c, fa, fb, fc);
+        ++changed;
+    }
+    std::fclose(out);
+    std::printf("MH3 step probe: step %u, %zu words changed -> %s\n", step, changed, name.c_str());
+    std::fflush(stdout);
+}
+#endif
+
 } // namespace
 
 extern "C" void MH3_GameFrame(CpuContext* ctx) {
@@ -74,6 +151,31 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         call(MovieUpdate);
         call(NetworkResetCheck);
         Memory::Write8(kSystem + kFramePhase, 2);
+#ifdef MH3_DEVELOPMENT
+        static uint32_t logicSteps = 0;
+        static const uint32_t probeAt = [] {
+            const char* v = std::getenv("MH3_STEP_PROBE");
+            return v ? uint32_t(std::strtoul(v, nullptr, 10)) : 0u;
+        }();
+        // MH3_STEP_PROBE_TICK=N[,N...] probes the first step at or after each N
+        // ticks of game time instead (loading runs many short steps at
+        // variable step).
+        static const std::vector<double> probeTicks = [] {
+            std::vector<double> ticks;
+            for (const char* v = std::getenv("MH3_STEP_PROBE_TICK"); v && *v;) {
+                char* end = nullptr;
+                ticks.push_back(std::strtod(v, &end));
+                if (end == v) break;
+                v = *end == ',' ? end + 1 : end;
+            }
+            return ticks;
+        }();
+        static size_t nextTickProbe = 0;
+        ++logicSteps;
+        const bool tickDue = nextTickProbe < probeTicks.size() && GameStep::Elapsed() >= probeTicks[nextTickProbe];
+        if (tickDue) ++nextTickProbe;
+        if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] { call(RunTasks); });
+#endif
         call(RunTasks);
         call(GrabScreen);
         call(ResetFade);

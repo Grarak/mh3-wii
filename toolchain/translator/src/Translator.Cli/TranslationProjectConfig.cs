@@ -94,10 +94,18 @@ internal sealed class TranslationProjectConfig
                 workspaceRoot,
                 Require(functionMapDto.Path, "translation.function_map.path"));
         }
+        string? loadHooksPath = dto.Translation?.LoadHooksPath is { Length: > 0 } hooks
+            ? ResolvePath(workspaceRoot, hooks)
+            : null;
+        string? tickSitesPath = dto.Translation?.TickSitesPath is { Length: > 0 } ticks
+            ? ResolvePath(workspaceRoot, ticks)
+            : null;
         var translation = new ProjectTranslation(
             entryPoints,
             functionMapPath,
-            dto.Translation?.AllowUnsupportedInstructions ?? false);
+            dto.Translation?.AllowUnsupportedInstructions ?? false,
+            loadHooksPath,
+            tickSitesPath);
 
         var abiDirectories = (dto.Runtime?.NativeAbiDirectories ?? [])
             .Select(pathValue => ResolvePath(workspaceRoot, pathValue))
@@ -405,6 +413,12 @@ internal sealed class TranslationProjectConfig
         public List<string>? EntryPoints { get; init; }
         public FunctionMapDto? FunctionMap { get; init; }
         public bool? AllowUnsupportedInstructions { get; init; }
+        // A file naming guest lwz instructions (one `{0xPC` / `0xPC` per line) whose load is
+        // answered by the runtime's MH3_HookedLoad32 instead of guest memory.
+        public string? LoadHooksPath { get; init; }
+        // A file naming guest loads (lwz/lha/lhz/lbz, one `{0xPC` per line) of step counters and
+        // countdowns; the runtime's MH3_TickLoad adjusts each loaded value by the step's ticks.
+        public string? TickSitesPath { get; init; }
     }
 
     private sealed class FunctionMapDto
@@ -472,7 +486,9 @@ internal sealed record ProjectInputs(ProjectBinaryInput Dol, ProjectRelInput? Re
 internal sealed record ProjectTranslation(
     IReadOnlyList<uint> EntryPoints,
     string? FunctionMapPath,
-    bool AllowUnsupportedInstructions);
+    bool AllowUnsupportedInstructions,
+    string? LoadHooksPath = null,
+    string? TickSitesPath = null);
 internal sealed record ProjectRuntime(
     IReadOnlyList<string> NativeAbiDirectories,
     string NativeRegistrationRoot);
