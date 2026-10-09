@@ -57,6 +57,8 @@ changes the interval).
 | `P:0xADDR`, `E:0xADDR`, `C:0xADDR` | fuzz: player and enemy functions called from made-up states (name their ports too); `C:` starts something once |
 | `fuzz-after=N` | the fuzz hooks fire on their Nth call (default 900) |
 | `fuzz-samples=N` | player fuzz samples per function (default 64) |
+| `EffectBatch` | not a port: every material geometry draw's replayed state (its snapshots, colours applied) against the Game state at its submission ([effect batching](native-effects-port.md#batched-particle-draws-and-the-ported-particle-path-2026-10-04)) |
+| `CurvesAt` | not a port: the particle curve blend of the owned words against the whole-block blend, at the variable step |
 
 ### `MH3_RAZOR`: Vita GPU capture and live metrics
 

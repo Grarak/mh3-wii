@@ -432,14 +432,22 @@ void mh3_effect_draw_particles(float minimum, const mh3_effect_billboard_source 
 }
 
 void mh3_effect_material_vertices(const mh3_draw_state *d, const mh3_effect_quad *q, const float uv[4][2], const mh3_effect_vertex_inputs *in, AuroraNativeMaterialVertex out[4]) {
-    static const uint8_t white[4] = {255, 255, 255, 255};
+    const int reversed = d->viewport[4] <= d->viewport[5];
     for (uint32_t i = 0; i < 4; i++) {
         AuroraNativeMaterialVertex *v = out + i;
-        AuroraNativeVertex clip;
-        mh3_draw_vertex(d, q->position[i], uv[i], white, &clip);
-        memcpy(v->position, clip.position, 16);
+        /* mh3_draw_vertex's arithmetic, with the view position kept. */
         for (uint32_t r = 0; r < 3; r++)
             v->view_position[r] = ((d->position[4 * r] * q->position[i][0] + d->position[4 * r + 1] * q->position[i][1]) + d->position[4 * r + 2] * q->position[i][2]) + d->position[4 * r + 3];
+        float clip[4];
+        for (uint32_t r = 0; r < 4; r++) {
+            const float *m = d->projection + r * 4;
+            clip[r] = ((m[0] * v->view_position[0] + m[1] * v->view_position[1]) + m[2] * v->view_position[2]) + m[3] * 1.f;
+        }
+        const float depth = reversed ? -clip[2] : clip[2] + clip[3];
+        v->position[0] = clip[0];
+        v->position[1] = clip[1];
+        v->position[2] = 2.f * depth - clip[3];
+        v->position[3] = clip[3];
         memcpy(v->normal, in->normal, 12);
         memcpy(v->color, in->color, 8);
         for (uint32_t slot = 0; slot < 8; slot++) {
