@@ -32,6 +32,23 @@ typedef struct mh3_model_view_callbacks {
 mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *input,
                                  const mh3_model_view_callbacks *callbacks);
 
+/* Renderer-owned native float arrays for an already admitted static model.
+ * Asset admission excludes billboard selectors and billboard-parent nodes.
+ * The renderer owns every output until CPU consumption ends; GPU uniforms or
+ * palettes must be copied/retained separately before that slot is returned.
+ * Capacity and selector contracts are debug assertions in the hot function.
+ * count==0 needs no arrays. environment is ignored when normal is absent. */
+typedef struct mh3_model_view_native_input {
+    uint32_t count;
+    mh3_matrix34 camera;
+    const mh3_matrix34 *models;
+    const uint32_t *attributes;
+    mh3_matrix34 *position;
+    mh3_matrix33 *normal;
+    mh3_matrix34 *environment;
+} mh3_model_view_native_input;
+void mh3_model_view_native_static(const mh3_model_view_native_input *input);
+
 #ifdef __cplusplus
 }
 #endif

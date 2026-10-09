@@ -3,6 +3,7 @@
  * Project, FloatUtils.cpp; also present in isa/ppc_isa_float.h. The remaining
  * typed matrix/producer implementation is original to this project. */
 #include "mh3_model_view.h"
+#include <assert.h>
 #include <math.h>
 #include <string.h>
 
@@ -211,4 +212,29 @@ mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *in,const mh3_m
         }
     }
     return MH3_RES_OK;
+}
+
+void mh3_model_view_native_static(const mh3_model_view_native_input *in) {
+    assert(in);
+    if(!in->count) return;
+    assert(in->count<=65535u && in->models && in->attributes && in->position);
+    for(uint32_t first=0;first<in->count;first+=40u) {
+        const uint32_t count=in->count-first<40u?in->count-first:40u;
+        for(uint32_t local=0;local<count;local++) {
+            const uint32_t index=first+local;
+            assert(!(in->attributes[index]&255u));
+            concat(&in->camera,&in->models[index],count>1u,&in->position[index]);
+        }
+        if(in->normal) for(uint32_t local=0;local<count;local++) {
+            const uint32_t index=first+local;
+            if(in->attributes[index]&UINT32_C(0x20000000)) in->normal[index]=upper(&in->position[index]);
+            else (void)inverse_normal(&in->position[index],&in->normal[index]);
+            if(in->environment) {
+                mh3_matrix34 environment={{{0}}};
+                for(size_t row=0;row<3;row++) for(size_t column=0;column<3;column++)
+                    environment.v[row][column]=in->normal[index].v[row][column];
+                in->environment[index]=environment;
+            }
+        }
+    }
 }
