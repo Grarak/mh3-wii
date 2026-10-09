@@ -779,4 +779,34 @@ void read_pixels(GLuint texture, uint32_t x, uint32_t y, uint32_t width, uint32_
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 }
 
+GLuint create_buffer() noexcept {
+  GLuint result = 0;
+  glGenBuffers(1, &result);
+  return result;
+}
+void destroy_buffer(GLuint buffer) noexcept { glDeleteBuffers(1, &buffer); }
+void write_buffer(GLuint buffer, bool indices, const void* bytes, size_t size) noexcept {
+  const GLenum target = indices ? GL_ELEMENT_ARRAY_BUFFER : GL_UNIFORM_BUFFER;
+  glBindBuffer(target, buffer);
+  glBufferData(target, static_cast<GLsizeiptr>(size), bytes, GL_STREAM_DRAW);
+}
+void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
+                         int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept {
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer(source, 0));
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, dest);
+  glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dstX, dstY, srcX, srcY, width, height);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+  invalidate_state();
+}
+void clear_color(const float* color) noexcept { glClearBufferfv(GL_COLOR, 0, color); }
+void clear_depth(float depth) noexcept { glClearBufferfv(GL_DEPTH, 0, &depth); }
+void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
+  glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT,
+                         reinterpret_cast<const void*>(static_cast<uintptr_t>(indexOffset)),
+                         static_cast<GLsizei>(instances));
+}
+void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {
+  glUniform4f(glGetUniformLocation(program, name), x, y, z, w);
+}
 } // namespace aurora::gl

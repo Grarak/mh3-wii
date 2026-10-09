@@ -166,7 +166,7 @@ void encode_frame_snapshot(const gl::TexturePtr& depth, uint32_t width, uint32_t
   gl::apply_raster_state({});
   gl::bind_texture(0, depth->gl(), gl::sampler(gl::NearestClamp));
   gl::use_program(program);
-  glUniform4f(glGetUniformLocation(program, "params"), params.offsetX, params.offsetY, params.scaleX, params.scaleY);
+  gl::uniform4(program, "params", params.offsetX, params.offsetY, params.scaleX, params.scaleY);
   gl::draw_fullscreen(program);
 
   // Synchronous, but limited to DepthPeekSnapshotHz and a logical-size target.

@@ -21,12 +21,12 @@ void render(const DrawData& data, uint32_t targetWidth, uint32_t targetHeight, c
   if (data.clearColor || data.clearAlpha) {
     gl::set_color_mask(data.clearColor, data.clearColor, data.clearColor, data.clearAlpha);
     const std::array color{data.color.x(), data.color.y(), data.color.z(), data.color.w()};
-    glClearBufferfv(GL_COLOR, 0, color.data());
+    gl::clear_color(color.data());
   }
   if (data.clearDepth) {
     gl::set_depth_write(true);
     const float depth = std::clamp(data.depth, 0.f, 1.f);
-    glClearBufferfv(GL_DEPTH, 0, &depth);
+    gl::clear_depth(depth);
   }
   gl::set_scissor(passScissor.x, passScissor.y, passScissor.width, passScissor.height);
 }

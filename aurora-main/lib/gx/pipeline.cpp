@@ -72,8 +72,6 @@ void render(const DrawData& data, DrawEncodeState& state, bool requireReadyPipel
   if (data.dstAlpha != UINT32_MAX) {
     gl::set_blend_color(0.f, 0.f, 0.f, static_cast<float>(data.dstAlpha) / 255.f);
   }
-  glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(data.indexCount), GL_UNSIGNED_SHORT,
-                          reinterpret_cast<const void*>(static_cast<uintptr_t>(data.idxRange.offset)),
-                          static_cast<GLsizei>(data.instanceCount));
+  gl::draw_indexed(data.indexCount, data.idxRange.offset, data.instanceCount);
 }
 } // namespace aurora::gx

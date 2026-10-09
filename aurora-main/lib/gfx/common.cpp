@@ -804,17 +804,14 @@ static void upload_batch(StagingSet& set) {
   auto& gpu = g_gpu;
   gpu.slot = (gpu.slot + 1) % FrameSlotCount;
   if (!set.uniforms.empty()) {
-    glBindBuffer(GL_UNIFORM_BUFFER, gpu.uniform);
     // Orphan the store so draws still queued on the previous contents keep them.
     // Size it to this batch (already padded by MaxUniformSize): orphaning the full
     // 24 MB made drivers such as llvmpipe allocate and zero-fault it every batch.
-    glBufferData(GL_UNIFORM_BUFFER, static_cast<GLsizeiptr>(set.uniforms.size()), set.uniforms.data(),
-                 GL_STREAM_DRAW);
+    gl::write_buffer(gpu.uniform, false, set.uniforms.data(), set.uniforms.size());
   }
   if (!set.indices.empty()) {
     gl::bind_draw_vao(gpu.index);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(set.indices.size()), set.indices.data(),
-                 GL_STREAM_DRAW);
+    gl::write_buffer(gpu.index, true, set.indices.data(), set.indices.size());
   }
   const auto uploadWords = [](const gl::TexturePtr& texture, ByteBuffer& buffer) {
     if (buffer.empty()) {
@@ -855,13 +852,9 @@ void initialize() {
                                           gl::Format::R32UI, "Storage word buffer");
   }
   gl::post([] {
-    glGenBuffers(1, &g_gpu.uniform);
-    glBindBuffer(GL_UNIFORM_BUFFER, g_gpu.uniform);
-    glBufferData(GL_UNIFORM_BUFFER, static_cast<GLsizeiptr>(UniformBufferSize + gx::MaxUniformSize), nullptr,
-                 GL_STREAM_DRAW);
-    glGenBuffers(1, &g_gpu.index);
+    g_gpu.uniform = gl::create_buffer();
+    g_gpu.index = gl::create_buffer();
     gl::bind_draw_vao(g_gpu.index);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(IndexBufferSize), nullptr, GL_STREAM_DRAW);
   });
 
   gx::initialize();
@@ -900,8 +893,8 @@ void shutdown() {
   g_frameIndex = UINT32_MAX;
   currentStagingBuffer = 0;
   gl::call([] {
-    glDeleteBuffers(1, &g_gpu.uniform);
-    glDeleteBuffers(1, &g_gpu.index);
+    gl::destroy_buffer(g_gpu.uniform);
+    gl::destroy_buffer(g_gpu.index);
     g_gpu = {};
   });
 }
@@ -1160,12 +1153,7 @@ static void render_pass_impl(const std::vector<RenderPass>& passes, u32 idx, int
 // Render thread: copy a rectangle of `source` (level 0) into `dest` at the given offset.
 static void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY, int32_t dstX, int32_t dstY,
                                 int32_t width, int32_t height) {
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, gl::framebuffer(source, 0));
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, dest);
-  glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dstX, dstY, srcX, srcY, width, height);
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-  gl::invalidate_state();
+  gl::copy_texture_region(source, dest, srcX, srcY, dstX, dstY, width, height);
 }
 
 static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpolatedFrame, bool finalize,
@@ -1205,11 +1193,11 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
         gl::set_color_mask(true, true, true, true);
         const std::array color{passInfo.clearColorValue.x(), passInfo.clearColorValue.y(),
                                passInfo.clearColorValue.z(), passInfo.clearColorValue.w()};
-        glClearBufferfv(GL_COLOR, 0, color.data());
+        gl::clear_color(color.data());
       }
       if (passInfo.clearDepth && passInfo.depth) {
         gl::set_depth_write(true);
-        glClearBufferfv(GL_DEPTH, 0, &passInfo.clearDepthValue);
+        gl::clear_depth(passInfo.clearDepthValue);
       }
     }
     render_pass_impl(renderPasses, i, interpolatedFrame, debugFrame);

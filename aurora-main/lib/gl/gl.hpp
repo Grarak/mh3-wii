@@ -5,7 +5,11 @@
 // other threads carry their metadata immediately and receive their GL name
 // when the creation task runs, which always precedes any task using them.
 
+#ifdef AURORA_GXM
+#include "../gxm/state_values.hpp"
+#else
 #include <GLES3/gl3.h>
+#endif
 
 #include <absl/functional/any_invocable.h>
 
@@ -201,6 +205,18 @@ void bind_draw_vao(GLuint indexBuffer) noexcept;
 // Draws a fullscreen triangle with `program`, sampling `source` on unit 0.
 // The caller binds the target framebuffer and viewport.
 void draw_fullscreen(GLuint program) noexcept;
+
+// Backend operations used by the recorded GX frame executor. GPU handles
+// are opaque: the GXM backend owns mapped buffers and native surfaces.
+GLuint create_buffer() noexcept;
+void destroy_buffer(GLuint buffer) noexcept;
+void write_buffer(GLuint buffer, bool indices, const void* bytes, size_t size) noexcept;
+void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
+                         int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept;
+void clear_color(const float* color) noexcept;
+void clear_depth(float depth) noexcept;
+void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
+void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept;
 
 // Render thread only: blit `source` into the window with the letterboxed
 // viewport and swap. Rows are stored top-down, so the blit flips.
