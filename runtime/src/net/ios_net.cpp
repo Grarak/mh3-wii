@@ -6,6 +6,7 @@
 #include "ios_host.h"
 #include "memory.h"
 #include "net_host.h"
+#include "online.h"
 
 #include <array>
 #include <chrono>
@@ -156,7 +157,12 @@ struct Pending {
 };
 
 std::vector<Pending> pending;
-bool traceNet = std::getenv("MH3_NET_TRACE") != nullptr;
+
+// Read at first use: the Vita applies runtime.env after static initialization.
+bool TraceNet() {
+    static const bool trace = std::getenv("MH3_NET_TRACE") != nullptr;
+    return trace;
+}
 
 // A request that is done at once.
 Attempt Done(int32_t result) {
@@ -273,7 +279,7 @@ Attempt ConnectAttempt(int32_t fd, Address address) {
         if (!*started) {
             *started = true;
 
-            if (traceNet)
+            if (TraceNet())
                 std::fprintf(stderr, "MH3 net: socket %d connects to %s:%u\n", fd, Dotted(address.ip).c_str(), Swap16(address.port));
 
             if (socket->connecting) {
@@ -350,7 +356,7 @@ Attempt GetHostByName(uint32_t in, uint32_t out, uint32_t outSize) {
 
         const auto& addresses = lookup->Addresses();
 
-        if (traceNet)
+        if (TraceNet())
             std::fprintf(stderr, "MH3 net: gethostbyname %s: %s\n", lookup->Name().c_str(), addresses.empty() ? "not found" : Dotted(addresses[0]).c_str());
 
         if (outSize != 0x460 || addresses.empty())
@@ -418,7 +424,7 @@ std::optional<Attempt> IpTopIoctl(uint32_t command, uint32_t in, uint32_t inSize
 
         sockets[fd] = Socket{handle, type == 1};
 
-        if (traceNet)
+        if (TraceNet())
             std::fprintf(stderr, "MH3 net: socket %d (%s)\n", fd, type == 1 ? "TCP" : "UDP");
 
         return Done(fd);
@@ -786,6 +792,32 @@ std::optional<Attempt> IpTopIoctlv(uint32_t command, const std::vector<Vector>& 
     }
 }
 
+// The launcher's Skip TLS: a session's bytes go over its socket as they are,
+// and the handshake succeeds at once.
+class PlainTls final : public NetHost::Tls {
+  public:
+    bool AddRootCa(const uint8_t*, size_t) override { return true; }
+    void Attach(int handle) override { handle_ = handle; }
+    int32_t Handshake() override { return kOk; }
+
+    int32_t Write(const uint8_t* data, size_t size) override {
+        return Result(NetHost::Send(handle_, data, size, false, nullptr), kWantWrite);
+    }
+
+    int32_t Read(uint8_t* data, size_t size) override {
+        return Result(NetHost::Receive(handle_, data, size, false, false, nullptr), kWantRead);
+    }
+
+    void Close() override {}
+
+  private:
+    static int32_t Result(int32_t result, int32_t wait) {
+        return result > 0 ? result : result == 0 ? kZero : result == -NetHost::kSoEAgain ? wait : kSyscall;
+    }
+
+    int handle_ = -1;
+};
+
 // SSL requests write their result into in[0]; out[0] holds the session id
 // (one-based) for every request but NEW.
 std::optional<Attempt> SslIoctlv(uint32_t command, const std::vector<Vector>& in, const std::vector<Vector>& out) {
@@ -810,15 +842,18 @@ std::optional<Attempt> SslIoctlv(uint32_t command, const std::vector<Vector>& in
         while (slot < kMaxTlsSessions && sessions[slot])
             ++slot;
 
-        auto tls = slot < kMaxTlsSessions ? NetHost::Tls::Create(hostname, verify) : nullptr;
+        std::unique_ptr<NetHost::Tls> tls;
+
+        if (slot < kMaxTlsSessions)
+            tls = SkipTlsSetting() ? std::make_unique<PlainTls>() : NetHost::Tls::Create(hostname, verify);
 
         if (!tls)
             return answer(NetHost::Tls::kFailed);
 
         sessions[slot] = TlsSession{std::move(tls), -1};
 
-        if (traceNet)
-            std::fprintf(stderr, "MH3 net: TLS session %d for %s (verify %d)\n", slot + 1, hostname.c_str(), verify);
+        if (TraceNet())
+            std::fprintf(stderr, "MH3 net: TLS session %d for %s (verify %d%s)\n", slot + 1, hostname.c_str(), verify, SkipTlsSetting() ? ", skipped: plain" : "");
 
         return answer(slot + 1);
     }
@@ -900,7 +935,7 @@ std::optional<Attempt> SslIoctlv(uint32_t command, const std::vector<Vector>& in
             else {
                 result = current->tls->Handshake();
 
-                if (traceNet && result != NetHost::Tls::kWantRead && result != NetHost::Tls::kWantWrite)
+                if (TraceNet() && result != NetHost::Tls::kWantRead && result != NetHost::Tls::kWantWrite)
                     std::fprintf(stderr, "MH3 net: TLS session %d handshake: %d\n", id + 1, result);
             }
 
@@ -1085,7 +1120,7 @@ int32_t Open(std::string_view path) {
     if (path == "/dev/net/ncd/manage" || path == "/dev/net/ip/top")
         onlineStarted = true;
 
-    if (traceNet)
+    if (TraceNet())
         std::fprintf(stderr, "MH3 net: open %.*s\n", int(path.size()), path.data());
 
     return 0;
@@ -1099,7 +1134,7 @@ void Close(std::string_view path) {
 int32_t Ioctl(CpuContext* cpu, std::string_view path, uint32_t command, uint32_t in, uint32_t inSize, uint32_t out, uint32_t outSize) {
     const int32_t result = RunSync(cpu, IoctlAttempt(path, command, in, inSize, out, outSize));
 
-    if (traceNet)
+    if (TraceNet())
         std::fprintf(stderr, "MH3 net: %.*s ioctl %u = %d\n", int(path.size()), path.data(), command, result);
 
     return result;
@@ -1109,21 +1144,21 @@ int32_t Ioctlv(CpuContext* cpu, std::string_view path, uint32_t command, uint32_
     const int32_t result = RunSync(cpu, IoctlvAttempt(path, command, inputs, outputs, vectors));
 
     // The interface options are asked every frame online.
-    if (traceNet && !(path == "/dev/net/ip/top" && command == kSoGetInterfaceOpt))
+    if (TraceNet() && !(path == "/dev/net/ip/top" && command == kSoGetInterfaceOpt))
         std::fprintf(stderr, "MH3 net: %.*s ioctlv %u = %d\n", int(path.size()), path.data(), command, result);
 
     return result;
 }
 
 void IoctlAsync(std::string_view path, uint32_t command, uint32_t in, uint32_t inSize, uint32_t out, uint32_t outSize, uint32_t callback, uint32_t argument) {
-    if (traceNet)
+    if (TraceNet())
         std::fprintf(stderr, "MH3 net: %.*s ioctl %u (asynchronous)\n", int(path.size()), path.data(), command);
 
     RunAsync(IoctlAttempt(path, command, in, inSize, out, outSize), callback, argument);
 }
 
 void IoctlvAsync(std::string_view path, uint32_t command, uint32_t inputs, uint32_t outputs, uint32_t vectors, uint32_t callback, uint32_t argument) {
-    if (traceNet)
+    if (TraceNet())
         std::fprintf(stderr, "MH3 net: %.*s ioctlv %u (asynchronous)\n", int(path.size()), path.data(), command);
 
     RunAsync(IoctlvAttempt(path, command, inputs, outputs, vectors), callback, argument);

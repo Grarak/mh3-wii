@@ -9,12 +9,15 @@
 // character (LoadCharacter, 0x80442088, from the save manager's buffer) and
 // records the selection (system_w+0x89C file, +0x89E character); choosing
 // Village (0x80982E40) sets game mode 2 and play mode 5 and starts the village
-// task in the title's slot (StartGameModeTask, 0x800419DC).
+// task in the title's slot (StartGameModeTask, 0x800419DC). City (the mode
+// menu's cursor, work+0x102D, at 1) does the same with the soft-reset flag
+// clear, play mode 4 and system_w+0x7D3/+0x7D4 set; the City task loads
+// net_data.rso (the network screen, docs/online.md).
 //
 // The boot waits for the title's intro (state 1), reads File 1 into the save
 // manager's buffer from the host (after the game's read request), loads its
-// first character and the file's options and chooses Village as the mode menu
-// does.
+// first character and the file's options and chooses Village or City as the
+// mode menu does.
 #include "village_boot.h"
 #include "fatal.h"
 
@@ -36,23 +39,25 @@ namespace {
 
 constexpr uint32_t kSystem = 0x8065AA60;
 enum : uint32_t {
-    kSceneFlag = 0x20,          // u8
+    kSceneFlag = 0x20,          // u8: setSoftresetFlag's (0 for Village, 1 for City)
     kGameMode = 0x24,           // u8: 2 village
-    kPlayMode = 0x25,           // u8: 5 village
+    kPlayMode = 0x25,           // u8: 5 village, 4 city
     kModeFlag0 = 0x7CE,         // u8, cleared by the mode choice
-    kVillageVariant = 0x7D3,    // u8: 0 the village task (StartGameModeTask)
+    kVillageVariant = 0x7D3,    // u8: 0 the village task, 1 the city's (StartGameModeTask)
+    kCityFlag = 0x7D4,          // u8: set by the City choice
     kModeFlag1 = 0x866,         // u8, cleared by the mode choice
     kOnlineCapable = 0x86B,     // u8, copied to +0x870 by the mode menu
     kOnlineMenu = 0x870,        // u8
     kSelectedFile = 0x89C,      // u8 [2]
     kSelectedCharacter = 0x89E, // u8 [2]
-    kMode = 0x8C2,              // u8: the mode menu's choice, 0 Village
+    kMode = 0x8C2,              // u8: the mode menu's choice, 0 Village, 1 City
     kSystemSaveBuffer = 0x950,  // u32: the save manager's buffer
 };
 
 enum : uint8_t {
     kGameModeVillage = 2,
-    kPlayModeVillage = 5
+    kPlayModeVillage = 5,
+    kPlayModeCity = 4
 };
 
 // The options (controls, camera, sound): the file's at +0x28, the game's
@@ -82,6 +87,7 @@ enum class State {
 State state = State::Off;
 std::vector<uint8_t> file;
 unsigned selectedFile = 0, selectedCharacter = 0;
+bool toCity = false;
 
 uint32_t Word(std::span<const uint8_t> data, size_t offset) {
     return (uint32_t(data[offset]) << 24) | (uint32_t(data[offset + 1]) << 16) | (uint32_t(data[offset + 2]) << 8) | data[offset + 3];
@@ -98,7 +104,7 @@ bool InMainMemory(uint32_t address) {
 }
 } // namespace
 
-void StartVillageBoot(unsigned fileIndex, unsigned character) {
+void StartVillageBoot(unsigned fileIndex, unsigned character, bool city) {
     if (fileIndex >= 6 || character >= 3)
         MH3_THROW(std::runtime_error("Invalid save selection"));
 
@@ -119,7 +125,8 @@ void StartVillageBoot(unsigned fileIndex, unsigned character) {
     state = State::Waiting;
     selectedFile = fileIndex;
     selectedCharacter = character;
-    std::cerr << "MH3 village boot: entering File " << selectedFile + 1 << " / character " << selectedCharacter + 1 << '\n';
+    toCity = city;
+    std::cerr << "MH3 village boot: entering " << (city ? "the City" : "the village") << " with File " << selectedFile + 1 << " / character " << selectedCharacter + 1 << '\n';
 }
 
 void StepVillageBoot(CpuContext* ctx) {
@@ -157,23 +164,27 @@ void StepVillageBoot(CpuContext* ctx) {
     Memory::Write8(kSystem + kSelectedFile, selectedFile);
     Memory::Write8(kSystem + kSelectedCharacter, selectedCharacter);
 
-    // The mode menu's Village (0x80982E30).
+    // The mode menu's Village (0x80982E30) or City.
     Memory::Write8(kSystem + kOnlineMenu, Memory::Read8(kSystem + kOnlineCapable) == 1);
     game.Call<RunExitHook>();
-    Memory::Write8(kSystem + kMode, 0);
+    Memory::Write8(kSystem + kMode, toCity);
     Memory::Write8(kSystem + kModeFlag0, 0);
     Memory::Write8(kSystem + kModeFlag1, 0);
     game.Call<SceneReset>();
-    Memory::Write8(kSystem + kSceneFlag, 0);
+    Memory::Write8(kSystem + kSceneFlag, toCity);
     game.Call<SceneExit0>();
     game.Call<SceneExit1>();
     Memory::Write8(kSystem + kGameMode, kGameModeVillage);
-    Memory::Write8(kSystem + kPlayMode, kPlayModeVillage);
-    Memory::Write8(kSystem + kVillageVariant, 0);
+    Memory::Write8(kSystem + kPlayMode, toCity ? kPlayModeCity : kPlayModeVillage);
+    Memory::Write8(kSystem + kVillageVariant, toCity);
+
+    if (toCity)
+        Memory::Write8(kSystem + kCityFlag, 1);
+
     game.Call<StartGameModeTask>();
     *ctx = saved;
     state = State::Complete;
-    std::cerr << "MH3 village boot: loaded File " << selectedFile + 1 << " / character " << selectedCharacter + 1 << ", starting the village\n";
+    std::cerr << "MH3 village boot: loaded File " << selectedFile + 1 << " / character " << selectedCharacter + 1 << ", starting " << (toCity ? "the City" : "the village") << "\n";
 }
 
 void FinishVillageBoot() {
@@ -181,7 +192,7 @@ void FinishVillageBoot() {
         return;
 
     state = State::Off;
-    std::cerr << "MH3 village boot: village module verified\n";
+    std::cerr << "MH3 village boot: " << (toCity ? "network" : "village") << " module verified\n";
 }
 
 ClassicControllerSample ReadGameController() {

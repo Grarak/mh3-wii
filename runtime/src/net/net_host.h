@@ -1,7 +1,6 @@
 // The host side of the Wii network devices (ios_net.cpp): sockets, name
-// lookups and TLS sessions on the platform's network stack. Linux uses BSD
-// sockets and OpenSSL (net_host_posix.cpp); another platform (the Vita's
-// sceNet/sceSsl) implements this interface.
+// lookups and TLS sessions on the platform's network stack: BSD sockets and
+// OpenSSL on Linux and the Vita (net_host_posix.cpp), none on the web.
 //
 // Every socket is non-blocking on the host. A guest call that would block
 // waits in the guest thread scheduler (GuestThreads::BlockUntil) and retries.
@@ -96,6 +95,13 @@ Interface DefaultInterface();
 
 // A dotted IPv4 address (network byte order).
 bool ParseIpv4(const std::string& text, uint32_t* ip);
+
+// The launcher's server address: host names matching `pattern` ("*.domain"
+// for every host in it) resolve to `ip` (network byte order) before
+// MH3_ONLINE_HOSTS and DNS, and connections to port `from` go to `to`
+// instead (MH3_ONLINE_PORTS answers after them).
+void AddHostOverride(std::string pattern, uint32_t ip);
+void AddPortOverride(uint16_t from, uint16_t to);
 
 // A name lookup started on a helper thread; Done() turns true once it
 // finished. MH3_ONLINE_HOSTS (name=address[,name=address...], "*.domain"

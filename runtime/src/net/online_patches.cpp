@@ -8,7 +8,9 @@
 // - The Capcom server (mmh-t1-opn04.mmh-service.capcom.co.jp) becomes
 //   opn.mh3sp.com; the Nintendo account server (naswii.nintendowifi.net,
 //   HTTPS) becomes http://nas.mh3sp.com; GameSpy's availability check and NAT
-//   negotiation servers become available/natneg1-3.mh3sp.com.
+//   negotiation servers become available/natneg1-3.mh3sp.com. Another
+//   server's domain (the launcher's OnlineServerSetting) takes mh3sp.com's
+//   place.
 // - NNBeginNegotiationWithSocket uses those NAT negotiation host names as
 //   they are instead of prefixing the game name (the sprintf patch).
 #include "online.h"
@@ -17,10 +19,14 @@
 #include "fatal.h"
 #include "guest_call.h"
 #include "memory.h"
+#include "net_host.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -43,20 +49,85 @@ constexpr std::string_view kPinnedCaPrefix{"\x30\x82\x03\x98\x30\x82\x03\x01\xA0
 struct StringPatch {
     uint32_t address;
     std::string_view original; // what must be there, without the terminator
-    const char* replacement;
+    const char* prefix;        // the replacement: prefix, domain, suffix
+    const char* suffix;
     uint32_t length; // bytes the patch writes (the original's slot)
 };
 
 // RMHP08 addresses of the strings MH3SP.xml searches for.
 constexpr StringPatch kStrings[]{
-    {0x80601200, "mmh-t1-opn04.mmh-service.capcom.co.jp", "opn.mh3sp.com", 38},
-    {0x80630920, "https://naswii.nintendowifi.net/ac", "http://nas.mh3sp.com/ac", 34},
-    {0x806309A0, "https://naswii.nintendowifi.net/pr", "http://nas.mh3sp.com/pr", 34},
-    {0x80631118, "%s.available.gs.nintendowifi.net", "available.mh3sp.com", 32},
-    {0x806311A8, "natneg1.gs.nintendowifi.net", "natneg1.mh3sp.com", 28},
-    {0x806311C4, "natneg2.gs.nintendowifi.net", "natneg2.mh3sp.com", 28},
-    {0x806311E0, "natneg3.gs.nintendowifi.net", "natneg3.mh3sp.com", 28},
+    {0x80601200, "mmh-t1-opn04.mmh-service.capcom.co.jp", "opn.", "", 38},
+    {0x80630920, "https://naswii.nintendowifi.net/ac", "http://nas.", "/ac", 34},
+    {0x806309A0, "https://naswii.nintendowifi.net/pr", "http://nas.", "/pr", 34},
+    {0x80631118, "%s.available.gs.nintendowifi.net", "available.", "", 32},
+    {0x806311A8, "natneg1.gs.nintendowifi.net", "natneg1.", "", 28},
+    {0x806311C4, "natneg2.gs.nintendowifi.net", "natneg2.", "", 28},
+    {0x806311E0, "natneg3.gs.nintendowifi.net", "natneg3.", "", 28},
 };
+
+// The longest domain every slot holds: natneg1.<domain> in 27 characters.
+constexpr size_t kMaxDomain = 19;
+
+std::optional<std::string> serverSetting;
+std::optional<bool> skipTlsSetting;
+
+// A server setting taken apart: the domain to patch in, the address that
+// answers for it (0: DNS does) and the account server's port (0: 80).
+struct Server {
+    std::string domain;
+    uint32_t ip = 0;
+    uint16_t nasPort = 0;
+    std::string error;
+};
+
+Server ParseServer(std::string text) {
+    Server server;
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+
+    // A URL's host: no scheme, no path.
+    for (const std::string_view scheme : {"http://", "https://"})
+        if (text.starts_with(scheme))
+            text.erase(0, scheme.size());
+
+    text = text.substr(0, text.find('/'));
+
+    if (const auto colon = text.find(':'); colon != std::string::npos) {
+        const std::string port = text.substr(colon + 1);
+        text.resize(colon);
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(port.c_str(), &end, 10);
+
+        if (port.empty() || *end || value == 0 || value > 65535) {
+            server.error = "The port after the colon must be a number from 1 to 65535.";
+            return server;
+        }
+
+        server.nasPort = uint16_t(value);
+    }
+
+    if (text.empty()) {
+        server.error = "Enter a server: a domain such as mh3sp.com, or an IP address.";
+        return server;
+    }
+
+    // An address serves every MH3SP host name.
+    if (NetHost::ParseIpv4(text, &server.ip)) {
+        server.domain = kDefaultOnlineServer;
+        return server;
+    }
+
+    const bool valid = text.find('.') != std::string::npos && text.front() != '.' && text.back() != '.' &&
+                       std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '-'; });
+
+    if (!valid)
+        server.error = "\"" + text + "\" is not a domain (such as mh3sp.com) or an IPv4 address.";
+    else if (text.size() > kMaxDomain)
+        server.error = "The game's server names hold a domain of at most " + std::to_string(kMaxDomain) + " characters.";
+    else
+        server.domain = text;
+
+    return server;
+}
 
 bool Matches(uint32_t address, std::string_view bytes) {
     return std::memcmp(Memory::GetPointer(address, uint32_t(bytes.size())), bytes.data(), bytes.size()) == 0;
@@ -79,7 +150,47 @@ std::vector<uint8_t> RootCa() {
 }
 } // namespace
 
+std::string OnlineServerSetting() {
+    if (serverSetting)
+        return *serverSetting;
+
+    // Read at first use: the Vita applies runtime.env after static initialization.
+    const char* value = std::getenv("MH3_ONLINE_SERVER");
+    return value && *value ? value : kDefaultOnlineServer;
+}
+
+void SetOnlineServerSetting(std::string server) {
+    serverSetting = std::move(server);
+}
+
+std::string CheckOnlineServer(const std::string& server) {
+    return ParseServer(server).error;
+}
+
+bool SkipTlsSetting() {
+    if (skipTlsSetting)
+        return *skipTlsSetting;
+
+    const char* value = std::getenv("MH3_ONLINE_SKIP_TLS");
+    return value && *value && value[0] != '0';
+}
+
+void SetSkipTlsSetting(bool skip) {
+    skipTlsSetting = skip;
+}
+
 void ApplyOnlinePatches() {
+    const Server server = ParseServer(OnlineServerSetting());
+
+    if (!server.error.empty())
+        MH3_THROW(std::runtime_error("Online server " + OnlineServerSetting() + ": " + server.error));
+
+    if (server.ip)
+        NetHost::AddHostOverride("*." + server.domain, server.ip);
+
+    if (server.nasPort)
+        NetHost::AddPortOverride(80, server.nasPort);
+
     if (!Matches(kPinnedCa, kPinnedCaPrefix))
         MH3_THROW(std::runtime_error("Online patch: the pinned CA is not where RMHP08 has it"));
 
@@ -92,9 +203,10 @@ void ApplyOnlinePatches() {
         if (!Matches(patch.address, patch.original))
             MH3_THROW(std::runtime_error("Online patch: unexpected string at " + std::to_string(patch.address)));
 
+        const std::string replacement = patch.prefix + server.domain + patch.suffix;
         auto* slot = Memory::GetPointer(patch.address, patch.length);
         std::memset(slot, 0, patch.length);
-        std::memcpy(slot, patch.replacement, std::strlen(patch.replacement));
+        std::memcpy(slot, replacement.data(), replacement.size());
     }
 }
 

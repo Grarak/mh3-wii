@@ -233,8 +233,8 @@ endif()
 include(../generated/build_shards/shards.cmake)
 
 # Online play's host network stack (net/net_host.h): BSD sockets and OpenSSL
-# on Linux; none yet on the Vita and the web.
-if(VITA OR EMSCRIPTEN)
+# on Linux and the Vita (newlib's sockets on sceNet); none on the web.
+if(EMSCRIPTEN)
   set(MH3_NET_HOST_SOURCE src/net/net_host_none.cpp)
 else()
   set(MH3_NET_HOST_SOURCE src/net/net_host_posix.cpp)
@@ -517,6 +517,11 @@ if(VITA)
 
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
     ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub SceCtrl_stub SceTouch_stub SceCommonDialog_stub)
+
+  # Online play: VitaSDK's OpenSSL 1.0.2 for the game's TLS sessions, over
+  # newlib's sockets (SceNet, SceNetCtl).
+  target_link_libraries(MH3 PRIVATE ssl crypto SceNet_stub SceNetCtl_stub)
+  target_compile_definitions(MH3 PRIVATE MH3_HAS_OPENSSL)
   set_target_properties(MH3 PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/ldscript.ld")
 
   # Every GXM program, compiled offline (docs/vita-shader-bank.md).

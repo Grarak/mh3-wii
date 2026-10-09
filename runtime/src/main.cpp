@@ -129,6 +129,7 @@ int RunEfbCheck(int argc, char** argv);
 
 constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --village                      start File 1 / character 1 in the village\n"
+                               "  --city                         start File 1 / character 1 in the City (online play)\n"
                                "  --list quests|online-quests|arena-quests\n"
                                "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
                                "  --quest <id>|free [--area <n>] [--spawn <x,y,z>|exit:<n>]\n"
@@ -462,6 +463,8 @@ int main(int argc, char** argv) {
 
         if (argc == 2 && std::string_view(argv[1]) == "--village")
             StartVillageBoot();
+        else if (argc == 2 && std::string_view(argv[1]) == "--city")
+            StartVillageBoot(0, 0, true);
         else if (argc >= 3 && std::string_view(argv[1]) == "--quest")
             StartQuestBoot(argc, argv);
         else if (argc != 1)

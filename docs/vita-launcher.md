@@ -178,8 +178,14 @@ the Classic Controller mapping's `vita_controller.cpp`): a PS TV controller
 or the devkit harness's CTRLP pad drives the menus too. With this call the
 handheld's L/R report as L1/R1.
 
-The main menu contains `Start game`, `Quests`, `Create custom quest`,
-`Cheats`, `Widescreen`, `Upscaling` and `Game thread limit`. `Widescreen`
+The main menu contains `Start game`, `Village`, `City (online)`, `Quests`,
+`Create custom quest`, `Cheats`, `Widescreen`, `Upscaling`, `Game thread
+limit` and `Online settings`. `Village` and `City (online)` choose a hunter as
+Quests does and skip the title: the boot (`StartVillageBoot`) loads the
+character and makes the mode menu's Village or City choice (City: the network
+screen, [online.md](online.md); `--city` on the command line). `Online
+settings` holds the server and Skip TLS handshake
+([online.md](online.md#the-launchers-online-page)). `Widescreen`
 toggles the game's 16:9 mode for this launch (on by default;
 `MH3_WIDESCREEN=0` starts it off) through
 `SetWidescreenSetting`; the game reads it once, at `RenderInit`, after the
@@ -464,6 +470,10 @@ Quests > Online quests > three pages down > quest 10057:
 ```text
 120 down
 124 none
+135 down
+139 none
+150 down
+154 none
 170 cross
 174 none
 220 down

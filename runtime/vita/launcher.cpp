@@ -13,6 +13,7 @@
 #include "widescreen.h"
 #include "upscaling.h"
 #include "frame_limit.h"
+#include "../src/net/online.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
 #include <aurora/thread_role.hpp>
@@ -647,11 +648,12 @@ enum class Page {
     Templates,
     Editor,
     Cheats,
-    CheatList
+    CheatList,
+    Online
 };
 
 const char* PageName(Page page) {
-    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats", "Cheat list"};
+    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats", "Cheat list", "Online"};
     return names[unsigned(page)];
 }
 
@@ -734,6 +736,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     Page page = Page::Main;
     size_t selected = 0;
     bool creating = false;
+
+    // Where the hunter selection leads: Quests, or a start in the village or the City.
+    enum class Then { Quests, Village, City } then = Then::Quests;
     size_t cheatGroup = 0;
     std::vector<size_t> groupCheats;
 
@@ -743,6 +748,8 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
     bool frameLimit = FrameLimitSetting();
+    std::string onlineServer = OnlineServerSetting();
+    bool skipTls = SkipTlsSetting();
     SaveSlot save{};
     std::vector<SaveSlot> saves;
     std::vector<QuestCatalog::Quest> quests;
@@ -806,6 +813,13 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         StartGame(*font, what);
     };
 
+    // The Village and City shortcuts, with the chosen hunter.
+    const auto startMode = [&] {
+        const bool city = then == Then::City;
+        StartVillageBoot(save.file, save.character, city);
+        start(std::string(city ? "City" : "village") + ", " + saveName());
+    };
+
     Log("menu ready");
 
     while (Pump()) {
@@ -816,22 +830,28 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         case Page::Main: {
             title = "Main menu";
             rows = {"Start game",
+                    "Village",
+                    "City (online)",
                     "Quests",
                     "Create custom quest",
                     "Cheats",
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
                     std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
-                    std::string("Game thread limit: ") + (frameLimit ? "ON" : "OFF")};
+                    std::string("Game thread limit: ") + (frameLimit ? "ON" : "OFF"),
+                    "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
             const std::string cheats = ActiveCheats();
             const std::string details[] = {"Continue through the game's title and character selection." + cheats,
+                                           "Straight into Moga Village with an existing hunter, past the title." + cheats,
+                                           "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." + cheats,
                                            "Start a quest directly with an existing hunter." + cheats,
                                            "Make a hunt or capture quest from one of the game's quests.",
                                            "Gameplay toggles for this launch." + cheats,
                                            widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display.",
                                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
                                            frameLimit ? "The game waits for each frame to be drawn before the next: every frame is shown."
-                                                      : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder."};
-            detail = details[std::min<size_t>(selected, 6)];
+                                                      : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
+                                           "The server the game's City mode connects to."};
+            detail = details[std::min<size_t>(selected, 9)];
             footer = "X Select   D-pad Move";
             break;
         }
@@ -949,6 +969,20 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
             break;
         }
+        case Page::Online:
+            title = "Online";
+            rows = {"Server: " + onlineServer, std::string("Skip TLS handshake: ") + OnOff(skipTls)};
+
+            if (selected == 0) {
+                detail = std::string("A domain such as ") + kDefaultOnlineServer + " (the community server) or a local MH3SP's IP address. Add :port for an account server off port 80.";
+                footer = "X Keyboard   Triangle Default   O Back   D-pad Move";
+            } else {
+                detail = skipTls ? "TLS sessions run unencrypted: for a server whose OPN has UseSSL = OFF. The community server needs TLS."
+                                 : "TLS as on the Wii, verified against the MH3SP certificate authority.";
+                footer = "X Toggle   O Back   D-pad Move";
+            }
+
+            break;
         case Page::CheatList: {
             const auto cheats = LauncherCheats::List();
             title = std::string("Cheats: ") + LauncherCheats::Groups()[cheatGroup];
@@ -1005,19 +1039,23 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             case Page::Saves:
             case Page::Categories:
                 enter(Page::Main);
-                selected = 1;
+                selected = then == Then::Village ? 1 : then == Then::City ? 2 : 3;
                 break;
             case Page::Templates:
                 enter(Page::Main);
-                selected = 2;
+                selected = 4;
                 break;
             case Page::Cheats:
                 enter(Page::Main);
-                selected = 3;
+                selected = 5;
                 break;
             case Page::CheatList:
                 enter(Page::Cheats);
                 selected = cheatGroup;
+                break;
+            case Page::Online:
+                enter(Page::Main);
+                selected = 9;
                 break;
             case Page::Main:
                 break;
@@ -1154,6 +1192,21 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
             }
 
+            if (page == Page::Online && selected == 0 && (accept || (buttons & Button::Triangle))) {
+                std::string server = accept ? onlineServer : kDefaultOnlineServer;
+
+                if (accept)
+                    MH3_RETURN_IF_ERROR(TypeName(server, "server", 43));
+
+                if (const std::string error = CheckOnlineServer(server); !error.empty())
+                    return Status::Error(error);
+
+                onlineServer = server;
+                SetOnlineServerSetting(server);
+                Log("online server %s", server.c_str());
+                return {};
+            }
+
             if (!accept)
                 return {};
 
@@ -1164,40 +1217,56 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     return {};
                 }
 
-                if (selected == 1) {
+                if (selected >= 1 && selected <= 3) {
                     creating = false;
+                    then = selected == 1 ? Then::Village : selected == 2 ? Then::City : Then::Quests;
                     saves = ProbeSaves(user);
 
                     if (saves.empty()) {
-                        Message("No hunter save was found. Quests need an existing character: choose Start game and create one through the game's own screens, "
-                                "or copy your Monster Hunter Tri save.");
+                        Message("No hunter save was found. Village, City and Quests need an existing character: choose Start game and create one through the game's own "
+                                "screens, or copy your Monster Hunter Tri save.");
                         break;
                     }
 
                     save = saves.front();
-                    enter(saves.size() > 1 ? Page::Saves : Page::Categories);
-                } else if (selected == 2) {
+
+                    if (saves.size() > 1)
+                        enter(Page::Saves);
+                    else if (then == Then::Quests)
+                        enter(Page::Categories);
+                    else {
+                        startMode();
+                        return {};
+                    }
+                } else if (selected == 4) {
                     creating = true;
                     enter(Page::Templates);
-                } else if (selected == 3)
+                } else if (selected == 5)
                     enter(Page::Cheats);
-                else if (selected == 4) {
+                else if (selected == 6) {
                     widescreen = !widescreen;
                     SetWidescreenSetting(widescreen);
                     Log("widescreen %s", widescreen ? "on" : "off");
-                } else if (selected == 5) {
+                } else if (selected == 7) {
                     upscaling = !upscaling;
                     SetUpscalingSetting(upscaling);
                     Log("upscaling %s", upscaling ? "on" : "off");
-                } else {
+                } else if (selected == 8) {
                     frameLimit = !frameLimit;
                     SetFrameLimitSetting(frameLimit);
                     Log("game thread limit %s", frameLimit ? "on" : "off");
-                }
+                } else
+                    enter(Page::Online);
 
                 break;
             case Page::Saves:
                 save = saves[selected];
+
+                if (then != Then::Quests) {
+                    startMode();
+                    return {};
+                }
+
                 enter(Page::Categories);
                 break;
             case Page::Categories:
@@ -1265,6 +1334,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 Log("cheat %s %s%s", LauncherCheats::List()[cheat].name, LauncherCheats::Enabled(cheat) ? "on" : "off", value.empty() ? "" : (" (" + value + ")").c_str());
                 break;
             }
+            case Page::Online:
+                if (selected == 1) {
+                    skipTls = !skipTls;
+                    SetSkipTlsSetting(skipTls);
+                    Log("skip TLS handshake %s", skipTls ? "on" : "off");
+                }
+
+                break;
             case Page::Editor:
                 break;
             }

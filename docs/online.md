@@ -134,31 +134,57 @@ above).
 
 ## The Vita
 
-The guest thread scheduler, the IOS devices and the patches are portable
-(they compile with the Vita build's flags); what the Vita needs is a
-`NetHost` (`runtime/src/net/net_host.h`) of its own instead of
-`net_host_none.cpp`:
+Devkit, October 5, against a local MH3SP on the LAN (OPN without TLS,
+`MH3_ONLINE_SERVER=<ip>:18080`, Skip TLS handshake): the launcher's City
+(online) → the network screen → NAS login → OPN notices → CAPCOM ID → server
+type, server, gate (LMP, FMP) → the Loc Lac movie → **the gate area**,
+running at about 47 fps. Exchanges sometimes stall for up to a minute: the
+Vita's Wi-Fi answers pings in 2-200 ms with losses (power saving), and TCP's
+retransmission backoff stretches each loss.
 
-- `sceNetInit` with a memory pool, `sceNetCtlInit`, and the BSD calls
-  (`sceNetSocket`, `sceNetConnect`, `sceNetRecvfrom`, ... with
-  `SCE_NET_SO_NBIO` for non-blocking sockets; or newlib's socket wrappers)
-  and `sceNetEpoll`/`sceNetPoll` for `Poll`/`Readable`/`Writable`;
-  `sceNetResolverStartNtoa` on a helper thread for `Lookup` (it blocks);
-  `sceNetCtlInetGetInfo` for `DefaultInterface`.
-- TLS: VitaSDK's OpenSSL 1.0.2 works with `net_host_posix.cpp`'s
-  `OpenSslTls` as is (it has 1.0.2 paths; SHA-1 and 1024-bit RSA pass there
-  without lowering a security level). VitaSDK's sceSsl stubs document no TLS
-  session over a socket of one's own; sceHttp only does whole HTTP requests.
-- Host thread stacks: each guest thread that runs gets a 1 MiB host thread;
-  online play starts five or six. The waits use timed re-checks, which the
-  Vita's condition variables need (lost wakeups).
-- The devkit's network: the community servers resolve through the console's
-  DNS; a local test server needs `MH3_ONLINE_HOSTS` pointing at the host.
+Fixed on the way: newlib closed the process's stderr when an exited thread's
+reent was reclaimed (`runtime/vita/newlib_reent.c`), and texture packs and
+extracted streams held more than the 50 descriptors a Vita process has.
+
+`net_host_posix.cpp` serves the Vita too: VitaSDK's newlib implements the
+BSD socket calls, `poll` (on `sceNetEpoll`), `fcntl(O_NONBLOCK)` (sceNet's
+NBIO option) and `getaddrinfo` (sceNet's resolver) on SceNet, and its first
+socket starts the network stack (`_vita_net_init`: the NET module,
+`sceNetInit`, `sceNetCtlInit`). The differences are behind `__vita__`:
+`DefaultInterface` asks `sceNetCtlInetGetInfo` (no `getifaddrs` or
+`res_init`), and sends have no `MSG_NOSIGNAL`. TLS is VitaSDK's OpenSSL
+1.0.2 (`SSL_library_init` once; it seeds itself from
+`sceKernelGetRandomNumber`). The Vita's `poll.h` makes `POLLPRI` and
+`POLLRDBAND` `POLLIN`, so `Poll` reports only the events asked for (and
+error, hang-up, invalid).
+
+Each guest thread that runs gets a 1 MiB host thread; online play starts
+five or six. The waits use timed re-checks, which the Vita's condition
+variables need (lost wakeups).
 
 ## Running
 
-Against the community servers, nothing is needed: the host build resolves
-`opn.mh3sp.com` and friends through the system resolver.
+Against the community servers, nothing is needed: the game resolves
+`opn.mh3sp.com` and friends through the system's DNS.
+
+### The launcher's Online page
+
+The Vita launcher's main menu has **City (online)** after Start game: with a
+hunter chosen, it skips the title and goes to the network screen. Its last
+row, **Online settings**, holds:
+
+- **Server** (X: keyboard, Triangle: back to `mh3sp.com`). A domain whose
+  `opn.`, `nas.`, `available.` and `natneg1-3.` hosts are the servers (at
+  most 19 characters: the game's string slots), or the IPv4 address of a
+  local MH3SP, which then answers every `*.mh3sp.com` name. `:port` after
+  either moves the account server (NAS, HTTP on port 80) to that port.
+- **Skip TLS handshake**. The game's TLS sessions carry their bytes
+  unencrypted, with no handshake and no certificate, for a server whose OPN
+  runs without TLS (MH3SP's `[OPN] UseSSL = OFF`). The community server needs
+  TLS, so leave this off for it.
+
+Without the launcher (the host build, a devkit run with arguments),
+`MH3_ONLINE_SERVER` and `MH3_ONLINE_SKIP_TLS=1` set the same.
 
 Against a local MH3SP server (recommended for testing):
 
@@ -173,6 +199,8 @@ MH3_ONLINE_CA=MH3SP/cert/ca.der MH3_ONLINE_HOSTS='*.mh3sp.com=127.0.0.1' \
 
 | Variable | Meaning |
 | --- | --- |
+| `MH3_ONLINE_SERVER=DOMAIN[:PORT]` or `IP[:PORT]` | the server (default `mh3sp.com`); see the Online page above |
+| `MH3_ONLINE_SKIP_TLS=1` | TLS sessions pass their bytes through unencrypted (OPN `UseSSL = OFF`) |
 | `MH3_ONLINE_CA=PATH` | install this DER CA instead of the MH3SP one (the local server's `cert/ca.der`) |
 | `MH3_ONLINE_HOSTS=name=ip,...` | answer these host names (`*.domain` for a whole domain) without DNS |
 | `MH3_ONLINE_PORTS=from=to,...` | connect to `to` instead of port `from` (the NAS's port 80) |

@@ -1,4 +1,7 @@
-// NetHost (net_host.h) on BSD sockets, getaddrinfo and OpenSSL: Linux.
+// NetHost (net_host.h) on BSD sockets, getaddrinfo and OpenSSL: Linux, and
+// the Vita, whose newlib implements them on sceNet (its first socket starts
+// the network stack: _vita_net_init loads SceNet and runs sceNetInit and
+// sceNetCtlInit).
 #include "net_host.h"
 
 #include "guest_threads.h"
@@ -10,17 +13,25 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <ifaddrs.h>
 #include <mutex>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#include <resolv.h>
 #include <string_view>
 #include <sys/socket.h>
-#include <thread>
+#include <pthread.h>
 #include <unistd.h>
+#include <vector>
+
+#ifdef __vita__
+#include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
+#include <psp2/sysmodule.h>
+#else
+#include <ifaddrs.h>
+#include <resolv.h>
+#endif
 
 #ifdef MH3_HAS_OPENSSL
 #include <openssl/err.h>
@@ -29,6 +40,12 @@
 #include <openssl/x509v3.h>
 #endif
 
+#ifdef __vita__
+// sceNet has no SIGPIPE.
+#define MSG_NOSIGNAL 0
+
+extern "C" int _vita_net_init();
+#endif
 namespace NetHost {
 namespace {
 // A host errno as a negated Wii SO error (Dolphin's TranslateErrorCode).
@@ -76,13 +93,25 @@ int32_t Result(int result) {
 // MH3_ONLINE_PORTS (from=to[,from=to...]): destination ports to change, so a
 // local test server can stand in for one on a privileged port (the account
 // server's 80).
+std::mutex overrideLock;
+std::vector<std::pair<uint16_t, uint16_t>> portOverrides;
+
 uint16_t MapPort(uint16_t port) {
+    const unsigned wanted = ntohs(port);
+
+    {
+        std::lock_guard guard(overrideLock);
+
+        for (const auto& [from, to] : portOverrides)
+            if (from == wanted)
+                return htons(to);
+    }
+
     const char* ports = std::getenv("MH3_ONLINE_PORTS");
 
     if (!ports)
         return port;
 
-    const unsigned wanted = ntohs(port);
     std::string_view rest(ports);
 
     while (!rest.empty()) {
@@ -171,8 +200,30 @@ uint32_t Swap32(uint32_t value) {
     return __builtin_bswap32(value);
 }
 
-// MH3_ONLINE_HOSTS: name=address entries, "*.domain" for every host in it.
+struct HostOverride {
+    std::string pattern;
+    uint32_t ip;
+};
+
+std::vector<HostOverride> hostOverrides;
+
+bool MatchesHost(std::string_view pattern, std::string_view name) {
+    return pattern == name || (pattern.starts_with("*.") && name.ends_with(pattern.substr(1)));
+}
+
+// AddHostOverride's entries, then MH3_ONLINE_HOSTS: name=address entries,
+// "*.domain" for every host in it.
 bool Override(const std::string& name, uint32_t* ip) {
+    {
+        std::lock_guard guard(overrideLock);
+
+        for (const auto& entry : hostOverrides)
+            if (MatchesHost(entry.pattern, name)) {
+                *ip = entry.ip;
+                return true;
+            }
+    }
+
     const char* hosts = std::getenv("MH3_ONLINE_HOSTS");
 
     if (!hosts)
@@ -191,9 +242,8 @@ bool Override(const std::string& name, uint32_t* ip) {
 
         const std::string_view pattern = entry.substr(0, equals);
         const std::string address(entry.substr(equals + 1));
-        const bool matches = pattern == name || (pattern.starts_with("*.") && std::string_view(name).ends_with(pattern.substr(1)));
 
-        if (matches && inet_pton(AF_INET, address.c_str(), ip) == 1)
+        if (MatchesHost(pattern, name) && inet_pton(AF_INET, address.c_str(), ip) == 1)
             return true;
     }
 
@@ -201,8 +251,41 @@ bool Override(const std::string& name, uint32_t* ip) {
 }
 } // namespace
 
+void AddHostOverride(std::string pattern, uint32_t ip) {
+    std::lock_guard guard(overrideLock);
+    hostOverrides.push_back({std::move(pattern), ip});
+}
+
+void AddPortOverride(uint16_t from, uint16_t to) {
+    std::lock_guard guard(overrideLock);
+    portOverrides.emplace_back(from, to);
+}
+
 bool Startup() {
+#ifdef __vita__
+    // newlib's own sceNetInit pool (about 140 KiB) runs out with the game's
+    // sockets: the stack then stops taking (and acknowledging) segments for
+    // minutes. Initialized first, newlib keeps this one.
+    static const bool started = [] {
+        constexpr int kPoolBytes = 2 << 20;
+
+        if (sceSysmoduleIsLoaded(SCE_SYSMODULE_NET) != SCE_SYSMODULE_LOADED && sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0)
+            return false;
+
+        SceNetInitParam parameters{};
+        parameters.memory = std::malloc(kPoolBytes);
+        parameters.size = kPoolBytes;
+        const int initialized = sceNetInit(&parameters);
+
+        if (initialized < 0)
+            std::fprintf(stderr, "MH3 net: sceNetInit 0x%08X\n", unsigned(initialized));
+
+        return _vita_net_init() >= 0;
+    }();
+    return started;
+#else
     return true;
+#endif
 }
 
 int32_t OpenSocket(bool stream) {
@@ -402,8 +485,10 @@ int32_t Poll(std::vector<PollEntry>& entries) {
             if (natives[i].revents & event.native)
                 revents |= event.wii;
 
-        entries[i].revents = revents;
-        count += revents != 0;
+        // Only the events asked for, and the conditions always reported (the
+        // Vita's poll.h makes POLLPRI and POLLRDBAND POLLIN).
+        entries[i].revents = revents & (entries[i].events | 0xE0);
+        count += entries[i].revents != 0;
     }
 
     return count;
@@ -419,6 +504,30 @@ bool Writable(int handle) {
     return ::poll(&entry, 1, 0) > 0;
 }
 
+#ifdef __vita__
+Interface DefaultInterface() {
+    Interface result{};
+    inet_pton(AF_INET, "10.0.1.30", &result.ip);
+    inet_pton(AF_INET, "255.255.255.0", &result.netmask);
+    inet_pton(AF_INET, "10.0.1.1", &result.gateway);
+    inet_pton(AF_INET, "8.8.8.8", &result.dns);
+    Startup();
+
+    const auto read = [](int code, uint32_t* address) {
+        SceNetCtlInfo info{};
+
+        if (sceNetCtlInetGetInfo(code, &info) == 0)
+            inet_pton(AF_INET, info.ip_address, address);
+    };
+
+    read(SCE_NETCTL_INFO_GET_IP_ADDRESS, &result.ip);
+    read(SCE_NETCTL_INFO_GET_NETMASK, &result.netmask);
+    read(SCE_NETCTL_INFO_GET_DEFAULT_ROUTE, &result.gateway);
+    read(SCE_NETCTL_INFO_GET_PRIMARY_DNS, &result.dns);
+    result.broadcast = (result.ip & result.netmask) | ~result.netmask;
+    return result;
+}
+#else
 Interface DefaultInterface() {
     Interface result{};
     inet_pton(AF_INET, "10.0.1.30", &result.ip);
@@ -477,6 +586,7 @@ Interface DefaultInterface() {
     freeifaddrs(interfaces);
     return result;
 }
+#endif
 
 bool ParseIpv4(const std::string& text, uint32_t* ip) {
     return inet_pton(AF_INET, text.c_str(), ip) == 1;
@@ -500,7 +610,10 @@ Lookup::Lookup(std::string name) : state_(std::make_shared<State>()) {
     }
 
     // getaddrinfo blocks; the guest thread waits in the scheduler meanwhile.
-    std::thread([state = state_] {
+    // A detached pthread, not std::thread: without exceptions libc++ aborts
+    // the process when a thread call fails, which on the Vita stopped the
+    // lookup thread (and its TTY) for good.
+    const auto resolve = [](const std::shared_ptr<State>& state) {
         addrinfo hints{};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
@@ -522,7 +635,34 @@ Lookup::Lookup(std::string name) : state_(std::make_shared<State>()) {
         }
 
         GuestThreads::Notify();
-    }).detach();
+    };
+
+    struct Job {
+        std::shared_ptr<State> state;
+        void (*resolve)(const std::shared_ptr<State>&);
+    };
+
+    auto* job = new Job{state_, resolve};
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setstacksize(&attributes, 256u << 10);
+    pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+    pthread_t thread;
+    const int failed = pthread_create(
+        &thread, &attributes,
+        [](void* argument) -> void* {
+            std::unique_ptr<Job> job(static_cast<Job*>(argument));
+            job->resolve(job->state);
+            return nullptr;
+        },
+        job);
+    pthread_attr_destroy(&attributes);
+
+    // No thread: resolve here, blocking the guest thread instead.
+    if (failed) {
+        std::unique_ptr<Job> owned(job);
+        resolve(state_);
+    }
 }
 
 Lookup::~Lookup() = default;
@@ -546,6 +686,12 @@ class OpenSslTls final : public Tls {
   public:
     OpenSslTls(const std::string& hostname, bool verify) : hostname_(hostname), verify_(verify) {
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
+        // 1.1 initializes itself (the Vita has 1.0.2).
+        static std::once_flag initialized;
+        std::call_once(initialized, [] {
+            SSL_library_init();
+            SSL_load_error_strings();
+        });
         context_ = SSL_CTX_new(SSLv23_client_method());
 #else
         context_ = SSL_CTX_new(TLS_client_method());

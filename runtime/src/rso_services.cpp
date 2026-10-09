@@ -126,7 +126,8 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint3
     RecompMod::RegisterExecutableRange(text, text + size, name);
     profile->active = true;
 
-    if (std::string_view(name) == "map_village.rso")
+    // The village, or the City's network screen.
+    if (std::string_view(name) == "map_village.rso" || std::string_view(name) == "net_data.rso")
         FinishVillageBoot();
     // The map's loading screen: extract the audio streams it played before.
     if (std::string_view(name).starts_with("map"))

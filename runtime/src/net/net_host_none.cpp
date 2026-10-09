@@ -1,7 +1,5 @@
-// NetHost (net_host.h) for platforms without a port of it yet (the Vita, the
-// web build): no network, so the game's connection attempt fails as on a Wii
-// without one. The Vita's needs sceNet sockets and resolver and sceSsl (or
-// OpenSSL over sceNet) behind this interface (docs/online.md).
+// NetHost (net_host.h) for platforms without a port of it (the web build): no
+// network, so the game's connection attempt fails as on a Wii without one.
 #include "net_host.h"
 
 namespace NetHost {
@@ -88,6 +86,10 @@ Interface DefaultInterface() {
 bool ParseIpv4(const std::string&, uint32_t*) {
     return false;
 }
+
+void AddHostOverride(std::string, uint32_t) {}
+
+void AddPortOverride(uint16_t, uint16_t) {}
 
 struct Lookup::State {
     std::string name;
