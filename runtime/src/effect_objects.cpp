@@ -1841,7 +1841,7 @@ void SpawnerDrawEffects(GuestCall& game, uint32_t spawner, uint32_t effects, int
 // area (+0x44) it moves on to state 2. Kind 1 (+7) only draws, its second
 // set with VillageDepartureSetting, three effects fewer on map 0x16 in the
 // first star stages. Otherwise each slot (u8 index, 0xFF none; +4 its wait,
-// +8 its random modulus, +0xC the random extra, +0x10 the frames waited)
+// +8 its random modulus, +0xC the random extra, +0x10 the ticks waited)
 // spawns its effect once the wait and extra have passed and retires it
 // when it has no particle managers left; then the effects draw, with the
 // camera flag (+0x8D4) only while the camera is at or above 0x80798B68.
@@ -1886,7 +1886,11 @@ void EffectSpawnerUpdate(CpuContext* cpu, GuestCall& game, uint32_t spawner, con
             continue;
         }
 
-        const uint32_t waited = FlatRead32(slot + 0x10) + 1;
+        // The original counts the update calls, one a tick at the stock step:
+        // the whole ticks of game time in the step keep the waits in time at
+        // any step length (at sub-tick steps the shore waves spawned several
+        // times too often).
+        const uint32_t waited = FlatRead32(slot + 0x10) + GameStep::Ticks();
         FlatWrite32(slot + 0x10, waited);
 
         if (int32_t(FlatRead32(slot + 4) + FlatRead32(slot + 0xC)) < int32_t(waited)) {
