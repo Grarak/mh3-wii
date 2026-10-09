@@ -501,6 +501,9 @@ if(VITA)
   # reads the same clock (pthread-embedded's timed waits compare the two).
   target_sources(MH3 PRIVATE vita/fast_clock.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=gettimeofday" "-Wl,--wrap=clock_gettime")
+
+  # newlib's isfinite/isnan/isinf as builtins under clang (not __fpclassifyf calls).
+  target_compile_options(MH3 PRIVATE "$<$<COMPILE_LANGUAGE:C>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/vita/newlib_math_builtins.h>")
   option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)
 
   if(MH3_VITA_FAST_TLS)
