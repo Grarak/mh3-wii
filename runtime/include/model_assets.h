@@ -30,6 +30,10 @@ void ObserveNativeModelAssetDemand(uintptr_t resident_handle, uint64_t resident_
 // Called at an admitted draw, after CPU state updates. False means the bounded
 // GPU model budget is still occupied; no wait or overwrite is performed.
 bool EnsureNativeModelAssetGPU(uintptr_t resident_handle, uint64_t resident_generation);
+
+// Game thread, each frame: queues the render tasks that make the GPU data the
+// read-ahead worker read for newly admitted packs resident.
+void PumpNativeModelGPUReads();
 struct NativeModelAssetStats {
     size_t index_bytes = 0, metadata_bytes = 0, identity_bytes = 0, gpu_bytes = 0, demanded_gpu_bytes = 0;
     uint32_t admitted_packs = 0;

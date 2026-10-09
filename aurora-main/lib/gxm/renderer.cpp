@@ -1080,6 +1080,14 @@ constexpr std::array<FormatInfo, 19> FormatInfos{{
 } // namespace
 
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
+  create(path, offset, nullptr, bytes);
+}
+
+NativeMeshBuffer::NativeMeshBuffer(const void* payload, uint32_t bytes) {
+  create(nullptr, 0, payload, bytes);
+}
+
+void NativeMeshBuffer::create(const char* path, uint64_t offset, const void* payload, uint32_t bytes) {
   auto& r = renderer();
 
   if (!bytes)
@@ -1110,7 +1118,7 @@ NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t b
     memory = MappedMemory(bytes, MappedMemory::Kind::Main, "Aurora model pack (main memory)");
   }
 
-  gfx::read_mesh_payload(path, offset, memory.data(), bytes);
+  gfx::fill_mesh_payload(path, offset, payload, memory.data(), bytes);
   const auto id = r.name();
   const auto* data = static_cast<const uint8_t*>(memory.data());
   r.meshes.emplace(id, std::move(memory));

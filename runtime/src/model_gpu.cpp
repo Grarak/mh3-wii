@@ -43,7 +43,7 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
     aurora::gl::MeshLayout out;
     out.stride = uint16_t(source.stride);
 
-    // A skinned mesh (docs/gpu-skinning.md) has rows and weights, no GX
+    // A skinned mesh (docs/optimizations/rendering/gpu-skinning.md) has rows and weights, no GX
     // selector inputs.
     out.matrixIndexMask = source.flags & MH3_LAYOUT_SKINNED ? 0 : uint16_t((source.flags >> 8) & 0x1ffu);
 
@@ -89,6 +89,11 @@ void NativeModelGPUPayloadRelease::operator()(aurora::gl::NativeMeshBuffer* buff
 NativeModelGPUPayload ReadNativeModelGPU(const char* path, uint64_t offset, uint32_t bytes) {
     Owner();
     return NativeModelGPUPayload(new aurora::gl::NativeMeshBuffer(path, offset, bytes));
+}
+
+NativeModelGPUPayload CopyNativeModelGPU(const void* payload, uint32_t bytes) {
+    Owner();
+    return NativeModelGPUPayload(new aurora::gl::NativeMeshBuffer(payload, bytes));
 }
 
 void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t handle, uint64_t generation) {

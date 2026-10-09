@@ -4,6 +4,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 
@@ -30,5 +31,13 @@ inline void read_mesh_payload(const char* path, uint64_t offset, void* destinati
     out += count;
     bytes -= count;
   }
+}
+
+// A buffer's payload: read from the file range, or copied from `payload`.
+inline void fill_mesh_payload(const char* path, uint64_t offset, const void* payload, void* destination, size_t bytes) {
+  if (payload)
+    std::memcpy(destination, payload, bytes);
+  else
+    read_mesh_payload(path, offset, destination, bytes);
 }
 } // namespace aurora::gfx

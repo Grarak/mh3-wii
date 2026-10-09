@@ -1348,13 +1348,21 @@ void upload_now(Renderer& r, const Texture& handle, uint32_t mip, uint32_t x, ui
 // ---- Context ----
 
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
+  create(path, offset, nullptr, bytes);
+}
+
+NativeMeshBuffer::NativeMeshBuffer(const void* payload, uint32_t bytes) {
+  create(nullptr, 0, payload, bytes);
+}
+
+void NativeMeshBuffer::create(const char* path, uint64_t offset, const void* payload, uint32_t bytes) {
   if (!on_render_thread() || !bytes)
     AURORA_THROW(std::runtime_error("Native mesh load outside context owner or empty payload"));
 
   // The shared compact pack reader requires a 16-byte base.
   const auto release = [](uint8_t* pointer) { ::operator delete[](pointer, std::align_val_t(16)); };
   std::unique_ptr<uint8_t, decltype(release)> data(static_cast<uint8_t*>(::operator new[]((bytes + 3) & ~3u, std::align_val_t(16))), release);
-  gfx::read_mesh_payload(path, offset, data.get(), bytes);
+  gfx::fill_mesh_payload(path, offset, payload, data.get(), bytes);
   std::memset(data.get() + bytes, 0, ((bytes + 3) & ~3u) - bytes);
   run([&] {
     auto& r = renderer();

@@ -233,6 +233,8 @@ bool shaded_target_alpha_one() noexcept;
 class NativeMeshBuffer {
 public:
   NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes);
+  // A payload another thread read (16-byte aligned), copied in.
+  NativeMeshBuffer(const void* payload, uint32_t bytes);
   ~NativeMeshBuffer();
   NativeMeshBuffer(const NativeMeshBuffer&) = delete;
   NativeMeshBuffer& operator=(const NativeMeshBuffer&) = delete;
@@ -241,6 +243,9 @@ public:
   uint32_t size() const noexcept { return m_bytes; }
 
 private:
+  // From the file range, or (payload set) from memory.
+  void create(const char* path, uint64_t offset, const void* payload, uint32_t bytes);
+
   GLuint m_buffer = 0;
   const uint8_t* m_data = nullptr;
   uint32_t m_bytes = 0;

@@ -42,13 +42,21 @@ std::vector<std::pair<GLsync, size_t>> nativeMeshRetired;
 } // namespace
 
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
+  create(path, offset, nullptr, bytes);
+}
+
+NativeMeshBuffer::NativeMeshBuffer(const void* payload, uint32_t bytes) {
+  create(nullptr, 0, payload, bytes);
+}
+
+void NativeMeshBuffer::create(const char* path, uint64_t offset, const void* payload, uint32_t bytes) {
   if (!on_render_thread() || !bytes)
     AURORA_THROW(std::runtime_error("Native mesh load outside context owner or empty payload"));
   // The shared compact pack reader requires a 16-byte base. ARM32's
   // ordinary byte-array allocation can be only eight-byte aligned.
   const auto release = [](uint8_t* pointer) { ::operator delete[](pointer, std::align_val_t(16)); };
   std::unique_ptr<uint8_t, decltype(release)> data(static_cast<uint8_t*>(::operator new[](bytes, std::align_val_t(16))), release);
-  gfx::read_mesh_payload(path, offset, data.get(), bytes);
+  gfx::fill_mesh_payload(path, offset, payload, data.get(), bytes);
   GLint previous = 0;
   glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING, &previous);
   glGenBuffers(1, &m_buffer);

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <climits>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -18,12 +19,14 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <new>
 #include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -388,7 +391,10 @@ Status ReadPack(const Manager* m, const std::filesystem::path& path, uint32_t in
 // draw: a mid-fight model's packs, read from the card there, took ~270 ms of
 // one render packet. Only while the budget holds it without an eviction; a
 // pack retired meanwhile is skipped. The first draw still notes the demand.
-void PrefetchGPU(Manager& m, uintptr_t handle, uint64_t generation) {
+// `payload`: the GPU data the read-ahead worker read (PackPreparer), copied
+// in; without it the render thread reads it from the card, which took up to
+// 0.8 s of a loading screen's packet on the devkit.
+void PrefetchGPU(Manager& m, uintptr_t handle, uint64_t generation, const uint8_t* payload = nullptr) {
     // The admitted pack, still unregistered and within the budget.
     const auto pending = [&]() -> Assets* {
         const auto found = m.handles.find(handle);
@@ -418,7 +424,7 @@ void PrefetchGPU(Manager& m, uintptr_t handle, uint64_t generation) {
     // The payload is read from the card without the lock: certification on
     // the game thread takes it for each pack it admits and would wait behind
     // the read.
-    auto buffer = ReadNativeModelGPU(path.c_str(), offset, bytes);
+    auto buffer = payload ? CopyNativeModelGPU(payload, bytes) : ReadNativeModelGPU(path.c_str(), offset, bytes);
     std::lock_guard lock(m.lock);
     Assets* asset = pending();
 
@@ -457,14 +463,16 @@ Status TimedOpenPack(Manager& m, const std::filesystem::path& path, uint32_t ind
     return opened;
 }
 
-// Converted model packs read ahead (docs/loading-progress.md): the asset cache
+// Converted model packs read ahead (docs/optimizations/assets/load-time-asset-conversion.md): the asset cache
 // hands on the pack of each source file the game starts to read, and a worker
 // reads and validates it (ReadPack: the pack's meshes, typed materials and
 // draws, and its source identities) while the file loads; one, beside the
 // disc reader it would otherwise compete with for the card. Certification
 // on the game thread then claims the read pack (ClaimPack, Admit) instead of
 // reading it. The pack bytes and checks are the same on either thread; the
-// budget, generation and admission order stay the game thread's.
+// budget, generation and admission order stay the game thread's. A second
+// worker reads each admitted pack's GPU data for the render thread
+// (PrefetchGPU).
 class PackPreparer {
   public:
     static PackPreparer& Get() {
@@ -490,13 +498,32 @@ class PackPreparer {
         }
 
         entries.push_back({key, path});
-
-        while (threads < Threads) {
-            ++threads;
-            std::thread([this] { Run(); }).detach();
-        }
-
+        Start();
         changed.notify_all();
+    }
+
+    // An admitted pack's GPU data, read after the packs queued ahead of it.
+    struct Payload {
+        uintptr_t handle;
+        uint64_t generation;
+        std::string path;
+        uint64_t offset;
+        uint32_t bytes;
+        std::shared_ptr<uint8_t> data; // 64-byte aligned; empty when the read failed
+    };
+
+    // Game thread (Admit).
+    void QueuePayload(Payload payload) {
+        std::lock_guard guard(lock);
+        payloads.push_back(std::move(payload));
+        Start();
+        changed.notify_all();
+    }
+
+    // Game thread: the payloads read since the last call.
+    std::deque<Payload> TakePayloads() {
+        std::lock_guard guard(lock);
+        return std::exchange(read, {});
     }
 
     // How Take found the pack.
@@ -535,7 +562,7 @@ class PackPreparer {
 
   private:
     static constexpr size_t MaxEntries = 16;
-    static constexpr unsigned Threads = 1, MaxDiscWaitMs = 100;
+    static constexpr unsigned MaxDiscWaitMs = 100;
 
     struct Entry {
         uint32_t key;
@@ -544,6 +571,69 @@ class PackPreparer {
         std::unique_ptr<Assets> pack;
         Status status;
     };
+
+    // With the lock held. The payloads have their own thread: queued behind
+    // one, packs waited and certification read 12 of 21 itself on the game
+    // thread (devkit, 1.28 s).
+    void Start() {
+        if (!started) {
+            started = true;
+            std::thread([this] { Run(); }).detach();
+        }
+
+        if (!payloads.empty() && !payloadStarted) {
+            payloadStarted = true;
+            std::thread([this] { RunPayloads(); }).detach();
+        }
+    }
+
+    // The game's disc reads first: a pack read beside one slows it down (one
+    // card serves both), and a loading screen lasts as long as its reads. Pi 5
+    // with a cold page cache: the loader's reads took 5.7-9.6 ms instead of
+    // 3.3-5.1 ms on average.
+    static void DeferToDisc() {
+        for (unsigned waited = 0; waited < MaxDiscWaitMs && DiscReadWaiting(); ++waited)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // A payload read into memory, or none when the read failed (the render
+    // thread then reads it itself).
+    static void ReadPayload(Payload& payload) {
+        uint8_t* data = static_cast<uint8_t*>(::operator new[](payload.bytes, std::align_val_t(64), std::nothrow));
+
+        if (!data)
+            return;
+
+        payload.data.reset(data, [](uint8_t* p) { ::operator delete[](p, std::align_val_t(64)); });
+        std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen(payload.path.c_str(), "rb"), &std::fclose);
+
+        if (!file || payload.offset > uint64_t(LONG_MAX) || std::fseek(file.get(), long(payload.offset), SEEK_SET) ||
+            std::fread(data, 1, payload.bytes, file.get()) != payload.bytes)
+            payload.data.reset();
+    }
+
+    void RunPayloads() {
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+
+        for (;;) {
+            Payload payload;
+            {
+                std::unique_lock guard(lock);
+
+                // Timed: VitaSDK's condition variable can lose a notification.
+                while (payloads.empty())
+                    changed.wait_for(guard, std::chrono::milliseconds(100));
+
+                payload = std::move(payloads.front());
+                payloads.pop_front();
+            }
+
+            DeferToDisc();
+            ReadPayload(payload);
+            std::lock_guard guard(lock);
+            read.push_back(std::move(payload));
+        }
+    }
 
     void Run() {
         aurora::pin_current_thread(aurora::ThreadRole::Worker);
@@ -564,13 +654,7 @@ class PackPreparer {
                 path = next->path;
             }
 
-            // The game's disc reads first: a pack read beside one slows it
-            // down (one card serves both), and a loading screen lasts as long
-            // as its reads. Pi 5 with a cold page cache: the loader's reads
-            // took 5.7-9.6 ms instead of 3.3-5.1 ms on average.
-            for (unsigned waited = 0; waited < MaxDiscWaitMs && DiscReadWaiting(); ++waited)
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
+            DeferToDisc();
             std::unique_ptr<Assets> pack;
             Status status = ReadPack(nullptr, path, key, pack);
             std::lock_guard guard(lock);
@@ -592,7 +676,8 @@ class PackPreparer {
     std::mutex lock;
     std::condition_variable changed;
     std::deque<Entry> entries;
-    unsigned threads = 0;
+    std::deque<Payload> payloads, read;
+    bool started = false, payloadStarted = false;
 };
 
 // The converted pack of `key`: claimed from the read-ahead, or read here.
@@ -662,7 +747,7 @@ Status Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eage
                  static_cast<unsigned long long>(asset.metadata.size()), static_cast<unsigned long long>(asset.identity.size()), asset.pack.gpu_bytes, eagerGPU ? "resident" : "CPU metadata admitted");
 
     if (!eagerGPU)
-        QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [&m, handle = asset.handle(), generation = asset.generation] { PrefetchGPU(m, handle, generation); });
+        PackPreparer::Get().QueuePayload({asset.handle(), asset.generation, asset.path.string(), asset.pack.gpu_file_offset, asset.pack.gpu_bytes, nullptr});
 
     return {};
 }
@@ -940,6 +1025,17 @@ NativeModelPackOpenings ReadNativeModelPackOpenings() {
     std::lock_guard lock(manager->lock);
     const auto& stats = manager->stats;
     return {stats.admissions, stats.open_ms, stats.cache_ms, stats.take_ms, stats.ensure_ms, stats.read_ahead_ready, stats.read_ahead_waited, stats.read_ahead_own};
+}
+
+void PumpNativeModelGPUReads() {
+    auto payloads = PackPreparer::Get().TakePayloads();
+
+    if (!manager)
+        return;
+
+    for (auto& payload : payloads)
+        QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws,
+                                [&m = *manager, payload = std::move(payload)] { PrefetchGPU(m, payload.handle, payload.generation, payload.data.get()); });
 }
 
 void UnloadNativeModelAssets() {

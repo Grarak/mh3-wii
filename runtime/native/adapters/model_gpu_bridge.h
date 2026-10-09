@@ -19,6 +19,8 @@ struct NativeModelGPUPayloadRelease {
 
 using NativeModelGPUPayload = std::unique_ptr<aurora::gl::NativeMeshBuffer, NativeModelGPUPayloadRelease>;
 NativeModelGPUPayload ReadNativeModelGPU(const char* path, uint64_t offset, uint32_t bytes);
+/* The payload another thread read into memory (16-byte aligned), copied into a new buffer. */
+NativeModelGPUPayload CopyNativeModelGPU(const void* payload, uint32_t bytes);
 void RegisterNativeModelGPU(mh3_mesh_pack& pack, const char* path, uintptr_t handle, uint64_t generation, NativeModelGPUPayload buffer);
 void UnregisterNativeModelGPU(uintptr_t handle, uint64_t generation);
 void ClearNativeModelGPU();

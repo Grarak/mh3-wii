@@ -518,6 +518,7 @@ void BeginOverlappedNativeGraphicsFrame() {
     MH3_STAT(BeginNativeFrameStatistics();)
     BeginNativeFramePacket(overlapAdmitted);
     overlapPacketBegun = true;
+    PumpNativeModelGPUReads();
 
     for (const auto& [destination, source] : pendingClones)
         if (NativeFramePacketRecording() && !RecordNativeSceneClone(destination, source))
@@ -557,6 +558,7 @@ bool BeginNativeGraphicsFrame() {
     razorNativeFrameStarted = aurora::gxm::razor_begin_cpu_work();
 #endif
     BeginNativeFramePacket(aurora_native_window_presentable());
+    PumpNativeModelGPUReads();
     return NativeFramePacketRecording();
 }
 
