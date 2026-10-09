@@ -26,6 +26,7 @@ uint32_t Result(mh3_res_status status,uint32_t value) {
     return value;
 }
 } // namespace
+const mh3_res_memory& MH3NativeResourceMemory() { return ResourceMemory(); }
 
 // Thin shared adapter for the previously registered generic ResDic port.
 uint32_t MH3NativeResDictionary(uint32_t reference,int32_t index) {

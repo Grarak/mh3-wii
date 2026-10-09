@@ -4,7 +4,7 @@
 /* This view only adapts guest resource addresses to caller-owned native spans.
  * All parsing/validation operates on those spans, and returned addresses retain
  * the source alias. No guest execution or PPC register state is involved. */
-typedef struct { mh3_res_span span; size_t offset; uint32_t guest_base; } view;
+typedef mh3_res_memory_view view;
 static uint32_t word(const uint8_t *p) {
     return (uint32_t)p[0]<<24|(uint32_t)p[1]<<16|(uint32_t)p[2]<<8|p[3];
 }
@@ -27,6 +27,9 @@ static mh3_res_status mapped(const mh3_res_memory *m,uint32_t address,size_t byt
 static mh3_res_status pointer_result(view v,size_t at,uint32_t *out) {
     if (!out || at>UINT32_MAX || at>UINT32_MAX-v.guest_base) return MH3_RES_RANGE;
     *out=v.guest_base+(uint32_t)at; return MH3_RES_OK;
+}
+mh3_res_status mh3_res_runtime_map(const mh3_res_memory *m,uint32_t address,size_t bytes,mh3_res_memory_view *out) {
+    return mapped(m,address,bytes,out);
 }
 static mh3_res_status object(const mh3_res_memory *m,uint32_t ref,size_t bytes,view *v) {
     uint32_t data; mh3_res_status s=mh3_res_runtime_reference(m,ref,1,&data);

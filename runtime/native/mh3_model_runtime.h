@@ -9,6 +9,10 @@ extern "C" {
 #endif
 
 typedef struct { mh3_res_span mem1, mem2, locked_cache; } mh3_res_memory;
+typedef struct { mh3_res_span span; size_t offset; uint32_t guest_base; } mh3_res_memory_view;
+/* Checked compatibility boundary for native producers borrowing an owned bank. */
+mh3_res_status mh3_res_runtime_map(const mh3_res_memory *memory,uint32_t address,
+                                  size_t required,mh3_res_memory_view *out);
 
 mh3_res_status mh3_res_runtime_reference(const mh3_res_memory *memory,uint32_t reference,
                                         int require_valid,uint32_t *result);
