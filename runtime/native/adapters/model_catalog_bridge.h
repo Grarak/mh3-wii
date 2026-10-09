@@ -2,11 +2,14 @@
 #include "runtime/native/mh3_model_submission.h"
 #include "runtime/native/mh3_vertex_sources.h"
 #include "runtime/native/mh3_texture_matrices.h"
+#include "runtime/native/adapters/model_prepare_diagnostics.h"
 /* Explicit loader events. Tracking disc reads alone does not certify copied,
  * recycled or decompressed owners. No bind-time revision bumps or hashing. */
-void RecordNativeDiscWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes);
-void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes);
-void RetireNativeResourceOwner(uint32_t address, uint32_t bytes);
+void RecordNativeDiscWrite(uint32_t destination, uint64_t partition_offset, uint32_t bytes, uint32_t diagnostic_frame = UINT32_MAX);
+void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes,
+    NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceCopy, uint32_t diagnostic_frame = UINT32_MAX);
+void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
+    NativeSourceEpochProducer producer = NativeSourceEpochProducer::ResourceRetire, uint32_t diagnostic_frame = UINT32_MAX);
 /* This replica's structural producer token. Changes on source/pack lifetime
  * events, never a draw or a typed material-field update. */
 uint64_t ReadNativeModelStructureRevision();
@@ -28,7 +31,7 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
 /* Caller owns validated metadata/catalog and resident allocation until explicit
  * unregistration. Backend's asynchronous fence lifetime is a separate owner. */
 void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t resident_handle, uint64_t resident_generation);
-void UnregisterNativeModelPack(uintptr_t resident_handle);
+void UnregisterNativeModelPack(uintptr_t resident_handle, uint32_t diagnostic_frame = UINT32_MAX);
 /* Conservative demand-loader pin: certified owners, copied typed material
  * groups, or any tracked partial source receipt keep metadata alive. */
 bool NativeModelPackHasLiveSources(uintptr_t resident_handle);

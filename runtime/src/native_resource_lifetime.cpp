@@ -82,18 +82,18 @@ class HeapLock {
     uint32_t heap_;
     bool locked_;
 };
-void RetireWrite(uint32_t address, uint32_t bytes) {
+void RetireWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
     if (!bytes)
         return;
     uint32_t canonical;
     if (Canonical(address, bytes, &canonical))
-        RetireNativeResourceOwner(canonical, bytes);
+        RetireNativeResourceOwner(canonical, bytes, producer);
     else if (address < 0xe0000000u || uint64_t(address) + bytes > 0xe0004000ull)
         throw std::runtime_error("Native write is outside RAM/locked cache");
 }
-void PrepareWrite(uint32_t address, uint32_t bytes) {
+void PrepareWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
     RecompMod::CheckExecutableWrite(address, bytes, 0);
-    RetireWrite(address, bytes);
+    RetireWrite(address, bytes, producer);
 }
 void CopyBlocks(uint32_t destination, uint32_t source, uint32_t bytes) {
     Checked(mh3_lifetime_validate_copy32(destination, source, bytes));
@@ -109,18 +109,18 @@ void CopyBlocks(uint32_t destination, uint32_t source, uint32_t bytes) {
         mh3_lifetime_copy_kind kind;
         Checked(mh3_lifetime_forward_copy_kind(canonical_dst, canonical_src, bytes, &kind));
         if (kind == MH3_LIFETIME_COPY_SOURCE)
-            RecordNativeResourceCopy(canonical_dst, canonical_src, bytes);
+            RecordNativeResourceCopy(canonical_dst, canonical_src, bytes, NativeSourceEpochProducer::Copy32);
         else if (kind == MH3_LIFETIME_COPY_UNKNOWN)
-            RetireNativeResourceOwner(canonical_dst, bytes);
+            RetireNativeResourceOwner(canonical_dst, bytes, NativeSourceEpochProducer::Copy32Unknown);
     } else
-        RetireWrite(destination, bytes);
+        RetireWrite(destination, bytes, NativeSourceEpochProducer::Copy32Unknown);
     Checked(mh3_lifetime_copy32(dst, bytes, src, bytes, bytes));
 }
 void Fill(uint32_t destination, uint8_t value, uint32_t bytes) {
     if (!bytes)
         return;
     void* pointer = Memory::GetPointer(destination, bytes);
-    PrepareWrite(destination, bytes);
+    PrepareWrite(destination, bytes, NativeSourceEpochProducer::Fill);
     Checked(mh3_lifetime_fill(pointer, bytes, value, bytes));
 }
 uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t options) {
@@ -130,7 +130,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
         return 0;
     Memory::GetPointer(region.address, region.bytes);
     RamAddress(region.address, region.bytes);
-    PrepareWrite(region.address, region.bytes);
+    PrepareWrite(region.address, region.bytes, NativeSourceEpochProducer::HeapCreate);
     GuestFrame frame(cpu, 0x40);
     GuestCall call{cpu};
     call(0x804C1F20, {region.address, 0x45585048, region.address + 80, region.address + region.bytes, options});
@@ -140,7 +140,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
 }
 uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     const auto heap = ReadHeap(address);
-    PrepareWrite(heap.address, heap.end - heap.address);
+    PrepareWrite(heap.address, heap.end - heap.address, NativeSourceEpochProducer::HeapDestroy);
     GuestFrame frame(cpu, 0x40);
     GuestCall{cpu}(0x804C20E0, {address});
     return address;
@@ -159,7 +159,7 @@ uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t ali
         Checked(mh3_lifetime_expblock_extent(&heap, payload, &block, &region));
         // The allocator may absorb a short fragment: retire its actual extent,
         // including the header/alignment padding, rather than the request size.
-        RetireNativeResourceOwner(region.address, region.bytes);
+        RetireNativeResourceOwner(region.address, region.bytes, NativeSourceEpochProducer::HeapAllocate);
     }
     return result;
 }
@@ -179,7 +179,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     const uint32_t previous = Memory::Read32(payload - 8), next = Memory::Read32(payload - 4);
     Memory::GetPointer(plan.links[0].address, 4);
     Memory::GetPointer(plan.links[1].address, 4);
-    PrepareWrite(plan.retired.address, plan.retired.bytes);
+    PrepareWrite(plan.retired.address, plan.retired.bytes, NativeSourceEpochProducer::HeapFree);
     Memory::Write32(plan.links[0].address, next);
     Memory::Write32(plan.links[1].address, previous);
     const uint32_t padding = (block.settings >> 8) & 127;

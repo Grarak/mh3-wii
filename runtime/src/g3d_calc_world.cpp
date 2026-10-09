@@ -327,7 +327,7 @@ void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
     const uint32_t destination = dst & 0x1FFFFFE0u;
     void* output = Memory::GetPointer(destination, size);
     const void* input = Memory::GetPointer(cache & ~31u, size);
-    RetireNativeResourceOwner(destination, size);
+    RetireNativeResourceOwner(destination, size, NativeSourceEpochProducer::ViewLc);
     std::memcpy(output, input, size);
 }
 

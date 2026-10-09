@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <type_traits>
 #include <vector>
 
 const mh3_res_memory& MH3NativeResourceMemory();
@@ -89,12 +90,25 @@ void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
 template <class T> struct RecipeCache {
     uint64_t revision = UINT64_MAX;
     std::unordered_map<uint32_t, T> entries;
+    NativePrepareCacheCounters* counters = nullptr;
 };
 template <class T> RecipeCache<T>& Recipes() {
     static std::array<RecipeCache<T>, DrawReplica::Count> replicas;
-    auto& cache = replicas[DrawReplica::current];
+    const unsigned replica = DrawReplica::current;
+    auto& cache = replicas[replica];
     const uint64_t revision = ReadNativeModelStructureRevision();
     if (cache.revision != revision) {
+        if (cache.revision == UINT64_MAX) {
+            if (auto* d = NativeModelPreparationDiagnosticsForOwner(replica)) {
+                if constexpr (std::is_same_v<T, mh3_model_scope_recipe>)
+                    cache.counters = &d->material;
+                else
+                    cache.counters = &d->shape;
+            }
+        } else if (cache.counters) {
+            ++cache.counters->token_clears;
+            cache.counters->discarded_entries += cache.entries.size();
+        }
         cache.entries.clear();
         cache.revision = revision;
     }
@@ -107,8 +121,16 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
         Checked(mh3_model_material_bindings_read(Bytes(swaps, 56), &replacements));
     auto& recipes = Recipes<mh3_model_scope_recipe>();
     const auto cached = recipes.entries.find(material);
-    if (cached != recipes.entries.end() && mh3_model_scope_recipe_matches(&cached->second, recipes.revision, material, &replacements))
+    if (cached != recipes.entries.end() && mh3_model_scope_recipe_matches(&cached->second, recipes.revision, material, &replacements)) {
+        if (recipes.counters)
+            ++recipes.counters->hits;
         return cached->second.scope;
+    }
+    if (recipes.counters) {
+        ++recipes.counters->misses;
+        if (cached != recipes.entries.end())
+            ++recipes.counters->replacement_misses;
+    }
     uint32_t version = 0;
     if (material) {
         uint32_t parent = 0;
@@ -123,8 +145,13 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     Checked(mh3_model_material_scope_read(&MH3NativeResourceMemory(), material, version, &replacements, &scope));
     // Admission may demand-load a pack and advance the structural token.
     auto& admitted = Recipes<mh3_model_scope_recipe>();
-    if (admitted.entries.size() >= 8192)
+    if (admitted.entries.size() >= 8192) {
+        if (admitted.counters) {
+            ++admitted.counters->capacity_clears;
+            admitted.counters->discarded_entries += admitted.entries.size();
+        }
         admitted.entries.clear();
+    }
     admitted.entries.insert_or_assign(material, mh3_model_scope_recipe{admitted.revision, replacements, scope});
     return scope;
 }
@@ -232,7 +259,8 @@ struct ShapeSources {
 };
 const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, uint32_t shape) {
     const uint32_t key = shape;
-    auto& shape_sources = Recipes<ShapeSources>().entries;
+    auto& recipes = Recipes<ShapeSources>();
+    auto& shape_sources = recipes.entries;
     const auto cached = shape_sources.find(key);
     if (cached != shape_sources.end() && cached->second.source_generation == owner.source_generation && cached->second.resident_handle == owner.resident_handle &&
         cached->second.resident_generation == owner.resident_generation)
@@ -256,8 +284,13 @@ const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, u
     }
     // Owned scalar metadata only. Bound the cache across recycled scene heaps;
     // evicting it requires fresh CPU header resolution, never GPU repacking.
-    if (shape_sources.size() >= 8192)
+    if (shape_sources.size() >= 8192) {
+        if (recipes.counters) {
+            ++recipes.counters->capacity_clears;
+            recipes.counters->discarded_entries += shape_sources.size();
+        }
         shape_sources.clear();
+    }
     shape_sources.insert_or_assign(key, result);
     return shape_sources.at(key);
 }
@@ -278,13 +311,18 @@ struct ShapeContext {
 ShapeContext ResolveShape(uint32_t reference) {
     ShapeContext context{reference, 0, {}, nullptr};
     context.shape = Resource(reference, true);
-    const auto& entries = Recipes<ShapeSources>().entries;
+    auto& recipes = Recipes<ShapeSources>();
+    const auto& entries = recipes.entries;
     const auto cached = entries.find(context.shape);
     if (cached != entries.end()) {
+        if (recipes.counters)
+            ++recipes.counters->hits;
         context.owner = cached->second.owner;
         context.sources = &cached->second;
         return context;
     }
+    if (recipes.counters)
+        ++recipes.counters->misses;
     context.owner = ShapeOwner(reference, &context.shape);
     context.sources = &Sources(context.owner, reference, context.shape);
     return context;

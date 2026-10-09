@@ -55,8 +55,10 @@ void ServiceVideoRetrace(CpuContext* cpu) {
         throw std::runtime_error("VI handler did not deliver a retrace");
     if (after <= 3)
         std::fprintf(stderr, "MH3 VI retrace delivered: %u\n", after);
-#ifdef MH3_DEVELOPMENT
-    // Every five seconds: translated code must still match the guest image.
+#if defined(MH3_DEVELOPMENT) && !defined(NDEBUG)
+    // Debug assertion every five seconds. Development builds also provide
+    // profiling and quest tools; their release measurements must not scan
+    // all translated executable bytes periodically.
     if (after % 300 == 0)
         RecompMod::VerifyExecutableRanges();
 #endif

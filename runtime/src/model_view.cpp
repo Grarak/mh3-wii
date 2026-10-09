@@ -37,7 +37,7 @@ mh3_res_status BeforeStore(void* opaque, uint32_t kind, uint32_t first, size_t b
     const auto& context = *static_cast<CallbackContext*>(opaque);
     if (kind >= 3 || bytes > UINT32_MAX)
         return MH3_RES_INVALID;
-    RetireNativeResourceOwner(context.output[kind] + first * (kind == 1 ? 36u : 48u), uint32_t(bytes));
+    RetireNativeResourceOwner(context.output[kind] + first * (kind == 1 ? 36u : 48u), uint32_t(bytes), NativeSourceEpochProducer::ViewDma);
     return MH3_RES_OK;
 }
 mh3_res_status Billboard(void* opaque, uint32_t type, uint32_t id, int uniform, mh3_res_mut_span position) {

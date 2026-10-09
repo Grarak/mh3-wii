@@ -63,7 +63,7 @@ void TransferLockedCache(uint32_t lower) {
     const bool load = (lower & 16u) != 0;
     if (!load) {
         RecompMod::CheckExecutableWrite(memoryAddress, size, 0);
-        RetireNativeResourceOwner(memoryAddress, size);
+        RetireNativeResourceOwner(memoryAddress, size, NativeSourceEpochProducer::LockedCacheDma);
     }
     std::memcpy(load ? cache : memory, load ? memory : cache, size);
     static unsigned traced = 0;
