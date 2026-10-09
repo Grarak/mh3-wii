@@ -103,6 +103,14 @@ class DiscReader {
         replies.back().request = request;
 #ifdef MH3_DEVELOPMENT
         replies.back().submitted = Clock::now();
+
+        // The caller's first read after its last reply: how long it was idle.
+        if (const auto last = delivered.find(request.caller); length && last != delivered.end()) {
+            CallerReads& c = callers[request.caller];
+            c.idle += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(replies.back().submitted - last->second).count());
+            ++c.idled;
+            delivered.erase(last);
+        }
 #endif
         if (length && !started) {
             started = true;
@@ -136,6 +144,13 @@ class DiscReader {
 
             if (reply.broken)
                 continue; // answered by Break
+#ifdef MH3_DEVELOPMENT
+            if (reply.length) {
+                const auto now = Clock::now();
+                callers[reply.request.caller].deliver += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(now - reply.readyAt).count());
+                delivered[reply.request.caller] = now;
+            }
+#endif
             guard.unlock();
 
             if (!reply.failure.empty())
@@ -215,7 +230,7 @@ class DiscReader {
         std::string failure; // why the read failed
         DiscRequest request;
 #ifdef MH3_DEVELOPMENT
-        Clock::time_point submitted;
+        Clock::time_point submitted, readyAt;
         bool ahead = false; // answered from the read-ahead
 #endif
     };
@@ -381,7 +396,8 @@ class DiscReader {
             guard.lock();
 #ifdef MH3_DEVELOPMENT
             next->ahead = hit;
-            Count(*next, start, read, Clock::now());
+            next->readyAt = Clock::now();
+            Count(*next, start, read, next->readyAt);
 #else
             (void)hit;
 #endif
@@ -395,8 +411,9 @@ class DiscReader {
   public:
     // Development: each second's reads per caller for the "MH3 disc" lines:
     // the time on the disc, waiting for the asset cache's conversion, and
-    // from the request to the reply. Reads over 50 ms are listed with their
-    // file.
+    // from the request to the reply; how long a ready reply waited for the
+    // game thread to deliver it, and how long the caller then took to ask for
+    // its next read (idle). Reads over 50 ms are listed with their file.
     void Report(double seconds) {
         std::vector<std::pair<uint32_t, CallerReads>> rows;
         uint64_t ahead;
@@ -411,14 +428,19 @@ class DiscReader {
             std::fprintf(stderr, "MH3 disc: read ahead %.2f MiB/s\n", ahead / (1048576.0 * seconds));
 
         for (const auto& [caller, c] : rows)
-            std::fprintf(stderr, "MH3 disc: %s %.1f reads/s %.2f MiB/s (%llu from the read-ahead); disc %.2f ms avg %.2f max, conversion wait %.2f ms avg, reply %.2f ms avg %.2f max\n",
+            std::fprintf(stderr,
+                         "MH3 disc: %s %.1f reads/s %.2f MiB/s (%llu from the read-ahead); disc %.2f ms avg %.2f max, conversion wait %.2f ms avg, reply %.2f ms avg %.2f max, "
+                         "delivery %.2f ms avg, idle %.2f ms avg (%llu)\n",
                          CallerName(caller).c_str(), c.reads / seconds, c.bytes / (1048576.0 * seconds), static_cast<unsigned long long>(c.ahead),
-                         c.disc / (1000.0 * c.reads), c.discMax / 1000.0, c.convert / (1000.0 * c.reads), c.reply / (1000.0 * c.reads), c.replyMax / 1000.0);
+                         c.disc / (1000.0 * std::max<uint64_t>(c.reads, 1)), c.discMax / 1000.0, c.convert / (1000.0 * std::max<uint64_t>(c.reads, 1)),
+                         c.reply / (1000.0 * std::max<uint64_t>(c.reads, 1)), c.replyMax / 1000.0, c.deliver / (1000.0 * std::max<uint64_t>(c.reads, 1)),
+                         c.idle / (1000.0 * std::max<uint64_t>(c.idled, 1)), static_cast<unsigned long long>(c.idled));
     }
 
   private:
     struct CallerReads {
         uint64_t reads = 0, bytes = 0, ahead = 0, disc = 0, discMax = 0, convert = 0, reply = 0, replyMax = 0; // us
+        uint64_t deliver = 0, idle = 0, idled = 0;                                                         // us, us, count
     };
 
     using Callers = std::map<uint32_t, CallerReads>;
@@ -473,6 +495,7 @@ class DiscReader {
     }
 
     Callers callers;
+    std::map<uint32_t, Clock::time_point> delivered; // each caller's last reply, until its next read
     uint64_t aheadBytes = 0;
 #endif
     std::mutex lock;
