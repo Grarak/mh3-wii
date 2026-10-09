@@ -206,10 +206,9 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         EfbCopyTrace::BeforeCopy(copy.destination, copy.bytes);
 #endif
         GXCopyTex(destination, copy.clear ? GX_TRUE : GX_FALSE);
-        // Eager readback keeps all translated RAM reads coherent, including
-        // inlined accesses. A later demand-paged bridge may defer this wait.
-        if (!aurora_flush_efb_copy_to_ram(destination))
-            throw std::runtime_error("GX texture-copy readback failed");
+        // No RAM readback: the copy stays on the GPU and Aurora binds it when
+        // the guest samples this address. MH3 was not seen reading copy bytes
+        // from the CPU; MH3_ENABLE_EFB_COPY_TRACE reports any access that does.
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
         EfbCopyTrace::AfterCopy(copy.destination, copy.guestDestination, copy.bytes, copy.width, copy.height, copy.format);
 #endif
