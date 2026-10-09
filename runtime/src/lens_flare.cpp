@@ -15,15 +15,19 @@
 // update that gets past it underwater draws the parts at the visibility the
 // sun had above water. MH3_TRACE=sun (development) reports each switch
 // between updates that run and updates that return early, with the camera's
-// height (the point ahead of it the fade gets).
-#ifdef MH3_DEVELOPMENT
+// height (the point ahead of it the fade gets). Registered in every build:
+// the generated dispatch profile names these natives, so a release build
+// without them stopped at its start ("omits translated winner 0x80102660").
 #include "abi_bridge.h"
+#ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
 #include "memory.h"
 #include <chrono>
 #include <cstdio>
+#endif
 
 namespace {
+#ifdef MH3_DEVELOPMENT
 constexpr uint32_t kSeaFlag = 0x806BB854; // u8, bit 0: the camera's height decides (set in the Deserted Island, on land too)
 
 bool Traced() {
@@ -40,6 +44,11 @@ double Seconds() {
 bool faded = false;
 uint32_t fadeVisible = 0;
 float fadeY = 0;
+#else
+constexpr bool Traced() {
+    return false;
+}
+#endif
 } // namespace
 
 extern "C" void func_80102008(CpuContext* ctx);
@@ -48,6 +57,7 @@ extern "C" void MH3_LensFlareUpdate(CpuContext* ctx) {
         func_80102008(ctx);
         return;
     }
+#ifdef MH3_DEVELOPMENT
 
     static uint32_t calls = 0, ran = 0, switches = 0;
     static int lastRan = -1;
@@ -74,18 +84,19 @@ extern "C" void MH3_LensFlareUpdate(CpuContext* ctx) {
 
     if (calls % 1800 == 0)
         std::fprintf(stderr, "MH3 sun: %.3f s %u updates, %u ran, %u switches; part visibility %.3f\n", Seconds(), calls, ran, switches, flare ? Memory::ReadFloat32(flare + 0xC) : 0.f);
+#endif
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80102008, MH3_LensFlareUpdate, "LensFlareUpdate");
 
 extern "C" void func_80102660(CpuContext* ctx);
 extern "C" void MH3_LensFlareFade(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
     if (Traced()) [[unlikely]] {
         faded = true;
         fadeVisible = ctx->gpr[4] & 0xFF;
         fadeY = Memory::ReadFloat32(ctx->gpr[5] + 4);
     }
-
+#endif
     func_80102660(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80102660, MH3_LensFlareFade, "LensFlareFade");
-#endif
