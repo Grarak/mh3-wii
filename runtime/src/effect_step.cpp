@@ -160,6 +160,7 @@ struct Particle {
     uint16_t seed = 0;       // identity: a reused slot or a stock tick invalidates the entry
     double age = 0;          // ticks, fractional
     uint64_t generation = 0; // Effect::Calc pass that last advanced it
+    uint32_t between = 0;    // the Calc call (betweenCall) in which its age crosses no tick
 };
 
 // Guest address -> V, open addressing with linear probing: a multiplicative
@@ -694,7 +695,8 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
             continue;
         const uint16_t tick = MemoryInline::FlatRead16(p + kParticleTick);
         double age = tick, dt = step.particleStep;
-        if (const Particle* found = step.particles.Find(p)) {
+        Particle* found = step.particles.Find(p);
+        if (found) {
             const Particle& e = *found;
             if (e.seed == MemoryInline::FlatRead16(p + kParticleSeed) && uint32_t(e.age) == tick) {
                 age = e.age;
@@ -707,8 +709,14 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         Work w{p, age, dt, MemoryInline::FlatReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity), ReadVec(p + kParticlePosition)};
         if (dt != 1.0)
             MemoryInline::FlatWriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
-        if (std::floor(age + dt) == std::floor(age))
-            betweenTicks[p] = betweenCall;
+        if (std::floor(age + dt) == std::floor(age)) {
+            // Its step entry carries the stamp; a particle on a whole tick has
+            // none, and the map takes it.
+            if (found)
+                found->between = betweenCall;
+            else
+                betweenTicks[p] = betweenCall;
+        }
         work.push_back(w);
     }
     ParticleManagerCalcNative(ctx);
@@ -742,7 +750,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
             step.particles.Erase(p);
             continue;
         }
-        step.particles[p] = {MemoryInline::FlatRead16(p + kParticleSeed), age, step.generation};
+        step.particles[p] = {MemoryInline::FlatRead16(p + kParticleSeed), age, step.generation, 0};
         // After the tick from age k the Wii shows the curves at k: the curves
         // run one tick behind the age, here at age - 1.
         if (age <= 1.0)
@@ -759,8 +767,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x800AC35C, MH3_ParticleManagerCalc, "ParticleManage
 // Child emission is a curve event: only when the particle's age crosses a tick.
 extern "C" void func_800A1D0C(CpuContext* ctx);
 static void AnimCurveExecuteChildPort(CpuContext* ctx) {
+    const Particle* entry = step.particles.Find(ctx->gpr[4]);
     const uint32_t* stamp = betweenTicks.Find(ctx->gpr[4]);
-    if (!stamp || *stamp != betweenCall)
+    if (!(entry && entry->between == betweenCall) && !(stamp && *stamp == betweenCall))
         func_800A1D0C(ctx);
 }
 extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) {
