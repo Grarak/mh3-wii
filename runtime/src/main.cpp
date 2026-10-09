@@ -94,10 +94,11 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --village                      start File 1 / character 1 in the village\n"
                                "  --list quests|online-quests|arena-quests\n"
                                "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-                               "  --quest <id>|free [--area <n>] [--spawn <x,y,z>]\n"
+                               "  --quest <id>|free [--area <n>] [--spawn <x,y,z>|exit:<n>]\n"
                                "                                 start a quest (village, arena or online) or the\n"
                                "                                 Moga Woods free roam from the village; --spawn\n"
-                               "                                 moves the hunter there (arena pit: 0,300,0)\n"
+                               "                                 moves the hunter there (arena pit: 0,300,0), or\n"
+                               "                                 into the area's exit to area n\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
                                "                                 the launcher's list by its name (\"InfHP\"; with its\n"
@@ -155,6 +156,8 @@ void StartQuestBoot(int argc, char** argv) {
 
         if (option == "--area" && i + 1 < argc)
             area = std::stoi(argv[++i]);
+        else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
+            RequestQuestExit(std::stoi(argv[++i] + 5));
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)
             RequestQuestSpawn(x, y, z);
         else

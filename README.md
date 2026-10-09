@@ -93,9 +93,11 @@ MH3 --quest 19001 --area 1 --no-damage    # Alatreon, the benchmark quest
 MH3 --launcher                # development builds: the Vita launcher's menus
 ```
 
-`--quest <id>|free [--area <n>] [--spawn x,y,z] [--no-damage]` starts a quest
-directly. `--cheat <name>[=<value>]` (repeatable, with any option) turns on a
-code of the launcher's cheat list, for example `--cheat "Inf HP"` or
+`--quest <id>|free [--area <n>] [--spawn x,y,z|exit:<n>] [--no-damage]` starts a
+quest directly; `--spawn exit:<n>` puts the hunter into the start area's exit
+to area n, so the game changes area as it does in play.
+`--cheat <name>[=<value>]` (repeatable, with any option) turns on a code of
+the launcher's cheat list, for example `--cheat "Inf HP"` or
 `--cheat "Bully:Super speed=L+R+Up"` ([cheats](docs/vita-launcher.md#custom-quests-and-cheats)).
 `MH3_DISC_DIR` points at another prepared data directory instead.
 Saves default to `saves/` (`MH3_USER_DIR` changes the root); development

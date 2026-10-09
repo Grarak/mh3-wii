@@ -26,6 +26,15 @@
 // more than once while it starts. The arena's start area is its waiting room;
 // --spawn 0,300,0 drops the hunter into the pit.
 //
+// --spawn exit:n instead puts the hunter, kExitSettle steps into the field,
+// into the current area's exit toward area n, and the game changes area as if
+// they had walked there: the exit check (0x802B2754, each step of the field)
+// tests, while the hunter may leave, their position against the area's exits
+// (0x802AFEC0(map, area): 0x34-byte records up to an s8 -1, +0 the area they
+// lead to, +2 the shape, 0 a cylinder at +4 x, +8 y, +0xC z) and on a hit
+// starts the change (0x8028D150(area, the position +0x24 there, the angle
+// +0x30)).
+//
 // The village runs 30 steps in its main state before leaving.
 #include "field_jump.h"
 
@@ -63,6 +72,16 @@ enum : uint32_t {
 
 constexpr uint64_t kSpawnSettle = 60; // game frames (30 Hz)
 enum : uint32_t {
+    MyPlayerIndex = 0x800CF3E8,
+    GetNowMapNumber = 0x802AFCD8,
+    GetNowAreaNumber = 0x802AFCE8,
+    AreaExits = 0x802AFEC0, // (map, area): the area's exits
+};
+
+constexpr uint32_t kExitSettle = 60; // exit checks (game steps) in the field
+constexpr uint32_t kExitBytes = 0x34;
+constexpr uint16_t kExitCylinder = 0;
+enum : uint32_t {
     kWorkArea = 0xEA,
     kWorkStartArea = 0xEE
 };
@@ -89,6 +108,8 @@ struct Jump {
     int lastState = -1;
     bool spawn = false;
     float spawnPos[3] = {};
+    int exitArea = -1;       // --spawn exit:n, -1: a position
+    uint32_t exitChecks = 0; // exit checks in the field so far
     uint64_t placedAt = 0; // game frame the hunter was first seen placed, 0: not yet
 };
 
@@ -158,6 +179,10 @@ void RequestQuestSpawn(float x, float y, float z) {
     jump.spawnPos[2] = z;
 }
 
+void RequestQuestExit(int area) {
+    State().exitArea = area;
+}
+
 void FieldJumpFrame(uint64_t gameFrame) {
     Jump& jump = State();
 
@@ -184,6 +209,38 @@ void FieldJumpFrame(uint64_t gameFrame) {
     std::fprintf(stderr, "MH3 field jump: moved the hunter to %.1f %.1f %.1f\n", jump.spawnPos[0], jump.spawnPos[1], jump.spawnPos[2]);
     jump.spawn = false;
 }
+
+// The hunter's exit check; first, for --spawn exit:n, the hunter into that
+// exit.
+extern "C" void func_802B2754(CpuContext* ctx);
+extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
+    Jump& jump = State();
+
+    if (jump.exitArea >= 0 && jump.done && ++jump.exitChecks == kExitSettle) {
+        const CpuContext saved = *ctx;
+        GuestCall game{ctx};
+        const uint32_t player = game.Call<MoveWork>({kPlayerMoveWork}) + 0xB20 * uint32_t(int8_t(game.Call<MyPlayerIndex>()));
+        const int8_t area = int8_t(game.Call<GetNowAreaNumber>());
+        uint32_t exit = area < 0 ? 0 : game.Call<AreaExits>({uint8_t(game.Call<GetNowMapNumber>()), uint8_t(area)});
+        *ctx = saved;
+
+        for (; exit && int8_t(Memory::Read8(exit)) != -1; exit += kExitBytes)
+            if (int8_t(Memory::Read8(exit)) == jump.exitArea && Memory::Read16(exit + 2) == kExitCylinder)
+                break;
+
+        if (!exit || int8_t(Memory::Read8(exit)) == -1) {
+            std::fprintf(stderr, "MH3 field jump: area %d has no exit to area %d\n", area, jump.exitArea);
+        } else {
+            for (int i = 0; i < 3; ++i)
+                Memory::WriteFloat32(player + kPosition + 4 * i, Memory::ReadFloat32(exit + 4 + 4 * i));
+
+            std::fprintf(stderr, "MH3 field jump: moved the hunter into area %d's exit to area %d\n", area, jump.exitArea);
+        }
+    }
+
+    func_802B2754(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802B2754, MH3_PlayerAreaExit, "PlayerAreaExit");
 
 // Loads the field's quest file: the jump's quest set.
 extern "C" void func_803AD264(CpuContext* ctx);
