@@ -14,7 +14,11 @@
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
+#ifdef __vita__
+#include "../vita/platform.h"
+#else
 #include <execinfo.h>
+#endif
 #include <iostream>
 #include <string_view>
 
@@ -35,9 +39,11 @@ void SystemBridge::DumpCpuState(std::ostream& out, const CpuContext* cpu) {
 }
 void SystemBridge::DumpCpuState(const CpuContext* cpu) { DumpCpuState(std::cerr, cpu); }
 void DumpHostStackTraceForRuntimeHelper() {
+#ifndef __vita__
     void* frames[40];
     int count = backtrace(frames, 40);
     backtrace_symbols_fd(frames, count, 2);
+#endif
 }
 void ShowRuntimeFatalPopup(std::string_view category, std::string_view details) noexcept {
     std::cerr << category << ": " << details << '\n';
@@ -127,6 +133,9 @@ void StartQuestBoot(int argc, char** argv) {
 #endif
 
 int main(int argc, char** argv) {
+#ifdef __vita__
+    InitializeVitaPlatform(argc, argv);
+#endif
     // Ctrl-C ends the process at once (the default action); SDL would turn it
     // into a quit event the game only sees at its next event check.
     setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);

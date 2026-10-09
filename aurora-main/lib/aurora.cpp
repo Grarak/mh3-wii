@@ -233,6 +233,8 @@ constexpr const char* backend_name(AuroraBackend backend) noexcept {
     return "OpenGL";
   case BACKEND_OPENGLES:
     return "OpenGLES";
+  case BACKEND_GXM:
+    return "GXM";
   case BACKEND_WEBGPU:
     return "WebGPU";
   case BACKEND_NULL:
@@ -286,15 +288,19 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
   ASSERT(window::initialize_event_watch(), "Error initializing SDL event watch");
 
 #ifdef AURORA_ENABLE_GX
-  // OpenGL ES 3.0 is the only renderer.
-  if (config.desiredBackend != BACKEND_AUTO && config.desiredBackend != BACKEND_OPENGLES) {
-    Log.warn("Requested graphics backend {} is unavailable; using OpenGL ES", backend_name(config.desiredBackend));
-  }
+#ifdef AURORA_GXM
+  const AuroraBackend selectedBackend = BACKEND_GXM;
+#else
   const AuroraBackend selectedBackend = BACKEND_OPENGLES;
+#endif
+  if (config.desiredBackend != BACKEND_AUTO && config.desiredBackend != selectedBackend) {
+    Log.warn("Requested graphics backend {} is unavailable; using {}", backend_name(config.desiredBackend),
+             backend_name(selectedBackend));
+  }
   if (!window::create_window(selectedBackend) || !gpu::initialize(window::get_sdl_window())) {
     std::string error = SDL_GetError();
     if (error.empty()) {
-      error = "OpenGL ES 3.0 is unavailable";
+      error = std::string(backend_name(selectedBackend)) + " is unavailable";
     }
     window::destroy_window();
     SDL_SetError("%s", error.c_str());
@@ -625,7 +631,11 @@ bool aurora_flush_draws() {
 }
 AuroraBackend aurora_get_backend() { return aurora::g_config.desiredBackend; }
 const AuroraBackend* aurora_get_available_backends(size_t* count) {
+#ifdef AURORA_GXM
+  static constexpr AuroraBackend Backends[] = {BACKEND_GXM};
+#else
   static constexpr AuroraBackend Backends[] = {BACKEND_OPENGLES};
+#endif
   if (count != nullptr) {
     *count = 1;
   }

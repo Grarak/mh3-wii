@@ -24,6 +24,7 @@ namespace {
 using namespace gxm;
 [[noreturn]] void fail(const char* message) {
   std::printf("Aurora GXM: %s\n", message);
+  std::fprintf(stderr, "Aurora GXM: %s\n", message);
   std::fflush(stdout);
   sceKernelExitProcess(1);
   std::abort();

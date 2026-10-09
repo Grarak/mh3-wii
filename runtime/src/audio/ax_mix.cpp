@@ -8,6 +8,9 @@
 #include "memory.h"
 #include "ppc_runtime.h"
 #include "runtime_log.h"
+#ifdef __vita__
+#include <aurora/thread_role.hpp>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -41,6 +44,12 @@ bool MixWorkerWanted() {
 }
 
 std::filesystem::path FindDspCoefficientRom() {
+#ifdef __vita__
+    for (const char* path : {"app0:/dsp_coef.bin", "host0:/game/dsp_coef.bin"}) {
+        if (std::filesystem::is_regular_file(path)) return path;
+    }
+    throw std::runtime_error("Missing bundled Wii DSP coefficient ROM (dsp_coef.bin)");
+#else
     for (auto base = std::filesystem::current_path(); !base.empty();) {
         const auto sourceTreeAsset = base / "Assets" / "DSP" / "dsp_coef.bin";
         if (std::filesystem::is_regular_file(sourceTreeAsset)) {
@@ -54,6 +63,7 @@ std::filesystem::path FindDspCoefficientRom() {
     }
 
     throw std::runtime_error("Missing bundled Wii DSP coefficient ROM (dsp_coef.bin)");
+#endif
 }
 
 class AXWii {
@@ -1371,6 +1381,9 @@ private:
     }
 
     void MixWorkerMain() {
+#ifdef __vita__
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+#endif
         t_onMixWorker = true;
         for (;;) {
             {

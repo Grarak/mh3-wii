@@ -19,6 +19,9 @@
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>
+#endif
 
 extern "C" void MH3_EXIInit(CpuContext*);
 extern "C" void MH3_EXIGetID(CpuContext*);
@@ -832,8 +835,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             const char* value = std::getenv("MH3_USER_DIR");
             hadOriginal = value != nullptr;
             if (value) original = value;
-            std::string pattern = (std::filesystem::temp_directory_path() / "mh3-sram-test-XXXXXX").string();
+#ifdef __vita__
+            const auto testRoot = std::filesystem::path(original).parent_path() / ".port-tests";
+            std::filesystem::create_directories(testRoot);
+            std::string pattern = (testRoot / ("mh3-sram-test-" + std::to_string(sceKernelGetProcessId()))).string();
+            if (!std::filesystem::create_directory(pattern)) throw std::runtime_error("SRAM test directory already exists");
+#else
+            const auto testRoot = std::filesystem::temp_directory_path();
+            std::string pattern = (testRoot / "mh3-sram-test-XXXXXX").string();
             if (!mkdtemp(pattern.data())) throw std::runtime_error("Unable to create SRAM test directory");
+#endif
             path = pattern;
             setenv("MH3_USER_DIR", pattern.c_str(), 1);
         }
@@ -892,7 +903,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     cpu->gpr[3] = fd; MH3_IOSClose(cpu);
     if (open("/../escape", 1) != -4 || open("//etc/passwd", 1) != -4 || open("/missing", 1) != -106)
         throw std::runtime_error("IOS path/error handling failed");
+#ifndef __vita__ // Vita's exFAT mount cannot contain symlinks.
     std::filesystem::create_directory_symlink(directory.path, nand / "link");
+#endif
     if (open("/link/sram.bin", 1) >= 0)
         throw std::runtime_error("IOS NAND symlink isolation failed");
     std::filesystem::create_directories(nand / "usage/sub");
@@ -924,8 +937,10 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         throw std::runtime_error("Asynchronous ioctlv completion lost result/arguments");
     if (usage("/../usage") != -4 || usage("//etc") != -4 || usage("/link") >= 0)
         throw std::runtime_error("NAND usage followed an unsafe path");
+#ifndef __vita__
     std::filesystem::create_directory_symlink(directory.path, nand / "usage/sub/link");
     if (usage("/usage") != -102) throw std::runtime_error("NAND usage followed a nested symlink");
+#endif
     auto createEntry = [&](const std::string& path, bool directoryEntry, bool async = false) {
         for (uint32_t i = 0; i < 0x4C; ++i) Memory::Write8(0x80001800 + i, 0);
         for (size_t i = 0; i < path.size(); ++i) Memory::Write8(0x80001806 + i, path[i]);
@@ -1017,10 +1032,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (heldFd < 0 || erase("/tmp/mh3-test") != -111 || !std::filesystem::exists(nand / "tmp/mh3-test/moved"))
         throw std::runtime_error("NAND deleted an in-use subtree");
     cpu->gpr[3] = heldFd; MH3_IOSClose(cpu);
+#ifndef __vita__
     std::filesystem::create_directory_symlink(directory.path, nand / "tmp/mh3-test/link");
     if (erase("/tmp/mh3-test") != -102 || !std::filesystem::exists(nand / "tmp/mh3-test/moved"))
         throw std::runtime_error("NAND delete did not reject a symlink before changing data");
     std::filesystem::remove(nand / "tmp/mh3-test/link");
+#endif
     if (erase("/") != -101 || erase("/../escape") != -101 || erase("/tmp/mh3-test") ||
         std::filesystem::exists(nand / "tmp/mh3-test") || erase("/tmp/mh3-test") != -106)
         throw std::runtime_error("NAND recursive delete/error handling failed");

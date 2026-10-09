@@ -2,6 +2,7 @@
 
 #include "../internal.hpp"
 #include "aurora/gfx.h"
+#include "aurora/thread_role.hpp"
 
 // Guest matrices really do carry NaN/Inf, and the isfinite guards here keep them
 // out of the MatchEdge sort. Needs -fno-finite-math-only (see runtime/CMakeLists.txt).
@@ -93,7 +94,13 @@ private:
     const unsigned hardware = std::thread::hardware_concurrency();
     // The caller helps too. Cap the helpers: tasks are short memcpy+math, so dispatch
     // overhead and memory bandwidth dominate past a few threads.
-    const unsigned helpers = hardware > 2 ? std::min(hardware - 1, 6u) : 0;
+    const unsigned helpers = hardware > 2 ? std::min(hardware - 1,
+#ifdef __vita__
+                                                    1u
+#else
+                                                    6u
+#endif
+                                                    ) : 0;
     m_workers.reserve(helpers);
     for (unsigned i = 0; i < helpers; ++i) {
       m_workers.emplace_back([this] { worker_loop(); });
@@ -116,6 +123,7 @@ private:
   }
 
   void worker_loop() {
+    aurora::pin_current_thread(aurora::ThreadRole::Worker);
     uint64_t seenGeneration = 0;
     while (true) {
       {

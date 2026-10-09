@@ -22,6 +22,7 @@ typedef enum {
   BACKEND_OPENGLES,
   BACKEND_WEBGPU,
   BACKEND_NULL,
+  BACKEND_GXM,
 } AuroraBackend;
 
 typedef enum {

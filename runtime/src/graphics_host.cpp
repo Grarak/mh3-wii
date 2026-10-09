@@ -17,6 +17,7 @@
 #include <vector>
 #include <cstring>
 #include <aurora/aurora.h>
+#include <aurora/thread_role.hpp>
 #include <cstdlib>
 #include <aurora/event.h>
 #include <aurora/gfx.h>
@@ -81,7 +82,9 @@ class GxWorker {
 public:
     explicit GxWorker(void (*process)(const uint8_t*, size_t)) : process(process), filling(kChunk) {
         thread = std::thread([this] { Run(); });
+#ifndef __vita__
         pthread_setname_np(thread.native_handle(), "MH3 GX");
+#endif
     }
     void Submit(const uint8_t* data, size_t size) {
         CloseWindow();
@@ -141,6 +144,7 @@ private:
         work.notify_one();
     }
     void Run() {
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
         std::unique_lock lock(mutex);
         for (;;) {
             work.wait(lock, [&] { return stop || !queue.empty(); });
@@ -235,15 +239,26 @@ void ShutdownGraphics() {
 }
 void InitializeGraphics(int argc, char** argv) {
     if (initialized) return;
-    std::filesystem::create_directories("saves/graphics/cache");
-    const auto user = std::filesystem::absolute("saves/graphics").string();
-    const auto cache = std::filesystem::absolute("saves/graphics/cache").string();
+    const char* userRoot = std::getenv("MH3_USER_DIR");
+    const auto graphicsRoot = (userRoot ? std::filesystem::path(userRoot) : "saves") / "graphics";
+    std::filesystem::create_directories(graphicsRoot / "cache");
+#ifdef __vita__
+    // libstdc++'s POSIX absolute() treats the Vita mount prefix as relative.
+    const auto user = graphicsRoot.string();
+    const auto cache = (graphicsRoot / "cache").string();
+#else
+    const auto user = std::filesystem::absolute(graphicsRoot).string();
+    const auto cache = std::filesystem::absolute(graphicsRoot / "cache").string();
+#endif
     AuroraConfig config{};
     config.appName = "Monster Hunter Tri";
     config.userPath = user.c_str();
     config.cachePath = cache.c_str();
-    // MH3 renders only through OpenGL ES 3.0 (aurora-gles).
+#ifdef AURORA_GXM
+    config.desiredBackend = BACKEND_GXM;
+#else
     config.desiredBackend = BACKEND_OPENGLES;
+#endif
     config.windowWidth = 640;
     config.windowHeight = 480;
 #ifdef MH3_DEVELOPMENT
@@ -286,8 +301,7 @@ void InitializeGraphics(int argc, char** argv) {
     }
 #endif
     std::atexit(ShutdownGraphics);
-    // Aurora falls back to another backend when GLES fails; never run on one.
-    if (info.backend != BACKEND_OPENGLES) throw std::runtime_error("Aurora did not select OpenGL ES");
+    if (info.backend != config.desiredBackend) throw std::runtime_error("Aurora did not select the required renderer");
     aurora::gx::fifo::init();
     // Frameskip: a frame is dropped when the render thread is still busy with the
     // previous one. MH3_FRAMESKIP=0 renders every frame (debugging).
@@ -831,7 +845,7 @@ int RunGraphicsCheck(int argc, char** argv) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
-    if (frames != 30) throw std::runtime_error("GLES frame check timed out");
-    std::fprintf(stderr, "MH3 GLES renderer check: %u frames submitted\n", frames);
+    if (frames != 30) throw std::runtime_error("Renderer frame check timed out");
+    std::fprintf(stderr, "MH3 renderer check: %u frames submitted\n", frames);
     return 0;
 }

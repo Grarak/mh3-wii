@@ -9,7 +9,11 @@
 // path and are not listed; scripts/ can find those statically.
 #include "slow_path_trace.h"
 
+#ifdef __vita__
+#include "abi_bridge.h"
+#else
 #include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -69,8 +73,13 @@ const auto start = std::chrono::steady_clock::now();
 auto lastReport = start;
 
 std::string Describe(const void* pc) {
+#ifdef __vita__
+    if (auto entry = TranslatedFunctionRegistry::FindByHostAddress(reinterpret_cast<uintptr_t>(pc)))
+        return entry->name;
+#else
     Dl_info info{};
     if (dladdr(pc, &info) && info.dli_sname) return info.dli_sname;
+#endif
     char text[32];
     std::snprintf(text, sizeof(text), "%p", pc);
     return text;

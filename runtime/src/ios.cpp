@@ -10,7 +10,13 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef __vita__
+#include <psp2/io/fcntl.h>
+#include <psp2/io/dirent.h>
+#include <psp2/io/stat.h>
+#else
 #include <sys/xattr.h>
+#endif
 #include <memory>
 #include <iostream>
 #include <map>
@@ -62,6 +68,7 @@ bool ValidNandPath(const std::string& path, bool allowRoot = false) {
 // one title: UID 0x1000, group 0x3038 (verified in RMHP08's TMD).
 using NandMetadata = std::array<uint8_t, 10>;
 constexpr NandMetadata defaultMetadata{0, 0, 0x10, 0, 0x30, 0x38, 3, 3, 3, 0};
+#ifndef __vita__
 #ifdef __APPLE__
 constexpr const char* metadataName = "org.mh3.nand";
 #else
@@ -85,6 +92,7 @@ int GetMetadata(int fd, NandMetadata& metadata) {
 #endif
     return size == metadata.size() ? 0 : size < 0 ? Error() : -101;
 }
+#endif
 std::string GuestPath(uint32_t address) {
     std::string path;
     for (unsigned i = 0; i < 64; ++i) {
@@ -97,6 +105,11 @@ std::string GuestPath(uint32_t address) {
 // IOS_Open does not create files. ISFS creation will be handled independently.
 // Resolve every component relative to the private NAND root without following
 // symlinks, and reject traversal before opening any host file.
+#ifdef __vita__
+#include "../vita/nand.inc"
+#else
+int CloseNandPath(int fd) { return ::close(fd); }
+int SyncNandFile(int fd) { return ::fsync(fd) == 0 ? 0 : Error(); }
 int OpenNandPath(const std::string& path, int finalFlags, bool allowRoot = false) {
     if (!ValidNandPath(path, allowRoot)) return -4;
     std::filesystem::path relative = path.substr(1);
@@ -268,6 +281,7 @@ int DirectoryUsage(int fd, uint64_t& clusters, uint64_t& inodes, unsigned depth 
         } else return -102;
     }
 }
+#endif
 }
 
 std::optional<IosCompletion> TakeIosCompletion() {
@@ -306,7 +320,11 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
         if (path == "/dev/di") (void)Disc();
         if (path == "/dev/fs") {
             const int result = InitializeNand();
-            if (result) { ctx->gpr[3] = result; return; }
+            if (result) {
+                std::fprintf(stderr, "MH3 NAND initialization failed: %d (errno %d), root %s\n",
+                             result, errno, NandRoot().c_str());
+                ctx->gpr[3] = result; return;
+            }
         }
         uint32_t handle = nextHandle++;
         devices.emplace(handle, path);
@@ -335,8 +353,8 @@ extern "C" void MH3_IOSClose(CpuContext* ctx) {
     }
     auto it = files.find(ctx->gpr[3]);
     if (it == files.end()) { ctx->gpr[3] = -4; return; }
-    const int syncError = (it->second.mode & 2) && ::fsync(it->second.host) != 0 ? Error() : 0;
-    int result = ::close(it->second.host);
+    const int syncError = (it->second.mode & 2) ? SyncNandFile(it->second.host) : 0;
+    int result = CloseNandPath(it->second.host);
     files.erase(it);
     ctx->gpr[3] = syncError ? syncError : result == 0 ? 0 : Error();
 }
@@ -497,7 +515,7 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
                 for (unsigned i = 0; i < 6; ++i) metadata[i] = Memory::Read8(input + i);
                 const int fd = OpenNandPath(path, O_RDONLY);
                 result = fd < 0 ? fd : SetMetadata(fd, metadata);
-                if (fd >= 0) ::close(fd);
+                if (fd >= 0) CloseNandPath(fd);
             } else result = CreateNandEntry(path, command == 3, metadata);
             if (std::getenv("MH3_TRACE_ERRORS"))
                 std::cerr << "MH3 NAND command " << command << ": " << path << " -> " << result << '\n';
@@ -512,7 +530,7 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
             if (fd < 0) { ctx->gpr[3] = fd; return; }
             NandMetadata metadata;
             const int result = GetMetadata(fd, metadata);
-            ::close(fd);
+            CloseNandPath(fd);
             if (result) { ctx->gpr[3] = result; return; }
             for (unsigned i = 0; i < 74; ++i) Memory::Write8(output + i, 0);
             for (unsigned i = 0; i < 6; ++i) Memory::Write8(output + i, metadata[i]);
