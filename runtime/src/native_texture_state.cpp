@@ -11,6 +11,10 @@ std::array<mh3_native_palette_source,20> palettes{};
 struct TextureBinding { mh3_native_texture_binding value; bool valid=false; };
 std::array<TextureBinding,8> textures{};
 }
+const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit) {
+    if(unit>=textures.size()) throw std::runtime_error("Invalid native texture unit");
+    return textures[unit].valid ? &textures[unit].value : nullptr;
+}
 void BindNativePalette(uint32_t slot,const mh3_native_palette_source& palette) {
     if(!aurora::gl::on_render_thread()) throw std::runtime_error("Palette changed outside graphics owner");
     if(slot>=palettes.size() || !palette.payload_address || !palette.entries || palette.entries>16384 || palette.format>2)

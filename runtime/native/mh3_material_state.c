@@ -5,7 +5,7 @@
 
 /* These CPU producers preserve scalar arithmetic and nonfinite handling even
  * when their renderer target enables fast math. */
-#if defined(__clang__)
+#if defined(__clang__) && !defined(__arm__)
 #pragma float_control(precise,on)
 #endif
 
@@ -24,10 +24,12 @@ static mh3_res_status mask_check(uint64_t known,uint64_t allowed,uint64_t requir
     return MH3_RES_OK;
 }
 static int tev_domain(unsigned field,uint8_t value) {
-    static const uint8_t maximum[34]={15,15,15,15,15,2,3,1,3,7,7,7,7,15,2,3,1,3,255,7,7,3,3,31,31,3,3,7,3,11,6,6,1,1};
+    static const uint8_t maximum[34]={15,15,15,15,15,2,3,1,3,7,7,7,7,15,2,3,1,3,255,255,255,3,3,31,31,3,3,7,3,11,6,6,1,1};
     if(value>maximum[field]) return 0;
     if(field==MH3_TEV_COLOR_OPERATION || field==MH3_TEV_ALPHA_OPERATION) return value<=1 || value>=8;
     if(field==MH3_TEV_TEXTURE_MAP) return value<8 || value==255;
+    if(field==MH3_TEV_TEXTURE_COORDINATE) return value<8 || value==255;
+    if(field==MH3_TEV_RASTER_CHANNEL) return value<=8 || value==255;
     if(field==MH3_TEV_KONST_COLOR) return value<8 || value>=12;
     if(field==MH3_TEV_KONST_ALPHA) return value<8 || value>=16;
     if(field==MH3_TEV_INDIRECT_MATRIX) return value<=3 || (value>=5 && value<=7) || (value>=9 && value<=11);
@@ -91,7 +93,7 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
         const uint32_t required=requirements ? requirements->texgen[index] : 0;
         if(index>=state->texgen_count) {if(required) return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_TEXGEN,index,required);continue;}
         const mh3_pack_texgen *texgen=&state->texgen[index];
-        static const uint8_t maximum[10]={1,1,7,31,7,7,63,63,1,1};
+        static const uint8_t maximum[10]={1,1,3,12,7,7,63,63,1,1};
         status=mask_check(texgen->known,MH3_MATERIAL_TEXGEN_MASK,required,MH3_MATERIAL_TEXGEN,index,out);if(status) return status;
         for(unsigned field=0;field<10;++field) if((texgen->known&(1u<<field)) && texgen->values[field]>maximum[field])
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TEXGEN,index,1u<<field);
@@ -113,7 +115,8 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
         if(index>=state->indirect_count) {if(required) return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_INDIRECT,index,required);continue;}
         status=mask_check(indirect->known,15,required,MH3_MATERIAL_INDIRECT,index,out);if(status) return status;
         const uint8_t values[4]={indirect->coordinate,indirect->map,indirect->scale_s,indirect->scale_t};
-        for(unsigned field=0;field<4;++field) if((indirect->known&(1u<<field)) && values[field]>(field<2?7:8))
+        for(unsigned field=0;field<4;++field) if((indirect->known&(1u<<field)) &&
+            (field<2 ? values[field]>7 && values[field]!=255 : values[field]>8))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_INDIRECT,index,1u<<field);
     }
     for(unsigned index=0;index<3;++index) {

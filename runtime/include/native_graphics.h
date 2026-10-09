@@ -16,17 +16,23 @@ bool GetNativeNormalMatrix(uint32_t selector,float row_major[9]);
 void SetNativeViewport(float x,float y,float width,float height,float near_z,float far_z);
 void SetNativeScissor(int32_t x,int32_t y,int32_t width,int32_t height);
 void SetNativeRaster(const mh3_raster_state& raster);
+using NativeRasterObserver=void(*)(const mh3_raster_state&);
+void SetNativeRasterObserver(NativeRasterObserver observer);
 void RestoreNativeRenderState();
 void BindNativeTexture(const mh3_native_texture_binding& binding);
+const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit);
 void BindNativePalette(uint32_t slot,const mh3_native_palette_source& palette);
 void SetNativeFog(const mh3_native_fog& fog);
 void SetNativeModelLights(const mh3_native_light_slots& lights);
 void SetNativeTextureMatrix(uint32_t selector,const float row_major[12],bool matrix3x4);
+bool GetNativeTextureMatrix(uint32_t selector,float row_major[12],bool* matrix3x4=nullptr);
 void SetNativeDepthCompareBeforeTexture(bool before);
 void SetNativeMaterial(const mh3_native_material_state& material);
 const mh3_native_material_state& GetNativeMaterialState();
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) { SetNativeMaterial(material); }
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
+// Called before destroying the graphics context; preserves no borrowed GPU data.
+void ClearNativeMaterialPrograms();
 
 // Create the renderer on the game thread. Native targets use only the selected
 // visible dimensions, with no guest FIFO or XFB allocation/initialization.
