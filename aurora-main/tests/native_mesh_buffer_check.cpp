@@ -207,6 +207,8 @@ int main(int argc, char** argv) {
     GLuint sentinel=0; glGenBuffers(1,&sentinel); glBindBuffer(GL_COPY_WRITE_BUFFER,sentinel);
     {
       aurora::gl::NativeMeshBuffer buffer(path.c_str(),64,384);
+      require((reinterpret_cast<uintptr_t>(buffer.data()) & 15u)==0,
+              "resident GPU payload CPU view is not 16-byte aligned");
       require(buffer.size()==384 && !std::memcmp(buffer.data(),source.data()+64,384), "CPU range differs");
       GLint binding=0; glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING,&binding);
       require(GLuint(binding)==sentinel, "mesh load changed buffer binding");

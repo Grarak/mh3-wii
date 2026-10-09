@@ -44,6 +44,15 @@ struct NativeDraw {
 void native_program(uint32_t id,uint64_t vertexHash,uint64_t fragmentHash,
                     bool discard,bool depthReplace,std::string_view label) noexcept;
 void native_draw(std::string_view kind,const NativeDraw& draw) noexcept;
+// Runtime mesh provenance follows its actual native_draw row. Stable offline
+// IDs and explicit producer generations identify every use of a shared shader;
+// the program's first source origin alone cannot identify all later objects.
+struct NativeMeshSource {
+  uint32_t frame=0,program=0,asset=0,model=0,shape=0,mesh=0,firstIndex=0,indexCount=0;
+  uint64_t residentGeneration=0,sourceGeneration=0,poseGeneration=0,materialGeneration=0;
+  uint32_t layoutFlags=0;
+};
+void native_mesh_source(const NativeMeshSource& source) noexcept;
 // Actual GLSL/draw hashes are retained; Cg uses Vita-normalized alpha hashes.
 // Optional origin identifies the producer/program when supplied by a caller.
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment,

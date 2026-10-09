@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <new>
 #include <thread>
 
 #include "tracy/Tracy.hpp"
@@ -35,7 +36,13 @@ std::vector<std::pair<GLsync, size_t>> nativeMeshRetired;
 }
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
   if (!on_render_thread() || !bytes) throw std::runtime_error("Native mesh load outside context owner or empty payload");
-  auto data = std::make_unique<uint8_t[]>(bytes);
+  // The shared compact pack reader requires a 16-byte base. ARM32's
+  // ordinary byte-array allocation can be only eight-byte aligned.
+  const auto release = [](uint8_t* pointer) {
+    ::operator delete[](pointer, std::align_val_t(16));
+  };
+  std::unique_ptr<uint8_t, decltype(release)> data(
+      static_cast<uint8_t*>(::operator new[](bytes, std::align_val_t(16))), release);
   gfx::read_mesh_payload(path, offset, data.get(), bytes);
   GLint previous = 0;
   glGetIntegerv(GL_COPY_WRITE_BUFFER_BINDING, &previous);
@@ -61,7 +68,7 @@ NativeMeshBuffer::~NativeMeshBuffer() {
     nativeMeshLiveBytes -= bytes;
     nativeMeshRetired.emplace_back(fence, bytes);
   });
-  delete[] m_data;
+  ::operator delete[](const_cast<uint8_t*>(m_data), std::align_val_t(16));
 }
 size_t native_mesh_allocation_bytes(uint32_t bytes) {
   if (!on_render_thread()) throw std::runtime_error("Model allocation query outside context owner");

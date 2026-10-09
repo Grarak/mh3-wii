@@ -122,6 +122,14 @@ void native_draw(std::string_view kind,const NativeDraw& s) noexcept {
   std::fputc('\n',c.events);
   std::fflush(c.events);
 }
+void native_mesh_source(const NativeMeshSource& s) noexcept {
+  auto& c=capture();if (!c.events || s.frame%c.drawInterval) return;
+  std::lock_guard lock(c.mutex);
+  std::fprintf(c.events,"native_mesh_source\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%llu\t%llu\t%llu\t%llu\t%u\n",
+      s.frame,s.program,s.asset,s.model,s.shape,s.mesh,s.firstIndex,s.indexCount,
+      (unsigned long long)s.residentGeneration,(unsigned long long)s.sourceGeneration,
+      (unsigned long long)s.poseGeneration,(unsigned long long)s.materialGeneration,s.layoutFlags);
+}
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment,
             std::string_view origin) noexcept {
   auto& c = capture();

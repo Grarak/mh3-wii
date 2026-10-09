@@ -47,9 +47,14 @@ void RegisterNativeModelGPU(mh3_mesh_pack& pack,const char* path,uintptr_t handl
         throw std::runtime_error("Invalid or duplicate model GPU registration");
     Resident next{&pack,generation,std::make_unique<aurora::gl::NativeMeshBuffer>(path,pack.gpu_file_offset,pack.gpu_bytes),{}, {}};
     auto bound=pack;
-    if(mh3_mesh_pack_bind_gpu(&bound,{next.buffer->data(),next.buffer->size()})!=MH3_PACK_OK ||
-       mh3_mesh_pack_validate_indices(&bound)!=MH3_PACK_OK)
-        throw std::runtime_error("Invalid compact model GPU payload");
+    const auto bindStatus=mh3_mesh_pack_bind_gpu(&bound,{next.buffer->data(),next.buffer->size()});
+    if(bindStatus!=MH3_PACK_OK)
+        throw std::runtime_error("Compact model GPU binding failed (status "+
+                                 std::to_string(bindStatus)+"): "+path);
+    const auto indexStatus=mh3_mesh_pack_validate_indices(&bound);
+    if(indexStatus!=MH3_PACK_OK)
+        throw std::runtime_error("Compact model GPU index validation failed (status "+
+                                 std::to_string(indexStatus)+"): "+path);
     next.layouts.reserve(pack.counts[MH3_PACK_LAYOUTS]);
     for(unsigned i=0;i<pack.counts[MH3_PACK_LAYOUTS];++i) {
         mh3_pack_layout layout{};

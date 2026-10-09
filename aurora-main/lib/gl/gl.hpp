@@ -178,7 +178,7 @@ struct ProgramDesc {
 };
 
 // One immutable converted-pack payload. Vita reads directly into CDRAM; GLES
-// uploads once and retains a CPU view for common metadata range validation.
+// uploads once and retains a 16-byte-aligned CPU view for common pack validation.
 // Creation/destruction belong to the context owner. Retiring a live GPU buffer
 // never waits; its backing allocation survives all preceding submissions.
 class NativeMeshBuffer {

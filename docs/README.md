@@ -16,7 +16,7 @@ build, run and debug.
 - [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and historical DevKit checkpoints.
 - [vita-launcher.md](vita-launcher.md): launcher, ROM processing and startup UI scope.
 - [vita-render-investigation.md](vita-render-investigation.md), [vita-razor.md](vita-razor.md), [vita-active-play-capture.md](vita-active-play-capture.md): investigation/profiling tools and source-specific captures; older GX gameplay is historical.
-- [pi5-cortex-a9-benchmark.md](pi5-cortex-a9-benchmark.md): historical source-identified playable snapshots; Pi 5 executes the Cortex-A9 build on a Cortex-A76 CPU.
+- [pi5-cortex-a9-benchmark.md](pi5-cortex-a9-benchmark.md): current native gameplay CPU/frame measurements and historical regression boundary; Pi 5 executes the Cortex-A9 build on a Cortex-A76 CPU.
 - [aurora-dependency.md](aurora-dependency.md): maintained GLES/GXM copy and dependency setup.
 
 ## Runtime and simulation references

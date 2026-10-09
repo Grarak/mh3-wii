@@ -10,6 +10,10 @@
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
 #include "gl/gl.hpp"
+#ifdef MH3_DEVELOPMENT
+#include "gfx/port_capture.hpp"
+namespace aurora::gfx { uint32_t current_frame() noexcept; }
+#endif
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -576,9 +580,17 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     AuroraNativeUniforms uniforms{};
     if(!aurora_allocate_native_uniforms(modelState.info.uniformSize,&uniforms)) return;
     WriteUniforms(modelState,uniforms,&inputs,mesh.texcoord_sizes);
+    const auto programID=program->second->get();
     aurora::gl::draw_native_mesh(*resident.buffer,*resident.layout,resident.mesh->vertex_offset,
         resident.mesh->vertex_count,resident.mesh->index_offset+mesh.first_index*2,mesh.index_count,
-        program->second->get(),uniforms);
+        programID,uniforms);
+#ifdef MH3_DEVELOPMENT
+    if(aurora::gfx::port_capture::enabled())
+        aurora::gfx::port_capture::native_mesh_source({aurora::gfx::current_frame(),programID,
+            mesh.asset_id,mesh.model_id,mesh.shape_id,mesh.mesh_index,mesh.first_index,mesh.index_count,
+            mesh.resident_generation,mesh.source_generation,mesh.pose_generation,material.generation,
+            mesh.layout.flags});
+#endif
 }
 void ClearNativeMaterialPrograms() {
     Owner();programs.clear();modelPrograms.clear();ClearNativeModelGPU();preparedKnown=false;
