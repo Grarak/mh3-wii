@@ -1268,6 +1268,14 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     MH3_IOSIoctl(cpu);
     if (cpu->gpr[3] || Memory::Read32(0x80001946) != 0x03010020 || std::filesystem::exists(nand / "tmp/mh3-test/save") || std::filesystem::file_size(nand / "tmp/mh3-test/moved") != 5)
         throw std::runtime_error("NAND rename lost data or metadata");
+    // ISFS rename replaces an existing file (saves move their temporary over it).
+    {
+        std::ofstream(nand / "tmp/mh3-test/old") << "old";
+        std::ofstream(nand / "tmp/mh3-test/new") << "newer";
+    }
+    if (rename("/tmp/mh3-test/new", "/tmp/mh3-test/old") || std::filesystem::exists(nand / "tmp/mh3-test/new") || std::filesystem::file_size(nand / "tmp/mh3-test/old") != 5 ||
+        std::filesystem::exists(nand / "tmp/mh3-test/old.replaced"))
+        throw std::runtime_error("NAND rename did not replace an existing file");
     for (unsigned i = 0; i < 74; ++i)
         Memory::Write8(0x80001800 + i, Memory::Read8(0x80001900 + i));
     Memory::Write8(0x80001846, 1); // owner may read, but no longer write

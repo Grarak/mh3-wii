@@ -188,7 +188,24 @@ bool PathInTree(const std::string& path, const std::string& tree) {
 }
 int RenameNandEntry(const std::string& from, const std::string& to) {
     if (!NativeValidPath(from) || !NativeValidPath(to)) return -101;
-    const int result = sceIoRename(NativeNandPath(from).c_str(), NativeNandPath(to).c_str());
+    const auto source = NativeNandPath(from), target = NativeNandPath(to);
+    int result = sceIoRename(source.c_str(), target.c_str());
+    // ISFS Rename replaces an existing file; sceIoRename refuses (EEXIST).
+    // Saves move their temporary file over the old one, and the game retries
+    // a failed move forever. Move the old file aside, rename, then drop it
+    // (or put it back).
+    SceIoStat info{};
+    if (uint32_t(result) == 0x80010011 && sceIoGetstat(target.c_str(), &info) >= 0) {
+        if (!SCE_S_ISREG(info.st_mode)) return -102;
+        const auto aside = target.string() + ".replaced";
+        sceIoRemove(aside.c_str()); // left by an interrupted replace
+        result = sceIoRename(target.c_str(), aside.c_str());
+        if (result >= 0) {
+            result = sceIoRename(source.c_str(), target.c_str());
+            if (result < 0) sceIoRename(aside.c_str(), target.c_str());
+            else sceIoRemove(aside.c_str());
+        }
+    }
     if (result < 0) return NativeIoError(result);
     LoadNativeMetadata();
     std::map<std::string, NandMetadata> moved;
