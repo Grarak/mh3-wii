@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
 #include <stdexcept>
 
 namespace {
@@ -127,3 +128,14 @@ REGISTER_NATIVE_FUNCTION(0x804D3550, MH3_UnlockSram);
 // AX mixing and audio output still require their own host implementation.
 extern "C" void MH3_OSInitAudioSystem(CpuContext*) {}
 REGISTER_NATIVE_FUNCTION(0x804CC9D0, MH3_OSInitAudioSystem);
+
+// __write_console(handle, buffer, byteCount*, refCon): leave formatting to
+// MH3's translated C library and route its final byte stream to the host.
+extern "C" void MH3_WriteConsole(CpuContext* ctx) {
+    const uint32_t size = Memory::Read32(ctx->gpr[5]);
+    const void* bytes = Memory::GetPointer(ctx->gpr[4], size);
+    const size_t written = std::fwrite(bytes, 1, size, stderr);
+    Memory::Write32(ctx->gpr[5], static_cast<uint32_t>(written));
+    ctx->gpr[3] = written == size ? 0 : 1;
+}
+REGISTER_NATIVE_FUNCTION(0x80464340, MH3_WriteConsole);

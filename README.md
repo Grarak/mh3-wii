@@ -1,8 +1,8 @@
 # Monster Hunter Tri static recompilation for macOS
 
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
-but it is not playable yet.** The current boot passes device and initial thread setup. Host services are
-still being implemented; see the runtime progress section below.
+but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
+initial thread, and arena setup. It stops at IOS IPC initialization (`0xCD000004`).
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -94,8 +94,19 @@ The translated default thread-switch callback is explicitly seeded in
 OS boundaries; the latter preserves interrupt bindings and the original
 shutdown-list registration. This does not implement audio playback or scheduling.
 
+The console byte writer sends the original C library's formatted output to the
+host log. Boot metadata includes MEM1/MEM2 arenas and IOS55, requested by the
+supplied disc's TMD. IOS55 metadata follows
+[Dolphin's extracted IOS values](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/VersionInfo.cpp).
+
 With `MH3_TRACE_ERRORS=1`, runtime failures emit symbolized native backtraces
 before unwinding, so routine diagnosis needs no LLDB authorization.
+
+The latest run reaches `IPCCltInit` at `0x804BBDD0` and stops on its hardware
+control-register write to `0xCD000004`. The IPC heap is initialized at
+`0x935E0000`. IOS file/device services and callback scheduling are the next
+required host integration. The original arena-clearing code executes; its
+reset-code query reports a cold host launch or the SDK's saved restart code.
 
 Remaining requirements for a playable port include:
 

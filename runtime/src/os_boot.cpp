@@ -58,3 +58,11 @@ extern "C" void MH3_OSInitMemoryProtection(CpuContext* ctx) {
     Memory::Write32(0x80797830, 1);
 }
 REGISTER_NATIVE_FUNCTION(0x804D2490, MH3_OSInitMemoryProtection);
+
+// OSGetResetCode: retain the SDK's saved restart code, otherwise report a
+// cold host launch instead of reading the physical PI reset-code register.
+extern "C" void MH3_OSGetResetCode(CpuContext* ctx) {
+    ctx->gpr[3] = Memory::Read32(0x8074F740)
+        ? Memory::Read32(0x8074F744) | 0x80000000u : 0;
+}
+REGISTER_NATIVE_FUNCTION(0x804D31C0, MH3_OSGetResetCode);
