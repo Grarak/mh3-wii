@@ -140,6 +140,7 @@ inline void ReportRetiredVariables() {
         {"MH3_STEP_PROBE_ALL", "MH3_STEP_PROBE"},
         {"MH3_WRITE_WATCH_LIST", "MH3_WRITE_WATCH"},
         {"MH3_WRITE_WATCH_MS", "MH3_WRITE_WATCH"},
+        {"MH3_CALL_TRACE_GATE", "MH3_CALL_TRACE"},
     };
     for (const auto& retired : kRetired) {
         if (!std::getenv(retired.name))

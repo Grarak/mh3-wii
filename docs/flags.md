@@ -90,6 +90,14 @@ These need a CMake option, which rebuilds the generated code.
 | `list=FILE` | watch the words listed instead (first field of each line, hex: a step probe's output works as is) |
 | `ms=N` | report the writers every N ms (default 5000) |
 
+### `MH3_CALL_TRACE`: guest call edges (`-DMH3_ENABLE_GUEST_CALL_TRACE=ON`)
+
+`MH3_CALL_TRACE=PATH[,gate=MARKER]`: the instrumented calls' edges as CSV in
+PATH; with `gate`, only once the file MARKER exists. Instrument with
+`scripts/trace_guest_calls.py enable`, summarize with `... summarize PATH`
+([gameplay debugging](gameplay-debugging.md)); `scripts/replay_village.py
+--dock-edge` creates the marker.
+
 ## Renamed and removed
 
 A development build names any of these that is still set at startup.
@@ -107,3 +115,4 @@ A development build names any of these that is still set at startup.
 | `MH3_STEP_PROBE=N`, `MH3_STEP_PROBE_TICK=T,...` | `MH3_STEP_PROBE=step=N`, `MH3_STEP_PROBE=T,...` |
 | `MH3_STEP_PROBE_SETTLE=1`, `MH3_STEP_PROBE_ALL` | `MH3_STEP_PROBE=...,settle,all` |
 | `MH3_WRITE_WATCH_LIST=FILE`, `MH3_WRITE_WATCH_MS=N` | `MH3_WRITE_WATCH=list=FILE,ms=N` |
+| `MH3_CALL_TRACE_GATE=MARKER` | `MH3_CALL_TRACE=PATH,gate=MARKER` |

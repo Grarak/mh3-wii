@@ -3,7 +3,8 @@
 
 The generated shards are ignored build products. `enable` backs up and edits
 only shards containing TARGETS; `restore` puts their original bytes back.
-Set MH3_CALL_TRACE to a CSV path while running an instrumented executable.
+Set MH3_CALL_TRACE to a CSV path (optionally ,gate=MARKER) while running an
+instrumented executable.
 """
 
 import argparse

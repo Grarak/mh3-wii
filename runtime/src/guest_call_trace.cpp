@@ -1,20 +1,26 @@
 #include "guest_call_trace.h"
 
+#include "dev_options.h"
+
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 namespace {
+// MH3_CALL_TRACE=PATH[,gate=MARKER]: call edges as CSV; with a gate, only once
+// the marker file exists.
 struct TraceState {
+    const DevOptions options{"MH3_CALL_TRACE", {"gate"}, DevOptions::Words::Allowed};
     std::FILE* file = nullptr;
-    const char* gate = std::getenv("MH3_CALL_TRACE_GATE");
+    const char* gate = options.Value("gate");
     std::atomic<unsigned> gateChecks{0};
     std::atomic<bool> gateOpen{gate == nullptr};
     std::atomic<unsigned> count{0};
 
     TraceState() {
-        if (const char* path = std::getenv("MH3_CALL_TRACE"))
-            file = std::fopen(path, "w");
+        if (!options.List().empty())
+            file = std::fopen(options.List().front().c_str(), "w");
     }
     ~TraceState() {
         if (file)
