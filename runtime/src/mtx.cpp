@@ -784,3 +784,79 @@ void G3dNative::MtxTo33(uint32_t dst, uint32_t src) {
 void G3dNative::MtxConcatArray(uint32_t a, uint32_t src, uint32_t dst, uint32_t count, uint32_t r13) {
     ConcatArray(a, src, dst, count, r13);
 }
+
+// The game's matrix wrappers (Ghidra decompilation; the casts they call,
+// 0x8005056C, 0x800515D4, 0x8005090C and 0x80050910, return their argument):
+//   0x80088428 MtxInverseWrapper(out, in): PSMTXInverse(in, out), its result
+//   0x80071120 MtxConcatWrapper(out, a, b): PSMTXConcat(a, b, out), returns out
+//   0x80051560 MtxMultVecWrapper(out, m, v): PSMTXMultVec(m, v, out), returns out
+// As precise natives their callers call the matrix ports directly, without
+// the wrappers' frames and the dispatch between them.
+extern "C" void func_80088428(CpuContext* ctx);
+extern "C" void func_80071120(CpuContext* ctx);
+extern "C" void func_80051560(CpuContext* ctx);
+static void InverseWrapperPort(CpuContext* p) {
+    p->gpr[3] = Inverse(p->gpr[4], p->gpr[3]);
+}
+static uint32_t InverseWrapperChecked(uint32_t r1, uint32_t out, uint32_t in) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("MtxInverseWrapper");
+    if (check) [[unlikely]] {
+        CpuContext* c = TryGetCpuContext();
+        c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = in;
+        PortCheck::RunOutput(c, "MtxInverseWrapper", func_80088428, InverseWrapperPort, {{out, 0x30}});
+        return c->gpr[3];
+    }
+#else
+    (void)r1;
+#endif
+    return Inverse(in, out);
+}
+extern "C" void MH3_MtxInverseWrapper(CpuContext* ctx) {
+    ctx->gpr[3] = InverseWrapperChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80088428, MH3_MtxInverseWrapper, "MtxInverseWrapper");
+
+static void ConcatWrapperPort(CpuContext* p) {
+    Concat(p->gpr[4], p->gpr[5], p->gpr[3]);
+}
+static void ConcatWrapperChecked(uint32_t r1, uint32_t out, uint32_t a, uint32_t b) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("MtxConcatWrapper");
+    if (check) [[unlikely]] {
+        CpuContext* c = TryGetCpuContext();
+        c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = a, c->gpr[5] = b;
+        PortCheck::RunOutput(c, "MtxConcatWrapper", func_80071120, ConcatWrapperPort, {{out, 0x30}});
+        return;
+    }
+#else
+    (void)r1;
+#endif
+    Concat(a, b, out);
+}
+extern "C" void MH3_MtxConcatWrapper(CpuContext* ctx) {
+    ConcatWrapperChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80071120, MH3_MtxConcatWrapper, "MtxConcatWrapper");
+
+static void MultVecWrapperPort(CpuContext* p) {
+    MultVec(p->gpr[4], p->gpr[5], p->gpr[3]);
+}
+static void MultVecWrapperChecked(uint32_t r1, uint32_t out, uint32_t m, uint32_t v) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("MtxMultVecWrapper");
+    if (check) [[unlikely]] {
+        CpuContext* c = TryGetCpuContext();
+        c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = m, c->gpr[5] = v;
+        PortCheck::RunOutput(c, "MtxMultVecWrapper", func_80051560, MultVecWrapperPort, {{out, 12}});
+        return;
+    }
+#else
+    (void)r1;
+#endif
+    MultVec(m, v, out);
+}
+extern "C" void MH3_MtxMultVecWrapper(CpuContext* ctx) {
+    MultVecWrapperChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80051560, MH3_MtxMultVecWrapper, "MtxMultVecWrapper");
