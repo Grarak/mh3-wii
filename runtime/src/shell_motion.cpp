@@ -24,6 +24,16 @@
 // its velocity (VecMagWrapper 0x80050F88, through PSVECMag), off a budget
 // (+0x378) each step: at those three calls the length is scaled likewise.
 //
+// An enemy's height offset (f32 +0x1AC, the body raised or lowered from its
+// position: burrowing, surfacing, landing, hovering) moves through
+// EnemyHeightAdd (0x80130460: +0x1AC += f1, returns it). A state sets it
+// (0x80130450) when it starts and adds an amount each step until a bound:
+// constants (+5, -2, +10 a step, the 0x80154D08 sink by 5), a motion curve
+// times the motion rate (0x801356A8), the vertical speed +0x314 (0x80135510),
+// a twentieth of a gap. All 37 calls are of that kind, so the amount is taken
+// over this step's length. Kind 8's rise at a Tundra quest's start
+// (0x8015F884: +10 a step from -1270) was found with a step probe online.
+//
 // The player's status tint (0x802E77EC, per player from 0x802E79D0) advances
 // two u16 phases (+0x13E, +0x140) once a step: by 960, 1456, 512 or 768, or a
 // rate from a table (0x805C6434) through three helpers, and sets them to 0
@@ -242,3 +252,10 @@ extern "C" void MH3_PlayerTintPulse(CpuContext* ctx) {
     }
 }
 REGISTER_NATIVE_FUNCTION_AS(0x802E77EC, MH3_PlayerTintPulse, "PlayerTintPulse");
+
+extern "C" void func_80130460(CpuContext* ctx);
+extern "C" void MH3_EnemyHeightAdd(CpuContext* ctx) {
+    ctx->fpr[1].d = float(ctx->fpr[1].d * GameStep::Scale());
+    func_80130460(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80130460, MH3_EnemyHeightAdd, "EnemyHeightAdd");

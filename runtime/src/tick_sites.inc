@@ -145,6 +145,8 @@
 {0x801E37A8u, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
 {0x801E3824u, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
 {0x801E3EDCu, TickSite::CountdownPastZero}, // effect (801E3E68, ending): steps left (+0x10) before the release
+{0x801FFE40u, TickSite::Countup},           // NPC script (NpcScriptStep 801FFD04): steps in the entry (s16 +0x20A); a -2 entry moves on after 3
+{0x801FFE74u, TickSite::Countup},           // NPC script: steps in the entry against its length (+0x10)
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
 {0x8021D258u, TickSite::Countup},           // village talk typing (8021D238): steps (0x806ACC2C); shows steps / 2 + 1 letters
@@ -158,6 +160,8 @@
 {0x80264760u, TickSite::Countdown},          // player condition: countdown (s16 +0x462), fires at 0
 {0x8026B018u, TickSite::Countdown},          // player input (8026AF6C): input lock (s16 +0x352), also counted down by PlayerStepTimers
 {0x8026C0C4u, TickSite::Countdown},          // Classic commands (8026BFFC): chord window (u8 +0x137, from 2) for a second attack button
+{0x8028CB4Cu, TickSite::CountupEvery, 32},  // FieldOnlineLoad (8028C730): steps waiting for the members (s16 +6), a sync message every 32
+{0x8028D064u, TickSite::Countdown},         // FieldOnlinePlay (8028CE14): input lock (s16 +4) of 30 steps at the online quest's start
 {0x802B4BA8u, TickSite::Countdown},          // stage (802B4B20): countdown (s16 +0x2FDC), fires at 0
 {0x802B638Cu, TickSite::EaseDivisor},       // field camera (802B5CBC): height eases, target (f31) and eye (f30). These 9 entries
                                               // act on the translated original only (port checks): field_camera.cpp does the same
@@ -214,6 +218,7 @@
 {0x8031E958u, TickSite::Countup},           // enemy-attached model (8031E858): key frame (+0xC) of its scale curve
 {0x8031F728u, TickSite::Advance, 512},      // marker effect (8031F574): bob phase (u16), +512 per step
 {0x8031F734u, TickSite::Advance, 255},      // marker effect: spin angle (+0x28), +255 per step
+{0x8032C5A8u, TickSite::Countdown},         // field object (step 8032C574 in the handler table 805DE1A0): random wait (s16 +0x22) of 30..329 steps before its next state
 {0x803327A4u, TickSite::CountdownPastZero}, // actor action countdown (+0x28), fires at <= 0
 {0x80334330u, TickSite::CountdownPastZero},
 {0x803407D0u, TickSite::PerStep},           // fish (8034062C, appearing): scale x grown per step (target / 10)
@@ -235,6 +240,7 @@
 {0x80341F28u, TickSite::PerStep},           // fish fleeing: speed (+0x20) moved per step
 {0x80341F78u, TickSite::PerStep},           // fish fleeing: scale shrunk per step (last 10)
 {0x80341FB4u, TickSite::CountdownPastZero}, // fish fled: steps left (+0xC) before it hides
+{0x803440A8u, TickSite::Countup, 899},      // shared object (80343F50, from ObjectAgesUpdate 80345188): steps since its last sync message (s16 +6); at 900 it resyncs
 {0x80346E68u, TickSite::Countdown},          // object (80346AF0): countdown (s16 +0x20), fires at 0
 {0x80346F08u, TickSite::Countup},            // object: steps (s16 +0x22)
 {0x80346F18u, TickSite::Countup},            // object: steps (s16 +0x22), against 600
@@ -279,6 +285,7 @@
 {0x80398080u, TickSite::Countdown},         // quest result screen: +0x2FF4 countdown, set from seconds * fps by 803973A8
 {0x8039E568u, TickSite::Countup},           // quest result screen (8039E3AC): +0x2FF4 step counter
 {0x8039E5E0u, TickSite::Countdown},         // quest result screen: +0x2FF4 countdown, set from seconds * fps by 8039D174
+{0x803A451Cu, TickSite::Countdown},         // field actor (803A44AC, wandering): wait (+0x16C) of 100..163 steps
 {0x803B0C00u, TickSite::Countup},           // quest clock (803B0228): steps of quest time (quest work+0x28)
 {0x803B0CE4u, TickSite::Countup},
 {0x803B0E84u, TickSite::Countup},           // quest (803B0E28): quest work +0x697C steps, against seconds * fps

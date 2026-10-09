@@ -1191,6 +1191,10 @@
 80299f5c HitTimerStep
 8013547c EnemyAddVelocity
 80135558 EnemyAddTurnedVelocity
+80130450 EnemyHeightSet
+80130460 EnemyHeightAdd
+80135510 EnemyHeightAddSpeed
+80154d08 RathHeightSink
 80135064 EnemyGlide
 803822d8 CreatureFade
 803bc584 AmbientFlutter
@@ -1566,6 +1570,18 @@
 801fdc34 NpcVisibilityUpdate
 801fdac4 NpcOnScreen
 801fda28 NpcWithinDrawDistance
+# NPC turning and script steps (npc_turn.cpp).
+801fdea0 NpcYawTo
+801fded8 NpcTimedTurnStep
+801fdf48 NpcTimedTurnStart
+801ffd04 NpcScriptStep
+801ffea8 NpcScriptNext
+# A field actor's wandering and turns (field_actor.cpp).
+8038595c FieldActorUpdate
+803a433c FieldActorStep
+803a44ac FieldActorWander
+803a4148 ActorTurnToward
+803a41d4 ActorFaceGoal
 802d9fd4 HudScaleX
 802be158 CameraSetPerspectivePosture
 802bbcb4 PreviewCameraSetup
