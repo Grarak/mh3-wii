@@ -139,3 +139,13 @@ extern "C" void MH3_WriteConsole(CpuContext* ctx) {
     ctx->gpr[3] = written == size ? 0 : 1;
 }
 REGISTER_NATIVE_FUNCTION(0x80464340, MH3_WriteConsole);
+
+// SISetXY: retain the SDK's scanline/line-count polling configuration. Host
+// controller services do not use the physical SI polling register.
+extern "C" void MH3_SISetXY(CpuContext* cpu) {
+    const uint32_t state = (Memory::Read32(0x8062A8A4) & 0xFC0000FFu) |
+        (cpu->gpr[3] << 16) | (cpu->gpr[4] << 8);
+    Memory::Write32(0x8062A8A4, state);
+    cpu->gpr[3] = state;
+}
+REGISTER_NATIVE_FUNCTION(0x804DEC10, MH3_SISetXY);

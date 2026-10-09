@@ -4,6 +4,7 @@
 #include "gx_host.h"
 #include "gx_stream.h"
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,7 @@
 extern "C" void MH3_EXIInit(CpuContext*);
 extern "C" void MH3_EXIGetID(CpuContext*);
 extern "C" void MH3_SIInit(CpuContext*);
+extern "C" void MH3_SISetXY(CpuContext*);
 extern "C" void MH3_OSInitSram(CpuContext*);
 extern "C" void MH3_UnlockSram(CpuContext*);
 extern "C" void MH3_OSGetResetCode(CpuContext*);
@@ -27,10 +29,16 @@ extern "C" void MH3_IOSOpenAsync(CpuContext*);
 
 namespace {
 bool callbackObserved = false;
+unsigned callbackDepth = 0, maxCallbackDepth = 0, callbackCount = 0;
 void TestIosCallback(CpuContext* cpu) {
     if (static_cast<int32_t>(cpu->gpr[3]) != -106 || cpu->gpr[4] != 0x12345678)
         throw std::runtime_error("IOS callback arguments were not delivered");
     callbackObserved = true;
+    ++callbackCount;
+    ++callbackDepth;
+    maxCallbackDepth = std::max(maxCallbackDepth, callbackDepth);
+    PumpIosCompletions(cpu);
+    --callbackDepth;
     cpu->gpr[14] = 0xDEADBEEF;
     cpu->lr = 0;
 }
@@ -46,6 +54,21 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     const uint16_t sample = Memory::Read16(0xCC00202E);
     if (line < 1 || line > 625 || sample < 1 || sample > 864)
         throw std::runtime_error("VI beam position out of PAL bounds");
+    BeginVideoRetrace();
+    if (Memory::Read16(0xCC00202C) != 1 || !(Memory::Read16(0xCC002030) & 0x8000) || VideoRetracePeriodNs() != 20000000)
+        throw std::runtime_error("VI first PAL retrace latch failed");
+    Memory::Write16(0xCC002030, Memory::Read16(0xCC002030) & 0x7FFF);
+    EndVideoRetrace();
+    BeginVideoRetrace();
+    if (Memory::Read16(0xCC00202C) != 313 || !(Memory::Read16(0xCC002034) & 0x8000) || (Memory::Read16(0xCC002030) & 0x8000))
+        throw std::runtime_error("VI second-field/acknowledgement failed");
+    EndVideoRetrace();
+    Memory::Write16(0xCC002002, 5); // enabled, non-interlaced NTSC
+    BeginVideoRetrace(); EndVideoRetrace(); BeginVideoRetrace();
+    if (Memory::Read16(0xCC00202C) != 1 || VideoRetracePeriodNs() != 16683333)
+        throw std::runtime_error("VI non-interlaced retrace failed");
+    EndVideoRetrace();
+    ResetVideoInterface();
     uint16_t unused;
     if (ReadVideoRegister16(0xCC003000, unused) || ReadVideoRegister16(0xCC002001, unused))
         throw std::runtime_error("VI intercepted an unrelated or unaligned register");
@@ -173,6 +196,12 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         Memory::Read32(0x80003040 + 9 * 4) != 0x804B1310)
         throw std::runtime_error("EXI absence/interrupt-state test failed");
     MH3_SIInit(cpu);
+    Memory::Write32(0x8062A8A4, 0xFC123411);
+    cpu->gpr[3] = 0x70; cpu->gpr[4] = 3;
+    MH3_SISetXY(cpu);
+    if (cpu->gpr[3] != 0xFC700311 || Memory::Read32(0x8062A8A4) != 0xFC700311)
+        throw std::runtime_error("SI polling-rate guest state failed");
+    Memory::Write32(0x8062A8A4, 0);
     if (Memory::Read32(0x80797934) != 1 || Memory::Read32(0x80759B28) != 0xFFFFFFFF)
         throw std::runtime_error("SI initialization test failed");
 
@@ -248,6 +277,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     std::filesystem::create_directory_symlink(directory.path, nand / "link");
     if (open("/link/sram.bin", 1) >= 0)
         throw std::runtime_error("IOS NAND symlink isolation failed");
+    fd = open("/dev/stm/immediate", 0);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 0x5001;
+    cpu->gpr[5] = 0x80001400; cpu->gpr[6] = 20;
+    cpu->gpr[7] = 0; cpu->gpr[8] = 0;
+    cpu->gpr[9] = 0x804D6320; cpu->gpr[10] = 0xA5;
+    MH3_IOSIoctlAsync(cpu);
+    auto dimming = TakeIosCompletion();
+    if (cpu->gpr[3] || !dimming || dimming->result || dimming->callback != 0x804D6320 || dimming->argument != 0xA5)
+        throw std::runtime_error("STM async dimming completion failed");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
     fd = open("/dev/stm/eventhook", 0);
     if (fd < 0) throw std::runtime_error("STM event device open failed");
     Memory::Write32(0x80001400, 0xDEADBEEF);
@@ -314,11 +353,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         0x81700000, "IOS callback test", TestIosCallback, FunctionKind::Native,
         false, 0, 0, 0, TestIosCallback);
     TranslatedFunctionRegistry::Finalize();
-    cpu->gpr[3] = 0x80001200; cpu->gpr[4] = 1;
-    cpu->gpr[5] = 0x81700000; cpu->gpr[6] = 0x12345678;
-    MH3_IOSOpenAsync(cpu);
+    for (unsigned i = 0; i < 2; ++i) {
+        cpu->gpr[3] = 0x80001200; cpu->gpr[4] = 1;
+        cpu->gpr[5] = 0x81700000; cpu->gpr[6] = 0x12345678;
+        MH3_IOSOpenAsync(cpu);
+    }
     cpu->gpr[14] = 0x1234; cpu->lr = 0x5678;
     PumpIosCompletions(cpu);
-    if (!callbackObserved || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678 || TakeIosCompletion())
+    if (!callbackObserved || callbackCount != 2 || maxCallbackDepth != 1 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678 || TakeIosCompletion())
         throw std::runtime_error("IOS callback CPU-state preservation failed");
 }

@@ -160,7 +160,7 @@ REGISTER_NATIVE_FUNCTION(0x804BCC80, MH3_IOSWrite);
 extern "C" void MH3_IOSIoctl(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
     auto it = devices.find(ctx->gpr[3]);
-    if (it != devices.end() && it->second == "/dev/di") {
+    if (it != devices.end() && (it->second == "/dev/di" || it->second == "/dev/stm/immediate")) {
         const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
         if (!callback) { ctx->gpr[3] = -4; return; }
         MH3_IOSIoctl(ctx);
@@ -181,7 +181,8 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
         ctx->gpr[3] = 0;
         return;
     }
-    throw std::runtime_error("IOS async ioctl needs a host implementation");
+    throw std::runtime_error("IOS async ioctl needs a host implementation: " +
+        (it == devices.end() ? std::string("invalid descriptor") : it->second) + " command " + std::to_string(ctx->gpr[4]));
 }
 REGISTER_NATIVE_FUNCTION(0x804BCE70, MH3_IOSIoctlAsync);
 
@@ -342,6 +343,10 @@ REGISTER_NATIVE_FUNCTION(0x804BC750, MH3_IOSCloseAsync);
 // starts. Preserve the polling caller's full CPU state around each callback.
 // Process a bounded batch so callbacks that resubmit cannot starve the caller.
 void PumpIosCompletions(CpuContext* ctx) {
+    static thread_local bool pumping = false;
+    if (pumping) return;
+    pumping = true;
+    struct Reset { bool& flag; ~Reset() { flag = false; } } reset{pumping};
     for (unsigned i = 0; i < 32; ++i) {
         auto completion = TakeIosCompletion();
         if (!completion) break;
@@ -360,3 +365,12 @@ extern "C" void MH3_SCCheckStatus(CpuContext* ctx) {
     func_804DB770(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804DB770, MH3_SCCheckStatus, "MH3_SCCheckStatus");
+
+// MH3 polls DVD command status while waiting for module/asset reads. Deliver
+// queued IOS completions before querying the original SDK state machine.
+extern "C" void func_804AACC0(CpuContext*);
+extern "C" void MH3_DVDGetCommandBlockStatus(CpuContext* ctx) {
+    PumpIosCompletions(ctx);
+    func_804AACC0(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804AACC0, MH3_DVDGetCommandBlockStatus, "MH3_DVDGetCommandBlockStatus");

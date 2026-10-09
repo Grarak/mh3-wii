@@ -83,6 +83,12 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     });
 }
 
+void ServiceHostGraphicsEvents() {
+    if (!initialized) return;
+    for (const auto* event = aurora_update(); event && event->type != AURORA_NONE; ++event)
+        if (event->type == AURORA_EXIT) throw std::runtime_error("MH3 window closed");
+}
+
 void CompleteHostGraphics() {
     if (!initialized) return;
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
