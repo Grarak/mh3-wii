@@ -57,6 +57,21 @@ void TexturePool::collect() {
 }
 size_t TexturePool::main_used() const noexcept { return m_main ? m_main->used() : 0; }
 size_t TexturePool::phycont_used() const noexcept { return m_phycont ? m_phycont->used() : 0; }
+ResidencyStatistics TexturePool::statistics() const noexcept {
+  ResidencyStatistics result;
+  result.arena_used = m_device.arena().used();
+  result.arena_capacity = m_device.arena().capacity();
+  result.main_spill_bytes = main_used();
+  result.phycont_spill_bytes = phycont_used();
+  result.textures = uint32_t(m_lru.size());
+  for (const auto* texture : m_lru) {
+    result.texture_bytes += texture->m_bytes;
+    result.pinned_textures += texture->m_pinned;
+    result.gpu_written_textures += texture->m_gpuWritten;
+  }
+  for (const auto& retired : m_retired) result.retired_texture_bytes += retired.bytes;
+  return result;
+}
 void* TexturePool::allocate_spill(size_t bytes, MappedArena*& arena) {
   if (!m_phycont && m_phycontBudget && bytes <= m_phycontBudget) {
     SceKernelFreeMemorySizeInfo freeMemory{};

@@ -4,6 +4,7 @@
 #include "disc_image.h"
 #include "launcher_texture_inventory.h"
 #include "gfx/texture_convert.hpp"
+#include "gfx/native_texture_pack.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -17,8 +18,7 @@
 
 namespace VitaLauncher {
 namespace {
-struct Record { uint32_t id,format,width,height,mips,flags,bytes,reserved; uint64_t offset; };
-static_assert(sizeof(Record)==40);
+using Record = aurora::gfx::NativeTextureRecord;
 struct Source : TextureInventory::Texture {
  std::string path;
 };
@@ -140,10 +140,10 @@ void PrepareTextures(const std::filesystem::path& root,const Progress& progress)
  data.clear();data.shrink_to_fit();
  std::fstream output(root/"native-textures.bin.preparing",std::ios::binary|std::ios::in|std::ios::out|std::ios::trunc);
  if(!output)throw std::runtime_error("Cannot create native texture pack");
- const std::array<uint32_t,8> header{0x5456334d,1,uint32_t(sources.size()),40,0,0,0,0};
+ const std::array<uint32_t,8> header{0x5456334d,2,uint32_t(sources.size()),sizeof(Record),0,0,0,0};
  for(auto word:header)Little32(output,word);
  std::vector<Record> records(sources.size());
- std::vector<uint8_t> zero(records.size()*40);output.write(reinterpret_cast<const char*>(zero.data()),zero.size());zero.clear();zero.shrink_to_fit();
+ std::vector<uint8_t> zero(records.size()*sizeof(Record));output.write(reinterpret_cast<const char*>(zero.data()),zero.size());zero.clear();zero.shrink_to_fit();
  std::string path;
  for(size_t i=0;i<sources.size();++i) {
   const auto& s=sources[i];progress("Converting game textures",i,sources.size());
@@ -152,18 +152,30 @@ void PrepareTextures(const std::filesystem::path& root,const Progress& progress)
   const aurora::ArrayRef<uint8_t> bytes{data.data()+s.offset,s.bytes};
   auto converted=s.entries ? aurora::gfx::convert_texture_palette(s.format,s.width,s.height,s.mips,bytes,GXTlutFmt(s.paletteFormat),s.entries,{data.data()+s.palette,size_t(s.entries)*2}) : aurora::gfx::convert_texture(s.format,s.width,s.height,s.mips,bytes);
   if(converted.data.empty())throw std::runtime_error("Texture conversion failed: "+path);
-  Record r{s.id,1,s.width,s.height,s.mips,converted.hasArbitraryMips?1u:0u,0,0,0};std::vector<uint8_t> payload;
+  Record r{};r.id=s.id;r.format=1;r.width=s.width;r.height=s.height;r.mips=s.mips;
+  r.flags=converted.hasArbitraryMips?1u:0u;std::vector<uint8_t> payload;
   if(s.format==GX_TF_CMPR && std::has_single_bit(s.width) && std::has_single_bit(s.height)) {
    const bool alpha=has_transparency(s,bytes.data());r.format=alpha?3:2;payload=compressed(s,bytes.data(),alpha);
   } else payload=linear(s,converted.data.data());
+  const auto layout=aurora::gfx::native_texture_layout(s.width,s.height,s.mips,
+      aurora::gfx::native_texture_format(r.format));
+  if(payload.size()!=layout.total_bytes)throw std::runtime_error("Texture payload disagrees with native storage: "+path);
+  r.image_bytes=layout.image_bytes;r.palette_offset=layout.palette_offset;r.palette_bytes=layout.palette_bytes;
+  r.source_format=s.format;r.source_palette_entries=s.entries;r.source_palette_format=s.entries?s.paletteFormat:0;
+  const int64_t delta=int64_t(s.palette)-s.offset;
+  if(s.entries && (delta<INT32_MIN || delta>INT32_MAX))throw std::runtime_error("Texture palette offset exceeds native record: "+path);
+  r.source_palette_delta=s.entries?int32_t(delta):0;
   r.offset=(uint64_t(output.tellp())+63)&~uint64_t(63);r.bytes=payload.size();
+  const uint64_t previousEnd=i?records[i-1].offset+records[i-1].bytes:32+uint64_t(records.size())*sizeof(Record);
+  aurora::gfx::validate_native_texture_record(r,2,s.id,previousEnd,r.offset+r.bytes);
   output.seekp(r.offset);output.write(reinterpret_cast<const char*>(payload.data()),payload.size());
   if(!output)throw std::runtime_error("Cannot write native texture payload");records[i]=r;
  }
  output.seekp(32);
  for(const auto& r:records) {
-  for(uint32_t word:std::array<uint32_t,8>{r.id,r.format,r.width,r.height,r.mips,r.flags,r.bytes,r.reserved})Little32(output,word);
-  Little64(output,r.offset);
+  for(uint32_t word:std::array<uint32_t,16>{r.id,r.format,r.width,r.height,r.mips,r.flags,r.bytes,r.palette_offset,
+      uint32_t(r.offset),uint32_t(r.offset>>32),r.image_bytes,r.palette_bytes,std::bit_cast<uint32_t>(r.source_palette_delta),
+      r.source_palette_entries,r.source_palette_format,r.source_format})Little32(output,word);
  }
  output.close();if(!output)throw std::runtime_error("Cannot close native texture pack");
  // Publish the patch table after all of its referenced payloads are complete.

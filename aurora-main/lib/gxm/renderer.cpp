@@ -833,3 +833,15 @@ void read_pixels(GLuint id, uint32_t x, uint32_t y, uint32_t width, uint32_t hei
   });
 }
 }
+
+namespace aurora::gxm {
+ResidencyStatistics residency_statistics() noexcept {
+  return gl::guarded([] {
+    const auto& r = gl::renderer();
+    auto result = r.pool.statistics();
+    for (const auto& mesh : r.meshes) result.model_bytes += mesh.second.size();
+    for (const auto& mesh : r.retiredMeshes) result.retired_model_bytes += mesh.second.size();
+    return result;
+  });
+}
+} // namespace aurora::gxm

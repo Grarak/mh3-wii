@@ -7,6 +7,7 @@
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
 #include "gxm/device.hpp"
+#include "gxm/residency.hpp"
 #endif
 #include "memory.h"
 #include "game_step.h"
@@ -25,6 +26,7 @@
 #include <aurora/generated_texture.hpp>
 #include <aurora/native_scene_feedback.hpp>
 #include <aurora/native_draw_memory.hpp>
+#include <aurora/native_geometry.h>
 #include <aurora/thread_role.hpp>
 #include <cstdlib>
 #include <aurora/event.h>
@@ -437,12 +439,25 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         uint32_t(display.presented - previousDisplay.presented) / seconds, display.backlog, display.pending_scenes,
         display.failures, (display.callback_wait_us - previousDisplay.callback_wait_us) / (1000.0 * seconds));
     previousDisplay = display;
+    const auto residency = aurora::gxm::residency_statistics();
+    std::fprintf(stderr, "MH3 native CDRAM: arena %.2f/%.2f MiB, textures %.2f MiB (%u live/%u pinned/%u GPU-written), retired textures %.2f MiB, models %.2f MiB + %.2f MiB retired, spill main/phycont %.2f/%.2f MiB\n",
+        residency.arena_used / 1048576.0, residency.arena_capacity / 1048576.0,
+        residency.texture_bytes / 1048576.0, residency.textures, residency.pinned_textures,
+        residency.gpu_written_textures, residency.retired_texture_bytes / 1048576.0,
+        residency.model_bytes / 1048576.0, residency.retired_model_bytes / 1048576.0,
+        residency.main_spill_bytes / 1048576.0, residency.phycont_spill_bytes / 1048576.0);
 #endif
     const auto high = aurora::gfx::staging_high_water();
     std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %llu idx %llu uniform %llu storage %llu (KiB)\n",
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
                  static_cast<unsigned long long>(high[0] >> 10), static_cast<unsigned long long>(high[2] >> 10),
                  static_cast<unsigned long long>(high[1] >> 10), static_cast<unsigned long long>(high[3] >> 10));
+    const auto nativeMemory = aurora_native_draw_stats();
+    std::fprintf(stderr, "MH3 native draw memory: high water vert %llu idx %llu uniform %llu (KiB), capacity cancellations %llu\n",
+                 static_cast<unsigned long long>(nativeMemory.vertex_high_water >> 10),
+                 static_cast<unsigned long long>(nativeMemory.index_high_water >> 10),
+                 static_cast<unsigned long long>(nativeMemory.uniform_high_water >> 10),
+                 static_cast<unsigned long long>(nativeMemory.capacity_cancellations));
     const auto waits = aurora::gfx::staging_wait_counters();
     std::fprintf(stderr, "MH3 waits: GX staging %.2f ms/s (%llu waits), render total Finish %.2f ms/s (%llu calls)\n",
                  double(waits[0] - lastWaits[0]) / (1000.0 * seconds),
@@ -722,7 +737,11 @@ int RunGraphicsCheck(int argc, char** argv) {
         if (BeginNativeGraphicsFrame()) {
             const auto memory = aurora::native_draw_memory();
             if (slot >= slotMemory.size() || memory.vertices.empty() || memory.uniforms.empty() ||
-                memory.indices.empty() || memory.attributes.empty())
+                memory.indices.empty()
+#ifndef __vita__
+                || memory.attributes.empty()
+#endif
+                )
                 throw std::runtime_error("Native rendered frame has no bounded draw slot");
             if (slotMemory[slot] && slotMemory[slot] != memory.uniforms.data())
                 throw std::runtime_error("Native frame slot allocation changed across reuse");

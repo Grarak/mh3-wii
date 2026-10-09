@@ -111,7 +111,11 @@ int mh3_scene_equipment_update(const mh3_scene_cpu_ops *o,uint32_t owner,uint32_
             uint32_t kind=RC(work+offset+0x18)>>24;if(kind-4<3){if(slot!=7)kind=slot+3;}else if(kind==1){if(slot!=7)kind=9;}else if(kind==3&&slot!=7)kind=10;
             const uint32_t source_base=CALL(0x800d5168,RC(work+offset+0x44)),dest_base=CALL(0x800d5168,RC(work+offset+200));const uint32_t delta=(uint32_t)((int32_t)(int16_t)RH(0x805c6644+kind*2)*0x5000),source=source_base+delta,destination=dest_base+delta;
             if(destination!=source)o->copy(o->context,destination,source,(uint32_t)((int32_t)(int16_t)RH(0x805c6628+kind*2)*0x5000));
-            o->copy_string(o->context,name,CALL(0x80268668,slot,RC(work+offset+0x18)));WC(work+offset+0xf4,CALL(0x800d5758,name,destination));CALL(0x80223f54,equipment,(slot-7)&255);
+            o->copy_string(o->context,name,CALL(0x80268668,slot,RC(work+offset+0x18)));WC(work+offset+0xf4,CALL(0x800d5758,name,destination));
+            /* 80268C88 explicitly supplies r5=slot. The callee distinguishes
+             * the attachment index from its resource-pool slot; omitting the
+             * third argument reuses a prior CPU call's unrelated register. */
+            CALL(0x80223f54,equipment,(slot-7)&255,slot);
             if(RC(record+0x10c))WB(RC(record+0x10c)+3,4);WC(work+offset+0x120,equipment+slot-7+0x9c7);
         }
     }

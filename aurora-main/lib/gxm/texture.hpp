@@ -2,6 +2,7 @@
 #include "device.hpp"
 #include "../gfx/format.hpp"
 #include "../gfx/native_texture_layout.hpp"
+#include "residency.hpp"
 #include <list>
 #include <vector>
 
@@ -18,6 +19,7 @@ public:
   void collect();
   size_t main_used() const noexcept;
   size_t phycont_used() const noexcept;
+  ResidencyStatistics statistics() const noexcept;
   uint64_t generation() const noexcept { return m_generation; }
 
 private:
