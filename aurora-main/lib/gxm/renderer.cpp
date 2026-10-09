@@ -659,6 +659,19 @@ void clear_color(const float* color) noexcept {
 void clear_depth(float depth) noexcept {
   if (aurora::native_frame_drawing_allowed()) guarded([&] { const float ignored[4]{}; renderer().clear(ignored, depth, true); });
 }
+void clear_depth_full_target(float depth) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
+  guarded([&] {
+    auto& r=renderer();
+    const bool depthWrite=r.state.raster.depthWrite,scissor=r.state.scissorEnabled;
+    r.state.raster.depthWrite=true;
+    if(scissor) {r.state.scissorEnabled=false;r.state.clipDirty=true;}
+    const float ignored[4]{};
+    r.clear(ignored,depth,true);
+    r.state.raster.depthWrite=depthWrite;
+    if(scissor) {r.state.scissorEnabled=true;r.state.clipDirty=true;}
+  });
+}
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
   if (!aurora::native_frame_drawing_allowed()) return;
   guarded([&] { if (!indexCount || !instances) return; auto& r = renderer(); r.prepare(r.state.program); r.draws.draw(indexCount, indexOffset, instances); });

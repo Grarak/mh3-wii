@@ -863,6 +863,17 @@ void clear_color(const float* color) noexcept {
 void clear_depth(float depth) noexcept {
   if (aurora::native_frame_drawing_allowed()) glClearBufferfv(GL_DEPTH, 0, &depth);
 }
+void clear_depth_full_target(float depth) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
+  const bool scissor = g_state.scissorEnabled >= 0 ? g_state.scissorEnabled != 0 : glIsEnabled(GL_SCISSOR_TEST);
+  GLboolean depthWrite = g_state.raster.depthWrite;
+  if (!g_state.rasterValid) glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+  set_scissor_enabled(false);
+  set_depth_write(true);
+  clear_depth(depth);
+  set_depth_write(depthWrite != GL_FALSE);
+  set_scissor_enabled(scissor);
+}
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
   if (!aurora::native_frame_drawing_allowed()) return;
   glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT,

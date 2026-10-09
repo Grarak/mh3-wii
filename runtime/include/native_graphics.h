@@ -24,6 +24,10 @@ void SetNativeRaster(const mh3_raster_state& raster);
 using NativeRasterObserver=void(*)(const mh3_raster_state&);
 void SetNativeRasterObserver(NativeRasterObserver observer);
 void RestoreNativeRenderState();
+// Clear only far depth on the current admitted target. Covers the whole target
+// while preserving logical state and backend raster/scissor/draw bindings.
+// Skipped frames perform no GPU work, allocation, scene switch or wait.
+void ClearNativeDepthTarget();
 void BindNativeTexture(const mh3_native_texture_binding& binding);
 const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit);
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);

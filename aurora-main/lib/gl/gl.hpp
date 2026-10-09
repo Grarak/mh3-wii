@@ -287,6 +287,9 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
                          int32_t dstX, int32_t dstY, int32_t width, int32_t height) noexcept;
 void clear_color(const float* color) noexcept;
 void clear_depth(float depth) noexcept;
+// Full current-target depth clear, independent of the application's scissor
+// and depth-write mask. Retains backend state and never switches render targets.
+void clear_depth_full_target(float depth) noexcept;
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted
 // CDRAM allocation directly; GLES uploads the host allocation into VBOs.
