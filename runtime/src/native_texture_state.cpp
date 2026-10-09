@@ -1,6 +1,7 @@
 #include "native_graphics.h"
 #include "memory.h"
 #include "../native/mh3_model_state.h"
+#include "../native/adapters/model_state_bridge.h"
 #include <aurora/native_texture.hpp>
 #include "gl/gl.hpp"
 #include <array>
@@ -36,6 +37,7 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
     aurora::NativeTextureSource source;
     source.width=input.width;source.height=input.height;source.levels=input.levels;source.format=input.format;
     source.asset=input.asset_id;source.generation=input.generation;source.mutable_source=input.mutable_source;
+    source.original_image=NativeTextureResourceIsOriginal(input.payload_address,input.generation);
     const size_t bytes=aurora::native_texture_source_size(source.format,source.width,source.height,source.levels);
     source.bytes={Memory::GetPointer(input.payload_address,bytes),bytes};
     if(input.indexed) {
@@ -46,6 +48,7 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
             source.palette={Memory::GetPointer(palette.payload_address,size),size};
             source.palette_format=palette.format;source.palette_entries=palette.entries;
             source.palette_generation=palette.generation;
+            source.original_palette=NativeTextureResourceIsOriginal(palette.payload_address,palette.generation);
         }
     }
     const auto& sampler=binding.sampler;

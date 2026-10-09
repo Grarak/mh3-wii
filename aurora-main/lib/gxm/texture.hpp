@@ -1,6 +1,7 @@
 #pragma once
 #include "device.hpp"
 #include "../gfx/format.hpp"
+#include "../gfx/native_texture_layout.hpp"
 #include <list>
 #include <vector>
 
@@ -52,6 +53,7 @@ public:
   const SceGxmDepthStencilSurface* depth_surface() const;
   SceGxmOutputRegisterFormat output_format() const noexcept;
   bool in_cdram() const noexcept;
+  bool has_gpu_use() const noexcept { return m_lastUse.address || m_gpuWritten; }
   void pin(bool pinned) noexcept { m_pinned = pinned; }
   void note_gpu_use(bool writes = false) noexcept {
     m_lastUse = m_pool.m_device.current_fence();
@@ -60,17 +62,21 @@ public:
   void* pixels() const noexcept { return m_data; }
   uint32_t row_bytes(uint32_t mip = 0) const;
   size_t size() const noexcept { return m_bytes; }
+  size_t image_bytes() const noexcept { return m_imageBytes; }
+  size_t palette_offset() const noexcept { return m_paletteOffset; }
+  size_t palette_bytes() const noexcept { return m_paletteBytes; }
   const uint32_t width, height, mips;
   const gl::Format format;
 
 private:
   friend class TexturePool;
-  struct Level { size_t offset; uint32_t width, height, pitch; };
+  using Level = gfx::NativeTextureLevel;
   void refresh_views();
   TexturePool& m_pool;
   void* m_data = nullptr;
   MappedArena* m_arena = nullptr;
   size_t m_bytes = 0;
+  size_t m_imageBytes = 0,m_paletteOffset = 0,m_paletteBytes = 0;
   uint32_t m_pixelBytes = 0;
   bool m_pinned = false, m_linked = false, m_gpuWritten = false;
   SceGxmNotification m_lastUse{};

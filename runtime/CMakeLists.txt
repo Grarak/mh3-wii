@@ -219,9 +219,29 @@ endif()
 
 if(TARGET aurora::core)
   if(NOT VITA)
-    add_executable(MH3VitaTexturePack ../scripts/vita_texture_pack.cpp)
-    target_include_directories(MH3VitaTexturePack PRIVATE "${MH3_AURORA_ROOT}/lib")
-    target_link_libraries(MH3VitaTexturePack PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
+    option(MH3_BUILD_VITA_TEXTURE_PACKER "Build the offline Vita texture packer" ON)
+    if(MH3_BUILD_VITA_TEXTURE_PACKER)
+      find_file(MH3_STB_DXT_HEADER stb_dxt.h
+        HINTS ENV STB_INCLUDE_DIR
+        PATHS "${CMAKE_CURRENT_SOURCE_DIR}/../../Vita3K/external/stb" /usr/include/stb
+        DOC "External upstream stb_dxt.h for offline measured BC4/BC5 encoding")
+      if(NOT MH3_STB_DXT_HEADER OR NOT EXISTS "${MH3_STB_DXT_HEADER}")
+        message(FATAL_ERROR "Offline texture packer needs MH3_STB_DXT_HEADER; set its FILEPATH or disable MH3_BUILD_VITA_TEXTURE_PACKER")
+      endif()
+      add_executable(MH3VitaTexturePack ../scripts/vita_texture_pack.cpp)
+      target_include_directories(MH3VitaTexturePack PRIVATE "${MH3_AURORA_ROOT}/lib")
+      target_compile_definitions(MH3VitaTexturePack PRIVATE STB_DXT_HEADER="${MH3_STB_DXT_HEADER}")
+      target_link_libraries(MH3VitaTexturePack PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
+      add_executable(mh3_native_texture_pack_check EXCLUDE_FROM_ALL
+        "${MH3_AURORA_ROOT}/tests/native_texture_pack_check.cpp")
+      target_include_directories(mh3_native_texture_pack_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+      target_compile_features(mh3_native_texture_pack_check PRIVATE cxx_std_20)
+      add_executable(mh3_native_texture_format_check EXCLUDE_FROM_ALL
+        "${MH3_AURORA_ROOT}/tests/native_texture_format_check.cpp")
+      target_include_directories(mh3_native_texture_format_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+      target_compile_features(mh3_native_texture_format_check PRIVATE cxx_std_20)
+      target_link_libraries(mh3_native_texture_format_check PRIVATE aurora::core aurora::gx aurora::vi)
+    endif()
     add_executable(MH3LauncherTests EXCLUDE_FROM_ALL src/launcher_tests.cpp
       src/launcher_support.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/disc_image.cpp)
     target_include_directories(MH3LauncherTests PRIVATE include "${MH3_AURORA_ROOT}/lib")

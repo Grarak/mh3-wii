@@ -328,11 +328,16 @@ Renderer& renderer() {
     throw std::runtime_error("Native operation called outside the game thread");
   return *g_context->renderer;
 }
-constexpr std::array<FormatInfo, 9> FormatInfos{{
+constexpr std::array<FormatInfo, 19> FormatInfos{{
     {0, 0, 0, 4, false, false, true}, {0, 0, 0, 1, false, false, true},
     {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, true, false, false},
     {0, 0, 0, 4, false, false, false}, {0, 0, 0, 4, true, false, false},
     {0, 0, 0, 4, false, true, false},
+    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
+    {0, 0, 0, 1, false, false, true}, {0, 0, 0, 1, false, false, true},
+    {0, 0, 0, 1, false, false, true}, {0, 0, 0, 1, false, false, true},
+    {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, false, false, true},
+    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
     {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
 }};
 }

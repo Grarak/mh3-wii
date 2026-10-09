@@ -91,18 +91,20 @@ using TexturePtr = std::shared_ptr<Texture>;
 
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format,
                           std::string_view label) noexcept;
-#ifdef AURORA_GXM
 struct NativeTextureInfo {
   Format format;
   uint32_t width, height, mips, bytes;
   bool arbitraryMips;
+  uint32_t imageBytes=0,paletteOffset=0,paletteBytes=0;
+  int32_t sourcePaletteDelta=0;
+  uint32_t sourcePaletteEntries=0,sourcePaletteFormat=0,sourceFormat=0;
+  bool sourceProvenance=false;
 };
 void open_native_texture_pack(const char* path) noexcept;
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
 // Reads an immutable offline payload directly into a fresh CDRAM allocation.
 // The queued read precedes every draw using the returned texture.
 TexturePtr native_texture_asset(uint32_t asset) noexcept;
-#endif
 // Uploads `data` (rows of `bytesPerRow`, tightly following each other) into
 // the given region. The bytes are copied before returning.
 void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,

@@ -10,9 +10,6 @@ extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSur
 
 namespace aurora::gxm {
 namespace {
-constexpr uint32_t align(uint32_t value, uint32_t alignment) {
-  return (value + alignment - 1) & ~(alignment - 1);
-}
 struct NativeFormat {
   uint32_t bytes;
   SceGxmTextureFormat sampled;
@@ -30,6 +27,16 @@ NativeFormat native_format(gl::Format format) {
   case gl::Format::Depth32F: return {4, SCE_GXM_TEXTURE_FORMAT_F32M_R, SCE_GXM_COLOR_FORMAT_F32_R};
   case gl::Format::BC1: return {0, SCE_GXM_TEXTURE_FORMAT_UBC1_ABGR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
   case gl::Format::BC3: return {0, SCE_GXM_TEXTURE_FORMAT_UBC3_ABGR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
+  case gl::Format::U8_RRRR: return {1, SCE_GXM_TEXTURE_FORMAT_U8_RRRR, SCE_GXM_COLOR_FORMAT_U8_R};
+  case gl::Format::U8_1RRR: return {1, SCE_GXM_TEXTURE_FORMAT_U8_1RRR, SCE_GXM_COLOR_FORMAT_U8_R};
+  case gl::Format::U8_R000: return {1, SCE_GXM_TEXTURE_FORMAT_U8_R000, SCE_GXM_COLOR_FORMAT_U8_R};
+  case gl::Format::U8_R111: return {1, SCE_GXM_TEXTURE_FORMAT_U8_R111, SCE_GXM_COLOR_FORMAT_U8_R};
+  case gl::Format::U8U8_GRRR: return {2, SCE_GXM_TEXTURE_FORMAT_U8U8_GRRR, SCE_GXM_COLOR_FORMAT_U8U8_GR};
+  case gl::Format::RGB565: return {2, SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
+  case gl::Format::P4_ABGR: return {0, SCE_GXM_TEXTURE_FORMAT_P4_ABGR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
+  case gl::Format::P8_ABGR: return {0, SCE_GXM_TEXTURE_FORMAT_P8_ABGR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
+  case gl::Format::BC4_RRRR: return {0, SCE_GXM_TEXTURE_FORMAT_UBC4_RRRR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
+  case gl::Format::BC5_GRRR: return {0, SCE_GXM_TEXTURE_FORMAT_UBC5_GRRR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
   case gl::Format::R32UI: throw std::runtime_error("Native raw word buffers must use mapped BUFFER bindings");
   }
   throw std::runtime_error("Unknown native texture format");
@@ -70,13 +77,16 @@ void* TexturePool::allocate_spill(size_t bytes, MappedArena*& arena) {
   return nullptr;
 }
 void TexturePool::move(TextureStorage& texture, void* data, MappedArena& arena) {
-  // Earlier scenes hold the old address in their PDS state. Wait before
-  // recycling it, then rebuild all views that contain the backing address.
-  m_device.finish();
+  // Only CPU-produced images may migrate. GPU targets have no CPU readback
+  // path, and earlier PDS states retain their original backing notification.
+  if(texture.m_gpuWritten)throw std::runtime_error("GPU-written texture cannot migrate through CPU memory");
   std::memcpy(data, texture.m_data, texture.m_bytes);
-  texture.m_arena->free(texture.m_data, texture.m_bytes);
+  if(texture.m_lastUse.address&&int32_t(*texture.m_lastUse.address-texture.m_lastUse.value)<0)
+    m_retired.push_back({texture.m_lastUse,texture.m_data,texture.m_arena,texture.m_bytes});
+  else texture.m_arena->free(texture.m_data, texture.m_bytes);
   texture.m_data = data;
   texture.m_arena = &arena;
+  texture.m_lastUse = {};
   texture.refresh_views();
   ++m_generation;
 }
@@ -91,7 +101,8 @@ void TexturePool::allocate(TextureStorage& texture) {
     // A large cold target may not fit either spill partition. Keep scanning:
     // moving smaller cold allocations can still make room for the new target.
     for (auto* entry : m_lru) {
-      if (entry->m_arena != &cdram || entry->m_pinned) continue;
+      if (entry->m_arena != &cdram || entry->m_pinned || entry->m_gpuWritten ||
+          (entry->m_lastUse.address&&int32_t(*entry->m_lastUse.address-entry->m_lastUse.value)<0)) continue;
       if ((data = allocate_spill(entry->m_bytes, spill))) { candidate = entry; break; }
     }
     if (!data) break;
@@ -130,39 +141,16 @@ void TexturePool::release(TextureStorage& texture) noexcept {
 }
 void TexturePool::touch(TextureStorage& texture) {
   m_lru.splice(m_lru.end(), m_lru, texture.m_lru);
-  if (!texture.in_cdram()) {
+  if (!texture.in_cdram()&&!texture.m_gpuWritten) {
     if (void* data = m_device.arena().allocate(texture.m_bytes)) move(texture, data, m_device.arena());
   }
 }
 TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t height_, uint32_t mips_, gl::Format format_)
     : width(width_), height(height_), mips(mips_), format(format_), m_pool(pool) {
-  if (!width || !height || width > 4096 || height > 4096 || !mips || mips > 13 ||
-      (mips > 1 && (1u << (mips - 1)) > std::max(width, height)) ||
-      (format == gl::Format::Depth32F && mips != 1))
-    throw std::runtime_error("Invalid native texture dimensions or mip count");
   m_pixelBytes = native_format(format).bytes;
-  const bool compressed = format == gl::Format::BC1 || format == gl::Format::BC3;
-  if (compressed && (!std::has_single_bit(width) || !std::has_single_bit(height)))
-    throw std::runtime_error("Native block-compressed assets require power-of-two dimensions");
-  for (uint32_t mip = 0; mip < mips; ++mip) {
-    const uint32_t w = std::max(width >> mip, 1u), h = std::max(height >> mip, 1u);
-    if (compressed) {
-      const uint32_t blocks = std::max(w / 4, 1u) * std::max(h / 4, 1u);
-      m_levels.push_back({m_bytes, w, h, 0});
-      m_bytes += size_t(blocks) * (format == gl::Format::BC1 ? 8 : 16);
-      continue;
-    }
-    // Depth exports use a tile-aligned stride even with LINEAR storage.
-    const uint32_t pitch = align(w, format == gl::Format::Depth32F ? 32 : 8) * m_pixelBytes;
-    m_levels.push_back({m_bytes, w, h, pitch});
-    if (format == gl::Format::Depth32F) m_bytes += size_t(pitch) * align(h, 32);
-    else if (mip + 1 < mips) {
-      // Mip rows use the actual width, but the address of the next level
-      // advances by the enclosing power-of-two dimensions (GPU guide p.43).
-      m_bytes += size_t(std::max(std::bit_ceil(width) >> mip, 8u)) *
-                 std::max(std::bit_ceil(height) >> mip, 1u) * m_pixelBytes;
-    } else m_bytes += size_t(pitch) * h;
-  }
+  auto layout=gfx::native_texture_layout(width,height,mips,format);
+  m_levels=std::move(layout.levels);m_imageBytes=layout.image_bytes;
+  m_paletteOffset=layout.palette_offset;m_paletteBytes=layout.palette_bytes;m_bytes=layout.total_bytes;
   try {
     m_pool.allocate(*this);
     if (format == gl::Format::Depth32F) {
@@ -178,8 +166,9 @@ bool TextureStorage::in_cdram() const noexcept { return m_arena == &m_pool.m_dev
 uint32_t TextureStorage::row_bytes(uint32_t mip) const { return m_levels.at(mip).pitch; }
 void TextureStorage::refresh_views() {
   const auto native = native_format(format);
-  if (format == gl::Format::BC1 || format == gl::Format::BC3) {
-    check(sceGxmTextureInitSwizzled(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native compressed asset");
+  if (gfx::native_swizzled(format)) {
+    check(sceGxmTextureInitSwizzled(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native swizzled asset");
+    if(m_paletteBytes)check(sceGxmTextureSetPalette(&m_sampled,static_cast<uint8_t*>(m_data)+m_paletteOffset),"initialize native CDRAM palette");
   } else if (format == gl::Format::Depth32F) {
     check(sceGxmTextureInitLinearStrided(&m_sampled, m_data, native.sampled, width, height, m_levels[0].pitch), "initialize sampled depth view");
     check(sceGxmDepthStencilSurfaceInit(&m_depth, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32M,
@@ -189,13 +178,14 @@ void TextureStorage::refresh_views() {
     sceGxmDepthStencilSurfaceSetBackgroundMask(&m_depth, SCE_TRUE);
   } else {
     check(sceGxmTextureInitLinear(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native linear texture");
+    if(format>=gl::Format::U8_RRRR)return; // Explicit asset formats are sample-only.
     check(sceGxmColorSurfaceInit(&m_color, native.color, SCE_GXM_COLOR_SURFACE_LINEAR,
         SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
         width, height, m_levels[0].pitch / m_pixelBytes, m_data), "initialize native color surface");
   }
 }
 const SceGxmColorSurface* TextureStorage::color_surface() const {
-  if (format == gl::Format::Depth32F || format == gl::Format::BC1 || format == gl::Format::BC3)
+  if (format == gl::Format::Depth32F || gfx::native_swizzled(format) || format>=gl::Format::U8_RRRR)
     throw std::runtime_error("Sample-only texture used as color target");
   return &m_color;
 }
@@ -210,8 +200,8 @@ SceGxmOutputRegisterFormat TextureStorage::output_format() const noexcept {
 void TextureStorage::upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                             const void* source, uint32_t sourcePitch) {
   if (!w || !h) return;
-  if (format == gl::Format::BC1 || format == gl::Format::BC3)
-    throw std::runtime_error("Compressed assets require native packed uploads");
+  if (gfx::native_swizzled(format))
+    throw std::runtime_error("Swizzled assets require native packed uploads");
   const auto& level = m_levels.at(mip);
   const uint32_t sourcePixelBytes = format == gl::Format::R16I ? 2 : m_pixelBytes;
   if (!source || uint64_t(x) + w > level.width || uint64_t(y) + h > level.height ||

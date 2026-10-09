@@ -4,6 +4,8 @@
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
 #include "../gfx/native_mesh_layout.hpp"
+#include "../gfx/native_texture_archive.hpp"
+#include "../gfx/native_texture_decode.hpp"
 #include <aurora/gpu_completion.hpp>
 #include <aurora/native_frame_gate.hpp>
 
@@ -60,6 +62,7 @@ struct RenderContext {
 
 RenderContext* g_context = nullptr;
 Caps g_caps;
+std::unique_ptr<gfx::NativeTextureArchive> g_nativeTextureArchive;
 std::array<GLsync, aurora::GpuFrameRing::BufferCount> g_frameFences{};
 unsigned g_frameSlot = 0;
 
@@ -136,7 +139,7 @@ void forget_texture(GLuint texture) {
   }
 }
 
-constexpr std::array<FormatInfo, 7> FormatInfos{{
+constexpr std::array<FormatInfo, 19> FormatInfos{{
     {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
     {GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, false, false, true},
     {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2, false, false, true},
@@ -144,6 +147,19 @@ constexpr std::array<FormatInfo, 7> FormatInfos{{
     {GL_R32F, GL_RED, GL_FLOAT, 4, false, false, false},
     {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, 4, true, false, false},
     {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT, 4, false, true, false},
+    // GLES diagnostic loads expand unsupported swizzled formats to RGBA8.
+    {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
+    {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
+    {GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, false, false, true},
+    {GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, false, false, true},
+    {GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, false, false, true},
+    {GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, false, false, true},
+    {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2, false, false, true},
+    {GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, 2, false, false, true},
+    {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
+    {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
+    {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
+    {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false, false, true},
 }};
 
 
@@ -229,6 +245,7 @@ void shutdown() noexcept {
   }
   if (!on_render_thread()) Log.fatal("GL shutdown called outside the game thread");
   post([] {
+    g_nativeTextureArchive.reset();
     g_nativePrograms[0].reset();
     g_nativePrograms[1].reset();
     if (g_nativeVao) glDeleteVertexArrays(1, &g_nativeVao);
@@ -322,6 +339,14 @@ Texture::Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, 
     // Samplers override filtering; keep the texture complete without one.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    if(format>=Format::U8_RRRR&&format<=Format::U8U8_GRRR) {
+      const std::array<GLint,4> swizzle=format==Format::U8_RRRR?std::array<GLint,4>{GL_RED,GL_RED,GL_RED,GL_RED}:
+          format==Format::U8_1RRR?std::array<GLint,4>{GL_RED,GL_RED,GL_RED,GL_ONE}:
+          format==Format::U8_R000?std::array<GLint,4>{GL_ZERO,GL_ZERO,GL_ZERO,GL_RED}:
+          format==Format::U8_R111?std::array<GLint,4>{GL_ONE,GL_ONE,GL_ONE,GL_RED}:
+          std::array<GLint,4>{GL_RED,GL_RED,GL_RED,GL_GREEN};
+      for(unsigned c=0;c<4;c++)glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_R+c,swizzle[c]);
+    }
     g_state.activeUnit = UINT32_MAX;
     for (auto& bound : g_state.textures) {
       bound = UINT32_MAX;
@@ -349,6 +374,34 @@ Texture::~Texture() {
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format,
                           std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
+}
+
+void open_native_texture_pack(const char* path) noexcept {
+  call([path=std::string(path)]{
+    if(g_nativeTextureArchive)throw std::runtime_error("Host native texture pack already open");
+    auto archive=std::make_unique<gfx::NativeTextureArchive>();archive->open(path.c_str());g_nativeTextureArchive=std::move(archive);
+  });
+}
+NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
+  if(!g_nativeTextureArchive)Log.fatal("Host native texture pack is not open");
+  const auto& r=g_nativeTextureArchive->record(asset);
+  return {gfx::native_texture_format(r.format),r.width,r.height,r.mips,r.bytes,bool(r.flags&1),
+    r.image_bytes,r.palette_offset,r.palette_bytes,r.source_palette_delta,r.source_palette_entries,
+    r.source_palette_format,r.source_format,g_nativeTextureArchive->pack_version()==2};
+}
+TexturePtr native_texture_asset(uint32_t asset) noexcept {
+  if(!on_render_thread())Log.fatal("Host native texture asset load outside graphics owner");
+  const auto info=native_texture_info(asset);const auto& r=g_nativeTextureArchive->record(asset);
+  auto payload=g_nativeTextureArchive->payload(asset);
+  const auto layout=gfx::native_texture_layout(info.width,info.height,info.mips,info.format);
+  const bool expand=gfx::native_swizzled(info.format);
+  auto texture=create_texture(info.width,info.height,info.mips,expand?Format::RGBA8:info.format,"Offline native texture host probe");
+  for(unsigned mip=0;mip<info.mips;mip++){
+    const auto& level=layout.levels[mip];
+    if(expand){auto rgba=gfx::native_texture_rgba_level(r,payload,mip);upload_texture(*texture,mip,0,0,level.width,level.height,rgba.data(),level.width*4);}
+    else upload_texture(*texture,mip,0,0,level.width,level.height,payload.data()+level.offset,level.pitch);
+  }
+  return texture;
 }
 
 void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,

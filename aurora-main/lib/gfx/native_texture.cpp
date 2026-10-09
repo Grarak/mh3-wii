@@ -111,11 +111,31 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   const bool indexed=source.format==8 || source.format==9 || source.format==10;
   // A native asset already includes its immutable palette. Live palette or
   // image revisions must use their own producer payload instead.
-  const bool offline=source.asset && !source.mutable_source && (!indexed || source.palette.empty());
+  bool offline=source.asset && !source.mutable_source && source.original_image;
+#ifdef AURORA_GXM
+  gl::NativeTextureInfo offlineInfo{};
+  if(offline) {
+    offlineInfo=gl::native_texture_info(source.asset);
+    if(offlineInfo.width!=source.width||offlineInfo.height!=source.height||offlineInfo.mips!=source.levels||
+        (offlineInfo.sourceProvenance&&offlineInfo.sourceFormat!=source.format))
+      throw std::runtime_error("Native asset metadata disagrees with published texture");
+    if(indexed) {
+      const int64_t delta=int64_t(reinterpret_cast<uintptr_t>(source.palette.data()))-
+          int64_t(reinterpret_cast<uintptr_t>(source.bytes.data()));
+      offline=source.original_palette&&offlineInfo.sourceProvenance&&
+          delta==offlineInfo.sourcePaletteDelta&&source.palette_entries==offlineInfo.sourcePaletteEntries&&
+          source.palette_format==offlineInfo.sourcePaletteFormat;
+    }
+  }
+#else
+  // Live host rendering retains its authored producer bytes. The standalone
+  // GLES pack probe exercises offline payload layouts separately.
+  offline=false;
+#endif
   const Key key{offline?0:reinterpret_cast<uintptr_t>(source.bytes.data()),offline?source.asset:0,
     source.width,source.height,source.levels,source.format,offline?0:source.generation,
-    offline?0:reinterpret_cast<uintptr_t>(source.palette.data()),source.palette_format,
-    source.palette_entries,source.palette_generation};
+    offline?0:reinterpret_cast<uintptr_t>(source.palette.data()),offline?0:source.palette_format,
+    offline?0:source.palette_entries,offline?0:source.palette_generation};
   if(auto found=cache.find(key);found!=cache.end()) {
     found->second.used=++serial;publish(found->second.texture);return;
   }
@@ -132,10 +152,7 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   size_t allocated=rgba_allocation(source);
 #ifdef AURORA_GXM
   if(offline) {
-    const auto info=gl::native_texture_info(source.asset);
-    if(info.width!=source.width || info.height!=source.height || info.mips!=source.levels)
-      throw std::runtime_error("Native asset dimensions disagree with published texture");
-    allocated=(size_t(info.bytes)+63)&~size_t(63);
+    allocated=(size_t(offlineInfo.bytes)+63)&~size_t(63);
     make_room(allocated);texture=gl::native_texture_asset(source.asset);
   } else
 #endif

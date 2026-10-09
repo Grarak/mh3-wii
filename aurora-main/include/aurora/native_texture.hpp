@@ -12,6 +12,9 @@ struct NativeTextureSource {
   uint32_t palette_format=0,palette_entries=0;
   uint64_t generation=0,palette_generation=0;
   bool mutable_source=false;
+  // Certified by explicit resource-load producers, never inferred from bytes.
+  // Later image or palette writes invalidate the corresponding baseline.
+  bool original_image=false,original_palette=false;
 };
 struct NativeTextureSampler {
   uint32_t wrap_s=0,wrap_t=0,min_filter=0,mag_filter=0,anisotropy=0;

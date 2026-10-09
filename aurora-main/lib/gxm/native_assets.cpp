@@ -18,14 +18,6 @@ void read(int file, void* memory, uint64_t offset, uint32_t size) {
     done += count;
   }
 }
-gl::Format format(uint32_t value) {
-  switch (value) {
-  case 1: return gl::Format::RGBA8;
-  case 2: return gl::Format::BC1;
-  case 3: return gl::Format::BC3;
-  default: throw std::runtime_error("Unsupported offline native texture format");
-  }
-}
 }
 NativeAssets::~NativeAssets() { if (m_file >= 0) sceIoClose(m_file); }
 void NativeAssets::open(const char* path) {
@@ -37,18 +29,19 @@ void NativeAssets::open(const char* path) {
     if (sceIoGetstatByFd(file, &stat) < 0) throw std::runtime_error("Cannot stat native texture pack");
     std::array<uint32_t, 8> header{};
     read(file, header.data(), 0, sizeof(header));
-    if (header[0] != 0x5456334d || header[1] != 1 || !header[2] || header[2] > 32768 || header[3] != sizeof(Record))
+    if (header[0] != 0x5456334d || (header[1] != 1 && header[1] != 2) || !header[2] || header[2] > 32768 ||
+        header[3] != (header[1]==1?40u:64u) || header[4] || header[5] || header[6] || header[7])
       throw std::runtime_error("Invalid native texture pack header");
+    m_version=header[1];
     m_records.resize(header[2]);
-    read(file, m_records.data(), 32, m_records.size() * sizeof(Record));
-    const uint64_t dataStart = 32 + m_records.size() * sizeof(Record);
+    const uint64_t dataStart = 32 + uint64_t(m_records.size()) * header[3];
+    if(dataStart>stat.st_size)throw std::runtime_error("Native texture table exceeds file");
+    std::vector<uint8_t> table(m_records.size()*header[3]);
+    read(file,table.data(),32,table.size());
     uint64_t previousEnd = dataStart;
     for (unsigned i = 0; i < m_records.size(); ++i) {
-      const auto& r = m_records[i];
-      if (r.id != i + 1 || !r.width || !r.height || r.width > 4096 || r.height > 4096 || !r.mips || r.mips > 13 ||
-          !r.bytes || r.reserved || r.offset < previousEnd || (r.offset & 63) || r.offset > stat.st_size || r.bytes > stat.st_size - r.offset)
-        throw std::runtime_error("Invalid native texture pack record");
-      format(r.format);
+      auto& r = m_records[i];r=gfx::decode_native_texture_record({table.data()+i*header[3],header[3]},m_version);
+      gfx::validate_native_texture_record(r,m_version,i+1,previousEnd,stat.st_size);
       previousEnd = r.offset + r.bytes;
     }
     m_file = file;
@@ -61,12 +54,15 @@ const NativeAssets::Record& NativeAssets::record(uint32_t id) const {
 }
 gl::NativeTextureInfo NativeAssets::info(uint32_t id) const {
   const auto& r = record(id);
-  return {format(r.format), r.width, r.height, r.mips, r.bytes, bool(r.flags & 1)};
+  return {gfx::native_texture_format(r.format), r.width, r.height, r.mips, r.bytes, bool(r.flags & 1),
+    r.image_bytes,r.palette_offset,r.palette_bytes,r.source_palette_delta,
+    r.source_palette_entries,r.source_palette_format,r.source_format,m_version==2};
 }
 void NativeAssets::load(uint32_t id, TextureStorage& texture) const {
   const auto& r = record(id);
   if (texture.width != r.width || texture.height != r.height || texture.mips != r.mips ||
-      texture.format != format(r.format) || texture.size() != r.bytes || !texture.in_cdram())
+      texture.format != gfx::native_texture_format(r.format) || texture.size() != r.bytes || !texture.in_cdram() || texture.has_gpu_use() ||
+      (m_version==2&&(texture.image_bytes()!=r.image_bytes||texture.palette_offset()!=r.palette_offset||texture.palette_bytes()!=r.palette_bytes)))
     throw std::runtime_error("Native texture payload does not match CDRAM layout");
   // New allocation: no preceding scene refers to these bytes. The queued
   // upload runs before any draw consumes them, with no finish or staging copy.
