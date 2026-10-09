@@ -394,34 +394,44 @@ const mh3_matrix_table& PoseTable(const mh3_matrix_sources& sources, unsigned i)
     return i == 0 ? sources.positions : i == 1 ? sources.normals : sources.environment;
 }
 
-bool SamePoseLayout(const mh3_matrix_sources& a, const mh3_matrix_sources& b) {
+// A version's tables are the live ones in host byte order (CopyPose).
+bool SamePoseLayout(const mh3_matrix_sources& version, const mh3_matrix_sources& live) {
     for (unsigned i = 0; i < 3; ++i) {
-        const auto &x = PoseTable(a, i), &y = PoseTable(b, i);
+        const auto &x = PoseTable(version, i), &y = PoseTable(live, i);
 
-        if (!x.bytes.data != !y.bytes.data || x.bytes.size != y.bytes.size || x.count != y.count || x.stride != y.stride || x.big_endian != y.big_endian)
+        if (!x.bytes.data != !y.bytes.data || x.bytes.size != y.bytes.size || x.count != y.count || x.stride != y.stride || x.big_endian)
             return false;
     }
 
     return true;
 }
 
-// Word compare, 16 bytes a step (memcmp is a byte loop on the Vita); stops
+// Word compare of a version's host-order words with the live words (swapped
+// when big-endian), 16 bytes a step (memcmp is a byte loop on the Vita); stops
 // at the first difference, which a moved camera puts in the first matrix.
-bool SamePoseBytes(const uint8_t* a, const uint8_t* b, size_t bytes) {
+// Matrix tables are whole words.
+bool SamePoseBytes(const uint8_t* have, const uint8_t* now, size_t bytes, bool swap) {
+    const auto word = [swap](uint32_t value) { return swap ? __builtin_bswap32(value) : value; };
     size_t i = 0;
 
     for (; i + 16 <= bytes; i += 16) {
         uint32_t x[4], y[4];
-        std::memcpy(x, a + i, 16);
-        std::memcpy(y, b + i, 16);
+        std::memcpy(x, have + i, 16);
+        std::memcpy(y, now + i, 16);
 
-        if ((x[0] ^ y[0]) | (x[1] ^ y[1]) | (x[2] ^ y[2]) | (x[3] ^ y[3]))
+        if ((x[0] ^ word(y[0])) | (x[1] ^ word(y[1])) | (x[2] ^ word(y[2])) | (x[3] ^ word(y[3])))
             return false;
     }
 
-    for (; i < bytes; ++i)
-        if (a[i] != b[i])
+    for (; i + 4 <= bytes; i += 4) {
+        uint32_t x, y;
+        std::memcpy(&x, have + i, 4);
+        std::memcpy(&y, now + i, 4);
+
+        if (x != word(y))
             return false;
+    }
+
     return true;
 }
 
@@ -430,11 +440,23 @@ bool SamePoseContents(const NativePoseVersion& version, const mh3_matrix_sources
     for (unsigned i = 0; i < 3; ++i) {
         const auto &have = PoseTable(version.sources, i), &now = PoseTable(live, i);
 
-        if (now.bytes.data && !SamePoseBytes(have.bytes.data, now.bytes.data, now.bytes.size))
+        if (now.bytes.data && !SamePoseBytes(have.bytes.data, now.bytes.data, now.bytes.size, now.big_endian))
             return false;
     }
 
     return true;
+}
+
+// The live (guest, big-endian) words in host order, so the render thread
+// copies a version's matrices without swapping each one for every batch that
+// loads it (mh3_model_palette_apply_batch).
+void CopyHostOrder(uint8_t* to, const uint8_t* from, size_t bytes) {
+    for (size_t i = 0; i + 4 <= bytes; i += 4) {
+        uint32_t word;
+        std::memcpy(&word, from + i, 4);
+        word = __builtin_bswap32(word);
+        std::memcpy(to + i, &word, 4);
+    }
 }
 
 NativePoseVersion* CopyPose(const mh3_matrix_sources& live) {
@@ -451,8 +473,13 @@ NativePoseVersion* CopyPose(const mh3_matrix_sources& live) {
         if (!table->bytes.data)
             continue;
 
-        std::memcpy(at, table->bytes.data, table->bytes.size);
+        if (table->big_endian)
+            CopyHostOrder(at, table->bytes.data, table->bytes.size);
+        else
+            std::memcpy(at, table->bytes.data, table->bytes.size);
+
         table->bytes.data = at;
+        table->big_endian = 0;
         at += table->bytes.size;
     }
 

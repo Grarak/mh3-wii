@@ -250,13 +250,19 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             }
 
             if (normal_required && (batch->normal_required & (1u << slot))) {
-                // The final GPU matrix's padding is exact +0.
+                // The final GPU matrix's padding is exact +0. Built here and
+                // stored whole: the output is uncached GPU memory on the Vita,
+                // where twelve scalar stores cost more than one block copy.
+                mh3_matrix34 normal;
+
                 for (unsigned r = 0; r < 3; r++) {
                     for (unsigned c = 0; c < 3; c++)
-                        normals_out[slot].v[r][c] = mesh->palette->normal[slot].v[r][c];
+                        normal.v[r][c] = mesh->palette->normal[slot].v[r][c];
 
-                    normals_out[slot].v[r][3] = 0.f;
+                    normal.v[r][3] = 0.f;
                 }
+
+                normals_out[slot] = normal;
             }
         }
 

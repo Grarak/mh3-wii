@@ -1,4 +1,5 @@
 #include "../gl/gl.hpp"
+#include <aurora/fast_map.h>
 #include <aurora/fatal.hpp>
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
@@ -130,7 +131,7 @@ uint32_t address_mode(GLenum mode) {
   }
 }
 
-SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& desc) {
+SceGxmTexture build_sampling_view(const TextureStorage& texture, const SamplerDesc& desc) {
   SceGxmTexture result = texture.sampled();
   set_texture_address_modes(result, address_mode(desc.wrapS), address_mode(desc.wrapT));
   const bool minLinear = desc.minFilter == GL_LINEAR || desc.minFilter == GL_LINEAR_MIPMAP_NEAREST || desc.minFilter == GL_LINEAR_MIPMAP_LINEAR;
@@ -171,6 +172,38 @@ SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& de
   words[3] = (words[3] & ~(3u << 26)) | ((uint32_t(minLod) & 3u) << 26);
   std::memcpy(&result, words, sizeof(words));
   return result;
+}
+
+// build_sampling_view's results by input (render thread): draws in a row
+// sample the same textures with the same samplers, and a view costs four GXM
+// calls. Direct-mapped; the texture's control words (address, format, size)
+// and mip count identify it.
+struct SamplingMemo {
+  uint32_t words[4];
+  uint32_t mips;
+  SamplerDesc desc;
+  SceGxmTexture view;
+  bool valid;
+};
+
+std::array<SamplingMemo, 64> samplingMemo{};
+
+SceGxmTexture sampling_view(const TextureStorage& texture, const SamplerDesc& desc) {
+  uint32_t words[4];
+  std::memcpy(words, &texture.sampled(), sizeof(words));
+  auto& memo = samplingMemo[FastHash(words[0], words[1], words[2], words[3], texture.mips, desc.wrapS, desc.wrapT, desc.minFilter, desc.magFilter, desc.minLod, desc.maxLod,
+                                     desc.lodBias) &
+                            (samplingMemo.size() - 1)];
+
+  if (memo.valid && memo.mips == texture.mips && memo.desc == desc && std::equal(words, words + 4, memo.words))
+    return memo.view;
+
+  memo.view = build_sampling_view(texture, desc);
+  std::memcpy(memo.words, words, sizeof(words));
+  memo.mips = texture.mips;
+  memo.desc = desc;
+  memo.valid = true;
+  return memo.view;
 }
 
 class Renderer {
@@ -670,13 +703,15 @@ public:
   static constexpr size_t DefaultAttributesOffset = 128;
   MappedMemory utility;
   State state;
-  std::map<GLuint, TextureEntry> textures;
-  std::map<GLuint, NativeProgram> programs;
+
+  // Looked up several times per draw: FastMap (fast_map.h), not std::map.
+  FastMap<GLuint, TextureEntry> textures;
+  FastMap<GLuint, NativeProgram> programs;
   std::vector<std::pair<SceGxmNotification, NativeProgram>> retiredPrograms;
-  std::map<GLuint, MappedMemory> meshes;
+  FastMap<GLuint, MappedMemory> meshes;
   std::vector<std::pair<SceGxmNotification, MappedMemory>> retiredMeshes;
   std::map<std::pair<uint64_t, uint64_t>, std::weak_ptr<PatchedProgram>> patchedPrograms;
-  std::map<GLuint, SamplerDesc> samplers;
+  FastMap<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
   GLuint nextName = 1;
 

@@ -1,5 +1,6 @@
 #include "device.hpp"
 #include <aurora/fatal.hpp>
+#include "raster.hpp"
 #include "razor.hpp"
 #include "shader_bank.hpp"
 #ifdef MH3_DEVELOPMENT
@@ -380,6 +381,7 @@ void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* co
   // Firmware retains fragment ordering, including render-to-fragment-texture.
   // No fragment-to-vertex resource edge requires an explicit dependency.
   check(sceGxmBeginScene(m_context, 0, found->second, nullptr, nullptr, sync, color, depth), "begin scene");
+  forget_raster_state();
   m_inScene = true;
 }
 
