@@ -9,6 +9,67 @@ namespace Translator.Tests;
 
 public sealed class TranslatedBuildShardEmitterTests
 {
+    [Theory]
+    [InlineData(0u, false)]
+    [InlineData(100u, false)]
+    [InlineData(10000u, false)]
+    [InlineData(10001u, true)]
+    public void NewNativeWinnersOverrideStaleResolvedProfilesAtRuntimePriority(uint priority, bool modWins)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"native-profile-{Guid.NewGuid():N}");
+        var functions = Path.Combine(root, "functions");
+        var native = Path.Combine(root, "native");
+        var mod = Path.Combine(root, "mod", "cpp");
+        var output = Path.Combine(root, "out");
+        Directory.CreateDirectory(functions); Directory.CreateDirectory(native); Directory.CreateDirectory(mod);
+        try
+        {
+            var entries = new List<BaseTranslationFunctionMetadata>();
+            foreach (var address in new[] { 0x80001000u, 0x80002000u, 0x80003000u })
+            {
+                var body = address == 0x80001000u ? "InvokeDirectCpu<0x80002000u>(ctx); InvokeDirectCpu<0x80003000u>(ctx);" : "";
+                var source = $"#include \"abi_bridge.h\"\nextern \"C\" void func_{address:X8}(CpuContext* ctx) {{ {body} }}\n" +
+                             $"// RECOMP_REGISTRATION base 0x{address:X8} func_{address:X8} preserves=true fpr_mask=0x00000000\n";
+                var relative = $"func_{address:X8}.cpp";
+                Write(Path.Combine(functions, relative), source); entries.Add(Metadata(relative, address, source));
+            }
+            Write(Path.Combine(native, "draw.cpp"),
+                "extern \"C\" void NativeAs(CpuContext*) {}\nREGISTER_NATIVE_FUNCTION_AS(0x80002000,NativeAs,\"draw\");\n" +
+                "extern \"C\" void NativeFull(CpuContext*) {}\nREGISTER_NATIVE_FUNCTION(0x80003000,NativeFull);\n");
+            foreach (var address in new[] { 0x80002000u, 0x80003000u })
+                Write(Path.Combine(mod, $"rr_{address:X8}.cpp"),
+                    $"#include \"abi_bridge.h\"\nextern \"C\" void rr_{address:X8}(CpuContext*) {{}}\n" +
+                    $"// RECOMP_REGISTRATION mod 0x{address:X8} rr_{address:X8} \"mod\" preserves=true fpr_mask=0x00000000 priority={priority} module_id=7\n");
+            var metadata = Path.Combine(root, "metadata.json");
+            BaseTranslationOutputMetadataFile.WriteIfChangedAtomic(metadata,
+                BaseTranslationOutputMetadata.Create(entries, TranslationQualityMetadata.Clean, "identity"));
+            var profile = Path.Combine(root, "mod", "profile.json");
+            Write(profile, $$"""
+                {"Entries":[
+                  {"Address":2147491840,"Symbol":"rr_80002000","Name":"mod","Kind":"rr","Priority":{{priority}},"DirectCallAvailable":true,"PreservesNonvolatileFprs":true,"NonvolatileFprWriteMask":0,"MustRemainDynamicallyDispatchable":true},
+                  {"Address":2147495936,"Symbol":"rr_80003000","Name":"mod","Kind":"rr","Priority":{{priority}},"DirectCallAvailable":true,"PreservesNonvolatileFprs":true,"NonvolatileFprWriteMask":0,"MustRemainDynamicallyDispatchable":true}
+                ]}
+                """);
+            TranslatedBuildShardEmitter.Emit(new(metadata, functions, output, native, profile, mod,
+                BaseShardCount: 1, ModShardCount: 1, RegistrationShardCount: 1));
+            var baseTable = File.ReadAllText(Directory.GetFiles(Path.Combine(output, "base_dispatch"), "*.cpp").Single());
+            var modTable = File.ReadAllText(Directory.GetFiles(Path.Combine(output, "retro_rewind_dispatch"), "*.cpp").Single());
+            Assert.DoesNotContain("{0x80002000u", baseTable); Assert.DoesNotContain("{0x80003000u", baseTable);
+            foreach (var address in new[] { "80002000", "80003000" })
+            {
+                Assert.Equal(modWins, modTable.Contains($"{{0x{address}u, &rr_{address}"));
+                var traits = Directory.GetFiles(output, "*_traits.h", SearchOption.AllDirectories)
+                    .Where(path => Path.GetFileName(Path.GetDirectoryName(path))!.StartsWith("retro_"))
+                    .Select(File.ReadAllText).Aggregate("", string.Concat);
+                Assert.Equal(modWins, traits.Contains($"MKW_TRANSLATED_TRAIT({address}, rr_{address}"));
+            }
+            var baseRegistrations = File.ReadAllText(Directory.GetFiles(Path.Combine(output, "base_registration"), "*.cpp").Single());
+            Assert.Contains("{0x80002000u", baseRegistrations); // AS keeps its original oracle body.
+            Assert.DoesNotContain("{0x80003000u", baseRegistrations); // Full replacement excludes it.
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void RemainingWeightPartitionDoesNotCreateOversizedTailBin()
     {

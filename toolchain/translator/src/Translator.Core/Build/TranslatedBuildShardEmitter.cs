@@ -182,7 +182,8 @@ public static partial class TranslatedBuildShardEmitter
                 WinnerKind: "base",
                 WinnerPriority: 0u);
         }
-        var rrTraits = new Dictionary<uint, Trait>(BuildRetroTraits(activeBase, baseTraits, retroEntries));
+        var nativeWinners = nativeOverrides.Winners.Except(nativeOverrides.RawTranslatedOverrides.Keys).ToHashSet();
+        var rrTraits = new Dictionary<uint, Trait>(BuildRetroTraits(activeBase, baseTraits, retroEntries, nativeWinners));
         foreach (var address in nativeOverrides.RawTranslatedOverrides.Keys)
             rrTraits[address] = baseTraits[address];
         var sensitiveTargets = FindProfileSensitiveTargets(baseTraits, rrTraits);
@@ -499,13 +500,24 @@ public static partial class TranslatedBuildShardEmitter
     private static IReadOnlyDictionary<uint, Trait> BuildRetroTraits(
         IReadOnlyList<FunctionRecord> baseFunctions,
         IReadOnlyDictionary<uint, Trait> baseTraits,
-        IReadOnlyDictionary<uint, ProfileEntry> retroEntries)
+        IReadOnlyDictionary<uint, ProfileEntry> retroEntries,
+        IReadOnlySet<uint> nativeWinners)
     {
         if (retroEntries.Count == 0) return new Dictionary<uint, Trait>(baseTraits);
         var traits = new Dictionary<uint, Trait>(baseTraits.Count + retroEntries.Count);
         foreach (var function in baseFunctions)
         {
             if (!retroEntries.TryGetValue(function.Address, out var resolved))
+            {
+                traits[function.Address] = baseTraits[function.Address];
+                continue;
+            }
+            // Resolved profiles can predate a new native AS wrapper. The
+            // runtime still gives that native priority 10,000 (native wins
+            // ties), so an older translated profile must not resurrect a
+            // static translated winner or its direct-call trait. Preserve
+            // deliberately higher-priority mod winners.
+            if (nativeWinners.Contains(function.Address) && resolved.Priority <= 10_000u)
             {
                 traits[function.Address] = baseTraits[function.Address];
                 continue;
@@ -526,6 +538,8 @@ public static partial class TranslatedBuildShardEmitter
         foreach (var resolved in retroEntries.Values)
         {
             if (traits.ContainsKey(resolved.Address)) continue;
+            // Full native replacements may have removed their base body.
+            if (nativeWinners.Contains(resolved.Address) && resolved.Priority <= 10_000u) continue;
             var translated = resolved.DirectCallAvailable &&
                              (resolved.Kind.Equals("base", StringComparison.OrdinalIgnoreCase) ||
                               resolved.Kind.Equals("mod", StringComparison.OrdinalIgnoreCase) ||
