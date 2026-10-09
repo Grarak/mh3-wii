@@ -82,40 +82,6 @@ void CheckNativeTls() {
 }
 } // namespace
 
-#ifdef MH3_DEVELOPMENT
-namespace {
-SceUID debugLog = -1;
-int WriteDebugLog(void*, const char* bytes, int size) {
-    const int written = sceIoWrite(debugLog, bytes, size);
-    if (written < 0) {
-        errno = EIO;
-        return -1;
-    }
-    return written;
-}
-int CloseDebugLog(void*) {
-    const int result = debugLog >= 0 ? sceIoClose(debugLog) : 0;
-    debugLog = -1;
-    return result;
-}
-void OpenDebugLog() {
-    debugLog = sceIoOpen("host0:/game/runtime.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC | SCE_O_NOBUF, 0777);
-    if (debugLog < 0)
-        return;
-    FILE* stream = funopen(nullptr, nullptr, WriteDebugLog, nullptr, CloseDebugLog);
-    if (!stream) {
-        CloseDebugLog(nullptr);
-        return;
-    }
-    // Native unbuffered device I/O avoids host0's file cache rewriting the
-    // accumulated file on every flushed line. Keep newlib formatting.
-    std::fflush(stderr);
-    _GLOBAL_REENT->_stderr = stream;
-    stderr = stream;
-    std::setvbuf(stream, nullptr, _IOLBF, 0);
-}
-} // namespace
-#endif
 
 void InitializeVitaPlatform(int& argc, char**& argv) {
     aurora::pin_current_thread(aurora::ThreadRole::Game);
@@ -151,6 +117,10 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     setenv("MH3_DISC_DIR", "ux0:/data/mh3-wii", 0);
     setenv("MH3_USER_DIR", "ux0:/data/mh3-wii/saves", 0);
 #ifdef MH3_DEVELOPMENT
+    // The log goes to the Vita's TTY, which the devkit's CP debug link carries
+    // (console.txt), apart from the DECI link that serves host0: files: a
+    // stalled host0 link no longer blocks every thread that logs. Whole lines.
+    std::setvbuf(stderr, nullptr, _IOLBF, 1024);
     std::fprintf(stderr, "MH3 Vita: main thread core 2, heap 112 MiB, argv0=%s\n", argc ? argv[0] : "");
     for (int i = 1; i < argc; ++i)
         std::fprintf(stderr, "MH3 Vita: argv[%d]=%s\n", i, argv[i]);
