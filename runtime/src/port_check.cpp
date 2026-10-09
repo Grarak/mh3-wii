@@ -300,7 +300,7 @@ namespace {
 // returns: -1 none, else a Returns.
 void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {
 #ifdef MH3_DEVELOPMENT
-    static std::map<std::string, uint64_t> counts;
+    static std::map<std::string, uint64_t> counts, closeCalls;
     static std::set<std::string> reported;
     std::vector<std::vector<uint8_t>> before, expected;
 
@@ -348,6 +348,22 @@ void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*origina
         if (at == r.bytes)
             continue;
 
+        // tolerance=R: an output whose differing words all read as floats
+        // close to the original's counts as matching (and as close).
+        if ((r.address & 3) == 0 && (r.bytes & 3) == 0) {
+            bool close = true;
+
+            for (size_t k = at & ~size_t(3); k < r.bytes && close; k += 4) {
+                const uint32_t port = uint32_t(out[k]) << 24 | out[k + 1] << 16 | out[k + 2] << 8 | out[k + 3];
+                close = port == Word(want, k) || Close(port, Word(want, k));
+            }
+
+            if (close) {
+                ++closeCalls[name];
+                continue;
+            }
+        }
+
         same = false;
         char line[256];
         std::snprintf(line, sizeof line,
@@ -361,7 +377,8 @@ void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*origina
     }
 
     if (same && (checks & (checks - 1)) == 0)
-        std::printf("MH3 port check: %s matches the original (%llu calls)\n", name, (unsigned long long)checks);
+        std::printf("MH3 port check: %s matches the original (%llu calls, %llu of them within the tolerance)\n", name, (unsigned long long)checks,
+                    (unsigned long long)closeCalls[name]);
 
     std::fflush(stdout);
 #else
