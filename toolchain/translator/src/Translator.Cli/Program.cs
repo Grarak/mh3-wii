@@ -134,7 +134,7 @@ var modPatchedAddresses = new Lazy<IReadOnlySet<uint>>(() =>
     BuildModPatchedAddresses(modPatchProfiles.Value));
 var leafInliningBlockedTargets = new Lazy<IReadOnlySet<uint>>(() =>
     BuildLeafInliningBlockedTargets(
-        modPatchedAddresses.Value, runtimeNativeGuestEffects.Value, baseTranslationExclusions.Value));
+        modPatchedAddresses.Value, runtimeNativeIndex.Value, baseTranslationExclusions.Value));
 
 // Leaf inlining is a front-end decision: the splice happens before SSA, so the
 // canonical graph the emission wave lowers is already inlined and every
@@ -3993,10 +3993,14 @@ static bool HasFlag(string[] argsTail, string name) => argsTail.Any(a => string.
 /// </summary>
 static IReadOnlySet<uint> BuildLeafInliningBlockedTargets(
     IReadOnlySet<uint> modPatchedAddresses,
-    RuntimeNativeGuestEffectSet nativeGuestEffects,
+    RuntimeNativeIndex nativeIndex,
     IReadOnlySet<uint> translationExclusions)
 {
-    var blocked = new HashSet<uint>(nativeGuestEffects.Contracts.Keys);
+    // Registration determines the runtime winner even when effect analysis
+    // cannot recover a contract (e.g. a panic wrapper or an external helper).
+    // AS wrappers retain their translated original for explicit comparisons,
+    // but a caller must still reach the registered native implementation.
+    var blocked = nativeIndex.Registrations.Select(static entry => entry.Address).ToHashSet();
     blocked.UnionWith(translationExclusions);
     blocked.UnionWith(modPatchedAddresses);
     return blocked;

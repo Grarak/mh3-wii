@@ -9,6 +9,61 @@ namespace Translator.Tests;
 public sealed class TranslateRecursiveRuntimeConfigTests
 {
     [Fact]
+    public void NativeWrapperWithoutEffectContractStillBlocksLeafInlining()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"translator-native-leaf-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            const uint entry = 0x80001000u;
+            const uint leaf = entry + 0x10;
+            File.WriteAllBytes(Path.Combine(root, "main.dol"), SyntheticDolFactory.CreateBytes(
+                entry, sections: [SyntheticDolFactory.Text(0, entry,
+                    0x48000011u, // bl leaf
+                    0x4E800020u, // blr
+                    0x60000000u, 0x60000000u,
+                    0x38630001u, // addi r3,r3,1: otherwise an inlinable leaf
+                    0x4E800020u)]));
+            Directory.CreateDirectory(Path.Combine(root, "native"));
+            File.WriteAllText(Path.Combine(root, "native", "replacement.cpp"), """
+                // Declaration only: effect analysis has no native body to scan.
+                extern "C" void Replacement(CpuContext*);
+                REGISTER_NATIVE_FUNCTION_AS(0x80001010, Replacement, "Replacement");
+                """);
+            var project = Path.Combine(root, "recomp.yml");
+            File.WriteAllText(project, """
+                schema_version: 1
+                project:
+                  id: native-leaf-test
+                memory:
+                  sda_base: 0x80002000
+                  sda2_base: 0x80003000
+                inputs:
+                  dol:
+                    path: main.dol
+                runtime:
+                  native_registration_root: native
+                  native_abi_directories: []
+                output:
+                  root: generated
+                """);
+            var output = Path.Combine(root, "generated", "functions");
+            Assert.Equal(0, InvokeCli("translate-recursive", $"0x{entry:X8}",
+                "--project", project, "--outdir", output,
+                "--output-metadata", Path.Combine(root, "metadata.json"), "--threads", "1"));
+            var caller = File.ReadAllText(Path.Combine(output, $"func_{entry:X8}.cpp"));
+            Assert.DoesNotContain($"inline leaf 0x{leaf:X8}", caller, StringComparison.Ordinal);
+            Assert.Contains($"0x{leaf:X8}", caller, StringComparison.OrdinalIgnoreCase);
+            // AS retains the original, unlike a complete native replacement.
+            Assert.True(File.Exists(Path.Combine(output, $"func_{leaf:X8}.cpp")));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void UnsupportedOpcodeFailsStrictTranslation()
     {
         var root = Path.Combine(Path.GetTempPath(), $"translator-unsupported-opcode-{Guid.NewGuid():N}");

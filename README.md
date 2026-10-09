@@ -9,7 +9,8 @@ is no interpreter or JIT fallback. Graphics go through Aurora with a native
   tested on a Raspberry Pi 5) and arm64 Linux (development and debugging).
 - **Current migration:** game and rendering share one CPU thread, and remaining
   GX calls stop with guest/native backtraces. Native gameplay rendering is
-  incomplete; boot currently stops at global 3D light initialization.
+  incomplete; native light setup now passes and boot stops at RenderInit's
+  overscan helper.
   [Rendering investigation](docs/vita-render-investigation.md) records the
   migration and earlier playable results.
 
