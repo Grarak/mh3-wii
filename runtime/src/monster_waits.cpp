@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of seventeen enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of nineteen enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -13,6 +13,8 @@
 //     0x801482AC  kind 1 (Rathian)   a wait (0.0, 0.4), 150 ticks
 //     0x80159054  kind 3 (Qurupeco)  a move, at least 10 or 20 ticks
 //     0x8015898C  kind 3 (Qurupeco)  a backward hop, 22 or 30 ticks
+//     0x801B795C, 0x801B867C  hops (the dispatcher 0x801B94B4, after kind
+//                 34 Kelbi's code): a 10-tick hold on landing
 //     0x8034FA1C  em024 (Alatreon)   a flight, 300 ticks (an effect at 20 left)
 //     0x8039E9EC  em028 (Popo)       a rest, 150 or 300 ticks
 //     0x801C7570  em006 (Diablos)    an ambush from the sand, 90 ticks
@@ -462,6 +464,86 @@ void Em003BackstepPort(CpuContext* ctx) {
 
         break;
     }
+}
+
+// 0x801B795C and 0x801B867C (`back`: the second, which also moves backward
+// and steers first through 0x801B7108): hops (the pattern sweep's em034
+// Kelbi; reached through 0x801B94B4, a dispatcher after kind 34's code, not
+// Kelbi variant 1's), motion 5:
+// from frame 6 to 16 its rise (+0x314) and the second's backward speed
+// (+0x318) follow two curves (0x801356A8, tables 0x805B2948 and 0x805B29A8)
+// through the scaled velocity add; then motion 1 and a hold of 10 ticks
+// (the original's 10 calls) before 0x80128048.
+void Em034Hop(CpuContext* ctx, bool back) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const auto move = [&] {
+        game.Call<0x8013545C>({work});
+        game.Call<0x801356A8>({work, 0x805B2948});
+        Memory::WriteFloat32(work + 0x314, game.F1());
+
+        if (back) {
+            game.Call<0x801356A8>({work, 0x805B29A8});
+            Memory::WriteFloat32(work + 0x318, -game.F1());
+        }
+
+        game.Call<AddVelocity>({work});
+    };
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+
+        if (back) {
+            game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
+            game.Call<SetScale>({work});
+        } else
+            game.Call<Em::SetUp>({work, 0});
+
+        em.SetMotion(5, 4, 0);
+        break;
+    case 1:
+        if (back)
+            game.Call<0x801B7108>({work});
+
+        if (em.At(6.0f, 1)) {
+            em.NextState();
+
+            if (!back) {
+                game.Call<0x801302AC>({work});
+                game.Call<SetScale>({work});
+            }
+
+            move();
+        }
+
+        break;
+    case 2:
+        move();
+
+        if (em.At(16.0f, 1)) {
+            em.NextState();
+            em.SetMotion(1, 10, 0);
+            em.Count(10);
+            game.Call<0x8013545C>({work});
+        }
+
+        break;
+    case 3:
+        if (CountDown(em))
+            game.Call<0x80128048>({work});
+
+        break;
+    }
+}
+
+void Em034HopPort(CpuContext* ctx) {
+    Em034Hop(ctx, false);
+}
+
+void Em034HopBackPort(CpuContext* ctx) {
+    Em034Hop(ctx, true);
 }
 
 // em007 0x801D91B4 (r4: 1 enraged, other voices): Deviljho's charge,
@@ -1214,6 +1296,18 @@ extern "C" void MH3_Em003Backstep(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em003Backstep", func_8015898C, Em003BackstepPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8015898C, MH3_Em003Backstep, "Em003Backstep");
+
+extern "C" void func_801B795C(CpuContext* ctx);
+extern "C" void MH3_Em034Hop(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em034Hop", func_801B795C, Em034HopPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801B795C, MH3_Em034Hop, "Em034Hop");
+
+extern "C" void func_801B867C(CpuContext* ctx);
+extern "C" void MH3_Em034HopBack(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em034HopBack", func_801B867C, Em034HopBackPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801B867C, MH3_Em034HopBack, "Em034HopBack");
 
 extern "C" void func_801D91B4(CpuContext* ctx);
 extern "C" void MH3_Em007Charge(CpuContext* ctx) {
