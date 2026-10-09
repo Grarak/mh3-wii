@@ -566,7 +566,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
                     std::fprintf(stderr, "MH3 effect curves: particle %08x age %.3f kept tick %u differs:", p, age,
                                  uint32_t(w.age));
                     for (size_t i = 0; i < kCurveWords; ++i)
-                        if (cached[i] != full[i]) std::fprintf(stderr, " +%02zx %08x/%08x", 0x20 + 4 * i, cached[i], full[i]);
+                        if (cached[i] != full[i]) std::fprintf(stderr, " +%02llx %08x/%08x", static_cast<unsigned long long>(0x20 + 4 * i), cached[i], full[i]);
                     std::fprintf(stderr, "\n");
                 }
             }
