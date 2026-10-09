@@ -12,10 +12,14 @@ bool WriteGxRegister(uint32_t address, unsigned width, uint32_t value);
 void SubmitHostGraphicsTask(std::function<void()> task);
 void SubmitGuestGxBytes(const uint8_t* data, size_t size);
 #ifdef MH3_DEVELOPMENT
+#include <string>
 #include <vector>
 // Port checks: while `into` is set, the guest's FIFO bytes are appended to it
 // instead of going to the GPU (the FIFO window is closed meanwhile).
 void CaptureGuestGx(std::vector<uint8_t>* into);
+
+// The debug port's `shot`: the next frame that begins is dumped to `path` (BMP).
+void RequestFrameDump(std::string path);
 #endif
 // SubmitGuestGxBytes for the 1-, 2- and 4-byte FIFO writes.
 template <size_t N>

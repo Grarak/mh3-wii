@@ -32,6 +32,9 @@
 #include <utility>
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
+#ifndef __vita__
+#include "debug_port.h"
+#endif
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -685,6 +688,9 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         StepVillageBoot(ctx);
         Cheats::Step(ctx);
         MonsterControl::Step(ctx);
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+        DebugPort::Step(ctx);
+#endif
 
         // The task pass's Effect::Calc calls run on the guest worker during
         // the scene's traverse and opaque draws (EffectStep::Launch in the

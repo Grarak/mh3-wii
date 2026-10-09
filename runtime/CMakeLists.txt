@@ -603,6 +603,11 @@ endif()
 
 target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest, launcher
 
+# MH3_DEBUG_PORT (docs/debug-port.md): development builds on the hosts.
+if(MH3_DEVELOPMENT AND NOT VITA)
+  target_sources(MH3 PRIVATE src/debug_port.cpp)
+endif()
+
 # MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it
 # does not rebuild the generated shards.
 if(MH3_DEVELOPMENT)

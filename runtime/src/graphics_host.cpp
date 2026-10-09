@@ -98,6 +98,13 @@ uint64_t razorNativeFrameStarted = 0;
 uint32_t captureInterval = 0;
 uint32_t captureStart = 0;
 std::filesystem::path capturePath;
+#ifdef MH3_DEVELOPMENT
+// The debug port's frame dump (RequestFrameDump): its path, and the frame it
+// was given once that frame began.
+std::mutex dumpLock;
+std::string dumpPath;
+uint32_t dumpFrame = 0;
+#endif
 GuestGxStream guestStream;
 std::vector<uint8_t> efbPixels;
 uint32_t efbPitch = 0, efbWidth = 0, efbHeight = 0;
@@ -393,6 +400,17 @@ void SealDisplayFrame() {
         const auto path = capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
         aurora_request_frame_capture(frame, path.c_str());
     }
+#ifdef MH3_DEVELOPMENT
+    {
+        std::lock_guard lock(dumpLock);
+
+        if (dumpFrame == frame && !dumpPath.empty()) {
+            aurora_request_frame_capture(frame, dumpPath.c_str());
+            dumpPath.clear();
+            dumpFrame = 0;
+        }
+    }
+#endif
 
     { aurora_end_frame(); }
     frameActive = false;
@@ -426,10 +444,24 @@ void BeginHostGraphicsFrame() {
 
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
         aurora::gfx::require_frame_render();
+#ifdef MH3_DEVELOPMENT
+    std::lock_guard lock(dumpLock);
+
+    if (!dumpPath.empty() && !dumpFrame) {
+        dumpFrame = frame;
+        aurora::gfx::require_frame_render();
+    }
+#endif
 }
 } // namespace
 
 #ifdef MH3_DEVELOPMENT
+void RequestFrameDump(std::string path) {
+    std::lock_guard lock(dumpLock);
+    dumpPath = std::move(path);
+    dumpFrame = 0;
+}
+
 static std::vector<uint8_t>* gxCapture = nullptr;
 void CaptureGuestGx(std::vector<uint8_t>* into) {
     gxCapture = into;
@@ -615,6 +647,16 @@ void EndNativeGraphicsFrame() {
 
     if (captureInterval && frame >= captureStart && frame % captureInterval == 0)
         capture = (capturePath.parent_path() / (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp")).string();
+#ifdef MH3_DEVELOPMENT
+    {
+        std::lock_guard lock(dumpLock);
+
+        if (!dumpPath.empty()) {
+            capture = std::move(dumpPath);
+            dumpPath.clear();
+        }
+    }
+#endif
 
     PublishNativeFramePacket(std::move(capture));
     MH3_STAT(EndNativeFrameStatistics(rendered);)

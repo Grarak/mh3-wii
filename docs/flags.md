@@ -180,6 +180,10 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 `MH3_MONSTER_CONTROL=PATH`: commands read from PATH while the game runs (`act MODE SUB`, `every TICKS MODE SUB`, `ai off`, `freeze on`, `face DEGREES`, `goto X Y Z`, `target N`, `wait TICKS`, `list`), one a line, each run once in order as it appears. With `--quest 9004 --quest-monster NAME` a chosen monster in the arena pit, `--quest 9000 --quest-small NAME` four small ones ([monster control](monster-control.md)).
 
+### `MH3_DEBUG_PORT`: drive the game over TCP
+
+`MH3_DEBUG_PORT=PORT` (127.0.0.1) or `ADDR:PORT`, Linux: a TCP line protocol for memory peeks and pokes, guest calls, cheats and frame dumps while the game runs, whose commands skip the menus (`scripts/dev/debug-port.py`, [debug port](debug-port.md)).
+
 ## Build-option tools
 
 These need a CMake option, which rebuilds the generated code.
