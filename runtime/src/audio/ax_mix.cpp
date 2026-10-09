@@ -637,7 +637,18 @@ private:
 
     void ProcessPBList(uint32_t pbAddr, bool newFilter, bool oldAxLayout) {
         uint32_t guard = 0;
+        // A stopped voice mixes nothing and its PB goes back unchanged: follow
+        // its link without the full read and write-back (most of the chain).
+        // Not when a per-ms update block could start it (the old layout's
+        // updates, which only SkipBiquadGapOnly carries).
+        const bool skipStopped = m_pbLayout != PBLayout::Unknown &&
+                                 !(oldAxLayout && m_pbLayout == PBLayout::SkipBiquadGapOnly);
         while (pbAddr && guard++ < 256) {
+            if (skipStopped && MixRead16(pbAddr + offsetof(AXPBWii, running)) != 1) {
+                pbAddr = Hilo(MixRead16(pbAddr + offsetof(AXPBWii, next_pb_hi)),
+                              MixRead16(pbAddr + offsetof(AXPBWii, next_pb_lo)));
+                continue;
+            }
             AXPBWii pb{};
             ReadPB(pbAddr, pb);
             AXBuffers buffers = MixBuffers();
