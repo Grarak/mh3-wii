@@ -293,25 +293,8 @@ void AddPortOverride(uint16_t from, uint16_t to) {
 
 bool Startup() {
 #ifdef __vita__
-    // newlib's own sceNetInit pool (about 140 KiB) runs out with the game's
-    // sockets: the stack then stops taking (and acknowledging) segments for
-    // minutes. Initialized first, newlib keeps this one.
-    static const bool started = [] {
-        constexpr int kPoolBytes = 2 << 20;
-
-        if (sceSysmoduleIsLoaded(SCE_SYSMODULE_NET) != SCE_SYSMODULE_LOADED && sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0)
-            return false;
-
-        SceNetInitParam parameters{};
-        parameters.memory = std::malloc(kPoolBytes);
-        parameters.size = kPoolBytes;
-        const int initialized = sceNetInit(&parameters);
-
-        if (initialized < 0)
-            std::fprintf(stderr, "MH3 net: sceNetInit 0x%08X\n", unsigned(initialized));
-
-        return _vita_net_init() >= 0;
-    }();
+    // The stack's pool: runtime/vita/newlib_net.c.
+    static const bool started = _vita_net_init() >= 0;
     return started;
 #else
     return true;
@@ -625,7 +608,7 @@ bool ParseIpv4(const std::string& text, uint32_t* ip) {
 namespace {
 // One DNS A query over UDP to SERVER (network order), for when the system's
 // resolver fails: the Vita devkit's answered every name with ECONNREFUSED
-// (getaddrinfo -5, oct07-tls2) while its network worked.
+// (getaddrinfo -5) while its network worked.
 bool QueryDns(const std::string& name, uint32_t server, std::vector<uint32_t>& addresses) {
     uint8_t packet[512] = {0x4d, 0x33, 0x01, 0x00, 0x00, 0x01}; // id, recursion desired, one question
     size_t size = 12;

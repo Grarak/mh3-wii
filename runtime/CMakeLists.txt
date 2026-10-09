@@ -502,6 +502,10 @@ if(VITA)
   target_sources(MH3 PRIVATE vita/newlib_sfp.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=__sfp")
 
+  # newlib: the network stack's first start takes our larger pool.
+  target_sources(MH3 PRIVATE vita/newlib_net.c)
+  target_link_options(MH3 PRIVATE "-Wl,--wrap=_vita_net_init")
+
   # gettimeofday from the process time instead of a system call (6 us):
   # steady_clock, and with it the guest time base, read it. clock_gettime
   # reads the same clock (pthread-embedded's timed waits compare the two).
