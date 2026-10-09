@@ -183,7 +183,8 @@ std::atomic<uint64_t> completed{0};
 // lastPublished: the newest packet published (game thread writes it).
 std::atomic<uint64_t> taken{0}, lastPublished{0};
 
-// Advanced after each take (and a failure): the game thread limiter waits on it.
+// Advanced after each take and each completion (and a failure): the game
+// thread limiter waits on it.
 SpinSignal takenSignal;
 #ifdef MH3_DEVELOPMENT
 struct RenderCounters {
@@ -1006,6 +1007,25 @@ void ReportMemcpyCensus() {
 }
 #endif
 
+// The game thread limiter on: a packet that presents waits here for a free
+// GPU frame slot (and display queue entry) instead of skipping its draw, so
+// the render thread consumes packets as fast as it submits frames and the game
+// thread, waiting for consumption, steps once per frame drawn. A GPU stuck for
+// 100 ms falls back to the skip.
+void WaitForGpuFrameSlot() {
+    const auto start = std::chrono::steady_clock::now();
+
+    while (aurora::gl::gpu_frame_pending() && !stopping.load(std::memory_order_relaxed)) {
+        if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(100))
+            return;
+#ifdef __vita__
+        sceKernelDelayThread(200);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+#endif
+    }
+}
+
 void RenderPackets() {
 #ifdef __vita__
     // The game thread runs on core 2; the AX mix worker and the display
@@ -1072,6 +1092,9 @@ void RenderPackets() {
             idleStart = 0;
         }
 #endif
+        if (paced && !synchronous && p.render && !p.canceled)
+            WaitForGpuFrameSlot();
+
         Execute(p);
 
         // Its quads were drawn from the packet's arena (SlotFree).
@@ -1107,6 +1130,7 @@ void RenderPackets() {
 #endif
         completed.store(p.sequence, std::memory_order_release);
         completed.notify_all();
+        takenSignal.Advance();
     }
 
     // Resource work queued after the last packet.
@@ -1178,6 +1202,7 @@ EM_BOOL RenderAnimationFrame(double, void*) {
             Execute(p);
             completed.store(p.sequence, std::memory_order_release);
             completed.notify_all();
+            takenSignal.Advance();
             return EM_TRUE;
         }
 
@@ -1634,16 +1659,18 @@ void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32
 }
 #endif
 // The game thread limiter: the game thread records packet s only after the
-// render thread took packet s - 1, so at most one published packet waits for
-// it. The render thread then finds its next packet as it finishes one while
-// the game thread keeps up, and the game runs at the rate frames are shown
-// (variable steps follow it, so the frames sample game time evenly). A deeper
+// render thread consumed packet s - 2, that is submitted its frame to the GPU
+// (completed), so it records s while the render thread works on s - 1 and the
+// GPU on s - 2. The render thread waits for a free GPU frame slot instead of
+// skipping a packet's draw (WaitForGpuFrameSlot), so every packet is drawn and
+// the game runs at the rate frames are shown (variable steps follow it, so
+// the frames sample game time evenly). A deeper
 // queue only added a render frame of latency per packet. Without the limiter
 // (the launcher's game thread limit off) the game thread waits only for a
 // free slot, which the render thread frees by taking the newest packet,
 // skipping the older ones: their draw work is lost and the frames shown
 // judder. The wait spins briefly, then parks on
-// takenSignal, which the render thread advances at each take. The park is
+// takenSignal, which the render thread advances at each take and completion. The park is
 // bounded and the loop re-checks, so a slot freed by a completion alone is
 // seen within the bound, and a stall reports itself.
 void PaceNativeFramePacket() {
@@ -1651,7 +1678,7 @@ void PaceNativeFramePacket() {
         return;
 
     const uint64_t next = sequence + 1;
-    const auto released = [next] { return paced ? taken.load(std::memory_order_acquire) + 1 >= next : SlotReleased(next); };
+    const auto released = [next] { return paced ? completed.load(std::memory_order_acquire) + 2 >= next : SlotReleased(next); };
     const auto ready = [&] { return released() && SlotFree(next); };
 
     // Loaded before the check: a take after the check moves the signal on.
