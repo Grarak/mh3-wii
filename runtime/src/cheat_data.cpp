@@ -31,7 +31,7 @@ enum : uint32_t {
     kMoney = 0x18,        // u32
     kClothing = 0x9E,     // u8
     kVoice = 0x9F,        // u8
-    kClothingColor = 0x39A0, // u8 red, green, blue
+    kClothingColor = 0x39BC, // u8 red, green, blue, alpha (0x8043B334)
     kCombos = 0x3960,     // u32[4] known combinations, then u8 at +0x10
     kEyeColor = 0x3DE6,   // u8
     kFeatures = 0x3DE7,   // u8
@@ -128,7 +128,8 @@ enum : uint32_t {
     kGallery = kSystem + 0x888,  // u8[8] unlocked movies
     kPlaySeconds = kSystem + 0x890, // u32 (PlayTimeTick 0x800D2F80)
     kMapOption = 0x8065B51E,     // u8 game option 14 (options at 0x8065B510)
-    kHudState = 0x806C0281,      // u16 (unaligned), menu state
+    kHudState = 0x806C0280,      // u16 menu state (the code's 286BDE01: the
+                                 //   address's low bit is the if's endif)
     kMusicVolume = 0x80796E80,   // f32 (sound code at 0x800E4800)
     kEnemySpeed = 0x80799110,    // f32 1.0: enemy motion rate (0x80125xxx)
     kLanceChargeRate = 0x8079D874, // f32 1.2
@@ -140,10 +141,6 @@ enum : uint32_t {
 
 void WriteF32(uint32_t address, float value) {
     Memory::Write32(address, std::bit_cast<uint32_t>(value));
-}
-
-uint16_t ReadUnaligned16(uint32_t address) {
-    return uint16_t(Memory::Read8(address) << 8 | Memory::Read8(address + 1));
 }
 
 // The Gecko codes' "16-bit if" on a PLW halfword: (value & ~mask) == compare.
@@ -616,7 +613,7 @@ void StepSaveData() {
         Memory::Write32(kMusicVolume, 0x40112244);
 
     if (On(Id::MapOnHud))
-        Memory::Write8(kMapOption, ReadUnaligned16(kHudState) == 0x3C04 ? 1 : 0);
+        Memory::Write8(kMapOption, Memory::Read16(kHudState) == 0x3C04 ? 1 : 0);
 
     if (On(Id::SetPlayTime))
         Memory::Write32(kPlaySeconds, uint32_t(Value(Id::SetPlayTime)));
@@ -655,7 +652,12 @@ void StepSaveData() {
         if (On(write.id))
             Memory::Write8(user + write.offset, write.value);
 
-    // Picked values: the character's looks and the forecast.
+    // Picked values: the character's looks and the forecast. The looks
+    // take character creation's values (0x8043B4AC): the face and hair index
+    // file tables that end there. The clothing colour codes wrote +0x39A0 to
+    // +0x39A2, the skin tone's base and shade (most values pick face
+    // textures that do not exist) and a list entry; here they write the
+    // inner clothing's colour that their names promise.
     constexpr struct {
         Id id;
         uint32_t offset;

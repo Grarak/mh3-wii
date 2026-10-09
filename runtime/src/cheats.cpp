@@ -98,6 +98,16 @@ constexpr Option kDefenseBonuses[]{
     {"+100", 100}, {"+500", 500}, {"+1000", 1000}, {"+4000", 4000}, {"+9000", 9000},
 };
 
+// Skin tones, darkest to lightest: the u16 is the tone's base (0 to 2) and
+// its shade towards the next (0 to 100), as character creation sets them
+// (0x80047BBC). The code's notes gave 000-264 as one hex range; the values
+// between hold shades the game never makes.
+constexpr Option kSkinTones[]{
+    {"000", 0x000}, {"014", 0x014}, {"028", 0x028}, {"03C", 0x03C}, {"050", 0x050},
+    {"100", 0x100}, {"114", 0x114}, {"128", 0x128}, {"13C", 0x13C}, {"150", 0x150},
+    {"200", 0x200}, {"214", 0x214}, {"228", 0x228}, {"23C", 0x23C}, {"250", 0x250}, {"264", 0x264},
+};
+
 // Bowgun barrel ranges, as the code's notes listed them (hundredths).
 constexpr Option kBarrelRanges[]{
     {"0.30", 30}, {"0.50", 50}, {"0.70", 70}, {"1.00", 100}, {"3.00", 300}, {"4.00", 400},
@@ -296,18 +306,18 @@ constexpr Entry kEntries[]{
     {Id::FelyneSkill2, {kSkiller, "Felyne skill 2 button activation", "L+R+Down sets the second Felyne skill.", {}, {0, 63}}},
     {Id::FelyneSkill3, {kSkiller, "Felyne skill 3 button activation", "L+R+Left sets the third Felyne skill.", {}, {0, 63}}},
     {Id::FelyneSkill4, {kSkiller, "Felyne skill 4 button activation", "L+R+Right sets the fourth Felyne skill.", {}, {0, 63}}},
-    {Id::PuddyFace, {kSkiller, "Puddy face", "Face; loads with the character.", {}, {0, 15}}},
-    {Id::HairStyle, {kSkiller, "Hair dresser", "Hair style; loads with the character.", {}, {0, 15}}},
+    {Id::PuddyFace, {kSkiller, "Puddy face", "Face (character creation's 9); loads with the character.", {}, {0, 8}}},
+    {Id::HairStyle, {kSkiller, "Hair dresser", "Hair style (character creation's 11); loads with the character.", {}, {0, 10}}},
     {Id::HairRed, {kSkiller, "Hair dye (red)", "Hair colour, red.", {}, {0, 255, 15}}},
     {Id::HairGreen, {kSkiller, "Hair dye (green)", "Hair colour, green.", {}, {0, 255, 15}}},
     {Id::HairBlue, {kSkiller, "Hair dye (blue)", "Hair colour, blue.", {}, {0, 255, 15}}},
-    {Id::Clothing, {kSkiller, "Clothing change", "Inner clothing; loads with the character.", {}, {0, 15}}},
-    {Id::Voice, {kSkiller, "Voice change", "Voice.", {}, {0, 15}}},
-    {Id::EyeColor, {kSkiller, "Eye color change", "Eye colour; loads with the character.", {}, {0, 15}}},
-    {Id::Features, {kSkiller, "Features", "Facial features; loads with the character.", {}, {0, 15}}},
-    {Id::ClothingRed, {kSkiller, "Color changing clothing (red)", "Clothing colour, red.", {}, {0, 255, 15}}},
-    {Id::ClothingGreen, {kSkiller, "Color changing clothing (green)", "Clothing colour, green.", {}, {0, 255, 15}}},
-    {Id::ClothingBlue, {kSkiller, "Color changing clothing (blue)", "Clothing colour, blue.", {}, {0, 255, 15}}},
+    {Id::Clothing, {kSkiller, "Clothing change", "Inner clothing (character creation's 4); loads with the character.", {}, {0, 3}}},
+    {Id::Voice, {kSkiller, "Voice change", "Voice (character creation's 20).", {}, {0, 19}}},
+    {Id::EyeColor, {kSkiller, "Eye color change", "Eye colour (character creation's 10); loads with the character.", {}, {0, 9}}},
+    {Id::Features, {kSkiller, "Features", "Facial features (character creation's 13); loads with the character.", {}, {0, 12}}},
+    {Id::ClothingRed, {kSkiller, "Color changing clothing (red)", "Inner clothing colour, red; loads with the character.", {}, {0, 255, 15}}},
+    {Id::ClothingGreen, {kSkiller, "Color changing clothing (green)", "Inner clothing colour, green; loads with the character.", {}, {0, 255, 15}}},
+    {Id::ClothingBlue, {kSkiller, "Color changing clothing (blue)", "Inner clothing colour, blue; loads with the character.", {}, {0, 255, 15}}},
 
     {Id::ArgonInfiniteTime, {kArgon, "Infinite time arena and quests", "The quest clock stops; the buttons run the time out.", kActivators}},
     {Id::SetPlayTime, {kArgon, "Set playtime", "The play time stays at this value.", kPlayTimes}},
@@ -403,7 +413,7 @@ constexpr Entry kEntries[]{
     {Id::GlovesLevel255, {kDoudley, "Equipped gloves level 255 (quest only)", "The equipped gloves at level 255."}},
     {Id::BeltLevel255, {kDoudley, "Equipped belt level 255 (quest only)", "The equipped belt at level 255."}},
     {Id::PantsLevel255, {kDoudley, "Equipped pants level 255 (quest only)", "The equipped pants at level 255."}},
-    {Id::SkinTone, {kDoudley, "Skin tone change", "Skin tone, darkest to lightest; not saved.", {}, {0, 0x264, 20}}},
+    {Id::SkinTone, {kDoudley, "Skin tone change", "Skin tone, darkest to lightest; not saved.", kSkinTones}},
     {Id::DoudleyBothArmorTypes, {kDoudley, "Enable both armor type for all armors", "Every chest, arms, waist and legs armor counts as both types (blademaster and gunner)."}},
     {Id::DoudleyArmorPigment, {kDoudley, "Enable armour pigment for all armors", "Every armor piece can be dyed."}},
     {Id::BarrelRange300, {kDoudley, "Range 3.00 for all bowgun barrels", "Every bowgun barrel has range 3.00."}},
@@ -703,16 +713,22 @@ int32_t Number(std::string_view text) {
 
 bool EnableByName(std::string_view name, std::string_view value) {
     // "Group:name" picks among cheats of the same name in several lists (the
-    // group by the start of its name: "bully:actionrepeater").
+    // group by the start of its name: "bully:actionrepeater"); a name with a
+    // colon of its own ("All hunting fleets: half a day voyages") also
+    // matches whole.
     std::string_view group;
+    std::string_view shortName = name;
 
     if (const size_t colon = name.find(':'); colon != std::string_view::npos) {
         group = name.substr(0, colon);
-        name.remove_prefix(colon + 1);
+        shortName = name.substr(colon + 1);
     }
 
     for (size_t i = 0; i < kList.size(); ++i) {
-        if (Key(name) != Key(kList[i].name) || !Key(kList[i].group).starts_with(Key(group)))
+        const bool inGroup = Key(shortName) == Key(kList[i].name) && Key(kList[i].group).starts_with(Key(group));
+        const bool whole = Key(name) == Key(kList[i].name);
+
+        if (!inGroup && !whole)
             continue;
 
         if (TextLength(i)) {
