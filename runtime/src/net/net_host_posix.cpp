@@ -128,16 +128,45 @@ uint16_t MapPort(uint16_t port) {
     return port;
 }
 
+// MH3_ONLINE_ADDRESSES (from=to[,from=to...]): IPv4 addresses to change, both
+// ways. A server that names itself by an address this machine cannot reach
+// (its ZeroTier address, to a Vita on the LAN) is reached at another one, and
+// what comes from there reads as coming from the address it named.
+uint32_t MapAddress(uint32_t ip, bool outgoing) {
+    const char* addresses = std::getenv("MH3_ONLINE_ADDRESSES");
+
+    if (!addresses)
+        return ip;
+
+    std::string_view rest(addresses);
+
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        const std::string entry(rest.substr(0, comma));
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+        const auto equals = entry.find('=');
+        in_addr from{}, to{};
+
+        if (equals == std::string::npos || inet_pton(AF_INET, entry.substr(0, equals).c_str(), &from) != 1 || inet_pton(AF_INET, entry.substr(equals + 1).c_str(), &to) != 1)
+            continue;
+
+        if (ip == (outgoing ? from : to).s_addr)
+            return (outgoing ? to : from).s_addr;
+    }
+
+    return ip;
+}
+
 sockaddr_in Native(const Address& address) {
     sockaddr_in native{};
     native.sin_family = AF_INET;
-    native.sin_addr.s_addr = address.ip;
+    native.sin_addr.s_addr = MapAddress(address.ip, true);
     native.sin_port = MapPort(address.port);
     return native;
 }
 
 Address FromNative(const sockaddr_in& native) {
-    return {native.sin_addr.s_addr, native.sin_port};
+    return {MapAddress(native.sin_addr.s_addr, false), native.sin_port};
 }
 
 // A Wii socket option as the host's; false for one this layer drops.

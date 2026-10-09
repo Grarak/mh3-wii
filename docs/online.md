@@ -204,4 +204,5 @@ MH3_ONLINE_CA=MH3SP/cert/ca.der MH3_ONLINE_HOSTS='*.mh3sp.com=127.0.0.1' \
 | `MH3_ONLINE_CA=PATH` | install this DER CA instead of the MH3SP one (the local server's `cert/ca.der`) |
 | `MH3_ONLINE_HOSTS=name=ip,...` | answer these host names (`*.domain` for a whole domain) without DNS |
 | `MH3_ONLINE_PORTS=from=to,...` | connect to `to` instead of port `from` (the NAS's port 80) |
+| `MH3_ONLINE_ADDRESSES=from=to,...` | reach IPv4 address `from` at `to`, and read packets from `to` as from `from` (a server that names its ZeroTier address, reached from a Vita on the LAN) |
 | `MH3_TRACE=net` | development builds: log sockets, connects, lookups and TLS sessions |
