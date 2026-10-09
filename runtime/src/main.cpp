@@ -134,7 +134,7 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --city                         start File 1 / character 1 in the City (online play)\n"
                                "  --list quests|online-quests|arena-quests\n"
                                "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
-                               "  --quest <id>|free [--area <n>] [--spawn <x,y,z>|exit:<n>]\n"
+                               "  --quest <id>|free [--area <n>] [--spawn <x,y,z>|exit:<n>|exit:tour]\n"
                                "                                 start a quest (village, arena or online) or the\n"
                                "                                 Moga Woods free roam from the village; --spawn\n"
                                "                                 moves the hunter there (arena pit: 0,300,0), or\n"
@@ -205,6 +205,8 @@ void StartQuestBoot(int argc, char** argv) {
             monster = argv[++i];
         else if (option == "--quest-small" && i + 1 < argc)
             small = argv[++i];
+        else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]) == "exit:tour")
+            ++i, RequestQuestTour();
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
             RequestQuestExit(std::stoi(argv[++i] + 5));
         else if (option == "--spawn" && i + 1 < argc && std::sscanf(argv[++i], "%f,%f,%f", &x, &y, &z) == 3)

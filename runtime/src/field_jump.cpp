@@ -35,6 +35,11 @@
 // starts the change (0x8028D150(area, the position +0x24 there, the angle
 // +0x30)).
 //
+// --spawn exit:tour keeps going: kExitSettle steps after each arrival the
+// hunter takes the area's next exit in turn (each area's exits in rotation,
+// a rotor walk, which takes every exit of the areas it reaches), printing
+// each change, so one run crosses every area change of the map (1.11).
+//
 // The arena (map 9) runs here as an offline field (play mode 3), not in its
 // own play mode 2 (FieldTaskVs 0x8028E58C). The waiting room is part of the
 // pit's area, beyond z -10000, and the field work marks per player whether
@@ -133,7 +138,11 @@ struct Jump {
     bool spawn = false;
     float spawnPos[3] = {};
     int exitArea = -1;       // --spawn exit:n, -1: a position
-    uint32_t exitChecks = 0; // exit checks in the field so far
+    uint32_t exitChecks = 0; // exit checks in the field (in the area, touring) so far
+    bool tour = false;       // --spawn exit:tour
+    int tourArea = -1;       // the area the tour last saw
+    uint32_t tourChanges = 0;
+    uint8_t tourRotor[64] = {}; // per area: its next exit
     uint64_t placedAt = 0; // game frame the hunter was first seen placed, 0: not yet
 };
 
@@ -207,6 +216,10 @@ void RequestQuestExit(int area) {
     State().exitArea = area;
 }
 
+void RequestQuestTour() {
+    State().tour = true;
+}
+
 // The arena's mark of the hunter in the pit, from the hunter's side.
 static void KeepArenaPit() {
     const uint32_t table = Memory::Read32(kMoveWorkTable);
@@ -260,8 +273,66 @@ void FieldJumpFrame(uint64_t gameFrame) {
 // The hunter's exit check; first, for --spawn exit:n, the hunter into that
 // exit.
 extern "C" void func_802B2754(CpuContext* ctx);
+
+// The tour's next exit: the current area's exits in turn. An exit that left
+// the hunter in the area kExitSettle * 4 checks later is passed over.
+static void TourStep(CpuContext* ctx, Jump& jump) {
+    const CpuContext saved = *ctx;
+    GuestCall game{ctx};
+    const int8_t area = int8_t(game.Call<GetNowAreaNumber>());
+
+    if (area < 0 || area >= int8_t(sizeof jump.tourRotor)) {
+        *ctx = saved;
+        return;
+    }
+
+    if (area != jump.tourArea) {
+        if (jump.tourArea >= 0)
+            std::fprintf(stderr, "MH3 field jump: tour change %u: in area %d\n", ++jump.tourChanges, area);
+
+        jump.tourArea = area;
+        jump.exitChecks = 0;
+    }
+
+    if (++jump.exitChecks == kExitSettle * 5)
+        jump.exitChecks = kExitSettle;
+
+    if (jump.exitChecks != kExitSettle) {
+        *ctx = saved;
+        return;
+    }
+
+    const uint32_t player = game.Call<MoveWork>({kPlayerMoveWork}) + 0xB20 * uint32_t(int8_t(game.Call<MyPlayerIndex>()));
+    const uint32_t exits = game.Call<AreaExits>({uint8_t(game.Call<GetNowMapNumber>()), uint8_t(area)});
+    *ctx = saved;
+    uint32_t count = 0;
+
+    for (uint32_t e = exits; e && int8_t(Memory::Read8(e)) != -1; e += kExitBytes)
+        count += Memory::Read16(e + 2) == kExitCylinder;
+
+    if (!count) {
+        std::fprintf(stderr, "MH3 field jump: tour: area %d has no exit\n", area);
+        return;
+    }
+
+    const uint32_t pick = jump.tourRotor[area]++ % count;
+    uint32_t exit = exits;
+
+    for (uint32_t seen = 0;; exit += kExitBytes)
+        if (Memory::Read16(exit + 2) == kExitCylinder && seen++ == pick)
+            break;
+
+    for (int i = 0; i < 3; ++i)
+        Memory::WriteFloat32(player + kPosition + 4 * i, Memory::ReadFloat32(exit + 4 + 4 * i));
+
+    std::fprintf(stderr, "MH3 field jump: tour: area %d's exit %u of %u, to area %d\n", area, pick + 1, count, int8_t(Memory::Read8(exit)));
+}
+
 extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
     Jump& jump = State();
+
+    if (jump.tour && jump.done)
+        TourStep(ctx, jump);
 
     if (jump.exitArea >= 0 && jump.done && ++jump.exitChecks == kExitSettle) {
         const CpuContext saved = *ctx;

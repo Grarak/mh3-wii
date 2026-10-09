@@ -16,5 +16,8 @@ void RequestQuestSpawn(float x, float y, float z);
 // area n, so the game changes area.
 void RequestQuestExit(int area);
 
+// --spawn exit:tour: after each arrival, the area's next exit in turn.
+void RequestQuestTour();
+
 // Each paced frame, with the game time in 30 Hz frames.
 void FieldJumpFrame(uint64_t gameFrame);
