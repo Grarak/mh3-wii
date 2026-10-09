@@ -1,6 +1,7 @@
 // Thin RMHP08 ABI and owned producer registry. C11 owns resource/selector
 // semantics; no guest function, GX, FIFO or vertex expansion is performed.
 #include "abi_bridge.h"
+#include "fast_map.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -15,19 +16,18 @@
 #include <map>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 // Pose owners are game-thread state.
-std::unordered_map<uint32_t, mh3_model_pose_owner> owners;
+FastMap<uint32_t, mh3_model_pose_owner> owners;
 struct Region {
     uint32_t bytes;
     std::vector<uint32_t> scenes;
 };
 std::map<uint32_t, Region> regions;
-std::unordered_map<uint32_t, std::vector<uint32_t>> positions;
+FastMap<uint32_t, std::vector<uint32_t>> positions;
 uint64_t pose_revision = 0;
 constinit mh3_model_matrix_selectors selectors{};
 // Loaded matrix slots per owner: UI/effect producers load the Game copy; model
@@ -94,9 +94,9 @@ inline void Checked(mh3_res_status status) {
 uint32_t Canonical(uint32_t address) {
     return address ? (address & 0x3fffffffu) | 0x80000000u : 0;
 }
-void Reindex(const std::unordered_map<uint32_t, mh3_model_pose_owner>& next) {
+void Reindex(const FastMap<uint32_t, mh3_model_pose_owner>& next) {
     std::map<uint32_t, Region> ranges;
-    std::unordered_map<uint32_t, std::vector<uint32_t>> arrays;
+    FastMap<uint32_t, std::vector<uint32_t>> arrays;
     auto add = [&](uint32_t start, uint32_t bytes, uint32_t scene) {
         if (!bytes)
             return;

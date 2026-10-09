@@ -2,6 +2,7 @@
 // order, coordinate scales and matrix math; these adapters own CPU records and
 // forward direct material/mesh publications. No guest/GX/FIFO calls.
 #include "abi_bridge.h"
+#include "fast_map.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -19,7 +20,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <type_traits>
 #include <vector>
 
@@ -90,7 +90,7 @@ void Group(uint32_t address, mh3_model_material_block kind, bool xf = false) {
 }
 template <class T> struct RecipeCache {
     uint64_t revision = UINT64_MAX;
-    std::unordered_map<uint32_t, T> entries;
+    FastMap<uint32_t, T> entries;
     NativePrepareCacheCounters* counters = nullptr;
 };
 template <class T> RecipeCache<T>& Recipes() {

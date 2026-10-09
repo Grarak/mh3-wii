@@ -1,20 +1,20 @@
 // Platform memory/ownership bridge to typed native C model inputs. No GX,
 // guest rendering helper or source command-list decoder is called here.
 #include "memory.h"
+#include "fast_map.h"
 #include "guest_span.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <array>
 #include <mutex>
 
 namespace {
 // Typed texture and palette objects (game thread).
 struct Objects {
-    std::unordered_map<uint32_t, mh3_native_texture_binding> textures;
-    std::unordered_map<uint32_t, mh3_native_palette_source> palettes;
+    FastMap<uint32_t, mh3_native_texture_binding> textures;
+    FastMap<uint32_t, mh3_native_palette_source> palettes;
 } objects;
 Objects& O() {
     return objects;
@@ -22,10 +22,10 @@ Objects& O() {
 // The render thread reads texture revisions while binding; the game thread
 // produces them. Only these two maps are shared.
 std::mutex generationLock;
-std::unordered_map<uint32_t, uint64_t> generations;
-std::unordered_map<uint32_t, uint64_t> initialized_generations;
+FastMap<uint32_t, uint64_t> generations;
+FastMap<uint32_t, uint64_t> initialized_generations;
 // Bound view arrays (game thread draw state).
-std::unordered_map<uint32_t, mh3_matrix_binding> matrix_sources;
+FastMap<uint32_t, mh3_matrix_binding> matrix_sources;
 uint64_t resource_generation = 0;
 [[noreturn, gnu::cold, gnu::noinline]] void CheckedFailed(mh3_res_status status) {
     throw std::runtime_error("Native model resource input failed: " + std::to_string(status));

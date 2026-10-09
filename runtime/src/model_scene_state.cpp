@@ -2,6 +2,7 @@
 // serialized updates live in portable C. Backend receives ordinary records;
 // no guest rendering functions, GX calls or source command lists are used.
 #include "abi_bridge.h"
+#include "fast_map.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
@@ -10,7 +11,6 @@
 #include "runtime/native/mh3_model_state.h"
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
@@ -57,7 +57,7 @@ struct LightSlots {
     mh3_native_light_slots slots;
     uint64_t revision;
 };
-std::unordered_map<uint32_t, LightSlots> light_slots;
+FastMap<uint32_t, LightSlots> light_slots;
 uint64_t light_revision = 0;
 } // namespace
 void RestoreNativeModelCamera() {

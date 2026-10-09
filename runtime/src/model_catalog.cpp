@@ -1,6 +1,7 @@
 // Disc/guest address ownership boundary. Lookup algorithms and byte copies are
 // portable C. No GX, content/name matching or renderer fallback is present.
 #include "abi_bridge.h"
+#include "fast_map.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "model_assets.h"
@@ -12,7 +13,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <map>
 #include <sstream>
 #include <cstring>
@@ -61,9 +61,9 @@ struct Catalog {
     // block_epoch: typed material group writes, which change block provenance
     // but never a resource header, so resolved resources stay valid across them.
     uint64_t source_epoch = 0, block_epoch = 0;
-    std::unordered_map<uint32_t, CachedOwner> owners;
-    std::unordered_map<uint64_t, CachedResource> resources;
-    std::unordered_map<uint64_t, CachedBlock> blocks;
+    FastMap<uint32_t, CachedOwner> owners;
+    FastMap<uint64_t, CachedResource> resources;
+    FastMap<uint64_t, CachedBlock> blocks;
     std::map<uint64_t, NativeLiveMaterialBlock> live_blocks;
     uint64_t material_revision = 0;
     NativeModelPreparationDiagnostics* diagnostics = nullptr;

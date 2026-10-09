@@ -1,11 +1,11 @@
 // Pure array binding ABI: retain typed source provenance instead of GXSetArray.
 #include "abi_bridge.h"
+#include "fast_map.h"
 #include "guest_span.h"
 #include "memory.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <array>
 #include <stdexcept>
-#include <unordered_map>
 
 namespace {
 // Bound arrays (game thread draw state).
@@ -20,8 +20,8 @@ struct Revision {
     uint32_t bytes;
 };
 // Producer revisions.
-std::unordered_map<uint32_t, Revision> generations;
-std::unordered_map<uint32_t, Revision>& Generations() {
+FastMap<uint32_t, Revision> generations;
+FastMap<uint32_t, Revision>& Generations() {
     return generations;
 }
 uint32_t Canonical(uint32_t address, uint32_t bytes = 1) {
