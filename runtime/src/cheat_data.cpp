@@ -458,9 +458,12 @@ void StepActions(uint32_t plw) {
             Memory::Write8(plw + kActionId, 0x1B);
     }
 
-    // The code wrote 0x46, then 0x54.
-    if (On(Id::SleepAnywhere) && Pressed() == (kMinus | kB) && idle)
+    // The code wrote 0x46, then 0x54, after the game's step had taken Minus
+    // (the field menu, 0x1E); here, before it, the presses go.
+    if (On(Id::SleepAnywhere) && Pressed() == (kMinus | kB) && idle) {
         Memory::Write8(plw + kActionId, 0x54);
+        ConsumePresses();
+    }
 
     // Group 8 (down): fainted, back to camp.
     if (On(Id::BackToCamp) && Pressed() == (kMinus | kR) && idle) {

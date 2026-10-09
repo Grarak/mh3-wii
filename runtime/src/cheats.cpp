@@ -546,6 +546,10 @@ bool QuestEndPressed() {
 namespace {
 constexpr uint32_t kPsw = 0x8065B7D0; // channel 0's pad work
 constexpr uint32_t kClassicHeld = 0xD6, kClassicPressed = 0xDA;
+
+// The pressed words of the Wii Remote's, the Classic Controller's, the
+// Nunchuk's and the game's key sets (pad_input.cpp).
+constexpr uint32_t kPressedWords[]{0xCA + 4, 0xD6 + 4, 0xFC + 4, 0x2C0 + 4};
 } // namespace
 
 uint16_t Held() {
@@ -554,6 +558,11 @@ uint16_t Held() {
 
 uint16_t Pressed() {
     return Memory::Read16(kPsw + kClassicPressed);
+}
+
+void ConsumePresses() {
+    for (const uint32_t offset : kPressedWords)
+        Memory::Write16(kPsw + offset, 0);
 }
 
 void Step(CpuContext*) {

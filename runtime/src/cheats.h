@@ -434,6 +434,10 @@ enum Button : uint16_t {
 uint16_t Held();
 uint16_t Pressed();
 
+// Channel 0's presses this step, taken away: the game's tasks then see none
+// (a code that answers a button the game also answers).
+void ConsumePresses();
+
 // All of `buttons` held, at least one of them pressed this step.
 inline bool Combo(uint16_t buttons) {
     return (Held() & buttons) == buttons && (Pressed() & buttons) != 0;
