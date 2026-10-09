@@ -25,6 +25,11 @@ namespace GuestFlat {
 // MEM1 -> B0000000, MEM2 -> C0000000, locked cache -> B4000000.
 // D0000000 is outside the usable reservation partition on firmware 3.65.
 // These virtual views are reserved with kubridge, without physical gap pages.
+// No view can sit below 0x8B000000: a devkit probe (2026-10-05, 16 MiB steps)
+// found every fixed-address reservation from 0x00001000 to 0x8AFFFFFF refused
+// (0x80024804), so the physical aliases (host 0x30000000/0x40000000 at this
+// base) and the uncached ones (0xF0000000/0x00000000) cannot be mapped; the
+// aliases are folded instead. A 64 KiB commit at 0x8B000000 hung the console.
 inline constexpr uintptr_t kGuestBase = 0xB000'0000u;
 #elif defined(__EMSCRIPTEN__)
 // WebAssembly has no virtual memory, so the web build folds the aliases as
