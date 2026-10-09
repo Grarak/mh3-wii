@@ -17,8 +17,12 @@
 //      is scaled by dt for the call, and the velocity change the call made is
 //      taken dt times, the position corrected for it;
 //      the curves (colours, size, scale, rotation, texture transforms) are
-//      keyframed values of the age: they are evaluated at the particle's
-//      fractional age, from the curve's values at the ticks on either side;
+//      keyframed values of the age: where a value runs linearly through its
+//      tick it is evaluated at the particle's fractional age, from the
+//      curve's values at the ticks on either side; a value that jumps at the
+//      tick (a random pick per tick, a key's corner) and the texture offsets
+//      (a flipbook's frames) hold until the next tick, as on the Wii
+//      (blending them made fire churn at every pass);
 //      the age crosses whole ticks for the tick's events: child emission
 //      (a curve track) and retirement at the end of life only happen then.
 //    At dt = 1 (the stock 1/30 s step) the call is the original.
@@ -30,6 +34,7 @@
 #include "port_check.h"
 #include "memory.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -77,6 +82,7 @@ enum : uint32_t {
     kParticleCurves = 0x20,        // ParticleParameter: curve targets from here
     kParticleColours = 0x30,       // .. RGBA8 colours up to here
     kParticleRotate = 0x40,        // VEC3 radians
+    kParticleTexTranslate = 0x70,  // VEC2[3]
     kParticleFloats = 0x88,        // size .. texture translate: f32 up to here
     kParticleCurvesEnd = 0xA0,     // textures, flags
     kParticleVelocity = 0xA0,      // VEC3
@@ -147,33 +153,53 @@ void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t ti
     }
 }
 
-// Shows the curves at age `at` (a fraction past a whole tick): the keyframed
-// values between the ticks either side, as the curves are linear between keys.
+// Shows the curves at age `at` (a fraction past a whole tick). A value that
+// changes by the same amount into its tick as out of it (a keyframed ramp) is
+// blended between the ticks either side; one that jumps at the tick holds the
+// tick's value, as the Wii shows it for the whole tick.
 void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
     const uint32_t tick = uint32_t(at);
     const float t = float(at - tick);
     const Curves kept = ReadCurves(particle);
+    Curves before = kept;
+    if (tick > 0) {
+        RunCurves(game, manager, particle, tick - 1);
+        before = ReadCurves(particle);
+        WriteCurves(particle, kept);
+    }
     RunCurves(game, manager, particle, tick);
     const Curves a = ReadCurves(particle);
     RunCurves(game, manager, particle, tick + 1);
     const Curves b = ReadCurves(particle);
+    // Into and out of the tick: the same step (within a tenth, or the
+    // rounding of a u8) is a ramp.
+    auto ramp = [](double in, double out, double slack) {
+        return std::fabs(out - in) <= 0.1 * std::max(std::fabs(in), std::fabs(out)) + slack;
+    };
     Curves s = kept;
     constexpr size_t colours = (kParticleColours - kParticleCurves) / 4;
     constexpr size_t floats = (kParticleFloats - kParticleCurves) / 4;
     constexpr size_t rotate = (kParticleRotate - kParticleCurves) / 4;
+    constexpr size_t translate = (kParticleTexTranslate - kParticleCurves) / 4;
     for (size_t i = 0; i < colours; ++i) {
         uint32_t v = 0;
         for (int shift = 24; shift >= 0; shift -= 8) {
+            const float w = float(before[i] >> shift & 0xFF);
             const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
-            v |= uint32_t(std::lround(x + (y - x) * t)) << shift;
+            const float shown = ramp(x - w, y - x, 1.0) ? x + (y - x) * t : x;
+            v |= uint32_t(std::lround(shown)) << shift;
         }
         s[i] = v;
     }
     for (size_t i = colours; i < floats; ++i) {
-        const float x = F(a[i]), y = F(b[i]);
-        // A rotation curve wrapping between the two ticks snaps.
+        const float w = F(before[i]), x = F(a[i]), y = F(b[i]);
+        // A rotation curve wrapping between the two ticks snaps. Texture
+        // offsets step through a flipbook's frames even when evenly: never
+        // blended.
         const bool wraps = i >= rotate && i < rotate + 3 && std::fabs(y - x) > 3.1415927f;
-        s[i] = !std::isfinite(x) || !std::isfinite(y) || wraps ? a[i] : Bits(x + (y - x) * t);
+        const bool blend = i < translate && std::isfinite(w) && std::isfinite(x) && std::isfinite(y) && !wraps &&
+                           ramp(double(x) - w, double(y) - x, 1e-6);
+        s[i] = blend ? Bits(x + (y - x) * t) : a[i];
     }
     WriteCurves(particle, s);
 }
