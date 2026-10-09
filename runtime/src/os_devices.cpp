@@ -1,11 +1,14 @@
 #include "abi_bridge.h"
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace {
 constexpr uint32_t kSram = 0x8074FB00;
@@ -151,9 +154,35 @@ REGISTER_NATIVE_FUNCTION(0x804CC9D0, MH3_OSInitAudioSystem);
 
 // __write_console(handle, buffer, byteCount*, refCon): leave formatting to
 // MH3's translated C library and route its final byte stream to the host.
+// The game repeats some diagnostics every frame (nw4r's FSqrt domain warning
+// from the sway chains). Each write is a synchronous device write (host0 over
+// DECI on the Vita), so an identical consecutive write is only counted, and
+// the count is reported once per second or before the next different write.
+namespace {
+std::string lastConsoleWrite;
+uint64_t consoleRepeats = 0;
+std::chrono::steady_clock::time_point consoleRepeatsReported;
+void ReportConsoleRepeats() {
+    std::fprintf(stderr, "(guest console: previous write repeated %llu more times)\n", static_cast<unsigned long long>(consoleRepeats));
+    consoleRepeats = 0;
+}
+} // namespace
 extern "C" void MH3_WriteConsole(CpuContext* ctx) {
     const uint32_t size = Memory::Read32(ctx->gpr[5]);
-    const void* bytes = Memory::GetPointer(ctx->gpr[4], size);
+    const char* bytes = reinterpret_cast<const char*>(Memory::GetPointer(ctx->gpr[4], size));
+    const std::string_view text(bytes, size);
+    if (size && text == lastConsoleWrite) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!consoleRepeats++)
+            consoleRepeatsReported = now;
+        else if (now - consoleRepeatsReported >= std::chrono::seconds(1))
+            ReportConsoleRepeats();
+        ctx->gpr[3] = 0;
+        return;
+    }
+    if (consoleRepeats)
+        ReportConsoleRepeats();
+    lastConsoleWrite.assign(text);
     const size_t written = std::fwrite(bytes, 1, size, stderr);
     Memory::Write32(ctx->gpr[5], static_cast<uint32_t>(written));
     ctx->gpr[3] = written == size ? 0 : 1;
