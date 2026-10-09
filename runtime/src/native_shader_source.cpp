@@ -504,13 +504,16 @@ void main() {
 #endif
     vec4 result = clamp((base * (v_color0 * kv + kc) + d) * s, 0.0, 1.0);
 #elif BASIC_LERP
-    // Constant inputs are their offsets; only c (texture role 0) varies.
-    vec3 c = LERP_COLOR_SCALE.rgb * mix(t0.rgb, t0.aaa, LERP_SWIZZLE) + LERP_COLOR_OFFSET(2).rgb;
-    vec3 color = mix(LERP_COLOR_OFFSET(0).rgb, LERP_COLOR_OFFSET(1).rgb, c);
-    color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
-    float alpha = mix(LERP_ALPHA_OFFSET(0), LERP_ALPHA_OFFSET(1), LERP_ALPHA_SCALE * t0.a + LERP_ALPHA_OFFSET(2));
-    alpha = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
-    vec4 result = clamp(vec4(color, alpha), 0.0, 1.0);
+    // Constant inputs are their offsets; only c (texture role 0) varies, so
+    // the whole equation is affine in it: base + slope * texel, both from
+    // uniforms only (GXM's secondary program evaluates them once per draw).
+    vec3 range = LERP_COLOR_OFFSET(1).rgb - LERP_COLOR_OFFSET(0).rgb;
+    vec3 slope = range * LERP_COLOR_SCALE.rgb * (COLOR_EQUATION.z * COLOR_EQUATION.y);
+    vec3 base = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * (LERP_COLOR_OFFSET(0).rgb + range * LERP_COLOR_OFFSET(2).rgb)) * COLOR_EQUATION.y;
+    float alpha_range = LERP_ALPHA_OFFSET(1) - LERP_ALPHA_OFFSET(0);
+    float alpha_slope = alpha_range * LERP_ALPHA_SCALE * (ALPHA_EQUATION.z * ALPHA_EQUATION.y);
+    float alpha_base = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * (LERP_ALPHA_OFFSET(0) + alpha_range * LERP_ALPHA_OFFSET(2))) * ALPHA_EQUATION.y;
+    vec4 result = clamp(vec4(base, alpha_base) + vec4(slope, alpha_slope) * vec4(mix(t0.rgb, t0.aaa, LERP_SWIZZLE), t0.a), 0.0, 1.0);
 #else
     vec3 b = color_input(1, SWIZZLE1, t0, t1, t2);
 #if OVERLAY
@@ -980,12 +983,15 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     result.ba = saturate((base_ba * (v.ba * kv.ba + kc.ba) + d.ba) * s.ba);
 #elif BASIC_LERP
     // Constant inputs are their offsets; only c (texture role 0) varies.
-    real3 c = LERP_COLOR_SCALE.rgb * lerp(t0.rgb, t0.aaa, real(LERP_SWIZZLE)) + LERP_COLOR_OFFSET(2).rgb;
-    real3 color = lerp(LERP_COLOR_OFFSET(0).rgb, LERP_COLOR_OFFSET(1).rgb, c);
-    color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * color) * COLOR_EQUATION.y;
-    real alpha = lerp(LERP_ALPHA_OFFSET(0), LERP_ALPHA_OFFSET(1), LERP_ALPHA_SCALE * t0.a + LERP_ALPHA_OFFSET(2));
-    alpha = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
-    real4 result = saturate(real4(color, alpha));
+    // Affine in the texture (as the GLSL): psp2shaderperf basic_t1_lerp_gpu
+    // 13 -> 7 cycles.
+    real3 range = LERP_COLOR_OFFSET(1).rgb - LERP_COLOR_OFFSET(0).rgb;
+    real3 slope = range * LERP_COLOR_SCALE.rgb * (COLOR_EQUATION.z * COLOR_EQUATION.y);
+    real3 base = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * (LERP_COLOR_OFFSET(0).rgb + range * LERP_COLOR_OFFSET(2).rgb)) * COLOR_EQUATION.y;
+    real alpha_range = LERP_ALPHA_OFFSET(1) - LERP_ALPHA_OFFSET(0);
+    real alpha_slope = alpha_range * LERP_ALPHA_SCALE * (ALPHA_EQUATION.z * ALPHA_EQUATION.y);
+    real alpha_base = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * (LERP_ALPHA_OFFSET(0) + alpha_range * LERP_ALPHA_OFFSET(2))) * ALPHA_EQUATION.y;
+    real4 result = saturate(real4(base, alpha_base) + real4(slope, alpha_slope) * real4(lerp(t0.rgb, t0.aaa, real(LERP_SWIZZLE)), t0.a));
 #else
     real3 b = color_input(1, SWIZZLE1, t0, t1, t2, v);
 #if OVERLAY
