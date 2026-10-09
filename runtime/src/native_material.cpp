@@ -1562,7 +1562,6 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     CountCensusDraw(mesh, entry.key, program, variant);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
-    blocks->perspective = GetNativeDrawState(NativeOwner::Render).perspective;
     aurora::gl::draw_shaded_mesh(*resident.buffer, layout, bind, resident.mesh->vertex_offset, resident.mesh->vertex_count, resident.mesh->index_offset + mesh.first_index * 2, mesh.index_count,
                                  program, *blocks, units);
 #ifdef MH3_DEVELOPMENT
@@ -1643,7 +1642,6 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
 #ifdef MH3_DEVELOPMENT
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
-    blocks->perspective = GetNativeDrawState(NativeOwner::Render).perspective;
     aurora::gl::draw_shaded_geometry(geometry, coordinates, program, *blocks, units);
 }
 
@@ -1738,7 +1736,6 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
 #ifdef MH3_DEVELOPMENT
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
-    blocks->perspective = GetNativeDrawState(NativeOwner::Render).perspective;
     aurora::gl::draw_shaded_quads(vertices, count, program, *blocks, units);
 }
 } // namespace
