@@ -16,6 +16,7 @@
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_material_prep.h"
 #include "runtime/native/mh3_model_prepare_cache.h"
+#include "runtime/native/mh3_shade.h"
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -108,6 +109,122 @@ void CopyObjects(uint8_t* out, const uint8_t* objects, uint32_t stride) {
 // Group publication sources of the Render and Shadow owners.
 mh3_native_material_state groupStates[2];
 #ifdef MH3_DEVELOPMENT
+// A ResMat's name (+8, relative to the material).
+std::array<char, 32> MaterialName(uint32_t material) {
+    std::array<char, 32> name{};
+
+    for (uint32_t i = 0, at = material + Memory::Read32(material + 8); i + 1 < name.size() && Memory::Read8(at + i); i++)
+        name[i] = char(Memory::Read8(at + i));
+
+    return name;
+}
+
+// MH3_TRACE=materials: each model material once, the first time it is
+// prepared: its name, its TEV stages (colour and alpha a b c d op bias scale
+// clamp out; texture map/coordinate, raster channel, konst selectors,
+// indirect stage/format/bias/alpha/matrix), swap tables, colour and konst
+// registers, indirect stages, the pixel block (alpha compare, depth, blend)
+// and what the shader classifier makes of it (model, textures, quality:
+// 1 exact, 2 swap, 4 folded, 8 fallback, 16 compare, 32 indirect ignored,
+// 64 channel 1).
+void TraceMaterial(uint32_t material, const NativeLiveMaterialBlock* const* blocks, const uint32_t* slots) {
+    static std::mutex lock;
+    static std::unordered_map<uint32_t, bool> seen;
+    const std::lock_guard guard(lock);
+
+    if (!seen.try_emplace(material, true).second)
+        return;
+
+    const auto* pipeline = blocks[MH3_MODEL_MATERIAL_PIPELINE];
+    const auto* pixel = blocks[MH3_MODEL_MATERIAL_PIXEL];
+    const auto* colors = blocks[MH3_MODEL_MATERIAL_COLORS];
+    const auto* indirect = blocks[MH3_MODEL_MATERIAL_INDIRECT];
+
+    if (!pipeline)
+        return;
+
+    mh3_native_material_state state = pipeline->fields;
+
+    if (pixel)
+        state.pixel = pixel->fields.pixel;
+
+    if (colors) {
+        std::memcpy(state.color, colors->fields.color, sizeof state.color);
+        std::memcpy(state.konst, colors->fields.konst, sizeof state.konst);
+    }
+
+    if (indirect) {
+        std::memcpy(state.indirect, indirect->fields.indirect, sizeof state.indirect);
+        std::memcpy(state.indirect_matrix, indirect->fields.indirect_matrix, sizeof state.indirect_matrix);
+    }
+
+    mh3_shade_material shading{};
+    const uint8_t quality = mh3_shade_classify(&state, &shading);
+    std::fprintf(stderr, "MH3 material: %08x (%s) stages %u indirect %u textures %u model %u quality %02x alpha-test %u\n", material, MaterialName(material).data(),
+                 state.tev_count, indirect ? indirect->fields.indirect_count : 0, shading.textures, shading.model, quality, shading.alpha_test);
+
+    for (uint32_t i = 0; i < state.tev_count && i < 16; i++) {
+        const auto& t = state.tev[i];
+        std::fprintf(stderr,
+                     "MH3 material:   stage %u colour %u %u %u %u op %u bias %u scale %u clamp %u out %u | alpha %u %u %u %u op %u bias %u scale %u clamp %u out %u | map %u coord %u ras %u "
+                     "swap %u/%u konst %u/%u | ind stage %u format %u bias %u alpha %u matrix %u wrap %u/%u add %u\n",
+                     i, t.color.a, t.color.b, t.color.c, t.color.d, t.color.operation, t.color.bias, t.color.scale, t.color.clamp, t.color.output, t.alpha.a, t.alpha.b, t.alpha.c,
+                     t.alpha.d, t.alpha.operation, t.alpha.bias, t.alpha.scale, t.alpha.clamp, t.alpha.output, t.texture_map, t.texture_coordinate, t.raster_channel, t.raster_swap,
+                     t.texture_swap, t.konst_color, t.konst_alpha, t.indirect_stage, t.indirect_format, t.indirect_bias, t.indirect_alpha, t.indirect_matrix, t.indirect_wrap_s,
+                     t.indirect_wrap_t, t.indirect_add_previous);
+    }
+
+    for (uint32_t i = 0; i < 4; i++)
+        std::fprintf(stderr, "MH3 material:   swap %u %u%u%u%u colour %d %d %d %d konst %d %d %d %d indirect %u/%u scale %u/%u\n", i, state.swaps[i].rgba[0], state.swaps[i].rgba[1],
+                     state.swaps[i].rgba[2], state.swaps[i].rgba[3], state.color[i].rgba[0], state.color[i].rgba[1], state.color[i].rgba[2], state.color[i].rgba[3], state.konst[i].rgba[0],
+                     state.konst[i].rgba[1], state.konst[i].rgba[2], state.konst[i].rgba[3], state.indirect[i].coordinate, state.indirect[i].map, state.indirect[i].scale_s,
+                     state.indirect[i].scale_t);
+
+    for (uint32_t i = 0; i < 3; i++) {
+        const auto& m = state.indirect_matrix[i];
+
+        if (m.known)
+            std::fprintf(stderr, "MH3 material:   indirect matrix %u %d %d %d / %d %d %d exponent %d\n", i, m.coefficients[0], m.coefficients[1], m.coefficients[2], m.coefficients[3],
+                         m.coefficients[4], m.coefficients[5], m.scale_exponent);
+    }
+
+    // The raw colour channels (40 bytes) and the texture objects (GXTexObj:
+    // the format in bits 20-23 of the third word).
+    if (const uint32_t channels = slots[MH3_MAT_CHANNELS]) {
+        std::fprintf(stderr, "MH3 material:   channels");
+
+        for (uint32_t i = 0; i < 40; i += 4)
+            std::fprintf(stderr, " %08x", Memory::Read32(channels + i));
+
+        std::fprintf(stderr, "\n");
+    }
+
+    if (const uint32_t objects = slots[MH3_MAT_TEXTURE_OBJECTS])
+        for (uint32_t i = 0; i < 8; i++)
+            if (Memory::Read32(objects) & (1u << i)) {
+                const uint32_t at = objects + 4 + i * 32;
+                std::fprintf(stderr, "MH3 material:   texture %u format %u size %ux%u words", i, (Memory::Read32(at + 8) >> 20) & 15, (Memory::Read32(at + 8) & 1023) + 1,
+                             ((Memory::Read32(at + 8) >> 10) & 1023) + 1);
+
+                for (uint32_t k = 0; k < 32; k += 4)
+                    std::fprintf(stderr, " %08x", Memory::Read32(at + k));
+
+                std::fprintf(stderr, "\n");
+            }
+
+    std::fprintf(stderr, "MH3 material:   pixel");
+
+    for (uint32_t i = 0; i < MH3_PIXEL_FIELD_COUNT; i++)
+        std::fprintf(stderr, " %u", state.pixel.values[i]);
+
+    std::fprintf(stderr, " (alpha compare %u %u %u %u op %u, depth %u %u write %u, blend %u logic %u subtract %u src %u dst %u, dst alpha %u %u)\n",
+                 state.pixel.values[MH3_PIXEL_ALPHA_COMPARE0], state.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0], state.pixel.values[MH3_PIXEL_ALPHA_COMPARE1],
+                 state.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1], state.pixel.values[MH3_PIXEL_ALPHA_OPERATION], state.pixel.values[MH3_PIXEL_DEPTH_TEST],
+                 state.pixel.values[MH3_PIXEL_DEPTH_COMPARE], state.pixel.values[MH3_PIXEL_DEPTH_WRITE], state.pixel.values[MH3_PIXEL_BLEND_ENABLE],
+                 state.pixel.values[MH3_PIXEL_LOGIC_ENABLE], state.pixel.values[MH3_PIXEL_BLEND_SUBTRACT], state.pixel.values[MH3_PIXEL_BLEND_SOURCE],
+                 state.pixel.values[MH3_PIXEL_BLEND_DESTINATION], state.pixel.values[MH3_PIXEL_DESTINATION_ALPHA_ENABLE], state.pixel.values[MH3_PIXEL_DESTINATION_ALPHA]);
+}
+
 // MH3_TRACE=srt: a texture SRT resource (guest address) whose slots'
 // translations or effect-matrix translations moved, the first time and every
 // 60th move, with the step counter (system_w+0xC, in ticks): how fast each
@@ -135,10 +252,12 @@ void TraceTextureSrt(uint32_t resource, uint32_t material, const mh3_native_text
     if (!moved || s.moves++ % 60)
         return;
 
+    const auto name = MaterialName(material);
+
     for (uint32_t i = 0; i < 8; i++)
         if (srt.slot[i].flags & 1)
-            std::fprintf(stderr, "MH3 srt: resource %08x material %08x slot %u move %u translation %.5f %.5f effect %.5f %.5f tick %u\n", resource, material, i, s.moves - 1,
-                         s.t[i][0], s.t[i][1], s.t[i][2], s.t[i][3], Memory::Read32(0x8065AA6C));
+            std::fprintf(stderr, "MH3 srt: resource %08x material %08x (%s) slot %u move %u translation %.5f %.5f effect %.5f %.5f tick %u\n", resource, material, name.data(), i,
+                         s.moves - 1, s.t[i][0], s.t[i][1], s.t[i][2], s.t[i][3], Memory::Read32(0x8065AA6C));
 }
 #endif
 
@@ -668,6 +787,13 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
         std::memcpy(entry.slots, slots, sizeof entry.slots);
         entry.objects = ReadNativeTextureObjectRevision();
     }
+
+#ifdef MH3_DEVELOPMENT
+    static const bool tracedMaterials = TraceOptions().Has("materials");
+
+    if (tracedMaterials) [[unlikely]]
+        TraceMaterial(scope.material_address, entry.blocks, slots);
+#endif
 
     in.record = entry.record;
     in.indirect = entry.record->indirect;
