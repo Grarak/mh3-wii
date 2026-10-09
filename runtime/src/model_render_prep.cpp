@@ -39,12 +39,14 @@ ModelPrepMirror renderMirror;
 uint32_t pendingInvalidate = 0;
 // Game thread: the frozen typed blocks of recently captured material scopes.
 // While the live material revision is unchanged, every live block keeps its
-// version, so a scope with the same records reuses them.
+// version and its frozen copy, so a scope with the same records reuses the
+// pointers; after a change it asks its blocks again (the live blocks own the
+// copies, NativeFrozenCopy).
 struct FrozenSet {
     uint32_t material = 0;
     uint32_t slots[MH3_MAT_RESOURCE_COUNT]{};
     uint64_t live = UINT64_MAX;
-    std::shared_ptr<const NativeFrozenMaterialBlock> pipeline, pixel, colors, indirect, texgen;
+    const NativeFrozenMaterialBlock *pipeline = nullptr, *pixel = nullptr, *colors = nullptr, *indirect = nullptr, *texgen = nullptr;
 };
 std::array<FrozenSet, 512> frozenSets;
 // Copies the presence word and the present 32/12-byte objects only: the
@@ -328,28 +330,12 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
     if (in.pipeline_address > UINT32_MAX - 32)
         throw std::runtime_error("Model pipeline offset overflows");
     auto& set = frozenSets[((scope.material_address >> 4) * 2654435761u) >> 23];
-    if (set.material == scope.material_address && set.live != ReadNativeLiveMaterialRevision() && !std::memcmp(set.slots, slots, sizeof set.slots)) {
-        // Some live block changed (animated materials publish every frame):
-        // refreeze only this material's blocks whose generation moved.
-        const auto refresh = [](std::shared_ptr<const NativeFrozenMaterialBlock>& frozen, uint32_t address, mh3_model_material_block kind) {
-            if (!address)
-                return;
-            const auto& live = ReadNativeLiveMaterialBlockView(address, kind);
-            if (!frozen || frozen->fields.generation != live.fields.generation)
-                frozen = FreezeNativeLiveMaterialBlock(live);
-        };
-        refresh(set.pipeline, in.pipeline_address ? in.pipeline_address + 32 : 0, MH3_MODEL_MATERIAL_PIPELINE);
-        refresh(set.pixel, slots[MH3_MAT_PIXEL_STATE], MH3_MODEL_MATERIAL_PIXEL);
-        refresh(set.colors, slots[MH3_MAT_TEV_COLORS], MH3_MODEL_MATERIAL_COLORS);
-        refresh(set.indirect, slots[MH3_MAT_INDIRECT_MATRIX_SCALE], MH3_MODEL_MATERIAL_INDIRECT);
-        refresh(set.texgen, slots[MH3_MAT_TEXCOORD_GENERATION], MH3_MODEL_MATERIAL_TEXGEN);
-        set.live = ReadNativeLiveMaterialRevision();
-    }
     if (set.material != scope.material_address || set.live != ReadNativeLiveMaterialRevision() || std::memcmp(set.slots, slots, sizeof set.slots)) {
-        const auto freeze = [](uint32_t address, mh3_model_material_block kind) -> std::shared_ptr<const NativeFrozenMaterialBlock> {
-            if (!address)
-                return nullptr;
-            return FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(address, kind));
+        // A live block changed (animated materials publish every frame) or the
+        // set held another scope: take each block's current frozen copy (made
+        // only for a block whose version moved).
+        const auto freeze = [](uint32_t address, mh3_model_material_block kind) -> const NativeFrozenMaterialBlock* {
+            return address ? FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(address, kind)) : nullptr;
         };
         set.pipeline = freeze(in.pipeline_address ? in.pipeline_address + 32 : 0, MH3_MODEL_MATERIAL_PIPELINE);
         set.pixel = freeze(slots[MH3_MAT_PIXEL_STATE], MH3_MODEL_MATERIAL_PIXEL);
@@ -361,11 +347,11 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
         std::memcpy(set.slots, slots, sizeof set.slots);
         set.live = ReadNativeLiveMaterialRevision();
     }
-    in.pipeline = set.pipeline.get();
-    in.pixel = set.pixel.get();
-    in.colors = set.colors.get();
-    in.indirect = set.indirect.get();
-    in.texgen = set.texgen.get();
+    in.pipeline = set.pipeline;
+    in.pixel = set.pixel;
+    in.colors = set.colors;
+    in.indirect = set.indirect;
+    in.texgen = set.texgen;
     if (slots[MH3_MAT_CHANNELS])
         std::memcpy(in.channels, bytes(slots[MH3_MAT_CHANNELS], 40), 40);
     if (const uint32_t resource = slots[MH3_MAT_TEXTURE_SRT]) {

@@ -802,12 +802,12 @@ void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t
         }
     throw std::runtime_error("Native coordinate mapping owner was retired");
 }
-const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
-    if (block.frozen && block.frozen->fields.generation == block.fields.generation)
-        return block.frozen;
-    // Items of unrendered packets may still point at a released copy: the
+const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
+    if (const auto* current = block.frozen.get(); current && current->fields.generation == block.fields.generation)
+        return current;
+    // Items of unrendered packets may still point at the replaced copy: the
     // render thread deletes it after the current packet (model_render_prep.cpp).
-    std::shared_ptr<NativeFrozenMaterialBlock> frozen(new NativeFrozenMaterialBlock, [](NativeFrozenMaterialBlock* p) { ReleaseNativeFrozenMaterialBlock(p); });
+    auto frozen = std::make_unique<NativeFrozenMaterialBlock>();
     frozen->fields = block.fields;
     std::memset(frozen->texcoord_map, 0, sizeof frozen->texcoord_map);
     frozen->texcoord_known = 0;
@@ -827,8 +827,8 @@ const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterial
         if (!found)
             throw std::runtime_error("Native coordinate mapping owner was retired");
     }
-    block.frozen = std::move(frozen);
-    return block.frozen;
+    block.frozen.Reset(frozen.release());
+    return block.frozen.get();
 }
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind) {
     auto block = ReadNativeLiveMaterialBlock(source, kind);

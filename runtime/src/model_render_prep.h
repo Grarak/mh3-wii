@@ -43,7 +43,7 @@ struct ModelPrepInputs {
     mh3_native_palette_source palettes[8]{};
     mh3_native_texture_binding textures[8]{};
     uint32_t pipeline_address = 0;
-    // Frozen copies stay alive while the game thread holds them and are
+    // Frozen copies are owned by their live blocks; a replaced copy is
     // deleted only after the packets recorded meanwhile have rendered.
     const NativeFrozenMaterialBlock *pipeline = nullptr, *pixel = nullptr, *colors = nullptr, *indirect = nullptr, *texgen = nullptr;
     uint8_t channels[40]{};

@@ -76,6 +76,33 @@ struct NativeFrozenMaterialBlock {
     uint8_t texcoord_map[8];
     uint8_t texcoord_known;
 };
+/* Deleter of frozen copies: deletes after the render thread finished the
+ * packet being recorded (immediately while no render thread runs). */
+void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block);
+/* The frozen copy a live block owns for its current version (game thread).
+ * A copy of the live block does not take it; replacing or destroying the
+ * owning block retires it, so items already recorded keep reading it until
+ * their packet has rendered. Holders of the plain pointer keep it while no
+ * live block changed (ReadNativeLiveMaterialRevision) and ask again after. */
+class NativeFrozenCopy {
+  public:
+    NativeFrozenCopy() = default;
+    NativeFrozenCopy(const NativeFrozenCopy&) noexcept {}
+    NativeFrozenCopy& operator=(const NativeFrozenCopy&) noexcept {
+        Reset(nullptr);
+        return *this;
+    }
+    ~NativeFrozenCopy() { Reset(nullptr); }
+    const NativeFrozenMaterialBlock* get() const { return block_; }
+    void Reset(const NativeFrozenMaterialBlock* block) {
+        if (block_ && block_ != block)
+            ReleaseNativeFrozenMaterialBlock(block_);
+        block_ = block;
+    }
+
+  private:
+    const NativeFrozenMaterialBlock* block_ = nullptr;
+};
 struct NativeLiveMaterialBlock {
     mh3_native_material_state fields;
     uint32_t address, bytes;
@@ -83,7 +110,7 @@ struct NativeLiveMaterialBlock {
     uintptr_t resident_handle;
     uint64_t resident_generation, origin_offset, source_generation;
     // The frozen copy of fields.generation, made on demand.
-    mutable std::shared_ptr<const NativeFrozenMaterialBlock> frozen;
+    mutable NativeFrozenCopy frozen;
 };
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
 /* Owner-only immediate read view. The cache owns these bytes; consume them
@@ -94,12 +121,9 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
  * keep the admitted origin; unknown writes retire them. No live command read. */
 void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t* known);
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
-/* Game thread: the immutable copy of the block's current version. The copy
- * is made once per published version; callers keep it as long as they need. */
-const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
-/* Deleter of frozen copies: deletes after the render thread finished the
- * packet being recorded (immediately while no render thread runs). */
-void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block);
+/* Game thread: the immutable copy of the block's current version, made once
+ * per published version and owned by the block (NativeFrozenCopy). */
+const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
 uint64_t NextNativeMaterialRevision();
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind);
 /* Explicit mutable vertex producers must advance source revisions when arrays

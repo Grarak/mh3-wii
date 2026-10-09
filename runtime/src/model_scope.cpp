@@ -817,7 +817,7 @@ void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_
         in.pipeline = in.pixel = in.colors = in.texgen = nullptr;
         // An ignored material still applies a replaced indirect matrix block.
         const uint32_t indirect = (scope.replacement_mask & (1u << MH3_MAT_INDIRECT_MATRIX_SCALE)) ? scope.selected.resource_slots[MH3_MAT_INDIRECT_MATRIX_SCALE] : 0;
-        in.indirect = indirect ? FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(indirect, MH3_MODEL_MATERIAL_INDIRECT)).get() : nullptr;
+        in.indirect = indirect ? FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(indirect, MH3_MODEL_MATERIAL_INDIRECT)) : nullptr;
     }
     in.indirect_operator = d.descriptor != 0;
     if (in.indirect_operator) {
