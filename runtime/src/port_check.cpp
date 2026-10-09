@@ -284,6 +284,18 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 #endif
 }
 
+bool RunPreciseSlow(const char* name, uint32_t r1, bool pure, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+    CpuContext* ctx = TryGetCpuContext();
+    ctx->gpr[1] = r1;
+
+    if (pure)
+        RunPure(ctx, name, returns, original, port);
+    else
+        Run(ctx, name, original, port);
+
+    return true;
+}
+
 namespace {
 // returns: -1 none, else a Returns.
 void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {

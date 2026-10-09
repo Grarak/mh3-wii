@@ -572,14 +572,21 @@ uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, doub
     }
 }
 
-void MHcharFrameCheckPort(CpuContext* ctx) {
+[[maybe_unused]] void MHcharFrameCheckPort(CpuContext* ctx) {
     ctx->gpr[3] = FrameCheck(ctx->gpr[3], ctx->gpr[4] & 0xFFFF, (ctx->gpr[5] & 0xFFFF) == 0, ctx->fpr[1].d, ctx->fpr[2].d);
 }
 
 } // namespace
 
+// A precise native (docs/native-dispatch-freshness.md): its body names only
+// the argument registers, and r1 for the port check, so translated callers
+// call it directly, without the dispatch's guard.
 extern "C" void func_800E1740(CpuContext* ctx);
 extern "C" void MH3_MHcharFrameCheck(CpuContext* ctx) {
-    PortCheck::Call(ctx, "MHcharFrameCheck", func_800E1740, MHcharFrameCheckPort);
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::RunPrecise("MHcharFrameCheck", ctx->gpr[1], func_800E1740, MHcharFrameCheckPort)) [[unlikely]]
+        return;
+#endif
+    ctx->gpr[3] = FrameCheck(ctx->gpr[3], ctx->gpr[4] & 0xFFFF, (ctx->gpr[5] & 0xFFFF) == 0, ctx->fpr[1].d, ctx->fpr[2].d);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E1740, MH3_MHcharFrameCheck, "MHcharFrameCheck");

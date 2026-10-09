@@ -957,14 +957,18 @@ uint32_t EffectDrawFlags(GuestCall& game, uint32_t chara) {
 // Pl_master_ck (0x8026FE38): whether this machine runs the player: play
 // mode 2 (0x8065AA85), online mode 3 (0x8065AA84), or its index (+8) is
 // MyPlayerIndex (0x8065AA87, signed).
-bool PlMasterCheck(GuestCall& game, uint32_t player) {
-    if (Routed<0x8026FE38>())
-        return game.Call<0x8026FE38>({player}) != 0;
-
+bool PlMaster(uint32_t player) {
     if (FlatRead8(0x8065AA85) == 2 || FlatRead8(0x8065AA84) == 3)
         return true;
 
     return int32_t(int8_t(FlatRead8(0x8065AA87))) == int32_t(FlatRead8(player + 8));
+}
+
+bool PlMasterCheck(GuestCall& game, uint32_t player) {
+    if (Routed<0x8026FE38>())
+        return game.Call<0x8026FE38>({player}) != 0;
+
+    return PlMaster(player);
 }
 
 // eftGetKeyRGB (0x800FA804): the color at `t` of keys {t, r, g, b} (four
@@ -1265,10 +1269,7 @@ void GetCameraPos(GuestCall& game, uint32_t out, uint32_t scratch) {
 // translation of its world matrix (the ScnMdl's (+0x118) array at +0xEC by
 // the ResNode's id, ResNode::GetID 0x8006FE30); without a model the default
 // word (0x807988F8) thrice.
-void GetJointWpos(GuestCall& game, uint32_t chara, uint32_t joint, uint32_t out) {
-    if (Routed<0x800E0AF8>())
-        return void(game.Call<0x800E0AF8>({chara, joint, out}));
-
+void JointWpos(uint32_t chara, uint32_t joint, uint32_t out) {
     const uint32_t model = FlatRead32(chara + 0x118);
 
     if (!model) {
@@ -1289,6 +1290,13 @@ void GetJointWpos(GuestCall& game, uint32_t chara, uint32_t joint, uint32_t out)
 
     for (uint32_t k = 0; k < 3; ++k)
         FlatWrite32(out + 4 * k, FlatRead32(m + 0xC + 0x10 * k));
+}
+
+void GetJointWpos(GuestCall& game, uint32_t chara, uint32_t joint, uint32_t out) {
+    if (Routed<0x800E0AF8>())
+        return void(game.Call<0x800E0AF8>({chara, joint, out}));
+
+    JointWpos(chara, joint, out);
 }
 
 // 0x800A9778: the emitter's particle manager `index`.
@@ -2584,7 +2592,22 @@ MH3_GAME_PORT(800E3BA0, MHcharDrawPass, { return MHcharDrawPass(game, frame.Arg(
 REGISTER_NATIVE_FUNCTION_AS(0x800E3BA0, MH3_MHcharDrawPass, "MHcharDrawPass");
 MH3_EFFECT_PORT(800F93E4, EffectDrawFlags, { return EffectDrawFlags(game, frame.Arg(3)); });
 REGISTER_NATIVE_FUNCTION_AS(0x800F93E4, MH3_EffectDrawFlags, "EffectDrawFlags");
-MH3_GAME_PORT(8026FE38, PlMasterCheck, { return PlMasterCheck(game, frame.Arg(3)); });
+
+// A precise native (docs/optimizations/cpu/native-function-ports.md): its body names r1 and
+// r3 only, so translated callers call it directly, without the dispatch's
+// guard; the framed port runs only for its check.
+static uint32_t PlMasterCheckBody(CpuContext*, GuestCall& game, const GuestFrame& frame) {
+    return PlMasterCheck(game, frame.Arg(3));
+}
+
+extern "C" void func_8026FE38(CpuContext* ctx);
+extern "C" void MH3_PlMasterCheck(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::RunPrecise("PlMasterCheck", ctx->gpr[1], func_8026FE38, FramedPort<0x8026FE38, PlMasterCheckBody, false>)) [[unlikely]]
+        return;
+#endif
+    ctx->gpr[3] = PlMaster(ctx->gpr[3]) ? 1 : 0;
+}
 REGISTER_NATIVE_FUNCTION_AS(0x8026FE38, MH3_PlMasterCheck, "PlMasterCheck");
 
 MH3_EFFECT_PORT(800FA804, EftKeyRGB, {
@@ -2664,10 +2687,20 @@ REGISTER_NATIVE_FUNCTION_AS(0x800E3BF0, MH3_PrimRequest, "PrimRequest");
 MH3_GAME_PORT(8007F130, ScnRootPushBack, { return ScnRootPushBack(game, frame.Arg(3), frame.Arg(4)); });
 REGISTER_NATIVE_FUNCTION_AS(0x8007F130, MH3_ScnRootPushBack, "ScnRootPushBack");
 
-MH3_GAME_PORT(800E0AF8, GetJointWpos, {
+// A precise native, like PlMasterCheck.
+static uint32_t GetJointWposBody(CpuContext* cpu, GuestCall& game, const GuestFrame& frame) {
     GetJointWpos(game, frame.Arg(3), frame.Arg(4), frame.Arg(5));
     return cpu->gpr[3];
-});
+}
+
+extern "C" void func_800E0AF8(CpuContext* ctx);
+extern "C" void MH3_GetJointWpos(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::RunPrecise("GetJointWpos", ctx->gpr[1], func_800E0AF8, FramedPort<0x800E0AF8, GetJointWposBody, false>)) [[unlikely]]
+        return;
+#endif
+    JointWpos(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x800E0AF8, MH3_GetJointWpos, "GetJointWpos");
 
 // ResNode::GetID (0x8006FE30): the id (+0x10) of the ResNode the handle at
@@ -2772,17 +2805,18 @@ REGISTER_NATIVE_FUNCTION_AS(0x80096424, MH3_ResTevColorGetKColor, "ResTevColorGe
 
 // The geometry tests write no guest memory but their result (and the
 // segment's parameter): checked on every call.
-static void HitPointSpherePort(CpuContext* cpu) {
+[[maybe_unused]] static void HitPointSpherePort(CpuContext* cpu) {
     cpu->gpr[3] = HitPointSphere(cpu->gpr[3], cpu->gpr[4], float(cpu->fpr[1].d)) ? 1 : 0;
 }
 
+// A precise native: translated callers call it directly.
 extern "C" void func_8028F680(CpuContext* ctx);
 extern "C" void MH3_HitPointSphere(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
-    if (PortCheck::Enabled("HitPointSphere")) [[unlikely]]
-        return PortCheck::RunPure(ctx, "HitPointSphere", PortCheck::Returns::Gpr3, func_8028F680, HitPointSpherePort);
+    if (PortCheck::RunPurePrecise("HitPointSphere", ctx->gpr[1], PortCheck::Returns::Gpr3, func_8028F680, HitPointSpherePort)) [[unlikely]]
+        return;
 #endif
-    HitPointSpherePort(ctx);
+    ctx->gpr[3] = HitPointSphere(ctx->gpr[3], ctx->gpr[4], float(ctx->fpr[1].d)) ? 1 : 0;
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8028F680, MH3_HitPointSphere, "HitPointSphere");
 

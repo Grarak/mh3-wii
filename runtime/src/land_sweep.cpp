@@ -229,10 +229,13 @@ uint32_t TriangleCounts(uint32_t triangle, Tested tested, uint32_t flagMask, uin
     return 1;
 }
 
-void TriangleCountsPort(CpuContext* cpu) {
-    const uint32_t list = cpu->gpr[4], count = cpu->gpr[5];
-    cpu->gpr[3] = TriangleCounts(cpu->gpr[3], [&](uint32_t t) { return count && Listed(t, list, count); }, cpu->gpr[6] & 0xFFFF, cpu->gpr[7] & 0xFFFF,
-                                 cpu->gpr[8], cpu->gpr[9]);
+// (triangle, tested list, tested count, flag mask, skip mask, taken, area).
+uint32_t TriangleCountsOf(uint32_t triangle, uint32_t list, uint32_t count, uint32_t flagMask, uint32_t skipMask, uint32_t taken, uint32_t area) {
+    return TriangleCounts(triangle, [&](uint32_t t) { return count && Listed(t, list, count); }, flagMask & 0xFFFF, skipMask & 0xFFFF, taken, area);
+}
+
+[[maybe_unused]] void TriangleCountsPort(CpuContext* cpu) {
+    cpu->gpr[3] = TriangleCountsOf(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9]);
 }
 
 // ---- 0x80292524 ----
@@ -357,7 +360,7 @@ uint32_t CandidateFilter(uint32_t sweep, uint32_t triangle, uint32_t point) {
     return 1;
 }
 
-void CandidateFilterPort(CpuContext* cpu) {
+[[maybe_unused]] void CandidateFilterPort(CpuContext* cpu) {
     cpu->gpr[3] = CandidateFilter(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 
@@ -586,21 +589,26 @@ void SweepQuery(CpuContext* cpu) {
 
 } // namespace
 
+// The two filters are precise natives (docs/optimizations/cpu/native-function-ports.md):
+// their bodies name only the argument registers, and r1 for the port check,
+// so translated callers call them directly, without the dispatch's guard.
 extern "C" void func_802962C4(CpuContext* cpu);
 extern "C" void MH3_LandSweepTriangleCounts(CpuContext* cpu) {
-    if (PortCheck::Enabled("LandSweepTriangleCounts"))
-        PortCheck::Run(cpu, "LandSweepTriangleCounts", func_802962C4, TriangleCountsPort);
-    else
-        TriangleCountsPort(cpu);
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::RunPrecise("LandSweepTriangleCounts", cpu->gpr[1], func_802962C4, TriangleCountsPort)) [[unlikely]]
+        return;
+#endif
+    cpu->gpr[3] = TriangleCountsOf(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x802962C4, MH3_LandSweepTriangleCounts, "LandSweepTriangleCounts");
 
 extern "C" void func_80292524(CpuContext* cpu);
 extern "C" void MH3_LandSweepTriangleCandidateFilter(CpuContext* cpu) {
-    if (PortCheck::Enabled("LandSweepTriangleCandidateFilter"))
-        PortCheck::Run(cpu, "LandSweepTriangleCandidateFilter", func_80292524, CandidateFilterPort);
-    else
-        CandidateFilterPort(cpu);
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::RunPrecise("LandSweepTriangleCandidateFilter", cpu->gpr[1], func_80292524, CandidateFilterPort)) [[unlikely]]
+        return;
+#endif
+    cpu->gpr[3] = CandidateFilter(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80292524, MH3_LandSweepTriangleCandidateFilter, "LandSweepTriangleCandidateFilter");
 

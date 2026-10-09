@@ -303,19 +303,18 @@ extern "C" void MH3_CheatMonsterStep(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80137980, MH3_CheatMonsterStep, "CheatMonsterStep");
 
-// 0x803C4878: 1 while an event scene (state 4) plays. 0x801382A0 skips the
-// monster's sight, awareness and target updates then (its call returns to
-// 0x80138720); Monster can't see you (US 0x801386BC, EU 0x80138720: the
-// branch taken) always skips them.
-extern "C" void func_803C4878(CpuContext* ctx);
-
+// 0x803C4878: 1 while an event scene (state 4, the byte 0x806D4FA0) plays.
+// 0x801382A0 skips the monster's sight, awareness and target updates then
+// (its call returns to 0x80138720); Monster can't see you (US 0x801386BC, EU
+// 0x80138720: the branch taken) always skips them. A precise native
+// (docs/native-dispatch-freshness.md): translated callers call it directly.
 extern "C" void MH3_CheatEventDemoState4(CpuContext* ctx) {
     if (On(Id::MonsterCantSeeYou) && ctx->lr == 0x80138720) {
         ctx->gpr[3] = 1;
         return;
     }
 
-    func_803C4878(ctx);
+    ctx->gpr[3] = MemoryInline::FlatRead8(0x806D4FA0) == 4 ? 1 : 0;
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x803C4878, MH3_CheatEventDemoState4, "CheatEventDemoState4");

@@ -106,4 +106,20 @@ inline void Call(CpuContext* ctx, const char* name, void (*original)(CpuContext*
     else
         port(ctx);
 }
+
+// The check of a precise native: its registered body names only constant-index
+// registers, so translated callers sync just those
+// (docs/optimizations/cpu/native-function-ports.md), and it must not hand them its context.
+// It passes r1 instead; the check runs on the thread's context and leaves the
+// port's result there. Whether the check ran.
+bool RunPreciseSlow(const char* name, uint32_t r1, bool pure, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*));
+
+inline bool RunPrecise(const char* name, uint32_t r1, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+    return Enabled(name) && RunPreciseSlow(name, r1, false, Returns::Gpr3, original, port);
+}
+
+// RunPure of a precise native.
+inline bool RunPurePrecise(const char* name, uint32_t r1, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+    return Enabled(name) && RunPreciseSlow(name, r1, true, returns, original, port);
+}
 } // namespace PortCheck
