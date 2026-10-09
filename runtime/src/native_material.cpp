@@ -400,6 +400,13 @@ const mh3_native_material_state& GetNativeMaterialState() {
     return material;
 }
 void SetNativeMaterial(const mh3_native_material_state& source) {
+    // Effects and UI reapply the state they read per quad/primitive (~60% of
+    // calls in Alatreon). The raster is imported into the material, so equal
+    // bytes change nothing and the next packet record reuses its snapshot.
+    Owner();
+    ObserveRasterPublications();
+    if (&source != &material && !std::memcmp(&source, &material, sizeof material))
+        return;
     OverlayNativeMaterial(source, MH3_MATERIAL_TOP_ALL);
 }
 void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh3_model_material_block kind, uint32_t count) {
