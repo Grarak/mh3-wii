@@ -591,12 +591,16 @@ inline const TranslatedFunctionInfo* ResolveDirectCpuTargetInfoCached() {
 // Caches the "is the published winner still base translation?" verdict for state-free fast
 // paths guarding tens of thousands of call sites. Same latching rule as above: 0 = unresolved,
 // 1 = negative, 2 = positive, and a verdict computed pre-publication is never stored.
+// Relaxed: the verdict is the whole value (nothing read after it depends on its store), the
+// registry it is computed from is immutable once published, and a thread that still sees 0
+// recomputes the same answer. An acquire load is a dmb on ARM32, and a state-free call tests
+// one verdict per function of its region on every call.
 template <uint32_t Target>
 inline bool IsBaseTranslatedCpuTargetActive() {
     static std::atomic<uint8_t> cachedVerdict{0};
     constexpr uint8_t kNegativeVerdict = 1;
     constexpr uint8_t kPositiveVerdict = 2;
-    const uint8_t cached = cachedVerdict.load(std::memory_order_acquire);
+    const uint8_t cached = cachedVerdict.load(std::memory_order_relaxed);
     if (cached != 0) {
         return cached == kPositiveVerdict;
     }
@@ -604,7 +608,7 @@ inline bool IsBaseTranslatedCpuTargetActive() {
     const auto* info = ResolveDirectCpuTargetInfo<Target>();
     const bool active = info != nullptr && info->kind == FunctionKind::BaseTranslated;
     if (publishable) {
-        cachedVerdict.store(active ? kPositiveVerdict : kNegativeVerdict, std::memory_order_release);
+        cachedVerdict.store(active ? kPositiveVerdict : kNegativeVerdict, std::memory_order_relaxed);
     }
     return active;
 }
