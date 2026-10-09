@@ -182,6 +182,10 @@ struct AssetCache::Impl {
 
     Step gameStep;
     std::atomic<const Source*> gameSource{nullptr};
+
+    // The disc reader's wait for a file that is still converting (Converted).
+    Step readerStep;
+    std::atomic<const Source*> readerSource{nullptr};
     std::array<Step, Workers> workerSteps;
     std::atomic<unsigned> nextWorker{0};
     pthread_t watchdog{};
@@ -775,14 +779,16 @@ void AssetCache::Impl::Watch() {
             }
         }
 
-        const char* what = gameStep.what;
-        const double waited = Seconds() - gameStep.since;
+        const bool reader = !gameStep.what && readerStep.what;
+        const Step& step = reader ? readerStep : gameStep;
+        const char* what = step.what;
+        const double waited = Seconds() - step.since;
 
         if (!what || waited < 5)
             continue;
 
         char text[1024];
-        int n = std::snprintf(text, sizeof text, "MH3 asset cache watchdog: the game has been %s %s for %.0f s;", what, gameStep.file.load() ? gameStep.file.load() : "", waited);
+        int n = std::snprintf(text, sizeof text, "MH3 asset cache watchdog: the %s has been %s %s for %.0f s;", reader ? "disc reader" : "game", what, step.file.load() ? step.file.load() : "", waited);
         bool locked = false;
 
         for (int i = 0; i < 20 && !locked; ++i) {
@@ -795,7 +801,7 @@ void AssetCache::Impl::Watch() {
         if (locked) {
             n += std::snprintf(text + n, sizeof text - n, " lock free, %.1f MiB pending, %lu jobs queued, %u model jobs;", pendingBytes / 1048576.0, static_cast<unsigned long>(jobs.size()), modelJobs);
 
-            if (const Source* waited = gameSource)
+            if (const Source* waited = reader ? readerSource.load() : gameSource.load())
                 n += std::snprintf(text + n, sizeof text - n, " source indexed %d checked %d indexing %d textures %u done %d, models %u done %d usable %d, data %d, failure '%s';", waited->indexed, waited->checked,
                                    waited->indexing, waited->textureCount, waited->texturesDone, waited->modelCount, waited->modelsDone, waited->modelsUsable, waited->data != nullptr, waited->failure.c_str());
             lock.unlock();
@@ -905,12 +911,26 @@ bool AssetCache::Converted(uint64_t offset, size_t bytes, std::chrono::milliseco
         auto& s = *std::prev(next);
 
         // Timed: a lost wakeup (Impl::Wait) only delays the next check.
-        while (s.checked && !(s.texturesDone && s.modelsDone))
+        while (s.checked && !(s.texturesDone && s.modelsDone)) {
+#ifdef MH3_DEVELOPMENT
+            // The reader retries every limit: keep the first wait's start.
+            if (m.readerSource != &s) {
+                m.readerSource = &s;
+                m.readerStep.Set("reading a file that is converting", s.file.path.c_str());
+            }
+#endif
             if (m.changed.wait_until(guard, deadline) == std::cv_status::timeout && !(s.texturesDone && s.modelsDone))
                 return false;
+        }
+
         at = s.file.offset + s.file.bytes;
     }
-
+#ifdef MH3_DEVELOPMENT
+    if (m.readerSource) {
+        m.readerSource = nullptr;
+        m.readerStep.Set(nullptr, nullptr);
+    }
+#endif
     return true;
 }
 
