@@ -20,7 +20,12 @@
 #include "guest_call.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
+#ifdef MH3_DEVELOPMENT
+#include <cstdio>
+#include <cstdlib>
+#endif
 
 namespace {
 
@@ -127,8 +132,34 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
     if (animated != step) Memory::WriteFloat32(kAnimationBaseRate, float(stepRate * (animated / step)));
     game(InitAnmResult, {result});
     for (uint32_t i = 0; i < 6; ++i) Memory::Write32(channel(i, kPrevFrame), Memory::Read32(channel(i, kFrame)));
+#ifdef MH3_DEVELOPMENT
+    // MH3_ANIM_WHOLE_FRAMES=1 (debugging): the channels are shown at whole
+    // frames; their exact frames are kept here and restored before advancing.
+    static const bool wholeFrames = std::getenv("MH3_ANIM_WHOLE_FRAMES") != nullptr;
+    static std::unordered_map<uint64_t, float> exact;
+    if (wholeFrames)
+        for (uint32_t i = 0; i < 6; ++i) {
+            const uint32_t anim = game(ChannelAnim, {self, i});
+            if (!anim) continue;
+            game.Virtual(anim, kGetFrame);
+            const float shown = game.F1();
+            const auto it = exact.find(uint64_t(self) << 8 | i);
+            if (it != exact.end() && std::floor(it->second) == shown) game.Virtual(anim, kSetFrame, {}, {it->second});
+        }
+#endif
     if (Memory::Read8(self + kSkipAdvance) == 0) game.Virtual(channelSet, kUpdateFrame);
     else Memory::Write8(self + kSkipAdvance, 0);
+#ifdef MH3_DEVELOPMENT
+    if (wholeFrames)
+        for (uint32_t i = 0; i < 6; ++i) {
+            const uint32_t anim = game(ChannelAnim, {self, i});
+            if (!anim) continue;
+            game.Virtual(anim, kGetFrame);
+            const float frameNow = game.F1();
+            exact[uint64_t(self) << 8 | i] = frameNow;
+            game.Virtual(anim, kSetFrame, {}, {std::floor(frameNow)});
+        }
+#endif
     game(ChannelBlend, {self});
 
     const float zero = 0.0f; // f32 at r2-30312 (0x807988F8)
@@ -169,6 +200,18 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         game(VecAdd, {sum, scaled});
     }
     Memory::WriteFloat32(kAnimationBaseRate, stepRate);
+#ifdef MH3_DEVELOPMENT
+    // MH3_MOTION_LOG=file: per call, the game time, the character, its
+    // position and its first two channels' frame and rate.
+    static FILE* log = [] {
+        const char* path = std::getenv("MH3_MOTION_LOG");
+        return path ? std::fopen(path, "w") : nullptr;
+    }();
+    if (log)
+        std::fprintf(log, "%.4f %08x %.2f %.2f %.2f %.3f %.3f %.3f %.3f\n", GameStep::Elapsed(), self,
+                     F32(self + kPosition), F32(self + kPosition + 4), F32(self + kPosition + 8),
+                     F32(channel(0, kFrame)), F32(channel(0, kRate)), F32(channel(1, kFrame)), F32(channel(1, kRate)));
+#endif
     const bool holding = Memory::Read8(self + kHoldSteps) != 0;
     const double moved = holding ? Spend(self + kHoldSteps, state.hold, animated) : animated;
     if (moved > 0 && (Memory::Read32(self + kFlags) & 2) == 0) { // 0x800E19BC, inlined

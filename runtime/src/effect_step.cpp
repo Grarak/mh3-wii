@@ -35,6 +35,7 @@
 #include "memory.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -341,6 +342,11 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         step.particles[p] = {Memory::Read16(p + kParticleSeed), age, step.generation};
         // After the tick from age k the Wii shows the curves at k: the curves
         // run one tick behind the age, here at age - 1.
+#ifdef MH3_DEVELOPMENT
+        // MH3_EFFECT_TICK_CURVES=1 (debugging): curves stay at the whole tick.
+        static const bool tickCurves = std::getenv("MH3_EFFECT_TICK_CURVES") != nullptr;
+        if (tickCurves) continue;
+#endif
         if (age > 1.0) CurvesAt(game, manager, p, age - 1.0);
     }
 }

@@ -143,7 +143,17 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         frameEnd = now;
         stepTicks = std::chrono::duration<double>(step) / period;
         // The next step is assumed to take as long as this one.
-        GameStep::Begin(std::max(stepTicks, 1e-3) / 2);
+        double next = std::max(stepTicks, 1e-3) / 2;
+#ifdef MH3_DEVELOPMENT
+        // MH3_STEP_SCALE=s (debugging): every step is s ticks long, whatever
+        // time it took.
+        static const double forcedScale = [] {
+            const char* v = std::getenv("MH3_STEP_SCALE");
+            return v ? std::atof(v) : 0.0;
+        }();
+        if (forcedScale > 0) next = forcedScale;
+#endif
+        GameStep::Begin(next);
         // No wait: only deliver the device work due (audio, alarms, IOS, VI).
         const CpuContext frame = *ctx;
         PumpDevices(ctx);

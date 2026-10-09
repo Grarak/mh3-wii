@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <iterator>
 
 namespace {
@@ -65,6 +66,17 @@ const Site* Find(uint32_t pc) {
     return it != std::end(kSites) && it->pc == pc ? it : nullptr;
 }
 
+// MH3_STEP_COUNTER_RAW=1 (debugging): the counter counts steps and every read
+// is the counter itself, as the original.
+bool Raw() {
+#ifdef MH3_DEVELOPMENT
+    static const bool raw = std::getenv("MH3_STEP_COUNTER_RAW") != nullptr;
+    return raw;
+#else
+    return false;
+#endif
+}
+
 } // namespace
 
 extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc) {
@@ -72,7 +84,7 @@ extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc)
     const uint32_t counter = Memory::Read32(address);
     const Site* site = Find(pc);
     const uint32_t ticks = GameStep::Ticks();
-    if (!site || !IsCounter(address) || ticks == 1 || !site->equality) return counter;
+    if (!site || !IsCounter(address) || ticks == 1 || !site->equality || Raw()) return counter;
     if (site->n == 0) return ticks == 0 ? 1u : counter; // 1 % N != 0 for any N > 1
     // The latest value in (counter - ticks, counter] that is k mod N.
     const uint32_t back = (counter % site->n + site->n - site->k % site->n) % site->n;
@@ -83,7 +95,7 @@ extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc)
 // RunTasks: the counter advances by the ticks of this step (RunTasks adds 1).
 extern "C" void func_800416F8(CpuContext* ctx);
 extern "C" void MH3_RunTasks(CpuContext* ctx) {
-    Memory::Write32(kCounter, Memory::Read32(kCounter) + GameStep::Ticks() - 1);
+    if (!Raw()) Memory::Write32(kCounter, Memory::Read32(kCounter) + GameStep::Ticks() - 1);
     func_800416F8(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800416F8, MH3_RunTasks, "RunTasks");

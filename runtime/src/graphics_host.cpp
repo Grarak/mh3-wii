@@ -1,5 +1,6 @@
 #include "gx_host.h"
 #include "memory.h"
+#include "game_step.h"
 #include "gx_stream.h"
 #include "efb_host.h"
 #include "gl/device.hpp"
@@ -20,14 +21,17 @@
 #include <stdexcept>
 #include <thread>
 #include <memory>
-#ifdef MH3_ENABLE_GX_DIAGNOSTICS
+#include <string>
+#if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_DEVELOPMENT)
 #include "gx/gx.hpp"
+#endif
+#ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include <fstream>
 #endif
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
 #include "efb_copy_trace.h"
 #endif
-namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); void require_frame_render() noexcept;
+namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame() noexcept; void split_staging_batch(); void require_frame_render() noexcept;
     std::array<uint64_t, 4> staging_high_water() noexcept; uint64_t staging_split_count() noexcept; }
 
 namespace aurora::gx::fifo {
@@ -39,6 +43,7 @@ bool initialized = false;
 bool frameActive = false;
 bool gpuSynchronized = true, displayCopyPending = false, hasBegunFrame = false;
 uint32_t captureInterval = 0;
+uint32_t captureStart = 0;
 std::filesystem::path capturePath;
 GuestGxStream guestStream;
 std::vector<uint8_t> efbPixels;
@@ -110,6 +115,14 @@ void InitializeGraphics(int argc, char** argv) {
     config.desiredBackend = BACKEND_OPENGLES;
     config.windowWidth = 640;
     config.windowHeight = 480;
+#ifdef MH3_DEVELOPMENT
+    // MH3_WINDOW_SCALE=n: an n times larger window, which renders at n times
+    // the resolution.
+    if (const char* v = std::getenv("MH3_WINDOW_SCALE")) {
+        const int n = std::atoi(v);
+        if (n > 1) { config.windowWidth *= n; config.windowHeight *= n; }
+    }
+#endif
     config.msaa = 1;
     config.maxTextureAnisotropy = 1;
     const auto info = aurora_initialize(argc, argv, &config);
@@ -142,6 +155,8 @@ void InitializeGraphics(int argc, char** argv) {
                 throw std::runtime_error("MH3_CAPTURE_INTERVAL must be between 1 and 4294967294");
             captureInterval = static_cast<uint32_t>(value);
             capturePath = path;
+            // MH3_CAPTURE_START=n: no captures before frame n.
+            if (const char* start = std::getenv("MH3_CAPTURE_START")) captureStart = uint32_t(std::stoul(start));
         } else {
             const char* frame = std::getenv("MH3_CAPTURE_FRAME");
             aurora_request_frame_capture(frame ? std::stoul(frame) : 30, path);
@@ -154,7 +169,30 @@ void InitializeGraphics(int argc, char** argv) {
 void SealDisplayFrame() {
     // Aurora advances its frame index while sealing, before capture encoding.
     const auto frame = aurora::gfx::current_frame() + 1;
-    if (captureInterval && frame % captureInterval == 0) {
+#ifdef MH3_DEVELOPMENT
+    // MH3_STEP_LOG=file: "frame ticks scale" for the step each display frame shows.
+    static FILE* stepLog = [] {
+        const char* path = std::getenv("MH3_STEP_LOG");
+        return path ? std::fopen(path, "w") : nullptr;
+    }();
+    // MH3_STEP_LOG_WORDS=addr[,addr...] (hex) adds those words (hex).
+    static const std::vector<uint32_t> logWords = [] {
+        std::vector<uint32_t> words;
+        for (const char* v = std::getenv("MH3_STEP_LOG_WORDS"); v && *v;) {
+            char* end = nullptr;
+            words.push_back(uint32_t(std::strtoul(v, &end, 16)));
+            if (end == v) break;
+            v = *end == ',' ? end + 1 : end;
+        }
+        return words;
+    }();
+    if (stepLog) {
+        std::fprintf(stepLog, "%llu %u %.4f", (unsigned long long)frame, GameStep::Ticks(), GameStep::Scale());
+        for (uint32_t word : logWords) std::fprintf(stepLog, " %08x", Memory::Read32(word));
+        std::fprintf(stepLog, "\n");
+    }
+#endif
+    if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
         const auto path = capturePath.parent_path() /
             (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
         aurora_request_frame_capture(frame, path.c_str());
@@ -185,6 +223,47 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         if (!frameActive) throw std::runtime_error("Aurora could not begin the guest GX frame");
     }
     guestStream.Write(std::span<const uint8_t>(data, size), [](auto packet) {
+#ifdef MH3_DEVELOPMENT
+        // MH3_GX_DRAW_LOG=file,from,to: per draw of frames from..to, the
+        // frame, the draw's index, its primitive and vertex count, a hash of
+        // its bytes and of the loaded position matrices, and the current
+        // position matrix's translation.
+        static FILE* drawLog = nullptr;
+        static uint64_t logFrom = 0, logTo = 0;
+        static const bool drawLogInit = [] {
+            const char* v = std::getenv("MH3_GX_DRAW_LOG");
+            if (!v) return true;
+            std::string spec = v;
+            const auto a = spec.find(','), b = spec.rfind(',');
+            if (a == std::string::npos || a == b) return true;
+            logFrom = std::stoull(spec.substr(a + 1, b - a - 1));
+            logTo = std::stoull(spec.substr(b + 1));
+            drawLog = std::fopen(spec.substr(0, a).c_str(), "w");
+            return true;
+        }();
+        (void)drawLogInit;
+        static uint64_t drawFrame = ~0ull;
+        static uint32_t drawIndex = 0;
+        if (drawLog && packet[0] >= 0x80 && packet[0] <= 0xBF) {
+            const uint64_t frame = aurora::gfx::current_frame();
+            if (frame != drawFrame) { drawFrame = frame; drawIndex = 0; }
+            if (frame >= logFrom && frame <= logTo) {
+                auto fnv = [](const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
+                    for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
+                    return h;
+                };
+                const auto& st = aurora::gx::g_gxState;
+                uint64_t mh = 1469598103934665603ull;
+                for (const auto& m : st.pnMtx) mh = fnv(&m.pos, sizeof(m.pos), mh);
+                const auto& cur = st.pnMtx[st.currentPnMtx / 3].pos;
+                std::fprintf(drawLog, "%llu %u %02x %u %016llx %016llx %u %.3f %.3f %.3f\n", (unsigned long long)frame,
+                             drawIndex, packet[0], unsigned(packet[1] << 8 | packet[2]),
+                             (unsigned long long)fnv(packet.data(), packet.size()), (unsigned long long)mh,
+                             st.currentPnMtx, cur.m0.w(), cur.m1.w(), cur.m2.w());
+            }
+            ++drawIndex;
+        }
+#endif
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
         GxDiagnosticDraw diagnostic(packet[0] >= 0x80 && packet[0] <= 0xBF);
         if (diagnostic.skip) return;
