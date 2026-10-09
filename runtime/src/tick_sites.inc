@@ -200,6 +200,9 @@
 {0x803C3A28u, TickSite::Advance, 255},
 {0x803C3A34u, TickSite::Advance, 512},
 {0x803C477Cu, TickSite::Countup},           // event demo (803C46C4): demo steps (0x806D4FA4), the demo script's clock
+{0x80449B20u, TickSite::Countdown},         // name-entry keyboard open (80449B00): input wait (0x8079722C), 15 after opening
+{0x8044A058u, TickSite::Countdown},         // name-entry keyboard update (8044A038): the same input wait
+{0x8044C784u, TickSite::CountdownPastZero}, // name-entry keyboard (8044C72C): close delay (the same word, from 2), fires below 0
 {0x808CAF3Cu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x4)
 {0x808DEA90u, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x10)
 {0x808DF69Cu, TickSite::Countup},            // quest object (quest_data RSO): steps (+0x10)

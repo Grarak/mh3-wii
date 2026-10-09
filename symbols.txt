@@ -1282,8 +1282,13 @@
 800e5738 SeVoiceCallback
 800e9eb8 StreamVoiceCallback
 # Name-entry software keyboard: layout loader, its font setup (one I4 sheet,
-# the UI font atlas) and the font's glyph lookup.
+# the UI font atlas) and the font's glyph lookup. Its input wait (0x8079722C,
+# 15 after opening; 2 as the close delay) counts ticks: tick sites in
+# KeyboardOpenLayout, KeyboardUpdate and KeyboardCloseStep.
 80448708 KeyboardLayoutLoad
+80449b00 KeyboardOpenLayout
+8044a038 KeyboardUpdate
+8044c72c KeyboardCloseStep
 80506d30 KeyboardFontSetup
 80507450 KeyboardFontGetGlyph
 # Controllers: pad records at 0x8065B7D0 (0x350 bytes per channel), filled each frame by
