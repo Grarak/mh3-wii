@@ -55,6 +55,7 @@ enum : uint32_t {
     kCalcWorld = 0x30, // vtable: the object's own world matrix (object, information, &argument)
     kChildren = 0xDC,
     kChildCount = 0xE4,
+    kCalcWorldCallback = 0x11C, // ScnMdlSimple: the CalcWorld callback object
 };
 
 constexpr uint32_t kTaskCalcWorld = 1;
@@ -150,7 +151,18 @@ void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t 
     std::stable_sort(order.begin(), order.begin() + count, [&](uint8_t a, uint8_t b) { return LastCost(children[a]) > LastCost(children[b]); });
     uint64_t load[2] = {0, 0};
 
+    // A model with a CalcWorld callback (+0x11C, the hunter's at its root
+    // node) runs game code that may read other models: these stay on the
+    // game thread, in their order.
     for (uint32_t i = 0; i < count; ++i) {
+        if (Memory::Read32(children[i] + kCalcWorldCallback) != 0)
+            load[0] += LastCost(children[i]);
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+        if (Memory::Read32(children[order[i]] + kCalcWorldCallback) != 0)
+            continue;
+
         const unsigned to = load[1] < load[0] ? 1 : 0;
         side[order[i]] = uint8_t(to);
         load[to] += LastCost(children[order[i]]);
