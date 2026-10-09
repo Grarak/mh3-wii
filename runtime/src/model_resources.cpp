@@ -10,14 +10,14 @@
 #include <stdexcept>
 
 namespace {
-const mh3_res_memory& LiveMemory() {
-    static const mh3_res_memory memory{{Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size), Memory::kMem1Size},
-                                       {Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size), Memory::kMem2Size},
-                                       {Memory::GetPointer(0xe0000000, 0x4000), 0x4000}};
-    return memory;
-}
+// The guest RAM views: fixed host addresses, valid once guest memory is
+// mapped. Namespace scope, not a function-local static: every accessor reads
+// it, and a local static's guard test is an acquire load, a dmb on ARM32.
+const mh3_res_memory liveMemory{{GuestFlat::Host(Memory::kMem1CachedBase), Memory::kMem1Size},
+                                {GuestFlat::Host(Memory::kMem2CachedBase), Memory::kMem2Size},
+                                {GuestFlat::Host(0xe0000000), 0x4000}};
 const mh3_res_memory& ResourceMemory() {
-    return LiveMemory();
+    return liveMemory;
 }
 uint32_t Result(mh3_res_status status, uint32_t value) {
     if (status != MH3_RES_OK) {

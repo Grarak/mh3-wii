@@ -386,14 +386,15 @@ class TranslatedFunctionRegistry {
     static void Finalize();
     static inline bool IsLookupPublished() noexcept { return lookupPublished_.load(std::memory_order_acquire); }
     static std::optional<TranslatedFunctionInfo> FindNearestByAddress(uint32_t address);
+    // A memo slot is only filled after the lookup was seen published (the
+    // acquire below), so a hit needs no barrier, as in FindRawByAddressPtr.
     static inline const TranslatedFunctionInfo* FindByAddressPtr(uint32_t address) {
-        if (!lookupPublished_.load(std::memory_order_acquire)) {
-            return FindByAddressPtrSlow(address);
-        }
-
         auto& cached = g_indirectResolvedDispatchMemo[IndirectDispatchMemoSlot(address)];
         if (cached.valid && cached.address == address) {
             return cached.info;
+        }
+        if (!lookupPublished_.load(std::memory_order_acquire)) {
+            return FindByAddressPtrSlow(address);
         }
 
         const auto* info = FindByAddressPtrSlow(address);
