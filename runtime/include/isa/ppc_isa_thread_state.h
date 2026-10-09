@@ -40,8 +40,12 @@ inline State& Current() noexcept {
 }
 
 // The record of the thread `cpu` is current on (the game thread's when it
-// is current on none): compares, without finding the calling thread.
+// is current on none): compares, without finding the calling thread. The
+// game thread's, which the dispatch asks for on every call, is the first.
 inline State& Of(const CpuContext* cpu) noexcept {
+    if (cpu == state[Game].context)
+        return state[Game];
+
     if (cpu == state[Worker].context)
         return state[Worker];
 
