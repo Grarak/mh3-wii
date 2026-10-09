@@ -19,6 +19,8 @@
 //     0x8035F378, 0x8035F560  kind 35 (Bnahabra) waits, 90 ticks
 //     0x8014888C  kinds 1/2 (Rathian, Rathalos) a walk, 300 ticks
 //     0x8014A8C4  kinds 1/2 a hover, 60 ticks
+//     0x80388D80, 0x80387D08, 0x803878A8  kind 9 (Uragaan) under the lava 90,
+//                 dozing 150 and its sleep 1800 ticks
 //     0x80184DFC  kinds 16/17 (the Ludroth kinds) a swim, at most 200, 150+ or 90+ ticks
 //     0x8018599C  kinds 16/17 a rest underwater, up to 1800 ticks, hunters checked every 30
 //     sleeps of 1800 ticks: 0x80148ED0 kinds 1/2, 0x80155EBC 3, 0x8015E39C 8,
@@ -1093,6 +1095,203 @@ void Em006WalkPort(CpuContext* ctx) {
 
 void Em005WalkPort(CpuContext* ctx) {
     Timed(ctx, {true, 0, false, 0x13, 6, 300, 0x0, NextAction, 1, 3, nullptr});
+}
+
+// kind 9 0x80388D80: Uragaan waiting under the lava (motion 1 looped, set up
+// with kind 4), steering each step (0x8012CF84, 0x80131ED8); after 90 ticks
+// (the original's 90 calls, ended at exactly 0) 0x80128158.
+void Em009BuriedPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    game.Call<0x8012CF84>({work});
+    game.Call<0x80131ED8>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 4});
+        game.Call<SetMotionLoop>({work, 1, 0, 0});
+        game.Call<0x80130390>({work}); // f1 passes on
+        game.Call<0x80130450>({work});
+        em.Count(0x5A);
+        break;
+    case 1: {
+        const int32_t ticks = int32_t(GameStep::Ticks());
+
+        if (ticks && em.Count() > 0 && em.Count() - ticks <= 0) {
+            em.Count(0);
+            game.Call<0x80128158>({work});
+        } else
+            em.Count(em.Count() - ticks);
+
+        break;
+    }
+    }
+}
+
+// kind 9 0x80387D08: Uragaan dozing (motion 0x6E looped for 150 ticks, the
+// original's 150 calls, +0x8AB set and 0x80132280 each step), then it gets
+// up (0x70, 0x26), follows the path 0x805712E0 (0x801349C8, 0x80134B70),
+// turns to its target (motion 10, 0x80134178), digs in (0x27, effects at
+// frames 200, 10 and 210) and ends (motion 1, 0x8012B3E4, then 1.7), steering
+// each step (0x8012CF84, 0x80131ED8) before state 6.
+void Em009DozePort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    constexpr uint32_t kPath = 0x805712E0;
+    const auto steer = [&] {
+        game.Call<0x8012CF84>({work});
+        game.Call<0x80131ED8>({work});
+    };
+
+    switch (em.State()) {
+    case 0:
+        em.NextState();
+        game.Call<SetMotionLoop>({work, 0x6E, 0, 0});
+        em.Count(0x96);
+        game.Call<0x80132288>({work});
+        steer();
+        break;
+    case 1:
+        steer();
+        game.Call<0x80132280>({work, 1, 3}, {0.6f});
+
+        if (CountDown(em)) {
+            em.NextState();
+            em.SetMotion(0x70, 4, 0);
+            game.Call<0x801322C8>({work});
+        }
+
+        break;
+    case 2:
+        steer();
+
+        if (em.Ended()) {
+            em.NextState();
+            game.Call<Em::SetUp>({work, 0});
+            em.SetMotion(0x26, 4, 0);
+        }
+
+        break;
+    case 3:
+        steer();
+
+        if (em.At(200.0f, 1))
+            game.Call<0x80136D78>({work});
+
+        if (em.Ended()) {
+            em.NextState();
+            game.Call<Em::SetUp>({work, 4});
+            game.Call<0x801349C8>({work, kPath, 0, 0, 0});
+            game.Call<0x80130390>({work}); // f1 passes on
+            game.Call<0x80130450>({work});
+        }
+
+        break;
+    case 4:
+        steer();
+
+        if (game.Call<0x80134B70>({work, kPath}) == 1) {
+            em.NextState();
+            game.Call<Em::SetUp>({work, 4});
+            em.SetMotion(10, 0, 0);
+            game.Call<TurnSetUp>({work, 0}, {0.0});
+            game.Call<0x80130390>({work}); // f1 passes on
+            game.Call<0x80130450>({work});
+        }
+
+        break;
+    case 5:
+        steer();
+        game.Call<0x80131DE8>({work});
+
+        if (game.Call<TurnStep>({work, 0, 0x100}) == 1) {
+            em.NextState();
+            game.Call<Em::SetUp>({work, 0});
+            em.SetMotion(0x27, 0, 0);
+            game.Call<0x80130450>({work}, {0.0});
+            game.Call<0x80136D78>({work});
+        }
+
+        break;
+    case 6:
+        if (em.At(210.0f, 2))
+            steer();
+
+        if (em.At(10.0f, 2))
+            game.Call<0x80136D78>({work});
+
+        if (em.Ended()) {
+            em.NextState();
+            game.Call<SetMotionLoop>({work, 1, 6, 0});
+        }
+
+        break;
+    case 7:
+        if (game.Call<0x8012F9AC>({work}) == 1) {
+            game.Call<0x8012B3E4>({work, 0, 0, 0});
+            game.Call<NextAction>({work, 1, 7});
+        }
+
+        break;
+    }
+}
+
+// kind 9 0x803878A8: Uragaan's sleep, steering each step (0x8012CF84,
+// 0x80131ED8): lie down (0x28), sleep (0x6E) for 1800 ticks (the
+// original's 1800 calls) or until, while it may act, it senses a hunter
+// (EnemySensesPlayer over the player works), then 0x8012B3E4 (5, 8, 4) and
+// 1.6. The original's flag is r28, left from the caller when the sleep goes
+// on and it may not act; the port reads it the same way.
+void Em009SleepPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const uint32_t entryR28 = ctx->gpr[28];
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    game.Call<0x8012CF84>({work});
+    game.Call<0x80131ED8>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0x28, 2, 0);
+        break;
+    case 1:
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0x6E, 4, 0);
+            em.Count(0x708);
+            game.Call<0x80132288>({work});
+        }
+
+        break;
+    case 2: {
+        game.Call<0x80132280>({work, 1, 0xF}, {0.6f});
+        uint32_t wake = entryR28;
+
+        if (CountDown(em))
+            wake = 1;
+        else if (Memory::Read8(work + 0x1F5) == 1) {
+            const uint32_t players = game.Call<0x800CFB34>({2}) & 0xFFFF; // get_move_work_max(2)
+            uint32_t player = game.Call<0x800CFAF4>({2});                 // get_move_work_adrs(2)
+            wake = 0;
+
+            for (uint32_t i = 0; i < players; ++i, player += 0xB20)
+                if (Memory::Read8(player) != 0 && game.Call<0x8012D20C>({Memory::Read8(player + 8)}) == 0 && game.Call<0x8012D118>({work, player}) == 1)
+                    wake = 1;
+        }
+
+        if (wake == 1) {
+            game.Call<0x8012B3E4>({work, 5, 8, 4});
+            game.Call<NextAction>({work, 1, 6});
+        }
+
+        break;
+    }
+    }
 }
 
 // kind 35 0x8035F378 and 0x8035F560 (motion flags 4 or 0): Bnahabra
@@ -2292,6 +2491,24 @@ extern "C" void MH3_Em005Walk(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em005Walk", func_801CB5E0, Em005WalkPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801CB5E0, MH3_Em005Walk, "Em005Walk");
+
+extern "C" void func_80388D80(CpuContext* ctx);
+extern "C" void MH3_Em009Buried(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em009Buried", func_80388D80, Em009BuriedPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80388D80, MH3_Em009Buried, "Em009Buried");
+
+extern "C" void func_80387D08(CpuContext* ctx);
+extern "C" void MH3_Em009Doze(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em009Doze", func_80387D08, Em009DozePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80387D08, MH3_Em009Doze, "Em009Doze");
+
+extern "C" void func_803878A8(CpuContext* ctx);
+extern "C" void MH3_Em009Sleep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em009Sleep", func_803878A8, Em009SleepPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x803878A8, MH3_Em009Sleep, "Em009Sleep");
 
 extern "C" void func_8035F378(CpuContext* ctx);
 extern "C" void MH3_Em035Wait(CpuContext* ctx) {
