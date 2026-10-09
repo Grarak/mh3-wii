@@ -27,7 +27,10 @@ extern "C" void MH3_IOSOpen(CpuContext*);
 extern "C" void MH3_IOSClose(CpuContext*);
 extern "C" void MH3_IOSRead(CpuContext*);
 extern "C" void MH3_IOSWrite(CpuContext*);
+extern "C" void MH3_IOSWriteAsync(CpuContext*);
+extern "C" void MH3_IOSSeekAsync(CpuContext*);
 extern "C" void MH3_IOSIoctlAsync(CpuContext*);
+extern "C" void MH3_IOSIoctl(CpuContext*);
 extern "C" void MH3_IOSIoctlv(CpuContext*);
 extern "C" void MH3_IOSIoctlvAsync(CpuContext*);
 extern "C" void MH3_IOSOpenAsync(CpuContext*);
@@ -487,6 +490,104 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         throw std::runtime_error("NAND usage followed an unsafe path");
     std::filesystem::create_directory_symlink(directory.path, nand / "usage/sub/link");
     if (usage("/usage") != -102) throw std::runtime_error("NAND usage followed a nested symlink");
+    auto createEntry = [&](const std::string& path, bool directoryEntry, bool async = false) {
+        for (uint32_t i = 0; i < 0x4C; ++i) Memory::Write8(0x80001800 + i, 0);
+        for (size_t i = 0; i < path.size(); ++i) Memory::Write8(0x80001806 + i, path[i]);
+        Memory::Write8(0x80001846, 3); Memory::Write8(0x80001847, 1); Memory::Write8(0x80001849, 0x20);
+        cpu->gpr[3] = fd; cpu->gpr[4] = directoryEntry ? 3 : 9;
+        cpu->gpr[5] = 0x80001800; cpu->gpr[6] = 0x4C; cpu->gpr[7] = cpu->gpr[8] = 0;
+        cpu->gpr[9] = 0x81700000; cpu->gpr[10] = 0x5678;
+        if (async) MH3_IOSIoctlAsync(cpu); else MH3_IOSIoctl(cpu);
+        return static_cast<int32_t>(cpu->gpr[3]);
+    };
+    if (createEntry("/tmp/mh3-test", true, true)) throw std::runtime_error("NAND mkdir enqueue failed");
+    auto created = TakeIosCompletion();
+    if (!created || created->result || created->callback != 0x81700000 || created->argument != 0x5678 ||
+        !std::filesystem::is_directory(nand / "tmp/mh3-test"))
+        throw std::runtime_error("NAND mkdir callback/storage failed");
+    if (createEntry("/tmp/mh3-test", true) != -105 || createEntry("/absent/sub", true) != -106 ||
+        createEntry("/../outside", true) != -101 || createEntry("/link/outside", true) >= 0)
+        throw std::runtime_error("NAND mkdir error/isolation failed");
+    if (createEntry("/tmp/mh3-test/save", false)) throw std::runtime_error("NAND file creation failed");
+    { std::ofstream file(nand / "tmp/mh3-test/save"); file << "saved"; }
+    if (createEntry("/tmp/mh3-test/save", false) != -105 || std::filesystem::file_size(nand / "tmp/mh3-test/save") != 5)
+        throw std::runtime_error("NAND creation overwrote existing data");
+    cpu->gpr[3] = fd; MH3_IOSClose(cpu);
+    fd = open("/dev/fs", 0);
+    cpu->gpr[3] = fd; cpu->gpr[4] = 6; cpu->gpr[5] = 0x80001806; cpu->gpr[6] = 64;
+    cpu->gpr[7] = 0x80001900; cpu->gpr[8] = 0x4C;
+    MH3_IOSIoctl(cpu);
+    if (cpu->gpr[3] || Memory::Read32(0x80001900) != 0x1000 || Memory::Read16(0x80001904) != 0x3038 ||
+        Memory::Read32(0x80001946) != 0x03010020)
+        throw std::runtime_error("NAND metadata did not persist across descriptor reopening");
+    const int32_t saveFd = open("/tmp/mh3-test/save", 3);
+    if (saveFd < 0) throw std::runtime_error("Created save could not be opened");
+    Memory::Write32(0x80001300, 0x54535421);
+    cpu->gpr[3] = saveFd; cpu->gpr[4] = 0x80001300; cpu->gpr[5] = 4;
+    cpu->gpr[6] = 0x81700000; cpu->gpr[7] = 0x1234;
+    MH3_IOSWriteAsync(cpu);
+    auto writeResult = TakeIosCompletion();
+    if (cpu->gpr[3] || !writeResult || writeResult->result != 4 || writeResult->argument != 0x1234)
+        throw std::runtime_error("Asynchronous save write failed");
+    auto seek = [&](uint32_t offset, uint32_t mode) {
+        cpu->gpr[3] = saveFd; cpu->gpr[4] = offset; cpu->gpr[5] = mode;
+        cpu->gpr[6] = 0x81700000; cpu->gpr[7] = 0x1234;
+        MH3_IOSSeekAsync(cpu);
+        auto completion = TakeIosCompletion();
+        if (cpu->gpr[3] || !completion) throw std::runtime_error("Asynchronous save seek was not queued");
+        return completion->result;
+    };
+    if (seek(uint32_t(-2), 2) != 3) throw std::runtime_error("Save seek from end failed");
+    cpu->gpr[3] = saveFd; cpu->gpr[4] = 0x80001300; cpu->gpr[5] = 2;
+    MH3_IOSRead(cpu);
+    if (cpu->gpr[3] != 2 || Memory::Read16(0x80001300) != 0x2164 || seek(6, 0) != -101)
+        throw std::runtime_error("Save seek/read or EOF bounds failed");
+    cpu->gpr[3] = saveFd; cpu->gpr[4] = 11; cpu->gpr[7] = 0x80001900; cpu->gpr[8] = 8;
+    MH3_IOSIoctl(cpu);
+    if (cpu->gpr[3] || Memory::Read32(0x80001900) != 5 || Memory::Read32(0x80001904) != 5)
+        throw std::runtime_error("Save file size/offset query failed");
+    cpu->gpr[3] = saveFd; MH3_IOSClose(cpu);
+    auto rename = [&](const std::string& from, const std::string& to) {
+        for (unsigned i = 0; i < 128; ++i) Memory::Write8(0x80001800 + i, 0);
+        for (size_t i = 0; i < from.size(); ++i) Memory::Write8(0x80001800 + i, from[i]);
+        for (size_t i = 0; i < to.size(); ++i) Memory::Write8(0x80001840 + i, to[i]);
+        cpu->gpr[3] = fd; cpu->gpr[4] = 8; cpu->gpr[5] = 0x80001800; cpu->gpr[6] = 128;
+        MH3_IOSIoctl(cpu);
+        return static_cast<int32_t>(cpu->gpr[3]);
+    };
+    if (rename("/tmp/mh3-test/save", "/../outside") != -101 ||
+        rename("/tmp/mh3-test/save", "/link/outside") >= 0 ||
+        rename("/tmp/mh3-test/save", "/tmp/mh3-test/moved"))
+        throw std::runtime_error("NAND rename or destination isolation failed");
+    cpu->gpr[3] = fd; cpu->gpr[4] = 6; cpu->gpr[5] = 0x80001840; cpu->gpr[6] = 64;
+    cpu->gpr[7] = 0x80001900; cpu->gpr[8] = 0x4C;
+    MH3_IOSIoctl(cpu);
+    if (cpu->gpr[3] || Memory::Read32(0x80001946) != 0x03010020 ||
+        std::filesystem::exists(nand / "tmp/mh3-test/save") || std::filesystem::file_size(nand / "tmp/mh3-test/moved") != 5)
+        throw std::runtime_error("NAND rename lost data or metadata");
+    for (unsigned i = 0; i < 74; ++i) Memory::Write8(0x80001800 + i, Memory::Read8(0x80001900 + i));
+    Memory::Write8(0x80001846, 1); // owner may read, but no longer write
+    cpu->gpr[3] = fd; cpu->gpr[4] = 5; cpu->gpr[5] = 0x80001800; cpu->gpr[6] = 0x4C;
+    MH3_IOSIoctl(cpu);
+    if (cpu->gpr[3] || open("/tmp/mh3-test/moved", 2) != -102 || open("/tmp/mh3-test", 1) != -101)
+        throw std::runtime_error("NAND metadata permissions/directory open were not enforced");
+    auto erase = [&](const std::string& path) {
+        for (unsigned i = 0; i < 64; ++i) Memory::Write8(0x80001800 + i, i < path.size() ? path[i] : 0);
+        cpu->gpr[3] = fd; cpu->gpr[4] = 7; cpu->gpr[5] = 0x80001800; cpu->gpr[6] = 64;
+        MH3_IOSIoctl(cpu);
+        return static_cast<int32_t>(cpu->gpr[3]);
+    };
+    const int32_t heldFd = open("/tmp/mh3-test/moved", 1);
+    if (heldFd < 0 || erase("/tmp/mh3-test") != -111 || !std::filesystem::exists(nand / "tmp/mh3-test/moved"))
+        throw std::runtime_error("NAND deleted an in-use subtree");
+    cpu->gpr[3] = heldFd; MH3_IOSClose(cpu);
+    std::filesystem::create_directory_symlink(directory.path, nand / "tmp/mh3-test/link");
+    if (erase("/tmp/mh3-test") != -102 || !std::filesystem::exists(nand / "tmp/mh3-test/moved"))
+        throw std::runtime_error("NAND delete did not reject a symlink before changing data");
+    std::filesystem::remove(nand / "tmp/mh3-test/link");
+    if (erase("/") != -101 || erase("/../escape") != -101 || erase("/tmp/mh3-test") ||
+        std::filesystem::exists(nand / "tmp/mh3-test") || erase("/tmp/mh3-test") != -106)
+        throw std::runtime_error("NAND recursive delete/error handling failed");
     cpu->gpr[3] = fd; MH3_IOSClose(cpu);
     fd = open("/dev/stm/immediate", 0);
     cpu->gpr[3] = fd; cpu->gpr[4] = 0x5001;
