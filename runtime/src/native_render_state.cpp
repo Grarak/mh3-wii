@@ -24,7 +24,7 @@ struct DrawOwner {
     mh3_draw_state drawState = {
         {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}, {0, 0, 640, 448, 0, 1}, 0, {0, 1, 0, 3, 1, 3, 1, 0, 1, 1}};
 };
-constinit DrawOwner owners[2]{};
+constinit DrawOwner owners[NativeOwnerCount]{};
 DrawOwner& D(NativeOwner owner = NativeOwner::Game) {
     return owners[unsigned(owner)];
 }
@@ -187,6 +187,30 @@ void ApplyRenderState() {
 } // namespace
 void SetNativeRaster(const mh3_raster_state& raster) {
     SetRaster(raster, true);
+}
+void SetNativeRaster(const mh3_raster_state& raster, NativeOwner owner) {
+    if (owner == NativeOwner::Game) {
+        SetRaster(raster, true);
+        return;
+    }
+    // Render and Shadow publish logically; the render thread applies the
+    // result once per draw (ApplyNativeRenderRaster).
+    CheckRaster(raster);
+    auto& d = D(owner);
+    if (!d.rasterKnown || std::memcmp(&d.drawState.raster, &raster, sizeof raster)) {
+        d.drawState.raster = raster;
+        d.rasterKnown = true;
+        Changed(owner);
+    }
+}
+void ApplyNativeRenderRaster() {
+    const auto& d = D(NativeOwner::Render);
+    if (d.rasterKnown && NativeGraphicsFrameShouldRender())
+        aurora::gl::apply_raster_state(BackendRaster(d.drawState.raster));
+}
+void CopyNativeDrawRaster(NativeOwner from, NativeOwner to) {
+    D(to).drawState.raster = D(from).drawState.raster;
+    D(to).rasterKnown = D(from).rasterKnown;
 }
 
 void CaptureNativeDrawSnapshot(NativeDrawSnapshot& out) {

@@ -22,7 +22,8 @@ void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // textured draws sampled RGBA * vertex RGBA, otherwise vertex RGBA.
 void SubmitNativeGeometry(const AuroraNativeGeometry& geometry, bool textured);
 // item indexes the model store of this packet's slot (model_scope.cpp).
-void RecordNativeModelDraw(uint32_t item);
+// A deferred item is prepared by the render thread into its own state.
+void RecordNativeModelDraw(uint32_t item, bool deferred = false);
 void RecordNativeDepthClear();
 // Scene feedback runs in draw order on the render thread. The game thread
 // keeps its own revisions of the published targets for its texture bindings.

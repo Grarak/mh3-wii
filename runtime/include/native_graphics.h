@@ -25,6 +25,10 @@ void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height);
 // An unpublished rectangle returns false and leaves out untouched.
 bool GetNativeScissor(int32_t out[4]);
 void SetNativeRaster(const mh3_raster_state& raster);
+// Render/Shadow: logical raster publication of deferred model preparation.
+void SetNativeRaster(const mh3_raster_state& raster, NativeOwner owner);
+// Render thread: apply the Render owner's raster to the backend before a draw.
+void ApplyNativeRenderRaster();
 using NativeRasterObserver = void (*)(const mh3_raster_state&);
 void SetNativeRasterObserver(NativeRasterObserver observer);
 // Clear only far depth on the current admitted target. Covers the whole target
@@ -32,10 +36,10 @@ void SetNativeRasterObserver(NativeRasterObserver observer);
 // Skipped frames perform no GPU work, allocation, scene switch or wait.
 void ClearNativeDepthTarget();
 // Game: records a binding; the render thread binds the backend on restore.
-void BindNativeTexture(const mh3_native_texture_binding& binding);
+void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner = NativeOwner::Game);
 const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit, NativeOwner owner = NativeOwner::Game);
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);
-void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette);
+void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette, NativeOwner owner = NativeOwner::Game);
 void SetNativeFog(const mh3_native_fog& fog);
 // Publishes a selected light set. owner/revision identify the producer's slots
 // (model_scene_state.cpp): while both are unchanged since the previous
@@ -43,7 +47,7 @@ void SetNativeFog(const mh3_native_fog& fog);
 void SetNativeModelLightSelection(const mh3_native_light_slots& lights, const void* owner, uint64_t revision);
 void SetNativeTextureMatrix(uint32_t selector, const float row_major[12], bool matrix3x4, NativeOwner owner = NativeOwner::Game);
 bool GetNativeTextureMatrix(uint32_t selector, float row_major[12], bool* matrix3x4 = nullptr, NativeOwner owner = NativeOwner::Game);
-void SetNativeDepthCompareBeforeTexture(bool before);
+void SetNativeDepthCompareBeforeTexture(bool before, NativeOwner owner = NativeOwner::Game);
 void SetNativeMaterial(const mh3_native_material_state& material);
 // Internal sparse publication from typed renderer producers; only declared
 // fields replace sticky inherited state. DEBUG asserts producer domains and
@@ -51,9 +55,11 @@ void SetNativeMaterial(const mh3_native_material_state& material);
 // failures leave the material unchanged. Runs on skipped logical frames too.
 void OverlayNativeMaterial(const mh3_native_material_state& patch, uint32_t top_known = 0);
 const mh3_native_material_state& GetNativeMaterialState(NativeOwner owner = NativeOwner::Game);
+// The owner's selected model light slots (the last SetNativeModelLights or restore).
+const mh3_native_light_slots& GetNativeModelLights(NativeOwner owner = NativeOwner::Game);
 // Explicit current-matrix producer: updates row/dual fields directly and marks
 // consumed shader fields dirty only when those fields actually change.
-void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors);
+void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors, NativeOwner owner = NativeOwner::Game);
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) {
     SetNativeMaterial(material);
 }

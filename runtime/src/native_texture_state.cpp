@@ -21,7 +21,7 @@ struct TextureOwner {
     std::array<mh3_native_palette_source, 20> palettes{};
     std::array<TextureBinding, 8> textures{};
 };
-constinit TextureOwner owners[2]{};
+constinit TextureOwner owners[NativeOwnerCount]{};
 TextureOwner& T(NativeOwner owner = NativeOwner::Game) {
     return owners[unsigned(owner)];
 }
@@ -74,19 +74,26 @@ const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot) {
     const auto& palette = palettes[slot];
     return palette.entries && palette.payload_address ? &palette : nullptr;
 }
-void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette) {
-    auto& palettes = T().palettes;
+void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette, NativeOwner owner) {
+    auto& [palettes, textures] = T(owner);
     if (slot >= palettes.size() || !palette.payload_address || !palette.entries || palette.entries > 16384 || palette.format > 2)
         throw std::runtime_error("Invalid native palette binding");
     // Materials rebind their palettes on every draw; an unchanged binding keeps
     // the revision, so the frame packet need not capture and compare a copy.
     if (!std::memcmp(&palettes[slot], &palette, sizeof palette))
         return;
+    const bool rebind = owner == NativeOwner::Render;
     palettes[slot] = palette;
-    Changed();
+    if (rebind) {
+        // Indexed images resolve their palette when bound: rebind them.
+        for (auto& texture : textures)
+            if (texture.valid && texture.value.source.indexed && texture.value.tlut_id == slot)
+                BindBackend(texture.value);
+    }
+    Changed(owner);
 }
-void BindNativeTexture(const mh3_native_texture_binding& binding) {
-    auto& [palettes, textures] = T();
+void BindNativeTexture(const mh3_native_texture_binding& binding, NativeOwner owner) {
+    auto& [palettes, textures] = T(owner);
     if (binding.map_id >= textures.size())
         throw std::runtime_error("Invalid native texture unit");
     if (binding.source.indexed && binding.tlut_id >= palettes.size())
@@ -94,8 +101,29 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
     auto& texture = textures[binding.map_id];
     if (texture.valid && BytesEqual(&texture.value, &binding, sizeof binding))
         return;
-    texture = {binding, true};
-    Changed();
+    // Deferred model preparation binds the Render backend directly.
+    if (owner == NativeOwner::Render)
+        BindBackend(binding);
+    else
+        texture = {binding, true};
+    Changed(owner);
+}
+void CopyNativeTextureBindings(NativeOwner from, NativeOwner to) {
+    T(to) = T(from);
+    Changed(to);
+}
+bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b) {
+    const auto& x = T(a);
+    const auto& y = T(b);
+    if (std::memcmp(x.palettes.data(), y.palettes.data(), sizeof x.palettes))
+        return false;
+    for (unsigned unit = 0; unit < x.textures.size(); ++unit) {
+        if (x.textures[unit].valid != y.textures[unit].valid)
+            return false;
+        if (x.textures[unit].valid && std::memcmp(&x.textures[unit].value, &y.textures[unit].value, sizeof x.textures[unit].value))
+            return false;
+    }
+    return true;
 }
 void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out) {
     const auto& [palettes, textures] = T();

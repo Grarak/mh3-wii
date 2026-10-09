@@ -16,6 +16,7 @@
 #include "frame_split.h"
 #include "native_frame_packet.h"
 #include "native_shade_snapshot.h"
+#include "model_render_prep.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -426,6 +427,10 @@ struct ModelItem {
     mh3_shape_matrix_input input;
     uint32_t pose;
     mh3_model_texcoord_sizes coordinate_sizes;
+    // Deferred items carry the dispatch's preparation inputs instead of its
+    // prepared input/coordinate sizes; the render thread prepares them.
+    bool deferred = false, direct_position = false, direct_normal = false;
+    ModelPrepInputs prep;
 };
 // Pose arrays as the draw found them: copied once per binding and pass.
 struct ModelPose {
@@ -459,10 +464,16 @@ ModelStore& Store() {
     }
     return store;
 }
-uint32_t CapturePose(ModelStore& capture, const uint32_t addresses[3], const mh3_matrix_sources& sources) {
+// The pose this model draw already copied from the same arrays, or -1.
+int64_t SharedPose(const ModelStore& capture, const uint32_t addresses[3]) {
     for (size_t i = capture.poseCount; i-- > capture.poseShared;)
         if (!std::memcmp(capture.poses[i].address, addresses, sizeof capture.poses[i].address))
-            return uint32_t(i);
+            return int64_t(i);
+    return -1;
+}
+uint32_t CapturePose(ModelStore& capture, const uint32_t addresses[3], const mh3_matrix_sources& sources) {
+    if (const auto shared = SharedPose(capture, addresses); shared >= 0)
+        return uint32_t(shared);
     if (capture.poseCount == capture.poses.size())
         capture.poses.emplace_back();
     auto& pose = capture.poses[capture.poseCount];
@@ -552,11 +563,10 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         Memory::Write8(locations.current_valid, 0);
 }
 // Render thread: replays one recorded item against the Render owner's state.
-void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
+void ExecuteModelItem(const ModelStore& capture, const ModelItem& item, mh3_shape_matrix_input input, const mh3_model_texcoord_sizes& coordinate_sizes) {
     const auto& prepared = *item.prepared;
     const auto& owner = item.owner;
     const auto sources = PoseSources(capture.poses[item.pose]);
-    auto input = item.input;
     if (input.direct_position)
         input.direct_position = &item.storage.direct_position;
     if (input.direct_normal)
@@ -606,7 +616,7 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
         submit.texture_matrices = post;
         submit.texture_matrix_known = postKnown;
         submit.texture_matrix_3x4 = post3x4;
-        submit.texcoord_sizes = &item.coordinate_sizes;
+        submit.texcoord_sizes = &coordinate_sizes;
         SubmitNativeModelMesh(submit);
     };
     if (prepared.palette_batch_count)
@@ -618,16 +628,24 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item) {
 } // namespace
 
 namespace {
+#ifdef MH3_DEVELOPMENT
+// The item the original path prepared last (MH3_RENDER_PREP=2 checks it).
+const ModelItem* lastSubmitted = nullptr;
+#endif
 void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
     auto& capture = Store();
     if (capture.itemCount == capture.items.size())
         capture.items.emplace_back();
     auto& item = capture.items[capture.itemCount];
+    item.deferred = false;
     {
         MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
         PrepareModelItem(capture, item, context, direct_position, direct_normal);
     }
     item.coordinate_sizes = coordinate_sizes;
+#ifdef MH3_DEVELOPMENT
+    lastSubmitted = &item;
+#endif
     if (&capture == &scratch)
         return;
     MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MODEL_RECORD);
@@ -642,9 +660,20 @@ void BeginNativeModelDraw() {
     auto& capture = Store();
     capture.poseShared = capture.poseCount;
 }
-void ExecuteNativeModelDraw(uint32_t slot, uint32_t item) {
+void ExecuteNativeModelDraw(uint32_t slot, uint32_t index) {
     const auto& capture = stores.at(slot);
-    ExecuteModelItem(capture, capture.items.at(item));
+    const auto& item = capture.items.at(index);
+    if (!item.deferred) {
+        ExecuteModelItem(capture, item, item.input, item.coordinate_sizes);
+        return;
+    }
+    ModelPrepShapeResult shape;
+    ExecuteModelPrep(NativeOwner::Render, RenderModelPrepMirror(), item.prep, item.direct_position ? &item.storage.direct_position : nullptr,
+                     item.direct_normal ? &item.storage.direct_normal : nullptr, &shape);
+    if (!item.prep.visible)
+        return;
+    ApplyNativeRenderRaster();
+    ExecuteModelItem(capture, item, shape.input, shape.coordinate_sizes);
 }
 
 extern "C" void MH3_ModelMaterialScope(CpuContext* cpu) {
@@ -699,7 +728,8 @@ extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
 // Only integer guest arguments/results reach the native matrix producers;
 // no guest call or CpuContext is passed to their descendants.
 REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices", true);
-void DispatchNativeModel(const NativeModelDispatch& d) {
+namespace {
+void DispatchGameThread(const NativeModelDispatch& d) {
     TraceNativeModelDispatch(d);
     mh3_model_material_scope scope;
     {
@@ -739,6 +769,266 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
         Memory::Write8(sync_address, 1);
     }
     SubmitShape(shape, d.position, d.normal);
+}
+
+// ---- Deferred preparation (model_render_prep.h) ----
+// 80076220 steps 1 (fog) and 10 (light set) stay on the game thread: they
+// publish the lighting snapshot and keep the guest fog/light caches.
+void GameLightingSteps(const mh3_model_material_scope& scope) {
+    mh3_model_material_misc misc{};
+    Checked(mh3_model_material_misc_read(Bytes(scope.selected.resource_slots[MH3_MAT_MISC], 12), &misc));
+    mh3_native_fog fog{};
+    int apply = 0;
+    Checked(mh3_fog_state_select(Mutable(0x80685d60, 1544), uint32_t(int32_t(misc.fog_reference)), &fog, &apply));
+    if (apply)
+        SetNativeFog(fog);
+    (void)SelectNativeModelLightSet(0x80686368, uint32_t(int32_t(misc.light_reference)));
+}
+// 800879DC's vertex source bindings: the game thread keeps them to check that
+// the converted mesh matches the bound arrays.
+void PrePrimitiveSources(const ShapeContext& context) {
+    const auto& sources = *context.sources;
+    for (uint32_t i = 0; i < 12; i++)
+        if (sources.known & (1u << i))
+            StoreNativeVertexSource(i, sources.source[i]);
+}
+uint64_t capturedSelectors = UINT64_MAX, capturedSequence = UINT64_MAX;
+void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_model_material_scope& scope, bool ignore) {
+    if (!ignore) {
+        CaptureModelPrepMaterial(in, scope);
+        const auto& lights = GetNativeModelLights();
+        in.light_masks[0] = lights.diffuse_color;
+        in.light_masks[1] = lights.diffuse_alpha;
+        in.light_masks[2] = lights.specular_color;
+        in.light_masks[3] = lights.specular_alpha;
+        std::memcpy(in.ambient, &lights.ambient, 4);
+    } else {
+        in.present = 0;
+        in.pipeline_address = 0;
+        in.pipeline = in.pixel = in.colors = in.texgen = nullptr;
+        // An ignored material still applies a replaced indirect matrix block.
+        const uint32_t indirect = (scope.replacement_mask & (1u << MH3_MAT_INDIRECT_MATRIX_SCALE)) ? scope.selected.resource_slots[MH3_MAT_INDIRECT_MATRIX_SCALE] : 0;
+        in.indirect = indirect ? FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(indirect, MH3_MODEL_MATERIAL_INDIRECT)) : nullptr;
+    }
+    in.indirect_operator = d.descriptor != 0;
+    if (in.indirect_operator) {
+        if (d.descriptor != operator_address || !current_operator.active)
+            throw std::runtime_error("Indirect matrix operator has no completed native producer");
+        OperatorKnown(d.descriptor);
+        in.op = current_operator;
+    }
+}
+// PrepareModelItem's game-thread part: the converted-source check, the pose
+// copy and the direct matrices. The rest runs with the deferred preparation.
+void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
+    item.owner = context.owner;
+    const auto& prepared = *context.sources->prepared;
+    item.prepared = &prepared;
+    const auto& originals = *context.sources;
+    for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
+        const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
+        mh3_native_vertex_source selected{};
+        if (semantic >= 12 && prepared.palette_batch_count)
+            continue;
+        if (!(originals.known & (1u << semantic)) || !ReadNativeVertexSource(semantic, &selected) || Canonical(selected.payload_address) != Canonical(originals.source[semantic].payload_address) ||
+            selected.source_generation)
+            throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
+    }
+    const auto binding = ReadNativeModelMatrixSources(locations.arrays);
+    // Shapes of one model draw share its pose arrays: read and copy them once.
+    const int64_t shared = binding.address[0] ? SharedPose(capture, binding.address) : -1;
+    mh3_matrix_sources sources{};
+    if (binding.address[0]) {
+        if (shared < 0)
+            sources = ReadNativeModelPose(binding.address, item.owner.model_address);
+    } else if (!direct_position)
+        throw std::runtime_error("Indexed model matrix has no completed pose producer");
+    item.storage = {};
+    item.direct_position = direct_position != 0;
+    item.direct_normal = direct_position && direct_normal;
+    if (direct_position) {
+        mh3_matrix_read34_unchecked({Bytes(direct_position, 48), 1, 48, 1}, 0, &item.storage.direct_position);
+        if (direct_normal)
+            mh3_matrix_read34_unchecked({Bytes(direct_normal, 48), 1, 48, 1}, 0, &item.storage.direct_normal);
+    }
+    if (originals.matrix_id < 0 && !prepared.palette_batch_count)
+        throw std::runtime_error("Envelope model requires converted skinning palette records");
+    item.pose = shared >= 0 ? uint32_t(shared) : CapturePose(capture, binding.address, sources);
+    item.prep.matrix_id = originals.matrix_id;
+    item.prep.has_normal = originals.has_normal;
+    item.prep.has_binding = binding.address[0] != 0;
+}
+void DispatchDeferred(const NativeModelDispatch& d) {
+    TraceNativeModelDispatch(d);
+    // Skipped frames record nothing (the game-side steps still run); the
+    // render thread forgets its caches at the next recorded frame.
+    ModelStore* capture = NativeGraphicsFrameShouldRender() ? &Store() : nullptr;
+    ModelItem* item = nullptr;
+    if (capture) {
+        if (capture->itemCount == capture->items.size())
+            capture->items.emplace_back();
+        item = &capture->items[capture->itemCount];
+        item->deferred = true;
+    }
+    mh3_model_material_scope scope;
+    bool ignore;
+    {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_MATERIAL_PREP);
+        scope = Scope(d.material, d.bindings);
+        ignore = !scope.material_address || (d.flags & 16);
+        if (!ignore)
+            GameLightingSteps(scope);
+        if (item) {
+            auto& in = item->prep;
+            in.flags = d.flags;
+            in.invalidate = TakeNativeModelPrepInvalidate();
+            in.material = !ignore;
+            // A newer packet can replace this one before it renders: every
+            // packet's first item carries the selectors again.
+            const uint64_t selectors = ReadNativeModelSelectorsRevision();
+            in.selectors = selectors != capturedSelectors || capturedSequence != NativeFramePacketSequence();
+            if (in.selectors) {
+                in.selector_state = ReadNativeModelSelectors();
+                capturedSelectors = selectors;
+                capturedSequence = NativeFramePacketSequence();
+            }
+            CaptureInputs(in, d, scope, ignore);
+        }
+    }
+    uint32_t visible = 0;
+    Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), d.shape, &visible));
+    bool draws = visible != 0;
+    if (draws) {
+        if (scope.fur_address)
+            throw std::runtime_error("Fur model needs native sampled-shell material preparation");
+        if (!Resource(d.shape)) {
+            if (!(d.flags & 2))
+                Replacements(ResolveShape(d.shape), scope);
+            draws = false;
+        } else {
+            MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
+            const auto shape = ResolveShape(d.shape);
+            if (!(d.flags & 2)) {
+                PrePrimitiveSources(shape);
+                Replacements(shape, scope);
+                if (item)
+                    std::memcpy(item->prep.shape_cache, Bytes(shape.shape + 12, 12).data, 12);
+            }
+            if (item)
+                CaptureShape(*capture, *item, shape, d.position, d.normal);
+        }
+    }
+    if (!item)
+        return;
+    item->prep.visible = draws;
+    MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
+    RecordNativeModelDraw(uint32_t(capture->itemCount++), true);
+}
+
+#ifdef MH3_DEVELOPMENT
+// MH3_RENDER_PREP=2: run the original preparation, then execute the captured
+// inputs on the Shadow owner from the same starting state and compare.
+struct Verify {
+    ModelPrepMirror mirror;
+    uint64_t dispatches = 0, mismatches = 0, reported = 0;
+} verify;
+void DispatchVerify(const NativeModelDispatch& d) {
+    auto& m = verify.mirror;
+    CopyNativeMaterialOwner(NativeOwner::Game, NativeOwner::Shadow);
+    CopyNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow);
+    CopyNativeDrawRaster(NativeOwner::Game, NativeOwner::Shadow);
+    std::memcpy(m.a, Memory::GetPointer(ModelPrepMirror::BaseA, ModelPrepMirror::SizeA), ModelPrepMirror::SizeA);
+    std::memcpy(m.b, Memory::GetPointer(ModelPrepMirror::BaseB, ModelPrepMirror::SizeB), ModelPrepMirror::SizeB);
+    m.pipeline_address = pipeline_address;
+    m.pipeline_revision = pipeline_revision;
+    m.coordinate_map_known = coordinate_map_known;
+    m.map_sizes = map_sizes;
+    m.coordinate_sizes = coordinate_sizes;
+    m.selectors = ReadNativeModelSelectors();
+    lastSubmitted = nullptr;
+    DispatchGameThread(d);
+    // Capture what the original consumed (its fog/light steps already ran).
+    const auto scope = Scope(d.material, d.bindings);
+    const bool ignore = !scope.material_address || (d.flags & 16);
+    ModelPrepInputs in;
+    in.flags = d.flags;
+    in.material = !ignore;
+    in.visible = lastSubmitted != nullptr;
+    CaptureInputs(in, d, scope, ignore);
+    mh3_matrix34 position{}, normal{};
+    if (in.visible) {
+        const auto shape = ResolveShape(d.shape);
+        std::memcpy(in.shape_cache, Bytes(shape.shape + 12, 12).data, 12);
+        in.matrix_id = shape.sources->matrix_id;
+        in.has_normal = shape.sources->has_normal;
+        in.has_binding = ReadNativeModelMatrixSources(locations.arrays).address[0] != 0;
+        if (d.position) {
+            mh3_matrix_read34_unchecked({Bytes(d.position, 48), 1, 48, 1}, 0, &position);
+            if (d.normal)
+                mh3_matrix_read34_unchecked({Bytes(d.normal, 48), 1, 48, 1}, 0, &normal);
+        }
+    }
+    ModelPrepShapeResult shape;
+    ExecuteModelPrep(NativeOwner::Shadow, m, in, d.position ? &position : nullptr, d.position && d.normal ? &normal : nullptr, &shape);
+    std::string diff = CompareNativeMaterialOwners(NativeOwner::Game, NativeOwner::Shadow);
+    if (!EqualNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow))
+        diff += " textures";
+    if (std::memcmp(&GetNativeDrawState(NativeOwner::Game).raster, &GetNativeDrawState(NativeOwner::Shadow).raster, sizeof(mh3_raster_state)))
+        diff += " raster";
+    for (uint32_t i = 0; i < ModelPrepMirror::SizeA; i++)
+        if (m.a[i] != static_cast<const uint8_t*>(Memory::GetPointer(ModelPrepMirror::BaseA, ModelPrepMirror::SizeA))[i]) {
+            diff += " cacheA@" + std::to_string(i);
+            break;
+        }
+    for (uint32_t i = 0; i < ModelPrepMirror::SizeB; i++)
+        if (m.b[i] != static_cast<const uint8_t*>(Memory::GetPointer(ModelPrepMirror::BaseB, ModelPrepMirror::SizeB))[i]) {
+            diff += " cacheB@" + std::to_string(i);
+            break;
+        }
+    if (m.pipeline_address != pipeline_address || m.pipeline_revision != pipeline_revision || m.coordinate_map_known != coordinate_map_known)
+        diff += " pipeline";
+    if (std::memcmp(&m.map_sizes, &map_sizes, sizeof map_sizes) || std::memcmp(&m.coordinate_sizes, &coordinate_sizes, sizeof coordinate_sizes))
+        diff += " sizes";
+    const auto selectors = ReadNativeModelSelectors();
+    if (std::memcmp(&m.selectors, &selectors, sizeof selectors))
+        diff += " selectors";
+    if (lastSubmitted) {
+        const auto& a = lastSubmitted->input;
+        const auto& b = shape.input;
+        if (a.valid != b.valid || a.has_normal != b.has_normal || a.matrix_id != b.matrix_id || std::memcmp(a.texture_source, b.texture_source, sizeof a.texture_source) ||
+            a.current_is_valid != b.current_is_valid || a.view_array_is_valid != b.view_array_is_valid || !a.direct_position != !b.direct_position || !a.direct_normal != !b.direct_normal)
+            diff += " shape-input";
+        if (std::memcmp(&lastSubmitted->coordinate_sizes, &shape.coordinate_sizes, sizeof shape.coordinate_sizes))
+            diff += " item-sizes";
+    }
+    ++verify.dispatches;
+    if (!diff.empty()) {
+        ++verify.mismatches;
+        if (verify.reported++ < 40)
+            std::fprintf(stderr, "MH3 render prep verify: dispatch %llu material %08x shape %08x flags %x:%s\n", static_cast<unsigned long long>(verify.dispatches), scope.material_address,
+                         Resource(d.shape), d.flags, diff.c_str());
+    }
+    if (verify.dispatches % 5000 == 0)
+        std::fprintf(stderr, "MH3 render prep verify: %llu dispatches, %llu mismatches\n", static_cast<unsigned long long>(verify.dispatches), static_cast<unsigned long long>(verify.mismatches));
+}
+#endif
+} // namespace
+void DispatchNativeModel(const NativeModelDispatch& d) {
+    switch (NativeModelPrepMode()) {
+    case ModelPrepMode::GameThread:
+        DispatchGameThread(d);
+        break;
+    case ModelPrepMode::Deferred:
+        DispatchDeferred(d);
+        break;
+    case ModelPrepMode::Verify:
+#ifdef MH3_DEVELOPMENT
+        DispatchVerify(d);
+#else
+        DispatchGameThread(d);
+#endif
+        break;
+    }
 }
 extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
     DispatchNativeModel({cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9]});

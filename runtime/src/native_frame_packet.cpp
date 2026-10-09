@@ -6,6 +6,7 @@
 #include "frame_split.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_frame_state_exchange.h"
+#include "model_render_prep.h"
 #include <aurora/aurora.h>
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
@@ -62,8 +63,11 @@ template <class T>
 struct Pool {
     std::vector<T> items;
     uint32_t count = 0, current = 0, revision = 0;
-    bool valid = false;
-    void Reset() { count = 0, valid = false; }
+    // diverged: a deferred model item changed the render thread's copy of this
+    // component after the current snapshot; equal contents no longer mean an
+    // equal render state, so the next changed capture always gets an index.
+    bool valid = false, diverged = false;
+    void Reset() { count = 0, valid = false, diverged = false; }
 };
 struct Packet {
     uint32_t slot = 0;
@@ -238,12 +242,13 @@ uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
     Capture(next);
     pool.revision = revision;
     // Producers republish unchanged state; keep one copy of equal contents.
-    if (pool.valid && BytesEqual(&next, &pool.items[pool.current], sizeof next))
+    if (pool.valid && !pool.diverged && BytesEqual(&next, &pool.items[pool.current], sizeof next))
         return pool.current;
 #ifdef MH3_DEVELOPMENT
     ++snapshotCounts[2][component];
 #endif
     pool.valid = true;
+    pool.diverged = false;
     pool.current = pool.count++;
     return pool.current;
 }
@@ -303,18 +308,31 @@ void RunTasks(std::deque<Task>& queue, uint64_t through) {
     }
 }
 void Restore(const Packet& p, const StateIndices& state, StateIndices& applied) {
+    // Any restore except lighting replaces state the deferred model
+    // preparation's caches describe.
+    bool forget = false;
     // Draw state first: the material snapshot already holds its raster import.
-    if (applied[NATIVE_STATE_DRAW] != state[NATIVE_STATE_DRAW])
+    if (applied[NATIVE_STATE_DRAW] != state[NATIVE_STATE_DRAW]) {
         RestoreNativeDrawSnapshot(p.draws.items[state[NATIVE_STATE_DRAW]]);
+        forget = true;
+    }
     if (applied[NATIVE_STATE_LIGHTING] != state[NATIVE_STATE_LIGHTING])
         RestoreNativeLightingSnapshot(p.lighting.items[state[NATIVE_STATE_LIGHTING]]);
-    if (applied[NATIVE_STATE_POST] != state[NATIVE_STATE_POST])
+    if (applied[NATIVE_STATE_POST] != state[NATIVE_STATE_POST]) {
         RestoreNativePostSnapshot(p.posts.items[state[NATIVE_STATE_POST]]);
-    if (applied[NATIVE_STATE_TEXTURES] != state[NATIVE_STATE_TEXTURES])
+        forget = true;
+    }
+    if (applied[NATIVE_STATE_TEXTURES] != state[NATIVE_STATE_TEXTURES]) {
         RestoreNativeTextureSnapshot(p.textures.items[state[NATIVE_STATE_TEXTURES]]);
-    if (applied[NATIVE_STATE_MATERIAL] != state[NATIVE_STATE_MATERIAL])
+        forget = true;
+    }
+    if (applied[NATIVE_STATE_MATERIAL] != state[NATIVE_STATE_MATERIAL]) {
         RestoreNativeMaterialSnapshot(p.materials.items[state[NATIVE_STATE_MATERIAL]]);
+        forget = true;
+    }
     applied = state;
+    if (forget)
+        ForgetNativeModelPrepCaches();
 }
 #ifdef __vita__
 // GXM reads vertices and indices in place when it executes the frame, so the
@@ -344,6 +362,7 @@ void Draw(const Packet& p) {
     const auto forget = [&] {
         applied.fill(UINT32_MAX);
         ForgetNativeTextureBindings();
+        ForgetNativeModelPrepCaches();
     };
     forget();
     for (const auto& record : p.records) {
@@ -535,9 +554,16 @@ void SubmitNativeGeometry(const AuroraNativeGeometry& geometry, bool textured) {
     recording->geometry.push_back(geometry);
     Push(Kind::Geometry, uint32_t(recording->geometry.size() - 1), textured);
 }
-void RecordNativeModelDraw(uint32_t item) {
-    if (NativeFramePacketRecording())
-        Push(Kind::Model, item);
+void RecordNativeModelDraw(uint32_t item, bool deferred) {
+    if (!NativeFramePacketRecording())
+        return;
+    Push(Kind::Model, item);
+    if (deferred) {
+        // The render thread prepares this item into its draw, material,
+        // texture and post-matrix state (lighting stays the game's).
+        auto& p = *recording;
+        p.draws.diverged = p.materials.diverged = p.posts.diverged = p.textures.diverged = true;
+    }
 }
 void RecordNativeDepthClear() {
     if (NativeFramePacketRecording())

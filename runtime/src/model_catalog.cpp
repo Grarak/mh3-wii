@@ -350,6 +350,9 @@ void ReportNativeModelPreparationDiagnostics() {
 uint64_t ReadNativeModelStructureRevision() {
     return C().source_epoch;
 }
+uint64_t ReadNativeMaterialBlockRevision() {
+    return C().block_epoch;
+}
 
 void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes, uint32_t diagnostic_frame) {
     if (!bytes)
@@ -754,7 +757,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
                     Checked(status);
             }
         }
-        NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state, address, source.bytes, kind, pack.handle, pack.generation, identity.partition_offset, generation};
+        NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state, address, source.bytes, kind, pack.handle, pack.generation, identity.partition_offset, generation, {}};
         block.fields.generation = NextNativeMaterialRevision();
         const auto& admitted = C().live_blocks.emplace(key, std::move(block)).first->second;
         recent = {key, live_version, &admitted};
@@ -796,6 +799,32 @@ void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t
             return;
         }
     throw std::runtime_error("Native coordinate mapping owner was retired");
+}
+const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
+    if (block.frozen && block.frozen->fields.generation == block.fields.generation)
+        return block.frozen;
+    auto frozen = std::make_shared<NativeFrozenMaterialBlock>();
+    frozen->fields = block.fields;
+    std::memset(frozen->texcoord_map, 0, sizeof frozen->texcoord_map);
+    frozen->texcoord_known = 0;
+    if (block.kind == MH3_MODEL_MATERIAL_PIPELINE) {
+        bool found = false;
+        for (const auto& pack : Packs())
+            if (pack.handle == block.resident_handle && pack.generation == block.resident_generation) {
+                const auto origin = pack.origins.find(std::make_pair(block.origin_offset, uint32_t(MH3_MODEL_MATERIAL_PIPELINE)));
+                if (origin == pack.origins.end())
+                    break;
+                const auto& prepared = pack.materials.at(origin->second.material_index);
+                std::memcpy(frozen->texcoord_map, prepared.texcoord_map, 8);
+                frozen->texcoord_known = prepared.texcoord_map_known;
+                found = true;
+                break;
+            }
+        if (!found)
+            throw std::runtime_error("Native coordinate mapping owner was retired");
+    }
+    block.frozen = std::move(frozen);
+    return block.frozen;
 }
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind) {
     auto block = ReadNativeLiveMaterialBlock(source, kind);

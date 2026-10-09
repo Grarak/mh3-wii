@@ -38,7 +38,7 @@ uint32_t current_frame() noexcept;
 #include <unordered_map>
 #include <vector>
 
-constinit uint32_t nativeStateRevision[2][NATIVE_STATE_COMPONENTS]{};
+constinit uint32_t nativeStateRevision[NativeOwnerCount][NATIVE_STATE_COMPONENTS]{};
 namespace {
 constexpr uint64_t Bit(unsigned field) {
     return UINT64_C(1) << field;
@@ -62,7 +62,7 @@ struct MaterialOwner {
     std::array<TextureMatrix, 10> textureMatrices{};
     std::array<TextureMatrix, 20> postTextureMatrices{};
 };
-constinit MaterialOwner owners[2]{};
+constinit MaterialOwner owners[NativeOwnerCount]{};
 MaterialOwner& M(NativeOwner owner = NativeOwner::Game) {
     return owners[unsigned(owner)];
 }
@@ -442,8 +442,13 @@ bool KnownSuperset(const mh3_native_material_state& source, const mh3_native_mat
             return false;
     return covers(source.pixel.known, target.pixel.known) && (source.clip_mode_known || !target.clip_mode_known);
 }
-// Publishes a material-derived raster without importing it back.
-void PublishMaterialRaster(const mh3_raster_state& raster) {
+// Publishes a material-derived raster without importing it back. Other
+// owners publish logically (no observer imports their raster).
+void PublishMaterialRaster(const mh3_raster_state& raster, NativeOwner owner = NativeOwner::Game) {
+    if (owner != NativeOwner::Game) {
+        SetNativeRaster(raster, owner);
+        return;
+    }
     struct Export {
         Export() { publishingMaterialRaster = true; }
         ~Export() { publishingMaterialRaster = false; }
@@ -462,33 +467,36 @@ void SetNativeMaterial(const mh3_native_material_state& source) {
     // preserve the revision without comparing unknown storage or padding.
     OverlayNativeMaterial(source, MH3_MATERIAL_TOP_ALL);
 }
-void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh3_model_material_block kind, uint32_t count) {
-    ObserveRasterPublications();
+void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh3_model_material_block kind, uint32_t count, NativeOwner owner) {
+    if (owner == NativeOwner::Game)
+        ObserveRasterPublications();
     if ((kind == MH3_MODEL_MATERIAL_INDIRECT || kind == MH3_MODEL_MATERIAL_TEXGEN) && !count)
         return;
-    auto& material = game.material;
+    auto& m = M(owner);
+    auto& material = m.material;
     // Only pixel groups affect raster state. Preflight the small pixel record
     // before mutation so unsupported output features retain atomic publication.
     if (kind == MH3_MODEL_MATERIAL_PIXEL) {
         mh3_pack_pixel_inputs pixel;
         mh3_material_group_pixel_preview_unchecked(&material.pixel, &source.pixel, &pixel);
-        auto raster = GetNativeDrawState().raster;
+        auto raster = GetNativeDrawState(owner).raster;
         Check(mh3_material_pixel_raster_unchecked(&pixel, &raster), "Native material group pixel raster");
         raster.cull_mode = material.cull_mode;
-        PublishMaterialRaster(raster);
+        PublishMaterialRaster(raster, owner);
     }
     const uint32_t structure = kind == MH3_MODEL_MATERIAL_PIXEL ? MH3_SHADE_STRUCTURE_PIXEL :
         kind == MH3_MODEL_MATERIAL_PIPELINE ? MH3_SHADE_STRUCTURE_TEV | MH3_SHADE_STRUCTURE_SWAPS : 0;
-    const bool structureChanged = !game.shadeStructureDirty && structure &&
+    const bool structureChanged = !m.shadeStructureDirty && structure &&
         mh3_shade_structure_overlay_changes(&material, &source, 0, structure);
     if (mh3_material_group_publish_mutation_unchecked(&material, &source, kind, count))
-        Changed(NATIVE_STATE_MATERIAL);
-    game.shadeStructureDirty |= structureChanged;
+        Changed(NATIVE_STATE_MATERIAL, owner);
+    m.shadeStructureDirty |= structureChanged;
 }
-void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors) {
-    ObserveRasterPublications();
-    if (mh3_model_matrix_overlay_unchecked(&selectors, &game.material))
-        Changed(NATIVE_STATE_MATERIAL);
+void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors, NativeOwner owner) {
+    if (owner == NativeOwner::Game)
+        ObserveRasterPublications();
+    if (mh3_model_matrix_overlay_unchecked(&selectors, &M(owner).material))
+        Changed(NATIVE_STATE_MATERIAL, owner);
 }
 void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top_known) {
     ObserveRasterPublications();
@@ -535,32 +543,38 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
 namespace {
 // A patch without a pixel record keeps the material's pixel-derived raster
 // and republishes it with the (possibly declared) cull mode.
-void PublishPixelRaster(uint32_t cull) {
-    auto raster = GetNativeDrawState().raster;
-    Check(mh3_material_pixel_raster_unchecked(&game.material.pixel, &raster), "Native material pixel raster");
+void PublishPixelRaster(uint32_t cull, NativeOwner owner = NativeOwner::Game) {
+    auto raster = GetNativeDrawState(owner).raster;
+    Check(mh3_material_pixel_raster_unchecked(&M(owner).material.pixel, &raster), "Native material pixel raster");
     raster.cull_mode = cull;
-    PublishMaterialRaster(raster);
+    PublishMaterialRaster(raster, owner);
 }
 } // namespace
-void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t channels, uint32_t tevs, uint32_t indirect, uint32_t cull) {
-    ObserveRasterPublications();
-    auto& material = game.material;
-    PublishPixelRaster((top_known & MH3_MATERIAL_TOP_CULL) ? cull : material.cull_mode);
-    game.shadeStructureDirty |= (top_known & MH3_MATERIAL_TOP_TEV_COUNT) && material.tev_count != tevs;
+void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t channels, uint32_t tevs, uint32_t indirect, uint32_t cull, NativeOwner owner) {
+    if (owner == NativeOwner::Game)
+        ObserveRasterPublications();
+    auto& m = M(owner);
+    auto& material = m.material;
+    PublishPixelRaster((top_known & MH3_MATERIAL_TOP_CULL) ? cull : material.cull_mode, owner);
+    m.shadeStructureDirty |= (top_known & MH3_MATERIAL_TOP_TEV_COUNT) && material.tev_count != tevs;
     if (mh3_material_overlay_top_mutation_unchecked(&material, top_known, texgens, channels, tevs, indirect, cull))
-        Changed(NATIVE_STATE_MATERIAL);
+        Changed(NATIVE_STATE_MATERIAL, owner);
 }
-void OverlayNativeMaterialChannels(const mh3_pack_channel channels[2]) {
-    ObserveRasterPublications();
-    PublishPixelRaster(game.material.cull_mode);
-    if (mh3_material_overlay_channels_mutation_unchecked(&game.material, channels))
-        Changed(NATIVE_STATE_MATERIAL);
+void OverlayNativeMaterialChannels(const mh3_pack_channel channels[2], NativeOwner owner) {
+    if (owner == NativeOwner::Game)
+        ObserveRasterPublications();
+    auto& m = M(owner);
+    PublishPixelRaster(m.material.cull_mode, owner);
+    if (mh3_material_overlay_channels_mutation_unchecked(&m.material, channels))
+        Changed(NATIVE_STATE_MATERIAL, owner);
 }
-void OverlayNativeMaterialIndirectMatrices(const mh3_pack_indirect_matrix matrices[3]) {
-    ObserveRasterPublications();
-    PublishPixelRaster(game.material.cull_mode);
-    if (mh3_material_overlay_indirect_matrices_mutation_unchecked(&game.material, matrices))
-        Changed(NATIVE_STATE_MATERIAL);
+void OverlayNativeMaterialIndirectMatrices(const mh3_pack_indirect_matrix matrices[3], NativeOwner owner) {
+    if (owner == NativeOwner::Game)
+        ObserveRasterPublications();
+    auto& m = M(owner);
+    PublishPixelRaster(m.material.cull_mode, owner);
+    if (mh3_material_overlay_indirect_matrices_mutation_unchecked(&m.material, matrices))
+        Changed(NATIVE_STATE_MATERIAL, owner);
 }
 void SetNativeFog(const mh3_native_fog& source) {
     auto next = game.preparedFog;
@@ -681,12 +695,58 @@ void RestoreNativePostSnapshot(const NativePostSnapshot& snapshot) {
     }
     Changed(NATIVE_STATE_POST, NativeOwner::Render);
 }
-void SetNativeDepthCompareBeforeTexture(bool before) {
-    if (game.depthBeforeTexture != before) {
-        game.depthBeforeTexture = before;
-        Changed(NATIVE_STATE_MATERIAL);
+void SetNativeDepthCompareBeforeTexture(bool before, NativeOwner owner) {
+    auto& m = M(owner);
+    if (m.depthBeforeTexture != before) {
+        m.depthBeforeTexture = before;
+        Changed(NATIVE_STATE_MATERIAL, owner);
     }
 }
+const mh3_native_light_slots& GetNativeModelLights(NativeOwner owner) {
+    return M(owner).lightSlots;
+}
+void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to) {
+    if (from == NativeOwner::Game)
+        ObserveRasterPublications();
+    auto& source = M(from);
+    auto& target = M(to);
+    target.material = source.material;
+    target.shadeStructureDirty = source.shadeStructureDirty;
+    target.depthBeforeTexture = source.depthBeforeTexture;
+    target.postTextureMatrices = source.postTextureMatrices;
+    Changed(NATIVE_STATE_MATERIAL, to);
+    Changed(NATIVE_STATE_POST, to);
+}
+#ifdef MH3_DEVELOPMENT
+std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b) {
+    const auto& x = M(a);
+    const auto& y = M(b);
+    std::string result;
+    auto material = x.material, other = y.material;
+    material.generation = other.generation = 0;
+    if (std::memcmp(&material, &other, sizeof material)) {
+        result += " material";
+        const auto* p = reinterpret_cast<const uint8_t*>(&material);
+        const auto* q = reinterpret_cast<const uint8_t*>(&other);
+        for (size_t i = 0; i < sizeof material; ++i)
+            if (p[i] != q[i]) {
+                char text[48];
+                std::snprintf(text, sizeof text, "@%zu(%02x/%02x)", i, p[i], q[i]);
+                result += text;
+                break;
+            }
+    }
+    if (x.depthBeforeTexture != y.depthBeforeTexture)
+        result += " depth-before-texture";
+    for (unsigned i = 0; i < 8; ++i) {
+        const auto& p = x.postTextureMatrices[i];
+        const auto& q = y.postTextureMatrices[i];
+        if (p.known != q.known || (p.known && (p.matrix3x4 != q.matrix3x4 || std::memcmp(p.values.data(), q.values.data(), 48))))
+            result += " post" + std::to_string(i);
+    }
+    return result;
+}
+#endif
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     if (NativeGraphicsFrameShouldRender())
         RecordNativeMaterialGeometry(geometry);

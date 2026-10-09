@@ -16,6 +16,7 @@ void PublishNativeModelDualTexture(bool enabled);
 void ApplyNativeModelSelectors();
 /* The game thread's selector state. */
 mh3_model_matrix_selectors ReadNativeModelSelectors();
+uint64_t ReadNativeModelSelectorsRevision();
 void SetNativeModelSelectors(const mh3_model_matrix_selectors& state);
 void PublishNativeModelMatrixRows(const uint32_t rows[8]);
 /* Actual native matrix setter publications, shared with UI/effects. Selectors

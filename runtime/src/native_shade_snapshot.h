@@ -20,7 +20,7 @@ enum NativeStateComponent : unsigned {
     NATIVE_STATE_TEXTURES,
     NATIVE_STATE_COMPONENTS
 };
-extern constinit uint32_t nativeStateRevision[2][NATIVE_STATE_COMPONENTS];
+extern constinit uint32_t nativeStateRevision[NativeOwnerCount][NATIVE_STATE_COMPONENTS];
 
 // native_render_state.cpp: projection, position, viewport, raster, scissor.
 struct NativeDrawSnapshot {
@@ -64,3 +64,15 @@ void RestoreNativeTextureSnapshot(const NativeTextureSnapshot& snapshot);
 // Drop the render thread's backend texture bindings so the next texture
 // restore rebinds every unit (after the backend changed its own bindings).
 void ForgetNativeTextureBindings();
+// Deferred model preparation (model_render_prep.h): copy one owner's logical
+// material/post, texture and raster state into another (MH3_RENDER_PREP=2
+// starts its Shadow from the Game state) and compare the results.
+void CopyNativeMaterialOwner(NativeOwner from, NativeOwner to);
+void CopyNativeTextureBindings(NativeOwner from, NativeOwner to);
+void CopyNativeDrawRaster(NativeOwner from, NativeOwner to);
+bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b);
+#ifdef MH3_DEVELOPMENT
+#include <string>
+// Empty when equal; otherwise the differing parts.
+std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b);
+#endif

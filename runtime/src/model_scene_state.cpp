@@ -9,6 +9,7 @@
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_model_state.h"
+#include "model_render_prep.h"
 #include <stdexcept>
 #include <string>
 
@@ -218,6 +219,8 @@ void InvalidateNativeModelCaches(uint32_t fields) {
                                           Mutable(0x80685504, 12), Mutable(0x80796db4, 1),  Mutable(0x80685510, 32), Mutable(0x80796db8, 4), Mutable(0x80796dc8, 4),
                                           Mutable(0x80685d60, 4),  Mutable(0x80686378, 28), Mutable(0x80685530, 12), Mutable(0x80796db0, 1)};
     Checked(mh3_model_cache_invalidate(storage, fields));
+    // The render thread's deferred preparation mirrors these caches.
+    NoteNativeModelPrepInvalidate(fields);
     if (fields & 1024) {
         const uint32_t absent[]{0, 0, 0};
         StoreNativeModelMatrixSources(0x80685530, absent);

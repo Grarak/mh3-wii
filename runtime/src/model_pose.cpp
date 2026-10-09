@@ -30,13 +30,15 @@ std::map<uint32_t, Region> regions;
 FastMap<uint32_t, std::vector<uint32_t>> positions;
 uint64_t pose_revision = 0;
 constinit mh3_model_matrix_selectors selectors{};
+// Advances on every selector change (deferred preparation copies them).
+constinit uint64_t selectorRevision = 0;
 // Loaded matrix slots per owner: UI/effect producers load the Game copy; model
 // draws rebuild the Render copy while the render thread replays them.
 struct MatrixPalette {
     mh3_model_palette palette{};
     uint64_t revision = 0;
 };
-constinit MatrixPalette matrixPalettes[2]{};
+constinit MatrixPalette matrixPalettes[NativeOwnerCount]{};
 MatrixPalette& Palette(NativeOwner owner) {
     return matrixPalettes[unsigned(owner)];
 }
@@ -146,6 +148,7 @@ mh3_model_pose_owner& Declare(uint32_t scene) {
     return owners.at(next.scene_address);
 }
 void PublishSelectors() {
+    ++selectorRevision;
     SetNativeModelMatrixSelectors(selectors);
 }
 void Select(const uint32_t rows[8]) {
@@ -218,6 +221,7 @@ void ClearNativeModelPose() {
     regions.clear();
     positions.clear();
     selectors = {};
+    ++selectorRevision;
 }
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
     if (!addresses)
@@ -254,6 +258,9 @@ void ApplyNativeModelSelectors() {
 }
 mh3_model_matrix_selectors ReadNativeModelSelectors() {
     return selectors;
+}
+uint64_t ReadNativeModelSelectorsRevision() {
+    return selectorRevision;
 }
 void SetNativeModelSelectors(const mh3_model_matrix_selectors& state) {
     selectors = state;

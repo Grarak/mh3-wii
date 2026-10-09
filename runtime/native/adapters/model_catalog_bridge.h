@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include "runtime/native/mh3_model_submission.h"
 #include "runtime/native/mh3_vertex_sources.h"
 #include "runtime/native/mh3_texture_matrices.h"
@@ -13,6 +14,9 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes,
 /* The structural producer token. Changes on source/pack lifetime
  * events, never a draw or a typed material-field update. */
 uint64_t ReadNativeModelStructureRevision();
+/* Advances on every typed material group write or copy. With the structure
+ * revision unchanged, every live material block keeps its node and version. */
+uint64_t ReadNativeMaterialBlockRevision();
 /* A vertex producer installs this before retaining any sources/revisions.
  * Generic overwrites notify it even when no disc interval is tracked. */
 using NativeModelVertexRetireHook = void (*)(uint32_t address, uint32_t bytes);
@@ -62,12 +66,21 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
  * pointer survives an overwrite or resident retirement. First creation joins
  * complete source provenance to admitted typed defaults; later reads are O(1).
  * Writes must call RecordNativeTypedMaterialWrite before publishing. */
+/* An immutable copy of one live block version, shared with the render thread
+ * (deferred model preparation). Pipeline blocks carry their coordinate map. */
+struct NativeFrozenMaterialBlock {
+    mh3_native_material_state fields;
+    uint8_t texcoord_map[8];
+    uint8_t texcoord_known;
+};
 struct NativeLiveMaterialBlock {
     mh3_native_material_state fields;
     uint32_t address, bytes;
     mh3_model_material_block kind;
     uintptr_t resident_handle;
     uint64_t resident_generation, origin_offset, source_generation;
+    // The frozen copy of fields.generation, made on demand.
+    mutable std::shared_ptr<const NativeFrozenMaterialBlock> frozen;
 };
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
 /* Owner-only immediate read view. The cache owns these bytes; consume them
@@ -78,6 +91,9 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
  * keep the admitted origin; unknown writes retire them. No live command read. */
 void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t* known);
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
+/* Game thread: the immutable copy of the block's current version. The copy
+ * is made once per published version; callers keep it as long as they need. */
+const std::shared_ptr<const NativeFrozenMaterialBlock>& FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
 uint64_t NextNativeMaterialRevision();
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind);
 /* Explicit mutable vertex producers must advance source revisions when arrays
