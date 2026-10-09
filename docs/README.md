@@ -70,6 +70,7 @@ how to build, run (including the Vita devkit) and debug.
 
 - [vita-baseline.md](vita-baseline.md): the devkit's Alatreon-fight baseline (2026-10-04): game thread, its breakdown, GPU.
 - [profiling.md](profiling.md): the statistics lines, Vita CPU profiles (flat or with stack snapshots), offline callers, build setup, Pi and VM profiling.
+- [pgo.md](pgo.md): profile-guided optimization of the Vita build with a profile collected on arm32 Linux.
 - [vita-razor.md](vita-razor.md): Vita GPU captures with Sony Razor and the last measurement.
 - [hdmi-audio-capture.md](hdmi-audio-capture.md): the devkit's HDMI video and audio capture.
 - [native-active-gameplay.md](native-active-gameplay.md), [native-model-transform-check.md](native-model-transform-check.md): host capture and transform-check tools (last used on the October 2 renderer).

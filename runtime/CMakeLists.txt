@@ -104,6 +104,42 @@ if(NOT MH3_DEVELOPMENT)
   endif()
 endif()
 
+# Profile-guided optimization (docs/pgo.md). MH3_PGO_GENERATE instruments
+# every C/C++ object with clang's source-based counters, in continuous mode so
+# that a killed run still leaves its profile; MH3_PGO_RUNTIME links a profile
+# runtime the compiler lacks (arm32 Linux). MH3_PGO_USE optimizes with an
+# indexed profile (llvm-profdata merge). Source-based profiles match functions
+# by name and source structure, not by target: a profile collected on arm32
+# Linux applies to the Vita build's shared code, and code only one target
+# compiles (the GLES or GXM renderer) stays unprofiled. Set before Aurora so
+# that its targets and the fetched dependencies get it too.
+option(MH3_PGO_GENERATE "Instrument the build to collect a PGO profile (docs/pgo.md)" OFF)
+set(MH3_PGO_RUNTIME "" CACHE FILEPATH "Profile runtime archive for MH3_PGO_GENERATE when the compiler has none")
+set(MH3_PGO_USE "" CACHE FILEPATH "Indexed clang profile to optimize with (docs/pgo.md)")
+
+if(MH3_PGO_GENERATE AND MH3_PGO_USE)
+  message(FATAL_ERROR "MH3_PGO_GENERATE and MH3_PGO_USE are exclusive")
+endif()
+
+if(MH3_PGO_GENERATE)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fprofile-instr-generate;-fprofile-continuous>")
+
+  if(MH3_PGO_RUNTIME)
+    # After the objects, where the driver puts it: the runtime's weak
+    # default counter bias must lose to the objects' own, or continuous mode
+    # cannot start.
+    string(APPEND CMAKE_C_STANDARD_LIBRARIES " \"${MH3_PGO_RUNTIME}\"")
+    string(APPEND CMAKE_CXX_STANDARD_LIBRARIES " \"${MH3_PGO_RUNTIME}\"")
+    add_link_options(-Wl,-u,__llvm_profile_runtime)
+  else()
+    add_link_options(-fprofile-instr-generate)
+  endif()
+elseif(MH3_PGO_USE)
+  # Functions the profile does not cover (or covers for different source)
+  # keep the plain optimization; that is expected across targets.
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fprofile-instr-use=${MH3_PGO_USE};-Wno-profile-instr-unprofiled;-Wno-profile-instr-out-of-date;-Wno-profile-instr-missing>")
+endif()
+
 if(MH3_AURORA_ROOT)
   enable_language(C)
 
