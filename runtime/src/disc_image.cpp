@@ -537,3 +537,8 @@ uint32_t DiscImage::FileSize(const std::string& name) const {
 
     return it->second.second;
 }
+
+uint32_t DiscImage::FileSizeOrZero(const std::string& name) const {
+    const auto it = fileEntries.find(name);
+    return it == fileEntries.end() ? 0 : it->second.second;
+}

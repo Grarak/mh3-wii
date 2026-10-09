@@ -163,7 +163,7 @@ uint32_t QueuedBytes(uint32_t entry, const std::string& path) {
     auto found = fileSizes.find(path);
 
     if (found == fileSizes.end())
-        found = fileSizes.emplace(path, GameDiscImage().FileSize(path)).first;
+        found = fileSizes.emplace(path, GameDiscImage().FileSizeOrZero(path)).first;
 
     return std::min(found->second, Memory::Read32(entry + kEntryCapacity));
 }

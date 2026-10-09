@@ -34,6 +34,9 @@ class DiscImage {
     uint64_t FileOffset(const std::string& name) const;
     uint32_t FileSize(const std::string& name) const;
 
+    // FileSize without stopping the game: 0 for a name the FST lacks.
+    uint32_t FileSizeOrZero(const std::string& name) const;
+
     // Without a prepared native texture map, the game's image hands reads to
     // the load-time asset cache (asset_cache.h), which patches its own tags.
     bool HasNativeTextureMap() const { return hasTextureMap; }
