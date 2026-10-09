@@ -620,8 +620,12 @@ namespace {
 // The lock has no owner, so it is not recursive: a recursive mutex finds its
 // owner through TLS, which the Vita emulates (pte's lock calls took about 4%
 // of the draw thread). Each entry point locks once and calls the others'
-// unlocked forms. A holder may wait seconds for a model pack conversion, so a
-// long wait sleeps between tries. Host development builds catch a thread
+// unlocked forms. A Jhen Mohran fight takes it about 110 times a frame on the
+// game thread and 250 on the draw thread; about 6 of each wait, for about
+// 0.7 us each on the host, so a waiter spins: sleeping after 64 tries made
+// the Vita's frame 1 ms slower than the recursive mutex had. A holder may
+// wait seconds for a model pack conversion, so a wait past about a
+// millisecond sleeps between tries. Host development builds catch a thread
 // taking it twice.
 class CatalogLock {
 public:
@@ -650,7 +654,7 @@ public:
 
 private:
     static void Pause(uint32_t tries) noexcept {
-        if (tries < 64)
+        if (tries < 65536)
             return;
 #ifdef __vita__
         sceKernelDelayThread(50);
