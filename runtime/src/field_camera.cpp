@@ -278,7 +278,8 @@ void ReportMonsters(GuestCall& game) {
 // camera's release blends (+0x100 height, +0x101 sideways; their offsets),
 // the aim view's blend (+0x234 steps left; its eye +0x1F0), the zone camera's
 // blend (the zone +0x42; the region's kind, +1; the zone's eye +0x00 and
-// distance and angles +0x60) and the scope zoom (+0x1DC, +0x1E0 changing).
+// distance and angles +0x60), the scope zoom (+0x1DC, +0x1E0 changing) and a
+// monster's hold (BindCamera's count +0x114; the eye and target).
 constexpr uint32_t kZone = 0x348; // the zone camera (0x802BA400)
 
 void ReportBlends(uint32_t cam) {
@@ -305,6 +306,7 @@ void ReportBlends(uint32_t cam) {
         {"aim", {{0x1F0, 3}, {0, 0}}, -1, 0, 0, 0},
         {"zone", {{kZone, 3}, {kZone + 0x60, 4}}, -1, 0, 0, 0},
         {"zoom", {{0x1DC, 2}, {0, 0}}, -1, 0, 0, 0},
+        {"bind", {{kEye, 3}, {kTarget, 3}}, -1, 0, 0, 0},
     };
 
     static float zoom[2], zoomFrom[2];
@@ -317,6 +319,7 @@ void ReportBlends(uint32_t cam) {
         int16_t(Memory::Read16(cam + 0x234)) > 0,
         Memory::Read8(cam + kZone + 0x42) != 0,
         zoomNow[0] != zoom[0] || zoomNow[1] != zoom[1],
+        int32_t(R32(cam + 0x114)) > 0,
     };
 
     for (size_t i = 0; i < std::size(blends); ++i) {
@@ -733,15 +736,70 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
 // two phases at +0x144) or drives eases of an orbit (kinds 1 and 2: the yaw
 // +0x11A and pitch +0x11C by 1/n of the gap a step, the offset +0x138). All
 // of it counted steps, so at 400 fps the path ran 13 times as fast. Here the
-// original runs once per tick of the step. At a step without a tick it runs
-// for the eye and target it places, and its state (+0x114..+0x145) is put
-// back after, so the path moves on a tick at a time, as on the Wii.
-constexpr uint32_t kBindSteps = 0x114, kBindStateEnd = 0x146;
+// original runs once per tick of the step. Past the last tick (the step's
+// fraction) it runs once more for the next tick's place, its state
+// (+0x114..+0x145) put back after, and the eye, target and field of view sit
+// that fraction of the way from the last tick's place to the next: the path
+// moves on every step, at the Wii's speed.
+constexpr uint32_t kBindSteps = 0x114, kBindStateEnd = 0x146, kBindMode = 0x7C;
+
+// The words a hold places: the eye, the target, the field of view (+0x34)
+// and the yaws (+0x68, +0x70; the angle from the target to the eye).
+struct BindPlace {
+    float eye[3], target[3], fov;
+    uint32_t yawTarget, yaw;
+    uint8_t mode;
+
+    void Read(uint32_t cam) {
+        for (uint32_t i = 0; i < 3; ++i) {
+            eye[i] = F(cam + kEye + 4 * i);
+            target[i] = F(cam + kTarget + 4 * i);
+        }
+
+        fov = F(cam + kFovA);
+        yawTarget = R32(cam + kYawTarget);
+        yaw = R32(cam + kYaw);
+        mode = Memory::Read8(cam + kBindMode);
+    }
+
+    void Write(uint32_t cam) const {
+        for (uint32_t i = 0; i < 3; ++i) {
+            WF(cam + kEye + 4 * i, eye[i]);
+            WF(cam + kTarget + 4 * i, target[i]);
+        }
+
+        WF(cam + kFovA, fov);
+        W32(cam + kYawTarget, yawTarget);
+        W32(cam + kYaw, yaw);
+        Memory::Write8(cam + kBindMode, mode);
+    }
+};
 
 extern "C" void func_802B8ED0(CpuContext* ctx);
 
+// One tick of the original; true when it placed the eye and target (a hold
+// past its delay). The eye's x is marked first to tell: no path reads it.
+static bool BindTick(CpuContext* ctx, uint32_t cam, uint32_t plw) {
+    constexpr uint32_t kUnplaced = 0x7FBADBAD; // a NaN no path writes
+    const uint32_t x = R32(cam + kEye);
+
+    W32(cam + kEye, kUnplaced);
+    ctx->gpr[3] = cam;
+    ctx->gpr[4] = plw;
+    func_802B8ED0(ctx);
+
+    if (R32(cam + kEye) != kUnplaced)
+        return true;
+
+    W32(cam + kEye, x);
+    return false;
+}
+
 static void BindCameraPort(CpuContext* ctx) {
     const uint32_t cam = ctx->gpr[3], plw = ctx->gpr[4], ticks = GameStep::Ticks();
+    const float fraction = float(GameStep::Fraction());
+    static bool placed = false; // the last tick placed the eye and target
+    static BindPlace last;
 #ifdef MH3_DEVELOPMENT
     // MH3_TRACE=bind-camera: each hold's length in ticks of game time and
     // the count it reached, and each change of its state (+0x118), phase
@@ -753,22 +811,43 @@ static void BindCameraPort(CpuContext* ctx) {
     const uint32_t flags = Memory::Read8(cam + 0x118) << 16 | Memory::Read8(cam + 0x144) << 8 | Memory::Read8(cam + 0x145);
 #endif
 
-    if (ticks == 0) {
+    for (uint32_t i = 0; i < ticks; ++i) {
+        placed = BindTick(ctx, cam, plw);
+
+        if (placed)
+            last.Read(cam);
+    }
+
+    if (ticks == 0 || fraction > 0) {
         uint8_t state[kBindStateEnd - kBindSteps];
+        BindPlace now;
 
         for (uint32_t i = 0; i < sizeof(state); ++i)
             state[i] = Memory::Read8(cam + kBindSteps + i);
 
-        func_802B8ED0(ctx);
+        now.Read(cam);
+        const bool next = BindTick(ctx, cam, plw);
 
         for (uint32_t i = 0; i < sizeof(state); ++i)
             Memory::Write8(cam + kBindSteps + i, state[i]);
-    }
 
-    for (uint32_t i = 0; i < ticks; ++i) {
-        ctx->gpr[3] = cam;
-        ctx->gpr[4] = plw;
-        func_802B8ED0(ctx);
+        if (placed && next) {
+            GuestCall game{ctx};
+
+            for (uint32_t i = 0; i < 3; ++i) {
+                WF(cam + kEye + 4 * i, last.eye[i] + (F(cam + kEye + 4 * i) - last.eye[i]) * fraction);
+                WF(cam + kTarget + 4 * i, last.target[i] + (F(cam + kTarget + 4 * i) - last.target[i]) * fraction);
+            }
+
+            WF(cam + kFovA, last.fov + (F(cam + kFovA) - last.fov) * fraction);
+            const uint32_t yaw = game.Call<AngleBetween>({cam + kTarget, cam + kEye});
+            W32(cam + kYawTarget, yaw);
+            W32(cam + kYaw, yaw);
+        } else if (placed) {
+            last.Write(cam);
+        } else {
+            now.Write(cam);
+        }
     }
 
 #ifdef MH3_DEVELOPMENT
