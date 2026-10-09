@@ -63,12 +63,10 @@ extern thread_local PrivateMixMemory* t_privateMixMemory;
 
 void RefreshMixMemoryMap();
 
-// Host pointer for a guest range that lies entirely inside MEM1 or MEM2 through
-// any of their physical/cached/uncached aliases; nullptr otherwise.
-inline uint8_t* MixResolveRange(uint32_t addr, size_t bytes) {
-    if (t_onMixWorker) {
-        return t_privateMixMemory ? t_privateMixMemory->Resolve(addr, bytes) : nullptr;
-    }
+// Live RAM resolver for owner code. Admission has joined the previous job and
+// consumes these pointers before sealing; shared execution dispatches through
+// MixResolveRange. Aliases, full-range bounds and missing maps are checked.
+inline uint8_t* MixResolveOwnerRange(uint32_t addr, size_t bytes) {
     if (bytes == 0 || bytes > Memory::kMem2Size) {
         return nullptr;
     }
@@ -118,6 +116,15 @@ inline uint8_t* MixResolveRange(uint32_t addr, size_t bytes) {
         return base != nullptr ? base + offset : nullptr;
     }
     return nullptr;
+}
+
+// Execution can run on either thread. Worker accesses remain confined to the
+// sealed private epoch and never fall through to the owner's live RAM bases.
+inline uint8_t* MixResolveRange(uint32_t addr, size_t bytes) {
+    if (t_onMixWorker) {
+        return t_privateMixMemory ? t_privateMixMemory->Resolve(addr, bytes) : nullptr;
+    }
+    return MixResolveOwnerRange(addr, bytes);
 }
 
 inline uint8_t* MixResolveWriteRange(uint32_t addr, size_t bytes) {

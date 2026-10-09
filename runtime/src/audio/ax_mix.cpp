@@ -516,17 +516,18 @@ class AXWii {
     size_t m_admissionPbCount = 0, m_admissionWriteCount = 0;
     uint32_t m_admissionActivePbs = 0;
 
-    bool AddJobRange(uint32_t addr, size_t bytes, bool write = false, bool pb = false) {
+    // Owner admission only. Return the checked live range after adding it.
+    uint8_t* AddJobRange(uint32_t addr, size_t bytes, bool write = false, bool pb = false) {
         uint32_t physical;
-        uint8_t* host = MixResolveRange(addr, bytes);
+        uint8_t* host = MixResolveOwnerRange(addr, bytes);
         if (!host || !NormalizeMixAddress(addr, bytes, physical))
-            return false;
+            return nullptr;
         if (write && !pb) {
             if (m_admissionWriteCount == m_admissionWrites.size())
-                return false;
+                return nullptr;
             m_admissionWrites[m_admissionWriteCount++] = {physical, physical + uint32_t(bytes)};
         }
-        return m_privateMemory.Add(addr, bytes, host, write);
+        return m_privateMemory.Add(addr, bytes, host, write) ? host : nullptr;
     }
 
     bool PreparePBChain(uint32_t addr) {
@@ -539,9 +540,10 @@ class AXWii {
             if (m_admissionPbCount == m_admissionPbs.size())
                 return false;
             constexpr size_t headerBytes = offsetof(AXPBWii, running) + sizeof(uint16_t);
-            if (!MixResolveRange(addr, headerBytes))
+            const uint8_t* header = MixResolveOwnerRange(addr, headerBytes);
+            if (!header)
                 return false;
-            const bool running = MixRead16(addr + offsetof(AXPBWii, running)) == 1;
+            const bool running = BigEndian::Read16(header + offsetof(AXPBWii, running)) == 1;
             uint32_t physical;
             const size_t bytes = running ? pbBytes : headerBytes;
             if (!NormalizeMixAddress(addr, bytes, physical))
@@ -553,15 +555,18 @@ class AXWii {
                     return false;
             }
             m_admissionPbs[m_admissionPbCount++] = range;
-            if (!AddJobRange(addr, bytes, running, true))
+            const uint8_t* admittedPb = AddJobRange(addr, bytes, running, true);
+            if (!admittedPb)
                 return false;
             if (!running) {
-                addr = Hilo(MixRead16(addr), MixRead16(addr + 2));
+                addr = Hilo(BigEndian::Read16(header), BigEndian::Read16(header + 2));
                 continue;
             }
             ++m_admissionActivePbs;
             AXPBWii voice{};
-            ReadPBWithLayout(addr, voice, m_pbLayout);
+            // Admission already proved the complete live PB range. Reuse that
+            // pointer and the same layout table as execution, before Seal.
+            ReadAdmittedPB(admittedPb, voice, segments, segmentCount);
             const uint32_t ratio = Hilo(voice.src.ratio_hi, voice.src.ratio_lo);
             // Retain the uint32 resampler's exact no-wrap read count. Unusual
             // ratios use the complete serial route rather than a huge snapshot.
@@ -1032,15 +1037,19 @@ class AXWii {
         }
     }
 
+    static void CopyPBHalfwords(const uint8_t* guest, char* dst, size_t structOffset, size_t byteCount) {
+        for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
+            uint16_t value = 0;
+            std::memcpy(&value, guest + i, sizeof(value));
+            *reinterpret_cast<uint16_t*>(dst + structOffset + i) = MemoryInline::ByteSwap16(value);
+        }
+    }
+
     // Both directions take their offsets in the same order - guest side first,
     // then host side - so a mirrored read/write pair reads the same way round.
     static void CopyGuestToStruct(uint32_t addr, size_t guestOffset, char* dst, size_t structOffset, size_t byteCount) {
         if (const uint8_t* guest = MixResolveRange(addr + static_cast<uint32_t>(guestOffset), byteCount)) {
-            for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
-                uint16_t value = 0;
-                std::memcpy(&value, guest + i, sizeof(value));
-                *reinterpret_cast<uint16_t*>(dst + structOffset + i) = MemoryInline::ByteSwap16(value);
-            }
+            CopyPBHalfwords(guest, dst, structOffset, byteCount);
             return;
         }
         for (size_t i = 0; i < byteCount; i += sizeof(uint16_t)) {
@@ -1114,6 +1123,16 @@ class AXWii {
             out[0] = {0, 0, updatesBegin};
             out[1] = {updatesBegin, updatesEnd, pbBytes - updatesEnd};
             return 2;
+        }
+    }
+
+    // Owner admission only: the complete range was checked by AddJobRange.
+    // Execution still uses ReadPBWithLayout and its thread-aware resolver.
+    static void ReadAdmittedPB(const uint8_t* guest, AXPBWii& pb, const std::array<PBSegment, 3>& segments, size_t count) {
+        std::memset(&pb, 0, sizeof(pb));
+        char* dst = reinterpret_cast<char*>(&pb);
+        for (size_t i = 0; i < count; ++i) {
+            CopyPBHalfwords(guest + segments[i].guestOffset, dst, segments[i].structOffset, segments[i].byteCount);
         }
     }
 
