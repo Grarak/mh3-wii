@@ -39,8 +39,6 @@
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 extern "C" void func_800A4C20(CpuContext*); // nw4r::ef::Effect::Calc(bool onlyBillboard)
@@ -122,8 +120,68 @@ struct Particle {
     uint64_t generation = 0; // Effect::Calc pass that last advanced it
 };
 
+// Guest address -> V, open addressing with linear probing: a multiplicative
+// hash (no division, which the Cortex-A9 does in software) and the entries
+// inline, where std::unordered_map chased a node per lookup.
+template <class V>
+class AddressMap {
+public:
+    AddressMap() { Rehash(64); }
+    bool Empty() const { return count_ == 0; }
+    V* Find(uint32_t key) {
+        for (uint32_t i = Home(key);; i = (i + 1) & mask_) {
+            if (slots_[i].key == key) return &slots_[i].value;
+            if (slots_[i].key == 0) return nullptr;
+        }
+    }
+    V& operator[](uint32_t key) {
+        if (V* v = Find(key)) return *v;
+        if (2 * (count_ + 1) > slots_.size()) Rehash(uint32_t(slots_.size()) * 2);
+        uint32_t i = Home(key);
+        while (slots_[i].key != 0) i = (i + 1) & mask_;
+        ++count_;
+        slots_[i] = {key, V{}};
+        return slots_[i].value;
+    }
+    void Erase(uint32_t key) {
+        uint32_t i = Home(key);
+        while (slots_[i].key != key) {
+            if (slots_[i].key == 0) return;
+            i = (i + 1) & mask_;
+        }
+        // Backward-shift deletion: pull later entries of the run into the hole.
+        for (uint32_t j = (i + 1) & mask_; slots_[j].key != 0; j = (j + 1) & mask_) {
+            const uint32_t home = Home(slots_[j].key);
+            if (((j - home) & mask_) >= ((j - i) & mask_)) {
+                slots_[i] = slots_[j];
+                i = j;
+            }
+        }
+        slots_[i].key = 0;
+        --count_;
+    }
+
+private:
+    struct Slot {
+        uint32_t key; // 0: empty
+        V value;
+    };
+    uint32_t Home(uint32_t key) const { return ((key >> 2) * 0x9E3779B1u) >> shift_; }
+    void Rehash(uint32_t size) {
+        std::vector<Slot> old = std::move(slots_);
+        slots_.assign(size, Slot{0, V{}});
+        mask_ = size - 1;
+        shift_ = 32 - uint32_t(__builtin_ctz(size));
+        count_ = 0;
+        for (const Slot& s : old)
+            if (s.key != 0) (*this)[s.key] = s.value;
+    }
+    std::vector<Slot> slots_;
+    uint32_t mask_ = 0, shift_ = 0, count_ = 0;
+};
+
 struct Step {
-    std::unordered_map<uint32_t, Particle> particles; // those between ticks
+    AddressMap<Particle> particles; // those between ticks
     uint64_t generation = 0;
     double particleStep = 1.0; // ticks particles advance in this Effect::Calc pass
     bool particlesOnly = false;
@@ -131,7 +189,7 @@ struct Step {
 Step step;
 
 // Particles whose age crosses no whole tick in the running ParticleManager::Calc.
-std::unordered_set<uint32_t> betweenTicks;
+AddressMap<bool> betweenTicks;
 
 // Runs the particle's curve tracks at `tick`, as ParticleManager::Calc does
 // (without the child and texture tracks, the events, and the emitter-age ones).
@@ -280,7 +338,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800A8E5C, MH3_EmitterCalcEmission, "EmitterCalcEmi
 static void ParticleManagerCalcPort(CpuContext* ctx) {
     // Whole ticks with every particle on a whole tick (the stock 1/30 s step)
     // are the original.
-    if (step.particleStep == 1.0 && step.particles.empty()) {
+    if (step.particleStep == 1.0 && step.particles.Empty()) {
         func_800AC35C(ctx);
         return;
     }
@@ -301,8 +359,8 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
             continue;
         const uint16_t tick = Memory::Read16(p + kParticleTick);
         double age = tick, dt = step.particleStep;
-        if (auto it = step.particles.find(p); it != step.particles.end()) {
-            const Particle& e = it->second;
+        if (const Particle* found = step.particles.Find(p)) {
+            const Particle& e = *found;
             if (e.seed == Memory::Read16(p + kParticleSeed) && uint32_t(e.age) == tick) {
                 age = e.age;
                 // Calc again in the same pass (calc remain: a particle emitted
@@ -313,11 +371,11 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         Work w{p, age, dt, Memory::ReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity),
                ReadVec(p + kParticlePosition)};
         if (dt != 1.0) Memory::WriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
-        if (std::floor(age + dt) == std::floor(age)) betweenTicks.insert(p);
+        if (std::floor(age + dt) == std::floor(age)) betweenTicks[p] = true;
         work.push_back(w);
     }
     func_800AC35C(ctx);
-    betweenTicks.clear();
+    for (const Work& w : work) betweenTicks.Erase(w.address);
     *ctx = saved;
 
     GuestFrame frame(ctx, 0x20);
@@ -325,7 +383,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     for (const Work& w : work) {
         const uint32_t p = w.address;
         if (Memory::Read32(p + kLifeStatus) != kLifeActive) { // retired
-            step.particles.erase(p);
+            step.particles.Erase(p);
             continue;
         }
         if (w.dt != 1.0) {
@@ -345,7 +403,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         const double age = w.age + w.dt;
         Memory::Write16(p + kParticleTick, uint16_t(age));
         if (age == std::floor(age)) {
-            step.particles.erase(p);
+            step.particles.Erase(p);
             continue;
         }
         step.particles[p] = {Memory::Read16(p + kParticleSeed), age, step.generation};
@@ -367,7 +425,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800AC35C, MH3_ParticleManagerCalc, "ParticleManage
 // Child emission is a curve event: only when the particle's age crosses a tick.
 extern "C" void func_800A1D0C(CpuContext* ctx);
 static void AnimCurveExecuteChildPort(CpuContext* ctx) {
-    if (!betweenTicks.count(ctx->gpr[4])) func_800A1D0C(ctx);
+    if (!betweenTicks.Find(ctx->gpr[4])) func_800A1D0C(ctx);
 }
 extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) { PortCheck::Call(ctx, "AnimCurveExecuteChild", func_800A1D0C, AnimCurveExecuteChildPort); }
 REGISTER_NATIVE_FUNCTION_AS(0x800A1D0C, MH3_AnimCurveExecuteChild, "AnimCurveExecuteChild");
