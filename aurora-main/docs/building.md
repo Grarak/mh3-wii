@@ -1,5 +1,9 @@
 # Building
 
+> Retained upstream instructions. This MH3 copy uses a different GLES/GXM
+> backend and fatal GX guards. Follow [HANDOVER](../../HANDOVER.md) and the
+> [dependency note](../../docs/aurora-dependency.md) for this checkout.
+
 ## Prerequisites
 
 - CMake 3.25 or later

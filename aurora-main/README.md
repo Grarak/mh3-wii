@@ -3,43 +3,21 @@
 </div>
 <br/>
 
-Aurora is a source-level GameCube & Wii compatibility layer intended for use with game decompilation projects.
+This is MH3's maintained Aurora copy. It provides SDL3 application services,
+OpenGL ES 3.0 on Linux and native GXM on Vita. The current migration uses one
+game/render owner and typed native geometry/material/texture APIs. GX API and
+FIFO compatibility entry points deliberately panic. Dawn/WebGPU, Vulkan,
+D3D12 and Metal are not build targets in this checkout.
 
-Originally developed for use in [Metaforce](https://github.com/AxioDL/metaforce), a Metroid Prime reverse engineering project.
-It now powers several completed source ports, including [Dusklight](https://github.com/TwilitRealm/dusklight).
+See [the dependency note](../docs/aurora-dependency.md) for origin/build details
+and [native renderer status](../docs/native-renderer-status.md) for implemented
+boundaries and pending integration. Use the repository's build scripts and
+[HANDOVER](../HANDOVER.md); upstream Aurora build instructions describe a
+different renderer.
 
-### Features
-
-- Application layer using SDL3
-  - Runs on Windows, Linux, macOS, iOS, tvOS, Android
-- GX compatibility layer
-  - Graphics API support: D3D12, Vulkan, Metal
-  - Highly accurate and performant GX implementation
-  - Robust pipeline cache system with "transferable" cache support for releases
-  - Dolphin-compatible texture pack support
-  - Widescreen & resolution scaling support
-  - Custom APIs for offscreen rendering
-- PAD compatibility layer
-  - Utilizes `SDL_Gamepad` for wide controller support, including GameCube controller adapters
-  - Automatically saves and loads controller bindings and port mappings
-  - Gyro & mouse support
-- DVD compatibility layer
-  - Utilizes [nod](https://github.com/encounter/nod) to support all GameCube/Wii disc image types, including RVZ
-- CARD compatibility layer
-  - Full compatibility with Dolphin `.gci` and `.raw` for game saves
-- [Dear ImGui](https://github.com/ocornut/imgui) built-in for simple debug UIs
-
-### Graphics
-
-The GX compatibility layer is built on top of [WebGPU](https://www.w3.org/TR/webgpu/), a cross-platform graphics API
-abstraction layer. WebGPU allows targeting all major platforms simultaneously with minimal overhead. The WebGPU
-implementation used is Chromium's [Dawn](https://dawn.googlesource.com/dawn/).
-
-![Screenshot](assets/screenshot.png)
-
-### Building
-
-See [docs/building.md](docs/building.md) for build instructions, CMake integration, and configuration options.
+Aurora originated as a source-level GameCube/Wii compatibility layer, developed
+for [Metaforce](https://github.com/AxioDL/metaforce). Its retained license and
+services do not imply current support for every upstream platform or GX path.
 
 ### License
 

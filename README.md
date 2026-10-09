@@ -1,26 +1,26 @@
-# Monster Hunter Tri static recompilation for ARM Linux
+# Monster Hunter Tri static recompilation for ARM Linux and Vita
 
 Monster Hunter Tri's PowerPC code (European disc `RMHP08`) is statically
 recompiled to C++ and linked with a native runtime into one executable. There
-is no interpreter or JIT fallback. Graphics go through Aurora with a native
-**OpenGL ES 3.0** renderer.
+is no interpreter or JIT fallback. Aurora provides **OpenGL ES 3.0** on Linux
+and native **GXM** on Vita.
 
-- **Targets:** arm32 Linux (armhf, tuned for Cortex-A9; the deployment target,
-  tested on a Raspberry Pi 5) and arm64 Linux (development and debugging).
-- **Current migration:** game and rendering share one CPU thread, and remaining
-  GX calls stop with guest/native backtraces. Native gameplay rendering is
-  incomplete; native light, render-mode, graphics and display startup now
-  pass; quest boot reaches the first game frame and stops at the 2D projection
-  setup's GX tripwire. Native frame boundaries use three notification-protected
-  slots and skip drawing when the next slot or display queue is busy.
-  [Rendering investigation](docs/vita-render-investigation.md) records the
-  migration and earlier playable results.
+- **Targets:** Vita (ARM32, Cortex-A9, GXM), arm32 Linux (armhf, Cortex-A9
+  build tested on Pi 5), and arm64 Linux for development.
+- **Current migration, 2026-10-01:** game and rendering share one CPU thread;
+  legacy GX/FIFO routes remain fatal. Native startup, UI/scene/effect families,
+  dynamic materials and resident asset preparation have focused verification.
+  GPU model transforms/texgen and live shape/material routing remain in progress;
+  complete quest rendering and current FPS/RAM results are not established.
+  Busy frame slots/display queues skip rendering while logic continues.
+  [Native renderer status](docs/native-renderer-status.md) distinguishes current
+  implementation, pending gates and earlier playable evidence.
 
 **[HANDOVER.md](HANDOVER.md)** is the working guide: setup, translation, arm64
 and arm32 builds, running on the VM and the Pi, debugging tools, conventions
 and open work. The `docs/` notes are listed in [docs/README.md](docs/README.md).
 
-## Quick start (arm64 development build)
+## Quick start (arm64 migration build)
 
 ```sh
 tools/dotnet/dotnet build -c Release toolchain/translator/src/Translator.Cli
@@ -29,7 +29,8 @@ MH3_ARCH=arm64 MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON scripts/build-aurora.sh
 build/linux-arm64/MH3 --village
 ```
 
-For arm32, build inside the `mh3-armhf-cross` Docker image
+The launch is an integration probe: unported or unsupported rendering paths
+fail explicitly. For arm32 Linux, build inside the `mh3-armhf-cross` Docker image
 (`scripts/docker-build.sh scripts/build-aurora.sh`). See HANDOVER.md.
 
 Keyboard: Space = A, Left Shift = B, WASD = left stick, arrows = D-pad,

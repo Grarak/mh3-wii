@@ -3,6 +3,7 @@
 #include "../internal.hpp"
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
+#include "../gfx/native_mesh_layout.hpp"
 #include <aurora/gpu_completion.hpp>
 #include <aurora/native_frame_gate.hpp>
 
@@ -90,6 +91,7 @@ struct State {
 State g_state;
 ProgramPtr g_nativePrograms[2];
 GLuint g_nativeVao = 0, g_nativeVertexBuffer = 0, g_nativeIndexBuffer = 0;
+GLuint g_meshVao=0,g_meshUniformBuffer=0;
 GLuint g_materialVao=0,g_materialVertexBuffer=0,g_materialIndexBuffer=0,g_materialUniformBuffer=0;
 
 struct FramebufferKey {
@@ -233,6 +235,9 @@ void shutdown() noexcept {
     if (g_nativeVertexBuffer) glDeleteBuffers(1, &g_nativeVertexBuffer);
     if (g_nativeIndexBuffer) glDeleteBuffers(1, &g_nativeIndexBuffer);
     g_nativeVao = g_nativeVertexBuffer = g_nativeIndexBuffer = 0;
+    if(g_meshVao) glDeleteVertexArrays(1,&g_meshVao);
+    if(g_meshUniformBuffer) glDeleteBuffers(1,&g_meshUniformBuffer);
+    g_meshVao=g_meshUniformBuffer=0;
     if(g_materialVao) glDeleteVertexArrays(1,&g_materialVao);
     if(g_materialVertexBuffer) glDeleteBuffers(1,&g_materialVertexBuffer);
     if(g_materialIndexBuffer) glDeleteBuffers(1,&g_materialIndexBuffer);
@@ -893,6 +898,40 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
   glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
   bind_uniform_range(0,g_materialUniformBuffer,0,uniforms.size);
   glDrawElements(GL_TRIANGLES,geometry.index_count,GL_UNSIGNED_SHORT,nullptr);
+  glBindVertexArray(g_state.emptyVao);
+}
+void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
+                      uint32_t vertexOffset, uint32_t vertexCount,
+                      uint32_t indexOffset, uint32_t indexCount, GLuint program,
+                      const AuroraNativeUniforms& uniforms) {
+  if (!aurora::native_frame_drawing_allowed() || !indexCount) return;
+  gfx::validate_mesh_draw(buffer,layout,vertexOffset,vertexCount,indexOffset,indexCount);
+  if (!uniforms.data || !uniforms.size) throw std::runtime_error("Native mesh has no uniforms");
+  use_program(program);
+  if (!g_meshVao) {
+    glGenVertexArrays(1,&g_meshVao);
+    glGenBuffers(1,&g_meshUniformBuffer);
+  }
+  glBindVertexArray(g_meshVao);
+  glBindBuffer(GL_ARRAY_BUFFER,buffer.get());
+  for (unsigned i=0;i<12;++i) glDisableVertexAttribArray(i);
+  for (const auto& attribute : layout.attributes) {
+    GLenum type=GL_FLOAT; GLboolean normalized=GL_FALSE;
+    switch(attribute.format) {
+    case MeshAttributeFormat::F32: break;
+    case MeshAttributeFormat::F16: type=GL_HALF_FLOAT; break;
+    case MeshAttributeFormat::U8N: type=GL_UNSIGNED_BYTE; normalized=GL_TRUE; break;
+    case MeshAttributeFormat::S16N: type=GL_SHORT; normalized=GL_TRUE; break;
+    }
+    glVertexAttribPointer(attribute.location,attribute.components,type,normalized,layout.stride,
+                          reinterpret_cast<const void*>(uintptr_t(vertexOffset)+attribute.offset));
+    glEnableVertexAttribArray(attribute.location);
+  }
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,buffer.get());
+  glBindBuffer(GL_UNIFORM_BUFFER,g_meshUniformBuffer);
+  glBufferData(GL_UNIFORM_BUFFER,uniforms.size,uniforms.data,GL_STREAM_DRAW);
+  bind_uniform_range(0,g_meshUniformBuffer,0,uniforms.size);
+  glDrawElements(GL_TRIANGLES,indexCount,GL_UNSIGNED_SHORT,reinterpret_cast<const void*>(uintptr_t(indexOffset)));
   glBindVertexArray(g_state.emptyVao);
 }
 void uniform4(GLuint program, const char* name, float x, float y, float z, float w) noexcept {

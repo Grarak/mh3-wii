@@ -1,6 +1,7 @@
 #include "../gl/gl.hpp"
 #include "../gfx/port_capture.hpp"
 #include "../gfx/native_mesh_io.hpp"
+#include "../gfx/native_mesh_layout.hpp"
 #include "alpha_compare.hpp"
 #include "native_assets.hpp"
 #include "device.hpp"
@@ -48,6 +49,7 @@ struct NativeProgram {
   std::map<std::string, std::array<float, 4>> uniforms;
   bool buffer0 = false;
   bool nativeMaterialVertices = false;
+  MeshLayout nativeMeshLayout;
 };
 struct State {
   RasterState raster;
@@ -510,10 +512,28 @@ GLuint Program::get() noexcept {
     auto& r = renderer();
     NativeProgram native;
     native.nativeMaterialVertices=m_desc.nativeMaterialVertices;
+    native.nativeMeshLayout=m_desc.nativeMeshLayout;
     auto& shared = r.patchedPrograms[{m_vertexHash, m_fragmentHash}];
-    native.program = shared.lock();
+    // Compact layouts own their patched program. Shader hashes alone cannot
+    // distinguish vertex strides/offsets. The frontend caches each full layout.
+    if (!m_desc.nativeMeshLayout.stride) native.program = shared.lock();
     if (!native.program) {
-      if(m_desc.nativeMaterialVertices) {
+      if(m_desc.nativeMeshLayout.stride) {
+        gfx::validate_mesh_layout(m_desc.nativeMeshLayout);
+        std::vector<VertexInput> inputs;
+        for (const auto& attribute : m_desc.nativeMeshLayout.attributes) {
+          SceGxmAttributeFormat format=SCE_GXM_ATTRIBUTE_FORMAT_F32;
+          switch(attribute.format) {
+          case MeshAttributeFormat::F32: break;
+          case MeshAttributeFormat::F16: format=SCE_GXM_ATTRIBUTE_FORMAT_F16; break;
+          case MeshAttributeFormat::U8N: format=SCE_GXM_ATTRIBUTE_FORMAT_U8N; break;
+          case MeshAttributeFormat::S16N: format=SCE_GXM_ATTRIBUTE_FORMAT_S16N; break;
+          }
+          inputs.push_back({gfx::MeshAttributeNames[attribute.location],format,
+                            attribute.components,attribute.offset,m_desc.nativeMeshLayout.stride,0});
+        }
+        native.program=std::make_shared<PatchedProgram>(r.device,m_vertexHash,m_fragmentHash,SCE_GXM_INDEX_FORMAT_U16,inputs);
+      } else if(m_desc.nativeMaterialVertices) {
         constexpr uint16_t stride=sizeof(AuroraNativeMaterialVertex);
         const VertexInput inputs[]{
           {"a_native_position",SCE_GXM_ATTRIBUTE_FORMAT_F32,4,0,stride,0},
@@ -532,7 +552,7 @@ GLuint Program::get() noexcept {
         static_assert(stride==144 && offsetof(AuroraNativeMaterialVertex,color)==136);
         native.program=std::make_shared<PatchedProgram>(r.device,m_vertexHash,m_fragmentHash,SCE_GXM_INDEX_FORMAT_U16,inputs);
       } else native.program = std::make_shared<PatchedProgram>(r.device, m_vertexHash, m_fragmentHash);
-      shared = native.program;
+      if (!m_desc.nativeMeshLayout.stride) shared = native.program;
     }
     if (m_usesAlphaReferences) native.uniforms.emplace("aur_alpha_refs", m_alphaReferences);
     for (const auto& [name, unit] : m_desc.samplers) {
@@ -676,6 +696,25 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
     check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
                     geometry.indices,geometry.index_count),"draw native material triangles");
   });
+}
+void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout,
+                      uint32_t vertexOffset, uint32_t vertexCount,
+                      uint32_t indexOffset, uint32_t indexCount, GLuint program,
+                      const AuroraNativeUniforms& uniforms) {
+  if (!aurora::native_frame_drawing_allowed() || !indexCount) return;
+  gfx::validate_mesh_draw(buffer,layout,vertexOffset,vertexCount,indexOffset,indexCount);
+  auto& r=renderer();
+  if (!(r.programs.at(program).nativeMeshLayout==layout))
+    throw std::runtime_error("Resident mesh differs from patched vertex layout");
+  const auto found=r.meshes.find(buffer.get());
+  if(found==r.meshes.end() || found->second.data()!=buffer.data())
+    throw std::runtime_error("Resident mesh backing was retired");
+  if (!uniforms.data || !uniforms.size) throw std::runtime_error("Native mesh has no uniforms");
+  r.state.uniformOffset=uniforms.offset;r.state.uniformBytes=uniforms.size;r.state.uniformValid=true;
+  r.prepare(program);
+  check(sceGxmSetVertexStream(r.device.context(),0,buffer.data()+vertexOffset),"bind resident mesh attributes");
+  check(sceGxmDraw(r.device.context(),SCE_GXM_PRIMITIVE_TRIANGLES,SCE_GXM_INDEX_FORMAT_U16,
+                  buffer.data()+indexOffset,indexCount),"draw resident mesh triangles");
 }
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });
