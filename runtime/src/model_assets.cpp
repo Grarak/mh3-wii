@@ -468,6 +468,23 @@ bool EnsureNativeModelAssetGPU(uintptr_t handle, uint64_t epoch) {
     asset.gpuRegistered = true;
     return true;
 }
+bool ReadNativeModelPackFile(uintptr_t handle, uint64_t epoch, NativeModelPackFile* out) {
+    if (!manager || !out)
+        return false;
+    std::lock_guard lock(manager->lock);
+    const auto found = manager->handles.find(handle);
+    if (found == manager->handles.end() || found->second->generation != epoch)
+        return false;
+    const auto& asset = *found->second;
+    uint32_t hash = 2166136261u;
+    for (const uint8_t byte : asset.identity)
+        hash = (hash ^ byte) * 16777619u;
+    out->path = asset.path.string();
+    out->metadata_bytes = uint32_t(asset.metadata.size());
+    out->identity_bytes = uint32_t(asset.identity.size());
+    out->identity_hash = hash;
+    return true;
+}
 NativeModelAssetStats ReadNativeModelAssetStats() {
     if (!manager)
         return {};

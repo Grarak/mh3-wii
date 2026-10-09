@@ -72,6 +72,8 @@ size_t CountNativeModelOwners();
  * Resource-address/header joins are cached until a provenance event invalidates
  * them. Never stores a pose/material/camera pointer. */
 const mh3_prepared_mesh& ReadNativePreparedMesh(const NativeModelOwner& owner, uint32_t shape_address);
+/* The prepared mesh at a pack index of the owner's resident pack, or null. */
+const mh3_prepared_mesh* ReadNativePreparedMeshAt(const NativeModelOwner& owner, uint32_t pack_index);
 using NativePreparedMaterial = mh3_prepared_material;
 /* Immutable resource defaults/recipes only. Live replacements/inherited pass
  * state must be merged by typed producers; no live borrowed pointers cached. */

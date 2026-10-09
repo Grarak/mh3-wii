@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <string>
 // Graphics-owner lifetime. Metadata and identities remain owned until retirement;
 // the backend reads the immutable GPU range directly into its resident storage.
 // An explicit MH3_NATIVE_MODEL_PACK must exist. Without an override the optional
@@ -30,3 +31,10 @@ struct NativeModelAssetStats {
 };
 // GPU bytes include retired backing pending completion, with Vita rounding.
 NativeModelAssetStats ReadNativeModelAssetStats();
+// An admitted pack's file and its content key (metadata and identity sizes,
+// FNV-1a of the identity bytes), for caches derived from the pack.
+struct NativeModelPackFile {
+    std::string path; // the M3MP file
+    uint32_t metadata_bytes = 0, identity_bytes = 0, identity_hash = 0;
+};
+bool ReadNativeModelPackFile(uintptr_t resident_handle, uint64_t resident_generation, NativeModelPackFile* out);

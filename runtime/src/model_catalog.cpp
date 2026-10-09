@@ -846,6 +846,12 @@ const mh3_prepared_mesh& ReadNativePreparedMesh(const NativeModelOwner& owner, u
             return pack.meshes.at(resource.pack_index);
     throw std::runtime_error("Native model resident allocation was retired");
 }
+const mh3_prepared_mesh* ReadNativePreparedMeshAt(const NativeModelOwner& owner, uint32_t pack_index) {
+    for (const auto& pack : Packs())
+        if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
+            return pack_index < pack.meshes.size() ? &pack.meshes[pack_index] : nullptr;
+    return nullptr;
+}
 const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner& owner, uint32_t material) {
     const mh3_catalog_resource resource = ResolveNativeModelResource(owner, material, true);
     for (const auto& pack : Packs())
