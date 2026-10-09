@@ -1400,3 +1400,5 @@
 800c8c00 DrawStrategyLastAlive
 800c8d1c DrawStrategyNextAlive
 800c8e48 DrawStrategyPrevAlive
+# nw4r ef util: a ut::List into an array (effect_calc.cpp).
+8009b3d8 EffUtilListToArray

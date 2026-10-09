@@ -48,6 +48,7 @@ extern "C" void func_800A8AC0(CpuContext*);  // nw4r::ef::Emitter::CalcEmitter()
 extern "C" void func_800A8E5C(CpuContext*);  // nw4r::ef::Emitter::CalcEmission()
 extern "C" void func_800AC35C(CpuContext*);  // nw4r::ef::ParticleManager::Calc()
 void ParticleManagerCalcNative(CpuContext*); // its port (particle_manager_calc.cpp)
+void EffectCalcNative(CpuContext*);          // Effect::Calc's port (effect_calc.cpp)
 // Native ports (ef_anim_curve.cpp, nw4r_accessors.cpp), called directly.
 extern "C" void MH3_ResEmitterNumPtclTrack(CpuContext*);
 extern "C" void MH3_ResEmitterGetPtclTrack(CpuContext*);
@@ -464,7 +465,7 @@ static void EffectCalcPort(CpuContext* ctx) {
     const double scale = GameStep::Scale();
     const uint32_t ticks = GameStep::Ticks();
     if (onlyBillboard) {
-        func_800A4C20(ctx);
+        EffectCalcNative(ctx);
         return;
     }
     const CpuContext saved = *ctx;
@@ -482,7 +483,7 @@ static void EffectCalcPort(CpuContext* ctx) {
         step.particleStep = scale;
         step.particlesOnly = true;
         ++step.generation;
-        func_800A4C20(ctx);
+        EffectCalcNative(ctx);
         step.particlesOnly = false;
         for (const auto& [e, words] : kept)
             for (size_t i = 0; i < 6; ++i)
@@ -492,7 +493,7 @@ static void EffectCalcPort(CpuContext* ctx) {
         for (uint32_t i = 0; i < ticks; ++i) {
             *ctx = saved;
             ++step.generation;
-            func_800A4C20(ctx);
+            EffectCalcNative(ctx);
         }
     }
     step.particleStep = 1.0;
