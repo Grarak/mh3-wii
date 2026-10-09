@@ -14,6 +14,14 @@
 #include <stdexcept>
 #include <utility>
 #include <string>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+
+#include <array>
+#include <cstdio>
+#include <cstring>
+#include <unordered_map>
+#endif
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
@@ -210,6 +218,42 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
 
     if (count > 128 || sets > 128)
         MH3_THROW(std::runtime_error("Native LightSetting capacity exceeds128"));
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=lights: each LightObj (68 bytes: flags, two words (the colour
+    // at +8), then floats)
+    // and ambient colour that changed since the last import, the first change
+    // and every 30th per light, with the caller and the step counter.
+    static const bool traced = TraceOptions().Has("lights");
+
+    if (traced && count) [[unlikely]] {
+        static std::unordered_map<uint64_t, std::pair<std::array<uint8_t, 72>, uint32_t>> last;
+        const uint32_t objects = Memory::Read32(setting + 4), ambients = Memory::Read32(setting + 8);
+
+        for (uint32_t i = 0; i < count; i++) {
+            std::array<uint8_t, 72> now;
+            std::memcpy(now.data(), Bytes(objects + i * 68, 68).data, 68);
+            std::memcpy(now.data() + 68, Bytes(ambients + i * 4, 4).data, 4);
+            auto [it, fresh] = last.try_emplace(uint64_t(setting) << 32 | i, now, 0);
+
+            if (!fresh && it->second.first == now)
+                continue;
+
+            it->second.first = now;
+
+            if (it->second.second++ % 30)
+                continue;
+
+            const uint32_t light = objects + i * 68;
+            std::fprintf(stderr, "MH3 light: setting %08x caller %08x light %u change %u flags %08x words %08x %08x ambient %08x", setting, cpu->lr, i,
+                         it->second.second - 1, Memory::Read32(light), Memory::Read32(light + 4), Memory::Read32(light + 8), Memory::Read32(ambients + i * 4));
+
+            for (uint32_t w = 3; w < 17; w++)
+                std::fprintf(stderr, " %.4g", Memory::ReadFloat32(light + w * 4));
+
+            std::fprintf(stderr, " tick %u\n", Memory::Read32(0x8065AA6C));
+        }
+    }
+#endif
 
     mh3_matrix34 view{};
     Checked(mh3_scene_view_matrix(Bytes(0x80688d94, 52 + 32 * 48), &view));

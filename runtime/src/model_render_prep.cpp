@@ -163,6 +163,25 @@ void TraceMaterial(uint32_t material, const NativeLiveMaterialBlock* const* bloc
     std::fprintf(stderr, "MH3 material: %08x (%s) stages %u indirect %u textures %u model %u quality %02x alpha-test %u\n", material, MaterialName(material).data(),
                  state.tev_count, indirect ? indirect->fields.indirect_count : 0, shading.textures, shading.model, quality, shading.alpha_test);
 
+    // What takes a light or camera: the light set, the indirect methods (NW4R:
+    // 0 warp, 1 normal map, 2 normal map + specular, 3 fur) with their lights,
+    // and each texture SRT slot's mapping mode with its camera and light.
+    if (slots[MH3_MAT_MISC]) {
+        mh3_model_material_misc misc{};
+        Checked(mh3_model_material_misc_read({static_cast<const uint8_t*>(Memory::GetPointer(slots[MH3_MAT_MISC], 12)), 12}, &misc));
+        std::fprintf(stderr, "MH3 material:   misc light set %d fog %d indirect methods %u %u %u normal-map lights %d %d %d\n", misc.light_reference, misc.fog_reference,
+                     misc.indirect_method[0], misc.indirect_method[1], misc.indirect_method[2], misc.normal_map_light[0], misc.normal_map_light[1], misc.normal_map_light[2]);
+    }
+
+    if (slots[MH3_MAT_TEXTURE_SRT]) {
+        mh3_native_texture_srt srt{};
+        Checked(mh3_texture_srt_read_for_prepare({static_cast<const uint8_t*>(Memory::GetPointer(slots[MH3_MAT_TEXTURE_SRT], 0x248)), 0x248}, &srt));
+
+        for (uint32_t i = 0; i < 8; i++)
+            if (srt.slot[i].flags & 1)
+                std::fprintf(stderr, "MH3 material:   srt slot %u map mode %u camera %d light %d\n", i, srt.slot[i].map_mode, srt.slot[i].camera_reference, srt.slot[i].light_reference);
+    }
+
     for (uint32_t i = 0; i < state.tev_count && i < 16; i++) {
         const auto& t = state.tev[i];
         std::fprintf(stderr,
