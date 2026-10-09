@@ -757,6 +757,7 @@
 800c8798 EffectTexTransS
 800c86e4 EffectTexTransT
 8009c7c4 SinCosRad
+8009c838 RotationYAxis
 804b61b0 GXSetTexCoordGen2
 804bacd0 GXLoadTexMtxImm
 804b8e00 GXInitTlutObj
