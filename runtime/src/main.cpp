@@ -3,6 +3,7 @@
 #include "disc_image.h"
 #include "audio_dma.h"
 #include "village_boot.h"
+#include "gx_host.h"
 #include "field_jump.h"
 #include "quest_catalog.h"
 #include "player_health.h"
@@ -121,6 +122,9 @@ void StartQuestBoot(int argc, char** argv) {
 #endif
 
 int main(int argc, char** argv) {
+    // Ctrl-C ends the process at once (the default action); SDL would turn it
+    // into a quit event the game only sees at its next event check.
+    setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
     try {
 #ifdef MH3_DEVELOPMENT
         // --no-damage goes with any other option.
@@ -277,6 +281,12 @@ int main(int argc, char** argv) {
         InvokeIndirectCpu(0x80006310, &cpu);
         std::cout << "MH3 entry returned\n";
         return 0;
+    } catch (const HostQuit&) {
+        // Out at once: the audio and render threads are still running, so no
+        // static destructors.
+        std::cerr << "MH3: window closed\n";
+        std::fflush(nullptr);
+        std::_Exit(0);
     } catch (const std::exception& error) {
         std::cerr << "MH3 runtime stopped: " << error.what() << '\n';
         SystemBridge::DumpCpuState(&GetPersistentCpuContext());

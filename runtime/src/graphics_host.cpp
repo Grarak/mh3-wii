@@ -162,6 +162,14 @@ void SealDisplayFrame() {
     aurora_end_frame(); frameActive = false; displayCopyPending = false;
 }
 
+bool quitRequested = false;
+
+// Reads the host events; a quit is kept for ServiceHostGraphicsEvents.
+void PollHostGraphicsEvents() {
+    for (const auto* event = aurora_update(); event && event->type != AURORA_NONE; ++event)
+        if (event->type == AURORA_EXIT) quitRequested = true;
+}
+
 void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     FlushHostEfbPokes();
     efbPixels.clear();
@@ -170,7 +178,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv);
     if (!frameActive) {
-        aurora_update();
+        PollHostGraphicsEvents(); // mid-GX: the game cannot stop here
         if (hasBegunFrame) aurora::gfx::preserve_next_efb_frame();
         frameActive = aurora_begin_frame();
         hasBegunFrame = true;
@@ -279,8 +287,8 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
 
 void ServiceHostGraphicsEvents() {
     if (!initialized) return;
-    for (const auto* event = aurora_update(); event && event->type != AURORA_NONE; ++event)
-        if (event->type == AURORA_EXIT) throw std::runtime_error("MH3 window closed");
+    PollHostGraphicsEvents();
+    if (quitRequested) throw HostQuit();
 }
 
 void CompleteHostGraphics() {
