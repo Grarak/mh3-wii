@@ -102,7 +102,12 @@ public:
     if (region)
       file.read(region, pack->first, payloadBytes);
 
-    pack->file = std::make_unique<File>(std::move(file));
+    // A resident pack's file closes: the process's open files are limited
+    // (the Vita's sceIo), and a session reads hundreds of packs. One evicted
+    // later reads from its file reopened (read below).
+    if (!region)
+      pack->file = std::make_unique<File>(std::move(file));
+
     std::lock_guard guard(m_lock);
     std::erase_if(m_filling, [&](const Filling& f) { return f.region == region; });
 
@@ -160,7 +165,13 @@ public:
     }
 
     const auto start = std::chrono::steady_clock::now();
-    entry.pack->file->read(out, entry.record->offset, entry.record->bytes);
+
+    // An evicted pack's file was closed: open it for this read only.
+    if (entry.pack->file)
+      entry.pack->file->read(out, entry.record->offset, entry.record->bytes);
+    else
+      File(entry.pack->path).read(out, entry.record->offset, entry.record->bytes);
+
     const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
     auto& s = read_stats();
     s.count.fetch_add(1, std::memory_order_relaxed);
@@ -191,7 +202,7 @@ public:
     uint64_t first = 0;               // file offset of the payloads
     uint8_t* resident = nullptr;      // the payloads in the arena, until evicted (lock held)
     uint64_t residentBytes = 0;
-    std::unique_ptr<File> file;       // kept open
+    std::unique_ptr<File> file;       // kept open while the pack is not resident
   };
 
 private:
@@ -278,8 +289,14 @@ private:
       m_fd = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
       SceIoStat st{};
 
-      if (m_fd < 0 || sceIoGetstatByFd(m_fd, &st) < 0)
-        fail("open");
+      if (m_fd < 0) {
+        char what[32];
+        std::snprintf(what, sizeof(what), "open (0x%08X)", unsigned(m_fd));
+        fail(what);
+      }
+
+      if (sceIoGetstatByFd(m_fd, &st) < 0)
+        fail("stat");
 
       size = st.st_size;
 #else

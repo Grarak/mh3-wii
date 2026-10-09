@@ -2,6 +2,7 @@
 #include "fatal.h"
 #include "disc_image.h"
 #include <aurora/thread_role.hpp>
+#include <psp2/kernel/clib.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/fcntl.h>
@@ -11,8 +12,10 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 #include <psp2/appmgr.h>
+#include <csignal>
 #include <cstdio>
 #include <cerrno>
+#include <unwind.h>
 #include <reent.h>
 #include <algorithm>
 #include <chrono>
@@ -32,8 +35,31 @@ unsigned int _pthread_stack_default_user = 1024 * 1024;
 unsigned int _sceUserMainThreadStackSize = 2 * 1024 * 1024;
 }
 
+namespace {
+_Unwind_Reason_Code PrintFrame(_Unwind_Context* context, void* count) {
+    sceClibPrintf("MH3 abort:   pc 0x%08X\n", unsigned(_Unwind_GetIP(context)));
+    return ++*static_cast<int*>(count) < 32 ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+// abort() on a thread that reports nothing itself (libstdc++ without
+// exceptions aborts on a std::system_error with no message): the thread and
+// its stack, through the kernel's TTY rather than the C library's streams.
+// Then abort goes on (raise again, without this handler).
+void ReportAbort(int) {
+    SceKernelThreadInfo info{};
+    info.size = sizeof(info);
+    const SceUID thread = sceKernelGetThreadId();
+    sceKernelGetThreadInfo(thread, &info);
+    sceClibPrintf("MH3 abort on thread %s (0x%08X), stack 0x%08X+0x%X\n", info.name, unsigned(thread), unsigned(uintptr_t(info.stack)), unsigned(info.stackSize));
+    int frames = 0;
+    _Unwind_Backtrace(PrintFrame, &frames);
+    std::signal(SIGABRT, SIG_DFL);
+}
+} // namespace
+
 void InitializeVitaPlatform(int& argc, char**& argv) {
     aurora::pin_current_thread(aurora::ThreadRole::Game);
+    std::signal(SIGABRT, ReportAbort);
 
     // SceAppMgr supplies an empty argv[0], the SELF path and its own options.
     // Preserve the game's option/value pairs and give the shared parser a

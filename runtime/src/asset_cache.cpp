@@ -54,6 +54,11 @@ constexpr uint64_t MaxExtractedBytes = 512ull << 20;
 // Small enough that game reads waiting on the image's lock are not delayed long.
 constexpr size_t ExtractChunk = 256u << 10;
 
+// Extracted files open at once, the least recently read closing first: the
+// Vita gives a process 50 descriptors, shared with the texture packs and
+// online play's sockets, and 64 MiB of streams were dozens of files.
+constexpr size_t MaxOpenCopies = 6;
+
 uint32_t Le32(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
@@ -143,7 +148,7 @@ struct AssetCache::Impl {
     struct Extract {
         SourceFile file;
         enum class State { None, Queued, Ready } state = State::None;
-        std::FILE* copy = nullptr; // open while Ready
+        std::FILE* copy = nullptr; // open while Ready and recently read (OpenCopy)
         uint64_t used = 0;         // last read, for eviction
         bool failed = false;       // no retry this launch
     };
@@ -160,6 +165,7 @@ struct AssetCache::Impl {
     std::vector<Source> sources;        // by partition offset
     std::vector<Extract> extracts;      // by partition offset
     uint64_t extractedBytes = 0, reads = 0;
+    size_t openCopies = 0;
 
     // Learned prefetch: the streams each map read (cache/files/streams.log,
     // "map-name offset" lines), queued again when that map loads.
@@ -249,7 +255,7 @@ struct AssetCache::Impl {
             std::error_code error;
             const auto size = std::filesystem::file_size(ExtractPath(extracts[i]), error);
 
-            if (!error && size == extracts[i].file.bytes && (extracts[i].copy = std::fopen(ExtractPath(extracts[i]).string().c_str(), "rb"))) {
+            if (!error && size == extracts[i].file.bytes) {
                 extracts[i].state = Extract::State::Ready;
                 extractedBytes += size;
             }
@@ -293,8 +299,41 @@ struct AssetCache::Impl {
         pthread_join(watchdog, nullptr);
 #endif
         for (auto& e : extracts)
-            if (e.copy)
-                std::fclose(e.copy);
+            CloseCopy(e);
+    }
+
+    // Lock held. Opens a Ready file's copy, closing the least recently read
+    // open one beyond MaxOpenCopies.
+    bool OpenCopy(Extract& e) {
+        if (e.copy)
+            return true;
+
+        while (openCopies >= MaxOpenCopies) {
+            Extract* oldest = nullptr;
+
+            for (auto& other : extracts)
+                if (other.copy && (!oldest || other.used < oldest->used))
+                    oldest = &other;
+
+            if (!oldest)
+                break;
+
+            CloseCopy(*oldest);
+        }
+
+        e.copy = std::fopen(ExtractPath(e).string().c_str(), "rb");
+        openCopies += e.copy != nullptr;
+        return e.copy;
+    }
+
+    // Lock held.
+    void CloseCopy(Extract& e) {
+        if (!e.copy)
+            return;
+
+        std::fclose(e.copy);
+        e.copy = nullptr;
+        --openCopies;
     }
 
     void LoadStreamLog() {
@@ -353,18 +392,12 @@ struct AssetCache::Impl {
             return {};
 
         const size_t count = size_t(stop - at);
-        const auto read = [&] { return !std::fseek(e.copy, long(at - e.file.offset), SEEK_SET) && std::fread(out, 1, count, e.copy) == count; };
+        const auto read = [&] { return OpenCopy(e) && !std::fseek(e.copy, long(at - e.file.offset), SEEK_SET) && std::fread(out, 1, count, e.copy) == count; };
 
         // A suspend (the PS button) invalidates descriptors under ux0:data
         // (ENODEV after the resume): open the copy again once and retry.
         if (!read()) {
-            std::FILE* copy = std::fopen(ExtractPath(e).string().c_str(), "rb");
-
-            if (!copy)
-                return Status::Error("Cannot read the extracted " + e.file.path);
-
-            std::fclose(e.copy);
-            e.copy = copy;
+            CloseCopy(e);
 
             if (!read())
                 return Status::Error("Cannot read the extracted " + e.file.path);
@@ -385,8 +418,7 @@ struct AssetCache::Impl {
             if (!oldest)
                 break;
 
-            std::fclose(oldest->copy);
-            oldest->copy = nullptr;
+            CloseCopy(*oldest);
             oldest->state = Extract::State::None;
             extractedBytes -= oldest->file.bytes;
             std::error_code ignored;
@@ -406,7 +438,7 @@ struct AssetCache::Impl {
         const double since = Seconds();
 #endif
         const auto path = ExtractPath(e), temporary = std::filesystem::path(path.string() + ".tmp");
-        std::FILE* copy = nullptr;
+        bool published = false;
         bool written = false;
         Status failure;
         {
@@ -430,8 +462,7 @@ struct AssetCache::Impl {
                 std::filesystem::remove(path, ignored);
                 failure = FsStatus::Rename(temporary, path);
 
-                if (failure.ok())
-                    copy = std::fopen(path.string().c_str(), "rb");
+                published = failure.ok();
             }
         }
 
@@ -440,18 +471,18 @@ struct AssetCache::Impl {
             written = false;
         }
 
-        if (!copy) {
+        if (!published) {
             std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
         }
 #ifdef MH3_DEVELOPMENT
-        if (Seconds() - since > 0.5 || !copy)
-            std::fprintf(stderr, "MH3 asset cache: extracted %s (%llu bytes) in %.2f s%s\n", e.file.path.c_str(), static_cast<unsigned long long>(e.file.bytes), Seconds() - since, copy ? "" : ", failed");
+        if (Seconds() - since > 0.5 || !published)
+            std::fprintf(stderr, "MH3 asset cache: extracted %s (%llu bytes) in %.2f s%s\n", e.file.path.c_str(), static_cast<unsigned long long>(e.file.bytes), Seconds() - since, published ? "" : ", failed");
 #endif
         guard.lock();
 
-        if (copy) {
-            e.copy = copy;
+        // Opened at its first read (OpenCopy).
+        if (published) {
             e.state = Extract::State::Ready;
         } else {
             // Not enough space or a read error: keep reading from the image.

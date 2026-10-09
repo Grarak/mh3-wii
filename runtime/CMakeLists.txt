@@ -490,6 +490,10 @@ if(VITA)
   target_sources(MH3 PRIVATE vita/pthread_embedded.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=pte_osSemaphorePost" "-Wl,--wrap=pte_cancellable_wait")
 
+  # newlib: an exited thread's reclaimed reent closed descriptors 0-2.
+  target_sources(MH3 PRIVATE vita/newlib_reent.c)
+  target_link_options(MH3 PRIVATE "-Wl,--wrap=_reclaim_reent")
+
   # gettimeofday from the process time instead of a system call (6 us):
   # steady_clock, and with it the guest time base, read it. clock_gettime
   # reads the same clock (pthread-embedded's timed waits compare the two).
