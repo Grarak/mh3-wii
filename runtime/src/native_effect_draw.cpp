@@ -22,6 +22,7 @@ struct EffectInputs {
     float texture_matrix[8][12]{};
     bool position_source[8]{};
     uint32_t strategy=0;
+    uint8_t line_size=0,point_size=0;
 } effect;
 
 mh3_res_span Span(uint32_t p,size_t n){return {Memory::GetPointer(p,n),n};}
@@ -112,7 +113,7 @@ void ParticleState(CpuContext *cpu,uint32_t strategy,uint32_t particle,uint32_t 
     // The stock routine emits eight degenerate vertices only to flush GX state.
     // Native submission snapshots the complete material; no pad geometry exists.
 }
-void Emit(const mh3_effect_quad &q,bool textured,const float (*coordinates)[2]=nullptr,uint32_t size_code=0,bool point=false){
+void Emit(const mh3_effect_quad &q,bool textured,const float (*coordinates)[2]=nullptr,uint32_t size_code=0,bool point=false,bool strip=false){
     AuroraNativeMaterialGeometry geometry{};if(!aurora_allocate_native_material_geometry(4,6,&geometry))return;
     const float defaults[4][2]={{0,1},{0,0},{1,0},{1,1}},zero[4][2]={};const auto &material=GetNativeMaterialState();mh3_effect_vertex_inputs input{};
     std::memcpy(input.texture_matrix,effect.texture_matrix,sizeof(input.texture_matrix));for(uint32_t i=0;i<8;i++)input.position_source[i]=effect.position_source[i];input.normal[0]=1;float normal_matrix[9];if(GetNativeNormalMatrix(0,normal_matrix)){for(uint32_t r=0;r<3;r++)input.normal[r]=normal_matrix[3*r];float n=std::sqrt(input.normal[0]*input.normal[0]+input.normal[1]*input.normal[1]+input.normal[2]*input.normal[2]);if(n>1e-5f)for(float &v:input.normal)v/=n;}else if(material.channel[0].color.lighting||material.channel[0].alpha.lighting){throw std::runtime_error("Lit effect has unresolved inherited normal matrix0");}for(uint32_t c=0;c<2;c++)std::memcpy(input.color[c],material.channel[c].material_color,4);
@@ -120,7 +121,7 @@ void Emit(const mh3_effect_quad &q,bool textured,const float (*coordinates)[2]=n
     if(size_code){
         if(point)mh3_effect_expand_point(&GetNativeDrawState(),float(size_code)/6,geometry.vertices);else mh3_effect_expand_line(&GetNativeDrawState(),float(size_code)/6,geometry.vertices);
         for(uint32_t i=0;i<4;i++){if(point&&(i&1))geometry.vertices[i].texcoord[0][0]+=1;if(point&&i>=2)geometry.vertices[i].texcoord[0][1]+=1;if(!point&&(i&1))geometry.vertices[i].texcoord[0][1]+=1;}mh3_effect_strip_indices(4,geometry.indices);
-    }else mh3_effect_quad_indices(0,geometry.indices);
+    }else if(strip)mh3_effect_strip_indices(4,geometry.indices);else mh3_effect_quad_indices(0,geometry.indices);
     SubmitNativeMaterialGeometry(geometry);
 }
 struct BillboardContext {CpuContext *cpu;uint32_t strategy,info,manager,resource,first_fn,next_fn,rotation_out,sine_out;};
@@ -271,7 +272,7 @@ void DrawSmall(void *opaque,uint32_t id,const mh3_effect_particle *p,float width
     mh3_effect_quad q{};const float point_uv[4][2]={},line_uv[4][2]={{0,0},{0,0},{0,1},{0,1}};
     if(s.point)for(uint32_t i=0;i<4;i++)std::memcpy(q.position[i],p->position,12);
     else{GuestCall game{c.cpu};game.Call<0x800A7F64>({id,s.movement_out});float movement[3];ReadVector(s.movement_out,movement,3);float length=std::sqrt(movement[0]*movement[0]+movement[1]*movement[1]+movement[2]*movement[2]);if(length==0)return;for(uint32_t i=0;i<4;i++)for(uint32_t k=0;k<3;k++)q.position[i][k]=i<2?p->position[k]:p->position[k]-movement[k]/length*height;}
-    bool first=s.last_size==0;ParticleState(c.cpu,c.strategy,id,c.resource,c.info,uint32_t(first));s.last_size=code;Emit(q,effect.resource.texture_count!=0,s.point?point_uv:line_uv,code,s.point);
+    bool first=s.last_size==0;ParticleState(c.cpu,c.strategy,id,c.resource,c.info,uint32_t(first));s.last_size=code;if(s.point)effect.point_size=uint8_t(code);else effect.line_size=uint8_t(code);Emit(q,effect.resource.texture_count!=0,s.point?point_uv:line_uv,code,s.point);
 }
 void SmallStrategy(CpuContext *cpu,bool point){
     GuestFrame frame(cpu,0xc0);SmallParticleContext s{{cpu,frame.Arg(3),frame.Arg(4),frame.Arg(5),0,0,0,0,0},frame[0x70],0,point};auto &c=s.base;c.resource=FlatRead32(c.manager+0x24)+0x9c;GuestCall game{cpu};
@@ -299,3 +300,169 @@ REGISTER_NATIVE_FUNCTION_AS(0x800B8030,MH3_EffectStrategySetup,"EffectStripeSetu
 REGISTER_NATIVE_FUNCTION_AS(0x800C4594,MH3_EffectStrategySetup,"EffectSmoothStripeSetup");
 REGISTER_NATIVE_FUNCTION_AS(0x800B768C,MH3_EffectCullPadding,"EffectStripeCullPadding");
 REGISTER_NATIVE_FUNCTION_AS(0x800C3D5C,MH3_EffectCullPadding,"EffectSmoothStripeCullPadding");
+namespace {
+struct DirectionalContext {BillboardContext base;uint32_t context,direction_fn,rotation_matrix,size_matrix,movement_out,direction_out;mh3_effect_directional_inputs inputs;float pivot[2];};
+void DirectionalQuad(void *opaque,uint32_t id,const mh3_effect_particle *p,float width,float height){
+    auto &d=*static_cast<DirectionalContext*>(opaque);auto &c=d.base;GuestCall game{c.cpu};float stretch=1;
+    if(FlatRead8(c.resource+0xb0)){game.Call<0x800A7F64>({id,d.movement_out});float movement[3];ReadVector(d.movement_out,movement,3);float magnitude=std::sqrt(movement[0]*movement[0]+movement[1]*movement[1]+movement[2]*movement[2]);stretch=1+float(float(FlatReadFloat32(0x8079863c)*magnitude)/height);}
+    game.Call<0x800BCEFC>({d.rotation_matrix,id,FlatRead8(c.resource+0xaf)});game.Call<0x800BCD78>({d.size_matrix,FlatRead8(c.resource+0xb1),d.rotation_matrix},{d.pivot[0],d.pivot[1],width,height,stretch});ReadVector(d.size_matrix,d.inputs.size_matrix,12);
+    game(d.direction_fn,{d.direction_out,d.context,id});ReadVector(d.direction_out,d.inputs.direction,3);ReadVector(id+0xcc,d.inputs.history,3);std::memcpy(d.inputs.position,p->position,12);float history[3],matrix[12];mh3_effect_directional_matrix(&d.inputs,history,matrix);WriteVector(id+0xcc,history,3);
+    uint32_t planes=1u+(FlatRead8(c.resource+0xad)==1);
+    for(uint32_t plane=0;plane<planes;plane++){
+        mh3_effect_quad q;
+        if(d.inputs.screen_facing){float center[3],a[3],b[3];for(uint32_t r=0;r<3;r++){center[r]=matrix[4*r+3];a[r]=matrix[4*r+plane]+matrix[4*r+plane+1];b[r]=matrix[4*r+plane]-matrix[4*r+plane+1];}mh3_effect_quad_axes(center,a,b,&q);}
+        else{mh3_effect_quad canonical;for(uint32_t v=0;v<4;v++)ReadVector(0x8056ff30+0x30*plane+12*v,canonical.position[v],3);mh3_effect_quad_transform(matrix,&canonical,&q);}
+        Emit(q,effect.resource.texture_count!=0);
+    }
+}
+void DirectionalStrategy(CpuContext *cpu,bool screen){
+    GuestFrame frame(cpu,0x240);DirectionalContext d{{cpu,frame.Arg(3),frame.Arg(4),frame.Arg(5),0,0,0,0,0},frame[0x70],0,frame[0x140],frame[0x180],frame[0x1c0],frame[0x1d0],{}, {}};auto &c=d.base;c.resource=FlatRead32(c.manager+0x24)+0x9c;GuestCall game{cpu};
+    TextureMaps(c.strategy,c.resource);Material(c.strategy,c.resource,c.info);Channels(c.strategy,c.resource,c.info);game.Call<0x800B7E14>({c.info,frame[0x10]});game.Call<0x800C8F74>({d.context,frame[0x10],c.manager});
+    float view[12],local[12];ReadVector(frame[0x10],view,12);ReadVector(d.context+0x38,local,12);for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)d.inputs.view_local[4*r+col]=view[4*r]*local[col]+view[4*r+1]*local[4+col]+view[4*r+2]*local[8+col]+(col==3?view[4*r+3]:0);d.inputs.screen_facing=screen;
+    float initial[3];
+    if(screen){ReadVector(0x806970ac,initial,3);ReadVector(0x80697088,d.inputs.fallback,3);float identity[12];ReadVector(0x806970b8,identity,12);SetNativePositionMatrix(identity);}
+    else{SetNativePositionMatrix(d.inputs.view_local);float inverse[12],global[12],basis[12];ReadVector(d.context+0x68,inverse,12);if(FlatRead8(c.resource+0xae)==7)std::memcpy(basis,inverse,48);else{ReadVector(d.context+8,global,12);for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)basis[4*r+col]=inverse[4*r]*global[col]+inverse[4*r+1]*global[4+col]+inverse[4*r+2]*global[8+col]+(col==3?inverse[4*r+3]:0);}for(uint32_t r=0;r<3;r++){initial[r]=basis[4*r+1];d.inputs.fallback[r]=basis[4*r+2];}float n=std::sqrt(d.inputs.fallback[0]*d.inputs.fallback[0]+d.inputs.fallback[1]*d.inputs.fallback[1]+d.inputs.fallback[2]*d.inputs.fallback[2]);if(n!=0)for(float &v:d.inputs.fallback)v/=n;}
+    for(uint32_t p=game.Call<0x800B5BA4>({c.manager});p&&FlatReadFloat32(p+0xcc)>1;p=game.Call<0x800B5B98>({c.manager,p}))WriteVector(p+0xcc,initial,3);
+    d.direction_fn=game.Virtual<0x18>(c.strategy,{c.manager});uint32_t order=FlatRead16(c.resource)&0x800;c.first_fn=game.Virtual<0x10>(c.strategy,{order});c.next_fn=game.Virtual<0x14>(c.strategy,{order});d.pivot[0]=float(int8_t(FlatRead8(c.resource+0xa9)))/100;d.pivot[1]=float(int8_t(FlatRead8(c.resource+0xaa)))/100;
+    mh3_effect_billboard_source source{&d,First,Next,ReadParticle,Prepare,nullptr,nullptr};mh3_effect_draw_particles(FlatReadFloat32(0x80798638),&source,DirectionalQuad);
+}
+}
+extern "C" void MH3_EffectDirectionalStrategy(CpuContext *cpu){DirectionalStrategy(cpu,false);}
+extern "C" void MH3_EffectDirectionalBillboardStrategy(CpuContext *cpu){DirectionalStrategy(cpu,true);}
+REGISTER_NATIVE_FUNCTION_AS(0x800BC48C,MH3_EffectDirectionalStrategy,"EffectDirectionalStrategy");
+REGISTER_NATIVE_FUNCTION_AS(0x800BD298,MH3_EffectDirectionalBillboardStrategy,"EffectDirectionalBillboardStrategy");
+namespace {
+struct RibbonContext {CpuContext *cpu;uint32_t strategy,context,flags,direction_fn,first_fn,next_fn,manager,orientation,size_matrix,direction_out;float pivot;float axes[2][3];};
+uint32_t RibbonFirst(void *opaque){auto &r=*static_cast<RibbonContext*>(opaque);return GuestCall{r.cpu}(r.first_fn,{r.manager});}
+uint32_t RibbonNext(void *opaque,uint32_t p){auto &r=*static_cast<RibbonContext*>(opaque);return GuestCall{r.cpu}(r.next_fn,{r.manager,p});}
+void RibbonPair(void *opaque,uint32_t p,int origin,float out[2][3]){
+    auto &r=*static_cast<RibbonContext*>(opaque);GuestCall game{r.cpu};if(!p)p=game.Call<0x800B5AC8>({r.manager});game(r.direction_fn,{r.direction_out,r.context,p});uint32_t position=origin?r.context+0xa4:p+0xac;
+    game.Call<0x800B584C>({r.orientation,r.strategy,r.context,r.flags,p,r.direction_out,position});game.Call<0x800B5334>({r.size_matrix,r.strategy,p},{r.pivot});float orientation[12],size[12],matrix[12];ReadVector(r.orientation,orientation,12);ReadVector(r.size_matrix,size,12);
+    for(uint32_t row=0;row<3;row++)for(uint32_t col=0;col<4;col++)matrix[4*row+col]=orientation[4*row]*size[col]+orientation[4*row+1]*size[4+col]+orientation[4*row+2]*size[8+col]+(col==3?orientation[4*row+3]:0);
+    for(uint32_t side=0;side<2;side++)for(uint32_t row=0;row<3;row++)out[side][row]=((matrix[4*row]*r.axes[side][0]+matrix[4*row+1]*r.axes[side][1])+matrix[4*row+2]*r.axes[side][2])+matrix[4*row+3];
+}
+void RibbonSubmit(void *opaque,const mh3_effect_quad *q,const float uv[4][2]){auto &r=*static_cast<RibbonContext*>(opaque);Emit(*q,(r.flags&1)!=0,uv,0,false,true);}
+}
+extern "C" void MH3_EffectRibbonDraw(CpuContext *cpu){
+    GuestFrame frame(cpu,0xc0);RibbonContext r{cpu,frame.Arg(3),frame.Arg(4),frame.Arg(5),0,0,0,FlatRead32(frame.Arg(4)),frame[0x10],frame[0x40],frame[0x70],0,{}};GuestCall game{cpu};uint32_t resource=FlatRead32(r.manager+0x24)+0x9c,count=game.Call<0x800B5BB8>({r.strategy,r.manager});
+    r.direction_fn=game.Virtual<0x18>(r.strategy,{r.manager});uint32_t order=FlatRead16(resource)&0x800;r.first_fn=game.Virtual<0x10>(r.strategy,{order});r.next_fn=game.Virtual<0x14>(r.strategy,{order});r.pivot=FlatReadFloat32(0x807985e0)*float(int8_t(FlatRead8(resource+0xa9)));ReadVector(frame.Arg(6),r.axes[0],3);ReadVector(frame.Arg(7),r.axes[1],3);
+    mh3_effect_ribbon_source source{&r,RibbonFirst,RibbonNext,RibbonPair,RibbonSubmit,count,uint8_t(FlatRead8(resource+0xb2)&7),uint8_t(order!=0),uint8_t(game.Call<0x800B5BAC>({r.strategy,resource})==0x40)};mh3_effect_draw_ribbon(&source);
+}
+extern "C" void MH3_EffectTubeSegment(CpuContext *cpu){
+    mh3_effect_tube_frame frames[2];const uint32_t pointers[2]={cpu->gpr[4],cpu->gpr[5]};for(uint32_t i=0;i<2;i++){ReadVector(pointers[i],frames[i].center,3);ReadVector(pointers[i]+0xc,frames[i].axis_y,3);ReadVector(pointers[i]+0x18,frames[i].axis_z,3);frames[i].texture_t=FlatReadFloat32(pointers[i]+0x24);}uint32_t flags=cpu->gpr[6],segments=cpu->gpr[7],angles=cpu->gpr[8];if(!segments||segments>32766)throw std::runtime_error("Invalid effect tube tessellation");
+    for(uint32_t i=0;i<segments;i++){float samples[2][2];ReadVector(angles+8*i,samples[0],2);ReadVector(angles+8*(i+1),samples[1],2);mh3_effect_quad q;float uv[4][2];mh3_effect_tube_quad(frames,samples,i,segments,(flags&16)!=0,&q,uv);Emit(q,(flags&1)!=0,uv,0,false,true);}
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800B4C08,MH3_EffectRibbonDraw,"EffectRibbonDraw");
+REGISTER_NATIVE_FUNCTION_AS(0x800B61A8,MH3_EffectTubeSegment,"EffectTubeSegment");
+
+namespace {
+void Concat(const float a[12],const float b[12],float out[12]) {
+    for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)out[4*r+col]=a[4*r]*b[col]+a[4*r+1]*b[4+col]+a[4*r+2]*b[8+col]+(col==3?a[4*r+3]:0);
+}
+void StripeStrategy(CpuContext *cpu,bool smooth) {
+    GuestFrame frame(cpu,0x280);uint32_t strategy=frame.Arg(3),info=frame.Arg(4),manager=frame.Arg(5),resource=FlatRead32(manager+0x24)+0x9c;GuestCall game{cpu};
+    uint32_t count=game.Call<0x800B5BB8>({strategy,manager});if(!count)return;
+    uint32_t context=frame[0x70],initial=frame[0x150],inverse=frame[0x160],direction=frame[0x1a0],orientation=frame[0x1b0],axis0=frame[0x1f0],axis1=frame[0x200];
+    game.Call<0x800B7E14>({info,frame[0x10]});
+    if(smooth){game.Call<0x800C4D50>({context,frame[0x10],manager});game.Call<0x800C474C>({initial,strategy,resource,context});}
+    else{game.Call<0x800B88EC>({context,frame[0x10],manager});game.Call<0x800B81E8>({initial,strategy,resource,context});}
+    float history[3];ReadVector(initial,history,3);float sentinel=FlatReadFloat32(smooth?0x80798684:0x807985e4);
+    for(uint32_t p=game.Call<0x800B5BA4>({manager});p&&FlatReadFloat32(p+0xcc)>sentinel;p=game.Call<0x800B5B98>({manager,p}))WriteVector(p+0xcc,history,3);
+    uint32_t order=FlatRead16(resource)&0x800,flags=(FlatRead8(resource+0xad)==2?8:0)|(order?16:0);
+    float view[12],local[12],combined[12];ReadVector(frame[0x10],view,12);ReadVector(context+0x38,local,12);Concat(view,local,combined);WriteVector(frame[0x40],combined,12);
+    if(flags&8){float camera[3]={0,0,1};if(game.Call<0x80088428>({inverse,frame[0x40]}))for(uint32_t r=0;r<3;r++)camera[r]=FlatReadFloat32(inverse+16*r+8);WriteVector(context+0xc8,camera,3);}
+    uint32_t closure=smooth?(FlatRead8(resource+0xb2)&7):((FlatRead16(resource+0xb2)>>8)&7);
+    uint32_t first_fn=game.Virtual<0x10>(strategy,{order}),next_fn=game.Virtual<0x14>(strategy,{order});
+    if((closure==1&&count<3)||(closure==0&&count<2)) {
+        uint32_t direction_fn=game.Virtual<0x18>(strategy,{manager});
+        for(uint32_t particle=game(first_fn,{manager});particle;particle=game(next_fn,{manager,particle})) {
+            game(direction_fn,{direction,context,particle});
+            if(smooth)game.Call<0x800C05D8>({orientation,strategy,context,flags,particle,direction,particle+0xac});
+            else game.Call<0x800B584C>({orientation,strategy,context,flags,particle,direction,particle+0xac});
+        }
+        return;
+    }
+    TextureMaps(strategy,resource);Material(strategy,resource,info);Channels(strategy,resource,info);SetNativePositionMatrix(combined);flags|=effect.resource.texture_count!=0;
+    uint32_t particle=game(first_fn,{manager});ParticleState(cpu,strategy,particle,resource,info,1);
+    uint32_t subdivisions=smooth?FlatRead8(resource+0xb1):1;if(!subdivisions)subdivisions=1;
+    if(smooth) {
+        const uint32_t vectors[4]={0x80696a38,0x80696a44,0x80696a50,0x80696a5c},ready[4]={0x80796de8,0x80796de9,0x80796dea,0x80796deb};
+        const float axes[4][3]={{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
+        for(uint32_t i=0;i<4;i++)if(!FlatRead8(ready[i])){WriteVector(vectors[i],axes[i],3);FlatWrite8(ready[i],1);}
+    }
+    if(FlatRead8(resource+0xad)==3) {
+        uint32_t padding=(FlatRead16(resource)&8)!=0;
+        if(!padding){uint32_t owner=FlatRead32(particle+0xc8);owner=FlatRead32(owner+0x20);owner=FlatRead32(owner+0xbc);owner=FlatRead32(owner+0x20);padding=FlatRead8(owner+0xc064)==0;}
+        if(smooth)game.Call<0x800C3908>({strategy,context,subdivisions,flags,padding});
+        else game.Call<0x800B7254>({strategy,context,flags,padding});
+    } else {
+        const float axes[4][3]={{1,0,0},{-1,0,0},{0,0,-1},{0,0,1}};
+        for(uint32_t plane=0;plane<1u+(FlatRead8(resource+0xad)==1);plane++) {
+            if(smooth)game.Call<0x800C279C>({strategy,context,subdivisions,flags,plane?0x80696a50u:0x80696a38u,plane?0x80696a5cu:0x80696a44u});
+            else{WriteVector(axis0,axes[2*plane],3);WriteVector(axis1,axes[2*plane+1],3);game.Call<0x800B4C08>({strategy,context,flags,axis0,axis1});}
+        }
+    }
+}
+struct SmoothRibbonContext {RibbonContext ribbon;uint32_t output,axis_addresses[2];};
+void SmoothPair(void *opaque,uint32_t particle,int,float out[2][3]) {
+    auto &s=*static_cast<SmoothRibbonContext*>(opaque);auto &r=s.ribbon;GuestCall game{r.cpu};
+    /* C0038 is a CPU-only orientation/size producer. Its ninth integer input
+     * is the second axis, passed in the original ABI's stack argument slot. */
+    FlatWrite32(r.cpu->gpr[1]+8,s.axis_addresses[1]);
+    game.Call<0x800C0038>({r.strategy,s.output,r.context,r.flags,particle,r.direction_fn,particle+0xac,s.axis_addresses[0]},{r.pivot,0});
+    ReadVector(s.output,out[0],3);ReadVector(s.output+12,out[1],3);
+}
+void SmoothSubmit(void *opaque,const mh3_effect_quad *quad,const float uv[4][2]) {auto &s=*static_cast<SmoothRibbonContext*>(opaque);RibbonSubmit(&s.ribbon,quad,uv);}
+uint32_t SmoothFirst(void *opaque){return RibbonFirst(&static_cast<SmoothRibbonContext*>(opaque)->ribbon);}
+uint32_t SmoothNext(void *opaque,uint32_t particle){return RibbonNext(&static_cast<SmoothRibbonContext*>(opaque)->ribbon,particle);}
+void SmoothRibbon(CpuContext *cpu,uint8_t closure) {
+    GuestFrame frame(cpu,0xc0);SmoothRibbonContext s{{cpu,frame.Arg(3),frame.Arg(4),frame.Arg(6),0,0,0,FlatRead32(frame.Arg(4)),0,0,0,0,{}},frame[0x20],{frame.Arg(7),frame.Arg(8)}};auto &r=s.ribbon;GuestCall game{cpu};uint32_t resource=FlatRead32(r.manager+0x24)+0x9c;
+    r.direction_fn=game.Virtual<0x18>(r.strategy,{r.manager});uint32_t order=FlatRead16(resource)&0x800;r.first_fn=game.Virtual<0x10>(r.strategy,{order});r.next_fn=game.Virtual<0x14>(r.strategy,{order});r.pivot=FlatReadFloat32(0x80798698)*float(int8_t(FlatRead8(resource+0xa9)));
+    mh3_effect_smooth_ribbon_source source{};source.ribbon={&s,SmoothFirst,SmoothNext,SmoothPair,SmoothSubmit,game.Call<0x800B5BB8>({r.strategy,r.manager}),closure,uint8_t(order!=0),uint8_t((FlatRead8(resource+0xb2)&0xc0)==0x40)};source.subdivisions=frame.Arg(5);
+    if(closure==2){uint32_t youngest=game.Call<0x800B5AC8>({r.manager});if(!youngest)throw std::runtime_error("Smooth stripe origin has no live particle");for(uint32_t axis=0;axis<3;axis++)source.origin_delta[axis]=FlatReadFloat32(r.context+0xa4+4*axis)-FlatReadFloat32(youngest+0xac+4*axis);}
+    mh3_effect_draw_smooth_ribbon(&source);
+}
+void ReadTubeFrame(uint32_t pointer,mh3_effect_tube_frame &frame){ReadVector(pointer,frame.center,3);ReadVector(pointer+12,frame.axis_y,3);ReadVector(pointer+24,frame.axis_z,3);frame.texture_t=FlatReadFloat32(pointer+36);}
+}
+extern "C" void MH3_EffectStripeStrategy(CpuContext *cpu){StripeStrategy(cpu,false);}
+extern "C" void MH3_EffectSmoothStripeStrategy(CpuContext *cpu){StripeStrategy(cpu,true);}
+extern "C" void MH3_EffectSmoothOpen(CpuContext *cpu){SmoothRibbon(cpu,0);}
+extern "C" void MH3_EffectSmoothClosed(CpuContext *cpu){SmoothRibbon(cpu,1);}
+extern "C" void MH3_EffectSmoothOrigin(CpuContext *cpu){SmoothRibbon(cpu,2);}
+extern "C" void MH3_EffectSmoothTubeSegment(CpuContext *cpu) {
+    uint32_t subdivisions=cpu->gpr[4],segments=cpu->gpr[5],flags=cpu->gpr[9],angles=cpu->gpr[10];
+    if(!subdivisions||!segments||segments>32766)throw std::runtime_error("Invalid smooth effect tube tessellation");
+    mh3_effect_tube_frame control[3],previous,current,frames[2];for(uint32_t i=0;i<3;i++)ReadTubeFrame(cpu->gpr[6+i],control[i]);float weights[3];mh3_effect_spline_weights(0,weights);mh3_effect_spline_tube(control,weights,&previous);float step=1.0f/float(subdivisions);
+    for(uint32_t span=1;span<=subdivisions;span++) {
+        mh3_effect_spline_weights(float(span)*step,weights);mh3_effect_spline_tube(control,weights,&current);
+        /* Original normal order emits the next ring first. */
+        frames[0]=current;frames[1]=previous;
+        for(uint32_t i=0;i<segments;i++){float samples[2][2];ReadVector(angles+8*i,samples[0],2);ReadVector(angles+8*(i+1),samples[1],2);mh3_effect_quad quad;float uv[4][2];mh3_effect_tube_quad(frames,samples,i,segments,(flags&16)!=0,&quad,uv);Emit(quad,(flags&1)!=0,uv,0,false,true);}
+        previous=current;
+    }
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800B7728,MH3_EffectStripeStrategy,"EffectStripeStrategy");
+REGISTER_NATIVE_FUNCTION_AS(0x800C3DEC,MH3_EffectSmoothStripeStrategy,"EffectSmoothStripeStrategy");
+REGISTER_NATIVE_FUNCTION_AS(0x800C179C,MH3_EffectSmoothOpen,"EffectSmoothOpen");
+REGISTER_NATIVE_FUNCTION_AS(0x800C1C30,MH3_EffectSmoothClosed,"EffectSmoothClosed");
+REGISTER_NATIVE_FUNCTION_AS(0x800C2148,MH3_EffectSmoothOrigin,"EffectSmoothOrigin");
+REGISTER_NATIVE_FUNCTION_AS(0x800C1084,MH3_EffectSmoothTubeSegment,"EffectSmoothTubeSegment");
+extern "C" void MH3_NativeMovieCleanup(CpuContext *cpu) {
+    GuestFrame frame(cpu,0x20);GuestCall game{cpu};game.Call<0x804E91A0>({1});game.Call<0x804E9010>();game.Call<0x804E8050>();game.Call<0x80523B10>();game.Call<0x8046DAA0>({0});game.Call<0x804DF7B0>();game.Call<0x804DDAD0>();game.Call<0x804C2E80>();
+    /* Only the removed legacy GX completion callbacks were cleared here.
+     * All CPU/VI cleanup is retained; native rendering has no installed GX callback. */
+    game.Call<0x804FD8E0>({0});game.Call<0x804FD9A0>({0});game.Call<0x804E7790>({0});
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804360B0,MH3_NativeMovieCleanup,"NativeMovieCleanup");
+extern "C" void MH3_EffectLineLeaf(CpuContext *cpu) {
+    if(!effect.line_size)throw std::runtime_error("Effect line leaf has unresolved width");
+    mh3_effect_quad q;for(uint32_t i=0;i<4;i++)ReadVector(cpu->gpr[i<2?3:4],q.position[i],3);
+    const float uv[4][2]={{0,0},{0,0},{0,1},{0,1}};Emit(q,cpu->gpr[5]!=0,uv,effect.line_size,false);
+}
+extern "C" void MH3_EffectPointLeaf(CpuContext *cpu) {
+    if(!effect.point_size)throw std::runtime_error("Effect point leaf has unresolved width");
+    mh3_effect_quad q;for(uint32_t i=0;i<4;i++)ReadVector(cpu->gpr[3],q.position[i],3);
+    const float uv[4][2]={};Emit(q,cpu->gpr[4]!=0,uv,effect.point_size,true);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800BF52C,MH3_EffectLineLeaf,"EffectLineLeaf");
+REGISTER_NATIVE_FUNCTION_AS(0x800BFD30,MH3_EffectPointLeaf,"EffectPointLeaf");

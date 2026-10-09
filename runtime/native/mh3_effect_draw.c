@@ -43,7 +43,7 @@ mh3_res_status mh3_effect_material_read(mh3_res_span resource,mh3_effect_materia
     *out=m;return MH3_RES_OK;
 }
 void mh3_effect_material_apply(const mh3_effect_material *r,const mh3_native_material_state *inherited,mh3_native_material_state *out){
-    mh3_native_material_state m=*inherited;m.texgen_count=r->texture_count;m.tev_count=r->stage_count;m.cull_mode=0;m.indirect_count=(r->flags&0x40)?1:0;
+    mh3_native_material_state m=*inherited;m.texgen_count=r->texture_count;m.tev_count=r->stage_count;m.cull_mode=0;m.clip_mode_known=1;m.clip_disabled=(r->flags&8)!=0;m.indirect_count=(r->flags&0x40)?1:0;
     memcpy(m.tev,r->stages,r->stage_count*sizeof(r->stages[0]));
     m.swaps[0]=(mh3_pack_swap_table){15,{0,1,2,3}};
     for(uint32_t f=0;f<MH3_PIXEL_FIELD_COUNT;f++)if(r->pixel.known&(UINT64_C(1)<<f)){m.pixel.known|=UINT64_C(1)<<f;m.pixel.values[f]=r->pixel.values[f];}
@@ -187,4 +187,126 @@ void mh3_effect_expand_line(const mh3_draw_state *d,float width,AuroraNativeMate
     float vw=d->viewport[2],vh=d->viewport[3],wa=v[0].position[3],wb=v[2].position[3];if(vw<=0||vh<=0||wa==0||wb==0)return;
     float x=(v[2].position[0]/wb-v[0].position[0]/wa)*vw,y=(v[2].position[1]/wb-v[0].position[1]/wa)*vh,n=sqrtf(x*x+y*y);if(n>1e-5f){x/=n;y/=n;}else{x=1;y=0;}
     for(uint32_t i=0;i<4;i++){float sign=(i&1)?1:-1;v[i].position[0]+=-y*width/vw*sign*v[i].position[3];v[i].position[1]+=x*width/vh*sign*v[i].position[3];}
+}
+static void cross(const float a[3],const float b[3],float out[3]){float v[3]={a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};memcpy(out,v,12);}
+static int normalize(float v[3]){float n=sqrtf(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);if(n==0)return 0;for(uint32_t i=0;i<3;i++)v[i]/=n;return 1;}
+void mh3_effect_directional_matrix(const mh3_effect_directional_inputs *in,float history[3],float out[12]){
+    float a[3],d[3],z[3],basis[12];memcpy(d,in->direction,12);
+    if(in->screen_facing){
+        float raw[3];for(uint32_t r=0;r<3;r++)raw[r]=(in->view_local[4*r]*d[0]+in->view_local[4*r+1]*d[1])+in->view_local[4*r+2]*d[2];memcpy(d,raw,12);normalize(d);
+        a[0]=raw[1];a[1]=-raw[0];a[2]=0;
+        if(!normalize(a)){cross(raw,in->history,a);if(!normalize(a))memcpy(a,in->fallback,12);cross(a,raw,z);}else{z[0]=-raw[0]*raw[2];z[1]=-raw[1]*raw[2];z[2]=raw[0]*raw[0]+raw[1]*raw[1];}normalize(z);memcpy(history,z,12);
+        for(uint32_t r=0;r<3;r++){float scale=sqrtf(in->view_local[r]*in->view_local[r]+in->view_local[4+r]*in->view_local[4+r]+in->view_local[8+r]*in->view_local[8+r]);for(uint32_t row=0;row<3;row++)basis[4*row+r]=(r==0?a[row]:r==1?d[row]:z[row])*scale;}
+        for(uint32_t r=0;r<3;r++)basis[4*r+3]=((in->view_local[4*r]*in->position[0]+in->view_local[4*r+1]*in->position[1])+in->view_local[4*r+2]*in->position[2])+in->view_local[4*r+3];
+    }else{
+        cross(in->history,d,z);if(!normalize(z))memcpy(z,in->fallback,12);cross(d,z,a);memcpy(history,a,12);
+        for(uint32_t r=0;r<3;r++){basis[4*r]=a[r];basis[4*r+1]=d[r];basis[4*r+2]=z[r];basis[4*r+3]=in->position[r];}
+    }
+    concat(basis,in->size_matrix,out);
+}
+static void ribbon_append(const mh3_effect_ribbon_source *s,uint32_t particle,int origin,float fraction,float previous[2][3],float *previous_uv,int *have_previous){
+    float pair[2][3];s->pair(s->context,particle,origin,pair);
+    if(*have_previous){mh3_effect_quad q;float uv[4][2]={{1,*previous_uv},{0,*previous_uv},{1,fraction},{0,fraction}};memcpy(q.position[0],previous[0],12);memcpy(q.position[1],previous[1],12);memcpy(q.position[2],pair[0],12);memcpy(q.position[3],pair[1],12);s->submit(s->context,&q,uv);}
+    memcpy(previous,pair,24);*previous_uv=fraction;*have_previous=1;
+}
+void mh3_effect_draw_ribbon(const mh3_effect_ribbon_source *s){
+    uint32_t count=s->count+(s->closure==1||s->closure==2),first=s->first(s->context);if(!first||count<2)return;
+    float previous[2][3],previous_uv=0;int have=0,index=s->reverse?(int)count-1:0,step=s->reverse?-1:1;float scale=s->individual_uv?1:1.0f/(float)(count-1);
+    if(s->closure==2&&!s->reverse){ribbon_append(s,0,1,scale*(float)index,previous,&previous_uv,&have);index+=step;}
+    for(uint32_t p=first;p;p=s->next(s->context,p)){ribbon_append(s,p,0,scale*(float)index,previous,&previous_uv,&have);index+=step;}
+    if(s->closure==1)ribbon_append(s,first,0,scale*(float)index,previous,&previous_uv,&have);
+    if(s->closure==2&&s->reverse)ribbon_append(s,0,1,scale*(float)index,previous,&previous_uv,&have);
+}
+void mh3_effect_tube_quad(const mh3_effect_tube_frame f[2],const float angles[2][2],uint32_t sample,uint32_t segments,int reverse,mh3_effect_quad *out,float uv[4][2]){
+    for(uint32_t i=0;i<4;i++){uint32_t end=(i&1)^(reverse!=0),angle=i/2;for(uint32_t k=0;k<3;k++)out->position[i][k]=(f[end].axis_y[k]*angles[angle][1]+f[end].axis_z[k]*angles[angle][0])+f[end].center[k];uv[i][0]=(float)(sample+angle)/(float)segments;uv[i][1]=f[end].texture_t;}
+}
+
+/* Quadratic B-spline used by the NW4R smooth stripe strategy. Each operation
+ * retains the single-precision boundary present in the original PPC helper. */
+void mh3_effect_spline_weights(float t,float out[3]) {
+    float square=t*t,half=0.5f*square;
+    out[0]=0.5f+(half-t);out[1]=0.5f+(-square+t);out[2]=half;
+}
+void mh3_effect_spline_pair(const mh3_effect_ribbon_pair frames[3],const float w[3],
+                            mh3_effect_ribbon_pair *out) {
+    for(unsigned side=0;side<2;side++)for(unsigned axis=0;axis<3;axis++)
+        out->position[side][axis]=(frames[0].position[side][axis]*w[0]+frames[1].position[side][axis]*w[1])+frames[2].position[side][axis]*w[2];
+    out->texture_t=(frames[0].texture_t*w[0]+frames[1].texture_t*w[1])+frames[2].texture_t*w[2];
+}
+void mh3_effect_spline_tube(const mh3_effect_tube_frame frames[3],const float w[3],
+                            mh3_effect_tube_frame *out) {
+    for(unsigned axis=0;axis<3;axis++) {
+        out->center[axis]=(frames[0].center[axis]*w[0]+frames[1].center[axis]*w[1])+frames[2].center[axis]*w[2];
+        out->axis_y[axis]=(frames[0].axis_y[axis]*w[0]+frames[1].axis_y[axis]*w[1])+frames[2].axis_y[axis]*w[2];
+        out->axis_z[axis]=(frames[0].axis_z[axis]*w[0]+frames[1].axis_z[axis]*w[1])+frames[2].axis_z[axis]*w[2];
+    }
+    out->texture_t=(frames[0].texture_t*w[0]+frames[1].texture_t*w[1])+frames[2].texture_t*w[2];
+}
+typedef struct smooth_output {
+    const mh3_effect_ribbon_source *source;
+    mh3_effect_ribbon_pair previous;
+    int have_previous;
+} smooth_output;
+static void smooth_emit(smooth_output *stream,const mh3_effect_ribbon_pair *pair) {
+    if(stream->have_previous) {
+        mh3_effect_quad quad;float uv[4][2];
+        for(unsigned side=0;side<2;side++) {
+            memcpy(quad.position[side],stream->previous.position[side],sizeof(quad.position[side]));
+            memcpy(quad.position[side+2],pair->position[side],sizeof(quad.position[side]));
+            uv[side][0]=uv[side+2][0]=side?0:1;
+            uv[side][1]=stream->previous.texture_t;uv[side+2][1]=pair->texture_t;
+        }
+        stream->source->submit(stream->source->context,&quad,uv);
+    }
+    stream->previous=*pair;stream->have_previous=1;
+}
+static void smooth_segment(smooth_output *stream,uint32_t count,const mh3_effect_ribbon_pair *a,
+                           const mh3_effect_ribbon_pair *b,const mh3_effect_ribbon_pair *c,int endpoint) {
+    mh3_effect_ribbon_pair frames[3]={*a,*b,*c},out;float weights[3];
+    if(endpoint){mh3_effect_spline_weights(1,weights);mh3_effect_spline_pair(frames,weights,&out);smooth_emit(stream,&out);return;}
+    float step=1.0f/(float)count;
+    for(uint32_t i=0;i<count;i++){mh3_effect_spline_weights((float)i*step,weights);mh3_effect_spline_pair(frames,weights,&out);smooth_emit(stream,&out);}
+}
+void mh3_effect_draw_smooth_ribbon(const mh3_effect_smooth_ribbon_source *input) {
+    const mh3_effect_ribbon_source *s=&input->ribbon;
+    if(!s->count||!input->subdivisions)return;
+    uint32_t particle=s->first(s->context);if(!particle)return;
+    int reverse=s->reverse!=0,step=reverse?-1:1;
+    float scale=s->individual_uv?1.0f:1.0f/(float)(s->count-(s->closure==0));
+    int32_t index=reverse?(int32_t)s->count-(s->closure==0):0;
+    if(s->closure==1){scale=s->individual_uv?0.5f:0.5f/(float)s->count;index=reverse?(int32_t)s->count*2+1:-1;step=reverse?-2:2;}
+    mh3_effect_ribbon_pair a,b,c,first,second;
+    smooth_output stream={s,{{{0}},0},0};
+    s->pair(s->context,particle,0,b.position);b.texture_t=(float)index*scale;first=b;a=b;
+    index+=step;
+    if(s->closure==2&&!reverse) {
+        c=b;c.texture_t=(float)index*scale;
+        for(unsigned side=0;side<2;side++)for(unsigned axis=0;axis<3;axis++)b.position[side][axis]+=input->origin_delta[axis];
+        a=b;smooth_segment(&stream,input->subdivisions,&a,&b,&c,0);a=b;b=c;index+=step;
+    }
+    particle=s->next(s->context,particle);
+    if(s->closure==1) {
+        if(!particle)return;
+        s->pair(s->context,particle,0,c.position);c.texture_t=(float)index*scale;second=c;
+        a=b;b=c;index+=step;particle=s->next(s->context,particle);
+    }
+    for(;particle;particle=s->next(s->context,particle)) {
+        s->pair(s->context,particle,0,c.position);c.texture_t=(float)index*scale;
+        smooth_segment(&stream,input->subdivisions,&a,&b,&c,0);a=b;b=c;index+=step;
+    }
+    if(s->closure==1) {
+        first.texture_t=(float)index*scale;
+        smooth_segment(&stream,input->subdivisions,&a,&b,&first,0);index+=step;
+        second.texture_t=(float)index*scale;
+        smooth_segment(&stream,input->subdivisions,&b,&first,&second,0);
+        smooth_segment(&stream,input->subdivisions,&b,&first,&second,1);
+    } else {
+        if(s->closure==2&&reverse) {
+            c=b;c.texture_t=(float)index*scale;
+            for(unsigned side=0;side<2;side++)for(unsigned axis=0;axis<3;axis++)c.position[side][axis]+=input->origin_delta[axis];
+            smooth_segment(&stream,input->subdivisions,&a,&b,&c,0);a=b;b=c;
+        }
+        smooth_segment(&stream,input->subdivisions,&a,&b,&b,0);
+        smooth_segment(&stream,input->subdivisions,&a,&b,&b,1);
+    }
 }

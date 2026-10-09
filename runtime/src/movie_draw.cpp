@@ -17,7 +17,6 @@
 #include "abi_bridge.h"
 #include "game_step.h"
 #include "native_effect_draw.h"
-#include "port_check.h"
 #include "memory.h"
 #include <initializer_list>
 
@@ -86,9 +85,8 @@ static void MovieDrawFrame(CpuContext* ctx) {
     Memory::Write8(kMovie + kFrameDrawn, 1);
     *ctx = saved;
 }
-extern "C" void func_804344F8(CpuContext* ctx);
 
 extern "C" void MH3_MovieDrawFrame(CpuContext* ctx) {
-    PortCheck::Call(ctx, "MovieDrawFrame", func_804344F8, MovieDrawFrame);
+    MovieDrawFrame(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804344F8, MH3_MovieDrawFrame, "MovieDrawFrame");

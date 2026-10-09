@@ -51,6 +51,12 @@ void mh3_effect_billboard_axes(mh3_effect_billboard *out,const float matrix[12],
 void mh3_effect_billboard_quad(const mh3_effect_billboard *draw,const float position[3],
                                float width,float height,float angle,float sine,float cosine,
                                mh3_effect_quad *out);
+typedef struct mh3_effect_directional_inputs {
+    float view_local[12],size_matrix[12],position[3],direction[3],history[3],fallback[3];
+    uint8_t screen_facing;
+} mh3_effect_directional_inputs;
+void mh3_effect_directional_matrix(const mh3_effect_directional_inputs *input,
+                                   float history_out[3],float matrix_out[12]);
 void mh3_effect_quad_axes(const float center[3],const float diagonal_a[3],const float diagonal_b[3],
                           mh3_effect_quad *out);
 void mh3_effect_quad_transform(const float matrix[12],const mh3_effect_quad *input,mh3_effect_quad *out);
@@ -89,6 +95,31 @@ void mh3_effect_material_vertices(const mh3_draw_state *draw,const mh3_effect_qu
 void mh3_effect_expand_point(const mh3_draw_state *draw,float width,AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_expand_line(const mh3_draw_state *draw,float width,AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_quad_indices(uint16_t base,uint16_t out[6]);
+typedef struct mh3_effect_ribbon_source {
+    void *context;
+    uint32_t (*first)(void *context);
+    uint32_t (*next)(void *context,uint32_t particle);
+    void (*pair)(void *context,uint32_t particle,int origin,float position[2][3]);
+    void (*submit)(void *context,const mh3_effect_quad *quad,const float uv[4][2]);
+    uint32_t count;
+    uint8_t closure,reverse,individual_uv;
+} mh3_effect_ribbon_source;
+void mh3_effect_draw_ribbon(const mh3_effect_ribbon_source *source);
+typedef struct mh3_effect_ribbon_pair {float position[2][3],texture_t;} mh3_effect_ribbon_pair;
+typedef struct mh3_effect_smooth_ribbon_source {
+    mh3_effect_ribbon_source ribbon;
+    uint32_t subdivisions;
+    float origin_delta[3];
+} mh3_effect_smooth_ribbon_source;
+void mh3_effect_spline_weights(float t,float out[3]);
+void mh3_effect_spline_pair(const mh3_effect_ribbon_pair frames[3],const float weights[3],
+                            mh3_effect_ribbon_pair *out);
+void mh3_effect_draw_smooth_ribbon(const mh3_effect_smooth_ribbon_source *source);
+typedef struct mh3_effect_tube_frame {float center[3],axis_y[3],axis_z[3],texture_t;} mh3_effect_tube_frame;
+void mh3_effect_spline_tube(const mh3_effect_tube_frame frames[3],const float weights[3],
+                            mh3_effect_tube_frame *out);
+void mh3_effect_tube_quad(const mh3_effect_tube_frame frames[2],const float angles[2][2],
+                          uint32_t sample,uint32_t segments,int reverse,mh3_effect_quad *out,float uv[4][2]);
 void mh3_effect_strip_indices(uint16_t vertex_count,uint16_t *out);
 #ifdef __cplusplus
 }
