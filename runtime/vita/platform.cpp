@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "fatal.h"
 #include "disc_image.h"
+#include "nand_recover.h"
 #include <aurora/thread_role.hpp>
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/sysmem.h>
@@ -123,6 +124,8 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     // Match Azahar's documented native clock setup using official ScePower
     // rates. Query the resulting clocks in diagnostics rather than assuming
     // the DevKit's shell left them at the intended performance setting.
+    // Before the launcher lists saves or a quest launch reads one.
+    RecoverNandSaves();
     const int armClock = scePowerSetArmClockFrequency(444);
     const int busClock = scePowerSetBusClockFrequency(222);
     const int gpuClock = scePowerSetGpuClockFrequency(222);

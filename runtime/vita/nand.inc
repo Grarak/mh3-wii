@@ -50,10 +50,14 @@ int EnsureNativeDirectory(const std::filesystem::path& path) {
     return created >= 0 ? 0 : NativeIoError(created);
 }
 
+// nand_recover.h (C linkage names the same function from this namespace).
+extern "C" void MH3_RecoverNandReplaces(const char* nandRoot);
+
 void LoadNativeMetadata() {
     const auto root = NandRoot().parent_path();
 
     if (nativeMetadataRoot == root) return;
+    MH3_RecoverNandReplaces(NandRoot().string().c_str());
     nativeNandMetadata.clear();
     nativeMetadataRoot.clear();
     const auto path = root / "nand-metadata.bin";
@@ -254,6 +258,10 @@ int RenameNandEntry(const std::string& from, const std::string& to) {
             if (result < 0) sceIoRename(aside.c_str(), target.c_str());
             else sceIoRemove(aside.c_str());
         }
+
+        // The new save's name and the old one's removal on the card before
+        // the game goes on (MH3_RecoverNandReplaces restores an interrupted one).
+        if (result >= 0) SyncNandFile(-1);
     }
 
     if (result < 0) return NativeIoError(result);
