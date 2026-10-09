@@ -6,6 +6,7 @@
 #include "../native/mh3_model_gpu_inputs.h"
 #include "../native/adapters/model_gpu_bridge.h"
 #include "../native/adapters/model_pose_bridge.h"
+#include <algorithm>
 #include <aurora/native_texture.hpp>
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
@@ -46,10 +47,22 @@ struct ModelSuffix {
 };
 struct PreparedMaterial {ShaderConfig config;ShaderInfo info;mh3_material_requirements requirements{};
     uint64_t configHash=0;bool configHashKnown=false;BaseSuffix baseSuffix;ModelSuffix modelSuffix;};
-PreparedMaterial prepared;
+PreparedMaterial unprepared;
 bool preparedKnown=false;
 bool preparedConfigKnown=false,preparedAdmissionPending=false;
 uint64_t preparedRevision=0;
+struct BasePreparation {
+    mh3_native_material_state source;
+    PreparedMaterial state;
+    uint64_t filter=0,revision=0,lastUse=0;
+};
+constexpr size_t BasePreparationCapacity=64;
+std::vector<BasePreparation> basePreparations;
+size_t activePreparation=BasePreparationCapacity;
+uint64_t preparationClock=0,nextPreparationRevision=0;
+PreparedMaterial& ActivePrepared() {
+    return activePreparation<basePreparations.size() ? basePreparations[activePreparation].state : unprepared;
+}
 struct ModelVariantKey {
     uint64_t baseRevision;
     uint16_t attributes,matrixIndices;
@@ -59,8 +72,13 @@ struct ModelVariantKey {
 };
 struct ModelVariant {ModelVariantKey key;PreparedMaterial state;};
 constexpr size_t ModelVariantCapacity=64;
+static_assert(sizeof(BasePreparation)*BasePreparationCapacity+sizeof(ModelVariant)*ModelVariantCapacity<768*1024);
 std::vector<ModelVariant> modelVariants;
 size_t modelVariantNext=0;
+struct PreparationCounters {
+    uint64_t needs=0,dirtyLookups=0,baseHits=0,fullPreparations=0,baseEvictions=0;
+    uint64_t modelHits=0,modelMisses=0,configHashes=0,suffixHashes=0;
+} preparationCounters;
 bool rasterObserverInstalled=false,publishingMaterialRaster=false;
 struct ProgramKey {ShaderConfig config;uint8_t zeroBias;uint8_t portableZeroBias=0;};
 struct ModelProgramKey {
@@ -85,6 +103,7 @@ uint64_t ConfigHash(const ShaderConfig& config) {
 }
 uint64_t ConfigDigest(PreparedMaterial& state) {
     if(!state.configHashKnown) {
+        ++preparationCounters.configHashes;
         state.configHash=ConfigHash(state.config);state.configHashKnown=true;
     }
     return state.configHash;
@@ -105,6 +124,7 @@ ModelProgramLookup Lookup(const ShaderConfig& config,uint64_t configHash,uint8_t
 ProgramLookup MaterialLookup(PreparedMaterial& state,uint8_t actual,uint8_t portable) {
     auto& suffix=state.baseSuffix;
     if(!suffix.known || suffix.actual!=actual || suffix.portable!=portable) {
+        ++preparationCounters.suffixHashes;
         suffix={actual,portable,Lookup(state.config,ConfigDigest(state),actual,portable).hash,true};
     }
     return {state.config,actual,portable,suffix.hash};
@@ -114,6 +134,7 @@ ModelProgramLookup ModelLookup(PreparedMaterial& state,uint8_t actual,uint8_t po
     auto& suffix=state.modelSuffix;
     if(!suffix.known || suffix.layout!=layout || suffix.actual!=actual || suffix.portable!=portable ||
        suffix.nonzero!=nonzero || suffix.zero!=zero) {
+        ++preparationCounters.suffixHashes;
         suffix={layout,actual,portable,nonzero,zero,
             Lookup(state.config,ConfigDigest(state),actual,portable,layout,nonzero,zero).hash,true};
     }
@@ -445,54 +466,147 @@ template<typename T> bool ChangedFields(const T* a,const T* b,uint64_t fields,un
     }
     return false;
 }
-bool MaterialStructureChanged(const mh3_native_material_state& next) {
-    if(material.tev_count!=next.tev_count || material.texgen_count!=next.texgen_count ||
-       material.channel_count!=next.channel_count ||
-       material.indirect_count!=next.indirect_count) return true;
-    const auto& requirements=prepared.requirements;
+bool SameMaterialStructure(const mh3_native_material_state& source,const mh3_native_material_state& next,
+                           const mh3_material_requirements& requirements) {
+    if(source.tev_count!=next.tev_count || source.texgen_count!=next.texgen_count ||
+       source.channel_count!=next.channel_count || source.indirect_count!=next.indirect_count) return false;
     static_assert(sizeof(mh3_pack_tev_pass)==9);
     static_assert(offsetof(mh3_pack_tev_stage,indirect_add_previous)-offsetof(mh3_pack_tev_stage,color)==33);
-    for(unsigned i=0;i<16;++i) if(ChangedFields(reinterpret_cast<const uint8_t*>(&material.tev[i].color),
-        reinterpret_cast<const uint8_t*>(&next.tev[i].color),requirements.tev[i],MH3_TEV_FIELD_COUNT)) return true;
-    for(unsigned i=0;i<8;++i) if(ChangedFields(material.texgen[i].values,next.texgen[i].values,
-        requirements.texgen[i],MH3_TEXGEN_FIELD_COUNT)) return true;
+    for(unsigned i=0;i<16;++i) {
+        if((next.tev[i].known&requirements.tev[i])!=requirements.tev[i]) return false;
+        if(ChangedFields(reinterpret_cast<const uint8_t*>(&source.tev[i].color),
+            reinterpret_cast<const uint8_t*>(&next.tev[i].color),requirements.tev[i],MH3_TEV_FIELD_COUNT)) return false;
+    }
+    for(unsigned i=0;i<8;++i) {
+        if((next.texgen[i].known&requirements.texgen[i])!=requirements.texgen[i]) return false;
+        if(ChangedFields(source.texgen[i].values,next.texgen[i].values,
+            requirements.texgen[i],MH3_TEXGEN_FIELD_COUNT)) return false;
+    }
     for(unsigned i=0;i<2;++i) {
         static_assert(offsetof(mh3_pack_channel_control,light_mask)==5);
+        const uint32_t controls=requirements.channel[i]&(MH3_CHANNEL_CONTROL_COLOR|MH3_CHANNEL_CONTROL_ALPHA);
+        if((next.channel[i].flags&controls)!=controls) return false;
         if((requirements.channel[i]&MH3_CHANNEL_CONTROL_COLOR) &&
-           std::memcmp(&material.channel[i].color,&next.channel[i].color,5)!=0) return true;
+           std::memcmp(&source.channel[i].color,&next.channel[i].color,5)!=0) return false;
         if((requirements.channel[i]&MH3_CHANNEL_CONTROL_ALPHA) &&
-           std::memcmp(&material.channel[i].alpha,&next.channel[i].alpha,5)!=0) return true;
+           std::memcmp(&source.channel[i].alpha,&next.channel[i].alpha,5)!=0) return false;
     }
     for(unsigned i=0;i<4;++i) {
-        if(ChangedFields(material.swaps[i].rgba,next.swaps[i].rgba,requirements.swaps[i],4)) return true;
+        if((next.swaps[i].known&requirements.swaps[i])!=requirements.swaps[i] ||
+           (next.indirect[i].known&requirements.indirect[i])!=requirements.indirect[i]) return false;
+        if(ChangedFields(source.swaps[i].rgba,next.swaps[i].rgba,requirements.swaps[i],4)) return false;
         static_assert(offsetof(mh3_pack_indirect_stage,scale_t)-offsetof(mh3_pack_indirect_stage,coordinate)==3);
-        if(ChangedFields(&material.indirect[i].coordinate,&next.indirect[i].coordinate,requirements.indirect[i],4)) return true;
+        if(ChangedFields(&source.indirect[i].coordinate,&next.indirect[i].coordinate,requirements.indirect[i],4)) return false;
     }
-    return ChangedFields(material.pixel.values,next.pixel.values,requirements.pixel,MH3_PIXEL_FIELD_COUNT);
+    if((next.pixel.known&requirements.pixel)!=requirements.pixel) return false;
+    return !ChangedFields(source.pixel.values,next.pixel.values,requirements.pixel,MH3_PIXEL_FIELD_COUNT);
+}
+bool MaterialStructureChanged(const mh3_native_material_state& next) {
+    return !SameMaterialStructure(material,next,ActivePrepared().requirements);
+}
+bool SameRequirements(const mh3_material_requirements& a,const mh3_material_requirements& b) {
+    // Compare typed dependencies: the C structure has trailing padding, which
+    // is not part of a recipe's identity and need not survive a value copy.
+    const auto same=[](const auto& x,const auto& y) {
+        return std::equal(std::begin(x),std::end(x),std::begin(y));
+    };
+    return same(a.tev,b.tev) && a.pixel==b.pixel && same(a.texgen,b.texgen) &&
+        same(a.channel,b.channel) && same(a.color,b.color) && same(a.konst,b.konst) &&
+        same(a.swaps,b.swaps) && same(a.indirect,b.indirect) &&
+        same(a.indirect_matrix,b.indirect_matrix) &&
+        a.supported_features==b.supported_features && a.require_clip==b.require_clip;
+}
+void RequirePrepared(const PreparedMaterial& state) {
+    if(material.fog_reference>=0 && !fogKnown)
+        throw std::runtime_error("Native material fog reference has no typed producer");
+    mh3_material_diagnostic diagnostic{};
+    const auto status=mh3_material_state_require(&material,&state.requirements,&diagnostic);
+    if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
+        ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
+        ", fields "+std::to_string(diagnostic.fields));
+}
+bool PreparationFilter(uint64_t& filter) {
+    // Integer rejection tag only. Never read an unknown equation operation,
+    // and never hash an input state merely to search the bounded recipe cache.
+    const uint64_t operations=Bit(MH3_TEV_COLOR_OPERATION)|Bit(MH3_TEV_ALPHA_OPERATION);
+    if(!material.tev_count || (material.tev[0].known&operations)!=operations ||
+       (material.pixel.known&AlphaFields)!=AlphaFields) return false;
+    const auto& pixel=material.pixel.values;
+    const auto compare0=pixel[MH3_PIXEL_ALPHA_COMPARE0],compare1=pixel[MH3_PIXEL_ALPHA_COMPARE1];
+    const bool reference0=compare0!=0 && compare0!=7,reference1=compare1!=0 && compare1!=7;
+    if((reference0 && !(material.pixel.known&Bit(MH3_PIXEL_ALPHA_REFERENCE0))) ||
+       (reference1 && !(material.pixel.known&Bit(MH3_PIXEL_ALPHA_REFERENCE1)))) return false;
+    filter=uint64_t(material.tev_count)|(uint64_t(material.texgen_count)<<5)|
+        (uint64_t(material.channel_count)<<9)|(uint64_t(material.indirect_count)<<11)|
+        (uint64_t(material.tev[0].color.operation)<<14)|(uint64_t(material.tev[0].alpha.operation)<<22)|
+        (uint64_t(fogKnown?fogSource.type:0)<<30)|(uint64_t(fogKnown&&fogSource.range_enabled)<<38)|
+        (uint64_t(fogKnown)<<39)|(uint64_t(compare0)<<40)|(uint64_t(compare1)<<43)|
+        (uint64_t(pixel[MH3_PIXEL_ALPHA_OPERATION])<<46)|
+        (uint64_t(reference0?pixel[MH3_PIXEL_ALPHA_REFERENCE0]:0)<<48)|
+        (uint64_t(reference1?pixel[MH3_PIXEL_ALPHA_REFERENCE1]:0)<<56);
+    return true;
+}
+void ActivatePreparation(size_t index) {
+    activePreparation=index;auto& entry=basePreparations[index];
+    entry.lastUse=++preparationClock;preparedRevision=entry.revision;
+    preparedKnown=preparedConfigKnown=true;preparedAdmissionPending=false;
 }
 PreparedMaterial& EnsurePreparedMaterial() {
+    ++preparationCounters.needs;
     if(!preparedKnown) {
-        auto next=PrepareMaterial();
-        // Several skipped publications can return to identical effective bytes.
-        // Preserve the digest/variants then; no producer hashes eagerly.
-        if(preparedConfigKnown && next.config==prepared.config) {
-            next.configHash=prepared.configHash;next.configHashKnown=prepared.configHashKnown;
-            next.baseSuffix=prepared.baseSuffix;next.modelSuffix=prepared.modelSuffix;
+        ++preparationCounters.dirtyLookups;
+        uint64_t filter=0;const bool filterKnown=PreparationFilter(filter);
+        auto matches=[&](size_t i) {
+            const auto& entry=basePreparations[i];
+            return filterKnown && entry.filter==filter &&
+                SameMaterialStructure(entry.source,material,entry.state.requirements);
+        };
+        size_t hit=BasePreparationCapacity;
+        // Coalesced skipped publications commonly return to the active recipe.
+        if(activePreparation<basePreparations.size() && matches(activePreparation)) hit=activePreparation;
+        else for(size_t i=0;i<basePreparations.size();++i) if(matches(i)) {hit=i;break;}
+        if(hit!=BasePreparationCapacity) {
+            RequirePrepared(basePreparations[hit].state);
+            ++preparationCounters.baseHits;ActivatePreparation(hit);
         } else {
-            ++preparedRevision;modelVariants.clear();modelVariantNext=0;
+            auto next=PrepareMaterial();++preparationCounters.fullPreparations;
+            // Equal canonical outputs can keep the same token and lazy memo,
+            // even if an unused count or first-known NONE fog changed the raw
+            // readset. Requirements must also agree before variants are reused.
+            size_t same=BasePreparationCapacity;
+            for(size_t i=0;i<basePreparations.size();++i) {
+                const auto& entry=basePreparations[i];
+                if(entry.state.config==next.config && SameRequirements(entry.state.requirements,next.requirements)) {
+                    same=i;break;
+                }
+            }
+            if(same!=BasePreparationCapacity) {
+                auto& entry=basePreparations[same];entry.source=material;entry.filter=filter;
+                ActivatePreparation(same);
+            } else {
+                if(preparedConfigKnown && next.config==ActivePrepared().config) {
+                    next.configHash=ActivePrepared().configHash;next.configHashKnown=ActivePrepared().configHashKnown;
+                    next.baseSuffix=ActivePrepared().baseSuffix;next.modelSuffix=ActivePrepared().modelSuffix;
+                }
+                BasePreparation entry{material,next,filter,++nextPreparationRevision,0};
+                size_t index=basePreparations.size();
+                if(basePreparations.capacity()<BasePreparationCapacity) basePreparations.reserve(BasePreparationCapacity);
+                if(index<BasePreparationCapacity) basePreparations.push_back(entry);
+                else {
+                    index=std::min_element(basePreparations.begin(),basePreparations.end(),
+                        [](const auto& a,const auto& b){return a.lastUse<b.lastUse;})-basePreparations.begin();
+                    const auto retired=basePreparations[index].revision;
+                    std::erase_if(modelVariants,[&](const auto& variant){return variant.key.baseRevision==retired;});
+                    modelVariantNext%=ModelVariantCapacity;
+                    basePreparations[index]=entry;++preparationCounters.baseEvictions;
+                }
+                ActivatePreparation(index);
+            }
         }
-        prepared=next;preparedKnown=preparedConfigKnown=true;preparedAdmissionPending=false;
     } else if(preparedAdmissionPending) {
-        if(material.fog_reference>=0 && !fogKnown)
-            throw std::runtime_error("Native material fog reference has no typed producer");
-        mh3_material_diagnostic diagnostic{};
-        const auto status=mh3_material_state_require(&material,&prepared.requirements,&diagnostic);
-        if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
-            ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
-            ", fields "+std::to_string(diagnostic.fields));
-        preparedAdmissionPending=false;
+        RequirePrepared(ActivePrepared());preparedAdmissionPending=false;
     }
-    return prepared;
+    return ActivePrepared();
 }
 std::array<uint32_t,17> ModelLayout(const aurora::gl::MeshLayout& source) {
     std::array<uint32_t,17> result{};result[0]=source.stride;result[1]=source.matrixIndexMask;
@@ -515,8 +629,11 @@ ModelVariantKey ModelRecipe(const mh3_model_gpu_inputs& inputs,const aurora::gl:
 }
 PreparedMaterial& ModelPreparation(const mh3_model_gpu_inputs& inputs,const aurora::gl::MeshLayout& layout) {
     const auto key=ModelRecipe(inputs,layout);
-    for(auto& variant:modelVariants) if(variant.key==key) return variant.state;
-    auto state=prepared;auto& config=state.config;
+    for(auto& variant:modelVariants) if(variant.key==key) {
+        ++preparationCounters.modelHits;return variant.state;
+    }
+    ++preparationCounters.modelMisses;
+    auto state=ActivePrepared();auto& config=state.config;
     config.attrs={};config.vtxStride=0;
     for(unsigned location=0;location<12;++location) if(key.attributes&(1u<<location)) {
         const GXAttr attr=location==0?GX_VA_POS:location==1?GX_VA_NRM:
@@ -542,7 +659,7 @@ PreparedMaterial& ModelPreparation(const mh3_model_gpu_inputs& inputs,const auro
     state.info=aurora::gx::build_shader_info(config);
     // Only identical bytes can inherit the base digest. Model-only use need
     // never hash the unused base configuration.
-    if(!(config==prepared.config)) {
+    if(!(config==ActivePrepared().config)) {
         state.configHash=0;state.configHashKnown=false;state.baseSuffix={};state.modelSuffix={};
     }
     if(modelVariants.capacity()<ModelVariantCapacity) modelVariants.reserve(ModelVariantCapacity);
@@ -551,6 +668,14 @@ PreparedMaterial& ModelPreparation(const mh3_model_gpu_inputs& inputs,const auro
     }
     auto& victim=modelVariants[modelVariantNext];modelVariantNext=(modelVariantNext+1)%ModelVariantCapacity;
     victim={key,state};return victim.state;
+}
+void ClearMaterialPreparations() {
+    preparedKnown=preparedConfigKnown=preparedAdmissionPending=false;
+    basePreparations.clear();activePreparation=BasePreparationCapacity;
+    preparationClock=nextPreparationRevision=0;
+    modelVariants.clear();modelVariantNext=0;preparedRevision=0;
+    // Cumulative owner statistics survive graphics teardown. Retained vector
+    // capacities are still included in the reported fixed CPU storage.
 }
 const mh3_native_texture_binding& Texture(unsigned unit) {
     const auto* binding=GetNativeTextureBinding(unit);
@@ -738,33 +863,33 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     Owner();if(!NativeGraphicsFrameShouldRender()) return;
     EnsurePreparedMaterial();
     const auto& raster=GetNativeDrawState().raster;
-    if(depthBeforeTexture && raster.depth_test && raster.depth_write && bool(prepared.config.alphaCompare))
+    if(depthBeforeTexture && raster.depth_test && raster.depth_write && bool(ActivePrepared().config.alphaCompare))
         throw std::runtime_error("Native early depth write with alpha discard is unsupported");
     uint8_t zeroBias=0;
-    for(unsigned i=0;i<8;++i) if(prepared.info.sampledTextures.test(i)) {
+    for(unsigned i=0;i<8;++i) if(ActivePrepared().info.sampledTextures.test(i)) {
         (void)Texture(i);
         if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
-    const auto portable=PortableSampling(prepared.info,zeroBias);
-    const auto lookup=MaterialLookup(prepared,zeroBias,portable.zeroBias);
+    const auto portable=PortableSampling(ActivePrepared().info,zeroBias);
+    const auto lookup=MaterialLookup(ActivePrepared(),zeroBias,portable.zeroBias);
     auto iterator=programs.find(lookup);
     if(iterator==programs.end()) {
         // Always use the user-selected float native equations. The generator's
         // exact mode exists only for independent reference probes.
-        auto description=aurora::gx::build_shader_description(prepared.config,true,zeroBias,true);
+        auto description=aurora::gx::build_shader_description(ActivePrepared().config,true,zeroBias,true);
         description.origin="runtime/src/native_material.cpp:SubmitNativeMaterialGeometry";
         if(portable.active) {
-            const auto counterpart=aurora::gx::build_shader_description(prepared.config,true,portable.zeroBias,true);
+            const auto counterpart=aurora::gx::build_shader_description(ActivePrepared().config,true,portable.zeroBias,true);
             description.portableVertex=counterpart.vertex;description.portableFragment=counterpart.fragment;
-            description.portableOrigin=PortableOrigin(portable,prepared.info);
+            description.portableOrigin=PortableOrigin(portable,ActivePrepared().info);
         }
         auto program=std::make_shared<aurora::gl::Program>(std::move(description));
-        iterator=programs.emplace(HashedProgramKey<ProgramKey>{{prepared.config,zeroBias,portable.zeroBias},lookup.hash},
+        iterator=programs.emplace(HashedProgramKey<ProgramKey>{{ActivePrepared().config,zeroBias,portable.zeroBias},lookup.hash},
                                  std::move(program)).first;
     }
     AuroraNativeUniforms uniforms{};
-    if(!aurora_allocate_native_uniforms(prepared.info.uniformSize,&uniforms)) return;
-    WriteUniforms(prepared,uniforms);
+    if(!aurora_allocate_native_uniforms(ActivePrepared().info.uniformSize,&uniforms)) return;
+    WriteUniforms(ActivePrepared(),uniforms);
     aurora_submit_native_material_geometry(&geometry,iterator->second->get(),&uniforms);
 }
 void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
@@ -782,8 +907,8 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     if(((draw.layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)&0x1ffu)!=resident.layout->matrixIndexMask)
         throw std::runtime_error("Native model matrix selector layout mismatch");
     mh3_model_gpu_inputs inputs{};
-    Check(mh3_model_gpu_prepare(&draw,uint8_t(prepared.info.sampledTexCoords.to_ulong()),
-          prepared.info.lightingEnabled,GetNativeDrawState().viewport[4],GetNativeDrawState().viewport[5],&inputs),
+    Check(mh3_model_gpu_prepare(&draw,uint8_t(ActivePrepared().info.sampledTexCoords.to_ulong()),
+          ActivePrepared().info.lightingEnabled,GetNativeDrawState().viewport[4],GetNativeDrawState().viewport[5],&inputs),
           "Native model GPU inputs");
     auto& modelState=ModelPreparation(inputs,*resident.layout);const auto& config=modelState.config;
     const auto& raster=GetNativeDrawState().raster;
@@ -827,10 +952,18 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
             mesh.layout.flags});
 #endif
 }
+void GetNativeMaterialPreparationStatistics(uint64_t statistics[12]) {
+    Owner();if(!statistics) return;
+    const std::array<uint64_t,12> values{preparationCounters.needs,preparationCounters.dirtyLookups,
+        preparationCounters.baseHits,preparationCounters.fullPreparations,preparationCounters.baseEvictions,
+        preparationCounters.modelHits,preparationCounters.modelMisses,preparationCounters.configHashes,
+        preparationCounters.suffixHashes,basePreparations.size(),modelVariants.size(),
+        basePreparations.capacity()*sizeof(BasePreparation)+modelVariants.capacity()*sizeof(ModelVariant)};
+    std::copy(values.begin(),values.end(),statistics);
+}
 void ClearNativeMaterialPrograms() {
     Owner();programs.clear();modelPrograms.clear();ClearNativeModelGPU();
-    preparedKnown=preparedConfigKnown=preparedAdmissionPending=false;
-    modelVariants.clear();modelVariantNext=0;preparedRevision=0;
+    ClearMaterialPreparations();
     if(rasterObserverInstalled) SetNativeRasterObserver(nullptr);
     rasterObserverInstalled=false;
 }
