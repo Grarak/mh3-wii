@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 // All allocations in this heap are committed by newlib at startup. Guest RAM
@@ -28,6 +29,56 @@ unsigned int _newlib_heap_size_user = 112 * 1024 * 1024;
 unsigned int _pthread_stack_default_user = 1024 * 1024;
 unsigned int _sceUserMainThreadStackSize = 2 * 1024 * 1024;
 }
+
+namespace {
+// thread_local is native module TLS (cmake/toolchains/vita-clang.cmake): the
+// kernel copies the template vita-elf-create stored to each thread's
+// TPIDRURO. A wrong template or offset would silently corrupt every
+// thread_local, so check an initialized and a zeroed variable on this thread
+// and on a new one before anything else runs. Volatile keeps the compiler from
+// folding the never-written values.
+thread_local volatile uint32_t tlsProbe[2] = {0x4d483354u, 0x4c533321u};
+thread_local volatile uint32_t tlsZero[4];
+uintptr_t ThreadPointer() {
+    uintptr_t tp;
+    asm volatile("mrc p15, 0, %0, c13, c0, 3" : "=r"(tp));
+    return tp;
+}
+const char* CheckThreadTls() {
+    const uintptr_t tp = ThreadPointer(), at = reinterpret_cast<uintptr_t>(&tlsProbe[0]);
+    if (at < tp + 8 || at - tp >= 0x100000)
+        return "a thread_local is not in the block above TPIDRURO";
+    if (tlsProbe[0] != 0x4d483354u || tlsProbe[1] != 0x4c533321u)
+        return "an initialized thread_local does not hold its initial value";
+    for (const auto& value : tlsZero)
+        if (value)
+            return "a zero-initialized thread_local is not zero";
+    tlsProbe[0] = tp;
+    return nullptr;
+}
+void CheckNativeTls() {
+    const char* error = CheckThreadTls();
+    const char* where = "the main thread";
+    if (!error) {
+        uintptr_t workerAt = 0;
+        std::thread([&] {
+            error = CheckThreadTls();
+            workerAt = reinterpret_cast<uintptr_t>(&tlsProbe[0]);
+        }).join();
+        where = "a new thread";
+        if (!error && (workerAt == reinterpret_cast<uintptr_t>(&tlsProbe[0]) || tlsProbe[0] != ThreadPointer()))
+            error = "threads share one thread_local";
+    }
+    if (error) {
+        std::fprintf(stderr, "MH3 Vita: native TLS check failed on %s: %s\n", where, error);
+        std::abort();
+    }
+#ifdef MH3_DEVELOPMENT
+    std::fprintf(stderr, "MH3 Vita: native TLS ok, probe at TPIDRURO + 0x%x\n",
+                 unsigned(reinterpret_cast<uintptr_t>(&tlsProbe[0]) - ThreadPointer()));
+#endif
+}
+} // namespace
 
 #ifdef MH3_DEVELOPMENT
 namespace {
@@ -110,6 +161,7 @@ void InitializeVitaPlatform(int& argc, char**& argv) {
     (void)argc;
     (void)argv;
 #endif
+    CheckNativeTls();
     // Match Azahar's documented native clock setup using official ScePower
     // rates. Query the resulting clocks in diagnostics rather than assuming
     // the DevKit's shell left them at the intended performance setting.

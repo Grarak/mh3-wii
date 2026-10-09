@@ -4,11 +4,16 @@ cd "$(dirname "$0")/.."
 task_build_dir=${MH3_VITA_BUILD_DIR:-build/vita}
 task_sdk=${VITASDK:-/usr/local/vitasdk}
 task_args=()
-# A corrected converter registers real ARM exception-table ranges. Keep the
-# override local to this build instead of replacing tools in the system SDK.
-if [[ -n "${MH3_VITA_ELF_CREATE:-}" ]]; then
-  task_args+=("-DVITA_ELF_CREATE:PATH=$MH3_VITA_ELF_CREATE")
+# The patched converter (/path/to/vita-toolchain) registers real ARM
+# exception-table ranges and emits the module TLS template native
+# thread_local needs; the stock one rejects R_ARM_TLS_LE32. Keep the override
+# local to this build instead of replacing tools in the system SDK.
+task_elf_create=${MH3_VITA_ELF_CREATE:-/path/to/vita-toolchain/build-unwind/src/vita-elf-create}
+if [[ ! -x "$task_elf_create" ]]; then
+  echo "Missing the patched vita-elf-create ($task_elf_create); set MH3_VITA_ELF_CREATE" >&2
+  exit 1
 fi
+task_args+=("-DVITA_ELF_CREATE:PATH=$task_elf_create")
 # Reuse the ARM64 renderer capture build's source downloads when available.
 # Each target still gets independent objects compiled for the proper ABI.
 for task_dependency in abseil-cpp sdl xxhash fmt imgui sqlite3 zstd tracy; do
