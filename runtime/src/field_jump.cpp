@@ -266,6 +266,7 @@ extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
         const uint32_t player = game.Call<MoveWork>({kPlayerMoveWork}) + 0xB20 * uint32_t(int8_t(game.Call<MyPlayerIndex>()));
         const int8_t area = int8_t(game.Call<GetNowAreaNumber>());
         uint32_t exit = area < 0 ? 0 : game.Call<AreaExits>({uint8_t(game.Call<GetNowMapNumber>()), uint8_t(area)});
+        const uint32_t exits = exit;
         *ctx = saved;
 
         for (; exit && int8_t(Memory::Read8(exit)) != -1; exit += kExitBytes)
@@ -273,7 +274,13 @@ extern "C" void MH3_PlayerAreaExit(CpuContext* ctx) {
                 break;
 
         if (!exit || int8_t(Memory::Read8(exit)) == -1) {
-            std::fprintf(stderr, "MH3 field jump: area %d has no exit to area %d\n", area, jump.exitArea);
+            std::fprintf(stderr, "MH3 field jump: area %d has no exit to area %d (exits to", area, jump.exitArea);
+
+            for (uint32_t e = exits; e && int8_t(Memory::Read8(e)) != -1; e += kExitBytes)
+                if (Memory::Read16(e + 2) == kExitCylinder)
+                    std::fprintf(stderr, " %d", int8_t(Memory::Read8(e)));
+
+            std::fprintf(stderr, ")\n");
         } else {
             for (int i = 0; i < 3; ++i)
                 Memory::WriteFloat32(player + kPosition + 4 * i, Memory::ReadFloat32(exit + 4 + 4 * i));

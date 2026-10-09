@@ -24,7 +24,7 @@ namespace {
 // MH3_PORT_CHECK (port_check.h, docs/flags.md): port names or `all`, fuzz
 // entries (P:/E:/C:0xADDR) and the options.
 const DevOptions& Options() {
-    static const DevOptions options("MH3_PORT_CHECK", {"every", "originals", "dump", "fuzz-after", "fuzz-samples"}, DevOptions::Words::Allowed);
+    static const DevOptions options("MH3_PORT_CHECK", {"every", "originals", "dump", "fuzz-after", "fuzz-samples", "fuzz-demo", "fuzz-frames"}, DevOptions::Words::Allowed);
     return options;
 }
 } // namespace
@@ -341,6 +341,143 @@ void RunOutput(CpuContext* ctx, const char* name, Returns returns, void (*origin
     CheckOutputs(ctx, name, int(returns), original, port, outputs);
 }
 
+#ifdef MH3_DEVELOPMENT
+namespace {
+
+constexpr uint32_t kStepCounter = 0x8065AA6C;
+
+// A: entries (A:0xADDR[:KIND], from the player's hook, which runs every step):
+// an enemy action, run once, from fuzz-after on, on an active enemy of that
+// kind (+3), one in the current area if any, taken from the enemy works
+// (get_move_work_adrs(3), as fps_timers.cpp reads them). Samples (fuzz-samples
+// × 4) of its state (+5, each of 0-15 in turn), the substate (+6), its count
+// (+0x20), the motion's frame (channel 0, +0x98, 0-319, or every other run of
+// 16 one of the fuzz-frames=V/V/... values), the event demo clock (0-1023, or
+// every fourth run of 16 one of the fuzz-demo=V/V/... values) and the step
+// counter.
+void FuzzActions(CpuContext* ctx, const std::vector<std::string>& fuzz) {
+    constexpr uint32_t kDemoClock = 0x806D4FA4;
+    static std::set<std::string> done;
+    static const uint32_t samples = uint32_t(Options().Number("fuzz-samples", 64)) * 4;
+
+    // fuzz-demo=V/V/..., fuzz-frames=V/V/...
+    const auto values = [](const char* option) {
+        std::vector<uint32_t> values;
+        const char* text = Options().Value(option);
+
+        for (char* at = const_cast<char*>(text); at && *at;) {
+            values.push_back(uint32_t(std::strtoul(at, &at, 0)));
+
+            if (*at == '/')
+                ++at;
+            else
+                break;
+        }
+
+        return values;
+    };
+
+    static const std::vector<uint32_t> demo = values("fuzz-demo");
+    static const std::vector<uint32_t> frames = values("fuzz-frames");
+    static std::set<uint32_t> kinds;
+
+    // Nothing to do once every A: entry has run.
+    static const size_t actions = [&] {
+        size_t n = 0;
+
+        for (const std::string& item : fuzz)
+            n += item[0] == 'A';
+
+        return n;
+    }();
+
+    if (done.size() == actions)
+        return;
+
+    // The active enemies by kind, those of the current area (0x806BB806) first.
+    constexpr uint32_t kCurrentArea = 0x806BB806;
+    const uint32_t table = Memory::Read32(0x8065AB04);
+    const uint32_t works = table ? Memory::Read32(table + 16 + 3 * 4) : 0;
+    const uint32_t count = table ? Memory::Read16(table + 3 * 2) : 0;
+    std::map<uint32_t, uint32_t> byKind;
+
+    for (uint32_t i = 0, p = works; i < count; ++i, p += 0xB18) {
+        if (Memory::Read8(p) == 0)
+            continue;
+
+        const uint32_t kind = Memory::Read8(p + 3);
+
+        if (Memory::Read8(p + 0x1E1) == Memory::Read8(kCurrentArea))
+            byKind[kind] = p;
+        else
+            byKind.emplace(kind, p);
+
+        if (kinds.insert(kind).second) {
+            std::printf("MH3 port fuzz: enemy kind %u seen (work %08x)\n", kind, p);
+            std::fflush(stdout);
+        }
+    }
+
+    for (const std::string& item : fuzz) {
+        if (item[0] != 'A' || done.count(item))
+            continue;
+
+        char* end = nullptr;
+        const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, &end, 16));
+        const auto found = *end == ':' ? byKind.find(uint32_t(std::strtoul(end + 1, nullptr, 0))) : byKind.begin();
+
+        if (found == byKind.end())
+            continue;
+
+        const uint32_t work = found->second;
+
+        done.insert(item);
+        const CpuContext entry = *ctx;
+        const GameStep::State clock = GameStep::Save();
+        Snapshot start;
+        start.Save();
+        GuestCall game{ctx};
+        forced = true;
+
+        for (uint32_t i = 0; i < samples; ++i) {
+            uint32_t r = fn ^ (i * 0x9E3779B9u);
+            r ^= r >> 15;
+            r *= 0x2C1B3C6Du;
+            r ^= r >> 12;
+            r *= 0x297A2D39u;
+            r ^= r >> 15;
+            Memory::Write8(work + 5, uint8_t(i % 16));
+            Memory::Write8(work + 6, uint8_t(r >> 28));
+            Memory::Write32(work + 0x20, (r >> 4) % 400);
+
+            // Half the frames on (or half a frame, a frame before) a listed one.
+            const float frame = !frames.empty() && i / 16 % 2 == 1 ? float(frames[(r >> 12) % frames.size()]) - 0.5f * float((r >> 24) % 3) : float((r >> 12) % 320);
+            Memory::WriteFloat32(work + 0x98, frame);
+
+            // The motion (MHchar at +0x24) runs: no cross-fade (+0x44), a rate
+            // of 1 or 2 frames (channel 0, +0x5C) and an end past every frame
+            // tried (+0xA4), so the frame checks see the frame.
+            Memory::WriteFloat32(work + 0x24 + 0x44, 0.0f);
+            Memory::WriteFloat32(work + 0x24 + 0x5C, float(1 + (r >> 30) % 2));
+            Memory::WriteFloat32(work + 0x24 + 0xA4, 1000.0f);
+            const bool listed = !demo.empty() && i / 16 % 4 == 3;
+            Memory::Write32(kDemoClock, listed ? demo[(r >> 8) % demo.size()] : (r >> 6) % 0x400);
+            Memory::Write32(kStepCounter, (Memory::Read32(kStepCounter) & ~63u) + 64 + (r >> 20) % 64);
+            game(fn, {work});
+            start.Restore();
+            GameStep::Restore(clock);
+            *ctx = entry;
+        }
+
+        forced = false;
+        std::printf("MH3 port fuzz: %08x done on work %08x (kind %u), %u calls\n", fn, work, Memory::Read8(work + 3), samples);
+        std::fflush(stdout);
+    }
+}
+
+} // namespace
+#endif
+
 void FuzzSlow(CpuContext* ctx, char kind, uint32_t work) {
 #ifdef MH3_DEVELOPMENT
     // The fuzz entries: KIND:0xADDR.
@@ -355,10 +492,17 @@ void FuzzSlow(CpuContext* ctx, char kind, uint32_t work) {
     static const uint32_t after = uint32_t(Options().Number("fuzz-after", 900));
     static std::map<char, uint32_t> calls;
 
-    if (fuzz.empty() || ++calls[kind] != after)
+    if (fuzz.empty())
         return;
 
-    constexpr uint32_t kStepCounter = 0x8065AA6C;
+    const uint32_t call = ++calls[kind];
+
+    if (kind == 'P' && call >= after)
+        FuzzActions(ctx, fuzz);
+
+    if (call != after)
+        return;
+
     const CpuContext entry = *ctx;
     const GameStep::State clock = GameStep::Save();
     Snapshot start;
