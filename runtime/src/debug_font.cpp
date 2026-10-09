@@ -13,14 +13,19 @@
 //              ends before
 //   0x8005BFCC FontGlyphColumns(text): its first character's columns, 1 for a
 //              narrow of exactly 1, else 2
+//   0x8005C040 FontPutsText(text): queues the text's glyphs at the font's pen
+//              (+0x15068 x, +0x1506C y), moving it on by the glyph width
+//              (+0x15060), half for a space or a narrow glyph; a newline
+//              returns to the line's start x and moves y on by the width
+//   0x8005BB58 FontPutGlyph(x, y, index), its glyph quad: see PutGlyph
 //
 // The original walked the table from its first code for every character: on
-// the MH3SP notice screen flKnjMsgNumPtr took 37.7% of the game thread (devkit
-// oct08-tls6). A map built from the table on first use answers a code at once;
+// the MH3SP notice screen flKnjMsgNumPtr took 37.7% of the game thread (on a
+// Vita). A map built from the table on first use answers a code at once;
 // no code writes the table. The characters are read as 0x8005BDA0 reads them:
 // 1 to 3 UTF-8 bytes, 0xFFFFFFFF for a malformed sequence (not in the table).
 // MH3_PORT_CHECK=flKnjMsgNumPtr,FontTextColumns,FontGlyphColumns,FontGlyphIndex
-// checks every call.
+// checks every call, FontPutsText its writes now and then.
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "guest_flat_memory.h"
@@ -36,8 +41,16 @@ extern "C" void func_8005B83C(CpuContext* ctx);
 extern "C" void func_8005B8DC(CpuContext* ctx);
 extern "C" void func_8005BF84(CpuContext* ctx);
 extern "C" void func_8005BFCC(CpuContext* ctx);
+extern "C" void func_8005C040(CpuContext* ctx);
 
 namespace {
+
+using MemoryInline::FlatRead16;
+using MemoryInline::FlatRead32;
+using MemoryInline::FlatReadFloat32;
+using MemoryInline::FlatWrite16;
+using MemoryInline::FlatWrite32;
+using MemoryInline::FlatWriteFloat32;
 
 constexpr uint32_t kFontWork = 0x80796D98, kGlyphs = 0x80580818;
 constexpr uint8_t kAbsent = 0xFF;
@@ -90,7 +103,7 @@ uint32_t GlyphIndex(const uint8_t* map, uint32_t code) {
 
 // 0x8005C010: the glyph's narrow, 1 past the font's glyphs.
 uint32_t GlyphNarrow(uint32_t font, uint32_t index) {
-    return index < Memory::Read32(font + 0x1C) ? Memory::Read16(kGlyphs + index * 4 + 2) : 1;
+    return index < FlatRead32(font + 0x1C) ? FlatRead16(kGlyphs + index * 4 + 2) : 1;
 }
 
 // 0x8005BDA0: the next character, moving p past the bytes it read (a NUL
@@ -127,7 +140,7 @@ uint32_t Utf8Next(const uint8_t*& p) {
 
 // The columns of a character other than NUL and newline.
 uint32_t Columns(uint32_t font, const uint8_t* map, uint32_t code) {
-    if (!Memory::Read32(font + 0x30)) {
+    if (!FlatRead32(font + 0x30)) {
         if (int32_t(code) <= 0x0F)
             return 2;
 
@@ -139,7 +152,7 @@ uint32_t Columns(uint32_t font, const uint8_t* map, uint32_t code) {
 }
 
 uint32_t TextColumns(uint32_t text) {
-    const uint32_t font = Memory::Read32(kFontWork);
+    const uint32_t font = FlatRead32(kFontWork);
     const uint8_t* map = GlyphMap();
     const uint8_t* p = GuestFlat::Host(text);
     uint32_t columns = 0;
@@ -152,7 +165,7 @@ uint32_t TextColumns(uint32_t text) {
 }
 
 uint32_t TextAfterColumns(uint32_t text, int32_t limit) {
-    const uint32_t font = Memory::Read32(kFontWork);
+    const uint32_t font = FlatRead32(kFontWork);
     const uint8_t* map = GlyphMap();
     const uint8_t* start = GuestFlat::Host(text);
     const uint8_t* p = start;
@@ -172,9 +185,105 @@ uint32_t TextAfterColumns(uint32_t text, int32_t limit) {
 }
 
 uint32_t GlyphColumns(uint32_t text) {
-    const uint32_t font = Memory::Read32(kFontWork);
+    const uint32_t font = FlatRead32(kFontWork);
     const uint8_t* p = GuestFlat::Host(text);
     return GlyphNarrow(font, GlyphIndex(GlyphMap(), Utf8Next(p))) == 1 ? 1 : 2;
+}
+
+// 0x8005BB58: the glyph's quad into the next record of the bank (+0x50) the
+// font fills (84 bytes from +0x54 + bank * 0x15000: four corners of x, y and
+// z, their texture coordinates from the glyph's 32-pixel cell in a 16-wide
+// sheet, the colour +0x15078), the record's number on the bank's draw stack
+// (+0x15094 count, +0x15098 slots) and one more queued (+0x1505C). A glyph
+// joins the font's list of glyphs in use (+0x160A0, +0x16098 of +0x1609C)
+// first; without room there nothing is drawn.
+void PutGlyph(uint32_t font, uint32_t x, uint32_t y, uint32_t index) {
+    const uint32_t queued = FlatRead32(font + 0x1505C);
+
+    if (queued >= FlatRead32(font + 0x15058))
+        return;
+
+    const int32_t used = int32_t(FlatRead32(font + 0x16098));
+    int32_t slot = 0;
+
+    while (slot < used && FlatRead16(font + 0x160A0 + uint32_t(slot) * 2) != (index & 0xFFFF))
+        ++slot;
+
+    if (slot == used || used <= 0) {
+        if (used >= int32_t(FlatRead32(font + 0x1609C)))
+            return;
+
+        FlatWrite16(font + 0x160A0 + uint32_t(used) * 2, uint16_t(index));
+        FlatWrite32(font + 0x16098, uint32_t(used + 1));
+    }
+
+    const uint32_t record = font + FlatRead32(font + 0x50) * 0x15000 + queued * 84 + 84;
+    const float cell = FlatReadFloat32(0x807981E0), z = FlatReadFloat32(0x807981E4), scale = FlatReadFloat32(0x807981E8);
+    const float left = float(int32_t(x)), top = float(int32_t(y));
+    const float right = float(int32_t(x + FlatRead32(font + 0x15060))), bottom = float(int32_t(y + FlatRead32(font + 0x15064)));
+    const float u = float((index & 0xF) << 5) * scale, v = float((index >> 4) << 5) * scale;
+    const float u1 = u + cell, v1 = v + cell;
+    const float corners[4][4]{{left, top, u, v}, {right, top, u1, v}, {right, bottom, u1, v1}, {left, bottom, u, v1}};
+
+    for (uint32_t i = 0; i < 4; ++i) {
+        FlatWriteFloat32(record + i * 12, corners[i][0]);
+        FlatWriteFloat32(record + i * 12 + 4, corners[i][1]);
+        FlatWriteFloat32(record + i * 12 + 8, z);
+        FlatWriteFloat32(record + 48 + i * 8, corners[i][2]);
+        FlatWriteFloat32(record + 52 + i * 8, corners[i][3]);
+    }
+
+    FlatWrite32(record + 80, FlatRead32(font + 0x15078));
+    const uint32_t bank = FlatRead32(font + 0x50);
+    const int32_t stacked = int16_t(FlatRead16(font + 0x15094 + bank * 2));
+    FlatWrite16(font + 0x15098 + bank * 0x800 + uint32_t(stacked) * 2, uint16_t(queued));
+    FlatWrite16(font + 0x15094 + bank * 2, uint16_t(stacked + 1));
+    FlatWrite32(font + 0x1505C, queued + 1);
+}
+
+// `index` starts as the caller's r29: with the font's +0x30 clear the
+// original draws an ASCII character with the glyph looked up last (that
+// register), a slip kept here.
+void PutsText(uint32_t text, uint32_t index) {
+    const uint32_t font = FlatRead32(kFontWork);
+    const uint32_t lineX = FlatRead32(font + 0x15068);
+    const uint8_t* map = GlyphMap();
+    const uint8_t* p = GuestFlat::Host(text);
+
+    while (const uint32_t code = Utf8Next(p)) {
+        uint32_t shift = 1;
+
+        if (code == '\n') {
+            FlatWrite32(font + 0x15068, lineX);
+            FlatWrite32(font + 0x1506C, FlatRead32(font + 0x1506C) + FlatRead32(font + 0x15060));
+            continue;
+        }
+
+        if (code != ' ') {
+            bool draw = true;
+
+            if (!FlatRead32(font + 0x30) && code <= 0x7F) {
+                shift = code <= 0x0F ? 0 : 1;
+            } else {
+                index = GlyphIndex(map, code);
+                shift = GlyphNarrow(font, index);
+
+                if (index >= FlatRead32(font + 0x1C))
+                    draw = false;
+                else if (FlatRead32(font + 0x1505C) >= FlatRead32(font + 0x15058))
+                    return;
+            }
+
+            if (draw) {
+                PutGlyph(font, FlatRead32(font + 0x15068), FlatRead32(font + 0x1506C), index);
+                FlatWrite32(font + 0x1505C, FlatRead32(font + 0x1505C) + 1);
+            }
+        }
+
+        // srw: shifts of 32 to 63 leave 0.
+        const uint32_t width = FlatRead32(font + 0x15060);
+        FlatWrite32(font + 0x15068, FlatRead32(font + 0x15068) + ((shift & 63) < 32 ? width >> (shift & 63) : 0));
+    }
 }
 
 [[maybe_unused]] void GlyphIndexPort(CpuContext* cpu) {
@@ -191,6 +300,10 @@ uint32_t GlyphColumns(uint32_t text) {
 
 [[maybe_unused]] void GlyphColumnsPort(CpuContext* cpu) {
     cpu->gpr[3] = GlyphColumns(cpu->gpr[3]);
+}
+
+[[maybe_unused]] void PutsTextPort(CpuContext* cpu) {
+    PutsText(cpu->gpr[3], cpu->gpr[29]);
 }
 
 } // namespace
@@ -231,3 +344,12 @@ extern "C" void MH3_FontGlyphColumns(CpuContext* ctx) {
     ctx->gpr[3] = GlyphColumns(ctx->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8005BFCC, MH3_FontGlyphColumns, "FontGlyphColumns");
+
+extern "C" void MH3_FontPutsText(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::RunPrecise("FontPutsText", ctx->gpr[1], func_8005C040, PutsTextPort)) [[unlikely]]
+        return;
+#endif
+    PutsText(ctx->gpr[3], ctx->gpr[29]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8005C040, MH3_FontPutsText, "FontPutsText");
