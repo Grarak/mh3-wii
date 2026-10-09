@@ -38,9 +38,28 @@ struct MH3FrameSplitScope {
             MH3FrameSplitTime(family, std::chrono::steady_clock::now() - start);
     }
 };
+// Per-draw parts (material/shape preparation, packet record) run about a
+// hundred times per frame; timing each costs two clock reads (a system call on
+// the Vita, ~1 ms/frame there). MH3_MODEL_SPLIT=1 enables them.
+extern const bool mh3SplitDetail;
+struct MH3FrameSplitDetailScope {
+    unsigned family;
+    bool active;
+    std::chrono::steady_clock::time_point start;
+    explicit MH3FrameSplitDetailScope(unsigned value) : family(value), active(mh3SplitDetail) {
+        if (active && !mh3SplitDepth[family]++)
+            start = std::chrono::steady_clock::now();
+    }
+    ~MH3FrameSplitDetailScope() {
+        if (active && !--mh3SplitDepth[family])
+            MH3FrameSplitTime(family, std::chrono::steady_clock::now() - start);
+    }
+};
 #define MH3_SPLIT_JOIN2(a, b) a##b
 #define MH3_SPLIT_JOIN(a, b) MH3_SPLIT_JOIN2(a, b)
 #define MH3_SPLIT_SCOPE(family) MH3FrameSplitScope MH3_SPLIT_JOIN(mh3SplitScope, __LINE__)(family)
+#define MH3_SPLIT_DETAIL_SCOPE(family) MH3FrameSplitDetailScope MH3_SPLIT_JOIN(mh3SplitScope, __LINE__)(family)
 #else
 #define MH3_SPLIT_SCOPE(family)
+#define MH3_SPLIT_DETAIL_SCOPE(family)
 #endif

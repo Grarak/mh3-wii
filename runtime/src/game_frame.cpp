@@ -159,6 +159,10 @@ uint32_t splitScopes[MH3_SPLIT_FAMILIES];
 #ifdef MH3_DEVELOPMENT
 uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 uint32_t mh3SplitFrame;
+extern const bool mh3SplitDetail = [] {
+    const char* value = std::getenv("MH3_MODEL_SPLIT");
+    return value && value[0] == '1';
+}();
 void MH3FrameSplitCall(unsigned kind) {
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];
@@ -205,8 +209,9 @@ struct FrameSplit {
         std::printf("MH3 draw split: traverse %.2f model %.2f effect %.2f node callback %.2f font %.2f fade %.2f hud %.2f movie %.2f ms/frame\n", f(MH3_SPLIT_TRAVERSE),
                     f(MH3_SPLIT_MODEL), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD), f(MH3_SPLIT_MOVIE));
         const auto n = [this](unsigned family) { return splitScopes[family] / frames; };
-        std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
-                    f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));
+        if (mh3SplitDetail)
+            std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
+                        f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));
         std::memset(splitCalls, 0, sizeof splitCalls);
         std::memset(splitFamilies, 0, sizeof splitFamilies);
         std::memset(splitScopes, 0, sizeof splitScopes);

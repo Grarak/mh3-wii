@@ -610,13 +610,13 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
         capture.items.emplace_back();
     auto& item = capture.items[capture.itemCount];
     {
-        MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
+        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
         PrepareModelItem(capture, item, context, direct_position, direct_normal);
     }
     item.coordinate_sizes = coordinate_sizes;
     if (&capture == &scratch)
         return;
-    MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
+    MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MODEL_RECORD);
     RecordNativeModelDraw(uint32_t(capture.itemCount++));
 }
 } // namespace
@@ -685,7 +685,7 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
     TraceNativeModelDispatch(d);
     mh3_model_material_scope scope;
     {
-        MH3_SPLIT_SCOPE(MH3_SPLIT_MATERIAL_PREP);
+        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_MATERIAL_PREP);
         scope = Scope(d.material, d.bindings);
         const bool ignore = !scope.material_address || (d.flags & 16);
         PrepareContext context{};
@@ -706,11 +706,11 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
         return;
     }
     const auto shape = [&] {
-        MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
+        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
         return ResolveShape(d.shape);
     }();
     if (!(d.flags & 2)) {
-        MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
+        MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
         PrePrimitive(shape);
         Replacements(shape, scope);
     }
