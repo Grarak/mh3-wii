@@ -9,6 +9,8 @@
 #include <psp2/power.h>
 #include <psp2/appmgr.h>
 #include <cstdio>
+#include <cerrno>
+#include <reent.h>
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
@@ -25,6 +27,35 @@ unsigned int _newlib_heap_size_user = 112 * 1024 * 1024;
 unsigned int _pthread_stack_default_user = 1024 * 1024;
 unsigned int _sceUserMainThreadStackSize = 2 * 1024 * 1024;
 }
+
+#ifdef MH3_DEVELOPMENT
+namespace {
+SceUID debugLog = -1;
+int WriteDebugLog(void*, const char* bytes, int size) {
+    const int written = sceIoWrite(debugLog, bytes, size);
+    if (written < 0) { errno = EIO; return -1; }
+    return written;
+}
+int CloseDebugLog(void*) {
+    const int result = debugLog >= 0 ? sceIoClose(debugLog) : 0;
+    debugLog = -1;
+    return result;
+}
+void OpenDebugLog() {
+    debugLog = sceIoOpen("host0:/game/runtime.log",
+                         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC | SCE_O_NOBUF, 0777);
+    if (debugLog < 0) return;
+    FILE* stream = funopen(nullptr, nullptr, WriteDebugLog, nullptr, CloseDebugLog);
+    if (!stream) { CloseDebugLog(nullptr); return; }
+    // Native unbuffered device I/O avoids host0's file cache rewriting the
+    // accumulated file on every flushed line. Keep newlib formatting.
+    std::fflush(stderr);
+    _GLOBAL_REENT->_stderr = stream;
+    stderr = stream;
+    std::setvbuf(stream, nullptr, _IOLBF, 0);
+}
+}
+#endif
 
 void InitializeVitaPlatform(int& argc, char**& argv) {
     aurora::pin_current_thread(aurora::ThreadRole::Game);
