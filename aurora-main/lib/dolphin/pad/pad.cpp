@@ -6,6 +6,7 @@
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_joystick.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <sys/stat.h>

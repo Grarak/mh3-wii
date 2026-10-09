@@ -21,7 +21,7 @@ fi
 task_args+=("-DVITA_ELF_CREATE:PATH=$task_elf_create")
 # Reuse the ARM64 renderer capture build's source downloads when available.
 # Each target still gets independent objects compiled for the proper ABI.
-for task_dependency in abseil-cpp sdl xxhash fmt imgui sqlite3 zstd; do
+for task_dependency in sdl xxhash fmt imgui sqlite3 zstd; do
   task_source="$PWD/build/aurora-arm64/_deps/$task_dependency-src"
   if [[ -d "$task_source" ]]; then
     task_args+=("-DFETCHCONTENT_SOURCE_DIR_${task_dependency^^}=$task_source")

@@ -6,7 +6,7 @@
 #include "../../gfx/texture_replacement.hpp"
 #include "dolphin/gx/GXAurora.h"
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -49,10 +49,7 @@ struct TlutIdentity {
     return data == rhs.data && format == rhs.format && entries == rhs.entries;
   }
 
-  template <typename H>
-  friend H AbslHashValue(H h, const TlutIdentity& key) {
-    return H::combine(std::move(h), key.data, key.format, key.entries);
-  }
+  friend uint32_t FastHashValue(const TlutIdentity& key) { return FastHash(key.data, key.format, key.entries); }
 };
 
 struct TlutIdentityRecord {
@@ -63,7 +60,7 @@ struct TlutIdentityRecord {
 
   // Limit cached palette IDs; evicted palettes are safely uploaded again.
 constexpr size_t MaxTlutIdentities = 4096;
-absl::flat_hash_map<TlutIdentity, TlutIdentityRecord> sTlutIdentities;
+FastMap<TlutIdentity, TlutIdentityRecord> sTlutIdentities;
 
   // Use separate high-range versions when a palette points to a new buffer.
 u32 sNextRepointedTlutDataVersion = 0;

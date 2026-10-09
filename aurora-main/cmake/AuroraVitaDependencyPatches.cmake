@@ -1,5 +1,4 @@
-# Vita uses ELF containers but does not expose glibc's dynamic-loader ABI.
-# Keep the host implementation and use Abseil's existing fallback on Vita.
+# Source patches for the Vita's fetched dependencies, applied in place once.
 function(aurora_vita_replace file old new)
   set(_file "${file}")
   file(READ "${_file}" _source)
@@ -33,36 +32,5 @@ struct has_flockfile<F, void_t<decltype(flockfile(&std::declval<F&>()))>>
 template <typename F>
 struct has_flockfile<F, void_t<decltype(flockfile(&std::declval<F&>()))>>
     : std::true_type {};
-#endif]=])
-endfunction()
-
-function(aurora_patch_vita_abseil source_dir)
-  aurora_vita_replace("${source_dir}/absl/debugging/internal/elf_mem_image.h"
-    "!defined(__VXWORKS__) && !defined(__hexagon__)"
-    "!defined(__VXWORKS__) && !defined(__hexagon__) && !defined(__vita__)")
-
-  # Vita newlib has no tm_gmtoff/tm_zone members. Its two TZ rules already
-  # contain the standard and daylight offsets (seconds west of UTC).
-  set(_tz "${source_dir}/absl/time/internal/cctz/src/time_zone_libc.cc")
-  aurora_vita_replace("${_tz}" "#include <utility>" [=[#include <utility>
-
-#if defined(__vita__)
-extern "C" {
-#include <sys/_tz_structs.h>
-}
-#endif]=])
-  aurora_vita_replace("${_tz}" "#elif defined(__sun) || defined(_AIX)" [=[#elif defined(__vita__)
-long tm_gmtoff(const std::tm& tm) {
-  return -__gettzinfo()->__tzrule[tm.tm_isdst > 0].offset;
-}
-const char* tm_zone(const std::tm& tm) {
-  return tzname[tm.tm_isdst > 0];
-}
-#elif defined(__sun) || defined(_AIX)]=])
-  aurora_vita_replace("${_tz}"
-    "al.offset = static_cast<int>(tm_gmtoff(*tmp));" [=[#if defined(__vita__)
-  al.offset = local_ ? static_cast<int>(tm_gmtoff(*tmp)) : 0;
-#else
-  al.offset = static_cast<int>(tm_gmtoff(*tmp));
 #endif]=])
 endfunction()

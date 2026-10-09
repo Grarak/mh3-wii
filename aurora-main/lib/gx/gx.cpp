@@ -12,8 +12,7 @@
 #include "../gfx/texture_replacement.hpp"
 #include "gx_fmt.hpp"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
+#include <aurora/fast_map.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -79,11 +78,10 @@ struct TextureResolveIdentity {
   u8 flags = 0;
 
   bool operator==(const TextureResolveIdentity& rhs) const = default;
-  template <typename H>
-  friend H AbslHashValue(H h, const TextureResolveIdentity& identity) {
-    return H::combine(std::move(h), identity.data, identity.mode0, identity.mode1, identity.image0,
-                      identity.image3, identity.width, identity.height, identity.format, identity.tlut,
-                      identity.texObjId, identity.texDataVersion, identity.flags);
+  friend u32 FastHashValue(const TextureResolveIdentity& identity) {
+    return FastHash(identity.data, identity.mode0, identity.mode1, identity.image0, identity.image3, identity.width,
+                    identity.height, identity.format, identity.tlut, identity.texObjId, identity.texDataVersion,
+                    identity.flags);
   }
 };
 static std::array<TextureResolveIdentity, MaxTextures> s_lastTextureResolveIdentity{};
@@ -127,9 +125,8 @@ struct DynamicPaletteKey {
   u32 format = 0;
 
   bool operator==(const DynamicPaletteKey& rhs) const = default;
-  template <typename H>
-  friend H AbslHashValue(H h, const DynamicPaletteKey& key) {
-    return H::combine(std::move(h), key.sourceIdentity, key.width, key.height, key.format);
+  friend u32 FastHashValue(const DynamicPaletteKey& key) {
+    return FastHash(key.sourceIdentity, key.width, key.height, key.format);
   }
 };
 
@@ -157,9 +154,8 @@ struct StaticTextureKey {
   u32 texDataVersion = 0;
 
   bool operator==(const StaticTextureKey& rhs) const = default;
-  template <typename H>
-  friend H AbslHashValue(H h, const StaticTextureKey& key) {
-    return H::combine(std::move(h), key.data, key.width, key.height, key.mips, key.format, key.texDataVersion);
+  friend u32 FastHashValue(const StaticTextureKey& key) {
+    return FastHash(key.data, key.width, key.height, key.mips, key.format, key.texDataVersion);
   }
 };
 
@@ -175,9 +171,8 @@ struct StaticPaletteTextureKey {
   u32 tlutDataVersion = 0;
 
   bool operator==(const StaticPaletteTextureKey& rhs) const = default;
-  template <typename H>
-  friend H AbslHashValue(H h, const StaticPaletteTextureKey& key) {
-    return H::combine(std::move(h), key.texture, key.tlutData, key.tlutFormat, key.tlutEntries, key.tlutDataVersion);
+  friend u32 FastHashValue(const StaticPaletteTextureKey& key) {
+    return FastHash(FastHashValue(key.texture), key.tlutData, key.tlutFormat, key.tlutEntries, key.tlutDataVersion);
   }
 };
 
@@ -211,22 +206,22 @@ struct CachedTlutTextureEntry {
 
 struct TlutObjectCache {
   CachedTlutTextureEntry tlutTexture;
-  absl::flat_hash_map<DynamicPaletteKey, DynamicPaletteEntry> dynamicPaletteTextures;
-  absl::flat_hash_set<u32> staticTextureUsers;
+  FastMap<DynamicPaletteKey, DynamicPaletteEntry> dynamicPaletteTextures;
+  FastSet<u32> staticTextureUsers;
 };
 
-absl::flat_hash_map<u32, CachedTextureEntry> s_textureObjectCaches;
-absl::flat_hash_map<u32, TlutObjectCache> s_tlutObjectCaches;
-absl::flat_hash_map<StaticTextureKey, StaticTextureSourceEntry> s_staticTextureSourceCache;
+FastMap<u32, CachedTextureEntry> s_textureObjectCaches;
+FastMap<u32, TlutObjectCache> s_tlutObjectCaches;
+FastMap<StaticTextureKey, StaticTextureSourceEntry> s_staticTextureSourceCache;
 #ifdef AURORA_GXM
 struct NativeAssetEntry { gfx::TextureHandle handle; u32 frame, bytes; };
-absl::flat_hash_map<u32, NativeAssetEntry> s_nativeAssetTextures;
+FastMap<u32, NativeAssetEntry> s_nativeAssetTextures;
 size_t s_nativeAssetBytes = 0;
 constexpr size_t kNativeAssetCacheBudget = 28u << 20;
 #endif
-absl::flat_hash_map<StaticPaletteTextureKey, StaticPaletteTextureSourceEntry> s_staticPaletteTextureSourceCache;
-absl::flat_hash_map<u32, StaticTextureKey> s_texObjSourceKeys;
-absl::flat_hash_map<u32, StaticPaletteTextureKey> s_texObjPaletteSourceKeys;
+FastMap<StaticPaletteTextureKey, StaticPaletteTextureSourceEntry> s_staticPaletteTextureSourceCache;
+FastMap<u32, StaticTextureKey> s_texObjSourceKeys;
+FastMap<u32, StaticPaletteTextureKey> s_texObjPaletteSourceKeys;
 
 // A repeated bind of the same texture object re-derives the same source key and re-stores it into the map above on every resolve.
 template <typename Key>
@@ -597,7 +592,7 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
 
   const bool canUseSourceCache = canCacheUpload && obj.data != nullptr;
   const StaticTextureKey sourceKey = canUseSourceCache ? make_static_texture_key(obj) : StaticTextureKey{};
-  const size_t sourceHash = canUseSourceCache ? absl::Hash<StaticTextureKey>{}(sourceKey) : 0;
+  const size_t sourceHash = canUseSourceCache ? FastHashValue(sourceKey) : 0;
   if (canUseSourceCache) {
     if (auto handle = lookup_static_source_front_cache(sourceKey, sourceHash)) {
       if (obj.texObjId != 0) {
@@ -640,7 +635,7 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
     store_cached_texture(obj, handle);
     if (canUseSourceCache) {
       if (s_staticTextureSourceCache.size() >= 512) {
-        absl::erase_if(s_staticTextureSourceCache, [](const auto& item) { return item.second.handle.use_count() <= 1; });
+        s_staticTextureSourceCache.erase_if([](const auto& item) { return item.second.handle.use_count() <= 1; });
         clear_static_source_front_cache();
       }
       s_staticTextureSourceCache[sourceKey] = make_static_texture_source_entry(sourceKey, handle);
@@ -707,7 +702,7 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
     store_cached_texture(obj, handle, tlut.tlutObjId, tlut.tlutDataVersion);
     if (canUseSourceCache) {
       if (s_staticPaletteTextureSourceCache.size() >= 256) {
-        absl::erase_if(s_staticPaletteTextureSourceCache, [](const auto& item) { return item.second.handle.use_count() <= 1; });
+        s_staticPaletteTextureSourceCache.erase_if([](const auto& item) { return item.second.handle.use_count() <= 1; });
       }
       s_staticPaletteTextureSourceCache[sourceKey] = make_static_palette_texture_source_entry(sourceKey, handle);
       if (obj.texObjId != 0) {
@@ -724,7 +719,7 @@ gfx::TextureHandle resolve_dynamic_palette_texture(const GXTexObj_& obj, const G
   const auto tlutHandle = get_tlut_texture(tlut);
   auto& tlutCache = s_tlutObjectCaches[tlut.tlutObjId];
   if (tlutCache.dynamicPaletteTextures.size() >= 32) {
-    absl::erase_if(tlutCache.dynamicPaletteTextures, [](const auto& item) { return item.second.handle.use_count() <= 1; });
+    tlutCache.dynamicPaletteTextures.erase_if([](const auto& item) { return item.second.handle.use_count() <= 1; });
   }
   auto& entry = tlutCache.dynamicPaletteTextures[make_dynamic_palette_key(obj, source)];
   if (!entry.handle) {
@@ -1089,7 +1084,7 @@ static void prune_idle_texture_caches() noexcept {
 
   if (s_tlutObjectCaches.size() >= kTlutObjectCacheSoftLimit) {
     // Only drop palettes nothing depends on: an entry with users still records which cached conversions have to be thrown away when its bytes change.
-    absl::erase_if(s_tlutObjectCaches, [revision](const auto& item) {
+    s_tlutObjectCaches.erase_if([revision](const auto& item) {
       const auto& cache = item.second;
       return cache.staticTextureUsers.empty() && cache.dynamicPaletteTextures.empty() &&
              (!cache.tlutTexture.handle || cache.tlutTexture.handle.use_count() <= 1) &&
@@ -1099,12 +1094,11 @@ static void prune_idle_texture_caches() noexcept {
 
   // The source-key maps exist only so evict_texture_object can find the static source entry a texObjId last resolved to, and nothing else ever retires them -- with GXInitTexObj minting a fresh id per call they otherwise grow for the lifetime of the process.
   if (s_texObjSourceKeys.size() >= kTexObjSourceKeySoftLimit) {
-    absl::erase_if(s_texObjSourceKeys, [](const auto& item) { return !s_textureObjectCaches.contains(item.first); });
+    s_texObjSourceKeys.erase_if([](const auto& item) { return !s_textureObjectCaches.contains(item.first); });
     s_texObjSourceKeyMemo.reset();
   }
   if (s_texObjPaletteSourceKeys.size() >= kTexObjSourceKeySoftLimit) {
-    absl::erase_if(s_texObjPaletteSourceKeys,
-                   [](const auto& item) { return !s_textureObjectCaches.contains(item.first); });
+    s_texObjPaletteSourceKeys.erase_if([](const auto& item) { return !s_textureObjectCaches.contains(item.first); });
     s_texObjPaletteSourceKeyMemo.reset();
   }
 }
@@ -1172,11 +1166,12 @@ void set_display_copy_present_source() noexcept {
 
 void evict_copy_texture(const void* dest) noexcept {
   // Dynamic palette textures are keyed on the copy texture's raw TextureRef pointer; evicting the copy without them leaves entries that can match a recycled allocation at the same address and serve a stale conversion.
-  absl::flat_hash_set<const void*> sourceIdentities;
+  // At most a few copies share a destination, so a vector holds their identities.
+  std::vector<const void*> sourceIdentities;
   bool changed = false;
   if (const auto it = g_gxState.copyTextures.find(dest); it != g_gxState.copyTextures.end()) {
     if (it->second.handle) {
-      sourceIdentities.insert(it->second.handle.get());
+      sourceIdentities.push_back(it->second.handle.get());
     }
     g_gxState.copyTextures.erase(it);
     changed = true;
@@ -1184,7 +1179,7 @@ void evict_copy_texture(const void* dest) noexcept {
   for (auto it = g_gxState.copyTextureCache.begin(); it != g_gxState.copyTextureCache.end();) {
     if (it->first.dest == dest) {
       if (it->second.handle) {
-        sourceIdentities.insert(it->second.handle.get());
+        sourceIdentities.push_back(it->second.handle.get());
       }
       g_gxState.copyTextureCache.erase(it++);
       changed = true;
@@ -1195,7 +1190,8 @@ void evict_copy_texture(const void* dest) noexcept {
   if (!sourceIdentities.empty()) {
     for (auto& [_, cache] : s_tlutObjectCaches) {
       for (auto it = cache.dynamicPaletteTextures.begin(); it != cache.dynamicPaletteTextures.end();) {
-        if (sourceIdentities.contains(it->first.sourceIdentity)) {
+        if (std::find(sourceIdentities.begin(), sourceIdentities.end(), it->first.sourceIdentity) !=
+            sourceIdentities.end()) {
           cache.dynamicPaletteTextures.erase(it++);
         } else {
           ++it;
@@ -1313,7 +1309,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
         obj.data != nullptr;
     const StaticTextureKey staticSourceKey =
         canUseStaticSourceKey ? make_static_texture_key(obj) : StaticTextureKey{};
-    const size_t identityHash = canUseStaticSourceKey ? absl::Hash<TextureResolveIdentity>{}(identity) : 0;
+    const size_t identityHash = canUseStaticSourceKey ? FastHashValue(identity) : 0;
     if (canUseStaticSourceKey) {
       const auto& entry = s_textureResolveIdentityCache[identityHash & (s_textureResolveIdentityCache.size() - 1)];
       if (entry.valid && entry.hash == identityHash && entry.copyTextureRevision == s_copyTextureStateRevision &&

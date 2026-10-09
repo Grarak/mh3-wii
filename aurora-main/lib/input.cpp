@@ -9,7 +9,6 @@
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_iostream.h>
 
-#include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <array>
 #include <string>
@@ -19,7 +18,7 @@ using namespace std::string_view_literals;
 
 namespace aurora::input {
 Module Log("aurora::input");
-absl::flat_hash_map<Uint32, GameController> g_GameControllers;
+FastMap<Uint32, GameController> g_GameControllers;
 
 namespace {
 constexpr uint32_t kPortPreferencesMagic = SBIG('CPRT');

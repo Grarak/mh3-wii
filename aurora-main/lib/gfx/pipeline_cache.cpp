@@ -3,7 +3,7 @@
 #include "../gx/pipeline.hpp"
 #include "../internal.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 #include <atomic>
 #include <mutex>
@@ -13,7 +13,7 @@ namespace {
 Module Log("aurora::gfx::pipeline_cache");
 
 std::mutex g_pipelineMutex;
-absl::flat_hash_map<PipelineRef, PipelinePtr> g_pipelines;
+FastMap<PipelineRef, PipelinePtr> g_pipelines;
 std::atomic_bool g_skipUnreadyPipelines{false};
 
 template <typename Config>

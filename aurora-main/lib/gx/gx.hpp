@@ -8,7 +8,7 @@
 #include "../gfx/pipeline_cache.hpp"
 #include "reversed_z.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 #include <algorithm>
 #include <type_traits>
 #include <cstring>
@@ -412,13 +412,12 @@ struct GXState {
       return dest == rhs.dest && width == rhs.width && height == rhs.height && format == rhs.format;
     }
 
-    template <typename H>
-    friend H AbslHashValue(H h, const CopyTextureKey& key) {
-      return H::combine(std::move(h), key.dest, key.width, key.height, key.format);
+    friend u32 FastHashValue(const CopyTextureKey& key) {
+      return FastHash(key.dest, key.width, key.height, key.format);
     }
   };
-  absl::flat_hash_map<const void*, CopyTextureRef> copyTextures;
-  absl::flat_hash_map<CopyTextureKey, CopyTextureRef> copyTextureCache;
+  FastMap<const void*, CopyTextureRef> copyTextures;
+  FastMap<CopyTextureKey, CopyTextureRef> copyTextureCache;
   gfx::TextureHandle displayCopyTexture;
   u32 displayCopyWidth = 0;
   u32 displayCopyHeight = 0;

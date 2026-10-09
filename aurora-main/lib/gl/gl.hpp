@@ -11,8 +11,6 @@
 #include <GLES3/gl3.h>
 #endif
 
-#include <absl/functional/any_invocable.h>
-
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -23,12 +21,11 @@
 #include "../gfx/format.hpp"
 #include "../gfx/shader_source.hpp"
 #include <aurora/native_geometry.h>
+#include "task.hpp"
 
 struct SDL_Window;
 
 namespace aurora::gl {
-
-using Task = absl::AnyInvocable<void() &&>;
 
 struct Caps {
   std::string vendor;

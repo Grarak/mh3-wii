@@ -5,8 +5,7 @@
 #include "dds_io.hpp"
 #include "texture_convert.hpp"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
+#include <aurora/fast_map.h>
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -37,9 +36,8 @@ struct RuntimeTextureKey {
 
   bool operator==(const RuntimeTextureKey& rhs) const = default;
 
-  template <typename H>
-  friend H AbslHashValue(H h, const RuntimeTextureKey& key) {
-    return H::combine(std::move(h), key.textureHash, key.tlutHash, key.width, key.height, key.hasTlut, key.format);
+  friend uint32_t FastHashValue(const RuntimeTextureKey& key) {
+    return FastHash(key.textureHash, key.tlutHash, key.width, key.height, key.hasTlut, key.format);
   }
 };
 
@@ -64,11 +62,11 @@ struct ReplacementIndexEntry {
   std::filesystem::path path;
 };
 
-absl::flat_hash_map<RuntimeTextureKey, ReplacementIndexEntry> s_replacementIndex;
-absl::flat_hash_map<RuntimeTextureKey, CachedReplacement> s_replacementCache;
-absl::flat_hash_set<RuntimeTextureKey> s_failedKeys;
-absl::flat_hash_set<RuntimeTextureKey> s_reportedMisses;
-absl::flat_hash_map<const GXTlutObj*, TlutMetadata> s_pendingTluts;
+FastMap<RuntimeTextureKey, ReplacementIndexEntry> s_replacementIndex;
+FastMap<RuntimeTextureKey, CachedReplacement> s_replacementCache;
+FastSet<RuntimeTextureKey> s_failedKeys;
+FastSet<RuntimeTextureKey> s_reportedMisses;
+FastMap<const GXTlutObj*, TlutMetadata> s_pendingTluts;
 std::array<TlutMetadata, MaxTluts> s_loadedTluts{};
 std::list<RuntimeTextureKey> s_replacementLru;
 std::filesystem::path s_replacementRoot;

@@ -10,7 +10,7 @@
 #include "shader_info.hpp"
 #include "../internal.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 #include <algorithm>
 #include <chrono>
@@ -2282,7 +2282,7 @@ static gfx::Range upload_vertex_array(const void* data, uint32_t size) {
   struct KeyHash {
     size_t operator()(const Key& key) const noexcept { return static_cast<size_t>(key.hash); }
   };
-  static absl::flat_hash_map<Key, gfx::Range, KeyHash> uploads;
+  static FastMap<Key, gfx::Range, KeyHash> uploads;
   static uint64_t uploadsEpoch = UINT64_MAX;
   if (uploadsEpoch != gfx::staging_epoch()) {
     uploads.clear();

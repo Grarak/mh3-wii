@@ -11,7 +11,7 @@
 
 #include <SDL3/SDL.h>
 #include <xxhash.h>
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 #include <algorithm>
 #include <map>
@@ -195,23 +195,19 @@ struct FramebufferKey {
   GLuint color;
   GLuint depth;
   bool operator==(const FramebufferKey&) const = default;
-  template <typename H>
-  friend H AbslHashValue(H h, const FramebufferKey& key) {
-    return H::combine(std::move(h), key.color, key.depth);
-  }
+  friend uint32_t FastHashValue(const FramebufferKey& key) { return FastHash(key.color, key.depth); }
 };
-absl::flat_hash_map<FramebufferKey, GLuint> g_framebuffers;
+FastMap<FramebufferKey, GLuint> g_framebuffers;
 
 struct SamplerKey {
   SamplerDesc desc;
   bool operator==(const SamplerKey& rhs) const { return desc == rhs.desc; }
-  template <typename H>
-  friend H AbslHashValue(H h, const SamplerKey& key) {
+  friend uint32_t FastHashValue(const SamplerKey& key) {
     const auto& d = key.desc;
-    return H::combine(std::move(h), d.wrapS, d.wrapT, d.minFilter, d.magFilter, d.minLod, d.maxLod, d.maxAnisotropy, d.lodBias);
+    return FastHash(d.wrapS, d.wrapT, d.minFilter, d.magFilter, d.minLod, d.maxLod, d.maxAnisotropy, d.lodBias);
   }
 };
-absl::flat_hash_map<SamplerKey, GLuint> g_samplers;
+FastMap<SamplerKey, GLuint> g_samplers;
 
 void forget_texture(GLuint texture) {
   for (auto it = g_framebuffers.begin(); it != g_framebuffers.end();) {

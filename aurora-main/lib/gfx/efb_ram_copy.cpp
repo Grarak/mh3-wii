@@ -11,7 +11,7 @@
 #include <mutex>
 #include <vector>
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 namespace aurora::gfx::efb_ram {
 namespace {
@@ -42,7 +42,7 @@ std::mutex g_asyncMutex;
 struct AsyncSlot {
   TextureHandle nativeTexture;
 };
-absl::flat_hash_map<void*, AsyncSlot> g_asyncSlots;
+FastMap<void*, AsyncSlot> g_asyncSlots;
 
 // An internally scaled copy cannot be read back directly, so blit it down to native-resolution
 // RGBA8 first. Pushes a uniform into the batch being recorded.

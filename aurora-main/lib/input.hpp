@@ -9,7 +9,7 @@
 #include "SDL3/SDL_mouse.h"
 #include "logging.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 namespace aurora::input {
 extern Module Log;
@@ -64,7 +64,7 @@ void controller_rumble(uint32_t instance, uint16_t low_freq_intensity, uint16_t 
 uint32_t controller_count() noexcept;
 void initialize() noexcept;
 void persist_controller_for_player(uint32_t player, const GameController* controller) noexcept;
-extern absl::flat_hash_map<Uint32, GameController> g_GameControllers;
+extern FastMap<Uint32, GameController> g_GameControllers;
 
 void set_mouse_scroll(float scrollX, float scrollY) noexcept;
 void get_mouse_scroll(float* scrollX, float* scrollY) noexcept;

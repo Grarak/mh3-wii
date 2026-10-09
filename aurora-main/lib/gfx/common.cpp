@@ -32,7 +32,7 @@
 #include <optional>
 #include <ranges>
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 #include <magic_enum.hpp>
 
 namespace aurora::gfx {
@@ -97,7 +97,7 @@ constexpr uint32_t word_buffer_rows(uint64_t bytes) noexcept {
 }
 } // namespace
 
-static absl::flat_hash_map<BindGroupRef, CachedBindGroup> g_cachedBindGroups;
+static FastMap<BindGroupRef, CachedBindGroup> g_cachedBindGroups;
 // Bind groups dropped from the cache while recorded draws may still reference them. They travel
 // with the next submitted frame and are released once the render thread has executed it.
 static std::vector<std::shared_ptr<const TextureBindGroup>> g_retiredBindGroups;
@@ -400,16 +400,13 @@ struct OffscreenCacheKey {
   uint32_t height;
 
   bool operator==(const OffscreenCacheKey& rhs) const { return width == rhs.width && height == rhs.height; }
-  template <typename H>
-  friend H AbslHashValue(H h, const OffscreenCacheKey& key) {
-    return H::combine(std::move(h), key.width, key.height);
-  }
+  friend uint32_t FastHashValue(const OffscreenCacheKey& key) { return FastHash(key.width, key.height); }
 };
 struct OffscreenCacheEntry {
   gl::TexturePtr color;
   gl::TexturePtr depth;
 };
-static absl::flat_hash_map<OffscreenCacheKey, OffscreenCacheEntry> g_offscreenCache;
+static FastMap<OffscreenCacheKey, OffscreenCacheEntry> g_offscreenCache;
 
 static inline void push_command(CommandType type, const Command::Data& data) {
   if (!has_current_render_pass())

@@ -7,14 +7,14 @@
 #include "texture.hpp"
 #include "../gx/gx_fmt.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 #include "texture_convert.hpp"
 
 namespace aurora::gfx::tex_copy_conv {
 static Module Log("aurora::gfx::tex_copy_conv");
 
-static absl::flat_hash_map<GXTexFmt, gl::ProgramPtr> g_programs;
+static FastMap<GXTexFmt, gl::ProgramPtr> g_programs;
 static gl::ProgramPtr g_blitProgram;
 
 static gl::ProgramPtr create_program(const shaders::Conversion& conversion) {

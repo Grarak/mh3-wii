@@ -129,7 +129,6 @@ trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user bu
 | DirectXShaderCompiler (`dxcompiler.dll`) | with Dawn | NCSA / University of Illinois Open Source | <https://github.com/microsoft/DirectXShaderCompiler> |
 | SDL | 3.4.4 | zlib | <https://github.com/libsdl-org/SDL> |
 | libusb (linked into SDL on Windows) | 1.0.30 | LGPL-2.1-or-later | <https://github.com/libusb/libusb> |
-| Abseil | LTS 20240722.0 | Apache-2.0 | <https://github.com/abseil/abseil-cpp> |
 | Dear ImGui | 1.91.9b-docking | MIT | <https://github.com/ocornut/imgui> |
 | {fmt} | 11.1.4 | MIT | <https://github.com/fmtlib/fmt> |
 | xxHash | 0.8.3 | BSD-2-Clause | <https://github.com/Cyan4973/xxHash> |

@@ -6,7 +6,7 @@
 #include <memory>
 #include <mutex>
 
-#include <absl/container/flat_hash_map.h>
+#include <aurora/fast_map.h>
 
 namespace aurora::gx {
 static Module Log("aurora::gx");
@@ -17,7 +17,7 @@ struct ShaderConfigHash {
 };
 
 std::mutex sProgramCacheMutex;
-absl::flat_hash_map<ShaderConfig, gl::ProgramPtr, ShaderConfigHash> sProgramCache;
+FastMap<ShaderConfig, gl::ProgramPtr, ShaderConfigHash> sProgramCache;
 
 gl::ProgramPtr cached_program(const ShaderConfig& config) {
   {
