@@ -47,6 +47,47 @@ if(NOT VITA AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROC
   message(WARNING "Configuring for unsupported host ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+# Release builds (MH3_DEVELOPMENT=OFF) compile and link with ThinLTO: the game,
+# the runtime, Aurora and its dependencies compile to LLVM bitcode, static
+# libraries are archived with llvm-ar, and lld optimizes across all of them at
+# link time. Development builds, and with them every profiling and benchmark
+# build, are left exactly as they were. Set before Aurora so that its targets
+# and the fetched dependencies get it too.
+if(NOT MH3_DEVELOPMENT)
+  include(CheckIPOSupported)
+
+  # Also for dependencies whose minimum CMake version predates CMP0069.
+  set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+
+  # ThinLTO needs lld (the Vita and arm32 toolchains already use it); the
+  # check below links with it as well.
+  if(NOT VITA)
+    add_link_options(-fuse-ld=lld)
+  endif()
+
+  block(PROPAGATE mh3_thinlto mh3_thinlto_error)
+    if(NOT VITA)
+      string(APPEND CMAKE_C_FLAGS " -fuse-ld=lld")
+      string(APPEND CMAKE_CXX_FLAGS " -fuse-ld=lld")
+    endif()
+
+    check_ipo_supported(RESULT mh3_thinlto OUTPUT mh3_thinlto_error LANGUAGES C CXX)
+  endblock()
+
+  if(NOT mh3_thinlto)
+    message(FATAL_ERROR "Release builds (MH3_DEVELOPMENT=OFF) need ThinLTO with clang and lld: ${mh3_thinlto_error}")
+  endif()
+
+  # CMake's IPO flags for clang are -flto=thin.
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+
+  # The link-time backends run at -O2, the level the game code is compiled at
+  # (the driver would pass the -O3 of the release flags), and cache their
+  # objects so that a relink only recompiles the modules that changed.
+  add_link_options("-Wl,--lto-O2" "-Wl,--thinlto-cache-dir=${CMAKE_BINARY_DIR}/thinlto-cache"
+    "-Wl,--thinlto-cache-policy=cache_size_bytes=4g")
+endif()
+
 if(MH3_AURORA_ROOT)
   enable_language(C)
 
@@ -422,6 +463,12 @@ if(VITA OR MH3_ROM_DECODER)
       # The EABI memory helpers the nod archive used to supply (vita/aeabi_memory.c).
       target_sources(MH3 PRIVATE vita/aeabi_memory.c)
       set_source_files_properties(vita/aeabi_memory.c PROPERTIES COMPILE_OPTIONS -fno-builtin)
+
+      # Native code even under ThinLTO: the code generator emits these calls
+      # after LTO has dropped the bitcode definitions nothing referenced yet.
+      if(NOT MH3_DEVELOPMENT)
+        set_property(SOURCE vita/aeabi_memory.c APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
+      endif()
     endif()
   elseif(VITA)
     set(rom_decoder_script "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build-vita-rom-decoder.sh")

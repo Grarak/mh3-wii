@@ -65,7 +65,8 @@ patched `vita-elf-create`; [Vita platform](docs/vita-platform.md)).
 The container mounts the checkout at the same absolute path because the
 translated data blobs use absolute `.incbin` paths; configure and build arm32
 only inside it. `MH3_DEVELOPMENT` adds statistics, captures, scripted input
-and port checks; leave it OFF for a plain build (without `MH3_BUILD_DIR` the
+and port checks; leave it OFF for a plain (release) build, which is compiled
+and linked with ThinLTO and needs lld (without `MH3_BUILD_DIR` the
 build goes to `build/linux-<arch>`). Assertions follow Release/NDEBUG
 independently. Configure and build logs go to `logs/aurora-*.log`.
 
