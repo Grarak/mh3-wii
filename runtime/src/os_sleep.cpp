@@ -1,5 +1,6 @@
 #include "abi_bridge.h"
 #include "audio_dma.h"
+#include "audio/native_audio.h"
 #include "os_alarm.h"
 #include "ios_host.h"
 #include "timebase_contract.h"
@@ -54,6 +55,7 @@ void PumpDevices(CpuContext* cpu) {
 #endif
     PumpIosCompletions(cpu);
     ServiceAudioDma(cpu);
+    NativeAudio::ServiceNativeAudio(cpu);
     ServiceOsAlarms(cpu);
     ServiceVideoRetrace(cpu);
 }

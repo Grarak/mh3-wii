@@ -1,9 +1,13 @@
 #include "audio_dma.h"
 #include "audio_output_statistics.h"
+#include "../src/audio/native_audio_mixer.h"
 #include <aurora/thread_role.hpp>
 #include <psp2/audioout.h>
+#include <psp2/kernel/threadmgr.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -173,3 +177,70 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
     }
     audio->Queue(data, bytes, rate);
 }
+
+// Native mixer output: one core-0 thread mixes 12 ms (four AX ticks) at a time
+// and hands it to SceAudio, whose blocking output call is the audio clock.
+// Nothing else runs on this thread; the game thread never waits for it.
+namespace NativeAudio {
+namespace {
+constexpr uint32_t kNativeFrames = 384;  // a multiple of 64 (SceAudio) and 96 (one tick)
+std::thread nativeThread;
+std::atomic<bool> nativeStop{false};
+alignas(64) int16_t nativeBuffers[2][kNativeFrames * 2];
+
+void RunNative() noexcept {
+    aurora::pin_current_thread(aurora::ThreadRole::Worker);  // core 0, mask 0x10000
+    NoteAudioThread();
+    const int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, kNativeFrames, kSampleRate, SCE_AUDIO_OUT_MODE_STEREO);
+    if (port < 0)
+        std::fprintf(stderr, "MH3 audio: SceAudio port failed: 0x%08x; mixing without output\n", unsigned(port));
+    else
+        std::fprintf(stderr, "MH3 audio: native mixer output on core 0 at %u Hz stereo, %u-frame buffers\n", unsigned(kSampleRate), unsigned(kNativeFrames));
+    const auto period = std::chrono::microseconds(kNativeFrames * 1000000ull / kSampleRate);
+    auto next = std::chrono::steady_clock::now();
+    unsigned side = 0;
+    while (!nativeStop.load(std::memory_order_relaxed)) {
+        MixerRender(nativeBuffers[side], kNativeFrames);
+        if (port >= 0) {
+            // Returns once the previous buffer is playing: this one is next.
+            const int result = sceAudioOutOutput(port, nativeBuffers[side]);
+            if (result < 0) {
+                std::fprintf(stderr, "MH3 audio: native output failed: 0x%08x\n", unsigned(result));
+                break;
+            }
+        } else {
+            next += period;
+            std::this_thread::sleep_until(next);
+        }
+        side ^= 1;
+    }
+    if (port >= 0) {
+        sceAudioOutOutput(port, nullptr);
+        sceAudioOutReleasePort(port);
+    }
+}
+} // namespace
+
+void NoteAudioThread() {
+    MixerStatistics& s = GetMixer().Statistics();
+    const int thread = sceKernelGetThreadId();
+    s.thread.store(thread, std::memory_order_relaxed);
+    s.affinity.store(uint32_t(sceKernelGetThreadCpuAffinityMask(thread)), std::memory_order_relaxed);
+    s.core.store(sceKernelGetCpuId(), std::memory_order_relaxed);
+}
+
+void StartAudioOutput() {
+    if (nativeThread.joinable())
+        return;
+    nativeStop.store(false);
+    nativeThread = std::thread(RunNative);
+}
+
+void StopAudioOutput() {
+    if (!nativeThread.joinable())
+        return;
+    nativeStop.store(true);
+    nativeThread.join();
+}
+
+} // namespace NativeAudio

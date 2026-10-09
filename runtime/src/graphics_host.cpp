@@ -7,6 +7,7 @@
 #include "runtime/native/adapters/model_prepare_diagnostics.h"
 #include "native_frame_statistics.h"
 #include "audio/ax_dsp.h"
+#include "audio/native_audio.h"
 #include "audio_output_statistics.h"
 #include "audio_dma_statistics.h"
 #ifdef __vita__
@@ -550,6 +551,9 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  residency.gpu_written_textures, residency.retired_texture_bytes / 1048576.0, residency.model_bytes / 1048576.0, residency.retired_model_bytes / 1048576.0,
                  residency.main_spill_bytes / 1048576.0, residency.phycont_spill_bytes / 1048576.0);
 #endif
+    if (NativeAudio::NativeAudioActive()) {
+        NativeAudio::ReportNativeAudioStatistics(seconds);
+    } else {
     const auto ax = AxDspHle::GetMixWorkerStats();
     const uint64_t axJobs = ax.submitted - previousAx.submitted;
     std::fprintf(stderr, "MH3 AX: private %.1f jobs/s (%llu completed/%llu published), serial %llu rejected %llu failed %llu, snapshot %.2f KiB avg/%.2f max-ever, active PBs %u last\n",
@@ -584,6 +588,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         double(dma.completedFrames - previousDma.completedFrames) / seconds, double(dma.completedDurationNs - previousDma.completedDurationNs) / (1e6 * seconds),
         static_cast<unsigned long long>(dma.capHits - previousDma.capHits), dma.currentDebtNs / 1e6, dma.maxDebtNs / 1e6, dma.currentPeriodNs / 1e6, dma.maxServiceGapNs / 1e6);
     previousDma = dma;
+    }
     const auto feedback = ReadSceneFeedbackStats();
     std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
                  double(feedback.allocations - previousFeedback.allocations) / seconds, double(feedback.reuses - previousFeedback.reuses) / seconds,

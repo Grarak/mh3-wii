@@ -2,6 +2,7 @@
 #include "video_interface.h"
 #include "ios_host.h"
 #include "audio_dma.h"
+#include "audio/native_audio.h"
 #include "os_alarm.h"
 #include "controller_host.h"
 #include "recomp_mod_loader.h"
@@ -70,6 +71,7 @@ extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
 #endif
     PumpIosCompletions(cpu);
     ServiceAudioDma(cpu);
+    NativeAudio::ServiceNativeAudio(cpu);
     ServiceOsAlarms(cpu);
     ServiceVideoRetrace(cpu);
 }

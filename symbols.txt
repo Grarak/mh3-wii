@@ -98,9 +98,6 @@
 80087b34 SetupAndSubmitDisplayList
 # Large render dispatch path; most inclusive samples are inside the host GX bridge.
 80076a58 RenderDisplayListDispatch
-# Three-channel floating-point delay/filter processing in the audio callback chain.
-# Exact effect/SDK identity remains unverified.
-80475880 AudioThreeChannelFilterCallback
 # Main loop end-of-frame pacer: waits for the retrace budget, flips the XFB (runtime/src/frame_pacer.cpp).
 800401a8 FramePacer
 # Returns the frame budget in VI retraces (r13-0x4684).
@@ -739,8 +736,8 @@
 8009e8b8 AnimCurveBlendU8
 80471040 AXSyncPB
 80470ed0 AXDepopVoice
-8046edc0 AXPushFreeStack
-8046eb70 AXGetStackHead
+8046edc0 __AXPushCallbackStack
+8046eb70 __AXGetStackHead
 8046f990 AXGetCommandListCycles
 800c8a34 EffectTexWrapS
 800c89b8 EffectTexWrapT
@@ -1070,6 +1067,83 @@
 800d0174 UITextureTPL
 800d754c CalcTextureSrtXsi
 800e47b8 RestoreModelCamera
+# RVL SDK AX (0x4302_145), ported natively in runtime/src/audio/native_audio_api.cpp; the
+# DSP side (__AXOutInit/__AXOutNewFrame) is replaced by the native mixer.
+8046ea50 AXInit
+8046eab0 AXInitEx
+8046eb10 AXQuit
+8046eb60 AXIsInit
+8046eb90 __AXServiceCallbackStack
+8046ec40 __AXAllocInit
+8046ecf0 __AXAllocQuit
+8046eda0 __AXPushFreeStack
+8046edd0 __AXRemoveFromStack
+8046ee60 AXFreeVoice
+8046eee0 AXAcquireVoice
+8046f070 AXSetVoicePriority
+8046f110 __AXAuxInit
+8046f230 __AXAuxQuit
+8046f470 __AXProcessAux
+8046f820 AXRegisterAuxACallback
+8046f890 AXRegisterAuxBCallback
+8046f900 AXRegisterAuxCCallback
+8046f970 AXGetAuxACallback
+8046f9d0 __AXBuildCommandList
+80470390 __AXCLInit
+804703f0 AXSetMode
+80470400 AXGetMode
+80470410 AXSetCompressor
+80470420 AXGetAuxAReturnVolume
+80470430 AXGetAuxBReturnVolume
+80470440 AXGetAuxCReturnVolume
+80470450 AXSetMasterVolume
+80470470 AXSetAuxAReturnVolume
+80470480 AXSetAuxBReturnVolume
+80470490 AXSetAuxCReturnVolume
+804704a0 __AXOutNewFrame
+80470700 __AXOutAiCallback
+804707c0 __AXDSPResumeCallback
+80470840 __AXOutInitDSP
+80470930 __AXOutInit
+80470b30 __AXOutQuit
+80470ba0 AXRegisterCallback
+80470ce0 __AXWriteBusSetup
+80470e60 __AXSPBInit
+804718b0 __AXSetPBDefault
+804718f0 __AXVPBInit
+80471920 __AXPBInit
+80471bb0 __AXVPBQuit
+80471bd0 AXSetVoiceSrcType
+80471c90 AXSetVoiceState
+80471d00 AXSetVoiceCurrentAddr
+80471d60 AXSetVoiceSrcRatio
+80471de0 AXSetVoiceAdpcmLoop
+80471e40 AXSetVoiceLpf
+80471eb0 AXSetVoiceLpfCoefs
+80471f10 AXGetLpfCoefs
+80471fd0 AXGetMaxVoices
+# The game's sound setup (sound engine at 0x800E4000-0x800F0000): AI/AX/MIX/SYN init, the
+# AX frame callback (SEQ, SYN, MIX and engine updates) and its AI DMA callback (Wii Speak).
+800e8794 SoundSystemInit
+800e86fc SoundAxFrameCallback
+800e88ec SoundAiDmaCallback
+800e8848 SoundSetOutputMode
+800e5058 SoundSetAuxEffect
+804c2d60 MIXInit
+804c4750 MIXUpdateSettings
+804ddae0 SEQRunAudioFrame
+804df720 SYNInit
+804df7c0 SYNRunAudioFrame
+# AXFX ReverbHi: AXFXReverbHiCallback (0x80475440) tail-calls the ReverbHiExp callback
+# (runtime/src/audio_reverb.cpp); the native mixer runs its own copy (native_audio_mixer.cpp).
+80475330 AXFXReverbHiInit
+804753a0 AXFXReverbHiShutdown
+804753d0 AXFXReverbHiSettings
+80475440 AXFXReverbHiCallback
+804755b0 AXFXReverbHiExpInit
+80475750 AXFXReverbHiExpSettingsUpdate
+80475820 AXFXReverbHiExpShutdown
+80475880 AXFXReverbHiExpCallback
 804352c8 NativeMovieRestore
 804353e0 NativeMovieSetup
 80435888 NativeMovieTexgen

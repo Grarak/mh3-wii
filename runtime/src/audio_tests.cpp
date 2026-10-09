@@ -7,7 +7,11 @@
 #include <stdexcept>
 
 extern "C" void MH3_AXOutInitDSP(CpuContext*);
+namespace NativeAudio {
+void RunNativeMixerSelfTests();
+}
 void RunAudioSelfTests(CpuContext* cpu) {
+    NativeAudio::RunNativeMixerSelfTests();
     AudioDmaState timing;
     timing.enabled = true;
     timing.length = 384;

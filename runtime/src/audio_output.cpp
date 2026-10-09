@@ -1,10 +1,18 @@
 #include "audio_dma.h"
 #include "audio_output_statistics.h"
+#include "audio/native_audio_mixer.h"
 #include <SDL3/SDL.h>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <sched.h>
 #include <stdexcept>
 #include <string>
+#include <sys/syscall.h>
+#include <thread>
+#include <unistd.h>
 #include <vector>
 namespace {
 SDL_AudioStream* stream = nullptr;
@@ -68,3 +76,111 @@ void QueueHostPcm(const uint8_t* data, uint32_t bytes, uint32_t rate) {
 NativeAudioOutputStatistics GetNativeAudioOutputStatistics() {
     return {};
 }
+
+// Native mixer output: SDL pulls 32 kHz stereo from the mixer on its own audio
+// thread. Without a playback device a native thread consumes the mix at the
+// same rate, so the game's audio clock still advances.
+namespace NativeAudio {
+namespace {
+SDL_AudioStream* pullStream = nullptr;
+std::thread nullSink;
+std::atomic<bool> nullSinkStop{false};
+constexpr uint32_t kChunkFrames = 384;  // 12 ms
+
+#ifdef MH3_DEVELOPMENT
+// MH3_AUDIO_DUMP=file: the mixed output, raw s16le stereo at 32 kHz.
+FILE* DumpFile() {
+    static FILE* dump = [] {
+        const char* path = std::getenv("MH3_AUDIO_DUMP");
+        return path ? std::fopen(path, "wb") : nullptr;
+    }();
+    return dump;
+}
+#endif
+
+void Render(int16_t* out, uint32_t frames) {
+    MixerRender(out, frames);
+#ifdef MH3_DEVELOPMENT
+    if (FILE* dump = DumpFile())
+        std::fwrite(out, 4, frames, dump);
+#endif
+}
+
+void SDLCALL Pull(void*, SDL_AudioStream* audio, int additional, int) {
+    static bool noted = false;
+    if (!noted) {
+        NoteAudioThread();
+        noted = true;
+    }
+    int16_t buffer[kChunkFrames * 2];
+    for (int frames = (additional + 3) / 4; frames > 0;) {
+        const uint32_t n = uint32_t(std::min<int>(frames, int(kChunkFrames)));
+        Render(buffer, n);
+        SDL_PutAudioStreamData(audio, buffer, int(n * 4));
+        frames -= int(n);
+    }
+}
+
+void RunNullSink() {
+    NoteAudioThread();
+    using Clock = std::chrono::steady_clock;
+    const auto period = std::chrono::microseconds(kChunkFrames * 1000000ull / kSampleRate);
+    auto next = Clock::now();
+    int16_t buffer[kChunkFrames * 2];
+    while (!nullSinkStop.load(std::memory_order_relaxed)) {
+        Render(buffer, kChunkFrames);
+        next += period;
+        std::this_thread::sleep_until(next);
+    }
+}
+} // namespace
+
+void NoteAudioThread() {
+    MixerStatistics& s = GetMixer().Statistics();
+    s.thread.store(int(syscall(SYS_gettid)), std::memory_order_relaxed);
+    s.core.store(sched_getcpu(), std::memory_order_relaxed);
+}
+
+void StartAudioOutput() {
+    if (pullStream || nullSink.joinable())
+        return;
+    bool null = false;
+#ifdef MH3_DEVELOPMENT
+    // MH3_AUDIO_NULL=1: no playback device, the mix is consumed at 32 kHz.
+    if (const char* v = std::getenv("MH3_AUDIO_NULL"))
+        null = v[0] == '1';
+#endif
+    if (!null) {
+        SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "384");
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+            const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, int(kSampleRate)};
+            pullStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, Pull, nullptr);
+            if (pullStream && SDL_ResumeAudioStreamDevice(pullStream)) {
+                std::fprintf(stderr, "MH3 audio: SDL playback at %u Hz stereo (%s)\n", unsigned(kSampleRate), SDL_GetCurrentAudioDriver());
+                std::atexit(StopAudioOutput);
+                return;
+            }
+            std::fprintf(stderr, "MH3 audio: no SDL playback (%s); mixing to a null sink\n", SDL_GetError());
+            if (pullStream)
+                SDL_DestroyAudioStream(pullStream);
+            pullStream = nullptr;
+        }
+    }
+    nullSinkStop.store(false);
+    nullSink = std::thread(RunNullSink);
+    std::atexit(StopAudioOutput);
+    std::fprintf(stderr, "MH3 audio: null sink at %u Hz\n", unsigned(kSampleRate));
+}
+
+void StopAudioOutput() {
+    if (pullStream) {
+        SDL_DestroyAudioStream(pullStream);
+        pullStream = nullptr;
+    }
+    if (nullSink.joinable()) {
+        nullSinkStop.store(true);
+        nullSink.join();
+    }
+}
+
+} // namespace NativeAudio

@@ -45,6 +45,7 @@ were deleted on 2026-10-03; they remain in git history.
 
 ## Audio
 
+- [native-audio.md](native-audio.md): the native AX mixer on core 0 (current path), its approximations and devkit measurements.
 - [vita-native-audio-worker-design.md](vita-native-audio-worker-design.md), [ax-private-memory-cost.md](ax-private-memory-cost.md), [vita-audio-output-evaluation.md](vita-audio-output-evaluation.md), [vita-streaming-audio-tempo.md](vita-streaming-audio-tempo.md), [vita-soundtouch-streaming-experiment.md](vita-soundtouch-streaming-experiment.md): AX worker and output experiments (SoundTouch is not integrated; AX gets replaced after rendering).
 
 ## Runtime and simulation
