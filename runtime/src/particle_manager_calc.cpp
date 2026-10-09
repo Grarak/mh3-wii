@@ -80,7 +80,7 @@ enum : uint32_t {
 constexpr uint32_t kFieldKind[8] = {0x800ADA30, 0x800ADA88, 0x800AD484, 0x800AD3E8, 0x800AD2B8, 0, 0x800AD4E0, 0x800AD584};
 
 // Panic messages (ef_particlemanager.cpp).
-constexpr uint32_t kFile = 0x80593738, kBadManagerEmitter = 0x80593830, kBadEmitterEffect = 0x8059386C, kAssertTexture = 0x80593970, kAssertRotate = 0x80593994, kAssertPostField = 0x805939C4;
+constexpr uint32_t kFile = 0x80593738, kAssertTexture = 0x80593970, kAssertRotate = 0x80593994, kAssertPostField = 0x805939C4;
 
 // Frame offsets of the original's locals.
 enum : uint32_t {
@@ -124,11 +124,6 @@ enum : uint32_t {
     kFirst = 0x39C,
     kFrameSize = 0x430,
 };
-
-bool ValidPointer(uint32_t p) {
-    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u || (p & 0xFF800000u) == 0xC1000000u ||
-           (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
-}
 
 // Single-precision add/subtract as the translated fadds/fsubs/ps_add round them.
 float Add(double a, double b) {
@@ -199,13 +194,12 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
     if (!first)
         return;
 
-    if (!ValidPointer(FlatRead32(manager + 0x20)))
-        panic(0xE1, kBadManagerEmitter);
+    // NW4R's pointer checks of the manager's emitter and its effect always
+    // pass in the port; both pointers are folded to their cached aliases.
+    const uint32_t ownerEmitter = GuestFlat::CachedAlias(FlatRead32(manager + 0x20));
+    const uint32_t ownerEffect = GuestFlat::CachedAlias(FlatRead32(ownerEmitter + 0xBC));
 
-    if (!ValidPointer(FlatRead32(FlatRead32(manager + 0x20) + 0xBC)))
-        panic(0xE2, kBadEmitterEffect);
-
-    if (const uint32_t before = FlatRead32(FlatRead32(FlatRead32(manager + 0x20) + 0xBC) + 0x4C))
+    if (const uint32_t before = FlatRead32(ownerEffect + 0x4C))
         game(before, {manager, list, first});
 
     // The manager's frames: local (its emitter's space, as the manager
@@ -213,7 +207,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
     const float zero = FlatReadFloat32(r2 - 0x79F4);
     game.Call<kManagerLocalMtx>({manager, sp + kLocal});
     game.Call<kMtxInverse>({sp + kWorldToLocal, sp + kLocal});
-    game.Call<kEmitterGlobalMtx>({FlatRead32(manager + 0x20), sp + kGlobal});
+    game.Call<kEmitterGlobalMtx>({ownerEmitter, sp + kGlobal});
 
     for (uint32_t row = 0; row < 3; ++row) {
         const uint32_t m = sp + kGlobal + row * 16;
@@ -281,7 +275,7 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
         FlatWrite32(p + 0xD8, 1);
 
         if (FlatRead16(p + 0xE2) != 0) {
-            const uint32_t effect = FlatRead32(FlatRead32(manager + 0x20) + 0xBC);
+            const uint32_t effect = ownerEffect;
             FlatWrite32(effect + 0x54, FlatRead32(effect + 0x54) | 0x10000);
         }
 
@@ -411,14 +405,14 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
                     game.Call<kFieldKind[7]>({force, fieldParams, track, track, p, tick, seed, sp + kVelocity});
                     break;
                 case 8: { // toward the emitter's movement
-                    const uint32_t emitter = FlatRead32(manager + 0x20);
+                    const uint32_t emitter = ownerEmitter;
 
                     if (!(unset == FlatReadFloat32(emitter + 0x114))) {
                         game.Call<kEmitterGlobalMtx>({emitter, sp + kEmitterMtx});
                         FlatWrite32(sp + kEmitterPosition, FlatRead32(sp + kEmitterMtx + 0x0C));
                         FlatWrite32(sp + kEmitterPosition + 4, FlatRead32(sp + kEmitterMtx + 0x1C));
                         FlatWrite32(sp + kEmitterPosition + 8, FlatRead32(sp + kEmitterMtx + 0x2C));
-                        game.Call<kVecSubtract>({force, sp + kEmitterPosition, FlatRead32(manager + 0x20) + 0x114});
+                        game.Call<kVecSubtract>({force, sp + kEmitterPosition, ownerEmitter + 0x114});
                         game.Call<kVecScale>({force}, {FlatReadFloat32(sp + kFieldParams + 4)});
                     }
 
@@ -554,6 +548,6 @@ void ParticleManagerCalcNative(CpuContext* ctx) {
     }
 
     FlatWrite32(manager + 0x54, FlatRead32(list + 4)); // the list's last
-    if (const uint32_t after = FlatRead32(FlatRead32(FlatRead32(manager + 0x20) + 0xBC) + 0x50))
+    if (const uint32_t after = FlatRead32(ownerEffect + 0x50))
         game(after, {manager, list, FlatRead32(sp + kFirst)});
 }

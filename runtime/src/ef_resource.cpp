@@ -89,12 +89,10 @@ enum : uint32_t {
     MH3_THROW(std::runtime_error(text));
 }
 
-// NW4R_ASSERT_VALID_PTR: cached or uncached MEM1/MEM2, or the locked cache.
-void CheckPointer(uint32_t p, const char* what) {
-    const bool valid = (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u ||
-                       (p & 0xFF800000u) == 0xC1000000u || (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
-    if (!valid) [[unlikely]]
-        Panic(what, p);
+// NW4R_ASSERT_VALID_PTR always passes in the port; the pointer is folded to
+// its cached alias instead.
+void FoldPointer(uint32_t& p) {
+    p = GuestFlat::CachedAlias(p);
 }
 
 const char* HostString(uint32_t address) {
@@ -196,8 +194,8 @@ const ProjectIndex& IndexOf(uint32_t project) {
 
 // _FindEmitter / _FindTexture: the pointer checks, then the index.
 uint32_t FindInProject(uint32_t project, uint32_t name) {
-    CheckPointer(project, "project");
-    CheckPointer(name, "searchName");
+    FoldPointer(project);
+    FoldPointer(name);
     const char* text = HostString(name);
     return IndexOf(project).Find(text, NameHash(text));
 }
@@ -209,7 +207,7 @@ uint32_t FindInList(uint32_t list, uint32_t name, uint32_t hint) {
     const uint32_t hash = NameHash(text);
 
     if (hint) {
-        CheckPointer(hint, "project");
+        FoldPointer(hint);
 
         if (const uint32_t result = IndexOf(hint).Find(text, hash))
             return result;
@@ -218,7 +216,7 @@ uint32_t FindInList(uint32_t list, uint32_t name, uint32_t hint) {
     const uint32_t linkOffset = FlatRead16(list + 10);
 
     for (uint32_t project = FlatRead32(list + 4); project; project = FlatRead32(project + linkOffset)) {
-        CheckPointer(project, "project");
+        FoldPointer(project);
 
         if (const uint32_t result = IndexOf(project).Find(text, hash))
             return result;
@@ -228,12 +226,12 @@ uint32_t FindInList(uint32_t list, uint32_t name, uint32_t hint) {
 }
 
 uint32_t FindEmitter(uint32_t resource, uint32_t name, uint32_t hint) {
-    CheckPointer(name, "name");
+    FoldPointer(name);
     return FindInList(resource, name, hint);
 }
 
 uint32_t FindTexture(uint32_t resource, uint32_t name, uint32_t hint) {
-    CheckPointer(name, "name");
+    FoldPointer(name);
 
     if (!FlatRead8(name))
         return 0;
@@ -252,7 +250,7 @@ constexpr ProjectKind kEffects{0x52454646u, kRelocateEffects};
 constexpr ProjectKind kTextures{0x52454654u, kRelocateTextures};
 
 uint32_t ProjectCount(uint32_t project) {
-    CheckPointer(project, "project");
+    FoldPointer(project);
     return FlatRead16(project + FlatRead32(project) + 4);
 }
 
@@ -271,7 +269,7 @@ void Initialize(uint32_t resource) {
 // The file header (magic, byte-order mark 0xFEFF, version 11, header size),
 // then the first block (magic) holding the project at +8.
 uint32_t AddProject(CpuContext* ctx, uint32_t list, uint32_t data, const ProjectKind& kind) {
-    CheckPointer(data, "data");
+    FoldPointer(data);
 
     if (FlatRead32(data) != kind.magic)
         Panic("strncmp(fhd->signature) failed", data);
@@ -299,7 +297,7 @@ uint32_t AddProject(CpuContext* ctx, uint32_t list, uint32_t data, const Project
 }
 
 uint32_t RemoveProject(CpuContext* ctx, uint32_t list, uint32_t project) {
-    CheckPointer(project, "target");
+    FoldPointer(project);
     const uint32_t linkOffset = FlatRead16(list + 10);
 
     for (uint32_t p = FlatRead32(list); p; p = FlatRead32(p + linkOffset + 4)) {

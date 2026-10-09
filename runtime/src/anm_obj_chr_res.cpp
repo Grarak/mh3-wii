@@ -55,12 +55,6 @@ uint32_t Bits(float value) {
     return bits;
 }
 
-// NW4R's pointer check (MEM1, MEM2, their uncached views, the locked cache).
-bool ValidPointer(uint32_t p) {
-    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u || (p & 0xFF800000u) == 0xC1000000u ||
-           (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
-}
-
 // nw4r::db::Panic (0x80501130, g3d_anmchr.cpp) halts the game; so does the port.
 [[noreturn]] void Panic(const char* what, uint32_t line, uint32_t value) {
     char text[128];
@@ -68,9 +62,10 @@ bool ValidPointer(uint32_t p) {
     MH3_THROW(std::runtime_error(text));
 }
 
-void CheckPointer(uint32_t p, uint32_t line) {
-    if (!ValidPointer(p)) [[unlikely]]
-        Panic("Pointer Error", line, p);
+// NW4R's pointer check (NW4R_ASSERT_CHECK_POINTER) always passes in the
+// port; the pointer is folded to its cached alias instead.
+void FoldPointer(uint32_t& p) {
+    p = GuestFlat::CachedAlias(p);
 }
 
 // FrameCtrl::SetFrame: the frame the play policy makes of `frame`.
@@ -84,9 +79,9 @@ void SetControlFrame(GuestCall& game, uint32_t control, float frame) {
 }
 
 void UpdateCache(GuestCall& game, uint32_t self) {
-    CheckPointer(self, 1326);
-    const uint32_t cache = Memory::Read32(self + kCache);
-    CheckPointer(cache, 1327);
+    FoldPointer(self);
+    uint32_t cache = Memory::Read32(self + kCache);
+    FoldPointer(cache);
     const float frame = F32(self + kFrameCtrl + kFrame);
     const uint32_t count = Memory::Read32(self + kCount), bindings = Memory::Read32(self + kBindings);
 
@@ -102,7 +97,7 @@ void UpdateCache(GuestCall& game, uint32_t self) {
 }
 
 void SetFrame(GuestCall& game, uint32_t self, float frame) {
-    CheckPointer(self, 1049);
+    FoldPointer(self);
 
     if (!std::isfinite(frame)) [[unlikely]]
         Panic("Floating Point Value Error frame", 1050, Bits(frame));
@@ -113,7 +108,7 @@ void SetFrame(GuestCall& game, uint32_t self, float frame) {
 }
 
 void UpdateFrame(GuestCall& game, uint32_t self, uint32_t r2, uint32_t r13) {
-    CheckPointer(self, 1096);
+    FoldPointer(self);
     const uint32_t control = self + kFrameCtrl;
 
     if (F32(control + kRate) == F32(r2 - 32088)) // 0.0f
@@ -127,11 +122,11 @@ void UpdateFrame(GuestCall& game, uint32_t self, uint32_t r2, uint32_t r13) {
 }
 
 uint32_t GetResult(GuestCall& game, uint32_t self, uint32_t result, uint32_t index) {
-    CheckPointer(self, 1297);
+    FoldPointer(self);
 
     if (int32_t(index) > int32_t(Memory::Read32(self + kCount)) - 1) [[unlikely]]
         Panic("Failed assertion idx < count", 1298, index);
-    CheckPointer(result, 1299);
+    FoldPointer(result);
     const uint32_t binding = MemoryInline::FlatRead16(Memory::Read32(self + kBindings) + 2 * index);
 
     if (binding & 0xC000) {
@@ -159,7 +154,7 @@ void SetFramePort(CpuContext* ctx) {
 }
 
 void GetFramePort(CpuContext* ctx) {
-    CheckPointer(ctx->gpr[3], 1064);
+    FoldPointer(ctx->gpr[3]);
     ctx->fpr[1].d = F32(ctx->gpr[3] + kFrameCtrl + kFrame);
 }
 
@@ -207,11 +202,11 @@ void ControlUpdateFrmPort(CpuContext* ctx) {
 } // namespace
 
 uint32_t AnmObjChrResResultAt(GuestCall& game, uint32_t anim, uint32_t result, uint32_t index, float frame) {
-    CheckPointer(anim, 1049);
+    FoldPointer(anim);
 
     if (!std::isfinite(frame)) [[unlikely]]
         Panic("Floating Point Value Error frame", 1050, Bits(frame));
-    CheckPointer(result, 1299);
+    FoldPointer(result);
 
     if (int32_t(index) > int32_t(Memory::Read32(anim + kCount)) - 1) [[unlikely]]
         Panic("Failed assertion idx < count", 1298, index);

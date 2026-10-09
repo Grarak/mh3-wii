@@ -123,17 +123,9 @@ SinCos LookUp(float index, float period) {
     return {index < 0.0f ? -s : s, c};
 }
 
-bool ValidOut(uint32_t p) {
-    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u ||
-           (p & 0xFF800000u) == 0xC1000000u || (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
-}
-
 uint32_t RotationYAxis(uint32_t angles, uint32_t out) {
-    if (!ValidOut(out)) [[unlikely]] {
-        char text[96];
-        std::snprintf(text, sizeof text, "NW4R panic (ef_util.cpp:934): Pointer Error pOut(=%08x) is not valid", out);
-        MH3_THROW(std::runtime_error(text));
-    }
+    // NW4R's pOut check always passes; the pointer is folded instead.
+    out = GuestFlat::CachedAlias(out);
 
     const float k = MemoryInline::FlatReadFloat32(kRad2Index), period = MemoryInline::FlatReadFloat32(kIndexPeriod);
     const SinCos x = LookUp(MemoryInline::FlatReadFloat32(angles) * k, period);
@@ -155,7 +147,7 @@ uint32_t RotationYAxisChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
     const bool check = PortCheck::Enabled("RotationYAxis");
 
-    if (check && ValidOut(r4)) [[unlikely]] {
+    if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
         c->gpr[3] = r3;

@@ -51,13 +51,6 @@ enum : uint32_t {
     kOffset = 0x0C,   // f32, FVS32 and FVS48
 };
 
-// NW4R's pointer check (NW4R_ASSERT_CHECK_POINTER): MEM1, MEM2 or the locked
-// cache, cached or not.
-bool ValidPointer(uint32_t p) {
-    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u || (p & 0xFF800000u) == 0xC1000000u ||
-           (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
-}
-
 // nw4r::db::Panic ends the game (it halts); so does the port.
 [[noreturn]] void Panic(const char* what, uint32_t value) {
     char text[128];
@@ -186,8 +179,7 @@ struct Fvs96 : TrackBase {
 
 template <typename Track>
 double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
-    if (!ValidPointer(anm))
-        Panic("NW4R:Pointer Error pAnm is not valid", anm);
+    anm = GuestFlat::CachedAlias(anm);
 
     const uint32_t scratch = r1 - 8;
     Track t;
@@ -340,8 +332,7 @@ struct Lean<Fvs96> {
 
 template <typename Track>
 double EvaluateLean(uint32_t r2, uint32_t anm, float frame, const CpuContext& cpu) {
-    if (!ValidPointer(anm))
-        Panic("NW4R:Pointer Error pAnm is not valid", anm);
+    anm = GuestFlat::CachedAlias(anm);
 
     typename Lean<Track>::Type t;
     LeanBase& b = t;
@@ -523,10 +514,7 @@ struct ResultPort {
         if (constant)
             return Load(data);
 
-        const uint32_t track = node + MemoryInline::FlatRead32(data);
-
-        if (!ValidPointer(track))
-            Panic("NW4R:Pointer Error pAnm is not valid", track);
+        const uint32_t track = GuestFlat::CachedAlias(node + MemoryInline::FlatRead32(data));
 
         switch (format) {
         case 1:
@@ -559,9 +547,7 @@ struct ResultPort {
         if (constant)
             return Load(data);
 
-        const uint32_t track = node + MemoryInline::FlatRead32(data); // 0x8008B0DC
-        if (!ValidPointer(track))
-            Panic("NW4R:Pointer Error pAnm is not valid", track);
+        const uint32_t track = GuestFlat::CachedAlias(node + MemoryInline::FlatRead32(data)); // 0x8008B0DC
 
         auto value = [&](uint32_t i) {
             switch (format) {
@@ -700,14 +686,10 @@ uint32_t NodeData(uint32_t data, uint32_t index) {
 }
 
 void GetAnmResult(CpuContext* ctx) {
-    const uint32_t anm = ctx->gpr[3], result = ctx->gpr[4], index = ctx->gpr[5];
+    // NW4R's pointer checks always pass in the port; the pointers are folded
+    // to their cached aliases instead.
+    const uint32_t anm = GuestFlat::CachedAlias(ctx->gpr[3]), result = GuestFlat::CachedAlias(ctx->gpr[4]), index = ctx->gpr[5];
     const double frame = ctx->fpr[1].d;
-
-    if (!ValidPointer(anm))
-        Panic("NW4R:Pointer Error this is not valid", anm);
-
-    if (!ValidPointer(result))
-        Panic("NW4R:Pointer Error pResult is not valid", result);
 
     if (!std::isfinite(frame))
         Panic("NW4R:Floating Point Value Error frame", 0);
@@ -717,10 +699,7 @@ void GetAnmResult(CpuContext* ctx) {
     if (!data)
         Panic("NW4R:Failed assertion IsValid()", anm);
 
-    const uint32_t node = NodeData(data, index);
-
-    if (!ValidPointer(node))
-        Panic("NW4R:Pointer Error nodeData is not valid", node);
+    const uint32_t node = GuestFlat::CachedAlias(NodeData(data, index));
 
     const uint32_t flags = MemoryInline::FlatRead32(node + 4);
     MemoryInline::FlatWrite32(result, flags & 0x1FFF);

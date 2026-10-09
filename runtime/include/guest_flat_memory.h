@@ -90,6 +90,15 @@ inline uint8_t* HostCached(uint32_t guestAddress) noexcept {
 #endif
 }
 
+// The cached alias of an uncached MEM1 or MEM2 address (0xC..., 0xD...);
+// other addresses unchanged. CPU code never holds physical addresses (they
+// come from GX registers), and the locked cache has no cached alias. Ports of
+// NW4R's pointer checks fold the pointer with it, so HostCached reads it.
+constexpr uint32_t CachedAlias(uint32_t address) noexcept {
+    const uint32_t top = address >> 28;
+    return top == 0xC || top == 0xD ? address & ~0x40000000u : address;
+}
+
 // Reserves the window and maps MEM1, MEM2 and the locked cache into it from a
 // fresh shared-memory object (zero filled), then installs the fault reporter.
 // Throws std::runtime_error when the window is already occupied. Calling it

@@ -35,11 +35,6 @@
 
 namespace {
 
-bool ValidPointer(uint32_t p) {
-    return (p & 0xFF000000u) == 0x80000000u || (p & 0xFF800000u) == 0x81000000u || (p & 0xF8000000u) == 0x90000000u || (p & 0xFF000000u) == 0xC0000000u || (p & 0xFF800000u) == 0xC1000000u ||
-           (p & 0xF8000000u) == 0xD0000000u || (p & 0xFFFFC000u) == 0xE0000000u;
-}
-
 struct Args {
     uint32_t index, exact, lower, upper;
     int32_t frame;
@@ -55,9 +50,10 @@ struct Args {
     MH3_THROW(std::runtime_error(text));
 }
 
-void CheckPointer(uint32_t p, const char* what) {
-    if (!ValidPointer(p)) [[unlikely]]
-        Panic(what, p);
+// NW4R's pointer check always passes in the port; the pointer is folded to
+// its cached alias instead.
+void FoldPointer(uint32_t& p) {
+    p = GuestFlat::CachedAlias(p);
 }
 
 // The search's outputs, written as the original writes them (a sink either
@@ -82,7 +78,7 @@ struct HostKeyOutputs {
 
 template <class Out>
 void SearchKeys(int32_t frame, double time, uint32_t keys, uint32_t stride, int32_t lo, int32_t hi, uint32_t r2, Out& out) {
-    CheckPointer(keys, "key");
+    FoldPointer(keys);
     auto key = [&](int32_t i) {
         return int32_t(MemoryInline::FlatRead16(keys + uint32_t(i) * stride));
     };
@@ -371,7 +367,7 @@ struct Tables {
 
 // 0x8009F290: the track's tables.
 Tables ResolveTables(uint32_t track) {
-    CheckPointer(track, "pHead");
+    FoldPointer(track);
     Tables t;
     t.header = track;
     t.keys = track + 0x20;
@@ -390,7 +386,7 @@ struct TickFrame {
 // 0x8009CE20 (AnimCurveTickToFrame): the curve frame at particle tick `tick`
 // of `life`, as a whole frame, a float frame and the loop it is in.
 TickFrame TickToFrame(uint32_t life, uint32_t header, uint32_t tick) {
-    CheckPointer(header, "header");
+    FoldPointer(header);
     TickFrame r{0, 0.0f, 0};
     const uint32_t frames = MemoryInline::FlatRead16(header + 8);
 
@@ -480,8 +476,8 @@ void AdjustLoops(uint32_t header, uint32_t keys, int32_t index, uint32_t& low, u
 // copied (`width` bytes each).
 template <uint32_t width>
 void ExecuteBaked(uint32_t track, uint32_t target, uint32_t tick, uint32_t life) {
-    CheckPointer(track, "mCmdList");
-    CheckPointer(target, "target");
+    FoldPointer(track);
+    FoldPointer(target);
     const uint32_t mask = MemoryInline::FlatRead8(track + 3);
     const int32_t bound = int32_t(ChannelBound(mask));
     const uint32_t count = ChannelCount(mask);
@@ -521,8 +517,8 @@ uint32_t RandomChannel(uint32_t& values, uint32_t seed) {
 // 0x8009DF14 (AnimCurveExecuteU8): the track's values at particle tick `tick`
 // of `life` into the target's channel bytes.
 void ExecuteU8(uint32_t track, uint32_t target, uint32_t tick, uint32_t particleSeed, uint32_t life, uint32_t r2) {
-    CheckPointer(track, "mCmdList");
-    CheckPointer(target, "target");
+    FoldPointer(track);
+    FoldPointer(target);
 
     if (MemoryInline::FlatRead8(track) == 0xAB) {
         ExecuteBaked<1>(track, target, tick, life);
@@ -711,8 +707,8 @@ void WriteFloat(uint32_t address, float f) {
 // own), and its picks advance on every channel bit.
 template <bool rotate>
 void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t particleSeed, uint32_t life, uint32_t r2) {
-    CheckPointer(track, "mCmdList");
-    CheckPointer(target, "target");
+    FoldPointer(track);
+    FoldPointer(target);
 
     if (!rotate && MemoryInline::FlatRead8(track) == 0xAB) {
         ExecuteBaked<4>(track, target, tick, life);
@@ -891,9 +887,9 @@ static void TickToFrameChecked(uint32_t r1, uint32_t r2, uint32_t life, uint32_t
     (void)r1;
     (void)r2;
 #endif
-    CheckPointer(outTick, "tick");
-    CheckPointer(outFrame, "tickF32");
-    CheckPointer(outLoop, "resDiv");
+    FoldPointer(outTick);
+    FoldPointer(outFrame);
+    FoldPointer(outLoop);
     const TickFrame r = TickToFrame(life, header, tick);
     MemoryInline::FlatWrite16(outTick, r.tick);
     uint32_t bits;
@@ -930,7 +926,7 @@ static void FrameIndexChecked(uint32_t r1, uint32_t header, uint32_t tick, uint3
 #else
     (void)r1;
 #endif
-    CheckPointer(out, "tick");
+    FoldPointer(out);
     MemoryInline::FlatWrite16(out, TickToFrame(life, header, tick).tick);
 }
 
@@ -971,11 +967,11 @@ static void ResolveTablesChecked(uint32_t r1, uint32_t track, uint32_t header, u
     (void)r1;
 #endif
     const Tables t = ResolveTables(track);
-    CheckPointer(header, "header");
-    CheckPointer(keys, "key");
-    CheckPointer(random, "random");
-    CheckPointer(pool, "randomTable");
-    CheckPointer(names, "nameTable");
+    FoldPointer(header);
+    FoldPointer(keys);
+    FoldPointer(random);
+    FoldPointer(pool);
+    FoldPointer(names);
     StoreTables(t, header, keys, random, pool, names);
 }
 
@@ -1013,10 +1009,10 @@ static void AdjustLoopsChecked(uint32_t r1, uint32_t header, uint32_t keys, uint
 #else
     (void)r1;
 #endif
-    CheckPointer(header, "header");
-    CheckPointer(keys, "key");
-    CheckPointer(low, "divL");
-    CheckPointer(high, "divH");
+    FoldPointer(header);
+    FoldPointer(keys);
+    FoldPointer(low);
+    FoldPointer(high);
     AdjustLoopsStore(header, keys, index, low, high);
 }
 

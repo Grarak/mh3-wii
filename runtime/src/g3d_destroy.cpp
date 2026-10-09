@@ -25,7 +25,7 @@
 //   0x8006EA2C. 0x8005E64C and 0x8006AB0C check that the object is in RAM
 //   (else panic) and detach it from its model (+0x44).
 //
-// The overlapped draw (docs/pipelined-draw.md) walks the scene the previous
+// The overlapped draw (docs/optimizations/threading/pipelined-draw.md) walks the scene the previous
 // logic step prepared while the game thread runs the next step. An area
 // change, or a monster leaving, destroys models the draw still holds: their
 // destructors put the base vtable in place, whose draw virtual is null, and
@@ -185,18 +185,10 @@ uint32_t AnmObj5E5F0(GuestCall& game, uint32_t self, int16_t) {
     return self ? AnmObj(game, self, 0) : self;
 }
 
-// The object must be in guest RAM (MEM1, MEM2 or their uncached and locked
-// cache aliases) before it detaches from its model (+0x44).
-bool InRam(uint32_t a) {
-    return (a & 0xFF000000u) == 0x80000000u || (a & 0xFF800000u) == 0x81000000u || (a & 0xF8000000u) == 0x90000000u || (a & 0xFF000000u) == 0xC0000000u ||
-           (a & 0xFF800000u) == 0xC1000000u || (a & 0xF8000000u) == 0xD0000000u || (a & 0xFFFFC000u) == 0xE0000000u;
-}
-
-void Release(GuestCall& game, uint32_t self, uint32_t file, uint32_t line, uint32_t format) {
-    if (!InRam(self))
-        game.Call<Panic>({file, line, format, self});
-
-    game.Virtual<0x44>(self);
+// NW4R's pointer check before the object detaches from its model (+0x44)
+// always passes in the port; the pointer is folded to its cached alias.
+void Release(GuestCall& game, uint32_t self) {
+    game.Virtual<0x44>(GuestFlat::CachedAlias(self));
 }
 
 uint32_t AnmObj5E64C(GuestCall& game, uint32_t self, int16_t) {
@@ -204,7 +196,7 @@ uint32_t AnmObj5E64C(GuestCall& game, uint32_t self, int16_t) {
         return self;
 
     Write32(self, 0x8058C518);
-    Release(game, self, 0x8058BBD0, 0xE1, 0x8058BC34);
+    Release(game, self);
     return AnmObj5E5F0(game, self, 0);
 }
 
@@ -233,7 +225,7 @@ uint32_t AnmObj6AB0C(GuestCall& game, uint32_t self, int16_t) {
         return self;
 
     Write32(self, 0x8058DD28);
-    Release(game, self, 0x8058D5D0, 0x9D, 0x8058D5E4);
+    Release(game, self);
     return AnmObj6AAB0(game, self, 0);
 }
 
