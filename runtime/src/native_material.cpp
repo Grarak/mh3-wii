@@ -146,12 +146,12 @@ void Owner() {
 void Check(mh3_res_status status,const char* operation) {
     if(status!=MH3_RES_OK) throw std::runtime_error(std::string(operation)+": status "+std::to_string(status));
 }
-void Validate(const mh3_material_requirements* requirements) {
+void Validate(const mh3_material_requirements* requirements,mh3_material_requirement_proof& proof) {
     mh3_material_diagnostic diagnostic{};
-    // PrepareMaterial checks all domains once before building dependencies.
-    // Its owner-only state remains unchanged throughout that preparation.
-    const auto status=requirements ? mh3_material_state_require(&material,requirements,&diagnostic) :
-        mh3_material_state_validate(&material,nullptr,&diagnostic);
+    // This proof lives only inside one owner-only immutable preparation.
+    // Each discovery boundary checks newly consumed fields before reading them.
+    const auto status=requirements ? mh3_material_state_require_step(&proof,&material,requirements,&diagnostic) :
+        mh3_material_state_require_begin(&proof,&material,&diagnostic);
     if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
         ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
         ", fields "+std::to_string(diagnostic.fields));
@@ -214,7 +214,8 @@ void ChannelConfig(const mh3_pack_channel_control& source,aurora::gx::ColorChann
     out.lightingEnabled=source.lighting;out.diffFn=GXDiffuseFn(source.diffuse);out.attnFn=GXAttnFn(source.attenuation);
 }
 PreparedMaterial PrepareMaterial() {
-    Validate(nullptr);
+    mh3_material_requirement_proof proof{};
+    Validate(nullptr,proof);
     if(!material.tev_count) throw std::runtime_error("Native material has no active combiner stages");
     if(material.fog_reference>=0 && !fogKnown) throw std::runtime_error("Native material fog reference has no typed producer");
     PreparedMaterial result;
@@ -228,11 +229,11 @@ PreparedMaterial PrepareMaterial() {
     requirements.pixel=AlphaFields;
     // An unknown operation must be diagnosed before it can narrow dependencies.
     for(unsigned i=0;i<material.tev_count;++i) requirements.tev[i]=Bit(MH3_TEV_COLOR_OPERATION)|Bit(MH3_TEV_ALPHA_OPERATION);
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<material.tev_count;++i) {
         requirements.tev[i]|=PassFields(material.tev[i].color,0)|PassFields(material.tev[i].alpha,9);
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     bool anyTexture=false;
     std::array<uint8_t,2> usedChannelComponents{};
     for(unsigned i=0;i<material.tev_count;++i) {
@@ -245,7 +246,7 @@ PreparedMaterial PrepareMaterial() {
         if(ColorUses(source,14)) requirements.tev[i]|=Bit(MH3_TEV_KONST_COLOR);
         if(AlphaUses(source,6)) requirements.tev[i]|=Bit(MH3_TEV_KONST_ALPHA);
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<material.tev_count;++i) {
         const auto& source=material.tev[i];
         if((ColorUses(source,8)||ColorUses(source,9)||AlphaUses(source,4)) && source.texture_map!=255 && material.texgen_count)
@@ -271,7 +272,7 @@ PreparedMaterial PrepareMaterial() {
         if(anyTexture) requirements.tev[i]|=Bit(MH3_TEV_INDIRECT_MATRIX)|Bit(MH3_TEV_INDIRECT_WRAP_S)|
             Bit(MH3_TEV_INDIRECT_WRAP_T)|Bit(MH3_TEV_INDIRECT_ADD_PREVIOUS);
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<material.tev_count;++i) {
         const auto& source=material.tev[i];auto& stage=config.tevStages[i];
         const bool textureRgb=ColorUses(source,8),textureAlpha=ColorUses(source,9)||AlphaUses(source,4);
@@ -297,7 +298,7 @@ PreparedMaterial PrepareMaterial() {
         }
         if(stage.indTexMtxId!=GX_ITM_OFF) requirements.tev[i]|=Bit(MH3_TEV_INDIRECT_STAGE);
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<material.tev_count;++i) {
         const auto& source=material.tev[i];auto& stage=config.tevStages[i];
         if(requirements.tev[i]&Bit(MH3_TEV_INDIRECT_STAGE)) stage.indTexStage=GXIndTexStageID(source.indirect_stage);
@@ -309,7 +310,7 @@ PreparedMaterial PrepareMaterial() {
         if(aurora::gx::tev_stage_needs_fixed_texcoord_state(config,i) && material.texgen_count)
             requirements.tev[i]|=Bit(MH3_TEV_TEXTURE_COORDINATE);
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<material.tev_count;++i) {
         const auto& source=material.tev[i];auto& stage=config.tevStages[i];
         if(requirements.tev[i]&Bit(MH3_TEV_TEXTURE_COORDINATE)) stage.texCoordId=GXTexCoordID(source.texture_coordinate);
@@ -347,7 +348,7 @@ PreparedMaterial PrepareMaterial() {
         if(usedChannelComponents[i]&7) requirements.channel[i]|=MH3_CHANNEL_CONTROL_COLOR;
         if(usedChannelComponents[i]&8) requirements.channel[i]|=MH3_CHANNEL_CONTROL_ALPHA;
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<2;++i) {
         const auto& source=material.channel[i];
         if(usedChannelComponents[i]&7) {
@@ -365,7 +366,7 @@ PreparedMaterial PrepareMaterial() {
     config.alphaCompare={GXCompare(pixel[MH3_PIXEL_ALPHA_COMPARE0]),0,GXAlphaOp(pixel[MH3_PIXEL_ALPHA_OPERATION]),GXCompare(pixel[MH3_PIXEL_ALPHA_COMPARE1]),0};
     if(pixel[MH3_PIXEL_ALPHA_COMPARE0]!=0 && pixel[MH3_PIXEL_ALPHA_COMPARE0]!=7) requirements.pixel|=Bit(MH3_PIXEL_ALPHA_REFERENCE0);
     if(pixel[MH3_PIXEL_ALPHA_COMPARE1]!=0 && pixel[MH3_PIXEL_ALPHA_COMPARE1]!=7) requirements.pixel|=Bit(MH3_PIXEL_ALPHA_REFERENCE1);
-    Validate(&requirements);
+    Validate(&requirements,proof);
     if(requirements.pixel&Bit(MH3_PIXEL_ALPHA_REFERENCE0)) config.alphaCompare.ref0=pixel[MH3_PIXEL_ALPHA_REFERENCE0];
     if(requirements.pixel&Bit(MH3_PIXEL_ALPHA_REFERENCE1)) config.alphaCompare.ref1=pixel[MH3_PIXEL_ALPHA_REFERENCE1];
     if(fogKnown) {config.fogType=fogSource.type;config.fogRangeAdjust=fogSource.range_enabled;}
@@ -383,7 +384,7 @@ PreparedMaterial PrepareMaterial() {
         else if(selection>=5 && selection<=7) requirements.indirect_matrix[selection-5]|=64;
         else if(selection>=9 && selection<=11) requirements.indirect_matrix[selection-9]|=64;
     }
-    Validate(&requirements);
+    Validate(&requirements,proof);
     for(unsigned i=0;i<8;++i) if(result.info.sampledTexCoords.test(i))
         config.tcgs[i].type=material.texgen[i].values[MH3_TEXGEN_PROJECTION] ? GX_TG_MTX3x4 : GX_TG_MTX2x4;
     // Projection changes varying types, but cannot introduce matrix dependencies.

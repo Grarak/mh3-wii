@@ -145,6 +145,89 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
 mh3_res_status mh3_material_state_require(const mh3_native_material_state *state,const mh3_material_requirements *requirements,mh3_material_diagnostic *out) {
     return validate(state,requirements,out,0);
 }
+mh3_res_status mh3_material_state_require_begin(mh3_material_requirement_proof *proof,
+    const mh3_native_material_state *state,mh3_material_diagnostic *out) {
+    if(!proof) return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TOP,0,0);
+    memset(proof,0,sizeof *proof);
+    const mh3_res_status status=mh3_material_state_validate(state,NULL,out);
+    if(!status) proof->state=state;
+    return status;
+}
+mh3_res_status mh3_material_state_require_step(mh3_material_requirement_proof *proof,
+    const mh3_native_material_state *state,const mh3_material_requirements *requirements,
+    mh3_material_diagnostic *out) {
+    if(!proof || !state || proof->state!=state || proof->capabilities_known>1)
+        return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TOP,0,0);
+    if(!requirements) return MH3_RES_OK;
+    if(requirements->require_clip>1 || requirements->supported_features&~MH3_MATERIAL_SUPPORT_ALL)
+        return fail(out,MH3_RES_INVALID,MH3_MATERIAL_TOP,0,0);
+    const mh3_material_requirements *checked=&proof->checked;
+    mh3_res_status status;
+    /* Previously successful fields are known in this unchanged state. Inactive
+     * records keep ABSENT precedence over request-domain errors, exactly as in
+     * require. Read a known mask only when this phase consumes a new field. */
+#define REQUIRE_DELTA(request,prior,active,known,allowed,group,index) do { \
+    const uint64_t added=(uint64_t)(request)&~(uint64_t)(prior); \
+    if(added) { \
+        if(!(active)) return fail(out,MH3_RES_ABSENT,group,index,added); \
+        status=mask_check(known,allowed,added,group,index,out);if(status) return status; \
+    } \
+} while(0)
+    for(unsigned index=0;index<16;++index)
+        REQUIRE_DELTA(requirements->tev[index],checked->tev[index],index<state->tev_count,
+            state->tev[index].known,MH3_MATERIAL_TEV_MASK,MH3_MATERIAL_TEV,index);
+    for(unsigned index=0;index<8;++index)
+        REQUIRE_DELTA(requirements->texgen[index],checked->texgen[index],index<state->texgen_count,
+            state->texgen[index].known,MH3_MATERIAL_TEXGEN_MASK,MH3_MATERIAL_TEXGEN,index);
+    for(unsigned index=0;index<2;++index)
+        REQUIRE_DELTA(requirements->channel[index],checked->channel[index],index<state->channel_count,
+            state->channel[index].flags,63,MH3_MATERIAL_CHANNEL,index);
+    for(unsigned index=0;index<4;++index) {
+        REQUIRE_DELTA(requirements->color[index],checked->color[index],1,
+            state->color[index].known,15,MH3_MATERIAL_COLOR,index);
+        REQUIRE_DELTA(requirements->konst[index],checked->konst[index],1,
+            state->konst[index].known,15,MH3_MATERIAL_KONST,index);
+        REQUIRE_DELTA(requirements->swaps[index],checked->swaps[index],1,
+            state->swaps[index].known,15,MH3_MATERIAL_SWAP,index);
+        REQUIRE_DELTA(requirements->indirect[index],checked->indirect[index],index<state->indirect_count,
+            state->indirect[index].known,15,MH3_MATERIAL_INDIRECT,index);
+    }
+    for(unsigned index=0;index<3;++index)
+        REQUIRE_DELTA(requirements->indirect_matrix[index],checked->indirect_matrix[index],1,
+            state->indirect_matrix[index].known,127,MH3_MATERIAL_INDIRECT_MATRIX,index);
+    REQUIRE_DELTA(requirements->pixel,checked->pixel,1,
+        state->pixel.known,MH3_MATERIAL_PIXEL_MASK,MH3_MATERIAL_PIXEL,0);
+#undef REQUIRE_DELTA
+    /* Promises may shrink, even when no required bit changed. Full domain
+     * validation does not establish support for enabled optional features. */
+    if(!proof->capabilities_known || requirements->supported_features!=checked->supported_features ||
+       requirements->require_clip!=checked->require_clip) {
+        if(requirements->require_clip && !state->clip_mode_known)
+            return fail(out,MH3_RES_ABSENT,MH3_MATERIAL_CLIP,0,1);
+        if(state->clip_mode_known && state->clip_disabled &&
+           !(requirements->supported_features&MH3_MATERIAL_SUPPORT_CLIP_DISABLED))
+            return fail(out,MH3_RES_UNSUPPORTED,MH3_MATERIAL_CLIP,0,1);
+        const unsigned fields[3]={MH3_PIXEL_DITHER,MH3_PIXEL_DESTINATION_ALPHA_ENABLE,MH3_PIXEL_DEPTH_TEXTURE_OPERATION};
+        const uint32_t capabilities[3]={MH3_MATERIAL_SUPPORT_DITHER,MH3_MATERIAL_SUPPORT_DESTINATION_ALPHA,MH3_MATERIAL_SUPPORT_DEPTH_TEXTURE};
+        for(unsigned index=0;index<3;++index) if((state->pixel.known&BIT(fields[index])) && state->pixel.values[fields[index]] &&
+            !(requirements->supported_features&capabilities[index]))
+                return fail(out,MH3_RES_UNSUPPORTED,MH3_MATERIAL_PIXEL,0,BIT(fields[index]));
+    }
+    /* Commit only after every group/capability passed; a failed phase cannot
+     * certify later fields. Union also permits removing/re-adding requirements
+     * while the same immutable state remains in this preparation. */
+#define UNION_REQUIREMENT(field,count) for(unsigned index=0;index<count;++index) \
+    proof->checked.field[index]|=requirements->field[index]
+    UNION_REQUIREMENT(tev,16);UNION_REQUIREMENT(texgen,8);UNION_REQUIREMENT(channel,2);
+    UNION_REQUIREMENT(color,4);UNION_REQUIREMENT(konst,4);UNION_REQUIREMENT(swaps,4);
+    UNION_REQUIREMENT(indirect,4);UNION_REQUIREMENT(indirect_matrix,3);
+#undef UNION_REQUIREMENT
+    proof->checked.pixel|=requirements->pixel;
+    proof->checked.require_clip=requirements->require_clip;
+    proof->checked.supported_features=requirements->supported_features;
+    proof->capabilities_known=1;
+    return MH3_RES_OK;
+}
 static void merge_bytes(void *destination,const void *source,uint64_t known,size_t count,size_t stride) {
     if(!known) return;
     if(known==(BIT(count)-1)) {memcpy(destination,source,count*stride);return;}

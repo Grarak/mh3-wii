@@ -69,6 +69,22 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
  * publication; this helper is not an admission check for arbitrary input. */
 mh3_res_status mh3_material_state_require(const mh3_native_material_state *state,
     const mh3_material_requirements *requirements,mh3_material_diagnostic *diagnostic);
+/* One owner-local preparation of an immutable state. Begin checks all known
+ * domains; steps preserve discovery ordering while checking newly consumed
+ * fields only. Caller must not alter state or proof between steps, and must
+ * begin again after every publication (including same-address replacement).
+ * Checked fields accumulate; capability promises may change between steps.
+ * Failed steps leave the proof unchanged. No heap or borrowed GPU state. */
+typedef struct mh3_material_requirement_proof {
+    const mh3_native_material_state *state;
+    mh3_material_requirements checked;
+    uint8_t capabilities_known;
+} mh3_material_requirement_proof;
+mh3_res_status mh3_material_state_require_begin(mh3_material_requirement_proof *proof,
+    const mh3_native_material_state *state,mh3_material_diagnostic *diagnostic);
+mh3_res_status mh3_material_state_require_step(mh3_material_requirement_proof *proof,
+    const mh3_native_material_state *state,const mh3_material_requirements *requirements,
+    mh3_material_diagnostic *diagnostic);
 /* Alpha comparisons and other non-raster fields stay shader/backend owned.
  * A partial blend-mode triple returns ABSENT without changing any raster byte. */
 mh3_res_status mh3_material_pixel_raster(const mh3_pack_pixel_inputs *pixel,mh3_raster_state *raster);
