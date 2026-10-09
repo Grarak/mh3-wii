@@ -102,30 +102,44 @@ struct NativeFrozenMaterialBlock {
 /* Deleter of frozen copies: deletes after the render thread finished the
  * packet being recorded (immediately while no render thread runs). */
 void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block);
-/* The frozen copy a live block owns for its current version (game thread).
+/* An immutable version of a pixel or colour block's per-draw fields (the
+ * pixel group, or the TEV and konst colours), made when they change and
+ * referenced by every draw until they change again. */
+struct NativeMaterialGroupVersion {
+    mh3_pack_pixel_inputs pixel;
+    mh3_pack_tev_color color[4], konst[4];
+};
+/* The same deferred deleter for group versions; batched per packet. */
+void ReleaseNativeMaterialGroupVersion(const NativeMaterialGroupVersion* version);
+/* The immutable copy a live block owns for its current version (game thread).
  * A copy of the live block does not take it; replacing or destroying the
  * owning block retires it, so items already recorded keep reading it until
  * their packet has rendered. Holders of the plain pointer keep it while no
  * live block changed (ReadNativeLiveMaterialRevision) and ask again after. */
-class NativeFrozenCopy {
+template <class T, void (*Release)(const T*)>
+class NativeSharedCopy {
   public:
-    NativeFrozenCopy() = default;
-    NativeFrozenCopy(const NativeFrozenCopy&) noexcept {}
-    NativeFrozenCopy& operator=(const NativeFrozenCopy&) noexcept {
+    NativeSharedCopy() = default;
+    NativeSharedCopy(const NativeSharedCopy&) noexcept {}
+    NativeSharedCopy& operator=(const NativeSharedCopy&) noexcept {
         Reset(nullptr);
         return *this;
     }
-    ~NativeFrozenCopy() { Reset(nullptr); }
-    const NativeFrozenMaterialBlock* get() const { return block_; }
-    void Reset(const NativeFrozenMaterialBlock* block) {
+    ~NativeSharedCopy() { Reset(nullptr); }
+    const T* get() const { return block_; }
+    void Reset(const T* block) {
         if (block_ && block_ != block)
-            ReleaseNativeFrozenMaterialBlock(block_);
+            Release(block_);
         block_ = block;
     }
+    // The block generation the copy was last confirmed against.
+    uint64_t generation = 0;
 
   private:
-    const NativeFrozenMaterialBlock* block_ = nullptr;
+    const T* block_ = nullptr;
 };
+using NativeFrozenCopy = NativeSharedCopy<NativeFrozenMaterialBlock, ReleaseNativeFrozenMaterialBlock>;
+using NativeGroupCopy = NativeSharedCopy<NativeMaterialGroupVersion, ReleaseNativeMaterialGroupVersion>;
 struct NativeLiveMaterialBlock {
     mh3_native_material_state fields;
     uint32_t address, bytes;
@@ -134,6 +148,8 @@ struct NativeLiveMaterialBlock {
     uint64_t resident_generation, origin_offset, source_generation;
     // The frozen copy of fields.generation, made on demand.
     mutable NativeFrozenCopy frozen;
+    // Pixel and colour blocks: the group version draws reference.
+    mutable NativeGroupCopy group;
     // Typed writes may update this node in place (any publication, and a new
     // block or owner over its bytes, clears it).
     bool writable = false;
@@ -160,6 +176,10 @@ void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
 /* Game thread: the immutable copy of the block's current version, made once
  * per published version and owned by the block (NativeFrozenCopy). */
 const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
+/* Game thread: the version of a pixel or colour block's current group fields.
+ * A new generation with equal fields keeps the previous version, so a draw
+ * costs one generation compare while its material is not animating. */
+const NativeMaterialGroupVersion* VersionNativeLiveMaterialGroup(const NativeLiveMaterialBlock& block);
 uint64_t NextNativeMaterialRevision();
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind);
 /* Explicit mutable vertex producers must advance source revisions when arrays

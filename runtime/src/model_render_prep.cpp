@@ -99,15 +99,15 @@ struct Prep {
         if (apply)
             OverlayNativeMaterialTop(top, value.texgens, value.channels, value.tevs, value.indirect, value.cull, owner);
     }
-    // The captured pixel/colour group fields as a material state; a group's
+    // The captured pixel/colour group version as a material state; a group's
     // publication reads only its own fields (mh3_material_group_publish).
     const mh3_native_material_state& GroupState(mh3_model_material_block kind) {
         auto& state = groupStates[owner == NativeOwner::Render ? 0 : 1];
         if (kind == MH3_MODEL_MATERIAL_PIXEL)
-            state.pixel = in.pixel;
+            std::memcpy(&state.pixel, &in.pixel->pixel, sizeof state.pixel);
         else {
-            std::memcpy(state.color, in.color, sizeof in.color);
-            std::memcpy(state.konst, in.konst, sizeof in.konst);
+            std::memcpy(state.color, in.colors->color, sizeof state.color);
+            std::memcpy(state.konst, in.colors->konst, sizeof state.konst);
         }
         return state;
     }
@@ -123,7 +123,7 @@ struct Prep {
             PublishGenmode(true);
     }
     void Group(mh3_model_material_block kind) {
-        if (in.groups & (1u << kind))
+        if (kind == MH3_MODEL_MATERIAL_PIXEL ? in.pixel : in.colors)
             Publish(GroupState(kind), kind, false);
     }
     void Group(const NativeFrozenMaterialBlock* block, mh3_model_material_block kind, bool xf = false) {
@@ -298,6 +298,30 @@ void ReleaseNativeFrozenMaterialBlock(const NativeFrozenMaterialBlock* block) {
     QueueNativeGraphicsTask(NativeTaskOrder::AfterDraws, [block] { delete block; });
 }
 
+namespace {
+// Group versions retired while one packet was recorded, deleted by one task
+// after a later packet rendered (a version retires every time an animated
+// group changes, so one task per version would cost more than the copy).
+std::vector<const NativeMaterialGroupVersion*> retiredVersions;
+uint64_t retiredSequence = 0;
+} // namespace
+void ReleaseNativeMaterialGroupVersion(const NativeMaterialGroupVersion* version) {
+    if (!NativeRenderThreadRunning()) {
+        delete version;
+        return;
+    }
+    const uint64_t sequence = NativeFramePacketSequence();
+    if (!retiredVersions.empty() && retiredSequence != sequence) {
+        QueueNativeGraphicsTask(NativeTaskOrder::AfterDraws, [versions = std::move(retiredVersions)] {
+            for (const auto* retired : versions)
+                delete retired;
+        });
+        retiredVersions.clear();
+    }
+    retiredSequence = sequence;
+    retiredVersions.push_back(version);
+}
+
 ModelPrepMode NativeModelPrepMode() {
     static const ModelPrepMode mode = [] {
         const char* value = std::getenv("MH3_RENDER_PREP");
@@ -342,16 +366,6 @@ void NoteNativeModelPrepInvalidate(uint32_t fields) {
 }
 
 namespace {
-// Copies the fields the pixel or colour group publication reads.
-void CopyGroup(ModelPrepInputs& in, const mh3_native_material_state& fields, mh3_model_material_block kind) {
-    if (kind == MH3_MODEL_MATERIAL_PIXEL)
-        in.pixel = fields.pixel;
-    else {
-        std::memcpy(in.color, fields.color, sizeof in.color);
-        std::memcpy(in.konst, fields.konst, sizeof in.konst);
-    }
-    in.groups |= uint8_t(1u << kind);
-}
 // Aligned word compare (memcmp is a byte loop on the Vita).
 bool SameWords(const void* a, const void* b, size_t bytes) {
     const auto* x = static_cast<const uint32_t*>(a);
@@ -497,12 +511,11 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
     in.record = entry.record;
     in.indirect = entry.record->indirect;
 
-    // Animated group fields: per dispatch, from the live blocks (updated in place).
-    in.groups = 0;
-    if (const auto* pixel = entry.blocks[MH3_MODEL_MATERIAL_PIXEL])
-        CopyGroup(in, pixel->fields, MH3_MODEL_MATERIAL_PIXEL);
-    if (const auto* colors = entry.blocks[MH3_MODEL_MATERIAL_COLORS])
-        CopyGroup(in, colors->fields, MH3_MODEL_MATERIAL_COLORS);
+    // Animated group fields: the live blocks' (updated in place) current versions.
+    const auto* pixel = entry.blocks[MH3_MODEL_MATERIAL_PIXEL];
+    in.pixel = pixel ? VersionNativeLiveMaterialGroup(*pixel) : nullptr;
+    const auto* colors = entry.blocks[MH3_MODEL_MATERIAL_COLORS];
+    in.colors = colors ? VersionNativeLiveMaterialGroup(*colors) : nullptr;
 
     in.srt = -1;
     if (const uint32_t resource = slots[MH3_MAT_TEXTURE_SRT]) {

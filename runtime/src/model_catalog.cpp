@@ -1030,7 +1030,41 @@ bool SameGroup(const mh3_native_material_state& a, const mh3_native_material_sta
         return false;
     }
 }
+// Word compare (memcmp is a byte loop on the Vita).
+bool SameWords(const void* a, const void* b, size_t bytes) {
+    const auto* x = static_cast<const uint32_t*>(a);
+    const auto* y = static_cast<const uint32_t*>(b);
+    for (size_t i = 0; i < bytes / 4; i++)
+        if (x[i] != y[i])
+            return false;
+    return true;
+}
+static_assert(sizeof(mh3_pack_pixel_inputs) % 4 == 0 && sizeof(mh3_pack_tev_color[4]) % 4 == 0);
 } // namespace
+const NativeMaterialGroupVersion* VersionNativeLiveMaterialGroup(const NativeLiveMaterialBlock& block) {
+    auto& copy = block.group;
+    const auto& fields = block.fields;
+    const auto* current = copy.get();
+    if (current && copy.generation == fields.generation)
+        return current;
+    // Setters stamp a new generation even when they store the same values.
+    const bool pixel = block.kind == MH3_MODEL_MATERIAL_PIXEL;
+    if (current && (pixel ? SameWords(&current->pixel, &fields.pixel, sizeof fields.pixel)
+                          : SameWords(current->color, fields.color, sizeof fields.color) && SameWords(current->konst, fields.konst, sizeof fields.konst))) {
+        copy.generation = fields.generation;
+        return current;
+    }
+    auto* version = new NativeMaterialGroupVersion;
+    if (pixel)
+        std::memcpy(&version->pixel, &fields.pixel, sizeof fields.pixel);
+    else {
+        std::memcpy(version->color, fields.color, sizeof fields.color);
+        std::memcpy(version->konst, fields.konst, sizeof fields.konst);
+    }
+    copy.Reset(version);
+    copy.generation = fields.generation;
+    return version;
+}
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind) {
     const auto& from = ReadNativeLiveMaterialBlockView(source, kind);
     const uint32_t bytes = from.bytes;

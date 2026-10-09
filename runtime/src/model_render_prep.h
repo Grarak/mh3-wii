@@ -80,12 +80,12 @@ struct ModelPrepInputs {
     uint8_t depth_before_texture = 0;
     uint8_t genmode[8]{};
     uint8_t channels[40]{};
-    // The fields the pixel and colour typed blocks publish
-    // (mh3_material_group_publish), copied per dispatch: per-instance alpha
-    // compare, blend and konst colours change between draws.
-    uint8_t groups = 0; // 1 << MH3_MODEL_MATERIAL_PIXEL / _COLORS when copied
-    mh3_pack_pixel_inputs pixel{};
-    mh3_pack_tev_color color[4]{}, konst[4]{};
+    // The current versions of the fields the pixel and colour typed blocks
+    // publish (mh3_material_group_publish); null without the block.
+    // Per-instance alpha compare, blend and konst colours change between
+    // draws: each change is a new version, an unchanged block keeps its one.
+    const NativeMaterialGroupVersion* pixel = nullptr;
+    const NativeMaterialGroupVersion* colors = nullptr;
     // The record's indirect block, or the replaced one of an ignored material.
     const NativeFrozenMaterialBlock* indirect = nullptr;
     uint32_t light_masks[4]{};
