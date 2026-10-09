@@ -22,6 +22,7 @@
 #include "model_cull.h"
 #include "../native/mh3_shade.h"
 #ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
 #include "gfx/port_capture.hpp"
 #include <xxhash.h>
 #endif
@@ -419,11 +420,18 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
 
 // ---- Material uniforms in GPU memory (docs/native-material-gpu.md) ----
 // MH3_MATERIAL_GPU=0 keeps the per-draw Shade uniforms (mh3_shade_fill).
+// MH3_MATERIAL_GPU: unset or 1 for every draw, 0 for none, "models" for
+// model meshes only (pre-transformed geometry takes the per-draw Shade path).
+const char* MaterialGpuValue() {
+    static const char* value = std::getenv("MH3_MATERIAL_GPU");
+    return value ? value : "1";
+}
 bool MaterialGpu() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("MH3_MATERIAL_GPU");
-        return !(value && value[0] == '0');
-    }();
+    static const bool enabled = MaterialGpuValue()[0] != '0';
+    return enabled;
+}
+bool MaterialGpuGeometry() {
+    static const bool enabled = MaterialGpu() && std::strcmp(MaterialGpuValue(), "models") != 0;
     return enabled;
 }
 // Frame uniform memory for Animated blocks and resolved Material copies,
@@ -839,6 +847,124 @@ void ReportMaterialGpu() {
     lastFrame = frame;
 }
 #endif
+#ifdef MH3_DEVELOPMENT
+// MH3_PROFILE=fill: screen area that material geometry (effects, particles,
+// layouts) covers per fragment program and blend, every 300 rendered frames,
+// for attributing the GPU's fragment time. Areas are in screens (the clip
+// square), clipped to w > 0 and the viewport; depth and scissor are ignored.
+struct FillCount {
+    double screens = 0;
+    uint64_t draws = 0, triangles = 0;
+};
+std::unordered_map<std::string, FillCount> fillCounts;
+uint32_t fillFrame = 0;
+double ClippedScreens(const float* a, const float* b, const float* c) {
+    std::array<std::array<float, 4>, 9> polygon, next;
+    unsigned count = 3;
+    std::memcpy(polygon[0].data(), a, 16);
+    std::memcpy(polygon[1].data(), b, 16);
+    std::memcpy(polygon[2].data(), c, 16);
+    // Planes as signed distances: w - eps, w - x, w + x, w - y, w + y.
+    const auto distance = [](const std::array<float, 4>& v, unsigned plane) {
+        switch (plane) {
+        case 0: return v[3] - 1e-5f;
+        case 1: return v[3] - v[0];
+        case 2: return v[3] + v[0];
+        case 3: return v[3] - v[1];
+        default: return v[3] + v[1];
+        }
+    };
+    for (unsigned plane = 0; plane < 5 && count; ++plane) {
+        unsigned out = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            const auto& p = polygon[i];
+            const auto& q = polygon[(i + 1) % count];
+            const float dp = distance(p, plane), dq = distance(q, plane);
+            if (dp >= 0 && out < next.size())
+                next[out++] = p;
+            if ((dp >= 0) != (dq >= 0) && out < next.size()) {
+                const float t = dp / (dp - dq);
+                for (unsigned k = 0; k < 4; ++k)
+                    next[out][k] = p[k] + t * (q[k] - p[k]);
+                ++out;
+            }
+        }
+        polygon = next;
+        count = out;
+    }
+    double area = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        const auto& p = polygon[i];
+        const auto& q = polygon[(i + 1) % count];
+        area += double(p[0] / p[3]) * (q[1] / q[3]) - double(q[0] / q[3]) * (p[1] / p[3]);
+    }
+    return std::abs(area) / 8; // the clip square's area is 4
+}
+// BASIC structure: per input source (0, T role, V; ' replicates alpha) with
+// offset + scale constants (Z 1 H R K F kind, index), then subtract/bias/scale.
+std::string BasicStructure(const mh3_shade_material& shading) {
+    const auto constant = [](const mh3_shade_constant& c) {
+        std::string out;
+        for (unsigned i = 0; i < 2; ++i) {
+            if (c.kind[i] == MH3_SHADE_CONSTANT_ONE)
+                continue;
+            out += "Z1HRKF"[c.kind[i] < 6 ? c.kind[i] : 0];
+            if (c.kind[i] >= MH3_SHADE_CONSTANT_REGISTER)
+                out += std::to_string(c.index[i]);
+            if (c.alpha[i])
+                out += 'a';
+        }
+        return out.empty() ? std::string("1") : out;
+    };
+    std::string out;
+    for (const auto* equation : {&shading.color, &shading.alpha}) {
+        out += equation == &shading.color ? " c[" : " a[";
+        for (const auto& term : equation->input) {
+            out += term.source == MH3_SHADE_SOURCE_TEXTURE ? "T" + std::to_string(term.texture) : term.source == MH3_SHADE_SOURCE_VERTEX ? std::string("V") : std::string("0");
+            if (term.replicate_alpha)
+                out += '\'';
+            out += "*" + constant(term.scale) + "+" + constant(term.offset) + " ";
+        }
+        out += std::to_string(equation->subtract) + std::to_string(equation->bias) + std::to_string(equation->scale) + "]";
+    }
+    return out;
+}
+void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderVariant& variant, const mh3_shade_material& shading) {
+    static const bool enabled = ProfileOptions().Has("fill");
+    if (!enabled)
+        return;
+    const auto& raster = GetNativeDrawState(NativeOwner::Render).raster;
+    char blend[32];
+    std::snprintf(blend, sizeof blend, " b%u:%u:%u%s", raster.blend_mode, raster.src_factor, raster.dst_factor, raster.depth_test ? "" : " nodepth");
+    auto& count = fillCounts[NativeShaderFragmentName(variant) + blend + (shading.model == MH3_SHADE_BASIC ? BasicStructure(shading) : std::string())];
+    ++count.draws;
+    for (uint32_t i = 0; i + 2 < geometry.index_count; i += 3) {
+        const auto& v = geometry.vertices;
+        count.screens += ClippedScreens(v[geometry.indices[i]].position, v[geometry.indices[i + 1]].position, v[geometry.indices[i + 2]].position);
+        ++count.triangles;
+    }
+    const uint32_t frame = aurora::gfx::current_frame();
+    if (!fillFrame)
+        fillFrame = frame;
+    if (frame - fillFrame < 300)
+        return;
+    const double frames = frame - fillFrame;
+    std::vector<std::pair<std::string, FillCount>> sorted(fillCounts.begin(), fillCounts.end());
+    std::sort(sorted.begin(), sorted.end(), [](const auto& x, const auto& y) { return x.second.screens > y.second.screens; });
+    double total = 0;
+    uint64_t draws = 0;
+    for (const auto& [name, value] : sorted) {
+        total += value.screens;
+        draws += value.draws;
+    }
+    std::fprintf(stderr, "MH3 material fill: %.2f screens %.1f draws per frame\n", total / frames, draws / frames);
+    for (size_t i = 0; i < sorted.size() && i < 16; ++i)
+        std::fprintf(stderr, "MH3 material fill:   %6.3f screens %6.1f draws %7.1f triangles  %s\n", sorted[i].second.screens / frames, sorted[i].second.draws / frames,
+                     sorted[i].second.triangles / frames, sorted[i].first.c_str());
+    fillCounts.clear();
+    fillFrame = frame;
+}
+#endif
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
 #ifdef MH3_DEVELOPMENT
     ReportMaterialGpu();
@@ -1020,7 +1146,7 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     const auto& entry = ShadeMaterial();
     const auto& shading = entry.shading;
     RequireEarlyDepth(shading);
-    const auto* baked = MaterialGpu() ? RecordBlock(entry) : nullptr;
+    const auto* baked = MaterialGpuGeometry() ? RecordBlock(entry) : nullptr;
     const bool gpu = baked != nullptr;
     AuroraNativeUniforms memory{};
     mh3_shade_draw* block = nullptr;
@@ -1065,6 +1191,9 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     if (!blocks)
         return;
     const GLuint program = ShadeProgram(variant)->get();
+#ifdef MH3_DEVELOPMENT
+    CountFill(geometry, variant, shading);
+#endif
     aurora::gl::draw_shaded_geometry(geometry, coordinates, program, *blocks, units);
 }
 } // namespace

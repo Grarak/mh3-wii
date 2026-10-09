@@ -82,7 +82,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,sync][,skip=KIND[+KIND...]]`
+`MH3_PROFILE=[frames=N][,split][,sync][,skip=KIND[+KIND...]][,fill]`
 
 | Item | Effect |
 | --- | --- |
@@ -90,6 +90,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw) |
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 | `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry); for attributing GPU time with Razor |
+| `fill` | every 300 frames, the `MH3 material fill` lines: screen area (in screens) that material geometry covers per fragment program and blend, clipped to the viewport |
 
 ### `MH3_VERIFY`: reused state against a fresh copy
 
@@ -157,7 +158,7 @@ A second cleanup pass merges or removes these; the last column says how.
 | `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file | all | keep or remove after its A/B |
 | `MH3_DRAW_TABLE_DISCOVER` | `0`: draw tables only for models already drawn | all | remove |
 | `MH3_DRAW_TABLE_TRACE` | draw-table statistics | development | remove |
-| `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory | all | remove (on in the devkit A/B) |
+| `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory; `models`: material blocks for model meshes only | all | remove (on in the devkit A/B) |
 | `MH3_MATERIAL_GPU_RING` | route the render thread's Animated sections through the producer ring (self-test) | development | remove |
 | `MH3_MATERIAL_GPU_VERIFY` | compare the material programs' coefficients with `mh3_shade_fill` | development | into `MH3_VERIFY` |
 | `MH3_MODEL_CULL` | `0`: draw models whose mesh box is off screen | all | remove (on in the devkit A/B) |

@@ -186,12 +186,12 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,sync][,skip=KIND[+KIND...]]: the frame
-// profile and GX counters every N frames (graphics_host.cpp), the per-draw
-// split timers (game_frame.cpp), serial frames and dropped draw kinds
-// (native_frame_packet.cpp).
+// MH3_PROFILE=[frames=N][,split][,sync][,skip=KIND[+KIND...]][,fill]: the
+// frame profile and GX counters every N frames (graphics_host.cpp), the
+// per-draw split timers (game_frame.cpp), serial frames and dropped draw kinds
+// (native_frame_packet.cpp), material geometry screen area (native_material.cpp).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "sync", "skip"});
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "sync", "skip", "fill"});
     return options;
 }
 
