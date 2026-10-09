@@ -5,7 +5,7 @@
 // Player work (PLW): +0x0A u8 action group (8: down), +0x370 s16 health,
 // +0x372 s16 maximum health, +0x376 s16 recoverable ("red") health.
 //
-// --no-damage (development builds) drops the negative amounts.
+// The optional --no-damage cheat drops the negative amounts.
 #include "player_health.h"
 
 #include "abi_bridge.h"

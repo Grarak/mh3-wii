@@ -83,7 +83,6 @@ int RunEfbCheck(int argc, char** argv);
 #endif
 
 constexpr const char* kUsage =
-#ifdef MH3_DEVELOPMENT
     "Unknown option. Options:\n"
     "  --village                      start File 1 / character 1 in the village\n"
     "  --list quests|online-quests|arena-quests\n"
@@ -93,12 +92,8 @@ constexpr const char* kUsage =
     "                                 Moga Woods free roam from the village; --spawn\n"
     "                                 moves the hunter there (arena pit: 0,300,0)\n"
     "  --no-damage                    (with any of the above) the hunter takes no damage\n"
-#else
-    "Unknown option (--village, --quest and --list are in development builds)"
-#endif
     ;
 
-#ifdef MH3_DEVELOPMENT
 // --quest <id>|free [--area <n>] [--spawn <x,y,z>]. The quest sets' ids don't overlap (village
 // 1000.., arena 9000.., online 10000..): the id picks the set.
 void StartQuestBoot(int argc, char** argv) {
@@ -132,7 +127,6 @@ void StartQuestBoot(int argc, char** argv) {
     RequestQuestJump(quest, set, area);
     StartVillageBoot();
 }
-#endif
 
 int main(int argc, char** argv) {
     InstallLegacyGxPanicHandler();
@@ -146,7 +140,6 @@ int main(int argc, char** argv) {
 #ifdef __vita__
         if (argc == 1 && !VitaLauncher::Run()) return 0;
 #endif
-#ifdef MH3_DEVELOPMENT
         // --no-damage goes with any other option.
         const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });
         if (noDamage != argv + argc) {
@@ -154,7 +147,6 @@ int main(int argc, char** argv) {
             std::cerr << "MH3: no damage\n";
             argc = int(noDamage - argv);
         }
-#endif
 #ifdef MH3_HAS_AURORA
         if (argc == 2 && std::string_view(argv[1]) == "--efb-check")
             return RunEfbCheck(argc, argv);
@@ -171,7 +163,6 @@ int main(int argc, char** argv) {
             if (!output) throw std::runtime_error("Disc read output failed");
             return 0;
         }
-#ifdef MH3_DEVELOPMENT
         if (argc == 3 && std::string_view(argv[1]) == "--list") {
             const std::string_view what = argv[2];
             if (what == "quests") QuestCatalog::Print(QuestCatalog::Set::Village);
@@ -180,7 +171,6 @@ int main(int argc, char** argv) {
             else throw std::runtime_error(kUsage);
             return 0;
         }
-#endif
         Memory::Init(24 * 1024 * 1024);
         InitializePersistentCpuContext();
         auto& cpu = GetPersistentCpuContext();
@@ -230,12 +220,10 @@ int main(int argc, char** argv) {
             RunAudioSelfTests(&cpu);
             return 0;
         }
-#ifdef MH3_DEVELOPMENT
         if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
         else if (argc >= 3 && std::string_view(argv[1]) == "--quest")
             StartQuestBoot(argc, argv);
         else
-#endif
         if (argc != 1) throw std::runtime_error(kUsage);
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");

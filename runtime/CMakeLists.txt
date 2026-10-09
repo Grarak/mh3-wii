@@ -8,6 +8,8 @@ option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinatio
 # speed line, MH3_PROFILE_FRAMES profile and GX counters, MH3_CAPTURE_* frame
 # dumps, MH3_FRAMESKIP, and scripted input (MH3_INPUT_FILE / _RECORD / _PLAYBACK).
 option(MH3_DEVELOPMENT "Build development/debug features (stats, captures, scripted input)" OFF)
+# Quest selection and native launcher features are present in every build.
+# Assertions follow CMAKE_BUILD_TYPE/NDEBUG independently of instrumentation.
 option(MH3_PROFILE_FRAME_POINTERS "Emit frame pointers and unwind tables for CPU caller profiling" ${MH3_DEVELOPMENT})
 if(MH3_PROFILE_FRAME_POINTERS)
   add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fno-omit-frame-pointer;-mno-omit-leaf-frame-pointer;-funwind-tables>")
@@ -289,9 +291,7 @@ if(MH3_WRITE_WATCH)
   target_compile_definitions(MH3 PRIVATE MH3_WRITE_WATCH=1)
 endif()
 
-if(MH3_DEVELOPMENT OR VITA)
-  target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest
-endif()
+target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest, launcher
 if(MH3_DEVELOPMENT)
   target_sources(MH3 PRIVATE src/slow_path_trace.cpp) # MH3_SLOW_PATH_TRACE
 endif()

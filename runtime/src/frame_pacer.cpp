@@ -191,8 +191,8 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // Input record/playback is indexed by game time in 30 Hz frames (2 retraces),
     // so a recording replays in real time at any logic rate.
     SetInputFrame(uint64_t(pacedTicks / 2));
-#ifdef MH3_DEVELOPMENT
     FieldJumpFrame(uint64_t(pacedTicks / 2));
+#ifdef MH3_DEVELOPMENT
     // MH3_RAM_DUMP=first,count: write MEM1 then MEM2 to mh3-ram-<frame>.bin after each of
     // `count` frames starting at paced frame `first` (offline state diffing).
     static const auto ramDump = [] {
