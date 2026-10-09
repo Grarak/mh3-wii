@@ -146,3 +146,4 @@ void ReportVitaMemory() {
         std::fprintf(stderr, "MH3 Vita free: main %.2f MiB, CDRAM %.2f MiB, phycont %.2f MiB\n", memory.size_user / 1048576.0, memory.size_cdram / 1048576.0, memory.size_phycont / 1048576.0);
 }
 
+

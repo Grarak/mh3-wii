@@ -4,6 +4,9 @@
 #include <aurora/thread_role.hpp>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <thread>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -90,6 +93,14 @@ bool Exists(const std::filesystem::path& path) {
     std::error_code error;
     return std::filesystem::exists(path, error);
 }
+#ifdef MH3_DEVELOPMENT
+// Development log of conversion jobs and of the game thread's waits for them:
+// a first load of a map converts its packs on the workers while the game
+// thread may wait, which is otherwise silent.
+double Seconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+#endif
 } // namespace
 
 struct AssetCache::Impl {
@@ -136,6 +147,36 @@ struct AssetCache::Impl {
     unsigned modelJobs = 0;
     bool stopping = false;
     std::vector<pthread_t> threads;
+#ifdef MH3_DEVELOPMENT
+    // Watchdog view of the game's waits and the workers' steps (no lock
+    // needed to read): the file a wait or a job concerns stays valid while
+    // the cache lives (sources and extracts never move).
+    struct Step {
+        std::atomic<const char*> what{nullptr}, file{nullptr};
+        std::atomic<double> since{0};
+        void Set(const char* w, const char* f) {
+            file = f;
+            since = Seconds();
+            what = w;
+        }
+    };
+    Step gameStep;
+    std::atomic<const Source*> gameSource{nullptr};
+    std::array<Step, Workers> workerSteps;
+    std::atomic<unsigned> nextWorker{0};
+    pthread_t watchdog{};
+    void Watch();
+#endif
+
+    // VitaSDK's pthread condition variable (pthread-embedded) sometimes loses
+    // a broadcast: a waiter whose condition already holds stays blocked
+    // (a cold load of Moga Woods stalled on a published model pack). Every
+    // wait here re-checks its condition at least every 20 ms.
+    template <class Ready>
+    void Wait(std::unique_lock<std::mutex>& guard, Ready ready) {
+        while (!ready())
+            changed.wait_for(guard, std::chrono::milliseconds(20));
+    }
 
     std::filesystem::path TexturePath(const Source& s) const { return cache / "textures" / (Hex16(s.file.offset) + "-" + std::to_string(s.firstTexture) + ".bin"); }
     std::filesystem::path ModelPath(const Source& s) const { return cache / "models" / (Hex16(s.file.offset) + "-" + std::to_string(s.firstModel) + ".bin"); }
@@ -185,6 +226,9 @@ struct AssetCache::Impl {
             if (result)
                 throw std::runtime_error("Cannot start asset conversion workers");
         }
+#ifdef MH3_DEVELOPMENT
+        pthread_create(&watchdog, nullptr, [](void* self) -> void* { static_cast<Impl*>(self)->Watch(); return nullptr; }, this);
+#endif
     }
     ~Impl() {
         {
@@ -194,6 +238,9 @@ struct AssetCache::Impl {
         changed.notify_all();
         for (auto thread : threads)
             pthread_join(thread, nullptr);
+#ifdef MH3_DEVELOPMENT
+        pthread_join(watchdog, nullptr);
+#endif
         for (auto& e : extracts)
             if (e.copy)
                 std::fclose(e.copy);
@@ -269,6 +316,9 @@ struct AssetCache::Impl {
         }
         extractedBytes += e.file.bytes; // reserved while copying
         guard.unlock();
+#ifdef MH3_DEVELOPMENT
+        const double since = Seconds();
+#endif
         const auto path = ExtractPath(e), temporary = std::filesystem::path(path.string() + ".tmp");
         std::FILE* copy = nullptr;
         bool written = false;
@@ -298,6 +348,10 @@ struct AssetCache::Impl {
             std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
         }
+#ifdef MH3_DEVELOPMENT
+        if (Seconds() - since > 0.5 || !copy)
+            std::fprintf(stderr, "MH3 asset cache: extracted %s (%llu bytes) in %.2f s%s\n", e.file.path.c_str(), static_cast<unsigned long long>(e.file.bytes), Seconds() - since, copy ? "" : ", failed");
+#endif
         guard.lock();
         if (copy) {
             e.copy = copy;
@@ -391,8 +445,7 @@ struct AssetCache::Impl {
     // Lock held. Makes sure the source is indexed and its conversion either
     // published or queued. Released while reading and parsing the file.
     void Ensure(Source& s, std::unique_lock<std::mutex>& guard) {
-        while (s.indexing)
-            changed.wait(guard);
+        Wait(guard, [&] { return !s.indexing; });
         if (s.checked)
             return;
         if (s.indexed && Converted(s)) {
@@ -444,18 +497,33 @@ struct AssetCache::Impl {
             Queue(s, Kind::Textures);
         if (!s.modelsDone)
             Queue(s, Kind::Models);
-        changed.wait(guard, [&] { return pendingBytes <= MaxPendingBytes || stopping; });
+#ifdef MH3_DEVELOPMENT
+        if (pendingBytes > MaxPendingBytes) {
+            const double since = Seconds();
+            gameSource = &s;
+            gameStep.Set("waiting for pending conversion", s.file.path.c_str());
+            Wait(guard, [&] { return pendingBytes <= MaxPendingBytes || stopping; });
+            gameStep.Set(nullptr, nullptr);
+            if (Seconds() - since > 0.5)
+                std::fprintf(stderr, "MH3 asset cache: game waited %.2f s for %.1f MiB of pending conversion\n", Seconds() - since, pendingBytes / 1048576.0);
+        }
+#endif
+        Wait(guard, [&] { return pendingBytes <= MaxPendingBytes || stopping; });
     }
 
     void Work() {
         aurora::pin_current_thread(aurora::ThreadRole::Any);
+#ifdef MH3_DEVELOPMENT
+        Step& step = workerSteps[nextWorker++ % Workers];
+        step.Set("idle", nullptr);
+#endif
         std::unique_ptr<ModelConverter> converter;
         std::unique_lock guard(lock);
         for (;;) {
             if (jobs.empty())
                 converter.reset(); // Return the model workspace while idle.
             auto next = jobs.end();
-            changed.wait(guard, [&] {
+            Wait(guard, [&] {
                 next = std::find_if(jobs.begin(), jobs.end(), [&](const Job& j) { return j.kind != Kind::Models || modelJobs < ModelWorkers; });
                 return stopping || next != jobs.end();
             });
@@ -464,7 +532,13 @@ struct AssetCache::Impl {
             const Job job = *next;
             jobs.erase(next);
             if (job.kind == Kind::Extract) {
+#ifdef MH3_DEVELOPMENT
+                step.Set("extracting", job.extract->file.path.c_str());
+#endif
                 RunExtract(*job.extract, guard);
+#ifdef MH3_DEVELOPMENT
+                step.Set("idle", nullptr);
+#endif
                 changed.notify_all();
                 continue;
             }
@@ -475,6 +549,11 @@ struct AssetCache::Impl {
             guard.unlock();
             std::string failure;
             bool usable = false;
+#ifdef MH3_DEVELOPMENT
+            const double since = Seconds();
+            const char* kind = job.kind == Kind::Textures ? "textures" : "models";
+            step.Set(job.kind == Kind::Textures ? "converting textures" : "converting models", s.file.path.c_str());
+#endif
             try {
                 if (job.kind == Kind::Textures)
                     ConvertTextures(s, *data);
@@ -486,7 +565,16 @@ struct AssetCache::Impl {
             } catch (const std::exception& e) {
                 failure = s.file.path + ": " + e.what();
             }
+#ifdef MH3_DEVELOPMENT
+            if (Seconds() - since > 0.5 || !failure.empty())
+                std::fprintf(stderr, "MH3 asset cache: converted %s of %s (%lu bytes) in %.2f s%s%s\n", kind, s.file.path.c_str(), static_cast<unsigned long>(data ? data->size() : 0), Seconds() - since,
+                             failure.empty() ? "" : ", failed: ", failure.c_str());
+            step.Set("relocking after converting", s.file.path.c_str());
+#endif
             guard.lock();
+#ifdef MH3_DEVELOPMENT
+            step.Set("idle", nullptr);
+#endif
             if (!failure.empty() && s.failure.empty())
                 s.failure = failure;
             if (job.kind == Kind::Textures)
@@ -545,6 +633,56 @@ struct AssetCache::Impl {
             throw std::runtime_error("Asset conversion failed: " + s.failure);
     }
 };
+
+#ifdef MH3_DEVELOPMENT
+// Development watchdog: while the game has waited on the cache for over 5 s,
+// every 5 s it reports what the game waits for, each worker's step and
+// whether the cache lock can be taken, to the TTY and to cache/watchdog.log
+// (the data check prints that file, in case the TTY itself is stuck).
+void AssetCache::Impl::Watch() {
+    for (;;) {
+        for (int i = 0; i < 50; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (lock.try_lock()) {
+                const bool stop = stopping;
+                lock.unlock();
+                if (stop)
+                    return;
+            }
+        }
+        const char* what = gameStep.what;
+        const double waited = Seconds() - gameStep.since;
+        if (!what || waited < 5)
+            continue;
+        char text[1024];
+        int n = std::snprintf(text, sizeof text, "MH3 asset cache watchdog: the game has been %s %s for %.0f s;", what, gameStep.file.load() ? gameStep.file.load() : "", waited);
+        bool locked = false;
+        for (int i = 0; i < 20 && !locked; ++i) {
+            locked = lock.try_lock();
+            if (!locked)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (locked) {
+            n += std::snprintf(text + n, sizeof text - n, " lock free, %.1f MiB pending, %lu jobs queued, %u model jobs;", pendingBytes / 1048576.0, static_cast<unsigned long>(jobs.size()), modelJobs);
+            if (const Source* waited = gameSource)
+                n += std::snprintf(text + n, sizeof text - n, " source indexed %d checked %d indexing %d textures %u done %d, models %u done %d usable %d, data %d, failure '%s';", waited->indexed, waited->checked,
+                                   waited->indexing, waited->textureCount, waited->texturesDone, waited->modelCount, waited->modelsDone, waited->modelsUsable, waited->data != nullptr, waited->failure.c_str());
+            lock.unlock();
+        } else
+            n += std::snprintf(text + n, sizeof text - n, " lock held for 200 ms;");
+        for (unsigned w = 0; w < Workers && n < int(sizeof text) - 64; ++w) {
+            const char* step = workerSteps[w].what;
+            const char* file = workerSteps[w].file;
+            n += std::snprintf(text + n, sizeof text - n, " worker %u %s %s (%.0f s)", w, step ? step : "not started", file ? file : "", Seconds() - workerSteps[w].since);
+        }
+        std::fprintf(stderr, "%s\n", text);
+        if (std::FILE* out = std::fopen((cache / "watchdog.log").string().c_str(), "a")) {
+            std::fprintf(out, "%s\n", text);
+            std::fclose(out);
+        }
+    }
+}
+#endif
 
 AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read)
     : impl(std::make_unique<Impl>(root, std::move(sources), std::move(streams), std::move(read))) {}
@@ -622,7 +760,18 @@ std::string AssetCache::TexturePack(uint32_t id) {
         throw std::runtime_error("Native texture asset " + std::to_string(id) + " belongs to no indexed source");
     auto& s = *std::prev(it)->second;
     m.Ensure(s, guard);
-    m.changed.wait(guard, [&] { return s.texturesDone; });
+#ifdef MH3_DEVELOPMENT
+    if (!s.texturesDone) {
+        const double since = Seconds();
+        m.gameSource = &s;
+        m.gameStep.Set("waiting for textures", s.file.path.c_str());
+        m.Wait(guard, [&] { return s.texturesDone; });
+        m.gameStep.Set(nullptr, nullptr);
+        if (Seconds() - since > 0.5)
+            std::fprintf(stderr, "MH3 asset cache: game waited %.2f s for the textures of %s\n", Seconds() - since, s.file.path.c_str());
+    }
+#endif
+    m.Wait(guard, [&] { return s.texturesDone; });
     m.Fail(s);
     return m.TexturePath(s).string();
 }
@@ -634,7 +783,18 @@ std::filesystem::path AssetCache::ModelPack(uint64_t at, uint32_t& key) {
         return {};
     key = uint32_t(s - m.sources.data());
     m.Ensure(*s, guard);
-    m.changed.wait(guard, [&] { return s->modelsDone; });
+#ifdef MH3_DEVELOPMENT
+    if (!s->modelsDone) {
+        const double since = Seconds();
+        m.gameSource = s;
+        m.gameStep.Set("waiting for models", s->file.path.c_str());
+        m.Wait(guard, [&] { return s->modelsDone; });
+        m.gameStep.Set(nullptr, nullptr);
+        if (Seconds() - since > 0.5)
+            std::fprintf(stderr, "MH3 asset cache: game waited %.2f s for the models of %s\n", Seconds() - since, s->file.path.c_str());
+    }
+#endif
+    m.Wait(guard, [&] { return s->modelsDone; });
     m.Fail(*s);
     return s->modelsUsable ? m.ModelPath(*s) : std::filesystem::path{};
 }
