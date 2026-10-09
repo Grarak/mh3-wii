@@ -86,9 +86,11 @@ void ReleaseNativeMaterialGpuAnimated(NativeMaterialGpuAnimatedRef animated);
 // (or a later packet) and the GPU completed it, waiting otherwise.
 void BeginNativeMaterialGpuPacket(uint64_t sequence);
 // Game thread: a write-only section of the current packet (fill all of it);
-// *animated identifies it for the packet item. Null when the ring is not
-// created yet (before the first EndNativeMaterialGpuPacket) or the segment is
-// full: keep the values another way for that draw.
+// *animated identifies it for the packet item. On the Vita it is
+// write-combined CDRAM: build the section in a local struct and copy it with
+// one memcpy; never read it back. Null when the ring is not created yet
+// (before the first EndNativeMaterialGpuPacket) or the segment is full: keep
+// the values another way for that draw.
 mh3_shade_gpu_animated* WriteNativeMaterialGpuAnimated(NativeMaterialGpuAnimatedRef* animated);
 // Render thread: after the draws of packet `sequence` were submitted (also
 // creates the ring and retires released persistent sections). Mandatory for
