@@ -238,11 +238,12 @@ extern "C" void MH3_EffectTexCoordGenerator(CpuContext *c){
     uint32_t index=c->gpr[3];if(index>=8)throw std::runtime_error("Effect texgen index exceeds material layout");
     auto material=GetNativeMaterialState();auto &gen=material.texgen[index];gen.known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;std::memset(gen.values,0,sizeof(gen.values));gen.values[MH3_TEXGEN_PROJECTION]=c->gpr[4]==0;gen.values[MH3_TEXGEN_SOURCE_ROW]=c->gpr[5]==4?5:uint8_t(c->gpr[5]);gen.values[MH3_TEXGEN_MATRIX_ROW]=uint8_t(c->gpr[6]);gen.values[MH3_TEXGEN_NORMALIZE]=c->gpr[7]!=0;gen.values[MH3_TEXGEN_POST_MATRIX_ROW]=uint8_t(c->gpr[8]-0x40);SetNativeMaterial(material);
 }
+extern "C" void MH3_NativeMovieTexgen(CpuContext *c){c->gpr[7]=0;c->gpr[8]=125;MH3_EffectTexCoordGenerator(c);}
 REGISTER_NATIVE_FUNCTION_AS(0x804351C4,MH3_NativeMovieTexture,"NativeMovieTexture");
 REGISTER_NATIVE_FUNCTION_AS(0x804352C8,MH3_NativeMovieRestore,"NativeMovieRestore");
 REGISTER_NATIVE_FUNCTION_AS(0x804353E0,MH3_NativeMovieSetup,"NativeMovieSetup");
 REGISTER_NATIVE_FUNCTION_AS(0x80435894,MH3_NativeMoviePlanes,"NativeMoviePlanes");
-REGISTER_NATIVE_FUNCTION_AS(0x80435888,MH3_EffectTexCoordGenerator,"NativeMovieTexgen");
+REGISTER_NATIVE_FUNCTION_AS(0x80435888,MH3_NativeMovieTexgen,"NativeMovieTexgen");
 REGISTER_NATIVE_FUNCTION_AS(0x800C86D8,MH3_EffectTexCoordGenerator,"EffectTexgen");
 
 namespace {

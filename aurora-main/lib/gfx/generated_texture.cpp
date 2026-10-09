@@ -40,9 +40,9 @@ void main() {
   vec4 color = texture(tex1, v_uv);
   vec4 detail = texture(tex2, v_uv);
   vec4 atlas = texture(tex3, v_atlas_uv);
-  float alpha = floor(color.a * params.x * 255.0 + 0.5) / 255.0;
-  vec3 result = floor(mix(base.rgb, color.rgb, alpha) * 255.0 + 0.5) / 255.0;
-  result = floor(mix(result, detail.rgb, detail.a * params.y) * 255.0 + 0.5) / 255.0;
+  float alpha = color.a * params.x;
+  vec3 result = mix(base.rgb, color.rgb, alpha);
+  result = mix(result, detail.rgb, detail.a * params.y);
   float atlasWeight = step(0.75, v_uv.x) * step(0.875, v_uv.y) * params.z;
   frag_color = vec4(mix(result, atlas.rgb, atlasWeight), 1.0);
 }
@@ -60,6 +60,10 @@ gfx::TextureHandle source_texture(const MaterialSource& source) {
 }
 }
 void publish_generated_material(uint32_t owner, const void* guestData, MaterialComposition material) {
+  // Capture before any texture constructor/upload changes backend bindings.
+  // Posting first also preserves order for the older producer-thread caller.
+  auto saved=std::make_shared<gl::OffscreenState>();
+  gl::post([saved]{*saved=gl::save_offscreen_state();});
   if (!materialProgram) materialProgram = std::make_shared<gl::Program>(gl::ProgramDesc{
       .label = "Character material composition", .vertex = gl::vertex_source(vertex),
       .fragment = gl::fragment_source(fragment),
@@ -70,7 +74,7 @@ void publish_generated_material(uint32_t owner, const void* guestData, MaterialC
   inputs[2] = material.optionalOverlay ? source_texture(material.sources[2]) : inputs[0];
   inputs[3] = material.atlas ? source_texture(material.sources[3]) : inputs[0];
   auto output = gfx::new_render_texture(128, 128, GX_TF_RGBA8_PC, "Generated character material");
-  gl::post([output, inputs, program = materialProgram, opacity = material.opacity,
+  gl::post([output, inputs, saved, program = materialProgram, opacity = material.opacity,
             detail = material.optionalOverlay, atlas = material.atlas, x = material.atlasX, y = material.atlasY] {
     const auto id = program->get();
     gl::bind_framebuffer(output->texture->gl(), 0);
@@ -82,6 +86,7 @@ void publish_generated_material(uint32_t owner, const void* guestData, MaterialC
     const auto sampler = gl::sampler(gl::NearestClamp);
     for (unsigned i = 0; i < inputs.size(); ++i) gl::bind_texture(i, inputs[i]->texture->gl(), sampler);
     gl::draw_fullscreen(id);
+    gl::restore_offscreen_state(*saved);
   });
   for (auto it = generatedTextures.begin(); it != generatedTextures.end();) {
     if (it->second.owner == owner) it = generatedTextures.erase(it);

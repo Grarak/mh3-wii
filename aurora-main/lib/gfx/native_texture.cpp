@@ -1,6 +1,7 @@
 #include <aurora/native_texture.hpp>
 #include <aurora/aurora.h>
 #include <aurora/generated_texture.hpp>
+#include <aurora/native_scene_feedback.hpp>
 #include "texture_convert.hpp"
 #include "../gxm/sampler_bias.hpp"
 #include <array>
@@ -100,6 +101,10 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
     bindings[unit]=texture;gl::bind_texture(unit,texture->gl(),gl::sampler(nativeDescriptor));
   };
   if(source.bytes.data()) {
+    if(bind_scene_feedback_texture(unit,source.bytes.data(),source.width,source.height,sampling)) {
+      // GPU targets own their storage. Do not inspect or convert guest pixels.
+      bindings[unit].reset();return;
+    }
     const auto version=generated_texture_version(source.bytes.data(),source.width,source.height);
     if(version) {publish(gfx::find_generated_texture(source.bytes.data(),version)->texture);return;}
   }
