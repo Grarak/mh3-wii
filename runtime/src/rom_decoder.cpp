@@ -1005,18 +1005,23 @@ bool RomReader::StartReadAhead(void (*start)()) {
         return false;
 
     ahead = std::move(worker);
+    const auto run = [this, start] {
+        if (start)
+            start();
 
+        RunAhead();
+    };
+#if defined(__cpp_exceptions)
     try {
-        ahead->thread = std::thread([this, start] {
-            if (start)
-                start();
-
-            RunAhead();
-        });
+        ahead->thread = std::thread(run);
     } catch (...) {
         ahead.reset();
         return false;
     }
+#else
+    // Release builds have no exceptions: a thread that cannot start aborts.
+    ahead->thread = std::thread(run);
+#endif
 
     return true;
 }
