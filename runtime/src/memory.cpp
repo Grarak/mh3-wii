@@ -4,6 +4,7 @@
 #include "video_interface.h"
 #include "audio_interface.h"
 #include "gx_host.h"
+#include "efb_host.h"
 #include <array>
 #include <cstring>
 #include <cstdlib>
@@ -41,6 +42,8 @@ uint8_t* resolve(uint32_t address, size_t length) {
 }
 template<class T> T read(uint32_t address) {
     if constexpr (std::is_same_v<T, uint32_t>) {
+        uint32_t efbValue;
+        if (ReadEfbColor32(address, efbValue)) return efbValue;
         uint32_t audioValue;
         if (ReadAudioRegister32(address, audioValue)) return audioValue;
         if ((address >> 30) != 1 && (address & 0x3FFFFFFF) == 0x0D0000C0)
@@ -58,6 +61,7 @@ template<class T> T read(uint32_t address) {
 }
 template<class T> void write(uint32_t address, T value) {
     if constexpr (std::is_same_v<T, uint32_t>) {
+        if (WriteEfbColor32(address, value)) return;
         if (WriteAudioRegister32(address, value)) return;
         if ((address >> 30) != 1 && (address & 0x3FFFFFFF) == 0x0D0000C0) {
             // GPIOB_OUT bit 8 controls the sensor bar. Other output devices

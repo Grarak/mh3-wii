@@ -3,6 +3,7 @@
 #include "video_interface.h"
 #include "audio_interface.h"
 #include "gx_host.h"
+#include "efb_host.h"
 #include "gx_stream.h"
 #include "os_alarm.h"
 #include "controller_host.h"
@@ -70,6 +71,29 @@ void TestIosCallback(CpuContext* cpu) {
 
 void RunDeviceSelfTests(CpuContext* cpu) {
     RunControllerSelfTests(cpu);
+    {
+        uint16_t x = 0, y = 0;
+        for (auto base : {0x08000000u, 0x88000000u, 0xC8000000u})
+            if (!DecodeEfbColorAddress(base + 527 * 4096 + 639 * 4, x, y) || x != 639 || y != 527)
+                throw std::runtime_error("EFB coordinate/alias decoding failed");
+        for (auto bad : {0x48000000u, 0xC8400000u, 0xC8000001u, 0x80000000u})
+            if (DecodeEfbColorAddress(bad, x, y)) throw std::runtime_error("Invalid EFB address accepted");
+        uint32_t value = 1;
+        if (!ReadEfbColor32(0xC8000A00, value) || value != 0)
+            throw std::runtime_error("EFB out-of-bounds read failed");
+        if (ConvertEfbArgb(0xAB123456, 0, 2) != 0xFF123456 ||
+            ConvertEfbArgb(0xAB123456, 1, 2) != 0xAA103455 ||
+            ConvertEfbArgb(0xAB123456, 2, 2) != 0xFF103452 ||
+            ConvertEfbArgb(0xAB123456, 1, 0) != 0x00103455 ||
+            ConvertEfbArgb(0xAB123456, 1, 1) != 0xFF103455)
+            throw std::runtime_error("EFB pixel format/alpha conversion failed");
+        for (auto modes : {std::pair{3u, 0u}, std::pair{0u, 3u}}) {
+            bool rejected = false;
+            try { ConvertEfbArgb(0, modes.first, modes.second); }
+            catch (const std::runtime_error&) { rejected = true; }
+            if (!rejected) throw std::runtime_error("Unsupported EFB mode accepted");
+        }
+    }
     {
         AudioInterfaceState ai;
         ai.Reset(0);
