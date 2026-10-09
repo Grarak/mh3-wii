@@ -126,7 +126,7 @@ static void VillageTaskPort(CpuContext* ctx) {
 extern "C" void MH3_VillageTask(CpuContext* ctx) { PortCheck::Call(ctx, "VillageTask", func_8021F40C, VillageTaskPort); }
 REGISTER_NATIVE_FUNCTION_AS(0x8021F40C, MH3_VillageTask, "VillageTask");
 
-#ifdef MH3_DEVELOPMENT
+#if defined(MH3_DEVELOPMENT) || defined(__vita__)
 void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area) {
     Jump& jump = State();
     jump.enabled = true;

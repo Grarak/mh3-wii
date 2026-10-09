@@ -99,7 +99,7 @@ void DiscImage::Add(uint64_t offset, const std::filesystem::path& path, uint64_t
     if (expected) extents.push_back({offset, expected, path});
 }
 DiscImage::~DiscImage() = default;
-DiscImage::DiscImage(const std::filesystem::path& root) {
+DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures) {
     const auto boot = Load(root / "sys/boot.bin");
     const auto fst = Load(root / "sys/fst.bin");
     if (Exists(root / "disc-layout.txt")) {
@@ -164,7 +164,7 @@ DiscImage::DiscImage(const std::filesystem::path& root) {
     } else if (packed) throw std::runtime_error("Packed disc requires partition.bin");
 #ifdef __vita__
     const auto mapPath = root / "native-texture-map.bin";
-    if (Exists(mapPath)) {
+    if (applyNativeTextures && Exists(mapPath)) {
         if (!Exists(root / "native-textures.bin")) throw std::runtime_error("Native texture map requires its payload pack");
         const auto map = Load(mapPath);
         const auto little32 = [&](size_t at) {
@@ -202,6 +202,7 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
     if (packed) {
         partition->Read(offset, result.data(), length);
         ApplyNativeTexturePatches(initialOffset, result);
+        ApplyFileOverrides(initialOffset, result);
         return result;
     }
     size_t done = 0;
@@ -225,6 +226,7 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
         offset += count; done += count;
     }
     ApplyNativeTexturePatches(initialOffset, result);
+    ApplyFileOverrides(initialOffset, result);
     return result;
 }
 std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {
@@ -233,7 +235,32 @@ std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {
     return Read(it->second.first, it->second.second);
 }
 DiscImage& GameDiscImage() {
+    // The launcher's disc preparation completes before this lazy instance.
     const char* path = std::getenv("MH3_DISC_DIR");
     static DiscImage image(path ? path : "Assets/DATA");
     return image;
+}
+void DiscImage::SetFileOverride(const std::string& name, std::vector<uint8_t> bytes) {
+    const auto it = fileEntries.find(name);
+    if (it == fileEntries.end() || bytes.size() != it->second.second)
+        throw std::runtime_error("Quest override must preserve the disc file length");
+    if (name != "05/quest00_eng.bin" && name != "05/quest01_eng.bin" && name != "05/quest03_eng.bin")
+        throw std::runtime_error("Only quest files may be overridden");
+    fileOverrides[it->second.first] = std::move(bytes);
+}
+void DiscImage::ApplyFileOverrides(uint64_t offset, std::vector<uint8_t>& data) const {
+    for (const auto& [start, bytes] : fileOverrides) {
+        const auto first = std::max(offset, start), last = std::min(offset + data.size(), start + bytes.size());
+        if (first < last) std::copy(bytes.begin() + (first - start), bytes.begin() + (last - start), data.begin() + (first - offset));
+    }
+}
+std::vector<std::string> DiscImage::FileNames() const {
+    std::vector<std::string> names;
+    for (const auto& [name, extent] : fileEntries) names.push_back(name);
+    return names;
+}
+uint64_t DiscImage::FileOffset(const std::string& name) const {
+    const auto it = fileEntries.find(name);
+    if (it == fileEntries.end()) throw std::runtime_error("Missing FST file: " + name);
+    return it->second.first;
 }

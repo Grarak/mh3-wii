@@ -211,7 +211,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         });
 #endif
         GameTasks::SkipStrapScreen();
-#ifdef MH3_DEVELOPMENT
+#if defined(MH3_DEVELOPMENT) || defined(__vita__)
         StepVillageBoot(ctx);
 #endif
         call(RunTasks);

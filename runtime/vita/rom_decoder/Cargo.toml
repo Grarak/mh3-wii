@@ -1,0 +1,17 @@
+[package]
+name = "mh3-rom-decoder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+nod = "=1.4.4"
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+codegen-units = 1
+

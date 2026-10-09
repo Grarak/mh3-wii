@@ -12,10 +12,14 @@ class DiscFile;
 // file checks; disc-layout.txt selects a single exact partition with sys metadata.
 class DiscImage {
 public:
-    explicit DiscImage(const std::filesystem::path& root);
+    explicit DiscImage(const std::filesystem::path& root, bool applyNativeTextures = true);
     ~DiscImage();
     std::vector<uint8_t> Read(uint64_t offset, uint32_t length) const;
     std::vector<uint8_t> ReadFile(const std::string& name) const;
+    // Launcher quest overlays preserve lengths and apply to partial DVD reads.
+    void SetFileOverride(const std::string& name, std::vector<uint8_t> bytes);
+    std::vector<std::string> FileNames() const;
+    uint64_t FileOffset(const std::string& name) const;
 private:
     struct Extent { uint64_t offset, size; std::filesystem::path path; };
     std::vector<Extent> extents;
@@ -23,6 +27,8 @@ private:
     std::unique_ptr<DiscFile> partition;
     uint64_t partitionSize = 0;
     bool packed = false;
+    std::map<uint64_t, std::vector<uint8_t>> fileOverrides;
+    void ApplyFileOverrides(uint64_t offset, std::vector<uint8_t>& data) const;
     struct NativeTexturePatch { uint64_t offset; std::array<uint8_t, 4> bytes; };
     std::vector<NativeTexturePatch> nativeTexturePatches;
     void ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const;

@@ -17,6 +17,7 @@
 #include <cstdlib>
 #ifdef __vita__
 #include "../vita/platform.h"
+#include "vita_launcher.h"
 #else
 #include <execinfo.h>
 #endif
@@ -142,6 +143,9 @@ int main(int argc, char** argv) {
     // into a quit event the game only sees at its next event check.
     setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
     try {
+#ifdef __vita__
+        if (argc == 1 && !VitaLauncher::Run()) return 0;
+#endif
 #ifdef MH3_DEVELOPMENT
         // --no-damage goes with any other option.
         const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });

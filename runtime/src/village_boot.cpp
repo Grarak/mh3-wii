@@ -19,6 +19,7 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "save_data.h"
+#include "vita_launcher.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -62,6 +63,7 @@ enum : uint32_t {
 enum class State { Off, Waiting, Complete };
 State state = State::Off;
 std::vector<uint8_t> file;
+unsigned selectedFile = 0, selectedCharacter = 0;
 
 uint32_t Word(std::span<const uint8_t> data, size_t offset) {
     return (uint32_t(data[offset]) << 24) | (uint32_t(data[offset + 1]) << 16) |
@@ -73,28 +75,30 @@ bool HasFirstCharacter(std::span<const uint8_t> data) {
     return data.size() == SaveData::kFileSize && (Word(data, 0) & 1) && Word(data, SaveData::kCharacters) != 0 &&
            std::accumulate(data.begin() + 8, data.end(), uint32_t(0)) == Word(data, 4);
 }
-#ifdef MH3_DEVELOPMENT
+#if defined(MH3_DEVELOPMENT) || defined(__vita__)
 bool InMainMemory(uint32_t address) {
     return (address >= 0x80000000u && address < 0x81800000u) || (address >= 0x90000000u && address < 0x94000000u);
 }
 #endif
 }
 
-#ifdef MH3_DEVELOPMENT
-void StartVillageBoot() {
+#if defined(MH3_DEVELOPMENT) || defined(__vita__)
+void StartVillageBoot(unsigned fileIndex, unsigned character) {
+    if (fileIndex >= 6 || character >= 3) throw std::runtime_error("Invalid save selection");
     const char* override = std::getenv("MH3_USER_DIR");
     const auto path = std::filesystem::path(override ? override : "saves") /
-        "nand/title/00010000/524d4850/data/nocopy/data00";
+        ("nand/title/00010000/524d4850/data/nocopy/data0" + std::to_string(fileIndex));
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input || input.tellg() != SaveData::kFileSize)
-        throw std::runtime_error("--village requires an existing File 1 save: " + path.string());
+        throw std::runtime_error("Quest launch requires the selected existing save: " + path.string());
     file.resize(SaveData::kFileSize);
     input.seekg(0);
     input.read(reinterpret_cast<char*>(file.data()), file.size());
-    if (!input || !HasFirstCharacter(file))
-        throw std::runtime_error("--village requires a valid File 1 with its first character populated; create one through normal startup first");
+    if (!input || !VitaLauncher::ValidSave(file, character))
+        throw std::runtime_error("The selected save character is invalid; create one through normal startup first");
     state = State::Waiting;
-    std::cerr << "MH3 village boot: entering File 1 / character 1\n";
+    selectedFile = fileIndex; selectedCharacter = character;
+    std::cerr << "MH3 village boot: entering File " << selectedFile+1 << " / character " << selectedCharacter+1 << '\n';
 }
 
 void StepVillageBoot(CpuContext* ctx) {
@@ -106,11 +110,11 @@ void StepVillageBoot(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
     // File 1's read, as the title's (state 12): the request, then the file.
-    if (!game.Call<SaveReadRequest>({0, uint32_t(-1)})) throw std::runtime_error("--village: the save read request failed");
+    if (!game.Call<SaveReadRequest>({selectedFile, uint32_t(-1)})) throw std::runtime_error("Quest launch: the save read request failed");
     std::copy(file.begin(), file.end(), Memory::GetPointer(buffer, SaveData::kFileSize));
-    if (!game.Call<LoadCharacter>({0})) throw std::runtime_error("--village: File 1's first character did not load");
-    Memory::Write8(kSystem + kSelectedFile, 0);
-    Memory::Write8(kSystem + kSelectedCharacter, 0);
+    if (!game.Call<LoadCharacter>({selectedCharacter})) throw std::runtime_error("Quest launch: the selected character did not load");
+    Memory::Write8(kSystem + kSelectedFile, selectedFile);
+    Memory::Write8(kSystem + kSelectedCharacter, selectedCharacter);
     // The mode menu's Village (0x80982E30).
     Memory::Write8(kSystem + kOnlineMenu, Memory::Read8(kSystem + kOnlineCapable) == 1);
     game.Call<RunExitHook>();
@@ -127,7 +131,7 @@ void StepVillageBoot(CpuContext* ctx) {
     game.Call<StartGameModeTask>();
     *ctx = saved;
     state = State::Complete;
-    std::cerr << "MH3 village boot: loaded File 1 / character 1, starting the village\n";
+    std::cerr << "MH3 village boot: loaded File " << selectedFile+1 << " / character " << selectedCharacter+1 << ", starting the village\n";
 }
 #endif
 

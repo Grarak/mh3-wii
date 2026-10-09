@@ -14,10 +14,12 @@
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
+#include "launcher_cheats.h"
 
 #include <cstdint>
 
 namespace {
+bool noStaminaDrain = false;
 
 enum : uint32_t {
     MasterCheck = 0x8026FE38,       // Pl_master_ck(PLW*) -> 1 for the local player
@@ -44,6 +46,7 @@ bool Is(GuestCall& game, uint32_t fn, uint32_t plw, uint32_t arg) { return game(
 
 // 0x8027695C: stamina changes by `delta`; a drain is adjusted.
 void Change(GuestCall& game, uint32_t plw, int16_t delta) {
+    if (noStaminaDrain && delta < 0) return;
     if (game.Call<MasterCheck>({plw}) == 0) return;
     if (delta < 0) {
         if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB))
@@ -62,6 +65,7 @@ void Change(GuestCall& game, uint32_t plw, int16_t delta) {
 // 0x80276AA0: a drain of 1 (3 in the conditions), on even steps only with the
 // halving skills.
 void Drain(GuestCall& game, uint32_t plw) {
+    if (noStaminaDrain) return;
     int16_t delta = -1;
     if (Is(game, DamageCondition, plw, kConditionA) || Is(game, DamageCondition, plw, kConditionB)) delta = -3;
     uint16_t skipMask = Is(game, SkillCheck, plw, kSkillHalve) ? 1 : 0;
@@ -84,6 +88,7 @@ template <typename F> void PerTick(uint32_t plw, F once) {
 }
 
 } // namespace
+void LauncherCheats::SetNoStaminaDrain(bool enabled) { noStaminaDrain = enabled; }
 
 extern "C" void func_8027695C(CpuContext* ctx);
 extern "C" void func_80276AA0(CpuContext* ctx);
