@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -149,7 +150,9 @@ int RunLauncherScreenCheck() {
     StopNativeRenderThread();
     const uint32_t cleared = pixel(100, 80);
     std::fprintf(stderr, "MH3 launcher screen: after the game's startup target %ux%u, pixel %08x\n", target.width, target.height, cleared);
-    if (target.width != 640 || target.height != 456 || !near(cleared, 0xff000000))
+    // Every host renders for the 960x544 display: the game's 640x456 render
+    // mode fits it at its own aspect (764x544).
+    if (target.height != ScreenHeight || std::abs(double(target.width) / target.height - 640.0 / 456) > 0.01 || !near(cleared, 0xff000000))
         throw std::runtime_error("Launcher screen: the restarted renderer did not take the game's target");
     std::fprintf(stderr, "MH3 launcher screen check passed\n");
     return 0;
