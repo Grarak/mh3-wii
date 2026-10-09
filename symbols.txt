@@ -1914,3 +1914,4 @@
 802929a4 CopyCollisionTriangle
 80296eb0 CleanCollisionNormal
 8005b52c FontStackReset
+802629a4 ComboTable

@@ -19,6 +19,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <limits>
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>
+#endif
 
 extern "C" void PPC_TrapWord(uint32_t trapOptions, uint32_t lhs, uint32_t rhs) {
     const bool trap = ((trapOptions & 0x10u) != 0u && static_cast<int32_t>(lhs) < static_cast<int32_t>(rhs)) ||
@@ -42,6 +45,11 @@ std::array<uint32_t, 2048> g_sprShadow{};
 uint32_t g_reservationAddr = 0;
 bool g_hasReservation = false;
 const auto g_timeBaseStart = std::chrono::steady_clock::now();
+#ifdef __vita__
+// The Vita's clocks count process microseconds (fast_clock.c): the time base
+// reads that counter directly.
+const SceUInt64 g_timeBaseStartUs = sceKernelGetProcessTimeWide();
+#endif
 
 // DMAU/DMAL layout follows Broadway's locked-cache DMA registers, also
 // documented by Dolphin's Gekko.h. The original LCLoad/LCStore instructions
@@ -90,7 +98,15 @@ void TransferLockedCache(uint32_t lower) {
     std::memcpy(load ? cache : memory, load ? memory : cache, size);
 }
 
+// The guest time base: 60.75 MHz ticks (243 MHz bus / 4) since startup. The
+// game reads it often (OSGetTime reads mftbu, mftb and mftbu again).
 uint64_t GetTimeBase() {
+#ifdef __vita__
+    // Microseconds * 243 / 4, the value NanosecondsToTicks gives for the same
+    // whole microseconds, without its 64-bit divisions (software on the A9)
+    // or the steady clock's split into seconds and back.
+    return ((sceKernelGetProcessTimeWide() - g_timeBaseStartUs) * 243u) >> 2;
+#endif
     const auto elapsed = std::chrono::steady_clock::now() - g_timeBaseStart;
     const auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
     return TimeBaseContract::NanosecondsToTicks(static_cast<uint64_t>(nanoseconds));

@@ -3472,3 +3472,23 @@ extern "C" void MH3_SwimPitch(CpuContext* ctx) {
     PortCheck::Call(ctx, "SwimPitch", func_80252B50, SwimPitch);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80252B50, MH3_SwimPitch, "SwimPitch");
+
+// 0x802629A4 (plw) -> r3: the hunter's combo table (+0x318, entries of 0x16
+// bytes until 0xFF, at most 48): each entry's frame window, conditions and
+// input pick the action that follows the current one (1 when one was
+// started). Steps with no table (+0x318 0) or in hit-stop (+0x313
+// above 0): the translated original then saved and restored nine
+// paired-single registers for a 0, here not. With a table (84% of the calls
+// in a fight, VM count) the original runs.
+extern "C" void func_802629A4(CpuContext* ctx);
+extern "C" void MH3_ComboTable(CpuContext* ctx) {
+    const uint32_t plw = ctx->gpr[3];
+
+    if (Memory::Read32(plw + 0x318) == 0 || int8_t(Memory::Read8(plw + 0x313)) > 0) {
+        ctx->gpr[3] = 0;
+        return;
+    }
+
+    func_802629A4(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802629A4, MH3_ComboTable, "ComboTable");

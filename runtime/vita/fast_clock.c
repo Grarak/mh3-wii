@@ -42,14 +42,36 @@ static int64_t now_us(void)
     return start_wall_us + (int64_t)(sceKernelGetProcessTimeWide() - start_process_us);
 }
 
+/* The high 64 bits of a * b, from 32-bit products. */
+static uint64_t mul_high(uint64_t a, uint64_t b)
+{
+    const uint64_t al = (uint32_t)a, ah = a >> 32, bl = (uint32_t)b, bh = b >> 32;
+    const uint64_t p0 = al * bl, p1 = al * bh, p2 = ah * bl, p3 = ah * bh;
+    const uint64_t mid = (p0 >> 32) + (uint32_t)p1 + (uint32_t)p2;
+    return p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+}
+
+/* us / 1000000 and us % 1000000 for 0 <= us < 2^63 without a 64-bit division
+ * (a libgcc call on the A9, twice per clock read): (us >> 6) / 15625 as a
+ * multiply by ceil(2^71 / 15625), exact below 2^57 (the error term
+ * 2^71 mod 15625 is under 2^14). */
+static void split_us(int64_t us, int64_t *seconds, int32_t *micros)
+{
+    const uint64_t q = mul_high((uint64_t)us >> 6, 151115727451828647ull) >> 7;
+    *seconds = (int64_t)q;
+    *micros = (int32_t)((uint64_t)us - q * 1000000u);
+}
+
 int __wrap_gettimeofday(struct timeval *tv, void *tz)
 {
     if (!started || tz || !tv)
         return __real_gettimeofday(tv, tz);
 
-    const int64_t us = now_us();
-    tv->tv_sec = (time_t)(us / 1000000);
-    tv->tv_usec = (suseconds_t)(us % 1000000);
+    int64_t seconds;
+    int32_t micros;
+    split_us(now_us(), &seconds, &micros);
+    tv->tv_sec = (time_t)seconds;
+    tv->tv_usec = (suseconds_t)micros;
     return 0;
 }
 
@@ -58,8 +80,10 @@ int __wrap_clock_gettime(clockid_t clock, struct timespec *ts)
     if (!started || !ts || (clock != CLOCK_REALTIME && clock != CLOCK_MONOTONIC))
         return __real_clock_gettime(clock, ts);
 
-    const int64_t us = now_us();
-    ts->tv_sec = (time_t)(us / 1000000);
-    ts->tv_nsec = (long)(us % 1000000) * 1000;
+    int64_t seconds;
+    int32_t micros;
+    split_us(now_us(), &seconds, &micros);
+    ts->tv_sec = (time_t)seconds;
+    ts->tv_nsec = (long)micros * 1000;
     return 0;
 }

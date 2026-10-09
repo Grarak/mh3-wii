@@ -13,6 +13,7 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_USER_DIR` | save/NAND root (default `saves` in the working directory; Vita `ux0:/data/mh3-wii/saves`) | all |
 | `MH3_NATIVE_ASSET_DIR` | a whole-disc converted texture/model set (`native-textures.bin`, `native-texture-map.bin`, `native-models/`) to use instead of the load-time cache | all |
 | `MH3_WIDESCREEN` | `0`: the console's 4:3 setting; default 16:9 ([widescreen](vita-widescreen.md)) | all |
+| `MH3_FRAME_LIMIT` | `off` turns the game thread limiter off (and on the Vita flips without VSync), as the launcher's `Game thread limit: OFF` does, for runs started without the launcher: benchmarks show the real speed | all |
 | `MH3_STATS` | `0` turns off the once-per-second statistics lines (default on; [profiling](profiling.md#statistics-lines)); set to anything, it also prints the material-GPU counters | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution (448·n rows); overrides the launcher's `Upscaling` ([launcher](vita-launcher.md)) | development |
@@ -123,7 +124,7 @@ scene on the draw thread while the game thread waits), `serial-prepare` (the
 scene graph walk on the game thread), `serial-world` (the world matrix pass on
 the game thread alone; `MH3_PORT_CHECK` other than `ScnGroupCalcWorld` still
 keeps it there), `queue=N` (two packets waiting for the render thread) and
-`unpaced` (the launcher's `Game thread limit: OFF` does the same).
+`unpaced` (the launcher's `Game thread limit: OFF` does the same; `MH3_FRAME_LIMIT=off` for runs started without the launcher).
 
 ### `MH3_VERIFY`: native paths against what they replace
 

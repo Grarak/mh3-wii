@@ -1571,6 +1571,11 @@ void StartNativeRenderThread() {
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
 
+    // MH3_FRAME_LIMIT=off (runtime.env): the launcher's `Game thread limit:
+    // OFF` for runs started without it (benchmarks on the devkit harness).
+    if (const char* limit = std::getenv("MH3_FRAME_LIMIT"); limit && std::strcmp(limit, "off") == 0)
+        frameLimit = false;
+
     paced = frameLimit;
 #ifdef AURORA_GXM
     // The limit off lets the displayed rate go past the VBlank's too.
