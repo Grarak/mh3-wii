@@ -95,7 +95,8 @@
 {0x8026B018u, TickSite::Countdown},          // player input (8026AF6C): input lock (s16 +0x352), also counted down by PlayerStepTimers
 {0x8026C0C4u, TickSite::Countdown},          // Classic commands (8026BFFC): chord window (u8 +0x137, from 2) for a second attack button
 {0x802B4BA8u, TickSite::Countdown},          // stage (802B4B20): countdown (s16 +0x2FDC), fires at 0
-{0x802B638Cu, TickSite::EaseDivisor},       // field camera (802B5CBC): height eases, target (f31) and eye (f30)
+{0x802B638Cu, TickSite::EaseDivisor},       // field camera (802B5CBC): height eases, target (f31) and eye (f30). These 9 entries
+                                              // act on the translated original only (port checks): field_camera.cpp does the same
 {0x802B644Cu, TickSite::EaseDivisor},
 {0x802B6450u, TickSite::EaseDivisor},
 {0x802B65BCu, TickSite::Countdown, 1},      // field camera: ease timer (+0xA8) while swimming, down to 1
@@ -104,6 +105,8 @@
 {0x802B65DCu, TickSite::EaseDivisor},
 {0x802B65FCu, TickSite::Countdown},         // field camera: ease timer (+0xA8)
 {0x802B6610u, TickSite::EaseDivisor},
+{0x802B7960u, TickSite::Countdown},         // camera climb mode (802B7880, twice a step): steps before the climb view (s16 +0x86)
+{0x802B799Cu, TickSite::Countdown},         // camera climb mode: steps before leaving it
 {0x802BACE8u, TickSite::Countdown},         // camera shake (802BAC0C): steps left (s16 +0x44)
 {0x802BCDC8u, TickSite::CountdownPastZero}, // camera script wait (op 0x25): frames left, done below 0
 {0x802BD878u, TickSite::Countdown},         // camera path hold (802BD78C): steps before playing

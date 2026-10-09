@@ -1330,3 +1330,17 @@
 8026bffc PlClassicCommands
 8026a758 PlCommandTest
 8026a73c PlCommandSet
+# Field camera (field_camera.cpp: FieldCameraUpdate; camera_input.cpp: its stick input).
+802b5cbc FieldCameraUpdate
+802b6864 CameraYawInput
+802b6d30 CameraPitchInput
+802bdc90 CameraAngleEase
+802b6c30 CameraSwingBack
+802b7880 CameraClimbMode
+802be2f0 CameraUsable
+802b8af0 CameraFollowMode
+802b7a1c CameraEvent
+802bb0b0 CameraResetCurve
+80052298 VecLerp
+802b8244 CameraCollide
+802b72bc CameraLimit
