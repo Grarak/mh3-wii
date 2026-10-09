@@ -24,13 +24,41 @@
 #include <cstdint>
 #include <cstring>
 
-// Hooks for GX HLE FIFO handling
+// The GX FIFO (gather pipe) writes the translator lowers guest stores to.
+// The window is the free tail of the GX worker's filling chunk
+// (graphics_host.cpp): while it has room a write is a big-endian store into
+// it; otherwise (no worker, GX synchronized, chunk full; `end` null when
+// closed) it goes the full way, GX_HLE_FIFO_WriteBurst.
+struct GxFifoWindow {
+    uint8_t* next;
+    uint8_t* end;
+};
+extern GxFifoWindow gGxFifoWindow;
 extern "C" {
-    void GX_HLE_FIFO_WriteFloat(float val);
-    void GX_HLE_FIFO_Write32(uint32_t val);
-    void GX_HLE_FIFO_Write16(uint16_t val);
-    void GX_HLE_FIFO_Write8(uint8_t val);
-    void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t sizeBytes);
+void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t sizeBytes);
+inline void GX_HLE_FIFO_WriteBytesInline(const uint8_t* bytes, uint32_t size) {
+    GxFifoWindow& w = gGxFifoWindow;
+    if (static_cast<size_t>(w.end - w.next) >= size) [[likely]] {
+        std::memcpy(w.next, bytes, size);
+        w.next += size;
+        return;
+    }
+    GX_HLE_FIFO_WriteBurst(bytes, size);
+}
+inline void GX_HLE_FIFO_Write8(uint8_t val) { GX_HLE_FIFO_WriteBytesInline(&val, 1); }
+inline void GX_HLE_FIFO_Write16(uint16_t val) {
+    const uint16_t bytes = __builtin_bswap16(val);
+    GX_HLE_FIFO_WriteBytesInline(reinterpret_cast<const uint8_t*>(&bytes), 2);
+}
+inline void GX_HLE_FIFO_Write32(uint32_t val) {
+    const uint32_t bytes = __builtin_bswap32(val);
+    GX_HLE_FIFO_WriteBytesInline(reinterpret_cast<const uint8_t*>(&bytes), 4);
+}
+inline void GX_HLE_FIFO_WriteFloat(float val) {
+    uint32_t bits;
+    std::memcpy(&bits, &val, 4);
+    GX_HLE_FIFO_Write32(bits);
+}
 }
 
 #define MKW_MEMORY_FORCE_INLINE __attribute__((always_inline)) inline

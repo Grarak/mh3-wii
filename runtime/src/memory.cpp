@@ -123,8 +123,5 @@ void SubmitGuestGxBytes(const uint8_t*, size_t) { throw std::runtime_error("GX r
 template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data) { SubmitGuestGxBytes(data, N); }
 #endif
+GxFifoWindow gGxFifoWindow{};
 extern "C" void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }
-extern "C" void GX_HLE_FIFO_Write8(uint8_t v) { SubmitGuestGxFixed<1>(&v); }
-extern "C" void GX_HLE_FIFO_Write16(uint16_t v) { const uint8_t b[]{uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxFixed<2>(b); }
-extern "C" void GX_HLE_FIFO_Write32(uint32_t v) { const uint8_t b[]{uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxFixed<4>(b); }
-extern "C" void GX_HLE_FIFO_WriteFloat(float v) { uint32_t bits; std::memcpy(&bits, &v, 4); GX_HLE_FIFO_Write32(bits); }

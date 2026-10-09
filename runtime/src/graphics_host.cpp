@@ -69,6 +69,10 @@ std::mutex auroraFrameMutex;
 // come after that. The guest RAM the commands point at (arrays, display lists,
 // textures) is read when the worker gets to them, as the GPU reads it when it
 // gets to them.
+//
+// Between Submits the filling chunk's free tail is the FIFO window
+// (gGxFifoWindow, memory_access.h) the translated FIFO writes store into; the
+// chunk's size is taken back from it before anything else touches the chunk.
 class GxWorker {
 public:
     explicit GxWorker(void (*process)(const uint8_t*, size_t)) : process(process), filling(kChunk) {
@@ -76,29 +80,25 @@ public:
         pthread_setname_np(thread.native_handle(), "MH3 GX");
     }
     void Submit(const uint8_t* data, size_t size) {
+        CloseWindow();
         if (filling.size + size > filling.capacity) [[unlikely]] {
             if (filling.size) HandOff();
             if (size > filling.capacity) filling = Chunk(size);
         }
         std::memcpy(filling.bytes.get() + filling.size, data, size);
         filling.size += size;
-    }
-    // A fixed-size FIFO write: a store into the filling chunk, not a memcpy call.
-    template <size_t N>
-    bool Append(const uint8_t* data) {
-        if (filling.size + N > filling.capacity) [[unlikely]] return false;
-        std::memcpy(filling.bytes.get() + filling.size, data, N);
-        filling.size += N;
-        return true;
+        gGxFifoWindow = {filling.bytes.get() + filling.size, filling.bytes.get() + filling.capacity};
     }
     // Waits until the worker processed everything submitted; rethrows its failure.
     void Drain() {
+        CloseWindow();
         if (filling.size) HandOff();
         std::unique_lock lock(mutex);
         idle.wait(lock, [&] { return queue.empty() && !busy; });
         RethrowFailure();
     }
     void Stop() {
+        CloseWindow();
         {
             std::lock_guard lock(mutex);
             stop = true;
@@ -115,6 +115,11 @@ private:
         std::unique_ptr<uint8_t[]> bytes;
         size_t size = 0, capacity;
     };
+    void CloseWindow() {
+        if (!gGxFifoWindow.end) return;
+        filling.size = size_t(gGxFifoWindow.next - filling.bytes.get());
+        gGxFifoWindow = {};
+    }
     void RethrowFailure() {
         if (failure) std::rethrow_exception(std::exchange(failure, nullptr));
     }
@@ -491,8 +496,7 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 
 template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data) {
-    if (!gpuSynchronized && gxWorker && gxWorker->Append<N>(data)) [[likely]] return;
-    SubmitGuestGxBytes(data, N);
+    GX_HLE_FIFO_WriteBytesInline(data, N);
 }
 template void SubmitGuestGxFixed<1>(const uint8_t*);
 template void SubmitGuestGxFixed<2>(const uint8_t*);
