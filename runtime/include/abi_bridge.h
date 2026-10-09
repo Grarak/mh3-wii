@@ -360,13 +360,21 @@ inline thread_local IndirectResolvedDispatchMemoEntry
     g_indirectResolvedDispatchMemo[kIndirectDispatchCacheEntries]{};
 
 // Address 0 marks an empty slot: no function lives there, so a probe for 0
-// finds no record either way.
+// finds no record either way. Two ways per set (the same 2048 entries): a
+// direct-mapped slot let pairs of hot targets evict each other every frame,
+// each miss a cache-missing table search. A miss replaces the older way.
 struct IndirectRawDispatchMemoEntry {
     uint32_t address;
     const RawDispatchRecord* record;
 };
-inline thread_local IndirectRawDispatchMemoEntry
-    g_indirectRawDispatchMemo[kIndirectDispatchCacheEntries]{};
+struct IndirectRawDispatchMemoSet {
+    IndirectRawDispatchMemoEntry way[2];
+};
+inline constexpr size_t kIndirectRawDispatchMemoSets = kIndirectDispatchCacheEntries / 2;
+inline constexpr uint32_t IndirectRawDispatchMemoSetIndex(uint32_t address) {
+    return ((address >> 2) * 2654435761u) >> (32 - std::bit_width(kIndirectRawDispatchMemoSets - 1));
+}
+inline thread_local IndirectRawDispatchMemoSet g_indirectRawDispatchMemo[kIndirectRawDispatchMemoSets]{};
 
 class TranslatedFunctionRegistry {
 public:
@@ -399,12 +407,14 @@ public:
     // published (the acquire in the miss path), so a hit needs no barrier - on
     // arm32 the acquire is a dmb on every bctrl.
     static MKW_PPC_FORCE_INLINE const RawDispatchRecord* FindRawByAddressPtr(uint32_t address) {
-        auto& cached = g_indirectRawDispatchMemo[IndirectDispatchMemoSlot(address)];
-        if (cached.address == address) {
-            return cached.record;
+        auto& set = g_indirectRawDispatchMemo[IndirectRawDispatchMemoSetIndex(address)];
+        if (set.way[0].address == address) {
+            return set.way[0].record;
         }
-
-        return FindRawByAddressPtrMiss(address, cached);
+        if (set.way[1].address == address) {
+            return set.way[1].record;
+        }
+        return FindRawByAddressPtrMiss(address, set);
     }
     // Look up a registered function by host (native) address.
     // This enables stack trace symbolication for translated functions.
@@ -414,7 +424,7 @@ private:
     // Memo miss: resolve against the header-inline generated table first; only dynamically
     // registered records or a not-yet-published table fall through to the slow path.
     static MKW_PPC_NO_INLINE MKW_PPC_COLD const RawDispatchRecord* FindRawByAddressPtrMiss(
-        uint32_t address, IndirectRawDispatchMemoEntry& cached) {
+        uint32_t address, IndirectRawDispatchMemoSet& set) {
         if (!lookupPublished_.load(std::memory_order_acquire)) {
             return nullptr;
         }
@@ -426,7 +436,8 @@ private:
         if (record == nullptr) {
             record = FindRawByAddressPtrSlow(address);
         }
-        cached = {address, record};
+        set.way[1] = set.way[0];
+        set.way[0] = {address, record};
         return record;
     }
 
