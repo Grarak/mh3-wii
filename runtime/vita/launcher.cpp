@@ -1,18 +1,17 @@
 #include "vita_launcher.h"
 #include "launcher_font.h"
+#include "launcher_screen.h"
 #include "launcher_cheats.h"
-#include "native_graphics.h"
 #include "player_health.h"
 #include "village_boot.h"
 #include "field_jump.h"
 #include "disc_image.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
-#include <aurora/native_geometry.h>
 #include <aurora/thread_role.hpp>
-#include "gl/gl.hpp"
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/message_dialog.h>
 #include <psp2/ime_dialog.h>
 #include <psp2/vshbridge.h>
@@ -20,14 +19,106 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <optional>
 #include <thread>
+#ifdef MH3_DEVELOPMENT
+#include <fstream>
+#include <sstream>
+#endif
 
 namespace VitaLauncher {
 namespace {
 constexpr uint32_t ink = 0xff28302c, paper = 0xffc8d7d8, gold = 0xff73b9de, light = 0xffe1ebed;
+// Development log lines (runtime.log); the devkit harness reads them.
+[[gnu::format(printf, 1, 2)]] void Log([[maybe_unused]] const char* format, ...) {
+#ifdef MH3_DEVELOPMENT
+    va_list arguments;
+    va_start(arguments, format);
+    std::fputs("MH3 launcher: ", stderr);
+    std::vfprintf(stderr, format, arguments);
+    std::fputc('\n', stderr);
+    va_end(arguments);
+#endif
+}
+#ifdef MH3_DEVELOPMENT
+// MH3_LAUNCHER_INPUT=file: scripted launcher input for devkit tests. Each line
+// "FRAME BUTTONS" holds BUTTONS from launcher input frame FRAME on: names
+// joined by '+' (up down left right cross circle triangle square start select
+// l r), "none", or SCE_CTRL bits as a number. Frames count the menu's input
+// reads. While a script runs, the dialogs close after 2.5 seconds; after its
+// last line the controller takes over.
+class Script {
+  public:
+    Script() {
+        const char* path = std::getenv("MH3_LAUNCHER_INPUT");
+        if (!path)
+            return;
+        std::ifstream input(path);
+        if (!input)
+            throw std::runtime_error(std::string("Cannot read MH3_LAUNCHER_INPUT ") + path);
+        for (std::string line; std::getline(input, line);) {
+            std::istringstream fields(line.substr(0, line.find('#')));
+            uint64_t frame;
+            std::string names;
+            if (!(fields >> frame))
+                continue;
+            if (!(fields >> names) || (!entries.empty() && frame < entries.back().first))
+                throw std::runtime_error("Invalid MH3_LAUNCHER_INPUT line: " + line);
+            entries.emplace_back(frame, Buttons(names));
+        }
+        Log("input script %s, %u entries", path, unsigned(entries.size()));
+    }
+    bool Running() const { return !finished && !entries.empty(); }
+    // The held buttons of this frame, or nothing once the script has ended.
+    std::optional<uint32_t> Held(uint64_t frame) {
+        if (finished || entries.empty())
+            return std::nullopt;
+        while (next < entries.size() && entries[next].first <= frame)
+            held = entries[next++].second;
+        if (next == entries.size()) {
+            finished = true;
+            Log("input script finished at frame %llu", (unsigned long long)frame);
+        }
+        return held;
+    }
+
+  private:
+    static uint32_t Buttons(const std::string& text) {
+        if (text == "none")
+            return 0;
+        if (std::isdigit(uint8_t(text[0])))
+            return uint32_t(std::stoul(text, nullptr, 0));
+        static const std::pair<const char*, uint32_t> named[] = {
+            {"up", SCE_CTRL_UP},           {"down", SCE_CTRL_DOWN},     {"left", SCE_CTRL_LEFT},     {"right", SCE_CTRL_RIGHT},
+            {"cross", SCE_CTRL_CROSS},     {"circle", SCE_CTRL_CIRCLE}, {"triangle", SCE_CTRL_TRIANGLE}, {"square", SCE_CTRL_SQUARE},
+            {"start", SCE_CTRL_START},     {"select", SCE_CTRL_SELECT}, {"l", SCE_CTRL_LTRIGGER},    {"r", SCE_CTRL_RTRIGGER}};
+        uint32_t value = 0;
+        for (size_t at = 0; at <= text.size();) {
+            const size_t end = std::min(text.find('+', at), text.size());
+            const auto name = text.substr(at, end - at);
+            const auto found = std::find_if(std::begin(named), std::end(named), [&](const auto& n) { return name == n.first; });
+            if (found == std::end(named))
+                throw std::runtime_error("Unknown MH3_LAUNCHER_INPUT button " + name);
+            value |= found->second;
+            at = end + 1;
+        }
+        return value;
+    }
+    std::vector<std::pair<uint64_t, uint32_t>> entries;
+    size_t next = 0;
+    uint32_t held = 0;
+    bool finished = false;
+};
+Script& InputScript() {
+    static Script script;
+    return script;
+}
+#endif
 bool Pump() {
     for (const auto* e = aurora_update(); e && e->type != AURORA_NONE; ++e)
         if (e->type == AURORA_EXIT)
@@ -37,41 +128,29 @@ bool Pump() {
 void Rect(std::vector<Rectangle>& list, float x, float y, float w, float h, uint32_t color) {
     list.push_back({x, y, w, h, color});
 }
-void Submit(const std::vector<Rectangle>& rectangles) {
-    mh3_raster_state raster{};
-    raster.depth_compare = 7;
-    raster.color_write = raster.alpha_write = 1;
-    SetNativeRaster(raster);
-    // Write once directly into the admitted CDRAM slot. Individual rectangles
-    // share a draw; splitting below 16-bit index limits preserves draw order.
-    for (size_t base = 0; base < rectangles.size(); base += 12000) {
-        const size_t count = std::min<size_t>(12000, rectangles.size() - base);
-        AuroraNativeGeometry geometry{};
-        if (!aurora_allocate_native_geometry(count * 4, count * 6, &geometry))
-            return;
-        for (size_t i = 0; i < count; ++i) {
-            const auto& r = rectangles[base + i];
-            for (unsigned corner = 0; corner < 4; ++corner) {
-                auto& v = geometry.vertices[i * 4 + corner];
-                v.position[0] = (r.x + (corner & 1 ? r.w : 0)) / 480.f - 1;
-                v.position[1] = 1 - (r.y + (corner & 2 ? r.h : 0)) / 272.f;
-                v.position[2] = 0;
-                v.position[3] = 1;
-                v.uv[0] = v.uv[1] = 0;
-                for (unsigned channel = 0; channel < 4; ++channel)
-                    v.color[channel] = r.color >> (8 * channel);
-            }
-            const uint16_t first = i * 4;
-            const uint16_t indices[] = {first, uint16_t(first + 1), uint16_t(first + 2), uint16_t(first + 2), uint16_t(first + 1), uint16_t(first + 3)};
-            std::copy(std::begin(indices), std::end(indices), geometry.indices + i * 6);
+// The last launcher frame; dialogs draw over it.
+std::vector<Rectangle> shown;
+// System dialogs draw into the display buffer the render thread presents:
+// Aurora's GXM present calls sceCommonDialogUpdate while one is active. The
+// render thread owns that flag, and a dialog must not end while a present
+// could still update it, so both changes run on the render thread.
+template <class Status, class Close>
+void RunDialog(Status status, [[maybe_unused]] Close close) {
+    RunOnRenderThread([] { aurora_set_common_dialog_active(true); }, &shown);
+    [[maybe_unused]] const uint64_t opened = sceKernelGetProcessTimeWide();
+    [[maybe_unused]] bool closing = false;
+    while (status() != SCE_COMMON_DIALOG_STATUS_FINISHED && Pump()) {
+#ifdef MH3_DEVELOPMENT
+        if (!closing && InputScript().Running() && sceKernelGetProcessTimeWide() - opened > 2500000) {
+            Log("dialog closed by the input script");
+            close();
+            closing = true;
         }
-        aurora_submit_native_geometry(&geometry, 0);
+#endif
+        PresentScreen(&shown);
+        sceKernelDelayThread(8000);
     }
-}
-void BlankFrame() {
-    BeginNativeGraphicsFrame();
-    EndNativeGraphicsFrame();
-    sceKernelDelayThread(8000);
+    RunOnRenderThread([] { aurora_set_common_dialog_active(false); }, &shown);
 }
 void Message(const std::string& text) {
     SceMsgDialogUserMessageParam user{};
@@ -81,14 +160,12 @@ void Message(const std::string& text) {
     sceMsgDialogParamInit(&param);
     param.mode = SCE_MSG_DIALOG_MODE_USER_MSG;
     param.userMsgParam = &user;
+    Log("message: %s", text.c_str());
     if (sceMsgDialogInit(&param) < 0) {
         std::fprintf(stderr, "MH3 launcher: %s\n", text.c_str());
         return;
     }
-    aurora_set_common_dialog_active(true);
-    while (sceMsgDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED && Pump())
-        BlankFrame();
-    aurora_set_common_dialog_active(false);
+    RunDialog(sceMsgDialogGetStatus, sceMsgDialogClose);
     sceMsgDialogTerm();
 }
 void EditName(std::string& name) {
@@ -108,12 +185,10 @@ void EditName(std::string& name) {
         throw std::runtime_error("Cannot load the quest-name keyboard");
     if (sceImeDialogInit(&param) < 0)
         throw std::runtime_error("Cannot open the quest-name keyboard");
-    aurora_set_common_dialog_active(true);
-    while (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED && Pump())
-        BlankFrame();
+    Log("quest-name keyboard open");
+    RunDialog(sceImeDialogGetStatus, sceImeDialogAbort);
     SceImeDialogResult result{};
     sceImeDialogGetResult(&result);
-    aurora_set_common_dialog_active(false);
     sceImeDialogTerm();
     if (result.button == SCE_IME_DIALOG_BUTTON_ENTER) {
         std::string value;
@@ -131,18 +206,14 @@ void EditName(std::string& name) {
 class Input {
   public:
     uint32_t Read() {
-        SceCtrlData sample{};
-        if (sceCtrlPeekBufferPositive(0, &sample, 1) < 1)
-            return 0;
-        uint32_t held = sample.buttons;
-        if (sample.ly < 80)
-            held |= SCE_CTRL_UP;
-        if (sample.ly > 176)
-            held |= SCE_CTRL_DOWN;
-        if (sample.lx < 80)
-            held |= SCE_CTRL_LEFT;
-        if (sample.lx > 176)
-            held |= SCE_CTRL_RIGHT;
+        const uint64_t index = frame++;
+        uint32_t held;
+#ifdef MH3_DEVELOPMENT
+        if (const auto scripted = InputScript().Held(index))
+            held = *scripted;
+        else
+#endif
+            held = Live();
         const uint64_t now = sceKernelGetProcessTimeWide();
         uint32_t edges = held & ~previous;
         const uint32_t directions = held & (SCE_CTRL_UP | SCE_CTRL_DOWN | SCE_CTRL_LEFT | SCE_CTRL_RIGHT);
@@ -157,44 +228,57 @@ class Input {
         } else
             lastDirection = 0;
         previous = held;
+        if (edges)
+            Log("input frame %llu buttons 0x%x", (unsigned long long)index, unsigned(edges));
         return edges;
     }
 
   private:
+    static uint32_t Live() {
+        SceCtrlData sample{};
+        if (sceCtrlPeekBufferPositive(0, &sample, 1) < 1)
+            return 0;
+        uint32_t held = sample.buttons;
+        if (sample.ly < 80)
+            held |= SCE_CTRL_UP;
+        if (sample.ly > 176)
+            held |= SCE_CTRL_DOWN;
+        if (sample.lx < 80)
+            held |= SCE_CTRL_LEFT;
+        if (sample.lx > 176)
+            held |= SCE_CTRL_RIGHT;
+        return held;
+    }
     uint32_t previous = 0, lastDirection = 0;
-    uint64_t nextRepeat = 0;
+    uint64_t nextRepeat = 0, frame = 0;
 };
 void Draw(Font& font, const std::string& title, const std::vector<std::string>& rows, size_t selected, const std::string& detail,
           const std::string& footer = "X Select   O Back   D-pad / left stick Move") {
-    const bool render = BeginNativeGraphicsFrame();
-    if (render) {
-        std::vector<Rectangle> rects;
-        rects.reserve(18000);
-        Rect(rects, 0, 0, 960, 544, ink);
-        Rect(rects, 30, 30, 900, 475, paper);
-        // Authored geometric borders echo MH3's framed parchment quest menus.
-        // Game fonts/art remain external; the launcher uses installed PVF.
-        for (int x = 34; x < 926; x += 24) {
-            Rect(rects, x, 34, 12, 4, gold);
-            Rect(rects, x, 497, 12, 4, gold);
-        }
-        Rect(rects, 42, 46, 876, 48, ink);
-        font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  " + title, gold, 830);
-        const size_t first = selected >= 7 ? selected - 6 : 0;
-        for (size_t row = first; row < std::min(first + 7, rows.size()); ++row) {
-            const float y = 110 + (row - first) * 43;
-            if (row == selected) {
-                Rect(rects, 54, y - 2, 848, 36, ink);
-                Rect(rects, 54, y - 2, 6, 36, gold);
-            }
-            font.Text(rects, 72, y + 4, rows[row], row == selected ? gold : ink, 810);
-        }
-        Rect(rects, 54, 421, 848, 2, ink);
-        font.Text(rects, 64, 435, detail, ink, 820);
-        font.Text(rects, 45, 517, footer, light, 890);
-        Submit(rects);
+    auto& rects = shown;
+    rects.clear();
+    Rect(rects, 0, 0, 960, 544, ink);
+    Rect(rects, 30, 30, 900, 475, paper);
+    // Authored geometric borders echo MH3's framed parchment quest menus.
+    // Game fonts/art remain external; the launcher uses installed PVF.
+    for (int x = 34; x < 926; x += 24) {
+        Rect(rects, x, 34, 12, 4, gold);
+        Rect(rects, x, 497, 12, 4, gold);
     }
-    EndNativeGraphicsFrame();
+    Rect(rects, 42, 46, 876, 48, ink);
+    font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  " + title, gold, 830);
+    const size_t first = selected >= 7 ? selected - 6 : 0;
+    for (size_t row = first; row < std::min(first + 7, rows.size()); ++row) {
+        const float y = 110 + (row - first) * 43;
+        if (row == selected) {
+            Rect(rects, 54, y - 2, 848, 36, ink);
+            Rect(rects, 54, y - 2, 6, 36, gold);
+        }
+        font.Text(rects, 72, y + 4, rows[row], row == selected ? gold : ink, 810);
+    }
+    Rect(rects, 54, 421, 848, 2, ink);
+    font.Text(rects, 64, 435, detail, ink, 820);
+    font.Text(rects, 45, 517, footer, light, 890);
+    PresentScreen(&rects);
     sceKernelDelayThread(8000);
 }
 // The disc image stays in base; its metadata and the converted-asset cache live
@@ -243,18 +327,16 @@ bool EnsureDisc(Font& font, const std::filesystem::path& base) {
                 maximum = total;
             }
             const unsigned percent = std::min<uint64_t>(100, completed * 100 / maximum);
-            if (BeginNativeGraphicsFrame()) {
-                std::vector<Rectangle> rects;
-                Rect(rects, 0, 0, 960, 544, ink);
-                Rect(rects, 120, 178, 720, 184, paper);
-                font.Text(rects, 150, 203, "Preparing your game", ink);
-                font.Text(rects, 150, 243, label, ink, 650);
-                Rect(rects, 150, 288, 660, 25, ink);
-                Rect(rects, 153, 291, 654 * percent / 100.f, 19, gold);
-                font.Text(rects, 150, 327, std::to_string(percent) + "%  Keep the application open", ink);
-                Submit(rects);
-            }
-            EndNativeGraphicsFrame();
+            auto& rects = shown;
+            rects.clear();
+            Rect(rects, 0, 0, 960, 544, ink);
+            Rect(rects, 120, 178, 720, 184, paper);
+            font.Text(rects, 150, 203, "Preparing your game", ink);
+            font.Text(rects, 150, 243, label, ink, 650);
+            Rect(rects, 150, 288, 660, 25, ink);
+            Rect(rects, 153, 291, 654 * percent / 100.f, 19, gold);
+            font.Text(rects, 150, 327, std::to_string(percent) + "%  Keep the application open", ink);
+            PresentScreen(&rects);
             Pump();
             sceKernelDelayThread(12000);
         }
@@ -265,9 +347,22 @@ bool EnsureDisc(Font& font, const std::filesystem::path& base) {
             throw std::runtime_error("Prepared game data did not pass validation");
     }
     setenv("MH3_DISC_DIR", output.string().c_str(), 1);
-    // Textures and models convert as the game loads them (disc/cache/).
-    OpenNativeAssets();
+    Log("game data in %s", output.string().c_str());
+    // The game's native assets open at the hand-off (StartGame); textures and
+    // models convert as the game loads them (disc/cache/).
     return true;
+}
+// Hands the renderer over to the game. The last launcher frame stays on the
+// display while the game boots; the game's native graphics startup restarts
+// the render thread at its own size.
+void StartGame(Font& font, const std::string& what) {
+    shown.clear();
+    Rect(shown, 0, 0, 960, 544, ink);
+    font.Text(shown, 60, 250, "Starting Monster Hunter Tri", gold, 830);
+    // Packets are newest-wins: the render thread presents this one before it stops.
+    PresentScreen(&shown);
+    Log("starting the game (%s) after %llu launcher frames", what.c_str(), (unsigned long long)ScreenFrames());
+    HandOffScreen();
 }
 enum class Page {
     Main,
@@ -279,10 +374,17 @@ enum class Page {
     Editor,
     Cheats
 };
+const char* PageName(Page page) {
+    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats"};
+    return names[unsigned(page)];
+}
 } // namespace
 bool Run() {
+    // After the hand-off the launcher no longer draws, so errors from there on
+    // go to the caller instead of a dialog.
+    bool handedOff = false;
     try {
-        InitializeNativeGraphics(960, 544, false);
+        StartScreen();
         SceCommonDialogConfigParam config{};
         sceCommonDialogConfigParamInit(&config);
         sceCommonDialogSetConfigParam(&config);
@@ -292,6 +394,9 @@ bool Run() {
             return false;
         }
         sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+#ifdef MH3_DEVELOPMENT
+        InputScript();
+#endif
         Font font;
         const auto base = std::filesystem::path(std::getenv("MH3_DISC_DIR"));
         std::filesystem::create_directories(base);
@@ -324,11 +429,14 @@ bool Run() {
         const auto enter = [&](Page next) {
             page = next;
             selected = 0;
+            Log("page %s", PageName(next));
         };
-        const auto launch = [&](uint16_t id, QuestCatalog::Set category) {
-            StartVillageBoot(save.file, save.character);
-            RequestQuestJump(id, category, -1);
+        const auto saveName = [&] { return "File " + std::to_string(save.file + 1) + " / character " + std::to_string(save.character + 1); };
+        const auto start = [&](const std::string& what) {
+            handedOff = true;
+            StartGame(font, what);
         };
+        Log("menu ready");
         while (Pump()) {
             std::string title, detail;
             std::vector<std::string> rows;
@@ -359,7 +467,7 @@ bool Run() {
                 for (const auto& q : quests)
                     rows.push_back(std::to_string(q.stars) + "*  " + q.name);
                 if (!quests.empty())
-                    detail = QuestCatalog::MapName(quests[selected].map) + " - " + quests[selected].goal;
+                    detail = QuestCatalog::MapName(quests[std::min(selected, quests.size() - 1)].map) + " - " + quests[std::min(selected, quests.size() - 1)].goal;
                 break;
             case Page::Custom:
                 title = "Custom quests";
@@ -458,6 +566,7 @@ bool Run() {
                         edit.stars = std::clamp<int>(int(edit.stars) + (direction ? direction : 1), 1, 7);
                     if (selected == 7 && accept) {
                         SaveCustomQuest(user, edit);
+                        Log("custom quest saved: %s (template %u, encounter %u, %u stars)", edit.name.c_str(), unsigned(edit.base), unsigned(edit.encounter), unsigned(edit.stars));
                         Message("Custom quest saved. Open Quests > Custom quests to play it.");
                         enter(Page::Main);
                     }
@@ -473,8 +582,10 @@ bool Run() {
                     continue;
                 switch (page) {
                 case Page::Main:
-                    if (selected == 0)
+                    if (selected == 0) {
+                        start("title screen");
                         return true;
+                    }
                     if (selected == 1) {
                         creating = false;
                         saves = ProbeSaves(user);
@@ -518,7 +629,10 @@ bool Run() {
                         refreshEditor();
                         enter(Page::Editor);
                     } else {
-                        launch(quests[selected].id, set);
+                        const auto& q = quests[selected];
+                        StartVillageBoot(save.file, save.character);
+                        RequestQuestJump(q.id, set, -1);
+                        start("quest " + std::to_string(q.id) + " " + q.name + ", " + saveName());
                         return true;
                     }
                     break;
@@ -533,6 +647,7 @@ bool Run() {
                             throw;
                         }
                         RequestQuestJump(q.base, q.set, -1);
+                        start("custom quest " + q.name + " on template " + std::to_string(q.base) + ", " + saveName());
                         return true;
                     }
                     break;
@@ -544,16 +659,21 @@ bool Run() {
                         noStamina = !noStamina;
                         LauncherCheats::SetNoStaminaDrain(noStamina);
                     }
+                    Log("cheats: no damage %s, no action stamina drain %s", noDamage ? "on" : "off", noStamina ? "on" : "off");
                     break;
                 case Page::Editor:
                     break;
                 }
             } catch (const std::exception& error) {
+                if (handedOff)
+                    throw;
                 Message(error.what());
             }
         }
         return false;
     } catch (const std::exception& error) {
+        if (handedOff)
+            throw;
         Message(error.what());
         return false;
     }

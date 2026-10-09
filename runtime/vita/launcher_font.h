@@ -1,4 +1,5 @@
 #pragma once
+#include "launcher_screen.h"
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -6,10 +7,7 @@
 #include <psp2/pvf.h>
 
 namespace VitaLauncher {
-struct Rectangle {
-    float x, y, w, h;
-    uint32_t color;
-};
+// The installed Latin PVF font, drawn as solid rectangles.
 class Font {
   public:
     Font();

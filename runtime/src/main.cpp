@@ -20,6 +20,7 @@
 #include "vita_launcher.h"
 #else
 #include "vita_launcher.h"
+#include "launcher_screen.h"
 #include <execinfo.h>
 #endif
 #include <iostream>
@@ -230,6 +231,11 @@ int main(int argc, char** argv) {
             return RunEfbCheck(argc, argv);
         if (argc == 2 && std::string_view(argv[1]) == "--graphics-check")
             return RunGraphicsCheck(argc, argv);
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+        // The Vita launcher's renderer use and hand-off to the game, on the host.
+        if (argc == 2 && std::string_view(argv[1]) == "--launcher-screen-check")
+            return VitaLauncher::RunLauncherScreenCheck();
+#endif
 #endif
         if (argc == 6 && std::string_view(argv[1]) == "--disc-read") {
             DiscImage disc(argv[2]);

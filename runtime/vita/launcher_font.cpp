@@ -1,4 +1,5 @@
 #include "launcher_font.h"
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <stdexcept>
@@ -61,8 +62,11 @@ Font::Glyph& Font::Get(unsigned character) {
     it->second.advance = info.glyphMetrics.horizontalAdvance64 / 64.f;
     if (it->second.advance < 1)
         it->second.advance = 6;
-    // CPU-only glyph descriptions; all final vertices/indices are allocated
-    // directly from the frame's CDRAM slot. No GPU buffer in main RAM.
+    // CPU-only glyph descriptions, recorded into each frame packet. A row's
+    // run that continues one of the row above with the same span extends it,
+    // so stems and bars are one rectangle each: a frame of text stays well
+    // inside the renderer's per-frame vertex memory.
+    auto& runs = it->second.runs;
     for (unsigned y = 0; y < 64; ++y)
         for (unsigned x = 0; x < 64;) {
             if (bitmap[y * 64 + x] < 96) {
@@ -72,7 +76,12 @@ Font::Glyph& Font::Get(unsigned character) {
             const unsigned start = x;
             while (x < 64 && bitmap[y * 64 + x] >= 96)
                 ++x;
-            it->second.runs.push_back({float(start) - 8, float(y) - 40, float(x - start), 1, 0});
+            const float left = float(start) - 8, top = float(y) - 40, width = float(x - start);
+            const auto above = std::find_if(runs.begin(), runs.end(), [&](const Rectangle& r) { return r.x == left && r.w == width && r.y + r.h == top; });
+            if (above != runs.end())
+                ++above->h;
+            else
+                runs.push_back({left, top, width, 1, 0});
         }
     return it->second;
 }

@@ -43,6 +43,7 @@ uint64_t NativeFramePacketSequence();
 // ---- Frame lifecycle (graphics_host.cpp) ----
 // Start hands the calling (game) thread's graphics context to a new render
 // thread; stop drains it, runs every queued task and hands the context back.
+// The launcher stops its render thread and the game's startup starts another.
 void StartNativeRenderThread();
 void StopNativeRenderThread();
 bool NativeRenderThreadRunning();

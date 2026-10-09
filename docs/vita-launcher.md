@@ -5,6 +5,43 @@ before allocating guest RAM. `Start game` continues through MH3's ordinary
 title and character menus. Quest selection, custom quest editing and cheats
 are compiled into Vita release builds; they do not depend on `--quest`.
 
+## Renderer and hand-off to the game
+
+The launcher uses the renderer the way the game does
+(`runtime/src/launcher_screen.cpp`). `StartScreen` creates the 960×544
+native target without opening game assets and starts the render thread. The
+launcher, on the game thread, records each frame as a packet of UI geometry
+(`AllocateNativeGeometry`/`SubmitNativeGeometry`, untextured, vertex colour).
+The render thread copies it into the frame's GPU slot, draws and presents.
+Recording never waits for the GPU.
+
+A Vita frame has 1 MiB of native vertex memory and a frame that does not fit
+is canceled, so the launcher draws at most 9,000 rectangles (four 28-byte
+vertices each) per frame. Glyph runs of the PVF font are merged vertically,
+so a stem or bar is one rectangle.
+
+System dialogs (`SceMsgDialog`, `SceImeDialog`) start on the game thread.
+Aurora's GXM present calls `sceCommonDialogUpdate` on the displayed buffer
+while its dialog flag is set. That flag belongs to the render thread: the
+launcher switches it with a render-thread task (`RunOnRenderThread`) and
+keeps presenting the menu behind the dialog. The dialog is terminated only
+after the switch-off task ran, so no present can update a terminated dialog.
+
+`Start game`, a quest or a custom quest ends the launcher (`StartGame`):
+
+1. It presents a last "Starting Monster Hunter Tri" frame.
+2. It stops the render thread, which hands the graphics context back to the
+   game thread, and opens the native assets of `MH3_DISC_DIR`.
+3. The game's own graphics startup (`NativeGraphicsInit`, `0x8003FD30`)
+   calls `InitializeNativeGraphics` at the render mode's size. Aurora is
+   already initialized, so this only reconfigures the target (resized at the
+   next admitted frame) and starts a new render thread. The frame packet
+   sequence continues across the restart.
+
+Until then the last launcher frame stays on the display. Errors after the
+hand-off go to `main` instead of a dialog. Native audio starts later, from the
+game (`StartNativeAudio`); the launcher does not touch it.
+
 ## Startup and external game data
 
 The launcher first initializes native GXM without opening game texture packs.
@@ -93,11 +130,8 @@ by cargo.
 ## Navigation and menus
 
 The UI uses a framed parchment/copper palette and a vertical selection list.
-Font glyphs come from the Vita's installed Latin PVF font. CPU glyph runs are
-converted directly into the admitted frame's CDRAM vertices and indices;
-there is no main RAM GPU vertex buffer. The renderer uses the existing triple
-buffer admission rules and skips busy GPU/display slots. It remains initialized
-for the guest game's subsequent native graphics startup.
+Font glyphs come from the Vita's installed Latin PVF font, drawn as solid
+rectangles (see [the renderer section](#renderer-and-hand-off-to-the-game)).
 
 | Control | Action |
 | --- | --- |
@@ -225,10 +259,8 @@ texture binding does not use content hashes.
 On the host, ISO processing took 6.94 seconds with peak RSS 31,692 KiB; RVZ
 processing took 9.88 seconds with peak RSS 32,492 KiB. These measurements do
 not represent Vita performance. Vita release source checks and the decoder's
-Vita clang codec build passed. No launcher display/controller test on physical
-hardware has been performed in this work. End-to-end gameplay remains subject
-to the current native rendering migration described in
-vita-render-investigation.md.
+Vita clang codec build passed. For the launcher on hardware, see
+[Devkit testing](#devkit-testing-2026-10-03).
 
 The updated production texture stage converted all 8,562 resources in an isolated
 host output in 2.34 seconds with 35,000 KiB peak RSS. Its complete tag map matched
@@ -236,3 +268,76 @@ the offline inventory byte for byte. Seven focused portable parser/production
 tests and the existing save/quest/ISO tests pass; independent clang 21 host and
 Vita launcher objects compile. This does not measure on-device preparation or
 certify the pending native model conversion stage.
+
+## Devkit testing (2026-10-03)
+
+`scripts/vita-hardware-test.py RUN --launcher` launches `host0:/game/eboot.bin`
+without arguments. Without `MH3_DISC_DIR`, the launcher checks
+`ux0:/data/mh3-wii` itself. The devkit still holds an older prepared install
+there (`partition.bin`, `native-textures.bin`), which this check would use as
+is, so test runs set `MH3_DISC_DIR=ux0:/data/mh3-wii/disc`. Menu input comes from
+`MH3_LAUNCHER_INPUT` (development builds): lines `FRAME BUTTONS`. Each line holds
+its buttons from that launcher input frame on: names joined by `+`, `none`, or
+`SCE_CTRL` bits. While a script runs, dialogs close after 2.5 s. For example,
+Quests > Online quests > three pages down > quest 10057:
+
+```text
+120 down
+124 none
+170 cross
+174 none
+220 down
+224 none
+270 cross
+274 none
+320 r
+324 none
+370 r
+374 none
+420 r
+424 none
+480 cross
+484 none
+```
+
+The launcher logs its pages, inputs, dialogs and
+`starting the game (...) after N launcher frames`. The harness counts
+readiness frames from that point. `--pad-script` sends timed CTRLP `pad`
+states; the launcher reads `sceCtrlPeekBufferPositive`, but CTRLP's effect
+there is untested. On the host, `MH3 --launcher-screen-check` draws launcher
+frames through the render thread, hands off, restarts the renderer at
+640×456 and checks pixels and the target size.
+
+Results, run directories under `build/vita-devkit/`:
+
+| Run | Result |
+| --- | --- |
+| `launcher-baseline-1` (before this work) | The launcher stopped at its first frame: `[fatal] [aurora::native_geometry] Geometry allocated outside game thread`. HDMI was black after the home screen. |
+| `launcher-quest-1` | The menu renders at full screen and the script navigates to quest 10057 (L/R paging included). The hand-off frame shows, and the game boots into the quest's loading screen. 253 KiB peak native vertex memory. |
+| `launcher-start-1` | The no-save message (`SceMsgDialog`) draws over the menu and closes. Start game hands off and the game reaches the THP startup. |
+| `launcher-direct-area0-1` | Control run: the same build, launched with `--quest 10057 --area -1`, plays normally. |
+
+**Open:** after the hand-off, the restarted render thread stops replaying
+packets. In `launcher-quest-1` this happened at the quest's first 3D frames
+(`packets_total` frozen at 280; the game thread kept running, the screen froze
+on Now Loading). In `launcher-start-1` it happened about 16 s after the hand-off
+at the title's THP startup; the game thread then stalled too and the CPU profiler's
+DECI requests timed out. The direct launch never shows this, so it belongs to
+the launcher path: the render-thread restart, or the target resize from
+960×544. The host check covers only 20 frames after the restart.
+
+Next steps:
+
+1. Rehearse the hand-off on the host before a full game run (launcher frames,
+   `HandOffScreen`, then `--quest`).
+2. Alternatively, keep the launcher's render thread for the game: open the
+   assets and reconfigure the target as render-thread tasks instead of
+   stopping it.
+
+Input scripts are in `scripts/launcher-input/`: `quest-10057.tsv` and
+`no-save-then-start.tsv` (both used above), and `tour-custom-quest.tsv` (cheats,
+editor with the keyboard, save, launch of the saved custom quest). There is
+also `hold-dialogs.tsv`, which only keeps dialogs closing by themselves, for
+example with `MH3_DISC_DIR` set to an empty `host0:` directory for the
+missing-disc message. Not yet run on hardware: the tour (custom quests, IME
+keyboard, cheats) and the missing-disc message.

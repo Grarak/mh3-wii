@@ -649,6 +649,9 @@ void StartNativeRenderThread() {
     gameThread = std::this_thread::get_id();
     stopping = false;
     failed = false;
+    // A restart (the launcher's renderer, then the game's) continues the
+    // packet sequence; the previous thread left completed at its maximum.
+    completed.store(sequence, std::memory_order_relaxed);
     aurora::gl::release_context();
     running = true;
     renderThread = std::thread(RenderLoop);

@@ -182,7 +182,8 @@ add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
     src/native_material.cpp src/model_gpu.cpp src/model_assets.cpp src/native_frame_statistics.cpp src/character_material.cpp
-    src/native_shader_source.cpp native/mh3_shade.c src/native_frame_packet.cpp native/mh3_frame_state_exchange.c)
+    src/native_shader_source.cpp native/mh3_shade.c src/native_frame_packet.cpp native/mh3_frame_state_exchange.c
+    src/launcher_screen.cpp)
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()
@@ -203,6 +204,7 @@ if(TARGET aurora::core)
   set_source_files_properties(src/model_gpu.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_material.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_frame_packet.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
+  set_source_files_properties(src/launcher_screen.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
   if(NOT VITA)
@@ -293,7 +295,7 @@ if(VITA)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   if(MH3_DEVELOPMENT)
-    set_property(SOURCE vita/platform.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
+    set_property(SOURCE vita/platform.cpp vita/launcher.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
   endif()
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
     ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub)
