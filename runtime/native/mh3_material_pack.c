@@ -1,4 +1,4 @@
-#include "mh3_mesh_pack.h"
+#include "mh3_model_state.h"
 #include <math.h>
 #include <string.h>
 
@@ -81,6 +81,61 @@ mh3_pack_status mh3_mesh_pack_texgen(const mh3_pack_native_material *m,uint32_t 
     for (n=0;n<10;n++) if (x.values[n]>maxima[n] || (!(x.known&(1u<<n)) && x.values[n])) return MH3_PACK_INVALID;
     *out=x;return MH3_PACK_OK;
 }
+static int16_t short_value(const uint8_t *p) {
+    uint32_t value=(uint32_t)p[0]|(uint32_t)p[1]<<8;
+    return (int16_t)(value&0x8000u?(int32_t)value-65536:(int32_t)value);
+}
+static mh3_pack_status constants(const mh3_pack_native_material *m,const uint8_t **out) {
+    const uint8_t *header=slice(m,0,128),*p;
+    if (!header) return MH3_PACK_INVALID;
+    if (word(header+4)!=2) return MH3_PACK_UNSUPPORTED;
+    p=slice(m,word(header+84),336);
+    if (!p || word(header+88)!=336) return MH3_PACK_RANGE;
+    if (memcmp(p,"M3MC",4) || word(p+8)!=336 || word(p+12)) return MH3_PACK_INVALID;
+    if (word(p+4)!=1) return MH3_PACK_UNSUPPORTED;
+    *out=p;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_mesh_pack_tev_color(const mh3_pack_native_material *m,uint32_t i,int konst,mh3_pack_tev_color *out) {
+    const uint8_t *p;mh3_pack_tev_color x;mh3_pack_status s;size_t j;
+    if (!out || (konst!=0 && konst!=1)) return MH3_PACK_INVALID;
+    if (i>=4) return MH3_PACK_RANGE;
+    s=constants(m,&p);if (s) return s;p+=16+(konst?64:0)+i*16;
+    memset(&x,0,sizeof x);x.known=word(p);
+    if (x.known>15 || !zero(p+12,4)) return MH3_PACK_INVALID;
+    for (j=0;j<4;j++) {x.rgba[j]=short_value(p+4+j*2);
+        if (x.rgba[j]<(konst?0:-1024) || x.rgba[j]>(konst?255:1023) || (!(x.known&(1u<<j)) && x.rgba[j])) return MH3_PACK_INVALID;}
+    *out=x;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_mesh_pack_swap_table(const mh3_pack_native_material *m,uint32_t i,mh3_pack_swap_table *out) {
+    const uint8_t *p;mh3_pack_swap_table x;mh3_pack_status s;size_t j;
+    if (!out) return MH3_PACK_INVALID;
+    if (i>=4) return MH3_PACK_RANGE;
+    s=constants(m,&p);if (s) return s;p+=144+i*8;memset(&x,0,sizeof x);x.known=word(p);memcpy(x.rgba,p+4,4);
+    if (x.known>15) return MH3_PACK_INVALID;
+    for (j=0;j<4;j++) if (x.rgba[j]>3 || (!(x.known&(1u<<j)) && x.rgba[j])) return MH3_PACK_INVALID;
+    *out=x;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_mesh_pack_indirect_stage(const mh3_pack_native_material *m,uint32_t i,mh3_pack_indirect_stage *out) {
+    const uint8_t *p;mh3_pack_indirect_stage x;mh3_pack_status s;size_t j;
+    if (!out) return MH3_PACK_INVALID;
+    if (i>=4) return MH3_PACK_RANGE;
+    s=constants(m,&p);if (s) return s;p+=176+i*16;memset(&x,0,sizeof x);x.known=word(p);
+    if (x.known>15 || !zero(p+8,8)) return MH3_PACK_INVALID;
+    for (j=0;j<4;j++) if (p[4+j]>(j<2?7:15) || (!(x.known&(1u<<j)) && p[4+j])) return MH3_PACK_INVALID;
+    x.coordinate=p[4];x.map=p[5];x.scale_s=p[6];x.scale_t=p[7];*out=x;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_mesh_pack_indirect_matrix(const mh3_pack_native_material *m,uint32_t i,mh3_pack_indirect_matrix *out) {
+    const uint8_t *p;mh3_pack_indirect_matrix x;mh3_pack_status s;size_t j;
+    if (!out) return MH3_PACK_INVALID;
+    if (i>=3) return MH3_PACK_RANGE;
+    s=constants(m,&p);if (s) return s;p+=240+i*32;memset(&x,0,sizeof x);x.known=word(p);
+    if (x.known>127 || !zero(p+20,12)) return MH3_PACK_INVALID;
+    for (j=0;j<6;j++) {x.coefficients[j]=short_value(p+4+j*2);
+        if (x.coefficients[j]<-1024 || x.coefficients[j]>1023 || (!(x.known&(1u<<j)) && x.coefficients[j])) return MH3_PACK_INVALID;}
+    x.scale_exponent=signed_value(word(p+16));
+    if (x.scale_exponent< -17 || x.scale_exponent>14 || (!(x.known&64) && x.scale_exponent)) return MH3_PACK_INVALID;
+    *out=x;return MH3_PACK_OK;
+}
 mh3_pack_status mh3_mesh_pack_material_native(const mh3_mesh_pack *pack,uint32_t i,mh3_pack_native_material *out) {
     mh3_pack_native_material x;const uint8_t *r,*p;size_t at;uint32_t offset,size,n;mh3_pack_status status;
     if (!pack || !out || !pack->metadata.data || pack->metadata.size<128) return MH3_PACK_INVALID;
@@ -92,16 +147,17 @@ mh3_pack_status mh3_mesh_pack_material_native(const mh3_mesh_pack *pack,uint32_t
     if (offset<pack->data_offset || offset>pack->metadata.size || size>pack->metadata.size-offset || size<1152) return MH3_PACK_RANGE;
     p=pack->metadata.data+offset;
     if (memcmp(p,"M3MT",4)) return MH3_PACK_INVALID;
-    if (word(p+4)!=1) return MH3_PACK_UNSUPPORTED;
+    if (word(p+4)!=1 && word(p+4)!=2) return MH3_PACK_UNSUPPORTED;
     memset(&x,0,sizeof x);x.bytes=(mh3_pack_span){p,size};x.flags=word(p+12);
     x.light_set_reference=signed_value(word(p+16));x.fog_reference=signed_value(word(p+20));
     for (n=0;n<3;n++) {x.indirect_method[n]=word(p+24+n*4);x.indirect_light_reference[n]=signed_value(word(p+36+n*4));}
     x.srt_flags=word(p+48);x.texture_matrix_mode=word(p+52);x.tev_count=word(p+72);x.texgen_count=word(p+80);
     if (x.flags&~1u || x.texture_matrix_mode>2 || x.light_set_reference < -128 || x.light_set_reference>127 ||
         x.fog_reference < -128 || x.fog_reference>127 || x.tev_count>16 || x.texgen_count>8 ||
-        x.tev_count!=word(r+32) || x.texgen_count!=word(r+24) || size!=1152+x.tev_count*48+x.texgen_count*32 ||
+        x.tev_count!=word(r+32) || x.texgen_count!=word(r+24) || size!=1152+x.tev_count*48+x.texgen_count*32+(word(p+4)==2?336:0) ||
         word(p+8)!=size || word(p+56)!=128 || word(p+60)!=896 || word(p+64)!=1024 || word(p+68)!=1152 ||
-        word(p+76)!=1152+x.tev_count*48 || !zero(p+84,44) || !zero(r+92,36)) return MH3_PACK_INVALID;
+        word(p+76)!=1152+x.tev_count*48 ||
+        (word(p+4)==1?!zero(p+84,44):(word(p+84)!=1152+x.tev_count*48+x.texgen_count*32 || word(p+88)!=336 || !zero(p+92,36))) || !zero(r+92,36)) return MH3_PACK_INVALID;
     for (n=0;n<3;n++) if (x.indirect_method[n]>255 || x.indirect_light_reference[n] < -128 || x.indirect_light_reference[n]>127) return MH3_PACK_INVALID;
     if (x.flags&1) {
         for (n=0;n<8;n++) {mh3_pack_texture_srt s;status=mh3_mesh_pack_texture_srt(&x,n,&s);if (status) return status;
@@ -111,5 +167,35 @@ mh3_pack_status mh3_mesh_pack_material_native(const mh3_mesh_pack *pack,uint32_t
     {mh3_pack_pixel_inputs pixel;status=mh3_mesh_pack_pixel(&x,&pixel);if (status) return status;}
     for (n=0;n<x.tev_count;n++) {mh3_pack_tev_stage t;status=mh3_mesh_pack_tev(&x,n,&t);if (status) return status;}
     for (n=0;n<x.texgen_count;n++) {mh3_pack_texgen t;status=mh3_mesh_pack_texgen(&x,n,&t);if (status) return status;}
+    if (word(p+4)==2) {
+        for (n=0;n<4;n++) {
+            mh3_pack_tev_color c;mh3_pack_swap_table t;mh3_pack_indirect_stage i;
+            status=mh3_mesh_pack_tev_color(&x,n,0,&c);if (status) return status;
+            status=mh3_mesh_pack_tev_color(&x,n,1,&c);if (status) return status;
+            status=mh3_mesh_pack_swap_table(&x,n,&t);if (status) return status;
+            status=mh3_mesh_pack_indirect_stage(&x,n,&i);if (status) return status;
+        }
+        for (n=0;n<3;n++) {mh3_pack_indirect_matrix m;status=mh3_mesh_pack_indirect_matrix(&x,n,&m);if (status) return status;}
+    }
     *out=x;return MH3_PACK_OK;
+}
+
+mh3_pack_status mh3_material_state_read(const mh3_mesh_pack *pack,uint32_t index,mh3_native_material_state *out) {
+    mh3_native_material_state x;mh3_pack_native_material material;mh3_pack_material record;mh3_pack_status s;uint32_t i;
+    if (!out) return MH3_PACK_INVALID;
+    s=mh3_mesh_pack_material_native(pack,index,&material);if (s) return s;
+    s=mh3_mesh_pack_material(pack,index,&record);if (s) return s;
+    memset(&x,0,sizeof x);x.texgen_count=record.texgen_count;x.channel_count=record.channel_count;x.tev_count=record.tev_count;
+    x.indirect_count=record.indirect_count;x.cull_mode=record.cull_mode;x.light_set_reference=material.light_set_reference;x.fog_reference=material.fog_reference;
+    for (i=0;i<x.tev_count;i++) {s=mh3_mesh_pack_tev(&material,i,&x.tev[i]);if (s) return s;}
+    for (i=0;i<4;i++) {
+        s=mh3_mesh_pack_tev_color(&material,i,0,&x.color[i]);if (s) return s;
+        s=mh3_mesh_pack_tev_color(&material,i,1,&x.konst[i]);if (s) return s;
+        s=mh3_mesh_pack_swap_table(&material,i,&x.swaps[i]);if (s) return s;
+        s=mh3_mesh_pack_indirect_stage(&material,i,&x.indirect[i]);if (s) return s;
+    }
+    for (i=0;i<3;i++) {s=mh3_mesh_pack_indirect_matrix(&material,i,&x.indirect_matrix[i]);if (s) return s;}
+    for (i=0;i<x.texgen_count;i++) {s=mh3_mesh_pack_texgen(&material,i,&x.texgen[i]);if (s) return s;}
+    for (i=0;i<x.channel_count;i++) {s=mh3_mesh_pack_channel(&material,i,&x.channel[i]);if (s) return s;}
+    s=mh3_mesh_pack_pixel(&material,&x.pixel);if (s) return s;*out=x;return MH3_PACK_OK;
 }

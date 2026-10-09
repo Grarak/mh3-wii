@@ -160,6 +160,17 @@ enum {
     MH3_TEXGEN_POST_MATRIX_ROW, MH3_TEXGEN_NORMALIZE, MH3_TEXGEN_DUAL_TEXTURE, MH3_TEXGEN_FIELD_COUNT
 };
 typedef struct { uint32_t known; uint8_t values[MH3_TEXGEN_FIELD_COUNT]; } mh3_pack_texgen;
+/* M3MT v2 constants. Known masks identify individual RGBA components, swap
+ * mappings, indirect fields or six row-major coefficients + scale exponent.
+ * Coefficients represent signed fixed point /1024; exponent is applied once. */
+typedef struct {uint32_t known;int16_t rgba[4];} mh3_pack_tev_color;
+typedef struct {uint32_t known;uint8_t rgba[4];} mh3_pack_swap_table;
+typedef struct {uint32_t known;uint8_t coordinate,map,scale_s,scale_t;} mh3_pack_indirect_stage;
+typedef struct {uint32_t known;int16_t coefficients[6];int32_t scale_exponent;} mh3_pack_indirect_matrix;
+mh3_pack_status mh3_mesh_pack_tev_color(const mh3_pack_native_material *material,uint32_t index,int konst,mh3_pack_tev_color *out);
+mh3_pack_status mh3_mesh_pack_swap_table(const mh3_pack_native_material *material,uint32_t index,mh3_pack_swap_table *out);
+mh3_pack_status mh3_mesh_pack_indirect_stage(const mh3_pack_native_material *material,uint32_t index,mh3_pack_indirect_stage *out);
+mh3_pack_status mh3_mesh_pack_indirect_matrix(const mh3_pack_native_material *material,uint32_t index,mh3_pack_indirect_matrix *out);
 mh3_pack_status mh3_mesh_pack_material_native(const mh3_mesh_pack *pack, uint32_t material_index, mh3_pack_native_material *out);
 mh3_pack_status mh3_mesh_pack_texture_srt(const mh3_pack_native_material *material, uint32_t slot, mh3_pack_texture_srt *out);
 mh3_pack_status mh3_mesh_pack_channel(const mh3_pack_native_material *material, uint32_t channel, mh3_pack_channel *out);
