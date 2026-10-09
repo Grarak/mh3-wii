@@ -1,7 +1,6 @@
 #include "common.hpp"
 
 #include "../internal.hpp"
-#include "../webgpu/gpu.hpp"
 #include "aurora/aurora.h"
 #include "texture.hpp"
 #include "texture_convert.hpp"
@@ -13,18 +12,11 @@
 #include <utility>
 
 #include <fmt/format.h>
-#include <magic_enum.hpp>
 #include <tracy/Tracy.hpp>
-#include <webgpu/webgpu_cpp.h>
 
 namespace aurora::gfx {
-using webgpu::g_device;
-using webgpu::g_queue;
-
 namespace {
 Module Log("aurora::gfx");
-
-constexpr u32 div_ceil(u32 value, u32 divisor) noexcept { return (value + divisor - 1) / divisor; }
 
 uint32_t clamp_mip_count(uint32_t width, uint32_t height, uint32_t mips, const char* label) noexcept {
   const uint32_t maxMips = max_texture_mip_count(width, height);
@@ -35,44 +27,35 @@ uint32_t clamp_mip_count(uint32_t width, uint32_t height, uint32_t mips, const c
   return safeMips;
 }
 
-wgpu::Extent3D physical_size(wgpu::Extent3D size, TextureFormatInfo info) {
-  const uint32_t width = ((size.width + info.blockWidth - 1) / info.blockWidth) * info.blockWidth;
-  const uint32_t height = ((size.height + info.blockHeight - 1) / info.blockHeight) * info.blockHeight;
-  return {.width = width, .height = height, .depthOrArrayLayers = size.depthOrArrayLayers};
+// Uploads every mip of `data` (tightly packed, mip after mip). Returns false if the data ran out.
+bool upload_mips(const TextureRef& ref, ArrayRef<uint8_t> data, const char* label) noexcept {
+  const auto bytesPerPixel = gl::format_info(ref.format).bytesPerPixel;
+  size_t offset = 0;
+  for (uint32_t mip = 0; mip < ref.mipCount; ++mip) {
+    const uint32_t mipWidth = std::max(ref.size.width >> mip, 1u);
+    const uint32_t mipHeight = std::max(ref.size.height >> mip, 1u);
+    const uint32_t bytesPerRow = mipWidth * bytesPerPixel;
+    const size_t dataSize = static_cast<size_t>(bytesPerRow) * mipHeight;
+    if (offset > data.size() || dataSize > data.size() - offset) {
+      Log.warn("{}: stopping at mip {}: expected at least {} bytes, got {}", label, mip, offset + dataSize,
+               data.size());
+      return false;
+    }
+    gl::write_texture(ref.texture, mip, 0, 0, mipWidth, mipHeight, data.data() + offset, bytesPerRow);
+    offset += dataSize;
+  }
+  if (data.size() != UINT32_MAX && offset < data.size()) {
+    Log.warn("{}: texture used {} bytes, but given {} bytes", label, offset, data.size());
+  }
+  return true;
 }
 } // namespace
 
-TextureFormatInfo format_info(wgpu::TextureFormat format) noexcept {
-  switch (format) {
-    DEFAULT_FATAL("unimplemented texture format {}", magic_enum::enum_name(format));
-  case wgpu::TextureFormat::R8Unorm:
-    return {1, 1, 1, false};
-  case wgpu::TextureFormat::RG8Unorm:
-  case wgpu::TextureFormat::R16Sint:
-    return {1, 1, 2, false};
-  case wgpu::TextureFormat::RGBA8Unorm:
-  case wgpu::TextureFormat::BGRA8Unorm:
-  case wgpu::TextureFormat::R32Float:
-    return {1, 1, 4, false};
-  case wgpu::TextureFormat::BC1RGBAUnorm:
-    return {4, 4, 8, true};
-  case wgpu::TextureFormat::BC3RGBAUnorm:
-  case wgpu::TextureFormat::BC5RGUnorm:
-  case wgpu::TextureFormat::BC7RGBAUnorm:
-    return {4, 4, 16, true};
-  }
-}
-
-uint64_t calc_texture_size(wgpu::TextureFormat format, u32 width, u32 height, u32 mips) noexcept {
-  const auto info = format_info(format);
+uint64_t calc_texture_size(gl::Format format, u32 width, u32 height, u32 mips) noexcept {
+  const auto bytesPerPixel = gl::format_info(format).bytesPerPixel;
   uint64_t total = 0;
   for (uint32_t mip = 0; mip < mips; ++mip) {
-    const uint32_t mipWidth = std::max(width >> mip, 1u);
-    const uint32_t mipHeight = std::max(height >> mip, 1u);
-    const uint64_t widthBlocks = div_ceil(mipWidth, info.blockWidth);
-    const uint64_t heightBlocks = div_ceil(mipHeight, info.blockHeight);
-    const uint64_t mipBytes = widthBlocks * heightBlocks * info.blockSize;
-    total += mipBytes;
+    total += static_cast<uint64_t>(std::max(width >> mip, 1u)) * std::max(height >> mip, 1u) * bytesPerPixel;
   }
   return total;
 }
@@ -99,49 +82,7 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
       ref.hasArbitraryMips = converted.hasArbitraryMips;
     }
   }
-
-  uint32_t offset = 0;
-  for (uint32_t mip = 0; mip < mips; ++mip) {
-    const wgpu::Extent3D mipSize{
-        .width = std::max(ref.size.width >> mip, 1u),
-        .height = std::max(ref.size.height >> mip, 1u),
-        .depthOrArrayLayers = ref.size.depthOrArrayLayers,
-    };
-    const auto info = format_info(ref.format);
-    const auto physicalSize = physical_size(mipSize, info);
-    const uint32_t widthBlocks = physicalSize.width / info.blockWidth;
-    const uint32_t heightBlocks = physicalSize.height / info.blockHeight;
-    const uint32_t bytesPerRow = widthBlocks * info.blockSize;
-    const uint32_t dataSize = bytesPerRow * heightBlocks * mipSize.depthOrArrayLayers;
-    if (offset > data.size() || dataSize > data.size() - offset) {
-      Log.warn("new_static_texture_2d[{}]: stopping at mip {}: expected at least {} bytes, got {}", label, mip,
-               static_cast<size_t>(offset) + dataSize, data.size());
-      return handle;
-    }
-    const wgpu::TexelCopyTextureInfo dstView{
-        .texture = ref.texture,
-        .mipLevel = mip,
-    };
-    if constexpr (UseTextureBuffer) {
-      const auto range = push_texture_data(data.data() + offset, dataSize, bytesPerRow, heightBlocks);
-      const wgpu::TexelCopyBufferLayout dataLayout{
-          .offset = range.offset,
-          .bytesPerRow = bytesPerRow,
-          .rowsPerImage = heightBlocks,
-      };
-      g_textureUploads.emplace_back(dataLayout, std::move(dstView), physicalSize);
-    } else {
-      const wgpu::TexelCopyBufferLayout dataLayout{
-          .bytesPerRow = bytesPerRow,
-          .rowsPerImage = heightBlocks,
-      };
-      g_queue.WriteTexture(&dstView, data.data() + offset, dataSize, &dataLayout, &physicalSize);
-    }
-    offset += dataSize;
-  }
-  if (data.size() != UINT32_MAX && offset < data.size()) {
-    Log.warn("new_static_texture_2d[{}]: texture used {} bytes, but given {} bytes", label, offset, data.size());
-  }
+  upload_mips(ref, data, label);
   return handle;
 }
 
@@ -149,100 +90,22 @@ TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t m
                                      const char* label) noexcept {
   ZoneScopedS(3);
   mips = clamp_mip_count(width, height, mips, label);
-  const auto wgpuFormat = to_wgpu(gxFormat);
-  const wgpu::Extent3D size{
-      .width = width,
-      .height = height,
-      .depthOrArrayLayers = 1,
-  };
-  const wgpu::TextureDescriptor textureDescriptor{
-      .label = label,
-      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
-      .dimension = wgpu::TextureDimension::e2D,
-      .size = size,
-      .format = wgpuFormat,
-      .mipLevelCount = mips,
-      .sampleCount = 1,
-  };
-  auto texture = g_device.CreateTexture(&textureDescriptor);
-  const auto viewLabel = fmt::format("{} view", label);
-  wgpu::TextureViewDescriptor textureViewDescriptor{
-      .label = viewLabel.c_str(),
-      .format = wgpuFormat,
-      .dimension = wgpu::TextureViewDimension::e2D,
-      .mipLevelCount = mips,
-  };
-  auto textureView = texture.CreateView(&textureViewDescriptor);
-  return std::make_shared<TextureRef>(std::move(texture), std::move(textureView), wgpu::TextureView{}, size, wgpuFormat,
-                                      mips, gxFormat);
+  const auto format = to_gl_format(gxFormat);
+  return std::make_shared<TextureRef>(gl::create_texture(width, height, mips, format, label),
+                                      Extent{width, height, 1}, format, mips, gxFormat);
 }
 
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   ZoneScoped;
-
-  const auto wgpuFormat = webgpu::g_graphicsConfig.surfaceConfiguration.format;
-  const wgpu::Extent3D size{
-      .width = width,
-      .height = height,
-      .depthOrArrayLayers = 1,
-  };
-  const wgpu::TextureDescriptor textureDescriptor{
-      .label = label,
-      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst |
-               wgpu::TextureUsage::RenderAttachment,
-      .dimension = wgpu::TextureDimension::e2D,
-      .size = size,
-      .format = wgpuFormat,
-      .mipLevelCount = 1,
-      .sampleCount = 1,
-  };
-  auto texture = g_device.CreateTexture(&textureDescriptor);
-
-  // Create texture view for color attachments
-  const auto viewLabel = fmt::format("{} view", label);
-  wgpu::TextureViewDescriptor textureViewDescriptor{
-      .label = viewLabel.c_str(),
-      .format = wgpuFormat,
-      .dimension = wgpu::TextureViewDimension::e2D,
-  };
-  auto attachmentTextureView = texture.CreateView(&textureViewDescriptor);
-  wgpu::TextureView sampleTextureView = attachmentTextureView;
-  return std::make_shared<TextureRef>(std::move(texture), std::move(sampleTextureView),
-                                      std::move(attachmentTextureView), size, wgpuFormat, 1, gxFormat);
+  return std::make_shared<TextureRef>(gl::create_texture(width, height, 1, gl::Format::RGBA8, label),
+                                      Extent{width, height, 1}, gl::Format::RGBA8, 1, gxFormat);
 }
 
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
   ZoneScoped;
-
-  const auto wgpuFormat = to_wgpu(gxFormat);
-  const wgpu::Extent3D size{
-      .width = width,
-      .height = height,
-      .depthOrArrayLayers = 1,
-  };
-  const wgpu::TextureDescriptor textureDescriptor{
-      .label = label,
-      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc |
-               wgpu::TextureUsage::RenderAttachment,
-      .dimension = wgpu::TextureDimension::e2D,
-      .size = size,
-      .format = wgpuFormat,
-      .mipLevelCount = 1,
-      .sampleCount = 1,
-  };
-  auto texture = g_device.CreateTexture(&textureDescriptor);
-
-  // Create texture view for color attachments
-  const auto viewLabel = fmt::format("{} view", label);
-  wgpu::TextureViewDescriptor textureViewDescriptor{
-      .label = viewLabel.c_str(),
-      .format = wgpuFormat,
-      .dimension = wgpu::TextureViewDimension::e2D,
-  };
-  auto attachmentTextureView = texture.CreateView(&textureViewDescriptor);
-  wgpu::TextureView sampleTextureView = attachmentTextureView;
-  return std::make_shared<TextureRef>(std::move(texture), std::move(sampleTextureView),
-                                      std::move(attachmentTextureView), size, wgpuFormat, 1, gxFormat);
+  const auto format = to_gl_format(gxFormat);
+  return std::make_shared<TextureRef>(gl::create_texture(width, height, 1, format, label), Extent{width, height, 1},
+                                      format, 1, gxFormat);
 }
 
 void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept {
@@ -256,48 +119,6 @@ void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept {
       data = converted.data;
     }
   }
-
-  uint32_t offset = 0;
-  for (uint32_t mip = 0; mip < ref.mipCount; ++mip) {
-    const wgpu::Extent3D mipSize{
-        .width = std::max(ref.size.width >> mip, 1u),
-        .height = std::max(ref.size.height >> mip, 1u),
-        .depthOrArrayLayers = ref.size.depthOrArrayLayers,
-    };
-    const auto info = format_info(ref.format);
-    const auto physicalSize = physical_size(mipSize, info);
-    const uint32_t widthBlocks = physicalSize.width / info.blockWidth;
-    const uint32_t heightBlocks = physicalSize.height / info.blockHeight;
-    const uint32_t bytesPerRow = widthBlocks * info.blockSize;
-    const uint32_t dataSize = bytesPerRow * heightBlocks * mipSize.depthOrArrayLayers;
-    if (offset > data.size() || dataSize > data.size() - offset) {
-      Log.warn("write_texture: stopping at mip {}: expected at least {} bytes, got {}", mip,
-               static_cast<size_t>(offset) + dataSize, data.size());
-      return;
-    }
-    const wgpu::TexelCopyTextureInfo dstView{
-        .texture = ref.texture,
-        .mipLevel = mip,
-    };
-    if constexpr (UseTextureBuffer) {
-      const auto range = push_texture_data(data.data() + offset, dataSize, bytesPerRow, heightBlocks);
-      const wgpu::TexelCopyBufferLayout dataLayout{
-          .offset = range.offset,
-          .bytesPerRow = bytesPerRow,
-          .rowsPerImage = heightBlocks,
-      };
-      g_textureUploads.emplace_back(dataLayout, std::move(dstView), physicalSize);
-    } else {
-      const wgpu::TexelCopyBufferLayout dataLayout{
-          .bytesPerRow = bytesPerRow,
-          .rowsPerImage = heightBlocks,
-      };
-      g_queue.WriteTexture(&dstView, data.data() + offset, dataSize, &dataLayout, &physicalSize);
-    }
-    offset += dataSize;
-  }
-  if (data.size() != UINT32_MAX && offset < data.size()) {
-    Log.warn("write_texture: texture used {} bytes, but given {} bytes", offset, data.size());
-  }
+  upload_mips(ref, data, "write_texture");
 }
 } // namespace aurora::gfx

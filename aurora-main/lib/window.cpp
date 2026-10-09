@@ -2,7 +2,7 @@
 
 #ifdef AURORA_ENABLE_GX
 #include "imgui.hpp"
-#include "webgpu/gpu.hpp"
+#include "gl/device.hpp"
 #endif
 #include "input.hpp"
 #include "internal.hpp"
@@ -195,7 +195,7 @@ void resize_swapchain() noexcept {
     SDL_SetRenderScale(g_renderer, size.scale, size.scale);
   }
 #ifdef AURORA_ENABLE_GX
-  webgpu::resize_swapchain(size.fb_width, size.fb_height, size.native_fb_width, size.native_fb_height);
+  gpu::resize_swapchain(size.fb_width, size.fb_height, size.native_fb_width, size.native_fb_height);
 #endif
 }
 
@@ -374,28 +374,21 @@ bool create_window(AuroraBackend backend) {
     flags |= SDL_WINDOW_FULLSCREEN;
   }
 #endif
-  switch (backend) {
+  (void)backend;
 #ifdef AURORA_ENABLE_GX
-#ifdef DAWN_ENABLE_BACKEND_VULKAN
-  case BACKEND_VULKAN:
-    flags |= SDL_WINDOW_VULKAN;
-    break;
+  // The renderer is OpenGL ES 3.0; the EFB lives in textures, so the window needs no depth/stencil.
+  flags |= SDL_WINDOW_OPENGL;
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+  SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+  SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+  SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+  SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
 #endif
-#ifdef DAWN_ENABLE_BACKEND_METAL
-  case BACKEND_METAL:
-    flags |= SDL_WINDOW_METAL;
-    break;
-#endif
-#ifdef DAWN_ENABLE_BACKEND_OPENGL
-  case BACKEND_OPENGL:
-  case BACKEND_OPENGLES:
-    flags |= SDL_WINDOW_OPENGL;
-    break;
-#endif
-#endif
-  default:
-    break;
-  }
   auto width = static_cast<Sint32>(g_config.windowWidth);
   auto height = static_cast<Sint32>(g_config.windowHeight);
   if (width == 0 || height == 0) {

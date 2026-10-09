@@ -6,7 +6,10 @@
 # MH3_ARM32_CPU / MH3_ARM32_FPU override the defaults (cortex-a9 / neon, i.e.
 # VFPv3-D32 + NEON; use vfpv3-d16 for an A9 without NEON). VFPv3 has no fused
 # multiply-add, so Gekko's fmadd family calls libm's exact fma/fmaf.
-# MH3_CLANG selects the compiler (default clang-21).
+# MH3_CLANG selects the compiler (default clang-21). --target is repeated in
+# the flags because some dependency probes (libpng genout) call the compiler
+# with CMAKE_C_FLAGS but without CMAKE_C_COMPILER_TARGET. Debian armhf is
+# built with 64-bit time_t/off_t (the t64 ABI), so match it.
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR armv7l)
 set(mh3_triple arm-linux-gnueabihf)
@@ -31,7 +34,7 @@ endif()
 if(DEFINED ENV{MH3_ARM32_FPU})
   set(mh3_arm32_fpu "$ENV{MH3_ARM32_FPU}")
 endif()
-set(mh3_arm32_flags "-mcpu=${mh3_arm32_cpu} -mfpu=${mh3_arm32_fpu} -mfloat-abi=hard -mthumb")
+set(mh3_arm32_flags "--target=${mh3_triple} -mcpu=${mh3_arm32_cpu} -mfpu=${mh3_arm32_fpu} -mfloat-abi=hard -mthumb -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64")
 set(CMAKE_C_FLAGS_INIT "${mh3_arm32_flags}")
 set(CMAKE_CXX_FLAGS_INIT "${mh3_arm32_flags}")
 set(CMAKE_ASM_FLAGS_INIT "${mh3_arm32_flags}")

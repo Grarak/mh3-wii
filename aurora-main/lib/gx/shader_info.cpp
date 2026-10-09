@@ -122,7 +122,7 @@ Vec4<float> texture_size_bias(const gfx::TextureBind& tex) {
   auto height = static_cast<float>(tex.texObj.height());
   const auto vpBias =
       enableLodBias && tex.ref && tex.ref->hasArbitraryMips
-          ? log2(std::min(g_gxState.renderViewport.width / std::max(g_gxState.logicalViewport.width, 1.f),
+          ? std::log2(std::min(g_gxState.renderViewport.width / std::max(g_gxState.logicalViewport.width, 1.f),
                           g_gxState.renderViewport.height / std::max(g_gxState.logicalViewport.height, 1.f)))
           : 0.f;
   return {width, height, tex.texObj.lod_bias() + vpBias, 0.0f};

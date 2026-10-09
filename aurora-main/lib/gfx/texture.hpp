@@ -16,46 +16,30 @@ constexpr uint32_t max_texture_mip_count(uint32_t width, uint32_t height) noexce
   return count;
 }
 
-struct TextureUpload {
-  wgpu::TexelCopyBufferLayout layout;
-  wgpu::TexelCopyTextureInfo tex;
-  wgpu::Extent3D size;
+struct Extent {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t depthOrArrayLayers = 1;
 
-  TextureUpload(wgpu::TexelCopyBufferLayout layout, wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size) noexcept
-  : layout(layout), tex(std::move(tex)), size(size) {}
+  bool operator==(const Extent& rhs) const noexcept {
+    return width == rhs.width && height == rhs.height && depthOrArrayLayers == rhs.depthOrArrayLayers;
+  }
 };
-extern std::vector<TextureUpload> g_textureUploads;
 
-struct TextureFormatInfo {
-  uint8_t blockWidth;
-  uint8_t blockHeight;
-  uint8_t blockSize;
-  bool compressed;
-};
-TextureFormatInfo format_info(wgpu::TextureFormat format) noexcept;
-uint64_t calc_texture_size(wgpu::TextureFormat format, uint32_t width, uint32_t height, uint32_t mips) noexcept;
+uint64_t calc_texture_size(gl::Format format, uint32_t width, uint32_t height, uint32_t mips) noexcept;
 
 constexpr u32 InvalidTextureFormat = -1;
 struct TextureRef {
-  wgpu::Texture texture;
-  wgpu::TextureView sampleTextureView;
-  wgpu::TextureView attachmentTextureView;
-  wgpu::Extent3D size;
-  wgpu::TextureFormat format;
+  gl::TexturePtr texture;
+  Extent size;
+  gl::Format format;
   uint32_t mipCount;
   u32 gxFormat;
   bool hasArbitraryMips = false;
   bool isReplacement = false;
 
-  TextureRef(wgpu::Texture texture, wgpu::TextureView sampleTextureView, wgpu::TextureView attachmentTextureView,
-             wgpu::Extent3D size, wgpu::TextureFormat format, uint32_t mipCount, u32 gxFormat)
-  : texture(std::move(texture))
-  , sampleTextureView(std::move(sampleTextureView))
-  , attachmentTextureView(std::move(attachmentTextureView))
-  , size(size)
-  , format(format)
-  , mipCount(mipCount)
-  , gxFormat(gxFormat) {}
+  TextureRef(gl::TexturePtr texture, Extent size, gl::Format format, uint32_t mipCount, u32 gxFormat)
+  : texture(std::move(texture)), size(size), format(format), mipCount(mipCount), gxFormat(gxFormat) {}
 };
 
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
@@ -141,7 +125,7 @@ struct TextureBind {
   TextureBind() noexcept = default;
   TextureBind(const GXTexObj_& obj, TextureHandle handle) noexcept : ref(std::move(handle)), texObj(obj) {}
   void reset() noexcept { ref.reset(); }
-  [[nodiscard]] wgpu::SamplerDescriptor get_descriptor() const noexcept;
+  [[nodiscard]] gl::SamplerDesc get_descriptor() const noexcept;
   operator bool() const noexcept { return ref.operator bool(); }
 };
 } // namespace aurora::gfx

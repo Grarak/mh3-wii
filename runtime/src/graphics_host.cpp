@@ -2,7 +2,8 @@
 #include "memory.h"
 #include "gx_stream.h"
 #include "efb_host.h"
-#include "webgpu/gpu.hpp"
+#include "gl/device.hpp"
+#include "gl/gl.hpp"
 #include "dolphin/vi/vi_internal.hpp"
 #include <algorithm>
 #include <atomic>
@@ -19,13 +20,10 @@
 #include <stdexcept>
 #include <thread>
 #include <memory>
-#include <webgpu/webgpu_cpp.h>
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include "gx/gx.hpp"
 #include <fstream>
 #endif
-bool mh3_aurora_flush_draws();
-namespace aurora::webgpu { extern wgpu::Queue g_queue; extern wgpu::Instance g_instance; }
 namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); }
 
 namespace aurora::gx::fifo {
@@ -46,15 +44,15 @@ bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 void FlushHostEfbPokes() {
     if (!efbDirty) return;
-    using namespace aurora::webgpu;
-    if (!gpuSynchronized || g_graphicsConfig.msaaSamples != 1)
-        throw std::runtime_error("EFB pokes require a completed single-sample framebuffer");
-    aurora_wait_for_frame_worker();
-    const wgpu::TexelCopyTextureInfo to{.texture = g_frameBuffer.texture, .origin = {efbMinX, efbMinY, 0}};
-    const wgpu::TexelCopyBufferLayout layout{.bytesPerRow = efbPitch, .rowsPerImage = efbMaxY - efbMinY};
-    const wgpu::Extent3D extent{efbMaxX - efbMinX, efbMaxY - efbMinY, 1};
-    const size_t offset = size_t(efbMinY) * efbPitch + efbMinX * 4;
-    g_queue.WriteTexture(&to, efbPixels.data() + offset, efbPixels.size() - offset, &layout, &extent);
+    if (!gpuSynchronized) throw std::runtime_error("EFB pokes require a completed framebuffer");
+    // Queued on the render thread behind every earlier draw, ahead of later ones.
+    const uint32_t width = efbMaxX - efbMinX, height = efbMaxY - efbMinY;
+    std::vector<uint8_t> rect(size_t(width) * height * 4);
+    for (uint32_t row = 0; row < height; ++row)
+        std::memcpy(rect.data() + size_t(row) * width * 4,
+                    efbPixels.data() + size_t(efbMinY + row) * efbPitch + efbMinX * 4, size_t(width) * 4);
+    aurora::gl::write_texture(aurora::gpu::g_frameBuffer.texture, 0, efbMinX, efbMinY, width, height,
+                              std::move(rect), width * 4);
     // GXDrawDone is a synchronization point, not a Wii EFB clear. The next
     // host frame must retain the CPU's pixels for subsequent GXCopyTex/draws.
     if (!frameActive) aurora::gfx::preserve_next_efb_frame();
@@ -96,8 +94,8 @@ void InitializeGraphics(int argc, char** argv) {
     config.appName = "Monster Hunter Tri";
     config.userPath = user.c_str();
     config.cachePath = cache.c_str();
-    // MH3 renders only through Vulkan (arm64 Linux).
-    config.desiredBackend = BACKEND_VULKAN;
+    // MH3 renders only through OpenGL ES 3.0 (aurora-gles).
+    config.desiredBackend = BACKEND_OPENGLES;
     config.windowWidth = 640;
     config.windowHeight = 480;
     config.msaa = 1;
@@ -114,8 +112,8 @@ void InitializeGraphics(int argc, char** argv) {
         profile.cpuStarted = std::clock();
     }
     std::atexit(ShutdownGraphics);
-    // Aurora falls back to another backend when Vulkan fails; never run on one.
-    if (info.backend != BACKEND_VULKAN) throw std::runtime_error("Aurora did not select Vulkan");
+    // Aurora falls back to another backend when GLES fails; never run on one.
+    if (info.backend != BACKEND_OPENGLES) throw std::runtime_error("Aurora did not select OpenGL ES");
     aurora::gx::fifo::init();
     if (const char* path = std::getenv("MH3_CAPTURE_PATH")) {
         if (const char* interval = std::getenv("MH3_CAPTURE_INTERVAL")) {
@@ -211,6 +209,32 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     if (displayCopyPending) SealDisplayFrame();
 }
 
+// MH3_STATS: once per second, separate game speed from rendered FPS.
+// Game speed is guest VI retraces delivered versus the nominal VI rate, since
+// the guest times its logic by retraces; game FPS counts display copies; host
+// FPS counts frames the render thread actually swapped.
+void ReportHostSpeed(uint64_t retraces, double nominalHz) {
+    static const bool enabled = std::getenv("MH3_STATS") != nullptr;
+    if (!enabled || !initialized) return;
+    using Clock = std::chrono::steady_clock;
+    static auto last = Clock::now();
+    static uint64_t lastRetraces = retraces, lastCopies = guestCopies, lastPresents = aurora_presented_frame_count();
+    const auto now = Clock::now();
+    const double seconds = std::chrono::duration<double>(now - last).count();
+    if (seconds < 1.0) return;
+    const uint64_t presents = aurora_presented_frame_count();
+    const double viHz = (retraces - lastRetraces) / seconds;
+    std::fprintf(stderr,
+        "MH3 stats: game speed %.1f%% (VI %.1f/%.1f Hz), game %.1f fps (display copies), host %.1f fps (presents), "
+        "%llu frames in flight\n",
+        100.0 * viHz / nominalHz, viHz, nominalHz, (guestCopies - lastCopies) / seconds,
+        (presents - lastPresents) / seconds, static_cast<unsigned long long>(guestCopies - presents));
+    last = now;
+    lastRetraces = retraces;
+    lastCopies = guestCopies;
+    lastPresents = presents;
+}
+
 void ServiceHostGraphicsEvents() {
     if (!initialized) return;
     for (const auto* event = aurora_update(); event && event->type != AURORA_NONE; ++event)
@@ -223,20 +247,13 @@ void CompleteHostGraphics() {
     FlushHostEfbPokes();
     if (guestStream.PendingBytes()) throw std::runtime_error("GXDrawDone encountered a partial FIFO command");
     if (frameActive && !displayCopyPending) {
-        if (!mh3_aurora_flush_draws()) throw std::runtime_error("GXDrawDone could not resume the in-progress frame");
+        if (!aurora_flush_draws()) throw std::runtime_error("GXDrawDone could not resume the in-progress frame");
     } else if (frameActive) {
         SealDisplayFrame();
     }
-    aurora_wait_for_frame_worker();
     const auto afterWorker = FrameProfile::Clock::now();
-    // Wait for actual submitted GPU work, not just the renderer worker's CPU
-    // submission. Shared state remains valid even if WaitAny times out.
-    auto result = std::make_shared<wgpu::QueueWorkDoneStatus>(wgpu::QueueWorkDoneStatus::Error);
-    auto future = aurora::webgpu::g_queue.OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly,
-        [result](wgpu::QueueWorkDoneStatus status, wgpu::StringView) { *result = status; });
-    const auto wait = aurora::webgpu::g_instance.WaitAny(future, 10000000000ULL);
-    if (wait != wgpu::WaitStatus::Success || *result != wgpu::QueueWorkDoneStatus::Success)
-        throw std::runtime_error("GXDrawDone failed while waiting for Vulkan completion");
+    // Wait for the render thread and the GPU, not just the producer's submission.
+    aurora_wait_for_gpu_idle();
     const auto afterGpu = FrameProfile::Clock::now();
     if (profile.interval) {
         auto ns = [](auto end, auto start) { return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); };
@@ -293,51 +310,28 @@ void CompleteHostGraphics() {
     gpuSynchronized = true;
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
-        std::fprintf(stderr, "MH3 GX draw completion %u: Vulkan work finished\n", completions);
+        std::fprintf(stderr, "MH3 GX draw completion %u: GPU work finished\n", completions);
 }
 
 uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
     ++guestEfbPeeks;
-    using namespace aurora::webgpu;
     if (!initialized || !gpuSynchronized || guestStream.PendingBytes())
         throw std::runtime_error("EFB color peek requires a completed GXDrawDone boundary");
-    const auto& source = g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved : g_frameBuffer;
+    const auto& source = aurora::gpu::g_frameBuffer;
     if (!source.texture) throw std::runtime_error("EFB color texture is unavailable");
-    if (efbPixels.empty() || efbWidth != source.size.width || efbHeight != source.size.height) {
+    if (efbPixels.empty() || efbWidth != source.width || efbHeight != source.height) {
         // Thousands of CPU peeks can follow one snapshot. New GX commands
-        // discard efbPixels, so only the first peek needs the worker wait.
-        aurora_wait_for_frame_worker();
+        // discard efbPixels, so only the first peek needs the render-thread round trip.
         const auto started = FrameProfile::Clock::now();
-        efbWidth = source.size.width; efbHeight = source.size.height;
-        efbBgra = source.format == wgpu::TextureFormat::BGRA8Unorm ||
-                  source.format == wgpu::TextureFormat::BGRA8UnormSrgb;
-        if (!efbBgra && source.format != wgpu::TextureFormat::RGBA8Unorm &&
-            source.format != wgpu::TextureFormat::RGBA8UnormSrgb)
-            throw std::runtime_error("Unsupported Vulkan EFB color texture format");
-        efbPitch = (efbWidth * 4 + 255) & ~255u;
-        const uint64_t bytes = uint64_t(efbPitch) * efbHeight;
-        const wgpu::BufferDescriptor desc{.label = "MH3 CPU EFB color readback",
-            .usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead, .size = bytes};
-        auto buffer = g_device.CreateBuffer(&desc);
-        auto encoder = g_device.CreateCommandEncoder();
-        const wgpu::TexelCopyTextureInfo from{.texture = source.texture};
-        const wgpu::TexelCopyBufferInfo to{.layout = {.bytesPerRow = efbPitch, .rowsPerImage = efbHeight},
-                                          .buffer = buffer};
-        encoder.CopyTextureToBuffer(&from, &to, &source.size);
-        auto command = encoder.Finish();
-        g_queue.Submit(1, &command);
-        auto status = std::make_shared<std::atomic<wgpu::MapAsyncStatus>>(wgpu::MapAsyncStatus::CallbackCancelled);
-        auto future = buffer.MapAsync(wgpu::MapMode::Read, 0, bytes, wgpu::CallbackMode::WaitAnyOnly,
-            [status](wgpu::MapAsyncStatus value, wgpu::StringView) { status->store(value); });
-        if (g_instance.WaitAny(future, 10000000000ULL) != wgpu::WaitStatus::Success ||
-            status->load() != wgpu::MapAsyncStatus::Success)
-            throw std::runtime_error("Vulkan EFB color readback failed");
-        const auto* pixels = static_cast<const uint8_t*>(buffer.GetConstMappedRange(0, bytes));
-        if (!pixels) throw std::runtime_error("Vulkan EFB color readback has no mapped data");
-        efbPixels.assign(pixels, pixels + bytes);
+        efbWidth = source.width; efbHeight = source.height;
+        efbBgra = false; // The EFB is RGBA8, rows top-down.
+        efbPitch = efbWidth * 4;
+        efbPixels.resize(size_t(efbPitch) * efbHeight);
+        aurora::gl::call([&] {
+            aurora::gl::read_pixels(source.texture->gl(), 0, 0, efbWidth, efbHeight, efbPixels.data());
+        });
         ++guestEfbSnapshots;
         guestEfbSnapshotNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
-        buffer.Unmap();
         static unsigned snapshots = 0;
         if (++snapshots <= 3) std::fprintf(stderr, "MH3 EFB color snapshot %u: %ux%u, format %u\n",
             snapshots, efbWidth, efbHeight, guestStream.PixelFormat());
@@ -357,8 +351,6 @@ uint32_t ReadHostEfbColor(uint16_t x, uint16_t y) {
 
 void WriteHostEfbColor(uint16_t x, uint16_t y, uint32_t value) {
     (void)ReadHostEfbColor(x, y); // Ensure a coherent snapshot for masks and later peeks.
-    if (aurora::webgpu::g_graphicsConfig.msaaSamples != 1)
-        throw std::runtime_error("EFB color pokes do not support MSAA");
     uint32_t blend = 0, alpha = 0, depth = 0, destinationAlpha = 0;
     ReadGxRegister(0xCC001002, 2, blend);
     ReadGxRegister(0xCC001006, 2, alpha);
@@ -403,11 +395,8 @@ void WriteHostEfbColor(uint16_t x, uint16_t y, uint32_t value) {
 int RunEfbCheck(int argc, char** argv) {
     InitializeGraphics(argc, argv);
     struct Shutdown { ~Shutdown() { ShutdownGraphics(); } } shutdown;
-    using namespace aurora::webgpu;
-    const auto& target = g_frameBuffer;
-    if (g_graphicsConfig.msaaSamples != 1) throw std::runtime_error("EFB check requires single sampling");
-    const bool bgra = target.format == wgpu::TextureFormat::BGRA8Unorm ||
-                      target.format == wgpu::TextureFormat::BGRA8UnormSrgb;
+    const auto& target = aurora::gpu::g_frameBuffer;
+    const bool bgra = false;
     for (unsigned pass = 0; pass < 2; ++pass) {
         const uint32_t expected = pass ? 0xFFABCDEF : 0xFF123456;
         uint8_t pixels[16];
@@ -417,21 +406,18 @@ int RunEfbCheck(int argc, char** argv) {
             pixels[i*4+2] = bgra ? (expected >> 16) & 255 : expected & 255;
             pixels[i*4+3] = 255;
         }
-        const wgpu::TexelCopyTextureInfo to{.texture = target.texture};
-        const wgpu::TexelCopyBufferLayout layout{.bytesPerRow = 8, .rowsPerImage = 2};
-        const wgpu::Extent3D extent{2, 2, 1};
-        g_queue.WriteTexture(&to, pixels, sizeof(pixels), &layout, &extent);
+        aurora::gl::write_texture(target.texture, 0, 0, 0, 2, 2, pixels, 8);
         efbPixels.clear();
         WriteGxRegister(0xCC001008, 2, 1);
         for (auto address : {0x08000000u, 0x88000004u, 0xC8001004u}) {
             uint32_t value;
             if (!ReadEfbColor32(address, value) || value != expected)
-                throw std::runtime_error("Vulkan EFB color/row/alias check failed");
+                throw std::runtime_error("GLES EFB color/row/alias check failed");
         }
         WriteGxRegister(0xCC001008, 2, 0);
         uint32_t value;
         if (!ReadEfbColor32(0xC8000000, value) || value != (expected & 0xFFFFFF))
-            throw std::runtime_error("Vulkan EFB alpha-read check failed");
+            throw std::runtime_error("GLES EFB alpha-read check failed");
     }
     WriteGxRegister(0xCC001008, 2, 1);
     WriteGxRegister(0xCC001002, 2, 0x18);
@@ -442,7 +428,7 @@ int RunEfbCheck(int argc, char** argv) {
     FlushHostEfbPokes();
     efbPixels.clear();
     if (ReadHostEfbColor(1, 1) != 0xFF336699 || ReadHostEfbColor(0, 0) != 0xFFABCDEF)
-        throw std::runtime_error("Vulkan EFB dirty-rectangle upload failed");
+        throw std::runtime_error("GLES EFB dirty-rectangle upload failed");
     frameActive = aurora_begin_frame();
     if (!frameActive) throw std::runtime_error("EFB preservation check could not begin a frame");
     gpuSynchronized = false;
@@ -463,7 +449,7 @@ int RunEfbCheck(int argc, char** argv) {
     efbPixels.clear();
     if (ReadHostEfbColor(1, 1) != 0xFF336699)
         throw std::runtime_error("CPU EFB pixels were lost across a host frame boundary");
-    std::puts("MH3 Vulkan EFB color readback/poke check passed");
+    std::puts("MH3 GLES EFB color readback/poke check passed");
     return 0;
 }
 
@@ -482,7 +468,7 @@ int RunGraphicsCheck(int argc, char** argv) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
-    if (frames != 30) throw std::runtime_error("Vulkan frame check timed out");
-    std::fprintf(stderr, "MH3 Vulkan renderer check: %u frames submitted\n", frames);
+    if (frames != 30) throw std::runtime_error("GLES frame check timed out");
+    std::fprintf(stderr, "MH3 GLES renderer check: %u frames submitted\n", frames);
     return 0;
 }

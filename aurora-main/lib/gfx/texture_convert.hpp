@@ -2,22 +2,21 @@
 
 #include "common.hpp"
 #include "texture.hpp"
-#include "../webgpu/gpu.hpp"
 
 namespace aurora::gfx {
-static constexpr wgpu::TextureFormat to_wgpu(u32 gxFormat) {
+static constexpr gl::Format to_gl_format(u32 gxFormat) {
   switch (gxFormat) {
   case GX_TF_C4:
   case GX_TF_C8:
   case GX_TF_C14X2:
-    return wgpu::TextureFormat::R16Sint;
+    return gl::Format::R16I;
   default:
-    return wgpu::TextureFormat::RGBA8Unorm;
+    return gl::Format::RGBA8;
   }
 }
 
 struct ConvertedTexture {
-  wgpu::TextureFormat format;
+  gl::Format format;
   uint32_t width;
   uint32_t height;
   uint32_t mips = 1;

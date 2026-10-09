@@ -132,8 +132,9 @@ void GXSetViewportJitter(float left, float top, float width, float height, float
 
   sx = width / 2.0f;
   sy = -height / 2.0f;
-  ox = 340.0f + (left + width / 2.0f);
-  oy = 340.0f + (top + height / 2.0f);
+  // GX viewport origins and scissor coordinates share a 342-pixel hardware bias.
+  ox = 342.0f + (left + width / 2.0f);
+  oy = 342.0f + (top + height / 2.0f);
   zmin = 1.6777215e7f * nearZ;
   zmax = 1.6777215e7f * farZ;
   sz = zmax - zmin;

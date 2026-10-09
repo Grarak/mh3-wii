@@ -1,14 +1,16 @@
 #include "dds_io.hpp"
 
 #include <cstring>
+#include <utility>
 #include <filesystem>
 #include <fstream>
 
 #include "texture.hpp"
 
 namespace aurora::gfx::dds {
+// OpenGL ES 3.0 has no BC formats, so only uncompressed 32-bit layouts load.
 struct ParsedDDSLayout {
-  wgpu::TextureFormat format = wgpu::TextureFormat::Undefined;
+  bool bgra = false;
   size_t dataOffset = 0;
 };
 
@@ -107,20 +109,13 @@ bool validate_dds_header(const DDSHeader& header) noexcept {
   return true;
 }
 
-std::optional<wgpu::TextureFormat> resolve_dx10_format(uint32_t dxgiFormat) noexcept {
+// Returns whether the DXGI format is BGRA, or nullopt when unsupported.
+std::optional<bool> resolve_dx10_format(uint32_t dxgiFormat) noexcept {
   switch (dxgiFormat) {
   case 28:
-    return wgpu::TextureFormat::RGBA8Unorm;
+    return false;
   case 87:
-    return wgpu::TextureFormat::BGRA8Unorm;
-  case 71:
-    return wgpu::TextureFormat::BC1RGBAUnorm;
-  case 77:
-    return wgpu::TextureFormat::BC3RGBAUnorm;
-  case 83:
-    return wgpu::TextureFormat::BC5RGUnorm;
-  case 98:
-    return wgpu::TextureFormat::BC7RGBAUnorm;
+    return true;
   default:
     return std::nullopt;
   }
@@ -130,46 +125,33 @@ std::optional<ParsedDDSLayout> resolve_dds_layout(ArrayRef<uint8_t> bytes, const
   ParsedDDSLayout out{.dataOffset = sizeof(uint32_t) + sizeof(DDSHeader)};
 
   if ((header.ddspf.flags & 0x00000004) != 0) { // DDS has FourCC
-    switch (header.ddspf.fourCC) {
-    case 0x31545844:
-      out.format = wgpu::TextureFormat::BC1RGBAUnorm;
-      return out;
-    case 0x35545844:
-      out.format = wgpu::TextureFormat::BC3RGBAUnorm;
-      return out;
-    case 0x32495441:
-      out.format = wgpu::TextureFormat::BC5RGUnorm;
-      return out;
-    case 0x30315844: {
-      if (bytes.size() < out.dataOffset + sizeof(DDSHeaderDX10)) {
-        return std::nullopt;
-      }
-      const auto* dx10 = reinterpret_cast<const DDSHeaderDX10*>(bytes.data() + out.dataOffset);
-      out.dataOffset += sizeof(DDSHeaderDX10);
-      if (dx10->resourceDimension != 3 || dx10->arraySize != 1) {
-        return std::nullopt;
-      }
-      const auto format = resolve_dx10_format(dx10->dxgiFormat);
-      if (!format.has_value()) {
-        return std::nullopt;
-      }
-      out.format = *format;
-      return out;
-    }
-    default:
+    if (header.ddspf.fourCC != 0x30315844) {
       return std::nullopt;
     }
+    if (bytes.size() < out.dataOffset + sizeof(DDSHeaderDX10)) {
+      return std::nullopt;
+    }
+    const auto* dx10 = reinterpret_cast<const DDSHeaderDX10*>(bytes.data() + out.dataOffset);
+    out.dataOffset += sizeof(DDSHeaderDX10);
+    if (dx10->resourceDimension != 3 || dx10->arraySize != 1) {
+      return std::nullopt;
+    }
+    const auto bgra = resolve_dx10_format(dx10->dxgiFormat);
+    if (!bgra.has_value()) {
+      return std::nullopt;
+    }
+    out.bgra = *bgra;
+    return out;
   }
 
   if ((header.ddspf.flags & 0x00000040) != 0 && header.ddspf.rgbBitCount == 32) {
     if (header.ddspf.rBitMask == 0x000000FF && header.ddspf.gBitMask == 0x0000FF00 &&
         header.ddspf.bBitMask == 0x00FF0000 && header.ddspf.aBitMask == 0xFF000000) {
-      out.format = wgpu::TextureFormat::RGBA8Unorm;
       return out;
     }
     if (header.ddspf.rBitMask == 0x00FF0000 && header.ddspf.gBitMask == 0x0000FF00 &&
         header.ddspf.bBitMask == 0x000000FF && header.ddspf.aBitMask == 0xFF000000) {
-      out.format = wgpu::TextureFormat::BGRA8Unorm;
+      out.bgra = true;
       return out;
     }
   }
@@ -198,15 +180,20 @@ std::optional<ConvertedTexture> parse_dds_bytes(ArrayRef<uint8_t> bytes) noexcep
   }
 
   const uint32_t mipCount = 1u;
-  const auto expectedSize = calc_texture_size(parsedLayout->format, header->width, header->height, mipCount);
+  const auto expectedSize = calc_texture_size(gl::Format::RGBA8, header->width, header->height, mipCount);
   if (expectedSize == 0 || parsedLayout->dataOffset + expectedSize > bytes.size()) {
     return std::nullopt;
   }
 
-  ByteBuffer data{expectedSize};
-  std::memcpy(data.data(), bytes.data() + parsedLayout->dataOffset, expectedSize);
+  ByteBuffer data{static_cast<size_t>(expectedSize)};
+  std::memcpy(data.data(), bytes.data() + parsedLayout->dataOffset, static_cast<size_t>(expectedSize));
+  if (parsedLayout->bgra) {
+    for (size_t i = 0; i + 3 < data.size(); i += 4) {
+      std::swap(data.data()[i], data.data()[i + 2]);
+    }
+  }
   return ConvertedTexture{
-      .format = parsedLayout->format,
+      .format = gl::Format::RGBA8,
       .width = header->width,
       .height = header->height,
       .mips = mipCount,

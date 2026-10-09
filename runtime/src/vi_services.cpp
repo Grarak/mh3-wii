@@ -11,6 +11,7 @@
 
 #ifdef MH3_HAS_AURORA
 void ServiceHostGraphicsEvents();
+void ReportHostSpeed(uint64_t retraces, double nominalHz);
 #endif
 
 namespace {
@@ -48,6 +49,9 @@ void ServiceVideoRetrace(CpuContext* cpu) {
     const uint32_t after = Memory::Read32(saved.gpr[13] - 0x379C);
     if (after != before + 1) throw std::runtime_error("VI handler did not deliver a retrace");
     if (after <= 3) std::fprintf(stderr, "MH3 VI retrace delivered: %u\n", after);
+#ifdef MH3_HAS_AURORA
+    ReportHostSpeed(after, 1e9 / VideoRetracePeriodNs());
+#endif
 }
 extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
     std::this_thread::sleep_until(nextRetrace);

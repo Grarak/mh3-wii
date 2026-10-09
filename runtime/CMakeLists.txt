@@ -2,10 +2,9 @@ cmake_minimum_required(VERSION 3.25)
 project(MH3Recompiled LANGUAGES CXX ASM)
 option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrumentation" OFF)
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
-option(MH3_ENABLE_GPU_VALIDATION "Keep Dawn API validation enabled for renderer checks" OFF)
 option(MH3_ENABLE_GX_DIAGNOSTICS "Enable controlled renderer isolation and state logging" OFF)
 # Supported targets: arm32 (armhf) and arm64 (aarch64) Linux, rendering
-# through Dawn's Vulkan backend. MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
+# through OpenGL ES 3.0. MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
 # configurable for development only; they are not a supported product.
 option(MH3_ALLOW_UNSUPPORTED_HOST "Configure on a host other than arm32/arm64 Linux" OFF)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv7l|armv7|armv8l|arm)$")
@@ -17,8 +16,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES 
 endif()
 if(MH3_AURORA_ROOT)
   enable_language(C)
+  # Aurora renders natively through OpenGL ES 3.0 on a dedicated render thread.
   add_subdirectory("${MH3_AURORA_ROOT}" "${CMAKE_BINARY_DIR}/aurora")
-  include(../scripts/aurora-efb.cmake)
 endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -67,11 +66,8 @@ if(TARGET aurora::core)
     target_link_libraries(MH3 PRIVATE absl::flat_hash_map)
   endif()
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
-  if(NOT DAWN_ENABLE_VULKAN)
-    message(FATAL_ERROR "MH3 renders through Vulkan; the selected Dawn has no Vulkan backend")
-  endif()
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
-  target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi dawn::webgpu_dawn)
+  target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
 endif()
 
 if(TARGET aurora::core)

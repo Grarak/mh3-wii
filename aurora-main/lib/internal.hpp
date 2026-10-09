@@ -122,16 +122,12 @@ auto underlying(T value) -> std::underlying_type_t<T> {
 
 #define UNIMPLEMENTED() FATAL("UNIMPLEMENTED: {}", __FUNCTION__)
 
-namespace wgpu { class CommandBuffer; }
-
 namespace aurora {
-void submit_staging_commands(const wgpu::CommandBuffer& commands);
 extern AuroraConfig g_config;
 extern uint32_t g_sdlCustomEventsStart;
 extern char g_gameName[4];
 
-// wait_for_frame_worker() joins the DONE phase (ImGui, surface, sealing another frame need this).
-// wait_for_frame_worker_sealed() joins only SEALED, which is what the FIFO drain uses.
+// Frames are sealed on the producer and rendered on the GL thread, so these never wait.
 void wait_for_frame_worker() noexcept;
 std::chrono::nanoseconds wait_for_frame_worker_sealed() noexcept;
 bool wait_for_frame_worker_for(std::chrono::microseconds timeout) noexcept;

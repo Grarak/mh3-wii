@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../gfx/common.hpp"
+#include "../gfx/pipeline_cache.hpp"
 #include "shader_info.hpp"
 
 namespace aurora::gx {
@@ -61,20 +62,19 @@ inline bool valid_pipeline_config(const PipelineConfig& config) noexcept {
          in_range(config.blendOp, GX_LO_SET) && in_range(config.pixelFmt, GX_PF_YUV420);
 }
 
-wgpu::RenderPipeline create_pipeline([[maybe_unused]] const PipelineConfig& config);
+gfx::PipelinePtr create_pipeline(const PipelineConfig& config);
 void clear_shader_module_cache();
 
-// Per-pass encoder state carried across the draws of one render pass, so the replay loop can elide Dawn calls that would re-bind what is already bound.
+// Per-pass state carried across the draws of one render pass, so the replay loop can skip
+// re-binding what is already bound.
 struct DrawEncodeState {
   gfx::PipelineRef currentPipeline = UINTPTR_MAX;
-  // The bind group currently occupying slot 2.
-  WGPUBindGroup boundTextureBindGroup = nullptr;
-  // The pass-wide index buffer binding is established lazily by the first indexed draw; every draw then addresses it with firstIndex instead of a per-draw SetIndexBuffer.
-  bool indexBufferBound = false;
+  const gfx::TextureBindGroup* boundTextureBindGroup = nullptr;
 };
 
-void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, DrawEncodeState& state,
-            bool requireReadyPipeline, const gfx::Range* uniformRangeOverride = nullptr);
+// Render thread.
+void render(const DrawData& data, DrawEncodeState& state, bool requireReadyPipeline,
+            const gfx::Range* uniformRangeOverride = nullptr);
 
 void queue_surface(const u8* dlStart, uint32_t dlSize, bool bigEndian) noexcept;
 } // namespace aurora::gx

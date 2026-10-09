@@ -3,10 +3,7 @@
 #include "common.hpp"
 
 #include <functional>
-
-namespace aurora::gfx::clear {
-struct PipelineConfig;
-} // namespace aurora::gfx::clear
+#include <memory>
 
 namespace aurora::gx {
 struct PipelineConfig;
@@ -14,7 +11,14 @@ struct PipelineConfig;
 
 namespace aurora::gfx {
 
-using NewPipelineCallback = std::function<wgpu::RenderPipeline()>;
+// A GX pipeline: its program (shared between pipelines with the same shader
+// config) and the fixed-function state applied with it.
+struct Pipeline {
+  gl::ProgramPtr program;
+  gl::RasterState raster;
+};
+using PipelinePtr = std::shared_ptr<Pipeline>;
+using NewPipelineCallback = std::function<PipelinePtr()>;
 
 void initialize_pipeline_cache();
 void shutdown_pipeline_cache();
@@ -24,13 +28,12 @@ void set_skip_unready_pipelines(bool enabled) noexcept;
 bool skip_unready_pipelines() noexcept;
 uint32_t queued_pipeline_count() noexcept;
 
+// Producer: the pipeline for `config`, created on first use. Its program
+// compiles on the render thread ahead of the draws that use it.
 template <typename Config>
 PipelineRef find_pipeline(ShaderType type, const Config& config, NewPipelineCallback&& cb);
 
-bool wait_pipeline(PipelineRef ref, wgpu::RenderPipeline& pipeline);
-bool try_pipeline(PipelineRef ref, wgpu::RenderPipeline& pipeline);
-// Waits indefinitely for a draw about to be committed to a persistent texture with no re-issue
-// path. Separate from wait_pipeline so skip-unready mode never becomes blocking for other passes.
-bool wait_pipeline_for_persistent_pass(PipelineRef ref, wgpu::RenderPipeline& pipeline);
+// Any thread. The pipeline stays alive until shutdown_pipeline_cache().
+const Pipeline* find_pipeline_object(PipelineRef ref) noexcept;
 
 } // namespace aurora::gfx

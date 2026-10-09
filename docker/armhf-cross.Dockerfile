@@ -12,10 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       git python3 python3-yaml pkg-config cmake ninja-build file \
       clang-21 lld-21 llvm-21 \
       libc6-dev:armhf libstdc++-14-dev:armhf libgcc-14-dev:armhf \
-      libvulkan-dev:armhf libx11-dev:armhf libxext-dev:armhf libxrandr-dev:armhf \
+      libx11-dev:armhf libxext-dev:armhf libxrandr-dev:armhf \
       libxcursor-dev:armhf libxi-dev:armhf libxss-dev:armhf libxtst-dev:armhf \
       libxfixes-dev:armhf libx11-xcb-dev:armhf libxcb1-dev:armhf libwayland-dev:armhf \
-      libxkbcommon-dev:armhf libdrm-dev:armhf libgbm-dev:armhf libegl-dev:armhf \
+      libxkbcommon-dev:armhf libdrm-dev:armhf libgbm-dev:armhf libegl-dev:armhf libgles-dev:armhf \
       libasound2-dev:armhf libpulse-dev:armhf libudev-dev:armhf libdbus-1-dev:armhf \
       wayland-protocols libwayland-bin \
     && ln -sf /usr/bin/clang-21 /usr/local/bin/clang \

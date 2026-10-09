@@ -1,0 +1,214 @@
+#pragma once
+
+// Native OpenGL ES 3.0 backend. One render thread owns the context; every GL
+// call runs there, in the order the tasks were posted. Objects created on
+// other threads carry their metadata immediately and receive their GL name
+// when the creation task runs, which always precedes any task using them.
+
+#include <GLES3/gl3.h>
+
+#include <absl/functional/any_invocable.h>
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+struct SDL_Window;
+
+namespace aurora::gl {
+
+using Task = absl::AnyInvocable<void() &&>;
+
+struct Caps {
+  std::string vendor;
+  std::string renderer;
+  std::string version;
+  int32_t maxTextureSize = 2048;
+  int32_t uniformOffsetAlignment = 256;
+  int32_t maxUniformBlockSize = 16384;
+  int32_t maxAnisotropy = 1;
+};
+
+bool initialize(SDL_Window* window, bool vsync) noexcept;
+void shutdown() noexcept;
+bool initialized() noexcept;
+const Caps& caps() noexcept;
+
+// Queue `task` behind everything already posted.
+void post(Task task) noexcept;
+// Post `task` and block until it has run. Runs inline on the render thread.
+void call(Task task) noexcept;
+// Wait until every task posted so far has run and the GPU has finished it.
+void finish() noexcept;
+bool on_render_thread() noexcept;
+
+enum class Format : uint8_t {
+  RGBA8,
+  R8,
+  RG8,
+  R16I,
+  R32F,
+  R32UI,
+  Depth32F,
+};
+
+struct FormatInfo {
+  GLenum internalFormat;
+  GLenum format;
+  GLenum type;
+  uint8_t bytesPerPixel;
+  bool integer;
+  bool depth;
+  bool filterable;
+};
+const FormatInfo& format_info(Format format) noexcept;
+
+// A GL name shared between the owning object (any thread) and the render
+// thread tasks that create, use and delete it.
+struct Name {
+  GLuint value = 0;
+};
+
+class Texture {
+public:
+  Texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept;
+  ~Texture();
+  Texture(const Texture&) = delete;
+  Texture& operator=(const Texture&) = delete;
+
+  // Render thread only.
+  [[nodiscard]] GLuint gl() const noexcept { return m_name->value; }
+
+  const uint32_t width;
+  const uint32_t height;
+  const uint32_t mips;
+  const Format format;
+
+private:
+  Name* m_name;
+};
+using TexturePtr = std::shared_ptr<Texture>;
+
+TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format,
+                          std::string_view label) noexcept;
+// Uploads `data` (rows of `bytesPerRow`, tightly following each other) into
+// the given region. The bytes are copied before returning.
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
+                   uint32_t height, const void* data, uint32_t bytesPerRow) noexcept;
+void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,
+                   uint32_t height, std::vector<uint8_t>&& data, uint32_t bytesPerRow) noexcept;
+
+// Render thread only: upload immediately.
+void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                    const void* data, uint32_t bytesPerRow) noexcept;
+
+struct SamplerDesc {
+  GLenum wrapS = GL_CLAMP_TO_EDGE;
+  GLenum wrapT = GL_CLAMP_TO_EDGE;
+  GLenum minFilter = GL_NEAREST;
+  GLenum magFilter = GL_NEAREST;
+  float minLod = 0.f;
+  float maxLod = 1000.f;
+  uint32_t maxAnisotropy = 1;
+
+  bool operator==(const SamplerDesc& rhs) const noexcept {
+    return wrapS == rhs.wrapS && wrapT == rhs.wrapT && minFilter == rhs.minFilter && magFilter == rhs.magFilter &&
+           minLod == rhs.minLod && maxLod == rhs.maxLod && maxAnisotropy == rhs.maxAnisotropy;
+  }
+};
+// Render thread only: the cached sampler object for `desc`.
+GLuint sampler(const SamplerDesc& desc) noexcept;
+inline constexpr SamplerDesc NearestClamp{};
+inline constexpr SamplerDesc LinearClamp{
+    .minFilter = GL_LINEAR,
+    .magFilter = GL_LINEAR,
+};
+
+// Render thread only: a framebuffer with the given attachments (0 = none).
+GLuint framebuffer(GLuint color, GLuint depth) noexcept;
+void bind_framebuffer(GLuint color, GLuint depth) noexcept;
+
+struct ProgramDesc {
+  std::string label;
+  std::string vertex;
+  std::string fragment;
+  // Sampler uniform name -> texture unit.
+  std::vector<std::pair<std::string, int>> samplers;
+  // Uniform block name -> binding point.
+  std::vector<std::pair<std::string, int>> blocks;
+};
+
+class Program {
+public:
+  explicit Program(ProgramDesc desc) noexcept;
+  ~Program();
+  Program(const Program&) = delete;
+  Program& operator=(const Program&) = delete;
+
+  // Render thread only. Compiles on first use; returns 0 if that failed.
+  GLuint get() noexcept;
+  [[nodiscard]] const std::string& label() const noexcept { return m_desc.label; }
+
+private:
+  ProgramDesc m_desc;
+  GLuint m_program = 0;
+  bool m_failed = false;
+};
+using ProgramPtr = std::shared_ptr<Program>;
+
+// The shared GLSL ES prelude: version, precision, WGSL-style aliases and helpers.
+std::string_view glsl_prelude() noexcept;
+std::string vertex_source(std::string_view body);
+std::string fragment_source(std::string_view body);
+
+// Fixed-function state for one draw. Compared field by field on the render thread.
+struct RasterState {
+  bool blend = false;
+  GLenum colorEquation = GL_FUNC_ADD;
+  GLenum alphaEquation = GL_FUNC_ADD;
+  GLenum srcColor = GL_ONE;
+  GLenum dstColor = GL_ZERO;
+  GLenum srcAlpha = GL_ONE;
+  GLenum dstAlpha = GL_ZERO;
+  bool depthTest = false;
+  bool depthWrite = false;
+  GLenum depthFunc = GL_ALWAYS;
+  bool cull = false;
+  GLenum cullFace = GL_BACK;
+  std::array<bool, 4> colorMask{true, true, true, true};
+};
+
+// Render thread state cache.
+void apply_raster_state(const RasterState& state) noexcept;
+void set_viewport(int32_t x, int32_t y, int32_t width, int32_t height, float minDepth, float maxDepth) noexcept;
+void set_scissor(int32_t x, int32_t y, int32_t width, int32_t height) noexcept;
+void set_scissor_enabled(bool enabled) noexcept;
+void set_blend_color(float r, float g, float b, float a) noexcept;
+void use_program(GLuint program) noexcept;
+void bind_texture(uint32_t unit, GLuint texture, GLuint sampler) noexcept;
+void bind_uniform_range(uint32_t binding, GLuint buffer, uint32_t offset, uint32_t size) noexcept;
+void set_color_mask(bool r, bool g, bool b, bool a) noexcept;
+void set_depth_write(bool enabled) noexcept;
+// Forget cached bindings, e.g. after code that touched GL state directly.
+void invalidate_state() noexcept;
+// Empty vertex array for attribute-less draws; binds its element buffer.
+void bind_draw_vao(GLuint indexBuffer) noexcept;
+
+// Draws a fullscreen triangle with `program`, sampling `source` on unit 0.
+// The caller binds the target framebuffer and viewport.
+void draw_fullscreen(GLuint program) noexcept;
+
+// Render thread only: blit `source` into the window with the letterboxed
+// viewport and swap. Rows are stored top-down, so the blit flips.
+void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept;
+// Render thread only: window framebuffer size in pixels.
+std::pair<uint32_t, uint32_t> drawable_size() noexcept;
+
+// Render thread only: read RGBA8 pixels of `texture` (level 0).
+void read_pixels(GLuint texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height, void* out) noexcept;
+
+} // namespace aurora::gl

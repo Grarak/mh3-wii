@@ -92,7 +92,7 @@ load_png_file(const std::filesystem::path& path) noexcept {
   png_read_end(structs.pStruct, nullptr);
 
   return ConvertedTexture{
-    .format = wgpu::TextureFormat::RGBA8Unorm,
+    .format = gl::Format::RGBA8,
     .width = width,
     .height = height,
     .mips = 1,

@@ -2,7 +2,7 @@
 #include "staging_capacity.hpp"
 
 #include "../internal.hpp"
-#include "../webgpu/gpu.hpp"
+#include "../gl/device.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -15,7 +15,6 @@
 #include <aurora/gfx.h>
 #include <aurora/math.hpp>
 #include <dolphin/gx/GXEnum.h>
-#include <webgpu/webgpu_cpp.h>
 #define XXH_STATIC_LINKING_ONLY
 #include <xxhash.h>
 
@@ -225,24 +224,14 @@ private:
 } // namespace aurora
 
 namespace aurora::gfx {
-inline constexpr bool UseTextureBuffer = false;
 inline constexpr uint64_t UniformBufferSize = 25165824;  // 24mb
 inline constexpr uint64_t VertexBufferSize = 3145728;    // 3mb
 inline constexpr uint64_t IndexBufferSize = 2097152;     // 2mb
 inline constexpr uint64_t StorageBufferSize = 8388608;   // 8mb
-inline constexpr uint64_t TextureUploadSize = 25165824;  // 24mb
 
 extern AuroraStats g_stats;
 extern uint32_t g_drawCallCount;
 extern uint32_t g_mergedDrawCallCount;
-extern wgpu::Buffer g_vertexBuffer;
-extern wgpu::Buffer g_uniformBuffer;
-extern wgpu::Buffer g_indexBuffer;
-extern wgpu::Buffer g_storageBuffer;
-extern wgpu::BindGroupLayout g_staticBindGroupLayout;
-extern wgpu::BindGroup g_staticBindGroup;
-extern wgpu::BindGroupLayout g_uniformBindGroupLayout;
-extern wgpu::BindGroup g_uniformBindGroup;
 
 using BindGroupRef = HashType;
 using PipelineRef = HashType;
@@ -266,7 +255,7 @@ struct ClipRect {
   bool operator!=(const ClipRect& rhs) const { return !(*this == rhs); }
 };
 
-using webgpu::Viewport;
+using gpu::Viewport;
 
 struct TextureRef;
 using TextureHandle = std::shared_ptr<TextureRef>;
@@ -282,8 +271,9 @@ void shutdown();
 bool begin_frame();
 bool resume_frame();
 void abort_frame() noexcept;
-void end_frame(const wgpu::CommandEncoder& cmd);
-void end_batch(const wgpu::CommandEncoder& cmd);
+// Hands the recorded staging data to the render thread.
+void end_frame();
+void end_batch();
 uint32_t current_frame() noexcept;
 
 // One frame's recorded render passes, detached from the guest-visible
@@ -311,19 +301,14 @@ private:
 // called with the renderer GPU mutex held; see SealedFrame.
 void seal_frame(SealedFrame& out) noexcept;
 
-// Encode a sealed frame. Never touches the producer-visible recording state,
-// so this may run concurrently with the producer's FIFO drains.
-void render(SealedFrame& frame, wgpu::CommandEncoder& cmd, int32_t interpolatedFrame = -1, bool finalize = true);
-
-// Encode the frame that is still being recorded. Only for the synchronous
-// EFB-readback split path, which runs on the producer thread.
-void render(wgpu::CommandEncoder& cmd, int32_t interpolatedFrame = -1, bool finalize = true);
+// Render thread: execute a sealed frame. Never touches the producer-visible
+// recording state.
+void render(SealedFrame& frame, int32_t interpolatedFrame = -1, bool finalize = true);
 
 // Sweep bind groups that have not been used for a while. Mutates the cache the producer inserts
 // into, so it may only run with the producer excluded, inside the seal prologue.
 void expire_bind_group_cache() noexcept;
 void after_submit() noexcept;
-void map_staging_buffer();
 // `persistentCopy` marks resolves whose destination outlives the frame with no re-issue path, so
 // the pass waits for its pipelines instead of dropping draws that would be baked in permanently.
 void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
@@ -332,6 +317,12 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
                   const std::array<u32, 3>* copyFilterCoefficients = nullptr, bool forceOpaqueAlpha = false,
                   float copyFilterRowStride = 1.0f, bool clampTop = false, bool clampBottom = false,
                   bool persistentCopy = false);
+
+// Submit the passes recorded so far (with their staging batch) to the render
+// thread. The caller resumes recording with resume_frame().
+void flush_recording();
+// Keep the EFB contents at the next begin_frame() instead of clearing them.
+void preserve_next_efb_frame() noexcept;
 
 void begin_offscreen(uint32_t width, uint32_t height);
 void end_offscreen();
@@ -368,7 +359,6 @@ template <typename T>
 static Range push_storage(const T& data) {
   return push_storage(reinterpret_cast<const uint8_t*>(&data), sizeof(T));
 }
-Range push_texture_data(const uint8_t* data, size_t length, uint32_t bytesPerRow, uint32_t rowsPerImage);
 std::pair<ByteBuffer, Range> map_verts(size_t length);
 std::pair<ByteBuffer, Range> map_indices(size_t length);
 std::pair<ByteBuffer, Range> map_uniform(size_t length);
@@ -384,15 +374,30 @@ DrawData* get_last_draw_command();
 
 template <typename PipelineConfig>
 PipelineRef pipeline_ref(const PipelineConfig& config);
-// `currentPipeline` is the caller's per-pass dedupe slot; as a file-static, two concurrent encoders
-// skipped each other's SetPipeline. `requireReady` refuses the skip-unready shortcut for bakes.
-bool bind_pipeline(PipelineRef ref, const wgpu::RenderPassEncoder& pass, PipelineRef& currentPipeline,
-                   bool requireReady = false);
+// Render thread: binds the pipeline's program and fixed-function state.
+// `currentPipeline` is the caller's per-pass dedupe slot.
+bool bind_pipeline(PipelineRef ref, PipelineRef& currentPipeline, bool requireReady = false);
 
-BindGroupRef bind_group_ref(const WGPUBindGroupDescriptor& descriptor);
-wgpu::BindGroup& find_bind_group(BindGroupRef id);
+inline constexpr uint32_t MaxBoundTextures = 8;
+// Texture unit layout of every GX program: textures 0-7, then the word buffers.
+inline constexpr uint32_t VertexBufferUnit = 8;
+inline constexpr uint32_t StorageBufferUnit = 9;
+struct TextureBinding {
+  TextureHandle ref;
+  gl::SamplerDesc sampler;
+};
+// The textures of one GX draw. Immutable once cached; `glSamplers` is filled
+// lazily on the render thread.
+struct TextureBindGroup {
+  std::array<TextureBinding, MaxBoundTextures> textures;
+  mutable std::array<GLuint, MaxBoundTextures> glSamplers{};
+  mutable bool samplersResolved = false;
+};
+BindGroupRef bind_group_ref(TextureBindGroup&& group);
+const TextureBindGroup* find_bind_group(BindGroupRef id);
 
-wgpu::Sampler& sampler_ref(const wgpu::SamplerDescriptor& descriptor);
+// Render thread: GL names of the batch buffers the current draws read.
+GLuint uniform_buffer() noexcept;
 
 uint32_t align_uniform(uint32_t value);
 uint64_t staging_uniform_bytes(uint64_t bytes);

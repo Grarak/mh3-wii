@@ -8,7 +8,6 @@
 #include "../../internal.hpp"
 #include "../../window.hpp"
 #include "../../gfx/clear.hpp"
-#include "../../webgpu/gpu.hpp"
 #include "../vi/vi_internal.hpp"
 
 #include <algorithm>
@@ -505,15 +504,11 @@ void GXCopyTex(void* dest, GXBool clear) {
     if (!clear) {
       // TODO: Confirm how this copy should handle alpha without changing the EFB.
     }
-    // Clear alpha with a pipeline that matches the pass sample count.
     aurora::gfx::push_draw_command(aurora::gfx::clear::DrawData{
-        .pipeline = aurora::gfx::pipeline_ref(aurora::gfx::clear::PipelineConfig{
-            .msaaSamples = aurora::gfx::get_sample_count(),
-            .clearColor = false,
-            .clearAlpha = true,
-            .clearDepth = false,
-        }),
-        .color = wgpu::Color{0.f, 0.f, 0.f, g_gxState.dstAlpha / 255.f},
+        .color = {0.f, 0.f, 0.f, g_gxState.dstAlpha / 255.f},
+        .clearColor = false,
+        .clearAlpha = true,
+        .clearDepth = false,
     });
   }
   if (aurora::gx::render_target_has_alpha(g_gxState.pixelFmt)) {

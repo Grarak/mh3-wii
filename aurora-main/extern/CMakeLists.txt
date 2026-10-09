@@ -16,17 +16,12 @@ function(aurora_find_package_global)
   set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL ${_PREV_FIND_PACKAGE_TARGETS_GLOBAL})
 endfunction()
 
-if (AURORA_ENABLE_GX)
-  include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraDawnProvider.cmake)
-endif ()
-
-# Abseil is needed for core libraries. It normally comes via Dawn's vendor build.
-# Otherwise prefer a system package and only fetch it as a last resort.
-if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree)
+# Abseil is needed for core libraries. Prefer a system package and only fetch it as a last resort.
+if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree OR NOT TARGET absl::any_invocable)
   aurora_find_package_global(absl CONFIG QUIET GLOBAL)
 endif ()
 
-if (TARGET absl::flat_hash_map AND TARGET absl::btree)
+if (TARGET absl::flat_hash_map AND TARGET absl::btree AND TARGET absl::any_invocable)
   message(STATUS "aurora: Using system/existing abseil")
 else ()
   message(STATUS "aurora: Fetching abseil-cpp (standalone)")
@@ -42,7 +37,7 @@ else ()
     EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(abseil-cpp)
-  if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree)
+  if (NOT TARGET absl::flat_hash_map OR NOT TARGET absl::btree OR NOT TARGET absl::any_invocable)
     message(FATAL_ERROR "Failed to make abseil-cpp available")
   endif ()
 endif ()
@@ -205,13 +200,11 @@ if (AURORA_ENABLE_GX)
     )
     target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
 
+    # No renderer backend: the OpenGL ES renderer draws no ImGui.
     add_library(imgui_backends STATIC
       ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
-      ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp
-      ${imgui_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp
     )
-    target_compile_definitions(imgui_backends PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
-    target_link_libraries(imgui_backends PRIVATE imgui ${AURORA_SDL3_TARGET} dawn::webgpu_dawn)
+    target_link_libraries(imgui_backends PRIVATE imgui ${AURORA_SDL3_TARGET})
     target_link_libraries(imgui PUBLIC imgui_backends)
 
     if (TARGET Freetype::Freetype)

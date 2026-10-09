@@ -4535,8 +4535,8 @@ TEST_F(GXFifoTest, CopyTexDepthZ16UsesRa8Ia8Semantics) {
   EXPECT_EQ(rgba, (std::array<std::uint8_t, 4>{0x12, 0x12, 0x12, 0xff}));
 
   constexpr auto shader = aurora::gfx::tex_copy_conv::detail::Z16FragmentShader;
-  EXPECT_NE(shader.find("let i = f32(depth_bytes.r)"), std::string_view::npos);
-  EXPECT_NE(shader.find("return vec4f(i, i, i, 1.0)"), std::string_view::npos);
+  EXPECT_NE(shader.find("float i = f32(depth_bytes.r)"), std::string_view::npos);
+  EXPECT_NE(shader.find("frag_color = vec4f(i, i, i, 1.0)"), std::string_view::npos);
 }
 
 TEST_F(GXFifoTest, CopyTexClearTrueNoOpsWhenAllUpdateMasksAreDisabled) {

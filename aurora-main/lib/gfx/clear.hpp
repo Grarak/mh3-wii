@@ -2,30 +2,20 @@
 
 #include "common.hpp"
 
-#include <webgpu/webgpu_cpp.h>
-
 namespace aurora::gfx::clear {
+// A scissored EFB clear. GL clears honour the scissor and write masks, so no
+// pipeline is involved.
 struct DrawData {
-  PipelineRef pipeline;
-  Range uniformRange;
-  wgpu::Color color;
+  Vec4<float> color;
   float depth = 0.f;
+  bool clearColor = true;
+  bool clearAlpha = true;
+  bool clearDepth = true;
+  // False: clear within the pass's current scissor.
   bool useScissor = false;
   ClipRect scissor{};
 };
 
-constexpr uint32_t ClearPipelineConfigVersion = 3;
-struct PipelineConfig {
-  uint32_t version = ClearPipelineConfigVersion;
-  uint32_t msaaSamples = 1;
-  bool clearColor = true;
-  bool clearAlpha = true;
-  bool clearDepth = true;
-  uint8_t _pad = 0;
-};
-static_assert(std::has_unique_object_representations_v<PipelineConfig>);
-
-wgpu::RenderPipeline create_pipeline(const PipelineConfig& config);
-void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, const wgpu::Extent3D& targetSize,
-            PipelineRef& currentPipeline);
+// Render thread. `passScissor` is the pass's current scissor, restored afterwards.
+void render(const DrawData& data, uint32_t targetWidth, uint32_t targetHeight, const ClipRect& passScissor);
 } // namespace aurora::gfx::clear

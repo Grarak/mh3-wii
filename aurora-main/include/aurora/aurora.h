@@ -163,6 +163,12 @@ void aurora_report_producer_paced(bool paced);
 void aurora_request_frame_capture(uint32_t frame, const char* outputPath);
 bool aurora_flush_efb_copies_to_ram();
 bool aurora_flush_efb_copy_to_ram(void* dest);
+// Submits the draws recorded so far and resumes the same frame without clearing the EFB.
+bool aurora_flush_draws();
+// Blocks until the render thread and the GPU have finished all submitted work.
+void aurora_wait_for_gpu_idle();
+// Frames the render thread has swapped to the window so far.
+uint64_t aurora_presented_frame_count();
 
 void aurora_set_log_level(AuroraLogLevel level);
 void aurora_set_pause_on_focus_lost(bool value);

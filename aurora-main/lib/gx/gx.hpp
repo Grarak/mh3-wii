@@ -5,6 +5,7 @@
 #include "../internal.hpp"
 #include "../gfx/common.hpp"
 #include "../gfx/texture.hpp"
+#include "../gfx/pipeline_cache.hpp"
 
 #include <absl/container/flat_hash_map.h>
 #include <algorithm>
@@ -70,7 +71,6 @@ constexpr u32 MaxPostexMtx = MaxPnMtx + MaxTexMtx;
 constexpr u32 MaxIndexAttr = 12; // VA_POS -> VA_TEX7
 constexpr u32 MaxUniformSize = 3840;
 
-extern wgpu::BindGroup g_emptyTextureBindGroup;
 
 template <typename Arg, Arg Default>
 struct TevPass {
@@ -420,7 +420,6 @@ struct GXState {
   absl::flat_hash_map<const void*, CopyTextureRef> copyTextures;
   absl::flat_hash_map<CopyTextureKey, CopyTextureRef> copyTextureCache;
   gfx::TextureHandle displayCopyTexture;
-  wgpu::BindGroup displayCopyBindGroup;
   u32 displayCopyWidth = 0;
   u32 displayCopyHeight = 0;
   bool depthCompare = true;
@@ -719,7 +718,7 @@ struct PipelineConfig;
 struct GXBindGroups {
   gfx::BindGroupRef textureBindGroup;
   // Bind group resolved at draw-build time so that gx::render does not have to hash-map the ref again for every draw.
-  WGPUBindGroup resolvedTextureBindGroup = nullptr;
+  const gfx::TextureBindGroup* resolvedTextureBindGroup = nullptr;
 };
 // Which matrix-memory slots a generated shader can actually read, and where each one lives in the compacted uniform arrays.
 struct UniformMatrixLayout {
@@ -765,9 +764,8 @@ struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};
 };
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept;
-wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu::VertexBufferLayout> vtxBuffers,
-                                    wgpu::ShaderModule shader, const char* label) noexcept;
-wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept;
+gfx::PipelinePtr build_pipeline(const PipelineConfig& config, gl::ProgramPtr program) noexcept;
+gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept;
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept;
 void notify_copy_texture_created() noexcept;
 
