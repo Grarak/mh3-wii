@@ -1,5 +1,6 @@
 #pragma once
 #include "staging_capacity.hpp"
+#include <aurora/native_draw_memory.hpp>
 
 #include "../internal.hpp"
 #include "../gl/device.hpp"
@@ -299,6 +300,9 @@ void abort_frame() noexcept;
 void end_frame();
 void end_batch();
 uint32_t current_frame() noexcept;
+// Advance a directly submitted frame without allocating GX staging or passes.
+void advance_native_frame() noexcept;
+NativeDrawMemory native_draw_memory(unsigned slot);
 
 // One frame's recorded render passes, detached from the guest-visible
 // recording state. The contents are private to common.cpp.

@@ -1,6 +1,7 @@
 #include "device.hpp"
 #include "razor.hpp"
 #include "shaders.hpp"
+#include <aurora/gpu_completion.hpp>
 #include <aurora/thread_role.hpp>
 #include <psp2/display.h>
 #include <psp2/kernel/sysmem.h>
@@ -18,10 +19,10 @@ extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSur
 
 namespace aurora::gxm {
 namespace {
-std::atomic<volatile unsigned*> g_frameNotification{nullptr};
-std::atomic<uint32_t> g_lastDisplayScene{0};
+std::atomic<Device*> g_frameDevice{nullptr};
+std::atomic<uint32_t> g_displayQueued{0}, g_displayCompleted{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
-struct DisplayData { void* address; bool vsync; };
+struct DisplayData { void* address; };
 void display_callback(const void* data) {
   aurora::pin_current_thread(aurora::ThreadRole::Worker);
   const auto& display = *static_cast<const DisplayData*>(data);
@@ -33,7 +34,10 @@ void display_callback(const void* data) {
   frame.width = Device::Width;
   frame.height = Device::Height;
   sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
-  if (display.vsync) sceDisplayWaitVblankStart();
+  // Sony's sync object can release the old buffer only after the actual flip.
+  // This wait belongs to the display callback on core 0, never the game thread.
+  sceDisplayWaitSetFrameBuf();
+  g_displayCompleted.fetch_add(1, std::memory_order_release);
 }
 void* host_alloc(void*, unsigned bytes) { return std::malloc(bytes); }
 void host_free(void*, void* memory) { std::free(memory); }
@@ -65,13 +69,16 @@ const SceGxmProgram* fragment_scalar_binary(uint64_t hash) {
   return find_binary(FragmentScalarShaders, FragmentScalarShaderCount, hash, "scalar fragment");
 }
 
-Device::Device(bool vsync) : m_vsync(vsync) {
+Device::Device(bool /*vsync*/) {
   try {
     SceGxmInitializeParams init{};
     // Stock sceGxmInitialize accepts only the affinity flags on firmware 3.65.
     // Query remaining CDRAM after its parameter-buffer allocation below.
     init.flags = SCE_GXM_INITIALIZE_FLAG_DEFAULT;
-    init.displayQueueMaxPendingCount = 2;
+    // Admission allows two pending flips. Keep one extra internal queue entry:
+    // the callback publishes completion just before libgxm retires its entry,
+    // so this headroom prevents even that bookkeeping race from blocking AddEntry.
+    init.displayQueueMaxPendingCount = aurora::GpuFrameRing::BufferCount;
     init.displayQueueCallback = display_callback;
     init.displayQueueCallbackDataSize = sizeof(DisplayData);
     init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;
@@ -83,8 +90,9 @@ Device::Device(bool vsync) : m_vsync(vsync) {
     // No scene has been submitted yet. Initialize our owned retirement word
     // even if the GXM notification region was retained from an earlier device.
     *m_notification = m_sceneSerial;
-    g_lastDisplayScene.store(0, std::memory_order_relaxed);
-    g_frameNotification.store(m_notification, std::memory_order_release);
+    g_displayQueued.store(0, std::memory_order_relaxed);
+    g_displayCompleted.store(0, std::memory_order_relaxed);
+    g_frameDevice.store(this, std::memory_order_release);
     m_memory.reserve(7);
     auto allocate = [&](unsigned bytes, MappedMemory::Kind kind, const char* name) -> MappedMemory& {
       m_memory.emplace_back(bytes, kind, name);
@@ -132,7 +140,7 @@ Device::Device(bool vsync) : m_vsync(vsync) {
     const unsigned budget = (unsigned(available.size_cdram) - producerReserve - driverReserve) & ~0x3ffffu;
     m_arena = std::make_unique<CdramArena>(budget);
     std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation 26 MiB\n", budget / 1048576.0);
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < aurora::GpuFrameRing::BufferCount; ++i) {
       m_displayData[i] = m_arena->allocate(Stride * Height * 4);
       if (!m_displayData[i]) throw std::bad_alloc();
       std::memset(m_displayData[i], 0, Stride * Height * 4);
@@ -159,7 +167,7 @@ void Device::release() noexcept {
   m_arena.reset();
   m_memory.clear();
   std::free(m_host); m_host = nullptr;
-  g_frameNotification.store(nullptr, std::memory_order_release);
+  g_frameDevice.store(nullptr, std::memory_order_release);
   if (m_initialized) sceGxmTerminate();
   razor_terminate();
   m_initialized = false;
@@ -193,6 +201,9 @@ void Device::end() {
   const SceGxmNotification completion{m_notification, m_sceneSerial + 1};
   check(sceGxmEndScene(m_context, nullptr, &completion), "end scene");
   ++m_sceneSerial;
+  // Offscreen work extends this frame slot's lease too. Other slots remain
+  // available while its fragment notification is pending.
+  m_frames.record_scene(m_notification, m_sceneSerial);
   m_inScene = false;
 }
 std::array<uint64_t, 2> finish_wait_counters() noexcept {
@@ -207,21 +218,28 @@ void Device::finish() {
   if (call < 32 && std::getenv("MH3_GXM_WAIT_TRACE"))
     std::fprintf(stderr, "MH3 GXM Finish caller %p: %lld us, scene %u\n", __builtin_return_address(0), static_cast<long long>(micros), m_sceneSerial);
 }
-void Device::begin_display() { begin(Width, Height, &m_display[m_back], nullptr, m_sync[m_back]); }
+void Device::begin_display() {
+  const unsigned back = m_frames.slot();
+  begin(Width, Height, &m_display[back], nullptr, m_sync[back]);
+}
+bool Device::frame_pending() const noexcept {
+  return m_frames.pending() || aurora::gpu_display_queue_full(
+      g_displayQueued.load(std::memory_order_acquire), g_displayCompleted.load(std::memory_order_acquire));
+}
 bool gpu_frame_pending() noexcept {
-  const auto* notification = g_frameNotification.load(std::memory_order_acquire);
-  const auto serial = g_lastDisplayScene.load(std::memory_order_acquire);
-  return notification && int32_t(*notification - serial) < 0;
+  const auto* device = g_frameDevice.load(std::memory_order_acquire);
+  return device && device->frame_pending();
 }
 void Device::flip() {
   end();
-  g_lastDisplayScene.store(m_sceneSerial, std::memory_order_release);
-  check(sceGxmPadHeartbeat(&m_display[m_back], m_sync[m_back]), "display heartbeat");
+  const unsigned back = m_frames.slot();
+  check(sceGxmPadHeartbeat(&m_display[back], m_sync[back]), "display heartbeat");
   razor_frame();
-  const DisplayData display{m_displayData[m_back], m_vsync};
-  check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[m_back], &display), "queue display");
-  m_front = m_back;
-  m_back = (m_back + 1) % 3;
+  const DisplayData display{m_displayData[back]};
+  g_displayQueued.fetch_add(1, std::memory_order_release);
+  check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[back], &display), "queue display");
+  m_front = back;
+  m_frames.advance();
 }
 
 PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash,

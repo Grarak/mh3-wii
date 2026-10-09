@@ -2,6 +2,8 @@
 
 #include "../internal.hpp"
 #include "../gfx/port_capture.hpp"
+#include <aurora/gpu_completion.hpp>
+#include <aurora/native_frame_gate.hpp>
 
 #include <SDL3/SDL.h>
 #include <xxhash.h>
@@ -32,7 +34,8 @@ struct RenderContext {
 
 RenderContext* g_context = nullptr;
 Caps g_caps;
-GLsync g_frameFence = nullptr;
+std::array<GLsync, aurora::GpuFrameRing::BufferCount> g_frameFences{};
+unsigned g_frameSlot = 0;
 
 // ---- Context owner state ----
 
@@ -214,7 +217,11 @@ void shutdown() noexcept {
   });
   // Teardown is the only unconditional finish in this ownership path.
   glFinish();
-  if (g_frameFence) { glDeleteSync(g_frameFence); g_frameFence = nullptr; }
+  for (auto& fence : g_frameFences) {
+    if (fence) glDeleteSync(fence);
+    fence = nullptr;
+  }
+  g_frameSlot = 0;
   SDL_GL_MakeCurrent(rt->window, nullptr);
   g_context = nullptr;
   SDL_GL_DestroyContext(rt->context);
@@ -237,15 +244,17 @@ void call(Task task) noexcept {
 }
 
 bool gpu_frame_pending() noexcept {
-  if (!g_context || !g_frameFence) return false;
+  auto& fence = g_frameFences[g_frameSlot];
+  if (!g_context || !fence) return false;
   if (!on_render_thread()) Log.fatal("GL GPU completion queried outside the game thread");
-  const GLenum result = glClientWaitSync(g_frameFence, 0, 0);
+  const GLenum result = glClientWaitSync(fence, 0, 0);
   if (result == GL_TIMEOUT_EXPIRED) return true;
   if (result == GL_WAIT_FAILED) Log.fatal("GL frame completion query failed");
-  glDeleteSync(g_frameFence);
-  g_frameFence = nullptr;
+  glDeleteSync(fence);
+  fence = nullptr;
   return false;
 }
+uint32_t native_frame_slot() noexcept { return g_frameSlot; }
 
 void finish() noexcept {
   ZoneScoped;
@@ -639,6 +648,7 @@ void bind_draw_vao(GLuint indexBuffer) noexcept {
 }
 
 void draw_fullscreen(GLuint program) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
   use_program(program);
   glBindVertexArray(g_state.emptyVao);
   glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -656,6 +666,7 @@ std::pair<uint32_t, uint32_t> drawable_size() noexcept {
 }
 
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
   ZoneScoped;
   const auto [drawableWidth, drawableHeight] = drawable_size();
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -674,11 +685,13 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
   }
   // Submit the scene without waiting for completion. The next game frame can
   // run while the GPU consumes it; frameskip polls this fence with timeout 0.
-  if (g_frameFence) glDeleteSync(g_frameFence);
-  g_frameFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-  if (!g_frameFence) Log.fatal("GL frame fence allocation failed");
+  auto& fence = g_frameFences[g_frameSlot];
+  if (fence) glDeleteSync(fence);
+  fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!fence) Log.fatal("GL frame fence allocation failed");
   glFlush();
   SDL_GL_SwapWindow(g_context->window);
+  g_frameSlot = (g_frameSlot + 1) % aurora::GpuFrameRing::BufferCount;
 }
 
 void read_pixels(GLuint texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height, void* out) noexcept {
@@ -708,9 +721,14 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   invalidate_state();
 }
-void clear_color(const float* color) noexcept { glClearBufferfv(GL_COLOR, 0, color); }
-void clear_depth(float depth) noexcept { glClearBufferfv(GL_DEPTH, 0, &depth); }
+void clear_color(const float* color) noexcept {
+  if (aurora::native_frame_drawing_allowed()) glClearBufferfv(GL_COLOR, 0, color);
+}
+void clear_depth(float depth) noexcept {
+  if (aurora::native_frame_drawing_allowed()) glClearBufferfv(GL_DEPTH, 0, &depth);
+}
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
   glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_SHORT,
                          reinterpret_cast<const void*>(static_cast<uintptr_t>(indexOffset)),
                          static_cast<GLsizei>(instances));

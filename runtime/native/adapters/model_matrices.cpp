@@ -2,6 +2,7 @@
 // records go directly to the renderer. No guest function, GX or FIFO calls.
 #include "abi_bridge.h"
 #include "memory.h"
+#include "native_graphics.h"
 #include "runtime/native/mh3_model_matrices.h"
 
 #include <stdexcept>
@@ -51,6 +52,7 @@ extern "C" void MH3_ModelMatrixSources(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80087E5C,MH3_ModelMatrixSources,"ModelMatrixSources");
 
 extern "C" void MH3_ModelShapePrimitive(CpuContext* cpu) {
+    if (!NativeGraphicsFrameShouldRender()) return;
     mh3_matrix_runtime_storage storage{};
     mh3_shape_matrix_input input{};
     mh3_matrix_sources sources{};

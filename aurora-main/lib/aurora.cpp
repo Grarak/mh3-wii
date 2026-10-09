@@ -1,4 +1,9 @@
 #include <aurora/aurora.h>
+#include <aurora/native_frame_gate.hpp>
+#include <aurora/native_draw_memory.hpp>
+#ifdef AURORA_GXM
+#include "gxm/draw_memory.hpp"
+#endif
 
 #ifdef AURORA_ENABLE_GX
 #include "gfx/common.hpp"
@@ -64,6 +69,8 @@ std::atomic<uint64_t> g_presentScheduleIntervalNanos{0};
 
 namespace {
 Module Log("aurora");
+NativeFrameGate g_nativeFrame;
+bool g_nativeFrameskip = false;
 
 std::atomic<uint32_t> g_captureFrame{UINT32_MAX};
 std::string g_captureOutputPath;
@@ -353,12 +360,12 @@ struct FrameCapture {
 };
 
 // Producer side: claim the capture request once the frame it names has been sealed.
-std::optional<FrameCapture> take_frame_capture() {
+std::optional<FrameCapture> take_frame_capture(bool allowLaterFrame = false) {
   const uint32_t requestedFrame = g_captureFrame.load(std::memory_order_acquire);
   const uint32_t currentFrame = gfx::current_frame();
   if (requestedFrame == UINT32_MAX || currentFrame < requestedFrame) return std::nullopt;
   g_captureFrame.store(UINT32_MAX, std::memory_order_release);
-  if (currentFrame != requestedFrame) {
+  if (currentFrame != requestedFrame && !allowLaterFrame) {
     Log.error("Missed requested frame capture {} (current frame {})", requestedFrame, currentFrame);
     return std::nullopt;
   }
@@ -410,6 +417,7 @@ void record_frame_telemetry() {
 #endif
 
 void shutdown() noexcept {
+  g_nativeFrame.end();
 #ifdef AURORA_ENABLE_GX
   imgui::shutdown();
   gfx::shutdown();
@@ -431,6 +439,7 @@ const AuroraEvent* update() noexcept {
 bool begin_frame() noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
+  if (g_nativeFrame.active()) Log.fatal("Cannot mix native and recorded frames");
   window::pump_events();
   if (!window::is_presentable() || window::is_paused()) {
     return false;
@@ -451,6 +460,60 @@ bool begin_frame() noexcept {
 #else
   return true;
 #endif
+}
+
+bool begin_native_frame() noexcept {
+#ifdef AURORA_ENABLE_GX
+  if (!gl::on_render_thread()) Log.fatal("Native frame begun outside the game thread");
+  if (g_nativeFrame.active()) Log.fatal("Native frame begun before the previous frame ended");
+  window::pump_events();
+#ifdef AURORA_GXM
+  // CDRAM lease and queue admission are mandatory for the native GXM path.
+  // Disabling optional frameskip cannot authorize overwriting a busy slot.
+  constexpr bool skipBusy = true;
+#else
+  const bool skipBusy = g_nativeFrameskip;
+#endif
+  const bool draw = g_nativeFrame.begin(skipBusy,
+      window::is_presentable() && !window::is_paused(), [] { return gl::gpu_frame_pending(); });
+  gfx::g_stats.presentedFrameCount = 0;
+  gfx::g_stats.interpolatedFrameCount = 0;
+  if (!draw) return false;
+#ifdef AURORA_GXM
+  const auto memory = gfx::native_draw_memory(gl::native_frame_slot());
+  gxm::bind_draw_memory(memory.uniforms.data(), memory.uniforms.size(), memory.indices.data(), memory.indices.size(),
+                        memory.vertices.data(), memory.vertices.size(), memory.attributes.data(), memory.attributes.size());
+#endif
+  // A skipped frame must not recreate surfaces, rotate staging or touch the
+  // previous frame's CDRAM. Resize only once its notification has arrived.
+  if (window::native_resize_pending() ||
+      !window::native_window_size_matches(gpu::g_graphicsConfig.width, gpu::g_graphicsConfig.height))
+    window::sync_frame_buffer_size();
+  return true;
+#else
+  return g_nativeFrame.begin(g_nativeFrameskip, true, [] { return false; });
+#endif
+}
+
+void end_native_frame() {
+  if (!g_nativeFrame.active()) Log.fatal("Native frame ended without a matching begin");
+#ifdef AURORA_ENABLE_GX
+  if (!gl::on_render_thread()) Log.fatal("Native frame ended outside the game thread");
+  const bool draw = g_nativeFrame.should_render();
+  gfx::advance_native_frame();
+  if (draw) {
+    const auto source = gpu::current_present_source();
+    // Explicit development capture can read back. A busy frame never forces
+    // rendering or a GPU wait; retain its request for the next rendered frame.
+    if (auto capture = take_frame_capture(true)) write_frame_capture(*capture, source);
+    present_frame(source);
+    gfx::g_stats.presentedFrameCount = 1;
+  } else {
+    gfx::count_skipped_frame();
+  }
+  record_frame_telemetry();
+#endif
+  g_nativeFrame.end();
 }
 
 // Seals the frame on the producer and hands it to the render thread, which renders,
@@ -521,6 +584,13 @@ bool flush_and_resume(void* dest, bool download) {
 } // namespace
 
 // Frames are sealed synchronously on the producer, so there is never a worker to join.
+bool native_frame_drawing_allowed() noexcept { return g_nativeFrame.drawing_allowed(); }
+NativeDrawMemory native_draw_memory() noexcept {
+#ifdef AURORA_ENABLE_GX
+  if (g_nativeFrame.should_render()) return gfx::native_draw_memory(gl::native_frame_slot());
+#endif
+  return {};
+}
 void wait_for_frame_worker() noexcept {}
 std::chrono::nanoseconds wait_for_frame_worker_sealed() noexcept { return std::chrono::nanoseconds::zero(); }
 bool wait_for_frame_worker_for(std::chrono::microseconds) noexcept { return true; }
@@ -537,10 +607,21 @@ void aurora_shutdown() { aurora::shutdown(); }
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }
+bool aurora_begin_native_frame() { return aurora::begin_native_frame(); }
+bool aurora_native_frame_should_render() { return aurora::g_nativeFrame.should_render(); }
+uint32_t aurora_native_frame_slot() {
+#ifdef AURORA_ENABLE_GX
+  return aurora::gl::native_frame_slot();
+#else
+  return 0;
+#endif
+}
+void aurora_end_native_frame() { aurora::end_native_frame(); }
 void aurora_set_frame_worker_wait_callback(AuroraFrameWorkerWaitCallback callback) {
   aurora::g_frameWorkerWaitCallback.store(callback, std::memory_order_release);
 }
 void aurora_set_frameskip(bool enabled) {
+  aurora::g_nativeFrameskip = enabled;
 #ifdef AURORA_ENABLE_GX
   aurora::gfx::set_frameskip(enabled);
 #endif

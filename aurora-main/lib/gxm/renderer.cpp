@@ -3,6 +3,7 @@
 #include "alpha_compare.hpp"
 #include "native_assets.hpp"
 #include "device.hpp"
+#include <aurora/native_frame_gate.hpp>
 #include "draw_memory.hpp"
 #include "raster.hpp"
 #include "texture.hpp"
@@ -357,7 +358,15 @@ void post(Task task) noexcept {
 void call(Task task) noexcept {
   post(std::move(task));
 }
-bool gpu_frame_pending() noexcept { return gxm::gpu_frame_pending(); }
+bool gpu_frame_pending() noexcept {
+  return guarded([] {
+    // Finish recording any standalone offscreen work before polling. This
+    // submits its notification; it does not wait for the GPU to write it.
+    renderer().device.end();
+    return gxm::gpu_frame_pending();
+  });
+}
+uint32_t native_frame_slot() noexcept { return guarded([] { return renderer().device.frame_slot(); }); }
 void finish() noexcept { call([] { renderer().device.finish(); }); }
 const FormatInfo& format_info(Format format) noexcept { return FormatInfos[size_t(format)]; }
 Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view label)
@@ -517,7 +526,10 @@ void invalidate_state() noexcept {
     r.state.program = 0; r.state.uniformValid = false; r.state.clipDirty = true; });
 }
 void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMemory. */ }
-void draw_fullscreen(GLuint id) noexcept { guarded([&] { auto& r = renderer(); r.state.program = id; r.prepare(id); r.utility_draw(3); }); }
+void draw_fullscreen(GLuint id) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
+  guarded([&] { auto& r = renderer(); r.state.program = id; r.prepare(id); r.utility_draw(3); });
+}
 GLuint create_buffer() noexcept { return guarded([] { return renderer().name(); }); }
 void destroy_buffer(GLuint) noexcept { /* Buffer storage belongs to the mapped frame slot. */ }
 void write_buffer(GLuint, bool, const void*, size_t bytes) noexcept { if (bytes) fail("Native draws must bind their mapped payload directly"); }
@@ -543,15 +555,21 @@ void copy_texture_region(GLuint source, GLuint dest, int32_t srcX, int32_t srcY,
     check(sceGxmTransferFinish(), "finish texture region copy");
   });
 }
-void clear_color(const float* color) noexcept { guarded([&] { renderer().clear(color, 0.f, false); }); }
-void clear_depth(float depth) noexcept { guarded([&] { const float ignored[4]{}; renderer().clear(ignored, depth, true); }); }
+void clear_color(const float* color) noexcept {
+  if (aurora::native_frame_drawing_allowed()) guarded([&] { renderer().clear(color, 0.f, false); });
+}
+void clear_depth(float depth) noexcept {
+  if (aurora::native_frame_drawing_allowed()) guarded([&] { const float ignored[4]{}; renderer().clear(ignored, depth, true); });
+}
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
   guarded([&] { if (!indexCount || !instances) return; auto& r = renderer(); r.prepare(r.state.program); r.draws.draw(indexCount, indexOffset, instances); });
 }
 void uniform4(GLuint id, const char* name, float x, float y, float z, float w) noexcept {
   guarded([&] { renderer().programs.at(id).uniforms[name] = {x, y, z, w}; });
 }
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept {
+  if (!aurora::native_frame_drawing_allowed()) return;
   guarded([&] {
     auto& r = renderer(); r.bind_target(0, 0); r.reset_texture_bindings();
     r.state.scissorEnabled = false; r.state.clipDirty = false;

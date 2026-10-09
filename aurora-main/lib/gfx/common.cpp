@@ -12,6 +12,8 @@
 #include "texture_replacement.hpp"
 #include "texture.hpp"
 #include "port_capture.hpp"
+#include <aurora/native_draw_memory.hpp>
+#include <aurora/gpu_completion.hpp>
 #include "../window.hpp"
 #ifdef AURORA_GXM
 #include "../gxm/memory.hpp"
@@ -115,11 +117,12 @@ struct StagingSet {
   ByteBuffer indices;
   ByteBuffer storage;
 };
-constexpr size_t FrameSlotCount = 3;
+constexpr size_t FrameSlotCount = aurora::GpuFrameRing::BufferCount;
 static std::mutex g_stagingPoolMutex;
 static std::condition_variable g_stagingPoolCv;
 static std::vector<std::unique_ptr<StagingSet>> g_stagingPool;
 static std::unique_ptr<StagingSet> g_staging;
+static std::array<std::unique_ptr<StagingSet>, FrameSlotCount> g_nativeDrawSlots;
 #ifdef AURORA_GXM
 struct RetiredStagingSet {
   SceGxmNotification fence;
@@ -863,6 +866,7 @@ void shutdown() {
   gx::shutdown();
 
   gl::finish();
+  for (auto& slot : g_nativeDrawSlots) slot.reset();
 #ifdef AURORA_GXM
   gl::call([] { g_gpu.active.reset(); });
   { std::lock_guard lock(g_stagingPoolMutex); g_retiredStaging.clear(); }
@@ -1123,6 +1127,22 @@ void split_staging_batch() {
 }
 
 uint32_t current_frame() noexcept { return g_frameIndex; }
+void advance_native_frame() noexcept { ++g_frameIndex; }
+
+NativeDrawMemory native_draw_memory(unsigned slot) {
+  if (slot >= FrameSlotCount) throw std::runtime_error("Native draw slot exceeds the triple buffer");
+  auto& set = g_nativeDrawSlots[slot];
+  if (!set) {
+    // Reuse the three existing bounded allocations; do not reserve another
+    // 26 MiB in CDRAM. Native frames never wait on the GX staging pool.
+    std::lock_guard lock(g_stagingPoolMutex);
+    if (g_stagingPool.empty()) throw std::runtime_error("Native and recorded draw slots cannot be mixed");
+    set = std::move(g_stagingPool.back());
+    g_stagingPool.pop_back();
+  }
+  return {{set->verts.data(), VertexBufferSize}, {set->uniforms.data(), UniformBufferSize},
+          {set->indices.data(), IndexBufferSize}, {set->storage.data(), StorageBufferSize}};
+}
 
 // The only place that erases from g_cachedBindGroups, whose handles the frame being encoded still
 // holds, so it runs in the seal prologue with the renderer mutex held and the producer excluded.

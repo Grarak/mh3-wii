@@ -1,6 +1,7 @@
 #pragma once
 
 #include "memory.hpp"
+#include <aurora/gpu_completion.hpp>
 #include <psp2/gxm.h>
 #include <map>
 #include <memory>
@@ -15,7 +16,7 @@ const SceGxmProgram* fragment_binary(uint64_t hash);
 const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
-// to the render thread. The display callback is pinned to worker core 0.
+// to the game thread. The display callback is pinned to worker core 0.
 class Device {
 public:
   explicit Device(bool vsync);
@@ -32,27 +33,30 @@ public:
   void finish();
   SceGxmNotification current_fence() const noexcept { return {m_notification, m_sceneSerial + unsigned(m_inScene)}; }
   SceGxmNotification completion_fence() { end(); return current_fence(); }
+  bool frame_pending() const noexcept;
+  unsigned frame_slot() const noexcept { return m_frames.slot(); }
   void begin_display();
   void flip();
-  const void* display_pixels() const noexcept { return m_displayData[m_back]; }
+  const void* display_pixels() const noexcept { return m_displayData[m_frames.slot()]; }
   static constexpr uint32_t Width = 960, Height = 544, Stride = 960;
 
 private:
   void release() noexcept;
-  bool m_initialized = false, m_inScene = false, m_vsync;
+  bool m_initialized = false, m_inScene = false;
   // Slot 0 is owned by this application context for ordered scene retirement.
   volatile unsigned* m_notification = nullptr;
   uint32_t m_sceneSerial = 0;
+  aurora::GpuFrameRing m_frames;
   SceGxmContext* m_context = nullptr;
   SceGxmShaderPatcher* m_patcher = nullptr;
   void* m_host = nullptr;
   std::vector<MappedMemory> m_memory;
   std::unique_ptr<CdramArena> m_arena;
   std::map<std::pair<uint32_t, uint32_t>, SceGxmRenderTarget*> m_targets;
-  void* m_displayData[3]{};
-  SceGxmColorSurface m_display[3]{};
-  SceGxmSyncObject* m_sync[3]{};
-  unsigned m_back = 0, m_front = 2;
+  void* m_displayData[aurora::GpuFrameRing::BufferCount]{};
+  SceGxmColorSurface m_display[aurora::GpuFrameRing::BufferCount]{};
+  SceGxmSyncObject* m_sync[aurora::GpuFrameRing::BufferCount]{};
+  unsigned m_front = aurora::GpuFrameRing::BufferCount - 1;
 };
 
 // Reflection supplies the vertex-ID / instance-ID stream register indices.

@@ -1,5 +1,6 @@
 #include "gx_host.h"
 #include "gx_panic.h"
+#include "native_graphics.h"
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <aurora/aurora.h>
 #include <aurora/generated_texture.hpp>
+#include <aurora/native_draw_memory.hpp>
 #include <aurora/thread_role.hpp>
 #include <cstdlib>
 #include <aurora/event.h>
@@ -84,7 +86,7 @@ void FlushHostEfbPokes() {
     if (!frameActive) aurora::gfx::preserve_next_efb_frame();
     efbDirty = false;
 }
-std::atomic<uint64_t> guestCopies{0}; // counted on the render thread
+std::atomic<uint64_t> guestCopies{0}; // logical frames, counted on the game thread
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include "gx_diagnostics.inc"
 #endif
@@ -290,6 +292,39 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
     InitializeGraphics(1, argv);
     if (!aurora::gl::on_render_thread()) throw std::runtime_error("Native graphics task called outside the game thread");
     task();
+}
+
+bool BeginNativeGraphicsFrame() {
+    char name[] = "MH3";
+    char* argv[]{name, nullptr};
+    InitializeGraphics(1, argv);
+    const auto frame = aurora::gfx::current_frame() + 1;
+    if (captureInterval && frame >= captureStart && frame % captureInterval == 0) {
+        const auto path = capturePath.parent_path() /
+            (capturePath.stem().string() + "-" + std::to_string(frame) + ".bmp");
+        aurora_request_frame_capture(frame, path.c_str());
+    }
+    if (!aurora_begin_native_frame()) return false;
+    const auto& color = aurora::gpu::g_frameBuffer;
+    const auto& depth = aurora::gpu::g_depthBuffer;
+    aurora::gl::bind_framebuffer(color.texture->gl(), depth.texture->gl());
+    aurora::gl::set_viewport(0, 0, color.width, color.height, 0.f, 1.f);
+    aurora::gl::set_scissor_enabled(false);
+    aurora::gl::set_color_mask(true, true, true, true);
+    aurora::gl::set_depth_write(true);
+    const float black[4]{0.f, 0.f, 0.f, 1.f};
+    aurora::gl::clear_color(black);
+    aurora::gl::clear_depth(0.f); // native shader projection uses reversed Z
+    return true;
+}
+
+bool NativeGraphicsFrameShouldRender() {
+    return initialized && aurora_native_frame_should_render();
+}
+
+void EndNativeGraphicsFrame() {
+    aurora_end_native_frame();
+    ++guestCopies;
 }
 
 template <size_t N>
@@ -601,18 +636,37 @@ int RunGraphicsCheck(int argc, char** argv) {
     aurora::gl::post([&] { inlineTask = aurora::gl::on_render_thread(); });
     if (!inlineTask) throw std::runtime_error("Native task was queued to another CPU thread");
     const auto& target = aurora::gpu::g_frameBuffer;
-    unsigned pending = 0;
+    unsigned rendered = 0, skipped = 0, slotsSeen = 0;
+    std::array<const uint8_t*, 3> slotMemory{};
     const float color[4]{20.f / 255.f, 40.f / 255.f, 80.f / 255.f, 1.f};
     for (unsigned frame = 0; frame < 30; ++frame) {
         ServiceHostGraphicsEvents();
-        aurora::gl::bind_framebuffer(target.texture->gl(), 0);
-        aurora::gl::set_viewport(0, 0, target.width, target.height, 0.f, 1.f);
-        aurora::gl::set_scissor_enabled(false);
-        aurora::gl::set_color_mask(true, true, true, true);
-        aurora::gl::clear_color(color);
-        const auto [width, height] = aurora::gl::drawable_size();
-        aurora::gl::present(target.texture, 0, 0, width, height);
-        pending += aurora::gl::gpu_frame_pending(); // timeout 0; never a finish
+        const auto slot = aurora_native_frame_slot();
+        if (BeginNativeGraphicsFrame()) {
+            const auto memory = aurora::native_draw_memory();
+            if (slot >= slotMemory.size() || memory.vertices.empty() || memory.uniforms.empty() ||
+                memory.indices.empty() || memory.attributes.empty())
+                throw std::runtime_error("Native rendered frame has no bounded draw slot");
+            if (slotMemory[slot] && slotMemory[slot] != memory.uniforms.data())
+                throw std::runtime_error("Native frame slot allocation changed across reuse");
+            for (unsigned other = 0; other < slotMemory.size(); ++other)
+                if (other != slot && slotMemory[other] == memory.uniforms.data())
+                    throw std::runtime_error("Native frame slots alias mutable draw data");
+            slotMemory[slot] = memory.uniforms.data();
+            slotsSeen |= 1u << slot;
+            aurora::gl::clear_color(color);
+            ++rendered;
+        } else {
+            const auto memory = aurora::native_draw_memory();
+            if (!memory.vertices.empty() || !memory.uniforms.empty() ||
+                !memory.indices.empty() || !memory.attributes.empty())
+                throw std::runtime_error("Skipped frame exposes writable GPU draw data");
+            ++skipped;
+        }
+        const bool submitted = NativeGraphicsFrameShouldRender();
+        EndNativeGraphicsFrame();
+        if (aurora_native_frame_slot() != (submitted ? (slot + 1) % 3 : slot))
+            throw std::runtime_error("Native frame ring rotation does not match submission");
     }
     // This diagnostic alone consumes a GPU result to validate pixel accuracy.
     uint8_t pixel[4]{};
@@ -620,8 +674,9 @@ int RunGraphicsCheck(int argc, char** argv) {
     if (std::abs(int(pixel[0]) - 20) > 1 || std::abs(int(pixel[1]) - 40) > 1 ||
         std::abs(int(pixel[2]) - 80) > 1 || pixel[3] != 255)
         throw std::runtime_error("Native renderer clear/present pixel validation failed");
-    std::fprintf(stderr, "MH3 renderer check: 30 native frames, game-thread owner, inline tasks, "
-                        "%u nonblocking busy observations, pixel %u,%u,%u,%u; no GX calls\n",
-                 pending, pixel[0], pixel[1], pixel[2], pixel[3]);
+    std::fprintf(stderr, "MH3 renderer check: 30 logical native frames, game-thread owner, inline tasks, "
+                        "%u rendered, %u skipped before preparation, slot mask %u, stable separate draw allocations, "
+                        "pixel %u,%u,%u,%u; no GX calls\n",
+                 rendered, skipped, slotsSeen, pixel[0], pixel[1], pixel[2], pixel[3]);
     return 0;
 }

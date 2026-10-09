@@ -1,6 +1,12 @@
 include(FetchContent)
 include(GoogleTest)
 
+add_executable(native_frame_gate_tests native_frame_gate.cpp)
+target_include_directories(native_frame_gate_tests PRIVATE ../include)
+target_compile_features(native_frame_gate_tests PRIVATE cxx_std_20)
+target_compile_options(native_frame_gate_tests PRIVATE -UNDEBUG)
+add_test(NAME native_frame_gate_tests COMMAND native_frame_gate_tests)
+
 if (NOT TARGET gtest)
   FetchContent_Declare(googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz

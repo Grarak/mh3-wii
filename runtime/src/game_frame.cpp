@@ -16,6 +16,7 @@
 #include "game_step.h"
 #include "game_tasks.h"
 #include "memory.h"
+#include "native_graphics.h"
 #include "village_boot.h"
 #include <initializer_list>
 #ifdef MH3_DEVELOPMENT
@@ -162,10 +163,13 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
     call(PollControllers);
     Memory::Write8(kSystem + kFramePhase, 1);
     const uint8_t boot = Memory::Read8(kSystem + kBootState);
+    // FrameSetup already latched admission before this logic step. Completing
+    // a notification during logic does not reopen a skipped frame's payload.
+    const bool render = NativeGraphicsFrameShouldRender();
     if (uint8_t(boot - 1) <= 1) {
         call(flfntStackReset);
         call(UpdateScene);
-        call(Setup2DProjection);
+        if (render) call(Setup2DProjection);
         call(MovieUpdate);
         call(NetworkResetCheck);
         Memory::Write8(kSystem + kFramePhase, 2);
@@ -196,11 +200,14 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         // drawing) instead of the task pass alone.
         static const bool probeAll = std::getenv("MH3_STEP_PROBE_ALL") != nullptr;
         if (logicSteps == probeAt || tickDue) ProbeStepDependence(logicSteps, [&] {
-            if (probeAll) { call(flfntStackReset); call(UpdateScene); call(Setup2DProjection); call(MovieUpdate); }
+            if (probeAll) { call(flfntStackReset); call(UpdateScene); if (render) call(Setup2DProjection); call(MovieUpdate); }
             call(RunTasks);
             if (!probeAll) return;
-            call(GrabScreen); call(ResetFade); call(TickSystemTimers); call(DrawScene); call(flfntFlush);
-            call(DrawFadeOverlay); call(TickFades); call(DrawHud); call(MovieDraw); call(PauseHook); call(OverlayHook);
+            call(GrabScreen); call(ResetFade); call(TickSystemTimers);
+            if (render) { call(DrawScene); call(flfntFlush); call(DrawFadeOverlay); }
+            call(TickFades);
+            if (render) { call(DrawHud); call(MovieDraw); }
+            call(PauseHook); call(OverlayHook);
         });
 #endif
         GameTasks::SkipStrapScreen();
@@ -212,16 +219,20 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         call(ResetFade);
         call(TickSystemTimers);
         Memory::Write8(kSystem + kFramePhase, 3);
-        call(DrawScene);
-        call(flfntFlush);
-        call(DrawFadeOverlay);
+        if (render) {
+            call(DrawScene);
+            call(flfntFlush);
+            call(DrawFadeOverlay);
+        }
         call(TickFades);
-        if (Memory::Read8(kSystem + kScreenGrab)) {
+        if (render && Memory::Read8(kSystem + kScreenGrab)) {
             Memory::Write8(kSystem + kScreenGrab, 0);
             call(RestoreGrabbedScreen);
         }
-        call(DrawHud);
-        call(MovieDraw);
+        if (render) {
+            call(DrawHud);
+            call(MovieDraw);
+        }
         call(PauseHook);
         call(OverlayHook);
     } else if (boot == 0) {

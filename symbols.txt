@@ -970,3 +970,5 @@
 8007a864 LightGetColor
 8007a878 LightApplyView
 8007a944 LightSettingDefaults
+8003ff20 NativeFrameBegin
+8003fffc NativeFrameEnd

@@ -149,6 +149,15 @@ void aurora_shutdown();
 const AuroraEvent* aurora_update();
 bool aurora_begin_frame();
 void aurora_end_frame();
+// Direct native rendering: call begin before preparing any draws or writing
+// their mapped GPU payload. False skips all drawing/clears/present for this
+// game frame without waiting. Logic still advances; always call end, including
+// after a skipped frame. The decision stays fixed throughout the frame.
+bool aurora_begin_native_frame();
+bool aurora_native_frame_should_render();
+// The three display and mutable draw slots rotate only on rendered frames.
+uint32_t aurora_native_frame_slot();
+void aurora_end_native_frame();
 typedef void (*AuroraFrameWorkerWaitCallback)();
 // Called from the producer thread at bounded intervals while Aurora waits for
 // the asynchronous frame worker. The callback must not enter Aurora.
@@ -169,8 +178,8 @@ bool aurora_flush_draws();
 // Blocks until the render thread and the GPU have finished all submitted work.
 void aurora_wait_for_gpu_idle();
 // Frames the render thread has swapped to the window so far.
-// Frameskip: skip rendering a frame when the render thread is still busy with the
-// previous one (see gfx::set_frameskip). Off by default.
+// Frameskip: poll GPU completion before native draw preparation. GXM reads its
+// latest scene notification; GLES uses a zero-timeout fence poll. Off by default.
 void aurora_set_frameskip(bool enabled);
 uint64_t aurora_skipped_frame_count();
 uint64_t aurora_presented_frame_count();
