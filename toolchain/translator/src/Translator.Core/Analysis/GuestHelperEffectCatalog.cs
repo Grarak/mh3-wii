@@ -92,7 +92,8 @@ public static class GuestHelperEffectCatalog
         "PPC_Mftb", "PPC_Mftbu", "PPC_TrapWord",
         // Runtime-answered guest loads (Lifting/GuestLoadHooks): read guest memory only;
         // tick-site adjustments of loaded values touch no guest state at all.
-        "MH3_HookedLoad32", "MH3_TickLoad", "MH3_EaseDivisor", "MH3_PerStep"
+        "MH3_HookedLoad32", "MH3_TickLoad", "MH3_EaseDivisor", "MH3_PerStep",
+        "MH3_Decay"
     };
 
     private static readonly string[] XerReadWriteHelpers =

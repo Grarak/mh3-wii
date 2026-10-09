@@ -10,7 +10,8 @@
 // sites (EaseDivisor) load such a d: MH3_EaseDivisor returns the divisor that
 // closes the same gap over this step's length s, 1 / (1 - (1 - 1/d)^s).
 // PerStep sites load an amount the guest applies once per step (a rate):
-// MH3_PerStep scales it by s.
+// MH3_PerStep scales it by s. Decay sites load a factor f of `x *= f` each
+// step: MH3_Decay returns f^s.
 //
 // Advance sites load an integer the guest moves on by a constant each step (a
 // spin angle, a phase): the site's limit is that amount k, and the value is
@@ -33,6 +34,7 @@ enum class TickSite : uint32_t {
     Countup,            // x + 1
     EaseDivisor,        // f32 d of x += (goal - x) / d (MH3_EaseDivisor)
     PerStep,            // f32 amount applied once per step (MH3_PerStep)
+    Decay,              // f32 factor f of x *= f (MH3_Decay)
     Advance,            // x + limit: moved on by limit * s
     Rate,               // the amount k of x + k: k * s
 };
@@ -73,6 +75,7 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
         return uint32_t(v - ticks + 1);
     case TickSite::EaseDivisor:
     case TickSite::PerStep:
+    case TickSite::Decay:
     case TickSite::Advance:
     case TickSite::Rate:
         return value;
@@ -91,3 +94,8 @@ extern "C" double MH3_EaseDivisor(double d) {
 }
 
 extern "C" double MH3_PerStep(double amount) { return amount * GameStep::Scale(); }
+
+extern "C" double MH3_Decay(double factor) {
+    const double s = GameStep::Scale();
+    return s == 1.0 || !(factor > 0.0) ? factor : std::pow(factor, s);
+}

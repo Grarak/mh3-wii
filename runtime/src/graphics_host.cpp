@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <aurora/event.h>
 #include <dolphin/gx.h>
+#include <dolphin/vi.h>
 #include <chrono>
 #include <ctime>
 #include <cstdio>
@@ -116,8 +117,8 @@ void InitializeGraphics(int argc, char** argv) {
     config.windowWidth = 640;
     config.windowHeight = 480;
 #ifdef MH3_DEVELOPMENT
-    // MH3_WINDOW_SCALE=n: an n times larger window, which renders at n times
-    // the resolution.
+    // MH3_WINDOW_SCALE=n: an n times larger window. It only shows the picture
+    // larger: pair it with MH3_RENDER_SCALE to render at that resolution.
     if (const char* v = std::getenv("MH3_WINDOW_SCALE")) {
         const int n = std::atoi(v);
         if (n > 1) { config.windowWidth *= n; config.windowHeight *= n; }
@@ -129,6 +130,14 @@ void InitializeGraphics(int argc, char** argv) {
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
     initialized = true;
+#ifdef MH3_DEVELOPMENT
+    // MH3_RENDER_SCALE=n: render the EFB at n times the native resolution,
+    // whatever the window size (captures are at that size).
+    if (const char* v = std::getenv("MH3_RENDER_SCALE")) {
+        const float n = std::strtof(v, nullptr);
+        if (n > 0) VISetFrameBufferScale(n);
+    }
+#endif
 #ifdef MH3_DEVELOPMENT
     if (const char* interval = std::getenv("MH3_PROFILE_FRAMES")) {
         const auto value = std::stoul(interval);

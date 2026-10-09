@@ -19,4 +19,5 @@
 extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc);
 extern "C" double MH3_EaseDivisor(double d);
 extern "C" double MH3_PerStep(double amount);
+extern "C" double MH3_Decay(double factor);
 extern "C" uint32_t MH3_HookedLoad32(uint32_t base, int32_t offset, uint32_t pc);

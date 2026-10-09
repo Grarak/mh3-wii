@@ -5,13 +5,17 @@
 // Float sites (lfs): EaseDivisor loads the d of `x += (goal - x) / d`, PerStep an
 // amount applied once per step. Integer Advance sites load a value the guest
 // moves on by a constant (limit) each step: it is moved on by limit * s.
-// Rate sites load such an amount kept in memory: it becomes k * s.
+// Rate sites load such an amount kept in memory: it becomes k * s. Decay sites
+// (lfs) load the f of `x *= f` each step: it becomes f^s.
 {0x800E1F08u, TickSite::PerStep},           // MHchar channel blend (800E1EB4): cross-fade -= rate per step
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
 {0x801298C8u, TickSite::Countup, 26999},    // enemy: steps (s16 +0x452), capped at 27000
 {0x80129A3Cu, TickSite::Countdown},         // enemy (80129A3C): countdowns (s16 +0x200, +0x202), clamped at 0
 {0x80129A5Cu, TickSite::Countdown},
 {0x801307C4u, TickSite::Countup, 32766},    // enemy: steps (s16 +0x440), capped at 0x7FFF
+{0x8013896Cu, TickSite::PerStep},           // enemy update (801382A0): fast turn speed (+0x1AC) slows by 10 a step
+{0x801389ACu, TickSite::Decay},             // enemy update: slow turn speed (+0x1AC) *= 0.9 a step
+{0x801389C0u, TickSite::PerStep},           // enemy update: yaw (+0x1A4) += turn speed a step
 {0x80138D14u, TickSite::Countdown},         // enemy (80138BC4): countdown (s16 +0x764)
 {0x80138D40u, TickSite::Countdown},
 {0x801556C8u, TickSite::Countup},           // enemy (801556C8): cycle steps (u16 +0x33C), wraps at 50

@@ -23,9 +23,12 @@ public sealed class GuestLoadHooks
     /// <summary>Float tick sites (<c>PerStep</c> kind): an amount applied once per step,
     /// scaled by the step's length.</summary>
     public const string PerStepHelper = "MH3_PerStep";
+    /// <summary>Float tick sites (<c>Decay</c> kind): a factor <c>x *= f</c> applied once per
+    /// step, raised to the step's length.</summary>
+    public const string DecayHelper = "MH3_Decay";
     private static readonly Regex Line = new(@"^\s*\{?\s*0x([0-9A-Fa-f]{1,8})", RegexOptions.Compiled);
 
-    public static GuestLoadHooks None { get; } = new(FrozenSet<uint>.Empty, FrozenSet<uint>.Empty, FrozenSet<uint>.Empty);
+    public static GuestLoadHooks None { get; } = new(FrozenSet<uint>.Empty, FrozenSet<uint>.Empty, FrozenSet<uint>.Empty, FrozenSet<uint>.Empty);
 
     /// <summary>Hooks in effect for this process; <see cref="None"/> until a project sets them.</summary>
     public static GuestLoadHooks Current { get; set; } = None;
@@ -36,12 +39,15 @@ public sealed class GuestLoadHooks
     private readonly FrozenSet<uint> _addresses;
     private readonly FrozenSet<uint> _easeDivisors;
     private readonly FrozenSet<uint> _perStep;
+    private readonly FrozenSet<uint> _decay;
 
-    private GuestLoadHooks(FrozenSet<uint> addresses, FrozenSet<uint> easeDivisors, FrozenSet<uint> perStep)
+    private GuestLoadHooks(FrozenSet<uint> addresses, FrozenSet<uint> easeDivisors, FrozenSet<uint> perStep,
+        FrozenSet<uint> decay)
     {
         _addresses = addresses;
         _easeDivisors = easeDivisors;
         _perStep = perStep;
+        _decay = decay;
     }
 
     public static GuestLoadHooks Load(string path)
@@ -49,6 +55,7 @@ public sealed class GuestLoadHooks
         var addresses = new HashSet<uint>();
         var easeDivisors = new HashSet<uint>();
         var perStep = new HashSet<uint>();
+        var decay = new HashSet<uint>();
         foreach (var line in File.ReadLines(path))
         {
             var match = Line.Match(line);
@@ -60,8 +67,11 @@ public sealed class GuestLoadHooks
                 easeDivisors.Add(address);
             if (line.Contains("PerStep", System.StringComparison.Ordinal))
                 perStep.Add(address);
+            if (line.Contains("TickSite::Decay", System.StringComparison.Ordinal))
+                decay.Add(address);
         }
-        return new GuestLoadHooks(addresses.ToFrozenSet(), easeDivisors.ToFrozenSet(), perStep.ToFrozenSet());
+        return new GuestLoadHooks(addresses.ToFrozenSet(), easeDivisors.ToFrozenSet(), perStep.ToFrozenSet(),
+            decay.ToFrozenSet());
     }
 
     public bool Contains(uint address) => _addresses.Contains(address);
@@ -71,5 +81,8 @@ public sealed class GuestLoadHooks
 
     /// <summary>The helper a float load site's value passes through, or null for none.</summary>
     public string? FloatHelper(uint address) =>
-        _easeDivisors.Contains(address) ? EaseDivisorHelper : _perStep.Contains(address) ? PerStepHelper : null;
+        _easeDivisors.Contains(address) ? EaseDivisorHelper
+        : _perStep.Contains(address) ? PerStepHelper
+        : _decay.Contains(address) ? DecayHelper
+        : null;
 }
