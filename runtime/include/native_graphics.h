@@ -43,6 +43,12 @@ void SetNativeMaterial(const mh3_native_material_state& material);
 // This CPU publication runs on skipped logical frames too.
 void OverlayNativeMaterial(const mh3_native_material_state& patch,uint32_t top_known=0);
 const mh3_native_material_state& GetNativeMaterialState();
+// Owner-only cumulative preparation counters, followed by current occupancy
+// and fixed cache bytes. Read only at development reporting boundaries.
+// 0..8: needs, dirty lookups, base hits, full preparations, base evictions,
+//       model hits, model misses, configuration hashes, suffix hashes.
+// 9..11: live base entries, live model variants, fixed cache allocation bytes.
+void GetNativeMaterialPreparationStatistics(uint64_t statistics[12]);
 inline void ApplyNativeMaterial(const mh3_native_material_state& material) { SetNativeMaterial(material); }
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // Direct compact resident mesh boundary. Caller supplies typed live uniforms;

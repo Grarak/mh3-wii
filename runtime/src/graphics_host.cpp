@@ -19,6 +19,7 @@
 #include "gl/gl.hpp"
 #include "dolphin/vi/vi_internal.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <exception>
 #include <vector>
@@ -408,6 +409,12 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                     lastSkipped = aurora_skipped_frame_count();
     static auto lastWaits = aurora::gfx::staging_wait_counters();
     static auto previousAx = AxDspHle::GetMixWorkerStats();
+    static auto previousFeedback = aurora::scene_feedback_stats();
+    static std::array<uint64_t, 12> previousMaterial = [] {
+        std::array<uint64_t, 12> counters{};
+        GetNativeMaterialPreparationStatistics(counters.data());
+        return counters;
+    }();
 #ifdef AURORA_GXM
     static auto previousDisplay = aurora::gxm::display_statistics();
 #endif
@@ -468,6 +475,41 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         ax.storageBytes / 1048576.0, ax.workerRunning ? "live" : "off", unsigned(ax.workerThread),
         ax.workerCore, unsigned(ax.workerAffinity), ax.core0Checked ? "yes" : "no");
     previousAx = ax;
+    std::array<uint64_t, 12> material{};
+    GetNativeMaterialPreparationStatistics(material.data());
+    const auto materialRate = [&](size_t counter) {
+        return double(material[counter] - previousMaterial[counter]) / seconds;
+    };
+    std::fprintf(stderr, "MH3 material: needs %.1f/s dirty %.1f/s, base hits %.1f/s full preparations %.1f/s evictions %.1f/s; model hits %.1f/s misses %.1f/s\n",
+        materialRate(0), materialRate(1), materialRate(2), materialRate(3), materialRate(4),
+        materialRate(5), materialRate(6));
+    std::fprintf(stderr, "MH3 material: config hashes %.1f/s suffix hashes %.1f/s, base/model entries %llu/%llu, fixed cache %.3f MiB\n",
+        materialRate(7), materialRate(8), static_cast<unsigned long long>(material[9]),
+        static_cast<unsigned long long>(material[10]), material[11] / 1048576.0);
+    previousMaterial = material;
+    const auto feedback = aurora::scene_feedback_stats();
+    std::fprintf(stderr, "MH3 feedback: %.1f allocations/s %.1f reuses/s, evictions %llu cancellations %llu; pool %.3f/%.3f MiB (%u/%u targets, %u retained/%u available), peak %.3f MiB/%u targets\n",
+        double(feedback.allocations - previousFeedback.allocations) / seconds,
+        double(feedback.reuses - previousFeedback.reuses) / seconds,
+        static_cast<unsigned long long>(feedback.evictions - previousFeedback.evictions),
+        static_cast<unsigned long long>(feedback.capacity_cancellations - previousFeedback.capacity_cancellations),
+        feedback.pool_bytes / 1048576.0, feedback.byte_limit / 1048576.0,
+        feedback.pool_targets, feedback.target_limit, feedback.retained_targets, feedback.available_targets,
+        feedback.peak_pool_bytes / 1048576.0, feedback.peak_pool_targets);
+    std::fprintf(stderr, "MH3 feedback: capture %.1f/s glare %.1f/s clone %.1f/s; last call %u targets (%u allocated/%u reused), %.3f MiB; untracked dimensions %llu\n",
+        double(feedback.capture_calls - previousFeedback.capture_calls) / seconds,
+        double(feedback.glare_calls - previousFeedback.glare_calls) / seconds,
+        double(feedback.clone_calls - previousFeedback.clone_calls) / seconds,
+        feedback.last_call_targets, feedback.last_call_allocations, feedback.last_call_reuses,
+        feedback.last_call_bytes / 1048576.0, static_cast<unsigned long long>(feedback.untracked_sizes));
+    for (uint32_t i = 0; i < feedback.size_count; ++i) {
+        const auto& size = feedback.sizes[i];
+        if (i < previousFeedback.size_count && size.allocations == previousFeedback.sizes[i].allocations) continue;
+        std::fprintf(stderr, "MH3 feedback: target %ux%u, %llu allocations/%llu reuses total, %.3f MiB/%u currently pooled\n",
+            size.width, size.height, static_cast<unsigned long long>(size.allocations),
+            static_cast<unsigned long long>(size.reuses), size.pool_bytes / 1048576.0, size.pool_targets);
+    }
+    previousFeedback = feedback;
     const auto high = aurora::gfx::staging_high_water();
     std::fprintf(stderr, "MH3 staging: %llu splits, high water vert %llu idx %llu uniform %llu storage %llu (KiB)\n",
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
