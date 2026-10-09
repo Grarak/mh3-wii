@@ -47,6 +47,7 @@ extern "C" void func_800A4C20(CpuContext*); // nw4r::ef::Effect::Calc(bool onlyB
 extern "C" void func_800A8AC0(CpuContext*); // nw4r::ef::Emitter::CalcEmitter()
 extern "C" void func_800A8E5C(CpuContext*); // nw4r::ef::Emitter::CalcEmission()
 extern "C" void func_800AC35C(CpuContext*); // nw4r::ef::ParticleManager::Calc()
+void ParticleManagerCalcNative(CpuContext*); // its port (particle_manager_calc.cpp)
 // Native ports (ef_anim_curve.cpp, nw4r_accessors.cpp), called directly.
 extern "C" void MH3_ResEmitterNumPtclTrack(CpuContext*);
 extern "C" void MH3_ResEmitterGetPtclTrack(CpuContext*);
@@ -468,7 +469,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     // Whole ticks with every particle on a whole tick (the stock 1/30 s step)
     // are the original.
     if (step.particleStep == 1.0 && step.particles.Empty()) {
-        func_800AC35C(ctx);
+        ParticleManagerCalcNative(ctx);
         return;
     }
     // One frame for the whole port: Calc runs inside it, and leaving it
@@ -507,7 +508,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         if (std::floor(age + dt) == std::floor(age)) betweenTicks[p] = true;
         work.push_back(w);
     }
-    func_800AC35C(ctx);
+    ParticleManagerCalcNative(ctx);
     for (const Work& w : work) betweenTicks.Erase(w.address);
 
     GuestCall game{ctx};
