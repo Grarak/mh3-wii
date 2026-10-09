@@ -103,6 +103,15 @@ struct Catalog {
 
     // Tracker generation of the last CertifyLoadedNativeModels pass.
     uint64_t discovered_generation = UINT64_MAX;
+
+    // Model files found at a range start by an earlier pass that were not yet
+    // whole in memory: each pass retries them until they are.
+    struct PendingModelFile {
+        uint32_t container, bytes;
+        uint64_t file;
+    };
+
+    std::vector<PendingModelFile> pending_model_files;
     NativeModelPreparationDiagnostics* diagnostics = nullptr;
     bool diagnostics_initialized = false;
 };
@@ -1173,25 +1182,28 @@ size_t CertifyLoadedNativeModels() {
     if (c.tracker.generation == c.discovered_generation)
         return 0;
 
+    // Ranges no newer than the last pass were looked at then: only new ones
+    // can start a model file. Files still loading wait in the pending list.
+    const uint64_t seen = c.discovered_generation == UINT64_MAX ? 0 : c.discovered_generation;
     c.discovered_generation = c.tracker.generation;
-
-    // The containers of complete model files: each range holding a file start.
-    struct Candidate {
-        uint32_t container;
-        uint64_t file;
-    };
-
-    std::vector<Candidate> candidates;
+    auto& pending = c.pending_model_files;
 
     for (size_t i = 0; i < c.tracker.count; i++) {
         const auto& range = c.tracker.ranges[i];
+
+        if (range.generation <= seen)
+            continue;
+
         uint64_t file = 0;
         uint32_t bytes = 0;
 
         if (!FindNativeModelSource(range.partition_offset, &file, &bytes) || file < range.partition_offset || file - range.partition_offset >= range.bytes)
             continue;
 
-        candidates.push_back({range.address + uint32_t(file - range.partition_offset), file});
+        const uint32_t container = range.address + uint32_t(file - range.partition_offset);
+
+        if (std::none_of(pending.begin(), pending.end(), [&](const auto& p) { return p.container == container && p.file == file; }))
+            pending.push_back({container, bytes, file});
     }
 
     size_t certified = 0;
@@ -1199,7 +1211,7 @@ size_t CertifyLoadedNativeModels() {
 
     // A file that fails is left uncertified; its models resolve (and report
     // their failure) at their first draw.
-    const auto certify = [&](const Candidate& candidate) {
+    const auto certify = [&](const Catalog::PendingModelFile& candidate) {
         MH3_RETURN_IF_ERROR(TryEnsureNativeModelAssets(candidate.file, 16));
         models.clear();
 
@@ -1227,7 +1239,21 @@ size_t CertifyLoadedNativeModels() {
         return Status{};
     };
 
-    for (const auto& candidate : candidates) {
+    // A file leaves the list once its start no longer holds it (overwritten or
+    // freed) or once it is whole: a retry could not certify more.
+    const auto holds = [&](const Catalog::PendingModelFile& candidate, uint32_t bytes) {
+        mh3_source_identity id{};
+        return mh3_source_resolve(&c.tracker, candidate.container, bytes, &id) == MH3_RES_OK && id.partition_offset == candidate.file;
+    };
+
+    for (size_t i = 0; i < pending.size();) {
+        const auto candidate = pending[i];
+
+        if (!holds(candidate, 1)) {
+            pending.erase(pending.begin() + i);
+            continue;
+        }
+
         const Status status = certify(candidate);
 #ifdef MH3_DEVELOPMENT
         if (!status.ok())
@@ -1235,6 +1261,11 @@ size_t CertifyLoadedNativeModels() {
 #else
         (void)status;
 #endif
+
+        if (holds(candidate, candidate.bytes))
+            pending.erase(pending.begin() + i);
+        else
+            ++i;
     }
 
     return certified;
