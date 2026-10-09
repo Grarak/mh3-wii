@@ -46,9 +46,15 @@
 {0x800EB7CCu, TickSite::Countup},
 {0x800FB6D8u, TickSite::Countup},            // enemy part (800FB1C4): steps (+0x10)
 {0x800FB944u, TickSite::Countup, 9},         // enemy part: steps (+0xC), up to 10
+{0x800FCAF4u, TickSite::CountdownPastZero}, // effect object (800FC48C): wait (+0xC) before its burst
+{0x800FCCF4u, TickSite::Countup},           // effect object (800FC48C): age (+0x10) for its colour keys
+{0x800FCF68u, TickSite::CountdownPastZero}, // effect object (800FC48C): wait, then life (+0xC)
+{0x800FD054u, TickSite::Countup},           // effect object (800FC48C): age (+0x10) for its texture matrix curves
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
+{0x80101300u, TickSite::Countup},           // effect object (80100AD0): age (+0x10) for its colour and alpha keys
 {0x8010425Cu, TickSite::CountdownPastZero},  // enemy (80104220): countdown (+0xC), fires below 0
 {0x80106608u, TickSite::CountdownPastZero}, // enemy effect (80106594, ending): steps left (+0x10) before the release
+{0x80106B7Cu, TickSite::Countdown},         // effect object (80106984): delay (+0xC)
 {0x80108448u, TickSite::Countdown},         // hunter effect (80107EC0, kind 0xC): start delay (+0x10)
 {0x80108DE8u, TickSite::CountdownPastZero}, // hunter effect (80108AD8, kinds 8/0x15): wait (+0xC)
 {0x8010920Cu, TickSite::Countup},           // hunter effect (kind 0xE): colour key frame (+0x10)
@@ -77,6 +83,18 @@
 {0x80110B98u, TickSite::PerStep},           // hunter effect falling: fall speed (+0x6C) moved per step
 {0x80110E60u, TickSite::PerStep},           // hunter effect (80110A7C, landing): fall acceleration per step
 {0x80110EB8u, TickSite::PerStep},           // hunter effect landing: fall speed (+0x6C) moved per step
+{0x80113A64u, TickSite::Countup},           // hunter effects (80112D80, kinds 0-2, 28, 57): age (+0x10) for colour keys
+{0x80113BC8u, TickSite::CountdownPastZero}, // hunter effects (kinds 7, 59): life (+0xC)
+{0x80113C48u, TickSite::CountdownPastZero}, // hunter effects (kind 8): life (+0xC)
+{0x80113D04u, TickSite::CountdownPastZero}, // hunter effects (kind 8): wait (+0x10) between parts, 9 ticks
+{0x80113DC4u, TickSite::CountupEvery, 5},   // hunter effects (kind 11): age (+0x10), == 5 starts a part once
+{0x80113F8Cu, TickSite::Countup},           // hunter effects (kind 19): age (+0x10) for colour keys
+{0x80114348u, TickSite::Countdown},         // hunter effects (kind 32): life, then fade (+0xC)
+{0x801143E4u, TickSite::CountupEvery, 30},  // hunter effects (kind 32): age (+0x10), a part every 30
+{0x80114420u, TickSite::CountdownPastZero}, // hunter effects (kind 47): life (+0xC)
+{0x80114458u, TickSite::Countup},           // hunter effects (kind 56): age (+0x10) for colour keys
+{0x80114540u, TickSite::Countup},           // hunter effects (kind 102): age (+0x10) for colour keys
+{0x80114788u, TickSite::Countup},           // hunter effects (kind 136): age (+0x10)
 {0x80119E74u, TickSite::CountdownPastZero}, // proximity glow (80119E50): start delay (+0xC)
 {0x8011A69Cu, TickSite::Countup},           // proximity glow (8011A3E8): fade-in key frame (+0x10), up to 10
 {0x8011A6E4u, TickSite::Countdown},         // proximity glow: fade-out key frame (+0x10), down to 0
@@ -157,14 +175,29 @@
 {0x802E4DB4u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xD)
 {0x802E4E24u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xE), 30..50
 {0x802EF2ACu, TickSite::Countdown},         // player-side timer (802EF294): +0x5C, set from seconds * fps by 802EF3A4
+{0x802F2D3Cu, TickSite::CountdownPastZero}, // Alatreon pieces (802F2D14): start delay (+0x10)
+{0x802F2D50u, TickSite::CountdownPastZero}, // Alatreon pieces: wait (+0xC) between pieces, 3 ticks
+{0x802F3094u, TickSite::PerStep},           // Alatreon pieces: growth per step
+{0x802F30D4u, TickSite::Countup},           // Alatreon pieces: colour phase (+8)
+{0x802F30F4u, TickSite::Countup},           // Alatreon pieces: colour phase (+8)
+{0x802F3114u, TickSite::Countup},           // Alatreon pieces: colour phase (+8)
+{0x802F3134u, TickSite::Countup},           // Alatreon pieces: colour phase (+8)
+{0x802F3278u, TickSite::Countup},           // Alatreon effect (802F3254): life (+0xC)
+{0x802F3420u, TickSite::CountupEvery, 32},  // Alatreon effect (802F33BC): age (+0xC) for its curves, kind 6 == 32 once
 {0x802FA510u, TickSite::Countup},           // glowing parts (802FA3A0): colour pulse phase (s16 +0x30A per part), 120-step cycle
 {0x802FA5B8u, TickSite::Countdown},         // glowing parts: near fade (+0xC) down to 0
 {0x802FA5D0u, TickSite::Countup, 14},       // glowing parts: near fade (+0xC) up to 15
+{0x8030555Cu, TickSite::Countdown},         // monster effects (803048A4, kind 44): life (+0xC)
+{0x803055E4u, TickSite::Countup},           // monster effects (kinds 21-23, 45-47): age (+0xC) for colour keys
 {0x80308050u, TickSite::Countup},            // effect (80307F30): age (+0x10)
 {0x8030805Cu, TickSite::CountdownPastZero},  // effect: life (+0xC), ends below 0
+{0x80308748u, TickSite::Advance, 5461},     // effect object (80307EA8): spin (+0x2C)
+{0x8030889Cu, TickSite::Advance, 5461},     // effect object (80307EA8): spin (+0x28)
 {0x803089C0u, TickSite::CountdownPastZero}, // debris (80308960): life (+0xC), ends below 0
 {0x80308A00u, TickSite::PerStep},            // debris (80308960): gravity (+0x18) off the fall speed each step
 {0x80308A18u, TickSite::Advance, -2185},     // debris (80308960): spin (+0x24), -2185 per step
+{0x80308AC4u, TickSite::CountdownPastZero}, // effect object (80308A94): life (+0xC)
+{0x80308AF0u, TickSite::Countup},           // effect object (80308A94): age (+0x10) for its texture matrix curves and colours
 {0x8031E51Cu, TickSite::CountdownPastZero},  // creature (8031DF1C): countdown (s16 +0x30)
 {0x8031E958u, TickSite::Countup},           // enemy-attached model (8031E858): key frame (+0xC) of its scale curve
 {0x8031F728u, TickSite::Advance, 512},      // marker effect (8031F574): bob phase (u16), +512 per step
@@ -227,6 +260,9 @@
 {0x80383AB0u, TickSite::Countdown},         // 0x806C4898 countdown (80383A50), set from seconds * fps by 80383C0C / 80384388
 {0x803860F0u, TickSite::CountdownPastZero},  // object (8038608C): countdown (+0x16C), fires below 0
 {0x80386488u, TickSite::Countdown},          // object (8038642C): countdown (+0x16C), fires at 0
+{0x80393FD4u, TickSite::Countup},           // village effects (80393B50): item age (s16) to 1350
+{0x80393FF8u, TickSite::Countdown},         // village effects: wait (s16) between parts, 8 ticks
+{0x80396700u, TickSite::Countup},           // village effect (80396074): age (+0x10) to its life (+0xC)
 {0x80398008u, TickSite::Countup},           // quest result screen (803975D0): +0x2FF4 step counter
 {0x80398080u, TickSite::Countdown},         // quest result screen: +0x2FF4 countdown, set from seconds * fps by 803973A8
 {0x8039E568u, TickSite::Countup},           // quest result screen (8039E3AC): +0x2FF4 step counter

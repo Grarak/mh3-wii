@@ -30,6 +30,15 @@
 #include "ps_vec_math.h"
 
 #include <cstdint>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#include "game_step.h"
+
+#include <cstdio>
+#include <map>
+#include <unordered_map>
+#include <unordered_set>
+#endif
 
 namespace {
 
@@ -52,7 +61,75 @@ const RawDispatchRecord* effectObjectMemo = nullptr;
 const RawDispatchRecord* effectManagerMemo = nullptr;
 const RawDispatchRecord* fieldObjectMemo = nullptr;
 
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=effect-objects: each update callback (+0x34) of the live effect
+// objects with each kind (+2) and type (+3) it runs, the first time, with the
+// object's state (+5), index and the step counter: the code to sweep for
+// per-step counters in a scene (docs/variable-step.md). Every 900 ticks of
+// game time, per callback and kind (the last an object had), how many objects
+// ended and their mean life in ticks, to compare with MH3_VARIABLE_STEP=0.
+struct EffectLife {
+    uint32_t callback;
+    uint16_t kind;
+    double born;
+};
+
+struct EffectLives {
+    unsigned ended = 0;
+    double ticks = 0;
+};
+
+void TraceEffectObjects() {
+    static std::unordered_set<uint64_t> seen;
+    static std::unordered_map<uint32_t, EffectLife> live;
+    static std::map<uint64_t, EffectLives> lives;
+    static double lastPrint = 0;
+    const double now = GameStep::Elapsed();
+    const uint32_t array = Read32(kEffectObjects + 0x10);
+
+    for (int32_t i = 0; i < int32_t(Read32(kEffectObjects + 0xC)); ++i) {
+        const uint32_t entry = array + uint32_t(i) * 0x48;
+        const bool on = MemoryInline::FlatRead8(entry) != 0;
+        const uint32_t callback = on ? Read32(entry + 0x34) : 0;
+        const uint16_t kind = uint16_t(MemoryInline::FlatRead8(entry + 2) << 8 | MemoryInline::FlatRead8(entry + 3));
+        auto it = live.find(entry);
+
+        if (it != live.end() && it->second.callback != callback) {
+            EffectLives& l = lives[uint64_t(it->second.callback) << 16 | it->second.kind];
+            ++l.ended;
+            l.ticks += now - it->second.born;
+            live.erase(it);
+            it = live.end();
+        }
+
+        if (!on)
+            continue;
+
+        if (it == live.end())
+            live.emplace(entry, EffectLife{callback, kind, now});
+        else
+            it->second.kind = kind;
+
+        if (seen.insert(uint64_t(callback) << 16 | kind).second)
+            std::fprintf(stderr, "MH3 effect object: callback %08x kind %u type %u state %u index %d tick %u\n", callback, kind >> 8, kind & 0xFF,
+                         MemoryInline::FlatRead8(entry + 5), int(i), Read32(0x8065AA6Cu));
+    }
+
+    if (now - lastPrint < 900)
+        return;
+
+    lastPrint = now;
+
+    for (const auto& [key, l] : lives)
+        std::fprintf(stderr, "MH3 effect object lives: t=%.0f callback %08x kind %u type %u ended %u mean %.2f ticks\n", now, uint32_t(key >> 16), unsigned(key >> 8 & 0xFF),
+                     unsigned(key & 0xFF), l.ended, l.ticks / l.ended);
+}
+#endif
+
 void EffectObjectsUpdate(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    static const bool traced = TraceOptions().Has("effect-objects");
+#endif
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     const uint32_t manager = Read32(kEffectObjects + 4);
@@ -60,6 +137,10 @@ void EffectObjectsUpdate(CpuContext* ctx) {
     if (!manager)
         return;
 
+#ifdef MH3_DEVELOPMENT
+    if (traced) [[unlikely]]
+        TraceEffectObjects();
+#endif
     game.Call<0x800F9608>({manager});
     MemoryInline::FlatWrite8(kEffectObjects + 0xC40, 0);
 
