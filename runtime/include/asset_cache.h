@@ -30,11 +30,7 @@ class AssetCache {
 
     // Streams are copied out to cache/files at their first read and then read
     // from there (least recently used copies make room).
-#ifdef __vita__
     static constexpr uint64_t StreamCacheBytes = 128ull << 20;
-#else
-    static constexpr uint64_t StreamCacheBytes = 512ull << 20;
-#endif
 
     // The stream copies under root/cache/files, in bytes.
     static uint64_t StreamCacheUse(const std::filesystem::path& root);

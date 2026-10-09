@@ -48,11 +48,10 @@ constexpr size_t MaxPendingBytes = 48u << 20;
 // Extracted stream files (cache/files): the disc's audio streams, copied out
 // as plain files at their first read so that later reads skip the image's
 // decompression and decryption. Least recently used files go beyond
-// AssetCache::StreamCacheBytes; on the Vita also beyond what the storage
-// holds at startup, less a reserve for saves (the launcher warns then).
-#ifdef __vita__
+// AssetCache::StreamCacheBytes, or beyond what the storage holds at startup
+// less a reserve for saves (the Vita's launcher warns then).
 constexpr uint64_t StorageReserve = 32ull << 20;
-#endif
+
 // Small enough that game reads waiting on the image's lock are not delayed long.
 constexpr size_t ExtractChunk = 256u << 10;
 
@@ -97,6 +96,23 @@ std::string Hex16(uint64_t value) {
 std::vector<uint8_t> Load(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(in), {}};
+}
+
+// Free bytes on the storage holding `path`; UINT64_MAX when unknown.
+uint64_t FreeStorage(const std::filesystem::path& path) {
+#ifdef __vita__
+    const std::string device = path.string().substr(0, path.string().find(':') + 1);
+    SceIoDevInfo storage{};
+
+    if (device.empty() || sceIoDevctl(device.c_str(), 0x3001, nullptr, 0, &storage, sizeof storage) < 0)
+        return UINT64_MAX;
+
+    return uint64_t(storage.free_size);
+#else
+    std::error_code error;
+    const auto space = std::filesystem::space(path, error);
+    return error ? UINT64_MAX : uint64_t(space.available);
+#endif
 }
 
 // Write to a temporary name, then publish: a file under its final name is complete.
@@ -316,15 +332,11 @@ struct AssetCache::Impl {
             }
         }
 
-#ifdef __vita__
-        const std::string device = root.string().substr(0, root.string().find(':') + 1);
-        SceIoDevInfo storage{};
-
-        if (!device.empty() && sceIoDevctl(device.c_str(), 0x3001, nullptr, 0, &storage, sizeof storage) >= 0) {
-            const uint64_t room = extractedBytes + uint64_t(storage.free_size);
+        if (const uint64_t free = FreeStorage(root); free != UINT64_MAX) {
+            const uint64_t room = extractedBytes + free;
             extractBudget = std::min(extractBudget, room > StorageReserve ? room - StorageReserve : 0);
         }
-#endif
+
         LoadStreamLog();
         threads.resize(Workers);
 
