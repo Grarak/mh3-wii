@@ -324,11 +324,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     GuestGxStream translatedStream;
     delivered.clear();
     const uint8_t arrayCommand[]{0x08, 0xA3, 0x10, 0, 0x12, 0x34};
+    // Host pointers travel as a big-endian 64-bit field; 32-bit hosts zero-extend them.
+    constexpr uintptr_t kHostArrayProbe = sizeof(uintptr_t) == 8
+        ? static_cast<uintptr_t>(0x0123456789ABCDEFULL) : static_cast<uintptr_t>(0x89ABCDEFu);
     translatedStream.Write(arrayCommand, sink, [](uint32_t guest) -> GuestGxStream::ArrayView {
         if (guest != 0x10001234) throw std::runtime_error("GX array address byte order failed");
-        return {0x0123456789ABCDEFULL, 0x1234};
+        return {kHostArrayProbe, 0x1234};
     });
-    const std::vector<uint8_t> expected{0x50, 0, 0x13, 1, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0, 0, 0x12, 0x34, 0};
+    std::vector<uint8_t> expected{0x50, 0, 0x13};
+    for (unsigned i = 0; i < 8; ++i) expected.push_back(uint8_t(uint64_t(kHostArrayProbe) >> (56 - 8 * i)));
+    expected.insert(expected.end(), {0, 0, 0x12, 0x34, 0});
     if (delivered != expected) throw std::runtime_error("GX host array command encoding failed");
     {
         std::array<uint8_t, 32> inner{}, outer{};

@@ -30,7 +30,9 @@ internal static class AssemblyBlobWriter
             ? ".section .rdata,\"dr\""
             : OperatingSystem.IsMacOS()
                 ? ".section __TEXT,__const"
-                : ".section .rodata,\"a\",@progbits");
+                // '%' rather than '@': '@' starts a comment in 32-bit ARM assembly,
+                // and every ELF assembler accepts the '%' spelling.
+                : ".section .rodata,\"a\",%progbits");
         assembly.AppendLine();
 
         foreach (var blob in blobs)
@@ -64,7 +66,7 @@ internal static class AssemblyBlobWriter
             // object linked into the binary already does (the norm on modern toolchains, just not
             // producible without an explicit section since this file is hand-assembled, not
             // compiler-emitted).
-            assembly.AppendLine(".section .note.GNU-stack,\"\",@progbits");
+            assembly.AppendLine(".section .note.GNU-stack,\"\",%progbits");
         }
         FileOutput.WriteTextIfChanged(assemblyPath, assembly.ToString());
     }
