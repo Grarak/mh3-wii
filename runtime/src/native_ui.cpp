@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "native_graphics.h"
 #include "../native/mh3_ui.h"
+#include "../native/mh3_system_ui.h"
 #include "../native/adapters/model_state_bridge.h"
 #include "../native/adapters/ui_bridge.h"
 #include <algorithm>
@@ -20,6 +21,7 @@ bool uiTextured=false;
 uint32_t uiStages=1;
 struct TextureCoordinates { uint32_t type=1,source=4,matrix=60; } uiCoordinates;
 uint64_t textureProducerGeneration=0;
+NativeUISourceObserver sourceObserver=nullptr;
 uint64_t NextGeneration(uint32_t payload) {
     textureProducerGeneration=std::max(textureProducerGeneration,ReadNativeTextureGeneration(payload))+1;
     if(!textureProducerGeneration) throw std::runtime_error("Native UI producer generation overflow");
@@ -92,6 +94,9 @@ void SetupPrimitive(GuestCall& call,uint32_t flags,uint32_t texture,uint32_t pal
     }
     auto raster=GetNativeDrawState().raster;raster.cull_mode=0;SetNativeRaster(raster);
     SetNativeDepthCompareBeforeTexture(false);
+    auto material=GetNativeMaterialState();material.channel_count=1;material.channel[0].color=material.channel[0].alpha=(mh3_pack_channel_control){1,1,0,0,2,0};material.channel[0].flags|=MH3_CHANNEL_CONTROL_COLOR|MH3_CHANNEL_CONTROL_ALPHA;
+    for(unsigned field=MH3_PIXEL_ALPHA_COMPARE0;field<=MH3_PIXEL_ALPHA_OPERATION;++field){material.pixel.known|=UINT64_C(1)<<field;material.pixel.values[field]=field==MH3_PIXEL_ALPHA_COMPARE0||field==MH3_PIXEL_ALPHA_COMPARE1?7:field==MH3_PIXEL_ALPHA_OPERATION?1:0;}
+    mh3_system_ui_application_pipeline(&material,(flags&2)!=0);if(flags&2){const uint32_t stage=0;mh3_system_ui_direct_stages(&material,&stage,1);}SetNativeMaterial(material);
     uiTextured=(flags&2)!=0;uiStages=1;
     if(uiTextured) {
         uiCoordinates={1,4,60};
@@ -107,6 +112,45 @@ void ConfigureDirectCoordinates(uint32_t id,uint32_t type,uint32_t source,uint32
     if(id!=0 || source!=4 || (type!=0 && type!=1) || (matrix!=60 && matrix!=54))
         throw std::runtime_error("Native UI texture coordinates require an unsupported generator");
     uiCoordinates={type,source,matrix};
+    auto material=GetNativeMaterialState();material.texgen[0].known|=1u<<MH3_TEXGEN_PROJECTION;material.texgen[0].values[MH3_TEXGEN_PROJECTION]=type==0;SetNativeMaterial(material);
+}
+mh3_ui_stream ShapeStream(uint32_t flags,uint32_t count) {
+    mh3_ui_stream stream{};stream.count=count;
+    stream.position_format=flags&1?MH3_UI_POSITION_FLOAT_3:flags&0x10000?MH3_UI_POSITION_FLOAT_2:MH3_UI_POSITION_I16_2;
+    stream.positions=Span(Memory::Read32(Shape+8),size_t(count)*(flags&1?12:flags&0x10000?8:4));
+    stream.color_stride=flags&0x20000?0:4;
+    stream.colors=Span(Memory::Read32(Shape+12),count?size_t(count-1)*stream.color_stride+4:0);
+    stream.uv_scale[0]=stream.uv_scale[1]=1;
+    if(flags&2) {
+        stream.uv_format=flags&0x40000?MH3_UI_UV_I16:MH3_UI_UV_FLOAT;
+        stream.uvs=Span(Memory::Read32(Shape+16),size_t(count)*(flags&0x40000?4:8));
+        if(flags&0x40000) {
+            const auto binding=ResourceBinding(0x8066CE80);
+            if(!binding.source.width||!binding.source.height) throw std::runtime_error("Native shape texture has zero dimensions");
+            stream.uv_scale[0]=1.f/binding.source.width;stream.uv_scale[1]=1.f/binding.source.height;
+        }
+        if(flags&8) {
+            stream.transform_uv=1;
+            for(unsigned i=0;i<12;++i) stream.uv_matrix[i]=Memory::ReadFloat32(0x8066CE44+i*4);
+        }
+    }
+    return stream;
+}
+void ObserveShape(uint32_t flags,uint32_t count) {
+    if(!sourceObserver || !(flags&2) || !count) return;
+    if((flags&1) || Memory::Read8(Shape+4)!=MH3_UI_QUADS)
+        throw std::runtime_error("Native source observer requires application 2D quads");
+    const auto stream=ShapeStream(flags,count);auto state=GetNativeDrawState();
+    if(!mh3_draw_ortho(state.projection,0,Memory::ReadFloat32(ScreenHeight),0,Memory::ReadFloat32(ScreenWidth),-10000,10000))
+        throw std::runtime_error("Native source observer has invalid screen dimensions");
+    state.perspective=0;
+    if(flags&4) for(unsigned i=0;i<12;++i) state.position[i]=Memory::ReadFloat32(0x8066CE14+i*4);
+    else mh3_draw_identity_position(state.position);
+    auto binding=ResourceBinding(0x8066CE80);
+    binding.sampler.wrap_s=Memory::Read32(0x8066CE74);binding.sampler.wrap_t=Memory::Read32(0x8066CE78);
+    mh3_native_palette_source palette{};const mh3_native_palette_source* colors=nullptr;
+    if(binding.source.indexed) {palette=ReadNativeResPalette(0x8066CE84);colors=&palette;}
+    sourceObserver(stream,state,binding,colors);
 }
 void DrawBeta(CpuContext* cpu,bool textured) {
     GuestFrame frame(cpu,0x20);GuestCall call{cpu};
@@ -126,6 +170,8 @@ void DrawBeta(CpuContext* cpu,bool textured) {
     DrawVertices(MH3_UI_QUADS,vertices,4,textured);
 }
 } // namespace
+
+void SetNativeUISourceObserver(NativeUISourceObserver observer) {sourceObserver=observer;}
 
 extern "C" void MH3_Setup2DProjection(CpuContext*) {
     Ortho(0,480,0,640,0,1);Identity();
@@ -147,6 +193,7 @@ extern "C" void MH3_DebugDrawSetup(CpuContext* cpu) {
     raster.blend_mode=1;raster.src_factor=4;raster.dst_factor=5;raster.logic_op=5;
     raster.alpha_write=0;raster.depth_test=0;raster.depth_compare=7;raster.depth_write=0;raster.cull_mode=2;
     SetNativeRaster(raster);uiTextured=false;uiStages=1;
+    auto material=GetNativeMaterialState();mh3_system_ui_fade_material(&material);material.cull_mode=2;const uint32_t stage=0;mh3_system_ui_direct_stages(&material,&stage,1);SetNativeMaterial(material);
     mh3_native_fog fog{};SetNativeFog(fog);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8005AF80,MH3_DebugDrawSetup,"DebugDrawSetup");
@@ -161,13 +208,14 @@ extern "C" void MH3_UITextureBind(CpuContext* cpu) {
     StoreNativeTextureObject(0x8066CE98+binding.map_id*32,binding);BindNativeTexture(binding);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80052C90,MH3_UITextureBind,"UITextureBind");
-extern "C" void MH3_UIColorPipeline(CpuContext*) { uiTextured=false;uiStages=1; }
+extern "C" void MH3_UIColorPipeline(CpuContext*) { uiTextured=false;uiStages=1;auto material=GetNativeMaterialState();mh3_system_ui_application_pipeline(&material,0);SetNativeMaterial(material); }
 REGISTER_NATIVE_FUNCTION_AS(0x80052F68,MH3_UIColorPipeline,"UIColorPipeline");
 extern "C" void MH3_UITexturePipeline(CpuContext* cpu) {
     const auto texture=cpu->gpr[3],palette=cpu->gpr[4];
     GuestFrame frame(cpu,0x10);GuestCall call{cpu};
     call(0x80052C90,{texture,palette,0,0,0});
     uiTextured=true;uiStages=1;ConfigureDirectCoordinates(0,1,4,60);
+    auto material=GetNativeMaterialState();mh3_system_ui_application_pipeline(&material,1);const uint32_t stage=0;mh3_system_ui_direct_stages(&material,&stage,1);SetNativeMaterial(material);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80052FB4,MH3_UITexturePipeline,"UITexturePipeline");
 extern "C" void MH3_UITextureCoordinates(CpuContext* cpu) {
@@ -177,7 +225,10 @@ REGISTER_NATIVE_FUNCTION_AS(0x80053028,MH3_UITextureCoordinates,"UITextureCoordi
 REGISTER_NATIVE_FUNCTION_AS(0x8005AF74,MH3_UITextureCoordinates,"BetaTextureCoordinates");
 REGISTER_NATIVE_FUNCTION_AS(0x8005C564,MH3_UITextureCoordinates,"FontTextureCoordinates");
 REGISTER_NATIVE_FUNCTION_AS(0x80048D3C,MH3_UITextureCoordinates,"SpriteTextureCoordinates");
-extern "C" void MH3_UIStageCount(CpuContext* cpu) { uiStages=cpu->gpr[3]&255; }
+extern "C" void MH3_UIStageCount(CpuContext* cpu) {
+    const uint32_t count=cpu->gpr[3]&255;if(!count||count>16)throw std::runtime_error("Native UI stage count is outside material storage");uint32_t stages[16];for(unsigned i=0;i<count;++i){stages[i]=Memory::Read32(0x8056fc80+i*4);if(stages[i]>=16)throw std::runtime_error("Native UI direct stage table index invalid");}
+    uiStages=count;auto material=GetNativeMaterialState();mh3_system_ui_direct_stages(&material,stages,count);SetNativeMaterial(material);
+}
 REGISTER_NATIVE_FUNCTION_AS(0x80053034,MH3_UIStageCount,"UIStageCount");
 extern "C" void MH3_UIVertexFormat(CpuContext* cpu) { uiFlags=cpu->gpr[3]; }
 REGISTER_NATIVE_FUNCTION_AS(0x800530D0,MH3_UIVertexFormat,"UIVertexFormat");
@@ -252,37 +303,19 @@ extern "C" void MH3_UIShapeSetup(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x800545E4,MH3_UIShapeSetup,"UIShapeSetup");
 extern "C" void MH3_DrawShape(CpuContext* cpu) {
     const auto flags=Memory::Read32(Shape);
-    if((flags&0x3000)!=0x3000 || !NativeGraphicsFrameShouldRender()) return;
+    if((flags&0x3000)!=0x3000) return;
+    const auto count=Memory::Read16(Shape+6);ObserveShape(flags,count);
+    if(!NativeGraphicsFrameShouldRender()) return;
     GuestFrame frame(cpu,0x10);GuestCall call{cpu};
     call(0x800545E4);
     const auto primitiveValue=Memory::Read8(Shape+4);
-    const auto count=Memory::Read16(Shape+6);
     if(!count) {RestoreWorld(call);return;}
     if(primitiveValue>MH3_UI_TRIANGLE_FAN) return; // original unsupported shape selector emits nothing
     const auto primitive=mh3_ui_primitive(primitiveValue);
     if((flags&2) && (primitive==MH3_UI_POINTS || primitive==MH3_UI_LINES || primitive==MH3_UI_LINE_STRIP) &&
        Memory::Read8(0x8066CE7C)!=0)
         throw std::runtime_error("Native UI textured line/point offset requires a pixel offset implementation");
-    mh3_ui_stream stream{};stream.count=count;
-    stream.position_format=uiFlags&1 ? MH3_UI_POSITION_FLOAT_3 : uiFlags&0x10000 ? MH3_UI_POSITION_FLOAT_2 : MH3_UI_POSITION_I16_2;
-    const auto positionBytes=flags&1 ? 12 : flags&0x10000 ? 8 : 4;
-    stream.positions=Span(Memory::Read32(Shape+8),size_t(count)*positionBytes);
-    stream.color_stride=flags&0x20000 ? 0 : 4;
-    stream.colors=Span(Memory::Read32(Shape+12),count ? size_t(count-1)*stream.color_stride+4 : 0);
-    stream.uv_scale[0]=stream.uv_scale[1]=1;
-    if(flags&2) {
-        stream.uv_format=flags&0x40000 ? MH3_UI_UV_I16 : MH3_UI_UV_FLOAT;
-        stream.uvs=Span(Memory::Read32(Shape+16),size_t(count)*(flags&0x40000 ? 4 : 8));
-        if(flags&0x40000) {
-            const auto binding=ResourceBinding(0x8066CE80);
-            if(!binding.source.width || !binding.source.height) throw std::runtime_error("Native shape texture has zero dimensions");
-            stream.uv_scale[0]=1.f/binding.source.width;stream.uv_scale[1]=1.f/binding.source.height;
-        }
-        if(uiCoordinates.type==0) {
-            stream.transform_uv=1;
-            for(unsigned i=0;i<12;++i) stream.uv_matrix[i]=Memory::ReadFloat32(0x8066CE44+i*4);
-        }
-    }
+    const auto stream=ShapeStream(flags,count);
     AuroraNativeGeometry geometry{};
     if(Allocate(primitive,count,geometry)) {
         Checked(mh3_ui_build_stream(&GetNativeDrawState(),primitive,&stream,Memory::Read8(Shape+5)/6.f,&geometry));
@@ -436,7 +469,7 @@ extern "C" void MH3_UIShapeTextureObject(CpuContext* cpu) {
     if(binding.source.indexed) {
         if(!Memory::Read32(frame[0x14])) {Memory::Write32(frame.Arg(5),0);return;}
         const auto palette=ReadNativeResPalette(frame[0x14]);
-        Checked(mh3_palette_compat_store({Memory::GetPointer(0x8066CF98,12),12},&palette));
+        StoreNativePaletteObject(0x8066CF98,palette);
         BindNativePalette(0,palette);
     } else Memory::Write32(frame.Arg(5),0);
     StoreNativeTextureObject(0x8066CE98,binding);

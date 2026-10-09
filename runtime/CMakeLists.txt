@@ -62,6 +62,7 @@ target_sources(MH3 PRIVATE native/mh3_draw_state.c)
 target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c
   src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
   src/native_ui.cpp native/mh3_ui.c
+  src/native_system_ui.cpp native/mh3_system_ui.c
   src/native_effect_draw.cpp native/mh3_effect_draw.c
   src/native_scene_feedback.cpp native/mh3_scene_feedback.c
   native/mh3_demo_menu.c
@@ -71,6 +72,7 @@ target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/
 # CPU fog/light producer's range/finite checks and operation order intact.
 set_source_files_properties(native/mh3_material_state.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 set_source_files_properties(native/mh3_scene_queue.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+set_source_files_properties(native/mh3_system_ui.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized MH3_TRACE_ERRORS stack traces.

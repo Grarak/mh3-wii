@@ -124,7 +124,7 @@ mh3_res_status mh3_material_state_validate(const mh3_native_material_state *stat
         status=mask_check(matrix->known,127,requirements?requirements->indirect_matrix[index]:0,MH3_MATERIAL_INDIRECT_MATRIX,index,out);if(status) return status;
         for(unsigned field=0;field<6;++field) if((matrix->known&(1u<<field)) && (matrix->coefficients[field]<-1024 || matrix->coefficients[field]>1023))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_INDIRECT_MATRIX,index,1u<<field);
-        if((matrix->known&64) && (matrix->scale_exponent < -17 || matrix->scale_exponent>14))
+        if((matrix->known&64) && (matrix->scale_exponent < -17 || matrix->scale_exponent>46))
             return fail(out,MH3_RES_INVALID,MH3_MATERIAL_INDIRECT_MATRIX,index,64);
     }
     status=pixel_check(&state->pixel,requirements?requirements->pixel:0,out);if(status) return status;
