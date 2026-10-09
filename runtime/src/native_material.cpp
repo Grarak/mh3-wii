@@ -16,6 +16,7 @@ namespace aurora::gfx { uint32_t current_frame() noexcept; }
 #endif
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <stdexcept>
@@ -39,11 +40,12 @@ struct PreparedMaterial {ShaderConfig config;ShaderInfo info;mh3_material_requir
 PreparedMaterial prepared;
 bool preparedKnown=false;
 bool rasterObserverInstalled=false,publishingMaterialRaster=false;
-struct ProgramKey {ShaderConfig config;uint8_t zeroBias;};
+struct ProgramKey {ShaderConfig config;uint8_t zeroBias;uint8_t portableZeroBias=0;};
 struct ProgramOrder {
     bool operator()(const ProgramKey& a,const ProgramKey& b) const {
         const int order=std::memcmp(&a.config,&b.config,sizeof a.config);
-        return order<0 || (order==0 && a.zeroBias<b.zeroBias);
+        return order<0 || (order==0 && (a.zeroBias<b.zeroBias ||
+            (a.zeroBias==b.zeroBias && a.portableZeroBias<b.portableZeroBias)));
     }
 };
 // Ordered typed configuration keys avoid reading or hashing asset contents.
@@ -65,6 +67,36 @@ struct ModelProgramOrder {
     }
 };
 std::map<ModelProgramKey,aurora::gl::ProgramPtr,ModelProgramOrder> modelPrograms;
+struct PortableCapture {uint8_t zeroBias=0;bool active=false;
+    std::array<aurora::NativeTexturePortableSampling,8> routes{};};
+PortableCapture PortableSampling(const ShaderInfo& info,uint8_t actualZeroBias) {
+    PortableCapture result;result.zeroBias=actualZeroBias;
+#if defined(MH3_DEVELOPMENT) && !defined(AURORA_GXM)
+    if(aurora::gfx::port_capture::enabled() && info.sampledTextures.any()) {
+        result.zeroBias=0;result.active=true;
+        for(unsigned i=0;i<8;++i) if(info.sampledTextures.test(i)) {
+            const auto route=aurora::native_texture_portable_sampling(i);result.routes[i]=route;
+            if(route.shader_bias==0) result.zeroBias|=1u<<i;
+        }
+    }
+#endif
+    return result;
+}
+std::string PortableOrigin(const PortableCapture& capture,const ShaderInfo& info) {
+    const auto biasText=[](float bias) {char text[32];std::snprintf(text,sizeof text,"%.9g",double(bias));return std::string(text);};
+    std::string result="GXM zero_bias_mask="+std::to_string(capture.zeroBias);
+    for(unsigned i=0;i<8;++i) if(info.sampledTextures.test(i)) {
+            const auto& route=capture.routes[i];
+            result+=" unit="+std::to_string(i)+" asset="+std::to_string(route.asset)+
+                " generation="+std::to_string(route.generation)+" palette_generation="+std::to_string(route.palette_generation)+
+                " dimensions="+std::to_string(route.width)+"x"+std::to_string(route.height)+
+                " mips="+std::to_string(route.mips)+" format="+std::to_string(route.format)+
+                " min="+std::to_string(route.min_filter)+" mag="+std::to_string(route.mag_filter)+
+                " anisotropy="+std::to_string(route.anisotropy)+" authored_bias="+biasText(route.authored_bias)+
+                " shader_bias="+biasText(route.shader_bias)+" sampler_bias="+biasText(route.sampler_bias)+";";
+    }
+    return result;
+}
 void Owner() {
     if(!aurora::gl::on_render_thread()) throw std::runtime_error("Native material changed outside graphics owner");
 }
@@ -502,12 +534,18 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
         (void)Texture(i);
         if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
-    ProgramKey key{prepared.config,zeroBias};auto iterator=programs.find(key);
+    const auto portable=PortableSampling(prepared.info,zeroBias);
+    ProgramKey key{prepared.config,zeroBias,portable.zeroBias};auto iterator=programs.find(key);
     if(iterator==programs.end()) {
         // Always use the user-selected float native equations. The generator's
         // exact mode exists only for independent reference probes.
         auto description=aurora::gx::build_shader_description(prepared.config,true,zeroBias,true);
         description.origin="runtime/src/native_material.cpp:SubmitNativeMaterialGeometry";
+        if(portable.active) {
+            const auto counterpart=aurora::gx::build_shader_description(prepared.config,true,portable.zeroBias,true);
+            description.portableVertex=counterpart.vertex;description.portableFragment=counterpart.fragment;
+            description.portableOrigin=PortableOrigin(portable,prepared.info);
+        }
         auto program=std::make_shared<aurora::gl::Program>(std::move(description));
         iterator=programs.emplace(std::move(key),std::move(program)).first;
     }
@@ -569,7 +607,8 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     for(unsigned i=0;i<8;++i) if(modelState.info.sampledTextures.test(i)) {
         (void)Texture(i);if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
-    ModelProgramKey key{{config,zeroBias},{},inputs.nonzero_projective_mask,inputs.zero_projective_mask};
+    const auto portable=PortableSampling(modelState.info,zeroBias);
+    ModelProgramKey key{{config,zeroBias,portable.zeroBias},{},inputs.nonzero_projective_mask,inputs.zero_projective_mask};
     key.layout[0]=resident.layout->stride;
     key.layout[1]=resident.layout->matrixIndexMask;
     for(unsigned i=0;i<resident.layout->attributes.size();++i) {
@@ -581,6 +620,12 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
         auto description=aurora::gx::build_shader_description(config,true,zeroBias,true,resident.layout,inputs.nonzero_projective_mask,inputs.zero_projective_mask);
         description.origin="runtime/src/native_material.cpp:SubmitNativeModelMesh asset="+std::to_string(mesh.asset_id)+
             " model="+std::to_string(mesh.model_id)+" shape="+std::to_string(mesh.shape_id);
+        if(portable.active) {
+            const auto counterpart=aurora::gx::build_shader_description(config,true,portable.zeroBias,true,
+                resident.layout,inputs.nonzero_projective_mask,inputs.zero_projective_mask);
+            description.portableVertex=counterpart.vertex;description.portableFragment=counterpart.fragment;
+            description.portableOrigin=PortableOrigin(portable,modelState.info);
+        }
         program=modelPrograms.emplace(key,std::make_shared<aurora::gl::Program>(std::move(description))).first;
     }
     AuroraNativeUniforms uniforms{};

@@ -167,6 +167,9 @@ struct ProgramDesc {
   std::string origin;
   std::string vertex;
   std::string fragment;
+  // Host capture can retain GLES pixels/hashes while compiling the counterpart
+  // selected by the authoritative admitted GXM sampler policy.
+  std::string portableVertex,portableFragment,portableOrigin;
   // Sampler uniform name -> texture unit.
   std::vector<std::pair<std::string, int>> samplers;
   // Uniform block name -> binding point.
@@ -218,6 +221,8 @@ public:
 private:
   ProgramDesc m_desc;
   uint64_t m_vertexHash = 0, m_fragmentHash = 0;
+  std::array<uint64_t,2> m_capturePortableHashes{};
+  std::string m_capturePortableOrigin;
   std::array<float, 4> m_alphaReferences{};
   bool m_usesAlphaReferences = false;
   bool m_usesDiscard = false, m_replacesDepth = false;

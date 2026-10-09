@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <array>
 #include <string_view>
+#include <string>
 
 // Opt-in host measurements and automatic Cg sources for Vita compilation.
 // Safe on producer and render threads; AURORA_PORT_CAPTURE enables output.
@@ -42,7 +43,8 @@ struct NativeDraw {
   std::array<uint32_t,8> textures{};
 };
 void native_program(uint32_t id,uint64_t vertexHash,uint64_t fragmentHash,
-                    bool discard,bool depthReplace,std::string_view label) noexcept;
+                    bool discard,bool depthReplace,std::string_view label,
+                    const std::array<uint64_t,2>& portableHashes={},std::string_view portableOrigin={}) noexcept;
 void native_draw(std::string_view kind,const NativeDraw& draw) noexcept;
 // Runtime mesh provenance follows its actual native_draw row. Stable offline
 // IDs and explicit producer generations identify every use of a shared shader;
@@ -55,8 +57,10 @@ struct NativeMeshSource {
 void native_mesh_source(const NativeMeshSource& source) noexcept;
 // Actual GLSL/draw hashes are retained; Cg uses Vita-normalized alpha hashes.
 // Optional origin identifies the producer/program when supplied by a caller.
-void shader(std::string_view label, std::string_view vertex, std::string_view fragment,
-            std::string_view origin = {}) noexcept;
+struct ShaderCapture {std::array<uint64_t,2> portableHashes{};std::string originFile;};
+ShaderCapture shader(std::string_view label, std::string_view vertex, std::string_view fragment,
+            std::string_view origin = {},std::string_view portableVertex={},
+            std::string_view portableFragment={},std::string_view portableOrigin={}) noexcept;
 void texture(const void* id, bool create, uint32_t width, uint32_t height, uint32_t mips,
              uint32_t format, uint32_t bytesPerPixel, std::string_view label = {}) noexcept;
 void upload(const void* id, uint32_t mip, uint64_t bytes) noexcept;

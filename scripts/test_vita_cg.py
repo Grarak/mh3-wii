@@ -92,6 +92,36 @@ def check_corpus(binary, captures, directory):
     return len(seen), scalar_count
 
 
+def check_portable_capture(binary,directory):
+    subprocess.run([binary,'--capture-portable',str(directory)],check=True)
+    shaders=directory/'shaders';metadata=[json.loads(p.read_text()) for p in shaders.glob('*.origin.json')]
+    require(len(metadata)==2 and len({row['glsl_pair'] for row in metadata})==1,
+            'portable variants lost shared actual GLSL identity')
+    require(len({row['vita_pair'] for row in metadata})==2,'portable variants collapsed')
+    for row in metadata:
+        require(row['portable_counterpart'] and row['portable_origin'],'portable policy provenance missing')
+        vertex=(shaders/row['vertex_glsl']).read_text();fragment=(shaders/row['fragment_glsl']).read_text()
+        require(row['glsl_pair']==oracle.source_hash(vertex)+'-'+oracle.source_hash(fragment),
+                'portable capture changed authored GLES source identity')
+        pv=(shaders/row['portable_vertex_glsl']).read_text()
+        pf=oracle.parameterize_alpha_references((shaders/row['portable_fragment_glsl']).read_text())
+        require(row['vita_pair']==oracle.source_hash(pv)+'-'+oracle.source_hash(pf),
+                'portable capture lost counterpart identity')
+        require(tokens((shaders/row['vertex_cg']).read_text())==tokens(oracle.convert(pv,'vertex')),
+                'portable vertex differs from native equation')
+        require(tokens((shaders/row['fragment_cg']).read_text())==tokens(oracle.convert(pf,'fragment')),
+                'portable fragment differs from native equation')
+    spec=importlib.util.spec_from_file_location('portable_report',Path(__file__).with_name('vita-capture-report.py'))
+    report_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(report_module)
+    report=report_module.report(directory/'events.tsv');path=directory/'capture-report.json'
+    path.write_text(json.dumps(report))
+    spec=importlib.util.spec_from_file_location('portable_audit',Path(__file__).with_name('vita-executed-shader-audit.py'))
+    audit=importlib.util.module_from_spec(spec);spec.loader.exec_module(audit)
+    _,rows,stages,_=audit.select(path,shaders)
+    require(sorted(row['sampled_draws'] for row in rows)==[1,2] and len(stages)==5,
+            'native executed portable variants lost frequency or stages')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=Path)
@@ -103,6 +133,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='mh3-cg-check-') as temporary:
         root = Path(temporary)
         check_capture(binary, root / 'capture')
+        check_portable_capture(binary,root/'portable')
         count, scalars = check_corpus(binary, args.captures, args.output or root / 'corpus')
     print(f'Capture metadata/deduplication passed; {count} unique GLSL stages and {scalars} scalar outputs match the Python oracle')
 

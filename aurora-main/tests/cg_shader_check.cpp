@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <xxhash.h>
 
 namespace {
 using aurora::gfx::cg::Stage;
@@ -144,6 +145,29 @@ void capture_checks(const char* path) {
   shader("unsupported", vertex, unsupported, "test/unsupported");
   shader("unsupported", vertex, unsupported, "test/unsupported");
 }
+void portable_capture_checks(const char* path) {
+  check(setenv("AURORA_PORT_CAPTURE",path,1)==0,"cannot set portable capture directory");
+  check(setenv("AURORA_PORT_CAPTURE_DRAW_INTERVAL","1",1)==0,"cannot set complete portable capture interval");
+  using namespace aurora::gfx::port_capture;
+  auto biased=fragment;biased.insert(biased.find("layout(location=0) out"),"uniform vec4 fixture_bias;\n");
+  const auto call=biased.find("texture(native_texture, native_uv)");
+  check(call!=biased.npos,"biased fixture sample missing");
+  biased.replace(call,std::string("texture(native_texture, native_uv)").size(),
+                 "texture(native_texture, native_uv, fixture_bias.x)");
+  const std::string samplerPolicy="GXM zero_bias_mask=1 unit=0 asset=1 generation=1 palette_generation=0 dimensions=8x8 mips=3 format=0 min=2 mag=0 anisotropy=0 authored_bias=2 shader_bias=0 sampler_bias=2;";
+  const std::string residualPolicy="GXM zero_bias_mask=0 unit=0 asset=1 generation=1 palette_generation=0 dimensions=8x8 mips=3 format=0 min=2 mag=0 anisotropy=0 authored_bias=0.03125 shader_bias=0.03125 sampler_bias=0;";
+  const auto independent=shader("portable fixture",vertex,biased,"fixture/native",vertex,fragment,samplerPolicy);
+  const auto dependent=shader("portable fixture",vertex,biased,"fixture/native",vertex,biased,residualPolicy);
+  check(independent.originFile!=dependent.originFile && independent.portableHashes!=dependent.portableHashes,
+        "multiple portable variants collapsed under one GLSL identity");
+  const auto repeated=shader("portable fixture",vertex,biased,"fixture/native",vertex,fragment,samplerPolicy);
+  check(repeated.originFile==independent.originFile,"repeated portable mapping changed identity");
+  const auto vh=XXH3_64bits(vertex.data(),vertex.size()),fh=XXH3_64bits(biased.data(),biased.size());
+  native_program(101,vh,fh,true,false,"portable fixture",independent.portableHashes,independent.originFile);
+  NativeDraw draw;draw.frame=1;draw.program=101;draw.indices=3;native_draw("mesh",draw);
+  native_program(102,vh,fh,true,false,"portable fixture",dependent.portableHashes,dependent.originFile);
+  draw.program=102;native_draw("mesh",draw);native_draw("mesh",draw);
+}
 } // namespace
 int main(int argc, char** argv) {
   try {
@@ -153,6 +177,7 @@ int main(int argc, char** argv) {
     } else if (argc == 4 && std::string(argv[1]) == "--scalar") {
       write(argv[3], aurora::gfx::cg::scalar_fragment(read(argv[2])));
     } else if (argc == 3 && std::string(argv[1]) == "--capture") capture_checks(argv[2]);
+    else if (argc == 3 && std::string(argv[1]) == "--capture-portable") portable_capture_checks(argv[2]);
     else { check(argc == 1, "invalid test arguments"); unit_checks(); std::cout << "Portable Cg checks passed\n"; }
     return 0;
   } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

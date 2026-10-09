@@ -565,7 +565,10 @@ Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
   m_usesDiscard = m_desc.fragment.find("discard;") != std::string::npos;
   m_replacesDepth = m_desc.fragment.find("gl_FragDepth =") != std::string::npos;
-  gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin);
+  const auto captured=gfx::port_capture::shader(m_desc.label,m_desc.vertex,m_desc.fragment,m_desc.origin,
+    m_desc.portableVertex,m_desc.portableFragment,m_desc.portableOrigin);
+  m_capturePortableHashes=captured.portableHashes;m_capturePortableOrigin=captured.originFile;
+  m_desc.portableVertex={};m_desc.portableFragment={};m_desc.portableOrigin={};
 }
 
 Program::~Program() {
@@ -629,7 +632,8 @@ GLuint Program::get() noexcept {
   m_desc.vertex = {};
   m_desc.fragment = {};
   m_program = program;
-  gfx::port_capture::native_program(program,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label);
+  gfx::port_capture::native_program(program,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label,
+    m_capturePortableHashes,m_capturePortableOrigin);
   return program;
 }
 

@@ -334,7 +334,15 @@ int main(int argc,char** argv) {
           mipSampler.lod_bias=2;
           aurora::bind_native_texture(0,mipSource,mipSampler);
           require(aurora::native_texture_shader_lod_bias(0)==2,"GLES lost shader LOD bias");
+          const auto portable=aurora::native_texture_portable_sampling(0);
+          require(portable.shader_bias==0 && portable.sampler_bias==2 && portable.mips==3,
+                  "portable sampler route disagrees with GXM DADJUST admission");
           material_quad(biasedProgram->get(),materialInfo);pixel(32,48,{0,0,255,255});
+          mipSampler.lod_bias=.03125f;aurora::bind_native_texture(0,mipSource,mipSampler);
+          const auto residual=aurora::native_texture_portable_sampling(0);
+          require(residual.shader_bias==.03125f && residual.sampler_bias==0 &&
+                  aurora::native_texture_shader_lod_bias(0)==.03125f,
+                  "portable route rounded an unrepresentable authored bias");
           aurora::gl::clear_color(clear);aurora::gl::clear_depth(0);
         }
         quad(-.9f,-.1f,.1f,.9f,0,{255,0,0,255},false);

@@ -28,6 +28,15 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
 // Bias left for the shader after native sampler bias. Read on the graphics
 // owner after frame admission and binding restoration.
 float native_texture_shader_lod_bias(uint32_t unit);
+// Authoritative GXM route for the same admitted backing, also available to host
+// development capture. It never replaces the GLES shader's authored bias.
+struct NativeTexturePortableSampling {
+  uint32_t asset=0,width=0,height=0,mips=0,format=0;
+  uint32_t min_filter=0,mag_filter=0,anisotropy=0;
+  uint64_t generation=0,palette_generation=0;
+  float authored_bias=0,shader_bias=0,sampler_bias=0;
+};
+NativeTexturePortableSampling native_texture_portable_sampling(uint32_t unit);
 // Reapply logical bindings after presentation changed the backend's units.
 void restore_native_textures();
 void clear_native_textures();

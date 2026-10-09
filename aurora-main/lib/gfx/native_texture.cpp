@@ -24,6 +24,7 @@ std::array<gl::TexturePtr,8> bindings;
 struct Binding { NativeTextureSource source; NativeTextureSampler sampling; bool valid=false; };
 std::array<Binding,8> logicalBindings;
 std::array<float,8> shaderLodBias{};
+std::array<NativeTexturePortableSampling,8> portableSampling{};
 size_t residentBytes=0;
 uint64_t serial=0;
 void owner() {
@@ -106,13 +107,16 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
     const bool ineffectiveBias=texture->mips==1 && sampling.anisotropy==0 &&
         (sampling.min_filter==0 || sampling.min_filter==2 || sampling.min_filter==4 ?
           sampling.mag_filter==0 : sampling.mag_filter==1);
+    const bool samplerBias=!ineffectiveBias && texture->format!=gl::Format::Depth32F &&
+        gxm::sampler_bias_encoding(sampling.lod_bias)>=0;
+    portableSampling[unit]={source.asset,texture->width,texture->height,texture->mips,
+      uint32_t(texture->format),sampling.min_filter,sampling.mag_filter,sampling.anisotropy,
+      source.generation,source.palette_generation,sampling.lod_bias,
+      ineffectiveBias||samplerBias?0:sampling.lod_bias,samplerBias?sampling.lod_bias:0};
     if(ineffectiveBias) shaderLodBias[unit]=0;
 #ifdef AURORA_GXM
-    if(!ineffectiveBias && texture->format!=gl::Format::Depth32F &&
-       gxm::sampler_bias_encoding(sampling.lod_bias)>=0) {
-      nativeDescriptor.lodBias=sampling.lod_bias;
-      shaderLodBias[unit]=0;
-    }
+    nativeDescriptor.lodBias=portableSampling[unit].sampler_bias;
+    shaderLodBias[unit]=portableSampling[unit].shader_bias;
 #endif
     bindings[unit]=texture;gl::bind_texture(unit,texture->gl(),gl::sampler(nativeDescriptor));
   };
@@ -120,6 +124,8 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
     if(!bind_scene_feedback_texture(unit,identity,source.width,source.height,sampling))
       throw std::runtime_error("Published scene feedback disappeared before binding");
     // GPU targets own their storage. Do not inspect or convert guest pixels.
+    portableSampling[unit]={source.asset,source.width,source.height,1,uint32_t(gl::Format::RGBA8),
+      sampling.min_filter,sampling.mag_filter,sampling.anisotropy,source.generation,source.palette_generation,0,0,0};
     bindings[unit].reset();return;
   }
   if(generatedRevision) {publish(gfx::find_generated_texture(identity,generatedRevision)->texture);return;}
@@ -198,13 +204,16 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   publish(texture);
 }
 void clear_native_textures() {
-  owner();logicalBindings={};bindings={};shaderLodBias={};cache.clear();residentBytes=0;serial=0;
+  owner();logicalBindings={};bindings={};shaderLodBias={};portableSampling={};cache.clear();residentBytes=0;serial=0;
 }
 float native_texture_shader_lod_bias(uint32_t unit) {
   owner();
   if(unit>=logicalBindings.size() || !logicalBindings[unit].valid || !aurora_native_frame_should_render())
     throw std::runtime_error("Native texture shader bias requested without an admitted binding");
   return shaderLodBias[unit];
+}
+NativeTexturePortableSampling native_texture_portable_sampling(uint32_t unit) {
+  (void)native_texture_shader_lod_bias(unit);return portableSampling[unit];
 }
 void restore_native_textures() {
   owner();

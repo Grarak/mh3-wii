@@ -531,7 +531,8 @@ void bind_framebuffer(GLuint color, GLuint depth) noexcept { guarded([&] { rende
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
   guarded([&] {
     m_usesAlphaReferences = parameterize_alpha_references(m_desc.fragment, m_alphaReferences);
-    gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment, m_desc.origin);
+    const auto captured=gfx::port_capture::shader(m_desc.label,m_desc.vertex,m_desc.fragment,m_desc.origin);
+    m_capturePortableHashes=captured.portableHashes;m_capturePortableOrigin=captured.originFile;
     m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
     m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
     // Construction also covers unused diagnostic programs. Compile/register
@@ -618,7 +619,8 @@ GLuint Program::get() noexcept {
     r.programs.emplace(id, std::move(native));
     m_desc.vertex.clear(); m_desc.fragment.clear();
     m_program = id;
-    gfx::port_capture::native_program(id,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label);
+    gfx::port_capture::native_program(id,m_vertexHash,m_fragmentHash,m_usesDiscard,m_replacesDepth,m_desc.label,
+      m_capturePortableHashes,m_capturePortableOrigin);
     return id;
   });
 }
