@@ -95,7 +95,7 @@ on track when the Pi 5 reaches 4-5 times the speed wanted on the Vita
 | --- | --- | --- |
 | [Disc access](assets/disc-access.md) | a disc drive or an extracted partition | first start 8 min 42 s → 0.25 s (Pi 5); loads never block the game thread |
 | [Load-time asset conversion](assets/load-time-asset-conversion.md) | GX textures and display lists read from RAM | no decoding while drawing; 0.35 s of conversion CPU instead of 18 s for the whole disc |
-| [Compressed textures](assets/compressed-textures.md) | CMPR decoded to 32-bit texels | BC1/BC3 blocks rewritten losslessly: an eighth (BC3: a quarter) of RGBA8's bytes; 210 instead of ~1,040 MiB of textures |
+| [Compressed textures](assets/compressed-textures.md) | CMPR decoded to 32-bit texels | BC1/BC3 blocks rewritten losslessly, other formats in the smallest exact GXM format (palettes, U8, U8U8, RGB565); the disc's textures 558 instead of 769 MiB (2.9 GiB as RGBA8) |
 | [Hardware movie decoding](assets/hardware-movie-decoding.md) | software THP decoding on the game thread | movies at 60 instead of 30 fps (Vita) |
 
 ## System

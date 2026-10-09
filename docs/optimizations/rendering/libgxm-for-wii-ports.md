@@ -277,12 +277,8 @@ directly [code: `texture.cpp`; doc: texture packs]:
 
 | Wii | GXM | Notes |
 | --- | --- | --- |
-| RGBA8, RGB5A3, others by default | `U8U8U8U8_ABGR` | |
-| CMPR | `UBC1_ABGR`, or `UBC3_ABGR` when CMPR's transparent mode is used | power-of-two sizes; block formats are swizzled (Morton order); [compressed textures](../assets/compressed-textures.md) |
-| CI4, CI8 | resolved to RGBA8 at load time; `P4_ABGR`/`P8_ABGR` with the palette in CDRAM through the offline policy | palettes 64-byte aligned after the image |
-| I4, I8 | `U8_RRRR` (or `U8_1RRR`, `U8_R000`, `U8_R111` by use) | offline policy |
-| IA4, IA8 | `U8U8_GRRR` | offline policy |
-| RGB565 | `U5U6U5_RGB` | offline policy |
+| CMPR | `UBC1_ABGR`, or `UBC3_ABGR` when CMPR's transparent mode is used | block and palette formats are swizzled (Morton order), other sizes than powers of two through the arbitrary swizzle; [compressed textures](../assets/compressed-textures.md) |
+| any other | the smallest exact one: `P4_ABGR`/`P8_ABGR` (palette in CDRAM), `U8_RRRR`/`U8_1RRR`/`U8_R000`/`U8_R111`, `U8U8_GRRR`, `U5U6U5_RGB`, else `U8U8U8U8_ABGR` | chosen from the decoded texels; palettes 64-byte aligned after the image |
 | (lossy, explicit) | `UBC4_RRRR`, `UBC5_GRRR` | offline policy only |
 
 Authored mipmaps are kept. The sampler's LOD bias is set in the texture

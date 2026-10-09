@@ -308,7 +308,10 @@ void TextureStorage::refresh_views() {
   const auto native = native_format(format);
 
   if (gfx::native_swizzled(format)) {
-    check(sceGxmTextureInitSwizzled(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native swizzled asset");
+    if (std::has_single_bit(width) && std::has_single_bit(height))
+      check(sceGxmTextureInitSwizzled(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native swizzled asset");
+    else
+      check(sceGxmTextureInitSwizzledArbitrary(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native arbitrary swizzled asset");
 
     if (m_paletteBytes)
       check(sceGxmTextureSetPalette(&m_sampled, static_cast<uint8_t*>(m_data) + m_paletteOffset), "initialize native CDRAM palette");

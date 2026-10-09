@@ -77,7 +77,8 @@ std::vector<uint8_t> compressed(const TextureInventory::Texture& s, const uint8_
     uint32_t w = s.width, h = s.height;
 
     for (unsigned mip = 0; mip < s.mips; ++mip) {
-        const uint32_t bw = std::max(w / 4, 1u), bh = std::max(h / 4, 1u);
+        // Morton order over the blocks of the size rounded up to powers of two.
+        const uint32_t bw = std::max(std::bit_ceil(w) / 4, 1u), bh = std::max(std::bit_ceil(h) / 4, 1u);
         const size_t start = output.size();
         output.resize(start + size_t(bw) * bh * blockBytes);
 
@@ -134,24 +135,185 @@ std::vector<uint8_t> compressed(const TextureInventory::Texture& s, const uint8_
     return output;
 }
 
-std::vector<uint8_t> linear(const TextureInventory::Texture& s, const uint8_t* data) {
-    std::vector<uint8_t> output;
+// Up to 256 distinct RGBA words in first-use order: the palette of a P4/P8
+// texture. A full palette has seen a 257th colour.
+struct Palette {
+    std::array<uint32_t, 512> keys{};
+    std::array<uint16_t, 512> slots{}; // index + 1, 0 empty
+    std::array<uint32_t, 256> colors{};
+    uint32_t count = 0;
+    bool full = false;
 
-    for (unsigned mip = 0; mip < s.mips; ++mip) {
-        const auto w = std::max(s.width >> mip, 1u), h = std::max(s.height >> mip, 1u);
-        const auto pitch = (w + 7) & ~7u;
-        const auto rows = mip + 1 < s.mips ? std::max(std::bit_ceil(s.height) >> mip, 1u) : h;
-        const auto storedWidth = mip + 1 < s.mips ? std::max(std::bit_ceil(s.width) >> mip, 8u) : pitch;
-        const auto offset = output.size();
-        output.resize(offset + size_t(storedWidth) * rows * 4);
+    static unsigned Hash(uint32_t color) {
+        return (color * 0x9e3779b1u) >> 23;
+    }
 
-        for (unsigned y = 0; y < h; ++y)
-            std::memcpy(output.data() + offset + size_t(y) * pitch * 4, data + size_t(y) * w * 4, size_t(w) * 4);
+    int Find(uint32_t color) const {
+        for (unsigned at = Hash(color);; at = (at + 1) & 511) {
+            if (!slots[at])
+                return -1;
 
-        data += size_t(w) * h * 4;
+            if (keys[at] == color)
+                return slots[at] - 1;
+        }
+    }
+
+    void Add(uint32_t color) {
+        unsigned at = Hash(color);
+
+        for (; slots[at]; at = (at + 1) & 511)
+            if (keys[at] == color)
+                return;
+
+        if (count == 256) {
+            full = true;
+            return;
+        }
+
+        keys[at] = color;
+        slots[at] = uint16_t(count + 1);
+        colors[count++] = color;
+    }
+};
+
+// GXM swizzles any size, but other sizes than powers of two only with one level.
+bool Swizzles(const TextureInventory::Texture& s) {
+    return s.mips == 1 || (std::has_single_bit(s.width) && std::has_single_bit(s.height));
+}
+
+uint32_t Word(const uint8_t* p) {
+    return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+}
+
+size_t TexelCount(const TextureInventory::Texture& s) {
+    size_t texels = 0;
+
+    for (unsigned mip = 0; mip < s.mips; ++mip)
+        texels += size_t(std::max(s.width >> mip, 1u)) * std::max(s.height >> mip, 1u);
+
+    return texels;
+}
+
+bool Exact565(const uint8_t* p) {
+    return p[3] == 255 && ((p[0] & 0xf8) | p[0] >> 5) == p[0] && ((p[1] & 0xfc) | p[1] >> 6) == p[1] && ((p[2] & 0xf8) | p[2] >> 5) == p[2];
+}
+
+// The smallest native format that samples every texel of the decoded RGBA
+// unchanged (tags of native_texture_format): a P4/P8 palette for up to 16/256
+// colours (swizzled: one level for other sizes than powers of two), U8 for grey or alpha-only texels, U8U8
+// for grey with alpha, RGB565 for opaque 5:6:5 colours, else RGBA8. Equal
+// sizes prefer the earlier, palette-free format.
+uint32_t ExactFormat(const TextureInventory::Texture& s, const uint8_t* rgba, Palette& palette) {
+    bool gray = true, alphaGray = true, opaque = true, black = true, white = true, rgb565 = true;
+    const bool swizzle = Swizzles(s);
+    const size_t texels = TexelCount(s);
+
+    for (size_t i = 0; i < texels; ++i, rgba += 4) {
+        const bool g = rgba[0] == rgba[1] && rgba[0] == rgba[2];
+        gray &= g;
+        alphaGray &= g && rgba[3] == rgba[0];
+        opaque &= rgba[3] == 255;
+        black &= g && rgba[0] == 0;
+        white &= g && rgba[0] == 255;
+        rgb565 &= Exact565(rgba);
+
+        if (swizzle && !palette.full)
+            palette.Add(Word(rgba));
+    }
+
+    uint32_t best = 1;
+    size_t bestBytes = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, aurora::gfx::native_texture_format(1)).total_bytes;
+    const auto consider = [&](bool usable, uint32_t format) {
+        if (!usable)
+            return;
+
+        const size_t bytes = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, aurora::gfx::native_texture_format(format)).total_bytes;
+
+        if (bytes < bestBytes) {
+            best = format;
+            bestBytes = bytes;
+        }
+    };
+
+    consider(alphaGray, 6);
+    consider(gray && opaque, 7);
+    consider(black, 8);
+    consider(white, 9);
+    consider(gray, 10);
+    consider(rgb565, 11);
+    consider(swizzle && palette.count <= 16, 4);
+    consider(swizzle && !palette.full, 5);
+    return best;
+}
+
+// The decoded RGBA levels in a linear or palette native format.
+std::vector<uint8_t> native(const TextureInventory::Texture& s, const uint8_t* rgba, uint32_t tag, const Palette& palette) {
+    const auto format = aurora::gfx::native_texture_format(tag);
+    const auto layout = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, format);
+    std::vector<uint8_t> output(layout.total_bytes);
+    const bool p4 = tag == 4, p8 = tag == 5;
+
+    if (p4 || p8)
+        for (uint32_t i = 0; i < palette.count; ++i)
+            std::memcpy(output.data() + layout.palette_offset + i * 4, &palette.colors[i], 4);
+
+    for (const auto& level : layout.levels) {
+        auto* dest = output.data() + level.offset;
+
+        for (uint32_t y = 0; y < level.height; ++y)
+            for (uint32_t x = 0; x < level.width; ++x, rgba += 4) {
+                if (p4 || p8) {
+                    const auto index = uint8_t(palette.Find(Word(rgba)));
+                    const auto at = morton(x, y, std::bit_ceil(level.width), std::bit_ceil(level.height));
+
+                    if (p4)
+                        dest[at / 2] |= uint8_t(index << (4 * (at & 1)));
+                    else
+                        dest[at] = index;
+
+                    continue;
+                }
+
+                auto* out = dest + size_t(y) * level.pitch;
+
+                switch (tag) {
+                case 1:
+                    std::memcpy(out + x * 4, rgba, 4);
+                    break;
+                case 6:
+                case 7:
+                case 10:
+                    out[x * (tag == 10 ? 2 : 1)] = rgba[0];
+
+                    if (tag == 10)
+                        out[x * 2 + 1] = rgba[3];
+
+                    break;
+                case 8:
+                case 9:
+                    out[x] = rgba[3];
+                    break;
+                case 11: {
+                    const uint16_t v = uint16_t((rgba[0] >> 3) << 11 | (rgba[1] >> 2) << 5 | rgba[2] >> 3);
+                    out[x * 2] = uint8_t(v);
+                    out[x * 2 + 1] = uint8_t(v >> 8);
+                    break;
+                }
+                }
+            }
     }
 
     return output;
+}
+
+aurora::gfx::ConvertedTexture Decode(const TextureInventory::Texture& s, std::span<const uint8_t> data) {
+    const aurora::ArrayRef<uint8_t> bytes{data.data() + s.offset, s.bytes};
+    return s.entries ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries, {data.data() + s.palette, size_t(s.entries) * 2})
+                     : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+}
+
+bool Compressed(const TextureInventory::Texture& s) {
+    return s.format == GX_TF_CMPR && Swizzles(s);
 }
 
 void Little32(std::ostream& out, uint32_t value) {
@@ -185,28 +347,29 @@ void Publish(const std::filesystem::path& temporary, const std::filesystem::path
 // passed ValidateSource and the inventory's checks.
 Status ConvertTexture(const TextureInventory::Texture& s, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path, TextureConversion& out) {
     MH3_RETURN_IF_ERROR(TextureInventory::ValidateSource(data, fileOffset, s));
-    const aurora::ArrayRef<uint8_t> bytes{data.data() + s.offset, s.bytes};
-    auto converted = s.entries
-                         ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries, {data.data() + s.palette, size_t(s.entries) * 2})
-                         : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+    const auto converted = Decode(s, data);
+
     if (converted.data.empty())
         return Status::Error("Texture conversion failed: " + path);
 
     out = {};
     auto& r = out.record;
     r.id = s.id;
-    r.format = 1;
     r.width = s.width;
     r.height = s.height;
     r.mips = s.mips;
     r.flags = converted.hasArbitraryMips ? 1u : 0u;
 
-    if (s.format == GX_TF_CMPR && std::has_single_bit(s.width) && std::has_single_bit(s.height)) {
-        const bool alpha = has_transparency(s, bytes.data());
+    if (Compressed(s)) {
+        const uint8_t* bytes = data.data() + s.offset;
+        const bool alpha = has_transparency(s, bytes);
         r.format = alpha ? 3 : 2;
-        out.payload = compressed(s, bytes.data(), alpha);
-    } else
-        out.payload = linear(s, converted.data.data());
+        out.payload = compressed(s, bytes, alpha);
+    } else {
+        Palette palette;
+        r.format = ExactFormat(s, converted.data.data(), palette);
+        out.payload = native(s, converted.data.data(), r.format, palette);
+    }
 
     const auto layout = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, aurora::gfx::native_texture_format(r.format));
 
@@ -231,10 +394,21 @@ Status ConvertTexture(const TextureInventory::Texture& s, std::span<const uint8_
 
 Status TexturePayloadBytes(const TextureInventory::Texture& s, std::span<const uint8_t> data, uint64_t fileOffset, uint64_t& bytes) {
     MH3_RETURN_IF_ERROR(TextureInventory::ValidateSource(data, fileOffset, s));
-    uint32_t format = 1;
 
-    if (s.format == GX_TF_CMPR && std::has_single_bit(s.width) && std::has_single_bit(s.height))
+    // ConvertTexture's choice: the same source decodes to the same texels.
+    uint32_t format;
+
+    if (Compressed(s))
         format = has_transparency(s, data.data() + s.offset) ? 3 : 2;
+    else {
+        const auto converted = Decode(s, data);
+
+        if (converted.data.empty())
+            return Status::Error("Texture conversion failed");
+
+        Palette palette;
+        format = ExactFormat(s, converted.data.data(), palette);
+    }
 
     bytes = aurora::gfx::native_texture_layout(s.width, s.height, s.mips, aurora::gfx::native_texture_format(format)).total_bytes;
     return {};

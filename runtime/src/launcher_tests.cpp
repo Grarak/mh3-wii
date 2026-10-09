@@ -1,11 +1,16 @@
 #include "vita_launcher.h"
 #include "disc_image.h"
 #include "load_progress.h"
+#include "launcher_convert.h"
+#include "launcher_texture_inventory.h"
+#include "gfx/native_texture_decode.hpp"
+#include "gfx/texture_convert.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <numeric>
 #include <stdexcept>
 
@@ -242,12 +247,70 @@ void DiscTests(const std::filesystem::path& root) {
     std::filesystem::resize_file(root / "game.iso", iso.size());
     Check(VitaLauncher::DiscReady(root / "processed"), "the restored disc image is ready again");
 }
+
+// Every disc texture's converted payload, decoded as the GPU samples it,
+// against the GX decode: exact formats must match, CMPR's BC blocks within
+// the difference of the in-between colours (GX blends them 3:5, BC1 1:2).
+void CheckTextures(const std::filesystem::path& root) {
+    DiscImage disc(root, false);
+    std::map<uint32_t, std::pair<unsigned, uint64_t>> formats;
+    unsigned textures = 0;
+
+    for (const auto& path : VitaLauncher::TextureInventory::SourceNames(disc.FileNames())) {
+        const auto data = disc.ReadFile(path);
+        std::vector<VitaLauncher::TextureInventory::Texture> parsed;
+        CheckStatus(VitaLauncher::TextureInventory::Parse(data, disc.FileOffset(path), parsed, 1));
+
+        for (const auto& s : parsed) {
+            VitaLauncher::TextureConversion converted;
+            CheckStatus(VitaLauncher::ConvertTexture(s, data, disc.FileOffset(path), path, converted));
+            uint64_t planned = 0;
+            CheckStatus(VitaLauncher::TexturePayloadBytes(s, data, disc.FileOffset(path), planned));
+            Check(planned == converted.payload.size(), "planned texture bytes differ from the payload");
+            const aurora::ArrayRef<uint8_t> bytes{data.data() + s.offset, s.bytes};
+            const auto source = s.entries ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries,
+                                                                                {data.data() + s.palette, size_t(s.entries) * 2})
+                                          : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+            const auto& r = converted.record;
+            const unsigned tolerance = r.format == 2 || r.format == 3 ? 11 : 0;
+            size_t at = 0;
+
+            for (uint32_t mip = 0; mip < r.mips; ++mip) {
+                const auto level = aurora::gfx::native_texture_rgba_level(r, converted.payload, mip);
+
+                for (size_t i = 0; i < level.size(); ++i)
+                    if (unsigned(std::abs(int(level[i]) - int(source.data.data()[at + i]))) > tolerance) {
+                        std::cerr << path << " texture " << s.id << " (GX format " << s.format << ", " << s.width << "x" << s.height << ", tag " << r.format << ") mip " << mip
+                                  << " texel " << i / 4 << " channel " << i % 4 << ": " << int(level[i]) << " instead of " << int(source.data.data()[at + i]) << "\n";
+                        throw std::runtime_error("converted texture samples differently");
+                    }
+
+                at += level.size();
+            }
+
+            auto& count = formats[r.format];
+            ++count.first;
+            count.second += r.bytes;
+            ++textures;
+        }
+    }
+
+    for (const auto& [format, count] : formats)
+        std::cout << "tag " << format << ": " << count.first << " textures, " << count.second / 1048576.0 << " MiB\n";
+
+    std::cout << textures << " textures sample as their source\n";
+}
 } // namespace
 
 int main(int argc, char** argv) {
     try {
         if (argc == 3 && std::string_view(argv[1]) == "--disc-ready") {
             return VitaLauncher::DiscReady(argv[2]) ? 0 : 1;
+        }
+
+        if (argc == 3 && std::string_view(argv[1]) == "--check-textures") {
+            CheckTextures(argv[2]);
+            return 0;
         }
 
         if (argc == 3 && std::string_view(argv[1]) == "--prepare-textures") {

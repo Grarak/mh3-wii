@@ -34,6 +34,10 @@ constexpr const char* Version = "mh3-asset-cache 1\n";
 // The converted models' own format, so a model converter change reconverts
 // only the models (2: GPU skinning, docs/optimizations/rendering/gpu-skinning.md).
 constexpr const char* ModelFormat = "mh3-model-packs 2\n";
+
+// The same for the texture packs (2: exact small formats,
+// docs/optimizations/assets/compressed-textures.md).
+constexpr const char* TextureFormat = "mh3-texture-packs 2\n";
 constexpr uint32_t RecordMagic = 0x5243334d; // "M3CR"
 constexpr unsigned Workers = 3;
 #ifdef __vita__
@@ -334,6 +338,12 @@ struct AssetCache::Impl {
             std::filesystem::create_directories(cache / "textures");
             std::filesystem::create_directories(cache / "models");
             CheckStatus(Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)}));
+        }
+
+        if (const auto format = Load(cache / "textures" / "format.txt"); std::string(format.begin(), format.end()) != TextureFormat) {
+            std::filesystem::remove_all(cache / "textures");
+            std::filesystem::create_directories(cache / "textures");
+            CheckStatus(Publish(cache / "textures" / "format.txt", {reinterpret_cast<const uint8_t*>(TextureFormat), std::strlen(TextureFormat)}));
         }
 
         if (const auto format = Load(cache / "models" / "format.txt"); std::string(format.begin(), format.end()) != ModelFormat) {

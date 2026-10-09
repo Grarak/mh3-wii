@@ -62,11 +62,11 @@ inline std::vector<uint8_t> native_texture_rgba_level(const NativeTextureRecord&
       std::array<uint8_t, 4> color{0, 0, 0, 255};
 
       if (native_palette_entries(f)) {
-        const auto at = native_texture_morton(x, y, level.width, level.height);
+        const auto at = native_texture_morton(x, y, native_swizzle_extent(level.width), native_swizzle_extent(level.height));
         const unsigned index = f == gl::Format::P4_ABGR ? image[at / 2] >> (4 * (at & 1)) & 15 : image[at];
         std::memcpy(color.data(), payload.data() + layout.palette_offset + index * 4, 4);
       } else if (const auto block_bytes = native_block_bytes(f)) {
-        const auto* block = image + native_texture_morton(x / 4, y / 4, std::max(level.width / 4, 1u), std::max(level.height / 4, 1u)) * block_bytes;
+        const auto* block = image + native_texture_morton(x / 4, y / 4, std::max(native_swizzle_extent(level.width) / 4, 1u), std::max(native_swizzle_extent(level.height) / 4, 1u)) * block_bytes;
         const unsigned texel = (y % 4) * 4 + x % 4;
 
         if (f == gl::Format::BC4_RRRR) {

@@ -18,12 +18,13 @@ game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`;
 [launcher](../../vita-launcher.md)):
 
 - **Textures** become one M3VT version 2 pack per file in
-  `disc/cache/textures/`: RGBA8, or BC1/BC3 for power-of-two CMPR
-  ([compressed textures](compressed-textures.md)); palettes
-  resolved; authored mips kept; block formats in the GPU's Morton order
-  (`scripts/vita_texture_pack.cpp` can choose exact smaller formats per
-  texture offline: P4/P8 with CDRAM palettes, U8 and U8U8 swizzles,
-  RGB565, BC4/BC5).
+  `disc/cache/textures/`: BC1/BC3 for CMPR, and for the other formats the
+  smallest GXM format that samples every texel unchanged (P4/P8 with CDRAM
+  palettes, U8, U8U8, RGB565, else RGBA8;
+  [compressed textures](compressed-textures.md)); authored mips kept;
+  block and palette formats in the GPU's Morton order
+  (`scripts/vita_texture_pack.cpp` can also apply lossy BC4/BC5 per
+  texture offline).
 - **Models** become an M3MP pack with its M3ID identity file in
   `disc/cache/models/`, assembled by the bounded C converter
   (`runtime/native/mh3_prepare_model.c` and its corner, skin and writer

@@ -143,12 +143,13 @@ source file's partition offset and first ID and written under a temporary name
 first, so a file under its final name is complete. A texture or model consumer
 that still arrives before its file is converted (a read outside the DVD
 library) waits for it; development builds log waits over 0.5 s. Later
-launches reuse every converted file and only parse what is new. `version.txt` names the cache format; a mismatch rebuilds the cache.
+launches reuse every converted file and only parse what is new. `version.txt` names the cache format; a mismatch rebuilds the cache. `textures/format.txt` and `models/format.txt` do the same for the texture and model packs alone.
 
 The conversions are the ones the whole-disc stages (`PrepareTextures`,
 `PrepareModels`, kept for development tools) use per file: authored mipmaps
-are retained, palettes resolved, CMPR converted to BC1/BC3 in the SGX Morton
-layout, and model packs assembled by the bounded C assembler
+are retained, CMPR converted to BC1/BC3 and every other texture to the
+smallest exact GXM format (palettes, U8, U8U8, RGB565 or RGBA8) in the SGX
+layouts ([compressed textures](optimizations/assets/compressed-textures.md)), and model packs assembled by the bounded C assembler
 (`mh3_prepare_model.c`) with validated GPU indices and palettes. Materials
 bind textures of their own container only, so each file converts on its own.
 BRRES source files are limited to 8 MiB and textures to 2048 pixels per
@@ -482,6 +483,7 @@ cmake --build build/linux-arm64-dev --target MH3LauncherTests -j$(nproc)
 build/linux-arm64-dev/MH3LauncherTests /tmp/mh3-launcher-test-data
 # Optional, against a prepared disc directory:
 build/linux-arm64-dev/MH3LauncherTests --quest-audit DISC_DIR
+build/linux-arm64-dev/MH3LauncherTests --check-textures DISC_DIR
 ```
 
 The tests create synthetic assets in their own temporary subdirectory. They
@@ -491,7 +493,10 @@ authored placement transfer, smaller objective counts, incompatible-map and
 scripted-mode rejection, exact ISO extraction, read-only ROM handling, and
 rejection of a truncated native texture pack. `--quest-audit` checks the
 parser and quest overlays against every authored base/encounter/hunt-or-capture
-configuration of the disc (107 on the European disc).
+configuration of the disc (107 on the European disc). `--check-textures`
+converts every texture of the disc, decodes each payload the way the GPU
+samples it and compares it with the GX decode (8,562 textures;
+[compressed textures](optimizations/assets/compressed-textures.md)).
 
 ## Scripted menu input
 

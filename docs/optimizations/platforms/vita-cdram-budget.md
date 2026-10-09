@@ -25,6 +25,9 @@ context and the shader patcher are set up, then splits it:
 Command rings, shader patcher and program storage and driver allocations use
 CDRAM too, so the 128 MiB are never all available.
 
+- **Textures** take the smallest GXM format that keeps their texels
+  ([compressed textures](../assets/compressed-textures.md)): BC1/BC3 for
+  CMPR, palettes, U8, U8U8 or RGB565 for the rest.
 - **Model packs** stay within their reservation; a pack that does not fit
   evicts older ones first ([asset conversion](../assets/load-time-asset-conversion.md)).
 - **At capacity**, a draw allocation that exceeds a slot's span or the U16

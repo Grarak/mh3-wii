@@ -60,6 +60,12 @@ constexpr bool native_swizzled(gl::Format f) {
   return native_block_bytes(f) || native_palette_entries(f);
 }
 
+// A swizzled level's Morton order and memory are those of its size rounded
+// up to powers of two (GXM's arbitrary swizzle for other sizes).
+constexpr uint32_t native_swizzle_extent(uint32_t size) {
+  return std::bit_ceil(size);
+}
+
 inline NativeTextureLayout native_texture_layout(uint32_t width, uint32_t height, uint32_t mips, gl::Format f) {
   if (!width || !height || width > 4096 || height > 4096 || !mips || mips > uint32_t(std::bit_width(std::max(width, height))) || (f == gl::Format::Depth32F && mips != 1))
     AURORA_THROW(std::runtime_error("Invalid native texture dimensions/mips"));
@@ -69,20 +75,21 @@ inline NativeTextureLayout native_texture_layout(uint32_t width, uint32_t height
   if (!block && !palette && !pixel)
     AURORA_THROW(std::runtime_error("Unknown native texture layout"));
 
-  if (native_swizzled(f) && (!std::has_single_bit(width) || !std::has_single_bit(height)))
-    AURORA_THROW(std::runtime_error("Native swizzled assets require power-of-two dimensions"));
+  if (native_swizzled(f) && mips > 1 && (!std::has_single_bit(width) || !std::has_single_bit(height)))
+    AURORA_THROW(std::runtime_error("Native swizzled assets of other sizes than powers of two have one level"));
 
   NativeTextureLayout out;
 
   for (uint32_t l = 0; l < mips; l++) {
     const uint32_t w = std::max(width >> l, 1u), h = std::max(height >> l, 1u);
+    const uint32_t sw = native_swizzle_extent(w), sh = native_swizzle_extent(h);
     uint32_t pitch = 0;
     size_t advance;
 
     if (block)
-      advance = size_t(std::max(w / 4, 1u)) * std::max(h / 4, 1u) * block;
+      advance = size_t(std::max(sw / 4, 1u)) * std::max(sh / 4, 1u) * block;
     else if (palette)
-      advance = size_t(h) * (f == gl::Format::P4_ABGR ? (w + 1) / 2 : w);
+      advance = size_t(sh) * (f == gl::Format::P4_ABGR ? (sw + 1) / 2 : sw);
     else {
       pitch = uint32_t(texture_align(w, f == gl::Format::Depth32F ? 32 : 8)) * pixel;
       advance = f == gl::Format::Depth32F ? size_t(pitch) * texture_align(h, 32)
