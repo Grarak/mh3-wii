@@ -29,6 +29,13 @@ DisplayStatistics display_statistics() noexcept;
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
 // to the render owner. The display callback is pinned to worker core 0.
+// How a scene uses its depth surface's memory. Without a load each tile starts
+// from `background` (a scene that begins with a depth clear, or depth no draw
+// reads); without a store the scene's depth is discarded.
+struct DepthScene {
+  bool load = true, store = true;
+  float background = 0.f;
+};
 class Device {
 public:
   Device();
@@ -39,10 +46,9 @@ public:
   SceGxmShaderPatcher* patcher() const noexcept { return m_patcher; }
   CdramArena& arena() noexcept { return *m_arena; }
   bool scene_active() const noexcept { return m_inScene; }
-  // clearDepth: the scene starts with its depth cleared to this value instead
-  // of loading the stored depth (the depth surface's background).
+  using DepthScene = gxm::DepthScene;
   void begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color, const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync = nullptr,
-             const float* clearDepth = nullptr);
+             DepthScene depthScene = {});
   void end();
   void finish();
   SceGxmNotification current_fence() const noexcept { return {m_notification, m_sceneSerial + unsigned(m_inScene)}; }

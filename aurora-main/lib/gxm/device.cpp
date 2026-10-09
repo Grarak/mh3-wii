@@ -260,7 +260,7 @@ void Device::release() noexcept {
 #endif
 }
 void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color, const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync,
-                   const float* clearDepth) {
+                   DepthScene depthScene) {
   end();
   const auto key = std::make_pair(width, height);
   auto found = m_targets.find(key);
@@ -274,17 +274,20 @@ void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* co
     check(sceGxmCreateRenderTarget(&params, &target), "create render target");
     found = m_targets.emplace(key, target).first;
   }
-  SceGxmDepthStencilSurface disabledDepth{}, clearedDepth;
+  SceGxmDepthStencilSurface disabledDepth{}, sceneDepth;
   if (!depth) {
     check(sceGxmDepthStencilSurfaceInitDisabled(&disabledDepth), "initialize disabled depth");
     sceGxmDepthStencilSurfaceSetBackgroundMask(&disabledDepth, SCE_TRUE);
     depth = &disabledDepth;
-  } else if (clearDepth) {
-    // Each tile starts from the background depth: no load of the stored depth.
-    clearedDepth = *depth;
-    sceGxmDepthStencilSurfaceSetForceLoadMode(&clearedDepth, SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_DISABLED);
-    sceGxmDepthStencilSurfaceSetBackgroundDepth(&clearedDepth, *clearDepth);
-    depth = &clearedDepth;
+  } else if (!depthScene.load || !depthScene.store) {
+    sceneDepth = *depth;
+    if (!depthScene.load) {
+      sceGxmDepthStencilSurfaceSetForceLoadMode(&sceneDepth, SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_DISABLED);
+      sceGxmDepthStencilSurfaceSetBackgroundDepth(&sceneDepth, depthScene.background);
+    }
+    if (!depthScene.store)
+      sceGxmDepthStencilSurfaceSetForceStoreMode(&sceneDepth, SCE_GXM_DEPTH_STENCIL_FORCE_STORE_DISABLED);
+    depth = &sceneDepth;
   }
   // Firmware retains fragment ordering, including render-to-fragment-texture.
   // No fragment-to-vertex resource edge requires an explicit dependency.

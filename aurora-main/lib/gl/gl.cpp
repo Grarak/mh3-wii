@@ -1151,6 +1151,7 @@ void clear_depth(float depth) noexcept {
   if (aurora::native_frame_drawing_allowed())
     glClearBufferfv(GL_DEPTH, 0, &depth);
 }
+void set_depth_liveness(GLuint, bool, bool) noexcept {}
 void clear_depth_full_target(float depth) noexcept {
   if (!aurora::native_frame_drawing_allowed())
     return;

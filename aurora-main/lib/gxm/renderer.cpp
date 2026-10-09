@@ -222,7 +222,7 @@ public:
         device.begin_display();
       else
         device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr,
-                     nullptr, clearDepth);
+                     nullptr, state.depth ? depth_scene(clearDepth) : Device::DepthScene{});
       razor_scene_begin(gfx::current_frame(), device.current_fence().value, width, height, state.color, state.depth, state.display);
       // Stored DF32M contains coverage from the previous scene. Recreate the
       // current coverage even when the logical scissor has not changed.
@@ -568,6 +568,35 @@ public:
   std::map<GLuint, SamplerDesc> samplers;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
   GLuint nextName = 1;
+  // set_depth_liveness: whether later draws read `livenessDepth`, and whether
+  // one reads it after the current target scene. unstoredDepth: the depth whose
+  // last scene skipped its store. A scene that would have to load it means the
+  // liveness was wrong: report it once and always load and store from then on.
+  struct DepthLiveness {
+    GLuint depth = 0, unstored = 0;
+    bool reads = true, readsAfterScene = true, broken = false;
+  } liveness;
+  Device::DepthScene depth_scene(const float* clearDepth) {
+    Device::DepthScene result;
+    if (clearDepth) {
+      result.load = false;
+      result.background = *clearDepth;
+    }
+    if (state.depth == liveness.depth && !liveness.broken) {
+      result.load &= liveness.reads;
+      result.store = liveness.reads && liveness.readsAfterScene;
+    }
+    if (result.load && liveness.unstored == state.depth) {
+      std::fprintf(stderr, "Aurora GXM: a scene loads depth its previous scene did not store; depth liveness disabled\n");
+      liveness.broken = true;
+      result.store = true;
+    }
+    if (result.store)
+      liveness.unstored = liveness.unstored == state.depth ? 0 : liveness.unstored;
+    else
+      liveness.unstored = state.depth;
+    return result;
+  }
   gxm::ResidencyStatistics residency() const {
     auto result = pool.statistics();
     for (const auto& mesh : meshes)
@@ -1153,6 +1182,14 @@ void clear_depth(float depth) noexcept {
       const float ignored[4]{};
       renderer().clear(ignored, depth, true);
     });
+}
+void set_depth_liveness(GLuint depth, bool reads, bool readsAfterScene) noexcept {
+  guarded([&] {
+    auto& liveness = renderer().liveness;
+    liveness.depth = depth;
+    liveness.reads = reads;
+    liveness.readsAfterScene = readsAfterScene;
+  });
 }
 void clear_depth_full_target(float depth) noexcept {
   if (!aurora::native_frame_drawing_allowed())

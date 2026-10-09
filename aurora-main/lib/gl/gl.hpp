@@ -318,6 +318,11 @@ void clear_depth(float depth) noexcept;
 // Full current-target depth clear, independent of the application's scissor
 // and depth-write mask. Retains backend state and never switches render targets.
 void clear_depth_full_target(float depth) noexcept;
+// Whether later draws read depth texture `depth`'s contents: `reads` any
+// draw from now on, `readsAfterScene` one after the current target scene ends
+// (at the next render target switch). GXM then neither loads nor stores depth
+// that nothing reads; GLES ignores it. depth 0 forgets the hint.
+void set_depth_liveness(GLuint depth, bool reads, bool readsAfterScene) noexcept;
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted
 // CDRAM allocation directly; GLES uploads the host allocation into VBOs.

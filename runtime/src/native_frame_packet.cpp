@@ -507,10 +507,49 @@ uint32_t SkippedKinds() {
     return mask;
 }
 #endif
+// Whether a record reads the stored depth: a draw whose depth test can both
+// pass and fail. A model draw publishes its materials' rasters as it draws, so
+// it counts as reading.
+bool ReadsDepth(const Packet& p, const Record& record) {
+    if (record.kind == Kind::Model)
+        return true;
+    if (record.kind != Kind::MaterialGeometry && record.kind != Kind::Geometry)
+        return false;
+    const auto& snapshot = p.draws.items[record.state[NATIVE_STATE_DRAW]];
+    const auto& raster = snapshot.draw.raster;
+    return !snapshot.rasterKnown || (raster.depth_test && raster.cull_mode != 3 && raster.depth_compare != 0 && raster.depth_compare != 7);
+}
+// Feedback operations render to other targets: the frame target's scene ends.
+bool EndsTargetScene(Kind kind) {
+    return kind == Kind::Capture || kind == Kind::Glare || kind == Kind::Clone;
+}
+// Depth liveness for the renderer from record `from` on: whether a record at
+// or after it reads depth, and whether one does after the next feedback
+// operation ends the frame target's scene.
+void PublishDepthLiveness(const Packet& p, GLuint depth, uint32_t from, uint32_t lastReader) {
+    if (lastReader == UINT32_MAX || from > lastReader) {
+        aurora::gl::set_depth_liveness(depth, false, false);
+        return;
+    }
+    bool after = false;
+    for (uint32_t i = from; i < lastReader && !after; ++i)
+        after = EndsTargetScene(p.records[i].kind);
+    aurora::gl::set_depth_liveness(depth, true, after);
+}
+struct DepthLivenessScope {
+    ~DepthLivenessScope() { aurora::gl::set_depth_liveness(0, true, true); }
+};
 void Draw(const Packet& p) {
     const auto& color = aurora::gpu::g_frameBuffer;
     const auto& depth = aurora::gpu::g_depthBuffer;
     aurora::gl::bind_framebuffer(color.texture->gl(), depth.texture->gl());
+    uint32_t lastReader = UINT32_MAX;
+    for (uint32_t i = 0; i < p.records.size(); ++i)
+        if (ReadsDepth(p, p.records[i]))
+            lastReader = i;
+    const GLuint depthTexture = depth.texture->gl();
+    DepthLivenessScope livenessScope;
+    PublishDepthLiveness(p, depthTexture, 0, lastReader);
     aurora::gl::set_viewport(0, 0, color.width, color.height, 0.f, 1.f);
     aurora::gl::set_scissor_enabled(false);
     aurora::gl::set_color_mask(true, true, true, true);
@@ -527,10 +566,14 @@ void Draw(const Packet& p) {
         ForgetNativeModelPrepCaches();
     };
     forget();
-    for ([[maybe_unused]] uint32_t index = 0; const auto& record : p.records) {
-        MH3_RENDER_STAGE(RenderStage::Draw, index++ << 8 | uint32_t(record.kind));
+    for (uint32_t index = 0; const auto& record : p.records) {
+        MH3_RENDER_STAGE(RenderStage::Draw, index << 8 | uint32_t(record.kind));
         if (!aurora_native_frame_should_render())
             return;
+        // Past the last depth reader, or a new frame target scene ahead.
+        if ((lastReader != UINT32_MAX && index == lastReader + 1) || (index && index <= lastReader && lastReader != UINT32_MAX && EndsTargetScene(p.records[index - 1].kind)))
+            PublishDepthLiveness(p, depthTexture, index, lastReader);
+        ++index;
         switch (record.kind) {
         case Kind::Capture: {
             const auto& op = p.feedback[record.payload];
