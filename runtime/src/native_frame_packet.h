@@ -79,8 +79,9 @@ bool NativeRenderThreadRunning();
 // next packet's slot is free).
 void PaceNativeFramePacket();
 
-// Game thread: a loading screen drew this frame. Its frames keep a 60 Hz pace
-// with the limit off, so that they leave the CPU to the loading.
+// Game thread: a loading screen drew this frame. Its frames run at up to
+// 240 Hz without the limiter in either mode, and the render thread draws them
+// at 60 Hz, leaving the CPU to the loading.
 void NoteNativeLoadingFrame();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();

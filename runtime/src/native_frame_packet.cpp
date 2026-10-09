@@ -107,6 +107,10 @@ struct Packet {
     uint32_t slot = 0;
     uint64_t sequence = 0;
     bool render = false, canceled = false;
+
+    // A loading screen drew it (NoteNativeLoadingFrame): the render thread
+    // draws at most 60 such packets a second (LoadingDrawDue).
+    bool loading = false;
     std::string capture;
     std::vector<Record> records;
     std::vector<AuroraNativeMaterialGeometry> materialGeometry;
@@ -142,6 +146,7 @@ struct Packet {
         sequence = next;
         render = admitted;
         canceled = false;
+        loading = false;
         capture.clear();
         records.clear();
         materialGeometry.clear();
@@ -337,10 +342,13 @@ bool synchronous = false;
 bool frameLimit = true;
 bool paced = true;
 
-// Game thread: whether a loading screen drew the frame being paced, and when
-// its next frame may start without the limiter.
+// Game thread: whether a loading screen drew the frame before the one being
+// paced, and when the next loading frame may start.
 bool loadingFrame = false;
 std::chrono::steady_clock::time_point loadingNext;
+
+// Render thread: when the next loading screen frame may be drawn.
+std::chrono::steady_clock::time_point loadingDrawNext;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
 
@@ -974,7 +982,7 @@ void Draw(const Packet& p) {
     }
 }
 
-void Execute(const Packet& p, [[maybe_unused]] uint64_t gpuWaitNs = 0) {
+void Execute(const Packet& p, bool draw, [[maybe_unused]] uint64_t gpuWaitNs = 0) {
 #ifdef MH3_DEVELOPMENT
     renderPacket.store(p.sequence, std::memory_order_relaxed);
     TaskTiming before, after;
@@ -989,7 +997,7 @@ void Execute(const Packet& p, [[maybe_unused]] uint64_t gpuWaitNs = 0) {
     RunTasks(beforeTasks, p.sequence);
 #endif
 
-    if (p.render && !p.canceled) {
+    if (draw) {
         MH3_RENDER_STAGE(RenderStage::Begin);
         MH3_RENDER_PART(Begin);
 
@@ -1105,6 +1113,31 @@ void WaitForGpuFrameSlot() {
     NoteGpuSlotWait(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()));
 }
 
+// Loading screens are drawn at most 60 times a second in either mode. Their
+// game frames run at up to 240 Hz (PaceNativeFramePacket): drawing each one
+// would spend the CPU the loading needs, and waiting to draw each held the
+// game thread back behind the slots, and the packets' tasks with it (a Jhen
+// Mohran load took 1.5 s instead of 0.65 on the Pi). A packet not due runs
+// only its tasks.
+bool LoadingDrawDue() {
+    constexpr auto period = std::chrono::microseconds(16667);
+    const auto now = std::chrono::steady_clock::now();
+
+    if (now < loadingDrawNext)
+        return false;
+
+    loadingDrawNext = now - loadingDrawNext > period ? now + period : loadingDrawNext + period;
+    return true;
+}
+
+// In order; without the limiter, or on a loading screen, the newest, skipping
+// the older ones (their tasks run with it). A packet not taken yet keeps its
+// slot, so the next one's flag may be read.
+uint64_t NextPacket(uint64_t current, uint64_t newest) {
+    const bool skip = !synchronous && (!paced || packets[(current + 1) % kNativeFramePacketSlots].loading);
+    return skip ? newest : current + 1;
+}
+
 void RenderPackets() {
 #ifdef __vita__
     // The game thread runs on core 2; the AX mix worker and the display
@@ -1144,10 +1177,9 @@ void RenderPackets() {
             continue;
         }
 
-        // In order; without the limiter the newest, skipping the older ones
-        // (their tasks run with it). Taken before its slot is read: the game
-        // thread reuses a skipped packet's slot once a newer one is taken.
-        const uint64_t next = paced || synchronous ? current + 1 : newest;
+        // Taken before its slot is read: the game thread reuses a skipped
+        // packet's slot once a newer one is taken.
+        const uint64_t next = NextPacket(current, newest);
         taken.store(next, std::memory_order_release);
         takenSignal.Advance();
         const auto& p = packets[next % kNativeFramePacketSlots];
@@ -1174,12 +1206,14 @@ void RenderPackets() {
 #ifdef MH3_DEVELOPMENT
         const uint64_t waitStart = RenderMonotonicNs();
 #endif
-        if (paced && !synchronous && p.render && !p.canceled)
+        const bool draw = p.render && !p.canceled && (synchronous || !p.loading || !p.capture.empty() || LoadingDrawDue());
+
+        if (paced && !synchronous && draw)
             WaitForGpuFrameSlot();
 #ifdef MH3_DEVELOPMENT
-        Execute(p, RenderMonotonicNs() - waitStart);
+        Execute(p, draw, RenderMonotonicNs() - waitStart);
 #else
-        Execute(p);
+        Execute(p, draw);
 #endif
 
         // Its quads were drawn from the packet's arena (SlotFree).
@@ -1194,7 +1228,7 @@ void RenderPackets() {
         ++replayed;
         wallNs += elapsed;
 
-        if (p.render && !p.canceled) {
+        if (draw) {
             ++drawPackets;
             drawWallNs += elapsed;
         }
@@ -1276,7 +1310,7 @@ EM_BOOL RenderAnimationFrame(double, void*) {
         const uint64_t newest = lastPublished.load(std::memory_order_acquire), current = taken.load(std::memory_order_relaxed);
 
         if (newest > current) {
-            const uint64_t next = paced || synchronous ? current + 1 : newest;
+            const uint64_t next = NextPacket(current, newest);
             taken.store(next, std::memory_order_release);
             takenSignal.Advance();
             const auto& p = packets[next % kNativeFramePacketSlots];
@@ -1284,7 +1318,7 @@ EM_BOOL RenderAnimationFrame(double, void*) {
             if (p.sequence != next)
                 MH3_THROW(std::runtime_error("Frame packet ring out of order"));
 
-            Execute(p);
+            Execute(p, p.render && !p.canceled);
             completed.store(p.sequence, std::memory_order_release);
             completed.notify_all();
             takenSignal.Advance();
@@ -1774,18 +1808,25 @@ void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32
 // seen within the bound, and a stall reports itself.
 void NoteNativeLoadingFrame() {
     loadingFrame = true;
+
+    if (recording)
+        recording->loading = true;
 }
 
 void PaceNativeFramePacket() {
     if (synchronous || !running.load(std::memory_order_relaxed))
         return;
 
-    // Without the limiter a loading screen spun at ~600 frames a second, its
-    // draw table preparation each frame and the render thread taking the CPU
-    // the asset cache's conversions need: a Jhen Mohran load took 49.9 s
-    // instead of 9.9. Its frames keep the 60 Hz pace.
-    if (!paced && std::exchange(loadingFrame, false)) {
-        constexpr auto period = std::chrono::microseconds(16667);
+    // A loading screen's frames run at up to 240 Hz in either mode, without
+    // the limiter, and the render thread draws them at 60 Hz (LoadingDrawDue).
+    // Part of a load is counted in frames: a Jhen Mohran load took 3.5 s at
+    // 60 Hz and 0.65 s at 340 Hz on the Pi. On the Vita it took 10.2 s at
+    // 60 Hz and 8.7 s at 240 Hz, but 48.8 s (32,532 frames) unbounded, where
+    // the frames took the CPU from the loading.
+    const bool loading = std::exchange(loadingFrame, false), unpaced = !paced || loading;
+
+    if (loading) {
+        constexpr auto period = std::chrono::microseconds(4167);
         const auto now = std::chrono::steady_clock::now();
 
         if (loadingNext > now && loadingNext - now <= period) {
@@ -1800,14 +1841,14 @@ void PaceNativeFramePacket() {
     }
 
     const uint64_t next = sequence + 1;
-    const auto released = [next] { return paced ? completed.load(std::memory_order_acquire) + 2 >= next : SlotReleased(next); };
+    const auto released = [next, unpaced] { return unpaced ? SlotReleased(next) : completed.load(std::memory_order_acquire) + 2 >= next; };
     const auto ready = [&] { return released() && SlotFree(next); };
 
     // The slack the render thread measured (WaitForGpuFrameSlot), less a 2 ms
     // margin for the frame's variation, at most 12 ms: the frame starts and
     // reads its input that much later, still in time for its GPU slot.
-    const auto startJustInTime = [] {
-        if (!paced)
+    const auto startJustInTime = [unpaced] {
+        if (unpaced)
             return;
 
         const uint32_t slack = gpuSlackUs.load(std::memory_order_relaxed);
