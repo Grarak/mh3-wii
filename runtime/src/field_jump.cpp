@@ -35,6 +35,19 @@
 // starts the change (0x8028D150(area, the position +0x24 there, the angle
 // +0x30)).
 //
+// The arena (map 9) runs here as an offline field (play mode 3), not in its
+// own play mode 2 (FieldTaskVs 0x8028E58C). The waiting room is part of the
+// pit's area, beyond z -10000, and the field work marks per player whether
+// they are in the pit (u8 +0x136 + player index, 0x8028EF94): only in play
+// mode 2 does the gate's area change (0x8028D150) toggle the mark. A monster
+// senses a hunter (0x8012D118, for its sight, targets and attacks) in its
+// own area, and on the arena map only on the hunter's side: an unmarked
+// hunter is sensed by monsters below z -10000 (0x802B06EC), a marked one by
+// the rest. With the mark never set, no monster in the pit notices the
+// hunter. Here the mark follows the hunter's side, however they got there:
+// --spawn x,y,z, or the waiting room's gate (a cylinder exit to the pit's own
+// area, walked through or --spawn exit:<area>).
+//
 // The village runs 30 steps in its main state before leaving.
 #include "field_jump.h"
 
@@ -83,8 +96,16 @@ constexpr uint32_t kExitBytes = 0x34;
 constexpr uint16_t kExitCylinder = 0;
 enum : uint32_t {
     kWorkArea = 0xEA,
-    kWorkStartArea = 0xEE
+    kWorkStartArea = 0xEE,
+    kWorkState = 0xFA, // 2, 3: in the field
+    kWorkInPit = 0x136 // u8 per player (two)
 };
+
+constexpr uint32_t kCurrentMap = 0x806BB805; // u8, get_now_mapno
+constexpr uint32_t kMyPlayer = 0x8065AA87;   // u8, what MyPlayerIndex returns
+constexpr uint32_t kPlayerBytes = 0xB20;
+constexpr uint8_t kArenaMap = 9;
+constexpr float kArenaWaitingRoomZ = -10000.0f; // below: the waiting room (0x802B06EC)
 
 enum : uint32_t {
     kPhase = 8,
@@ -183,8 +204,31 @@ void RequestQuestExit(int area) {
     State().exitArea = area;
 }
 
+// The arena's mark of the hunter in the pit, from the hunter's side.
+static void KeepArenaPit() {
+    const uint32_t table = Memory::Read32(kMoveWorkTable);
+    const uint32_t work = table ? Memory::Read32(table + 16) : 0;
+    const uint32_t players = table ? Memory::Read32(table + 16 + kPlayerMoveWork * 4) : 0;
+    const uint32_t index = Memory::Read8(kMyPlayer);
+
+    if (!work || !players || index > 1 || Memory::Read8(kCurrentMap) != kArenaMap || uint8_t(Memory::Read8(work + kWorkState) - 2) > 1)
+        return;
+
+    const uint32_t plw = players + index * kPlayerBytes;
+    const uint8_t inPit = Memory::ReadFloat32(plw + kPosition + 8) >= kArenaWaitingRoomZ;
+
+    if (!Memory::Read8(plw) || Memory::Read8(work + kWorkInPit + index) == inPit)
+        return;
+
+    Memory::Write8(work + kWorkInPit + index, inPit);
+    std::fprintf(stderr, "MH3 field jump: the hunter is %s the arena's pit\n", inPit ? "in" : "out of");
+}
+
 void FieldJumpFrame(uint64_t gameFrame) {
     Jump& jump = State();
+
+    if (jump.done && jump.set == QuestCatalog::Set::Arena)
+        KeepArenaPit();
 
     if (!jump.spawn || !jump.done)
         return;

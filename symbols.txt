@@ -318,6 +318,20 @@
 8028e58c FieldTaskVs
 8028dfbc FieldTaskOfflineLoad
 802aef5c StageSet
+# The arena's pit (field_jump.cpp): the field work's mark of a hunter in the
+# pit (+0x136 + player index), which the gate's area change toggles in play
+# mode 2, and the monsters' test whether they can sense a hunter.
+8012d118 EnemySensesPlayer
+8028ef94 PlInArenaPit
+802b06ec ArenaInWaitingRoom
+8028d150 AreaChangeStart
+802b0704 ArenaEntryPoint
+802b2854 PlayerAreaExitVs
+8028e77c FieldTaskVsLoad
+802ae5c8 StageData
+802afcf8 AreaStartPosition
+802afe6c AreaStartAngle
+800cf3f8 SetMyPlayerIndex
 80446d38 GalleryDemoLoad
 # Save data, task starts and the title (save_data.cpp, game_tasks.cpp, village_boot.cpp).
 80441ad8 SaveReadRequest
