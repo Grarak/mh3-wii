@@ -477,6 +477,43 @@ inline double PpcPackIntegerWordInline(int32_t value)
         static_cast<uint64_t>(static_cast<uint32_t>(value)));
 }
 
+// Correctly rounded float a*b + c without a fused instruction: the product of
+// two floats is exact in double, so the only rounding before the final one is
+// the double add. That double rounding can only go wrong when the double sum
+// lands exactly on a float halfway point; the exact TwoSum error then says
+// which way the true value lies. Float-subnormal results (another rounding
+// position) and NaNs take std::fma.
+inline float PpcFmaFloatViaDoubleInline(float a, float b, float c)
+{
+    const double product = static_cast<double>(a) * static_cast<double>(b);
+    const double addend = static_cast<double>(c);
+    double sum = product + addend;
+    const double magnitude = sum < 0.0 ? -sum : sum;
+    if (!(magnitude >= 0x1p-126) && sum != 0.0) [[unlikely]]  // float subnormal, or NaN
+        return std::fma(a, b, c);
+    uint64_t bits = PpcBitCastToU64Inline(sum);
+    if ((bits & 0x1FFFFFFFull) == 0x10000000ull) [[unlikely]]
+    {
+        const double addendPart = sum - product;
+        const double error = (product - (sum - addendPart)) + (addend - addendPart);
+        if (error != 0.0)
+            sum = PpcBitCastToDoubleInline((error > 0.0) == (sum > 0.0) ? bits + 1 : bits - 1);
+    }
+    return static_cast<float>(sum);
+}
+
+// Float fused multiply-add: one instruction where the host has it; the
+// Cortex-A9 (VFPv3/NEONv1, whose vmla rounds twice) uses the exact double form
+// instead of glibc's software fmaf.
+inline float PpcFmaFloatInline(float a, float b, float c)
+{
+#if defined(__arm__) && !defined(__ARM_FEATURE_FMA)
+    return PpcFmaFloatViaDoubleInline(a, b, c);
+#else
+    return std::fma(a, b, c);
+#endif
+}
+
 template <bool Subtract>
 inline float PpcAccuratePsMaddLaneInline(float a, float c, float b)
 {
@@ -485,14 +522,14 @@ inline float PpcAccuratePsMaddLaneInline(float a, float c, float b)
     // explicit float FMA therefore matches Gekko's single rounding point;
     // multiplying and adding separately can differ by an ULP on ordinary
     // vector and matrix workloads.
-    return PpcFlushSingleForNiInline(std::fma(a, c, signedB));
+    return PpcFlushSingleForNiInline(PpcFmaFloatInline(a, c, signedB));
 }
 
 template <bool Subtract>
 inline float PpcAccuratePsMaddLaneNoNiInline(float a, float c, float b)
 {
     const float signedB = Subtract ? -b : b;
-    return std::fma(a, c, signedB);
+    return PpcFmaFloatInline(a, c, signedB);
 }
 
 template <bool Subtract>
@@ -711,7 +748,7 @@ inline PpcPairVec PpcFmaddPairInline(PpcPairVec multiplicand, PpcPairVec multipl
         return PpcResolveNanLanes3Inline(result, multiplicand, multiplier, addend);
     return result;
 #elif defined(__arm__)
-    const PpcPairVec result{std::fma(multiplicand.lane0, multiplier.lane0, addend.lane0), std::fma(multiplicand.lane1, multiplier.lane1, addend.lane1)};
+    const PpcPairVec result{PpcFmaFloatInline(multiplicand.lane0, multiplier.lane0, addend.lane0), PpcFmaFloatInline(multiplicand.lane1, multiplier.lane1, addend.lane1)};
     return PpcResolveNanLanes3Inline(result, multiplicand, multiplier, addend);
 #endif
 }
@@ -726,7 +763,7 @@ inline PpcPairVec PpcFmsubPairInline(PpcPairVec multiplicand, PpcPairVec multipl
         return PpcResolveNanLanes3Inline(result, multiplicand, multiplier, subtractor);
     return result;
 #elif defined(__arm__)
-    const PpcPairVec result{std::fma(multiplicand.lane0, multiplier.lane0, -subtractor.lane0), std::fma(multiplicand.lane1, multiplier.lane1, -subtractor.lane1)};
+    const PpcPairVec result{PpcFmaFloatInline(multiplicand.lane0, multiplier.lane0, -subtractor.lane0), PpcFmaFloatInline(multiplicand.lane1, multiplier.lane1, -subtractor.lane1)};
     return PpcResolveNanLanes3Inline(result, multiplicand, multiplier, subtractor);
 #endif
 }
