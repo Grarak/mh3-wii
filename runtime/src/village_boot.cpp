@@ -1,6 +1,27 @@
+// --village: straight into the village with File 1's first character, without
+// the title's movies and menus.
+//
+// The title (demo_data.rso, a task in slot 4) runs a state machine in its work
+// (*0x809D3568, +0 u8 state, +1 u8 sub-state): 0 sets up, 1 plays the intro,
+// 2..9 the logos and the title screen, 10 reads the save files' headers, 11
+// and 12 check and read the chosen file, 13 is the file/character select, 20
+// and 21 the mode menu (Village/City). The select screen's confirm loads the
+// character (LoadCharacter, 0x80442088, from the save manager's buffer) and
+// records the selection (system_w+0x89C file, +0x89E character); choosing
+// Village (0x80982E40) sets game mode 2 and play mode 5 and starts the village
+// task in the title's slot (StartGameModeTask, 0x800419DC).
+//
+// The boot passes the Wii strap screen (the boot task's phase 3) as a button
+// would, waits for the title's intro (state 1), reads File 1 into the save
+// manager's buffer from the host (after the game's read request), loads its
+// first character and chooses Village as the mode menu does.
 #include "village_boot.h"
+
+#include "guest_call.h"
+#include "memory.h"
+#include "save_data.h"
+
 #include <algorithm>
-#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -10,37 +31,55 @@
 #include <vector>
 
 namespace {
-using Clock = std::chrono::steady_clock;
-enum class State { Off, Navigating, Complete, Cancelled, TimedOut };
-struct Navigator {
-    State state = State::Off;
-    ClassicControllerSample Update(ClassicControllerSample input, uint64_t milliseconds) {
-        if (state != State::Navigating) return input;
-        if (input.buttons || std::abs(int(input.leftX)) > 128 || std::abs(int(input.leftY)) > 128 ||
-            std::abs(int(input.rightX)) > 128 || std::abs(int(input.rightY)) > 128) {
-            state = State::Cancelled;
-            return input;
-        }
-        if (milliseconds >= 180000) {
-            state = State::TimedOut;
-            return input;
-        }
-        // Repeated edges tolerate menu animations, movie startup and slow
-        // shader compilation. Never continue these pulses into the village.
-        return {true, uint16_t(milliseconds % 1500 < 250 ? 0x10 : 0)};
-    }
+
+constexpr uint32_t kSystem = 0x8065AA60;
+enum : uint32_t {
+    kSceneFlag = 0x20,          // u8
+    kGameMode = 0x24,           // u8: 2 village
+    kPlayMode = 0x25,           // u8: 5 village
+    kModeFlag0 = 0x7CE,         // u8, cleared by the mode choice
+    kVillageVariant = 0x7D3,    // u8: 0 the village task (StartGameModeTask)
+    kModeFlag1 = 0x866,         // u8, cleared by the mode choice
+    kOnlineCapable = 0x86B,     // u8, copied to +0x870 by the mode menu
+    kOnlineMenu = 0x870,        // u8
+    kSelectedFile = 0x89C,      // u8 [2]
+    kSelectedCharacter = 0x89E, // u8 [2]
+    kMode = 0x8C2,              // u8: the mode menu's choice, 0 Village
+    kSystemSaveBuffer = 0x950,  // u32: the save manager's buffer
 };
-Navigator navigator;
-Clock::time_point started;
+enum : uint8_t { kGameModeVillage = 2, kPlayModeVillage = 5 };
+constexpr uint32_t kTaskSlots = 0x8065B5D0; // slot 0: the boot task
+enum : uint32_t { kTaskFunction = 4, kBootPhase = 8, kBootTimer = 12 };
+constexpr uint32_t BootTask = 0x80059648;
+constexpr uint8_t kBootStrapScreen = 3;
+constexpr uint32_t kTitleWork = 0x809D3568; // u32: the title's work, while demo_data.rso is loaded
+constexpr uint8_t kTitleIntro = 1;          // its state (+0) while the intro plays
+enum : uint32_t {
+    SaveReadRequest = 0x80441AD8,
+    LoadCharacter = 0x80442088,
+    RunExitHook = 0x800408B8,
+    StartGameModeTask = 0x800419DC,
+    SceneReset = 0x800CF000,
+    SceneExit0 = 0x8004D1E0,
+    SceneExit1 = 0x8004D1F4,
+};
+
+enum class State { Off, Waiting, Complete };
+State state = State::Off;
+std::vector<uint8_t> file;
+
 uint32_t Word(std::span<const uint8_t> data, size_t offset) {
     return (uint32_t(data[offset]) << 24) | (uint32_t(data[offset + 1]) << 16) |
            (uint32_t(data[offset + 2]) << 8) | data[offset + 3];
 }
 bool HasFirstCharacter(std::span<const uint8_t> data) {
-    // Original readDataFile validation (0x80441B9C) sums bytes 8..0x13FFF.
-    // Character records are 0x6000 bytes, starting at 0x48 (0x80441DB0).
-    return data.size() == 0x14000 && (Word(data, 0) & 1) && Word(data, 0x48) != 0 &&
+    // As LoadCharacter (0x80442088): in use, and the bytes from +8 sum to +4.
+    // The first character's record starts at 0x48.
+    return data.size() == SaveData::kFileSize && (Word(data, 0) & 1) && Word(data, SaveData::kCharacters) != 0 &&
            std::accumulate(data.begin() + 8, data.end(), uint32_t(0)) == Word(data, 4);
+}
+bool InMainMemory(uint32_t address) {
+    return (address >= 0x80000000u && address < 0x81800000u) || (address >= 0x90000000u && address < 0x94000000u);
 }
 }
 
@@ -48,51 +87,75 @@ void StartVillageBoot() {
     const char* override = std::getenv("MH3_USER_DIR");
     const auto path = std::filesystem::path(override ? override : "saves") /
         "nand/title/00010000/524d4850/data/nocopy/data00";
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file || file.tellg() != 0x14000)
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input || input.tellg() != SaveData::kFileSize)
         throw std::runtime_error("--village requires an existing File 1 save: " + path.string());
-    std::vector<uint8_t> data(0x14000);
-    file.seekg(0); file.read(reinterpret_cast<char*>(data.data()), data.size());
-    if (!file || !HasFirstCharacter(data))
+    file.resize(SaveData::kFileSize);
+    input.seekg(0);
+    input.read(reinterpret_cast<char*>(file.data()), file.size());
+    if (!input || !HasFirstCharacter(file))
         throw std::runtime_error("--village requires a valid File 1 with its first character populated; create one through normal startup first");
-    navigator.state = State::Navigating;
-    started = Clock::now();
-    std::cerr << "MH3 village shortcut: entering File 1 / character 1; press a controller button to cancel\n";
+    state = State::Waiting;
+    std::cerr << "MH3 village boot: entering File 1 / character 1\n";
+}
+
+void StepVillageBoot(CpuContext* ctx) {
+    if (state != State::Waiting || Memory::Read8(kSystem + kGameMode) != 0) return;
+    // The strap screen: the boot task's phase 3 until a button (after 30
+    // steps) or 600 steps. On to phase 4 as a button would.
+    if (Memory::Read32(kTaskSlots + kTaskFunction) == BootTask && Memory::Read8(kTaskSlots + kBootPhase) == kBootStrapScreen) {
+        Memory::Write8(kTaskSlots + kBootPhase, kBootStrapScreen + 1);
+        Memory::Write16(kTaskSlots + kBootTimer, 0);
+        std::cerr << "MH3 village boot: past the strap screen\n";
+    }
+    const uint32_t title = Memory::Read32(kTitleWork);
+    if (!InMainMemory(title) || Memory::Read8(title) != kTitleIntro) return;
+    const uint32_t buffer = Memory::Read32(kSystem + kSystemSaveBuffer);
+    if (!buffer) throw std::runtime_error("--village: the game has no save buffer at the title");
+    const CpuContext saved = *ctx;
+    GuestCall game{ctx};
+    // File 1's read, as the title's (state 12): the request, then the file.
+    if (!game(SaveReadRequest, {0, uint32_t(-1)})) throw std::runtime_error("--village: the save read request failed");
+    std::copy(file.begin(), file.end(), Memory::GetPointer(buffer, SaveData::kFileSize));
+    if (!game(LoadCharacter, {0})) throw std::runtime_error("--village: File 1's first character did not load");
+    Memory::Write8(kSystem + kSelectedFile, 0);
+    Memory::Write8(kSystem + kSelectedCharacter, 0);
+    // The mode menu's Village (0x80982E30).
+    Memory::Write8(kSystem + kOnlineMenu, Memory::Read8(kSystem + kOnlineCapable) == 1);
+    game(RunExitHook);
+    Memory::Write8(kSystem + kMode, 0);
+    Memory::Write8(kSystem + kModeFlag0, 0);
+    Memory::Write8(kSystem + kModeFlag1, 0);
+    game(SceneReset);
+    Memory::Write8(kSystem + kSceneFlag, 0);
+    game(SceneExit0);
+    game(SceneExit1);
+    Memory::Write8(kSystem + kGameMode, kGameModeVillage);
+    Memory::Write8(kSystem + kPlayMode, kPlayModeVillage);
+    Memory::Write8(kSystem + kVillageVariant, 0);
+    game(StartGameModeTask);
+    *ctx = saved;
+    state = State::Complete;
+    std::cerr << "MH3 village boot: loaded File 1 / character 1, starting the village\n";
 }
 
 void FinishVillageBoot() {
-    if (navigator.state != State::Navigating) return;
-    navigator.state = State::Complete;
-    std::cerr << "MH3 village shortcut: village module verified; normal controls restored\n";
+    if (state == State::Off) return;
+    state = State::Off;
+    std::cerr << "MH3 village boot: village module verified\n";
 }
 
 ClassicControllerSample ReadGameController() {
-    const auto before = navigator.state;
-    HoldInputPlayback(before == State::Navigating);
+    // Recorded input starts in the village.
+    const bool booting = state != State::Off;
+    HoldInputPlayback(booting);
     const auto input = ReadHostController();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
-    const auto output = navigator.Update(input, uint64_t(std::max<int64_t>(elapsed, 0)));
-    if (before != navigator.state) {
-        if (navigator.state == State::Cancelled) std::cerr << "MH3 village shortcut: cancelled by input; normal controls restored\n";
-        if (navigator.state == State::TimedOut) std::cerr << "MH3 village shortcut: timed out; use normal controls to continue\n";
-    }
-    return output;
+    return booting ? ClassicControllerSample{true} : input;
 }
 
 void RunVillageBootSelfTests() {
-    auto check = [](bool valid) { if (!valid) throw std::runtime_error("Village shortcut regression failed"); };
-    Navigator test{State::Navigating};
-    check(test.Update({}, 0).buttons == 0x10);
-    check(test.Update({}, 250).buttons == 0);
-    check(test.Update({}, 1500).buttons == 0x10);
-    test.state = State::Complete;
-    check(test.Update({}, 3000).buttons == 0);
-    test.state = State::Navigating;
-    check(test.Update({true, 0x40}, 0).buttons == 0x40 && test.state == State::Cancelled);
-    check(test.Update({}, 1500).buttons == 0);
-    test.state = State::Navigating;
-    check(test.Update({}, 180000).buttons == 0 && test.state == State::TimedOut);
-    std::vector<uint8_t> data(0x14000);
+    auto check = [](bool valid) { if (!valid) throw std::runtime_error("Village boot regression failed"); };
+    std::vector<uint8_t> data(SaveData::kFileSize);
     check(!HasFirstCharacter(data));
     data[3] = 1; data[0x4B] = '1'; data[7] = '1';
     check(HasFirstCharacter(data));

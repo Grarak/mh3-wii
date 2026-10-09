@@ -291,3 +291,12 @@
 8028dfbc FieldTaskOfflineLoad
 802aef5c StageSet
 80446d38 GalleryDemoLoad
+# Save data, task starts and the title (save_data.cpp, game_tasks.cpp, village_boot.cpp).
+80441ad8 SaveReadRequest
+80442088 LoadCharacter
+80049f6c LoadCharacterWork
+800419dc StartGameModeTask
+80041930 StartTask
+8097ebe4 TitleTask
+800408b8 RunExitHook
+8097e3a0 TitleConfirmPressed
