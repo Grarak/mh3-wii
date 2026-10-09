@@ -101,10 +101,19 @@ a save and does not inspect Mario Kart's `rksys.dat`.
 
 ## Custom quests and cheats
 
-The editor creates variants of existing hunt/capture quest templates. Choosing
-the template chooses its map, monsters, spawn tables, supplies and rewards.
-The editor changes the quest name, hunt/capture objective and stars. The target
-count follows the template's spawn configuration. It writes private `.mh3quest` settings under `saves/custom-quests/`;
+The editor starts from an existing hunt/capture quest. For ordinary quests with
+one monster on the five main maps, it also offers separate map and monster
+choices. A monster choice reuses a complete placement authored for that map,
+along with its main objective and rewards. Map changes choose an authored base
+for that map, preserving its small-monster spawn tables and supplies. The
+placement source is shown in the editor. This allows new combinations of an
+authored map environment, encounter, name, hunt/capture objective, time limit
+and stars (1–7), without guessing monster coordinates.
+
+The target count may be reduced within the authored objective's count. Counts
+that need additional monsters are rejected. The time limit can retain the
+template value or use 1–50 minutes. The editor writes private `.mh3quest`
+settings under `saves/custom-quests/`;
 several variants of one template can coexist, and editing updates the selected
 variant. Creation is allowed before a hunter save exists; launching requires
 the same valid save check as other quests.
@@ -112,13 +121,28 @@ the same valid save check as other quests.
 At launch the settings are applied to a copy of the corresponding complete
 disc quest file. The original IDs and file length stay fixed. `DiscImage`
 applies the replacement to full and partial raw DVD reads, so the game loads
-the edited quest objective and text. The disc is not modified. This is a
-template editor, not a map/spawn-script editor. Settings that increase the
-target count beyond the template's main objective are rejected because they
-would require additional spawn scripting.
-Capture is offered only for monster targets that appear in an authored
-capture objective elsewhere on the disc. This prevents introducing capture
-objectives for targets with no verified capture support.
+the edited quest objective and text. Both the summary objective at `+0x330` and
+the live expanded objective at `+0x394` change together. When changing the
+monster, old secondary objectives and their expanded records are removed.
+The disc is not modified. Version 2 settings retain compatibility with the
+initial version 1 template records.
+
+Composition excludes special boss maps, quests with extra monster slots,
+random invaders, and special quest modes. Those quests retain their template's
+map and placements. Creation currently uses hunt/capture templates; Arena's
+slay objectives are available for launching but not for composition. Arbitrary
+monster combinations, coordinate editing and new spawn scripts remain outside
+this initial editor's scope.
+Capture requires an authored capture objective for that species with matching
+placement mode bytes; targets or scripted variants without that evidence cannot
+be changed to capture.
+
+The field evidence comes from `803AE9F4` (complete eight-byte monster slot at
+`+0x314`, monster/map placement lookup and spawn index), `803AEF34` (copying
+three expanded objective/reward records from `+0x394`), `803AF518` (time limit
+at `+0x13a`) and `803AD4E0` (eight star buckets). Composition requires the
+ordinary `0x300c4/0x300c5` quest modes and preserves the base map's day/night
+selection. No new game code or guessed spawn tables are generated.
 
 Cheats currently offers two native toggles: `No damage` and
 `No action stamina drain`. They call the existing gameplay ports directly and
@@ -144,12 +168,18 @@ Focused host verification:
 ```
 cmake --build build/linux-arm64 --target MH3LauncherTests -j$(nproc)
 build/linux-arm64/MH3LauncherTests /tmp/mh3-launcher-test-data
+# Optional validation against the user's external prepared game assets:
+build/linux-arm64/MH3LauncherTests --quest-audit Assets/DATA
 ```
 
 The tests create synthetic assets in their own temporary subdirectory. They
 verify MH3 save checksums/populated slots, bad save/quest rejection, full and
-partial raw DVD quest overlays, exact ISO extraction, read-only ROM handling,
-and rejection of a truncated native texture pack.
+partial raw DVD quest overlays, live/summary objective consistency, compatible
+authored placement transfer, smaller objective counts, incompatible-map and
+scripted-mode rejection, exact ISO extraction, read-only ROM handling, and
+rejection of a truncated native texture pack. The external European quest audit
+passed for 107 authored base/encounter/hunt-or-capture configurations. This
+checks parser and overlay consistency; it is not a gameplay completion test.
 
 The production processor was also run on the actual external European RVZ
 and nodtool-decrypted ISO through the native C/Rust bridge. Both produced

@@ -183,6 +183,16 @@ bool Run() {
         Page page=Page::Main;size_t selected=0;bool creating=false,noDamage=false,noStamina=false;
         SaveSlot save{};std::vector<SaveSlot> saves;std::vector<QuestCatalog::Quest> quests;
         std::vector<CustomQuest> custom;CustomQuest edit;QuestCatalog::Set set=QuestCatalog::Set::Village;
+        std::vector<QuestCatalog::Quest> editorQuests;std::vector<uint16_t> encounters,maps;
+        const auto monsters=QuestCatalog::MonsterNames();
+        const auto editorQuest=[&](uint16_t id)->const QuestCatalog::Quest& {
+            const auto found=std::find_if(editorQuests.begin(),editorQuests.end(),[&](const auto& q){return q.id==id;});
+            if(found==editorQuests.end())throw std::runtime_error("Custom quest template is unavailable");
+            return *found;
+        };
+        const auto refreshEditor=[&] {
+            editorQuests=QuestCatalog::Load(edit.set);encounters=CompositionOptions(edit);maps=CompositionMaps(edit);
+        };
         Input input;
         const auto enter=[&](Page next){page=next;selected=0;};
         const auto launch=[&](uint16_t id,QuestCatalog::Set category){StartVillageBoot(save.file,save.character);RequestQuestJump(id,category,-1);};
@@ -195,7 +205,18 @@ bool Run() {
             case Page::Saves:title="Choose your hunter";for(const auto& s:saves)rows.push_back("File "+std::to_string(s.file+1)+" / Character "+std::to_string(s.character+1));detail="Only existing characters with valid save checksums appear";break;
             case Page::Quests:title=creating?"Choose a hunt/capture template":"Quest list";for(const auto& q:quests)rows.push_back(std::to_string(q.stars)+"*  "+q.name);if(!quests.empty())detail=QuestCatalog::MapName(quests[selected].map)+" - "+quests[selected].goal;break;
             case Page::Custom:title="Custom quests";for(const auto& q:custom)rows.push_back(q.name);detail=custom.empty()?"Create a custom quest from the main menu":"X Launch   Triangle Edit";break;
-            case Page::Editor:title="Create custom quest";rows={"Name: "+edit.name,"Objective: "+std::string(edit.capture?"Capture":"Hunt"),"Target count: "+std::to_string(edit.count)+" (template)","Stars: "+std::to_string(edit.stars),"Save quest"};detail="Left / Right change values; target count follows template spawns";break;
+            case Page::Editor: {
+                const auto& baseQuest=editorQuest(edit.base);const auto& encounter=editorQuest(edit.encounter?edit.encounter:edit.base);
+                const auto target=encounter.objectives.front().target;
+                const std::string monster=target<monsters.size()?monsters[target]:"ID "+std::to_string(target);
+                title="Create custom quest";
+                rows={"Name: "+edit.name,"Map: "+QuestCatalog::MapName(baseQuest.map)+(encounters.empty()?" (scripted)":""),
+                    "Monster: "+monster,"Objective: "+std::string(edit.capture?"Capture":"Hunt"),
+                    "Target count: "+std::to_string(edit.count),"Time: "+(edit.minutes?std::to_string(edit.minutes)+" minutes":"Template"),
+                    "Stars: "+std::to_string(edit.stars),"Save quest"};
+                detail=encounters.empty()?"Template keeps its scripted map and monster placements":"Placement/rewards: "+encounter.name;
+                break;
+            }
             case Page::Cheats:title="Cheats";rows={"No damage: "+std::string(noDamage?"ON":"OFF"),"No action stamina drain: "+std::string(noStamina?"ON":"OFF")};detail="Native gameplay toggles apply to the current launch";break;
             }
             if(rows.empty())rows={"No quests available"};
@@ -215,12 +236,28 @@ bool Run() {
                 const int direction=(buttons&SCE_CTRL_LEFT)?-1:(buttons&SCE_CTRL_RIGHT)?1:0;
                 if(page==Page::Editor && (direction || accept)) {
                     if(selected==0 && accept)EditName(edit.name);
-                    if(selected==1){if(!edit.capture && !SupportsCapture(edit))throw std::runtime_error("This target has no verified capture support; keep the hunt objective");edit.capture=!edit.capture;}
-                    if(selected==3)edit.stars=std::clamp<int>(int(edit.stars)+(direction?direction:1),1,7);
-                    if(selected==4 && accept){SaveCustomQuest(user,edit);Message("Custom quest saved. Open Quests > Custom quests to play it.");enter(Page::Main);}
+                    const auto cycle=[&](size_t index,size_t count){return (index+count+(direction?direction:1))%count;};
+                    if(selected==1 && !encounters.empty() && !maps.empty()) {
+                        const auto map=editorQuest(edit.base).map;
+                        const auto found=std::find_if(maps.begin(),maps.end(),[&](auto id){return editorQuest(id).map==map;});
+                        edit.base=maps[cycle(found-maps.begin(),maps.size())];edit.encounter=0;
+                        edit.count=editorQuest(edit.base).objectives.front().count;edit.capture=false;
+                        encounters=CompositionOptions(edit);
+                    }
+                    if(selected==2 && !encounters.empty()) {
+                        const auto found=std::find(encounters.begin(),encounters.end(),edit.encounter?edit.encounter:edit.base);
+                        edit.encounter=encounters[cycle(found==encounters.end()?0:found-encounters.begin(),encounters.size())];
+                        edit.count=editorQuest(edit.encounter).objectives.front().count;
+                        if(edit.capture && !SupportsCapture(edit))edit.capture=false;
+                    }
+                    if(selected==3){if(!edit.capture && !SupportsCapture(edit))throw std::runtime_error("This target/placement has no verified capture support; keep the hunt objective");edit.capture=!edit.capture;}
+                    if(selected==4)edit.count=std::clamp<int>(int(edit.count)+(direction?direction:1),1,editorQuest(edit.encounter?edit.encounter:edit.base).objectives.front().count);
+                    if(selected==5)edit.minutes=std::clamp<int>(int(edit.minutes)+(direction?direction:1),0,50);
+                    if(selected==6)edit.stars=std::clamp<int>(int(edit.stars)+(direction?direction:1),1,7);
+                    if(selected==7 && accept){SaveCustomQuest(user,edit);Message("Custom quest saved. Open Quests > Custom quests to play it.");enter(Page::Main);}
                     continue;
                 }
-                if(page==Page::Custom && !custom.empty() && (buttons&SCE_CTRL_TRIANGLE)){edit=custom[selected];enter(Page::Editor);continue;}
+                if(page==Page::Custom && !custom.empty() && (buttons&SCE_CTRL_TRIANGLE)){edit=custom[selected];refreshEditor();enter(Page::Editor);continue;}
                 if(!accept)continue;
                 switch(page) {
                 case Page::Main:
@@ -239,7 +276,7 @@ bool Run() {
                     enter(Page::Quests);break;
                 case Page::Quests:
                     if(quests.empty())break;
-                    if(creating){const auto& q=quests[selected];edit={"Custom "+q.name.substr(0,36),set,q.id,q.objectives[0].count,q.objectives[0].type==0x81,q.stars};enter(Page::Editor);}
+                    if(creating){const auto& q=quests[selected];edit={"Custom "+q.name.substr(0,36),set,q.id,q.objectives[0].count,q.objectives[0].type==0x81,q.stars};refreshEditor();enter(Page::Editor);}
                     else{launch(quests[selected].id,set);return true;}
                     break;
                 case Page::Custom:if(!custom.empty()){const auto& q=custom[selected];StartVillageBoot(save.file,save.character);try{ActivateCustomQuest(q);}catch(...){FinishVillageBoot();throw;}RequestQuestJump(q.base,q.set,-1);return true;}break;
