@@ -1,4 +1,5 @@
 #include "device.hpp"
+#include "razor.hpp"
 #include "shaders.hpp"
 #include <aurora/thread_role.hpp>
 #include <psp2/display.h>
@@ -68,6 +69,7 @@ Device::Device(bool vsync) : m_vsync(vsync) {
     init.displayQueueCallback = display_callback;
     init.displayQueueCallbackDataSize = sizeof(DisplayData);
     init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;
+    razor_initialize();
     check(sceGxmInitialize(&init), "initialize");
     m_initialized = true;
     m_memory.reserve(7);
@@ -133,6 +135,7 @@ void Device::release() noexcept {
   if (m_inScene) sceGxmEndScene(m_context, nullptr, nullptr);
   m_inScene = false;
   if (m_context) sceGxmFinish(m_context);
+  razor_stop();
   if (m_initialized) sceGxmDisplayQueueFinish();
   for (auto sync : m_sync) if (sync) sceGxmSyncObjectDestroy(sync);
   for (auto [size, target] : m_targets) sceGxmDestroyRenderTarget(target);
@@ -144,6 +147,7 @@ void Device::release() noexcept {
   m_memory.clear();
   std::free(m_host); m_host = nullptr;
   if (m_initialized) sceGxmTerminate();
+  razor_terminate();
   m_initialized = false;
 }
 void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color,
@@ -180,6 +184,7 @@ void Device::begin_display() { begin(Width, Height, &m_display[m_back], nullptr,
 void Device::flip() {
   end();
   check(sceGxmPadHeartbeat(&m_display[m_back], m_sync[m_back]), "display heartbeat");
+  razor_frame();
   const DisplayData display{m_displayData[m_back], m_vsync};
   check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[m_back], &display), "queue display");
   m_front = m_back;

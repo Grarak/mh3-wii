@@ -14,13 +14,13 @@
 //      corner it scribbled on;
 //   4. composites the glare texture over the frame with the filter's blend mode.
 //
-// Bloom is always off here: the CPU pixel pass is a mid-frame GPU stall plus
-// ~9k EFB accesses per frame, and its GXDrawDone would stop frameskip. The
-// composite quad is dropped too. Every other step still runs, because they
-// leave GX state behind (VAT 0 = s16 pos / rgba8 colour / f32 uv, vertex
-// descriptors, Z mode, cull, one TEV stage, channel control, projection, copy
-// filter) that later game draws inherit; skipping the whole function (clearing
-// `enabled`) breaks unrelated meshes and UI.
+// Bloom is disabled. EFB texture copies are removed globally, so the old
+// downscale quads and SceneCapture::drawBack must not run: drawBack would
+// overwrite the world with an unwritten texture. Preserve the final GX state
+// inherited by later draws, and the filter dimensions, without emitting any
+// capture, quad, readback or synchronization. SceneCapture capture/drawBack
+// were decompiled again in build/ghidra/efb-copy-removal to verify they have
+// no additional object-state writes that this path must reproduce.
 #include "abi_bridge.h"
 #include "memory.h"
 #include <initializer_list>
@@ -136,57 +136,18 @@ void SetupQuadState(Guest& gx, const Frame& fr, float right, float bottom) {
     gx(GXSetVtxAttrFmt, {0, 0xD, 1, 4, 0});
 }
 
-void DrawQuad(Guest& gx, int16_t w, int16_t h) {
-    const float zero = Memory::ReadFloat32(kZero), one = Memory::ReadFloat32(kOne);
-    const struct { int16_t x, y; float u, v; } corners[] = {
-        {0, 0, zero, zero}, {w, 0, one, zero}, {w, h, one, one}, {0, h, zero, one}};
-    gx(GXBegin, {0x80, 0, 4});
-    for (const auto& c : corners) {
-        gx(GXPosition2s16, {uint32_t(c.x), uint32_t(c.y)});
-        gx(GXColor4u8, {0xFF, 0xFF, 0xFF, 0xFF});
-        gx(GXTexCoord2f32, {}, {c.u, c.v});
-    }
-    gx(GXEnd);
-}
-
-void BrightPass(Guest& gx, const Frame& fr, uint32_t self) {
-    gx(GetScreenOrigin, {fr.vec});
-    const float screenW = Memory::ReadFloat32(fr.vec), screenH = Memory::ReadFloat32(fr.vec + 4);
-    const uint32_t texture = Memory::Read32(self + kTexture);
-    int16_t w = int16_t(Memory::Read16(self + kStartWidth));
-    int16_t h = int16_t(Memory::Read16(self + kStartHeight));
-    uint16_t srcW = uint16_t(w << 1), srcH = uint16_t(h << 1);
-    uint16_t dstW = uint16_t(w), dstH = uint16_t(h);
-
-    // Each level box-filters the previous one (EFB 2w x 2h -> w x h texture)
-    // and draws it back into the EFB corner for the next level.
-    gx(GXSetCopyFilter, {0, 0, 0, 0});
-    const int32_t levels = int32_t(Memory::Read32(self + kLevels));
-    for (int32_t level = 0; level < levels; ++level) {
-        gx(GXSetTexCopySrc, {0, 0, srcW, srcH});
-        gx(GXSetTexCopyDst, {dstW, dstH, 6, 1});
-        gx(DCInvalidateRange, {texture, uint32_t(dstW) * dstH * 4});
-        gx(GXCopyTex, {texture, 0});
-        gx(GXPixModeSync);
-        gx(GXInvalidateTexAll);
-        gx(GXInitTexObj, {fr.texObj, texture, dstW, dstH, 6, 0, 0, 0});
-        SetupQuadState(gx, fr, screenW, screenH);
-        gx(GXSetBlendMode, {1, 1, 0, 0});
-        DrawQuad(gx, w, h);
-        srcW >>= 1, srcH >>= 1, dstW >>= 1, dstH >>= 1;
-        w /= 2, h /= 2;
-    }
-
-    // Skipped: GXDrawDone and the CPU threshold pass over the smallest level.
-    gx(GXSetTexCopySrc, {0, 0, srcW, srcH});
-    gx(GXSetTexCopyDst, {srcW, srcH, 6, 0});
-    gx(DCInvalidateRange, {texture, uint32_t(srcW) * srcH * 4});
-    gx(GXCopyTex, {texture, 0});
-    gx(GXInvalidateTexAll);
+void RestoreCopyFilter(Guest& gx) {
     const uint32_t renderMode = Memory::Read32(gx.cpu->gpr[13] - 0x46B8);
     gx(GXSetCopyFilter, {Memory::Read8(renderMode + 0x19), renderMode + 0x1A, 1, renderMode + 0x32});
-    Memory::Write16(self + kTexWidth, srcW);
-    Memory::Write16(self + kTexHeight, srcH);
+}
+
+void UpdateFilterDimensions(uint32_t self) {
+    uint16_t width = uint16_t(Memory::Read16(self + kStartWidth) << 1);
+    uint16_t height = uint16_t(Memory::Read16(self + kStartHeight) << 1);
+    const int32_t levels = int32_t(Memory::Read32(self + kLevels));
+    for (int32_t level = 0; level < levels; ++level) { width >>= 1; height >>= 1; }
+    Memory::Write16(self + kTexWidth, width);
+    Memory::Write16(self + kTexHeight, height);
 }
 
 } // namespace
@@ -202,11 +163,11 @@ extern "C" void MH3_GlareFilterDraw(CpuContext* ctx) {
     Guest gx{ctx};
 
     if (gx(IsPaused) == 0 && Memory::Read8(kSceneCaptureArmed) != 0) {
-        gx(SceneCapture_capture, {kSceneCapture, 0});
+        RestoreCopyFilter(gx);
     }
     if (Memory::Read8(self + kEnabled) != 0) {
-        BrightPass(gx, fr, self);
-        gx(SceneCapture_drawBack, {kSceneCapture, 0});
+        UpdateFilterDimensions(self);
+        RestoreCopyFilter(gx);
 
         gx(GetScreenOrigin, {fr.vec});
         gx(GetScreenSize, {fr.vec});

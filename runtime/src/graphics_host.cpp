@@ -491,23 +491,10 @@ void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
         UpdateGxDiagnosticMode();
 #endif
         displayCopyPending = true;
-    }, [](const GuestGxStream::TextureCopy& copy) {
-        MH3_STAT(const auto started = FrameProfile::Clock::now();)
+    }, [](const GuestGxStream::EfbClear& copy) {
+        // The stream retains only a texture-copy command's clear side effect.
         GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
-        GXSetTexCopyDst(copy.width, copy.height, static_cast<GXTexFmt>(copy.format), copy.halfScale ? GX_TRUE : GX_FALSE);
-        auto* destination = reinterpret_cast<void*>(copy.destination);
-#ifdef MH3_ENABLE_EFB_COPY_TRACE
-        EfbCopyTrace::BeforeCopy(copy.destination, copy.bytes);
-#endif
-        GXCopyTex(destination, copy.clear ? GX_TRUE : GX_FALSE);
-        // No RAM readback: the copy stays on the GPU and Aurora binds it when
-        // the guest samples this address. MH3 was not seen reading copy bytes
-        // from the CPU; MH3_ENABLE_EFB_COPY_TRACE reports any access that does.
-#ifdef MH3_ENABLE_EFB_COPY_TRACE
-        EfbCopyTrace::AfterCopy(copy.destination, copy.guestDestination, copy.bytes, copy.width, copy.height, copy.format);
-#endif
-        MH3_STAT(++guestTextureCopies;
-                 guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();)
+        GXCopyTex(nullptr, GX_TRUE);
     });
     // GXCopyDisp is the presentation boundary. Seal its owned draw data now,
     // letting GPU encoding overlap guest work before GXDrawDone/next GX use.

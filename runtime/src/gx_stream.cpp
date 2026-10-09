@@ -352,7 +352,7 @@ void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& reso
 }
 
 void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver,
-                          const CopySink& copy, const TextureCopySink& textureCopy) {
+                          const CopySink& copy, const EfbClearSink& clear) {
     // A 65535-vertex direct packet can exceed 8 MiB with all attributes.
     constexpr size_t limit = 16 * 1024 * 1024;
     if (bytes.size() > limit || pending.size() + bytes.size() > limit)
@@ -458,7 +458,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 child.boundArrays = boundArrays;
                 child.palettes = palettes; child.paletteBindings = paletteBindings;
                 child.displayListDepth = displayListDepth + 1;
-                child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, textureCopy);
+                child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, clear);
                 if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
                 bp = child.bp; cp = child.cp; bpMask = child.bpMask;
                 textureBound = child.textureBound; textureDirty = child.textureDirty;
@@ -510,33 +510,16 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             if (reg == 0x52) {
                 const uint32_t trigger = bp[reg];
                 if (!(trigger & 0x4000)) {
-                    if (!textureCopy || !resolver) throw std::runtime_error("GX texture copy requires a RAM/cache bridge");
-                    const uint32_t encodedFormat = (trigger >> 3) & 15;
-                    const uint32_t format = (encodedFormat >> 1) | ((encodedFormat & 1) << 3);
-                    if ((bp[0x43] & 7) == 3 || !(trigger & 0x10000) || format > 6 ||
-                        ((format <= 3) != bool(trigger & 0x8000)))
-                        throw std::runtime_error("GX texture copy requires depth/channel format conversion");
-                    const uint32_t sourceWidth = (bp[0x4A] & 1023) + 1;
-                    const uint32_t sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1;
-                    const bool halfScale = (trigger & 0x200) != 0;
-                    const uint32_t width = std::max(1u, sourceWidth >> unsigned(halfScale));
-                    const uint32_t height = std::max(1u, sourceHeight >> unsigned(halfScale));
-                    const uint32_t tileWidth = format <= 2 ? 8 : 4;
-                    const uint32_t tileHeight = format == 0 ? 8 : 4;
-                    const uint32_t tileBytes = format == 6 ? 64 : 32;
-                    const uint32_t rowBytes = ((width + tileWidth - 1) / tileWidth) * tileBytes;
-                    if ((bp[0x4D] & 1023) * 32 != rowBytes)
-                        throw std::runtime_error("GX texture copy requires strided RAM output");
-                    const auto view = resolver(bp[0x4B] << 5);
-                    if (uint64_t(rowBytes) * ((height + tileHeight - 1) / tileHeight) > view.size)
-                        throw std::runtime_error("GX texture copy exceeds guest RAM");
-                    run.at = offset + length; // the copy follows the commands before it
+                    // Texture copies are removed on every backend. Forward
+                    // preceding state, but do not resolve guest RAM, invalidate
+                    // texture hashes or manufacture a copied texture. Preserve
+                    // the command's optional clear as a separate operation.
+                    run.at = offset + length;
                     run.Flush();
-                    // The copy rewrites only its destination.
-                    InvalidateTextureHashes(view.address, uint64_t(rowBytes) * ((height + tileHeight - 1) / tileHeight));
-                    textureCopy({view.address, bp[0x4B] << 5,
-                                 rowBytes * ((height + tileHeight - 1) / tileHeight), bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
-                                 sourceWidth, sourceHeight, width, height, format, halfScale, (trigger & 0x800) != 0});
+                    if ((trigger & 0x800) && clear)
+                        clear(EfbClear{.x = bp[0x49] & 1023, .y = (bp[0x49] >> 10) & 1023,
+                            .sourceWidth = (bp[0x4A] & 1023) + 1,
+                            .sourceHeight = ((bp[0x4A] >> 10) & 1023) + 1});
                     offset += length;
                     continue;
                 }

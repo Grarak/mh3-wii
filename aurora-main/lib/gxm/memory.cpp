@@ -1,4 +1,5 @@
 #include "memory.hpp"
+#include "razor.hpp"
 #include <psp2/gxm.h>
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
@@ -44,6 +45,7 @@ MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(k
     m_data = nullptr;
     throw std::runtime_error("Cannot map Vita GPU memory");
   }
+  razor_register_buffer(m_data, m_size);
   std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0,
                kind == Kind::Phycont ? "phycont" : "CDRAM", unsigned(reinterpret_cast<uintptr_t>(m_data)));
 }
@@ -61,6 +63,7 @@ MappedMemory& MappedMemory::operator=(MappedMemory&& other) noexcept {
 }
 void MappedMemory::release() noexcept {
   if (m_block < 0) return;
+  razor_unregister_buffer(m_data);
   if (m_kind == Kind::VertexUsse) sceGxmUnmapVertexUsseMemory(m_data);
   else if (m_kind == Kind::FragmentUsse) sceGxmUnmapFragmentUsseMemory(m_data);
   else sceGxmUnmapMemory(m_data);

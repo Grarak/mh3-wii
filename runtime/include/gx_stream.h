@@ -18,15 +18,10 @@ public:
     using ArrayResolver = std::function<ArrayView(uint32_t)>;
     struct DisplayCopy { uintptr_t destination; uint32_t width, height; bool clear; };
     using CopySink = std::function<void(const DisplayCopy&)>;
-    struct TextureCopy {
-        uintptr_t destination;
-        uint32_t guestDestination, bytes;
-        uint32_t x, y, sourceWidth, sourceHeight, width, height, format;
-        bool halfScale, clear;
-    };
-    using TextureCopySink = std::function<void(const TextureCopy&)>;
+    struct EfbClear { uint32_t x, y, sourceWidth, sourceHeight; };
+    using EfbClearSink = std::function<void(const EfbClear&)>;
     void Write(std::span<const uint8_t> bytes, const Sink& sink, const ArrayResolver& resolver = {},
-               const CopySink& copy = {}, const TextureCopySink& textureCopy = {});
+               const CopySink& copy = {}, const EfbClearSink& clear = {});
     unsigned PixelFormat() const { return bp[0x43] & 7; }
     // Sink one command per call instead of runs of them (per-draw diagnostics).
     bool coalesce = true;

@@ -779,51 +779,31 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     copyCase(640 * 352 * 2, 384, 0x4C00, true, 352);
     copyCase(640 * 2, 0, 0x4800, true, 1);
     copyCase(640 * 528 * 2, 0, 0x4C00, false);
-    copyCase(640 * 528 * 2, 256, 0x0800, false);
-    auto textureCopyCase = [&](unsigned format, uint32_t strideBytes, uint32_t room,
-                               bool half, bool shouldPass, bool depth = false) {
-        GuestGxStream copies;
-        unsigned copied = 0;
-        auto sink = [](auto) {};
-        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
-            if (address != 0x200000) throw std::runtime_error("Texture-copy address was not decoded");
-            return {0x12345678, room};
-        };
-        auto copyTexture = [&](const GuestGxStream::TextureCopy& copy) {
-            if (copy.destination != 0x12345678 || copy.x != 4 || copy.y != 8 ||
-                copy.sourceWidth != 10 || copy.sourceHeight != 9 ||
-                copy.width != (half ? 5 : 10) || copy.height != (half ? 4 : 9) ||
-                copy.format != format || copy.halfScale != half || !copy.clear)
-                throw std::runtime_error("Texture-copy metadata incorrect");
-            ++copied;
-        };
+    // Removed texture-copy commands must never access guest RAM or emit a
+    // copy callback, even with unsupported formats/invalid destinations.
+    // Their clear rectangle remains an independent observable operation.
+    for (const bool withClear : {false, true}) {
+        GuestGxStream stream;
+        unsigned clears = 0;
         auto bpWrite = [&](uint8_t reg, uint32_t value) {
             const uint8_t command[]{0x61, reg, uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)};
-            copies.Write(command, sink, resolve, {}, copyTexture);
+            stream.Write(command, [](auto) {},
+                [](uint32_t) -> GuestGxStream::ArrayView {
+                    throw std::runtime_error("Removed EFB texture copy touched guest RAM");
+                }, {}, [&](const GuestGxStream::EfbClear& clear) {
+                    if (clear.x != 4 || clear.y != 8 || clear.sourceWidth != 10 || clear.sourceHeight != 9)
+                        throw std::runtime_error("EFB clear rectangle changed");
+                    ++clears;
+                });
         };
-        bool passed = true;
-        try {
-            bpWrite(0x43, depth ? 3 : 0);
-            bpWrite(0x49, (8 << 10) | 4);
-            bpWrite(0x4A, (8 << 10) | 9);
-            bpWrite(0x4B, 0x200000 >> 5);
-            bpWrite(0x4D, strideBytes / 32);
-            bpWrite(0x52, 0x10800 | (format <= 3 ? 0x8000 : 0) |
-                          ((format * 2) << 3) | (half ? 0x200 : 0));
-        } catch (const std::runtime_error&) { passed = false; }
-        if (passed != shouldPass || copied != unsigned(shouldPass))
-            throw std::runtime_error("Texture-copy bounds/format/dispatch failed");
-    };
-    const unsigned copyRows[]{64, 64, 64, 96, 96, 96, 192};
-    const unsigned copyBytes[]{128, 192, 192, 288, 288, 288, 576};
-    for (unsigned fmt = 0; fmt < 7; ++fmt) {
-        textureCopyCase(fmt, copyRows[fmt], copyBytes[fmt], false, true);
-        textureCopyCase(fmt, copyRows[fmt], copyBytes[fmt] - 1, false, false);
-        textureCopyCase(fmt, copyRows[fmt] + 32, 4096, false, false);
+        bpWrite(0x43, 3);
+        bpWrite(0x49, (8 << 10) | 4);
+        bpWrite(0x4A, (8 << 10) | 9);
+        bpWrite(0x4B, 0xffffff);
+        bpWrite(0x4D, 0);
+        bpWrite(0x52, withClear ? 0x800 : 0);
+        if (clears != unsigned(withClear)) throw std::runtime_error("EFB clear-only dispatch failed");
     }
-    textureCopyCase(6, 128, 128, true, true);
-    textureCopyCase(6, 128, 127, true, false);
-    textureCopyCase(6, 192, 576, false, false, true);
     MH3_OSGetResetCode(cpu);
     if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
     Memory::Write32(0x8074F740, 1);

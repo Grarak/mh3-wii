@@ -38,10 +38,11 @@ if (AURORA_ENABLE_GX)
       target_compile_definitions(aurora_core PUBLIC AURORA_GXM)
       target_compile_options(aurora_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-gline-tables-only>)
       target_sources(aurora_core PRIVATE lib/gxm/renderer.cpp lib/gxm/device.cpp lib/gxm/memory.cpp
-        lib/gxm/draw_memory.cpp lib/gxm/texture.cpp lib/gxm/native_assets.cpp lib/gxm/raster.cpp lib/gxm/shaders.cpp lib/gxm/shaders.S)
+        lib/gxm/razor.cpp lib/gxm/draw_memory.cpp lib/gxm/texture.cpp lib/gxm/native_assets.cpp lib/gxm/raster.cpp lib/gxm/shaders.cpp lib/gxm/shaders.S)
       set_source_files_properties(lib/gxm/shaders.S PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lib/gxm/shaders.bin")
       target_include_directories(aurora_core PRIVATE lib/gxm)
-      target_link_libraries(aurora_core PUBLIC SceGxm_stub SceDisplay_stub)
+      target_link_libraries(aurora_core PUBLIC SceGxm_stub SceDisplay_stub
+        SceRazorCapture_stub_weak SceRazorHud_stub_weak ScePamgr_stub)
     else()
       find_path(AURORA_GLES3_INCLUDE_DIR GLES3/gl3.h REQUIRED)
       find_library(AURORA_GLESV2_LIBRARY NAMES GLESv2 REQUIRED)
