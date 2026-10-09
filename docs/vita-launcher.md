@@ -270,8 +270,9 @@ The Vita build adds a Rust static library from
 Cargo dependencies cached. `cargo fetch --locked --manifest-path
 runtime/vita/rom_decoder/Cargo.toml` can populate that cache. The build helper
 uses offline Cargo, all available CPUs, and clang-21/llvm-ar-21 for codec C
-sources. Existing C++ sources and GXM shaders use the port's clang/baked-GXP
-build. The launcher does not compile shaders at runtime.
+sources. The C++ sources and GXM shaders use the port's clang build and the
+offline [shader bank](vita-shader-bank.md). The launcher does not compile
+shaders at runtime.
 
 Focused host verification:
 
@@ -342,11 +343,10 @@ restart and target resize work; there is no hand-off stall. Two things seen
 in those runs belong to the game:
 
 - **Shader program creation.** At a quest's first model draws the render
-  thread creates about 25 GXM programs. Before the cache pack (24eee8c) each
-  cached program cost about 1 s of `ux0` file I/O and the screen held the
-  loading screen for 20–25 s; with the pack, warm runs load them without a
-  stall ([runtime shaders](vita-runtime-shaders.md)). A cold compile still
-  takes 3–5 s per program.
+  thread creates about 25 GXM programs. When they were compiled at runtime
+  and cached as files, the screen held the loading screen for 20–25 s. They
+  now come from the embedded [shader bank](vita-shader-bank.md), which needs
+  no compile or file access (`oct03-head-bank-1`: none at runtime).
 - **The THP intro** decodes on the game thread at about 320 ms per step (about
   3 logical fps). Its colours were fixed afterwards (3e4fabc: the YUV planes
   are converted to RGB when the texture is made); the devkit has not shown the

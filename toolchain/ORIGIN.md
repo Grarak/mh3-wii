@@ -20,9 +20,8 @@ MH3-specific changes:
 The port retains static PowerPC-to-C++ translation and native host compilation.
 There is no CPU interpreter or JIT fallback in this runtime.
 
-`runtime/src/audio/{ax_mix.cpp,ax_memory.cpp,ax_internal.h,ax_mix_kernels.h,ax_dsp.h}`
-is adapted from the same WiiCompiled commit's `runtime/src/hle/audio` directory.
-MH3 adaptations bind SDK task globals/callbacks, require the verified AX program
-hash `0x4CC52064`, use synchronous mixing during bring-up, and load coefficient
-data from ignored local `Assets/DSP`. The DSP coefficient file is included at `runtime/assets/dsp/dsp_coef.bin`;
-build scripts validate it and copy it into the local asset directory.
+The AX/DSP mixer that was adapted from the same WiiCompiled commit's
+`runtime/src/hle/audio` directory has been removed; audio is now a native
+mixer (`runtime/src/audio`). The DSP coefficient file it used is still included
+at `runtime/assets/dsp/dsp_coef.bin`; the build scripts validate it and copy it
+into the local asset directory, though the native mixer does not read it.

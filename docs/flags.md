@@ -160,9 +160,9 @@ A second cleanup pass merges or removes these; the last column says how.
 | `MH3_GXM_SERIAL_SCENES` | `1`: serialize GXM scenes | Vita | remove |
 | `MH3_GXM_SHADE_PROBE` | replace a shaded program's output stage (`blue`, ...) | Vita | remove |
 | `MH3_GXM_SHADE_DATA_DUMP` | dump shaded programs' uniform blocks | Vita | remove |
-| `MH3_GXM_SHADER_ABI_TRACE` | log runtime program reflection | Vita | remove |
+| `MH3_GXM_SHADER_ABI_TRACE` | log each GXM program's reflection once | Vita | remove |
 | `MH3_GXM_WAIT_TRACE` | log the first `sceGxmFinish` waits | Vita | remove |
-| `MH3_GXM_SHADER_DUMP` | mirror runtime-compiled GXPs to a directory (set by the selector preflight) | Vita | keep for the preflight |
+| `MH3_GXM_SHADER_DUMP` | mirror runtime-compiled GXPs (development bank misses, preflights) to a directory; set by the selector preflight | Vita | keep for the preflight |
 
 ## Read by tools, not the runtime
 

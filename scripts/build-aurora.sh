@@ -1,12 +1,13 @@
 #!/bin/bash
 # Build the OpenGL ES 3.0 executable for arm32 or arm64 Linux (MH3_ARCH,
-# default arm32): build/linux-$MH3_ARCH/MH3. Aurora renders natively through
-# OpenGL ES 3.0 on the game thread, with asynchronous GPU submissions.
+# default arm32): $MH3_BUILD_DIR/MH3, default build/linux-$MH3_ARCH/MH3.
+# MH3_EXTRA_CMAKE_ARGS adds CMake options (for example -DMH3_DEVELOPMENT=ON);
+# BUILD_JOBS sets the parallelism. A render thread draws through OpenGL ES 3.0.
+# Run arm32 builds inside scripts/docker-build.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/target.sh
 mkdir -p logs
-python3 scripts/prepare_audio_assets.py
 cmake -S runtime -B "$MH3_BUILD_DIR" -G Ninja "${MH3_CROSS_ARGS[@]}" \
   -DMH3_AURORA_ROOT="${AURORA_ROOT:-$PWD/aurora-main}" \
   -DFETCHCONTENT_BASE_DIR="$PWD/build/aurora-$MH3_ARCH/_deps" \

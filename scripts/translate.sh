@@ -1,5 +1,10 @@
 #!/bin/bash
-# Reproduce the current strict translation attempt. This does not build a playable port.
+# Translate the DOL and the 15 RSO overlay profiles into generated/ (about
+# 3.5 min; logs in logs/). Run it after adding or removing a native
+# registration or editing symbols.txt, recomp.yml or runtime/src/tick_sites.inc,
+# then rebuild. TRANSLATE_JOBS (default: all CPUs) and OVERLAY_JOBS (default 5)
+# set the parallelism; DOTNET_BIN and WIICOMPILED_ROOT select the dotnet binary
+# and the translator tree (default toolchain/).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ulimit -c 0
