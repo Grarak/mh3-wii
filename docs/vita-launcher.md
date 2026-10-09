@@ -45,11 +45,14 @@ game (`StartNativeAudio`); the launcher does not touch it.
 ## Startup and external game data
 
 The launcher first initializes native GXM without opening game texture packs.
-It checks the installed kernel module named `kubridge` with
+It checks the installed kernel modules named `kubridge` and `CapUnlocker`
+(core 3 for the draw thread and the disc read-ahead) with
 `_vshKernelSearchModuleByName`. A missing module produces a native
-`SceMsgDialog`, with its GUI rendered through `sceCommonDialogUpdate` on the
-current display buffer and sync object. No guest allocation happens before
-this check succeeds.
+`SceMsgDialog` saying how to install it (kubridge 0.3.1 or newer, which the
+guest memory aliases need), with its GUI rendered through
+`sceCommonDialogUpdate` on the current display buffer and sync object, and
+the launcher stops. No guest allocation happens before these checks
+succeed.
 
 Put exactly one European `RMHP08` disc image in `ux0:/data/mh3-wii/`:
 
@@ -566,7 +569,7 @@ directory gives the missing-disc message. `MH3_USER_DIR` holds the saves and
   Start (after 2.5 s while an input script runs);
 - the keyboard (quest names, the name cheat) is the Vita's: on the host
   the name keeps its value;
-- no kubridge check.
+- no kubridge or CapUnlocker check.
 
 Input is `MH3_LAUNCHER_INPUT`, or the host's controls read as the game's
 Classic Controller (`ReadLiveController`), by button position: B is Cross, A

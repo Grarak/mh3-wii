@@ -711,7 +711,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     const uint32_t search[2]{};
 
     if (_vshKernelSearchModuleByName("kubridge", search) < 0) {
-        Message("Kubridge is not installed. Install kubridge.skprx under *KERNEL in your taiHEN config.txt, then restart your PS Vita before launching Monster Hunter Tri.");
+        Message("Kubridge is not installed. Install kubridge.skprx version 0.3.1 or newer (https://github.com/bythos14/kubridge/releases) under *KERNEL in your taiHEN config.txt, then restart your PS Vita before launching Monster Hunter Tri.");
+        return {};
+    }
+
+    // Core 3 (the draw thread, the disc read-ahead) needs CapUnlocker; the
+    // module check is enough (azahar's citra_vita_main.cpp does the same).
+    if (_vshKernelSearchModuleByName("CapUnlocker", search) < 0) {
+        Message("CapUnlocker is not installed. Install CapUnlocker.skprx (https://github.com/GrapheneCt/CapUnlocker) under *KERNEL in your taiHEN config.txt, then restart your PS Vita before launching Monster Hunter Tri.");
         return {};
     }
 
