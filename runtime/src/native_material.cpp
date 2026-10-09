@@ -585,7 +585,10 @@ void* CarveUniforms(uint32_t bytes) {
 // The Animated block of the current draw: rebuilt only when the material,
 // textures or post SRT changed, rewritten only when its bytes changed.
 struct AnimatedState {
-    mh3_shade_gpu_animated values{};
+    // The last block's values and the next build's, swapped when the next
+    // differs: no copy to keep the last for the comparison.
+    mh3_shade_gpu_animated values[2]{};
+    unsigned last = 0;
     aurora::gl::UniformBlock block{};
     uint32_t frame = UINT32_MAX, slot = UINT32_MAX;
 
@@ -597,7 +600,6 @@ struct AnimatedState {
 
 // Per-draw resolved Material copy (ResolvesOnCpu).
 struct ResolvedState {
-    mh3_shade_gpu_material values{};
     aurora::gl::UniformBlock block{};
     const ShadeEntry* entry = nullptr;
     uint32_t frame = UINT32_MAX, slot = UINT32_MAX;
@@ -695,7 +697,7 @@ std::optional<aurora::gl::UniformBlock> ShadeAnimated(const ShadeEntry& entry, c
         return a.block;
     }
 
-    mh3_shade_gpu_animated next;
+    mh3_shade_gpu_animated& next = a.values[a.last ^ 1];
     mh3_shade_gpu_palette(&render.material, &next);
     mh3_shade_gpu_alpha_range(render.material.pixel.values, next.alpha_range);
     std::memcpy(next.texture_bias, bias, sizeof next.texture_bias);
@@ -706,7 +708,7 @@ std::optional<aurora::gl::UniformBlock> ShadeAnimated(const ShadeEntry& entry, c
     a.entry = &entry;
     a.srtRoles = srtRoles;
 
-    if (current && BytesEqual(&next, &a.values, sizeof next)) {
+    if (current && BytesEqual(&next, &a.values[a.last], sizeof next)) {
         ++gpuStatistics.animated_equal;
         return a.block;
     }
@@ -717,7 +719,7 @@ std::optional<aurora::gl::UniformBlock> ShadeAnimated(const ShadeEntry& entry, c
         return std::nullopt;
 
     std::memcpy(memory, &next, sizeof next);
-    a.values = next;
+    a.last ^= 1;
     a.block = {memory, 0, 0, uint32_t(sizeof next)};
     a.frame = aurora::gfx::current_frame();
     a.slot = aurora_native_frame_slot();
@@ -739,25 +741,26 @@ std::optional<aurora::gl::UniformBlock> ShadeMaterialBlock(const ShadeEntry& ent
     }
 
     // Static coefficients times their picks; the copy picks nothing (one).
-    r.values = entry.material;
-
-    for (unsigned k = 0; k < MH3_SHADE_GPU_COEFFICIENTS; ++k)
-        mh3_shade_gpu_coefficient(&entry.material, &values, k, r.values.coefficient[k]);
-
-    for (auto& pick : r.values.pick) {
-        const mh3_shade_gpu_pick one = {{float(MH3_SHADE_GPU_ONE), float(MH3_SHADE_GPU_ONE), 0.f, 0.f}, {0.f, 0.f, 0.f, 1.f}, {0.f, 0.f, 0.f, 1.f}};
-        pick = one;
-    }
-
-    void* memory = CarveUniforms(sizeof r.values);
+    // Built in the uniform memory itself.
+    void* memory = CarveUniforms(sizeof(mh3_shade_gpu_material));
 
     if (!memory)
         return std::nullopt;
 
-    std::memcpy(memory, &r.values, sizeof r.values);
+    auto& out = *static_cast<mh3_shade_gpu_material*>(memory);
+    out = entry.material;
+
+    for (unsigned k = 0; k < MH3_SHADE_GPU_COEFFICIENTS; ++k)
+        mh3_shade_gpu_coefficient(&entry.material, &values, k, out.coefficient[k]);
+
+    for (auto& pick : out.pick) {
+        const mh3_shade_gpu_pick one = {{float(MH3_SHADE_GPU_ONE), float(MH3_SHADE_GPU_ONE), 0.f, 0.f}, {0.f, 0.f, 0.f, 1.f}, {0.f, 0.f, 0.f, 1.f}};
+        pick = one;
+    }
+
     std::memcpy(r.palette.palette, values.palette, sizeof r.palette.palette);
     r.entry = &entry;
-    r.block = {memory, 0, 0, uint32_t(sizeof r.values)};
+    r.block = {memory, 0, 0, uint32_t(sizeof(mh3_shade_gpu_material))};
     r.frame = aurora::gfx::current_frame();
     r.slot = aurora_native_frame_slot();
     ++gpuStatistics.resolved_written;
@@ -1526,13 +1529,13 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         blocks = ShadeGpuBlocks(memory, paletteBytes, *materialBlock, *animatedBlock);
     } else if (gpu) {
         auto animatedBlock = ShadeAnimated(entry, bias, srt, srtRoles);
-        const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values) : std::nullopt;
+        const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values[animated.last]) : std::nullopt;
 
         if (!materialBlock)
             return;
 #ifdef MH3_DEVELOPMENT
         if (MaterialGpuVerify())
-            VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? resolved.values : entry.material, animated.values, &draw);
+            VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? *static_cast<const mh3_shade_gpu_material*>(resolved.block.data) : entry.material, animated.values[animated.last], &draw);
 #endif
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
@@ -1604,13 +1607,13 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
             mh3_shade_gpu_srt_identity(&role);
 
         const auto animatedBlock = ShadeAnimated(entry, bias, srt, 0);
-        const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values) : std::nullopt;
+        const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values[animated.last]) : std::nullopt;
 
         if (!materialBlock)
             return;
 #ifdef MH3_DEVELOPMENT
         if (MaterialGpuVerify())
-            VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? resolved.values : entry.material, animated.values, nullptr);
+            VerifyMaterialGpu(entry, ResolvesOnCpu(entry) ? *static_cast<const mh3_shade_gpu_material*>(resolved.block.data) : entry.material, animated.values[animated.last], nullptr);
 #endif
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
