@@ -4,6 +4,7 @@
 #include "disc_image.h"
 #include "asset_cache.h"
 #include "guest_call.h"
+#include "load_progress.h"
 #include "net/ios_net.h"
 #include "scope_exit.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -143,6 +144,7 @@ class DiscReader {
             if (reply.length) {
                 std::memcpy(Memory::GetPointer(reply.output, reply.length), reply.data.data(), reply.length);
                 RecordNativeDiscWrite(reply.output, reply.offset, reply.length);
+                LoadProgress::DiscDelivered(reply.offset, reply.length);
             }
 
             completions.push_back({reply.callback, reply.result, reply.argument});
@@ -1237,7 +1239,9 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
                 Reader().Submit(callback, argument, 32);
             else if (length) {
                 lastDiscPosition = position;
-                Reader().Submit(callback, argument, 1, output, uint64_t(position) * 4, length, DiscRequestOf(ctx, uint64_t(position) * 4, length));
+                const DiscRequest request = DiscRequestOf(ctx, uint64_t(position) * 4, length);
+                LoadProgress::DiscRead(uint64_t(position) * 4, length, request.end);
+                Reader().Submit(callback, argument, 1, output, uint64_t(position) * 4, length, request);
             } else
                 Reader().Submit(callback, argument, 1);
         } else {

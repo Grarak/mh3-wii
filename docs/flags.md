@@ -150,7 +150,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles][,loading]`
 
 | Item | Effect |
 | --- | --- |
@@ -163,6 +163,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 | `actions` | each (group, variant) EnemyActionTable looks up, once, with its action table word and caller |
 | `draw-writes` | the game thread's heap frees and memory fills while the overlapped draw runs beside it; when the draw meets a model whose draw virtual is gone, the `MH3 draw of a dead model` line and the recorded writes over it (`MH3 draw-side` lines) |
 | `particles` | every third tick of game time, an `MH3 particles` line per particle manager with live particles (its emitter resource, the count, their mean age and life in ticks, the summed alpha of the first colour) and one with the emitter emissions, child curves (each run or gated off between ticks) and queued child emissions since the last; and an `MH3 effect emitter` line for every emitter the game looks up by name (each effect it creates: the name, the emitter data and the return addresses of five frames up). Compares effects at fixed and variable steps (`MH3_VARIABLE_STEP=0`) |
+| `loading` | each loading screen: every file the loader queues as it is first seen, and every drawn frame an `MH3 loading` line with the loader state, the queued files and bytes, the disc bytes read, in flight and learned, the conversions done and queued, and the progress bar's share ([loading progress](loading-progress.md)) |
 
 ## Build-option tools
 

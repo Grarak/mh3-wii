@@ -3,6 +3,7 @@
 #include "fs_status.h"
 #include "disc_image.h"
 #include "launcher_convert.h"
+#include "load_progress.h"
 #include <aurora/thread_role.hpp>
 #include <algorithm>
 #include <array>
@@ -579,6 +580,7 @@ struct AssetCache::Impl {
         if (!s.data)
             MH3_THROW(std::logic_error("Asset conversion without source data"));
 
+        LoadProgress::ConversionQueued(s.data->size());
         jobs.push_back({&s, kind});
         changed.notify_all();
     }
@@ -747,6 +749,8 @@ struct AssetCache::Impl {
 
             if (!converted.ok())
                 failure = s.file.path + ": " + converted.message();
+
+            LoadProgress::ConversionDone(data->size());
 #ifdef MH3_DEVELOPMENT
             if (Seconds() - since > 0.5 || !failure.empty())
                 std::fprintf(stderr, "MH3 asset cache: converted %s of %s (%lu bytes) in %.2f s%s%s\n", kind, s.file.path.c_str(), static_cast<unsigned long>(data ? data->size() : 0), Seconds() - since,

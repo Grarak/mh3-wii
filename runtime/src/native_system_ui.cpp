@@ -2,6 +2,7 @@
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "guest_call.h"
+#include "load_progress.h"
 #include "memory.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
@@ -10,6 +11,7 @@
 #include "../native/adapters/model_state_bridge.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -1366,6 +1368,28 @@ void HudBlend(unsigned mode) {
     r.logic_op = 0;
     SetNativeRaster(r);
 }
+
+// The loading progress bar under the "Now Loading" letters
+// (docs/loading-progress.md): the letters' stone colour on a dark brown
+// track, as wide as the row of letters at rest, untextured and blended as the
+// screen's other quads. `shift`: the letters' horizontal offset (4:3).
+void HudProgress(float shift, float share) {
+    constexpr float left = 318, width = 446, top = 463, height = 5;
+    const uint8_t track[4] = {38, 22, 10, 200}, fill[4] = {226, 196, 148, 255};
+    mh3_system_ui_vertex vertices[8];
+
+    if (!mh3_system_ui_hud_rectangle(vertices, left - shift - 2, top - 2, width + 4, height + 4, track, 0, 0, 0, 0) ||
+        !mh3_system_ui_hud_rectangle(vertices + 4, left - shift, top, std::round(width * share), height, fill, 0, 0, 0, 0))
+        return;
+
+    const auto saved = GetNativeMaterialState();
+    auto m = saved;
+    mh3_system_ui_application_pipeline(&m, 0);
+    SetNativeMaterial(m);
+    HudBlend(1);
+    Submit(vertices, share > 0 ? 8 : 4);
+    SetNativeMaterial(saved);
+}
 } // namespace
 
 extern "C" void MH3_HUDTexgen(CpuContext* cpu) {
@@ -1412,11 +1436,14 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x60);
     GuestCall call{cpu};
 
-    if (!Memory::Read8(0x806977a0))
+    if (!Memory::Read8(0x806977a0)) {
+        LoadProgress::Idle();
         return;
+    }
 
     if (Memory::Read8(0x80697846) == 6 && !uint8_t(call(0x800d0744))) {
         Memory::Write8(0x806977a0, 0);
+        LoadProgress::Idle();
         return;
     }
 
@@ -1493,6 +1520,7 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
         MH3_THROW(std::runtime_error("HUD sprite atlas has zero dimensions"));
 
     const uint32_t language = Memory::Read8(0x8065aa69), count = Memory::Read8(0x80793820 + language), atlas = Memory::Read32(0x805959e8 + language * 4);
+    const float progress = LoadProgress::Frame();
 
     if (NativeGraphicsFrameShouldRender())
         for (unsigned i = 0; i < count; ++i) {
@@ -1521,6 +1549,10 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
 
             Submit(vertices, 4);
         }
+
+    if (count && NativeGraphicsFrameShouldRender())
+        HudProgress(call(0x80040424) == 0 ? 160 : 0, progress);
+
     if (type != 6) {
         if (Memory::Read8(0x8065b23c) != 255)
             call(0x800d29dc, {0});
