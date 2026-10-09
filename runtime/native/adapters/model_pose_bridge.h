@@ -71,3 +71,7 @@ void PublishNativeModelTextureMatrix(uint32_t selector, const float matrix[12], 
 const mh3_model_palette& ReadNativeModelPalette(NativeOwner owner = NativeOwner::Game);
 uint64_t ReadNativeModelPaletteRevision(NativeOwner owner = NativeOwner::Game);
 void PublishNativeModelPalette(const mh3_model_palette& palette, NativeOwner owner = NativeOwner::Game);
+/* The owner's palette to rebuild in place (a publication without the copy):
+ * advances its revision; the reference stays valid. Matrix setters given one
+ * of its own slots leave that slot as it is. */
+mh3_model_palette& EditNativeModelPalette(NativeOwner owner);

@@ -1244,18 +1244,17 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
         input.direct_position = &item.storage.direct_position;
     if (input.direct_normal)
         input.direct_normal = &item.storage.direct_normal;
-    mh3_model_palette palette = ReadNativeModelPalette(NativeOwner::Render);
+    // The Render owner's palette is rebuilt in place: the loads write its
+    // slots, and the setters below find their matrices already there.
+    auto& palette = EditNativeModelPalette(NativeOwner::Render);
     if (input.matrix_id >= 0) {
-        mh3_model_palette produced{};
-        mh3_model_palette_rigid(&input, &sources, &produced);
-        mh3_model_palette_overlay(&palette, &produced, &palette);
-        PublishNativeModelPalette(palette, NativeOwner::Render);
-        SetNativePositionMatrix(&produced.position[0].v[0][0], NativeOwner::Render);
-        if (produced.normal_valid & 1)
-            SetNativeNormalMatrix(0, &produced.normal[0].v[0][0], NativeOwner::Render);
-        for (uint32_t i = 0; i < 10; i++)
-            if (produced.texture_valid & (1u << i))
-                SetNativeTextureMatrix(30 + i * 3, &produced.texture[i].v[0][0], true, NativeOwner::Render);
+        const uint32_t produced = mh3_model_palette_rigid_into(&input, &sources, &palette);
+        SetNativePositionMatrix(&palette.position[0].v[0][0], NativeOwner::Render);
+        if (produced & MH3_PALETTE_PRODUCED_NORMAL)
+            SetNativeNormalMatrix(0, &palette.normal[0].v[0][0], NativeOwner::Render);
+        for (uint32_t i = 0; i < 8; i++)
+            if (produced & MH3_PALETTE_PRODUCED_TEXTURE(i))
+                SetNativeTextureMatrix(30 + i * 3, &palette.texture[i].v[0][0], true, NativeOwner::Render);
     }
     const auto& material = GetNativeMaterialState(NativeOwner::Render);
     float post[8][12]{};
@@ -1268,11 +1267,12 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
         }
     }
     auto submit_one = [&](uint32_t batch_index) {
-        mh3_resolved_mesh_submit submit{};
+        // Every field is written by the bind (or the draw is abandoned).
+        mh3_resolved_mesh_submit submit;
         if (prepared.palette_batch_count) {
             const auto& batch = prepared.palette_batches[batch_index];
             mh3_model_palette_apply_batch(&batch, &sources, &palette, &palette);
-            PublishNativeModelPalette(palette, NativeOwner::Render);
+            EditNativeModelPalette(NativeOwner::Render);
             if (batch.position_known & 1)
                 SetNativePositionMatrix(&palette.position[0].v[0][0], NativeOwner::Render);
             for (uint32_t slot = 0; slot < 10; slot++) {

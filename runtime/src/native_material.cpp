@@ -860,9 +860,10 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         if (shading.texture_coordinate[role] < 8)
             coordinates |= uint8_t(1u << shading.texture_coordinate[role]);
     const auto& material = render.material;
-    auto draw = mesh;
-    draw.mesh = *resident.mesh;
-    draw.material = &material;
+    // The submission itself: its material is the Render owner's (checked by
+    // SubmitNativeModelMesh), and the inputs read only its metadata (bounds),
+    // which the resident mesh shares.
+    const auto& draw = mesh;
     mh3_model_gpu_draw_inputs inputs;
     auto& palette = *reinterpret_cast<mh3_shade_palette*>(static_cast<char*>(memory.data) + (gpu ? ShadeGpuPaletteOffset : ShadePaletteOffset(shading.model)));
     const auto& viewport = GetNativeDrawState(NativeOwner::Render).viewport;

@@ -220,11 +220,11 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint
         return MH3_PACK_UNSUPPORTED;
     if (!prepared || !out || !source_generation || !pose_generation || resident_generation != prepared->immutable.resident_generation)
         return MH3_PACK_INVALID;
-    mh3_resolved_mesh_submit r = prepared->immutable;
-    r.source_generation = source_generation;
-    r.pose_generation = pose_generation;
-    r.palette = palette;
-    *out = r;
+    /* Checked above: the copy goes straight to out. */
+    *out = prepared->immutable;
+    out->source_generation = source_generation;
+    out->pose_generation = pose_generation;
+    out->palette = palette;
     return MH3_PACK_OK;
 }
 mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uint32_t index, uint64_t resident_generation, uint64_t source_generation, uint64_t palette_generation,
@@ -233,14 +233,13 @@ mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uin
         resident_generation != prepared->immutable.resident_generation)
         return MH3_PACK_INVALID;
     const mh3_pack_palette_batch *batch = &prepared->palette_batches[index];
-    mh3_resolved_mesh_submit result = prepared->immutable;
-    result.first_index = batch->first_index;
-    result.index_count = batch->index_count;
-    result.palette_batch = batch;
-    result.palette = palette;
-    result.pose_generation = palette_generation;
-    result.source_generation = source_generation;
-    *out = result;
+    *out = prepared->immutable;
+    out->first_index = batch->first_index;
+    out->index_count = batch->index_count;
+    out->palette_batch = batch;
+    out->palette = palette;
+    out->pose_generation = palette_generation;
+    out->source_generation = source_generation;
     return MH3_PACK_OK;
 }
 mh3_pack_status mh3_model_mesh_resolve(const mh3_model_catalog *catalog, const mh3_mesh_pack *pack, uint32_t model_index, uint32_t shape_id, uintptr_t handle, uint64_t resident_generation,
