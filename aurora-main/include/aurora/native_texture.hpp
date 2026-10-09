@@ -10,6 +10,8 @@ struct NativeTextureSource {
   std::span<const uint8_t> bytes, palette;
   uint32_t width=0,height=0,levels=1,format=0,asset=0;
   uint32_t palette_format=0,palette_entries=0;
+  // CPU image/palette revisions. GPU producer registries certify their own
+  // published backing revisions without reading guest image bytes.
   uint64_t generation=0,palette_generation=0;
   bool mutable_source=false;
   // Certified by explicit resource-load producers, never inferred from bytes.

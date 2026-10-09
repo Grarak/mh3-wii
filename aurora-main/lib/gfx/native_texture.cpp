@@ -85,7 +85,13 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
   if(unit>=bindings.size()) throw std::runtime_error("Invalid native texture unit");
   const auto descriptor=sampler(sampling);
   const size_t sourceBytes=native_texture_source_size(source.format,source.width,source.height,source.levels);
-  if(source.mutable_source && !source.generation)
+  // GPU producers publish their own backing revisions. A guest texture slot
+  // naming such a target is not a mutable CPU image and needs no byte revision.
+  // Resolve this before the frame gate so skipped bindings remain validated.
+  const auto identity=source.bytes.data();
+  const uint64_t feedbackRevision=identity ? scene_feedback_texture_version(identity,source.width,source.height) : 0;
+  const uint32_t generatedRevision=identity && !feedbackRevision ? generated_texture_version(identity,source.width,source.height) : 0;
+  if(source.mutable_source && !source.generation && !feedbackRevision && !generatedRevision)
     throw std::runtime_error("Mutable native texture has no producer revision");
   logicalBindings[unit]={source,sampling,true};
   shaderLodBias[unit]=sampling.lod_bias;
@@ -100,14 +106,13 @@ void bind_native_texture(uint32_t unit,const NativeTextureSource& source,const N
 #endif
     bindings[unit]=texture;gl::bind_texture(unit,texture->gl(),gl::sampler(nativeDescriptor));
   };
-  if(source.bytes.data()) {
-    if(bind_scene_feedback_texture(unit,source.bytes.data(),source.width,source.height,sampling)) {
-      // GPU targets own their storage. Do not inspect or convert guest pixels.
-      bindings[unit].reset();return;
-    }
-    const auto version=generated_texture_version(source.bytes.data(),source.width,source.height);
-    if(version) {publish(gfx::find_generated_texture(source.bytes.data(),version)->texture);return;}
+  if(feedbackRevision) {
+    if(!bind_scene_feedback_texture(unit,identity,source.width,source.height,sampling))
+      throw std::runtime_error("Published scene feedback disappeared before binding");
+    // GPU targets own their storage. Do not inspect or convert guest pixels.
+    bindings[unit].reset();return;
   }
+  if(generatedRevision) {publish(gfx::find_generated_texture(identity,generatedRevision)->texture);return;}
   const bool indexed=source.format==8 || source.format==9 || source.format==10;
   // A native asset already includes its immutable palette. Live palette or
   // image revisions must use their own producer payload instead.
