@@ -8,7 +8,9 @@
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
+#include <atomic>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #ifdef __vita__
@@ -22,6 +24,10 @@
 
 // Keep the partition open and use positioned reads: no shared seek cursor,
 // no reopen per DVD request, and native 64-bit offsets on Vita's 32-bit newlib.
+// On the Vita a suspend (the PS button) invalidates the descriptors of files
+// open under ux0:data: after the resume every read fails with ENODEV
+// (0x80010013, Sony's Development Process Overview), so the reader reopens
+// the file once and retries.
 class DiscFile {
   public:
     DiscFile() = default;
@@ -59,10 +65,22 @@ class DiscFile {
             return Status::Error("Disc read outside file: " + name);
 
         size_t done = 0;
+#ifdef __vita__
+        bool reopened = false;
+#endif
 
         while (done < length) {
 #ifdef __vita__
-            const auto count = sceIoPread(handle, output + done, length - done, static_cast<SceOff>(offset + done));
+            const int file = handle.load(std::memory_order_acquire);
+            const auto count = sceIoPread(file, output + done, length - done, static_cast<SceOff>(offset + done));
+
+            // Invalidated by a suspend (or closed by another reader's reopen).
+            if (count < 0 && !reopened) {
+                reopened = true;
+
+                if (Reopen(file))
+                    continue;
+            }
 #else
             const auto count = ::pread(handle, output + done, length - done, static_cast<off_t>(offset + done));
 
@@ -79,19 +97,43 @@ class DiscFile {
     }
 
   private:
+#ifdef __vita__
+    // Replaces `stale` with a new descriptor, unless another reader already
+    // did; false when the file cannot be opened again.
+    bool Reopen(int stale) const {
+        std::lock_guard lock(reopenLock);
+
+        if (handle.load(std::memory_order_relaxed) != stale)
+            return true;
+
+        const int file = sceIoOpen(name.c_str(), SCE_O_RDONLY, 0);
+
+        if (file < 0)
+            return false;
+
+        sceIoClose(stale);
+        handle.store(file, std::memory_order_release);
+        return true;
+    }
+#endif
+
     void Close() {
-        if (handle < 0)
+        const int file = handle.exchange(-1);
+
+        if (file < 0)
             return;
 #ifdef __vita__
-        sceIoClose(handle);
+        sceIoClose(file);
 #else
-        ::close(handle);
+        ::close(file);
 #endif
-        handle = -1;
     }
 
     std::string name;
-    int handle = -1;
+    mutable std::atomic<int> handle{-1};
+#ifdef __vita__
+    mutable std::mutex reopenLock;
+#endif
     uint64_t size = 0;
 };
 

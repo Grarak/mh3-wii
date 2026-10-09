@@ -1130,9 +1130,18 @@ void StartWebRenderLoop(void*) {
 }
 #endif
 
+// A publish that reads back (captures) or runs synchronously waits for its
+// packet here. Short sleeps that re-check, not std::atomic::wait: on the
+// Vita that parks on a pthread condition variable, which can lose the wakeup
+// (see WaitForPacket) and would hold the game thread for good.
 void WaitCompleted(uint64_t target) {
-    for (uint64_t seen = completed.load(std::memory_order_acquire); seen < target; seen = completed.load(std::memory_order_acquire))
-        completed.wait(seen, std::memory_order_acquire);
+    while (completed.load(std::memory_order_acquire) < target) {
+#ifdef __vita__
+        sceKernelDelayThread(100);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+#endif
+    }
 
     RethrowFailure();
 }

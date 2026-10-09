@@ -351,9 +351,22 @@ struct AssetCache::Impl {
             return {};
 
         const size_t count = size_t(stop - at);
+        const auto read = [&] { return !std::fseek(e.copy, long(at - e.file.offset), SEEK_SET) && std::fread(out, 1, count, e.copy) == count; };
 
-        if (std::fseek(e.copy, long(at - e.file.offset), SEEK_SET) || std::fread(out, 1, count, e.copy) != count)
-            return Status::Error("Cannot read the extracted " + e.file.path);
+        // A suspend (the PS button) invalidates descriptors under ux0:data
+        // (ENODEV after the resume): open the copy again once and retry.
+        if (!read()) {
+            std::FILE* copy = std::fopen(ExtractPath(e).string().c_str(), "rb");
+
+            if (!copy)
+                return Status::Error("Cannot read the extracted " + e.file.path);
+
+            std::fclose(e.copy);
+            e.copy = copy;
+
+            if (!read())
+                return Status::Error("Cannot read the extracted " + e.file.path);
+        }
 
         return {};
     }
