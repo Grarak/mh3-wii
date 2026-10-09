@@ -327,17 +327,11 @@ int main(int argc, char** argv) {
             if (MemoryInline::FlatLoad<uint32_t>(0xC0001004) != 0xABCDEF01)
                 throw std::runtime_error("Translated stack-store mapping failed");
 
-            bool caught = false;
-
             // GX MMIO now terminates with a backtrace; an unrelated unclaimed
             // device address still reports an ordinary access violation.
-            try {
-                Memory::Read32(0xCC009000);
-            } catch (const Memory::AccessViolation&) {
-                caught = true;
-            }
+            uint32_t unclaimed;
 
-            if (!caught)
+            if (Memory::TryRead32(0xCC009000, unclaimed))
                 throw std::runtime_error("MMIO must not silently read as RAM");
 
             MH3_OSExceptionInit(&cpu);

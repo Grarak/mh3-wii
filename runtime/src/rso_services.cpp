@@ -1,6 +1,7 @@
 #include "asset_cache.h"
 #include "abi_bridge.h"
 #include "village_boot.h"
+#include "self_test.h"
 #include "generated/rso_binding.h"
 #include "generated/rso_overlays/map_village.h"
 #include "generated/rso_overlays/quest_field.h"
@@ -202,15 +203,8 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
         throw std::runtime_error("Village overlay intercepted the active demo image");
 
     demo.active = false;
-    bool rejected = false;
 
-    try {
-        RecompMod::TryDispatchRsoOverlay(Prolog, cpu);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-
-    if (!rejected || overlay.active)
+    if (CheckRejections && (!Rejects([&] { RecompMod::TryDispatchRsoOverlay(Prolog, cpu); }) || overlay.active))
         throw std::runtime_error("Overlay accepted an unverified image");
     // Exercise the generated register-global-object leaf under an active overlay
     // fixture. Its address overlaps demo code; only the overlay entry may run.
@@ -237,15 +231,7 @@ void RunRsoOverlaySelfTests(CpuContext* cpu) {
     if (stoleLobby)
         throw std::runtime_error("Field quest overlay intercepted active lobby code");
 
-    rejected = false;
-
-    try {
-        RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-
-    if (!rejected || modules[6].active)
+    if (CheckRejections && (!Rejects([&] { RecompMod::TryDispatchRsoOverlay(QuestFieldBinding::Prolog, cpu); }) || modules[6].active))
         throw std::runtime_error("Field quest overlay accepted an unverified image");
 }
 

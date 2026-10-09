@@ -8,6 +8,7 @@
 #include "os_alarm.h"
 #include "controller_host.h"
 #include "village_boot.h"
+#include "self_test.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -127,15 +128,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
                 throw std::runtime_error("Terminal RAM or MMIO reported as mapped");
         }
 
-        bool rejected = false;
-
-        try {
-            Memory::Read64(0x817FFFFC);
-        } catch (const Memory::AccessViolation&) {
-            rejected = true;
-        }
-
-        if (!rejected)
+        if (CheckRejections && !Rejects<Memory::AccessViolation>([] { Memory::Read64(0x817FFFFC); }))
             throw std::runtime_error("Cross-allocation RAM read accepted");
     }
 
@@ -151,61 +144,41 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         RecompMod::RegisterExecutableRange(start, end, "duplicate registration");
         RecompMod::RegisterExecutableRange(end, end + 4, "shared-page neighbor");
         const auto rejectsWrite = [](uint32_t address) {
-            try {
-                RecompMod::CheckExecutableWrite(address, 4, 0x5A5A5A5A);
-            } catch (const std::runtime_error&) {
-                return true;
-            }
-
-            return false;
+            return Rejects([&] { RecompMod::CheckExecutableWrite(address, 4, 0x5A5A5A5A); });
         };
 
         for (auto alias : {0u, 0x80000000u, 0xC0000000u}) {
-            if (!rejectsWrite(((end - 4) & 0x3FFFFFFF) | alias))
+            if (CheckRejections && !rejectsWrite(((end - 4) & 0x3FFFFFFF) | alias))
                 throw std::runtime_error("Executable final-word/alias protection failed");
         }
 
         RecompMod::CheckExecutableWrite(start, 4, 0); // Identical loader writes remain valid.
         RecompMod::VerifyExecutableRanges();
         Memory::Write32(start + 4, 1);
-        bool detected = false;
 
-        try {
-            RecompMod::VerifyExecutableRanges();
-        } catch (const std::runtime_error&) {
-            detected = true;
-        }
-
-        if (!detected)
+        if (CheckRejections && !Rejects([] { RecompMod::VerifyExecutableRanges(); }))
             throw std::runtime_error("Code checksum missed a store to translated code");
 
         RecompMod::UnregisterExecutableRange(start, end);
         Memory::Write32(start, 1);
         Memory::Write32(end - 4, 1);
 
-        if (!rejectsWrite(end))
+        if (CheckRejections && !rejectsWrite(end))
             throw std::runtime_error("Unlink removed neighboring code protection");
 
         RecompMod::RegisterExecutableRange(start, end, "relinked image");
 
-        if (!rejectsWrite(start + 4))
+        if (CheckRejections && !rejectsWrite(start + 4))
             throw std::runtime_error("Reload did not restore code protection");
 
         RecompMod::VerifyExecutableRanges(); // A relinked image takes a fresh checksum.
         RecompMod::UnregisterExecutableRange(start, end);
         RecompMod::UnregisterExecutableRange(end, end + 4);
-        bool invoked = false;
+
+        // Rejected with a runtime error; the entry's logic error fails the test.
         RawDispatchRecord stale{0x80868F30, [](CpuContext*) { throw std::logic_error("Stale RSO entry executed"); }, 0, false};
 
-        try {
-            TryDispatchRawCpuTarget(&stale, cpu);
-            invoked = true;
-        } catch (const std::logic_error&) {
-            throw;
-        } catch (const std::runtime_error&) {
-        }
-
-        if (invoked)
+        if (CheckRejections && !Rejects([&] { TryDispatchRawCpuTarget(&stale, cpu); }))
             throw std::runtime_error("Unlinked RSO dispatch was accepted");
 
         RecompMod::CheckRsoExecution(0x8086907C); // Verification prolog remains reachable.
@@ -226,15 +199,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             ConvertEfbArgb(0xAB123456, 1, 0) != 0x00103455 || ConvertEfbArgb(0xAB123456, 1, 1) != 0xFF103455)
             throw std::runtime_error("EFB pixel format/alpha conversion failed");
         for (auto modes : {std::pair{3u, 0u}, std::pair{0u, 3u}}) {
-            bool rejected = false;
-
-            try {
-                ConvertEfbArgb(0, modes.first, modes.second);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
+            if (CheckRejections && !Rejects([&] { ConvertEfbArgb(0, modes.first, modes.second); }))
                 throw std::runtime_error("Unsupported EFB mode accepted");
         }
     }
@@ -309,15 +274,8 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             throw std::runtime_error("Sensor-bar GPIO alias failed");
 
         Memory::Write32(0xCD0000C0, 0);
-        bool rejected = false;
 
-        try {
-            Memory::Write32(0xCD0000C0, 2);
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-
-        if (!rejected)
+        if (CheckRejections && !Rejects([] { Memory::Write32(0xCD0000C0, 2); }))
             throw std::runtime_error("Unknown GPIO output was accepted");
     }
 
@@ -364,15 +322,8 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         // Reject the whole request before writing any destination bytes.
         const auto expectRejected = [&](uint32_t upper, uint32_t lower) {
             PPC_WriteSpr(922, upper);
-            bool rejected = false;
 
-            try {
-                PPC_WriteSpr(923, lower);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
+            if (CheckRejections && !Rejects([&] { PPC_WriteSpr(923, lower); }))
                 throw std::runtime_error("Invalid locked-cache DMA accepted");
         };
 
@@ -459,16 +410,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (packets != 2 || stream.PendingBytes() || !std::equal(delivered.begin(), delivered.end(), commands.begin(), commands.end()))
         throw std::runtime_error("GX stream changed command bytes");
 
-    bool rejected = false;
+    const uint8_t guestPointer[]{0x08, 0xA0, 0x80, 0, 0, 0};
 
-    try {
-        const uint8_t command[]{0x08, 0xA0, 0x80, 0, 0, 0};
-        stream.Write(command, sink);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-
-    if (!rejected || packets != 2)
+    if (CheckRejections && (!Rejects([&] { stream.Write(guestPointer, sink); }) || packets != 2))
         throw std::runtime_error("GX forwarded an unconverted guest pointer");
 
     GuestGxStream translatedStream;
@@ -540,15 +484,8 @@ void RunDeviceSelfTests(CpuContext* cpu) {
                 throw std::runtime_error("Guest display-list pointer reached Aurora");
         auto rejectList = [&](auto resolver) {
             GuestGxStream invalid;
-            bool rejected = false;
 
-            try {
-                invalid.Write(callOuter, [](auto) {}, resolver);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
+            if (CheckRejections && !Rejects([&] { invalid.Write(callOuter, [](auto) {}, resolver); }))
                 throw std::runtime_error("Invalid display list accepted");
         };
 
@@ -601,29 +538,16 @@ void RunDeviceSelfTests(CpuContext* cpu) {
                 !std::equal(last.begin() + 5, last.end(), matrices.begin() + 128))
                 throw std::runtime_error("Indexed XF expansion/endian/stride failed");
             accessible = 128 + lengths[slot] * 4 - 1;
-            bool rejected = false;
 
-            try {
-                indexed.Write(command, receive, resolve);
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
+            if (CheckRejections && !Rejects([&] { indexed.Write(command, receive, resolve); }))
                 throw std::runtime_error("Indexed XF exceeded source bounds");
         }
 
         GuestGxStream invalid;
         const uint8_t partial[]{0x20, 0, 0, 0xB0, 1};
-        bool rejected = false;
+        const auto matrixRam = [&](uint32_t) -> GuestGxStream::ArrayView { return {reinterpret_cast<uintptr_t>(matrices.data()), matrices.size()}; };
 
-        try {
-            invalid.Write(partial, [](auto) {}, [&](uint32_t) -> GuestGxStream::ArrayView { return {reinterpret_cast<uintptr_t>(matrices.data()), matrices.size()}; });
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-
-        if (!rejected)
+        if (CheckRejections && !Rejects([&] { invalid.Write(partial, [](auto) {}, matrixRam); }))
             throw std::runtime_error("Unsupported partial XF matrix accepted");
     }
 
@@ -775,15 +699,8 @@ void RunDeviceSelfTests(CpuContext* cpu) {
 
         available = 97;
         cp(0xA1, 0x1100); // resolved again at the base write
-        bool rejected = false;
 
-        try {
-            arrays.Write(nbt, receive, resolve);
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-
-        if (!rejected || draws != 5)
+        if (CheckRejections && (!Rejects([&] { arrays.Write(nbt, receive, resolve); }) || draws != 5))
             throw std::runtime_error("Out-of-RAM draw was emitted");
     }
 
@@ -863,6 +780,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     }
 
     auto textureCase = [&](uint32_t format, uint32_t width, uint32_t height, bool mips, uint32_t bytes, bool shouldPass, uint32_t guestAddress = 0) {
+        if (!CheckRejections && !shouldPass)
+            return; // its rejection would stop the process
+
         GuestGxStream textureStream;
         GuestGxStream::InvalidateTextureHashes(); // the hashes are process-wide
         std::vector<uint8_t> metadata;
@@ -892,9 +812,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             textureStream.Write(command, textureSink, resolve);
         };
 
-        bool passed = true;
-
-        try {
+        const bool passed = !Rejects([&] {
             bpWrite(0x80, mips ? 0xC0 : 0x80);
             bpWrite(0x88, (format << 20) | ((height - 1) << 10) | (width - 1));
 
@@ -904,9 +822,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             bpWrite(0x88, 0xF00000 | (width - 1));
             bpWrite(0x94, 0x100000 >> 5);
             draw();
-        } catch (const std::runtime_error&) {
-            passed = false;
-        }
+        });
 
         if (passed != shouldPass)
             throw std::runtime_error("GX texture footprint validation failed");
@@ -1113,15 +1029,7 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             throw std::runtime_error("Skipped GX frame lost the next visible draw's palette snapshot");
 
         auto mustReject = [&](auto operation) {
-            bool rejected = false;
-
-            try {
-                operation();
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-
-            if (!rejected)
+            if (CheckRejections && !Rejects(operation))
                 throw std::runtime_error("Invalid GX TLUT operation accepted");
         };
 
@@ -1137,6 +1045,9 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     }
 
     auto copyCase = [&](uint32_t room, uint32_t scale, uint32_t trigger, bool shouldPass, uint32_t expectedHeight = 528) {
+        if (!CheckRejections && !shouldPass)
+            return; // its rejection would stop the process
+
         GuestGxStream copyStream;
         unsigned copies = 0;
         auto resolveCopy = [&](uint32_t address) -> GuestGxStream::ArrayView {
@@ -1158,17 +1069,13 @@ void RunDeviceSelfTests(CpuContext* cpu) {
             copyStream.Write(command, [](auto) {}, resolveCopy, copied);
         };
 
-        bool passed = true;
-
-        try {
+        const bool passed = !Rejects([&] {
             writeBp(0x4A, (527 << 10) | 639);
             writeBp(0x4B, 0x200000 >> 5);
             writeBp(0x4D, 40);
             writeBp(0x4E, scale);
             writeBp(0x52, trigger);
-        } catch (const std::runtime_error&) {
-            passed = false;
-        }
+        });
 
         if (passed != shouldPass || copies != unsigned(shouldPass))
             throw std::runtime_error("GX display-copy bounds/dispatch failed");
@@ -1903,25 +1810,21 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     if (Memory::Read32(queue) || Memory::Read32(queue + 4) || Memory::Read32(0x80003000))
         throw std::runtime_error("Original alarm cancellation failed");
 
-    queueAlarm(0);
-    failAlarm = true;
-    bool alarmRejected = false;
+    // A failing callback (it still counts) leaves the service unlocked.
+    if (CheckRejections) {
+        queueAlarm(0);
+        failAlarm = true;
+        const bool alarmRejected = Rejects([&] { ServiceOsAlarms(cpu); });
+        failAlarm = false;
 
-    try {
-        ServiceOsAlarms(cpu);
-    } catch (const std::runtime_error&) {
-        alarmRejected = true;
+        if (!alarmRejected || Memory::Read32(0x800000D4) != 0x80004000 || Memory::Read32(cpu->gpr[13] - 14992))
+            throw std::runtime_error("Alarm exception context restoration failed");
     }
-
-    failAlarm = false;
-
-    if (!alarmRejected || Memory::Read32(0x800000D4) != 0x80004000 || Memory::Read32(cpu->gpr[13] - 14992))
-        throw std::runtime_error("Alarm exception context restoration failed");
 
     queueAlarm(0);
     ServiceOsAlarms(cpu);
 
-    if (alarmCallbacks != 4)
+    if (alarmCallbacks != (CheckRejections ? 4 : 3))
         throw std::runtime_error("Alarm service remained locked after exception");
 
     *cpu = alarmSaved;

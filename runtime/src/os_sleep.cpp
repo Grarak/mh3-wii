@@ -6,6 +6,7 @@
 #include "timebase_contract.h"
 #include "video_interface.h"
 #include "scope_exit.h"
+#include "self_test.h"
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -89,30 +90,19 @@ void RunSleepSelfTests(CpuContext* cpu) {
     if (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(5) || calls < 2 || cpu->gpr[14] != 0x1234 || cpu->lr != 0x5678)
         throw std::runtime_error("Sleep timing/pumping/CPU preservation failed");
 
-    bool rejected = false;
-
-    try {
+    const auto failing = [&] {
         SleepTicks(cpu, [&] {
             cpu->lr = 0;
             throw std::runtime_error("test callback failure");
         });
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
+    };
 
-    if (!rejected || cpu->lr != 0x5678)
+    if (CheckRejections && (!Rejects(failing) || cpu->lr != 0x5678))
         throw std::runtime_error("Sleep exception restoration failed");
 
     Memory::Write32(pending, 1);
-    rejected = false;
 
-    try {
-        SleepTicks(cpu, [&] { ++calls; });
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-
-    if (!rejected)
+    if (CheckRejections && !Rejects([&] { SleepTicks(cpu, [&] { ++calls; }); }))
         throw std::runtime_error("Sleep skipped a runnable thread");
 
     Memory::Write32(pending, oldPending);
