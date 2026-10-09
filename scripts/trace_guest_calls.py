@@ -12,6 +12,7 @@ from collections import Counter
 import json
 from pathlib import Path
 import re
+import struct
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,8 +27,11 @@ TARGETS = {
     0x80295988, 0x802959C0, 0x802959FC,  # exported intersection wrappers / body
     0x802963CC, 0x802968D4, 0x80296A5C,  # ground bounds / grid / triangle
     0x80292A40, 0x80293568, 0x80293AE0,  # PAL wall-cheat candidate chain
+    0x8025FF70, 0x802601FC, 0x8027D0B4,  # readers of player +868 flags
+    0x80256A58, 0x80256F04, 0x80266F94,  # contact-update callers
 }
-HELPER = '// MH3_GUEST_CALL_TRACE_BEGIN\n#include "guest_call_trace.h"\n// MH3_GUEST_CALL_TRACE_END\n'
+HELPER = ('// MH3_GUEST_CALL_TRACE_BEGIN\n#include "guest_call_trace.h"\n'
+          '#include <bit>\n// MH3_GUEST_CALL_TRACE_END\n')
 CALL = re.compile(
     r'(?m)^([ \t]*)(MKW_STATIC_TRANSLATED_CALL\((0x[0-9a-fA-F]+)u, [^\n]+\)|'
     r'InvokeDirectCpu<(0x[0-9a-fA-F]+)u>\(ctx\)|'
@@ -42,8 +46,11 @@ def instrument_function(body: str, address: int) -> tuple[str, int]:
     entry = f'    MKW_GUEST_TRACE_CALL(0, 0x{address:08X}u, ctx->lr - 4);\n'
     if address in (0x8029513C, 0x80293AE0):
         # Both PAL Gecko patches replace an lfs from r2 - 14184. Record r2
-        # so the original and substitute small-data constants can be decoded.
+        # and the actual original constant during movement.
         entry += f'    MKW_GUEST_TRACE_CALL(0xFFFFFFFDu, 0x{address:08X}u, ctx->gpr[2]);\n'
+        entry += (f'    MKW_GUEST_TRACE_CALL(0xFFFFFFFCu, 0x{address:08X}u, '
+                  'std::bit_cast<uint32_t>(static_cast<float>('
+                  'MemoryInline::FlatReadFloat32(ctx->gpr[2] - 14184))));\n')
     body = body.replace(signature, signature + entry, 1)
 
     def replace(match: re.Match) -> str:
@@ -55,10 +62,24 @@ def instrument_function(body: str, address: int) -> tuple[str, int]:
         if address == 0x802094EC and direct_cpp == '0x8029513C':
             after = (' MKW_GUEST_TRACE_CALL(0xFFFFFFFEu, 0x8029513Cu, '
                      'MemoryInline::FlatRead32((ctx->gpr[30] + 868)));')
+            for axis in range(3):
+                after += (f' MKW_GUEST_TRACE_CALL(0xFFFFFFF7u, {axis}u, '
+                          'std::bit_cast<uint32_t>(static_cast<float>('
+                          f'MemoryInline::FlatReadFloat32(ctx->gpr[30] + {60 + 4 * axis}))));')
+        if address == 0x802952F4 and direct_cpp == '0x802920F0':
+            after = (' MKW_GUEST_TRACE_CALL(0xFFFFFFF9u, 0x802920F0u, '
+                     'ctx->gpr[3]);')
         return (f'{indent}do {{ MKW_GUEST_TRACE_CALL(0x{address:08X}u, {target}, '
                 f'ctx->lr - 4); {call};{after} }} while (false);')
 
-    return CALL.subn(replace, body)
+    body, count = CALL.subn(replace, body)
+    if address == 0x802952F4:
+        marker = 'loc_80295534:\n{\n'
+        if marker not in body:
+            raise RuntimeError('Missing sweep contact flag accumulation block')
+        body = body.replace(marker, marker +
+                            '    MKW_GUEST_TRACE_CALL(0xFFFFFFF8u, r25, r31);\n', 1)
+    return body, count
 
 
 def enable() -> None:
@@ -112,6 +133,9 @@ def summarize(path: Path) -> None:
     entry_edges: Counter[tuple[int, int]] = Counter()
     sweep_flags: Counter[int] = Counter()
     r2_values: Counter[tuple[int, int]] = Counter()
+    source_constants: Counter[tuple[int, int]] = Counter()
+    candidate_results: Counter[int] = Counter()
+    contact_bits: Counter[tuple[int, int]] = Counter()
     malformed = 0
     for line in path.read_text().splitlines():
         parts = line.split(',')
@@ -124,6 +148,17 @@ def summarize(path: Path) -> None:
             continue
         if source == 0xFFFFFFFD:
             r2_values[target, _site] += 1
+            continue
+        if source == 0xFFFFFFFC:
+            source_constants[target, _site] += 1
+            continue
+        if source == 0xFFFFFFF9:
+            candidate_results[_site] += 1
+            continue
+        if source == 0xFFFFFFF8:
+            contact_bits[target, _site] += 1
+            continue
+        if source == 0xFFFFFFF7:
             continue
         if source:
             direct_edges[source, target] += 1
@@ -158,6 +193,19 @@ def summarize(path: Path) -> None:
         print('Small-data base r2 at PAL Gecko patch sites:')
         for (target, value), count in r2_values.most_common():
             print(f'{count:8d}  0x{target:08x} r2=0x{value:08x}')
+    if source_constants:
+        print('Original small-data float at PAL Gecko patch sites:')
+        for (target, bits), count in source_constants.most_common():
+            value = struct.unpack('>f', struct.pack('>I', bits))[0]
+            print(f'{count:8d}  0x{target:08x} value={value:g} bits=0x{bits:08x}')
+    if candidate_results:
+        print('Land sweep candidate return r3:')
+        for value, count in candidate_results.most_common():
+            print(f'{count:8d}  0x{value:08x}')
+    if contact_bits:
+        print('Contact flag inputs (r25 shift, r31 base):')
+        for (shift, base), count in contact_bits.most_common():
+            print(f'{count:8d}  r25=0x{shift:08x} r31=0x{base:08x}')
 
 
 parser = argparse.ArgumentParser(description=__doc__)
