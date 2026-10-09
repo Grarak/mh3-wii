@@ -42,10 +42,14 @@ bool preparedKnown=false;
 bool rasterObserverInstalled=false,publishingMaterialRaster=false;
 struct ProgramKey {ShaderConfig config;uint8_t zeroBias;uint8_t portableZeroBias=0;};
 struct ProgramOrder {
-    bool operator()(const ProgramKey& a,const ProgramKey& b) const {
+    static int Compare(const ProgramKey& a,const ProgramKey& b) {
         const int order=std::memcmp(&a.config,&b.config,sizeof a.config);
-        return order<0 || (order==0 && (a.zeroBias<b.zeroBias ||
-            (a.zeroBias==b.zeroBias && a.portableZeroBias<b.portableZeroBias)));
+        if(order) return order;
+        if(a.zeroBias!=b.zeroBias) return int(a.zeroBias)-int(b.zeroBias);
+        return int(a.portableZeroBias)-int(b.portableZeroBias);
+    }
+    bool operator()(const ProgramKey& a,const ProgramKey& b) const {
+        return Compare(a,b)<0;
     }
 };
 // Ordered typed configuration keys avoid reading or hashing asset contents.
@@ -58,9 +62,8 @@ struct ModelProgramKey {
 };
 struct ModelProgramOrder {
     bool operator()(const ModelProgramKey& a,const ModelProgramKey& b) const {
-        const ProgramOrder compare;
-        if(compare(a.material,b.material)) return true;
-        if(compare(b.material,a.material)) return false;
+        const int order=ProgramOrder::Compare(a.material,b.material);
+        if(order) return order<0;
         if(a.layout!=b.layout) return a.layout<b.layout;
         if(a.nonzeroProjection!=b.nonzeroProjection) return a.nonzeroProjection<b.nonzeroProjection;
         return a.zeroProjection<b.zeroProjection;
