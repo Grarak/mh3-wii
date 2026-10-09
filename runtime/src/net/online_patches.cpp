@@ -161,20 +161,6 @@ std::atomic<bool> refused{false};
 constexpr uint32_t kOnlineMode = 0x8065AA84; // u8, GetOnlineMode (0x800CF26C): 2 the City, online
 constexpr const char* kRules[]{"Do not harass other players."};
 constexpr const char* kRefused[]{"Cheats are not allowed online,", "please don't harass other players."};
-
-// MH3_ONLINE_COMMUNITY_TEST=1 (development builds): every server counts as a
-// community one, to try the loading screens' rules on a local MH3SP.
-bool CommunityTest() {
-#ifdef MH3_DEVELOPMENT
-    static const bool test = [] {
-        const char* value = std::getenv("MH3_ONLINE_COMMUNITY_TEST");
-        return value && *value && value[0] != '0';
-    }();
-    return test;
-#else
-    return false;
-#endif
-}
 } // namespace
 
 bool AdmitOnline() {
@@ -188,7 +174,7 @@ bool AdmitOnline() {
 }
 
 void NoteTlsServer(NetHost::Tls& tls) {
-    const bool signed_by_ca = tls.PeerSignedBy(kMh3spCa, sizeof(kMh3spCa)) || CommunityTest();
+    const bool signed_by_ca = tls.PeerSignedBy(kMh3spCa, sizeof(kMh3spCa));
 
     if (signed_by_ca && !community)
         std::fprintf(stderr, "MH3 net: a community server (its certificate signed by the MH3SP CA)\n");
@@ -201,10 +187,14 @@ std::span<const char* const> OnlineNotice(bool loading) {
         return community && Memory::Read8(kOnlineMode) == 2 ? std::span<const char* const>(kRules) : std::span<const char* const>();
 
     // Over the online screens' message window: the connection error the
-    // refusal leads to.
+    // refusal leads to. Their work pointer and window outlive net_data.rso:
+    // after the error the Mode Menu came back with the lines still drawn.
+    if (!refused || !RecompMod::RsoLinked("net_data.rso"))
+        return {};
+
     const uint32_t work = Memory::Read32(NetCtrl::kWorkPointer);
 
-    if (refused && work && Memory::Read32(work + NetCtrl::kDialog))
+    if (work && Memory::Read32(work + NetCtrl::kDialog))
         return kRefused;
 
     return {};
@@ -214,7 +204,7 @@ std::string OnlineServerSetting() {
     if (serverSetting)
         return *serverSetting;
 
-    // Read at first use: the Vita applies runtime.env after static initialization.
+    // Read at first use, after the launcher set it.
     const char* value = std::getenv("MH3_ONLINE_SERVER");
     return value && *value ? value : kDefaultOnlineServer;
 }

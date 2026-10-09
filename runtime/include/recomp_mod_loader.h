@@ -84,6 +84,9 @@ void UnregisterExecutableRange(uint32_t start, uint32_t end);
 void CheckRsoExecution(uint32_t address);
 bool TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu);
 
+// Whether the RSO module `name` (e.g. "net_data.rso") is linked now.
+bool RsoLinked(std::string_view name);
+
 // Host services that write guest memory (DMA, report copies) check here that
 // they leave translated code untouched.
 void CheckExecutableWrite(uint32_t address, size_t length, uint64_t value);

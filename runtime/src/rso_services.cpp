@@ -144,6 +144,10 @@ static void VerifyModule(CpuContext* cpu, const char* name, uint32_t base, uint3
     std::cerr << "MH3 RSO: verified " << name << " static binding\n";
 }
 
+bool RecompMod::RsoLinked(std::string_view name) {
+    return std::any_of(std::begin(modules), std::end(modules), [&](const Module& module) { return module.active && name == module.name; });
+}
+
 bool RecompMod::TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu) {
     Module* owner = nullptr;
 
