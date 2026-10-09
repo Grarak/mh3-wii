@@ -496,6 +496,10 @@ if(VITA)
   target_sources(MH3 PRIVATE vita/newlib_reent.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=_reclaim_reent")
 
+  # newlib: concurrent opens could take the same FILE (no stdio lock).
+  target_sources(MH3 PRIVATE vita/newlib_sfp.c)
+  target_link_options(MH3 PRIVATE "-Wl,--wrap=__sfp")
+
   # gettimeofday from the process time instead of a system call (6 us):
   # steady_clock, and with it the guest time base, read it. clock_gettime
   # reads the same clock (pthread-embedded's timed waits compare the two).
