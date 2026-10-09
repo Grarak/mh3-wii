@@ -56,6 +56,15 @@ enum : uint32_t {
     kChildren = 0xDC,
     kChildCount = 0xE4,
     kCalcWorldCallback = 0x11C, // ScnMdlSimple: the CalcWorld callback object
+    kCalcWorldTiming = 0x120,   // u8: when it runs (0: never)
+    kCharacterModel = 0x118,    // MHchar: its ScnMdlSimple
+};
+
+// CalcWorld callback classes (vtables).
+enum : uint32_t {
+    kArmorCallback = 0x805BB334,   // the hunter's armor parts
+    kWeaponCallback = 0x805BB318,  // the hunter's weapon parts
+    kMonsterCallback = 0x805A1B28, // a monster's own bones
 };
 
 constexpr uint32_t kTaskCalcWorld = 1;
@@ -136,6 +145,38 @@ bool SplitAllowed() {
     return GuestWorker::Available() && !GuestWorker::Pending();
 }
 
+// The models that must stay on the game thread, in their order. A model's
+// CalcWorld callback (ScnMdlSimple +0x11C, called at a node during its world
+// matrices) runs game code:
+// - the hunter's equipment parts (0x802296FC, 0x80229A84) copy bones of the
+//   hunter's body model into their own nodes, reading the body's matrices of
+//   the previous pass (the parts come first in the root's order): the parts
+//   and that body stay together, in order;
+// - a monster's (0x801398BC, 0x80139BD0) moves only its own bones;
+// - a callback whose timing mask is 0 never runs;
+// - any other callback may read anything and stays on the game thread.
+void PinDependentModels(const uint32_t* children, uint32_t count, bool* pinned) {
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t callback = Memory::Read32(children[i] + kCalcWorldCallback);
+
+        if (!callback)
+            continue;
+
+        const uint32_t vtable = Memory::Read32(callback);
+
+        if (vtable == kArmorCallback || vtable == kWeaponCallback) {
+            pinned[i] = true;
+            const uint32_t character = Memory::Read32(callback + (vtable == kArmorCallback ? 8 : 4));
+            const uint32_t body = character ? Memory::Read32(character + kCharacterModel) : 0;
+
+            for (uint32_t j = 0; j < count; ++j)
+                pinned[j] = pinned[j] || (body && children[j] == body);
+        } else if (vtable != kMonsterCallback && Memory::Read8(children[i] + kCalcWorldTiming) != 0) {
+            pinned[i] = true;
+        }
+    }
+}
+
 // Task 1 on the root's children: split by last cost (the longest first, each
 // to the side with less so far), each side keeping the original order.
 void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t matrix) {
@@ -151,16 +192,16 @@ void SplitChildren(CpuContext* cpu, uint32_t group, uint32_t argument, uint32_t 
     std::stable_sort(order.begin(), order.begin() + count, [&](uint8_t a, uint8_t b) { return LastCost(children[a]) > LastCost(children[b]); });
     uint64_t load[2] = {0, 0};
 
-    // A model with a CalcWorld callback (+0x11C, the hunter's at its root
-    // node) runs game code that may read other models: these stay on the
-    // game thread, in their order.
+    std::array<bool, kMaxChildren> pinned{};
+    PinDependentModels(children.data(), count, pinned.data());
+
     for (uint32_t i = 0; i < count; ++i) {
-        if (Memory::Read32(children[i] + kCalcWorldCallback) != 0)
+        if (pinned[i])
             load[0] += LastCost(children[i]);
     }
 
     for (uint32_t i = 0; i < count; ++i) {
-        if (Memory::Read32(children[order[i]] + kCalcWorldCallback) != 0)
+        if (pinned[order[i]])
             continue;
 
         const unsigned to = load[1] < load[0] ? 1 : 0;
