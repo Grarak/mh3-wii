@@ -1,5 +1,6 @@
 // Direct application render state. No GX calls, packets, register banks or FIFO.
 #include "native_graphics.h"
+#include "runtime/native/adapters/model_pose_bridge.h"
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
 #include "dolphin/vi/vi_internal.hpp"
@@ -49,6 +50,7 @@ void SetNativeProjection(const float matrix[16],bool perspective) {
 }
 void SetNativePositionMatrix(const float matrix[12]) {
     RequireOwner();
+    PublishNativeModelPositionMatrix(0,matrix);
     std::memcpy(drawState.position,matrix,sizeof(drawState.position));
 }
 void SetNativeNormalMatrix(uint32_t selector,const float matrix[9]) {
@@ -57,6 +59,7 @@ void SetNativeNormalMatrix(uint32_t selector,const float matrix[9]) {
         throw std::runtime_error("Invalid native normal-matrix selector");
     for(unsigned i=0;i<9;++i) if(!std::isfinite(matrix[i]))
         throw std::runtime_error("Non-finite native normal matrix");
+    PublishNativeModelNormalMatrix(selector,matrix);
     auto& destination=normalMatrices[selector/3];
     std::memcpy(destination.values.data(),matrix,sizeof(float)*9);
     destination.known=true;

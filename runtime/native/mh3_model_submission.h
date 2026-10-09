@@ -45,6 +45,11 @@ typedef struct mh3_resolved_mesh_submit {
 typedef struct mh3_prepared_mesh {
     mh3_resolved_mesh_submit immutable;
     uint8_t normal_required;
+    uint16_t matrix_index_mask;
+    uint32_t palette_batch_count;
+    /* Owner allocates/decodes these once after prepare; no binary reads during
+     * bind_batch. NULL until admitted; non-indexed meshes have count0. */
+    const mh3_pack_palette_batch *palette_batches;
 } mh3_prepared_mesh;
 typedef struct mh3_prepared_material {
     mh3_native_material_state state;
@@ -101,6 +106,10 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared,
                                         uint64_t resident_generation,uint64_t source_generation,
                                         uint64_t pose_generation,const mh3_model_palette *palette,
                                         mh3_resolved_mesh_submit *out);
+mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared,uint32_t batch_index,
+                                         uint64_t resident_generation,uint64_t source_generation,
+                                         uint64_t palette_generation,const mh3_model_palette *palette,
+                                         mh3_resolved_mesh_submit *out);
 /* Convenience tooling/test API. Runtime admission should use prepare followed
  * by bind_pose, rather than decoding immutable metadata on every draw.
  * Resolve metadata and validate the rigid palette and attribute contract. This

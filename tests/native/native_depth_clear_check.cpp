@@ -4,6 +4,10 @@
 #include "gl/gl.hpp"
 #include "gl/device.hpp"
 #include "native_graphics.h"
+// Explicit fixture boundary: this target validates depth clearing, not model
+// ownership; production matrix publications are supplied by model_pose.cpp.
+void PublishNativeModelPositionMatrix(uint32_t,const float[12]) {}
+void PublishNativeModelNormalMatrix(uint32_t,const float[9]) {}
 #include <array>
 #include <cmath>
 #include <cstdio>

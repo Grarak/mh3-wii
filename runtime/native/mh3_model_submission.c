@@ -113,7 +113,8 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog,const mh
     status=mh3_mesh_pack_mesh(pack,resource.pack_index,&r.mesh);if (status!=MH3_PACK_OK) return status;
     if (r.mesh.model_id!=model.model_id || r.mesh.source_id!=shape_id || r.mesh.asset_id!=resource.asset_id)
         return MH3_PACK_INVALID;
-    if (r.mesh.matrix_id<0) return MH3_PACK_UNSUPPORTED;
+    const int indexed=(r.mesh.flags&MH3_MESH_INDEXED_PALETTE)!=0;
+    if (r.mesh.matrix_id<0 && !indexed) return MH3_PACK_UNSUPPORTED;
     /* Metadata admission is independent of GPU residency. A demand loader
      * can prepare immutable scalar layouts/ranges before allocating CDRAM.
      * The backend later replaces spans with its validated resident mesh. */
@@ -123,10 +124,11 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog,const mh
     int position=0,normal=0;
     for (uint32_t i=0;i<r.layout.count;i++) {
         const mh3_pack_attribute a=r.layout.attributes[i];
-        if (a.semantic>11 || (a.semantic==0 && (a.format!=9 || a.components!=3)) ||
+        if (a.semantic>14 || (a.semantic>=12 && (!indexed || a.format!=0 || a.components!=(a.semantic==14?1:4))) ||
+            (a.semantic==0 && (a.format!=9 || a.components!=3)) ||
             (a.semantic==1 && ((a.format!=9 && a.format!=7) || a.components!=3)) ||
             ((a.semantic==2 || a.semantic==3) && (a.format!=4 || a.components!=4)) ||
-            (a.semantic>=4 && ((a.format!=9 && a.format!=8) || a.components>3))) return MH3_PACK_UNSUPPORTED;
+            (a.semantic>=4 && a.semantic<=11 && ((a.format!=9 && a.format!=8) || a.components>3))) return MH3_PACK_UNSUPPORTED;
         if (a.semantic==0) position=1;
         if (a.semantic==1) normal=1;
     }
@@ -140,12 +142,19 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog,const mh
     r.mesh.vertices=(mh3_pack_span){NULL,0};r.mesh.indices=(mh3_pack_span){NULL,0};
     mh3_prepared_mesh prepared;memset(&prepared,0,sizeof prepared);
     prepared.immutable=r;prepared.normal_required=(uint8_t)normal;
+    prepared.matrix_index_mask=(uint16_t)((r.layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)&511u);
+    if(indexed) {
+        mh3_pack_palette_batches batches;
+        status=mh3_mesh_pack_palette_batches(pack,r.mesh_index,&batches);if(status!=MH3_PACK_OK) return status;
+        prepared.palette_batch_count=batches.count;
+    }
     *out=prepared;return MH3_PACK_OK;
 }
 mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared,
                                         uint64_t resident_generation,uint64_t source_generation,
                                         uint64_t pose_generation,const mh3_model_palette *palette,
                                         mh3_resolved_mesh_submit *out) {
+    if(prepared && prepared->palette_batch_count) return MH3_PACK_UNSUPPORTED;
     if(!prepared || !out || !palette || !source_generation || !pose_generation ||
        resident_generation!=prepared->immutable.resident_generation || !(palette->position_valid&1) ||
        (prepared->normal_required && !(palette->normal_valid&1))) return MH3_PACK_INVALID;
@@ -156,6 +165,32 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared,
     mh3_resolved_mesh_submit r=prepared->immutable;
     r.source_generation=source_generation;r.pose_generation=pose_generation;r.palette=palette;
     *out=r;return MH3_PACK_OK;
+}
+mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared,uint32_t index,
+                                         uint64_t resident_generation,uint64_t source_generation,
+                                         uint64_t palette_generation,const mh3_model_palette *palette,
+                                         mh3_resolved_mesh_submit *out) {
+    if(!prepared || !palette || !out || !prepared->palette_batches || index>=prepared->palette_batch_count ||
+       !source_generation || !palette_generation || resident_generation!=prepared->immutable.resident_generation)
+        return MH3_PACK_INVALID;
+    const mh3_pack_palette_batch *batch=&prepared->palette_batches[index];
+    uint16_t positions=batch->position_required,normals=batch->normal_required;
+    if(!(prepared->matrix_index_mask&1u)) {positions|=1;if(prepared->normal_required) normals|=1;}
+    if(((positions|normals|batch->texture_required)&~1023u) ||
+       (positions&~palette->position_valid) || (normals&~palette->normal_valid) ||
+       (batch->texture_required&~palette->texture_valid)) return MH3_PACK_INVALID;
+    for(unsigned i=0;i<10;i++) {
+        if(positions&(1u<<i)) for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++)
+            if(!isfinite(palette->position[i].v[r][c])) return MH3_PACK_INVALID;
+        if(normals&(1u<<i)) for(unsigned r=0;r<3;r++) for(unsigned c=0;c<3;c++)
+            if(!isfinite(palette->normal[i].v[r][c])) return MH3_PACK_INVALID;
+        if(batch->texture_required&(1u<<i)) for(unsigned r=0;r<3;r++) for(unsigned c=0;c<4;c++)
+            if(!isfinite(palette->texture[i].v[r][c])) return MH3_PACK_INVALID;
+    }
+    mh3_resolved_mesh_submit result=prepared->immutable;
+    result.first_index=batch->first_index;result.index_count=batch->index_count;result.palette_batch=batch;
+    result.palette=palette;result.pose_generation=palette_generation;result.source_generation=source_generation;
+    *out=result;return MH3_PACK_OK;
 }
 mh3_pack_status mh3_model_mesh_resolve(const mh3_model_catalog *catalog,const mh3_mesh_pack *pack,
                                       uint32_t model_index,uint32_t shape_id,uintptr_t handle,

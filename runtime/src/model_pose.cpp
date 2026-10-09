@@ -7,6 +7,7 @@
 #include "runtime/native/adapters/model_state_bridge.h"
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -22,6 +23,12 @@ std::map<uint32_t,Region> regions;
 std::unordered_map<uint32_t,std::vector<uint32_t>> positions;
 uint64_t pose_revision=0;
 mh3_model_matrix_selectors selectors{};
+mh3_model_palette matrix_palette{};
+uint64_t matrix_palette_revision=0;
+void AdvancePalette() {
+    if(matrix_palette_revision==UINT64_MAX) throw std::runtime_error("Native matrix palette revision overflow");
+    ++matrix_palette_revision;
+}
 void Checked(mh3_res_status status) {
     if(status!=MH3_RES_OK) throw std::runtime_error("Native model pose input failed: "+std::to_string(status));
 }
@@ -140,6 +147,29 @@ void ApplyNativeModelSelectors(mh3_native_material_state& material) {
     Checked(mh3_model_matrix_overlay(&selectors,&material));
 }
 void PublishNativeModelMatrixRows(const uint32_t rows[8]) {Select(rows);}
+void PublishNativeModelPositionMatrix(uint32_t selector,const float matrix[12]) {
+    if(!matrix || selector%3 || selector>27) throw std::runtime_error("Native position matrix selector invalid");
+    AdvancePalette();std::memcpy(&matrix_palette.position[selector/3],matrix,48);
+    matrix_palette.position_valid|=uint16_t(1u<<(selector/3));
+}
+void PublishNativeModelNormalMatrix(uint32_t selector,const float matrix[9]) {
+    if(!matrix || selector%3 || selector>27) throw std::runtime_error("Native normal matrix selector invalid");
+    AdvancePalette();std::memcpy(&matrix_palette.normal[selector/3],matrix,36);
+    matrix_palette.normal_valid|=uint16_t(1u<<(selector/3));
+}
+void PublishNativeModelTextureMatrix(uint32_t selector,const float matrix[12],bool matrix3x4) {
+    if(selector>=64) return; // post/SRT matrices have an independent owner
+    if(!matrix || selector<30 || selector>57 || selector%3) throw std::runtime_error("Native texture palette selector invalid");
+    AdvancePalette();std::memcpy(&matrix_palette.texture[(selector-30)/3],matrix,matrix3x4?48:32);
+    if(matrix3x4) matrix_palette.texture_valid|=uint16_t(1u<<((selector-30)/3));
+}
+const mh3_model_palette& ReadNativeModelPalette() {return matrix_palette;}
+uint64_t ReadNativeModelPaletteRevision() {return matrix_palette_revision;}
+void PublishNativeModelPalette(const mh3_model_palette& palette) {
+    if((palette.position_valid|palette.normal_valid|palette.texture_valid)&~1023u)
+        throw std::runtime_error("Native palette known mask invalid");
+    AdvancePalette();matrix_palette=palette;
+}
 
 extern "C" void MH3_ModelViewPosition(CpuContext* cpu) {Array(cpu,0);}
 REGISTER_NATIVE_FUNCTION_AS(0x80080BC0,MH3_ModelViewPosition,"ModelViewPosition");

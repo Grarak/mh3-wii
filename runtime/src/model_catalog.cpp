@@ -25,6 +25,7 @@ struct Pack {
     uintptr_t handle;
     uint64_t generation;
     std::vector<mh3_prepared_mesh> meshes;
+    std::vector<std::vector<mh3_pack_palette_batch>> palette_batches;
     std::vector<NativePreparedMaterial> materials;
     std::vector<uint32_t> material_catalog_indices;
     std::vector<std::array<mh3_catalog_material_block,5>> material_blocks;
@@ -217,8 +218,9 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
                 throw std::runtime_error("Ambiguous external native model pack identity");
         }
     }
-    Pack admitted{pack,catalog,handle,generation,{},{},{},{},{}};
+    Pack admitted{pack,catalog,handle,generation,{},{},{},{},{},{}};
     admitted.meshes.resize(pack->counts[MH3_PACK_MESHES]);
+    admitted.palette_batches.resize(admitted.meshes.size());
     for(uint32_t i=0;i<catalog->model_count;i++) {
         mh3_catalog_model model{};mh3_model_catalog_model(catalog,i,&model);
         for(uint32_t j=0;j<model.shape_count;j++) {
@@ -227,6 +229,17 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
             if(mh3_model_mesh_prepare(catalog,pack,i,resource.source_id,handle,generation,
                                       &admitted.meshes[resource.pack_index])!=MH3_PACK_OK)
                 throw std::runtime_error("Native model immutable admission failed");
+            auto& prepared=admitted.meshes[resource.pack_index];
+            if(prepared.palette_batch_count) {
+                mh3_pack_palette_batches serialized{};
+                if(mh3_mesh_pack_palette_batches(pack,resource.pack_index,&serialized)!=MH3_PACK_OK)
+                    throw std::runtime_error("Native indexed matrix admission failed");
+                auto& batches=admitted.palette_batches[resource.pack_index];batches.resize(serialized.count);
+                for(uint32_t n=0;n<serialized.count;n++)
+                    if(mh3_mesh_pack_palette_batch(&serialized,n,&batches[n])!=MH3_PACK_OK)
+                        throw std::runtime_error("Native indexed matrix record admission failed");
+                prepared.palette_batches=batches.data();
+            }
         }
     }
     admitted.materials.resize(pack->counts[MH3_PACK_MATERIALS]);

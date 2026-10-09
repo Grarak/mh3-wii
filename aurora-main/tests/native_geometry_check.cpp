@@ -10,6 +10,10 @@
 #include "gxm/sampler_bias.hpp"
 #include "gxm/alpha_compare.hpp"
 #include "native_graphics.h"
+// Standalone raster/pixel fixture has no model owner registry. Matrix-producer
+// notifications are an explicit test boundary; production links model_pose.
+void PublishNativeModelPositionMatrix(uint32_t,const float[12]) {}
+void PublishNativeModelNormalMatrix(uint32_t,const float[9]) {}
 #include <array>
 #include <cmath>
 #include <cstdio>

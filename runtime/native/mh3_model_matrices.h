@@ -2,6 +2,7 @@
 #define MH3_MODEL_MATRICES_H
 #include "mh3_model_resources.h"
 #include "mh3_model_runtime.h"
+#include "mh3_mesh_pack.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -85,6 +86,21 @@ mh3_res_status mh3_model_palette_rigid(const mh3_shape_matrix_input *input,
 mh3_res_status mh3_model_palette_load(const mh3_matrix_sources *sources,
                                      const mh3_matrix_load *load,
                                      mh3_model_palette *palette);
+/* Overlay only produced slots; unknown slots retain owned inherited values.
+ * These are the values of actual native matrix publications, not borrowed pose
+ * pointers. Both routines are transactional and permit output aliasing. */
+mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited,
+                                        const mh3_model_palette *produced,
+                                        mh3_model_palette *out);
+/* Apply an admitted effective M3PL source map to certified pose extents.
+ * Clear known bits preserve the actual inherited slot. Required unproduced
+ * slots return ABSENT; absent normal/environment arrays never get synthesized.
+ * New loads require a completed producer generation. No GX bytes/vertices are
+ * read here; the extractor already resolved command order and index spans. */
+mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch,
+                                            const mh3_matrix_sources *sources,
+                                            const mh3_model_palette *inherited,
+                                            mh3_model_palette *out);
 
 /* 80077814 GetIndMtxOp: typed normal-map matrix inputs. This uses posed view
  * normal/camera matrices; bind matrices only adjust differing node IDs. */
