@@ -4,6 +4,8 @@
 #include "model_assets.h"
 #include "native_frame_statistics.h"
 #include "audio/ax_dsp.h"
+#include "audio_output_statistics.h"
+#include "audio_dma_statistics.h"
 #ifdef __vita__
 #include "../vita/platform.h"
 #include "gxm/razor.hpp"
@@ -409,6 +411,8 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                     lastSkipped = aurora_skipped_frame_count();
     static auto lastWaits = aurora::gfx::staging_wait_counters();
     static auto previousAx = AxDspHle::GetMixWorkerStats();
+    static auto previousAudio = GetNativeAudioOutputStatistics();
+    static auto previousDma = GetNativeAudioDmaStatistics();
     static auto previousFeedback = aurora::scene_feedback_stats();
     static std::array<uint64_t, 12> previousMaterial = [] {
         std::array<uint64_t, 12> counters{};
@@ -480,6 +484,31 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
         ax.storageBytes / 1048576.0, ax.workerRunning ? "live" : "off", unsigned(ax.workerThread),
         ax.workerCore, unsigned(ax.workerAffinity), ax.core0Checked ? "yes" : "no");
     previousAx = ax;
+    const auto audio = GetNativeAudioOutputStatistics();
+    if (audio.available) {
+        std::fprintf(stderr, "MH3 audio: %u Hz, queued %.1f frames/s, output %.1f calls/s, ring %u/%u high-water frames; underflow %llu buffers, padded %.2f ms/s, dropped %llu blocks/%llu frames, errors %llu, rate changes %llu\n",
+            audio.rateHz, double(audio.queuedFrames - previousAudio.queuedFrames) / seconds,
+            double(audio.outputCalls - previousAudio.outputCalls) / seconds,
+            audio.currentRingFrames, audio.ringHighWaterFrames,
+            static_cast<unsigned long long>(audio.underflowBuffers - previousAudio.underflowBuffers),
+            audio.rateHz ? double(audio.paddedFrames - previousAudio.paddedFrames) * 1000.0 / (audio.rateHz * seconds) : 0.0,
+            static_cast<unsigned long long>(audio.droppedBlocks - previousAudio.droppedBlocks),
+            static_cast<unsigned long long>(audio.droppedFrames - previousAudio.droppedFrames),
+            static_cast<unsigned long long>(audio.outputErrors - previousAudio.outputErrors),
+            static_cast<unsigned long long>(audio.rateChanges - previousAudio.rateChanges));
+    }
+    previousAudio = audio;
+    const auto dma = GetNativeAudioDmaStatistics();
+    const uint64_t dmaBlocks = dma.completedBlocks - previousDma.completedBlocks;
+    std::fprintf(stderr, "MH3 audio: DMA %s %u Hz/%u bytes, %.1f services/s %.1f blocks/s %.1f frames/s (%.2f ms/s PCM), cap hits %llu, debt %.3f ms/%.3f max-ever, period %.3f ms, service gap %.3f max-ever\n",
+        dma.enabled ? "on" : "off", dma.rateHz, dma.lengthBytes,
+        double(dma.serviceCalls - previousDma.serviceCalls) / seconds, dmaBlocks / seconds,
+        double(dma.completedFrames - previousDma.completedFrames) / seconds,
+        double(dma.completedDurationNs - previousDma.completedDurationNs) / (1e6 * seconds),
+        static_cast<unsigned long long>(dma.capHits - previousDma.capHits),
+        dma.currentDebtNs / 1e6, dma.maxDebtNs / 1e6, dma.currentPeriodNs / 1e6,
+        dma.maxServiceGapNs / 1e6);
+    previousDma = dma;
     std::array<uint64_t, 12> material{};
     GetNativeMaterialPreparationStatistics(material.data());
     const auto materialRate = [&](size_t counter) {
