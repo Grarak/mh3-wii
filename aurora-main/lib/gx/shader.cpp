@@ -528,7 +528,8 @@ static AlphaCompareExpr alpha_compare_xnor(const AlphaCompareExpr& lhs, const Al
   return {fmt::format("({} == {})", lhs.expr, rhs.expr), -1};
 }
 
-static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref) {
+static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref, bool floating=false) {
+  const char* suffix=floating?".0":"u";
   const auto iref = static_cast<u32>(ref);
   switch (comp) {
   default:
@@ -539,26 +540,26 @@ static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref) {
     if (ref == 0) {
       return alpha_compare_const(false);
     }
-    return {fmt::format("(alphaCompare < {}u)", iref), -1};
+    return {fmt::format("(alphaCompare < {}{})", iref, suffix), -1};
   case GX_LEQUAL:
     if (ref == 255) {
       return alpha_compare_const(true);
     }
-    return {fmt::format("(alphaCompare <= {}u)", iref), -1};
+    return {fmt::format("(alphaCompare <= {}{})", iref, suffix), -1};
   case GX_EQUAL:
-    return {fmt::format("(alphaCompare == {}u)", iref), -1};
+    return {fmt::format("(alphaCompare == {}{})", iref, suffix), -1};
   case GX_NEQUAL:
-    return {fmt::format("(alphaCompare != {}u)", iref), -1};
+    return {fmt::format("(alphaCompare != {}{})", iref, suffix), -1};
   case GX_GEQUAL:
     if (ref == 0) {
       return alpha_compare_const(true);
     }
-    return {fmt::format("(alphaCompare >= {}u)", iref), -1};
+    return {fmt::format("(alphaCompare >= {}{})", iref, suffix), -1};
   case GX_GREATER:
     if (ref == 255) {
       return alpha_compare_const(false);
     }
-    return {fmt::format("(alphaCompare > {}u)", iref), -1};
+    return {fmt::format("(alphaCompare > {}{})", iref, suffix), -1};
   case GX_ALWAYS:
     return alpha_compare_const(true);
   }
@@ -937,11 +938,47 @@ static std::string rename_members(std::string s, std::string_view from0, std::st
   return replace_token(replace_token(std::move(s), from0, to0), from1, to1);
 }
 
+static std::string native_float_op(const TevOp& op,std::string_view a,std::string_view b,
+                                  std::string_view c,std::string_view d,bool vector,
+                                  std::string_view colorA={},std::string_view colorB={}) {
+  const float bias=op.bias==GX_TB_ADDHALF?128.f/255.f:op.bias==GX_TB_SUBHALF?-128.f/255.f:0.f;
+  const float scale=op.scale==GX_CS_SCALE_2?2.f:op.scale==GX_CS_SCALE_4?4.f:op.scale==GX_CS_DIVIDE_2?.5f:1.f;
+  std::string expression;
+  if(op.op==GX_TEV_ADD || op.op==GX_TEV_SUB) {
+    expression=fmt::format("(({}) + {:.9f} {} mix({}, {}, {})) * {:.1f}",
+                          d,bias,op.op==GX_TEV_SUB?"-":"+",a,b,c,scale);
+  } else {
+    // Comparison stages retain their authored operation, without byte-domain
+    // quantization. Alpha R8/GR16/BGR24 comparisons consume color inputs.
+    const auto ca=vector?a:colorA,cb=vector?b:colorB;
+    const bool equal=(unsigned(op.op)&1)!=0;
+    const char* comparison=equal?"==":">";
+    std::string condition;
+    switch(op.op) {
+    case GX_TEV_COMP_R8_GT:case GX_TEV_COMP_R8_EQ:
+      condition=fmt::format("({}).r {} ({}).r",ca,comparison,cb);break;
+    case GX_TEV_COMP_GR16_GT:case GX_TEV_COMP_GR16_EQ:
+      condition=fmt::format("dot(({}).rg, vec2(1.0, 256.0)) {} dot(({}).rg, vec2(1.0, 256.0))",ca,comparison,cb);break;
+    case GX_TEV_COMP_BGR24_GT:case GX_TEV_COMP_BGR24_EQ:
+      condition=fmt::format("dot({}, vec3(1.0, 256.0, 65536.0)) {} dot({}, vec3(1.0, 256.0, 65536.0))",ca,comparison,cb);break;
+    case GX_TEV_COMP_RGB8_GT:case GX_TEV_COMP_RGB8_EQ:
+      condition=vector?fmt::format("{}({}, {})",equal?"equal":"greaterThan",a,b):fmt::format("({}) {} ({})",a,comparison,b);break;
+    default:Log.fatal("Invalid native material comparison {}",unsigned(op.op));
+    }
+    expression=fmt::format("select({}, {}, {}) + ({})",vector?"vec3(0.0)":"0.0",c,condition,d);
+  }
+  return op.clamp?fmt::format("clamp({}, 0.0, 1.0)",expression):
+      fmt::format("clamp({}, -1024.0 / 255.0, 1023.0 / 255.0)",expression);
+}
+
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices,
-                                        u8 nativeZeroLodBiasMask) noexcept {
+                                        u8 nativeZeroLodBiasMask,bool approximateNative) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
+  // All native materials use float combiners. The explicit switch exists only
+  // for reference probes; material properties never trigger an exact fallback.
+  const bool nativeFloat=nativeVertices && approximateNative;
 
   std::string uniformPre;
   std::string uniBufAttrs;
@@ -1108,6 +1145,8 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       std::string op = tev_color_op(
           stage.colorOp.op, stage.colorOp.bias, stage.colorOp.scale, stage.colorOp.clamp, colorA, colorB,
           color_arg_reg(stage.colorPass.c, idx, config, stage), color_arg_reg(stage.colorPass.d, idx, config, stage));
+      if(nativeFloat) op=native_float_op(stage.colorOp,colorA,colorB,
+          color_arg_reg(stage.colorPass.c,idx,config,stage),color_arg_reg(stage.colorPass.d,idx,config,stage),true);
       fragmentFn += fmt::format("\n    {0} = vec4f({1}, {0}.a);", outReg, op);
     }
     {
@@ -1117,6 +1156,9 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           alpha_arg_reg(stage.alphaPass.a, idx, config, stage), alpha_arg_reg(stage.alphaPass.b, idx, config, stage),
           alpha_arg_reg(stage.alphaPass.c, idx, config, stage), alpha_arg_reg(stage.alphaPass.d, idx, config, stage),
           colorA, colorB);
+      if(nativeFloat) op=native_float_op(stage.alphaOp,
+          alpha_arg_reg(stage.alphaPass.a,idx,config,stage),alpha_arg_reg(stage.alphaPass.b,idx,config,stage),
+          alpha_arg_reg(stage.alphaPass.c,idx,config,stage),alpha_arg_reg(stage.alphaPass.d,idx,config,stage),false,colorA,colorB);
       fragmentFn += fmt::format("\n    {0}.a = {1};", outReg, op);
     }
   }
@@ -1683,10 +1725,10 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     uniBufAttrs += fmt::format("\n    vec4 tex{}_size_bias;", i);
     texBindings += fmt::format("\nuniform highp sampler2D tex{};", i);
   }
-  fragmentFn += "\n    prev = tev_overflow_vec4f(prev);";
+  if(!nativeFloat) fragmentFn += "\n    prev = tev_overflow_vec4f(prev);";
   if (config.alphaCompare) {
-    const auto comp0 = alpha_compare(config.alphaCompare.comp0, config.alphaCompare.ref0);
-    const auto comp1 = alpha_compare(config.alphaCompare.comp1, config.alphaCompare.ref1);
+    const auto comp0 = alpha_compare(config.alphaCompare.comp0, config.alphaCompare.ref0, nativeFloat);
+    const auto comp1 = alpha_compare(config.alphaCompare.comp1, config.alphaCompare.ref1, nativeFloat);
     AlphaCompareExpr pass;
     switch (config.alphaCompare.op) {
     default:
@@ -1709,8 +1751,9 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     if (discard.constant == 1) {
       fragmentFn += "\n    // Alpha compare\n    discard;";
     } else if (discard.constant != 0) {
-      fragmentFn += "\n    // Alpha compare"
-                    "\n    uint alphaCompare = u32(round(clamp(prev.a, 0.0, 1.0) * 255.0));";
+      fragmentFn += "\n    // Alpha compare";
+      fragmentFn += nativeFloat?"\n    float alphaCompare = clamp(prev.a, 0.0, 1.0) * 255.0;":
+          "\n    uint alphaCompare = u32(round(clamp(prev.a, 0.0, 1.0) * 255.0));";
       fragmentFn += fmt::format("\n    if ({}) {{ discard; }}", discard.expr);
     }
   }

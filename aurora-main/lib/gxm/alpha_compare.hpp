@@ -24,11 +24,13 @@ inline bool parameterize_alpha_references(std::string& source, std::array<float,
       value = value * 10 + unsigned(source[end++] - '0');
       if (value > 255) throw std::runtime_error("GX alpha reference exceeds one byte");
     }
-    if (end == number || end == source.size() || source[end] != 'u') { position = number; continue; }
+    const bool floating=source.compare(end,2,".0")==0;
+    if (end == number || end == source.size() || (!floating && source[end] != 'u')) { position = number; continue; }
     if (count == 2) throw std::runtime_error("GX alpha compare has more than two references");
     values[count] = static_cast<float>(value);
-    const std::string replacement = count++ ? "u32(aur_alpha_refs.y)" : "u32(aur_alpha_refs.x)";
-    source.replace(number, end + 1 - number, replacement);
+    std::string replacement = count++ ? "aur_alpha_refs.y" : "aur_alpha_refs.x";
+    if(!floating) replacement="u32("+replacement+")";
+    source.replace(number, end + (floating?2:1) - number, replacement);
     position = number + replacement.size();
   }
   if (!count) return false;

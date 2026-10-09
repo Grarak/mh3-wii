@@ -8,6 +8,7 @@
 #include "gx/gx.hpp"
 #include "gx/shader_info.hpp"
 #include "gxm/sampler_bias.hpp"
+#include "gxm/alpha_compare.hpp"
 #include "native_graphics.h"
 #include <array>
 #include <cmath>
@@ -146,8 +147,36 @@ int main(int argc,char** argv) {
     struct Shutdown { ~Shutdown(){aurora_shutdown();} } shutdown;
     aurora_set_frameskip(true);
     const auto materialConfig=material_config();
+    std::string floatAlpha="#version 300 es\nif (alphaCompare > 128.0 && alphaCompare != 0.0) {}\n";
+    std::array<float,4> references{};
+    require(aurora::gxm::parameterize_alpha_references(floatAlpha,references) &&
+            references[0]==128 && references[1]==0 &&
+            floatAlpha.find("alphaCompare > aur_alpha_refs.x")!=std::string::npos &&
+            floatAlpha.find("alphaCompare != aur_alpha_refs.y")!=std::string::npos &&
+            floatAlpha.find("u32(")==std::string::npos,
+            "native float alpha parameters changed comparison type");
     const auto materialInfo=aurora::gx::build_shader_info(materialConfig);
     auto materialDescription=aurora::gx::build_shader_description(materialConfig,true,1);
+    const auto exactDescription=aurora::gx::build_shader_description(materialConfig,true,1,false);
+    require(materialDescription.fragment.find("prev = tev_overflow_vec4f(prev)")==std::string::npos,
+            "ordinary native material retained wrap emulation");
+    require(exactDescription.fragment.find("prev = tev_overflow_vec4f(prev)")!=std::string::npos,
+            "exact native reference was approximated");
+    for(unsigned guard=0;guard<4;++guard) {
+      auto guarded=materialConfig;
+      if(guard==0) {guarded.alphaCompare.comp0=GX_GREATER;guarded.alphaCompare.ref0=128;}
+      if(guard==1) guarded.tevStages[0].colorOp.clamp=false;
+      if(guard==2) guarded.tevStages[0].colorOp.op=GX_TEV_COMP_RGB8_GT;
+      if(guard==3) guarded.tevStages[0].colorPass.d=GX_CC_C0;
+      const auto description=aurora::gx::build_shader_description(guarded,true,1);
+      require(description.fragment.find("prev = tev_overflow_vec4f(prev)")==std::string::npos,
+              "native material silently fell back to integer emulation");
+      aurora::gl::Program checked(description);checked.get();
+    }
+    auto rejectConfig=materialConfig;rejectConfig.alphaCompare.op=GX_AOP_XOR;
+    const auto rejectDescription=aurora::gx::build_shader_description(rejectConfig,true,1);
+    require(rejectDescription.fragment.find("discard;")!=std::string::npos,
+            "ALWAYS XOR ALWAYS did not reject fragments");
     require(materialDescription.vertex.find("uniform highp usampler2D vbuf")==std::string::npos,
             "native material retained vertex word fetch binding");
     require(materialDescription.fragment.find("tex0_fixed_uv")==std::string::npos,
@@ -158,6 +187,7 @@ int main(int argc,char** argv) {
     require(biasedDescription.fragment.find("texture(tex0, tex0_uv, ubuf.tex0_size_bias.z)")!=std::string::npos,
             "unspecialized native sample lost sampler bias");
     auto materialProgram=std::make_shared<aurora::gl::Program>(std::move(materialDescription));
+    auto exactProgram=std::make_shared<aurora::gl::Program>(exactDescription);
     auto biasedProgram=std::make_shared<aurora::gl::Program>(biasedDescription);
     for(int code=0;code<64;++code)
       require(aurora::gxm::sampler_bias_encoding(float(code-31)/8)==code,"GXM bias encoding mismatch");
@@ -241,6 +271,14 @@ int main(int argc,char** argv) {
         // frame deliberately draws before issuing another texture bind.
         aurora::bind_native_texture(0,source,{});
         material_quad(materialProgram->get(),materialInfo);
+        uint8_t approximate[4]{},exact[4]{};
+        aurora::gl::read_pixels(target.texture->gl(),32,48,1,1,approximate);
+        aurora::gl::clear_depth(0);
+        material_quad(exactProgram->get(),materialInfo);
+        aurora::gl::read_pixels(target.texture->gl(),32,48,1,1,exact);
+        for(unsigned channel=0;channel<4;++channel)
+          require(std::abs(int(approximate[channel])-int(exact[channel]))<=1,
+                  "native float/reference material differs by more than one byte step");
       } else {
         AuroraNativeGeometry unavailable{};
         require(!aurora_allocate_native_geometry(4,6,&unavailable),"skipped frame exposed draw memory");

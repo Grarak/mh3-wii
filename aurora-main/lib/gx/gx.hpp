@@ -208,7 +208,7 @@ struct AlphaCompare {
 
   bool operator==(const AlphaCompare& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
   bool operator!=(const AlphaCompare& rhs) const { return !(*this == rhs); }
-  explicit operator bool() const { return comp0 != GX_ALWAYS || comp1 != GX_ALWAYS; }
+  explicit operator bool() const { return comp0 != GX_ALWAYS || comp1 != GX_ALWAYS || op == GX_AOP_XOR; }
 };
 static_assert(std::has_unique_object_representations_v<AlphaCompare>);
 struct IndTexMtxInfo {
@@ -772,7 +772,7 @@ gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept;
 // Keep dynamic bias for all units by default; callers must include this mask
 // in their program-cache identity when specializing native materials.
 gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeVertices=false,
-                                        u8 nativeZeroLodBiasMask=0) noexcept;
+                                        u8 nativeZeroLodBiasMask=0,bool approximateNative=true) noexcept;
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept;
 void notify_copy_texture_created() noexcept;
 

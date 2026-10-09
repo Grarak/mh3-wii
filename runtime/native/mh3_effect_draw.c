@@ -146,7 +146,7 @@ void mh3_effect_movie_material(const mh3_native_material_state *inherited,mh3_na
     pixel(&m.pixel,MH3_PIXEL_BLEND_ENABLE,0);pixel(&m.pixel,MH3_PIXEL_LOGIC_ENABLE,0);pixel(&m.pixel,MH3_PIXEL_BLEND_SUBTRACT,0);
     pixel(&m.pixel,MH3_PIXEL_BLEND_SOURCE,1);pixel(&m.pixel,MH3_PIXEL_BLEND_DESTINATION,0);pixel(&m.pixel,MH3_PIXEL_LOGIC_OPERATION,0);
     pixel(&m.pixel,MH3_PIXEL_COLOR_WRITE,1);pixel(&m.pixel,MH3_PIXEL_ALPHA_WRITE,0);
-    for(uint32_t i=0;i<2;i++){m.texgen[i].known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;memset(m.texgen[i].values,0,sizeof(m.texgen[i].values));m.texgen[i].values[MH3_TEXGEN_PROJECTION]=1;m.texgen[i].values[MH3_TEXGEN_SOURCE_ROW]=5;m.texgen[i].values[MH3_TEXGEN_MATRIX_ROW]=60;m.texgen[i].values[MH3_TEXGEN_POST_MATRIX_ROW]=61;}
+    for(uint32_t i=0;i<2;i++){m.texgen[i].known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;memset(m.texgen[i].values,0,sizeof(m.texgen[i].values));m.texgen[i].values[MH3_TEXGEN_PROJECTION]=0;m.texgen[i].values[MH3_TEXGEN_SOURCE_ROW]=5;m.texgen[i].values[MH3_TEXGEN_MATRIX_ROW]=60;m.texgen[i].values[MH3_TEXGEN_POST_MATRIX_ROW]=61;}
     *out=m;
 }
 void mh3_effect_movie_restore(const mh3_native_material_state *inherited,mh3_native_material_state *out){

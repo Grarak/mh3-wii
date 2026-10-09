@@ -159,7 +159,7 @@ uint32_t NativeEffectTextureSetup(CpuContext *cpu){
         float sine=0,cosine=1;if(t.rotation!=0){game.Call<0x8009C7C4>({frame[0x10],frame[0x14]},{t.rotation});sine=FlatReadFloat32(frame[0x10]);cosine=FlatReadFloat32(frame[0x14]);}
         float post[12];ReadVector(info+0x30,post,12);mh3_effect_texture_matrix(&t,sine,cosine,post,effect.texture_matrix[map]);effect.position_source[map]=t.position_source;
         SetNativeTextureMatrix(t.position_source?3*uint32_t(map)+0x40:3*uint32_t(map)+0x1e,effect.texture_matrix[map],t.position_source);
-        if(force){mh3_native_material_state material=GetNativeMaterialState();auto &gen=material.texgen[map];gen.known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;std::memset(gen.values,0,sizeof(gen.values));gen.values[MH3_TEXGEN_PROJECTION]=t.position_source?0:1;gen.values[MH3_TEXGEN_SOURCE_ROW]=t.position_source?0:5;gen.values[MH3_TEXGEN_POST_MATRIX_ROW]=t.position_source?uint8_t(3*map):61;SetNativeMaterial(material);}
+        if(force){mh3_native_material_state material=GetNativeMaterialState();auto &gen=material.texgen[map];gen.known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;std::memset(gen.values,0,sizeof(gen.values));gen.values[MH3_TEXGEN_PROJECTION]=t.position_source?1:0;gen.values[MH3_TEXGEN_SOURCE_ROW]=t.position_source?0:5;gen.values[MH3_TEXGEN_POST_MATRIX_ROW]=t.position_source?uint8_t(3*map):61;SetNativeMaterial(material);}
     }
     return changed;
 }
@@ -236,7 +236,7 @@ extern "C" void MH3_NativeMovieTexture(CpuContext *c){
 }
 extern "C" void MH3_EffectTexCoordGenerator(CpuContext *c){
     uint32_t index=c->gpr[3];if(index>=8)throw std::runtime_error("Effect texgen index exceeds material layout");
-    auto material=GetNativeMaterialState();auto &gen=material.texgen[index];gen.known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;std::memset(gen.values,0,sizeof(gen.values));gen.values[MH3_TEXGEN_PROJECTION]=c->gpr[4]==1;gen.values[MH3_TEXGEN_SOURCE_ROW]=c->gpr[5]==4?5:uint8_t(c->gpr[5]);gen.values[MH3_TEXGEN_MATRIX_ROW]=uint8_t(c->gpr[6]);gen.values[MH3_TEXGEN_NORMALIZE]=c->gpr[7]!=0;gen.values[MH3_TEXGEN_POST_MATRIX_ROW]=uint8_t(c->gpr[8]-0x40);SetNativeMaterial(material);
+    auto material=GetNativeMaterialState();auto &gen=material.texgen[index];gen.known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;std::memset(gen.values,0,sizeof(gen.values));gen.values[MH3_TEXGEN_PROJECTION]=c->gpr[4]==0;gen.values[MH3_TEXGEN_SOURCE_ROW]=c->gpr[5]==4?5:uint8_t(c->gpr[5]);gen.values[MH3_TEXGEN_MATRIX_ROW]=uint8_t(c->gpr[6]);gen.values[MH3_TEXGEN_NORMALIZE]=c->gpr[7]!=0;gen.values[MH3_TEXGEN_POST_MATRIX_ROW]=uint8_t(c->gpr[8]-0x40);SetNativeMaterial(material);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x804351C4,MH3_NativeMovieTexture,"NativeMovieTexture");
 REGISTER_NATIVE_FUNCTION_AS(0x804352C8,MH3_NativeMovieRestore,"NativeMovieRestore");
