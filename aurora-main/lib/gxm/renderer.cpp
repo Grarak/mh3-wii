@@ -21,10 +21,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <span>
+#include <set>
 #include <stdexcept>
 
 #include <thread>
@@ -297,6 +300,24 @@ public:
   // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette; fragment BUFFER[0] Shade,
   // [1] Scene. Sampler slot r reads the texture bound at unit units[r].
   void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units) {
+    static const char* dump = std::getenv("MH3_GXM_SHADE_DATA_DUMP");
+    if (dump && *dump) {
+      static std::set<std::pair<uint64_t, uint64_t>> saved;
+      if (saved.emplace(native.vertexHash, native.fragmentHash).second) {
+        std::filesystem::create_directories(dump);
+        char name[48];
+        std::snprintf(name, sizeof(name), "%016llx-%016llx", static_cast<unsigned long long>(native.vertexHash), static_cast<unsigned long long>(native.fragmentHash));
+        const auto base = std::filesystem::path(dump) / name;
+        const auto write = [&](const char* suffix, const void* data, uint32_t bytes) {
+          std::ofstream file(base.string() + suffix, std::ios::binary);
+          file.write(static_cast<const char*>(data), bytes);
+          if (!file)
+            throw std::runtime_error("Cannot save shaded uniform diagnostic");
+        };
+        write("-draw.bin", blocks.draw, blocks.drawBytes);
+        write("-scene.bin", blocks.scene, blocks.sceneBytes);
+      }
+    }
     scene();
     viewport();
     apply_raster(state.raster, device.context());

@@ -10,9 +10,10 @@ and native **GXM** on Vita.
 - **Status, 2026-10-03:** a render thread draws frame packets recorded by
   the game thread, with fixed hand-written shaders instead of TEV. The Pi runs
   Alatreon at full speed (game thread 143–146 fps moving). The Vita devkit
-  completes a scripted quest at ~10 fps with correct geometry, but shaded 3D
-  draws lose their blue channel. See [HANDOVER.md](HANDOVER.md) and
-  [renderer status](docs/native-renderer-status.md).
+  completes a scripted quest at ~10 fps. The hunter matrix-selection and
+  yellow-tint faults are fixed and verified in recorded gameplay. See
+  [HANDOVER.md](HANDOVER.md), [renderer status](docs/native-renderer-status.md)
+  and [the corrected-image CPU/GPU profile](docs/vita-oct03-fixed-render-profile.md).
 
 ## Build
 

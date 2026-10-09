@@ -5,6 +5,8 @@
 // Vertex inputs are bound per draw to fixed locations: the backend points each
 // texture role's coordinate and matrix selector at the mesh's actual texcoord
 // and selector byte, so the shaders never select or convert attributes.
+// Selectors are already integral U8 slots. A rounding bias is unnecessary and
+// GXM fastint can round biased array indices to the next matrix slot.
 // Every fragment texture read uses its varying unmodified (independent reads on
 // SGX); projective roles are divided per vertex and LOD bias is sampler state on
 // GXM. Both use GL depth from GX clip space: (x, y, 2z - w, w). GLES also
@@ -19,6 +21,7 @@
 // (fragment, binding 3 / fragment BUFFER[0]). Draw and Shade share one per-draw
 // allocation (mh3_shade_draw); Shade's tail differs per fragment model.
 #include "native_shader_source.h"
+#include <cstdlib>
 #include <string>
 
 namespace {
@@ -202,7 +205,7 @@ vec2 texgen(int role, vec2 uv, float selector, vec3 position, vec3 normal) {
     vec4 source = t.mode.x == 0 ? vec4(position, 1.0) : t.mode.x == 1 ? vec4(normal, 1.0) : vec4(uv, 1.0, 1.0);
     vec3 coordinate = source.xyz;
     if ((bits & 16) != 0) {
-        int slot = int(selector + 0.5);
+        int slot = int(selector);
         if (slot < 20)
             coordinate = source * palette.position[slot];
     } else if ((bits & 4) == 0)
@@ -217,7 +220,7 @@ vec2 texgen(int role, vec2 uv, float selector, vec3 position, vec3 normal) {
 }
 vec2 affine(int role, vec2 uv) { return (vec4(uv, 1.0, 1.0) * draw.texgen[role].main).xy; }
 void main() {
-    int slot = (draw.flags.x & 1) != 0 ? int(a_select + 0.5) : 0;
+    int slot = (draw.flags.x & 1) != 0 ? int(a_select) : 0;
     vec3 position = vec4(a_position, 1.0) * palette.position[slot];
     vec4 projected = vec4(position, 1.0) * draw.proj;
     vec4 vertex = (draw.flags.x & 2) != 0 ? a_color0 : vec4(1.0);
@@ -492,7 +495,7 @@ float2 texgen(int role, float2 uv, float selector, float3 position, float3 norma
     float4 source = t.mode.x == 0 ? float4(position, 1.0f) : t.mode.x == 1 ? float4(normal, 1.0f) : float4(uv, 1.0f, 1.0f);
     float3 coordinate = source.xyz;
     if ((bits & 16) != 0) {
-        int slot = int(selector + 0.5f);
+        int slot = int(selector);
         if (slot < 20)
             coordinate = mul(source, palette.position[slot]);
     } else if ((bits & 4) == 0)
@@ -510,7 +513,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
           float a_select, float a_select0, float a_select1, float a_select2,
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
           float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float out v_fog : TEXCOORD3) {
-    int slot = (draw.flags.x & 1) != 0 ? int(a_select + 0.5f) : 0;
+    int slot = (draw.flags.x & 1) != 0 ? int(a_select) : 0;
     float3 position = mul(float4(a_position, 1.0f), palette.position[slot]);
     float4 projected = mul(float4(position, 1.0f), draw.proj);
     float4 vertex = (draw.flags.x & 2) != 0 ? a_color0 : float4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -574,14 +577,22 @@ float4 main(float4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : T
 #endif
     float4 v = v_color0;
 #if MODULATE
-    float4 base = t0 * shade.w0 + shade.offset;
+    // Keep each arithmetic chain two components wide. The float4 chain's
+    // masked upper-lane uniform MAD loses B/A on the devkit; identical RG/BA
+    // equations pass the isolated native Shade-buffer readback test.
+    float2 base_rg = t0.rg * shade.w0.rg + shade.offset.rg;
+    float2 base_ba = t0.ba * shade.w0.ba + shade.offset.ba;
 #if TEXTURES == 2
-    base += t1 * shade.w1;
+    base_rg += t1.rg * shade.w1.rg;
+    base_ba += t1.ba * shade.w1.ba;
 #endif
 #if OVERLAY
-    base.rgb += shade.overlay.rgb * t1.rgb * t2.rgb;
+    base_rg += shade.overlay.rg * t1.rg * t2.rg;
+    base_ba.x += shade.overlay.b * t1.b * t2.b;
 #endif
-    float4 result = saturate((base * (v * shade.kv + shade.kc) + shade.d) * shade.s);
+    float4 result;
+    result.rg = saturate((base_rg * (v.rg * shade.kv.rg + shade.kc.rg) + shade.d.rg) * shade.s.rg);
+    result.ba = saturate((base_ba * (v.ba * shade.kv.ba + shade.kc.ba) + shade.d.ba) * shade.s.ba);
 #else
     float3 b = color_input(1, t0, t1, t2, v);
 #if OVERLAY
@@ -652,6 +663,31 @@ NativeShaderSources NativeShaderSource(NativeShaderVariant variant) {
     out.glsl_fragment = std::string(GlslPrelude) + fragment + GlslScene + GlslShade + GlslFragment;
     out.cg_vertex = std::string(CgScene) + vertex + (mesh ? TexgenOutputs(variant, true) : "") + CgDraw + CgVertexCommon + (mesh ? CgMeshVertex : CgGeometryVertex);
     out.cg_fragment = std::string(CgScene) + fragment + CgShade + CgFragment;
+#ifdef __vita__
+    // Diagnostic stage isolation; source identity changes, so a probe never
+    // reuses a cached production GXP. All shader arithmetic remains float.
+    if (const char* probe = std::getenv("MH3_GXM_SHADE_PROBE")) {
+        std::string result;
+        if (std::string(probe) == "blue")
+            result = "float4(0.0f, 0.0f, 1.0f, 1.0f)";
+        else if (std::string(probe) == "texture")
+            result = "t0";
+        else if (std::string(probe) == "vertex" || std::string(probe) == "vertex-white")
+            result = "v_color0";
+        else if (std::string(probe) == "geometry-texture" && !mesh && variant.textures)
+            result = "t0";
+        // Geometry includes full-screen composition and fades. Keep those
+        // authored equations when isolating mesh vertex lighting.
+        if (!result.empty() && ((std::string(probe) != "vertex" && std::string(probe) != "vertex-white") || mesh)) {
+            const auto at = out.cg_fragment.rfind("return result;");
+            out.cg_fragment.replace(at, std::string("return result;").size(), "return " + result + ";");
+        }
+        if (mesh && std::string(probe) == "vertex-white") {
+            const auto at = out.cg_vertex.rfind("v_position =");
+            out.cg_vertex.insert(at, "v_color0 = float4(1.0f, 1.0f, 1.0f, 1.0f);\n    ");
+        }
+    }
+#endif
     return out;
 }
 

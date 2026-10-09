@@ -10,13 +10,14 @@ were deleted on 2026-10-03; they remain in git history.
 
 ## Renderer and platform
 
-- [native-renderer-status.md](native-renderer-status.md): what works on each platform, the open Vita colour fault, shaders and memory limits. Start here.
+- [native-renderer-status.md](native-renderer-status.md): what works on each platform, the verified Vita colour/hunter fixes, shaders and memory limits. Start here.
 - [native-render-plan.md](native-render-plan.md): fixed shading models, frame packets, render thread, model instances and the measured Pi game/render split.
 - [frame-state-slot-exchange.md](frame-state-slot-exchange.md): the three-slot exchange the frame packets use.
 - [vita-launcher.md](vita-launcher.md): launcher, reading the disc image in place and load-time texture/model conversion.
 - [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and earlier devkit checkpoints.
 - [vita-native-cdram-capacity.md](vita-native-cdram-capacity.md): CDRAM budgets.
 - [vita-runtime-shaders.md](vita-runtime-shaders.md): the devkit's runtime Cg compiler and cache.
+- [vita-fixed-shader-abi.md](vita-fixed-shader-abi.md), [vita-selector-preflight.md](vita-selector-preflight.md): actual GXP reflection, matrix-selector and RGBA hardware fixtures behind the hunter/tint fixes.
 - [native-material-state.md](native-material-state.md), [native-material-group-publication.md](native-material-group-publication.md), [native-material-unchecked-publication.md](native-material-unchecked-publication.md), [native-material-update-origins.md](native-material-update-origins.md): typed material state and how it is published.
 - [native-resident-model-rendering.md](native-resident-model-rendering.md), [native-model-assets.md](native-model-assets.md), [native-model-draw-dispatch.md](native-model-draw-dispatch.md), [vita-model-conversion.md](vita-model-conversion.md), [vita-indexed-model-packs.md](vita-indexed-model-packs.md): converted models and their draw path.
 - [vita-native-assets.md](vita-native-assets.md), [vita-native-texture-formats.md](vita-native-texture-formats.md), [native-texture-processed-host.md](native-texture-processed-host.md), [native-texture-binding-origins.md](native-texture-binding-origins.md): texture formats and binding.
@@ -27,7 +28,9 @@ were deleted on 2026-10-03; they remain in git history.
 
 ## Profiling and capture
 
+- [vita-oct03-fixed-render-profile.md](vita-oct03-fixed-render-profile.md): matching recorded gameplay, CPU samples with unwind coverage, GPU-only Razor/vprof and current frame-rate bottlenecks.
 - [vita-native-profiling.md](vita-native-profiling.md), [vita-native-stack-profiling.md](vita-native-stack-profiling.md), [vita-razor.md](vita-razor.md): Vita CPU and GPU profiling.
+- [vita-render-thread-statistics.md](vita-render-thread-statistics.md), [vita-profile-analysis-draft.md](vita-profile-analysis-draft.md): game/render counter scopes and offline import/unwind coverage rules.
 - [pi5-arm32-callstack-unwind.md](pi5-arm32-callstack-unwind.md): recovering ARM32 callers.
 - [hdmi-audio-capture.md](hdmi-audio-capture.md): the devkit HDMI video/audio capture.
 - [aurora-dependency.md](aurora-dependency.md): the maintained Aurora copy.
