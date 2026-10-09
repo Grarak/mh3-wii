@@ -26,14 +26,18 @@ struct CustomQuest {
     uint16_t minutes = 0;   // Zero preserves the original time limit.
 };
 
-std::vector<uint16_t> QuestCompositionOptions(std::span<const uint8_t> source, uint16_t base);
-std::vector<uint16_t> CompositionOptions(const CustomQuest& quest);
-std::vector<uint16_t> CompositionMaps(const CustomQuest& quest);
-std::vector<uint8_t> EditQuestFile(std::span<const uint8_t> source, const CustomQuest& quest);
-void SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& quest);
-std::vector<CustomQuest> LoadCustomQuests(const std::filesystem::path& user);
-bool SupportsCapture(const CustomQuest& quest);
-void ActivateCustomQuest(const CustomQuest& quest);
+// Quest editing. A failure (a template missing from the disc, settings the
+// template cannot take, a file error) says why.
+Status QuestCompositionOptions(std::span<const uint8_t> source, uint16_t base, std::vector<uint16_t>& options);
+Status CompositionOptions(const CustomQuest& quest, std::vector<uint16_t>& options);
+Status CompositionMaps(const CustomQuest& quest, std::vector<uint16_t>& maps);
+Status EditQuestFile(std::span<const uint8_t> source, const CustomQuest& quest, std::vector<uint8_t>& edited);
+Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& quest);
+
+// The valid custom quests of user, by name; invalid records are skipped.
+Status LoadCustomQuests(const std::filesystem::path& user, std::vector<CustomQuest>& quests);
+Status SupportsCapture(const CustomQuest& quest, bool& supported);
+Status ActivateCustomQuest(const CustomQuest& quest);
 using Progress = std::function<void(const std::string&, uint64_t, uint64_t)>;
 
 // Extracts the disc metadata (sys/, ticket, TMD, certificates) of an ISO/RVZ

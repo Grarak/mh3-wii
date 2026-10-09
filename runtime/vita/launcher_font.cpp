@@ -28,7 +28,9 @@ using Bitmap = std::array<uint8_t, Cell * Cell>;
 struct Font::Source {
     ScePvfLibId library = nullptr;
     ScePvfFontId font = nullptr;
-    Source() {
+
+    // Null, or why the font cannot be opened.
+    const char* Open() {
         ScePvfInitRec init{};
         init.maxNumFonts = 1;
         init.allocFunc = [](void*, unsigned size) -> void* {
@@ -46,21 +48,28 @@ struct Font::Source {
         ScePvfError error = 0;
         library = scePvfNewLib(&init, &error);
 
-        if (!library || error)
-            throw std::runtime_error("Cannot open the system font library");
+        if (!library || error) {
+            library = nullptr;
+            return "Cannot open the system font library";
+        }
 
         font = scePvfOpenDefaultLatinFontOnSharedMemory(library, &error);
 
         if (!font || error) {
             scePvfDoneLib(library);
-            throw std::runtime_error("Cannot open the installed Latin system font");
+            library = nullptr;
+            return "Cannot open the installed Latin system font";
         }
 
         scePvfSetResolution(library, 72, 72);
         scePvfSetCharSize(font, 18, 18);
+        return nullptr;
     }
 
     ~Source() {
+        if (!library)
+            return;
+
         scePvfClose(font);
         scePvfDoneLib(library);
     }
@@ -93,7 +102,9 @@ struct Font::Source {
     std::vector<unsigned char> file;
     stbtt_fontinfo info{};
     float scale = 1;
-    Source() {
+
+    // Null, or why no font can be opened.
+    const char* Open() {
         for (const char* path : {"/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                                  "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "/usr/share/fonts/truetype/freefont/FreeSans.ttf"}) {
             std::ifstream input(path, std::ios::binary);
@@ -101,11 +112,11 @@ struct Font::Source {
 
             if (!file.empty() && stbtt_InitFont(&info, file.data(), stbtt_GetFontOffsetForIndex(file.data(), 0))) {
                 scale = stbtt_ScaleForMappingEmToPixels(&info, 18);
-                return;
+                return nullptr;
             }
         }
 
-        throw std::runtime_error("No system TrueType font for the launcher (Liberation Sans or DejaVu Sans)");
+        return "No system TrueType font for the launcher (Liberation Sans or DejaVu Sans)";
     }
 
     bool Render(unsigned character, Bitmap& bitmap, float& advance) {
@@ -127,7 +138,17 @@ struct Font::Source {
 };
 #endif
 
-Font::Font() : source(std::make_unique<Source>()) {}
+Status Font::Open(std::unique_ptr<Font>& font) {
+    auto source = std::make_unique<Source>();
+
+    if (const char* failure = source->Open())
+        return Status::Error(failure);
+
+    font.reset(new Font(std::move(source)));
+    return {};
+}
+
+Font::Font(std::unique_ptr<Source> source) : source(std::move(source)) {}
 Font::~Font() = default;
 Font::Glyph& Font::Get(unsigned character) {
     if (character < 32 || character > 126)
