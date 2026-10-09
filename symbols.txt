@@ -630,3 +630,29 @@
 8051e00c NWC24SuspendScheduler
 8051eb4c NWC24iSynchronizeRtcCounter
 8051ed54 NWC24iPrepareShutdown
+# Hot in fights (arm32 profiles): NW4R g3d animation/world-matrix work, ef effects, math.
+# ResAnmChr key evaluation per frame-value format (FVS32/48/96: hermite keys).
+8008aaf0 AnmChrKeyEvalFVS96
+8008b264 AnmChrKeyEvalFVS48
+8008b780 AnmChrFVS48KeyValue
+8008b9c0 AnmChrKeyEvalFVS32
+8008c09c AnmChrRotationFormatDispatch
+8008d660 AnmChrGetAnmResult
+800606bc AnmChrBlendGetResult
+# g3d NodeTree bytecode: world matrices (0x80074180 the recursive variant), view matrices, draw opa/xlu.
+80073830 G3dCalcWorld
+80074180 G3dCalcWorldRecursive
+80071cac G3dCalcView
+80078b00 G3dDrawOpaXlu
+800d7814 WorldMtxNodeStepMayaScale
+800871c0 TexSrtMtxSetup
+# ResDic::operator[] and the ResCommon reference check (panics on a bad pointer).
+800627b4 ResDicLookup
+800628a4 ResCommonRefCheck
+# ef: animation-curve key binary search, draw strategies.
+8009efec AnimCurveKeySearch
+800c7d44 EffectDrawTextureSetup
+800be424 EffectDrawFreeStrategy
+80501ab4 MTX34RotXYZFIdx
+804c63d0 PSMTXConcatArray
+80471590 AXSyncPBs
