@@ -25,6 +25,9 @@ public sealed partial class CxxLinearCodeGenerator
         private bool _writesCr;
         private bool _writesCtr;
         private bool _writesXer;
+        // r14-r31 some call boundary (not an exit) publishes to CpuContext; recorded by the
+        // discovery pass. See DirtiedPreservedGprMask.
+        private uint _boundaryFlushGprMask;
 
         private RegisterResidency(bool recording) => _recording = recording;
 
@@ -43,6 +46,7 @@ public sealed partial class CxxLinearCodeGenerator
             snapshot._writesCr = _writesCr;
             snapshot._writesCtr = _writesCtr;
             snapshot._writesXer = _writesXer;
+            snapshot._boundaryFlushGprMask = _boundaryFlushGprMask;
             return snapshot;
         }
 
@@ -54,6 +58,34 @@ public sealed partial class CxxLinearCodeGenerator
         /// don't publish them: no caller reads them back from CpuContext.
         /// </summary>
         public uint ExitPreservedGprMask { get; set; }
+
+        /// <summary>
+        /// Preserved r14-r31 this body changes and publishes to CpuContext at a call boundary
+        /// (for a callee that reads or may change it). The caller relies on CpuContext holding
+        /// its value afterwards whenever the register only passes through it, from a caller
+        /// that syncs it to a deeper callee that may change it; so every exit stores the entry
+        /// value back, as the guest's own restore would.
+        /// </summary>
+        private uint DirtiedPreservedGprMask
+        {
+            get
+            {
+                var mask = ExitPreservedGprMask & _boundaryFlushGprMask & NonvolatileGprPreservationAnalyzer.NonvolatileGprMask;
+                var written = 0u;
+                foreach (var gpr in _writtenGprs) written |= 1u << gpr;
+                return mask & written;
+            }
+        }
+
+        private static string GprEntryLocal(int index) => GprLocal(index) + "_entry";
+
+        private void AppendEntryRestores(StringBuilder sb, string pad)
+        {
+            var dirtied = DirtiedPreservedGprMask;
+            for (var gpr = 14; gpr < 32; ++gpr)
+                if ((dirtied & (1u << gpr)) != 0)
+                    sb.Append(pad).Append("ctx->gpr[").Append(gpr).Append("] = ").Append(GprEntryLocal(gpr)).AppendLine(";");
+        }
 
         /// <summary>
         /// Set when this body is a register-argument variant: its argument registers start from
@@ -217,6 +249,10 @@ public sealed partial class CxxLinearCodeGenerator
                 if (!_gprs.Contains(gpr)) sb.Append("    ctx->gpr[").Append(gpr).Append("] = arg_r").Append(gpr).AppendLine(";");
             foreach (var fpr in RegArgsEntry?.ArgFprs ?? Array.Empty<int>())
                 if (!_fprs.Contains(fpr)) sb.Append("    ctx->fpr[").Append(fpr).Append("].d = arg_f").Append(fpr).AppendLine(";");
+            var dirtied = DirtiedPreservedGprMask;
+            for (var gpr = 14; gpr < 32; ++gpr)
+                if ((dirtied & (1u << gpr)) != 0)
+                    sb.Append("    const uint32_t ").Append(GprEntryLocal(gpr)).Append(" = ").Append(GprLocal(gpr)).AppendLine(";");
             if (_cr) sb.AppendLine($"    uint32_t {CrLocal} = ctx->cr;");
             if (_ctr) sb.AppendLine($"    uint32_t {CtrLocal} = ctx->ctr;");
             if (_xer) sb.AppendLine($"    uint32_t {XerLocal} = ctx->xer;");
@@ -227,17 +263,25 @@ public sealed partial class CxxLinearCodeGenerator
         /// <c>CpuContext</c>. Storing an unmodified register writes the same
         /// value back, so the conservative write set stays correct.
         /// </summary>
-        public void AppendFlush(StringBuilder sb, string pad) =>
-            AppendFlush(sb, pad, ResidencyBoundarySync.Full.ExceptGprs(ExitPreservedGprMask));
+        public void AppendFlush(StringBuilder sb, string pad)
+        {
+            if (_recording) return;
+            AppendFlushCore(sb, pad, ResidencyBoundarySync.Full.ExceptGprs(ExitPreservedGprMask));
+            AppendEntryRestores(sb, pad);
+        }
 
         /// <summary>
         /// Flush before a return to the caller. A register-argument variant hands its results
         /// back as the C return value instead.
         /// </summary>
-        public void AppendExitFlush(StringBuilder sb, string pad) =>
-            AppendFlush(sb, pad, ResidencyBoundarySync.Full
+        public void AppendExitFlush(StringBuilder sb, string pad)
+        {
+            if (_recording) return;
+            AppendFlushCore(sb, pad, ResidencyBoundarySync.Full
                 .ExceptGprs(ExitPreservedGprMask | _exitExcludedGprMask)
                 .ExceptFprs(_exitExcludedFprMask));
+            AppendEntryRestores(sb, pad);
+        }
 
         /// <summary>
         /// Contract-narrowed flush. Only the registers the boundary can observe
@@ -246,7 +290,16 @@ public sealed partial class CxxLinearCodeGenerator
         /// </summary>
         public void AppendFlush(StringBuilder sb, string pad, ResidencyBoundarySync sync)
         {
-            if (_recording) return;
+            if (_recording)
+            {
+                _boundaryFlushGprMask |= sync.FlushGprMask;
+                return;
+            }
+            AppendFlushCore(sb, pad, sync);
+        }
+
+        private void AppendFlushCore(StringBuilder sb, string pad, ResidencyBoundarySync sync)
+        {
             foreach (var gpr in _writtenGprs)
                 if (sync.FlushesGpr(gpr))
                     sb.Append(pad).Append("ctx->gpr[").Append(gpr).Append("] = ").Append(GprLocal(gpr)).AppendLine(";");
