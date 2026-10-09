@@ -365,6 +365,18 @@ NativeMeshBuffer::~NativeMeshBuffer() {
     r.collect();
   });
 }
+size_t native_mesh_allocation_bytes(uint32_t bytes) {
+  (void)renderer();
+  return (size_t(bytes) + 0x3ffff) & ~size_t(0x3ffff);
+}
+size_t native_mesh_resident_bytes() {
+  auto& r = renderer();
+  r.collect();
+  size_t bytes = 0;
+  for (const auto& item : r.meshes) bytes += item.second.size();
+  for (const auto& item : r.retiredMeshes) bytes += item.second.size();
+  return bytes;
+}
 bool initialize(SDL_Window* window, bool vsync) noexcept {
   if (g_context) return g_context->window == window;
   try {
@@ -411,6 +423,9 @@ bool gpu_frame_pending() noexcept {
   });
 }
 uint32_t native_frame_slot() noexcept { return guarded([] { return renderer().device.frame_slot(); }); }
+void discard_native_frame() noexcept {
+  guarded([] { auto& r = renderer(); r.device.end(); r.collect(); });
+}
 void finish() noexcept { call([] { renderer().device.finish(); }); }
 const FormatInfo& format_info(Format format) noexcept { return FormatInfos[size_t(format)]; }
 Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view label)

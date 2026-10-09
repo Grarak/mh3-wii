@@ -50,6 +50,25 @@ int main() {
   frame.end();
   assert(payload != previousPayload);
 
+  // Demand loading may cancel an admitted frame after earlier offscreen draws.
+  // Cancellation closes drawing/presentation, preserves the current slot's
+  // scene lease and never reopens when the notification arrives mid-frame.
+  frame.cancel(); // Inactive cancellation preserves standalone preparation.
+  assert(frame.drawing_allowed());
+  aurora::GpuFrameRing canceledRing;
+  volatile unsigned canceledCompletion = 0;
+  assert(frame.begin(true, true, [] { return false; }));
+  canceledRing.record_scene(&canceledCompletion, 1);
+  frame.cancel(); frame.cancel();
+  assert(frame.active() && !frame.should_render() && !frame.drawing_allowed());
+  assert(canceledRing.slot() == 0 && canceledRing.pending());
+  canceledCompletion = 1;
+  assert(!frame.should_render());
+  frame.end();
+  assert(frame.begin(true, true, [&] { return canceledRing.pending(); }));
+  assert(canceledRing.slot() == 0);
+  frame.end();
+
   // New offscreen work owns memory even if the old display scene completed.
   ++submitted;
   assert(!frame.begin(true, true, pending));

@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
+namespace aurora::gfx { uint32_t current_frame() noexcept; }
 
 namespace {
 struct Resident {
@@ -71,6 +72,13 @@ void ClearNativeModelGPU() {
     Owner();for(auto& [handle,resident]:residents) resident.pack->gpu={};
     residents.clear();
 }
+size_t NativeModelGPUAllocationBytes(uint32_t bytes) {
+    Owner();return aurora::gl::native_mesh_allocation_bytes(bytes);
+}
+size_t NativeModelGPUResidentBytes() {
+    Owner();return aurora::gl::native_mesh_resident_bytes();
+}
+uint32_t NativeModelGPUFrameSerial() { Owner();return aurora::gfx::current_frame(); }
 NativeModelGPUView ResolveNativeModelGPU(const mh3_resolved_mesh_submit& mesh) {
     Owner();const auto found=residents.find(mesh.resident_handle);
     if(found==residents.end() || found->second.generation!=mesh.resident_generation ||

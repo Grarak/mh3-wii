@@ -192,6 +192,10 @@ private:
   const uint8_t* m_data = nullptr;
   uint32_t m_bytes = 0;
 };
+// Context-owner queries. Retirement polls completion and never waits; backing
+// pending the GPU notification remains part of the physical model budget.
+size_t native_mesh_allocation_bytes(uint32_t bytes);
+size_t native_mesh_resident_bytes();
 
 class Program {
 public:
@@ -309,6 +313,8 @@ void uniform4(GLuint program, const char* name, float x, float y, float z, float
 void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int32_t height) noexcept;
 // Nonblocking GPU completion check used for frameskip, independent of CPU tasks.
 bool gpu_frame_pending() noexcept;
+// Seal the current native scene and protect its mutable slot without a flip.
+void discard_native_frame() noexcept;
 // Slot 0..2 selected for the next rendered frame. Skipping does not rotate it.
 uint32_t native_frame_slot() noexcept;
 // Render thread only: window framebuffer size in pixels.

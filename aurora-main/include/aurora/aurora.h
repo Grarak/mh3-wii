@@ -160,9 +160,12 @@ bool aurora_configure_native_target(uint32_t width, uint32_t height);
 // Direct native rendering: call begin before preparing any draws or writing
 // their mapped GPU payload. False skips all drawing/clears/present for this
 // game frame without waiting. Logic still advances; always call end, including
-// after a skipped frame. The decision stays fixed throughout the frame.
+// after a skipped frame. Cancellation can close admission but never reopen it.
 bool aurora_begin_native_frame();
 bool aurora_native_frame_should_render();
+// Seal any recorded GPU work without presenting. The current mutable slot
+// retains its completion lease; CPU state continues until the normal end.
+void aurora_cancel_native_frame();
 // The three display and mutable draw slots rotate only on rendered frames.
 uint32_t aurora_native_frame_slot();
 void aurora_end_native_frame();

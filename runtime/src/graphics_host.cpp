@@ -344,6 +344,10 @@ bool BeginNativeGraphicsFrame() {
 bool NativeGraphicsFrameShouldRender() {
     return initialized && aurora_native_frame_should_render();
 }
+void CancelNativeGraphicsFrame() {
+    if (!initialized) throw std::runtime_error("Native frame canceled before graphics startup");
+    aurora_cancel_native_frame();
+}
 
 void EndNativeGraphicsFrame() {
     MH3_STAT(const bool rendered = aurora_native_frame_should_render();)

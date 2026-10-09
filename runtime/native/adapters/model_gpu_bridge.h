@@ -7,6 +7,13 @@ namespace aurora::gl { class NativeMeshBuffer; struct MeshLayout; }
 void RegisterNativeModelGPU(mh3_mesh_pack& pack,const char* path,uintptr_t handle,uint64_t generation);
 void UnregisterNativeModelGPU(uintptr_t handle,uint64_t generation);
 void ClearNativeModelGPU();
+/* Physical model backing only, including retired storage until notifications
+ * complete. Queries collect completed storage without waiting. The allocation
+ * cost includes Vita's 256 KiB memblock rounding. */
+size_t NativeModelGPUAllocationBytes(uint32_t payload_bytes);
+size_t NativeModelGPUResidentBytes();
+// Logical frame serial advances on skipped and canceled game frames too.
+uint32_t NativeModelGPUFrameSerial();
 struct NativeModelGPUView {
     const aurora::gl::NativeMeshBuffer* buffer;
     const aurora::gl::MeshLayout* layout;

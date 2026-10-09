@@ -500,6 +500,15 @@ bool begin_native_frame() noexcept {
 #endif
 }
 
+void cancel_native_frame() noexcept {
+  if (!g_nativeFrame.should_render()) return;
+#ifdef AURORA_ENABLE_GX
+  if (!gl::on_render_thread()) Log.fatal("Native frame canceled outside the game thread");
+  gl::discard_native_frame();
+#endif
+  g_nativeFrame.cancel();
+}
+
 void end_native_frame() {
   if (!g_nativeFrame.active()) Log.fatal("Native frame ended without a matching begin");
 #ifdef AURORA_ENABLE_GX
@@ -633,6 +642,7 @@ bool aurora_configure_native_target(uint32_t width, uint32_t height) {
 }
 bool aurora_begin_native_frame() { return aurora::begin_native_frame(); }
 bool aurora_native_frame_should_render() { return aurora::g_nativeFrame.should_render(); }
+void aurora_cancel_native_frame() { aurora::cancel_native_frame(); }
 uint32_t aurora_native_frame_slot() {
 #ifdef AURORA_ENABLE_GX
   return aurora::gl::native_frame_slot();

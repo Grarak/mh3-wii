@@ -56,4 +56,7 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height,bool load_native_a
 // logical frame, even when drawing is skipped; neither boundary waits.
 bool BeginNativeGraphicsFrame();
 bool NativeGraphicsFrameShouldRender();
+// Cancel presentation after temporary residency pressure. Recorded scenes are
+// sealed without a GPU wait; their frame slot remains leased until completion.
+void CancelNativeGraphicsFrame();
 void EndNativeGraphicsFrame();

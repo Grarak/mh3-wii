@@ -2,7 +2,7 @@
 
 namespace aurora {
 // Single-thread frame admission. Poll once before any native draw preparation
-// or mapped buffer writes, and retain that decision until the frame ends.
+// or mapped buffer writes. A canceled frame stays skipped until it ends.
 class NativeFrameGate {
 public:
   template <class PendingGpu>
@@ -14,6 +14,7 @@ public:
   bool active() const noexcept { return m_active; }
   bool should_render() const noexcept { return m_active && m_render; }
   bool drawing_allowed() const noexcept { return !m_active || m_render; }
+  void cancel() noexcept { if (m_active) m_render = false; }
   void end() noexcept { m_active = false; m_render = false; }
 
 private:

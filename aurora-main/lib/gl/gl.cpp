@@ -27,6 +27,10 @@
 #endif
 
 namespace aurora::gl {
+namespace {
+size_t nativeMeshLiveBytes = 0;
+std::vector<std::pair<GLsync, size_t>> nativeMeshRetired;
+}
 NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t bytes) {
   if (!on_render_thread() || !bytes) throw std::runtime_error("Native mesh load outside context owner or empty payload");
   auto data = std::make_unique<uint8_t[]>(bytes);
@@ -44,12 +48,34 @@ NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t b
     throw std::runtime_error("Native mesh GPU allocation failed");
   }
   m_data = data.release(); m_bytes = bytes;
+  nativeMeshLiveBytes += bytes;
 }
 NativeMeshBuffer::~NativeMeshBuffer() {
   // GL retains an in-flight object's storage after deletion. No finish/fence
   // wait and no live vertex/index data can be overwritten through this API.
-  if (m_buffer && initialized()) post([buffer = m_buffer] { glDeleteBuffers(1, &buffer); });
+  if (m_buffer && initialized()) post([buffer = m_buffer, bytes = m_bytes] {
+    const auto fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glDeleteBuffers(1, &buffer);
+    nativeMeshLiveBytes -= bytes;
+    nativeMeshRetired.emplace_back(fence, bytes);
+  });
   delete[] m_data;
+}
+size_t native_mesh_allocation_bytes(uint32_t bytes) {
+  if (!on_render_thread()) throw std::runtime_error("Model allocation query outside context owner");
+  return bytes;
+}
+size_t native_mesh_resident_bytes() {
+  if (!on_render_thread()) throw std::runtime_error("Model backing query outside context owner");
+  size_t bytes = nativeMeshLiveBytes;
+  for (auto it = nativeMeshRetired.begin(); it != nativeMeshRetired.end();) {
+    const auto status = it->first ? glClientWaitSync(it->first, 0, 0) : GL_WAIT_FAILED;
+    if (status == GL_WAIT_FAILED) throw std::runtime_error("GL model retirement notification failed");
+    if (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED) {
+      glDeleteSync(it->first); it = nativeMeshRetired.erase(it);
+    } else { bytes += it->second; ++it; }
+  }
+  return bytes;
 }
 namespace {
 Module Log("aurora::gl");
@@ -278,6 +304,8 @@ void shutdown() noexcept {
   });
   // Teardown is the only unconditional finish in this ownership path.
   glFinish();
+  for (const auto& item : nativeMeshRetired) if (item.first) glDeleteSync(item.first);
+  nativeMeshRetired.clear(); nativeMeshLiveBytes = 0;
   for (auto& fence : g_frameFences) {
     if (fence) glDeleteSync(fence);
     fence = nullptr;
@@ -316,6 +344,14 @@ bool gpu_frame_pending() noexcept {
   return false;
 }
 uint32_t native_frame_slot() noexcept { return g_frameSlot; }
+void discard_native_frame() noexcept {
+  if (!on_render_thread()) Log.fatal("GL native frame discarded outside the game thread");
+  auto& fence = g_frameFences[g_frameSlot];
+  if (fence) glDeleteSync(fence);
+  fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!fence) Log.fatal("GL canceled frame fence allocation failed");
+  glFlush();
+}
 
 void finish() noexcept {
   ZoneScoped;
