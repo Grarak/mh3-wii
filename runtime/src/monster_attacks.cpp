@@ -1,5 +1,5 @@
 // Monster attacks with counts per call, RMHP08. C reconstructions (decompiled
-// with Ghidra) of six enemy actions that count their calls at +0x20 while a
+// with Ghidra) of seven enemy actions that count their calls at +0x20 while a
 // motion is before or past a frame, which the enemy update calls once per
 // step:
 //
@@ -14,6 +14,8 @@
 //   0x8014DE50              Rathian's and Rathalos' dive (7.37): its moves
 //                           spread over a count of calls (the watch pass of
 //                           docs/monster-control.md found it)
+//   0x8014CF5C              their flying charge (7.22-7.29): its give-up,
+//                           braking and landing counted in calls
 //
 // At 120 steps a second the sounds and sparks came four times as often and
 // the blend took a quarter of the time. The counts take the step's whole
@@ -549,6 +551,176 @@ void Em001DivePort(CpuContext* ctx) {
     }
 }
 
+// kind 1/2 0x8014CF5C (r4 how it lands 0-2, r5 its climb 0-3): Rathian's and
+// Rathalos' flying charge (7.22-7.29). State 1 climbs (pitch toward 0x2800,
+// 0x2000, 0x1800 or the target's, at most 0x3000) and steers; state 2 flies
+// at the target until it passes it (0x80135664 with the height less 200),
+// giving up after 150 ticks; states 3-4 brake for 7 ticks; state 5 lands,
+// the hover (+0x1AC through 0x80130450) ramping back from -150 over 20 ticks
+// or -160..200 over 10. The original counts each of these in calls, so at
+// short steps it gave up, braked and landed early: here the counts take the
+// step's ticks (the moves through 0x80135558/0x8013562C are scaled by the
+// step already: shell_motion.cpp).
+void Em001FlyChargePort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x40);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, landing = uint8_t(frame.Arg(4)), climb = uint8_t(frame.Arg(5));
+    const uint32_t angles = work + kAngles, pitch = frame[0x0C], roll = frame[0x08], toTarget = frame[0x10], vector = frame[0x1C];
+    const int32_t ticks = int32_t(GameStep::Ticks());
+    const auto hover = [&](float value) { game.Call<0x80130450>({work}, {double(value)}); };
+    const auto fly = [&] {
+        game.Call<0x801302AC>({work});
+        return game.Call<0x80135664>({work, angles}, {double(game.F1() - 200.0f)});
+    };
+
+    game.Call<0x80043F0C>({vector});
+    game.Call<0x8012CF84>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<0x801302AC>({work}); // f1: the carried scale, for SetScale
+        game.Call<0x80130628>({work});
+        game.Call<Em004Prepare>({work});
+        em.SetMotion(0x45, 6, 0);
+        Memory::Write8(work + 6, 0);
+        game.Call<0x8013545C>({work});
+        Memory::WriteFloat32(work + 0x314, -2.0f);
+        Memory::WriteFloat32(work + 0x318, 50.0f);
+        break;
+    case 1: {
+        game.Call<0x80133CA0>({work});
+        game.Call<0x80136DB0>({work}, {5.0});
+        uint32_t goal = climb == 0 ? 0x2800 : climb == 1 ? 0x2000 : 0x1800;
+
+        if (climb > 2) {
+            game.Call<0x80050D04>({toTarget, work + 0x36C, work + 0x188});
+            game.Call<0x80041EA4>({vector, toTarget});
+            game.Call<0x80050D7C>({vector, pitch, roll}); // calcVecAngXY
+            goal = std::min<uint32_t>(Memory::Read32(pitch), 0x3000);
+        }
+
+        Memory::Write32(angles, game.Call<0x80133E14>({goal & 0xFFFF, Memory::Read32(angles) & 0xFFFF, 0x180}) & 0xFFFF);
+        game.Call<0x80133CB4>({work, 0x280});
+        fly();
+
+        if (Memory::ReadFloat32(work + 0x318) > 120.0f)
+            Memory::WriteFloat32(work + 0x318, 120.0f);
+
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0x3E, 6, 0);
+            em.Count(0);
+            game.Call<RoarVoice>({work, 0, 0xE, 3});
+            Memory::WriteFloat32(work + 0x324, 3.0f);
+        }
+
+        break;
+    }
+    case 2:
+        game.Call<0x80133CA0>({work});
+        em.Count(em.Count() + ticks);
+
+        if (fly() == 1) {
+            em.NextState();
+            game.Call<Em::SetUp>({work, 3});
+            em.SetMotion(0x3F, 6, 0);
+            hover(-200.0f);
+        } else if (em.Count() > 0x96 && Memory::Read8(work + 0x1F5) == 1)
+            game.Call<0x80128048>({work});
+
+        if (Memory::ReadFloat32(work + 0x318) > 110.0f)
+            Memory::WriteFloat32(work + 0x318, 110.0f);
+
+        break;
+    case 3:
+        hover(-200.0f);
+        game.Call<0x80135558>({work, angles});
+
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0xD0, 0, 0);
+            em.Count(0);
+        }
+
+        break;
+    case 4:
+        hover(-200.0f);
+        game.Call<0x80135558>({work, angles});
+        em.Count(em.Count() + ticks);
+
+        if (em.Count() > 6) {
+            em.NextState();
+            Memory::Write8(work + 6, 0);
+
+            if (landing == 1) {
+                game.Call<Em::SetUp>({work, 0});
+                em.SetMotion(0xDD, 0, 0);
+                hover(0.0f);
+            } else if (landing == 2)
+                em.SetMotion(0x35, 10, 0);
+            else {
+                em.SetMotion(0xD2, 6, 0);
+                Memory::WriteFloat32(work + 0x324, -3.5f);
+                em.Count(0);
+            }
+        }
+
+        break;
+    case 5:
+        if (landing == 1) {
+            if (Memory::Read8(work + 6) == 0) {
+                if (em.Ended()) {
+                    Memory::Write8(work + 6, 1);
+                    em.SetMotion(0xDA, 0, 0);
+                }
+            } else if (Memory::Read8(work + 6) == 1) {
+                if (em.At(30.0f))
+                    game.Call<0x80129788>({work, 0});
+
+                if (em.Ended())
+                    game.Call<ActionDone>({work});
+            }
+        } else if (landing == 2) {
+            if (Memory::Read8(work + 6) == 0) {
+                if (em.Count() < 10) {
+                    em.Count(std::min(em.Count() + ticks, 10));
+                    hover(-200.0f * float(5 - em.Count()) / 5.0f);
+                }
+
+                if (em.Ended()) {
+                    Memory::Write8(work + 6, 1);
+                    game.Call<0x80129788>({work, 0});
+                    game.Call<Em::SetUp>({work, 0});
+                    em.SetMotion(0x3C, 0, 0);
+                }
+            } else if (Memory::Read8(work + 6) == 1 && em.Ended())
+                game.Call<ActionDone>({work});
+        } else {
+            if (em.Count() < 20) {
+                em.Count(std::min(em.Count() + ticks, 20));
+                hover(-150.0f * float(20 - em.Count()) / 20.0f);
+            }
+
+            if (em.At(30.0f))
+                game.Call<0x80129788>({work, 0});
+
+            game.Call<0x8013562C>({work, angles});
+
+            if (Memory::ReadFloat32(work + 0x318) < 0.0f)
+                Memory::WriteFloat32(work + 0x318, 0.0f);
+
+            if (em.Ended())
+                game.Call<0x80128110>({work});
+        }
+
+        break;
+    default:
+        break;
+    }
+}
+
 } // namespace
 
 extern "C" void func_8014BBA4(CpuContext* ctx);
@@ -586,3 +758,9 @@ extern "C" void MH3_Em001Dive(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em001Dive", func_8014DE50, Em001DivePort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8014DE50, MH3_Em001Dive, "Em001Dive");
+
+extern "C" void func_8014CF5C(CpuContext* ctx);
+extern "C" void MH3_Em001FlyCharge(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em001FlyCharge", func_8014CF5C, Em001FlyChargePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8014CF5C, MH3_Em001FlyCharge, "Em001FlyCharge");
