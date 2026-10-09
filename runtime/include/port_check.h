@@ -71,6 +71,9 @@ struct Region {
 
 void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs);
 
+// RunOutput that also compares the return register.
+void RunOutput(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs);
+
 // MH3_PORT_CHECK=...,P:0xADDR,E:0xADDR,... (development): ports the game rarely
 // reaches, checked from a spread of made-up states. The PortCheck::Fuzz hooks
 // (the player's in PlayerStepTimers, an enemy's in EnemySight) fire once each,

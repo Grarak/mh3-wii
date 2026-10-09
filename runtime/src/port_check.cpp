@@ -255,7 +255,9 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 #endif
 }
 
-void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {
+namespace {
+// returns: -1 none, else a Returns.
+void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {
 #ifdef MH3_DEVELOPMENT
     static std::map<std::string, uint64_t> counts;
     static std::set<std::string> reported;
@@ -268,6 +270,8 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
 
     const CpuContext entry = *ctx;
     original(ctx);
+    const auto result = [&] { return returns == int(Returns::Gpr3) ? uint64_t(ctx->gpr[3]) : ctx->fpr[1].raw; };
+    const uint64_t expectedResult = result();
     size_t i = 0;
 
     for (const Region& r : outputs) {
@@ -282,6 +286,15 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
     ++checks;
     bool same = true;
     i = 0;
+
+    if (returns >= 0 && result() != expectedResult) {
+        same = false;
+        char line[256];
+        std::snprintf(line, sizeof line, "MH3 port check: %s returns %016llx, the original %016llx (r3 %08x r4 %08x r5 %08x r6 %08x r7 %08x r8 %08x)\n", name,
+                      (unsigned long long)result(), (unsigned long long)expectedResult, entry.gpr[3], entry.gpr[4], entry.gpr[5], entry.gpr[6], entry.gpr[7], entry.gpr[8]);
+        if (reported.size() < 64 && reported.insert(line).second)
+            std::printf("%s", line);
+    }
 
     for (const Region& r : outputs) {
         const uint8_t* out = Memory::GetPointer(r.address, r.bytes);
@@ -312,10 +325,20 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
     std::fflush(stdout);
 #else
     (void)name;
+    (void)returns;
     (void)original;
     (void)outputs;
     port(ctx);
 #endif
+}
+} // namespace
+
+void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {
+    CheckOutputs(ctx, name, -1, original, port, outputs);
+}
+
+void RunOutput(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs) {
+    CheckOutputs(ctx, name, int(returns), original, port, outputs);
 }
 
 void FuzzSlow(CpuContext* ctx, char kind, uint32_t work) {
