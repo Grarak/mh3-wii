@@ -121,9 +121,11 @@ struct Guest {
 // devkit the time between starts ran 12-44 ms for frames flipped 16.7 ms
 // apart, and a turning camera moved by uneven amounts on screen. So such a
 // frame's step is one retrace (a VBlank: both 59.94 Hz), plus the VBlanks the
-// display kept a frame for because the next was late, paid back a quarter
-// retrace a frame (the part over 4 retraces at once). Without a count from
-// the display (the limit off, a loading screen, GL) the step is the host time.
+// display kept a frame for because the next was late, paid back an eighth of
+// what is owed a frame, so the catch-up fades out rather than stopping at
+// once (a flat quarter retrace showed as a speed drop when it ended), the part
+// over 4 retraces at once. Without a count from the display (the limit off, a
+// loading screen, GL) the step is the host time.
 double DisplayStep(double hostTicks) {
     static std::optional<int64_t> seen;
     static double owed = 0.0;
@@ -137,7 +139,8 @@ double DisplayStep(double hostTicks) {
 
     owed += double(*repeated - *seen);
     seen = repeated;
-    const double paid = std::clamp(owed, -0.25, 0.25 + std::max(0.0, owed - 4.0));
+    const double excess = std::max(0.0, owed - 4.0);
+    const double paid = excess + (owed - excess) / 8.0;
     owed -= paid;
     return 1.0 + paid;
 }
