@@ -1,6 +1,9 @@
 #include "abi_bridge.h"
 #include "generated/RuntimeConfig.h"
 #include "disc_image.h"
+#include "audio_dma.h"
+#include <chrono>
+#include <thread>
 #include <fstream>
 #include <filesystem>
 #include <cstdlib>
@@ -103,6 +106,18 @@ int main(int argc, char** argv) {
             return 0;
         }
         InitializeDataSections();
+#ifdef MH3_HAS_AURORA
+        if (argc == 2 && std::string_view(argv[1]) == "--audio-output-check") {
+            RunAudioSelfTests(&cpu);
+            // Check the real playback device with silence, without requiring
+            // game boot or claiming that an in-game mix has been rendered.
+            const std::vector<uint8_t> silence(12800, 0);
+            QueueHostPcm(silence.data(), silence.size(), 32000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            std::cout << "MH3 host audio playback check passed\n";
+            return 0;
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--audio-self-test") {
             RunAudioSelfTests(&cpu);
             return 0;

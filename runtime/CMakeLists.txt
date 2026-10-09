@@ -13,7 +13,7 @@ include(../generated/build_shards/shards.cmake)
 add_executable(MH3
   src/main.cpp src/memory.cpp src/os_boot.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/audio_interface.cpp
-  src/audio/ax_mix.cpp src/audio/ax_memory.cpp src/audio_services.cpp src/audio_tests.cpp
+  src/audio/ax_mix.cpp src/audio/ax_memory.cpp src/audio_services.cpp src/audio_tests.cpp src/audio_dma.cpp
   src/device_tests.cpp src/ios.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp
   ../generated/data_sections_init.cpp ../generated/data_sections_init_blobs.S
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
@@ -24,7 +24,7 @@ enable_testing()
 add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
-  target_sources(MH3 PRIVATE src/graphics_host.cpp)
+  target_sources(MH3 PRIVATE src/graphics_host.cpp src/audio_output.cpp)
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi dawn::webgpu_dawn)
 endif()
