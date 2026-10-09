@@ -267,6 +267,88 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     });
     const std::vector<uint8_t> expected{0x50, 0, 0x13, 1, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0, 0, 0x12, 0x34, 0};
     if (delivered != expected) throw std::runtime_error("GX host array command encoding failed");
+    {
+        std::array<uint8_t, 32> inner{}, outer{};
+        const uint8_t setup[]{0x08, 0x50, 0, 0, 2, 0, 0x61, 0x43, 0, 0, 1};
+        std::copy(std::begin(setup), std::end(setup), inner.begin());
+        const std::array<uint8_t, 9> callInner{0x40, 0, 0, 0x20, 0, 0, 0, 0, 32};
+        std::copy(callInner.begin(), callInner.end(), outer.begin());
+        auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+            if (address == 0x1000) return {reinterpret_cast<uintptr_t>(outer.data()), outer.size()};
+            if (address == 0x2000) return {reinterpret_cast<uintptr_t>(inner.data()), inner.size()};
+            throw std::runtime_error("Unexpected display-list address");
+        };
+        const std::array<uint8_t, 9> callOuter{0x40, 0, 0, 0x10, 0, 0, 0, 0, 32};
+        GuestGxStream lists;
+        std::vector<std::vector<uint8_t>> packets;
+        auto receive = [&](auto bytes) { packets.emplace_back(bytes.begin(), bytes.end()); };
+        lists.Write(std::span(callOuter).first(4), receive, resolve);
+        if (!packets.empty()) throw std::runtime_error("Partial display-list call executed");
+        lists.Write(std::span(callOuter).subspan(4), receive, resolve);
+        const uint8_t draw[]{0x90, 0, 1, 0xAB, 0xCD};
+        lists.Write(draw, receive, resolve);
+        if (lists.PixelFormat() != 1 || lists.PendingBytes() ||
+            packets.front() != std::vector<uint8_t>(setup, setup + 6) ||
+            packets.back() != std::vector<uint8_t>(std::begin(draw), std::end(draw)))
+            throw std::runtime_error("Nested display-list state/order failed");
+        for (auto& packet : packets)
+            if (packet[0] == 0x40) throw std::runtime_error("Guest display-list pointer reached Aurora");
+        auto rejectList = [&](auto resolver) {
+            GuestGxStream invalid;
+            bool rejected = false;
+            try { invalid.Write(callOuter, [](auto) {}, resolver); }
+            catch (const std::runtime_error&) { rejected = true; }
+            if (!rejected) throw std::runtime_error("Invalid display list accepted");
+        };
+        rejectList([&](uint32_t) -> GuestGxStream::ArrayView {
+            return {reinterpret_cast<uintptr_t>(outer.data()), 8};
+        });
+        outer.fill(0); outer.back() = 0x08;
+        rejectList(resolve); // Truncated CP packet.
+        outer.fill(0); std::copy(callOuter.begin(), callOuter.end(), outer.begin());
+        rejectList(resolve); // Self-recursion.
+    }
+    {
+        std::array<uint8_t, 256> matrices;
+        for (unsigned i = 0; i < matrices.size(); ++i) matrices[i] = i ^ 0xA5;
+        const unsigned destinations[]{0, 0x400, 0x78, 0x600};
+        const unsigned lengths[]{12, 9, 8, 16};
+        for (unsigned slot = 0; slot < 4; ++slot) {
+            GuestGxStream indexed;
+            unsigned accessible = matrices.size();
+            auto resolve = [&](uint32_t address) -> GuestGxStream::ArrayView {
+                if (address != 0x1000) throw std::runtime_error("Indexed XF base address mismatch");
+                return {reinterpret_cast<uintptr_t>(matrices.data()), accessible};
+            };
+            std::vector<uint8_t> last;
+            auto receive = [&](auto bytes) { last.assign(bytes.begin(), bytes.end()); };
+            const uint8_t base[]{0x08, uint8_t(0xAC + slot), 0, 0, 0x10, 0};
+            const uint8_t stride[]{0x08, uint8_t(0xBC + slot), 0, 0, 0, 64};
+            indexed.Write(base, receive, resolve); indexed.Write(stride, receive, resolve);
+            const uint8_t command[]{uint8_t(0x20 + slot * 8), 0, 2,
+                uint8_t(((lengths[slot] - 1) << 4) | (destinations[slot] >> 8)), uint8_t(destinations[slot])};
+            indexed.Write(std::span(command).first(3), receive, resolve);
+            if (last != std::vector<uint8_t>(std::begin(stride), std::end(stride)))
+                throw std::runtime_error("Partial indexed XF command executed");
+            indexed.Write(std::span(command).subspan(3), receive, resolve);
+            if (last.size() != 5 + lengths[slot] * 4 || last[0] != 0x10 || last[2] != lengths[slot] - 1 ||
+                last[3] != destinations[slot] >> 8 || last[4] != (destinations[slot] & 255) ||
+                !std::equal(last.begin() + 5, last.end(), matrices.begin() + 128))
+                throw std::runtime_error("Indexed XF expansion/endian/stride failed");
+            accessible = 128 + lengths[slot] * 4 - 1;
+            bool rejected = false;
+            try { indexed.Write(command, receive, resolve); }
+            catch (const std::runtime_error&) { rejected = true; }
+            if (!rejected) throw std::runtime_error("Indexed XF exceeded source bounds");
+        }
+        GuestGxStream invalid;
+        const uint8_t partial[]{0x20, 0, 0, 0xB0, 1};
+        bool rejected = false;
+        try { invalid.Write(partial, [](auto) {}, [&](uint32_t) -> GuestGxStream::ArrayView {
+            return {reinterpret_cast<uintptr_t>(matrices.data()), matrices.size()};
+        }); } catch (const std::runtime_error&) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Unsupported partial XF matrix accepted");
+    }
     auto vertexCase = [&](uint32_t lo, uint32_t hi, uint32_t a, uint32_t b, uint32_t c,
                           size_t stride, uint16_t count, uint8_t opcode) {
         GuestGxStream vertices;

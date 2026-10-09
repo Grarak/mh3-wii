@@ -90,6 +90,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
         case 0x00: case 0x48: length = 1; break;
         case 0x08: length = 6; break;
         case 0x61: length = 5; break;
+        case 0x40: length = 9; break;
+        case 0x20: case 0x28: case 0x30: case 0x38: length = 5; break;
         case 0x10:
             if (available < 5) goto incomplete;
             length = 5 + 4 * (1 + ((size_t(p[1]) << 8) | p[2]));
@@ -104,6 +106,62 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             throw std::runtime_error("Guest GX opcode requires a bridge: " + std::to_string(p[0]));
         }
         if (available < length) break;
+        if (p[0] == 0x20 || p[0] == 0x28 || p[0] == 0x30 || p[0] == 0x38) {
+            if (!resolver) throw std::runtime_error("Indexed XF load requires guest RAM resolution");
+            const unsigned array = 12 + (p[0] - 0x20) / 8;
+            const uint32_t index = (uint32_t(p[1]) << 8) | p[2];
+            const unsigned words = (p[3] >> 4) + 1;
+            const unsigned destination = ((p[3] & 15) << 8) | p[4];
+            // Match Aurora's supported XF memory writes explicitly. Its decoder
+            // logs/skips unsupported forms, which must not look successful here.
+            const bool supported =
+                (destination < 0x78 && destination % 12 == 0 && words == 12) ||
+                (destination >= 0x78 && destination < 0xF0 && (destination - 0x78) % 12 == 0 && (words == 8 || words == 12)) ||
+                (destination >= 0x400 && destination < 0x45A && (destination - 0x400) % 9 == 0 && words == 9) ||
+                (destination >= 0x500 && destination < 0x5F0 && (destination - 0x500) % 12 == 0 && words == 12) ||
+                (destination >= 0x600 && destination < 0x680 && (destination & 15) + words <= 16);
+            if (!supported) throw std::runtime_error("Unsupported indexed XF destination or partial matrix write");
+            const uint32_t stride = cp[0xB0 + array] & 255;
+            const uint64_t sourceOffset = uint64_t(index) * stride;
+            const auto view = resolver(cp[0xA0 + array]);
+            if (!stride || !view.address || sourceOffset + words * 4 > view.size)
+                throw std::runtime_error("Indexed XF source exceeds guest matrix array");
+            std::array<uint8_t, 69> direct{};
+            direct[0] = 0x10; direct[2] = words - 1;
+            direct[3] = destination >> 8; direct[4] = destination;
+            const auto* source = reinterpret_cast<const uint8_t*>(view.address) + sourceOffset;
+            std::copy_n(source, words * 4, direct.begin() + 5);
+            sink(std::span<const uint8_t>(direct.data(), 5 + words * 4));
+            offset += length;
+            continue;
+        }
+        if (p[0] == 0x40) {
+            const uint32_t address = (uint32_t(p[1]) << 24) | (uint32_t(p[2]) << 16) |
+                                     (uint32_t(p[3]) << 8) | p[4];
+            const uint32_t size = (uint32_t(p[5]) << 24) | (uint32_t(p[6]) << 16) |
+                                  (uint32_t(p[7]) << 8) | p[8];
+            if (size) {
+                if (!resolver) throw std::runtime_error("GX display list requires guest RAM resolution");
+                if (size > limit || displayListDepth >= 16)
+                    throw std::runtime_error("GX display list exceeds size or nesting limit");
+                const auto view = resolver(address);
+                if (!view.address || size > view.size)
+                    throw std::runtime_error("GX display list exceeds guest RAM");
+                // A separate framer avoids invalidating the parent's partial FIFO
+                // packet while processing nested lists. GPU state flows through
+                // the call exactly as if its commands appeared inline.
+                GuestGxStream child;
+                child.bp = bp; child.cp = cp; child.bpMask = bpMask;
+                child.textureBound = textureBound; child.textureRevision = textureRevision;
+                child.displayListDepth = displayListDepth + 1;
+                child.Write({reinterpret_cast<const uint8_t*>(view.address), size}, sink, resolver, copy, textureCopy);
+                if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
+                bp = child.bp; cp = child.cp; bpMask = child.bpMask;
+                textureBound = child.textureBound; textureRevision = child.textureRevision;
+            }
+            offset += length;
+            continue;
+        }
         if (p[0] == 0x08)
             cp[p[1]] = (uint32_t(p[2]) << 24) | (uint32_t(p[3]) << 16) | (uint32_t(p[4]) << 8) | p[5];
         if (p[0] == 0x08 && p[1] >= 0xA0 && p[1] <= 0xAF) {
