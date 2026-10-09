@@ -44,11 +44,6 @@ size_t PageSize() {
 
 size_t RoundUp(size_t value) { return (value + PageSize() - 1) & ~(PageSize() - 1); }
 
-bool InRange(uint32_t address, size_t length, uint32_t start, uint32_t size) {
-    const uint32_t offset = address - start;
-    return offset < size && length <= size - offset;
-}
-
 const char* Describe(uint32_t address) {
     if (IsHardwareAddress(address)) {
         const uint32_t p = address & 0x0FFFFFFFu;
@@ -176,21 +171,8 @@ void Initialize() {
         Map(alias + 0x10000000u, kMem2Size, kMem1Size);
     }
     Map(0xE0000000u, lockedCache, off_t(kMem1Size) + kMem2Size);
+    g_mapped = true;
 }
 
-uint8_t* HostPointer(uint32_t address, size_t length) noexcept {
-    if (length == 0 || !reserved) return nullptr;
-    // Physical addresses (host code only) read through the cached alias.
-    if (address >> 30 == 0) address |= 0x80000000u;
-    if (address >> 30 == 1) return nullptr;
-    const bool mapped = InRange(address, length, 0x80000000u, kMem1Size) ||
-                        InRange(address, length, 0xC0000000u, kMem1Size) ||
-                        InRange(address, length, 0x90000000u, kMem2Size) ||
-                        InRange(address, length, 0xD0000000u, kMem2Size) ||
-                        InRange(address, length, 0xE0000000u, kLockedCacheSize);
-    return mapped ? Host(address) : nullptr;
-}
-
-bool IsMapped(uint32_t address, size_t length) noexcept { return HostPointer(address, length) != nullptr; }
 
 } // namespace GuestFlat

@@ -56,12 +56,28 @@ constexpr bool IsHardwareAddress(uint32_t address) noexcept {
     return (top & 0xFE) == 0xCC || top == 0xC8;
 }
 
-// The guest address range [address, address + length) lies wholly in mapped
-// memory (RAM through any alias, or the locked cache).
-bool IsMapped(uint32_t address, size_t length) noexcept;
+// Set once Initialize has mapped guest memory.
+inline bool g_mapped = false;
 
 // Host pointer for a mapped guest address, physical aliases included; nullptr
-// when [address, address + length) is not wholly mapped.
-uint8_t* HostPointer(uint32_t address, size_t length) noexcept;
+// when [address, address + length) is not wholly mapped. Host code only.
+inline uint8_t* HostPointer(uint32_t address, size_t length) noexcept {
+    // Physical addresses read through the cached alias.
+    if (address >> 30 == 0) address |= 0x80000000u;
+    uint32_t size;
+    switch (address >> 28) {
+    case 0x8: case 0xC: size = 24u << 20; break;  // MEM1
+    case 0x9: case 0xD: size = 64u << 20; break;  // MEM2
+    case 0xE: size = 0x4000; break;               // locked cache
+    default: return nullptr;
+    }
+    const uint32_t offset = address & 0x0FFFFFFFu;
+    if (length == 0 || offset >= size || length > size - offset || !g_mapped) return nullptr;
+    return Host(address);
+}
+
+// The guest address range [address, address + length) lies wholly in mapped
+// memory (RAM through any alias, or the locked cache).
+inline bool IsMapped(uint32_t address, size_t length) noexcept { return HostPointer(address, length) != nullptr; }
 
 } // namespace GuestFlat
