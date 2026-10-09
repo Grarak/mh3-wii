@@ -1042,9 +1042,11 @@ void Escape(CpuContext* ctx) {
         if (p.CountDown()) {
             nextStage();
         } else if (game.Call<AnyInput>({plw}) == 1) {
-            // The original counts the steps with input: here their ticks.
-            const uint32_t inputs = Memory::Read8(plw + kInputs) + GameStep::Ticks();
-            Memory::Write8(plw + kInputs, uint8_t(std::min(inputs, 255u)));
+            // AnyInput sees presses (button and stick-direction edges), which
+            // last one step whatever its length: each counts 1. Counting the
+            // step's ticks lost the presses of short steps, and the stun then
+            // ran its 5 x 300 steps.
+            Memory::Write8(plw + kInputs, uint8_t(Memory::Read8(plw + kInputs) + 1));
             int8_t needed = int8_t(Memory::Read8(EscapeStages + Memory::Read8(plw + kStages)));
 
             if (game.Call<SkillCheck>({plw, 9}) == 1)
@@ -3479,7 +3481,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80252B50, MH3_SwimPitch, "SwimPitch");
 // started). Steps with no table (+0x318 0) or in hit-stop (+0x313
 // above 0): the translated original then saved and restored nine
 // paired-single registers for a 0, here not. With a table (84% of the calls
-// in a fight, VM count) the original runs.
+// in a fight, arm64 count) the original runs.
 extern "C" void func_802629A4(CpuContext* ctx);
 extern "C" void MH3_ComboTable(CpuContext* ctx) {
     const uint32_t plw = ctx->gpr[3];
