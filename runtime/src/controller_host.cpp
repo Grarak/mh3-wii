@@ -82,7 +82,7 @@ void SetInputFrame(uint64_t frame) { inputFrame = frame; }
 void HoldInputPlayback(bool hold) { playbackHeld = hold; }
 ClassicControllerSample ReadHostController() {
     if (testSample) return *testSample;
-    if (auto played = PlaybackInput()) return *played;
+    if (auto played = PlaybackInput()) { RecordInput(*played); return *played; }
     const ClassicControllerSample sample = ReadLiveController();
     RecordInput(sample);
     return sample;

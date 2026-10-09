@@ -436,6 +436,9 @@ uint64_t staging_epoch() noexcept;
 StagingSizes staging_usage() noexcept;
 StagingSizes staging_high_water() noexcept;
 uint64_t staging_split_count() noexcept;
+// Cumulative GX-worker staging wait and render-thread recycle-Finish time,
+// in microseconds, followed by their respective call counts.
+std::array<uint64_t, 4> staging_wait_counters() noexcept;
 // Internal integration-test seam: never increases the physical allocation.
 void set_staging_capacity_limits_for_testing(const StagingSizes& limits);
 

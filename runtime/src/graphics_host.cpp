@@ -611,6 +611,14 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  static_cast<unsigned long long>(aurora::gfx::staging_split_count()),
                  static_cast<unsigned long long>(high[0] >> 10), static_cast<unsigned long long>(high[2] >> 10),
                  static_cast<unsigned long long>(high[1] >> 10), static_cast<unsigned long long>(high[3] >> 10));
+    static std::array<uint64_t, 4> lastWaits{};
+    const auto waits = aurora::gfx::staging_wait_counters();
+    std::fprintf(stderr, "MH3 waits: GX staging %.2f ms/s (%llu waits), render recycle Finish %.2f ms/s (%llu calls)\n",
+                 double(waits[0] - lastWaits[0]) / (1000.0 * seconds),
+                 static_cast<unsigned long long>(waits[2] - lastWaits[2]),
+                 double(waits[1] - lastWaits[1]) / (1000.0 * seconds),
+                 static_cast<unsigned long long>(waits[3] - lastWaits[3]));
+    lastWaits = waits;
     last = now;
     lastTicks = ticks;
     lastCopies = guestCopies;
@@ -708,7 +716,7 @@ void CompleteHostGraphics() {
     }
     static unsigned completions = 0;
     if (++completions <= 3 || completions % 300 == 0)
-        std::fprintf(stderr, "MH3 GX draw completion %u: GPU work finished\n", completions);
+        std::fprintf(stderr, "MH3 GX draw completion %u: CPU GX worker drained\n", completions);
 #endif
     gpuSynchronized = true;
 }

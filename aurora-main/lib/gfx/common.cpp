@@ -268,6 +268,12 @@ static StagingSizes g_stagingCapacity = PhysicalStagingCapacity;
 static uint64_t g_stagingEpoch = 0;
 static uint64_t g_stagingSplitCount = 0;
 static StagingSizes g_stagingHighWater{};
+static std::atomic<uint64_t> g_stagingWaitMicros{}, g_recycleFinishMicros{};
+static std::atomic<uint64_t> g_stagingWaitCount{}, g_recycleFinishCount{};
+std::array<uint64_t, 4> staging_wait_counters() noexcept {
+  return {g_stagingWaitMicros.load(std::memory_order_relaxed), g_recycleFinishMicros.load(std::memory_order_relaxed),
+          g_stagingWaitCount.load(std::memory_order_relaxed), g_recycleFinishCount.load(std::memory_order_relaxed)};
+}
 
 StagingSizes staging_usage() noexcept {
   if (!g_staging) {
@@ -815,7 +821,13 @@ static void acquire_staging_set() {
   }
   ZoneScopedN("Wait for staging set");
   std::unique_lock lock(g_stagingPoolMutex);
-  g_stagingPoolCv.wait(lock, [] { return !g_stagingPool.empty(); });
+  if (g_stagingPool.empty()) {
+    const auto started = std::chrono::steady_clock::now();
+    g_stagingPoolCv.wait(lock, [] { return !g_stagingPool.empty(); });
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
+    g_stagingWaitMicros.fetch_add(micros, std::memory_order_relaxed);
+    g_stagingWaitCount.fetch_add(1, std::memory_order_relaxed);
+  }
   g_staging = std::move(g_stagingPool.back());
   g_stagingPool.pop_back();
 }
@@ -1049,7 +1061,12 @@ static void end_batch_impl(bool advanceFrame) {
 #ifdef AURORA_GXM
       // A queued scene still reads the previous slot. Synchronize before
       // recycling, then retain this slot across all interpolation replays.
+      const auto finishStarted = std::chrono::steady_clock::now();
       gl::finish();
+      const auto finishMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - finishStarted).count();
+      g_recycleFinishMicros.fetch_add(finishMicros, std::memory_order_relaxed);
+      g_recycleFinishCount.fetch_add(1, std::memory_order_relaxed);
       if (g_gpu.active) release_staging_set(std::move(g_gpu.active));
       upload_batch(*set);
       g_gpu.active = std::move(set);
