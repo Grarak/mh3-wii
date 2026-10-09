@@ -65,9 +65,9 @@ void StopNativeRenderThread();
 bool NativeRenderThreadRunning();
 
 // Begins the next packet; it records draws only when render is true.
-// Game thread, before a frame: the game thread limiter. Waits while two
-// published packets wait for the render thread (MH3_PROFILE=unpaced: only
-// until the next packet's slot is free).
+// Game thread, before a frame: the game thread limiter. Waits while one
+// published packet (two with MH3_PROFILE=queue=2) waits for the render thread
+// (MH3_PROFILE=unpaced: only until the next packet's slot is free).
 void PaceNativeFramePacket();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();

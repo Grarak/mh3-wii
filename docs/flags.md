@@ -87,7 +87,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]]`
+`MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,queue=N][,disc][,split-world][,prepare[,prepare-frames=FIRST-LAST]]`
 
 | Item | Effect |
 | --- | --- |
@@ -97,7 +97,8 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 | `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry); for attributing GPU time with Razor |
 | `fill` | every 300 frames, the `MH3 material fill` lines: screen area (in screens) that material geometry covers per fragment program and blend, clipped to the viewport |
-| `unpaced` | turns the game thread limiter off: the game thread records its next frame packet even when two published ones wait for the render thread, which then takes the newest and skips the older ones ([packet ring](frame-packet-ring.md); for A/B runs) |
+| `unpaced` | turns the game thread limiter off: the game thread records its next frame packet even when published ones wait for the render thread, which then takes the newest and skips the older ones ([packet ring](frame-packet-ring.md); for A/B runs) |
+| `queue=N` | the game thread limiter lets N published frame packets wait for the render thread, 1 (the default) or 2; each adds a render frame of latency while the render thread sets the rate ([packet ring](frame-packet-ring.md)) |
 | `disc` | at startup, the `MH3 disc benchmark` lines: the disc image's read speed by read size (32 KiB to 2 MiB) into ordinary and, on the Vita, physically contiguous memory, and the decoder's for 512 KiB reads of the largest model archive with the share spent reading the image (discs read in place through `rom.txt` only) |
 | `split-world` | the scene's world matrix pass is split between the game thread and the guest worker; off by default, as it did not pay off on the devkit ([guest worker](guest-worker.md)) |
 | `prepare` | the model preparation counters and the first 64 source-epoch writers each `MH3 stats` report ([preparation diagnostics](native-model-preparation-diagnostics.md)); `prepare-frames=FIRST-LAST` samples the writers in that range of the game's frame counter |

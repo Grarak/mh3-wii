@@ -137,7 +137,7 @@ struct Task {
 
 // A ring by sequence: packet s in packets[s % kNativeFramePacketSlots]. The
 // render thread takes packets in order, so it renders one while the game
-// thread may have two published behind it and record a fourth.
+// thread may have up to two published behind it and record a fourth.
 std::array<Packet, kNativeFramePacketSlots> packets;
 std::thread renderThread;
 std::thread::id gameThread;
@@ -293,9 +293,11 @@ void SampleRenderParts() {
 #endif
 bool synchronous = false;
 
-// The game thread limiter (MH3_PROFILE=unpaced turns it off): at most two
-// packets wait for the render thread; see PaceNativeFramePacket.
+// The game thread limiter (MH3_PROFILE=unpaced turns it off): at most
+// queueDepth published packets wait for the render thread (one, or two with
+// MH3_PROFILE=queue=2); see PaceNativeFramePacket.
 bool paced = true;
+uint32_t queueDepth = 1;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
 
@@ -1200,6 +1202,7 @@ void StartNativeRenderThread() {
     // MH3_PROFILE=sync: wait for every packet to render (serial frames).
     synchronous = ProfileOptions().Has("sync");
     paced = !ProfileOptions().Has("unpaced");
+    queueDepth = uint32_t(std::clamp<uint64_t>(ProfileOptions().Number("queue", 1), 1, kNativeFramePacketSlots - 2));
     renderSplit = ProfileOptions().Has("render");
 
     if (static bool sampling = false; renderSplit && !sampling) {
@@ -1343,10 +1346,12 @@ void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged) {
 }
 #endif
 // The game thread limiter: the game thread records packet s only after the
-// render thread took packet s - 2, so at most two published packets wait for
-// it. The render thread then finds its next packet as it finishes one, and
-// the game runs at the rate frames are shown (variable steps follow it, so
-// the frames sample game time evenly), at most two packets ahead. Without the
+// render thread took packet s - queueDepth, so at most queueDepth published
+// packets wait for it. The render thread then finds its next packet as it
+// finishes one while the game thread keeps up, and the game runs at the rate
+// frames are shown (variable steps follow it, so the frames sample game time
+// evenly). Each packet of depth adds a render frame of latency while the
+// render thread sets the rate; one is the default. Without the
 // limiter (MH3_PROFILE=unpaced) the game thread waits only for a free slot,
 // which the render thread frees by taking the newest packet, skipping the
 // older ones: their draw work is lost and the frames shown judder. Short
@@ -1356,7 +1361,7 @@ void PaceNativeFramePacket() {
         return;
 
     const uint64_t next = sequence + 1;
-    const auto ready = [next] { return paced ? taken.load(std::memory_order_acquire) + 2 >= next : SlotFree(next); };
+    const auto ready = [next] { return paced ? taken.load(std::memory_order_acquire) + queueDepth >= next : SlotFree(next); };
 
     if (ready())
         return;
