@@ -169,6 +169,43 @@ void TexturePool::move(TextureStorage& texture, void* data, MappedArena& arena) 
 void TexturePool::allocate(TextureStorage& texture) {
   collect();
   auto& cdram = m_device.arena();
+
+  if (!place(texture)) {
+    // Textures an area change released wait in m_retired for their last
+    // scene's fence, and textures still in flight cannot move: wait for the
+    // GPU, free what it finished with, and try once more (a short stall at
+    // the change instead of stopping; retail Vita, village farm <-> Moga Woods).
+    std::fprintf(stderr, "Aurora GXM texture residency: %u bytes do not fit (arena %u/%u, %u retired textures); waiting for the GPU\n", unsigned(texture.m_bytes),
+                 unsigned(cdram.used()), unsigned(cdram.capacity()), unsigned(m_retired.size()));
+    m_device.finish();
+    collect();
+    place(texture);
+  }
+
+  if (!texture.m_data) {
+    std::fprintf(stderr, "Aurora GXM CDRAM exhausted: request %u bytes, arena %u/%u bytes, %u textures\n", unsigned(texture.m_bytes), unsigned(cdram.used()), unsigned(cdram.capacity()),
+                 unsigned(m_lru.size()));
+    std::vector<TextureStorage*> largest(m_lru.begin(), m_lru.end());
+    std::sort(largest.begin(), largest.end(), [](auto* a, auto* b) { return a->size() > b->size(); });
+
+    for (size_t i = 0; i < std::min(largest.size(), size_t(12)); ++i) {
+      const auto& entry = *largest[i];
+      std::fprintf(stderr, "Aurora GXM resident: %ux%u mips %u format %u, %u bytes, pinned %u\n", entry.width, entry.height, entry.mips, unsigned(entry.format), unsigned(entry.size()),
+                   entry.m_pinned);
+    }
+
+    AURORA_THROW(std::runtime_error("Native texture residency exhausted CDRAM and bounded spill arenas"));
+  }
+
+  m_lru.push_back(&texture);
+  texture.m_lru = std::prev(m_lru.end());
+  texture.m_linked = true;
+}
+
+// CDRAM for `texture`, moving cold textures out to the spill arenas as needed,
+// else a spill arena; false when neither has room now.
+bool TexturePool::place(TextureStorage& texture) {
+  auto& cdram = m_device.arena();
   texture.m_data = cdram.allocate(texture.m_bytes);
 
   while (!texture.m_data) {
@@ -200,24 +237,7 @@ void TexturePool::allocate(TextureStorage& texture) {
   if (!texture.m_data)
     texture.m_data = allocate_spill(texture.m_bytes, texture.m_arena);
 
-  if (!texture.m_data) {
-    std::fprintf(stderr, "Aurora GXM CDRAM exhausted: request %u bytes, arena %u/%u bytes, %u textures\n", unsigned(texture.m_bytes), unsigned(cdram.used()), unsigned(cdram.capacity()),
-                 unsigned(m_lru.size()));
-    std::vector<TextureStorage*> largest(m_lru.begin(), m_lru.end());
-    std::sort(largest.begin(), largest.end(), [](auto* a, auto* b) { return a->size() > b->size(); });
-
-    for (size_t i = 0; i < std::min(largest.size(), size_t(12)); ++i) {
-      const auto& entry = *largest[i];
-      std::fprintf(stderr, "Aurora GXM resident: %ux%u mips %u format %u, %u bytes, pinned %u\n", entry.width, entry.height, entry.mips, unsigned(entry.format), unsigned(entry.size()),
-                   entry.m_pinned);
-    }
-
-    AURORA_THROW(std::runtime_error("Native texture residency exhausted CDRAM and bounded spill arenas"));
-  }
-
-  m_lru.push_back(&texture);
-  texture.m_lru = std::prev(m_lru.end());
-  texture.m_linked = true;
+  return texture.m_data != nullptr;
 }
 
 void TexturePool::release(TextureStorage& texture) noexcept {

@@ -25,6 +25,7 @@ public:
 private:
   friend class TextureStorage;
   void allocate(TextureStorage& texture);
+  bool place(TextureStorage& texture);
   void release(TextureStorage& texture) noexcept;
   void* allocate_spill(size_t bytes, MappedArena*& arena);
   void move(TextureStorage& texture, void* data, MappedArena& arena);
