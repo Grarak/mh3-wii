@@ -547,6 +547,8 @@ gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
 
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   ZoneScoped;
+  if (obj.format() & AURORA_GENERATED_TEXTURE_FORMAT_BIT)
+    return gfx::find_generated_texture(obj.data, obj.texDataVersion);
 #ifdef AURORA_GXM
   if (obj.format() & AURORA_NATIVE_TEXTURE_FORMAT_BIT) {
     const u32 id = obj.texDataVersion;
@@ -1311,7 +1313,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     // putting native assets there prevents the residency cache from evicting
     // otherwise unused textures. Keep only the per-slot memo and draw owners.
     const bool canUseStaticSourceKey =
-        !(obj.format() & AURORA_NATIVE_TEXTURE_FORMAT_BIT) &&
+        !(obj.format() & (AURORA_NATIVE_TEXTURE_FORMAT_BIT | AURORA_GENERATED_TEXTURE_FORMAT_BIT)) &&
         !is_palette_format(obj.format()) && canCacheUpload && !obj.no_cache() &&
         obj.data != nullptr;
     const StaticTextureKey staticSourceKey =

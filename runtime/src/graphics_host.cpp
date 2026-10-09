@@ -20,6 +20,7 @@
 #include <vector>
 #include <cstring>
 #include <aurora/aurora.h>
+#include <aurora/generated_texture.hpp>
 #include <aurora/thread_role.hpp>
 #include <cstdlib>
 #include <aurora/event.h>
@@ -99,6 +100,17 @@ public:
         filling.size += size;
         gGxFifoWindow = {filling.bytes.get() + filling.size, filling.bytes.get() + filling.capacity};
     }
+    void SubmitTask(std::function<void()> task) {
+        CloseWindow();
+        if (filling.size) HandOff();
+        {
+            std::lock_guard lock(mutex);
+            RethrowFailure();
+            queue.emplace_back(0);
+            queue.back().task = std::move(task);
+        }
+        work.notify_one();
+    }
     // Waits until the worker processed everything submitted; rethrows its failure.
     void Drain() {
         CloseWindow();
@@ -125,6 +137,7 @@ private:
         explicit Chunk(size_t capacity) : bytes(new uint8_t[capacity]), capacity(capacity) {}
         std::unique_ptr<uint8_t[]> bytes;
         size_t size = 0, capacity;
+        std::function<void()> task;
     };
     void CloseWindow() {
         if (!gGxFifoWindow.end) return;
@@ -159,7 +172,7 @@ private:
             lock.unlock();
             std::exception_ptr error;
             if (!skip) {
-                try { process(chunk.bytes.get(), chunk.size); }
+                try { if (chunk.task) chunk.task(); else process(chunk.bytes.get(), chunk.size); }
                 catch (...) { error = std::current_exception(); }
             }
             lock.lock();
@@ -237,6 +250,7 @@ void ShutdownGraphics() {
             static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
             static_cast<unsigned long long>(GuestGxStream::drawCount), static_cast<unsigned long long>(guestTextureCopies)));
         if (gxWorker) { gxWorker->Stop(); gxWorker = nullptr; }
+        aurora::clear_generated_textures();
         aurora_shutdown(); initialized = false; frameActive = false;
     }
 }
@@ -543,6 +557,14 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
     }
     if (gxWorker) gxWorker->Submit(data, size);
     else ProcessGuestGxBytes(data, size);
+}
+
+void SubmitHostGraphicsTask(std::function<void()> task) {
+    char name[] = "MH3";
+    char* argv[]{name, nullptr};
+    InitializeGraphics(1, argv);
+    if (gxWorker) gxWorker->SubmitTask(std::move(task));
+    else task();
 }
 
 template <size_t N>

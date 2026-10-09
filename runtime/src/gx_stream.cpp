@@ -10,6 +10,7 @@
 #include <cstring>
 #include <unordered_map>
 #include "aurora-main/include/aurora/native_assets.h"
+#include "aurora-main/include/aurora/generated_texture.hpp"
 #ifdef __vita__
 #include "memory.h"
 #endif
@@ -244,14 +245,19 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
             Memory::Read32(header + 32) == format) nativeAsset = tag & 0x0fffffffu;
     }
 #endif
-    nativeTexture[slot] = nativeAsset != 0;
+#ifdef MH3_HAS_AURORA
+    const uint32_t generated = aurora::generated_texture_version(reinterpret_cast<const void*>(view.address), width, height);
+#else
+    const uint32_t generated = 0;
+#endif
+    nativeTexture[slot] = nativeAsset != 0 || generated != 0;
     std::array<uint8_t, 37> out{};
     out[0] = 0x50; out[2] = 0x30; out[3] = slot;
     for (unsigned i = 0; i < 8; ++i) out[4 + i] = uint64_t(view.address) >> (56 - 8 * i);
     auto put = [&](unsigned offset, uint32_t value) {
         for (unsigned i = 0; i < 4; ++i) out[offset + i] = value >> (24 - 8 * i);
     };
-    put(12, width); put(16, height); put(20, format | (nativeAsset ? AURORA_NATIVE_TEXTURE_FORMAT_BIT : 0));
+    put(12, width); put(16, height); put(20, format | (generated ? AURORA_GENERATED_TEXTURE_FORMAT_BIT : nativeAsset ? AURORA_NATIVE_TEXTURE_FORMAT_BIT : 0));
     // Each texture unit gets its own host TLUT slot. Guest TMEM offsets and
     // formats are resolved immediately before the draw that uses the palette.
     if (format >= 8 && format <= 10) put(24, slot);
@@ -262,7 +268,7 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
     EfbCopyTrace::BeginHostRead(view.address, needed);
 #endif
-    put(29, guest); put(33, nativeAsset ? nativeAsset : CachedTextureVersion(view.address, needed));
+    put(29, guest); put(33, generated ? generated : nativeAsset ? nativeAsset : CachedTextureVersion(view.address, needed));
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
     EfbCopyTrace::EndHostRead();
 #endif

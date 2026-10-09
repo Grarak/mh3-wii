@@ -2,10 +2,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <functional>
 
 void ResetGxRegisters();
 bool ReadGxRegister(uint32_t address, unsigned width, uint32_t& value);
 bool WriteGxRegister(uint32_t address, unsigned width, uint32_t value);
+// Queues native work between FIFO chunks without waiting for the GPU.
+void SubmitHostGraphicsTask(std::function<void()> task);
 void SubmitGuestGxBytes(const uint8_t* data, size_t size);
 #ifdef MH3_DEVELOPMENT
 #include <vector>
