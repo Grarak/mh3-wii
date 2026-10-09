@@ -235,6 +235,8 @@ extern "C" void MH3_NativeMovieTexture(CpuContext *c){
     {GuestFrame frame(c,0x30);c->gpr[3]=mode;MH3_NativeMovieSetup(c);c->gpr[3]=FlatRead32(0x806d6ccc);c->gpr[4]=FlatRead32(0x806d6cd0);c->gpr[5]=FlatRead32(0x806d6cd4);c->gpr[6]=x;c->gpr[7]=y;c->gpr[8]=FlatRead32(0x806d6c20);c->gpr[9]=FlatRead32(0x806d6c24);c->gpr[10]=w;FlatWrite32(frame[8],h);MH3_NativeMoviePlanes(c);MH3_NativeMovieRestore(c);}c->gpr[3]=uint32_t(result);
 }
 extern "C" void MH3_EffectTexCoordGenerator(CpuContext *c){
+    /*800C86D8 is the four-argument stub, like the movie/UI wrappers. */
+    c->gpr[7]=0;c->gpr[8]=125;
     uint32_t index=c->gpr[3];if(index>=8)throw std::runtime_error("Effect texgen index exceeds material layout");
     auto material=GetNativeMaterialState();auto &gen=material.texgen[index];gen.known=(1u<<MH3_TEXGEN_FIELD_COUNT)-1;std::memset(gen.values,0,sizeof(gen.values));gen.values[MH3_TEXGEN_PROJECTION]=c->gpr[4]==0;gen.values[MH3_TEXGEN_SOURCE_ROW]=c->gpr[5]==4?5:uint8_t(c->gpr[5]);gen.values[MH3_TEXGEN_MATRIX_ROW]=uint8_t(c->gpr[6]);gen.values[MH3_TEXGEN_NORMALIZE]=c->gpr[7]!=0;gen.values[MH3_TEXGEN_POST_MATRIX_ROW]=uint8_t(c->gpr[8]-0x40);SetNativeMaterial(material);
 }

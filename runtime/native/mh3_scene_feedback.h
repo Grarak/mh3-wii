@@ -73,8 +73,23 @@ typedef struct mh3_scene_cpu_ops {
     void (*copy_string)(void *,uint32_t,uint32_t);
     int (*compare_string)(void *,uint32_t,uint32_t);
     void (*texture_object)(void *,uint32_t,uint32_t);
+    void (*begin_shape_sample)(void *,int16_t,int16_t);
+    int (*sample_shape)(void *,int16_t,int16_t,uint8_t[4]);
+    float (*float_call)(void *,uint32_t,const uint32_t *,unsigned,const float *,unsigned);
 } mh3_scene_cpu_ops;
 int mh3_scene_equipment_update(const mh3_scene_cpu_ops *ops,uint32_t owner,uint32_t work,uint32_t slot,uint32_t scratch);
+int mh3_scene_inner_color_menu(const mh3_scene_cpu_ops *ops,uint32_t self,uint32_t scratch);
+int mh3_scene_equipment_color_menu(const mh3_scene_cpu_ops *ops,uint32_t self,uint32_t scratch);
+int mh3_scene_demo_character_menu(const mh3_scene_cpu_ops *ops,uint32_t scratch);
+int mh3_scene_demo_setup(float width,float height,const mh3_draw_state *draw,
+                         const mh3_native_material_state *material,mh3_scene_quad_plan *out);
+void mh3_scene_demo_quad(mh3_scene_quad_plan *plan,int16_t x,int16_t y,int16_t width,int16_t height,
+                         const float uv0[2],const float uv1[2],const uint8_t rgba[4],int additive);
+/* Sample authored texture bytes, never GPU pixels. -1 invalid,0 outside,
+ * 1 covered. Output RGBA floats include interpolated vertex modulation. */
+int mh3_scene_source_quad(mh3_res_span pixels,mh3_res_span palette,uint32_t palette_format,
+    const mh3_native_texture_binding *binding,const AuroraNativeVertex vertices[4],
+    const mh3_draw_state *state,const float point[2],float out[4]);
 #ifdef __cplusplus
 }
 #endif

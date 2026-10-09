@@ -15,5 +15,16 @@ int main(void){
     mh3_scene_glare_input glare={.identity=1,.shift=1,.low_threshold=64,.high_threshold=192,.levels=3,.start_width=320,.start_height=224,.darken=.5f,.brighten=.5f,.projection_width=640,.projection_height=448};mh3_scene_glare_plan bloom;assert(mh3_scene_glare_prepare(&glare,&bloom));assert(bloom.level_count==3&&bloom.width==80&&bloom.height==56);assert(bloom.levels[0].source_width==640&&bloom.levels[0].width==320&&bloom.levels[2].width==80);near(bloom.shift_scale,.5f);
     const float dark[3]={.1f,.1f,.1f},bright[3]={.9f,.9f,.9f},red[3]={1,0,0};near(mh3_scene_glare_brightness(&bloom,dark),.025f);near(mh3_scene_glare_brightness(&bloom,bright),.5f);near(mh3_scene_glare_brightness(&bloom,red),77.0f/512);
     memset(&bloom,0x5a,sizeof(bloom));mh3_scene_glare_plan unchanged=bloom;glare.levels=16;assert(!mh3_scene_glare_prepare(&glare,&bloom)&&!memcmp(&bloom,&unchanged,sizeof(bloom)));glare.levels=-1;assert(!mh3_scene_glare_prepare(&glare,&bloom));
-    puts("native scene feedback invariants pass");return 0;
+    /* Source samples operate on authored tiled bytes, including transparent
+     * vertex modulation and indexed palettes, independently of framebuffer. */
+    AuroraNativeVertex vertices[4]={0};const float clip[4][2]={{-1,1},{1,1},{1,-1},{-1,-1}},uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+    for(unsigned i=0;i<4;i++){vertices[i].position[0]=clip[i][0];vertices[i].position[1]=clip[i][1];vertices[i].position[3]=1;memcpy(vertices[i].uv,uv[i],8);memset(vertices[i].color,255,4);}draw.viewport[2]=draw.viewport[3]=4;
+    mh3_native_texture_binding texture={0};texture.source.width=texture.source.height=4;texture.source.format=6;uint8_t pixels[64]={0};
+    for(unsigned y=0;y<4;y++)for(unsigned x=0;x<4;x++){const unsigned i=y*4+x;pixels[i*2]=255;pixels[i*2+1]=x==0?255:0;pixels[32+i*2]=x==1?255:0;pixels[33+i*2]=x==2?255:0;}
+    float sampled[4],point[2]={.5f,.5f};assert(mh3_scene_source_quad((mh3_res_span){pixels,64},(mh3_res_span){0},0,&texture,vertices,&draw,point,sampled)==1);near(sampled[0],1);near(sampled[1],0);near(sampled[3],1);
+    texture.sampler.mag_filter=1;point[0]=1;assert(mh3_scene_source_quad((mh3_res_span){pixels,64},(mh3_res_span){0},0,&texture,vertices,&draw,point,sampled)==1);near(sampled[0],.5f);near(sampled[1],.5f);
+    point[0]=5;assert(mh3_scene_source_quad((mh3_res_span){pixels,64},(mh3_res_span){0},0,&texture,vertices,&draw,point,sampled)==0);
+    uint8_t indices[32],palette[4]={0,0,0,31};memset(indices,0x11,32);texture.source.format=8;point[0]=.5f;assert(mh3_scene_source_quad((mh3_res_span){indices,32},(mh3_res_span){palette,4},1,&texture,vertices,&draw,point,sampled)==1);near(sampled[2],1);near(sampled[0],0);
+    assert(mh3_scene_source_quad((mh3_res_span){indices,16},(mh3_res_span){palette,4},1,&texture,vertices,&draw,point,sampled)==-1);
+    puts("native scene feedback and authored source sampling invariants pass");return 0;
 }
