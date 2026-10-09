@@ -146,7 +146,7 @@ inline unsigned PpcLowestSetBitIndex(uint32_t value) noexcept {
 
 class PpcNonvolatileFprGuard {
 public:
-    explicit PpcNonvolatileFprGuard(CpuContext* cpu, uint32_t mask = kPpcAllNonvolatileFprMask) noexcept
+    MKW_PPC_FORCE_INLINE explicit PpcNonvolatileFprGuard(CpuContext* cpu, uint32_t mask = kPpcAllNonvolatileFprMask) noexcept
         : cpu_(cpu), mask_(mask & kPpcAllNonvolatileFprMask) {
         if (!cpu_ || mask_ == 0) {
             return;
@@ -163,10 +163,7 @@ public:
             const unsigned end = aboveRun == 0u ? 32u : PpcLowestSetBitIndex(aboveRun);
             firstSlot_ = static_cast<uint8_t>(first - 14u);
             slotCount_ = static_cast<uint8_t>(end - first);
-            const size_t count = slotCount_;
-            for (size_t i = 0; i < count; ++i) {
-                saved_[firstSlot_ + i] = cpu_->fpr[first + i];
-            }
+            CopyRun(&saved_[firstSlot_], &cpu_->fpr[first], slotCount_);
             return;
         }
         for (size_t i = 0; i < saved_.size(); ++i) {
@@ -177,16 +174,13 @@ public:
         }
     }
 
-    ~PpcNonvolatileFprGuard() noexcept {
+    MKW_PPC_FORCE_INLINE ~PpcNonvolatileFprGuard() noexcept {
         if (!cpu_ || mask_ == 0) {
             return;
         }
         if (slotCount_ != 0) {
             const unsigned first = 14u + firstSlot_;
-            const size_t count = slotCount_;
-            for (size_t i = 0; i < count; ++i) {
-                cpu_->fpr[first + i] = saved_[firstSlot_ + i];
-            }
+            CopyRun(&cpu_->fpr[first], &saved_[firstSlot_], slotCount_);
             return;
         }
         for (size_t i = 0; i < saved_.size(); ++i) {
@@ -201,6 +195,23 @@ public:
     PpcNonvolatileFprGuard& operator=(const PpcNonvolatileFprGuard&) = delete;
 
 private:
+    // A loop becomes a memcpy call (the run's length is not a constant),
+    // which on a Cortex-A9 costs more than the few slots it copies. Unrolled
+    // (a jump into straight-line copies); a constant length folds to the copies.
+    static MKW_PPC_FORCE_INLINE void CopyRun(PPC_FPR* to, const PPC_FPR* from, size_t count) noexcept {
+        switch (count) {
+#define MH3_FPR_COPY_CASE(n) \
+        case n: to[n - 1].raw = from[n - 1].raw; [[fallthrough]];
+        MH3_FPR_COPY_CASE(18) MH3_FPR_COPY_CASE(17) MH3_FPR_COPY_CASE(16) MH3_FPR_COPY_CASE(15)
+        MH3_FPR_COPY_CASE(14) MH3_FPR_COPY_CASE(13) MH3_FPR_COPY_CASE(12) MH3_FPR_COPY_CASE(11)
+        MH3_FPR_COPY_CASE(10) MH3_FPR_COPY_CASE(9) MH3_FPR_COPY_CASE(8) MH3_FPR_COPY_CASE(7)
+        MH3_FPR_COPY_CASE(6) MH3_FPR_COPY_CASE(5) MH3_FPR_COPY_CASE(4) MH3_FPR_COPY_CASE(3)
+        MH3_FPR_COPY_CASE(2) MH3_FPR_COPY_CASE(1)
+#undef MH3_FPR_COPY_CASE
+        default: break;
+        }
+    }
+
     CpuContext* cpu_ = nullptr;
     uint32_t mask_ = 0;
     // Contiguous-run description of mask_. slotCount_ == 0 means the mask is not

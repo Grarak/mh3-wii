@@ -105,9 +105,12 @@ void WriteVec(uint32_t a, const Vec3& v) {
 
 constexpr size_t kCurveWords = (kParticleCurvesEnd - kParticleCurves) / 4;
 using Curves = std::array<uint32_t, kCurveWords>;
+void ReadCurves(uint32_t particle, Curves& c) {
+    for (size_t i = 0; i < kCurveWords; ++i) c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
+}
 Curves ReadCurves(uint32_t particle) {
     Curves c;
-    for (size_t i = 0; i < kCurveWords; ++i) c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
+    ReadCurves(particle, c);
     return c;
 }
 void WriteCurves(uint32_t particle, const Curves& c) {
@@ -299,7 +302,7 @@ Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, co
             const float w = float(before[i] >> shift & 0xFF);
             const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
             const float shown = ramp(x - w, y - x, 1.0) ? x + (y - x) * t : x;
-            v |= uint32_t(std::lround(shown)) << shift;
+            v |= uint32_t(shown + 0.5f) << shift; // shown >= 0: lround without the libm call
         }
         s[i] = v;
     }
@@ -367,27 +370,35 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
     }
     if (!cache.owned.inside) return CurvesAtFull(game, manager, particle, at);
 
+    // The three ticks' curves live in the cache's slots (128 bytes each: no
+    // copies in and out). A tick already cached keeps its slot; the others
+    // take the slots left over.
     const Curves kept = ReadCurves(particle);
-    std::array<Curves, 3> got;
+    std::array<int, 3> slotOf{-1, -1, -1};
+    bool used[3] = {};
+    for (uint32_t k = 0; k < 3; ++k)
+        for (int s = 0; s < 3; ++s)
+            if (!used[s] && cache.ticks[s] == tick - 1 + k) {
+                slotOf[k] = s, used[s] = true;
+                break;
+            }
     for (uint32_t k = 0; k < 3; ++k) {
         const uint32_t want = tick - 1 + k;
-        if (want == keptTick) {
-            got[k] = kept;
-            continue;
+        int s = slotOf[k];
+        if (s < 0) {
+            s = int(std::find(used, used + 3, false) - used);
+            slotOf[k] = s, used[s] = true;
+            cache.ticks[s] = want;
+            if (want != keptTick) {
+                RunCurves(game, manager, particle, want);
+                ReadCurves(particle, cache.values[s]);
+                continue;
+            }
         }
-        const auto slot = std::find(cache.ticks.begin(), cache.ticks.end(), want);
-        if (slot != cache.ticks.end()) {
-            got[k] = cache.values[size_t(slot - cache.ticks.begin())];
-            continue;
-        }
-        RunCurves(game, manager, particle, want);
-        got[k] = ReadCurves(particle);
+        if (want == keptTick) cache.values[s] = kept;
     }
-    for (uint32_t k = 0; k < 3; ++k) {
-        cache.ticks[k] = tick - 1 + k;
-        cache.values[k] = got[k];
-    }
-    WriteCurves(particle, BlendCurves(kept, got[0], got[1], got[2], float(at - tick), &cache.owned));
+    const std::array<const Curves*, 3> got{&cache.values[slotOf[0]], &cache.values[slotOf[1]], &cache.values[slotOf[2]]};
+    WriteCurves(particle, BlendCurves(kept, *got[0], *got[1], *got[2], float(at - tick), &cache.owned));
 }
 
 } // namespace
