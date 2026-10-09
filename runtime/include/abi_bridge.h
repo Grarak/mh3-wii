@@ -338,9 +338,9 @@ constexpr bool KnownRegArgsCpuCall(void (*baseEntry)(CpuContext*)) {
 }
 
 // Direct-mapped thread-local memo in front of the sorted registry lookup every bctrl performs;
-// a miss just re-runs the sorted lookup. 512 entries (12 KiB) covers the per-frame indirect
-// working set while staying L1/L2 resident, unlike 4096 which would thrash L2. Must stay a
-// power of two, the index masks with (size - 1).
+// a miss just re-runs the sorted lookup. 2048 raw entries (16 KiB) cover the per-frame
+// indirect working set while staying L1/L2 resident. Must stay a power of two, the index
+// masks with (size - 1).
 inline constexpr size_t kIndirectDispatchCacheEntries = 2048;
 // The memo slot of a guest address: the high bits of a multiplicative hash (the
 // low bits of the product depend only on the address's low bits, so functions
@@ -359,8 +359,9 @@ struct IndirectResolvedDispatchMemoEntry {
 inline thread_local IndirectResolvedDispatchMemoEntry
     g_indirectResolvedDispatchMemo[kIndirectDispatchCacheEntries]{};
 
+// Address 0 marks an empty slot: no function lives there, so a probe for 0
+// finds no record either way.
 struct IndirectRawDispatchMemoEntry {
-    bool valid;
     uint32_t address;
     const RawDispatchRecord* record;
 };
@@ -394,13 +395,12 @@ public:
     // generated-table binary search alongside it pushed the whole function past
     // the inliner's budget and out-of-lined the probe itself, which is the part
     // every bctrl executes.
+    // A memo slot is only ever filled after this thread saw the lookup
+    // published (the acquire in the miss path), so a hit needs no barrier - on
+    // arm32 the acquire is a dmb on every bctrl.
     static MKW_PPC_FORCE_INLINE const RawDispatchRecord* FindRawByAddressPtr(uint32_t address) {
-        if (!lookupPublished_.load(std::memory_order_acquire)) {
-            return nullptr;
-        }
-
         auto& cached = g_indirectRawDispatchMemo[IndirectDispatchMemoSlot(address)];
-        if (cached.valid && cached.address == address) {
+        if (cached.address == address) {
             return cached.record;
         }
 
@@ -415,6 +415,9 @@ private:
     // registered records or a not-yet-published table fall through to the slow path.
     static MKW_PPC_NO_INLINE MKW_PPC_COLD const RawDispatchRecord* FindRawByAddressPtrMiss(
         uint32_t address, IndirectRawDispatchMemoEntry& cached) {
+        if (!lookupPublished_.load(std::memory_order_acquire)) {
+            return nullptr;
+        }
         const RawDispatchRecord* record = nullptr;
         if (const auto* table =
                 g_publishedStaticIndirectDispatchTable.load(std::memory_order_acquire)) {
@@ -423,7 +426,7 @@ private:
         if (record == nullptr) {
             record = FindRawByAddressPtrSlow(address);
         }
-        cached = {true, address, record};
+        cached = {address, record};
         return record;
     }
 
@@ -479,10 +482,7 @@ MKW_PPC_FORCE_INLINE bool TryDispatchResolvedCpuTarget(const TranslatedFunctionI
     return true;
 }
 
-inline bool TryDispatchRawCpuTarget(const RawDispatchRecord* record, CpuContext* cpu) {
-    if (!record || !record->entry) {
-        return false;
-    }
+MKW_PPC_NO_INLINE inline bool TryDispatchRawCpuTargetGuarded(const RawDispatchRecord* record, CpuContext* cpu) {
     if (record->address >= 0x80800000u && record->address < 0x81800000u)
         RecompMod::CheckRsoExecution(record->address);
     RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
@@ -494,6 +494,26 @@ inline bool TryDispatchRawCpuTarget(const RawDispatchRecord* record, CpuContext*
     } else {
         record->entry(cpu);
     }
+    return true;
+}
+
+// The common indirect call - a translated target that needs no register
+// guard, running in the caller's context - only checks overlay liveness and
+// swaps the reported execution address. Everything else takes the guarded
+// path, whose guard storage (r4-r11, d8-d15 and a 264-byte frame on arm32)
+// would otherwise be paid by every call.
+MKW_PPC_FORCE_INLINE bool TryDispatchRawCpuTarget(const RawDispatchRecord* record, CpuContext* cpu) {
+    if (!record || !record->entry) {
+        return false;
+    }
+    if (record->preserveNonvolatileGprs || (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) != 0 ||
+        TryGetCpuContext() != cpu) {
+        return TryDispatchRawCpuTargetGuarded(record, cpu);
+    }
+    if (record->address >= 0x80800000u && record->address < 0x81800000u)
+        RecompMod::CheckRsoExecution(record->address);
+    RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
+    record->entry(cpu);
     return true;
 }
 
@@ -689,8 +709,9 @@ inline void InvokeIndirectJump(uint32_t target, CpuContext* ctx) {
     std::exit(EXIT_FAILURE);
 }
 
-inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
-    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+// Overlay targets, registry-only records, native targets needing guards and
+// missing targets. Out of line so the common bctrl keeps a small frame.
+MKW_PPC_NO_INLINE inline void InvokeIndirectCpuSlow(uint32_t target, CpuContext* cpu) {
     if (target == 0) {
         ReportMissingCpuTarget(target, cpu);
     }
@@ -703,6 +724,20 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
         return;
     }
     ReportMissingCpuTarget(target, cpu);
+}
+
+inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
+    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+    if (target < 0x80800000u || target >= 0x81800000u) {
+        const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(target);
+        if (record && record->entry && !record->preserveNonvolatileGprs &&
+            (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0 && TryGetCpuContext() == cpu) {
+            RecompMod::ScopedTranslatedExecutionAddress translatedExecution(record->address);
+            record->entry(cpu);
+            return;
+        }
+    }
+    InvokeIndirectCpuSlow(target, cpu);
 }
 
 template <typename Signature>
