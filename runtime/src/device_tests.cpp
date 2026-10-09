@@ -1,6 +1,9 @@
 #include "abi_bridge.h"
 #include "ios_host.h"
 #include "video_interface.h"
+#include "gx_host.h"
+#include "gx_stream.h"
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -46,6 +49,48 @@ void RunDeviceSelfTests(CpuContext* cpu) {
     uint16_t unused;
     if (ReadVideoRegister16(0xCC003000, unused) || ReadVideoRegister16(0xCC002001, unused))
         throw std::runtime_error("VI intercepted an unrelated or unaligned register");
+    Memory::Write16(0xCC000020, 0xC600);
+    Memory::Write32(0xCC00300C, 0x00E2C600);
+    if (Memory::Read16(0x0C000020) != 0xC600 || Memory::Read32(0x8C00300C) != 0x00E2C600)
+        throw std::runtime_error("GX FIFO register aliases failed");
+    uint32_t gxValue;
+    if (ReadGxRegister(0xCC000000, 2, gxValue) || ReadGxRegister(0xCC000021, 2, gxValue) ||
+        ReadGxRegister(0xCC00300C, 2, gxValue) || ReadGxRegister(0x4C00300C, 4, gxValue))
+        throw std::runtime_error("GX register interface accepted an unsupported access");
+    Memory::Write16(0xCC000006, 0xFFFF);
+    Memory::Write16(0xCC000022, 0xFFFF);
+    Memory::Write16(0xCC000004, 3);
+    if (Memory::Read16(0xCC000006) != 7 || Memory::Read16(0xCC000022) != 0x1FFF || Memory::Read16(0xCC000004))
+        throw std::runtime_error("GX CP register masking/acknowledgement failed");
+    ResetGxRegisters();
+    GuestGxStream stream;
+    std::vector<uint8_t> delivered;
+    unsigned packets = 0;
+    auto sink = [&](std::span<const uint8_t> packet) {
+        ++packets;
+        delivered.insert(delivered.end(), packet.begin(), packet.end());
+    };
+    const std::array<uint8_t, 15> commands{0x08, 0x50, 0, 0, 0, 1, 0x10, 0, 0, 0x10, 0, 0x3F, 0x80, 0, 0};
+    stream.Write(std::span(commands).first(5), sink);
+    if (packets || stream.PendingBytes() != 5) throw std::runtime_error("GX decoded a partial command");
+    stream.Write(std::span(commands).subspan(5, 5), sink);
+    if (packets != 1 || stream.PendingBytes() != 4) throw std::runtime_error("GX command framing failed");
+    stream.Write(std::span(commands).subspan(10), sink);
+    if (packets != 2 || stream.PendingBytes() || !std::equal(delivered.begin(), delivered.end(), commands.begin(), commands.end()))
+        throw std::runtime_error("GX stream changed command bytes");
+    bool rejected = false;
+    try { const uint8_t command[]{0x08, 0xA0, 0x80, 0, 0, 0}; stream.Write(command, sink); }
+    catch (const std::runtime_error&) { rejected = true; }
+    if (!rejected || packets != 2) throw std::runtime_error("GX forwarded an unconverted guest pointer");
+    GuestGxStream translatedStream;
+    delivered.clear();
+    const uint8_t arrayCommand[]{0x08, 0xA3, 0x10, 0, 0x12, 0x34};
+    translatedStream.Write(arrayCommand, sink, [](uint32_t guest) -> GuestGxStream::ArrayView {
+        if (guest != 0x10001234) throw std::runtime_error("GX array address byte order failed");
+        return {0x0123456789ABCDEFULL, 0x1234};
+    });
+    const std::vector<uint8_t> expected{0x50, 0, 0x13, 1, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0, 0, 0x12, 0x34, 0};
+    if (delivered != expected) throw std::runtime_error("GX host array command encoding failed");
     MH3_OSGetResetCode(cpu);
     if (cpu->gpr[3] != 0) throw std::runtime_error("Cold boot reset code failed");
     Memory::Write32(0x8074F740, 1);

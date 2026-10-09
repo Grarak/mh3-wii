@@ -3,8 +3,8 @@
 **Work in progress: the native ARM64 executable builds and begins executing MH3,
 but it is not playable yet.** The current boot prints the original Revolution OS banner and passes device,
 initial thread, and arena setup. It passes OS/DVD initialization and C++ constructors, enters the game main
-function, passes video-interface initialization, and stops in GX FIFO setup at
-unsupported command-processor register `0xCC000002`.
+function, passes video-interface initialization, and sends GX initialization
+commands to Aurora Metal. It currently stops on texture-address conversion.
 
 This port uses WiiCompiled's PowerPC-to-C++ static translator and ISA/dispatch
 support. There is no CPU interpreter or JIT fallback. The original sibling
@@ -107,8 +107,8 @@ before unwinding, so routine diagnosis needs no LLDB authorization.
 
 Boot now passes IPC, STM, NAND, system configuration, DVD initialization and
 C++ constructors. The latest trace enters game main (`0x8003F278`), passes
-the original `VIInit` (`0x804E7B00`), and reaches GX initialization. The next
-unsupported access is command-processor register `0xCC000002`.
+the original `VIInit` (`0x804E7B00`), and reaches GX initialization. The Metal build now consumes guest GX setup commands and converts vertex-array
+addresses; its next unsupported boundary is texture-address conversion.
 The DOL constructor/destructor tables are explicitly seeded for static translation,
 including constructor stubs with no ordinary stack prologue.
 IOS synchronous open/close/read/write use a private NAND root at
@@ -166,7 +166,7 @@ and standard-header visibility without changing the sibling checkout.
 
 `build/metal/MH3 --graphics-check` initializes native Metal, opens a 640×480
 window, submits 30 frames, and exits. This checks the host renderer path only;
-guest GX bridging and actual game frames are still incomplete. Renderer caches
+the guest GX bridge is partial and actual game frames are still incomplete. Renderer caches
 are kept under `saves/graphics`. On this Apple M2 Max, the check selected Metal,
 created a BGRA8Unorm presentation surface, submitted all 30 frames, and exited
 successfully. The Aurora-linked executable also passes the runtime self-test.
@@ -192,3 +192,12 @@ the original VI timing and framebuffer setup still runs. Analog encoder writes
 are retained by a native I2C boundary. Retrace interrupts and scanout are not yet
 connected. Static jump-table discovery follows a scaled selector back to its
 logical register, fixing the VI format switch; all nine jump-table tests pass.
+
+The GX bridge frames fragmented CP/BP/XF commands and forwards complete packets
+in guest byte order. Vertex-array addresses become Aurora host-pointer commands,
+bounded to the containing MEM1/MEM2 region. Both ordinary and 64-bit FIFO writes
+use this path. Texture/TLUT addresses, drawing, display lists, copies, and GPU
+completion events still stop explicitly where their bridges are missing.
+Scoped CP/PE/PI registers preserve the original guest FIFO initialization state;
+this is not a complete hardware model. Tests cover fragmented command framing,
+array conversion, rejection of unconverted pointers, and register aliases/masks.

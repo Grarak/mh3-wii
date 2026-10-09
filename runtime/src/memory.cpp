@@ -2,6 +2,7 @@
 // until the corresponding host service is implemented. No CPU interpretation.
 #include "memory.h"
 #include "video_interface.h"
+#include "gx_host.h"
 #include <array>
 #include <cstring>
 #include <cstdlib>
@@ -34,14 +35,22 @@ template<class T> T read(uint32_t address) {
         uint16_t value;
         if (ReadVideoRegister16(address, value)) return value;
     }
+    uint32_t gxValue;
+    if (ReadGxRegister(address, sizeof(T), gxValue)) return static_cast<T>(gxValue);
     T value;
     std::memcpy(&value, Memory::GetPointer(address, sizeof(T)), sizeof(T));
     return MemoryInline::MaybeByteSwap(value);
 }
 template<class T> void write(uint32_t address, T value) {
+    if ((address >> 30) != 1 && (address & 0x3FFFFF00) == 0x0C008000) {
+        const auto encoded = MemoryInline::MaybeByteSwap(value);
+        SubmitGuestGxBytes(reinterpret_cast<const uint8_t*>(&encoded), sizeof(T));
+        return;
+    }
     if constexpr (std::is_same_v<T, uint16_t>) {
         if (WriteVideoRegister16(address, value)) return;
     }
+    if (WriteGxRegister(address, sizeof(T), static_cast<uint32_t>(value))) return;
     RecompMod::CheckExecutableWrite(address, sizeof(T), value);
     auto encoded = MemoryInline::MaybeByteSwap(value);
     std::memcpy(Memory::GetPointer(address, sizeof(T)), &encoded, sizeof(T));
@@ -58,6 +67,7 @@ Memory::AccessViolation::AccessViolation(uint32_t addr, size_t length, std::stri
 
 void Memory::Init(size_t size) {
     ResetVideoInterface();
+    ResetGxRegisters();
     mem1.assign(size, 0);
     mem2.assign(64 * 1024 * 1024, 0);
     for (uint32_t i = 0; i < MemoryInline::kPageCount; ++i) {
@@ -114,9 +124,12 @@ void WriteResolvedFallbackFloat32(uint32_t a, double v) { Memory::WriteFloat32(a
 void WriteResolvedFallbackFloat64(uint32_t a, double v) { Memory::WriteFloat64(a, v); }
 }
 
-// FIFO writes must become Aurora GX calls before the game can render.
-extern "C" void GX_HLE_FIFO_WriteFloat(float) { throw std::runtime_error("GX FIFO float write not implemented"); }
-extern "C" void GX_HLE_FIFO_Write32(uint32_t) { throw std::runtime_error("GX FIFO word write not implemented"); }
-extern "C" void GX_HLE_FIFO_Write16(uint16_t) { throw std::runtime_error("GX FIFO halfword write not implemented"); }
-extern "C" void GX_HLE_FIFO_Write8(uint8_t) { throw std::runtime_error("GX FIFO byte write not implemented"); }
-extern "C" void GX_HLE_FIFO_WriteBurst(const uint8_t*, uint32_t) { throw std::runtime_error("GX FIFO burst write not implemented"); }
+// FIFO scalar writes preserve the guest's big-endian command encoding.
+#ifndef MH3_HAS_AURORA
+void SubmitGuestGxBytes(const uint8_t*, size_t) { throw std::runtime_error("GX requires the Aurora-linked build"); }
+#endif
+extern "C" void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }
+extern "C" void GX_HLE_FIFO_Write8(uint8_t v) { SubmitGuestGxBytes(&v, 1); }
+extern "C" void GX_HLE_FIFO_Write16(uint16_t v) { const uint8_t b[]{uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxBytes(b, 2); }
+extern "C" void GX_HLE_FIFO_Write32(uint32_t v) { const uint8_t b[]{uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}; SubmitGuestGxBytes(b, 4); }
+extern "C" void GX_HLE_FIFO_WriteFloat(float v) { uint32_t bits; std::memcpy(&bits, &v, 4); GX_HLE_FIFO_Write32(bits); }
