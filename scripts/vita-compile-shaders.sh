@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Offline Sony compilation. The installed game uses only the embedded GXP blob.
+# Offline compilation of the known GXP corpus; missing native stages can
+# also use the user-authorized Vita runtime compiler/cache.
 set -euo pipefail
 if [ "$#" -ne 2 ]; then
   echo "Usage: $0 generated-cg-directory embed-output-directory" >&2
