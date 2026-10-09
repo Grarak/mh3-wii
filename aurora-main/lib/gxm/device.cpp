@@ -196,16 +196,19 @@ Device::Device() {
     // Three native draw slots: 10.5 MiB with unchanged live capacities, plus
     // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
     // committing the texture/display arena. Compact models own separately
-    // allocated CDRAM blocks, capped at 32 MiB including notified retirement.
-    // Keep that capacity available and leave 8 MiB for the driver.
+    // allocated CDRAM blocks: they peaked at 5.25 MiB (Alatreon, Moga Woods),
+    // so keep 16 MiB for them, not the 32 MiB a prepared map may reach (a
+    // pack that finds no CDRAM is fatal), and leave 8 MiB for the driver.
+    // Textures have no spill, and the old 32 MiB left them 31 MiB, which the
+    // opening movie after character creation filled.
     constexpr unsigned producerReserve = NativeProducerReserve;
-    constexpr unsigned modelReserve = 32u << 20;
+    constexpr unsigned modelReserve = 16u << 20;
     constexpr unsigned driverReserve = 8u << 20;
     if (available.size_cdram <= producerReserve + modelReserve + driverReserve)
       throw std::runtime_error("Insufficient CDRAM for Aurora, producer slots and resident models");
     const unsigned budget = (unsigned(available.size_cdram) - producerReserve - modelReserve - driverReserve) & ~0x3ffffu;
     m_arena = std::make_unique<CdramArena>(budget);
-    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation %.2f MiB, model reservation 32 MiB\n", budget / 1048576.0, producerReserve / 1048576.0);
+    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation %.2f MiB, model reservation %u MiB\n", budget / 1048576.0, producerReserve / 1048576.0, modelReserve >> 20);
     for (unsigned i = 0; i < aurora::GpuFrameRing::BufferCount; ++i) {
       m_displayData[i] = m_arena->allocate(Stride * Height * 4);
       if (!m_displayData[i])
