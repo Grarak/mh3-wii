@@ -435,7 +435,9 @@ inline bool gpu_fence_done(const GpuFence& fence) noexcept { return !fence.addre
 // Palette at paletteOffset (paletteBytes 0 = none); drawBytes covers all.
 // Material-GPU programs have no Shade (shadeBytes 0) and bind Material
 // (binding 4 / fragment BUFFER[2]) and Animated (binding 5 / fragment and
-// mesh vertex BUFFER[3]) instead.
+// mesh vertex BUFFER[3]) instead. Mesh draws bind View (binding 6 / vertex
+// BUFFER[4]): the projection and viewport, in the frame's uniforms and shared
+// by the draws; re-uploaded only when its revision changes.
 struct ShadedBlocks {
   const void* draw = nullptr;
   uint32_t drawBytes = 0, shadeOffset = 0, shadeBytes = 0;
@@ -443,6 +445,9 @@ struct ShadedBlocks {
   const void* scene = nullptr;
   uint32_t sceneBytes = 0;
   uint64_t sceneRevision = 0;
+  const void* view = nullptr;
+  uint32_t viewBytes = 0;
+  uint64_t viewRevision = 0;
   UniformBlock material, animated;
 };
 

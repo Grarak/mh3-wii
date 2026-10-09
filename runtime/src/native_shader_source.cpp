@@ -17,8 +17,9 @@
 // interpolated exactly; the fragment only applies the curve.
 //
 // Blocks: Draw (vertex, binding 0 / vertex BUFFER[0]), Scene (both, binding 1 /
-// BUFFER[1]), Palette (mesh vertex, binding 2 / vertex BUFFER[2]) and Shade
-// (fragment, binding 3 / fragment BUFFER[0]). Draw and Shade share one per-draw
+// BUFFER[1]), Palette (mesh vertex, binding 2 / vertex BUFFER[2]), Shade
+// (fragment, binding 3 / fragment BUFFER[0]) and View (mesh vertex, binding 6 /
+// vertex BUFFER[4]: the projection and viewport, shared by the draws). Draw and Shade share one per-draw
 // allocation (mh3_shade_draw); Shade's tail differs per fragment model.
 // MATERIAL_GPU programs (docs/native-material-gpu.md) replace Shade with the
 // baked Material block (binding 4 / fragment BUFFER[2]) and the Animated
@@ -66,8 +67,6 @@ struct Texgen {
     ivec4 mode;
 };
 layout(std140) uniform Draw {
-    mat4 proj;
-    vec4 viewport;
     ivec4 flags;
     vec4 channel_material;
     vec4 channel_ambient;
@@ -270,6 +269,11 @@ vec4 fog_blend(vec4 clip, inout vec4 color) {
 )GLSL";
 
 constexpr const char* GlslMeshVertex = R"GLSL(
+// mh3_shade_view: shared by the draws of one projection and viewport.
+layout(std140) uniform View {
+    mat4 proj;
+    vec4 viewport;
+} view;
 #if SKINNED
 // The mesh's palette rows (docs/gpu-skinning.md): three vec4 per matrix.
 layout(std140) uniform Palette {
@@ -364,7 +368,7 @@ void main() {
     int slot = (draw.flags.x & 1) != 0 ? int(a_select) : 0;
     vec3 position = vec4(a_position, 1.0) * palette.position[slot];
 #endif
-    vec4 projected = vec4(position, 1.0) * draw.proj;
+    vec4 projected = vec4(position, 1.0) * view.proj;
     vec4 vertex = (draw.flags.x & 2) != 0 ? a_color0 : vec4(1.0);
 #if LIT
 #if SKINNED
@@ -378,7 +382,7 @@ void main() {
     v_color0 = light_channel(position, vec3(0.0), vertex);
 #endif
     v_fog = fog_blend(projected, v_color0);
-    projected.xy += projected.w * draw.viewport.zw;
+    projected.xy += projected.w * view.viewport.zw;
     TEXGEN_OUTPUTS
     gl_Position = vec4(projected.x, -projected.y, 2.0 * projected.z - projected.w, projected.w);
 }
@@ -628,8 +632,6 @@ struct Texgen {
     int4 mode;
 };
 struct Draw {
-    float4x4 proj;
-    float4 viewport;
     int4 flags;
     float4 channel_material;
     float4 channel_ambient;
@@ -814,6 +816,12 @@ float4 fog_blend(float4 clip, inout float4 color) {
 )CG";
 
 constexpr const char* CgMeshVertex = R"CG(
+// mh3_shade_view: shared by the draws of one projection and viewport.
+struct View {
+    float4x4 proj;
+    float4 viewport;
+};
+uniform View view : BUFFER[4];
 #if SKINNED
 // The mesh's palette rows (docs/gpu-skinning.md): three float4 per matrix.
 struct Palette {
@@ -896,7 +904,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
     int slot = (draw.flags.x & 1) != 0 ? int(a_select) : 0;
     float3 position = mul(float4(a_position, 1.0f), palette.position[slot]);
 #endif
-    float4 projected = mul(float4(position, 1.0f), draw.proj);
+    float4 projected = mul(float4(position, 1.0f), view.proj);
     float4 vertex = (draw.flags.x & 2) != 0 ? a_color0 : float4(1.0f, 1.0f, 1.0f, 1.0f);
 #if LIT
 #if SKINNED
@@ -911,7 +919,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
     v_color0 = light_channel(position, float3(0.0f, 0.0f, 0.0f), vertex);
 #endif
     v_fog = fog_blend(projected, v_color0);
-    projected.xy += projected.w * draw.viewport.zw;
+    projected.xy += projected.w * view.viewport.zw;
     TEXGEN_OUTPUTS
     v_position = float4(projected.x, projected.y, 2.0f * projected.z - projected.w, projected.w);
 }

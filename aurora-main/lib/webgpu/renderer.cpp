@@ -1121,8 +1121,8 @@ public:
   FastMap<uint64_t, uint32_t> layoutIds;
   std::vector<VertexLayout> layouts;
   std::map<std::pair<GLuint, GLuint>, GLuint> framebuffers;
-  Streamed scene, material, animated;
-  uint64_t sceneRevision = ~0ull;
+  Streamed scene, material, animated, view;
+  uint64_t sceneRevision = ~0ull, viewRevision = ~0ull;
 
   // Persistent uniform blocks, after the staging range of the uniform buffer.
   uint32_t persistentCursor = 0;
@@ -2069,7 +2069,7 @@ void draw_native_mesh(const NativeMeshBuffer&, const MeshLayout&, uint32_t, uint
 }
 
 namespace {
-// Group 0 offsets of a shaded draw: Draw, Scene, Palette, Shade, Material, Animated.
+// Group 0 offsets of a shaded draw: Draw, Scene, Palette, Shade, Material, Animated, View.
 std::array<uint32_t, UniformBindings> shaded_offsets(Renderer& r, const ShadedBlocks& blocks) {
   if (blocks.shadeOffset % UniformAlignment || (blocks.paletteBytes && blocks.paletteOffset % UniformAlignment))
     AURORA_THROW(std::runtime_error("Shade or palette block offset violates the uniform alignment"));
@@ -2093,11 +2093,21 @@ std::array<uint32_t, UniformBindings> shaded_offsets(Renderer& r, const ShadedBl
   if (blocks.animated.valid())
     offsets[5] = r.block_offset(blocks.animated, r.animated);
 
+  // The view block, like the scene's, is staged once per revision.
+  if (blocks.view) {
+    if (blocks.viewRevision != r.viewRevision)
+      r.view = {};
+
+    r.viewRevision = blocks.viewRevision;
+    offsets[6] = r.stream(r.view, blocks.view, blocks.viewBytes);
+  }
+
   return offsets;
 }
 
 uint32_t shaded_bytes(const ShadedBlocks& blocks) {
-  return blocks.drawBytes + blocks.sceneBytes + (blocks.material.data ? blocks.material.size : 0) + (blocks.animated.data ? blocks.animated.size : 0) + 4 * UniformAlignment;
+  return blocks.drawBytes + blocks.sceneBytes + blocks.viewBytes + (blocks.material.data ? blocks.material.size : 0) + (blocks.animated.data ? blocks.animated.size : 0) +
+         5 * UniformAlignment;
 }
 
 wgpu::VertexFormat mesh_format(MeshAttributeFormat format, unsigned components, unsigned& componentBytes) {

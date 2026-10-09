@@ -237,6 +237,12 @@ struct ShadeState {
     // The scene block's copy in the current frame's GPU-visible uniform memory.
     AuroraNativeUniforms sceneMemory{};
     uint64_t sceneMemoryUpload = 0;
+
+    // The View block in the frame's uniform memory and what it holds; its
+    // revision counts written blocks (the GL and WebGPU backends upload by it).
+    AuroraNativeUniforms viewMemory{};
+    mh3_shade_view view{};
+    uint64_t viewRevision = 0;
 } shade;
 
 const ShadeEntry& ShadeMaterial() {
@@ -337,7 +343,7 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
         desc.fragment = std::move(sources.glsl_fragment);
 #endif
         desc.samplers = {{"u_texture0", 0}, {"u_texture1", 1}, {"u_texture2", 2}};
-        desc.blocks = {{"Draw", 0}, {"Scene", 1}, {"Palette", 2}, {"Shade", 3}, {"Material", 4}, {"Animated", 5}};
+        desc.blocks = {{"Draw", 0}, {"Scene", 1}, {"Palette", 2}, {"Shade", 3}, {"Material", 4}, {"Animated", 5}, {"View", 6}};
         program = std::make_shared<aurora::gl::Program>(std::move(desc));
 #ifdef MH3_DEVELOPMENT
         // Created on the render thread at first use: a stall of the frame.
@@ -458,6 +464,32 @@ bool ShadeSceneMemory(uint64_t& upload) {
     std::memcpy(memory.data, &scene, sizeof scene);
     shade.sceneMemoryUpload = upload;
     return true;
+}
+
+// The View block for the projection and the render viewport: the current
+// frame's when it holds the same values (a view's draws share one), else a new
+// one; null when the frame has no uniform space (frame canceled).
+const mh3_shade_view* ShadeViewMemory(const float* projection) {
+    mh3_shade_view view;
+    std::memcpy(view.proj, projection, sizeof view.proj);
+    std::array<float, 2> size{};
+    GetNativeRenderViewportSize(size.data());
+    view.viewport[0] = size[0];
+    view.viewport[1] = size[1];
+    view.viewport[2] = -1.f / (6.f * std::max(std::fabs(size[0]), 1.f));
+    view.viewport[3] = 1.f / (6.f * std::max(std::fabs(size[1]), 1.f));
+    auto& memory = shade.viewMemory;
+
+    if (memory.data && memory.frame == aurora::gfx::current_frame() && memory.slot == aurora_native_frame_slot() && !std::memcmp(&shade.view, &view, sizeof view))
+        return static_cast<const mh3_shade_view*>(memory.data);
+
+    if (!aurora_allocate_native_uniforms(sizeof view, &memory))
+        return nullptr;
+
+    std::memcpy(memory.data, &view, sizeof view);
+    shade.view = view;
+    ++shade.viewRevision;
+    return static_cast<const mh3_shade_view*>(memory.data);
 }
 
 // One per-draw allocation holds Draw, Shade and (mesh draws) the palette at
@@ -1384,7 +1416,10 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         return;
     // Built here and copied once: the frame's uniform memory is uncached CDRAM
     // on the Vita, where clearing it and then writing the fields cost twice.
-    mh3_shade_vertex vertex{};
+    // Only up to the last texture role's texgen: the program reads no other.
+    const uint32_t vertexBytes = MH3_SHADE_VERTEX_BYTES(shading.textures);
+    mh3_shade_vertex vertex;
+    std::memset(&vertex, 0, vertexBytes);
     const auto lighting = ShadeChannels(shading, vertex);
     uint8_t coordinates = 0;
 
@@ -1424,13 +1459,11 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         bind.location[11] = MH3_SEMANTIC_SKIN_WEIGHTS;
     }
 
-    std::memcpy(vertex.proj, inputs.projection, sizeof vertex.proj);
-    std::array<float, 2> size{};
-    GetNativeRenderViewportSize(size.data());
-    vertex.viewport[0] = size[0];
-    vertex.viewport[1] = size[1];
-    vertex.viewport[2] = -1.f / (6.f * std::max(std::fabs(size[0]), 1.f));
-    vertex.viewport[3] = 1.f / (6.f * std::max(std::fabs(size[1]), 1.f));
+    const auto* view = ShadeViewMemory(inputs.projection);
+
+    if (!view)
+        return;
+
     vertex.flags[0] = (inputs.matrix_index_mask & 1 && !skinned ? MH3_SHADE_FLAG_MATRIX_SELECTOR : 0) | (present(2) ? MH3_SHADE_FLAG_COLOR0 : 0);
 
     if (inputs.matrix_index_mask & 1) {
@@ -1505,8 +1538,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     if (NativeShaderFoldsFog(variant))
         vertex.channel[3] |= kFoldFog;
 
-    std::memcpy(vertexBlock, &vertex, sizeof vertex);
-    std::memset(reinterpret_cast<char*>(vertexBlock) + sizeof vertex, 0, MH3_SHADE_FRAGMENT_OFFSET - sizeof vertex);
+    std::memcpy(vertexBlock, &vertex, vertexBytes);
     float bias[4];
     const auto units = ShadeTextures(shading, bias);
     variant.skinned = skinned;
@@ -1557,6 +1589,9 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     if (!blocks)
         return;
 
+    blocks->view = view;
+    blocks->viewBytes = sizeof *view;
+    blocks->viewRevision = shade.viewRevision;
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
     CountCensusDraw(mesh, entry.key, program, variant);

@@ -225,7 +225,8 @@ struct PrecomputedCopy {
   const void* vertices = nullptr;
   const void* indices = nullptr;
   uint32_t count = 0;
-  std::array<const void*, 4> vertexBuffers{}, fragmentBuffers{};
+  std::array<const void*, 5> vertexBuffers{};
+  std::array<const void*, 4> fragmentBuffers{};
   std::array<SceGxmTexture, 3> textures{};
 };
 
@@ -478,11 +479,13 @@ public:
     return native.bindings.back().second;
   }
 
-  // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette; fragment BUFFER[0] Shade,
-  // [1] Scene. Sampler slot r reads the texture bound at unit units[r].
+  // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette, [4] View; fragment
+  // BUFFER[0] Shade, [1] Scene. Sampler slot r reads the texture bound at unit
+  // units[r].
   void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units) {
     bind_program(program, shaded_blend(native));
-    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes, blocks.view,
+                      blocks.viewBytes);
 
     // Material uniforms in GPU memory: persistent CDRAM blocks or the frame
     // slot's uniforms, read in place (fragment BUFFER[2]/[3], vertex BUFFER[3]).
@@ -675,12 +678,15 @@ public:
       copy.count = count;
     }
 
-    // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette, [3] animated; fragment
-    // [0] Shade, [1] Scene, [2] material, [3] animated, as prepare_shaded
-    // binds them. Absent blocks and the rest read the utility block.
-    const auto shaded = draws.shaded_buffers(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette, [3] animated, [4] View;
+    // fragment [0] Shade, [1] Scene, [2] material, [3] animated, as
+    // prepare_shaded binds them. Absent blocks and the rest read the utility
+    // block.
+    const auto shaded = draws.shaded_buffers(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes,
+                                             blocks.view, blocks.viewBytes);
     const void* unused = utility.data();
-    const std::array<const void*, 4> vertexBuffers{shaded.draw, shaded.scene, shaded.palette ? shaded.palette : unused, blocks.animated.data ? blocks.animated.data : unused};
+    const std::array<const void*, 5> vertexBuffers{shaded.draw, shaded.scene, shaded.palette ? shaded.palette : unused, blocks.animated.data ? blocks.animated.data : unused,
+                                                   shaded.view ? shaded.view : unused};
     const std::array<const void*, 4> fragmentBuffers{shaded.shade ? shaded.shade : unused, shaded.scene, blocks.material.data ? blocks.material.data : unused,
                                                      blocks.animated.data ? blocks.animated.data : unused};
     std::array<const void*, SCE_GXM_MAX_UNIFORM_BUFFERS> all;

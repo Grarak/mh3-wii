@@ -476,11 +476,13 @@ int main(void) {
   assert(offsetof(mh3_shade_gpu_animated, srt) == 176);
   assert(sizeof(mh3_shade_gpu_animated) == 272);
   srt_rows();
-  /* std140 offsets of the Draw block as declared in native_shader_source.cpp */
-  assert(offsetof(mh3_shade_vertex, viewport) == 64);
-  assert(offsetof(mh3_shade_vertex, texgen) == 144);
+  /* std140 offsets of the View and Draw blocks as declared in native_shader_source.cpp */
+  assert(offsetof(mh3_shade_view, viewport) == 64);
+  assert(sizeof(mh3_shade_view) == 80);
+  assert(offsetof(mh3_shade_vertex, texgen) == 64);
   assert(sizeof(mh3_shade_texgen) == 112);
-  assert(sizeof(mh3_shade_vertex) == 480);
+  assert(sizeof(mh3_shade_vertex) == 400);
+  assert(MH3_SHADE_VERTEX_BYTES(1) == 176 && MH3_SHADE_VERTEX_BYTES(3) == sizeof(mh3_shade_vertex));
   assert(offsetof(mh3_shade_draw, fragment) == MH3_SHADE_FRAGMENT_OFFSET);
   assert(offsetof(mh3_shade_fragment, alpha_range) == 32);
   assert(offsetof(mh3_shade_fragment, shading) == 48);

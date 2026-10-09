@@ -206,9 +206,9 @@ GLuint g_materialVao = 0, g_materialVertexBuffer = 0, g_materialIndexBuffer = 0,
 // Fixed shading programs: per-draw Draw+Shade and Palette blocks, Scene on revision.
 GLuint g_shadeMeshVao = 0, g_shadeGeometryVao = 0, g_shadeGeometryVertexBuffer = 0, g_shadeGeometryIndexBuffer = 0;
 GLuint g_shadeQuadVao = 0, g_shadeQuadVertexBuffer = 0, g_shadeQuadIndexBuffer = 0;
-GLuint g_shadeDrawBuffer = 0, g_shadeSceneBuffer = 0;
+GLuint g_shadeDrawBuffer = 0, g_shadeSceneBuffer = 0, g_shadeViewBuffer = 0;
 std::array<uint8_t, 3> g_shadeGeometryCoordinates{};
-uint64_t g_shadeSceneRevision = UINT64_MAX;
+uint64_t g_shadeSceneRevision = UINT64_MAX, g_shadeViewRevision = UINT64_MAX;
 
 // Persistent uniform blocks: ranges of one UBO, aligned to the offset
 // alignment. Retired ranges are reused after the frames that may read them.
@@ -441,14 +441,14 @@ void shutdown() noexcept {
       if (vao)
         glDeleteVertexArrays(1, &vao);
     const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeQuadVertexBuffer, g_shadeQuadIndexBuffer, g_shadeDrawBuffer, g_shadeSceneBuffer,
-                                   g_uniformBlockBuffer, g_streamedMaterial.buffer, g_streamedAnimated.buffer};
+                                   g_shadeViewBuffer, g_uniformBlockBuffer, g_streamedMaterial.buffer, g_streamedAnimated.buffer};
     for (GLuint buffer : shadeBuffers)
       if (buffer)
         glDeleteBuffers(1, &buffer);
     g_shadeMeshVao = g_shadeGeometryVao = g_shadeGeometryVertexBuffer = g_shadeGeometryIndexBuffer = 0;
     g_shadeQuadVao = g_shadeQuadVertexBuffer = g_shadeQuadIndexBuffer = 0;
-    g_shadeDrawBuffer = g_shadeSceneBuffer = 0;
-    g_shadeSceneRevision = UINT64_MAX;
+    g_shadeDrawBuffer = g_shadeSceneBuffer = g_shadeViewBuffer = 0;
+    g_shadeSceneRevision = g_shadeViewRevision = UINT64_MAX;
     g_uniformBlockBuffer = 0;
     g_uniformBlockCursor = 0;
     g_uniformBlockBytes = 0;
@@ -1724,6 +1724,17 @@ void bind_shaded_blocks(const ShadedBlocks& blocks) {
   }
 
   bind_uniform_range(1, g_shadeSceneBuffer, 0, blocks.sceneBytes);
+
+  if (!blocks.view)
+    return;
+
+  if (blocks.viewRevision != g_shadeViewRevision || !g_shadeViewBuffer) {
+    glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeViewBuffer));
+    glBufferData(GL_UNIFORM_BUFFER, blocks.viewBytes, blocks.view, GL_STREAM_DRAW);
+    g_shadeViewRevision = blocks.viewRevision;
+  }
+
+  bind_uniform_range(6, g_shadeViewBuffer, 0, blocks.viewBytes);
 }
 
 void bind_shaded_samplers(GLuint program, const std::array<uint8_t, 3>& units) {

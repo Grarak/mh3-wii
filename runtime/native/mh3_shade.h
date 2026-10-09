@@ -16,6 +16,7 @@
  * multiplies, prev + X layers (up to three) and stages that leave prev alone. */
 #include "mh3_model_state.h"
 #include "mh3_material_state.h"
+#include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
@@ -63,14 +64,22 @@ typedef struct mh3_shade_modulate {
     float w0[4], w1[4], offset[4], kv[4], kc[4], d[4], s[4];
 } mh3_shade_modulate;
 
+/* The View block (mesh vertex stage, binding 6 / vertex BUFFER[4]): the
+ * projection and viewport, shared by the draws that use them; a new block
+ * only when they change. */
+typedef struct mh3_shade_view {
+    float proj[16];
+    float viewport[4]; /* xy render size, zw clip-space pixel-centre correction */
+} mh3_shade_view;
+
 /* One per-draw allocation holds two std140 blocks: Draw (vertex stage,
  * binding 0 / vertex BUFFER[0]) at offset 0 and Shade (fragment stage,
  * binding 3 / fragment BUFFER[0]) at MH3_SHADE_FRAGMENT_OFFSET, so vertex
  * programs do not vary with the fragment model. Shade's tail is declared per
- * model; only MH3_SHADE_FRAGMENT_BYTES(model) bytes are written and bound. */
+ * model; only MH3_SHADE_FRAGMENT_BYTES(model) bytes are written and bound.
+ * A mesh draw writes Draw up to its last texture role's texgen
+ * (MH3_SHADE_VERTEX_BYTES): its program reads no other role. */
 typedef struct mh3_shade_vertex {
-    float proj[16];
-    float viewport[4]; /* xy render size, zw clip-space pixel-centre correction */
     int32_t flags[4];
     float channel_material[4], channel_ambient[4];
     int32_t channel[4]; /* x colour light mask, y alpha light mask, z bits, w functions */
@@ -89,7 +98,7 @@ typedef struct mh3_shade_fragment {
 
 typedef struct mh3_shade_draw {
     mh3_shade_vertex vertex;
-    float reserved[8];
+    float reserved[28]; /* Shade at MH3_SHADE_FRAGMENT_OFFSET */
     mh3_shade_fragment fragment;
 } mh3_shade_draw;
 
@@ -98,6 +107,7 @@ enum {
     MH3_SHADE_MODULATE
 };
 #define MH3_SHADE_FRAGMENT_OFFSET 512u
+#define MH3_SHADE_VERTEX_BYTES(textures) ((uint32_t)offsetof(mh3_shade_vertex, texgen) + (uint32_t)(textures) * (uint32_t)sizeof(mh3_shade_texgen))
 #define MH3_SHADE_FRAGMENT_BYTES(model) (48u + ((model) == MH3_SHADE_MODULATE ? (uint32_t)sizeof(mh3_shade_modulate) : (uint32_t)sizeof(mh3_shade_basic)))
 #define MH3_SHADE_DRAW_BYTES(model) (MH3_SHADE_FRAGMENT_OFFSET + MH3_SHADE_FRAGMENT_BYTES(model))
 /* Per vertex ze = fog.x / (fog.y - depth * fog.w) (perspective; fog.x = a * 2^24,
