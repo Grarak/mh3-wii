@@ -7,6 +7,10 @@
 void RecordNativeDiscWrite(uint32_t destination,uint64_t partition_offset,uint32_t bytes);
 void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t bytes);
 void RetireNativeResourceOwner(uint32_t address,uint32_t bytes);
+/* A vertex producer installs this before retaining any sources/revisions.
+ * Generic overwrites notify it even when no disc interval is tracked. */
+using NativeModelVertexRetireHook=void(*)(uint32_t address,uint32_t bytes);
+void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook);
 /* Only a verified native material producer may use these. Exact block bounds
  * preserve the certified allocation/model identity while content revisions
  * change. Generic memcpy/DI/free/unknown overwrite always retires overlapping
@@ -60,6 +64,9 @@ struct NativeLiveMaterialBlock {
     uint64_t resident_generation,origin_offset,source_generation;
 };
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_material_block kind);
+/* Mapping belongs to a certified pipeline source extent. Mutable/copy blocks
+ * keep the admitted origin; unknown writes retire them. No live command read. */
+void ReadNativeModelCoordinateMap(uint32_t pipeline,uint8_t mapping[8],uint8_t* known);
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block);
 uint64_t NextNativeMaterialRevision();
 void CopyNativeLiveMaterialBlock(uint32_t destination,uint32_t source,mh3_model_material_block kind);
@@ -67,5 +74,6 @@ void CopyNativeLiveMaterialBlock(uint32_t destination,uint32_t source,mh3_model_
  * change in place. A bind event only advances binding_generation. */
 void MarkNativeVertexProduced(uint32_t payload,uint64_t generation);
 mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference,mh3_vertex_kind kind);
+mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource,mh3_vertex_kind kind);
 void StoreNativeVertexSource(uint32_t semantic,const mh3_native_vertex_source& source);
 bool ReadNativeVertexSource(uint32_t semantic,mh3_native_vertex_source* out);

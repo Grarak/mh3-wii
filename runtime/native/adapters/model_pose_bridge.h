@@ -11,3 +11,4 @@ void PublishNativeModelDualTexture(bool enabled);
 /* Reapply independent live selector state after an immutable material overlay.
  * Unknown remains unknown; this is never an identity/dual fallback. */
 void ApplyNativeModelSelectors(mh3_native_material_state& material);
+void PublishNativeModelMatrixRows(const uint32_t rows[8]);

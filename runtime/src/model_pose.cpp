@@ -139,6 +139,7 @@ void PublishNativeModelDualTexture(bool enabled) {
 void ApplyNativeModelSelectors(mh3_native_material_state& material) {
     Checked(mh3_model_matrix_overlay(&selectors,&material));
 }
+void PublishNativeModelMatrixRows(const uint32_t rows[8]) {Select(rows);}
 
 extern "C" void MH3_ModelViewPosition(CpuContext* cpu) {Array(cpu,0);}
 REGISTER_NATIVE_FUNCTION_AS(0x80080BC0,MH3_ModelViewPosition,"ModelViewPosition");
@@ -161,7 +162,7 @@ extern "C" void MH3_ModelMainMatrixSelect(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009B1A4,MH3_ModelMainMatrixSelect,"ModelMainMatrixSelect");
 extern "C" void MH3_ModelCurrentMatrixReset(CpuContext* cpu) {
-    if(!Memory::Read32(cpu->gpr[3])) {mh3_model_matrix_reset(&selectors);PublishSelectors();Memory::Write32(cpu->gpr[3],1);}
+    if(!Memory::Read8(cpu->gpr[3])) {mh3_model_matrix_reset(&selectors);PublishSelectors();Memory::Write8(cpu->gpr[3],1);}
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087CF0,MH3_ModelCurrentMatrixReset,"ModelCurrentMatrixReset");
 extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
@@ -171,7 +172,7 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
     Checked(mh3_model_matrix_rows(types,int32_t(cpu->gpr[4]),rows,&apply));
     const bool identity=std::all_of(std::begin(rows),std::end(rows),[](uint32_t row){return row==60;});
     if(identity) {
-        if(!Memory::Read32(0x80796db4)) {mh3_model_matrix_reset(&selectors);PublishSelectors();Memory::Write32(0x80796db4,1);}
+        if(!Memory::Read8(0x80796db4)) {mh3_model_matrix_reset(&selectors);PublishSelectors();Memory::Write8(0x80796db4,1);}
         return;
     }
     if(std::any_of(std::begin(types),std::end(types),[](uint32_t type){return type==1;})) {
@@ -182,6 +183,6 @@ extern "C" void MH3_ModelPreTextureMatrices(CpuContext* cpu) {
         mh3_model_palette palette{};Checked(mh3_model_palette_rigid(&input,&sources,&palette));
         for(unsigned i=0;i<8;i++) if(types[i]==1) SetNativeTextureMatrix(30+i*3,&palette.texture[i].v[0][0],true);
     }
-    Select(rows);Memory::Write32(0x80796db4,0);
+    Select(rows);Memory::Write8(0x80796db4,0);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087D30,MH3_ModelPreTextureMatrices,"ModelPreTextureMatrices");

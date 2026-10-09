@@ -114,7 +114,11 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog,const mh
     if (r.mesh.model_id!=model.model_id || r.mesh.source_id!=shape_id || r.mesh.asset_id!=resource.asset_id)
         return MH3_PACK_INVALID;
     if (r.mesh.matrix_id<0) return MH3_PACK_UNSUPPORTED;
-    if (!r.mesh.vertices.data || !r.mesh.indices.data) return MH3_PACK_INVALID;
+    /* Metadata admission is independent of GPU residency. A demand loader
+     * can prepare immutable scalar layouts/ranges before allocating CDRAM.
+     * The backend later replaces spans with its validated resident mesh. */
+    if ((!r.mesh.vertices.data || !r.mesh.indices.data) &&
+        (r.mesh.vertices.data || r.mesh.indices.data || pack->gpu.data || pack->gpu.size)) return MH3_PACK_INVALID;
     status=mh3_mesh_pack_layout(pack,r.mesh.layout_index,&r.layout);if (status!=MH3_PACK_OK) return status;
     int position=0,normal=0;
     for (uint32_t i=0;i<r.layout.count;i++) {

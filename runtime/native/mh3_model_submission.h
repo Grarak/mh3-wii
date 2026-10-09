@@ -36,7 +36,9 @@ typedef struct mh3_resolved_mesh_submit {
     const mh3_model_texcoord_sizes *texcoord_sizes;
     uint32_t first_index, index_count;
 } mh3_resolved_mesh_submit;
-/* Admit once per resident generation. No borrowed live material/pose/camera
+/* Admit once per resident generation. Metadata-only packs may have both GPU
+ * spans absent; actual submission must resolve the validated resident mesh.
+ * No borrowed live material/pose/camera
  * pointers are cached. Callers key this immutable record by resident handle,
  * generation and catalog model/shape ID, and retire it with the allocation. */
 typedef struct mh3_prepared_mesh {

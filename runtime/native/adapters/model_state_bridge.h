@@ -8,6 +8,9 @@ mh3_native_texture_binding ReadNativeTextureObject(uint32_t object);
 void StoreNativeTextureObject(uint32_t object,const mh3_native_texture_binding& binding);
 mh3_native_palette_source ReadNativePaletteObject(uint32_t object);
 void StoreNativePaletteObject(uint32_t object,const mh3_native_palette_source& palette);
+void SelectNativeModelTextureObjects(uint32_t state,uint32_t objects);
+void SelectNativeModelPaletteObjects(uint32_t state,uint32_t objects);
+void LoadNativeModelTextureSrt(uint32_t resource);
 void MarkNativeTextureProduced(uint32_t payload,uint64_t generation);
 uint64_t ReadNativeTextureGeneration(uint32_t payload);
 /* True only for the explicit resource-initialization revision. Unknown and

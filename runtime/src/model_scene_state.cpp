@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_state_bridge.h"
+#include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_model_state.h"
 #include <stdexcept>
 #include <string>
@@ -197,8 +198,12 @@ extern "C" void MH3_ModelTextureReplace(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80069A2C,MH3_ModelTextureReplace,"ModelTextureReplace");
 extern "C" void MH3_ModelTextureSelect(CpuContext* cpu) {
-    const uint32_t objects=Resource(cpu->gpr[4]);uint8_t changed=0;
-    Checked(mh3_resource_objects_cache(Mutable(cpu->gpr[3],257),Bytes(objects,260),0,&changed));
+    SelectNativeModelTextureObjects(cpu->gpr[3],Resource(cpu->gpr[4]));
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80085EAC,MH3_ModelTextureSelect,"ModelTextureSelect");
+void SelectNativeModelTextureObjects(uint32_t state,uint32_t objects) {
+    uint8_t changed=0;
+    Checked(mh3_resource_objects_cache(Mutable(state,257),Bytes(objects,260),0,&changed));
     for (uint32_t i=0;i<8;i++) {
         int present=0;Checked(mh3_resource_objects_present(Bytes(objects,260),i,0,&present));
         if (!present) continue;
@@ -206,20 +211,27 @@ extern "C" void MH3_ModelTextureSelect(CpuContext* cpu) {
         // Producer generation can change without changing CPU object bytes.
         // The backend checks explicit identity/revision, never texture content.
         BindNativeTexture(binding);
-        if (changed&(1u<<i)) Checked(mh3_texture_scale_size(Mutable(0x8068530c,36),i,uint16_t(binding.source.width),uint16_t(binding.source.height)));
+        if (changed&(1u<<i)) {
+            if(binding.source.width>UINT16_MAX || binding.source.height>UINT16_MAX)
+                throw std::runtime_error("Native G3D texture dimensions exceed coordinate cache");
+            Checked(mh3_texture_scale_size(Mutable(0x8068530c,36),i,uint16_t(binding.source.width),uint16_t(binding.source.height)));
+            PublishNativeModelMapSize(i,uint16_t(binding.source.width),uint16_t(binding.source.height));
+        }
     }
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80085EAC,MH3_ModelTextureSelect,"ModelTextureSelect");
 extern "C" void MH3_ModelPaletteSelect(CpuContext* cpu) {
-    const uint32_t objects=Resource(cpu->gpr[4]);uint8_t changed=0;
-    Checked(mh3_resource_objects_cache(Mutable(cpu->gpr[3],98),Bytes(objects,100),1,&changed));
+    SelectNativeModelPaletteObjects(cpu->gpr[3],Resource(cpu->gpr[4]));
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800860A8,MH3_ModelPaletteSelect,"ModelPaletteSelect");
+void SelectNativeModelPaletteObjects(uint32_t state,uint32_t objects) {
+    uint8_t changed=0;
+    Checked(mh3_resource_objects_cache(Mutable(state,98),Bytes(objects,100),1,&changed));
     for (uint32_t i=0;i<8;i++) {
         int present=0;Checked(mh3_resource_objects_present(Bytes(objects,100),i,1,&present));
         if (present) BindNativePalette(i,ReadNativePaletteObject(objects+4+i*12));
     }
     Checked(mh3_texture_cache_palette_changed(Mutable(0x80685380,257),changed));
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800860A8,MH3_ModelPaletteSelect,"ModelPaletteSelect");
 extern "C" void MH3_ModelDepthCompare(CpuContext* cpu) {
     int apply=0;Checked(mh3_depth_compare_cache(Mutable(cpu->gpr[3],5),Mutable(0x80796db0,1),uint8_t(cpu->gpr[4])!=0,&apply));
     if (apply) SetNativeDepthCompareBeforeTexture(uint8_t(cpu->gpr[4])!=0);

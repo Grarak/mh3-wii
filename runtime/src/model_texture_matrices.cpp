@@ -48,7 +48,11 @@ extern "C" void MH3_CalcTextureSrtXsi(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x800D754C,MH3_CalcTextureSrtXsi,"CalcTextureSrtXsi");
 
 extern "C" void MH3_LoadModelTextureSrt(CpuContext* cpu) {
-    mh3_native_texture_srt srt{};Checked(mh3_texture_srt_read(Bytes(Resource(cpu->gpr[3]),0x248),&srt));
+    LoadNativeModelTextureSrt(Resource(cpu->gpr[3]));
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800871C0,MH3_LoadModelTextureSrt,"LoadModelTextureSrt");
+void LoadNativeModelTextureSrt(uint32_t resource) {
+    mh3_native_texture_srt srt{};Checked(mh3_texture_srt_read(Bytes(resource,0x248),&srt));
     mh3_matrix34 maps[8]{};uint32_t sources[8]{};
     // The constructor defines these exact built-in mapping functions. Custom
     // slots may change their callback and type at runtime; reject those until
@@ -77,7 +81,6 @@ extern "C" void MH3_LoadModelTextureSrt(CpuContext* cpu) {
     }
     Memory::Write32(0x80796db8,next);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800871C0,MH3_LoadModelTextureSrt,"LoadModelTextureSrt");
 
 extern "C" void MH3_NormalTextureMatrix(CpuContext* cpu) {
     mh3_matrix33 normal{};mh3_matrix34 matrix{};

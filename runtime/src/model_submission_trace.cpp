@@ -222,10 +222,8 @@ extern "C" void MH3_ModelDraw(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80078B00, MH3_ModelDraw, "G3dDrawOpaXlu");
 
-extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
+void TraceNativeModelDispatch(CpuContext* cpu) {
 #ifdef MH3_DEVELOPMENT
     TraceDispatch(cpu);
 #endif
-    func_80076A58(cpu);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch");

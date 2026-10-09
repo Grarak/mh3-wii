@@ -10,6 +10,7 @@
 #include <vector>
 #include <unordered_map>
 #include <map>
+#include <sstream>
 #include <cstring>
 
 namespace {
@@ -39,6 +40,7 @@ std::unordered_map<uint64_t,CachedResource> resources;
 std::unordered_map<uint64_t,CachedBlock> blocks;
 std::map<uint64_t,NativeLiveMaterialBlock> live_blocks;
 uint64_t material_revision=0;
+NativeModelVertexRetireHook vertex_retire=nullptr;
 void Checked(mh3_res_status status) {
     if(status!=MH3_RES_OK) throw std::runtime_error("Native model provenance failed: "+std::to_string(status));
 }
@@ -140,6 +142,7 @@ void RecordNativeDiscWrite(uint32_t destination,uint64_t offset,uint32_t bytes) 
     Initialize();destination=Canonical(destination,bytes);
     Checked(mh3_source_record_disc(&tracker,destination,bytes,offset,NextGeneration()));
     RetireNativeModelPose(destination,bytes);
+    if(vertex_retire) vertex_retire(destination,bytes);
     RetireCertificates(destination,bytes);RetireLiveBlocks(destination,bytes);InvalidateSourceCache();
 }
 void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t bytes) {
@@ -156,6 +159,7 @@ void RecordNativeResourceCopy(uint32_t destination,uint32_t source,uint32_t byte
     if(tracked || !owner_copies.empty())
         Checked(mh3_source_record_copy(&tracker,destination,source,bytes,generation));
     RetireNativeModelPose(destination,bytes);
+    if(vertex_retire) vertex_retire(destination,bytes);
     // A typed mutation may already have retired the byte provenance. Unknown
     // writes must still retire the independent allocation certificate.
     const bool retired_owner=RetireCertificates(destination,bytes),retired_block=RetireLiveBlocks(destination,bytes);
@@ -172,8 +176,13 @@ void RetireNativeResourceOwner(uint32_t address,uint32_t bytes) {
     const bool tracked=mh3_source_intersects(&tracker,address,bytes);
     if(tracked) Checked(mh3_source_retire(&tracker,address,bytes));
     RetireNativeModelPose(address,bytes);
+    if(vertex_retire) vertex_retire(address,bytes);
     const bool retired_owner=RetireCertificates(address,bytes),retired_block=RetireLiveBlocks(address,bytes);
     if(retired_owner || retired_block || tracked) InvalidateSourceCache();
+}
+void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook) {
+    if(vertex_retire && hook!=vertex_retire) throw std::runtime_error("Native vertex retirement owner already installed");
+    vertex_retire=hook;
 }
 void RecordNativeTypedMaterialWrite(uint32_t address,uint32_t bytes,mh3_model_material_block kind) {
     if(!bytes) return;
@@ -253,7 +262,10 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
                     if(alias->second.bytes!=origin.bytes ||
                        mh3_model_material_group_select(&material,mh3_model_material_block(kind),count,&a)!=MH3_PACK_OK ||
                        mh3_model_material_group_select(&other,mh3_model_material_block(kind),count,&b)!=MH3_PACK_OK ||
-                       std::memcmp(&a,&b,sizeof a))
+                       std::memcmp(&a,&b,sizeof a) ||
+                       (kind==MH3_MODEL_MATERIAL_PIPELINE &&
+                        (material.texcoord_map_known!=other.texcoord_map_known ||
+                         std::memcmp(material.texcoord_map,other.texcoord_map,8))))
                         throw std::runtime_error("Shared material source extent has inconsistent typed ownership");
                 } else admitted.origins.emplace(key,origin);
             }
@@ -407,7 +419,10 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address,mh3_model_m
             pack.handle,pack.generation,identity.partition_offset,generation};
         block.fields.generation=NextNativeMaterialRevision();live_blocks.emplace(key,block);return block;
     }
-    throw std::runtime_error("Material block has no admitted typed source extent");
+    std::ostringstream detail;
+    detail<<"Material block has no admitted typed source extent: address=0x"<<std::hex<<address
+          <<" kind="<<std::dec<<uint32_t(kind)<<" partition_offset=0x"<<std::hex<<identity.partition_offset;
+    throw std::runtime_error(detail.str());
 }
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
     if(!block.fields.generation || block.fields.generation>material_revision ||
@@ -420,6 +435,17 @@ void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
         live_blocks.insert_or_assign(LiveKey(block.address,block.kind),block);return;
     }
     throw std::runtime_error("Native material publication refers to a retired resident allocation");
+}
+void ReadNativeModelCoordinateMap(uint32_t pipeline,uint8_t mapping[8],uint8_t* known) {
+    if(!mapping || !known) throw std::runtime_error("Native coordinate mapping requires outputs");
+    const auto block=ReadNativeLiveMaterialBlock(pipeline,MH3_MODEL_MATERIAL_PIPELINE);
+    for(const auto& pack:packs) if(pack.handle==block.resident_handle && pack.generation==block.resident_generation) {
+        const auto origin=pack.origins.find(std::make_pair(block.origin_offset,uint32_t(MH3_MODEL_MATERIAL_PIPELINE)));
+        if(origin==pack.origins.end()) break;
+        const auto& prepared=pack.materials.at(origin->second.material_index);
+        std::memcpy(mapping,prepared.texcoord_map,8);*known=prepared.texcoord_map_known;return;
+    }
+    throw std::runtime_error("Native coordinate mapping owner was retired");
 }
 void CopyNativeLiveMaterialBlock(uint32_t destination,uint32_t source,mh3_model_material_block kind) {
     auto block=ReadNativeLiveMaterialBlock(source,kind);
