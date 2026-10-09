@@ -5,6 +5,8 @@
 #include <aurora/native_scene_feedback.hpp>
 #include "texture_convert.hpp"
 #include "native_texture_layout.hpp"
+#include "native_texture_set.hpp"
+#include "../gl/gl.hpp"
 #include "../gxm/sampler_bias.hpp"
 #include <aurora/fast_map.h>
 #include <algorithm>
@@ -517,3 +519,11 @@ void restore_native_textures() {
   }
 }
 } // namespace aurora
+
+namespace aurora::gl {
+NativeTextureReadStats take_native_texture_read_stats() noexcept {
+  auto& s = gfx::NativeTextureSet::read_stats();
+  return {s.count.exchange(0, std::memory_order_relaxed), s.bytes.exchange(0, std::memory_order_relaxed), s.ns.exchange(0, std::memory_order_relaxed),
+          s.longestNs.exchange(0, std::memory_order_relaxed)};
+}
+} // namespace aurora::gl

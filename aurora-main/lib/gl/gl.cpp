@@ -752,12 +752,12 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
 
 #if defined(__cpp_exceptions)
   try {
-    gfx::NativeTextureSet::read(entry, payload.data());
+    g_nativeTextures.read(entry, payload.data());
   } catch (const std::exception& e) {
     Log.fatal("{}", e.what());
   }
 #else
-  gfx::NativeTextureSet::read(entry, payload.data());
+  g_nativeTextures.read(entry, payload.data());
 #endif
 
   const auto layout = gfx::native_texture_layout(info.width, info.height, info.mips, info.format);

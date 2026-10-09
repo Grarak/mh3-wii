@@ -54,7 +54,10 @@
 #include <filesystem>
 #include <stdexcept>
 #include <memory>
+#include <condition_variable>
+#include <deque>
 #include <mutex>
+#include <thread>
 #include <string>
 #ifdef MH3_DEVELOPMENT
 #include "gx/gx.hpp"
@@ -199,6 +202,58 @@ void ShutdownGraphics() {
 }
 } // namespace
 
+// Opens the texture packs the asset cache hands on while the game loads, one
+// at a time, reading each pack's payloads into memory (aurora's native
+// texture set): at a texture's first use the render thread then copies from
+// RAM instead of reading the card (12-30 ms a texture on the Vita, a visible
+// stutter when something new appears).
+class PackPreloader {
+  public:
+    static PackPreloader& Get() {
+        static PackPreloader* preloader = new PackPreloader; // lives until exit
+        return *preloader;
+    }
+
+    // From the asset cache with its lock held: queues only.
+    void Queue(const std::string& pack) {
+        std::lock_guard guard(lock);
+        packs.push_back(pack);
+
+        if (!started) {
+            started = true;
+            std::thread([this] { Run(); }).detach();
+        }
+
+        wake.notify_one();
+    }
+
+  private:
+    void Run() {
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+
+        for (;;) {
+            std::string pack;
+            {
+                std::unique_lock guard(lock);
+
+                // Timed: VitaSDK's condition variable can lose a notification.
+                while (packs.empty())
+                    wake.wait_for(guard, std::chrono::milliseconds(100));
+
+                pack = std::move(packs.front());
+                packs.pop_front();
+            }
+
+            aurora::gl::open_native_texture_pack(pack.c_str());
+        }
+    }
+
+    std::mutex lock;
+    std::condition_variable wake;
+    std::deque<std::string> packs;
+    bool started = false;
+};
+
 void OpenNativeAssets() {
     const char* discRoot = std::getenv("MH3_DISC_DIR");
     const char* nativeRoot = std::getenv("MH3_NATIVE_ASSET_DIR");
@@ -214,8 +269,11 @@ void OpenNativeAssets() {
                             "native-textures.bin";
     if (std::filesystem::exists(nativePack))
         aurora::gl::open_native_texture_pack(nativePack.string().c_str());
-    else if (GameAssetCache())
-        // Load-time conversion: a texture's pack is opened at its first use.
+    else if (GameAssetCache()) {
+        // Load-time conversion: the packs of the files a load reads are
+        // opened (their payloads read into memory) beside the load; one not
+        // opened yet is at its first texture's use.
+        GameAssetCache()->SetTexturePackReady([](const std::string& pack) { PackPreloader::Get().Queue(pack); });
         aurora::gl::set_native_texture_resolver([](uint32_t asset) {
             std::string pack;
             const Status found = GameAssetCache()->TexturePack(asset, pack);
@@ -227,6 +285,8 @@ void OpenNativeAssets() {
 
             aurora::gl::open_native_texture_pack(pack.c_str());
         });
+    }
+
     LoadNativeModelAssets(nativeRoot ? nativeRoot : discRoot);
 }
 
@@ -698,6 +758,10 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      ms(NativeRenderSplit::ModelPrep), ms(NativeRenderSplit::ModelDraw), ms(NativeRenderSplit::ModelShade), ms(NativeRenderSplit::MaterialGeometry),
                      ms(NativeRenderSplit::Geometry), ms(NativeRenderSplit::Gl), ms(NativeRenderSplit::End), ms(NativeRenderSplit::Waiting), static_cast<unsigned long long>(split.packets), static_cast<unsigned long long>(samples));
     }
+
+    if (const auto reads = aurora::gl::take_native_texture_read_stats(); reads.count)
+        std::fprintf(stderr, "MH3 texture reads: %llu (%.1f KiB, %.2f ms, longest %.2f ms)\n", static_cast<unsigned long long>(reads.count), double(reads.bytes) / 1024.0,
+                     double(reads.ns) / 1e6, double(reads.longestNs) / 1e6);
 
     if (renderWindow && sameRenderThread && render.cpu.available && previousRender.cpu.available && render.cpu.running_us >= previousRender.cpu.running_us)
         std::fprintf(stderr, "MH3 native work: render CPU %.1f%%, thread %d core %d affinity %x (scheduled execution; window %.3f s)\n",

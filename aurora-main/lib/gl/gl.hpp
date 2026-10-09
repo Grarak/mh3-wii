@@ -121,6 +121,13 @@ void open_native_texture_pack(const char* path) noexcept;
 
 // Called for an asset no open pack holds; it opens the pack that holds it.
 void set_native_texture_resolver(void (*resolver)(uint32_t asset)) noexcept;
+
+// Native texture payload reads from the packs since the previous call, on
+// whatever thread did them (the render thread at a texture's first use).
+struct NativeTextureReadStats {
+  uint64_t count, bytes, ns, longestNs;
+};
+NativeTextureReadStats take_native_texture_read_stats() noexcept;
 NativeTextureInfo native_texture_info(uint32_t asset) noexcept;
 
 // Reads an immutable offline payload directly into a fresh CDRAM allocation.

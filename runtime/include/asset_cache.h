@@ -49,6 +49,12 @@ class AssetCache {
     // `map`, and the streams it read before are extracted ahead of their use.
     void PrefetchStreams(const std::string& map);
 
+    // Called with a source file's texture pack once it is written and the
+    // game has read the file (a load), on the reading or the converting
+    // thread with the cache locked: it must only hand the path on.
+    using PackReady = std::function<void(const std::string& pack)>;
+    void SetTexturePackReady(PackReady ready);
+
     // The converted pack holding texture asset `id`, once it is written; an
     // error when the asset is unknown or its source failed to convert.
     Status TexturePack(uint32_t id, std::string& pack);

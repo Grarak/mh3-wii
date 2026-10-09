@@ -1641,7 +1641,7 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
     const auto entry = g_nativeTextures.find(asset);
     const auto& record = *entry.record;
     std::vector<uint8_t> payload(record.bytes);
-    gfx::NativeTextureSet::read(entry, payload.data());
+    g_nativeTextures.read(entry, payload.data());
 
     // As on GLES: block-compressed and paletted packs decode to RGBA8.
     const auto layout = gfx::native_texture_layout(info.width, info.height, info.mips, info.format);

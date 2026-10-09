@@ -1067,7 +1067,7 @@ TexturePtr native_texture_asset(uint32_t asset) noexcept {
       AURORA_THROW(std::runtime_error("Native texture payload does not match CDRAM layout"));
     // New allocation: no preceding scene refers to these bytes. The queued
     // upload runs before any draw consumes them, with no finish or staging copy.
-    gfx::NativeTextureSet::read(entry, storage.pixels());
+    g_nativeTextures.read(entry, storage.pixels());
   });
   return texture;
 }

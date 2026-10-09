@@ -7,6 +7,11 @@
 #include <aurora/fatal.hpp>
 #include "native_texture_pack.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <utility>
+#include <atomic>
+#include <chrono>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -16,6 +21,7 @@
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/sysmem.h>
 #else
 #include <cerrno>
 #include <fcntl.h>
@@ -27,10 +33,13 @@ namespace aurora::gfx {
 class NativeTextureSet {
 public:
   using Resolver = void (*)(uint32_t id);
+  struct Pack;
+
   struct Entry {
     const NativeTextureRecord* record;
     const std::string* path;
     uint32_t version;
+    Pack* pack = nullptr;
   };
 
   void set_resolver(Resolver resolver) {
@@ -64,14 +73,45 @@ public:
       end = r.offset + r.bytes;
     }
 
+    {
+      std::lock_guard guard(m_lock);
+
+      if (const auto existing = m_packs.find(base + 1); existing != m_packs.end()) {
+        if (existing->second->path != path || existing->second->records.size() != count)
+          AURORA_THROW(std::runtime_error("Native texture packs overlap: " + path));
+
+        return;
+      }
+    }
+
+    // The payloads into memory now, in one read (the asset cache adds a pack
+    // while the game loads): a texture's first use then copies from RAM. On
+    // the Vita's card a read at first use stalled the render thread 12-30 ms
+    // each, most of it opening the file.
+    pack->first = 32 + table.size();
+    const uint64_t payloadBytes = end - pack->first;
+    uint8_t* region = nullptr;
+
+    if (Arena& arena = resident_arena(); payloadBytes && payloadBytes <= arena.size) {
+      std::lock_guard guard(m_lock);
+      region = reserve(arena, payloadBytes);
+    }
+
+    // Read outside the lock: the region's earlier packs were evicted first,
+    // and a reader copies under the lock, so none still reads them.
+    if (region)
+      file.read(region, pack->first, payloadBytes);
+
+    pack->file = std::make_unique<File>(std::move(file));
     std::lock_guard guard(m_lock);
-    const auto existing = m_packs.find(base + 1);
+    std::erase_if(m_filling, [&](const Filling& f) { return f.region == region; });
 
-    if (existing != m_packs.end()) {
-      if (existing->second->path != path || existing->second->records.size() != count)
-        AURORA_THROW(std::runtime_error("Native texture packs overlap: " + path));
-
+    if (m_packs.count(base + 1))
       return;
+
+    if (region) {
+      pack->resident = region;
+      pack->residentBytes = payloadBytes;
     }
 
     const auto next = m_packs.lower_bound(base + 1);
@@ -106,15 +146,111 @@ public:
     AURORA_THROW(std::runtime_error("Unknown native texture asset " + std::to_string(id)));
   }
 
-  // Reads the record's payload into `out` (r.bytes long).
-  static void read(const Entry& entry, void* out) { File(*entry.path).read(out, entry.record->offset, entry.record->bytes); }
+  // Reads the record's payload into `out` (r.bytes long): from memory while
+  // the pack is resident, else from its open file, counted in read_stats.
+  void read(const Entry& entry, void* out) const {
+    {
+      // Under the lock: a pack added meanwhile may take over this region.
+      std::lock_guard guard(m_lock);
+
+      if (const uint8_t* resident = entry.pack->resident) {
+        std::memcpy(out, resident + (entry.record->offset - entry.pack->first), entry.record->bytes);
+        return;
+      }
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    entry.pack->file->read(out, entry.record->offset, entry.record->bytes);
+    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    auto& s = read_stats();
+    s.count.fetch_add(1, std::memory_order_relaxed);
+    s.bytes.fetch_add(entry.record->bytes, std::memory_order_relaxed);
+    s.ns.fetch_add(ns, std::memory_order_relaxed);
+
+    for (uint64_t longest = s.longestNs.load(std::memory_order_relaxed); ns > longest && !s.longestNs.compare_exchange_weak(longest, ns, std::memory_order_relaxed);) {
+    }
+  }
+
+  struct ReadStats {
+    std::atomic<uint64_t> count{0}, bytes{0}, ns{0}, longestNs{0};
+  };
+
+  static ReadStats& read_stats() {
+    static ReadStats stats;
+    return stats;
+  }
 
 private:
+  class File;
+
+public:
   struct Pack {
     std::string path;
     uint32_t version;
     std::vector<NativeTextureRecord> records;
+    uint64_t first = 0;               // file offset of the payloads
+    uint8_t* resident = nullptr;      // the payloads in the arena, until evicted (lock held)
+    uint64_t residentBytes = 0;
+    std::unique_ptr<File> file;       // kept open
   };
+
+private:
+  // The resident payloads share one 48 MiB ring of main memory (on the Vita
+  // its own memory block, outside the libc heap). Packs go in at the head;
+  // the head wrapping round evicts the oldest, which read from their files
+  // again.
+  struct Arena {
+    uint8_t* base = nullptr;
+    uint64_t size = 0, head = 0;
+  };
+
+  static constexpr uint64_t ArenaBytes = uint64_t(48) << 20;
+
+  static Arena& resident_arena() {
+    static Arena arena = [] {
+      Arena a;
+#ifdef __vita__
+      const SceUID block = sceKernelAllocMemBlock("MH3 texture packs", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, ArenaBytes, nullptr);
+      void* base = nullptr;
+
+      if (block >= 0 && sceKernelGetMemBlockBase(block, &base) >= 0)
+        a = {static_cast<uint8_t*>(base), ArenaBytes, 0};
+      else
+        std::fprintf(stderr, "aurora: no memory for resident texture packs (%08x); they read from their files\n", unsigned(block));
+#else
+      a = {new uint8_t[ArenaBytes], ArenaBytes, 0};
+#endif
+      return a;
+    }();
+    return arena;
+  }
+
+  // Lock held: `bytes` at the arena's head, evicting the packs there; null
+  // when another add is still reading into that part.
+  uint8_t* reserve(Arena& arena, uint64_t bytes) {
+    if (arena.head + bytes > arena.size)
+      arena.head = 0;
+
+    const uint64_t from = arena.head, to = from + bytes;
+
+    for (const auto& f : m_filling)
+      if (f.from < to && from < f.from + f.bytes)
+        return nullptr;
+
+    for (auto& [first, pack] : m_packs) {
+      if (!pack->resident)
+        continue;
+
+      const uint64_t at = uint64_t(pack->resident - arena.base);
+
+      if (at < to && from < at + pack->residentBytes)
+        pack->resident = nullptr;
+    }
+
+    arena.head = to;
+    m_filling.push_back({arena.base + from, from, bytes});
+    return arena.base + from;
+  }
 
   Entry lookup(uint32_t id) const {
     std::lock_guard guard(m_lock);
@@ -129,12 +265,14 @@ private:
     if (id - it->first >= pack.records.size())
       return {};
 
-    return {&pack.records[id - it->first], &pack.path, pack.version};
+    return {&pack.records[id - it->first], &pack.path, pack.version, it->second.get()};
   }
 
   class File {
   public:
     uint64_t size = 0;
+
+    File(File&& other) noexcept : size(other.size), m_path(std::move(other.m_path)), m_fd(std::exchange(other.m_fd, -1)) {}
     explicit File(const std::string& path) : m_path(path) {
 #ifdef __vita__
       m_fd = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
@@ -196,6 +334,13 @@ private:
 
   mutable std::mutex m_lock;
   std::map<uint32_t, std::unique_ptr<Pack>> m_packs; // by first ID
+  // Arena regions being read into (outside the lock).
+  struct Filling {
+    uint8_t* region;
+    uint64_t from, bytes;
+  };
+
+  std::vector<Filling> m_filling;
   Resolver m_resolver = nullptr;
 };
 } // namespace aurora::gfx
