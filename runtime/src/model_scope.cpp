@@ -1369,8 +1369,8 @@ struct ModelItem {
     ModelPrepInputs prep;
 };
 
-// Items of one frame packet, indexed by its exchange slot: the game thread
-// fills the producer's store, the render thread reads the consumer's.
+// Items of one frame packet, indexed by its ring slot: the game thread fills
+// the recording packet's store, the render thread reads the one it renders.
 struct ModelStore {
     std::vector<ModelItem> items;
     ModelPrepSrtList srts;
@@ -1378,7 +1378,7 @@ struct ModelStore {
     uint64_t sequence = UINT64_MAX;
 };
 
-std::array<ModelStore, 3> stores;
+std::array<ModelStore, kNativeFramePacketSlots> stores;
 
 // Frames that are not recorded still prepare (guest/selector side effects).
 ModelStore scratch;

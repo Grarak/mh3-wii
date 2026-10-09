@@ -2,9 +2,10 @@
 // typed draw records (model items, material/UI geometry, depth clears, scene
 // feedback) with the shading state captured per changed component; the render
 // thread alone owns the graphics API: it restores each record's state, draws,
-// and presents. Packets travel through the three-slot newest-wins exchange
-// (mh3_frame_state_exchange): an unrendered packet may be replaced by a newer
-// one, so resource work goes through the task queues instead.
+// and presents. Packets travel through a ring of four, rendered in order
+// (docs/frame-packet-ring.md); without the game thread limiter an unrendered
+// packet may be skipped, so resource work goes through the task queues
+// instead.
 #pragma once
 #include <aurora/native_geometry.h>
 #include <aurora/native_scene_feedback.hpp>
@@ -36,17 +37,22 @@ bool RecordNativeSceneClone(const void* destination, const void* source);
 uint64_t NativeSceneFeedbackVersion(const void* identity, uint32_t width, uint32_t height);
 
 // Resource work outside the draw stream. Publications run before the draws
-// of the frame that queued them, retirements after them; a replaced packet
+// of the frame that queued them, retirements after them; a skipped packet
 // never drops either. Runs inline while no render thread exists.
 enum class NativeTaskOrder { BeforeDraws, AfterDraws };
 void QueueNativeGraphicsTask(NativeTaskOrder order, std::function<void()> task);
 
-// The recording packet's exchange slot (0..2) and frame sequence.
+// The packet ring's slots (native_frame_packet.cpp): the packet the render
+// thread renders, two published behind it and the one the game thread records.
+inline constexpr uint32_t kNativeFramePacketSlots = 4;
+
+// The recording packet's slot (its sequence modulo kNativeFramePacketSlots)
+// and frame sequence.
 uint32_t NativeFramePacketSlot();
 uint64_t NativeFramePacketSequence();
 
-// Game thread: every packet up to this sequence has rendered or was replaced
-// unrendered, so nothing it recorded is read any more (all of them while no
+// Game thread: every packet up to this sequence has rendered or was skipped
+// unrendered (MH3_PROFILE=unpaced), so nothing it recorded is read any more (all of them while no
 // render thread runs).
 uint64_t NativeFramePacketsDone();
 
@@ -59,15 +65,16 @@ void StopNativeRenderThread();
 bool NativeRenderThreadRunning();
 
 // Begins the next packet; it records draws only when render is true.
-// Game thread, before a frame: waits until the render thread has taken the
-// last packet, so the next one does not replace it (MH3_PROFILE=unpaced: no wait).
+// Game thread, before a frame: the game thread limiter. Waits while two
+// published packets wait for the render thread (MH3_PROFILE=unpaced: only
+// until the next packet's slot is free).
 void PaceNativeFramePacket();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();
 void CancelNativeFramePacket();
 
 // capture: development frame dump path for this packet, or empty. A capture
-// packet is waited for, so it cannot be replaced before it renders.
+// packet is waited for, so it cannot be skipped before it renders.
 void PublishNativeFramePacket(std::string capture);
 
 // The draw's game-side part (the HUD and what follows the scene,

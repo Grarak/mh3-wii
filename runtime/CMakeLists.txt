@@ -295,7 +295,7 @@ add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
     src/native_material.cpp src/model_gpu.cpp src/model_cull.cpp native/mh3_model_cull.c src/model_assets.cpp src/native_frame_statistics.cpp
-    src/character_material.cpp src/native_shader_source.cpp native/mh3_shade.c src/native_frame_packet.cpp native/mh3_frame_state_exchange.c
+    src/character_material.cpp src/native_shader_source.cpp native/mh3_shade.c src/native_frame_packet.cpp
     src/launcher_screen.cpp)
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
