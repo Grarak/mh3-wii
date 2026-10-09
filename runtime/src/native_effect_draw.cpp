@@ -8,6 +8,10 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "../native/mh3_effect_draw.h"
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#include "game_step.h"
+#endif
 #include "../native/mh3_model_catalog.h"
 #include "../native/mh3_particle_draw_state.h"
 #include "../native/adapters/model_state_bridge.h"
@@ -20,6 +24,8 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <unordered_map>
+#include <string>
 
 namespace {
 using MemoryInline::FlatRead16;
@@ -348,7 +354,136 @@ void ParticleState(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32
     // Native submission snapshots the complete material; no pad geometry exists.
 }
 
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=big-particles: a particle whose quad covers the whole view or
+// crosses the camera plane, when its colours (+0x20..+0x2F), size or scale
+// jump from the previous frame: the underwater one-frame blue flashes were
+// bubble quads with a corner nearer than the near plane (todo 3.5, fixed by
+// the vertex programs' clip planes). Big haze particles cover the view
+// all the time; only a jump is reported. View-space corners: depth is -z,
+// x/depth and y/depth the tangents of the view angles.
+uint32_t traceParticle = 0, traceResource = 0;
+float traceLocal[3]; // the particle draws' manager matrix translation (0x800AE3C4)
+
+// Particles that jumped, followed for their next frames whatever they cover.
+struct Followed {
+    uint32_t particle, frames;
+};
+
+std::array<Followed, 8> followed{};
+
+struct TracedParticle {
+    uint64_t packet;
+    uint8_t colours[16];
+    float size[2], scale[2];
+};
+
+void TraceBigQuad(const mh3_effect_quad &q) {
+    static const bool enabled = TraceOptions().Has("big-particles");
+    static std::unordered_map<uint32_t, TracedParticle> previous;
+
+    if (!enabled || !traceParticle)
+        return;
+
+    const uint32_t p = traceParticle;
+    float lo[2] = {1e30f, 1e30f}, hi[2] = {-1e30f, -1e30f};
+    bool behind = false, front = false;
+
+    for (const auto &v : q.position) {
+        const float depth = -v[2];
+
+        if (depth <= 0) {
+            behind = true;
+            continue;
+        }
+
+        front = true;
+
+        for (unsigned a = 0; a < 2; a++) {
+            lo[a] = std::min(lo[a], v[a] / depth);
+            hi[a] = std::max(hi[a], v[a] / depth);
+        }
+    }
+
+    // The view's tangents reach about +-0.8 across and +-0.45 up (16:9).
+    const bool covers = front && lo[0] < -0.8f && hi[0] > 0.8f && lo[1] < -0.45f && hi[1] > 0.45f;
+
+    for (auto &f : followed) {
+        if (!f.frames || f.particle != p)
+            continue;
+
+        --f.frames;
+        float position[3], prev[3], scale[2];
+        ReadVector(p + 0xac, position, 3);
+        ReadVector(p + 0xb8, prev, 3);
+        ReadVector(p + 0x38, scale, 2);
+        std::fprintf(stderr,
+                     "MH3 big particle: followed packet %lu particle %08x tick %u alpha %u scale %g position %g %g %g prev %g %g %g manager %g %g %g corners z %g %g %g %g tan x %g..%g y %g..%g "
+                     "step %.3f ticks %u\n",
+                     (unsigned long)NativeFramePacketSequence(), p, FlatRead16(p + 0xdc), FlatRead8(p + 0x23), scale[0], position[0], position[1], position[2], prev[0], prev[1], prev[2],
+                     traceLocal[0], traceLocal[1], traceLocal[2], q.position[0][2], q.position[1][2], q.position[2][2], q.position[3][2], lo[0], hi[0], lo[1], hi[1], GameStep::Scale(),
+                     GameStep::Ticks());
+    }
+
+    if (!covers && !(behind && front))
+        return;
+
+    const uint64_t packet = NativeFramePacketSequence();
+    TracedParticle now{packet, {}, {}, {}};
+
+    for (uint32_t i = 0; i < 16; i++)
+        now.colours[i] = FlatRead8(p + 0x20 + i);
+
+    ReadVector(p + 0x30, now.size, 2);
+    ReadVector(p + 0x38, now.scale, 2);
+
+    // Bounded: the haze particles of a few frames.
+    if (previous.size() > 4096)
+        previous.clear();
+
+    auto [it, inserted] = previous.try_emplace(p, now);
+    const TracedParticle before = it->second;
+    it->second = now;
+
+    if (inserted || before.packet + 1 != packet)
+        return;
+
+    int colourJump = 0;
+
+    for (uint32_t i = 0; i < 16; i++)
+        colourJump = std::max(colourJump, std::abs(int(now.colours[i]) - int(before.colours[i])));
+
+    const auto grew = [](float a, float b) { return std::fabs(a - b) > 0.5f * std::max(std::fabs(b), 1e-3f); };
+    const bool sizeJump = grew(now.size[0], before.size[0]) || grew(now.scale[0], before.scale[0]) || grew(now.scale[1], before.scale[1]);
+
+    if (colourJump <= 48 && !sizeJump)
+        return;
+
+    for (auto &f : followed)
+        if (!f.frames) {
+            f = {p, 30};
+            break;
+        }
+
+    const auto hex = [](const uint8_t *c) {
+        char text[40];
+        std::snprintf(text, sizeof text, "%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11],
+                      c[12], c[13], c[14], c[15]);
+        return std::string(text);
+    };
+
+    std::fprintf(stderr,
+                 "MH3 big particle: packet %lu particle %08x resource %08x tick %u life %u colours %s -> %s size %g -> %g scale %g %g -> %g %g step %.3f ticks %u %s tan x %g..%g y %g..%g\n",
+                 (unsigned long)packet, p, traceResource, FlatRead16(p + 0xdc), FlatRead16(p + 0xe0), hex(before.colours).c_str(), hex(now.colours).c_str(), before.size[0], now.size[0],
+                 before.scale[0], before.scale[1], now.scale[0], now.scale[1], GameStep::Scale(), GameStep::Ticks(), covers ? "covers the view" : "crosses the camera plane", lo[0], hi[0], lo[1],
+                 hi[1]);
+}
+#endif
+
 void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2] = nullptr, uint32_t size_code = 0, bool point = false, bool strip = false) {
+#ifdef MH3_DEVELOPMENT
+    TraceBigQuad(q);
+#endif
     const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
     const auto &material = GetNativeMaterialState();
     mh3_effect_vertex_inputs &input = effect.vertex;
@@ -465,10 +600,12 @@ std::atomic<uint64_t> particlesDrawn{0};
 #endif
 
 void ReadParticle(void *opaque, uint32_t p, mh3_effect_particle *out) {
+    auto &c = *static_cast<BillboardContext *>(opaque);
 #ifdef MH3_DEVELOPMENT
     particlesDrawn.fetch_add(1, std::memory_order_relaxed);
+    traceParticle = p;
+    traceResource = c.resource;
 #endif
-    auto &c = *static_cast<BillboardContext *>(opaque);
     *out = {};
     ReadVector(p + 0xac, out->position, 3);
     ReadVector(p + 0x30, out->size, 2);
@@ -657,6 +794,11 @@ void NativeEffectDrawBillboards(CpuContext *cpu) {
     float view[12], local[12], matrix[12];
     ReadVector(frame[0x10], view, 12);
     ReadVector(frame[0x40], local, 12);
+#ifdef MH3_DEVELOPMENT
+    traceLocal[0] = local[3];
+    traceLocal[1] = local[7];
+    traceLocal[2] = local[11];
+#endif
 
     for (uint32_t r = 0; r < 3; r++)
         for (uint32_t col = 0; col < 4; col++)
@@ -1075,6 +1217,11 @@ extern "C" void MH3_EffectFreeStrategy(CpuContext *cpu) {
     float view[12], local[12], matrix[12];
     ReadVector(frame[0x10], view, 12);
     ReadVector(frame[0x40], local, 12);
+#ifdef MH3_DEVELOPMENT
+    traceLocal[0] = local[3];
+    traceLocal[1] = local[7];
+    traceLocal[2] = local[11];
+#endif
 
     for (uint32_t r = 0; r < 3; r++)
         for (uint32_t col = 0; col < 4; col++)
@@ -1158,6 +1305,11 @@ void SmallStrategy(CpuContext *cpu, bool point) {
     float view[12], local[12], matrix[12];
     ReadVector(frame[0x10], view, 12);
     ReadVector(frame[0x40], local, 12);
+#ifdef MH3_DEVELOPMENT
+    traceLocal[0] = local[3];
+    traceLocal[1] = local[7];
+    traceLocal[2] = local[11];
+#endif
 
     for (uint32_t r = 0; r < 3; r++)
         for (uint32_t col = 0; col < 4; col++)

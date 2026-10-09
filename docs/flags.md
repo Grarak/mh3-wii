@@ -152,7 +152,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,materials][,draw-writes][,particles][,loading][,lights][,sun][,glare][,fog]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,materials][,draw-writes][,particles][,loading][,lights][,sun][,glare][,fog][,big-particles]`
 
 | Item | Effect |
 | --- | --- |
@@ -173,6 +173,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 | `sun` | the sun's lens flare (LensFlareUpdate 0x80102008, lens_flare.cpp): each switch between updates that run and updates that return early (the game skips them with the camera below y 0), with the camera's height, the sun's visibility, the parts' visibility and the glare fade's state; a summary every 1800 updates (`MH3 sun` lines) |
 | `glare` | the glare (bloom) settings at each draw (GlareFilter::draw 0x80056F88, native_scene_feedback.cpp): enabled, whether the scene was captured, the composite colour and blend factors, levels, shift, thresholds, darken/brighten; a value that leaves its neighbours' range for one draw prints the three draws, and every 1800 draws each value's range (`MH3 glare` lines): one-frame bloom flashes |
 | `fog` | the shading scene block's fog (native_material.cpp, render thread): each distinct set of colour, range, curve and shape when it first appears, with its frame, type and viewport width, and every 600 frames how often each set was built (`MH3 fog` lines): one-frame fog flashes (the underwater blue flicker) |
+| `big-particles` | each effect quad that covers the whole view or has a corner behind the camera while another is in front (native_effect_draw.cpp, draw side): its particle's tick, life, size, scale and position, the game step's scale and ticks, the corners' view depths and view-angle tangents (`MH3 big particle` lines): one-frame flashes from quads that sweep through the camera |
 
 ### `MH3_MONSTER_CONTROL`: drive a monster
 

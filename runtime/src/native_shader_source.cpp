@@ -880,7 +880,8 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
           float a_select, float a_select0, float a_select1, float a_select2,
 #endif
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
-          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
+          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3,
+          float out v_near : CLP0, float out v_far : CLP1) {
 #if SKINNED
     // M = sum weight * row matrix; its normal matrix is the inverse-transpose
     // (cofactor / det), the plain 3x3 when singular, as the game's view pass.
@@ -922,6 +923,12 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
     projected.xy += projected.w * view.viewport.zw;
     TEXGEN_OUTPUTS
     v_position = float4(projected.x, projected.y, 2.0f * projected.z - projected.w, projected.w);
+    // User clip planes at GX's near and far planes (z = -w, z = w): GXM's
+    // frustum clipping leaves depth alone, so a quad with a corner between the
+    // eye and the near plane projected over the screen (the underwater
+    // bubbles' blue flashes). GX and GL clip there themselves.
+    v_near = projected.z;
+    v_far = projected.w - projected.z;
 }
 )CG";
 
@@ -929,7 +936,8 @@ constexpr const char* CgGeometryVertex = R"CG(
 float2 affine(float3 uv) { return uv.z != 0.0f ? uv.xy / uv.z : uv.xy; }
 void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_color0, float3 a_uv0, float3 a_uv1, float3 a_uv2,
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
-          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
+          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3,
+          float out v_near : CLP0, float out v_far : CLP1) {
     v_color0 = light_channel(a_view_position, a_normal, a_color0);
     float4 p = a_position;
     v_fog = fog_blend(float4(p.xy, 0.5f * (p.z + p.w), p.w), v_color0);
@@ -937,6 +945,8 @@ void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_c
     v_uv1 = affine(a_uv1);
     v_uv2 = affine(a_uv2);
     v_position = float4(p.x, p.y, p.z, p.w);
+    v_near = p.z + p.w;
+    v_far = p.w - p.z;
 }
 )CG";
 
@@ -955,7 +965,8 @@ float2 affine(float3 uv) { return uv.z != 0.0f ? uv.xy / uv.z : uv.xy; }
 float2 coordinate(int source, float3 uv0, float3 uv1) { return source == 0 ? affine(uv0) : source == 1 ? affine(uv1) : float2(0.0f, 0.0f); }
 void main(float3 a_position, float3 a_uv0, float3 a_uv1,
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
-          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
+          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3,
+          float out v_near : CLP0, float out v_far : CLP1) {
     float3 view = mul(float4(a_position, 1.0f), quad.position);
     float4 clip = mul(float4(view, 1.0f), quad.proj);
     float depth = quad.mode.w != 0 ? -clip.z : clip.z + clip.w;
@@ -966,6 +977,8 @@ void main(float3 a_position, float3 a_uv0, float3 a_uv1,
     v_uv1 = coordinate(quad.mode.y, a_uv0, a_uv1);
     v_uv2 = coordinate(quad.mode.z, a_uv0, a_uv1);
     v_position = p;
+    v_near = p.z + p.w;
+    v_far = p.w - p.z;
 }
 )CG";
 

@@ -281,7 +281,7 @@ inline const DevOptions& ProfileOptions() {
 // (effect_step.cpp), and each loading-screen frame's progress counters
 // (load_progress.cpp).
 inline const DevOptions& TraceOptions() {
-    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog"});
+    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles"});
     return options;
 }
 
