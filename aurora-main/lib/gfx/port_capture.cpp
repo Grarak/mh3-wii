@@ -56,17 +56,24 @@ Capture& capture() {
   return value;
 }
 
-void write(const std::filesystem::path& path, std::string_view source) {
+// Writes a capture file; false with the reason in `error`.
+bool write(const std::filesystem::path& path, std::string_view source, std::string& error) {
   FILE* file = std::fopen(path.c_str(), "wb");
 
-  if (!file)
-    throw std::runtime_error("Cannot write shader capture: " + path.string());
+  if (!file) {
+    error = "Cannot write shader capture: " + path.string();
+    return false;
+  }
 
   const auto bytes = std::fwrite(source.data(), 1, source.size(), file);
   const auto status = std::fclose(file);
 
-  if (bytes != source.size() || status)
-    throw std::runtime_error("Incomplete shader capture: " + path.string());
+  if (bytes != source.size() || status) {
+    error = "Incomplete shader capture: " + path.string();
+    return false;
+  }
+
+  return true;
 }
 
 std::string pair(uint64_t vertex, uint64_t fragment) {
@@ -217,80 +224,88 @@ ShaderCapture shader(std::string_view label, std::string_view vertex, std::strin
 
   std::string captureOrigin = name + ".origin.json";
 
-  try {
-    if (c.shaderPairs.insert(name).second) {
-      write(base.string() + ".vert", vertex);
-      write(base.string() + ".frag", fragment);
-    }
-
-    const bool counterpart = !portableVertex.empty() || !portableFragment.empty();
-
-    if (counterpart && (portableVertex.empty() || portableFragment.empty()))
-      throw std::runtime_error("Incomplete portable shader counterpart");
-
-    const auto vitaVertex = counterpart ? portableVertex : vertex;
-    const auto vitaFragment = counterpart ? portableFragment : fragment;
-    const uint64_t vitaVh = XXH3_64bits(vitaVertex.data(), vitaVertex.size());
-    std::string normalized(vitaFragment);
-    std::array<float, 4> alpha{};
-    const bool alphaParameterized = gxm::parameterize_alpha_references(normalized, alpha);
-    const auto normalizedHash = XXH3_64bits(normalized.data(), normalized.size());
-    const auto cgName = pair(vitaVh, normalizedHash);
-    const auto metadataName = name + (counterpart ? ".vita-" + cgName : "") + ".origin.json";
-    captureOrigin = metadataName;
-    const ShaderCapture identity{{vitaVh, normalizedHash}, metadataName};
-
-    if (c.failedOrigins.contains(metadataName))
-      return {};
-
-    if (c.portableOrigins.contains(metadataName))
-      return identity;
-
-    if (!c.cgPairs.contains(cgName)) {
-      const auto vertexCg = cg::convert(vitaVertex, cg::Stage::Vertex);
-      const auto fragmentCg = cg::convert(normalized, cg::Stage::Fragment);
-      const auto scalarCg = cg::scalar_fragment(fragmentCg);
-      const auto cgBase = c.root / "shaders" / cgName;
-      write(cgBase.string() + "_v.cg", vertexCg);
-      write(cgBase.string() + "_f.cg", fragmentCg);
-      write(cgBase.string() + "_r.cg", scalarCg);
-      c.cgPairs.insert(cgName);
-    }
-
-    if (counterpart) {
-      write((c.root / "shaders" / metadataName).string() + ".vert", vitaVertex);
-      write((c.root / "shaders" / metadataName).string() + ".frag", vitaFragment);
-    }
-
-    const auto metadata = "{\n  \"generator\": \"aurora::gfx::cg\",\n  \"generator_version\": " + std::to_string(cg::Version) + ",\n  \"label\": " + json(label) +
-                          ",\n  \"source_origin\": " + json(origin.empty() ? "Aurora ProgramDesc" : origin) + ",\n  \"glsl_pair\": " + json(name) + ",\n  \"vita_pair\": " + json(cgName) +
-                          ",\n  \"portable_counterpart\": " + (counterpart ? "true" : "false") + ",\n  \"portable_origin\": " + json(portableOrigin) +
-                          (counterpart ? ",\n  \"portable_vertex_glsl\": " + json(metadataName + ".vert") + ",\n  \"portable_fragment_glsl\": " + json(metadataName + ".frag") : "") +
-                          ",\n  \"vertex_glsl\": " + json(name + ".vert") + ",\n  \"fragment_glsl\": " + json(name + ".frag") + ",\n  \"vertex_cg\": " + json(cgName + "_v.cg") +
-                          ",\n  \"fragment_cg\": " + json(cgName + "_f.cg") + ",\n  \"scalar_fragment_cg\": " + json(cgName + "_r.cg") +
-                          ",\n  \"alpha_parameterized\": " + (alphaParameterized ? "true" : "false") + ",\n  \"alpha_references\": [" + std::to_string(alpha[0]) + ", " + std::to_string(alpha[1]) +
-                          "]\n}\n";
-    write(c.root / "shaders" / metadataName, metadata);
-    c.portableOrigins.insert(metadataName);
-    std::fprintf(c.events, "shader_cg\t%s\t%s\t%u\n", name.c_str(), cgName.c_str(), cg::Version);
-    std::fflush(c.events);
-    return identity;
-  } catch (const std::exception& error) {
+  // A pair that cannot be converted or written: reported once per origin.
+  const auto reject = [&](const std::string& reason) -> ShaderCapture {
     if (!c.failedOrigins.insert(captureOrigin).second)
       return {};
 
-    const auto message = field(error.what());
+    const auto message = field(reason);
     std::fprintf(c.events, "shader_cg_error\t%s\t%s\t%s\n", name.c_str(), safeLabel.c_str(), message.c_str());
     std::fprintf(stderr, "Aurora shader capture %s (%s): %s\n", name.c_str(), safeLabel.c_str(), message.c_str());
+    std::string unwritten; // the error file is best effort
+    (void)write(base.string() + ".cg-error.txt", reason, unwritten);
+    std::fflush(c.events);
+    return {};
+  };
 
-    try {
-      write(base.string() + ".cg-error.txt", error.what());
-    } catch (...) {
-    }
+  std::string error;
+
+  if (c.shaderPairs.insert(name).second)
+    if (!write(base.string() + ".vert", vertex, error) || !write(base.string() + ".frag", fragment, error))
+      return reject(error);
+
+  const bool counterpart = !portableVertex.empty() || !portableFragment.empty();
+
+  if (counterpart && (portableVertex.empty() || portableFragment.empty()))
+    return reject("Incomplete portable shader counterpart");
+
+  const auto vitaVertex = counterpart ? portableVertex : vertex;
+  const auto vitaFragment = counterpart ? portableFragment : fragment;
+  const uint64_t vitaVh = XXH3_64bits(vitaVertex.data(), vitaVertex.size());
+  std::string normalized(vitaFragment);
+  std::array<float, 4> alpha{};
+  bool alphaParameterized = false;
+
+  if (!gxm::try_parameterize_alpha_references(normalized, alpha, alphaParameterized, error))
+    return reject(error);
+
+  const auto normalizedHash = XXH3_64bits(normalized.data(), normalized.size());
+  const auto cgName = pair(vitaVh, normalizedHash);
+  const auto metadataName = name + (counterpart ? ".vita-" + cgName : "") + ".origin.json";
+  captureOrigin = metadataName;
+  const ShaderCapture identity{{vitaVh, normalizedHash}, metadataName};
+
+  if (c.failedOrigins.contains(metadataName))
+    return {};
+
+  if (c.portableOrigins.contains(metadataName))
+    return identity;
+
+  if (!c.cgPairs.contains(cgName)) {
+    std::string vertexCg, fragmentCg, scalarCg;
+
+    if (!cg::try_convert(vitaVertex, cg::Stage::Vertex, vertexCg, error) || !cg::try_convert(normalized, cg::Stage::Fragment, fragmentCg, error) ||
+        !cg::try_scalar_fragment(fragmentCg, scalarCg, error))
+      return reject(error);
+
+    const auto cgBase = c.root / "shaders" / cgName;
+
+    if (!write(cgBase.string() + "_v.cg", vertexCg, error) || !write(cgBase.string() + "_f.cg", fragmentCg, error) || !write(cgBase.string() + "_r.cg", scalarCg, error))
+      return reject(error);
+
+    c.cgPairs.insert(cgName);
   }
 
+  if (counterpart)
+    if (!write((c.root / "shaders" / metadataName).string() + ".vert", vitaVertex, error) || !write((c.root / "shaders" / metadataName).string() + ".frag", vitaFragment, error))
+      return reject(error);
+
+  const auto metadata = "{\n  \"generator\": \"aurora::gfx::cg\",\n  \"generator_version\": " + std::to_string(cg::Version) + ",\n  \"label\": " + json(label) +
+                        ",\n  \"source_origin\": " + json(origin.empty() ? "Aurora ProgramDesc" : origin) + ",\n  \"glsl_pair\": " + json(name) + ",\n  \"vita_pair\": " + json(cgName) +
+                        ",\n  \"portable_counterpart\": " + (counterpart ? "true" : "false") + ",\n  \"portable_origin\": " + json(portableOrigin) +
+                        (counterpart ? ",\n  \"portable_vertex_glsl\": " + json(metadataName + ".vert") + ",\n  \"portable_fragment_glsl\": " + json(metadataName + ".frag") : "") +
+                        ",\n  \"vertex_glsl\": " + json(name + ".vert") + ",\n  \"fragment_glsl\": " + json(name + ".frag") + ",\n  \"vertex_cg\": " + json(cgName + "_v.cg") +
+                        ",\n  \"fragment_cg\": " + json(cgName + "_f.cg") + ",\n  \"scalar_fragment_cg\": " + json(cgName + "_r.cg") +
+                        ",\n  \"alpha_parameterized\": " + (alphaParameterized ? "true" : "false") + ",\n  \"alpha_references\": [" + std::to_string(alpha[0]) + ", " + std::to_string(alpha[1]) +
+                        "]\n}\n";
+
+  if (!write(c.root / "shaders" / metadataName, metadata, error))
+    return reject(error);
+
+  c.portableOrigins.insert(metadataName);
+  std::fprintf(c.events, "shader_cg\t%s\t%s\t%u\n", name.c_str(), cgName.c_str(), cg::Version);
   std::fflush(c.events);
-  return {};
+  return identity;
 }
 
 void texture(const void* id, bool create, uint32_t width, uint32_t height, uint32_t mips, uint32_t format, uint32_t bytesPerPixel, std::string_view label) noexcept {
