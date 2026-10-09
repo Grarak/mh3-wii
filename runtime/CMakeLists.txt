@@ -487,7 +487,7 @@ if(VITA)
 
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
-    vita/vita_controller.cpp vita/nand_recover.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
+    vita/vita_controller.cpp vita/nand_recover.cpp vita/thp_jpeg.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
   # pthread-embedded fixes: leaking mutex semaphores, polling waits, new
   # threads off the game thread's core.
   target_sources(MH3 PRIVATE vita/pthread_embedded.c)
@@ -523,7 +523,7 @@ if(VITA)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   if(MH3_DEVELOPMENT)
-    set_property(SOURCE vita/platform.cpp vita/launcher.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
+    set_property(SOURCE vita/platform.cpp vita/launcher.cpp vita/thp_jpeg.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
   endif()
 
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
@@ -531,6 +531,9 @@ if(VITA)
 
   # Weak: --vita-gxm-debug's registry write must never keep the game from loading.
   target_link_libraries(MH3 PRIVATE SceRegistryMgr_stub_weak)
+
+  # Weak: without the hardware JPEG decoder the movies decode in software.
+  target_link_libraries(MH3 PRIVATE SceJpeg_stub_weak)
 
   # Online play: VitaSDK's OpenSSL 1.0.2 for the game's TLS sessions, over
   # newlib's sockets (SceNet, SceNetCtl).

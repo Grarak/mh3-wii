@@ -61,6 +61,7 @@ how to build, run (including the Vita devkit) and debug.
 ## Vita platform
 
 - [vita-platform.md](vita-platform.md): the Vita build, threads, clocks, memory, guest RAM views, files and device checks.
+- [vita-movies.md](vita-movies.md): the movies on the Vita's hardware JPEG decoder, decoded ahead of the game.
 - [vita-launcher.md](vita-launcher.md): the launcher, reading the disc image in place, load-time conversion, custom quests, devkit and host runs.
 - [rom-decoder.md](rom-decoder.md): the native ISO/RVZ/WIA decoder, its check against nod, and where the Vita's runtime helpers come from.
 - [vita-controls.md](vita-controls.md): the Classic Controller the game sees and how the Vita, SDL gamepads and the keyboard map onto it.
