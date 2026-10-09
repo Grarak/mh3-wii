@@ -20,6 +20,10 @@
 #include <thread>
 #include <memory>
 #include <webgpu/webgpu_cpp.h>
+#ifdef MH3_ENABLE_GX_DIAGNOSTICS
+#include "gx/gx.hpp"
+#include <fstream>
+#endif
 bool mh3_aurora_flush_draws();
 namespace aurora::webgpu { extern wgpu::Queue g_queue; extern wgpu::Instance g_instance; }
 namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); }
@@ -59,6 +63,9 @@ void FlushHostEfbPokes() {
 uint64_t guestCommands = 0, guestArrays = 0, guestTextures = 0, guestCopies = 0, guestDraws = 0, guestTextureCopies = 0;
 uint64_t guestEfbSnapshots = 0, guestEfbPeeks = 0;
 uint64_t guestTextureCopyNs = 0, guestEfbSnapshotNs = 0;
+#ifdef MH3_ENABLE_GX_DIAGNOSTICS
+#include "gx_diagnostics.inc"
+#endif
 struct FrameProfile {
     using Clock = std::chrono::steady_clock;
     uint32_t interval = 0;
@@ -138,6 +145,10 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         if (!frameActive) throw std::runtime_error("Aurora could not begin the guest GX frame");
     }
     guestStream.Write(std::span<const uint8_t>(data, size), [](auto packet) {
+#ifdef MH3_ENABLE_GX_DIAGNOSTICS
+        GxDiagnosticDraw diagnostic(packet[0] >= 0x80 && packet[0] <= 0xBF);
+        if (diagnostic.skip) return;
+#endif
         auto consumed = aurora::gx::fifo::process(packet.data(), packet.size(), true);
         if (consumed != packet.size()) {
             // Each stream packet contains one complete command. Aurora yields
@@ -165,6 +176,9 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         GXSetDispCopyDst(copy.width, copy.height);
         GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
         ++guestCopies;
+#ifdef MH3_ENABLE_GX_DIAGNOSTICS
+        UpdateGxDiagnosticMode();
+#endif
         displayCopyPending = true;
     }, [](const GuestGxStream::TextureCopy& copy) {
         const auto started = FrameProfile::Clock::now();
