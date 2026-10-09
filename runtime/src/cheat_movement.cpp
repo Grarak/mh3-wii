@@ -383,14 +383,15 @@ void EvadeDistance(uint32_t from, uint32_t vec) {
 
 } // namespace
 
-// Pl_Skill_ck (0x80271374, plw, skill): 1 when the hunter has the skill.
-extern "C" void func_80271374(CpuContext* ctx);
+// Pl_Skill_ck (0x80271374, plw, skill): 1 when the hunter has the skill
+// (player_skill.cpp).
+uint32_t PlSkillCheck(uint32_t r1, uint32_t plw, uint32_t skill);
 
 extern "C" void MH3_CheatSkillCheck(CpuContext* ctx) {
     const uint32_t from = ctx->lr;
     const uint32_t skill = ctx->gpr[4];
 
-    func_80271374(ctx);
+    ctx->gpr[3] = PlSkillCheck(ctx->gpr[1], ctx->gpr[3], skill);
 
     if (On(Id::EnhancedEvade) && skill == 182)
         for (const uint32_t check : kEvadeChecks)

@@ -317,10 +317,10 @@ REGISTER_NATIVE_FUNCTION_AS(0x803BAEE4, MH3_CheatGatherItem, "CheatGatherItem");
 // item kind, 0xFFFF for none. Can't carve/gather (US 0x803BAB44 and
 // 0x803BAAA4, EU 0x803BABA8 and 0x803BAB08), switched by its buttons, finds
 // none.
-extern "C" void func_803BAA14(CpuContext* ctx);
+void GatherSpotFind(CpuContext* ctx); // gather_spots.cpp
 
 extern "C" void MH3_CheatGatherSpot(CpuContext* ctx) {
-    func_803BAA14(ctx);
+    GatherSpotFind(ctx);
 
     if (Toggled(Id::CantGather))
         ctx->gpr[3] = 0xFFFF;
