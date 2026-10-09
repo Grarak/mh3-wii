@@ -1,0 +1,10 @@
+// Native rectangle, used for clears, exact scissor masks and presentation.
+void main(float vertex_id : TEXCOORD14,
+          uniform float4 region, uniform float depth,
+          out float4 position : POSITION, out float2 uv : TEXCOORD0)
+{
+    float2 q = float2(vertex_id == 1.0 || vertex_id == 3.0 ? 1.0 : 0.0,
+                      vertex_id >= 2.0 ? 1.0 : 0.0);
+    position = float4(region.xy + q * region.zw, depth, 1.0);
+    uv = q;
+}

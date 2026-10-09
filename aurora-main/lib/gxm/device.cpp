@@ -1,0 +1,236 @@
+#include "device.hpp"
+#include "shaders.hpp"
+#include <aurora/thread_role.hpp>
+#include <psp2/display.h>
+#include <psp2/kernel/sysmem.h>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+
+// These firmware exports are in the SDK stub library but absent from its header.
+extern "C" void sceGxmDepthStencilSurfaceSetBackgroundMask(SceGxmDepthStencilSurface*, SceBool);
+
+namespace aurora::gxm {
+namespace {
+struct DisplayData { void* address; bool vsync; };
+void display_callback(const void* data) {
+  aurora::pin_current_thread(aurora::ThreadRole::Worker);
+  const auto& display = *static_cast<const DisplayData*>(data);
+  SceDisplayFrameBuf frame{};
+  frame.size = sizeof(frame);
+  frame.base = display.address;
+  frame.pitch = Device::Stride;
+  frame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
+  frame.width = Device::Width;
+  frame.height = Device::Height;
+  sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
+  if (display.vsync) sceDisplayWaitVblankStart();
+}
+void* host_alloc(void*, unsigned bytes) { return std::malloc(bytes); }
+void host_free(void*, void* memory) { std::free(memory); }
+const SceGxmProgram* find_binary(const ShaderBinary* list, size_t count, uint64_t hash, const char* stage) {
+  const auto* found = std::lower_bound(list, list + count, hash,
+      [](const ShaderBinary& entry, uint64_t value) { return entry.sourceHash < value; });
+  if (found == list + count || found->sourceHash != hash) {
+    char message[160];
+    std::snprintf(message, sizeof(message), "Missing offline GXM %s shader %08x%08x",
+                  stage, unsigned(hash >> 32), unsigned(hash));
+    throw std::runtime_error(message);
+  }
+  return reinterpret_cast<const SceGxmProgram*>(found->bytes);
+}
+}
+void check(int result, const char* operation) {
+  if (result >= 0) return;
+  char message[160];
+  std::snprintf(message, sizeof(message), "GXM %s failed: %08x", operation, unsigned(result));
+  throw std::runtime_error(message);
+}
+const SceGxmProgram* vertex_binary(uint64_t hash) {
+  return find_binary(VertexShaders, VertexShaderCount, hash, "vertex");
+}
+const SceGxmProgram* fragment_binary(uint64_t hash) {
+  return find_binary(FragmentShaders, FragmentShaderCount, hash, "fragment");
+}
+
+Device::Device(bool vsync) : m_vsync(vsync) {
+  try {
+    SceGxmInitializeParams init{};
+    // Stock sceGxmInitialize accepts only the affinity flags on firmware 3.65.
+    // Query remaining CDRAM after its parameter-buffer allocation below.
+    init.flags = SCE_GXM_INITIALIZE_FLAG_DEFAULT;
+    init.displayQueueMaxPendingCount = 2;
+    init.displayQueueCallback = display_callback;
+    init.displayQueueCallbackDataSize = sizeof(DisplayData);
+    init.parameterBufferSize = SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE;
+    check(sceGxmInitialize(&init), "initialize");
+    m_initialized = true;
+    m_memory.reserve(7);
+    auto allocate = [&](unsigned bytes, MappedMemory::Kind kind, const char* name) -> MappedMemory& {
+      m_memory.emplace_back(bytes, kind, name);
+      return m_memory.back();
+    };
+    auto& vdm = allocate(SCE_GXM_DEFAULT_VDM_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora VDM ring");
+    auto& vertex = allocate(SCE_GXM_DEFAULT_VERTEX_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora vertex ring");
+    auto& fragment = allocate(SCE_GXM_DEFAULT_FRAGMENT_RING_BUFFER_SIZE, MappedMemory::Kind::Draw, "Aurora fragment ring");
+    auto& usse = allocate(SCE_GXM_DEFAULT_FRAGMENT_USSE_RING_BUFFER_SIZE, MappedMemory::Kind::FragmentUsse, "Aurora fragment USSE ring");
+    m_host = std::malloc(SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE);
+    if (!m_host) throw std::bad_alloc();
+    SceGxmContextParams context{};
+    context.hostMem = m_host;
+    context.hostMemSize = SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE;
+    context.vdmRingBufferMem = vdm.data(); context.vdmRingBufferMemSize = vdm.size();
+    context.vertexRingBufferMem = vertex.data(); context.vertexRingBufferMemSize = vertex.size();
+    context.fragmentRingBufferMem = fragment.data(); context.fragmentRingBufferMemSize = fragment.size();
+    context.fragmentUsseRingBufferMem = usse.data(); context.fragmentUsseRingBufferMemSize = usse.size();
+    context.fragmentUsseRingBufferOffset = usse.usse_offset();
+    check(sceGxmCreateContext(&context, &m_context), "create context");
+
+    auto& buffer = allocate(4u << 20, MappedMemory::Kind::Draw, "Aurora shader patcher data");
+    auto& vertexUsse = allocate(2u << 20, MappedMemory::Kind::VertexUsse, "Aurora vertex programs");
+    auto& fragmentUsse = allocate(4u << 20, MappedMemory::Kind::FragmentUsse, "Aurora fragment programs");
+    SceGxmShaderPatcherParams patcher{};
+    patcher.hostAllocCallback = host_alloc;
+    patcher.hostFreeCallback = host_free;
+    patcher.bufferMem = buffer.data(); patcher.bufferMemSize = buffer.size();
+    patcher.vertexUsseMem = vertexUsse.data(); patcher.vertexUsseMemSize = vertexUsse.size();
+    patcher.vertexUsseOffset = vertexUsse.usse_offset();
+    patcher.fragmentUsseMem = fragmentUsse.data(); patcher.fragmentUsseMemSize = fragmentUsse.size();
+    patcher.fragmentUsseOffset = fragmentUsse.usse_offset();
+    check(sceGxmShaderPatcherCreate(&patcher, &m_patcher), "create shader patcher");
+
+    SceKernelFreeMemorySizeInfo available{};
+    available.size = sizeof(available);
+    check(sceKernelGetFreeMemorySize(&available), "query memory partitions");
+    if (available.size_cdram <= 8u << 20) throw std::runtime_error("Insufficient CDRAM for Aurora");
+    const unsigned budget = std::min(112u << 20, unsigned(available.size_cdram) - (8u << 20)) & ~0x3ffffu;
+    m_arena = std::make_unique<CdramArena>(budget);
+    for (unsigned i = 0; i < 3; ++i) {
+      m_displayData[i] = m_arena->allocate(Stride * Height * 4);
+      if (!m_displayData[i]) throw std::bad_alloc();
+      std::memset(m_displayData[i], 0, Stride * Height * 4);
+      check(sceGxmColorSurfaceInit(&m_display[i], SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR,
+          SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE,
+          SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, Width, Height, Stride, m_displayData[i]), "initialize display surface");
+      check(sceGxmSyncObjectCreate(&m_sync[i]), "create display sync");
+    }
+  } catch (...) { release(); throw; }
+}
+Device::~Device() { release(); }
+void Device::release() noexcept {
+  if (m_inScene) sceGxmEndScene(m_context, nullptr, nullptr);
+  m_inScene = false;
+  if (m_context) sceGxmFinish(m_context);
+  if (m_initialized) sceGxmDisplayQueueFinish();
+  for (auto sync : m_sync) if (sync) sceGxmSyncObjectDestroy(sync);
+  for (auto [size, target] : m_targets) sceGxmDestroyRenderTarget(target);
+  m_targets.clear();
+  if (m_patcher) sceGxmShaderPatcherDestroy(m_patcher);
+  if (m_context) sceGxmDestroyContext(m_context);
+  m_patcher = nullptr; m_context = nullptr;
+  m_arena.reset();
+  m_memory.clear();
+  std::free(m_host); m_host = nullptr;
+  if (m_initialized) sceGxmTerminate();
+  m_initialized = false;
+}
+void Device::begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color,
+                   const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync) {
+  end();
+  const auto key = std::make_pair(width, height);
+  auto found = m_targets.find(key);
+  if (found == m_targets.end()) {
+    SceGxmRenderTargetParams params{};
+    params.width = width; params.height = height;
+    params.scenesPerFrame = 8;
+    params.driverMemBlock = -1;
+    SceGxmRenderTarget* target = nullptr;
+    check(sceGxmCreateRenderTarget(&params, &target), "create render target");
+    found = m_targets.emplace(key, target).first;
+  }
+  SceGxmDepthStencilSurface disabledDepth{};
+  if (!depth) {
+    check(sceGxmDepthStencilSurfaceInitDisabled(&disabledDepth), "initialize disabled depth");
+    sceGxmDepthStencilSurfaceSetBackgroundMask(&disabledDepth, SCE_TRUE);
+    depth = &disabledDepth;
+  }
+  check(sceGxmBeginScene(m_context, SCE_GXM_SCENE_VERTEX_WAIT_FOR_DEPENDENCY | SCE_GXM_SCENE_FRAGMENT_SET_DEPENDENCY,
+      found->second, nullptr, nullptr, sync, color, depth), "begin scene");
+  m_inScene = true;
+}
+void Device::end() {
+  if (!m_inScene) return;
+  check(sceGxmEndScene(m_context, nullptr, nullptr), "end scene");
+  m_inScene = false;
+}
+void Device::finish() { end(); sceGxmFinish(m_context); }
+void Device::begin_display() { begin(Width, Height, &m_display[m_back], nullptr, m_sync[m_back]); }
+void Device::flip() {
+  end();
+  check(sceGxmPadHeartbeat(&m_display[m_back], m_sync[m_back]), "display heartbeat");
+  const DisplayData display{m_displayData[m_back], m_vsync};
+  check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[m_back], &display), "queue display");
+  m_front = m_back;
+  m_back = (m_back + 1) % 3;
+}
+
+PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash)
+    : m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)) {
+  try {
+    check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
+    check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
+    check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
+    check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_fragmentBinary, &m_fragmentId), "register fragment binary");
+    SceGxmVertexAttribute attributes[2]{};
+    SceGxmVertexStream streams[2]{{4, SCE_GXM_INDEX_SOURCE_INDEX_32BIT}, {4, SCE_GXM_INDEX_SOURCE_INSTANCE_32BIT}};
+    unsigned count = 0;
+    for (unsigned stream = 0; stream < 2; ++stream) {
+      const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, stream ? "instance_id" : "vertex_id");
+      if (!parameter) continue;
+      auto& attribute = attributes[count++];
+      attribute.streamIndex = stream;
+      attribute.format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+      // Sony reflects a whole PA register (four components) for this scalar
+      // input. The actual producer stream contains one float ID per vertex.
+      attribute.componentCount = 1;
+      attribute.regIndex = sceGxmProgramParameterGetResourceIndex(parameter);
+    }
+    check(sceGxmShaderPatcherCreateVertexProgram(device.patcher(), m_vertexId, attributes, count, streams, 2, &m_vertex), "patch vertex program");
+  } catch (...) { release(); throw; }
+}
+PatchedProgram::~PatchedProgram() { release(); }
+void PatchedProgram::release() noexcept {
+  for (auto [key, program] : m_fragments) sceGxmShaderPatcherReleaseFragmentProgram(m_device.patcher(), program);
+  if (m_vertex) sceGxmShaderPatcherReleaseVertexProgram(m_device.patcher(), m_vertex);
+  if (m_fragmentId) sceGxmShaderPatcherUnregisterProgram(m_device.patcher(), m_fragmentId);
+  if (m_vertexId) sceGxmShaderPatcherUnregisterProgram(m_device.patcher(), m_vertexId);
+}
+void PatchedProgram::bind(const SceGxmBlendInfo& blend) {
+  uint32_t key; std::memcpy(&key, &blend, sizeof(key));
+  auto found = m_fragments.find(key);
+  if (found == m_fragments.end()) {
+    SceGxmFragmentProgram* fragment = nullptr;
+    check(sceGxmShaderPatcherCreateFragmentProgram(m_device.patcher(), m_fragmentId,
+        SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE, &blend, m_vertexBinary, &fragment), "patch fragment program");
+    found = m_fragments.emplace(key, fragment).first;
+  }
+  sceGxmSetVertexProgram(m_device.context(), m_vertex);
+  sceGxmSetFragmentProgram(m_device.context(), found->second);
+  m_vertexDefault = nullptr;
+  m_fragmentDefault = nullptr;
+}
+void PatchedProgram::set_vertex_uniform(const char* name, const float* values, unsigned count) {
+  const auto* parameter = sceGxmProgramFindParameterByName(m_vertexBinary, name);
+  if (!parameter) return;
+  if (!m_vertexDefault) check(sceGxmReserveVertexDefaultUniformBuffer(m_device.context(), &m_vertexDefault), "reserve vertex defaults");
+  check(sceGxmSetUniformDataF(m_vertexDefault, parameter, 0, count, values), "set vertex default");
+}
+void PatchedProgram::set_fragment_uniform(const char* name, const float* values, unsigned count) {
+  const auto* parameter = sceGxmProgramFindParameterByName(m_fragmentBinary, name);
+  if (!parameter) return;
+  if (!m_fragmentDefault) check(sceGxmReserveFragmentDefaultUniformBuffer(m_device.context(), &m_fragmentDefault), "reserve fragment defaults");
+  check(sceGxmSetUniformDataF(m_fragmentDefault, parameter, 0, count, values), "set fragment default");
+}
+}

@@ -22,7 +22,7 @@ namespace GuestFlat {
 #if defined(__vita__)
 // DSVita places its guest MMU windows at 0xB0000000 and 0xC0000000.
 // Fold Wii cached/uncached/physical aliases before adding the Vita base:
-// MEM1 -> B0000000, MEM2 -> C0000000, locked cache -> B8000000.
+// MEM1 -> B0000000, MEM2 -> C0000000, locked cache -> B4000000.
 // D0000000 is outside the usable reservation partition on firmware 3.65.
 // These virtual views are reserved with kubridge, without physical gap pages.
 inline constexpr uintptr_t kGuestBase = 0xB000'0000u;
@@ -47,7 +47,7 @@ inline constexpr uintptr_t kGuestBase = 0x9000'0000u;
 // The host address of a guest address.
 inline uint8_t* Host(uint32_t guestAddress) noexcept {
 #if defined(__vita__)
-    const uint32_t offset = (guestAddress & 0x1fffffffu) | ((guestAddress >> 2) & 0x08000000u);
+    const uint32_t offset = (guestAddress & 0x1fffffffu) | ((guestAddress >> 3) & 0x04000000u);
     return reinterpret_cast<uint8_t*>(kGuestBase + offset);
 #else
     return reinterpret_cast<uint8_t*>(kGuestBase + guestAddress);
