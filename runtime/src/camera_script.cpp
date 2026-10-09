@@ -14,8 +14,10 @@
 // +0x44 counts up (a tick site), and 0x802BD938 sets the eye, target and field
 // of view from the path at that frame, linearly between keys. Here the path is
 // evaluated at the two frames around the step's fractional frame and the
-// results blended. At the stock 1/30 s step (one tick, no fraction) the
-// script wait runs the original unchanged.
+// results blended, except across a cut (two keys less than a frame apart),
+// where the original jumps between shots: there the earlier frame's pose
+// holds until the counter passes the cut. At the stock 1/30 s step (one tick,
+// no fraction) the script wait runs the original unchanged.
 //
 // The path evaluation itself is native: the original walked the keys from the
 // first on every call (three calls a step at a fractional frame), each key a
@@ -236,6 +238,28 @@ uint32_t EvaluatePath(uint32_t script, uint32_t flags, uint32_t keys, uint32_t s
     return 1;
 }
 
+// Whether the keys from `start` cut between frame `low` and the next: two keys
+// less than a frame apart there. The original shows whole frames only, so it
+// jumps from one shot to the next; a blend across them would fly the camera
+// between the two shots.
+bool CutAfter(uint32_t keys, uint32_t start, int32_t low) {
+    const uint8_t* k = GuestFlat::Host(keys) + start * kKeyBytes;
+    const int32_t from = HalfFrames(low), to = HalfFrames(low + 1);
+    int32_t before = -1;
+
+    for (;; k += kKeyBytes) {
+        const int32_t key = int32_t(Word(k));
+
+        if (key < 0 || key > to)
+            return false;
+
+        if (before >= from && key - before < 2)
+            return true;
+
+        before = key;
+    }
+}
+
 } // namespace
 
 static void CameraPathEvaluatePort(CpuContext* ctx) {
@@ -256,12 +280,16 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
 
     const double position = std::max(0.0, double(frame) + pending);
     const int32_t low = int32_t(std::floor(position));
-    const float blend = float(position - low);
+    float blend = float(position - low);
 
     // Evaluate at the counted frame for the result (done or not), then at the
     // two frames around the position for the pose.
     if (!(flags & 3)) {
         const uint32_t start = SeekKey(keys, std::min({HalfFrames(frame), HalfFrames(low), HalfFrames(low + 1)}));
+
+        if (CutAfter(keys, start, low))
+            blend = 0.0f;
+
         auto evaluate = [&](int32_t at, PathPose* pose) {
             Memory::Write16(script + kFrame, uint16_t(int16_t(at)));
             const uint32_t done = EvaluatePath(script, flags, keys, start);
@@ -285,6 +313,9 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
         ctx->gpr[3] = result;
         return;
     }
+
+    if (CutAfter(keys, SeekKey(keys, HalfFrames(low)), low))
+        blend = 0.0f;
 
     // The original changes volatile registers: each run starts from the entry's.
     const CpuContext entry = *ctx;
