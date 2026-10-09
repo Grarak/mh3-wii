@@ -45,6 +45,9 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #ifdef MH3_DEVELOPMENT
 void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
@@ -100,11 +103,14 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
             const uint32_t dst = Read16(code + 1), count = Read8(code + 3);
             code += 4;
             const uint32_t flagsAt = flags + 4 * dst;
-            MemoryInline::FlatWrite32(flagsAt, 0xF0000000u);
-            float sum[12];
-
-            for (float& s : sum)
-                s = 0.0f;
+            uint32_t combined = 0xF0000000u;
+#if defined(__ARM_NEON)
+            // Three rows of four, byte-swapped as they load and store (NEON:
+            // denormals flush to zero, the sums keep the scalar order).
+            float32x4_t sum0 = vdupq_n_f32(0.0f), sum1 = sum0, sum2 = sum0;
+#else
+            float sum[12] = {};
+#endif
 
             for (uint32_t i = 0; i < count; ++i, code += 6) {
                 const uint32_t src = Read16(code);
@@ -115,15 +121,30 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
                     return f;
                 }();
                 const uint32_t m = work + 0x30 * src;
-
+#if defined(__ARM_NEON)
+                // Multiply, then add: vmlaq is contracted to a fused FMA on
+                // AArch64, which rounds differently from the original.
+                const uint8_t* row = GuestFlat::Host(m);
+                sum0 = vaddq_f32(sum0, vmulq_n_f32(vreinterpretq_f32_u8(vrev32q_u8(vld1q_u8(row))), weight));
+                sum1 = vaddq_f32(sum1, vmulq_n_f32(vreinterpretq_f32_u8(vrev32q_u8(vld1q_u8(row + 16))), weight));
+                sum2 = vaddq_f32(sum2, vmulq_n_f32(vreinterpretq_f32_u8(vrev32q_u8(vld1q_u8(row + 32))), weight));
+#else
                 for (unsigned k = 0; k < 12; ++k)
                     sum[k] = ReadFloat(m + 4 * k) * weight + sum[k];
-
-                MemoryInline::FlatWrite32(flagsAt, Read32(flagsAt) & Read32(flags + 4 * src));
+#endif
+                combined &= Read32(flags + 4 * src);
             }
 
+            MemoryInline::FlatWrite32(flagsAt, combined);
+#if defined(__ARM_NEON)
+            uint8_t* result = GuestFlat::Host(out + 0x30 * dst);
+            vst1q_u8(result, vrev32q_u8(vreinterpretq_u8_f32(sum0)));
+            vst1q_u8(result + 16, vrev32q_u8(vreinterpretq_u8_f32(sum1)));
+            vst1q_u8(result + 32, vrev32q_u8(vreinterpretq_u8_f32(sum2)));
+#else
             for (unsigned k = 0; k < 12; ++k)
                 WriteFloat(out + 0x30 * dst + 4 * k, sum[k]);
+#endif
         } else {
             // 5 (anything else is an assert in the original).
             const uint32_t dst = Read16(code + 1);
