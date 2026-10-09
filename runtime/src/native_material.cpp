@@ -15,12 +15,14 @@
 namespace aurora::gfx { uint32_t current_frame() noexcept; }
 #endif
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <xxhash.h>
 
 namespace {
@@ -37,10 +39,28 @@ std::array<mh3_shader_light,8> preparedLights{};
 struct TextureMatrix {std::array<float,12> values{};bool known=false,matrix3x4=false;};
 std::array<TextureMatrix,10> textureMatrices{};
 std::array<TextureMatrix,20> postTextureMatrices{};
+struct BaseSuffix {uint8_t actual=0,portable=0;uint64_t hash=0;bool known=false;};
+struct ModelSuffix {
+    std::array<uint32_t,17> layout{};
+    uint8_t actual=0,portable=0,nonzero=0,zero=0;uint64_t hash=0;bool known=false;
+};
 struct PreparedMaterial {ShaderConfig config;ShaderInfo info;mh3_material_requirements requirements{};
-    uint64_t configHash=0;};
+    uint64_t configHash=0;bool configHashKnown=false;BaseSuffix baseSuffix;ModelSuffix modelSuffix;};
 PreparedMaterial prepared;
 bool preparedKnown=false;
+bool preparedConfigKnown=false,preparedAdmissionPending=false;
+uint64_t preparedRevision=0;
+struct ModelVariantKey {
+    uint64_t baseRevision;
+    uint16_t attributes,matrixIndices;
+    uint8_t texcoords;
+    std::array<std::array<uint8_t,7>,8> recipes{};
+    bool operator==(const ModelVariantKey&) const =default;
+};
+struct ModelVariant {ModelVariantKey key;PreparedMaterial state;};
+constexpr size_t ModelVariantCapacity=64;
+std::vector<ModelVariant> modelVariants;
+size_t modelVariantNext=0;
 bool rasterObserverInstalled=false,publishingMaterialRaster=false;
 struct ProgramKey {ShaderConfig config;uint8_t zeroBias;uint8_t portableZeroBias=0;};
 struct ModelProgramKey {
@@ -63,6 +83,12 @@ uint64_t ConfigHash(const ShaderConfig& config) {
     static_assert(std::has_unique_object_representations_v<ShaderConfig>);
     return XXH3_64bits(&config,sizeof config);
 }
+uint64_t ConfigDigest(PreparedMaterial& state) {
+    if(!state.configHashKnown) {
+        state.configHash=ConfigHash(state.config);state.configHashKnown=true;
+    }
+    return state.configHash;
+}
 ProgramLookup Lookup(const ShaderConfig& config,uint64_t configHash,uint8_t zeroBias,uint8_t portableZeroBias) {
     const std::array<uint8_t,2> suffix{zeroBias,portableZeroBias};
     return {config,zeroBias,portableZeroBias,XXH3_64bits_withSeed(suffix.data(),suffix.size(),configHash)};
@@ -75,6 +101,23 @@ ModelProgramLookup Lookup(const ShaderConfig& config,uint64_t configHash,uint8_t
                (uint32_t(nonzeroProjection)<<16)|(uint32_t(zeroProjection)<<24);
     const uint64_t hash=XXH3_64bits_withSeed(suffix.data(),sizeof suffix,configHash);
     return {{config,zeroBias,portableZeroBias,0},layout,nonzeroProjection,zeroProjection,hash};
+}
+ProgramLookup MaterialLookup(PreparedMaterial& state,uint8_t actual,uint8_t portable) {
+    auto& suffix=state.baseSuffix;
+    if(!suffix.known || suffix.actual!=actual || suffix.portable!=portable) {
+        suffix={actual,portable,Lookup(state.config,ConfigDigest(state),actual,portable).hash,true};
+    }
+    return {state.config,actual,portable,suffix.hash};
+}
+ModelProgramLookup ModelLookup(PreparedMaterial& state,uint8_t actual,uint8_t portable,
+    const std::array<uint32_t,17>& layout,uint8_t nonzero,uint8_t zero) {
+    auto& suffix=state.modelSuffix;
+    if(!suffix.known || suffix.layout!=layout || suffix.actual!=actual || suffix.portable!=portable ||
+       suffix.nonzero!=nonzero || suffix.zero!=zero) {
+        suffix={layout,actual,portable,nonzero,zero,
+            Lookup(state.config,ConfigDigest(state),actual,portable,layout,nonzero,zero).hash,true};
+    }
+    return {{state.config,actual,portable,0},layout,nonzero,zero,suffix.hash};
 }
 struct ProgramHash {
     using is_transparent=void;
@@ -389,8 +432,125 @@ PreparedMaterial PrepareMaterial() {
         config.tcgs[i].type=material.texgen[i].values[MH3_TEXGEN_PROJECTION] ? GX_TG_MTX3x4 : GX_TG_MTX2x4;
     // Projection changes varying types, but cannot introduce matrix dependencies.
     result.info=aurora::gx::build_shader_info(config);
-    result.configHash=ConfigHash(config);
     return result;
+}
+// Publication already checked every known domain. Compare only the previous
+// successful derivation's consumed structural fields; uniform values remain
+// live in material and are read by WriteUniforms on every admitted draw.
+template<typename T> bool ChangedFields(const T* a,const T* b,uint64_t fields,unsigned count) {
+    while(fields) {
+        const unsigned i=std::countr_zero(fields);if(i>=count) break;
+        if(a[i]!=b[i]) return true;
+        fields&=fields-1;
+    }
+    return false;
+}
+bool MaterialStructureChanged(const mh3_native_material_state& next) {
+    if(material.tev_count!=next.tev_count || material.texgen_count!=next.texgen_count ||
+       material.channel_count!=next.channel_count ||
+       material.indirect_count!=next.indirect_count) return true;
+    const auto& requirements=prepared.requirements;
+    static_assert(sizeof(mh3_pack_tev_pass)==9);
+    static_assert(offsetof(mh3_pack_tev_stage,indirect_add_previous)-offsetof(mh3_pack_tev_stage,color)==33);
+    for(unsigned i=0;i<16;++i) if(ChangedFields(reinterpret_cast<const uint8_t*>(&material.tev[i].color),
+        reinterpret_cast<const uint8_t*>(&next.tev[i].color),requirements.tev[i],MH3_TEV_FIELD_COUNT)) return true;
+    for(unsigned i=0;i<8;++i) if(ChangedFields(material.texgen[i].values,next.texgen[i].values,
+        requirements.texgen[i],MH3_TEXGEN_FIELD_COUNT)) return true;
+    for(unsigned i=0;i<2;++i) {
+        static_assert(offsetof(mh3_pack_channel_control,light_mask)==5);
+        if((requirements.channel[i]&MH3_CHANNEL_CONTROL_COLOR) &&
+           std::memcmp(&material.channel[i].color,&next.channel[i].color,5)!=0) return true;
+        if((requirements.channel[i]&MH3_CHANNEL_CONTROL_ALPHA) &&
+           std::memcmp(&material.channel[i].alpha,&next.channel[i].alpha,5)!=0) return true;
+    }
+    for(unsigned i=0;i<4;++i) {
+        if(ChangedFields(material.swaps[i].rgba,next.swaps[i].rgba,requirements.swaps[i],4)) return true;
+        static_assert(offsetof(mh3_pack_indirect_stage,scale_t)-offsetof(mh3_pack_indirect_stage,coordinate)==3);
+        if(ChangedFields(&material.indirect[i].coordinate,&next.indirect[i].coordinate,requirements.indirect[i],4)) return true;
+    }
+    return ChangedFields(material.pixel.values,next.pixel.values,requirements.pixel,MH3_PIXEL_FIELD_COUNT);
+}
+PreparedMaterial& EnsurePreparedMaterial() {
+    if(!preparedKnown) {
+        auto next=PrepareMaterial();
+        // Several skipped publications can return to identical effective bytes.
+        // Preserve the digest/variants then; no producer hashes eagerly.
+        if(preparedConfigKnown && next.config==prepared.config) {
+            next.configHash=prepared.configHash;next.configHashKnown=prepared.configHashKnown;
+            next.baseSuffix=prepared.baseSuffix;next.modelSuffix=prepared.modelSuffix;
+        } else {
+            ++preparedRevision;modelVariants.clear();modelVariantNext=0;
+        }
+        prepared=next;preparedKnown=preparedConfigKnown=true;preparedAdmissionPending=false;
+    } else if(preparedAdmissionPending) {
+        if(material.fog_reference>=0 && !fogKnown)
+            throw std::runtime_error("Native material fog reference has no typed producer");
+        mh3_material_diagnostic diagnostic{};
+        const auto status=mh3_material_state_require(&material,&prepared.requirements,&diagnostic);
+        if(status!=MH3_RES_OK) throw std::runtime_error("Native material status "+std::to_string(status)+
+            ", group "+std::to_string(diagnostic.group)+", index "+std::to_string(diagnostic.index)+
+            ", fields "+std::to_string(diagnostic.fields));
+        preparedAdmissionPending=false;
+    }
+    return prepared;
+}
+std::array<uint32_t,17> ModelLayout(const aurora::gl::MeshLayout& source) {
+    std::array<uint32_t,17> result{};result[0]=source.stride;result[1]=source.matrixIndexMask;
+    for(unsigned i=0;i<source.attributes.size();++i) {
+        const auto& a=source.attributes[i];
+        result[i+2]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
+    }
+    return result;
+}
+ModelVariantKey ModelRecipe(const mh3_model_gpu_inputs& inputs,const aurora::gl::MeshLayout& layout) {
+    ModelVariantKey key{preparedRevision,0,inputs.matrix_index_mask,inputs.texcoord_mask,{}};
+    for(const auto& attribute:layout.attributes) if(attribute.location<12) key.attributes|=1u<<attribute.location;
+    const bool absolute=(inputs.matrix_index_mask&1)||((inputs.matrix_index_mask>>1)&inputs.texcoord_mask);
+    for(unsigned i=0;i<8;++i) if(inputs.texcoord_mask&(1u<<i)) {
+        const auto& recipe=inputs.texgen[i];
+        key.recipes[i]={recipe.source_row,recipe.projection,recipe.input_ab11,recipe.normalize,
+            recipe.main_identity,recipe.post_identity,uint8_t(absolute&&!recipe.main_identity?recipe.main_slot:0)};
+    }
+    return key;
+}
+PreparedMaterial& ModelPreparation(const mh3_model_gpu_inputs& inputs,const aurora::gl::MeshLayout& layout) {
+    const auto key=ModelRecipe(inputs,layout);
+    for(auto& variant:modelVariants) if(variant.key==key) return variant.state;
+    auto state=prepared;auto& config=state.config;
+    config.attrs={};config.vtxStride=0;
+    for(unsigned location=0;location<12;++location) if(key.attributes&(1u<<location)) {
+        const GXAttr attr=location==0?GX_VA_POS:location==1?GX_VA_NRM:
+            location<4?GXAttr(GX_VA_CLR0+location-2):GXAttr(GX_VA_TEX0+location-4);
+        config.attrs[attr]={GX_DIRECT,uint8_t(location<2?3:location<4?4:2),uint8_t(location>=2&&location<4?GX_RGBA8:GX_F32)};
+    }
+    if(inputs.matrix_index_mask&1) config.attrs[GX_VA_PNMTXIDX]={GX_DIRECT,1,GX_U8};
+    for(unsigned i=0;i<8;++i) if(inputs.matrix_index_mask&(2u<<i))
+        config.attrs[GX_VA_TEX0MTXIDX+i]={GX_DIRECT,1,GX_U8};
+    const bool absolute=(inputs.matrix_index_mask&1)||((inputs.matrix_index_mask>>1)&inputs.texcoord_mask);
+    config.dualTexEnabled=false;
+    constexpr GXTexGenSrc source[]{GX_TG_POS,GX_TG_NRM,GX_TG_COLOR0,GX_TG_BINRM,GX_TG_TANGENT,
+        GX_TG_TEX0,GX_TG_TEX1,GX_TG_TEX2,GX_TG_TEX3,GX_TG_TEX4,GX_TG_TEX5,GX_TG_TEX6,GX_TG_TEX7};
+    for(unsigned i=0;i<8;++i) if(inputs.texcoord_mask&(1u<<i)) {
+        const auto& recipe=inputs.texgen[i];auto& gen=config.tcgs[i];
+        gen.src=source[recipe.source_row];gen.inputFormAB11=recipe.input_ab11;
+        gen.type=recipe.projection?GX_TG_MTX3x4:GX_TG_MTX2x4;
+        gen.mtx=recipe.main_identity?GX_IDENTITY:GXTexMtx(absolute?3*recipe.main_slot:30+3*i);
+        gen.postMtx=recipe.post_identity?GX_PTIDENTITY:GXPTTexMtx(64+3*i);
+        gen.normalize=recipe.normalize;
+        if(gen.normalize||!recipe.post_identity) config.dualTexEnabled=true;
+    }
+    state.info=aurora::gx::build_shader_info(config);
+    // Only identical bytes can inherit the base digest. Model-only use need
+    // never hash the unused base configuration.
+    if(!(config==prepared.config)) {
+        state.configHash=0;state.configHashKnown=false;state.baseSuffix={};state.modelSuffix={};
+    }
+    if(modelVariants.capacity()<ModelVariantCapacity) modelVariants.reserve(ModelVariantCapacity);
+    if(modelVariants.size()<ModelVariantCapacity) {
+        modelVariants.push_back({key,state});return modelVariants.back().state;
+    }
+    auto& victim=modelVariants[modelVariantNext];modelVariantNext=(modelVariantNext+1)%ModelVariantCapacity;
+    victim={key,state};return victim.state;
 }
 const mh3_native_texture_binding& Texture(unsigned unit) {
     const auto* binding=GetNativeTextureBinding(unit);
@@ -535,14 +695,19 @@ void OverlayNativeMaterial(const mh3_native_material_state& source,uint32_t top_
     Check(mh3_material_state_overlay_candidate(&next,&material,&source,top_known),"Native material overlay");
     auto raster=GetNativeDrawState().raster;Check(mh3_material_pixel_raster(&next.pixel,&raster),"Native material pixel raster");
     raster.cull_mode=next.cull_mode;
+    const bool structural=preparedKnown && MaterialStructureChanged(next);
     struct Export {Export(){publishingMaterialRaster=true;}~Export(){publishingMaterialRaster=false;}};
     {Export scoped;SetNativeRaster(raster);}
-    material=next;preparedKnown=false;
+    material=next;
+    if(structural) preparedKnown=false;
+    preparedAdmissionPending=true;
 }
 void SetNativeFog(const mh3_native_fog& source) {
     Owner();auto next=preparedFog;
     Check(mh3_material_prepare_fog(&source,GetNativeDrawState().viewport[2],&next),"Native fog producer");
-    fogSource=source;preparedFog=next;fogKnown=true;preparedKnown=false;
+    const bool structural=!fogKnown || fogSource.type!=source.type || fogSource.range_enabled!=source.range_enabled;
+    fogSource=source;preparedFog=next;fogKnown=true;
+    if(structural) preparedKnown=false;
 }
 void SetNativeModelLights(const mh3_native_light_slots& source) {
     Owner();std::array<mh3_shader_light,8> next{};
@@ -571,7 +736,7 @@ bool GetNativeTextureMatrix(uint32_t selector,float matrix[12],bool* matrix3x4) 
 void SetNativeDepthCompareBeforeTexture(bool before) {Owner();depthBeforeTexture=before;}
 void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     Owner();if(!NativeGraphicsFrameShouldRender()) return;
-    if(!preparedKnown) {prepared=PrepareMaterial();preparedKnown=true;}
+    EnsurePreparedMaterial();
     const auto& raster=GetNativeDrawState().raster;
     if(depthBeforeTexture && raster.depth_test && raster.depth_write && bool(prepared.config.alphaCompare))
         throw std::runtime_error("Native early depth write with alpha discard is unsupported");
@@ -581,7 +746,7 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
         if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
     const auto portable=PortableSampling(prepared.info,zeroBias);
-    const auto lookup=Lookup(prepared.config,prepared.configHash,zeroBias,portable.zeroBias);
+    const auto lookup=MaterialLookup(prepared,zeroBias,portable.zeroBias);
     auto iterator=programs.find(lookup);
     if(iterator==programs.end()) {
         // Always use the user-selected float native equations. The generator's
@@ -612,45 +777,15 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     const auto resident=ResolveNativeModelGPU(mesh);
     if(!mesh.material) throw std::runtime_error("Model draw has no native material producer");
     if(mesh.material!=&material) SetNativeMaterial(*mesh.material);
-    if(!preparedKnown) {prepared=PrepareMaterial();preparedKnown=true;}
-    auto modelState=prepared;
+    EnsurePreparedMaterial();
     auto draw=mesh;draw.mesh=*resident.mesh;draw.material=&material;
     if(((draw.layout.flags>>MH3_LAYOUT_MATRIX_MASK_SHIFT)&0x1ffu)!=resident.layout->matrixIndexMask)
         throw std::runtime_error("Native model matrix selector layout mismatch");
     mh3_model_gpu_inputs inputs{};
-    Check(mh3_model_gpu_prepare(&draw,uint8_t(modelState.info.sampledTexCoords.to_ulong()),
-          modelState.info.lightingEnabled,GetNativeDrawState().viewport[4],GetNativeDrawState().viewport[5],&inputs),
+    Check(mh3_model_gpu_prepare(&draw,uint8_t(prepared.info.sampledTexCoords.to_ulong()),
+          prepared.info.lightingEnabled,GetNativeDrawState().viewport[4],GetNativeDrawState().viewport[5],&inputs),
           "Native model GPU inputs");
-    auto& config=modelState.config;
-    config.attrs={};config.vtxStride=0;
-    for(const auto& a:resident.layout->attributes) {
-        const unsigned location=a.location;
-        if(location>=12) continue;
-        const GXAttr attr=location==0?GX_VA_POS:location==1?GX_VA_NRM:
-            location<4?GXAttr(GX_VA_CLR0+location-2):GXAttr(GX_VA_TEX0+location-4);
-        config.attrs[attr]={GX_DIRECT,uint8_t(location<2?3:location<4?4:2),uint8_t(location>=2&&location<4?GX_RGBA8:GX_F32)};
-    }
-    if(inputs.matrix_index_mask&1) config.attrs[GX_VA_PNMTXIDX]={GX_DIRECT,1,GX_U8};
-    for(unsigned i=0;i<8;++i) if(inputs.matrix_index_mask&(2u<<i))
-        config.attrs[GX_VA_TEX0MTXIDX+i]={GX_DIRECT,1,GX_U8};
-    const bool absoluteMatrices=(inputs.matrix_index_mask&1) ||
-        ((inputs.matrix_index_mask>>1)&inputs.texcoord_mask);
-    config.dualTexEnabled=false;
-    constexpr GXTexGenSrc source[]{GX_TG_POS,GX_TG_NRM,GX_TG_COLOR0,GX_TG_BINRM,GX_TG_TANGENT,
-        GX_TG_TEX0,GX_TG_TEX1,GX_TG_TEX2,GX_TG_TEX3,GX_TG_TEX4,GX_TG_TEX5,GX_TG_TEX6,GX_TG_TEX7};
-    for(unsigned i=0;i<8;++i) if(inputs.texcoord_mask&(1u<<i)) {
-        const auto& recipe=inputs.texgen[i];auto& gen=config.tcgs[i];
-        gen.src=source[recipe.source_row];gen.inputFormAB11=recipe.input_ab11;
-        gen.type=recipe.projection?GX_TG_MTX3x4:GX_TG_MTX2x4;
-        gen.mtx=recipe.main_identity?GX_IDENTITY:GXTexMtx(absoluteMatrices?3*recipe.main_slot:30+3*i);
-        gen.postMtx=recipe.post_identity?GX_PTIDENTITY:GXPTTexMtx(64+3*i);
-        gen.normalize=recipe.normalize;
-        if(gen.normalize || !recipe.post_identity) config.dualTexEnabled=true;
-    }
-    modelState.info=aurora::gx::build_shader_info(config);
-    // This model variant is still rebuilt per draw. Hash once after its final
-    // attribute/texgen edits; the base preparation's hash describes other bytes.
-    modelState.configHash=ConfigHash(config);
+    auto& modelState=ModelPreparation(inputs,*resident.layout);const auto& config=modelState.config;
     const auto& raster=GetNativeDrawState().raster;
     if(depthBeforeTexture && raster.depth_test && raster.depth_write && bool(config.alphaCompare))
         throw std::runtime_error("Native early depth write with alpha discard is unsupported");
@@ -659,14 +794,8 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
         (void)Texture(i);if(aurora::native_texture_shader_lod_bias(i)==0) zeroBias|=1u<<i;
     }
     const auto portable=PortableSampling(modelState.info,zeroBias);
-    std::array<uint32_t,17> layout{};
-    layout[0]=resident.layout->stride;
-    layout[1]=resident.layout->matrixIndexMask;
-    for(unsigned i=0;i<resident.layout->attributes.size();++i) {
-        const auto& a=resident.layout->attributes[i];
-        layout[i+2]=a.offset|(uint32_t(a.location)<<16)|(uint32_t(a.components)<<20)|(uint32_t(a.format)<<24);
-    }
-    const auto lookup=Lookup(config,modelState.configHash,zeroBias,portable.zeroBias,layout,
+    const auto layout=ModelLayout(*resident.layout);
+    const auto lookup=ModelLookup(modelState,zeroBias,portable.zeroBias,layout,
                              inputs.nonzero_projective_mask,inputs.zero_projective_mask);
     auto program=modelPrograms.find(lookup);
     if(program==modelPrograms.end()) {
@@ -699,7 +828,9 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
 #endif
 }
 void ClearNativeMaterialPrograms() {
-    Owner();programs.clear();modelPrograms.clear();ClearNativeModelGPU();preparedKnown=false;
+    Owner();programs.clear();modelPrograms.clear();ClearNativeModelGPU();
+    preparedKnown=preparedConfigKnown=preparedAdmissionPending=false;
+    modelVariants.clear();modelVariantNext=0;preparedRevision=0;
     if(rasterObserverInstalled) SetNativeRasterObserver(nullptr);
     rasterObserverInstalled=false;
 }
