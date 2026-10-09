@@ -306,6 +306,16 @@ enum class Id : uint16_t {
     BeltLevel255,
     PantsLevel255,
     SkinTone,
+    DoudleyBothArmorTypes,
+    DoudleyArmorPigment,
+    BarrelRange300,
+    BarrelRange,
+    HelmSkills,
+    ChestSkills,
+    ArmsSkills,
+    WaistSkills,
+    LegsSkills,
+    ArmorSkillsOff,
     Count
 };
 
@@ -365,6 +375,7 @@ void Step(CpuContext* ctx);
 
 // Step's parts, by what they write.
 void StepSaveData();
+void StepEquipment();
 void StepItems();
 void StepMonsterCodes();
 void StepHunterCodes();

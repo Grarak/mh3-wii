@@ -712,6 +712,113 @@ void StepSaveData() {
     }
 }
 
+namespace {
+
+// The equipment data (0x806ADC90): +0 the list of the armor tables by kind
+// (1 chest, 2 arms, 3 waist, 4 legs, 5 helm; 24 bytes an entry), +16 the
+// weapons' from kind 7 (36 bytes an entry; 12 the bowgun barrels). Each
+// kind's count is at 0x80570E80; entry 0 is empty. The US codes wrote the
+// tables where the US disc loads them, 0x40 lower.
+constexpr uint32_t kEquipment = 0x806ADC90;
+constexpr uint32_t kEquipmentCounts = 0x80570E80;
+constexpr uint32_t kArmorEntry = 24, kWeaponEntry = 36;
+constexpr uint32_t kBarrels = 12;
+
+enum : uint32_t {
+    kArmorPigment = 0x4, // u8: 2 can be dyed
+    kArmorClasses = 0x6, // u8: 0x0F blademaster and gunner
+    kArmorSkills = 0xE,  // five u8 pairs: skill, points
+    kBarrelRange = 0xA,  // u16: hundredths
+};
+
+bool InRam(uint32_t address) {
+    return (address >= 0x80000000 && address < 0x81800000) || (address >= 0x90000000 && address < 0x94000000);
+}
+
+// An equipment kind's table, 0 before the data is loaded.
+uint32_t EquipmentTable(uint32_t kind) {
+    const uint32_t list = Memory::Read32(kEquipment + (kind < 7 ? 0 : 16));
+
+    if (!InRam(list))
+        return 0;
+
+    const uint32_t table = Memory::Read32(list + 4 * (kind < 7 ? kind - 1 : kind - 7));
+    return InRam(table) ? table : 0;
+}
+
+// The most a kind has is 141 (helms).
+uint32_t EquipmentCount(uint32_t kind) {
+    const uint32_t count = Memory::Read32(kEquipmentCounts + 4 * (kind - 1));
+    return count <= 160 ? count : 0;
+}
+
+// The armor's own skills, kept from before the skill codes first wrote them,
+// for the code that switches them off: per armor kind, the table they are
+// from and each entry's five pairs.
+constexpr uint32_t kMaxArmor = 160;
+uint32_t g_skillsFrom[5];
+uint8_t g_ownSkills[5][kMaxArmor][10];
+
+// Doudley's armor skill codes: each entry's five skills the picked one, 50
+// points each; switched off, the armor's own back.
+void StepArmorSkills() {
+    constexpr Id kCodes[5]{Id::ChestSkills, Id::ArmsSkills, Id::WaistSkills, Id::LegsSkills, Id::HelmSkills};
+    const bool off = Toggled(Id::ArmorSkillsOff);
+
+    for (uint32_t kind = 1; kind <= 5; ++kind) {
+        const Id id = kCodes[kind - 1];
+        const uint32_t table = On(id) ? EquipmentTable(kind) : 0;
+
+        if (table == 0)
+            continue;
+
+        const uint32_t count = std::min(EquipmentCount(kind), kMaxArmor);
+        auto& own = g_ownSkills[kind - 1];
+
+        if (g_skillsFrom[kind - 1] != table) {
+            for (uint32_t i = 1; i < count; ++i)
+                for (uint32_t k = 0; k < 10; ++k)
+                    own[i][k] = Memory::Read8(table + i * kArmorEntry + kArmorSkills + k);
+
+            g_skillsFrom[kind - 1] = table;
+        }
+
+        for (uint32_t i = 1; i < count; ++i) {
+            const uint32_t skills = table + i * kArmorEntry + kArmorSkills;
+
+            for (uint32_t k = 0; k < 10; ++k)
+                Memory::Write8(skills + k, off ? own[i][k] : k % 2 == 0 ? uint8_t(Value(id)) : 50);
+        }
+    }
+}
+
+} // namespace
+
+// Doudley's equipment codes (serial writes to the tables, entries 1 on).
+void StepEquipment() {
+    if (On(Id::DoudleyBothArmorTypes))
+        for (uint32_t kind = 1; kind <= 4; ++kind)
+            if (const uint32_t table = EquipmentTable(kind))
+                for (uint32_t i = 1; i < EquipmentCount(kind); ++i)
+                    Memory::Write8(table + i * kArmorEntry + kArmorClasses, 0x0F);
+
+    if (On(Id::DoudleyArmorPigment))
+        for (uint32_t kind = 1; kind <= 5; ++kind)
+            if (const uint32_t table = EquipmentTable(kind))
+                for (uint32_t i = 1; i < EquipmentCount(kind); ++i)
+                    Memory::Write8(table + i * kArmorEntry + kArmorPigment, 2);
+
+    if (On(Id::BarrelRange300) || On(Id::BarrelRange)) {
+        const auto range = uint16_t(On(Id::BarrelRange) ? Value(Id::BarrelRange) : 300);
+
+        if (const uint32_t table = EquipmentTable(kBarrels))
+            for (uint32_t i = 1; i < EquipmentCount(kBarrels); ++i)
+                Memory::Write16(table + i * kWeaponEntry + kBarrelRange, range);
+    }
+
+    StepArmorSkills();
+}
+
 void StepPlayer() {
     const uint32_t plw = LocalPlayer();
 

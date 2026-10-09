@@ -98,6 +98,11 @@ constexpr Option kDefenseBonuses[]{
     {"+100", 100}, {"+500", 500}, {"+1000", 1000}, {"+4000", 4000}, {"+9000", 9000},
 };
 
+// Bowgun barrel ranges, as the code's notes listed them (hundredths).
+constexpr Option kBarrelRanges[]{
+    {"0.30", 30}, {"0.50", 50}, {"0.70", 70}, {"1.00", 100}, {"3.00", 300}, {"4.00", 400},
+};
+
 struct Entry {
     Id id;
     Cheat cheat;
@@ -397,6 +402,16 @@ constexpr Entry kEntries[]{
     {Id::BeltLevel255, {kDoudley, "Equipped belt level 255 (quest only)", "The equipped belt at level 255."}},
     {Id::PantsLevel255, {kDoudley, "Equipped pants level 255 (quest only)", "The equipped pants at level 255."}},
     {Id::SkinTone, {kDoudley, "Skin tone change", "Skin tone, darkest to lightest; not saved.", {}, {0, 0x264, 20}}},
+    {Id::DoudleyBothArmorTypes, {kDoudley, "Enable both armor type for all armors", "Every chest, arms, waist and legs armor counts as both types (blademaster and gunner)."}},
+    {Id::DoudleyArmorPigment, {kDoudley, "Enable armour pigment for all armors", "Every armor piece can be dyed."}},
+    {Id::BarrelRange300, {kDoudley, "Range 3.00 for all bowgun barrels", "Every bowgun barrel has range 3.00."}},
+    {Id::BarrelRange, {kDoudley, "Range N.NN for all bowgun barrels", "Every bowgun barrel has the picked range (from the start: the code's buttons are not needed).", kBarrelRanges, {}, 4}},
+    {Id::HelmSkills, {kDoudley, "Activate armor skills for all helmet", "Every helm gives 250 points of the picked skill (its number); on before the quest starts.", {}, {1, 127}}},
+    {Id::ChestSkills, {kDoudley, "Activate armor skills for all chest", "Every chest armor gives 250 points of the picked skill (its number); on before the quest starts.", {}, {1, 127}}},
+    {Id::ArmsSkills, {kDoudley, "Activate armor skills for all arms", "Every arms armor gives 250 points of the picked skill (its number); on before the quest starts.", {}, {1, 127}}},
+    {Id::WaistSkills, {kDoudley, "Activate armor skills for all waist", "Every waist armor gives 250 points of the picked skill (its number); on before the quest starts.", {}, {1, 127}}},
+    {Id::LegsSkills, {kDoudley, "Activate armor skills for all legs", "Every legs armor gives 250 points of the picked skill (its number); on before the quest starts.", {}, {1, 127}}},
+    {Id::ArmorSkillsOff, {kDoudley, "Deactivate armor skills codes (turn off)", "The buttons switch the five codes above off (the armor's own skills back) and on again.", kActivators}},
 };
 
 static_assert(std::size(kEntries) == size_t(Id::Count));
@@ -494,7 +509,7 @@ namespace {
 bool g_toggled[size_t(Id::Count)];
 
 // The cheats switched by their buttons.
-constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly, Id::ItemsGet10Toggle, Id::FreezeUnfreezeMonsters, Id::AltOneHitKillsToggle, Id::CantGather, Id::CantLeaveArea, Id::WalkThroughWalls, Id::PassThroughMonsters};
+constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly, Id::ItemsGet10Toggle, Id::FreezeUnfreezeMonsters, Id::AltOneHitKillsToggle, Id::CantGather, Id::CantLeaveArea, Id::WalkThroughWalls, Id::PassThroughMonsters, Id::ArmorSkillsOff};
 } // namespace
 
 bool Toggled(Id id) {
@@ -538,6 +553,7 @@ void Step(CpuContext*) {
             g_toggled[size_t(id)] = !g_toggled[size_t(id)];
 
     StepSaveData();
+    StepEquipment();
     StepItems();
     StepMonsterCodes();
     StepHunterCodes();
