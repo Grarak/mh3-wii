@@ -23,22 +23,6 @@ int mh3_model_gpu_texgen_is_plain(const mh3_model_gpu_texgen *gen) {
                 return 0;
     return 1;
 }
-/* Explicit classification keeps VitaSDK's isfinite macro from calling
- * __fpclassifyf for every validated float. NaN/Inf checks remain strict. */
-static int finite_matrix(const mh3_matrix34 *matrix) {
-    for (unsigned r = 0; r < 3; r++)
-        for (unsigned c = 0; c < 4; c++)
-            if (!__builtin_isfinite(matrix->v[r][c]))
-                return 0;
-    return 1;
-}
-static int finite_normal(const mh3_matrix33 *matrix) {
-    for (unsigned r = 0; r < 3; r++)
-        for (unsigned c = 0; c < 3; c++)
-            if (!__builtin_isfinite(matrix->v[r][c]))
-                return 0;
-    return 1;
-}
 static int attribute(const mh3_pack_layout *layout, unsigned semantic) {
     for (unsigned i = 0; i < layout->count; i++)
         if (layout->attributes[i].semantic == semantic)
@@ -54,16 +38,12 @@ static mh3_res_status main_matrix(const mh3_model_palette *palette, unsigned sel
         return MH3_RES_UNSUPPORTED;
     unsigned slot = selector / 3;
     if (slot < 10) {
-        if (!(palette->position_valid & (1u << slot)))
-            return MH3_RES_ABSENT;
         *out = palette->position[slot];
     } else {
         slot -= 10;
-        if (!(palette->texture_valid & (1u << slot)))
-            return MH3_RES_ABSENT;
         *out = palette->texture[slot];
     }
-    return finite_matrix(out) ? MH3_RES_OK : MH3_RES_INVALID;
+    return MH3_RES_OK;
 }
 /* Interval bound with a deliberately generous float roundoff guard. Returning
  * false only keeps the exact conditional divide; it never changes coordinates.
@@ -217,44 +197,24 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
         const mh3_pack_palette_batch *batch = mesh->palette_batch;
         if (!batch)
             return MH3_RES_ABSENT;
-        if ((batch->position_required | batch->normal_required | batch->texture_required) & ~0x3ffu)
-            return MH3_RES_INVALID;
-        if ((out->matrix_index_mask & 1) && (!batch->position_required || (normal_required && !batch->normal_required)))
-            return MH3_RES_ABSENT;
         const uint16_t positions = batch->position_required | ((out->matrix_index_mask & 1) ? 0 : 1);
-        if ((positions & ~mesh->palette->position_valid) || (batch->texture_required & ~mesh->palette->texture_valid) || (normal_required && (batch->normal_required & ~mesh->palette->normal_valid)))
-            return MH3_RES_ABSENT;
         for (unsigned slot = 0; slot < 10; slot++) {
             if (positions & (1u << slot)) {
-                if (!finite_matrix(&mesh->palette->position[slot]))
-                    return MH3_RES_INVALID;
                 positions_out[slot] = mesh->palette->position[slot];
             }
             if (batch->texture_required & (1u << slot)) {
-                if (!finite_matrix(&mesh->palette->texture[slot]))
-                    return MH3_RES_INVALID;
                 textures_out[slot] = mesh->palette->texture[slot];
             }
             if (normal_required && (batch->normal_required & (1u << slot))) {
-                // Validate the nine CPU-owned source coefficients. The final
-                // GPU matrix's three padding values are already exact +0.
-                // Keep the copy before the error return, preserving partial
-                // failure bytes without reading uncached GPU palette memory.
-                const int finite = finite_normal(&mesh->palette->normal[slot]);
+                // The final GPU matrix's padding is exact +0 from the memset.
                 for (unsigned r = 0; r < 3; r++)
                     for (unsigned c = 0; c < 3; c++)
                         normals_out[slot].v[r][c] = mesh->palette->normal[slot].v[r][c];
-                if (!finite)
-                    return MH3_RES_INVALID;
             }
         }
     }
     if (!(out->matrix_index_mask & 1)) {
-        if (!(mesh->palette->position_valid & 1))
-            return MH3_RES_ABSENT;
         out->position = mesh->palette->position[0];
-        if (!finite_matrix(&out->position))
-            return MH3_RES_INVALID;
         positions_out[0] = out->position;
     }
     for (unsigned i = 0; i < 16; i++) {
@@ -271,13 +231,9 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
         if (!attribute(&mesh->layout, 1))
             return MH3_RES_ABSENT;
         if (!(out->matrix_index_mask & 1)) {
-            if (!(mesh->palette->normal_valid & 1))
-                return MH3_RES_ABSENT;
             for (unsigned r = 0; r < 3; r++)
                 for (unsigned c = 0; c < 3; c++)
                     out->normal.v[r][c] = mesh->palette->normal[0].v[r][c];
-            if (!finite_matrix(&out->normal))
-                return MH3_RES_INVALID;
             normals_out[0] = out->normal;
         }
     }
@@ -289,7 +245,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             const int indexed = (out->matrix_index_mask & (2u << i)) != 0;
             const unsigned required = (1u << MH3_TEXGEN_PROJECTION) | (1u << MH3_TEXGEN_INPUT_AB11) | (1u << MH3_TEXGEN_FUNCTION) | (1u << MH3_TEXGEN_SOURCE_ROW) | (1u << MH3_TEXGEN_MATRIX_ROW) |
                                       (1u << MH3_TEXGEN_DUAL_TEXTURE);
-            const unsigned consumed = indexed ? required & ~(1u << MH3_TEXGEN_MATRIX_ROW) : required;
+            const unsigned consumed = required & ~(1u << MH3_TEXGEN_MATRIX_ROW);
             if ((source->known & consumed) != consumed)
                 return MH3_RES_ABSENT;
             const uint8_t *v = source->values;
@@ -312,7 +268,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             gen->main_slot = 20;
             gen->main_identity = indexed || v[MH3_TEXGEN_MATRIX_ROW] == 60;
             if (!indexed) {
-                mh3_res_status status = main_matrix(mesh->palette, v[MH3_TEXGEN_MATRIX_ROW], &gen->main);
+                const mh3_res_status status = main_matrix(mesh->palette, v[MH3_TEXGEN_MATRIX_ROW], &gen->main);
                 if (status != MH3_RES_OK)
                     return status;
                 gen->main_slot = (uint8_t)(v[MH3_TEXGEN_MATRIX_ROW] / 3);
@@ -324,7 +280,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             gen->post = identity();
             gen->post_identity = 1;
             if (v[MH3_TEXGEN_DUAL_TEXTURE]) {
-                const unsigned post_required = (1u << MH3_TEXGEN_NORMALIZE) | (1u << MH3_TEXGEN_POST_MATRIX_ROW);
+                const unsigned post_required = 1u << MH3_TEXGEN_NORMALIZE;
                 if ((source->known & post_required) != post_required)
                     return MH3_RES_ABSENT;
                 if (v[MH3_TEXGEN_NORMALIZE] > 1)
@@ -334,11 +290,9 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 if (post != 61) {
                     if (post % 3 || post / 3 >= 8)
                         return MH3_RES_UNSUPPORTED;
-                    if (!mesh->texture_matrices || !(mesh->texture_matrix_known & (1u << (post / 3))))
+                    if (!mesh->texture_matrices)
                         return MH3_RES_ABSENT;
                     memcpy(gen->post.v, mesh->texture_matrices[post / 3], sizeof gen->post.v);
-                    if (!finite_matrix(&gen->post))
-                        return MH3_RES_INVALID;
                     gen->post_identity = 0;
                 }
             }

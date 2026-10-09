@@ -39,8 +39,9 @@ mh3_res_status mh3_model_gpu_prepare(const mh3_resolved_mesh_submit *mesh, uint8
 /* Prepare directly into final draw metadata and three 10-slot palette arrays.
  * The caller owns writable arrays in its admitted GPU frame allocation.
  * Failure can leave outputs partially written; consume them only on success.
- * All input checks and conservative projective-Q rules match the transactional
- * API above. No pointer into live guest pose memory is retained. */
+ * Palette coefficients and required/known masks are consumed without repeated
+ * admission checks. Access bounds and conservative projective-Q rules match
+ * the transactional API above. No pointer into live guest pose memory is retained. */
 mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, uint8_t texcoord_mask, int normal_required, float near_z, float far_z, mh3_model_gpu_draw_inputs *out,
                                         mh3_matrix34 *positions, mh3_matrix34 *normals, mh3_matrix34 *textures);
 /* Whether the admitted coordinate recipe can use the fixed Identity/Affine

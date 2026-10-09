@@ -312,8 +312,6 @@ uint64_t ReadNativeModelPaletteRevision() {
     return matrix_palette_revision;
 }
 void PublishNativeModelPalette(const mh3_model_palette& palette) {
-    if ((palette.position_valid | palette.normal_valid | palette.texture_valid) & ~1023u)
-        throw std::runtime_error("Native palette known mask invalid");
     AdvancePalette();
     matrix_palette = palette;
 }

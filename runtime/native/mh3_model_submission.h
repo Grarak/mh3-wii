@@ -95,14 +95,15 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog, const m
                                        uint64_t resident_generation, mh3_prepared_mesh *out);
 /* Constant-time draw binding: no binary lookup or immutable metadata decode.
  * source_generation must come from the current verified owner; live resource
- * compatibility/material checks remain explicit producers/backend gates. */
+ * compatibility/material checks remain explicit producers/backend gates.
+ * Palette values and required/known masks are not validated again. */
 mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint64_t resident_generation, uint64_t source_generation, uint64_t pose_generation, const mh3_model_palette *palette,
                                          mh3_resolved_mesh_submit *out);
 mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uint32_t batch_index, uint64_t resident_generation, uint64_t source_generation, uint64_t palette_generation,
                                           const mh3_model_palette *palette, mh3_resolved_mesh_submit *out);
 /* Convenience tooling/test API. Runtime admission should use prepare followed
  * by bind_pose, rather than decoding immutable metadata on every draw.
- * Resolve metadata and validate the rigid palette and attribute contract. This
+ * Resolve metadata and the attribute contract, and bind the rigid palette. This
  * does not read GPU bytes, submit a draw, infer absent vertex defaults, validate
  * material dependencies or silently change alpha/blend/vegetation ordering.
  * resident_handle/generations and live shader inputs are explicit producers.

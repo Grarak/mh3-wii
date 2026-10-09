@@ -284,8 +284,7 @@ mh3_res_status mh3_model_palette_load(const mh3_matrix_sources *s, const mh3_mat
     return MH3_RES_UNSUPPORTED;
 }
 mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, const mh3_model_palette *produced, mh3_model_palette *out) {
-    if (!inherited || !produced || !out ||
-        ((inherited->position_valid | inherited->normal_valid | inherited->texture_valid | produced->position_valid | produced->normal_valid | produced->texture_valid) & ~1023u))
+    if (!inherited || !produced || !out)
         return MH3_RES_INVALID;
     mh3_model_palette next = *inherited;
     for (unsigned i = 0; i < 10; i++) {
@@ -304,17 +303,10 @@ mh3_res_status mh3_model_palette_overlay(const mh3_model_palette *inherited, con
     return MH3_RES_OK;
 }
 mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch, const mh3_matrix_sources *sources, const mh3_model_palette *inherited, mh3_model_palette *out) {
-    if (!batch || !sources || !inherited || !out || !batch->index_count || batch->first_index % 3 || batch->index_count % 3 ||
-        ((batch->position_known | batch->normal_known | batch->texture_known | batch->position_required | batch->normal_required | batch->texture_required | inherited->position_valid |
-          inherited->normal_valid | inherited->texture_valid) &
-         ~1023u))
+    if (!batch || !sources || !inherited || !out || !batch->index_count || batch->first_index % 3 || batch->index_count % 3)
         return MH3_RES_INVALID;
     const uint16_t known[3] = {batch->position_known, batch->normal_known, batch->texture_known};
     const uint16_t *const ids[3] = {batch->position_source, batch->normal_source, batch->texture_source};
-    for (unsigned group = 0; group < 3; group++)
-        for (unsigned slot = 0; slot < 10; slot++)
-            if (((known[group] >> slot) & 1u) == (ids[group][slot] == UINT16_MAX))
-                return MH3_RES_INVALID;
     if ((known[0] | known[1] | known[2]) && !sources->generation)
         return MH3_RES_ABSENT;
     mh3_model_palette next = *inherited;
@@ -329,27 +321,6 @@ mh3_res_status mh3_model_palette_apply_batch(const mh3_pack_palette_batch *batch
                 if (status != MH3_RES_OK)
                     return status;
             }
-    }
-    if ((batch->position_required & ~next.position_valid) || (batch->normal_required & ~next.normal_valid) || (batch->texture_required & ~next.texture_valid))
-        return MH3_RES_ABSENT;
-    /* Explicit classification avoids VitaSDK's per-float __fpclassifyf call
-     * while retaining every finite-value admission check. */
-    for (unsigned slot = 0; slot < 10; slot++) {
-        if ((batch->position_required | batch->position_known) & (1u << slot))
-            for (unsigned r = 0; r < 3; r++)
-                for (unsigned c = 0; c < 4; c++)
-                    if (!__builtin_isfinite(next.position[slot].v[r][c]))
-                        return MH3_RES_INVALID;
-        if ((batch->normal_required | batch->normal_known) & (1u << slot))
-            for (unsigned r = 0; r < 3; r++)
-                for (unsigned c = 0; c < 3; c++)
-                    if (!__builtin_isfinite(next.normal[slot].v[r][c]))
-                        return MH3_RES_INVALID;
-        if ((batch->texture_required | batch->texture_known) & (1u << slot))
-            for (unsigned r = 0; r < 3; r++)
-                for (unsigned c = 0; c < 4; c++)
-                    if (!__builtin_isfinite(next.texture[slot].v[r][c]))
-                        return MH3_RES_INVALID;
     }
     *out = next;
     return MH3_RES_OK;

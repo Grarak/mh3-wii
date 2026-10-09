@@ -57,9 +57,6 @@ uint32_t Resource(uint32_t reference, bool required = false) {
 uint32_t Canonical(uint32_t address) {
     return address ? (address & 0x3fffffffu) | 0x80000000u : 0;
 }
-void Publish(const mh3_native_material_state& patch, uint32_t top = 0) {
-    OverlayNativeMaterial(patch, top);
-}
 mh3_model_genmode Mode() {
     mh3_model_genmode mode{};
     Checked(mh3_model_genmode_read(Bytes(genmode, 12), &mode));
@@ -776,7 +773,9 @@ uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_
 extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
     cpu->gpr[3] = NativeModelIndirectMatrices(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices");
+// Only integer guest arguments/results reach the native matrix producers;
+// no guest call or CpuContext is passed to their descendants.
+REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices", true);
 void DispatchNativeModel(const NativeModelDispatch& d) {
     TraceNativeModelDispatch(d);
     mh3_model_material_scope scope;
@@ -821,4 +820,5 @@ void DispatchNativeModel(const NativeModelDispatch& d) {
 extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
     DispatchNativeModel({cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9]});
 }
-REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch");
+// Material/shape preparation and packet recording preserve every guest FPR.
+REGISTER_NATIVE_FUNCTION_AS(0x80076A58, MH3_ModelDispatch, "ModelDisplayListDispatch", true);

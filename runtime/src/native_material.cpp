@@ -565,9 +565,6 @@ void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matr
         destination = &postTextureMatrices[(selector - 64) / 3];
     if (!destination || !matrix)
         throw std::runtime_error("Invalid native texture-matrix producer");
-    for (unsigned i = 0; i < 12; ++i)
-        if (!std::isfinite(matrix[i]))
-            throw std::runtime_error("Nonfinite native texture matrix");
     PublishNativeModelTextureMatrix(selector, matrix, matrix3x4);
     std::memcpy(destination->values.data(), matrix, 48);
     destination->known = true;

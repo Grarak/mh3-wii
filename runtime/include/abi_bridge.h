@@ -853,6 +853,9 @@ class AbiTrampoline<Ret(CpuContext*)> {
     static AbiTrampoline<decltype(fn)> MKW_DETAIL_MAKE_UNIQUE(_abi_native_trampoline_, __COUNTER__)(address, #fn, fn, FunctionKind::Native, false, kPpcAllNonvolatileFprMask, 0, 0,                    \
                                                                                                     &AbiRawCpuThunk<&fn>::Invoke)
 
-#define REGISTER_NATIVE_FUNCTION_AS(address, fn, pretty_name)                                                                                                                                          \
-    static AbiTrampoline<decltype(fn)> MKW_DETAIL_MAKE_UNIQUE(_abi_native_trampoline_named_, __COUNTER__)(address, pretty_name, fn, FunctionKind::Native, false, kPpcAllNonvolatileFprMask, 0, 0,      \
+// The optional fourth argument certifies f14-f31 preservation for an audited
+// CpuContext* native. Three-argument CpuContext* registrations stay conservative.
+#define REGISTER_NATIVE_FUNCTION_AS(address, fn, pretty_name, ...)                                                                                                                                     \
+    static AbiTrampoline<decltype(fn)> MKW_DETAIL_MAKE_UNIQUE(_abi_native_trampoline_named_, __COUNTER__)(address, pretty_name, fn, FunctionKind::Native, false __VA_OPT__(|| (__VA_ARGS__)),             \
+                                                                                                          kPpcAllNonvolatileFprMask, 0, 0,                                                           \
                                                                                                           &AbiRawCpuThunk<&fn>::Invoke)

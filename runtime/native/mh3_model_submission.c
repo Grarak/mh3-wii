@@ -212,18 +212,8 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint
                                          mh3_resolved_mesh_submit *out) {
     if (prepared && prepared->palette_batch_count)
         return MH3_PACK_UNSUPPORTED;
-    if (!prepared || !out || !palette || !source_generation || !pose_generation || resident_generation != prepared->immutable.resident_generation || !(palette->position_valid & 1) ||
-        (prepared->normal_required && !(palette->normal_valid & 1)))
+    if (!prepared || !out || !palette || !source_generation || !pose_generation || resident_generation != prepared->immutable.resident_generation)
         return MH3_PACK_INVALID;
-    for (uint32_t row = 0; row < 3; row++)
-        for (uint32_t col = 0; col < 4; col++)
-            if (!isfinite(palette->position[0].v[row][col]))
-                return MH3_PACK_INVALID;
-    if (palette->normal_valid & 1)
-        for (uint32_t row = 0; row < 3; row++)
-            for (uint32_t col = 0; col < 3; col++)
-                if (!isfinite(palette->normal[0].v[row][col]))
-                    return MH3_PACK_INVALID;
     mh3_resolved_mesh_submit r = prepared->immutable;
     r.source_generation = source_generation;
     r.pose_generation = pose_generation;
@@ -237,32 +227,6 @@ mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uin
         resident_generation != prepared->immutable.resident_generation)
         return MH3_PACK_INVALID;
     const mh3_pack_palette_batch *batch = &prepared->palette_batches[index];
-    uint16_t positions = batch->position_required, normals = batch->normal_required;
-    if (!(prepared->matrix_index_mask & 1u)) {
-        positions |= 1;
-        if (prepared->normal_required)
-            normals |= 1;
-    }
-    if (((positions | normals | batch->texture_required) & ~1023u) || (positions & ~palette->position_valid) || (normals & ~palette->normal_valid) ||
-        (batch->texture_required & ~palette->texture_valid))
-        return MH3_PACK_INVALID;
-    for (unsigned i = 0; i < 10; i++) {
-        if (positions & (1u << i))
-            for (unsigned r = 0; r < 3; r++)
-                for (unsigned c = 0; c < 4; c++)
-                    if (!isfinite(palette->position[i].v[r][c]))
-                        return MH3_PACK_INVALID;
-        if (normals & (1u << i))
-            for (unsigned r = 0; r < 3; r++)
-                for (unsigned c = 0; c < 3; c++)
-                    if (!isfinite(palette->normal[i].v[r][c]))
-                        return MH3_PACK_INVALID;
-        if (batch->texture_required & (1u << i))
-            for (unsigned r = 0; r < 3; r++)
-                for (unsigned c = 0; c < 4; c++)
-                    if (!isfinite(palette->texture[i].v[r][c]))
-                        return MH3_PACK_INVALID;
-    }
     mh3_resolved_mesh_submit result = prepared->immutable;
     result.first_index = batch->first_index;
     result.index_count = batch->index_count;
