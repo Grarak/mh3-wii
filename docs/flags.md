@@ -150,7 +150,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,draw-writes][,particles][,loading]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,draw-writes][,particles][,loading]`
 
 | Item | Effect |
 | --- | --- |
@@ -161,6 +161,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 | `monster-spins` | every logic step, each monster whose yaw (+0x1C0) turns more than 2000 units a tick: its work words, the turn, the step's scale and ticks and its motion (a spin added once a step turns the same per step at any step length) |
 | `hit-shapes` | each (monster, body part, caller) of EnemyPartShape the first time, with the part's joints and mode and the monster's motion: an attack's hit parts appear from the attack check as it starts |
 | `actions` | every action a monster starts (`MH3 monster action`: the work, its kind, the action before and after as mode.sub, the pair asked for, how and the caller, marked `control` when the monster control started it, the step counter and the step's scale), once per kind its species handlers (`MH3 monster handlers`), and each (kind, variant) whose enemy data EnemyActionTable looks up, once ([monster control](monster-control.md)) |
+| `tex-scroll` | each caller of SetEffectMtx (0x800953A8: the game's texture scrollers, the water's among them) the first time and every 60th call, with the matrix's translation and the step counter (`MH3 tex scroll` lines; texture_scroll.cpp) |
 | `draw-writes` | the game thread's heap frees and memory fills while the overlapped draw runs beside it; when the draw meets a model whose draw virtual is gone, the `MH3 draw of a dead model` line and the recorded writes over it (`MH3 draw-side` lines) |
 | `particles` | every third tick of game time, an `MH3 particles` line per particle manager with live particles (its emitter resource, the count, their mean age and life in ticks, the summed alpha of the first colour) and one with the emitter emissions, child curves (each run or gated off between ticks) and queued child emissions since the last; and an `MH3 effect emitter` line for every emitter the game looks up by name (each effect it creates: the name, the emitter data and the return addresses of five frames up). Compares effects at fixed and variable steps (`MH3_VARIABLE_STEP=0`) |
 | `loading` | each loading screen: every file the loader queues as it is first seen, and every drawn frame an `MH3 loading` line with the loader state, the queued files and bytes, the disc bytes read, in flight and learned, the conversions done and queued, and the progress bar's share ([loading progress](loading-progress.md)) |

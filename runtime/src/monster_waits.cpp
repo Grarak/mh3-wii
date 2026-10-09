@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of twenty-two enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of twenty-three enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -14,6 +14,7 @@
 //     0x80159054  kind 3 (Qurupeco)  a move, at least 10 or 20 ticks
 //     0x8015898C  kind 3 (Qurupeco)  a backward hop, 22 or 30 ticks
 //     0x80171B7C  kind 12 (Great Jaggi) a retreat, 15 ticks before it may end
+//     0x8037A8AC  kind 19 (Agnaktor) under the ground: 15, 60 or 90 ticks, a mark every 8
 //     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
 //     0x801BD89C  kind 6 (Diablos)   a move under the sand, at least 20 ticks
 //     0x801B795C, 0x801B867C  hops (the dispatcher 0x801B94B4, after kind
@@ -514,6 +515,46 @@ void Em012RetreatPort(CpuContext* ctx) {
         }
 
         break;
+    }
+}
+
+// kind 19 0x8037A8AC (r4: 1 60 ticks marking every 8, 2 15 ticks, else
+// 90): Agnaktor waiting under the ground, motion 1 looped; then 0x80128158.
+// The original counts down a call at a time and ends at exactly 0.
+void Em019BuriedPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const uint8_t kind = uint8_t(ctx->gpr[4]);
+    game.Call<0x80131E64>({work});
+    game.Call<0x803790E8>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 4});
+        game.Call<SetMotionLoop>({work, 1, 0, 0});
+        game.Call<0x80130390>({work}); // f1 passes on
+        game.Call<0x80130450>({work});
+        game.Call<0x80379000>({work, 0xFF});
+        em.Count(kind == 1 ? 0x3C : kind == 2 ? 0xF : 0x5A);
+        break;
+    case 1: {
+        const uint32_t ticks = GameStep::Ticks();
+
+        // The original's test of the count before its decrement, over the
+        // counts this step's ticks pass.
+        if (kind == 1 && Em::AnyOf(em.Count() - int32_t(ticks) + 1, ticks, 8, 0))
+            game.Call<Mark>({work, uint32_t(-1), 200});
+
+        if (ticks && em.Count() > 0 && em.Count() - int32_t(ticks) <= 0) {
+            em.Count(0);
+            game.Call<0x80128158>({work});
+        } else
+            em.Count(em.Count() - int32_t(ticks));
+
+        break;
+    }
     }
 }
 
@@ -1450,6 +1491,12 @@ extern "C" void MH3_Em012Retreat(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em012Retreat", func_80171B7C, Em012RetreatPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80171B7C, MH3_Em012Retreat, "Em012Retreat");
+
+extern "C" void func_8037A8AC(CpuContext* ctx);
+extern "C" void MH3_Em019Buried(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em019Buried", func_8037A8AC, Em019BuriedPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8037A8AC, MH3_Em019Buried, "Em019Buried");
 
 extern "C" void func_801BD724(CpuContext* ctx);
 extern "C" void MH3_Em006Buried(CpuContext* ctx) {

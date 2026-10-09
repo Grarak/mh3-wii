@@ -1008,6 +1008,8 @@
 801b867c Em034HopBack
 801bd724 Em006Buried
 80171b7c Em012Retreat
+8037a8ac Em019Buried
+8037f588 Em019Actions
 80174158 Em012Actions
 801bd89c Em006Burrow
 801bf9fc Em006Actions

@@ -45,6 +45,11 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+
+#include <cstdio>
+#endif
 
 namespace {
 
@@ -338,6 +343,21 @@ REGISTER_NATIVE_FUNCTION_AS(0x80095434, MH3_TexCoordGetEffectMtx, "TexCoordGetEf
 
 extern "C" void func_800953A8(CpuContext* ctx);
 extern "C" void MH3_TexCoordSetEffectMtx(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=tex-scroll: each caller of SetEffectMtx (the game's texture
+    // scrollers, water among them) the first time and every 60th call, with
+    // the matrix's translation and the step counter.
+    static const bool traced = TraceOptions().Has("tex-scroll");
+
+    if (traced) [[unlikely]] {
+        static std::unordered_map<uint32_t, uint32_t> calls;
+        const uint32_t lr = ctx->lr, mtx = ctx->gpr[5];
+
+        if (const uint32_t n = calls[lr]++; n % 60 == 0)
+            std::fprintf(stderr, "MH3 tex scroll: caller %08x call %u handle %08x index %u translation %.4f %.4f tick %u\n", lr, n, ctx->gpr[3], ctx->gpr[4], mtx ? F(mtx + 12) : 0.0f,
+                         mtx ? F(mtx + 28) : 0.0f, Memory::Read32(0x8065AA6C));
+    }
+#endif
     PortCheck::Call(ctx, "TexCoordSetEffectMtx", func_800953A8, SetEffectMtxPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800953A8, MH3_TexCoordSetEffectMtx, "TexCoordSetEffectMtx");
