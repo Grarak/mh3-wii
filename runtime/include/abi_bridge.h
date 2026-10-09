@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -322,7 +323,13 @@ struct KnownPreciseNativeCpuCall {
 // a miss just re-runs the sorted lookup. 512 entries (12 KiB) covers the per-frame indirect
 // working set while staying L1/L2 resident, unlike 4096 which would thrash L2. Must stay a
 // power of two, the index masks with (size - 1).
-inline constexpr size_t kIndirectDispatchCacheEntries = 512;
+inline constexpr size_t kIndirectDispatchCacheEntries = 2048;
+// The memo slot of a guest address: the high bits of a multiplicative hash (the
+// low bits of the product depend only on the address's low bits, so functions
+// a multiple of the table size apart shared a slot).
+inline constexpr uint32_t IndirectDispatchMemoSlot(uint32_t address) {
+    return ((address >> 2) * 2654435761u) >> (32 - std::bit_width(kIndirectDispatchCacheEntries - 1));
+}
 
 // Namespace-scope `inline thread_local`, not function-local `static thread_local`, to avoid a
 // thread-static init epoch check on every bctrl (same as g_currentCpuContext in ppc_runtime.h).
@@ -355,8 +362,7 @@ public:
             return FindByAddressPtrSlow(address);
         }
 
-        auto& cached = g_indirectResolvedDispatchMemo[
-            ((address >> 2) * 2654435761u) & (kIndirectDispatchCacheEntries - 1)];
+        auto& cached = g_indirectResolvedDispatchMemo[IndirectDispatchMemoSlot(address)];
         if (cached.valid && cached.address == address) {
             return cached.info;
         }
@@ -375,8 +381,7 @@ public:
             return nullptr;
         }
 
-        auto& cached = g_indirectRawDispatchMemo[
-            ((address >> 2) * 2654435761u) & (kIndirectDispatchCacheEntries - 1)];
+        auto& cached = g_indirectRawDispatchMemo[IndirectDispatchMemoSlot(address)];
         if (cached.valid && cached.address == address) {
             return cached.record;
         }
