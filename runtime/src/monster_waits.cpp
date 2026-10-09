@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of forty enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of forty-two enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -17,6 +17,8 @@
 //     0x8037A8AC  kind 19 (Agnaktor) under the ground: 15, 60 or 90 ticks, a mark every 8
 //     0x801AC674  kind 27 (Aptonoth) a walk, 256-511 ticks
 //     0x8035F378, 0x8035F560  kind 35 (Bnahabra) waits, 90 ticks
+//     0x80184DFC  kinds 16/17 (the Ludroth kinds) a swim, at most 200, 150+ or 90+ ticks
+//     0x8018599C  kinds 16/17 a rest underwater, up to 1800 ticks, hunters checked every 30
 //     sleeps of 1800 ticks: 0x80148ED0 kinds 1/2, 0x80155EBC 3, 0x8015E39C 8,
 //                 0x80170BB0 12/14, 0x801777D8 15, 0x80183F00 16/17, 0x801BC230 6,
 //                 0x801CB6F8 5, 0x80379A0C 19, 0x801D7C5C 7, 0x80195DE4 18,
@@ -729,6 +731,170 @@ void Em004SleepPort(CpuContext* ctx) {
                     g.Call<SetScale>({w});
                     g.Call<0x80130724>({w, 1});
                 }});
+}
+
+// kinds 16/17 0x80184DFC (r4 the swim 0-9, r5: 0 motion 0x37, else 0x30): the
+// Ludroth kinds swimming toward a point (0x80134068 at -360 or 0, flags
+// 0x12); swim 3 rises to +0x210's height, giving up after 200 ticks; swims
+// 5 and 9 end after 150 or 90 plus up to 31 ticks or once there; the others
+// once there. Then motion 0x2F to its end (0x80128094). The counts were
+// calls.
+void Em016SwimPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    const uint8_t swim = uint8_t(ctx->gpr[4]), other = uint8_t(ctx->gpr[5]);
+    const auto way = [&](float distance) { game.Call<TurnSetUp>({work, 0x12}, {double(distance)}); };
+
+    if (swim == 8) {
+        game.Call<0x80131DE8>({work});
+        game.Call<0x8012CF84>({work});
+        game.Call<0x80131ED8>({work});
+    }
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 2});
+        game.Call<SetMotionEx>({work, other == 0 ? 0x37u : 0x30u, 0x14, 0, 1});
+
+        if (swim == 3) {
+            Memory::Write32(work + 0x370, Memory::Read32(work + 0x210));
+            em.Count(200);
+        }
+
+        switch (swim) {
+        case 1:
+            way(0.0f);
+            Memory::WriteFloat32(work + 0x378, 700.0f);
+            break;
+        case 2:
+            way(0.0f);
+            Memory::WriteFloat32(work + 0x378, 1500.0f);
+            break;
+        case 4:
+            way(0.0f);
+
+            if (Memory::ReadFloat32(work + 0x378) > 700.0f)
+                Memory::WriteFloat32(work + 0x378, 700.0f);
+
+            break;
+        case 5:
+            way(0.0f);
+            em.Count(int32_t((Memory::Read16(work + kRandom) & 0x1F) + 0x96));
+            break;
+        case 7:
+            game.Call<SetMotionSpeed>({work}, {3.0f});
+            way(-360.0f);
+            break;
+        case 8:
+            way(0.0f);
+            break;
+        case 9:
+            em.Count(int32_t((Memory::Read16(work + kRandom) & 0x1F) + 0x5A));
+            [[fallthrough]];
+        case 6:
+            game.Call<SetMotionSpeed>({work}, {2.0f});
+            way(-360.0f);
+            break;
+        default:
+            way(-360.0f);
+            break;
+        }
+
+        break;
+    case 1: {
+        bool there;
+
+        if (swim == 3) {
+            game.Call<TurnStep>({work, 0, 0x80});
+            game.Call<0x80136DB0>({work}, {3.0});
+            there = CountDown(em);
+
+            if (!there) {
+                game.Call<0x801359B4>({work}); // get_em_chg_scale
+                const float size = game.F1();
+                game.Call<0x801302D0>({work});
+                const float below = Memory::ReadFloat32(work + 0x370) - (10.0f + game.F1()) * size;
+                there = Memory::ReadFloat32(work + 0x18C) >= below;
+            }
+        } else if (swim == 5 || swim == 9)
+            there = CountDown(em) || game.Call<TurnStep>({work, 0, 0x80}) == 1;
+        else
+            there = game.Call<TurnStep>({work, 0, 0x80}) == 1;
+
+        if (there && game.Call<0x8012F9AC>({work}) == 0) {
+            em.NextState();
+            game.Call<SetMotionEx>({work, 0x2F, 0x28, 0, 1});
+        }
+
+        break;
+    }
+    case 2:
+        if (em.Ended())
+            game.Call<ActionDone94>({work});
+
+        break;
+    }
+}
+
+// kinds 16/17 0x8018599C: the Ludroth kinds resting underwater (motion 0x2A,
+// then 0x2B), counting up to 1800 ticks; while it may act, every 30 ticks a
+// hunter nearer than 3000 (+0x454 f32[4]) wakes it (0x8012B3E4 0, 2, then
+// 5.17), and so does the count's end (0x8012B3E4 5, 2, 5). The original
+// counted calls (and tested the count's multiples of 30 after each +1).
+void Em016RestPort(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const Em::Enemy em{game, ctx->gpr[3]};
+    const uint32_t work = em.work;
+    game.Call<0x8012CF84>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 2});
+        game.Call<SetMotionEx>({work, 0x2A, 10, 0, 1});
+        game.Call<0x801321D0>({work});
+        break;
+    case 1:
+        if (em.Ended()) {
+            em.NextState();
+            em.SetMotion(0x2B, 0, 0);
+            em.Count(0);
+        }
+
+        break;
+    case 2: {
+        game.Call<0x8011E750>({work, 5, 0x1E}, {1.0}); // EnemyEveryNScaled
+        const uint32_t ticks = GameStep::Ticks();
+        const int32_t before = em.Count();
+        em.Count(std::min(before + int32_t(ticks), 0x708));
+
+        if (Memory::Read8(work + 0x1F5) != 1)
+            break;
+
+        // The counts this step's ticks pass, as the original tested each.
+        if (ticks && Em::AnyOf(before + 1, ticks, 30, 0)) {
+            for (uint32_t i = 0; i < 4; ++i) {
+                const float distance = Memory::ReadFloat32(work + 0x454 + 4 * i);
+
+                if (distance > 0.0f && distance <= 3000.0f) {
+                    game.Call<0x8012B3E4>({work, 0, 2});
+                    game.Call<NextAction>({work, 5, 0x11});
+                    return;
+                }
+            }
+        }
+
+        if (em.Count() >= 0x708) {
+            game.Call<0x8012B3E4>({work, 5, 2, 5});
+            game.Call<0x801307DC>({work, 0});
+            game.Call<NextAction>({work, 5, 0x11});
+        }
+
+        break;
+    }
+    }
 }
 
 // kind 35 0x8035F378 and 0x8035F560 (motion flags 4 or 0): Bnahabra
@@ -1844,6 +2010,18 @@ extern "C" void MH3_Em004Sleep(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em004Sleep", func_801C6014, Em004SleepPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801C6014, MH3_Em004Sleep, "Em004Sleep");
+
+extern "C" void func_80184DFC(CpuContext* ctx);
+extern "C" void MH3_Em016Swim(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em016Swim", func_80184DFC, Em016SwimPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80184DFC, MH3_Em016Swim, "Em016Swim");
+
+extern "C" void func_8018599C(CpuContext* ctx);
+extern "C" void MH3_Em016Rest(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em016Rest", func_8018599C, Em016RestPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8018599C, MH3_Em016Rest, "Em016Rest");
 
 extern "C" void func_8035F378(CpuContext* ctx);
 extern "C" void MH3_Em035Wait(CpuContext* ctx) {
