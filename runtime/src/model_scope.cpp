@@ -1736,8 +1736,15 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
     };
 
 #ifdef MH3_DEVELOPMENT
-    if (prepared.skin_row_count && NativeSkipSkinnedMeshes())
-        return;
+    if (const uint32_t skip = NativeSkippedMeshes()) {
+        const auto& pixel = material.pixel.values;
+        const uint32_t operation = pixel[MH3_PIXEL_ALPHA_OPERATION], c0 = pixel[MH3_PIXEL_ALPHA_COMPARE0], c1 = pixel[MH3_PIXEL_ALPHA_COMPARE1];
+        const bool alwaysPasses = operation == 0 ? c0 == 7 && c1 == 7 : operation == 1 && (c0 == 7 || c1 == 7);
+
+        if (((skip & NATIVE_SKIP_SKINNED) && prepared.skin_row_count) || ((skip & NATIVE_SKIP_BLENDED) && pixel[MH3_PIXEL_BLEND_ENABLE]) ||
+            ((skip & NATIVE_SKIP_DISCARD) && !alwaysPasses))
+            return;
+    }
 #endif
     if (prepared.palette_batch_count && !prepared.skin_row_count)
         for (uint32_t i = 0; i < prepared.palette_batch_count; i++)

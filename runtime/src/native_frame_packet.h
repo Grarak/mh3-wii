@@ -89,8 +89,15 @@ void EndNativeFramePacketTail();
 // (FindNativeModelNodeViews).
 void SetNativeFramePacketPrepareOnDraw(bool running);
 #ifdef MH3_DEVELOPMENT
-// MH3_PROFILE=skip=skinned: the render thread drops skinned model meshes.
-bool NativeSkipSkinnedMeshes();
+// MH3_PROFILE=skip=skinned, blended, discard: the model meshes the render
+// thread drops, skinned or with a material that blends or alpha tests.
+enum : uint32_t {
+    NATIVE_SKIP_SKINNED = 1,
+    NATIVE_SKIP_BLENDED = 2,
+    NATIVE_SKIP_DISCARD = 4,
+};
+
+uint32_t NativeSkippedMeshes();
 #endif
 bool NativeFramePacketPrepareOnDraw();
 

@@ -1172,12 +1172,14 @@ void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderV
 }
 #endif
 #ifdef MH3_DEVELOPMENT
-// MH3_PROFILE=census: what the frame's model draws are, for batching. Every
-// 240 frames, per frame: draws, the extra index ranges of a mesh (palette
-// batches), ranges drawn again (instances, passes), runs of consecutive draws
-// sharing program and material, and the assets with the most draws.
+// MH3_PROFILE=census: what the frame's model draws are, for batching and GPU
+// cost. Every 240 frames, per frame: draws, the extra index ranges of a mesh
+// (palette batches), ranges drawn again (instances, passes), runs of
+// consecutive draws sharing program and material, the assets with the most
+// draws, and the programs (vertex+fragment stage names) with their draws and
+// triangles.
 struct CensusDraw {
-    uint32_t asset, model, shape, mesh, first;
+    uint32_t asset, model, shape, mesh, first, triangles;
     uint64_t material;
     GLuint program;
     bool batch;
@@ -1188,6 +1190,8 @@ struct Census {
     uint32_t frameId = 0, frames = 0;
     uint64_t draws = 0, batchDraws = 0, ranges = 0, meshes = 0, runs = 0, materials = 0, programs = 0;
     std::map<uint32_t, std::array<uint64_t, 3>> assets; // draws, ranges, meshes
+    std::map<GLuint, std::array<uint64_t, 2>> byProgram; // draws, triangles
+    std::map<GLuint, std::string> names;                 // kept across reports
 } census;
 
 void CensusFrame() {
@@ -1219,8 +1223,12 @@ void CensusFrame() {
 
     std::map<uint32_t, std::vector<const CensusDraw*>> byAsset;
 
-    for (const auto& d : f)
+    for (const auto& d : f) {
         byAsset[d.asset].push_back(&d);
+        auto& program = c.byProgram[d.program];
+        ++program[0];
+        program[1] += d.triangles;
+    }
 
     for (auto& [asset, draws] : byAsset) {
         auto& totals = c.assets[asset];
@@ -1260,10 +1268,24 @@ void CensusFrame() {
         std::fprintf(stderr, "MH3 draw census:   asset %5u: %.1f draws, %.1f ranges, %.1f meshes\n", top[i].second, t[0] / n, t[1] / n, t[2] / n);
     }
 
+    std::vector<std::pair<uint64_t, GLuint>> programs;
+
+    for (const auto& [program, totals] : c.byProgram)
+        programs.emplace_back(totals[1], program);
+
+    std::sort(programs.rbegin(), programs.rend());
+
+    for (size_t i = 0; i < programs.size() && i < 16; ++i) {
+        const auto& t = c.byProgram[programs[i].second];
+        std::fprintf(stderr, "MH3 draw census:   program %s: %.1f draws, %.0f triangles\n", c.names[programs[i].second].c_str(), t[0] / n, t[1] / n);
+    }
+
+    auto names = std::move(c.names);
     c = {};
+    c.names = std::move(names);
 }
 
-void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GLuint program) {
+void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GLuint program, const NativeShaderVariant& variant) {
     static const bool enabled = ProfileOptions().Has("census");
 
     if (!enabled)
@@ -1276,7 +1298,10 @@ void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GL
         census.frameId = frame;
     }
 
-    census.frame.push_back({mesh.asset_id, mesh.model_id, mesh.shape_id, mesh.mesh_index, mesh.first_index, material, program, mesh.palette_batch != nullptr});
+    if (auto& name = census.names[program]; name.empty())
+        name = NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant);
+
+    census.frame.push_back({mesh.asset_id, mesh.model_id, mesh.shape_id, mesh.mesh_index, mesh.first_index, mesh.index_count / 3, material, program, mesh.palette_batch != nullptr});
 }
 #endif
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
@@ -1492,7 +1517,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
-    CountCensusDraw(mesh, entry.key, program);
+    CountCensusDraw(mesh, entry.key, program, variant);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
     aurora::gl::draw_shaded_mesh(*resident.buffer, layout, bind, resident.mesh->vertex_offset, resident.mesh->vertex_count, resident.mesh->index_offset + mesh.first_index * 2, mesh.index_count,
