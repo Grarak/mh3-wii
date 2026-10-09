@@ -70,6 +70,18 @@ struct Catalog {
     bool diagnostics_initialized = false;
 };
 Catalog catalog;
+// Recent ReadNativeLiveMaterialBlockView results (game thread), direct-mapped
+// by key. Map nodes stay put until erased, so a remembered node is valid
+// while live_version is unchanged; every live block erase advances it.
+struct LiveLookup {
+    uint64_t key = UINT64_MAX, version = 0;
+    const NativeLiveMaterialBlock* block = nullptr;
+};
+std::array<LiveLookup, 64> live_lookups{};
+uint64_t live_version = 1;
+LiveLookup& LiveSlot(uint64_t key) {
+    return live_lookups[(key ^ (key >> 9)) & (live_lookups.size() - 1)];
+}
 NativeModelPreparationDiagnostics diagnostics;
 struct DiagnosticConfig {
     bool enabled = false;
@@ -212,6 +224,7 @@ bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
         const auto& block = it->second;
         if ((uint64_t)block.address + block.bytes > address) {
             it = C().live_blocks.erase(it);
+            ++live_version;
             retired = true;
         } else
             ++it;
@@ -559,9 +572,10 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
                     ++owner;
             }
             for (auto block = C().live_blocks.begin(); block != C().live_blocks.end();) {
-                if (block->second.resident_handle == handle)
+                if (block->second.resident_handle == handle) {
                     block = C().live_blocks.erase(block);
-                else
+                    ++live_version;
+                } else
                     ++block;
             }
             InvalidateSourceCache(c, NativeSourceEpochReason::PackUnregister, NativeSourceEpochProducer::PackManager, 0, 0, 0, 0, 0, frame);
@@ -705,9 +719,14 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
     Initialize();
     address = Canonical(address, 1);
     const auto key = LiveKey(address, kind);
+    auto& recent = LiveSlot(key);
+    if (recent.key == key && recent.version == live_version)
+        return *recent.block;
     const auto cached = C().live_blocks.find(key);
-    if (cached != C().live_blocks.end())
+    if (cached != C().live_blocks.end()) {
+        recent = {key, live_version, &cached->second};
         return cached->second;
+    }
     mh3_source_identity identity{};
     Checked(mh3_source_resolve(&C().tracker, address, 1, &identity));
     EnsureNativeModelAssets(identity.partition_offset, 1);
@@ -737,7 +756,9 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
         }
         NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state, address, source.bytes, kind, pack.handle, pack.generation, identity.partition_offset, generation};
         block.fields.generation = NextNativeMaterialRevision();
-        return C().live_blocks.emplace(key, std::move(block)).first->second;
+        const auto& admitted = C().live_blocks.emplace(key, std::move(block)).first->second;
+        recent = {key, live_version, &admitted};
+        return admitted;
     }
     std::ostringstream detail;
     detail << "Material block has no admitted typed source extent: address=0x" << std::hex << address << " kind=" << std::dec << uint32_t(kind) << " partition_offset=0x" << std::hex
