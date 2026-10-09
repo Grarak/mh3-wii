@@ -107,11 +107,53 @@ vulgarity lists, authentication, LMP address) → the two user agreements, the
 announcement and the mic-chat notice → LMP (ticket, user list, server time)
 → CAPCOM ID selection (a new ID in slot 1) → server type (Open) → server →
 gate (FMP) → the Loc Lac introduction movie → **the gate in Loc Lac**, drawn
-and running at the VM's usual 30 fps.
+and running at the VM's usual 30 fps → "Select a City" (walk up the street
+from the spawn) → a new city ("LayerStartEmpty", recruitment text, OK) →
+**inside the city**, walking around the plaza, Lodge Street and the upper
+deck → the Tavern (the archway left of the spawn, then up the street): the
+Guildmaster's hunter registration, then the Quest Receptionist's Quest
+Counter → "Harvest 'Shroom" (Deserted Island), quest settings, OK
+(`CircleCreate` on the FMP server) → the Departure Gate at the top of the
+Tavern's stairs ("Depart on Quest", Yes) → **the quest on the Deserted
+Island**, the hunter running from the base camp. The field loads the common,
+quest, enemy and map01 modules at the offline field bases, so their existing
+profiles serve.
 
-Against the community server the same flow applies, but the gate is a
-shared area other players can see, so testing there stops at the gate list
-(see the rules above).
+Creating the city ran into a callback only reachable through a code constant
+(`0x803CF830`, a register shuffle that tail-calls, passed as `lis`/`addi`):
+`scripts/generate_symbols.py` now seeds text addresses the code builds with
+`lis` + `addi`/`ori` that start after a `blr`/`bctr` (127 more functions).
+
+Against the community server (`opn.mh3sp.com`, October 5) the same flow
+works with no overrides: the NAS login at `nas.mh3sp.com`, the OPN server's
+TLS verified against the embedded MH3SP CA, LMP and FMP, a new CAPCOM ID,
+the server list (one Open server, "Valor US") and its gate list ("City Gate
+1-4"). A gate is a shared area other players walk in, and a city is only
+reached through one, so testing there stops at the gate list (see the rules
+above).
+
+## The Vita
+
+The guest thread scheduler, the IOS devices and the patches are portable
+(they compile with the Vita build's flags); what the Vita needs is a
+`NetHost` (`runtime/src/net/net_host.h`) of its own instead of
+`net_host_none.cpp`:
+
+- `sceNetInit` with a memory pool, `sceNetCtlInit`, and the BSD calls
+  (`sceNetSocket`, `sceNetConnect`, `sceNetRecvfrom`, ... with
+  `SCE_NET_SO_NBIO` for non-blocking sockets; or newlib's socket wrappers)
+  and `sceNetEpoll`/`sceNetPoll` for `Poll`/`Readable`/`Writable`;
+  `sceNetResolverStartNtoa` on a helper thread for `Lookup` (it blocks);
+  `sceNetCtlInetGetInfo` for `DefaultInterface`.
+- TLS: VitaSDK's OpenSSL 1.0.2 works with `net_host_posix.cpp`'s
+  `OpenSslTls` as is (it has 1.0.2 paths; SHA-1 and 1024-bit RSA pass there
+  without lowering a security level). VitaSDK's sceSsl stubs document no TLS
+  session over a socket of one's own; sceHttp only does whole HTTP requests.
+- Host thread stacks: each guest thread that runs gets a 1 MiB host thread;
+  online play starts five or six. The waits use timed re-checks, which the
+  Vita's condition variables need (lost wakeups).
+- The devkit's network: the community servers resolve through the console's
+  DNS; a local test server needs `MH3_ONLINE_HOSTS` pointing at the host.
 
 ## Running
 

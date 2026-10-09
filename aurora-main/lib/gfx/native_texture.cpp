@@ -380,7 +380,10 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     offlineInfo = gl::native_texture_info(source.asset);
 
     if (offlineInfo.width != source.width || offlineInfo.height != source.height || offlineInfo.mips != source.levels || (offlineInfo.sourceProvenance && offlineInfo.sourceFormat != source.format))
-      AURORA_THROW(std::runtime_error("Native asset metadata disagrees with published texture"));
+      AURORA_THROW(std::runtime_error("Native asset metadata disagrees with published texture: asset " + std::to_string(source.asset) + " is " +
+                                      std::to_string(offlineInfo.width) + "x" + std::to_string(offlineInfo.height) + " (" + std::to_string(offlineInfo.mips) +
+                                      " levels, format " + std::to_string(offlineInfo.sourceFormat) + "), published " + std::to_string(source.width) + "x" +
+                                      std::to_string(source.height) + " (" + std::to_string(source.levels) + " levels, format " + std::to_string(source.format) + ")"));
 
     if (indexed) {
       const int64_t delta = int64_t(reinterpret_cast<uintptr_t>(source.palette.data())) - int64_t(reinterpret_cast<uintptr_t>(source.bytes.data()));

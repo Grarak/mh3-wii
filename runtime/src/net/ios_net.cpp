@@ -1108,7 +1108,8 @@ int32_t Ioctl(CpuContext* cpu, std::string_view path, uint32_t command, uint32_t
 int32_t Ioctlv(CpuContext* cpu, std::string_view path, uint32_t command, uint32_t inputs, uint32_t outputs, uint32_t vectors) {
     const int32_t result = RunSync(cpu, IoctlvAttempt(path, command, inputs, outputs, vectors));
 
-    if (traceNet)
+    // The interface options are asked every frame online.
+    if (traceNet && !(path == "/dev/net/ip/top" && command == kSoGetInterfaceOpt))
         std::fprintf(stderr, "MH3 net: %.*s ioctlv %u = %d\n", int(path.size()), path.data(), command, result);
 
     return result;

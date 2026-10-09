@@ -52,6 +52,49 @@ def discover_indirect_pointer_seeds(dol, sections):
     return candidates
 
 
+def discover_code_constant_seeds(dol, sections):
+    """Speculative entries: text addresses the code builds with lis + addi/ori
+    (callbacks handed to other functions) that start after a blr or bctr.
+
+    The online code passes such leaf callbacks (0x803CF830, a register
+    shuffle that tail-calls) and reaches them only through the pointer. As for
+    data pointers, the return boundary is a heuristic and the strict
+    translator validates each candidate.
+    """
+    text = [s for s in sections if s["kind"] == "text"]
+    candidates = set()
+
+    def boundary(address):
+        for code in text:
+            base = int(code["address"], 16)
+            if base + 4 <= address < base + code["bytes"]:
+                return struct.unpack_from(">I", dol, code["file_offset"] + address - base - 4)[0] in (0x4E800020, 0x4E800420)
+        return False
+
+    for code in text:
+        words = struct.unpack_from(f">{code['bytes'] // 4}I", dol, code["file_offset"])
+        for i, word in enumerate(words):
+            # lis rD, high (addis rD, 0, high)
+            if word >> 26 != 15 or (word >> 16) & 31:
+                continue
+            target, high = (word >> 21) & 31, word & 0xFFFF
+            # The low half within the next three instructions: addi/ori rX, rD, low.
+            for follow in words[i + 1:i + 4]:
+                opcode, source, low = follow >> 26, (follow >> 16) & 31, follow & 0xFFFF
+                if opcode in (14, 24) and source == target:
+                    if opcode == 14:
+                        address = ((high << 16) + low - (0x10000 if low & 0x8000 else 0)) & 0xFFFFFFFF
+                    else:
+                        address = (high << 16) | low
+                    if address % 4 == 0 and boundary(address):
+                        candidates.add(address)
+                    break
+                # Stop at another write of rD (stores, which read it, go on).
+                if (follow >> 21) & 31 == target and opcode not in (32, 34, 36, 37, 40, 44, 48, 52):
+                    break
+    return candidates
+
+
 def discover_vtable_pointer_seeds(dol, sections, known_entries):
     """Speculative vtables with a zero header and a recognized first method."""
     text = [s for s in sections if s["kind"] == "text"]
@@ -147,6 +190,8 @@ def main():
                 symbols.setdefault(address, f"func_{address:08X}")
     for address in discover_indirect_pointer_seeds(dol, inventory["sections"]):
         symbols.setdefault(address, f"data_indirect_seed_{address:08X}")
+    for address in discover_code_constant_seeds(dol, inventory["sections"]):
+        symbols.setdefault(address, f"code_constant_seed_{address:08X}")
     for symbol in inventory["static_exports"]["exports"]:
         section = by_sel.get(symbol["section"])
         if section is None:
