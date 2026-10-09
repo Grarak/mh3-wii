@@ -520,6 +520,13 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      packets ? (render.packet_wall_ns - previousRender.packet_wall_ns) / (1e6 * packets) : 0.0,
                      drawPackets ? (render.draw_packet_wall_ns - previousRender.draw_packet_wall_ns) / (1e6 * drawPackets) : 0.0,
                      static_cast<unsigned long long>(render.packets), render.packet_wall_ns / 1e6);
+        if (render.packet_wait_ns >= previousRender.packet_wait_ns && render.packet_waits >= previousRender.packet_waits) {
+            const auto waits = render.packet_waits - previousRender.packet_waits;
+            const auto waited = render.packet_wait_ns - previousRender.packet_wait_ns;
+            std::fprintf(stderr, "MH3 native work: render waited for packets %.1f ms/s, %.3f ms avg per packet (%llu of %llu packets waited)\n",
+                         1e3 * double(waited) / double(renderWindow), waits ? waited / (1e6 * waits) : 0.0, static_cast<unsigned long long>(waits),
+                         static_cast<unsigned long long>(packets));
+        }
     } else
         std::fprintf(stderr, "MH3 native work: render replay unavailable\n");
     if (renderWindow && sameRenderThread && render.cpu.available && previousRender.cpu.available && render.cpu.running_us >= previousRender.cpu.running_us)

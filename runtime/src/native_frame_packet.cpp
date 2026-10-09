@@ -121,6 +121,8 @@ std::atomic<uint64_t> completed{0};
 struct RenderCounters {
     std::atomic<uint32_t> revision{0};
     std::atomic<uint64_t> packets{0}, drawPackets{0}, wallNs{0}, drawWallNs{0};
+    // Time blocked with no packet to replay, and how many acquisitions waited.
+    std::atomic<uint64_t> waitNs{0}, waits{0};
     std::atomic<int32_t> thread{-1};
 #ifdef __linux__
     std::atomic<clockid_t> cpuClock{-1};
@@ -423,7 +425,7 @@ void RenderLoop() {
             throw std::runtime_error("Render thread core 1 affinity failed");
 #endif
 #ifdef MH3_DEVELOPMENT
-        uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0;
+        uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0, waitNs = 0, waits = 0, idleStart = 0;
 #ifdef __vita__
         renderCounters.thread.store(sceKernelGetThreadId(), std::memory_order_release);
 #elif defined(__linux__)
@@ -439,6 +441,10 @@ void RenderLoop() {
             if (status == MH3_FRAME_STATE_EMPTY) {
                 if (stopping.load(std::memory_order_acquire))
                     break;
+#ifdef MH3_DEVELOPMENT
+                if (!idleStart)
+                    idleStart = RenderMonotonicNs();
+#endif
                 published.wait(ticket, std::memory_order_acquire);
                 continue;
             }
@@ -452,6 +458,11 @@ void RenderLoop() {
             const auto& p = *static_cast<const Packet*>(data);
 #ifdef MH3_DEVELOPMENT
             const auto replayStart = RenderMonotonicNs();
+            if (idleStart) {
+                waitNs += replayStart - idleStart;
+                ++waits;
+                idleStart = 0;
+            }
 #endif
             Execute(p);
 #ifdef MH3_DEVELOPMENT
@@ -469,6 +480,8 @@ void RenderLoop() {
             renderCounters.drawPackets.store(drawPackets, std::memory_order_relaxed);
             renderCounters.wallNs.store(wallNs, std::memory_order_relaxed);
             renderCounters.drawWallNs.store(drawWallNs, std::memory_order_relaxed);
+            renderCounters.waitNs.store(waitNs, std::memory_order_relaxed);
+            renderCounters.waits.store(waits, std::memory_order_relaxed);
             renderCounters.revision.fetch_add(1, std::memory_order_release);
 #endif
             completed.store(p.sequence, std::memory_order_release);
@@ -655,6 +668,8 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept {
         result.draw_packets = renderCounters.drawPackets.load(std::memory_order_relaxed);
         result.packet_wall_ns = renderCounters.wallNs.load(std::memory_order_relaxed);
         result.draw_packet_wall_ns = renderCounters.drawWallNs.load(std::memory_order_relaxed);
+        result.packet_wait_ns = renderCounters.waitNs.load(std::memory_order_relaxed);
+        result.packet_waits = renderCounters.waits.load(std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_acquire);
         if (before == renderCounters.revision.load(std::memory_order_relaxed)) {
             result.counters_available = thread >= 0;

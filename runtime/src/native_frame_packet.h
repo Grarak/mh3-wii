@@ -62,11 +62,14 @@ void PublishNativeFramePacket(std::string capture);
 #ifdef MH3_DEVELOPMENT
 #include "native_frame_statistics.h"
 // Cumulative completed replay work, including ordered resource tasks and
-// presentation, excluding the wait for another packet. Draw packets are the
+// presentation, excluding the wait for another packet. packet_wait_ns is that
+// wait: time the render thread sat with no packet, counted when the next
+// packet arrives; packet_waits is how many packets it had to wait for. Draw packets are the
 // admitted, uncanceled packets; their completion is not a display flip.
 struct NativeRenderThreadStatistics {
     uint64_t packets = 0, draw_packets = 0;
     uint64_t packet_wall_ns = 0, draw_packet_wall_ns = 0;
+    uint64_t packet_wait_ns = 0, packet_waits = 0;
     uint64_t sampled_at_ns = 0;
     mh3::statistics::OwnerCpuSample cpu{};
     bool counters_available = false;
