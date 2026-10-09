@@ -35,11 +35,11 @@ decode at once and one's image read overlaps the other's decompression. A
 group queued and not begun gives way to the next one queued, or is decoded by
 the reader itself. Disc (raw) reads never use the worker.
 
-On the Vita the worker runs on core 3, beside the draw thread and below the
-default priority, so a draw never waits for it (core 0 when core 3 is not
-available). The DVD reader thread that calls the decoder is on core 0: a
-worker there gave no parallel decoding, and one boot read took 422 ms
-instead of ~70.
+On the Vita the worker runs on core 0, beside the DVD reader thread that
+calls the decoder, below the default priority so the guest worker and the
+reader run first; core 3 is left to the draw thread (2026-10-06). Before, it
+ran on core 3: an earlier core-0 worker gave no parallel decoding, and one boot
+read took 422 ms instead of ~70.
 
 Checked with a standalone comparison of two decoders, with and without the
 worker: the whole 4 GiB game partition in 512 KiB reads and 20,000 random

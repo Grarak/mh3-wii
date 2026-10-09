@@ -103,15 +103,12 @@ class File {
     }
 };
 
-// The decoder's read-ahead worker. Vita: on core 3 beside the draw thread
-// (core 0 holds the DVD reader, which decodes beside it and waits on it),
-// below the default priority so a draw never waits for it; on core 0 without
-// core 3.
+// The decoder's read-ahead worker. Vita: on core 0 beside the DVD reader
+// that calls the decoder (user, 2026-10-06: core 3 is the draw thread's), below
+// the default priority so the guest worker and the reader run first.
 void PinDecodeWorker() {
 #ifdef __vita__
-    if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0 << 3) < 0)
-        sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
-
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
     constexpr int DefaultPriority = 0x10000100; // SCE_KERNEL_DEFAULT_PRIORITY_USER
     sceKernelChangeThreadPriority(sceKernelGetThreadId(), DefaultPriority + 16);
 #else
