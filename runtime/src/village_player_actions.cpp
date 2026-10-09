@@ -97,7 +97,7 @@ enum : uint32_t {
     RotVecY = 0x800510C8,         // rotVecY (VEC3*, u32 yaw)
     CommandBit = 0x8026A6A8,      // (plw, bit) -> 1 when the command bit (+0xE0) is set
     StanceStep = 0x8020FBE0,      // (plw): kind 12's step after its actions (the local player's 0x8020F8E4)
-    DistanceSquared = 0x80050F10, // (VEC3* a, VEC3* b) -> f1 |b - a|^2
+    DistanceSquared = 0x80050F10, // (VEC3* a, VEC3* b) -> |b - a|^2 in f1 (paired: ps0)
 };
 
 struct Player : Plw::Player {
@@ -652,7 +652,9 @@ void GlideToPort(CpuContext* ctx) {
     const uint32_t plw = frame.Arg(3);
     const int16_t steps = int16_t(frame.Arg(4));
     game.Call<DistanceSquared>({plw + kPosition, plw + kGlideTarget});
-    if (game.F1() >= 800.0f * 800.0f || steps == 0) { // f32 640000 at 0x8079C07C
+    // f1 is left as a paired single (ps_sum0): the scalar is its ps0.
+    const double distanceSquared = PPC_PsToScalarInline(ctx->fpr[1].d);
+    if (distanceSquared >= 800.0f * 800.0f || steps == 0) { // f32 640000 at 0x8079C07C
         Memory::Write16(plw + kGlideSteps, 0);
         for (uint32_t k = 0; k < 12; k += 4) {
             Memory::Write32(plw + kPosition + k, Memory::Read32(plw + kGlideTarget + k)); // Vec3Copy
