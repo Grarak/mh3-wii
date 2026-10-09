@@ -44,6 +44,11 @@ file(READ "${mh3_core_original}" mh3_core_text)
 file(READ "${CMAKE_CURRENT_LIST_DIR}/aurora-flush-draws.inc" mh3_flush_extension)
 set(mh3_core_overlay "${CMAKE_BINARY_DIR}/mh3-aurora/aurora.cpp")
 file(WRITE "${mh3_core_overlay}.in" "${mh3_core_text}\n${mh3_flush_extension}")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/patch_aurora_async.py")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/patch_aurora_async.py"
+  "${mh3_core_overlay}.in" COMMAND_ERROR_IS_FATAL ANY)
 configure_file("${mh3_core_overlay}.in" "${mh3_core_overlay}" COPYONLY)
 get_target_property(mh3_core_sources aurora_core SOURCES)
 set(mh3_core_patched_sources)
