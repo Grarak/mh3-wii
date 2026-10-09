@@ -248,7 +248,7 @@ void Install() {
     sigemptyset(&action.sa_mask);
     sigaction(SIGSEGV, &action, &previous);
     std::thread(Sampler).detach();
-    std::fprintf(stderr, "MH3 draw pages: recording %u draw/logic pairs from frame %u (%zu pages of %zu bytes)\n", kPairs, Start(), totalPages, pageBytes);
+    std::fprintf(stderr, "MH3 draw pages: recording %u draw/logic pairs from frame %u (%lu pages of %lu bytes)\n", kPairs, Start(), static_cast<unsigned long>(totalPages), static_cast<unsigned long>(pageBytes));
 }
 
 // The pair just finished: the draw's pages against the logic's writes.

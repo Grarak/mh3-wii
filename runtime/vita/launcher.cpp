@@ -740,25 +740,12 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     const auto base = std::filesystem::path(discDirectory);
     MH3_RETURN_IF_ERROR(FsStatus::CreateDirectories(base));
     MH3_RETURN_IF_ERROR(EnsureDisc(*font, base));
-#ifdef __vita__
-    // The sound stream cache (asset_cache.cpp) wants StreamCacheBytes of the
-    // storage, counting the copies it already holds; it stays below what fits.
-    const std::string device = base.string().substr(0, base.string().find(':') + 1);
-    SceIoDevInfo storage{};
 
-    if (!device.empty() && sceIoDevctl(device.c_str(), 0x3001, nullptr, 0, &storage, sizeof storage) >= 0) {
-        const uint64_t used = AssetCache::StreamCacheUse(base), wanted = AssetCache::StreamCacheBytes;
+    // The asset cache (converted packs and sound stream copies) wants
+    // AssetCache::StorageWanted of the storage, counting what it holds.
+    if (const std::string warning = AssetCache::StorageWarning(base); !warning.empty())
+        Message(warning);
 
-        if (used + uint64_t(storage.free_size) < wanted) {
-            char text[512];
-            std::snprintf(text, sizeof text,
-                          "%s has %llu MiB free. Monster Hunter Tri's sound stream cache needs %llu MiB (free space plus the %llu MiB it already uses). Free up space for smoother loading; "
-                          "until then the cache stays smaller and the other streams are read from the disc image.",
-                          device.c_str(), static_cast<unsigned long long>(storage.free_size >> 20), static_cast<unsigned long long>(wanted >> 20), static_cast<unsigned long long>(used >> 20));
-            Message(text);
-        }
-    }
-#endif
     const char* userDirectory = std::getenv("MH3_USER_DIR");
     const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
     Page page = Page::Main;

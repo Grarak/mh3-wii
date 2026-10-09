@@ -342,7 +342,7 @@ void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes) 
 void ReportDrawSideWrites(uint32_t begin, uint32_t end) {
     std::lock_guard lock(drawSideMutex);
     const size_t kept = std::min(drawSideCount, drawSideWrites.size());
-    std::fprintf(stderr, "MH3 draw-side writes: %zu recorded, packet now %llu\n", drawSideCount, static_cast<unsigned long long>(NativeFramePacketSequence()));
+    std::fprintf(stderr, "MH3 draw-side writes: %lu recorded, packet now %llu\n", static_cast<unsigned long>(drawSideCount), static_cast<unsigned long long>(NativeFramePacketSequence()));
 
     for (size_t i = drawSideCount - kept; i < drawSideCount; ++i) {
         const auto& w = drawSideWrites[i % drawSideWrites.size()];

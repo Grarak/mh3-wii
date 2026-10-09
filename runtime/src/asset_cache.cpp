@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <fstream>
@@ -31,7 +32,7 @@ using namespace VitaLauncher;
 constexpr const char* Version = "mh3-asset-cache 1\n";
 
 // The converted models' own format, so a model converter change reconverts
-// only the models (2: GPU skinning, docs/gpu-skinning.md).
+// only the models (2: GPU skinning, docs/optimizations/rendering/gpu-skinning.md).
 constexpr const char* ModelFormat = "mh3-model-packs 2\n";
 constexpr uint32_t RecordMagic = 0x5243334d; // "M3CR"
 constexpr unsigned Workers = 3;
@@ -113,6 +114,30 @@ uint64_t FreeStorage(const std::filesystem::path& path) {
     const auto space = std::filesystem::space(path, error);
     return error ? UINT64_MAX : uint64_t(space.available);
 #endif
+}
+
+// Bytes of the regular files directly under `folder`.
+uint64_t FolderBytes(const std::filesystem::path& folder) {
+    uint64_t bytes = 0;
+    std::error_code error;
+    std::filesystem::directory_iterator entries(folder, error);
+
+    for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error)) {
+        std::error_code sizeError;
+        const uint64_t size = entries->file_size(sizeError);
+        bytes += sizeError ? 0 : size;
+    }
+
+    return bytes;
+}
+
+// The converted packs, stream copies and index under `cache`, in bytes.
+uint64_t CacheUse(const std::filesystem::path& cache) {
+    return FolderBytes(cache) + FolderBytes(cache / "textures") + FolderBytes(cache / "models") + FolderBytes(cache / "files");
+}
+
+std::string MiB(uint64_t bytes) {
+    return std::to_string((bytes + (1u << 19)) >> 20) + " MiB";
 }
 
 // Write to a temporary name, then publish: a file under its final name is complete.
@@ -238,6 +263,9 @@ struct AssetCache::Impl {
     uint64_t extractBudget = AssetCache::StreamCacheBytes;
     size_t openCopies = 0;
 
+    // Bytes that writes granted by Room are putting on the storage.
+    uint64_t writing = 0;
+
     // Learned prefetch: the streams each map read (cache/files/streams.log,
     // "map-name offset" lines), queued again when that map loads.
     std::string streamContext;
@@ -314,6 +342,7 @@ struct AssetCache::Impl {
             CheckStatus(Publish(cache / "models" / "format.txt", {reinterpret_cast<const uint8_t*>(ModelFormat), std::strlen(ModelFormat)}));
         }
 
+        RemoveLeftovers();
         LoadIndex();
         std::sort(streams.begin(), streams.end(), [](const SourceFile& a, const SourceFile& b) { return a.offset < b.offset; });
         std::filesystem::create_directories(cache / "files");
@@ -335,6 +364,8 @@ struct AssetCache::Impl {
         if (const uint64_t free = FreeStorage(root); free != UINT64_MAX) {
             const uint64_t room = extractedBytes + free;
             extractBudget = std::min(extractBudget, room > StorageReserve ? room - StorageReserve : 0);
+            std::fprintf(stderr, "MH3 asset cache: %s free on the storage, the cache holds %s (%s of stream copies); it wants %s in all\n", MiB(free).c_str(), MiB(CacheUse(cache)).c_str(),
+                         MiB(extractedBytes).c_str(), MiB(AssetCache::StorageWanted).c_str());
         }
 
         LoadStreamLog();
@@ -494,15 +525,12 @@ struct AssetCache::Impl {
             if (!oldest)
                 break;
 
-            CloseCopy(*oldest);
-            oldest->state = Extract::State::None;
-            extractedBytes -= oldest->file.bytes;
-            std::error_code ignored;
-            std::filesystem::remove(ExtractPath(*oldest), ignored);
+            Evict(*oldest);
         }
 
-        if (extractedBytes + e.file.bytes > extractBudget) {
-            // Larger than the whole budget: keep reading it from the image.
+        // Larger than the whole budget, or the storage is short (the packs
+        // written since the launch took it): keep reading it from the image.
+        if (extractedBytes + e.file.bytes > extractBudget || !Room(e.file.bytes, false)) {
             e.state = Extract::State::None;
             e.failed = true;
             return;
@@ -556,6 +584,7 @@ struct AssetCache::Impl {
             std::fprintf(stderr, "MH3 asset cache: extracted %s (%llu bytes) in %.2f s%s\n", e.file.path.c_str(), static_cast<unsigned long long>(e.file.bytes), Seconds() - since, published ? "" : ", failed");
 #endif
         guard.lock();
+        writing -= e.file.bytes;
 
         // Opened at its first read (OpenCopy).
         if (published) {
@@ -566,6 +595,156 @@ struct AssetCache::Impl {
             e.state = Extract::State::None;
             e.failed = true;
         }
+    }
+
+    // Lock held. Deletes a Ready stream copy.
+    void Evict(Extract& e) {
+        CloseCopy(e);
+        e.state = Extract::State::None;
+        extractedBytes -= e.file.bytes;
+        std::error_code ignored;
+        std::filesystem::remove(ExtractPath(e), ignored);
+    }
+
+    // Temporary files of writes that a crash or a full storage cut short.
+    void RemoveLeftovers() {
+        for (const auto& folder : {cache, cache / "textures", cache / "models", cache / "files"}) {
+            std::vector<std::filesystem::path> leftovers;
+            std::error_code error;
+            std::filesystem::directory_iterator entries(folder, error);
+
+            for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
+                if (entries->path().extension() == ".tmp")
+                    leftovers.push_back(entries->path());
+
+            for (const auto& path : leftovers)
+                std::filesystem::remove(path, error);
+        }
+    }
+
+    // Lock held. The converted packs of files this launch has not loaded,
+    // one group per file and folder (a model pack with its identity), the
+    // least recently written first.
+    std::vector<std::vector<std::filesystem::path>> StalePacks() {
+        std::map<std::string, std::pair<std::filesystem::file_time_type, std::vector<std::filesystem::path>>> groups;
+
+        for (const char* folder : {"textures", "models"}) {
+            std::error_code error;
+            std::filesystem::directory_iterator entries(cache / folder, error);
+
+            for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error)) {
+                const auto& path = entries->path();
+                const std::string name = path.filename().string();
+
+                // "<offset>-<first ID>..." names; format.txt and partial writes stay.
+                if (name.size() < 17 || name[16] != '-' || path.extension() == ".tmp")
+                    continue;
+
+                const uint64_t offset = std::strtoull(name.substr(0, 16).c_str(), nullptr, 16);
+                const Source* s = Find(offset);
+
+                if (s && s->file.offset == offset && (s->checked || s->indexing || s->data))
+                    continue;
+
+                auto& group = groups[std::string(folder) + "/" + name.substr(0, name.find('.'))];
+                std::error_code timeError;
+                group.first = std::max(group.first, std::filesystem::last_write_time(path, timeError));
+                group.second.push_back(path);
+            }
+        }
+
+        std::vector<std::pair<std::filesystem::file_time_type, std::vector<std::filesystem::path>>> ordered;
+
+        for (auto& [name, group] : groups)
+            ordered.push_back(std::move(group));
+
+        std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<std::vector<std::filesystem::path>> stale;
+
+        for (auto& [time, paths] : ordered)
+            stale.push_back(std::move(paths));
+
+        return stale;
+    }
+
+    // Lock held. Makes room on the storage for a write of `bytes`, keeping
+    // StorageReserve free beside the other writes in flight. Deletes, as
+    // needed: the stream copies this launch has not read, then (with
+    // `packs`) the packs of files it has not loaded, then the least recently
+    // read stream copies. Deleted files are made again at their next use.
+    // On success the bytes count as in flight until the writer subtracts
+    // them from `writing`.
+    bool Room(uint64_t bytes, bool packs) {
+        const uint64_t before = FreeStorage(cache);
+        uint64_t free = before, streamBytes = 0, packBytes = 0;
+        unsigned streamFiles = 0, packFiles = 0;
+        const auto enough = [&] { return free == UINT64_MAX || free >= bytes + writing + StorageReserve; };
+        const auto evictStreams = [&](bool read) {
+            while (!enough()) {
+                Extract* oldest = nullptr;
+
+                for (auto& e : extracts)
+                    if (e.state == Extract::State::Ready && (read || !e.used) && (!oldest || e.used < oldest->used))
+                        oldest = &e;
+
+                if (!oldest)
+                    return;
+
+                free += oldest->file.bytes;
+                streamBytes += oldest->file.bytes;
+                ++streamFiles;
+                Evict(*oldest);
+            }
+        };
+
+        evictStreams(false);
+
+        if (packs && !enough())
+            for (const auto& group : StalePacks()) {
+                for (const auto& path : group) {
+                    std::error_code error;
+                    const uint64_t size = std::filesystem::file_size(path, error);
+
+                    if (!error && std::filesystem::remove(path, error)) {
+                        free += size;
+                        packBytes += size;
+                        ++packFiles;
+                    }
+                }
+
+                if (enough())
+                    break;
+            }
+
+        evictStreams(true);
+#ifdef MH3_DEVELOPMENT
+        if (streamFiles || packFiles || !enough())
+            std::fprintf(stderr, "MH3 asset cache: %s room for a %s write (%s free, %s in flight): deleted %u stream copies (%s) and %u pack files (%s)\n", enough() ? "made" : "found no", MiB(bytes).c_str(),
+                         MiB(before).c_str(), MiB(writing).c_str(), streamFiles, MiB(streamBytes).c_str(), packFiles, MiB(packBytes).c_str());
+#endif
+        if (!enough())
+            return false;
+
+        writing += bytes;
+        return true;
+    }
+
+    // Unlocked: Room for a pack, or the error that stops the game.
+    Status PackRoom(const Source& s, const char* what, uint64_t bytes) {
+        std::lock_guard guard(lock);
+
+        if (Room(bytes, true))
+            return {};
+
+        const uint64_t free = FreeStorage(cache);
+        return Status::Error("Not enough storage space for the converted " + std::string(what) + " of " + s.file.path + ": " + MiB(bytes) + " needed beside a " + MiB(StorageReserve) +
+                             " reserve, " + (free == UINT64_MAX ? std::string("unknown") : MiB(free)) + " free. Free up space on " + cache.string());
+    }
+
+    // Unlocked: the end of a write that PackRoom granted.
+    void Wrote(uint64_t bytes) {
+        std::lock_guard guard(lock);
+        writing -= bytes;
     }
 
     Source* Find(uint64_t at) {
@@ -614,7 +793,7 @@ struct AssetCache::Impl {
         }
 
         if (at != log.size()) {
-            std::fprintf(stderr, "MH3 asset cache: dropping %zu torn index bytes\n", log.size() - at);
+            std::fprintf(stderr, "MH3 asset cache: dropping %lu torn index bytes\n", static_cast<unsigned long>(log.size() - at));
             CheckStatus(Publish(cache / "index.log", {log.data(), at}));
         }
     }
@@ -895,13 +1074,25 @@ struct AssetCache::Impl {
         if (work->textures.size() != s.textureCount)
             return Status::Error("texture inventory differs from the cache index");
 
-        const auto path = TexturePath(s), temporary = std::filesystem::path(path.string() + ".tmp");
-        MH3_RETURN_IF_ERROR(work->writer.Open(temporary, s.textureCount, s.firstTexture));
         std::vector<uint64_t> bytes(work->textures.size());
 
         for (size_t i = 0; i < bytes.size(); ++i)
             MH3_RETURN_IF_ERROR(TexturePayloadBytes(work->textures[i], *data, s.file.offset, bytes[i]));
 
+        // The payloads, their 64-byte alignment and the records.
+        uint64_t packBytes = 4096 + uint64_t(bytes.size()) * 128;
+
+        for (const uint64_t b : bytes)
+            packBytes += b;
+
+        MH3_RETURN_IF_ERROR(PackRoom(s, "textures", packBytes));
+        const struct Written {
+            Impl& owner;
+            uint64_t bytes;
+            ~Written() { owner.Wrote(bytes); }
+        } written{*this, packBytes};
+        const auto path = TexturePath(s), temporary = std::filesystem::path(path.string() + ".tmp");
+        MH3_RETURN_IF_ERROR(work->writer.Open(temporary, s.textureCount, s.firstTexture));
         work->writer.Plan(bytes);
 
         if (work->textures.size() > 1) {
@@ -927,7 +1118,7 @@ struct AssetCache::Impl {
         MH3_RETURN_IF_ERROR(work->writer.Finish());
 #ifdef MH3_DEVELOPMENT
         if (work->helped)
-            std::fprintf(stderr, "MH3 asset cache: helping workers converted %u of the %zu textures of %s\n", work->helped.load(), work->textures.size(), s.file.path.c_str());
+            std::fprintf(stderr, "MH3 asset cache: helping workers converted %u of the %lu textures of %s\n", work->helped.load(), static_cast<unsigned long>(work->textures.size()), s.file.path.c_str());
 #endif
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
@@ -961,8 +1152,15 @@ struct AssetCache::Impl {
         identity.replace_extension(".identity.bin");
 
         // The pack is published last: its presence marks a complete pair.
-        MH3_RETURN_IF_ERROR(Publish(identity, result.identity));
-        MH3_RETURN_IF_ERROR(Publish(ModelPath(s), result.pack));
+        const uint64_t bytes = result.identity.size() + result.pack.size();
+        MH3_RETURN_IF_ERROR(PackRoom(s, "models", bytes));
+        Status published = Publish(identity, result.identity);
+
+        if (published.ok())
+            published = Publish(ModelPath(s), result.pack);
+
+        Wrote(bytes);
+        MH3_RETURN_IF_ERROR(published);
         usable = true;
         return {};
     }
@@ -1039,16 +1237,23 @@ void AssetCache::Impl::Watch() {
 }
 #endif
 
-uint64_t AssetCache::StreamCacheUse(const std::filesystem::path& root) {
-    uint64_t bytes = 0;
-    std::error_code error;
-    std::filesystem::directory_iterator entries(root / "cache" / "files", error);
+std::string AssetCache::StorageWarning(const std::filesystem::path& root) {
+    const uint64_t free = FreeStorage(root);
 
-    for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
-        if (entries->path().extension() == ".bin")
-            bytes += entries->file_size(error);
+    if (free == UINT64_MAX)
+        return {};
 
-    return bytes;
+    const uint64_t used = CacheUse(root / "cache");
+
+    if (free + used >= StorageWanted)
+        return {};
+
+    const auto text = root.string();
+    const auto colon = text.find(':');
+    const std::string storage = colon != std::string::npos ? text.substr(0, colon + 1) : text;
+    return storage + " has " + MiB(free) + " free and Monster Hunter Tri's asset cache holds " + MiB(used) + "; the cache wants " + MiB(StorageWanted) +
+           " in all. Free up space: until then maps convert again at more of their loads and fewer sound streams are cached, and a map whose converted assets do not fit stops the game "
+           "with an error.";
 }
 
 AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read)

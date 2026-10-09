@@ -200,3 +200,45 @@ void ReportVitaMemory() {
 }
 
 
+namespace {
+// Bytes in a directory tree; `leftovers` counts the files a crashed write
+// left behind (asset cache .tmp files).
+uint64_t VitaTreeBytes(const std::string& path, uint64_t& leftovers, unsigned& leftoverFiles) {
+    uint64_t bytes = 0;
+    const int dir = sceIoDopen(path.c_str());
+
+    if (dir < 0)
+        return 0;
+
+    SceIoDirent entry{};
+    std::vector<std::string> directories;
+
+    while (sceIoDread(dir, &entry) > 0) {
+        const std::string name = entry.d_name;
+
+        if (name == "." || name == "..")
+            continue;
+
+        if (SCE_S_ISDIR(entry.d_stat.st_mode)) {
+            directories.push_back(path + "/" + name);
+            continue;
+        }
+
+        bytes += entry.d_stat.st_size;
+
+        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tmp") == 0) {
+            leftovers += entry.d_stat.st_size;
+            ++leftoverFiles;
+        }
+    }
+
+    sceIoDclose(dir);
+
+    for (const auto& child : directories)
+        bytes += VitaTreeBytes(child, leftovers, leftoverFiles);
+
+    return bytes;
+}
+
+} // namespace
+

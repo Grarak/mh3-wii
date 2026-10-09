@@ -142,7 +142,7 @@ void load_pack(Store& s) {
   s.packLoaded = true;
   const std::string bytes = read_text(pack_path(), 64u << 20);
   s.pack = shader_pack::parse(bytes, uint32_t(RuntimeShaderStage::ScalarFragment), MaxProgramBytes);
-  std::fprintf(stderr, "MH3 GXM shader cache pack: %zu programs (%zu bytes)\n", s.pack.size(), bytes.size());
+  std::fprintf(stderr, "MH3 GXM shader cache pack: %lu programs (%lu bytes)\n", static_cast<unsigned long>(s.pack.size()), static_cast<unsigned long>(bytes.size()));
 }
 
 void append_pack(Key key, uint64_t source, const void* program, size_t size) {
@@ -235,7 +235,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
   if (entry.binary)
     return static_cast<const SceGxmProgram*>(entry.binary.get());
   // Once per stage. Retail cannot compile: the offline bank must hold every
-  // program (docs/vita-shader-bank.md), so any miss is a bank defect.
+  // program (docs/optimizations/rendering/offline-shader-bank.md), so any miss is a bank defect.
   std::fprintf(stderr, "MH3 GXM SHADER BANK MISS %s (%s): development runtime compile\n", id(hash, stage).c_str(), entry.origin.c_str());
   std::string cg = entry.cg ? entry.source : gfx::cg::convert(entry.source, stage == RuntimeShaderStage::Vertex ? gfx::cg::Stage::Vertex : gfx::cg::Stage::Fragment);
 
@@ -343,7 +343,7 @@ const SceGxmProgram* runtime_shader_binary(uint64_t hash, RuntimeShaderStage sta
   } else
     std::fprintf(stderr, "MH3 loaded cached GXM shader %s\n", id(hash, stage).c_str());
   // Retain the actual runtime compiler output for offline ABI/USSE diagnosis.
-  // The normal cache stays on ux0; this opt-in mirror can use host0.
+  // The normal cache stays on ux0; this opt-in mirror goes anywhere.
   if (const char* dump = std::getenv("MH3_GXM_SHADER_DUMP"); dump && *dump) {
     const std::filesystem::path directory(dump);
     std::filesystem::create_directories(directory);

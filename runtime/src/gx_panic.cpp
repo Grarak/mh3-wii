@@ -43,11 +43,11 @@ _Unwind_Reason_Code NativeFrame(_Unwind_Context* context, void* value) {
     // Unwind IPs are return addresses. A noreturn stub's return address can
     // equal the next function's start; symbolize the instruction before it.
     if (dladdr(reinterpret_cast<void*>(ip - 1), &symbol) && symbol.dli_sname) {
-        std::fprintf(stderr, " %s + 0x%zx", symbol.dli_sname, size_t(ip - reinterpret_cast<uintptr_t>(symbol.dli_saddr)));
+        std::fprintf(stderr, " %s + 0x%lx", symbol.dli_sname, static_cast<unsigned long>(ip - reinterpret_cast<uintptr_t>(symbol.dli_saddr)));
     }
 
     if (symbol.dli_fbase)
-        std::fprintf(stderr, " (ELF + 0x%zx)", size_t(ip - reinterpret_cast<uintptr_t>(symbol.dli_fbase)));
+        std::fprintf(stderr, " (ELF + 0x%lx)", static_cast<unsigned long>(ip - reinterpret_cast<uintptr_t>(symbol.dli_fbase)));
 #endif
     std::fputc('\n', stderr);
     return _URC_NO_REASON;

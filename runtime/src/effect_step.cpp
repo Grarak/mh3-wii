@@ -672,7 +672,7 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
             if (++mismatches <= 20)
                 for (size_t i = 0; i < kCurveWords; ++i)
                     if (actual[i] != expected[i]) {
-                        std::printf("MH3 port check: CurvesAt word %zu is %08x, the whole-block blend %08x (particle %08x) owned %u kept %08x before %08x a %08x b %08x t %g\n", i, actual[i], expected[i], particle,
+                        std::printf("MH3 port check: CurvesAt word %lu is %08x, the whole-block blend %08x (particle %08x) owned %u kept %08x before %08x a %08x b %08x t %g\n", static_cast<unsigned long>(i), actual[i], expected[i], particle,
                                     unsigned(cache.owned.bits[i / 8] >> (4 * (i % 8)) & 15), kept[i], cache.values[slotOf[0]][i], cache.values[slotOf[1]][i], cache.values[slotOf[2]][i], double(at - tick));
                         break;
                     }

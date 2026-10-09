@@ -374,6 +374,7 @@ endif()
 
 add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
+add_test(NAME mh3_vita_printf_formats COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check-vita-printf.py")
 
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp

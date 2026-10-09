@@ -1,6 +1,6 @@
 // Startup conversion of the disc's models into native source packs: one
 // M3MP/M3ID pair per FST file with models, and the M3IX source index the
-// runtime admits them through (native-models/, see docs/native-model-assets.md).
+// runtime admits them through (native-models/, see docs/optimizations/assets/load-time-asset-conversion.md).
 //
 // Model IDs follow the canonical recipe: standalone BRRES files by (file,
 // model name), then the common and map effect archives by (file, member
@@ -87,7 +87,7 @@ struct ModelConverter::Workspace {
     std::vector<uint16_t> corners = std::vector<uint16_t>(65536);
     std::vector<mh3_pack_palette_batch> batches = std::vector<mh3_pack_palette_batch>(16384);
 
-    // GPU skinning (docs/gpu-skinning.md): every indexed shape whose
+    // GPU skinning (docs/optimizations/rendering/gpu-skinning.md): every indexed shape whose
     // selectors allow it is converted skinned.
     std::vector<mh3_skin_matrix> skinMatrices = std::vector<mh3_skin_matrix>(MH3_SKIN_MAX_MATRICES);
     std::vector<mh3_skin_row> skinRows = std::vector<mh3_skin_row>(MH3_SKIN_MAX_ROWS);
@@ -269,8 +269,8 @@ bool ModelConverter::Convert(const std::string& path, uint64_t fileOffset, std::
         }
     }
 
-    std::fprintf(stderr, "MH3 prepare: %s left out (status %d, model %u kind %u resource %u at %zx)\n", path.c_str(), int(status), diagnostic.model_id, diagnostic.kind, diagnostic.resource_id,
-                 diagnostic.offset);
+    std::fprintf(stderr, "MH3 prepare: %s left out (status %d, model %u kind %u resource %u at %lx)\n", path.c_str(), int(status), diagnostic.model_id, diagnostic.kind, diagnostic.resource_id,
+                 static_cast<unsigned long>(diagnostic.offset));
     return false;
 }
 
@@ -338,7 +338,7 @@ void PrepareModels(const std::filesystem::path& root, const Progress& progress) 
         published.emplace_back("models.index.bin", indexBytes);
     }
 
-    std::fprintf(stderr, "MH3 prepare: %zu model source packs, %u sources left out\n", packs.size(), skipped);
+    std::fprintf(stderr, "MH3 prepare: %lu model source packs, %u sources left out\n", static_cast<unsigned long>(packs.size()), skipped);
 
     if (std::filesystem::exists(output))
         std::filesystem::remove_all(output);

@@ -982,7 +982,7 @@ std::shared_ptr<const NativeModelNodeViews> NodeViews(uint32_t model, const std:
         if (!prepared || prepared->palette_batch_count || (!prepared->skin_row_count && (matrix < 0 || uint32_t(matrix) >= views))) {
 #ifdef MH3_DEVELOPMENT
             if (mh3SplitDetail)
-                std::printf("MH3 node views: model %08x reads envelopes: shape %zu %s\n", model, i,
+                std::printf("MH3 node views: model %08x reads envelopes: shape %lu %s\n", model, static_cast<unsigned long>(i),
                             !prepared ? "unresolved" : prepared->palette_batch_count ? "has palette batches" : "rigid without a view matrix");
 #endif
             return nullptr;
@@ -1347,9 +1347,9 @@ void ReportNativeModelDrawTables() {
     const auto& s = tableStats;
     const auto n = [](uint64_t value) { return static_cast<unsigned long long>(value); };
     std::fprintf(stderr,
-                 "MH3 draw tables: %zu owners; %llu built in %.2f ms, %llu from the cache in %.2f ms (%llu eager, %llu failed); %llu materials (%llu missing) %llu shapes (%llu missing); "
+                 "MH3 draw tables: %lu owners; %llu built in %.2f ms, %llu from the cache in %.2f ms (%llu eager, %llu failed); %llu materials (%llu missing) %llu shapes (%llu missing); "
                  "cache files %.2f ms, %llu written (%llu bytes); items %llu indexed %llu by address (%llu sources in place); %llu alias misses; compared %llu mismatches %llu\n",
-                 CountNativeModelOwners(), n(s.built), s.build_ms, n(s.cached), s.cached_ms, n(s.eager), n(s.failed), n(s.materials), n(s.missing_materials), n(s.shapes),
+                 static_cast<unsigned long>(CountNativeModelOwners()), n(s.built), s.build_ms, n(s.cached), s.cached_ms, n(s.eager), n(s.failed), n(s.materials), n(s.missing_materials), n(s.shapes),
                  n(s.missing_shapes), s.cache_ms, n(s.files_written), n(s.bytes_written), n(s.indexed), n(s.unindexed), n(s.in_place), n(s.aliases), n(s.compared), n(s.mismatches));
 }
 

@@ -32,8 +32,16 @@ class AssetCache {
     // from there (least recently used copies make room).
     static constexpr uint64_t StreamCacheBytes = 128ull << 20;
 
-    // The stream copies under root/cache/files, in bytes.
-    static uint64_t StreamCacheUse(const std::filesystem::path& root);
+    // What the cache should have of the storage in all, free space plus what
+    // it holds: StreamCacheBytes of streams, the rest for converted packs.
+    // With less, packs of maps a launch did not load are deleted to make room
+    // (they convert again at their next load); a pack that still does not
+    // fit stops the game with an error instead of filling the storage.
+    static constexpr uint64_t StorageWanted = 384ull << 20;
+
+    // A message for the player when the storage holding root offers the cache
+    // less than StorageWanted; empty otherwise.
+    static std::string StorageWarning(const std::filesystem::path& root);
 
     AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read);
     ~AssetCache();

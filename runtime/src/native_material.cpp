@@ -2234,7 +2234,7 @@ std::string CompareNativeMaterialOwners(NativeOwner a, NativeOwner b) {
         for (size_t i = 0; i < sizeof material; ++i)
             if (p[i] != q[i]) {
                 char text[48];
-                std::snprintf(text, sizeof text, "@%zu(%02x/%02x)", i, p[i], q[i]);
+                std::snprintf(text, sizeof text, "@%lu(%02x/%02x)", static_cast<unsigned long>(i), p[i], q[i]);
                 result += text;
                 break;
             }

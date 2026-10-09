@@ -135,7 +135,7 @@ void MemoryHost::AuditHostAccess(uint32_t address, size_t length) {
     std::lock_guard guard(lock);
 
     if (reported.insert(caller).second)
-        std::fprintf(stderr, "MH3 audit: host access to %08x (%zu bytes) from %p\n", unsigned(address), length, caller);
+        std::fprintf(stderr, "MH3 audit: host access to %08x (%lu bytes) from %p\n", unsigned(address), static_cast<unsigned long>(length), caller);
 }
 #endif
 
