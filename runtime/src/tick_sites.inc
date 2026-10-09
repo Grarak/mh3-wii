@@ -113,11 +113,30 @@
 {0x80124B78u, TickSite::Countdown},          // enemy: countdown (+0x20), fires at 0
 {0x80124BB0u, TickSite::Countdown},
 {0x80124BCCu, TickSite::Countdown},
+{0x801268FCu, TickSite::Countdown},          // enemy senses (801298E0 -> 801268FC): countdown (s16 +0x18)
 {0x801298A0u, TickSite::Countdown},          // enemy (80129870): countdown (s16 +0x44C), clamped at 0
 {0x80130850u, TickSite::Countup},            // enemy (80130808): steps (s16 +0x442) against a table length
+{0x80130E0Cu, TickSite::Countdown},          // enemy senses (80130DC4): countdown (s16 +0x8A4), clamped at 0
+{0x801318C0u, TickSite::Countdown},          // enemy senses (801318AC): countdown (s16 +0x916)
+{0x80131D08u, TickSite::Countdown},          // enemy senses (80131CFC): four countdowns (s16 +0x444, +0x446, +0x448, +0x44A), each acting on +0x38F at 0
+{0x80131D40u, TickSite::Countdown},
+{0x80131D78u, TickSite::Countdown},
+{0x80131DB0u, TickSite::Countdown},
+{0x80131E98u, TickSite::Countdown},          // enemy senses (80131E7C): three countdowns (s16 +0x8C2, +0x8C4, +0x8C6)
+{0x80131EACu, TickSite::Countdown},
+{0x80131EC0u, TickSite::Countdown},
+{0x80131F3Cu, TickSite::Countdown},          // enemy senses (80131F30): countdown (s16 +0x81C)
+{0x80131F78u, TickSite::Countdown},          // enemy senses (80131F60): countdown (s16 +0x81E)
+{0x8013234Cu, TickSite::Countdown},          // enemy senses (8013234C): countdown (s16 +0x950)
+{0x80132850u, TickSite::Countup},            // enemy senses (801327CC): steps (s16 +0x926) against a table length
+{0x801333B4u, TickSite::Countdown},          // enemy status decay (801333A8): every 300 ticks (s16 +0x93C) the buildup (+0x93A) falls by 5
+{0x80133660u, TickSite::Countdown},          // enemy senses (80133660): countdown (s16 +0x952)
+{0x80133704u, TickSite::Countdown},          // enemy paint (80133704): paint time left (s16 +0x810), 18000 from a paintball hit (0x80133678)
+{0x80133784u, TickSite::Countdown},          // enemy senses (80133784): countdown (s16 +0x94A), 2700 from 0x8013371C
 {0x80134ED0u, TickSite::PerStep},           // flying enemy (80134E8C): vertical speed (+0x314) += 0.85 a step, below 100
 {0x80134FA8u, TickSite::PerStep},           // flying enemy (80134F7C): the same toward -10
 {0x80135538u, TickSite::PerStep},           // enemy (80135518): vertical speed (+0x314) += acceleration (+0x320) a step
+{0x80136D84u, TickSite::Countdown},          // enemy senses (80136D84): countdown (s16 +0x79C)
 {0x8013896Cu, TickSite::PerStep},           // enemy update (801382A0): a small height offset (+0x1AC) eases to 0 by 10 a step
 {0x801389ACu, TickSite::Decay},             // enemy update: a large height offset (+0x1AC) *= 0.9 a step
 // Not 0x801389C0: the model offset (+0x1A0, cleared each step) takes the
@@ -152,6 +171,7 @@
 {0x8021D258u, TickSite::Countup},           // village talk typing (8021D238): steps (0x806ACC2C); shows steps / 2 + 1 letters
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
 {0x8024ACD0u, TickSite::CountdownPastZero},
+{0x8024AE74u, TickSite::Countup},           // grilling meat (PlGrillStep 8024AAB8): cook time (s16 +0x5B8) against the item's raw/done/burnt steps
 {0x8024C224u, TickSite::Countdown, 1},
 {0x8024C314u, TickSite::Countdown},
 {0x80259EFCu, TickSite::PerStep},            // player anchored action (80259E3C, motion 422): offset z (+0x80) += this each step

@@ -109,6 +109,40 @@ struct Counters {
 
 std::unordered_map<uint32_t, Counters> counters;
 
+// The frame check's last mode-0 window ahead per character (a few slots by the
+// MHchar's address; a slot another character took just starts afresh): the
+// step (its game time), the frame the window started at, the frames it
+// covered, the frame updates (MHcharRootMotionPort) since, and whether that
+// port updates the character at all.
+struct AheadWindow {
+    uint32_t self = 0;
+    double step = -1;
+    float frame = 0, from = 0, to = 0;
+    uint32_t updates = 0;
+    bool updated = false;
+};
+
+std::array<AheadWindow, 64> aheadWindows;
+
+AheadWindow& WindowOf(uint32_t self) {
+    return aheadWindows[(self * 2654435761u) >> 26];
+}
+
+// One frame update of `self`, an advance or a step without one (a pause);
+// frames just set say nothing of the last window.
+void NoteFrameUpdate(uint32_t self, bool framesSet) {
+    AheadWindow& window = WindowOf(self);
+
+    if (window.self == self) {
+        if (framesSet) {
+            window.self = 0;
+        } else {
+            ++window.updates;
+            window.updated = true;
+        }
+    }
+}
+
 // Spends up to `time` ticks on the u8 count at `address`; returns the time
 // left over once it has run out (0 while it still runs).
 double Spend(uint32_t address, Partial& partial, double time) {
@@ -316,6 +350,7 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
     };
 
     const uint32_t channelSet = Memory::Read32(self + kChannelSet);
+    NoteFrameUpdate(self, Memory::Read8(self + kSkipAdvance) != 0);
 
     if (!channelSet || !game.Call<ChannelAnim>({self, 0})) {
         *ctx = saved;
@@ -449,44 +484,44 @@ REGISTER_NATIVE_FUNCTION_AS(0x800E19D4, MH3_MHcharRootMotion, "MHcharRootMotion"
 
 namespace {
 
-// Mode 0's last window ahead per channel (a few slots by the channel's
-// address; a slot another channel took just starts afresh): the step (its game
-// time), the frame the window started at and the frames it covered.
-struct AheadWindow {
-    uint32_t self = 0;
-    double step = -1;
-    float frame = 0, from = 0, to = 0;
-};
-
-std::array<AheadWindow, 64> aheadWindows;
-
 // Mode 0 over the advance ahead predicts the next advance from this step's
 // length, so at varying sub-tick steps the windows of consecutive steps
 // overlapped (the next step shorter: the event fired again) or left gaps (it
 // longer: the event never fired): a walking hunter's footstep dust came two or
-// three times a step on the Pi5 at ~11 steps a tick, and footsteps without
-// any between. The windows tile instead: one continues where the channel's
-// window of the step before ended (unless the frame went back: a new motion
-// or a reset); the checks of one step share its window. At equal steps the
-// window is the original's.
+// three times a step on a Raspberry Pi 5 at ~11 steps a tick, and footsteps without
+// any between. The windows tile instead: one continues where the character's
+// last window ended when its frames were updated once since (unless the frame
+// went back: a new motion or a reset); the checks between two updates share
+// one window. At equal steps the window is the original's.
+//
+// The checks between two updates can lie in two steps: the paintball's
+// (quest_field 0x808D0BE0) after the update of one step and the throw's
+// (0x8024902C) before the next one's both test the frame after that update.
+// Shared by the step instead, the throw continued the ball's window, found it
+// empty and never let go (no ball, none used up; the whetstone the same).
+// Characters whose frames move without the update port keep the step's rule:
+// a window continues the one of the step before.
 void TileAhead(uint32_t self, float frame, float& from, float& to) {
-    AheadWindow& last = aheadWindows[(self * 2654435761u) >> 26];
+    AheadWindow& last = WindowOf(self);
     const double step = GameStep::Elapsed();
 
-    if (last.self == self && last.step == step && last.frame == frame) {
+    const bool same = last.self == self;
+
+    if (same && last.frame == frame && (last.updated ? last.updates == 0 : last.step == step)) {
         from = last.from;
         to = last.to;
         return;
     }
 
     const bool previousStep = std::fabs(last.step - (step - GameStep::Scale())) <= 1e-6 * std::max(1.0, step);
-    const bool continues = last.self == self && previousStep && last.frame <= frame && last.to > last.frame;
+    const bool updatedOnce = last.updated ? last.updates == 1 : previousStep;
+    const bool continues = same && updatedOnce && last.frame <= frame && last.to > last.frame;
 
     if (continues)
         from = last.to;
 
     to = std::max(to, from);
-    last = {self, step, frame, from, to};
+    last = {self, step, frame, from, to, 0, same && last.updated};
 }
 
 // MHchar frame check (0x800E1740; enemies call it through em_frame_check
@@ -578,7 +613,7 @@ uint32_t FrameCheck(uint32_t self, uint32_t mode, bool ahead, double frame, doub
 
 } // namespace
 
-// A precise native (docs/native-dispatch-freshness.md): its body names only
+// A precise native (docs/optimizations/cpu/native-function-ports.md): its body names only
 // the argument registers, and r1 for the port check, so translated callers
 // call it directly, without the dispatch's guard.
 extern "C" void func_800E1740(CpuContext* ctx);
