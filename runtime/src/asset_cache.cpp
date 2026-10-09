@@ -218,7 +218,7 @@ struct AssetCache::Impl {
             std::filesystem::remove_all(cache);
             std::filesystem::create_directories(cache / "textures");
             std::filesystem::create_directories(cache / "models");
-            Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)});
+            CheckStatus(Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)}));
         }
 
         LoadIndex();
