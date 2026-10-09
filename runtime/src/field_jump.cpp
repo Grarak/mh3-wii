@@ -75,6 +75,7 @@ enum : uint32_t {
 constexpr uint32_t kFirstCounterQuest = 1000; // free-roam quests are 1..4
 constexpr uint32_t kPlayMode = 0x8065AA85;    // u8
 constexpr uint8_t kPlayModeOnline = 4;
+constexpr uint8_t kPlayModeArena = 2;         // FieldTaskVs
 constexpr uint32_t MoveWork = 0x800CFAF4;       // get_move_work_adrs(u8 kind) -> move work
 constexpr uint32_t kCurrentArea = 0x806BB806;   // u8, get_now_areano
 constexpr uint32_t kMoveWorkTable = 0x8065AB04; // +16: move works by kind
@@ -106,6 +107,8 @@ constexpr uint32_t kMyPlayer = 0x8065AA87;   // u8, what MyPlayerIndex returns
 constexpr uint32_t kPlayerBytes = 0xB20;
 constexpr uint8_t kArenaMap = 9;
 constexpr float kArenaWaitingRoomZ = -10000.0f; // below: the waiting room (0x802B06EC)
+constexpr uint32_t kQuestWork = 0x80797100;     // u32: +0x3C the quest's data, its +0x8B the quest's map
+constexpr uint8_t kWaterArenaMap = 10;          // the quest's map; the field loads map 9, area 1
 
 enum : uint32_t {
     kPhase = 8,
@@ -320,13 +323,21 @@ extern "C" void MH3_LoadQuestFile(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x803AD264, MH3_LoadQuestFile, "LoadQuestFile");
 
-// The quest's map setup; then the chosen start area.
+// The quest's map setup; then the chosen start area. The arena map (9) holds
+// both arenas: area 0 the land arena, area 1 the water arena, each with its
+// waiting room. Outside the arena's own play mode (2) the setup starts every
+// arena quest in area 0, so a water arena quest (map 10) ran in the land
+// arena; it starts in area 1.
 extern "C" void func_803AF518(CpuContext* ctx);
 static void QuestMapSetupPort(CpuContext* ctx) {
     func_803AF518(ctx);
     const Jump& jump = State();
+    const uint32_t questWork = Memory::Read32(kQuestWork);
+    const uint32_t quest = questWork ? Memory::Read32(questWork + 0x3C) : 0;
+    const bool water = quest && Memory::Read8(quest + 0x8B) == kWaterArenaMap && Memory::Read8(kPlayMode) != kPlayModeArena;
+    const int area = jump.done && jump.area >= 0 ? jump.area : water ? 1 : -1;
 
-    if (!jump.done || jump.area < 0)
+    if (area < 0)
         return;
 
     const CpuContext saved = *ctx;
@@ -337,10 +348,10 @@ static void QuestMapSetupPort(CpuContext* ctx) {
     if (!work)
         return;
 
-    std::fprintf(stderr, "MH3 field jump: starting in area %d instead of %u\n", jump.area, Memory::Read8(work + kWorkArea));
-    Memory::Write8(work + kWorkArea, uint8_t(jump.area));
-    Memory::Write8(work + kWorkStartArea, uint8_t(jump.area));
-    Memory::Write8(kCurrentArea, uint8_t(jump.area));
+    std::fprintf(stderr, "MH3 quest: starting in area %d instead of %u\n", area, Memory::Read8(work + kWorkArea));
+    Memory::Write8(work + kWorkArea, uint8_t(area));
+    Memory::Write8(work + kWorkStartArea, uint8_t(area));
+    Memory::Write8(kCurrentArea, uint8_t(area));
 }
 
 extern "C" void MH3_QuestMapSetup(CpuContext* ctx) {

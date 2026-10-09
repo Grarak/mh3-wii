@@ -20,11 +20,13 @@ MH3_SAVE_DIR=saves MH3_ARGS="--quest 9004 --quest-monster Deviljho --no-damage" 
   scripts/dev/run-heartbeat.sh jho 300
 ```
 
-The arena quests (`--list arena-quests`) use two maps: the land arena (map
-9: 9000-9002, 9004, 9006, 9007, 9009) and the **water arena** (map 10: 9003
-Royal Ludroth, 9005 Lagiacrus, 9008 Gobul and Lagiacrus), a pool for the
-underwater monsters and for water rendering and animation
-(`--quest 9005 --quest-monster Gobul`).
+The arena quests (`--list arena-quests`) use two arenas: the land arena
+(quest map 9: 9000-9002, 9004, 9006, 9007, 9009) and the **water arena**
+(quest map 10: 9003 Royal Ludroth, 9005 Lagiacrus, 9008 Gobul and
+Lagiacrus), a pool for the underwater monsters and for water rendering and
+animation (`--quest 9005 --quest-monster Gobul`). Both are the arena map
+(9): the land arena its area 0, the water arena its area 1, where a water
+arena quest starts (field_jump.cpp, QuestMapSetupPort).
 
 Small monsters: `--quest-small NAME|ID` makes every small monster spawn of
 the quest that monster (the area spawn tables at +0x4B8; only named
