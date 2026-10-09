@@ -25,25 +25,44 @@
 //               (0x80208B24) the action ends after the motion or 1 step
 //   0x8020D784  (plw, index) motion from the table at 0x805B99F0, 0x8020DAD0
 //               motion 507: after 60 steps action 11 or 0x8020D64C
+//   0x8020D10C, 0x8020D260  the run (action 1, 1) and its start (1, 2):
+//               motion 3, steered by the stick and pushed forward 1 (the
+//               start: 5, at motion speed 1.25) a step
+//   0x8020E0A0, 0x8020E1F4  the same in kind 12 (motion 53, or 59 with +20)
+// and two helpers of the player's movement (0x802094EC):
+//   0x8020A0BC  (plw, s16 steps) GlideTo: a glide to +0x90 over that many
+//               steps (at once from 800 away or with 0 steps)
+//   0x8020A1BC  each step: the glide's move; another console's player eases
+//               its yaw a quarter of the way to the wanted yaw
 //
 // The originals count the countdowns and counts by 1 per step. Here they
 // count the whole ticks of game time in the step (GameStep::Ticks()), so the
-// actions take the same time at any step length; at the stock 1/30 s step
-// (one tick) these are the originals.
+// actions take the same time at any step length. The moves' pushes, the
+// glide and the yaw ease were amounts per step: here they follow the step's
+// length (GameStep::Scale()). At the stock 1/30 s step (one tick) these are
+// the originals.
 #include "player_work.h"
 #include "port_check.h"
 
 #include <algorithm>
+#include <cmath>
+#include <unordered_map>
 
 namespace {
 
 // PLW fields of the village's actions (player_work.h has the shared ones).
 using namespace Plw;
 enum : uint32_t {
-    kStarted = 6,      // u8 (idle): 0 on its first step
-    kFlag20 = 20,      // u8
-    kIdleSteps = 0x36, // s16: steps idle, up to 150
-    kPosition = 0x90,  // VEC3
+    kStarted = 6,         // u8 (idle): 0 on its first step
+    kFlag20 = 20,         // u8: the other set of motions (66/63, 59/53)
+    kIdleSteps = 0x36,    // s16: steps idle, up to 150
+    kPosition = 0x3C,     // VEC3
+    kGlideTarget = 0x90,  // VEC3: where GlideTo takes the player
+    kGlideMove = 0x9C,    // VEC3: the glide's move a step
+    kGlideSteps = 0xB4,   // s16: the glide's steps left
+    kMoveWait = 0x266,    // s8: 10 as a move starts; it may stop or change once out (player_timers.cpp)
+    kMotionSpeed = 0x354, // f32: the motion's speed (0x8026A320 sets the MHchar's rate to twice it each step)
+    kMode = 0xB00,        // u8: 3 runs in motion 39 (0x80208B4C); 2 in kind 12 is the special stance
 };
 constexpr uint32_t kVillage = 0x806ACFC4;            // village scene work (step_counter.cpp)
 constexpr uint32_t kVillageReady = kVillage + 325;   // u8
@@ -55,25 +74,30 @@ constexpr uint32_t kMotionTable = 0x805B99F0;        // s16[3] {motion, blend, f
 constexpr uint32_t kSessionFlag = 0x8065B233;        // system_w+0x7D3 (0x800D076C: == 1)
 
 enum : uint32_t {
-    SetAction = 0x8020A448,     // (plw, u8, u16 action, u16)
-    NextAction = 0x8020A638,    // (plw, u8, u16 action, u16): +14 = 1, then SetAction
-    EndAction = 0x8020A770,     // (plw, u8 flag9, s32 blend, s32 flags): back to standing
-    IdleMotion = 0x8020A778,    // (plw, bool) -> 1 when it set an idle motion
-    IdleStep = 0x8020F850,      // (plw)
-    MessageText = 0x80211E80,   // LbStr (u8 table, u16 id) -> char*
-    ShowMessage = 0x8035B660,   // (0, char*)
-    SendText = 0x804534A4,      // (u8 id, char*)
-    ActionArg = 0x80342BD4,     // (plw, u8)
-    Fade = 0x800580A8,          // fade_set (0, 1 out / 2 in)
-    SpecialStance = 0x80208B24, // (plw) -> 1 in action 12 with +0xB00 == 2 (0x80208B1C, before it, is 0)
-    Nearby = 0x8026F96C,        // (plw, 0) -> u8
-    ActionDone = 0x8020D64C,    // (plw)
-    Answered = 0x8020FD68,      // (plw)
-    GoToAnswer = 0x8020E7E4,    // (plw, spot)
-    Watch = 0x802DE5DC,         // (plw, plw + 1432)
-    FindSpot = 0x8020B61C,      // (plw, 8, s16 player) -> spot* (VEC3 at +4, angle at +16) or 0
-    VecToMh = 0x8005001C,       // vec_to_mh_vec3 (out, VEC3*)
-    SetStance = 0x8020A0BC,     // (plw, 20)
+    SetAction = 0x8020A448,       // (plw, u8, u16 action, u16)
+    NextAction = 0x8020A638,      // (plw, u8, u16 action, u16): +14 = 1, then SetAction
+    EndAction = 0x8020A770,       // (plw, u8 flag9, s32 blend, s32 flags): back to standing
+    IdleMotion = 0x8020A778,      // (plw, bool) -> 1 when it set an idle motion
+    IdleStep = 0x8020F850,        // (plw)
+    MessageText = 0x80211E80,     // LbStr (u8 table, u16 id) -> char*
+    ShowMessage = 0x8035B660,     // (0, char*)
+    SendText = 0x804534A4,        // (u8 id, char*)
+    ActionArg = 0x80342BD4,       // (plw, u8)
+    Fade = 0x800580A8,            // fade_set (0, 1 out / 2 in)
+    SpecialStance = 0x80208B24,   // (plw) -> 1 in action 12 with +0xB00 == 2 (0x80208B1C, before it, is 0)
+    StickLevel = 0x8026F96C,      // (plw, stick 0) -> u8: the stick's tilt (+0xD4), 0 none, 1 walk, 3 run
+    ActionDone = 0x8020D64C,      // (plw)
+    Answered = 0x8020FD68,        // (plw)
+    GoToAnswer = 0x8020E7E4,      // (plw, spot)
+    Watch = 0x802DE5DC,           // (plw, plw + 1432)
+    FindSpot = 0x8020B61C,        // (plw, 8, s16 player) -> spot* (VEC3 at +4, angle at +16) or 0
+    VecToMh = 0x8005001C,         // vec_to_mh_vec3 (out, VEC3*)
+    GlideTo = 0x8020A0BC,         // (plw, s16 steps): see GlideToPort
+    SteerByStick = 0x8026A40C,    // (plw): the wanted yaw (+0xA8) from the stick's angle and the camera's yaw
+    RotVecY = 0x800510C8,         // rotVecY (VEC3*, u32 yaw)
+    CommandBit = 0x8026A6A8,      // (plw, bit) -> 1 when the command bit (+0xE0) is set
+    StanceStep = 0x8020FBE0,      // (plw): kind 12's step after its actions (the local player's 0x8020F8E4)
+    DistanceSquared = 0x80050F10, // (VEC3* a, VEC3* b) -> f1 |b - a|^2
 };
 
 struct Player : Plw::Player {
@@ -241,9 +265,9 @@ void GoToSpot(CpuContext* ctx) {
         p.Flag9(0);
         p.SetX(630, 4, 0);
         if (const uint32_t spot = game.Call<FindSpot>({plw, 8, uint32_t(int32_t(int16_t(p.Index())))})) {
-            game.Call<VecToMh>({plw + kPosition, spot + 4});
+            game.Call<VecToMh>({plw + kGlideTarget, spot + 4});
             Memory::Write32(plw + kAngle, Memory::Read32(spot + 16));
-            game.Call<SetStance>({plw, 20});
+            game.Call<GlideTo>({plw, 20});
         }
         break;
     case 1:
@@ -472,12 +496,12 @@ void StanceMotion(CpuContext* ctx) {
 }
 
 // 0x8020D784 (plw, index) and 0x8020DAD0: a motion, then after 60 steps (the
-// local player's) action 11 when 0x8026F96C says so, else 0x8020D64C.
+// local player's) action 11 with the stick held, else 0x8020D64C.
 void MotionThenAct(const Player& p) {
     p.CountDownToZero();
     if (!p.Master() || p.Timer() > 0)
         return;
-    if ((p.game.Call<Nearby>({p.plw, 0}) & 0xFF) != 0)
+    if ((p.game.Call<StickLevel>({p.plw, 0}) & 0xFF) != 0)
         p.game.Call<SetAction>({p.plw, 11, 0, 0});
     else
         p.game.Call<ActionDone>({p.plw});
@@ -518,6 +542,178 @@ void Motion507(CpuContext* ctx) {
         MotionThenAct(p);
         break;
     }
+}
+
+// The runs: 0x8020D10C (action 1, 1) and its start 0x8020D260 (1, 2), and in
+// kind 12 0x8020E0A0 and its start 0x8020E1F4. On the first step each sets
+// its motion (a start also the motion's speed) and the wait (+0x266) to 10
+// steps. Then, each step, the local player steers by the stick and is pushed
+// forward: 1 a step, a start 5. With the stick let go the action stops
+// ((1, 3) or (12, 4)) once the wait is out, and a start goes on to the run
+// ((1, 1) or (12, 2)) once the wait is out and command bit 0 is clear. The
+// motion's root motion (mhchar_motion.cpp) moves the player as well.
+//
+// The originals push the same amount on every step, so the hunter ran faster
+// the shorter the steps were. Here the push is the amount times the step's
+// length: the same ground per second at any step length.
+enum : uint32_t {
+    kYaw = 0x58,       // u32 (u16 angle), as Plw::kAngle2
+    kWantedYaw = 0xA8, // u32 (u16 angle), as Plw::kAngle
+};
+constexpr float kRunPush = 1.0f, kStartPush = 5.0f; // f32 0x8079BFE8, 0x8079C0A0
+
+// Pushes the player forward along its yaw by `forward` times the step's
+// length, through the guest VEC3 at `move` (rotVecY turns it).
+void PushForward(const Player& p, uint32_t move, float forward) {
+    Memory::WriteFloat32(move, 0.0f);
+    Memory::WriteFloat32(move + 4, 0.0f);
+    Memory::WriteFloat32(move + 8, float(forward * GameStep::Scale()));
+    p.game.Call<RotVecY>({move, Memory::Read32(p.plw + kYaw)});
+    for (uint32_t k = 0; k < 12; k += 4)
+        Memory::WriteFloat32(p.plw + kPosition + k, Memory::ReadFloat32(p.plw + kPosition + k) + Memory::ReadFloat32(move + k));
+}
+
+bool MoveWaitOut(const Player& p) {
+    return int8_t(Memory::Read8(p.plw + kMoveWait)) <= 0;
+}
+
+// The first step of a kind-1 run: motion 3, or 39 in mode 3 (0x80208B4C).
+void StartRun(const Player& p, bool start) {
+    const uint32_t plw = p.plw;
+    if (Memory::Read8(plw + kMode) == 3) {
+        p.SetX(39, 4, 0);
+        if (!start)
+            return; // (no wait set)
+        Memory::WriteFloat32(plw + kMotionSpeed, 1.1f);
+    } else if (!start) {
+        p.SetX(3, 6, 0);
+    } else {
+        if (p.Motion() == 42) // after turning round
+            p.SetX(3, 0, 38);
+        else
+            p.SetX(3, 4, 0);
+        if (!p.game.Call<SpecialStance>({plw}))
+            Memory::WriteFloat32(plw + kMotionSpeed, 1.25f);
+    }
+    Memory::Write8(plw + kMoveWait, 10);
+}
+
+// The first step of a kind-12 run: motion 53, or 59 with +20.
+void StartStanceRun(const Player& p, bool start) {
+    const uint32_t plw = p.plw;
+    p.SetX(Memory::Read8(plw + kFlag20) == 0 ? 53 : 59, 4, 0);
+    if (start && !p.game.Call<SpecialStance>({plw}))
+        Memory::WriteFloat32(plw + kMotionSpeed, 1.25f);
+    Memory::Write8(plw + kMoveWait, 10);
+}
+
+template <bool Stance12, bool Start>
+void Run(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    constexpr uint32_t kind = Stance12 ? 12 : 1, run = Stance12 ? 2 : 1, stop = Stance12 ? 4 : 3;
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flag9(0);
+        if (Stance12)
+            StartStanceRun(p, Start);
+        else
+            StartRun(p, Start);
+        break;
+    case 1:
+        if (!p.Master())
+            break;
+        if ((game.Call<StickLevel>({plw, 0}) & 0xFF) == 0) {
+            if (MoveWaitOut(p)) {
+                game.Call<SetAction>({plw, kind, stop, 0});
+                if (Stance12)
+                    return; // (kind 12 skips its step then)
+            }
+            break;
+        }
+        game.Call<SteerByStick>({plw});
+        PushForward(p, frame[8], Start ? kStartPush : kRunPush);
+        if (Start && game.Call<CommandBit>({plw, 0}) == 0 && MoveWaitOut(p))
+            game.Call<SetAction>({plw, kind, run, 0});
+        break;
+    }
+    game.Call<Stance12 ? StanceStep : IdleStep>({plw});
+}
+
+// 0x8020A0BC GlideTo (plw, s16 steps): glides the player to +0x90 over
+// `steps` steps (the move a step in +0x9C, the steps left in +0xB4), or puts
+// it there at once when it is 800 or more away or with no steps.
+void GlideToPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 48);
+    GuestCall game{ctx};
+    const uint32_t plw = frame.Arg(3);
+    const int16_t steps = int16_t(frame.Arg(4));
+    game.Call<DistanceSquared>({plw + kPosition, plw + kGlideTarget});
+    if (game.F1() >= 800.0f * 800.0f || steps == 0) { // f32 640000 at 0x8079C07C
+        Memory::Write16(plw + kGlideSteps, 0);
+        for (uint32_t k = 0; k < 12; k += 4) {
+            Memory::Write32(plw + kPosition + k, Memory::Read32(plw + kGlideTarget + k)); // Vec3Copy
+            Memory::WriteFloat32(plw + kGlideMove + k, 0.0f);
+        }
+        return;
+    }
+    Memory::Write16(plw + kGlideSteps, uint16_t(steps));
+    for (uint32_t k = 0; k < 12; k += 4)
+        Memory::WriteFloat32(plw + kGlideMove + k, (Memory::ReadFloat32(plw + kGlideTarget + k) - Memory::ReadFloat32(plw + kPosition + k)) / float(steps));
+}
+
+// The part of its current tick a glide has used up, per PLW, with the
+// steps-left count it belongs to (a count GlideTo sets anew starts afresh).
+struct Glide {
+    int16_t steps = 0;
+    double used = 0;
+};
+std::unordered_map<uint32_t, Glide> glides;
+
+// 0x8020A1BC, each step from the player's movement (0x802094EC). Another
+// console's player turns its yaw a quarter of the way to the wanted yaw (the
+// s16 gap / 4, toward 0). Any player in a glide moves by +0x9C and counts
+// +0xB4 down. Both were per step: here the yaw closes 1 - (3/4)^s of the gap
+// (truncated as the original), and a glide steps a tick of game time at a
+// time, moving by the part of the step it spends, so it lasts its steps in
+// ticks at any step length. At the stock step this is the original.
+void GlideStepPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const uint32_t plw = frame.Arg(3);
+    const double s = GameStep::Scale();
+    if (game.Call<MasterCheck>({plw}) == 0) {
+        const uint32_t yaw = Memory::Read32(plw + kYaw);
+        const int32_t gap = int16_t(uint16_t(Memory::Read32(plw + kWantedYaw) - yaw));
+        Memory::Write32(plw + kYaw, yaw + uint32_t(int32_t(gap * (1.0 - std::pow(0.75, s)))));
+    }
+    int16_t steps = int16_t(Memory::Read16(plw + kGlideSteps));
+    if (steps <= 0)
+        return;
+    Glide& glide = glides[plw];
+    if (glide.steps != steps)
+        glide.used = 0;
+    double time = s, moved = 0;
+    while (steps > 0 && time > 0) {
+        const double need = 1.0 - glide.used;
+        if (time >= need) {
+            time -= need;
+            moved += need;
+            glide.used = 0;
+            --steps;
+        } else {
+            glide.used += time;
+            moved += time;
+            time = 0;
+        }
+    }
+    glide.steps = steps;
+    Memory::Write16(plw + kGlideSteps, uint16_t(steps));
+    for (uint32_t k = 0; k < 12; k += 4)
+        Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(plw + kGlideMove + k) * float(moved));
 }
 
 } // namespace
@@ -617,3 +813,39 @@ extern "C" void MH3_VillageActionMotion507(CpuContext* ctx) {
     PortCheck::Call(ctx, "VillageActionMotion507", func_8020DAD0, Motion507);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8020DAD0, MH3_VillageActionMotion507, "VillageActionMotion507");
+
+extern "C" void func_8020D10C(CpuContext* ctx);
+extern "C" void MH3_VillageActionRun(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionRun", func_8020D10C, Run<false, false>);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8020D10C, MH3_VillageActionRun, "VillageActionRun");
+
+extern "C" void func_8020D260(CpuContext* ctx);
+extern "C" void MH3_VillageActionRunStart(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionRunStart", func_8020D260, Run<false, true>);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8020D260, MH3_VillageActionRunStart, "VillageActionRunStart");
+
+extern "C" void func_8020E0A0(CpuContext* ctx);
+extern "C" void MH3_VillageActionStanceRun(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStanceRun", func_8020E0A0, Run<true, false>);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8020E0A0, MH3_VillageActionStanceRun, "VillageActionStanceRun");
+
+extern "C" void func_8020E1F4(CpuContext* ctx);
+extern "C" void MH3_VillageActionStanceRunStart(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageActionStanceRunStart", func_8020E1F4, Run<true, true>);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8020E1F4, MH3_VillageActionStanceRunStart, "VillageActionStanceRunStart");
+
+extern "C" void func_8020A0BC(CpuContext* ctx);
+extern "C" void MH3_VillageGlideTo(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageGlideTo", func_8020A0BC, GlideToPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8020A0BC, MH3_VillageGlideTo, "VillageGlideTo");
+
+extern "C" void func_8020A1BC(CpuContext* ctx);
+extern "C" void MH3_VillageGlideStep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "VillageGlideStep", func_8020A1BC, GlideStepPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8020A1BC, MH3_VillageGlideStep, "VillageGlideStep");

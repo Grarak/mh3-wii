@@ -862,6 +862,15 @@
 8020e3a8 VillageActionStanceMotion53
 8020d784 VillageActionTableMotion
 8020dad0 VillageActionMotion507
+8020d10c VillageActionRun
+8020d260 VillageActionRunStart
+8020e0a0 VillageActionStanceRun
+8020e1f4 VillageActionStanceRunStart
+8020a0bc VillageGlideTo
+8020a1bc VillageGlideStep
+8020fbe0 VillageStanceStep
+8026f96c PlStickLevel
+8026a40c PlSteerByStick
 8020a448 VillageSetAction
 8020a638 VillageNextAction
 8020a650 VillageSetFlag9
