@@ -122,6 +122,14 @@ PATH; with `gate`, only once the file MARKER exists. Instrument with
 ([gameplay debugging](gameplay-debugging.md)); `scripts/replay_village.py
 --dock-edge` creates the marker.
 
+`MH3_CALL_TRACE=PATH,movie` in a `-DMH3_ENABLE_FUNCTION_TRACE=ON` build (every
+source compiled with `-finstrument-functions-after-inlining`, which slows the
+game): every host function call from a movie's first decoded frame until 5 s
+after its last. PATH gets each second's calls per callee and call site with the
+calling threads; `PATH.seq.N` the game thread's calls and returns in order
+around movie N's last frame (its skip and cleanup). `scripts/function_trace.py
+PATH` symbolizes both into `PATH.report/`.
+
 ## Asset overrides
 
 | Variable | Effect | Builds |

@@ -5,11 +5,13 @@
 // same tiled Y/U/V planes (runtime/native/mh3_thp_video.h).
 #include "abi_bridge.h"
 #include "guest_span.h"
+#include "guest_call_trace.h"
 #include "../native/mh3_thp_video.h"
 
 extern "C" void MH3_NativeThpVideoDecode(CpuContext* c) {
     // THPVideoDecode(file, tileY, tileU, tileV, work): the SDK's argument checks.
     const uint32_t file = c->gpr[3], y = c->gpr[4], u = c->gpr[5], v = c->gpr[6], work = c->gpr[7];
+    FunctionTraceMovieFrame();
     if (!file) {
         c->gpr[3] = 0x19;
         return;
