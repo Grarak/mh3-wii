@@ -31,7 +31,12 @@ namespace {
 constexpr size_t MaxIndexBytes = 4 * 1024 * 1024;
 constexpr size_t MaxMetadataBytes = 8 * 1024 * 1024;
 constexpr size_t MaxIdentityBytes = 4 * 1024 * 1024;
-constexpr size_t MaxGPUBytes = 32 * 1024 * 1024;
+
+// The packs' GPU data, released ones included until their last scene: the
+// Vita's CDRAM model reservation (aurora-main gxm/device.cpp). Least recently
+// drawn packs of earlier areas make room within it. One quest's packs take
+// 5-8 MiB; at 32 MiB they outgrew the reservation over a few areas.
+constexpr size_t MaxGPUBytes = 16 * 1024 * 1024;
 constexpr uint32_t LegacyPack = UINT32_MAX;
 struct Assets {
     std::vector<uint8_t> metadata, identity;

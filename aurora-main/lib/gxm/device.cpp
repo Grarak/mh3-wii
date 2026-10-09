@@ -276,9 +276,10 @@ Device::Device() {
   // Three native draw slots: 10.5 MiB with unchanged live capacities, plus
   // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
   // committing the texture/display arena. Compact models own separately
-  // allocated CDRAM blocks: they peaked at 5.25 MiB (Alatreon, Moga Woods),
-  // so keep 16 MiB for them, not the 32 MiB a prepared map may reach (a
-  // pack that finds no CDRAM is fatal), and leave 8 MiB for the driver.
+  // allocated CDRAM blocks: one quest's take 5-8 MiB, so keep 16 MiB for
+  // them, the packs' budget on the Vita (MaxGPUBytes in model_assets.cpp;
+  // a pack that still finds no CDRAM goes to main memory, renderer.cpp),
+  // and leave 8 MiB for the driver.
   // Textures have no spill, and the old 32 MiB left them 31 MiB, which the
   // opening movie after character creation filled.
   constexpr unsigned producerReserve = NativeProducerReserve;

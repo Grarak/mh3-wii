@@ -11,9 +11,14 @@ namespace aurora::gxm {
 // memory alive until its last scene has completed; recycling is a renderer action.
 class MappedMemory {
 public:
-  enum class Kind { Draw, Cdram, Phycont, VertexUsse, FragmentUsse };
+  // Main: uncached main memory (4 KiB pages), for GPU data CDRAM cannot hold.
+  enum class Kind { Draw, Cdram, Phycont, VertexUsse, FragmentUsse, Main };
   MappedMemory() = default;
   MappedMemory(size_t bytes, Kind kind, const char* name);
+
+  // The same, except that a failed allocation leaves it empty (data() null,
+  // the failure in `error`) instead of stopping: for callers with a fallback.
+  static MappedMemory try_allocate(size_t bytes, Kind kind, const char* name, int* error = nullptr) noexcept;
   ~MappedMemory();
   MappedMemory(const MappedMemory&) = delete;
   MappedMemory& operator=(const MappedMemory&) = delete;
@@ -24,6 +29,7 @@ public:
   unsigned usse_offset() const noexcept { return m_usseOffset; }
 
 private:
+  int allocate(size_t bytes, Kind kind, const char* name) noexcept;
   void release() noexcept;
   SceUID m_block = -1;
   void* m_data = nullptr;

@@ -817,7 +817,31 @@ NativeMeshBuffer::NativeMeshBuffer(const char* path, uint64_t offset, uint32_t b
   if (!bytes)
     AURORA_THROW(std::runtime_error("Empty native mesh payload"));
 
-  MappedMemory memory(bytes, MappedMemory::Kind::Cdram, "Aurora model pack");
+  // CDRAM holds the model reservation (device.cpp); the packs' budget keeps
+  // within it (model_assets.cpp), counting released packs until their last
+  // scene. Should it still not fit, wait for the GPU and free what it is done
+  // with, then use main memory: slower for the GPU to read, but the game goes
+  // on (it stopped going into a new area on a retail Vita).
+  int error = 0;
+  auto memory = MappedMemory::try_allocate(bytes, MappedMemory::Kind::Cdram, "Aurora model pack", &error);
+
+  if (!memory.data()) {
+    r.device.finish();
+    r.collect();
+    memory = MappedMemory::try_allocate(bytes, MappedMemory::Kind::Cdram, "Aurora model pack", &error);
+  }
+
+  if (!memory.data()) {
+    size_t resident = 0;
+
+    for (const auto& item : r.meshes)
+      resident += item.second.size();
+
+    std::fprintf(stderr, "Aurora GXM: model pack of %u bytes does not fit in CDRAM (%08x; %u packs, %.2f MiB resident): main memory\n", bytes, unsigned(error),
+                 unsigned(r.meshes.size()), resident / 1048576.0);
+    memory = MappedMemory(bytes, MappedMemory::Kind::Main, "Aurora model pack (main memory)");
+  }
+
   gfx::read_mesh_payload(path, offset, memory.data(), bytes);
   const auto id = r.name();
   const auto* data = static_cast<const uint8_t*>(memory.data());
@@ -1361,6 +1385,7 @@ void invalidate_state() noexcept {
 }
 
 void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMemory. */ }
+
 // GPU measurement (docs/vita-razor.md), development builds:
 // AURORA_SKIP_DRAWS=quads,geometry,blended-meshes,opaque-meshes leaves those
 // draws out, and program:TEXT items the draws whose program label contains
@@ -1790,6 +1815,7 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
 void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
     return;
+
   if (skip_draws(SkipQuads, program))
     return;
 

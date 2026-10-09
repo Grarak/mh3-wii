@@ -2,6 +2,7 @@
 #include <aurora/fatal.hpp>
 #include "razor.hpp"
 #include <psp2/gxm.h>
+#include <psp2/kernel/error.h>
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
 #include <cstdio>
@@ -11,27 +12,58 @@
 namespace aurora::gxm {
 namespace {
 size_t aligned(size_t bytes, size_t alignment) {
-  if (bytes > SIZE_MAX - alignment + 1)
-    AURORA_THROW(std::bad_alloc());
-
   return (bytes + alignment - 1) & ~(alignment - 1);
+}
+
+SceKernelMemBlockType memblock_type(MappedMemory::Kind kind) {
+  if (kind == MappedMemory::Kind::Phycont)
+    return SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW;
+
+  return kind == MappedMemory::Kind::Main ? SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE : SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW;
 }
 } // namespace
 
 MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(kind) {
-  m_size = aligned(bytes, kind == Kind::Phycont ? 0x100000 : 0x40000);
+  if (const int error = allocate(bytes, kind, name); error < 0) {
+    if (error == SCE_KERNEL_ERROR_ERROR) // mapping
+      AURORA_THROW(std::runtime_error("Cannot map Vita GPU memory"));
 
-  if (m_size == 0)
-    AURORA_THROW(std::bad_alloc());
+    char message[180];
+    std::snprintf(message, sizeof(message), "Vita allocation '%s' (%u bytes, type %08x) failed: %08x", name, unsigned(m_size), unsigned(memblock_type(kind)), unsigned(error));
+    AURORA_THROW(std::runtime_error(message));
+  }
+}
+
+MappedMemory MappedMemory::try_allocate(size_t bytes, Kind kind, const char* name, int* error) noexcept {
+  MappedMemory memory;
+  memory.m_kind = kind;
+  const int result = memory.allocate(bytes, kind, name);
+
+  if (error)
+    *error = result;
+
+  return memory;
+}
+
+// 0 or the failure: the kernel's allocation error, or SCE_KERNEL_ERROR_ERROR
+// when GXM cannot map the block. A failure leaves nothing allocated.
+int MappedMemory::allocate(size_t bytes, Kind kind, const char* name) noexcept {
+  const size_t alignment = kind == Kind::Phycont ? 0x100000 : kind == Kind::Main ? 0x1000 : 0x40000;
+
+  if (bytes == 0 || bytes > SIZE_MAX - alignment + 1)
+    return SCE_KERNEL_ERROR_INVALID_ARGUMENT;
+
+  m_size = aligned(bytes, alignment);
+
   // All producer buffers, command rings and patched USSE programs live in
   // CDRAM. CPU-only metadata and archival asset bytes use ordinary RAM.
-  auto type = kind == Kind::Phycont ? SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW : SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW;
+  const SceKernelMemBlockType type = memblock_type(kind);
   m_block = sceKernelAllocMemBlock(name, type, m_size, nullptr);
 
   if (m_block < 0) {
-    char message[180];
-    std::snprintf(message, sizeof(message), "Vita allocation '%s' (%u bytes, type %08x) failed: %08x", name, unsigned(m_size), unsigned(type), unsigned(m_block));
-    AURORA_THROW(std::runtime_error(message));
+    const int error = m_block;
+    m_block = -1;
+    return error;
   }
 
   int result = sceKernelGetMemBlockBase(m_block, &m_data);
@@ -49,11 +81,13 @@ MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(k
     sceKernelFreeMemBlock(m_block);
     m_block = -1;
     m_data = nullptr;
-    AURORA_THROW(std::runtime_error("Cannot map Vita GPU memory"));
+    return SCE_KERNEL_ERROR_ERROR;
   }
 
   razor_register_buffer(m_data, m_size);
-  std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0, kind == Kind::Phycont ? "phycont" : "CDRAM", unsigned(reinterpret_cast<uintptr_t>(m_data)));
+  std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0, kind == Kind::Phycont ? "phycont" : kind == Kind::Main ? "main" : "CDRAM",
+               unsigned(reinterpret_cast<uintptr_t>(m_data)));
+  return 0;
 }
 
 MappedMemory::~MappedMemory() {
