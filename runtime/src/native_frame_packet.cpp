@@ -23,8 +23,17 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#ifdef MH3_DEVELOPMENT
+#include <chrono>
+#endif
 #ifdef __vita__
 #include <psp2/kernel/threadmgr.h>
+#elif defined(__linux__) && defined(MH3_DEVELOPMENT)
+#include <pthread.h>
+#include <sched.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
 #endif
 
 namespace aurora::gfx {
@@ -108,6 +117,75 @@ std::exception_ptr failure;
 // sequence of the last packet the render thread finished (game waits on it).
 std::atomic<uint32_t> published{0};
 std::atomic<uint64_t> completed{0};
+#ifdef MH3_DEVELOPMENT
+struct RenderCounters {
+    std::atomic<uint32_t> revision{0};
+    std::atomic<uint64_t> packets{0}, drawPackets{0}, wallNs{0}, drawWallNs{0};
+    std::atomic<int32_t> thread{-1};
+#ifdef __linux__
+    std::atomic<clockid_t> cpuClock{-1};
+#endif
+} renderCounters;
+uint64_t RenderMonotonicNs() noexcept {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+mh3::statistics::OwnerCpuSample RenderCpuSample(int32_t thread) noexcept {
+    mh3::statistics::OwnerCpuSample sample;
+    sample.thread = thread;
+    if (thread < 0)
+        return sample;
+#ifdef __vita__
+    SceKernelThreadInfo info{};
+    info.size = sizeof(info);
+    if (sceKernelGetThreadInfo(thread, &info) >= 0) {
+        sample.running_us = info.runClocks;
+        sample.core = info.currentCpuId;
+        sample.affinity = info.currentCpuAffinityMask;
+        sample.available = true;
+    }
+#elif defined(__linux__)
+    timespec time{};
+    const auto clock = renderCounters.cpuClock.load(std::memory_order_acquire);
+    if (clock != clockid_t(-1) && clock_gettime(clock, &time) == 0) {
+        sample.running_us = uint64_t(time.tv_sec) * 1000000 + uint64_t(time.tv_nsec) / 1000;
+        sample.available = true;
+    }
+    cpu_set_t affinity;
+    if (sched_getaffinity(thread, sizeof(affinity), &affinity) == 0) {
+        uint32_t mask = 0;
+        for (unsigned core = 0; core < 32; ++core)
+            if (CPU_ISSET(core, &affinity))
+                mask |= uint32_t(1) << core;
+        sample.affinity = int32_t(mask);
+    }
+    // sched_getcpu() here would report the game thread. /proc reports the
+    // sampled render task's last CPU, including while that task is sleeping.
+    char path[80], text[1024];
+    std::snprintf(path, sizeof(path), "/proc/self/task/%d/stat", thread);
+    if (FILE* file = std::fopen(path, "r")) {
+        if (std::fgets(text, sizeof(text), file)) {
+            if (char* cursor = std::strrchr(text, ')')) {
+                ++cursor;
+                for (unsigned field = 3; field <= 39; ++field) {
+                    while (*cursor == ' ')
+                        ++cursor;
+                    if (!*cursor)
+                        break;
+                    char* end = cursor;
+                    while (*end && *end != ' ')
+                        ++end;
+                    if (field == 39)
+                        sample.core = int32_t(std::strtol(cursor, nullptr, 10));
+                    cursor = end;
+                }
+            }
+        }
+        std::fclose(file);
+    }
+#endif
+    return sample;
+}
+#endif
 bool synchronous = false;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
@@ -344,6 +422,17 @@ void RenderLoop() {
         if (sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1) < 0)
             throw std::runtime_error("Render thread core 1 affinity failed");
 #endif
+#ifdef MH3_DEVELOPMENT
+        uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0;
+#ifdef __vita__
+        renderCounters.thread.store(sceKernelGetThreadId(), std::memory_order_release);
+#elif defined(__linux__)
+        clockid_t cpuClock;
+        if (pthread_getcpuclockid(pthread_self(), &cpuClock) == 0)
+            renderCounters.cpuClock.store(cpuClock, std::memory_order_release);
+        renderCounters.thread.store(int32_t(syscall(SYS_gettid)), std::memory_order_release);
+#endif
+#endif
         for (;;) {
             const uint32_t ticket = published.load(std::memory_order_acquire);
             const auto status = mh3_frame_state_acquire(&consumer);
@@ -361,7 +450,27 @@ void RenderLoop() {
             if (mh3_frame_state_consumer_buffer(&consumer, &data, &bytes, &generation) != MH3_FRAME_STATE_OK)
                 throw std::runtime_error("Frame packet exchange has no consumer buffer");
             const auto& p = *static_cast<const Packet*>(data);
+#ifdef MH3_DEVELOPMENT
+            const auto replayStart = RenderMonotonicNs();
+#endif
             Execute(p);
+#ifdef MH3_DEVELOPMENT
+            const auto elapsed = RenderMonotonicNs() - replayStart;
+            ++replayed;
+            wallNs += elapsed;
+            if (p.render && !p.canceled) {
+                ++drawPackets;
+                drawWallNs += elapsed;
+            }
+            // Atomic payloads keep the bounded sequence snapshot race-free.
+            // Only this render owner writes them, once per completed packet.
+            renderCounters.revision.fetch_add(1, std::memory_order_acq_rel);
+            renderCounters.packets.store(replayed, std::memory_order_relaxed);
+            renderCounters.drawPackets.store(drawPackets, std::memory_order_relaxed);
+            renderCounters.wallNs.store(wallNs, std::memory_order_relaxed);
+            renderCounters.drawWallNs.store(drawWallNs, std::memory_order_relaxed);
+            renderCounters.revision.fetch_add(1, std::memory_order_release);
+#endif
             completed.store(p.sequence, std::memory_order_release);
             completed.notify_all();
         }
@@ -378,6 +487,9 @@ void RenderLoop() {
     }
     completed.store(UINT64_MAX, std::memory_order_release);
     completed.notify_all();
+#ifdef MH3_DEVELOPMENT
+    renderCounters.thread.store(-1, std::memory_order_release);
+#endif
     aurora::gl::release_context();
 }
 void WaitCompleted(uint64_t target) {
@@ -489,6 +601,15 @@ void StartNativeRenderThread() {
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
 #ifdef MH3_DEVELOPMENT
+    renderCounters.thread.store(-1, std::memory_order_relaxed);
+    renderCounters.revision.store(0, std::memory_order_relaxed);
+    renderCounters.packets.store(0, std::memory_order_relaxed);
+    renderCounters.drawPackets.store(0, std::memory_order_relaxed);
+    renderCounters.wallNs.store(0, std::memory_order_relaxed);
+    renderCounters.drawWallNs.store(0, std::memory_order_relaxed);
+#ifdef __linux__
+    renderCounters.cpuClock.store(-1, std::memory_order_relaxed);
+#endif
     // MH3_RENDER_SYNC=1: wait for every packet to render (serial frames).
     if (const char* v = std::getenv("MH3_RENDER_SYNC"))
         synchronous = v[0] == '1';
@@ -520,6 +641,29 @@ void StopNativeRenderThread() {
 bool NativeRenderThreadRunning() {
     return running.load(std::memory_order_acquire);
 }
+#ifdef MH3_DEVELOPMENT
+NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept {
+    NativeRenderThreadStatistics result;
+    const auto thread = renderCounters.thread.load(std::memory_order_acquire);
+    result.cpu = RenderCpuSample(thread);
+    result.sampled_at_ns = RenderMonotonicNs();
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        const auto before = renderCounters.revision.load(std::memory_order_acquire);
+        if (before & 1)
+            continue;
+        result.packets = renderCounters.packets.load(std::memory_order_relaxed);
+        result.draw_packets = renderCounters.drawPackets.load(std::memory_order_relaxed);
+        result.packet_wall_ns = renderCounters.wallNs.load(std::memory_order_relaxed);
+        result.draw_packet_wall_ns = renderCounters.drawWallNs.load(std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (before == renderCounters.revision.load(std::memory_order_relaxed)) {
+            result.counters_available = thread >= 0;
+            break;
+        }
+    }
+    return result;
+}
+#endif
 void BeginNativeFramePacket(bool render) {
     RequireGame();
     RethrowFailure();

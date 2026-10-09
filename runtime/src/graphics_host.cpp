@@ -481,6 +481,7 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     static auto previousAudio = GetNativeAudioOutputStatistics();
     static auto previousDma = GetNativeAudioDmaStatistics();
     static auto previousFeedback = ReadSceneFeedbackStats();
+    static auto previousRender = ReadNativeRenderThreadStatistics();
 #ifdef AURORA_GXM
     static auto previousDisplay = aurora::gxm::display_statistics();
 #endif
@@ -505,6 +506,27 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      work.owner_thread, work.owner_core, unsigned(work.owner_affinity), double(work.window_ns) / 1e9);
     else
         std::fprintf(stderr, "MH3 native work: owner CPU unavailable\n");
+    const auto render = ReadNativeRenderThreadStatistics();
+    const uint64_t renderWindow = render.sampled_at_ns >= previousRender.sampled_at_ns ? render.sampled_at_ns - previousRender.sampled_at_ns : 0;
+    const bool sameRenderThread = render.cpu.thread >= 0 && render.cpu.thread == previousRender.cpu.thread;
+    if (renderWindow && sameRenderThread && render.counters_available && previousRender.counters_available && render.packets >= previousRender.packets &&
+        render.draw_packets >= previousRender.draw_packets && render.packet_wall_ns >= previousRender.packet_wall_ns && render.draw_packet_wall_ns >= previousRender.draw_packet_wall_ns) {
+        const auto packets = render.packets - previousRender.packets, drawPackets = render.draw_packets - previousRender.draw_packets;
+        std::fprintf(stderr,
+                     "MH3 native work: render replay %.1f packets/s (%.1f draw packets/s), packet %.3f ms wall avg, draw packet %.3f ms wall avg, packets_total=%llu, packet_wall_total_ms=%.3f\n",
+                     1e9 * double(packets) / double(renderWindow), 1e9 * double(drawPackets) / double(renderWindow),
+                     packets ? (render.packet_wall_ns - previousRender.packet_wall_ns) / (1e6 * packets) : 0.0,
+                     drawPackets ? (render.draw_packet_wall_ns - previousRender.draw_packet_wall_ns) / (1e6 * drawPackets) : 0.0,
+                     static_cast<unsigned long long>(render.packets), render.packet_wall_ns / 1e6);
+    } else
+        std::fprintf(stderr, "MH3 native work: render replay unavailable\n");
+    if (renderWindow && sameRenderThread && render.cpu.available && previousRender.cpu.available && render.cpu.running_us >= previousRender.cpu.running_us)
+        std::fprintf(stderr, "MH3 native work: render CPU %.1f%%, thread %d core %d affinity %x (scheduled execution; window %.3f s)\n",
+                     1e5 * double(render.cpu.running_us - previousRender.cpu.running_us) / double(renderWindow), render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity),
+                     double(renderWindow) / 1e9);
+    else
+        std::fprintf(stderr, "MH3 native work: render CPU unavailable, thread %d core %d affinity %x\n", render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity));
+    previousRender = render;
 #ifdef AURORA_GXM
     const auto display = aurora::gxm::display_statistics();
     std::fprintf(stderr, "MH3 native work: displayed %.1f fps, backlog %u, scenes_pending %u, display_errors %u, callback wait %.2f ms/s (core0)\n",

@@ -58,3 +58,21 @@ void CancelNativeFramePacket();
 // capture: development frame dump path for this packet, or empty. A capture
 // packet is waited for, so it cannot be replaced before it renders.
 void PublishNativeFramePacket(std::string capture);
+
+#ifdef MH3_DEVELOPMENT
+#include "native_frame_statistics.h"
+// Cumulative completed replay work, including ordered resource tasks and
+// presentation, excluding the wait for another packet. Draw packets are the
+// admitted, uncanceled packets; their completion is not a display flip.
+struct NativeRenderThreadStatistics {
+    uint64_t packets = 0, draw_packets = 0;
+    uint64_t packet_wall_ns = 0, draw_packet_wall_ns = 0;
+    uint64_t sampled_at_ns = 0;
+    mh3::statistics::OwnerCpuSample cpu{};
+    bool counters_available = false;
+};
+// Game thread, initial baseline and once per enabled statistics interval only.
+// Samples the actual render TID, scheduled CPU clock, current CPU and affinity;
+// bounded atomic reads add no lock, queue task, packet wait or GPU wait.
+NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept;
+#endif
