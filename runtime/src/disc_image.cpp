@@ -66,6 +66,22 @@ DiscImage::DiscImage(const std::filesystem::path& root) {
     for (size_t i = 1; i < extents.size(); ++i)
         if (extents[i-1].offset + extents[i-1].size > extents[i].offset)
             throw std::runtime_error("Overlapping extracted disc extents");
+    partitionPath = root / "partition.bin";
+    if (std::filesystem::exists(partitionPath)) {
+        partitionSize = std::filesystem::file_size(partitionPath);
+        if (partitionSize < extents.back().offset + extents.back().size)
+            throw std::runtime_error("Truncated preserved partition");
+        std::ifstream partition(partitionPath, std::ios::binary);
+        const auto verify = [&](uint64_t offset, const std::vector<uint8_t>& expected) {
+            std::vector<uint8_t> actual(expected.size());
+            partition.seekg(offset);
+            partition.read(reinterpret_cast<char*>(actual.data()), actual.size());
+            if (!partition || actual != expected)
+                throw std::runtime_error("Preserved partition differs from extracted disc metadata");
+        };
+        verify(0, boot);
+        verify(uint64_t(Word(boot, 0x424)) * 4, fst);
+    }
 }
 std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
     if (length > 64 * 1024 * 1024 || offset > std::numeric_limits<uint64_t>::max() - length)
@@ -77,8 +93,19 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
             [](uint64_t value, const Extent& extent) { return value < extent.offset; });
         if (it == extents.begin()) throw std::runtime_error("Disc read precedes extracted data");
         --it;
-        if (offset >= it->offset + it->size)
-            throw std::runtime_error("Disc read reaches unextracted padding at byte " + std::to_string(offset));
+        if (offset >= it->offset + it->size) {
+            if (!partitionSize || offset >= partitionSize)
+                throw std::runtime_error("Disc read reaches unextracted padding at byte " + std::to_string(offset));
+            auto next = it + 1;
+            const uint64_t end = next == extents.end() ? partitionSize : std::min(partitionSize, next->offset);
+            const size_t count = std::min<uint64_t>(length - done, end - offset);
+            std::ifstream partition(partitionPath, std::ios::binary);
+            partition.seekg(offset);
+            partition.read(reinterpret_cast<char*>(result.data() + done), count);
+            if (!partition) throw std::runtime_error("Preserved partition read failed");
+            offset += count; done += count;
+            continue;
+        }
         const size_t count = std::min<uint64_t>(length - done, it->offset + it->size - offset);
         std::ifstream file(it->path, std::ios::binary);
         file.seekg(offset - it->offset);

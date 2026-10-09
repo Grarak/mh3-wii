@@ -13,7 +13,9 @@ completion wait. Host-timed sleeps service the original alarm queue, retraces,
 disc completions, and audio DMA. Boot now renders the Nintendo wrist-strap screen through native Metal, verified
 with a frame capture. It creates and reopens the NAND system file, six character-save slots, network
 data, and save banner. All five initial RSO prologs now execute as compiled native code. Startup prints
-the media version, then stops on a disc read extending into unextracted padding. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
+the media version, renders the Capcom logo, and enters THP movie playback.
+Exact preserved partition bytes now satisfy reads into disc padding. Movie
+playback remains unverified: boot reports unimplemented SPR 922/923 writes. See [NAND bring-up](docs/nand-bringup.md). Native PCM mixing, DMA timing, and host
 channel conversion pass tests; real boot opens SDL audio and executes DMA and
 AX callbacks. Audible game output and gameplay are not yet verified. The host controller bridge
 is initialized with no connected remote; keyboard/gamepad input is still pending.
@@ -77,9 +79,16 @@ Extraction was performed with nodtool `v2.0.0-alpha.10`, macOS ARM64:
 
 ```sh
 tools/nodtool extract -q 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' Assets/DATA
+tools/nodtool convert --decrypt 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' build/disc-decrypted.iso
+python3 scripts/prepare_partition.py build/disc-decrypted.iso
 ```
 
-Its SHA-256 is `e23ca466999b720c55e6d29c9683fce8cc74451ba64ead2e543d50129f24528a`.
+The preserved `Assets/DATA/partition.bin` retains exact padding bytes for aligned
+reads beyond file ends. Preparation strips sector hash blocks from the decrypted
+ISO and verifies the boot header and FST against extraction. It uses about 4 GiB;
+the intermediate ISO can be removed after preparation. Both remain ignored.
+
+The nodtool executable SHA-256 is `e23ca466999b720c55e6d29c9683fce8cc74451ba64ead2e543d50129f24528a`.
 Release: https://github.com/encounter/nod/releases/tag/v2.0.0-alpha.10
 
 ## Runtime progress and remaining work
@@ -145,8 +154,10 @@ and STM subscriptions/events. STM protocol behavior was checked against
 
 `DiscImage` maps the extracted partition's system files and FST file extents
 back to their original byte offsets. It validates metadata, directory bounds,
-file lengths and overlapping extents. Unextracted gaps are rejected. Tests cover
-cross-file reads, gaps, size mismatches and exact bytes from 13 real assets.
+file lengths and overlapping extents. Gaps use exact bytes from the optional
+`partition.bin`, whose size and metadata are checked; missing padding remains an
+explicit error. Tests cover hash-block stripping, nonzero gap bytes, cross-file
+reads, partition bounds/mismatches, and exact bytes from 13 real assets.
 `MH3_DISC_DIR` selects the extracted partition root (default `Assets/DATA`).
 
 The IOS disc service supports inquiry, disc ID, partition reads, cover/status
