@@ -109,6 +109,8 @@ private:
   SceGxmShaderPatcherId m_scalarFragmentId = nullptr;
   SceGxmVertexProgram* m_vertex = nullptr;
   std::map<uint64_t, SceGxmFragmentProgram*> m_fragments;
+  uint64_t m_lastKey = 0;
+  SceGxmFragmentProgram* m_lastFragment = nullptr;
   void* m_vertexDefault = nullptr;
   void* m_fragmentDefault = nullptr;
   int m_defaultStream = -1;

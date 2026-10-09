@@ -467,6 +467,15 @@ void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterForm
   uint32_t blendKey;
   std::memcpy(&blendKey, &blend, sizeof(blendKey));
   const uint64_t key = uint64_t(blendKey) | (uint64_t(output) << 32);
+  // Blend state is part of a GXM fragment program: one patched variant per
+  // blend/output state, created once. Consecutive draws mostly repeat it.
+  if (m_lastFragment && m_lastKey == key) {
+    sceGxmSetVertexProgram(m_device.context(), m_vertex);
+    sceGxmSetFragmentProgram(m_device.context(), m_lastFragment);
+    m_vertexDefault = nullptr;
+    m_fragmentDefault = nullptr;
+    return;
+  }
   auto found = m_fragments.find(key);
   if (found == m_fragments.end()) {
     SceGxmFragmentProgram* fragment = nullptr;
@@ -477,6 +486,8 @@ void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterForm
           "patch fragment program");
     found = m_fragments.emplace(key, fragment).first;
   }
+  m_lastKey = key;
+  m_lastFragment = found->second;
   sceGxmSetVertexProgram(m_device.context(), m_vertex);
   sceGxmSetFragmentProgram(m_device.context(), found->second);
   m_vertexDefault = nullptr;
