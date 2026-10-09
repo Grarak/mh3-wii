@@ -26,7 +26,7 @@ void RestoreNativeModelCamera();
 void InvalidateNativeModelCaches(uint32_t fields);
 /* Selection from a previously imported typed LightState. This publishes the
  * chosen slots and returns owned masks/ambient, never borrowed guest storage. */
-mh3_native_light_slots SelectNativeModelLightSet(uint32_t state, uint32_t set_id);
+const mh3_native_light_slots& SelectNativeModelLightSet(uint32_t state, uint32_t set_id);
 /* Explicit view-array bind producer. Addresses do not establish allocation
  * counts; the eventual pose owner must supply those for indexed mesh loads. */
 void StoreNativeModelMatrixSources(uint32_t state, const uint32_t addresses[3]);

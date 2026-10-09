@@ -540,6 +540,10 @@ void SetNativeFog(const mh3_native_fog& source) {
     game.preparedFog = next;
     game.fogKnown = true;
 }
+namespace {
+// Producer identity of the Game owner's light slots (SetNativeModelLightSelection).
+constinit const void* lightOwner = nullptr;
+constinit uint64_t lightOwnerRevision = 0;
 void SetNativeModelLights(const mh3_native_light_slots& source) {
     // Models reselect their light set per draw; prepared lights follow the slots.
     if (!std::memcmp(&game.lightSlots, &source, sizeof source))
@@ -552,6 +556,28 @@ void SetNativeModelLights(const mh3_native_light_slots& source) {
         Changed(NATIVE_STATE_LIGHTING);
     game.lightSlots = source;
     game.preparedLights = next;
+}
+} // namespace
+void SetNativeModelLightSelection(const mh3_native_light_slots& source, const void* owner, uint64_t revision) {
+    auto& current = game.lightSlots;
+    // Reselecting the set already published from these slots: the lights,
+    // source IDs and valid mask are unchanged (and so are the prepared
+    // lights), which saves comparing all eight light records per draw.
+    if (owner && owner == lightOwner && revision == lightOwnerRevision) {
+        if (current.diffuse_color == source.diffuse_color && current.diffuse_alpha == source.diffuse_alpha && current.specular_color == source.specular_color &&
+            current.specular_alpha == source.specular_alpha && !std::memcmp(&current.ambient, &source.ambient, sizeof source.ambient))
+            return;
+        current.diffuse_color = source.diffuse_color;
+        current.diffuse_alpha = source.diffuse_alpha;
+        current.specular_color = source.specular_color;
+        current.specular_alpha = source.specular_alpha;
+        current.ambient = source.ambient;
+        Changed(NATIVE_STATE_LIGHTING);
+        return;
+    }
+    SetNativeModelLights(source);
+    lightOwner = owner;
+    lightOwnerRevision = revision;
 }
 void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4, NativeOwner owner) {
     auto& m = M(owner);

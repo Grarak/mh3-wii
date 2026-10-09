@@ -37,7 +37,10 @@ const mh3_native_texture_binding* GetNativeTextureBinding(uint32_t unit, NativeO
 const mh3_native_palette_source* GetNativePaletteBinding(uint32_t slot);
 void BindNativePalette(uint32_t slot, const mh3_native_palette_source& palette);
 void SetNativeFog(const mh3_native_fog& fog);
-void SetNativeModelLights(const mh3_native_light_slots& lights);
+// Publishes a selected light set. owner/revision identify the producer's slots
+// (model_scene_state.cpp): while both are unchanged since the previous
+// publication, only the masks and the ambient colour can differ.
+void SetNativeModelLightSelection(const mh3_native_light_slots& lights, const void* owner, uint64_t revision);
 void SetNativeTextureMatrix(uint32_t selector, const float row_major[12], bool matrix3x4, NativeOwner owner = NativeOwner::Game);
 bool GetNativeTextureMatrix(uint32_t selector, float row_major[12], bool* matrix3x4 = nullptr, NativeOwner owner = NativeOwner::Game);
 void SetNativeDepthCompareBeforeTexture(bool before);

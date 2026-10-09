@@ -45,8 +45,16 @@ void ApplyScissor(const mh3_native_camera& camera) {
     Checked(mh3_camera_effective_scissor(&camera, rectangle));
     SetNativeScissor(rectangle[0], rectangle[1], rectangle[2], rectangle[3]);
 }
-// Imported light sets by LightState address (game thread).
-std::unordered_map<uint32_t, mh3_native_light_slots> light_slots;
+// Imported light sets by LightState address (game thread). revision advances
+// whenever the slots' lights, source IDs or valid mask may change (an import
+// or a selection of another set); reselecting the current set changes only
+// the masks and the ambient colour.
+struct LightSlots {
+    mh3_native_light_slots slots;
+    uint64_t revision;
+};
+std::unordered_map<uint32_t, LightSlots> light_slots;
+uint64_t light_revision = 0;
 } // namespace
 void RestoreNativeModelCamera() {
     // 802BDCF4 ->800473FC ->ScnRoot::GetCamera, not an inherited backend
@@ -167,21 +175,26 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
     Checked(mh3_light_state_import(Mutable(state, MH3_LIGHT_STATE_BYTES), count, sets, count ? Bytes(Memory::Read32(setting + 4), size_t(count) * 68) : mh3_res_span{},
                                    count ? Bytes(Memory::Read32(setting + 8), size_t(count) * 4) : mh3_res_span{}, sets ? Bytes(Memory::Read32(setting + 12), size_t(sets) * 12) : mh3_res_span{},
                                    &view, &slots));
-    light_slots.insert_or_assign(state, slots);
-    SetNativeModelLights(slots);
+    const auto& entry = light_slots.insert_or_assign(state, LightSlots{slots, ++light_revision}).first->second;
+    SetNativeModelLightSelection(entry.slots, &entry, entry.revision);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8008551C, MH3_ModelLightSetting, "ModelLightSetting");
-mh3_native_light_slots SelectNativeModelLightSet(uint32_t state, uint32_t set_id) {
+const mh3_native_light_slots& SelectNativeModelLightSet(uint32_t state, uint32_t set_id) {
     const auto found = light_slots.find(state);
     if (found == light_slots.end())
         throw std::runtime_error("LightState selection has no typed import producer");
-    auto& slots = found->second;
-    Checked(mh3_light_state_select(Mutable(state, MH3_LIGHT_STATE_BYTES), set_id, &slots));
-    SetNativeModelLights(slots);
-    return slots;
+    auto& entry = found->second;
+    const auto bytes = Mutable(state, MH3_LIGHT_STATE_BYTES);
+    // mh3_light_state_select decodes and reassigns slots only for a set other
+    // than the one selected last (LightState +0x10); see its no-set path too.
+    if (set_id < 128 && Memory::Read32(state + 16) != set_id)
+        entry.revision = ++light_revision;
+    Checked(mh3_light_state_select(bytes, set_id, &entry.slots));
+    SetNativeModelLightSelection(entry.slots, &entry, entry.revision);
+    return entry.slots;
 }
 extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
-    const auto slots = SelectNativeModelLightSet(cpu->gpr[3], cpu->gpr[4]);
+    const auto& slots = SelectNativeModelLightSet(cpu->gpr[3], cpu->gpr[4]);
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
     for (uint32_t i = 0; i < 4; i++)
         if (cpu->gpr[5 + i])

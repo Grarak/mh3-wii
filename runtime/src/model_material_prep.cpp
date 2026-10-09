@@ -114,7 +114,7 @@ extern "C" void MH3_ModelCurrentFog(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800881F0, MH3_ModelCurrentFog, "ModelCurrentFog");
 extern "C" void MH3_ModelCurrentLights(CpuContext* cpu) {
-    const auto slots = SelectNativeModelLightSet(0x80686368, cpu->gpr[3]);
+    const auto& slots = SelectNativeModelLightSet(0x80686368, cpu->gpr[3]);
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
     for (unsigned i = 0; i < 4; i++)
         if (cpu->gpr[4 + i])

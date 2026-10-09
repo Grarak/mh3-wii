@@ -775,13 +775,14 @@ mh3_res_status mh3_light_state_select(mh3_res_mut_span state, uint32_t id, mh3_n
     uint16_t count, sets;
     size_t i;
     mh3_res_status status;
+    mh3_rgba8 selected_ambient;
     if (!state.data || !slots)
         return MH3_RES_INVALID;
-    x = *slots;
+    /* The no-set and already-selected paths change only the masks and the
+     * ambient colour: update those in place instead of copying all slots. */
     if (id >= 128) {
-        x.diffuse_color = x.diffuse_alpha = x.specular_color = x.specular_alpha = 0;
-        x.ambient = (mh3_rgba8){255, 255, 255, 255};
-        *slots = x;
+        slots->diffuse_color = slots->diffuse_alpha = slots->specular_color = slots->specular_alpha = 0;
+        slots->ambient = (mh3_rgba8){255, 255, 255, 255};
         return MH3_RES_OK;
     }
     if (state.size < MH3_LIGHT_STATE_BYTES)
@@ -792,18 +793,20 @@ mh3_res_status mh3_light_state_select(mh3_res_mut_span state, uint32_t id, mh3_n
     memcpy(set.light, state.data + 0x242c + (size_t)id * 12, 8);
     memcpy(&set.ambient, state.data + 0x2434 + (size_t)id * 12, 1);
     if (set.ambient < 0)
-        x.ambient = (mh3_rgba8){255, 255, 255, 255};
+        selected_ambient = (mh3_rgba8){255, 255, 255, 255};
     else
-        memcpy(&x.ambient, state.data + 0x222c + (size_t)(uint8_t)set.ambient * 4, 4);
+        memcpy(&selected_ambient, state.data + 0x222c + (size_t)(uint8_t)set.ambient * 4, 4);
     /* The set already selected keeps its slots and masks: no light decoding. */
     if (be32(state.data + 16) == id) {
-        x.diffuse_color = be32(state.data + 20);
-        x.diffuse_alpha = be32(state.data + 24);
-        x.specular_color = be32(state.data + 28);
-        x.specular_alpha = be32(state.data + 32);
-        *slots = x;
+        slots->ambient = selected_ambient;
+        slots->diffuse_color = be32(state.data + 20);
+        slots->diffuse_alpha = be32(state.data + 24);
+        slots->specular_color = be32(state.data + 28);
+        slots->specular_alpha = be32(state.data + 32);
         return MH3_RES_OK;
     }
+    x = *slots;
+    x.ambient = selected_ambient;
     status = light_state_read((mh3_res_span){state.data, state.size}, lights, &count, &sets);
     if (status)
         return status;

@@ -147,8 +147,11 @@ mh3_model_material_scope Scope(uint32_t reference, uint32_t swaps) {
     admitted.entries.insert_or_assign(material, mh3_model_scope_recipe{admitted.revision, replacements, scope});
     return scope;
 }
+// The selected light set's masks and ambient colour for the channel step
+// (all zero when the material selects no set before it).
 struct PrepareContext {
-    mh3_native_light_slots lights{};
+    uint32_t masks[4]{};
+    uint8_t ambient[4]{};
 };
 void OperatorKnown(uint32_t address) {
     Checked(mh3_matrix_runtime_operator(&MH3NativeResourceMemory(), address, 0x80088a5c, 0x800888bc));
@@ -219,13 +222,17 @@ mh3_res_status PrepareStep(void* opaque, const mh3_model_material_step* step) {
     case MH3_MATERIAL_PREP_LIGHTS: {
         mh3_model_material_misc misc{};
         Checked(mh3_model_material_misc_read(Bytes(resource, 12), &misc));
-        context.lights = SelectNativeModelLightSet(0x80686368, uint32_t(int32_t(misc.light_reference)));
+        const auto& lights = SelectNativeModelLightSet(0x80686368, uint32_t(int32_t(misc.light_reference)));
+        context.masks[0] = lights.diffuse_color;
+        context.masks[1] = lights.diffuse_alpha;
+        context.masks[2] = lights.specular_color;
+        context.masks[3] = lights.specular_alpha;
+        std::memcpy(context.ambient, &lights.ambient, sizeof context.ambient);
         break;
     }
     case MH3_MATERIAL_PREP_CHANNELS: {
-        const uint32_t masks[]{context.lights.diffuse_color, context.lights.diffuse_alpha, context.lights.specular_color, context.lights.specular_alpha};
         mh3_pack_channel channels[2];
-        Checked(mh3_model_channels_prepare_channels(Bytes(resource, 40), Mode().channels, masks, reinterpret_cast<const uint8_t*>(&context.lights.ambient), step->force_light_off, channels));
+        Checked(mh3_model_channels_prepare_channels(Bytes(resource, 40), Mode().channels, context.masks, context.ambient, step->force_light_off, channels));
         OverlayNativeMaterialChannels(channels);
         Genmode(true);
         break;
