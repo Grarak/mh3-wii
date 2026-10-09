@@ -260,8 +260,12 @@ bool SkipNativeSceneModel(uint32_t object) {
     if (!base)
         return false;
     const size_t count = r->ids.size();
-    matrixValues.resize(count * 12);
-    matrixPointers.resize(count);
+    // Grow only: a resize back up to a larger model's count would zero the
+    // elements again before they are overwritten.
+    if (matrixValues.size() < count * 12) {
+        matrixValues.resize(count * 12);
+        matrixPointers.resize(count);
+    }
     for (size_t i = 0; i < count; ++i) {
         if (!mh3_scene_cull_read_matrix(GuestRange(base + r->ids[i] * 48, 48), &matrixValues[i * 12]))
             return false;
