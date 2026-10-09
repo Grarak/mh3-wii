@@ -366,8 +366,7 @@ void Certify(const std::vector<CachedOwner>& certified) {
             OwnerAdded(item);
     }
 }
-void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
-    const uint32_t destination = cpu->gpr[3], source = cpu->gpr[4], bytes = cpu->gpr[5];
+uint32_t Copy(uint32_t destination, uint32_t source, uint32_t bytes, NativeSourceEpochProducer producer) {
     if (bytes) {
         void* dst = GuestRange(destination, bytes);
         const void* src = GuestRange(source, bytes);
@@ -376,7 +375,7 @@ void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
         RecordNativeResourceCopy(destination, source, bytes, producer);
         mh3_model_copy_bytes(dst, src, bytes);
     }
-    cpu->gpr[3] = destination;
+    return destination;
 }
 } // namespace
 
@@ -1100,10 +1099,10 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
     MarkNativeLiveMaterialBlockWritable(destination, kind);
 }
 extern "C" void MH3_ModelMemcpy(CpuContext* cpu) {
-    Copy(cpu, NativeSourceEpochProducer::Memcpy);
+    cpu->gpr[3] = Copy(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], NativeSourceEpochProducer::Memcpy);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80004000, MH3_ModelMemcpy, "NativeResourceMemcpy");
 extern "C" void MH3_ModelMemmove(CpuContext* cpu) {
-    Copy(cpu, NativeSourceEpochProducer::Memmove);
+    cpu->gpr[3] = Copy(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], NativeSourceEpochProducer::Memmove);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8045BC18, MH3_ModelMemmove, "NativeResourceMemmove");

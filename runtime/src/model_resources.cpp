@@ -27,6 +27,39 @@ uint32_t Result(mh3_res_status status, uint32_t value) {
     }
     return value;
 }
+
+// An accessor's result from its argument registers. The registered bodies name
+// only the registers they use (r1 for the check's original), so the translator
+// calls them directly as precise natives, without the dispatch's register
+// guard; the port runs on a local context the compiler folds away. With
+// MH3_PORT_CHECK naming it (development builds), the original and the port
+// run in the current context and compare r3.
+template <void (*Original)(CpuContext*), void (*Port)(CpuContext*)>
+uint32_t Accessor(const char* name, uint32_t r1, uint32_t r3, const uint32_t* r4 = nullptr) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled(name);
+    if (check) [[unlikely]] {
+        CpuContext* cpu = TryGetCpuContext();
+        cpu->gpr[1] = r1;
+        cpu->gpr[3] = r3;
+        if (r4)
+            cpu->gpr[4] = *r4;
+        PortCheck::RunPure(cpu, name, PortCheck::Returns::Gpr3, Original, Port);
+        return cpu->gpr[3];
+    }
+#else
+    (void)name, (void)r1;
+#endif
+    CpuContext local;
+    local.gpr[3] = r3;
+    local.gpr[4] = r4 ? *r4 : 0;
+    Port(&local);
+    return local.gpr[3];
+}
+template <void (*Original)(CpuContext*), void (*Port)(CpuContext*)>
+uint32_t Accessor(const char* name, uint32_t r1, uint32_t r3, uint32_t r4) {
+    return Accessor<Original, Port>(name, r1, r3, &r4);
+}
 } // namespace
 const mh3_res_memory& MH3NativeResourceMemory() {
     return ResourceMemory();
@@ -52,11 +85,7 @@ static void MdlNodePort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlNode(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlNode");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlNode", PortCheck::Returns::Gpr3, func_80097F14, MdlNodePort);
-    else
-        MdlNodePort(cpu);
+    cpu->gpr[3] = Accessor<func_80097F14, MdlNodePort>("MdlNode", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80097F14, MH3_MdlNode, "MdlNode");
 
@@ -67,11 +96,7 @@ static void MdlPositionIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlPositionInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlPositionInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlPositionInt", PortCheck::Returns::Gpr3, func_8009802C, MdlPositionIntPort);
-    else
-        MdlPositionIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_8009802C, MdlPositionIntPort>("MdlPositionInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009802C, MH3_MdlPositionInt, "MdlPositionInt");
 
@@ -82,11 +107,7 @@ static void MdlPositionPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlPosition(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlPosition");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlPosition", PortCheck::Returns::Gpr3, func_80098094, MdlPositionPort);
-    else
-        MdlPositionPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098094, MdlPositionPort>("MdlPosition", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098094, MH3_MdlPosition, "MdlPosition");
 
@@ -97,11 +118,7 @@ static void MdlNormalIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlNormalInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlNormalInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlNormalInt", PortCheck::Returns::Gpr3, func_80098144, MdlNormalIntPort);
-    else
-        MdlNormalIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098144, MdlNormalIntPort>("MdlNormalInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098144, MH3_MdlNormalInt, "MdlNormalInt");
 
@@ -112,11 +129,7 @@ static void MdlNormalPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlNormal(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlNormal");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlNormal", PortCheck::Returns::Gpr3, func_800981AC, MdlNormalPort);
-    else
-        MdlNormalPort(cpu);
+    cpu->gpr[3] = Accessor<func_800981AC, MdlNormalPort>("MdlNormal", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800981AC, MH3_MdlNormal, "MdlNormal");
 
@@ -127,11 +140,7 @@ static void MdlColorIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlColorInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlColorInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlColorInt", PortCheck::Returns::Gpr3, func_8009825C, MdlColorIntPort);
-    else
-        MdlColorIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_8009825C, MdlColorIntPort>("MdlColorInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009825C, MH3_MdlColorInt, "MdlColorInt");
 
@@ -142,11 +151,7 @@ static void MdlColorPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlColor(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlColor");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlColor", PortCheck::Returns::Gpr3, func_800982C4, MdlColorPort);
-    else
-        MdlColorPort(cpu);
+    cpu->gpr[3] = Accessor<func_800982C4, MdlColorPort>("MdlColor", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800982C4, MH3_MdlColor, "MdlColor");
 
@@ -157,11 +162,7 @@ static void MdlTexCoordIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlTexCoordInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlTexCoordInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlTexCoordInt", PortCheck::Returns::Gpr3, func_800983E0, MdlTexCoordIntPort);
-    else
-        MdlTexCoordIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_800983E0, MdlTexCoordIntPort>("MdlTexCoordInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800983E0, MH3_MdlTexCoordInt, "MdlTexCoordInt");
 
@@ -172,11 +173,7 @@ static void MdlTexCoordPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlTexCoord(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlTexCoord");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlTexCoord", PortCheck::Returns::Gpr3, func_80098448, MdlTexCoordPort);
-    else
-        MdlTexCoordPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098448, MdlTexCoordPort>("MdlTexCoord", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098448, MH3_MdlTexCoord, "MdlTexCoord");
 
@@ -187,11 +184,7 @@ static void MdlFurPositionIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlFurPositionInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlFurPositionInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlFurPositionInt", PortCheck::Returns::Gpr3, func_80098680, MdlFurPositionIntPort);
-    else
-        MdlFurPositionIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098680, MdlFurPositionIntPort>("MdlFurPositionInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098680, MH3_MdlFurPositionInt, "MdlFurPositionInt");
 
@@ -202,11 +195,7 @@ static void MdlFurPositionPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlFurPosition(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlFurPosition");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlFurPosition", PortCheck::Returns::Gpr3, func_800986E8, MdlFurPositionPort);
-    else
-        MdlFurPositionPort(cpu);
+    cpu->gpr[3] = Accessor<func_800986E8, MdlFurPositionPort>("MdlFurPosition", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800986E8, MH3_MdlFurPosition, "MdlFurPosition");
 
@@ -217,11 +206,7 @@ static void MdlMaterialIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlMaterialInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlMaterialInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlMaterialInt", PortCheck::Returns::Gpr3, func_800987FC, MdlMaterialIntPort);
-    else
-        MdlMaterialIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_800987FC, MdlMaterialIntPort>("MdlMaterialInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800987FC, MH3_MdlMaterialInt, "MdlMaterialInt");
 
@@ -232,11 +217,7 @@ static void MdlMaterialPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlMaterial(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlMaterial");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlMaterial", PortCheck::Returns::Gpr3, func_80098864, MdlMaterialPort);
-    else
-        MdlMaterialPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098864, MdlMaterialPort>("MdlMaterial", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098864, MH3_MdlMaterial, "MdlMaterial");
 
@@ -247,11 +228,7 @@ static void MdlShapeIntPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlShapeInt(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlShapeInt");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlShapeInt", PortCheck::Returns::Gpr3, func_80098914, MdlShapeIntPort);
-    else
-        MdlShapeIntPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098914, MdlShapeIntPort>("MdlShapeInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098914, MH3_MdlShapeInt, "MdlShapeInt");
 
@@ -262,11 +239,7 @@ static void MdlShapePort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlShape(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlShape");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlShape", PortCheck::Returns::Gpr3, func_8009897C, MdlShapePort);
-    else
-        MdlShapePort(cpu);
+    cpu->gpr[3] = Accessor<func_8009897C, MdlShapePort>("MdlShape", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009897C, MH3_MdlShape, "MdlShape");
 
@@ -277,11 +250,7 @@ static void MdlNodeCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlNodeCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlNodeCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlNodeCount", PortCheck::Returns::Gpr3, func_80097FE4, MdlNodeCountPort);
-    else
-        MdlNodeCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_80097FE4, MdlNodeCountPort>("MdlNodeCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80097FE4, MH3_MdlNodeCount, "MdlNodeCount");
 
@@ -292,11 +261,7 @@ static void MdlPositionCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlPositionCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlPositionCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlPositionCount", PortCheck::Returns::Gpr3, func_800980FC, MdlPositionCountPort);
-    else
-        MdlPositionCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_800980FC, MdlPositionCountPort>("MdlPositionCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800980FC, MH3_MdlPositionCount, "MdlPositionCount");
 
@@ -307,11 +272,7 @@ static void MdlNormalCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlNormalCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlNormalCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlNormalCount", PortCheck::Returns::Gpr3, func_80098214, MdlNormalCountPort);
-    else
-        MdlNormalCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098214, MdlNormalCountPort>("MdlNormalCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098214, MH3_MdlNormalCount, "MdlNormalCount");
 
@@ -322,11 +283,7 @@ static void MdlColorCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlColorCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlColorCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlColorCount", PortCheck::Returns::Gpr3, func_8009832C, MdlColorCountPort);
-    else
-        MdlColorCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_8009832C, MdlColorCountPort>("MdlColorCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009832C, MH3_MdlColorCount, "MdlColorCount");
 
@@ -337,11 +294,7 @@ static void MdlTexCoordCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlTexCoordCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlTexCoordCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlTexCoordCount", PortCheck::Returns::Gpr3, func_800984B0, MdlTexCoordCountPort);
-    else
-        MdlTexCoordCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_800984B0, MdlTexCoordCountPort>("MdlTexCoordCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800984B0, MH3_MdlTexCoordCount, "MdlTexCoordCount");
 
@@ -352,11 +305,7 @@ static void MdlFurVectorCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlFurVectorCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlFurVectorCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlFurVectorCount", PortCheck::Returns::Gpr3, func_800985CC, MdlFurVectorCountPort);
-    else
-        MdlFurVectorCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_800985CC, MdlFurVectorCountPort>("MdlFurVectorCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800985CC, MH3_MdlFurVectorCount, "MdlFurVectorCount");
 
@@ -367,11 +316,7 @@ static void MdlFurPositionCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlFurPositionCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlFurPositionCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlFurPositionCount", PortCheck::Returns::Gpr3, func_80098750, MdlFurPositionCountPort);
-    else
-        MdlFurPositionCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_80098750, MdlFurPositionCountPort>("MdlFurPositionCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80098750, MH3_MdlFurPositionCount, "MdlFurPositionCount");
 
@@ -382,11 +327,7 @@ static void MdlMaterialCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlMaterialCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlMaterialCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlMaterialCount", PortCheck::Returns::Gpr3, func_800988CC, MdlMaterialCountPort);
-    else
-        MdlMaterialCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_800988CC, MdlMaterialCountPort>("MdlMaterialCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800988CC, MH3_MdlMaterialCount, "MdlMaterialCount");
 
@@ -397,11 +338,7 @@ static void MdlShapeCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MdlShapeCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MdlShapeCount");
-    if (check)
-        PortCheck::RunPure(cpu, "MdlShapeCount", PortCheck::Returns::Gpr3, func_800989E4, MdlShapeCountPort);
-    else
-        MdlShapeCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_800989E4, MdlShapeCountPort>("MdlShapeCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800989E4, MH3_MdlShapeCount, "MdlShapeCount");
 
@@ -412,11 +349,7 @@ static void ShpRefPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpRef(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpRef");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpRef", PortCheck::Returns::Gpr3, func_800773FC, ShpRefPort);
-    else
-        ShpRefPort(cpu);
+    cpu->gpr[3] = Accessor<func_800773FC, ShpRefPort>("ShpRef", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800773FC, MH3_ShpRef, "ShpRef");
 
@@ -427,11 +360,7 @@ static void ShpRefConstPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpRefConst(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpRefConst");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpRefConst", PortCheck::Returns::Gpr3, func_800776D8, ShpRefConstPort);
-    else
-        ShpRefConstPort(cpu);
+    cpu->gpr[3] = Accessor<func_800776D8, ShpRefConstPort>("ShpRefConst", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800776D8, MH3_ShpRefConst, "ShpRefConst");
 
@@ -442,11 +371,7 @@ static void MatRefConstPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MatRefConst(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MatRefConst");
-    if (check)
-        PortCheck::RunPure(cpu, "MatRefConst", PortCheck::Returns::Gpr3, func_80077630, MatRefConstPort);
-    else
-        MatRefConstPort(cpu);
+    cpu->gpr[3] = Accessor<func_80077630, MatRefConstPort>("MatRefConst", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80077630, MH3_MatRefConst, "MatRefConst");
 
@@ -457,11 +382,7 @@ static void TagRefConstPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagRefConst(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagRefConst");
-    if (check)
-        PortCheck::RunPure(cpu, "TagRefConst", PortCheck::Returns::Gpr3, func_80099578, TagRefConstPort);
-    else
-        TagRefConstPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099578, TagRefConstPort>("TagRefConst", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099578, MH3_TagRefConst, "TagRefConst");
 
@@ -472,11 +393,7 @@ static void TagRefPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagRef(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagRef");
-    if (check)
-        PortCheck::RunPure(cpu, "TagRef", PortCheck::Returns::Gpr3, func_800997A4, TagRefPort);
-    else
-        TagRefPort(cpu);
+    cpu->gpr[3] = Accessor<func_800997A4, TagRefPort>("TagRef", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800997A4, MH3_TagRef, "TagRef");
 
@@ -487,11 +404,7 @@ static void ResDictionaryCountPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ResDictionaryCount(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ResDictionaryCount");
-    if (check)
-        PortCheck::RunPure(cpu, "ResDictionaryCount", PortCheck::Returns::Gpr3, func_800696C8, ResDictionaryCountPort);
-    else
-        ResDictionaryCountPort(cpu);
+    cpu->gpr[3] = Accessor<func_800696C8, ResDictionaryCountPort>("ResDictionaryCount", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800696C8, MH3_ResDictionaryCount, "ResDictionaryCount");
 
@@ -502,11 +415,7 @@ static void ShpVisiblePort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpVisible(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpVisible");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpVisible", PortCheck::Returns::Gpr3, func_800776A8, ShpVisiblePort);
-    else
-        ShpVisiblePort(cpu);
+    cpu->gpr[3] = Accessor<func_800776A8, ShpVisiblePort>("ShpVisible", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800776A8, MH3_ShpVisible, "ShpVisible");
 
@@ -517,11 +426,7 @@ static void NodeVisiblePort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_NodeVisible(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("NodeVisible");
-    if (check)
-        PortCheck::RunPure(cpu, "NodeVisible", PortCheck::Returns::Gpr3, func_80078968, NodeVisiblePort);
-    else
-        NodeVisiblePort(cpu);
+    cpu->gpr[3] = Accessor<func_80078968, NodeVisiblePort>("NodeVisible", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80078968, MH3_NodeVisible, "NodeVisible");
 
@@ -532,11 +437,7 @@ static void NodeIdPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_NodeId(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("NodeId");
-    if (check)
-        PortCheck::RunPure(cpu, "NodeId", PortCheck::Returns::Gpr3, func_8005D0B4, NodeIdPort);
-    else
-        NodeIdPort(cpu);
+    cpu->gpr[3] = Accessor<func_8005D0B4, NodeIdPort>("NodeId", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8005D0B4, MH3_NodeId, "NodeId");
 
@@ -547,11 +448,7 @@ static void ShpParentPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpParent(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpParent");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpParent", PortCheck::Returns::Gpr3, func_80099464, ShpParentPort);
-    else
-        ShpParentPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099464, ShpParentPort>("ShpParent", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099464, MH3_ShpParent, "ShpParent");
 
@@ -562,11 +459,7 @@ static void ShpPositionPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpPosition(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpPosition");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpPosition", PortCheck::Returns::Gpr3, func_800999D8, ShpPositionPort);
-    else
-        ShpPositionPort(cpu);
+    cpu->gpr[3] = Accessor<func_800999D8, ShpPositionPort>("ShpPosition", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800999D8, MH3_ShpPosition, "ShpPosition");
 
@@ -577,11 +470,7 @@ static void ShpNormalPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpNormal(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpNormal");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpNormal", PortCheck::Returns::Gpr3, func_80099A4C, ShpNormalPort);
-    else
-        ShpNormalPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099A4C, ShpNormalPort>("ShpNormal", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099A4C, MH3_ShpNormal, "ShpNormal");
 
@@ -592,11 +481,7 @@ static void ShpColorPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpColor(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpColor");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpColor", PortCheck::Returns::Gpr3, func_80099ABC, ShpColorPort);
-    else
-        ShpColorPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099ABC, ShpColorPort>("ShpColor", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099ABC, MH3_ShpColor, "ShpColor");
 
@@ -607,11 +492,7 @@ static void ShpTexCoordPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpTexCoord(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpTexCoord");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpTexCoord", PortCheck::Returns::Gpr3, func_80099B74, ShpTexCoordPort);
-    else
-        ShpTexCoordPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099B74, ShpTexCoordPort>("ShpTexCoord", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099B74, MH3_ShpTexCoord, "ShpTexCoord");
 
@@ -622,11 +503,7 @@ static void ShpFurPositionPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpFurPosition(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpFurPosition");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpFurPosition", PortCheck::Returns::Gpr3, func_80099C14, ShpFurPositionPort);
-    else
-        ShpFurPositionPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099C14, ShpFurPositionPort>("ShpFurPosition", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099C14, MH3_ShpFurPosition, "ShpFurPosition");
 
@@ -637,11 +514,7 @@ static void ShpSetupTagConstPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpSetupTagConst(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpSetupTagConst");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpSetupTagConst", PortCheck::Returns::Gpr3, func_80099604, ShpSetupTagConstPort);
-    else
-        ShpSetupTagConstPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099604, ShpSetupTagConstPort>("ShpSetupTagConst", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099604, MH3_ShpSetupTagConst, "ShpSetupTagConst");
 
@@ -652,11 +525,7 @@ static void ShpSetupTagPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpSetupTag(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpSetupTag");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpSetupTag", PortCheck::Returns::Gpr3, func_80099810, ShpSetupTagPort);
-    else
-        ShpSetupTagPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099810, ShpSetupTagPort>("ShpSetupTag", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099810, MH3_ShpSetupTag, "ShpSetupTag");
 
@@ -667,11 +536,7 @@ static void ShpPrimitiveTagConstPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpPrimitiveTagConst(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpPrimitiveTagConst");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpPrimitiveTagConst", PortCheck::Returns::Gpr3, func_8009A15C, ShpPrimitiveTagConstPort);
-    else
-        ShpPrimitiveTagConstPort(cpu);
+    cpu->gpr[3] = Accessor<func_8009A15C, ShpPrimitiveTagConstPort>("ShpPrimitiveTagConst", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009A15C, MH3_ShpPrimitiveTagConst, "ShpPrimitiveTagConst");
 
@@ -682,11 +547,7 @@ static void ShpPrimitiveTagPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpPrimitiveTag(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpPrimitiveTag");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpPrimitiveTag", PortCheck::Returns::Gpr3, func_80099E5C, ShpPrimitiveTagPort);
-    else
-        ShpPrimitiveTagPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099E5C, ShpPrimitiveTagPort>("ShpPrimitiveTag", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099E5C, MH3_ShpPrimitiveTag, "ShpPrimitiveTag");
 
@@ -697,11 +558,7 @@ static void TagDisplayListPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagDisplayList(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagDisplayList");
-    if (check)
-        PortCheck::RunPure(cpu, "TagDisplayList", PortCheck::Returns::Gpr3, func_8009974C, TagDisplayListPort);
-    else
-        TagDisplayListPort(cpu);
+    cpu->gpr[3] = Accessor<func_8009974C, TagDisplayListPort>("TagDisplayList", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009974C, MH3_TagDisplayList, "TagDisplayList");
 
@@ -712,11 +569,7 @@ static void ShpSetupDisplayListPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpSetupDisplayList(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpSetupDisplayList");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpSetupDisplayList", PortCheck::Returns::Gpr3, func_80099710, ShpSetupDisplayListPort);
-    else
-        ShpSetupDisplayListPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099710, ShpSetupDisplayListPort>("ShpSetupDisplayList", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099710, MH3_ShpSetupDisplayList, "ShpSetupDisplayList");
 
@@ -727,11 +580,7 @@ static void TagBufferSizePort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagBufferSize(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagBufferSize");
-    if (check)
-        PortCheck::RunPure(cpu, "TagBufferSize", PortCheck::Returns::Gpr3, func_80099E38, TagBufferSizePort);
-    else
-        TagBufferSizePort(cpu);
+    cpu->gpr[3] = Accessor<func_80099E38, TagBufferSizePort>("TagBufferSize", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099E38, MH3_TagBufferSize, "TagBufferSize");
 
@@ -742,11 +591,7 @@ static void TagCommandSizePort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagCommandSize(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagCommandSize");
-    if (check)
-        PortCheck::RunPure(cpu, "TagCommandSize", PortCheck::Returns::Gpr3, func_8009A07C, TagCommandSizePort);
-    else
-        TagCommandSizePort(cpu);
+    cpu->gpr[3] = Accessor<func_8009A07C, TagCommandSizePort>("TagCommandSize", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8009A07C, MH3_TagCommandSize, "TagCommandSize");
 
@@ -757,11 +602,7 @@ static void ShpRelativeModelPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ShpRelativeModel(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ShpRelativeModel");
-    if (check)
-        PortCheck::RunPure(cpu, "ShpRelativeModel", PortCheck::Returns::Gpr3, func_800994A0, ShpRelativeModelPort);
-    else
-        ShpRelativeModelPort(cpu);
+    cpu->gpr[3] = Accessor<func_800994A0, ShpRelativeModelPort>("ShpRelativeModel", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800994A0, MH3_ShpRelativeModel, "ShpRelativeModel");
 
@@ -772,11 +613,7 @@ static void TagRelativeBytesPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagRelativeBytes(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagRelativeBytes");
-    if (check)
-        PortCheck::RunPure(cpu, "TagRelativeBytes", PortCheck::Returns::Gpr3, func_80099788, TagRelativeBytesPort);
-    else
-        TagRelativeBytesPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099788, TagRelativeBytesPort>("TagRelativeBytes", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099788, MH3_TagRelativeBytes, "TagRelativeBytes");
 
@@ -787,11 +624,7 @@ static void ResDictionaryValidPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_ResDictionaryValid(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("ResDictionaryValid");
-    if (check)
-        PortCheck::RunPure(cpu, "ResDictionaryValid", PortCheck::Returns::Gpr3, func_80062918, ResDictionaryValidPort);
-    else
-        ResDictionaryValidPort(cpu);
+    cpu->gpr[3] = Accessor<func_80062918, ResDictionaryValidPort>("ResDictionaryValid", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80062918, MH3_ResDictionaryValid, "ResDictionaryValid");
 
@@ -802,11 +635,7 @@ static void MatValidPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_MatValid(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("MatValid");
-    if (check)
-        PortCheck::RunPure(cpu, "MatValid", PortCheck::Returns::Gpr3, func_80077744, MatValidPort);
-    else
-        MatValidPort(cpu);
+    cpu->gpr[3] = Accessor<func_80077744, MatValidPort>("MatValid", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80077744, MH3_MatValid, "MatValid");
 
@@ -817,11 +646,7 @@ static void TagValidPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagValid(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagValid");
-    if (check)
-        PortCheck::RunPure(cpu, "TagValid", PortCheck::Returns::Gpr3, func_800995F0, TagValidPort);
-    else
-        TagValidPort(cpu);
+    cpu->gpr[3] = Accessor<func_800995F0, TagValidPort>("TagValid", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800995F0, MH3_TagValid, "TagValid");
 
@@ -832,11 +657,7 @@ static void TagRefUncheckedConstPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagRefUncheckedConst(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagRefUncheckedConst");
-    if (check)
-        PortCheck::RunPure(cpu, "TagRefUncheckedConst", PortCheck::Returns::Gpr3, func_800995DC, TagRefUncheckedConstPort);
-    else
-        TagRefUncheckedConstPort(cpu);
+    cpu->gpr[3] = Accessor<func_800995DC, TagRefUncheckedConstPort>("TagRefUncheckedConst", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800995DC, MH3_TagRefUncheckedConst, "TagRefUncheckedConst");
 
@@ -847,10 +668,6 @@ static void TagRefUncheckedPort(CpuContext* cpu) {
     cpu->gpr[3] = Result(status, value);
 }
 extern "C" void MH3_TagRefUnchecked(CpuContext* cpu) {
-    static const bool check = PortCheck::Enabled("TagRefUnchecked");
-    if (check)
-        PortCheck::RunPure(cpu, "TagRefUnchecked", PortCheck::Returns::Gpr3, func_80099808, TagRefUncheckedPort);
-    else
-        TagRefUncheckedPort(cpu);
+    cpu->gpr[3] = Accessor<func_80099808, TagRefUncheckedPort>("TagRefUnchecked", cpu->gpr[1], cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80099808, MH3_TagRefUnchecked, "TagRefUnchecked");
