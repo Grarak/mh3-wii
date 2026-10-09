@@ -1,27 +1,32 @@
 #pragma once
 #include "launcher_screen.h"
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
-#include <map>
-#include <psp2/pvf.h>
 
 namespace VitaLauncher {
-// The installed Latin PVF font, drawn as solid rectangles.
+// The installed Latin PVF font on the Vita (a system TrueType font on a
+// development host), drawn as solid rectangles.
 class Font {
   public:
     Font();
     ~Font();
     void Text(std::vector<Rectangle>& rects, float x, float y, std::string_view text, uint32_t color, float maxWidth = 880);
+    float Width(std::string_view text);
+    // Splits text into lines of at most width pixels at spaces and '\n'.
+    std::vector<std::string> Wrap(std::string_view text, float width);
 
   private:
     struct Glyph {
         std::vector<Rectangle> runs;
         float advance;
     };
+    struct Source;
     Glyph& Get(unsigned character);
-    ScePvfLibId library = nullptr;
-    ScePvfFontId font = nullptr;
+    std::unique_ptr<Source> source;
     std::map<unsigned, Glyph> glyphs;
 };
 } // namespace VitaLauncher

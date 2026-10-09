@@ -322,6 +322,11 @@ if(NOT VITA)
   target_sources(MH3 PRIVATE src/launcher_disc.cpp src/launcher_textures.cpp)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
+  # MH3 --launcher: the Vita launcher's menus on a development host.
+  if(MH3_DEVELOPMENT AND TARGET aurora::core)
+    target_sources(MH3 PRIVATE vita/launcher.cpp vita/launcher_font.cpp)
+    set_property(SOURCE vita/launcher.cpp vita/launcher_font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
+  endif()
   # RVZ/WIA images decode with nod (runtime/vita/rom_decoder); without it only
   # decrypted ISOs (nodtool convert --decrypt) can be prepared.
   option(MH3_ROM_DECODER "Decode RVZ/WIA disc images with the nod Rust library (needs cargo)" ON)

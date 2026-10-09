@@ -244,6 +244,16 @@ int main(int argc, char** argv) {
         }
 #ifndef __vita__
         PrepareGameData(rom);
+#if defined(MH3_DEVELOPMENT) && defined(MH3_HAS_AURORA)
+        // The Vita launcher's menus, then the game as they start it. Its disc
+        // directory is MH3_DISC_DIR as on the Vita: prepared game data, or a
+        // directory with one disc image (prepared into its disc/).
+        if (argc == 2 && std::string_view(argv[1]) == "--launcher") {
+            if (!VitaLauncher::Run())
+                return 0;
+            argc = 1;
+        }
+#endif
 #endif
         if (argc == 3 && std::string_view(argv[1]) == "--list") {
             const std::string_view what = argv[2];

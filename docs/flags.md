@@ -18,7 +18,7 @@ listed under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution | development |
 | `MH3_AUDIO_NULL` | `1`: no playback device; the mix is consumed at 32 kHz | development |
-| `MH3_LAUNCHER_INPUT` | Vita launcher input script ([launcher](vita-launcher.md)) | development |
+| `MH3_LAUNCHER_INPUT` | launcher input script, on the Vita and with `MH3 --launcher` on a host ([launcher](vita-launcher.md)) | development |
 
 ## Development tools
 

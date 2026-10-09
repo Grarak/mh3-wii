@@ -44,8 +44,10 @@ void PrepareTextures(const std::filesystem::path& root, const Progress& progress
 // Whole-disc conversion (development tools): native-models/ packs and index.
 bool ModelsReady(const std::filesystem::path& root);
 void PrepareModels(const std::filesystem::path& root, const Progress& progress);
-#ifdef __vita__
-// Returns false when startup cannot continue or the user exits.
+#if defined(__vita__) || defined(MH3_DEVELOPMENT)
+// The launcher's menus (runtime/vita/launcher.cpp); development hosts run them
+// with MH3 --launcher. Returns false when startup cannot continue or the user
+// exits.
 bool Run();
 #endif
 } // namespace VitaLauncher
