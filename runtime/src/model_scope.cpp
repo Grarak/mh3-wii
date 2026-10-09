@@ -51,10 +51,10 @@ void Group(uint32_t address,mh3_model_material_block kind,bool xf=false) {
     if(!address) return;
     const auto mode=Mode();const uint32_t count=kind==MH3_MODEL_MATERIAL_INDIRECT?mode.indirect:
         kind==MH3_MODEL_MATERIAL_TEXGEN?mode.texgens:1;
-    const auto patch=ReadNativeModelMaterialGroup(address,kind,count);
+    const auto* fields=count?&ReadNativeLiveMaterialBlockView(address,kind).fields:nullptr;
     if(!xf) Genmode(false);
     Memory::GetPointer(sync_address,1)[0]=0;
-    if(count) Publish(patch);
+    if(count) OverlayNativeModelMaterialGroup(*fields,kind,count);
     if(xf) Genmode(true);
 }
 mh3_model_material_scope Scope(uint32_t reference,uint32_t swaps) {
@@ -184,12 +184,13 @@ void PrepareNativeModelCoordinateSizes(uint32_t count) {
 void LoadNativeModelPipeline(uint32_t resource) {
     if(!resource) return;
     if(resource>UINT32_MAX-32) throw std::runtime_error("Model pipeline offset overflows");
-    const auto generation=ReadNativeLiveMaterialBlockView(resource+32,MH3_MODEL_MATERIAL_PIPELINE).fields.generation;
+    const auto& fields=ReadNativeLiveMaterialBlockView(resource+32,MH3_MODEL_MATERIAL_PIPELINE).fields;
+    const auto generation=fields.generation;
     if(Memory::Read32(0x80796dbc)==resource && pipeline_address==resource && pipeline_revision==generation) return;
     uint8_t table[8],known=0;ReadNativeModelCoordinateMap(resource+32,table,&known);
-    const auto patch=ReadNativeModelMaterialGroup(resource,MH3_MODEL_MATERIAL_PIPELINE);
     Checked(mh3_model_coordinate_table(Mutable(coordinate_cache,108),table));coordinate_map_known=known;
-    Genmode(false);Memory::GetPointer(sync_address,1)[0]=0;Publish(patch);
+    Genmode(false);Memory::GetPointer(sync_address,1)[0]=0;
+    OverlayNativeModelMaterialGroup(fields,MH3_MODEL_MATERIAL_PIPELINE);
     Memory::Write32(0x80796dbc,resource);pipeline_address=resource;pipeline_revision=generation;
     PrepareNativeModelCoordinateSizes(Mode().texgens);
 }

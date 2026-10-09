@@ -3,10 +3,12 @@
 #include "native_graphics.h"
 #include "model_assets.h"
 #include "../native/mh3_material_state.h"
+#include "../native/mh3_material_group_publication.h"
 #include "../native/mh3_model_gpu_inputs.h"
 #include "../native/mh3_model_pose.h"
 #include "../native/adapters/model_gpu_bridge.h"
 #include "../native/adapters/model_pose_bridge.h"
+#include "../native/adapters/model_material_bridge.h"
 #include <algorithm>
 #include <aurora/native_texture.hpp>
 #include "gx/gx.hpp"
@@ -899,6 +901,25 @@ const mh3_native_material_state& GetNativeMaterialState() {
 }
 void SetNativeMaterial(const mh3_native_material_state& source) {
     OverlayNativeMaterial(source,MH3_MATERIAL_TOP_ALL);
+}
+void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source,
+                                    mh3_model_material_block kind,uint32_t count) {
+    Owner();ObserveRasterPublications();
+    if((kind==MH3_MODEL_MATERIAL_INDIRECT || kind==MH3_MODEL_MATERIAL_TEXGEN) && !count) return;
+    // Only pixel groups affect raster state. Preflight the small pixel record
+    // before mutation so unsupported output features retain atomic publication.
+    if(kind==MH3_MODEL_MATERIAL_PIXEL) {
+        mh3_pack_pixel_inputs pixel;
+        mh3_material_group_pixel_preview_unchecked(&material.pixel,&source.pixel,&pixel);
+        auto raster=GetNativeDrawState().raster;
+        Check(mh3_material_pixel_raster_unchecked(&pixel,&raster),"Native material group pixel raster");
+        raster.cull_mode=material.cull_mode;
+        struct Export {Export(){publishingMaterialRaster=true;}~Export(){publishingMaterialRaster=false;}};
+        {Export scoped;SetNativeRaster(raster);}
+    }
+    const auto* consumed=preparedKnown?&ActivePrepared().requirements:nullptr;
+    if(mh3_material_group_publish_unchecked(&material,&source,kind,count,consumed)) preparedKnown=false;
+    preparedAdmissionPending=true;
 }
 void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors) {
     Owner();ObserveRasterPublications();

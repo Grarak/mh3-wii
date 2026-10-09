@@ -136,6 +136,7 @@ target_sources(MH3 PRIVATE src/native_display_utilities.cpp)
 target_sources(MH3 PRIVATE native/mh3_draw_state.c)
 target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c
   src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
+  native/mh3_material_group_publication.c
   src/native_ui.cpp native/mh3_ui.c
   src/native_system_ui.cpp native/mh3_system_ui.c
   src/native_effect_draw.cpp native/mh3_effect_draw.c native/mh3_particle_draw_state.c
@@ -221,7 +222,7 @@ if(TARGET aurora::core)
     target_link_libraries(mh3_native_geometry_check PRIVATE aurora::core aurora::gx aurora::vi)
     add_executable(mh3_native_material_check EXCLUDE_FROM_ALL
       ../tests/native/native_material_check.cpp src/native_material.cpp src/native_render_state.cpp
-      native/mh3_material_state.c native/mh3_draw_state.c
+      native/mh3_material_state.c native/mh3_material_group_publication.c native/mh3_draw_state.c
       src/model_gpu.cpp native/mh3_model_gpu_inputs.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
     target_include_directories(mh3_native_material_check PRIVATE "${MH3_AURORA_ROOT}/lib" include ..)
     target_compile_features(mh3_native_material_check PRIVATE cxx_std_20)

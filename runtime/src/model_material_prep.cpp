@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "memory.h"
 #include "native_graphics.h"
+#include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_material_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_material_prep.h"
@@ -35,12 +36,12 @@ void Group(CpuContext* cpu,mh3_model_material_block kind,bool xf) {
     mh3_model_genmode mode{};Checked(mh3_model_genmode_read(Bytes(genmode,12),&mode));
     const uint32_t count=kind==MH3_MODEL_MATERIAL_INDIRECT?mode.indirect:
         kind==MH3_MODEL_MATERIAL_TEXGEN?mode.texgens:1;
-    const auto patch=ReadNativeModelMaterialGroup(address,kind,count);
+    const auto* fields=count?&ReadNativeLiveMaterialBlockView(address,kind).fields:nullptr;
     // The original consumes SyncGX even for a zero-count group. This is now
     // CPU compatibility only; all typed state survives skipped GPU frames.
     if(!xf) PublishGenMode(genmode,false);
     Memory::GetPointer(sync_address,1)[0]=0;
-    if(count) Publish(patch);
+    if(count) OverlayNativeModelMaterialGroup(*fields,kind,count);
     if(xf) PublishGenMode(genmode,true);
 }
 void ChannelControl(CpuContext* cpu,bool force_off) {
