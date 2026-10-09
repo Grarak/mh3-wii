@@ -860,11 +860,16 @@ class AbiTrampoline<Ret(CpuContext*)> {
     static AbiTrampoline<decltype(fn)> MKW_DETAIL_MAKE_UNIQUE(_abi_native_trampoline_, __COUNTER__)(address, #fn, fn, FunctionKind::Native, false, kPpcAllNonvolatileFprMask, 0, 0,                    \
                                                                                                     &AbiRawCpuThunk<&fn>::Invoke)
 
-// The optional fourth argument certifies f14-f31 preservation for an audited
-// CpuContext* native. Three-argument CpuContext* registrations stay conservative,
-// unless the translator's contract shows the native writes no r14-r31 or f14-f31
-// (KnownPreciseNativeCpuCall::kKeepsNonvolatile).
+// The optional fourth argument certifies an audited CpuContext* native: `true`
+// when it leaves f14-f31 as it found them, kNativeKeepsNonvolatile when it
+// leaves r14-r31 too, so its indirect calls need no guard at all. Such a native
+// names none of those registers, restores every GPR it changes (GuestFrame)
+// and reaches guest code only through the dispatch (GuestCall), or guards the
+// direct calls itself. Three-argument CpuContext* registrations stay
+// conservative, unless the translator's contract shows the native writes no
+// r14-r31 or f14-f31 (KnownPreciseNativeCpuCall::kKeepsNonvolatile).
+inline constexpr int kNativeKeepsNonvolatile = 2;
 #define REGISTER_NATIVE_FUNCTION_AS(address, fn, pretty_name, ...)                                                                                                                                     \
-    static AbiTrampoline<decltype(fn)> MKW_DETAIL_MAKE_UNIQUE(_abi_native_trampoline_named_, __COUNTER__)(address, pretty_name, fn, FunctionKind::Native, false __VA_OPT__(|| (__VA_ARGS__)),             \
-                                                                                                          kPpcAllNonvolatileFprMask, 0, 0, &AbiRawCpuThunk<&fn>::Invoke, true,                       \
-                                                                                                          KnownPreciseNativeCpuCall<address>::kKeepsNonvolatile)
+    static AbiTrampoline<decltype(fn)> MKW_DETAIL_MAKE_UNIQUE(_abi_native_trampoline_named_, __COUNTER__)(                                                                                             \
+        address, pretty_name, fn, FunctionKind::Native, false __VA_OPT__(|| static_cast<int>(__VA_ARGS__) != 0), kPpcAllNonvolatileFprMask, 0, 0, &AbiRawCpuThunk<&fn>::Invoke, true,                   \
+        KnownPreciseNativeCpuCall<address>::kKeepsNonvolatile __VA_OPT__(|| static_cast<int>(__VA_ARGS__) == kNativeKeepsNonvolatile))
