@@ -15,6 +15,7 @@
 // ending the same one nominal step ahead, so consecutive windows join up. This
 // is identical at the stock 1/30 s step (base rate 1.0) and makes movement
 // follow game time at any step length.
+#include "anm_obj_chr_res.h"
 #include "game_step.h"
 #include "port_check.h"
 #include "guest_call.h"
@@ -139,6 +140,21 @@ std::array<float, 3> RootAt(GuestCall& game, uint32_t self, uint32_t anim, float
 // `known` is the translation at `from` when the caller has it.
 std::array<float, 3> RootDelta(GuestCall& game, uint32_t self, uint32_t anim, float from, float to, uint32_t result, uint32_t out, const std::array<float, 3>* known, std::array<float, 3>* atTo) {
     game.Call<InitAnmResult>({result});
+    if (Memory::Read32(anim) == kAnmObjChrResVtable) {
+        // Setting an AnmObjChrRes's frame re-evaluates its whole result cache,
+        // twice per window here (there and back) for the one root node: the
+        // root alone at each end gives the same translation.
+        const uint32_t root = Memory::Read32(self + kRootNode);
+        const auto at = [&](float frame) {
+            game.Call<ResultTranslation>({AnmObjChrResResultAt(game, anim, result, root, frame), out});
+            return std::array<float, 3>{F32(out), F32(out + 4), F32(out + 8)};
+        };
+        const std::array<float, 3> a = known ? *known : at(from);
+        const std::array<float, 3> b = at(to);
+        if (atTo)
+            *atTo = b;
+        return {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    }
     game.Virtual<kGetFrame>(anim);
     const float frame = game.F1();
     const std::array<float, 3> a = known ? *known : RootAt(game, self, anim, from, result, out);

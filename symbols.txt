@@ -176,9 +176,15 @@
 80048ffc ClearDrawSlots
 8028d7dc StaffRollUpdate
 # Animation stepping: NW4R g3d FrameCtrl (frame += rate * smBaseUpdateRate at f32 0x80793628) and MHchar root motion.
+80061d90 AnmObjChrResSetFrame
+80061f28 FrameCtrlSetFrame
+80061f6c AnmObjChrResGetFrame
+80062088 FrameCtrlGetFrame
 800624b0 FrameCtrlUpdateFrm
 80062364 FrameCtrlGetRate
 8006236c AnmObjChrResUpdateFrame
+800631d4 AnmObjChrResGetResult
+800634a0 AnmObjChrResUpdateCache
 800e19d4 MHcharRootMotion
 800e1c90 MHcharChannelAnim
 800e1d2c MHcharRootMotionDelta
