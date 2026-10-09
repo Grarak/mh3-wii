@@ -1284,6 +1284,8 @@
 800bdbc4 EffectDirectionalSetup
 800be1b8 EffectFreeQuad
 800bed90 EffectFreeSetup
+800bea64 EffectFreeRotationMtx
+800be99c EffectFreeQuadMtx
 800beffc EffectLineStrategy
 800bf52c EffectLineLeaf
 800bf62c EffectLineSetup
