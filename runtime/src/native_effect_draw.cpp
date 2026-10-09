@@ -358,8 +358,8 @@ void ParticleState(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32
 // MH3_TRACE=big-particles: a particle whose quad covers the whole view or
 // crosses the camera plane, when its colours (+0x20..+0x2F), size or scale
 // jump from the previous frame: the underwater one-frame blue flashes were
-// bubble quads with a corner nearer than the near plane (todo 3.5, fixed by
-// the vertex programs' clip planes). Big haze particles cover the view
+// bubble quads with a corner nearer than the near plane (todo 3.5, see
+// NearerThanNear). Big haze particles cover the view
 // all the time; only a jump is reported. View-space corners: depth is -z,
 // x/depth and y/depth the tangents of the view angles.
 uint32_t traceParticle = 0, traceResource = 0;
@@ -480,10 +480,41 @@ void TraceBigQuad(const mh3_effect_quad &q) {
 }
 #endif
 
+// A quad with a corner nearer than the projection's near plane. Underwater, a
+// bubble effect's large rotating quads sweep through the camera; GX clips them
+// at the near plane, GXM does not clip depth, and a corner a unit or two from
+// the eye made the quad cover the screen for a frame (the blue flashes, todo
+// 3.5). Such a quad is dropped whole: clipping it on the GPU (user clip
+// planes) still left flashes on the device.
+bool NearerThanNear(const mh3_effect_quad &q) {
+    const auto &state = GetNativeDrawState();
+
+    if (!state.perspective)
+        return false;
+
+    const float near = state.projection[11] / (state.projection[10] - 1.0f);
+
+    if (!(near > 0.0f) || !std::isfinite(near))
+        return false;
+
+    // View depth from the position matrix's z row.
+    const float *m = state.position;
+
+    for (const auto &v : q.position)
+        if (-(m[8] * v[0] + m[9] * v[1] + m[10] * v[2] + m[11]) < near)
+            return true;
+
+    return false;
+}
+
 void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2] = nullptr, uint32_t size_code = 0, bool point = false, bool strip = false) {
 #ifdef MH3_DEVELOPMENT
     TraceBigQuad(q);
 #endif
+
+    if (NearerThanNear(q))
+        return;
+
     const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
     const auto &material = GetNativeMaterialState();
     mh3_effect_vertex_inputs &input = effect.vertex;
