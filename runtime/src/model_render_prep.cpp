@@ -527,7 +527,7 @@ bool SameBindings(const ModelPrepMaterial& record, const uint32_t* slots) {
         const uint32_t present = Word(record.palette_objects);
 
         for (uint32_t i = 0; i < 8; i++)
-            if ((present & (1u << i)) && !EqualNativePaletteSource(record.palettes[i], ReadNativePaletteObject(objects + 4 + i * 12)))
+            if ((present & (1u << i)) && !EqualNativePaletteSource(record.palettes[i], NativePaletteObject(objects + 4 + i * 12)))
                 return false;
     }
 
@@ -535,7 +535,7 @@ bool SameBindings(const ModelPrepMaterial& record, const uint32_t* slots) {
         const uint32_t present = Word(record.texture_objects);
 
         for (uint32_t i = 0; i < 8; i++)
-            if ((present & (1u << i)) && !EqualNativeTextureBinding(record.textures[i], ReadNativeTextureObject(objects + 4 + i * 32)))
+            if ((present & (1u << i)) && !EqualNativeTextureBinding(record.textures[i], NativeTextureObject(objects + 4 + i * 32)))
                 return false;
     }
 

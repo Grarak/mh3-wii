@@ -7,6 +7,10 @@ mh3_native_palette_source ReadNativeResPalette(uint32_t reference);
 mh3_native_texture_binding ReadNativeTextureObject(uint32_t object);
 void StoreNativeTextureObject(uint32_t object, const mh3_native_texture_binding& binding);
 mh3_native_palette_source ReadNativePaletteObject(uint32_t object);
+/* The stored bindings in place, for comparing without a copy (game thread;
+ * valid until the next store). */
+const mh3_native_texture_binding& NativeTextureObject(uint32_t object);
+const mh3_native_palette_source& NativePaletteObject(uint32_t object);
 /* Advances whenever a typed texture or palette object, or the generation of
  * an image one refers to, changes (game thread). */
 uint64_t ReadNativeTextureObjectRevision();

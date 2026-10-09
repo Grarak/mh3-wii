@@ -187,7 +187,7 @@ uint64_t ReadNativeTextureObjectRevision() {
     return O().revision;
 }
 
-mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
+const mh3_native_texture_binding& NativeTextureObject(uint32_t object) {
     const auto& textures = O().textures;
     const auto found = textures.find(object);
 
@@ -195,6 +195,10 @@ mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
         MH3_THROW(std::runtime_error("Texture object has no typed native producer: " + std::to_string(object)));
 
     return found->second;
+}
+
+mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
+    return NativeTextureObject(object);
 }
 
 void StoreNativePaletteObject(uint32_t object, const mh3_native_palette_source& palette) {
@@ -208,7 +212,7 @@ void StoreNativePaletteObject(uint32_t object, const mh3_native_palette_source& 
     PutPalette(object, copy);
 }
 
-mh3_native_palette_source ReadNativePaletteObject(uint32_t object) {
+const mh3_native_palette_source& NativePaletteObject(uint32_t object) {
     const auto& palettes = O().palettes;
     const auto found = palettes.find(object);
 
@@ -216,6 +220,10 @@ mh3_native_palette_source ReadNativePaletteObject(uint32_t object) {
         MH3_THROW(std::runtime_error("Palette object has no typed native producer: " + std::to_string(object)));
 
     return found->second;
+}
+
+mh3_native_palette_source ReadNativePaletteObject(uint32_t object) {
+    return NativePaletteObject(object);
 }
 
 void InitializeNativeTextureSource(uint32_t reference, bool palette) {

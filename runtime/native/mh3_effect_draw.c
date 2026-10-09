@@ -108,25 +108,27 @@ mh3_res_status mh3_effect_material_read(mh3_res_span resource, mh3_effect_materi
 }
 
 void mh3_effect_material_apply(const mh3_effect_material *r, const mh3_native_material_state *inherited, mh3_native_material_state *out) {
-    mh3_native_material_state m = *inherited;
-    m.texgen_count = r->texture_count;
-    m.tev_count = r->stage_count;
-    m.cull_mode = 0;
-    m.clip_mode_known = 1;
-    m.clip_disabled = (r->flags & 8) != 0;
-    m.indirect_count = (r->flags & 0x40) ? 1 : 0;
-    memcpy(m.tev, r->stages, r->stage_count * sizeof(r->stages[0]));
-    m.swaps[0] = (mh3_pack_swap_table){15, {0, 1, 2, 3}};
+    /* Built in place: the state is 1.3 KiB, copied once. */
+    mh3_native_material_state *const m = out;
+    *m = *inherited;
+    m->texgen_count = r->texture_count;
+    m->tev_count = r->stage_count;
+    m->cull_mode = 0;
+    m->clip_mode_known = 1;
+    m->clip_disabled = (r->flags & 8) != 0;
+    m->indirect_count = (r->flags & 0x40) ? 1 : 0;
+    memcpy(m->tev, r->stages, r->stage_count * sizeof(r->stages[0]));
+    m->swaps[0] = (mh3_pack_swap_table){15, {0, 1, 2, 3}};
 
     for (uint32_t f = 0; f < MH3_PIXEL_FIELD_COUNT; f++)
         if (r->pixel.known & (UINT64_C(1) << f)) {
-            m.pixel.known |= UINT64_C(1) << f;
-            m.pixel.values[f] = r->pixel.values[f];
+            m->pixel.known |= UINT64_C(1) << f;
+            m->pixel.values[f] = r->pixel.values[f];
         }
-    if (m.indirect_count) {
-        m.indirect[0] = (mh3_pack_indirect_stage){15, (uint8_t)r->texture_maps[2], (uint8_t)r->texture_maps[2], 0, 0};
-        m.indirect_matrix[0].known = 127;
-        m.indirect_matrix[0].scale_exponent = r->indirect_exponent;
+    if (m->indirect_count) {
+        m->indirect[0] = (mh3_pack_indirect_stage){15, (uint8_t)r->texture_maps[2], (uint8_t)r->texture_maps[2], 0, 0};
+        m->indirect_matrix[0].known = 127;
+        m->indirect_matrix[0].scale_exponent = r->indirect_exponent;
 
         for (uint32_t k = 0; k < 6; k++) {
             int32_t coefficient = (int32_t)(r->indirect_matrix[k] * 1024.0f);
@@ -135,11 +137,9 @@ void mh3_effect_material_apply(const mh3_effect_material *r, const mh3_native_ma
             if (coefficient >= 1024)
                 coefficient -= 2048;
 
-            m.indirect_matrix[0].coefficients[k] = (int16_t)coefficient;
+            m->indirect_matrix[0].coefficients[k] = (int16_t)coefficient;
         }
     }
-
-    *out = m;
 }
 
 void mh3_effect_color(uint8_t source, const uint8_t colors[4][4], uint8_t out[3]) {
