@@ -153,6 +153,7 @@ void ProbeStepDependence(uint32_t step, RunTasks runTasks) {
 // animation results, effect calc, view matrices.
 uint32_t splitCalls[4][5];
 double splitFamilies[MH3_SPLIT_FAMILIES];
+uint32_t splitScopes[MH3_SPLIT_FAMILIES];
 #endif
 } // namespace
 #ifdef MH3_DEVELOPMENT
@@ -164,6 +165,7 @@ void MH3FrameSplitCall(unsigned kind) {
 }
 void MH3FrameSplitTime(unsigned family, std::chrono::steady_clock::duration elapsed) {
     splitFamilies[family] += std::chrono::duration<double, std::milli>(elapsed).count();
+    ++splitScopes[family];
 }
 #endif
 namespace {
@@ -202,8 +204,12 @@ struct FrameSplit {
         const auto f = [this](unsigned family) { return splitFamilies[family] / frames; };
         std::printf("MH3 draw split: traverse %.2f model %.2f effect %.2f node callback %.2f font %.2f fade %.2f hud %.2f movie %.2f ms/frame\n", f(MH3_SPLIT_TRAVERSE),
                     f(MH3_SPLIT_MODEL), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD), f(MH3_SPLIT_MOVIE));
+        const auto n = [this](unsigned family) { return splitScopes[family] / frames; };
+        std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
+                    f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));
         std::memset(splitCalls, 0, sizeof splitCalls);
         std::memset(splitFamilies, 0, sizeof splitFamilies);
+        std::memset(splitScopes, 0, sizeof splitScopes);
         std::fflush(stdout);
         logic = draw = other = 0;
         frames = 0;

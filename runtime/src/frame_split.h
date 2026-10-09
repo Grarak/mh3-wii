@@ -15,6 +15,11 @@ enum MH3SplitFamily : unsigned {
     MH3_SPLIT_FADE,
     MH3_SPLIT_HUD,
     MH3_SPLIT_MOVIE,
+    // Parts of the model family: material scope preparation, shape/item
+    // preparation (pose, matrices, selectors) and the packet record.
+    MH3_SPLIT_MATERIAL_PREP,
+    MH3_SPLIT_SHAPE_PREP,
+    MH3_SPLIT_MODEL_RECORD,
     MH3_SPLIT_FAMILIES
 };
 void MH3FrameSplitCall(unsigned kind);

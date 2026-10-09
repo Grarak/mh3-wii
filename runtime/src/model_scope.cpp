@@ -521,11 +521,15 @@ void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32
     if (capture.itemCount == capture.items.size())
         capture.items.emplace_back();
     auto& item = capture.items[capture.itemCount];
-    if (!PrepareModelItem(capture, item, reference, direct_position, direct_normal))
-        return;
+    {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
+        if (!PrepareModelItem(capture, item, reference, direct_position, direct_normal))
+            return;
+    }
     item.coordinate_sizes = coordinate_sizes;
     if (&capture == &scratch)
         return;
+    MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
     RecordNativeModelDraw(uint32_t(capture.itemCount++));
 }
 void BeginNativeModelDraw() {
@@ -584,10 +588,14 @@ extern "C" void MH3_ModelIndirectMatrices(CpuContext* cpu) {
 REGISTER_NATIVE_FUNCTION_AS(0x80077814, MH3_ModelIndirectMatrices, "ModelIndirectMatrices");
 extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
     TraceNativeModelDispatch(cpu);
-    const auto scope = Scope(cpu->gpr[3], cpu->gpr[8]);
-    const bool ignore = !scope.material_address || (cpu->gpr[7] & 16);
-    PrepareContext context{};
-    Checked(mh3_model_material_prepare_scope(&scope, cpu->gpr[7], cpu->gpr[9], ignore, PrepareStep, &context));
+    mh3_model_material_scope scope;
+    {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_MATERIAL_PREP);
+        scope = Scope(cpu->gpr[3], cpu->gpr[8]);
+        const bool ignore = !scope.material_address || (cpu->gpr[7] & 16);
+        PrepareContext context{};
+        Checked(mh3_model_material_prepare_scope(&scope, cpu->gpr[7], cpu->gpr[9], ignore, PrepareStep, &context));
+    }
     uint32_t visible = 0;
     Checked(mh3_res_runtime_shape_visible(&MH3NativeResourceMemory(), cpu->gpr[4], &visible));
     if (!visible)
@@ -595,6 +603,7 @@ extern "C" void MH3_ModelDispatch(CpuContext* cpu) {
     if (scope.fur_address)
         throw std::runtime_error("Fur model needs native sampled-shell material preparation");
     if (!(cpu->gpr[7] & 2)) {
+        MH3_SPLIT_SCOPE(MH3_SPLIT_SHAPE_PREP);
         PrePrimitive(cpu->gpr[4]);
         Replacements(cpu->gpr[4], scope);
     }
