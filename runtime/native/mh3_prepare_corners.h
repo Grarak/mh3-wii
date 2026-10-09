@@ -45,7 +45,7 @@ typedef struct {
     uint32_t batch_count;
     mh3_prepare_sink indices;
 
-    /* GPU skinning (docs/gpu-skinning.md): the model's skin tables, or NULL
+    /* GPU skinning (docs/optimizations/rendering/gpu-skinning.md): the model's skin tables, or NULL
      * for palette batches only. A shape is written skinned when its
      * selectors allow it: its rows go to skin_rows (MH3_SKIN_MAX_ROWS);
      * skin_lookup (2 * MH3_SKIN_MAX_MATRICES bytes) is scratch. */
@@ -53,14 +53,6 @@ typedef struct {
     mh3_skin_row *skin_rows;
     uint8_t *skin_lookup;
 } mh3_corner_workspace;
-
-/* Texgen kinds of a skinned shape's indexed coordinates (M3SK). */
-enum {
-    MH3_SKIN_TEXGEN_NONE = 0,
-    MH3_SKIN_TEXGEN_POSITION = 1,
-    MH3_SKIN_TEXGEN_ENVIRONMENT = 2,
-    MH3_SKIN_TEXGEN_IDENTITY = 3
-};
 
 typedef struct {
     mh3_pack_layout layout;
@@ -85,7 +77,7 @@ typedef struct {
 mh3_corners_status mh3_prepare_shape(const mh3_res_model *, uint32_t shape, const mh3_corner_workspace *, mh3_prepared_corners *, size_t *error_offset);
 /* Serialize prepared batches as M3PL v1 into an explicit bounded caller span. */
 mh3_corners_status mh3_prepare_palettes(const mh3_prepared_corners *, const mh3_corner_workspace *, uint8_t *, size_t, size_t *);
-/* Serialize a skinned shape's palette rows as M3SK v1 (docs/gpu-skinning.md). */
+/* Serialize a skinned shape's palette rows as M3SK v1 (docs/optimizations/rendering/gpu-skinning.md). */
 mh3_corners_status mh3_prepare_skin_palette(const mh3_prepared_corners *, const mh3_corner_workspace *, uint8_t *, size_t, size_t *);
 #ifdef __cplusplus
 }

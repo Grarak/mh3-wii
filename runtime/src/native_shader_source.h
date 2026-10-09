@@ -81,11 +81,15 @@ struct NativeShaderVariant {
     // texture role 0 (effect particles' colour ramps): a program with only
     // that input's arithmetic per fragment.
     bool basic_lerp = false;
+
+    // Mesh only: GPU skinning (docs/gpu-skinning.md), four palette rows and
+    // weights per vertex instead of the GX matrix selectors.
+    bool skinned = false;
     bool operator==(const NativeShaderVariant&) const = default;
 };
 
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 17, "update NativeShader*Key, NativeShader*Keys() and docs/vita-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 18, "update NativeShader*Key, NativeShader*Keys() and docs/vita-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
 // the GXM shader bank holds one program per key (docs/vita-shader-bank.md).
@@ -96,6 +100,7 @@ struct NativeShaderVertexKey {
     uint8_t lights = 0;                // Spot only
     NativeShaderTexgen texgen[3] = {}; // Mesh only
     bool material_gpu = false;
+    bool skinned = false; // Mesh only
     auto operator<=>(const NativeShaderVertexKey&) const = default;
 };
 

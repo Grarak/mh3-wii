@@ -459,15 +459,47 @@ void CopyHostOrder(uint8_t* to, const uint8_t* from, size_t bytes) {
     }
 }
 
-NativePoseVersion* CopyPose(const mh3_matrix_sources& live) {
+// The skin view the view pass recorded for a position array (GPU skinning):
+// the bones' world rows as the view pass saw them, in host order. Copied
+// there, not at the draw: in the overlapped draw the next logic step rewrites
+// the world arrays while the draw thread captures poses.
+struct SkinView {
+    float camera[12];
+    uint32_t count, total;
+    std::vector<uint8_t> bones;
+};
+
+FastMap<uint32_t, SkinView> skinViews;
+
+// The version's skin bones are those of `view` (or both are absent).
+bool SameSkinBones(const NativePoseVersion& version, const SkinView* view) {
+    if (!view)
+        return !version.bone_count;
+
+    return version.bone_first == view->count && version.bone_count == view->total - view->count && !std::memcmp(version.camera, view->camera, sizeof view->camera) &&
+           !std::memcmp(version.bones, view->bones.data(), view->bones.size());
+}
+
+NativePoseVersion* CopyPose(const mh3_matrix_sources& live, const SkinView* view) {
     size_t total = 0;
 
     for (unsigned i = 0; i < 3; ++i)
         total += PoseTable(live, i).bytes.data ? PoseTable(live, i).bytes.size : 0;
 
-    auto* version = AcquirePose(total);
+    const size_t boneBytes = view ? size_t(view->total - view->count) * 48 : 0;
+    auto* version = AcquirePose(total + boneBytes);
     version->sources = live;
+    version->bone_first = version->bone_count = 0;
+    version->bones = nullptr;
     uint8_t* at = version->bytes;
+
+    if (view) {
+        std::memcpy(at + total, view->bones.data(), boneBytes);
+        version->bone_first = view->count;
+        version->bone_count = view->total - view->count;
+        version->bones = reinterpret_cast<const float(*)[12]>(at + total);
+        std::memcpy(version->camera, view->camera, sizeof view->camera);
+    }
 
     for (auto* table : {&version->sources.positions, &version->sources.normals, &version->sources.environment}) {
         if (!table->bytes.data)
@@ -488,10 +520,22 @@ NativePoseVersion* CopyPose(const mh3_matrix_sources& live) {
 }
 } // namespace
 
+void PublishNativeModelSkinView(uint32_t position, const float camera[12], uint32_t world, uint32_t count, uint32_t total) {
+    auto& view = skinViews[position];
+    std::memcpy(view.camera, camera, sizeof view.camera);
+    view.count = count;
+    view.total = total;
+    view.bones.resize(size_t(total - count) * 48);
+    CopyHostOrder(view.bones.data(), GuestRange(world + count * 48, view.bones.size()), view.bones.size());
+}
+
 const NativePoseVersion* VersionNativeModelPose(const uint32_t addresses[3], const mh3_matrix_sources& live) {
     MH3_POSE_STAT(++poseStats.captures;)
     if (!addresses[0])
         return &emptyPose;
+
+    const auto skin = skinViews.find(addresses[0]);
+    const SkinView* view = skin != skinViews.end() ? &skin->second : nullptr;
 
     const uint64_t sequence = NativeFramePacketSequence();
     SweepPoses(sequence);
@@ -511,14 +555,14 @@ const NativePoseVersion* VersionNativeModelPose(const uint32_t addresses[3], con
 
         // CalcView rewrites every view each frame; an unmoved camera over an
         // unmoved model writes the same matrices again.
-        if (SamePoseLayout(binding.version->sources, live) && SamePoseContents(*binding.version, live)) {
+        if (SamePoseLayout(binding.version->sources, live) && SamePoseContents(*binding.version, live) && SameSkinBones(*binding.version, view)) {
             MH3_POSE_STAT(++poseStats.same_contents;)
             binding.generation = live.generation;
             return binding.version;
         }
     }
 
-    auto* version = CopyPose(live);
+    auto* version = CopyPose(live, view);
     RetirePose(binding.version);
     std::memcpy(binding.address, addresses, sizeof binding.address);
     binding.generation = live.generation;

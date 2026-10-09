@@ -42,7 +42,10 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
 
     aurora::gl::MeshLayout out;
     out.stride = uint16_t(source.stride);
-    out.matrixIndexMask = uint16_t((source.flags >> 8) & 0x1ffu);
+
+    // A skinned mesh (docs/gpu-skinning.md) has rows and weights, no GX
+    // selector inputs.
+    out.matrixIndexMask = source.flags & MH3_LAYOUT_SKINNED ? 0 : uint16_t((source.flags >> 8) & 0x1ffu);
 
     for (unsigned i = 0; i < source.count; ++i) {
         const auto& a = source.attributes[i];
@@ -68,7 +71,7 @@ aurora::gl::MeshLayout Layout(const mh3_pack_layout& source) {
             MH3_THROW(std::runtime_error("Unsupported compact model attribute format"));
         }
 
-        if (a.semantic > 14)
+        if (a.semantic > 16)
             MH3_THROW(std::runtime_error("Compact model needs an unsupported attribute producer"));
 
         out.attributes.push_back({a.offset, uint8_t(a.semantic), a.components, format});

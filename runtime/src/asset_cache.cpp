@@ -27,6 +27,10 @@ using namespace VitaLauncher;
 
 // Bump when converted pack contents change: the whole cache is rebuilt.
 constexpr const char* Version = "mh3-asset-cache 1\n";
+
+// The converted models' own format, so a model converter change reconverts
+// only the models (2: GPU skinning, docs/gpu-skinning.md).
+constexpr const char* ModelFormat = "mh3-model-packs 2\n";
 constexpr uint32_t RecordMagic = 0x5243334d; // "M3CR"
 constexpr unsigned Workers = 3;
 #ifdef __vita__
@@ -223,6 +227,12 @@ struct AssetCache::Impl {
             std::filesystem::create_directories(cache / "textures");
             std::filesystem::create_directories(cache / "models");
             CheckStatus(Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)}));
+        }
+
+        if (const auto format = Load(cache / "models" / "format.txt"); std::string(format.begin(), format.end()) != ModelFormat) {
+            std::filesystem::remove_all(cache / "models");
+            std::filesystem::create_directories(cache / "models");
+            CheckStatus(Publish(cache / "models" / "format.txt", {reinterpret_cast<const uint8_t*>(ModelFormat), std::strlen(ModelFormat)}));
         }
 
         LoadIndex();

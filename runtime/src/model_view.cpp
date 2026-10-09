@@ -1,6 +1,7 @@
 // Thin ABI/callback boundary for 80071CAC. The portable C producer performs
 // typed CPU preparation; no GX, rendering fallback or anonymous pose marking.
 #include "abi_bridge.h"
+#include <aurora/fast_map.h>
 #include "fatal.h"
 #include "guest_span.h"
 #include "guest_call.h"
@@ -10,6 +11,7 @@
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/mh3_model_view.h"
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -39,6 +41,59 @@ mh3_res_mut_span Mutable(uint32_t address, size_t bytes) {
 size_t Aligned(size_t size) {
     return (size + 31) & ~size_t(31);
 }
+
+} // namespace
+
+// The model's matrix-to-node map count (MDL0 info + 0x24): its matrix IDs,
+// skin bones included; 0 for other revisions or without the map.
+static uint32_t MatrixCount(const mh3_res_model& model) {
+    const size_t info = model.offset + 0x4c;
+    size_t mapping = 0;
+
+    if (model.version != 11 || info + 64 > model.offset + model.size || mh3_res_relative(model.container, info, info + 0x24, 4, &mapping) != MH3_RES_OK ||
+        mapping + 4 > model.offset + model.size)
+        return 0;
+
+    const uint8_t* p = model.container.data + mapping;
+    return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
+}
+
+// GPU skinning (docs/gpu-skinning.md): skin bones past a view pass's `count`
+// view matrices (the model's other matrix IDs) have only world matrices; the
+// pose version of these arrays keeps them with the camera. Every view pass
+// (DMA, plain, locked cache) calls this with its registers r3, r5, r8, r7, r9.
+void PublishSkinView(uint32_t position, uint32_t world, uint32_t camera, uint32_t count, uint32_t reference) {
+    // The reference is a handle (often on the caller's stack); its model
+    // data keys the counts.
+    uint32_t resource = 0;
+
+    if (mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &resource) != MH3_RES_OK)
+        return;
+
+    static FastMap<uint32_t, uint32_t> totals;
+    auto [it, added] = totals.try_emplace(resource, 0u);
+
+    if (added) {
+        mh3_res_memory_view bank{};
+        mh3_res_model model{};
+
+        if (mh3_res_runtime_map(&MH3NativeResourceMemory(), resource, 0x70, &bank) == MH3_RES_OK && mh3_res_model_open(bank.span, bank.offset, &model) == MH3_RES_OK)
+            it->second = MatrixCount(model);
+    }
+
+    if (it->second <= count)
+        return;
+
+    float view[12];
+
+    for (size_t r = 0; r < 3; r++)
+        for (size_t c = 0; c < 4; c++)
+            view[r * 4 + c] = Memory::ReadFloat32(camera + uint32_t(16 * r + 4 * c));
+
+    PublishNativeModelSkinView(position, view, world, count, it->second);
+}
+
+namespace {
 
 struct CallbackContext {
     CpuContext* cpu;
@@ -123,6 +178,8 @@ void Produce(CpuContext* cpu) {
     CallbackContext context{cpu, {position, normal, environment}, models, camera, reference};
     const mh3_model_view_callbacks callbacks{&context, Billboard, BeforeStore};
     Checked(mh3_model_view_dma(&input, &callbacks));
+
+    PublishSkinView(position, models, camera, count, reference);
 }
 } // namespace
 

@@ -13,12 +13,20 @@ inline void validate_mesh_layout(const gl::MeshLayout& layout) {
   unsigned used = 0;
 
   for (const auto& attribute : layout.attributes) {
-    if (attribute.location >= 15 || (used & (1u << attribute.location)) || !attribute.components || attribute.components > 4)
+    if (attribute.location >= 17 || (used & (1u << attribute.location)) || !attribute.components || attribute.components > 4)
       AURORA_THROW(std::runtime_error("Invalid native mesh attribute"));
 
     used |= 1u << attribute.location;
 
-    if (attribute.location >= 12) {
+    // GPU skinning (docs/optimizations/rendering/gpu-skinning.md): 15 four raw U8 palette rows, 16
+    // four F32 weights.
+    if (attribute.location == 15) {
+      if (attribute.format != gl::MeshAttributeFormat::U8 || attribute.components != 4)
+        AURORA_THROW(std::runtime_error("Invalid native mesh skin rows"));
+    } else if (attribute.location == 16) {
+      if (attribute.format != gl::MeshAttributeFormat::F32 || attribute.components != 4)
+        AURORA_THROW(std::runtime_error("Invalid native mesh skin weights"));
+    } else if (attribute.location >= 12) {
       if (attribute.format != gl::MeshAttributeFormat::U8 || attribute.components != (attribute.location == 14 ? 1 : 4))
         AURORA_THROW(std::runtime_error("Invalid native mesh matrix selector input"));
     } else if (attribute.format == gl::MeshAttributeFormat::U8) {

@@ -37,6 +37,13 @@ typedef struct mh3_resolved_mesh_submit {
     const mh3_model_texcoord_sizes *texcoord_sizes;
     uint32_t first_index, index_count;
     const mh3_pack_palette_batch *palette_batch; /* admitted typed batch; null for rigid */
+
+    /* Skinned (docs/optimizations/rendering/gpu-skinning.md): the whole mesh in one submit, its
+     * palette rows view-space 3x4 matrices (rigid rows the draw matrix, bone
+     * rows the skinning matrix); palette and palette_batch are null. */
+    const float (*skin_palette)[12];
+    uint32_t skin_row_count;
+    uint8_t skin_texgen[8];
 } mh3_resolved_mesh_submit;
 
 /* Admit once per resident generation. Metadata-only packs may have both GPU
@@ -52,6 +59,11 @@ typedef struct mh3_prepared_mesh {
     /* Owner allocates/decodes these once after prepare; no binary reads during
      * bind_batch. NULL until admitted; non-indexed meshes have count0. */
     const mh3_pack_palette_batch *palette_batches;
+
+    /* Skinned meshes: the M3SK rows, decoded by the owner like the batches. */
+    uint32_t skin_row_count;
+    const mh3_pack_skin_row *skin_rows;
+    uint8_t skin_texgen[8];
 } mh3_prepared_mesh;
 
 typedef struct mh3_prepared_material {
@@ -109,6 +121,10 @@ mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint
                                          mh3_resolved_mesh_submit *out);
 mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uint32_t batch_index, uint64_t resident_generation, uint64_t source_generation, uint64_t palette_generation,
                                           const mh3_model_palette *palette, mh3_resolved_mesh_submit *out);
+/* A skinned mesh's single submit with its palette rows (skin_row_count
+ * view-space 3x4 matrices, borrowed until the submit returns). */
+mh3_pack_status mh3_model_mesh_bind_skin(const mh3_prepared_mesh *prepared, uint64_t resident_generation, uint64_t source_generation, uint64_t pose_generation,
+                                         const float (*rows)[12], mh3_resolved_mesh_submit *out);
 /* Convenience tooling/test API. Runtime admission should use prepare followed
  * by bind_pose, rather than decoding immutable metadata on every draw.
  * Resolve metadata and the attribute contract, and bind the rigid palette. This

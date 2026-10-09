@@ -36,6 +36,7 @@ struct Pack {
     uint64_t generation;
     std::vector<mh3_prepared_mesh> meshes;
     std::vector<std::vector<mh3_pack_palette_batch>> palette_batches;
+    std::vector<std::vector<mh3_pack_skin_row>> skin_rows;
     std::vector<NativePreparedMaterial> materials;
     std::vector<uint32_t> material_catalog_indices;
     std::vector<std::array<mh3_catalog_material_block, 5>> material_blocks;
@@ -802,9 +803,10 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
         }
     }
 
-    Pack admitted{pack, catalog, handle, generation, {}, {}, {}, {}, {}, {}};
+    Pack admitted{pack, catalog, handle, generation, {}, {}, {}, {}, {}, {}, {}};
     admitted.meshes.resize(pack->counts[MH3_PACK_MESHES]);
     admitted.palette_batches.resize(admitted.meshes.size());
+    admitted.skin_rows.resize(admitted.meshes.size());
 
     for (uint32_t i = 0; i < catalog->model_count; i++) {
         mh3_catalog_model model{};
@@ -835,6 +837,21 @@ Status RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalo
                     if (mh3_mesh_pack_palette_batch(&serialized, n, &batches[n]) != MH3_PACK_OK)
                         return Status::Error("Native indexed matrix record admission failed");
                 prepared.palette_batches = batches.data();
+            }
+
+            if (prepared.skin_row_count) {
+                mh3_pack_skin skin{};
+
+                if (mh3_mesh_pack_skin(pack, resource.pack_index, &skin) != MH3_PACK_OK)
+                    return Status::Error("Native skinned mesh admission failed");
+
+                auto& rows = admitted.skin_rows[resource.pack_index];
+                rows.resize(skin.count);
+
+                for (uint32_t n = 0; n < skin.count; n++)
+                    if (mh3_mesh_pack_skin_row(&skin, n, &rows[n]) != MH3_PACK_OK)
+                        return Status::Error("Native skinned mesh row admission failed");
+                prepared.skin_rows = rows.data();
             }
         }
     }

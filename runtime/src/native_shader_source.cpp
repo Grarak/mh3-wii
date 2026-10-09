@@ -225,10 +225,19 @@ float fog_distance(vec4 clip) {
 )GLSL";
 
 constexpr const char* GlslMeshVertex = R"GLSL(
+#if SKINNED
+// The mesh's palette rows (docs/gpu-skinning.md): three vec4 per matrix.
+layout(std140) uniform Palette {
+    vec4 rows[765];
+} palette;
+layout(location=10) in vec4 a_bones;
+layout(location=11) in vec4 a_weights;
+#else
 layout(std140) uniform Palette {
     mat3x4 position[20];
     mat3x4 normal[10];
 } palette;
+#endif
 layout(location=0) in vec3 a_position;
 layout(location=1) in vec3 a_normal;
 layout(location=2) in vec4 a_color0;
@@ -248,15 +257,25 @@ out float v_fog;
 // mode.y bits: 1 projective (three-row result), 2 normalize, 4 main identity,
 // 8 post identity, 16 main from the palette slot in the role selector, 32 post
 // from the role's Animated SRT (MATERIAL_GPU).
+#if SKINNED
+// m: the vertex's blended matrix rows; n: its normal (environment) matrix rows.
+vec2 texgen(int role, vec2 uv, vec4 m0, vec4 m1, vec4 m2, vec3 n0, vec3 n1, vec3 n2, vec3 position, vec3 normal) {
+#else
 vec2 texgen(int role, vec2 uv, float selector, vec3 position, vec3 normal) {
+#endif
     Texgen t = draw.texgen[role];
     int bits = t.mode.y;
     vec4 source = t.mode.x == 0 ? vec4(position, 1.0) : t.mode.x == 1 ? vec4(normal, 1.0) : vec4(uv, 1.0, 1.0);
     vec3 coordinate = source.xyz;
     if ((bits & 16) != 0) {
+#if SKINNED
+        // 64: the environment matrix (the normal matrix, no translation).
+        coordinate = (bits & 64) != 0 ? vec3(dot(source.xyz, n0), dot(source.xyz, n1), dot(source.xyz, n2)) : vec3(dot(source, m0), dot(source, m1), dot(source, m2));
+#else
         int slot = int(selector);
         if (slot < 20)
             coordinate = source * palette.position[slot];
+#endif
     } else if ((bits & 4) == 0)
         coordinate = source * t.main;
     if ((bits & 1) == 0)
@@ -275,12 +294,39 @@ vec2 texgen(int role, vec2 uv, float selector, vec3 position, vec3 normal) {
 }
 vec2 affine(int role, vec2 uv) { return (vec4(uv, 1.0, 1.0) * draw.texgen[role].main).xy; }
 void main() {
+#if SKINNED
+    // M = sum weight * row matrix; its normal matrix is the inverse-transpose
+    // (cofactor / det), the plain 3x3 when singular, as the game's view pass.
+    ivec4 b = ivec4(a_bones) * 3;
+    vec4 w = a_weights;
+    vec4 m0 = w.x * palette.rows[b.x] + w.y * palette.rows[b.y] + w.z * palette.rows[b.z] + w.w * palette.rows[b.w];
+    vec4 m1 = w.x * palette.rows[b.x + 1] + w.y * palette.rows[b.y + 1] + w.z * palette.rows[b.z + 1] + w.w * palette.rows[b.w + 1];
+    vec4 m2 = w.x * palette.rows[b.x + 2] + w.y * palette.rows[b.y + 2] + w.z * palette.rows[b.z + 2] + w.w * palette.rows[b.w + 2];
+    vec3 n0 = cross(m1.xyz, m2.xyz), n1 = cross(m2.xyz, m0.xyz), n2 = cross(m0.xyz, m1.xyz);
+    float det = dot(m0.xyz, n0);
+    if (abs(det) < 1e-36) {
+        n0 = m0.xyz;
+        n1 = m1.xyz;
+        n2 = m2.xyz;
+    } else {
+        n0 /= det;
+        n1 /= det;
+        n2 /= det;
+    }
+    vec4 p = vec4(a_position, 1.0);
+    vec3 position = vec3(dot(p, m0), dot(p, m1), dot(p, m2));
+#else
     int slot = (draw.flags.x & 1) != 0 ? int(a_select) : 0;
     vec3 position = vec4(a_position, 1.0) * palette.position[slot];
+#endif
     vec4 projected = vec4(position, 1.0) * draw.proj;
     vec4 vertex = (draw.flags.x & 2) != 0 ? a_color0 : vec4(1.0);
 #if LIT
+#if SKINNED
+    vec3 normal = vec3(dot(a_normal, n0), dot(a_normal, n1), dot(a_normal, n2));
+#else
     vec3 normal = vec4(a_normal, 0.0) * palette.normal[slot];
+#endif
     normal = dot(normal, normal) > 1e-10 ? normalize(normal) : normal;
     v_color0 = light_channel(position, normal, vertex);
 #else
@@ -656,20 +702,37 @@ float fog_distance(float4 clip) {
 )CG";
 
 constexpr const char* CgMeshVertex = R"CG(
+#if SKINNED
+// The mesh's palette rows (docs/gpu-skinning.md): three float4 per matrix.
+struct Palette {
+    float4 rows[765];
+};
+#else
 struct Palette {
     float4x3 position[20];
     float4x3 normal[10];
 };
+#endif
 uniform Palette palette : BUFFER[2];
+#if SKINNED
+// m: the vertex's blended matrix rows; n: its normal (environment) matrix rows.
+float2 texgen(int role, float2 uv, float4 m0, float4 m1, float4 m2, float3 n0, float3 n1, float3 n2, float3 position, float3 normal) {
+#else
 float2 texgen(int role, float2 uv, float selector, float3 position, float3 normal) {
+#endif
     Texgen t = draw.texgen[role];
     int bits = t.mode.y;
     float4 source = t.mode.x == 0 ? float4(position, 1.0f) : t.mode.x == 1 ? float4(normal, 1.0f) : float4(uv, 1.0f, 1.0f);
     float3 coordinate = source.xyz;
     if ((bits & 16) != 0) {
+#if SKINNED
+        // 64: the environment matrix (the normal matrix, no translation).
+        coordinate = (bits & 64) != 0 ? float3(dot(source.xyz, n0), dot(source.xyz, n1), dot(source.xyz, n2)) : float3(dot(source, m0), dot(source, m1), dot(source, m2));
+#else
         int slot = int(selector);
         if (slot < 20)
             coordinate = mul(source, palette.position[slot]);
+#endif
     } else if ((bits & 4) == 0)
         coordinate = mul(source, t.main);
     if ((bits & 1) == 0)
@@ -687,15 +750,48 @@ float2 texgen(int role, float2 uv, float selector, float3 position, float3 norma
 }
 float2 affine(int role, float2 uv) { return mul(float4(uv, 1.0f, 1.0f), draw.texgen[role].main).xy; }
 void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, float2 a_uv1, float2 a_uv2,
+#if SKINNED
+          float4 a_bones, float4 a_weights,
+#else
           float a_select, float a_select0, float a_select1, float a_select2,
+#endif
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
           float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float out v_fog : TEXCOORD3) {
+#if SKINNED
+    // M = sum weight * row matrix; its normal matrix is the inverse-transpose
+    // (cofactor / det), the plain 3x3 when singular, as the game's view pass.
+    int4 b = int4(a_bones) * 3;
+    float4 w = a_weights;
+    float4 m0 = w.x * palette.rows[b.x] + w.y * palette.rows[b.y] + w.z * palette.rows[b.z] + w.w * palette.rows[b.w];
+    float4 m1 = w.x * palette.rows[b.x + 1] + w.y * palette.rows[b.y + 1] + w.z * palette.rows[b.z + 1] + w.w * palette.rows[b.w + 1];
+    float4 m2 = w.x * palette.rows[b.x + 2] + w.y * palette.rows[b.y + 2] + w.z * palette.rows[b.z + 2] + w.w * palette.rows[b.w + 2];
+    float3 n0 = cross(m1.xyz, m2.xyz);
+    float3 n1 = cross(m2.xyz, m0.xyz);
+    float3 n2 = cross(m0.xyz, m1.xyz);
+    float det = dot(m0.xyz, n0);
+    if (abs(det) < 1e-36f) {
+        n0 = m0.xyz;
+        n1 = m1.xyz;
+        n2 = m2.xyz;
+    } else {
+        n0 /= det;
+        n1 /= det;
+        n2 /= det;
+    }
+    float4 p = float4(a_position, 1.0f);
+    float3 position = float3(dot(p, m0), dot(p, m1), dot(p, m2));
+#else
     int slot = (draw.flags.x & 1) != 0 ? int(a_select) : 0;
     float3 position = mul(float4(a_position, 1.0f), palette.position[slot]);
+#endif
     float4 projected = mul(float4(position, 1.0f), draw.proj);
     float4 vertex = (draw.flags.x & 2) != 0 ? a_color0 : float4(1.0f, 1.0f, 1.0f, 1.0f);
 #if LIT
+#if SKINNED
+    float3 normal = float3(dot(a_normal, n0), dot(a_normal, n1), dot(a_normal, n2));
+#else
     float3 normal = mul(float4(a_normal, 0.0f), palette.normal[slot]);
+#endif
     normal = dot(normal, normal) > 1e-10f ? normalize(normal) : normal;
     v_color0 = light_channel(position, normal, vertex);
 #else
@@ -909,7 +1005,7 @@ std::string TexgenOutputs(const NativeShaderVertexKey& key, bool cg) {
             out += "affine(" + r + ", a_uv" + r + ")";
             break;
         case NativeShaderTexgen::General:
-            out += "texgen(" + r + ", a_uv" + r + ", a_select" + r + ", a_position, a_normal)";
+            out += "texgen(" + r + ", a_uv" + r + (key.skinned ? ", m0, m1, m2, n0, n1, n2" : ", a_select" + r) + ", a_position, a_normal)";
             break;
         case NativeShaderTexgen::Srt:
             out += "srt2d(" + r + ", affine(" + r + ", a_uv" + r + "))";
@@ -923,7 +1019,7 @@ std::string TexgenOutputs(const NativeShaderVertexKey& key, bool cg) {
 }
 
 std::string VertexDefines(const NativeShaderVertexKey& key) {
-    return Define("LIT", int(key.lighting)) + Define("LIGHTS", key.lights) + Define("MATERIAL_GPU", key.material_gpu);
+    return Define("LIT", int(key.lighting)) + Define("LIGHTS", key.lights) + Define("MATERIAL_GPU", key.material_gpu) + Define("SKINNED", key.skinned);
 }
 
 bool PureModulate(const NativeShaderVariant& variant) {
@@ -975,6 +1071,8 @@ NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant
         key.lights = variant.lights;
     }
 
+    key.skinned = variant.vertex == NativeShaderVertex::Mesh && variant.skinned;
+
     if (variant.vertex == NativeShaderVertex::Mesh)
         for (unsigned role = 0; role < 3; ++role) {
             if (variant.texgen[role] == NativeShaderTexgen::Srt && !variant.material_gpu)
@@ -1014,14 +1112,15 @@ std::vector<NativeShaderVertexKey> NativeShaderVertexKeys() {
     for (unsigned vertex = 0; vertex < NativeShaderVertexCount; ++vertex)
         for (unsigned lighting = 0; lighting < NativeShaderLightingCount; ++lighting)
             for (unsigned lights = 0; lights <= NativeShaderMaxLights; ++lights)
-                for (unsigned gpu = 0; gpu < 2; ++gpu)
+                for (unsigned flags = 0; flags < 4; ++flags)
                     for (unsigned t0 = 0; t0 < NativeShaderTexgenCount; ++t0)
                         for (unsigned t1 = 0; t1 < NativeShaderTexgenCount; ++t1)
                             for (unsigned t2 = 0; t2 < NativeShaderTexgenCount; ++t2) {
                                 v.vertex = NativeShaderVertex(vertex);
                                 v.lighting = NativeShaderLighting(lighting);
                                 v.lights = uint8_t(lights);
-                                v.material_gpu = gpu != 0;
+                                v.material_gpu = flags & 1;
+                                v.skinned = flags & 2;
                                 v.texgen[0] = NativeShaderTexgen(t0);
                                 v.texgen[1] = NativeShaderTexgen(t1);
                                 v.texgen[2] = NativeShaderTexgen(t2);
@@ -1101,7 +1200,7 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
     for (const auto texgen : key.texgen)
         name += texgens[unsigned(texgen)];
 
-    return name + (key.material_gpu ? "_gpu" : "");
+    return name + (key.material_gpu ? "_gpu" : "") + (key.skinned ? "_skin" : "");
 }
 
 std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {

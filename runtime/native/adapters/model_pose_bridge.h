@@ -23,12 +23,29 @@ struct NativePoseVersion {
     mh3_matrix_sources sources;
     uint8_t* bytes;
     uint8_t size_class;
+
+    // GPU skinning (docs/gpu-skinning.md): skin bones whose matrix IDs lie
+    // beyond the view matrices have only world matrices. Rows [bone_first,
+    // bone_first + bone_count) of the model's world array (host order, in
+    // `bytes`) and the camera the view pass used for the view matrices.
+    uint32_t bone_first, bone_count;
+    const float (*bones)[12];
+    float camera[12];
 #ifdef MH3_DEVELOPMENT
     // Advances whenever the storage is reused for other arrays: an item that
     // renders after its version's reuse is a lifetime error (MH3_VERIFY=pose).
     std::atomic<uint32_t> epoch{0};
 #endif
 };
+
+/* View pass: a model whose skin bones lie beyond its `count` view matrices
+ * (matrix IDs below `total`) records its camera (row-major 3x4) and world
+ * array for the next pose version of the arrays at `position`. */
+void PublishNativeModelSkinView(uint32_t position, const float camera[12], uint32_t world, uint32_t count, uint32_t total);
+
+/* model_view.cpp: the view pass's side of it (registers r3 position, r5 world
+ * array, r8 camera, r7 count, r9 model reference). */
+void PublishSkinView(uint32_t position, uint32_t world, uint32_t camera, uint32_t count, uint32_t reference);
 
 /* Game thread: the version of the arrays at `addresses` that `live`
  * (ReadNativeModelPose of them) describes; without arrays (addresses[0] 0)

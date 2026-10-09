@@ -72,14 +72,23 @@ enum {
     MH3_LAYOUT_MATRIX_MASK_SHIFT = 8u
 };
 
-/* GPU skinning (docs/gpu-skinning.md): mesh flag 16 instead of 8, its last
+/* GPU skinning (docs/optimizations/rendering/gpu-skinning.md): mesh flag 16 instead of 8, its last
  * record word pointing to an M3SK blob; layout flag bit 17; semantic 15 holds
  * four raw U8 palette rows, semantic 16 four F32 weights. */
 enum {
     MH3_MESH_SKINNED = 16u,
     MH3_LAYOUT_SKINNED = 0x20000u,
     MH3_SEMANTIC_SKIN_ROWS = 15u,
-    MH3_SEMANTIC_SKIN_WEIGHTS = 16u
+    MH3_SEMANTIC_SKIN_WEIGHTS = 16u,
+    MH3_PACK_SKIN_MAX_ROWS = 255u
+};
+
+/* Texgen kinds of a skinned mesh's indexed coordinates (M3SK). */
+enum {
+    MH3_SKIN_TEXGEN_NONE = 0,
+    MH3_SKIN_TEXGEN_POSITION = 1,
+    MH3_SKIN_TEXGEN_ENVIRONMENT = 2,
+    MH3_SKIN_TEXGEN_IDENTITY = 3
 };
 
 typedef struct {
@@ -97,6 +106,24 @@ typedef struct {
 
 mh3_pack_status mh3_mesh_pack_palette_batches(const mh3_mesh_pack *pack, uint32_t mesh_index, mh3_pack_palette_batches *out);
 mh3_pack_status mh3_mesh_pack_palette_batch(const mh3_pack_palette_batches *batches, uint32_t index, mh3_pack_palette_batch *out);
+
+/* A skinned mesh's M3SK palette (docs/optimizations/rendering/gpu-skinning.md): rows rigid draw
+ * matrices (the view-space matrix itself) or skin bones (times their inverse
+ * bind matrix); texgen kinds MH3_SKIN_TEXGEN_* per indexed coordinate. */
+typedef struct {
+    uint32_t count;
+    uint8_t texgen[8];
+    mh3_pack_span bytes;
+} mh3_pack_skin;
+
+typedef struct {
+    uint16_t matrix;
+    uint8_t kind; /* 0 rigid, 1 skin bone */
+    float inverse_bind[12];
+} mh3_pack_skin_row;
+
+mh3_pack_status mh3_mesh_pack_skin(const mh3_mesh_pack *pack, uint32_t mesh_index, mh3_pack_skin *out);
+mh3_pack_status mh3_mesh_pack_skin_row(const mh3_pack_skin *skin, uint32_t index, mh3_pack_skin_row *out);
 typedef struct {
     uint32_t mesh_index, first_index, index_count, flags;
     float bounds_min[3], bounds_max[3], centroid[3];

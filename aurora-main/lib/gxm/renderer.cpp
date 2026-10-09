@@ -1670,7 +1670,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   if (found == r.meshes.end() || found->second.data() != buffer.data())
     AURORA_THROW(std::runtime_error("Resident mesh backing was retired"));
   // Same order as the Cg mesh entry point; a selector lane reads one byte.
-  static constexpr const char* Names[] = {"a_position", "a_normal", "a_color0", "a_uv0", "a_uv1", "a_uv2", "a_select", "a_select0", "a_select1", "a_select2"};
+  static constexpr const char* Names[] = {"a_position", "a_normal", "a_color0", "a_uv0", "a_uv1", "a_uv2", "a_select", "a_select0", "a_select1", "a_select2", "a_bones", "a_weights"};
   static_assert(std::size(Names) == std::tuple_size_v<decltype(inputs.location)>);
   VertexInput bound[std::size(Names)];
   unsigned count = 0;

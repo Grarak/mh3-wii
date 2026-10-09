@@ -86,6 +86,12 @@ struct ModelConverter::Workspace {
     std::vector<mh3_corner_tree_node> tree = std::vector<mh3_corner_tree_node>(65536);
     std::vector<uint16_t> corners = std::vector<uint16_t>(65536);
     std::vector<mh3_pack_palette_batch> batches = std::vector<mh3_pack_palette_batch>(16384);
+
+    // GPU skinning (docs/gpu-skinning.md): every indexed shape whose
+    // selectors allow it is converted skinned.
+    std::vector<mh3_skin_matrix> skinMatrices = std::vector<mh3_skin_matrix>(MH3_SKIN_MAX_MATRICES);
+    std::vector<mh3_skin_row> skinRows = std::vector<mh3_skin_row>(MH3_SKIN_MAX_ROWS);
+    std::vector<uint8_t> skinLookup = std::vector<uint8_t>(MH3_SKIN_MAX_MATRICES * 2);
     Memory indices, gpu;
     mh3_prepare_model_workspace Get() {
         indices.data.clear();
@@ -103,7 +109,9 @@ struct ModelConverter::Workspace {
         w.string_count = uint32_t(strings.size());
         w.plans = plans.data();
         w.plan_count = uint32_t(plans.size());
-        w.shape = {vertices.data(), vertices.size(), tree.data(), uint32_t(tree.size()), corners.data(), uint32_t(corners.size()), batches.data(), uint32_t(batches.size()), indices.Sink()};
+        w.shape = {vertices.data(),      vertices.size(),     tree.data(),     uint32_t(tree.size()), corners.data(), uint32_t(corners.size()), batches.data(),
+                   uint32_t(batches.size()), indices.Sink(), nullptr, skinRows.data(), skinLookup.data()};
+        w.skin_matrices = skinMatrices.data();
         w.indices = indices.Input();
         w.gpu = gpu.Sink();
         return w;

@@ -61,6 +61,29 @@ bool CullNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
 
     const auto& frustum = last.value;
 
+    // A skinned mesh (docs/optimizations/rendering/gpu-skinning.md): every vertex is a convex
+    // combination of its rows' transforms, so the mesh is outside when one
+    // plane rejects its bounds under every row matrix.
+    if (mesh.skin_palette) {
+        static const float* rowMatrices[MH3_PACK_SKIN_MAX_ROWS];
+        static mh3_cull_box rowBoxes[MH3_PACK_SKIN_MAX_ROWS];
+
+        for (uint32_t r = 0; r < mesh.skin_row_count; r++) {
+            rowMatrices[r] = mesh.skin_palette[r];
+
+            for (unsigned c = 0; c < 3; c++) {
+                rowBoxes[r].min[c] = mesh.mesh.bounds_min[c];
+                rowBoxes[r].max[c] = mesh.mesh.bounds_max[c];
+            }
+        }
+
+        if (!mh3_cull_boxes_outside(&frustum, rowMatrices, rowBoxes, mesh.skin_row_count))
+            return false;
+
+        culled.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
     // The position matrices the vertices select: the batch's required slots
     // when the layout carries PN selectors, else the current matrix (slot 0).
     const bool selectors = (mesh.layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) & 1;

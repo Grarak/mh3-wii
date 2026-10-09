@@ -215,9 +215,9 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog, const m
     if (r.mesh.model_id != model.model_id || r.mesh.source_id != shape_id || r.mesh.asset_id != resource.asset_id)
         return MH3_PACK_INVALID;
 
-    const int indexed = (r.mesh.flags & MH3_MESH_INDEXED_PALETTE) != 0;
+    const int indexed = (r.mesh.flags & MH3_MESH_INDEXED_PALETTE) != 0, skinned = (r.mesh.flags & MH3_MESH_SKINNED) != 0;
 
-    if (r.mesh.matrix_id < 0 && !indexed)
+    if (r.mesh.matrix_id < 0 && !indexed && !skinned)
         return MH3_PACK_UNSUPPORTED;
     /* Metadata admission is independent of GPU residency. A demand loader
      * can prepare immutable scalar layouts/ranges before allocating CDRAM.
@@ -234,6 +234,13 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog, const m
 
     for (uint32_t i = 0; i < r.layout.count; i++) {
         const mh3_pack_attribute a = r.layout.attributes[i];
+
+        if (skinned && (a.semantic == MH3_SEMANTIC_SKIN_ROWS || a.semantic == MH3_SEMANTIC_SKIN_WEIGHTS)) {
+            if (a.components != 4 || a.format != (a.semantic == MH3_SEMANTIC_SKIN_ROWS ? 0 : 9))
+                return MH3_PACK_UNSUPPORTED;
+
+            continue;
+        }
 
         if (a.semantic > 14 || (a.semantic >= 12 && (!indexed || a.format != 0 || a.components != (a.semantic == 14 ? 1 : 4))) || (a.semantic == 0 && (a.format != 9 || a.components != 3)) ||
             (a.semantic == 1 && ((a.format != 9 && a.format != 7) || a.components != 3)) || ((a.semantic == 2 || a.semantic == 3) && (a.format != 4 || a.components != 4)) ||
@@ -278,13 +285,24 @@ mh3_pack_status mh3_model_mesh_prepare(const mh3_model_catalog *catalog, const m
         prepared.palette_batch_count = batches.count;
     }
 
+    if (skinned) {
+        mh3_pack_skin skin;
+        status = mh3_mesh_pack_skin(pack, r.mesh_index, &skin);
+
+        if (status != MH3_PACK_OK)
+            return status;
+
+        prepared.skin_row_count = skin.count;
+        memcpy(prepared.skin_texgen, skin.texgen, sizeof skin.texgen);
+    }
+
     *out = prepared;
     return MH3_PACK_OK;
 }
 
 mh3_pack_status mh3_model_mesh_bind_pose(const mh3_prepared_mesh *prepared, uint64_t resident_generation, uint64_t source_generation, uint64_t pose_generation, const mh3_model_palette *palette,
                                          mh3_resolved_mesh_submit *out) {
-    if (prepared && prepared->palette_batch_count)
+    if (prepared && (prepared->palette_batch_count || prepared->skin_row_count))
         return MH3_PACK_UNSUPPORTED;
 
     if (!prepared || !out || !source_generation || !pose_generation || resident_generation != prepared->immutable.resident_generation)
@@ -309,6 +327,21 @@ mh3_pack_status mh3_model_mesh_bind_batch(const mh3_prepared_mesh *prepared, uin
     out->palette_batch = batch;
     out->palette = palette;
     out->pose_generation = palette_generation;
+    out->source_generation = source_generation;
+    return MH3_PACK_OK;
+}
+
+mh3_pack_status mh3_model_mesh_bind_skin(const mh3_prepared_mesh *prepared, uint64_t resident_generation, uint64_t source_generation, uint64_t pose_generation,
+                                         const float (*rows)[12], mh3_resolved_mesh_submit *out) {
+    if (!prepared || !out || !rows || !prepared->skin_row_count || !prepared->skin_rows || !source_generation || !pose_generation ||
+        resident_generation != prepared->immutable.resident_generation)
+        return MH3_PACK_INVALID;
+
+    *out = prepared->immutable;
+    out->skin_palette = rows;
+    out->skin_row_count = prepared->skin_row_count;
+    memcpy(out->skin_texgen, prepared->skin_texgen, sizeof out->skin_texgen);
+    out->pose_generation = pose_generation;
     out->source_generation = source_generation;
     return MH3_PACK_OK;
 }

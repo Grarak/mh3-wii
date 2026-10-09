@@ -10,6 +10,10 @@ typedef struct {
     mh3_matrix34 main, post;
     uint8_t source_row, projection, input_ab11, normalize;
     uint8_t main_identity, post_identity, main_slot, indexed;
+
+    /* A skinned mesh's indexed coordinate (indexed set): its main matrix is
+     * the vertex's blended matrix, MH3_SKIN_TEXGEN_POSITION or _ENVIRONMENT. */
+    uint8_t skin;
 } mh3_model_gpu_texgen;
 
 typedef struct {

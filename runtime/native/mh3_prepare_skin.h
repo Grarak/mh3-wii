@@ -5,11 +5,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* GPU skinning tables of one model (docs/gpu-skinning.md), from its NodeMix
+/* GPU skinning tables of one model (docs/optimizations/rendering/gpu-skinning.md), from its NodeMix
  * bytecode. Offline preparation only: no allocation, no live pose data. */
 enum {
     MH3_SKIN_INFLUENCES = 4,
-    MH3_SKIN_MAX_ROWS = 255,
+    MH3_SKIN_MAX_ROWS = 255, /* MH3_PACK_SKIN_MAX_ROWS */
     MH3_SKIN_MAX_MATRICES = 2048
 };
 

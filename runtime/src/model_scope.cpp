@@ -390,7 +390,7 @@ Status TryReadSources(const NativeModelOwner& owner, uint32_t shape, ShapeSource
     for (uint32_t i = 0; i < layout.count; i++) {
         const uint32_t semantic = layout.attributes[i].semantic;
 
-        if (semantic >= 12 && result.prepared->palette_batch_count)
+        if (semantic >= 12 && (result.prepared->palette_batch_count || result.prepared->skin_row_count))
             continue;
 
         if (semantic >= 12 || !(result.known & (1u << semantic)))
@@ -1464,7 +1464,7 @@ void PrepareModelItem(ModelItem& item, const ShapeContext& context, uint32_t dir
 
         // These are immutable authoritative primitive matrix indices packed by
         // the extractor, not replacements for one of the twelve array sources.
-        if (semantic >= 12 && prepared.palette_batch_count)
+        if (semantic >= 12 && (prepared.palette_batch_count || prepared.skin_row_count))
             continue;
 
         if (!BoundOriginal(originals, semantic))
@@ -1489,7 +1489,7 @@ void PrepareModelItem(ModelItem& item, const ShapeContext& context, uint32_t dir
     mh3_model_shape_input_unchecked(originals.matrix_id, originals.has_normal, Bytes(locations.texture_sources, 32).data,
         Memory::Read8(locations.current_valid) != 0, binding.address[0] != 0,
         direct_position ? &item.storage.direct_position : nullptr, direct_position && direct_normal ? &item.storage.direct_normal : nullptr, &item.input);
-    if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
+    if (item.input.matrix_id < 0 && !prepared.palette_batch_count && !prepared.skin_row_count)
         MH3_THROW(std::runtime_error("Envelope model requires converted skinning palette records"));
 
     PrepareNativeModelCoordinateSizes(Mode().texgens);
@@ -1525,6 +1525,43 @@ void PrepareModelItem(ModelItem& item, const ShapeContext& context, uint32_t dir
 
     if (item.input.matrix_id < 0)
         Memory::Write8(locations.current_valid, 0);
+}
+
+// a * b for 3x4 affine matrices (implicit last row 0 0 0 1).
+void Concat34(const float* a, const float* b, float* out) {
+    for (unsigned r = 0; r < 3; r++) {
+        for (unsigned c = 0; c < 4; c++)
+            out[r * 4 + c] = a[r * 4] * b[c] + a[r * 4 + 1] * b[4 + c] + a[r * 4 + 2] * b[8 + c];
+
+        out[r * 4 + 3] += a[r * 4 + 3];
+    }
+}
+
+// A skinned mesh's palette (docs/gpu-skinning.md) from its pose version: a
+// rigid row is the view-space draw matrix itself, a skin bone row its view
+// matrix (the camera times its world matrix past the view matrices) times the
+// bone's inverse bind matrix. Render thread only.
+const float (*SkinPalette(const mh3_prepared_mesh& prepared, const NativePoseVersion& pose))[12] {
+    static float rows[MH3_PACK_SKIN_MAX_ROWS][12];
+
+    for (uint32_t r = 0; r < prepared.skin_row_count; r++) {
+        const auto& row = prepared.skin_rows[r];
+        mh3_matrix34 matrix;
+
+        if (row.matrix < pose.sources.positions.count)
+            PackChecked(mh3_matrix_read34(pose.sources.positions, row.matrix, &matrix) == MH3_RES_OK ? MH3_PACK_OK : MH3_PACK_RANGE);
+        else if (row.kind && row.matrix - pose.bone_first < pose.bone_count)
+            Concat34(pose.camera, pose.bones[row.matrix - pose.bone_first], &matrix.v[0][0]);
+        else
+            PackChecked(MH3_PACK_RANGE);
+
+        if (row.kind)
+            Concat34(&matrix.v[0][0], row.inverse_bind, rows[r]);
+        else
+            std::memcpy(rows[r], &matrix, sizeof rows[r]);
+    }
+
+    return rows;
 }
 
 // Render thread: replays one recorded item against the Render owner's state.
@@ -1571,7 +1608,10 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
         // Every field is written by the bind (or the draw is abandoned).
         mh3_resolved_mesh_submit submit;
 
-        if (prepared.palette_batch_count) {
+        if (prepared.skin_row_count)
+            PackChecked(mh3_model_mesh_bind_skin(&prepared, owner.resident_generation, owner.source_generation, ReadNativeModelPaletteRevision(NativeOwner::Render),
+                                                 SkinPalette(prepared, *item.pose), &submit));
+        else if (prepared.palette_batch_count) {
             const auto& batch = prepared.palette_batches[batch_index];
             mh3_model_palette_apply_batch(&batch, &sources, &palette, &palette);
             EditNativeModelPalette(NativeOwner::Render);
@@ -1600,7 +1640,7 @@ void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const
         SubmitNativeModelMesh(submit);
     };
 
-    if (prepared.palette_batch_count)
+    if (prepared.palette_batch_count && !prepared.skin_row_count)
         for (uint32_t i = 0; i < prepared.palette_batch_count; i++)
             submit_one(i);
     else
@@ -1878,7 +1918,7 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
     for (uint32_t i = 0; i < (bound ? 0 : prepared.immutable.layout.count); i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
 
-        if (semantic >= 12 && prepared.palette_batch_count)
+        if (semantic >= 12 && (prepared.palette_batch_count || prepared.skin_row_count))
             continue;
 
         if (!BoundOriginal(originals, semantic))
@@ -1902,7 +1942,7 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
             mh3_matrix_read34_unchecked({Bytes(direct_normal, 48), 1, 48, 1}, 0, &item.storage.direct_normal);
     }
 
-    if (originals.matrix_id < 0 && !prepared.palette_batch_count)
+    if (originals.matrix_id < 0 && !prepared.palette_batch_count && !prepared.skin_row_count)
         MH3_THROW(std::runtime_error("Envelope model requires converted skinning palette records"));
 
     item.prep.matrix_id = originals.matrix_id;

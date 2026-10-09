@@ -43,6 +43,7 @@ enum {
     MH3_SHADE_TEXGEN_POST_IDENTITY = 8,
     MH3_SHADE_TEXGEN_INDEXED = 16,
     MH3_SHADE_TEXGEN_POST_SRT = 32, /* material GPU: post from the role's Animated SRT */
+    MH3_SHADE_TEXGEN_SKIN_ENVIRONMENT = 64, /* skinned INDEXED: the vertex's environment matrix, not its position matrix */
     MH3_SHADE_FLAG_MATRIX_SELECTOR = 1,
     MH3_SHADE_FLAG_COLOR0 = 2,
     MH3_SHADE_CHANNEL_COLOR_LIGHTING = 1,

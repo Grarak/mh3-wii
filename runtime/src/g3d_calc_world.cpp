@@ -570,8 +570,10 @@ extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
         return;
     }
 #endif
+    const uint32_t world = ctx->gpr[5], camera = ctx->gpr[8];
     CalcViewLc(ctx);
     PublishNativeModelPose(position, normal, environment, count, model_reference);
+    PublishSkinView(position, world, camera, count, model_reference);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800711FC, MH3_G3dCalcViewLc, "G3dCalcViewLc");
 
@@ -584,8 +586,10 @@ extern "C" void MH3_G3dCalcViewPlain(CpuContext* ctx) {
 #endif
     const uint32_t position = ctx->gpr[3], normal = ctx->gpr[4], environment = ctx->gpr[10];
     const uint32_t count = ctx->gpr[7], model_reference = ctx->gpr[9];
+    const uint32_t world = ctx->gpr[5], camera = ctx->gpr[8];
     PortCheck::Call(ctx, "G3dCalcViewPlain", func_80070884, CalcViewPlain);
     PublishNativeModelPose(position, normal, environment, count, model_reference);
+    PublishSkinView(position, world, camera, count, model_reference);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80070884, MH3_G3dCalcViewPlain, "G3dCalcViewPlain");
 

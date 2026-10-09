@@ -235,8 +235,14 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
     out->matrix_index_mask = (uint16_t)((mesh->layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) & 0x1ffu);
     out->position = out->normal = identity();
     uint32_t written_positions = 0, written_normals = 0, written_textures = 0;
+    /* Skinned (docs/optimizations/rendering/gpu-skinning.md): the shader blends the vertex's matrix
+     * from the mesh's own palette; no slots are written. */
+    const int skinned = mesh->skin_palette != NULL;
 
-    if (out->matrix_index_mask) {
+    if (skinned && (!mesh->skin_row_count || !(out->matrix_index_mask & 1)))
+        return MH3_RES_INVALID;
+
+    if (out->matrix_index_mask && !skinned) {
         const mh3_pack_palette_batch *batch = mesh->palette_batch;
         const uint16_t positions = batch->position_required | ((out->matrix_index_mask & 1) ? 0 : 1);
 
@@ -346,6 +352,16 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
             gen->main_slot = 20;
             gen->main_identity = indexed || v[MH3_TEXGEN_MATRIX_ROW] == 60;
 
+            if (skinned && indexed) {
+                // Kinds 1/2 select the vertex's blended position or
+                // environment matrix; 3 is the identity selector.
+                if (mesh->skin_texgen[i] < 1 || mesh->skin_texgen[i] > 3)
+                    return MH3_RES_INVALID;
+
+                gen->skin = mesh->skin_texgen[i] == 3 ? 0 : mesh->skin_texgen[i];
+                gen->indexed = gen->skin != 0;
+            }
+
             if (!indexed) {
                 main_matrix(mesh->palette, v[MH3_TEXGEN_MATRIX_ROW], &gen->main);
                 gen->main_slot = (uint8_t)(v[MH3_TEXGEN_MATRIX_ROW] / 3);
@@ -380,7 +396,8 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 }
             }
 
-            const unsigned q = indexed ? indexed_q(mesh, gen, i) : nonzero_q(mesh, gen) ? 1 : zero_q(mesh, gen) ? 2 : 0;
+            // A skinned coordinate's main matrix varies per vertex: uncertified.
+            const unsigned q = skinned && indexed ? 0 : indexed ? indexed_q(mesh, gen, i) : nonzero_q(mesh, gen) ? 1 : zero_q(mesh, gen) ? 2 : 0;
 
             if (q == 1)
                 out->nonzero_projective_mask |= 1u << i;
@@ -390,7 +407,7 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
     out->texcoord_mask = mask;
     /* A rigid draw's shader reads only slot 0 (written above); draws with
      * per-vertex selectors read the slots nothing loads as zero. */
-    if (!out->matrix_index_mask)
+    if (!out->matrix_index_mask || skinned)
         return MH3_RES_OK;
 
     for (unsigned slot = 0; slot < 10; slot++) {

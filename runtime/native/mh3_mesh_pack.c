@@ -170,6 +170,69 @@ mh3_pack_status mh3_mesh_pack_palette_batches(const mh3_mesh_pack *p, uint32_t i
     return MH3_PACK_OK;
 }
 
+mh3_pack_status mh3_mesh_pack_skin_row(const mh3_pack_skin *s, uint32_t index, mh3_pack_skin_row *out) {
+    if (!s || !out || index >= s->count || !fits(s->bytes, 24 + (size_t)index * 52, 52))
+        return MH3_PACK_INVALID;
+
+    const uint8_t *r = s->bytes.data + 24 + (size_t)index * 52;
+    mh3_pack_skin_row next;
+    next.matrix = le16(r);
+    next.kind = r[2];
+    floats(next.inverse_bind, r + 4, 12);
+
+    if (next.kind > 1 || r[3])
+        return MH3_PACK_INVALID;
+
+    for (unsigned i = 0; i < 12; i++)
+        if (next.kind ? !isfinite(next.inverse_bind[i]) : le32(r + 4 + i * 4) != 0)
+            return MH3_PACK_INVALID;
+
+    *out = next;
+    return MH3_PACK_OK;
+}
+
+mh3_pack_status mh3_mesh_pack_skin(const mh3_mesh_pack *p, uint32_t index, mh3_pack_skin *out) {
+    const uint8_t *mesh = record(p, MH3_PACK_MESHES, index);
+
+    if (!mesh || !out)
+        return MH3_PACK_INVALID;
+
+    if (!indexed_version(p) || !(le32(mesh + 12) & MH3_MESH_SKINNED))
+        return MH3_PACK_UNSUPPORTED;
+
+    const uint32_t at = le32(mesh + 124);
+
+    if (!blob_fits(p, at, 24))
+        return MH3_PACK_RANGE;
+
+    const uint8_t *header = p->metadata.data + at;
+    const uint32_t count = le32(header + 8);
+    const uint64_t bytes = 24 + (uint64_t)count * 52;
+
+    if (memcmp(header, "M3SK", 4) || le32(header + 4) != 1 || !count || count > MH3_PACK_SKIN_MAX_ROWS || le32(header + 20) || !blob_fits(p, at, bytes))
+        return MH3_PACK_INVALID;
+
+    mh3_pack_skin next = {count, {0}, {header, (size_t)bytes}};
+
+    for (unsigned c = 0; c < 8; c++) {
+        next.texgen[c] = header[12 + c];
+
+        if (next.texgen[c] > 3)
+            return MH3_PACK_INVALID;
+    }
+
+    for (uint32_t i = 0; i < count; i++) {
+        mh3_pack_skin_row row;
+        const mh3_pack_status status = mh3_mesh_pack_skin_row(&next, i, &row);
+
+        if (status)
+            return status;
+    }
+
+    *out = next;
+    return MH3_PACK_OK;
+}
+
 mh3_pack_status mh3_mesh_pack_layout(const mh3_mesh_pack *p, uint32_t i, mh3_pack_layout *out) {
     const uint8_t *r = record(p, MH3_PACK_LAYOUTS, i);
     uint32_t a, seen = 0;
@@ -187,8 +250,12 @@ mh3_pack_status mh3_mesh_pack_layout(const mh3_mesh_pack *p, uint32_t i, mh3_pac
     out->flags = le32(r + 8);
     const uint32_t matrix_mask = out->flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT;
 
-    if (!out->count || out->count > 16 || !out->stride || out->stride > 65535 || (out->flags & ~(indexed_version(p) ? UINT32_C(0x1ff01) : 1u)) || le32(r + 12))
+    if (!out->count || out->count > 16 || !out->stride || out->stride > 65535 || (out->flags & ~(indexed_version(p) ? UINT32_C(0x1ff01) | MH3_LAYOUT_SKINNED : 1u)) || le32(r + 12))
         return MH3_PACK_INVALID;
+
+    // Skinned (docs/optimizations/rendering/gpu-skinning.md): palette rows and weights instead of
+    // the GX selector groups.
+    const int skinned = (out->flags & MH3_LAYOUT_SKINNED) != 0;
 
     for (a = 0; a < out->count; ++a) {
         const uint8_t *v = r + 16 + a * 8;
@@ -199,12 +266,15 @@ mh3_pack_status mh3_mesh_pack_layout(const mh3_mesh_pack *p, uint32_t i, mh3_pac
         attr->format = v[4];
         attr->components = v[5];
 
-        if (attr->semantic >= (indexed_version(p) ? 15u : 12u) || (seen & (1u << attr->semantic)) || !attr->components || attr->components > 4 || le16(v + 6))
+        if (attr->semantic >= (skinned ? 17u : indexed_version(p) ? 15u : 12u) || (seen & (1u << attr->semantic)) || !attr->components || attr->components > 4 || le16(v + 6))
             return MH3_PACK_INVALID;
 
         seen |= 1u << attr->semantic;
 
-        if (attr->semantic >= 12 && (attr->format != 0 || attr->components != (attr->semantic == 14 ? 1 : 4)))
+        if (attr->semantic == MH3_SEMANTIC_SKIN_WEIGHTS) {
+            if (attr->format != 9 || attr->components != 4)
+                return MH3_PACK_INVALID;
+        } else if (attr->semantic >= 12 && (attr->format != 0 || attr->components != (attr->semantic == 14 ? 1 : 4)))
             return MH3_PACK_INVALID;
 
         if (attr->format == 0 && attr->semantic >= 12)
@@ -225,9 +295,10 @@ mh3_pack_status mh3_mesh_pack_layout(const mh3_mesh_pack *p, uint32_t i, mh3_pac
     if (!(seen & 1))
         return MH3_PACK_INVALID;
 
-    const uint32_t groups = ((matrix_mask & 15u) ? 1u << 12 : 0u) | ((matrix_mask & 240u) ? 1u << 13 : 0u) | ((matrix_mask & 256u) ? 1u << 14 : 0u);
+    const uint32_t groups = skinned ? 3u << MH3_SEMANTIC_SKIN_ROWS
+                                    : ((matrix_mask & 15u) ? 1u << 12 : 0u) | ((matrix_mask & 240u) ? 1u << 13 : 0u) | ((matrix_mask & 256u) ? 1u << 14 : 0u);
 
-    if ((seen & UINT32_C(0x7000)) != groups)
+    if ((seen & UINT32_C(0x1f000)) != groups || (skinned && !(matrix_mask & 1)))
         return MH3_PACK_INVALID;
 
     return MH3_PACK_OK;
@@ -266,8 +337,10 @@ mh3_pack_status mh3_mesh_pack_mesh(const mh3_mesh_pack *p, uint32_t i, mh3_pack_
     floats(out->bounds_max, r + 76, 3);
     floats(out->center, r + 88, 3);
 
-    if (!out->asset_id || !out->model_id || (out->flags & ~(indexed_version(p) ? 15u : 7u)) || !(out->flags & 1) ||
-        (out->matrix_id < 0 && (!(out->flags & MH3_MESH_INDEXED_PALETTE) || out->matrix_id != -1)) || !out->vertex_count || out->vertex_count > 65536 || !out->index_count || out->index_count % 3 ||
+    const uint32_t matrices = MH3_MESH_INDEXED_PALETTE | MH3_MESH_SKINNED;
+
+    if (!out->asset_id || !out->model_id || (out->flags & ~(indexed_version(p) ? 31u : 7u)) || !(out->flags & 1) || (out->flags & matrices) == matrices ||
+        (out->matrix_id < 0 && (!(out->flags & matrices) || out->matrix_id != -1)) || !out->vertex_count || out->vertex_count > 65536 || !out->index_count || out->index_count % 3 ||
         !valid_bounds(out->bounds_min, out->bounds_max, out->center))
         return MH3_PACK_INVALID;
     s = mh3_mesh_pack_layout(p, out->layout_index, &layout);
@@ -278,10 +351,20 @@ mh3_pack_status mh3_mesh_pack_mesh(const mh3_mesh_pack *p, uint32_t i, mh3_pack_
     if (out->flags & MH3_MESH_INDEXED_PALETTE) {
         mh3_pack_palette_batches batches;
 
-        if (!(layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT))
+        if (!(layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) || (layout.flags & MH3_LAYOUT_SKINNED))
             return MH3_PACK_INVALID;
 
         s = mh3_mesh_pack_palette_batches(p, i, &batches);
+
+        if (s)
+            return s;
+    } else if (out->flags & MH3_MESH_SKINNED) {
+        mh3_pack_skin skin;
+
+        if (!(layout.flags & MH3_LAYOUT_SKINNED))
+            return MH3_PACK_INVALID;
+
+        s = mh3_mesh_pack_skin(p, i, &skin);
 
         if (s)
             return s;
@@ -826,8 +909,27 @@ static mh3_pack_status open_metadata_validated(mh3_pack_span metadata, mh3_mesh_
             const uint32_t mesh_index = x.mesh_first + n;
             const uint8_t *mesh = record(out, MH3_PACK_MESHES, mesh_index);
 
-            if (le32(mesh + 44) >= recipes.matrix_count && !(le32(mesh + 12) & MH3_MESH_INDEXED_PALETTE))
+            if (le32(mesh + 44) >= recipes.matrix_count && !(le32(mesh + 12) & (MH3_MESH_INDEXED_PALETTE | MH3_MESH_SKINNED)))
                 return MH3_PACK_RANGE;
+
+            if (le32(mesh + 12) & MH3_MESH_SKINNED) {
+                mh3_pack_skin skin;
+                s = mh3_mesh_pack_skin(out, mesh_index, &skin);
+
+                if (s)
+                    return s;
+
+                for (uint32_t row = 0; row < skin.count; row++) {
+                    mh3_pack_skin_row value;
+                    s = mh3_mesh_pack_skin_row(&skin, row, &value);
+
+                    if (s)
+                        return s;
+
+                    if (value.matrix >= recipes.matrix_count)
+                        return MH3_PACK_RANGE;
+                }
+            }
 
             if (le32(mesh + 12) & MH3_MESH_INDEXED_PALETTE) {
                 mh3_pack_palette_batches batches;
@@ -1065,6 +1167,60 @@ static mh3_pack_status validate_palette_indices(const mh3_mesh_pack *p, uint32_t
     return MH3_PACK_OK;
 }
 
+/* Admission proves every skinned vertex's rows and weights against the
+ * immutable GPU bytes: rows inside the palette, weights finite, in [0, 1] and
+ * summing to 1, unused influences row 0; and the texgen kinds cover exactly
+ * the indexed coordinates. */
+static mh3_pack_status validate_skin_vertices(const mh3_mesh_pack *p, uint32_t mesh_index, const mh3_pack_mesh *mesh) {
+    mh3_pack_layout layout;
+    mh3_pack_skin skin;
+    mh3_pack_status status = mh3_mesh_pack_layout(p, mesh->layout_index, &layout);
+
+    if (status)
+        return status;
+
+    status = mh3_mesh_pack_skin(p, mesh_index, &skin);
+
+    if (status)
+        return status;
+
+    const uint32_t mask = layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT;
+
+    for (unsigned coordinate = 0; coordinate < 8; coordinate++)
+        if (!(mask & (2u << coordinate)) != !skin.texgen[coordinate])
+            return MH3_PACK_INVALID;
+
+    uint32_t rows = 0, weights = 0;
+
+    for (uint32_t a = 0; a < layout.count; a++) {
+        if (layout.attributes[a].semantic == MH3_SEMANTIC_SKIN_ROWS)
+            rows = layout.attributes[a].offset;
+
+        if (layout.attributes[a].semantic == MH3_SEMANTIC_SKIN_WEIGHTS)
+            weights = layout.attributes[a].offset;
+    }
+
+    for (uint32_t v = 0; v < mesh->vertex_count; v++) {
+        const uint8_t *vertex = mesh->vertices.data + (size_t)v * layout.stride;
+        float total = 0.0f;
+
+        for (unsigned k = 0; k < 4; k++) {
+            float weight;
+            memcpy(&weight, vertex + weights + k * 4, 4);
+
+            if (!isfinite(weight) || weight < 0.0f || weight > 1.0f || vertex[rows + k] >= skin.count || (!weight && vertex[rows + k]))
+                return MH3_PACK_INVALID;
+
+            total += weight;
+        }
+
+        if (fabsf(total - 1.0f) > 1.0e-3f)
+            return MH3_PACK_INVALID;
+    }
+
+    return MH3_PACK_OK;
+}
+
 mh3_pack_status mh3_mesh_pack_validate_indices(const mh3_mesh_pack *p) {
     uint32_t i;
 
@@ -1087,6 +1243,13 @@ mh3_pack_status mh3_mesh_pack_validate_indices(const mh3_mesh_pack *p) {
                 return MH3_PACK_RANGE;
         if (mesh.flags & MH3_MESH_INDEXED_PALETTE) {
             s = validate_palette_indices(p, i, &mesh);
+
+            if (s)
+                return s;
+        }
+
+        if (mesh.flags & MH3_MESH_SKINNED) {
+            s = validate_skin_vertices(p, i, &mesh);
 
             if (s)
                 return s;

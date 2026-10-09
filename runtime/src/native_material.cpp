@@ -301,7 +301,7 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 1 | uint64_t(variant.lights) << 3 | uint64_t(variant.model) << 7 | uint64_t(variant.textures) << 8 |
                          uint64_t(variant.overlay) << 10 | uint64_t(variant.alpha_test) << 11 | uint64_t(variant.fog) << 12 | uint64_t(variant.texgen[0]) << 13 | uint64_t(variant.texgen[1]) << 16 |
                          uint64_t(variant.texgen[2]) << 19 | uint64_t(variant.linear_fog) << 22 | uint64_t(variant.pure_modulate) << 23 | uint64_t(variant.target_alpha_one) << 24 |
-                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26 | uint64_t(variant.basic_lerp) << 27;
+                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26 | uint64_t(variant.basic_lerp) << 27 | uint64_t(variant.skinned) << 28;
 
     if (shade.lastProgram && key == shade.lastProgramKey)
         return *shade.lastProgram;
@@ -441,21 +441,35 @@ constexpr uint32_t ShadePaletteOffset(uint8_t model) {
 
 constexpr uint32_t ShadeGpuPaletteOffset = MH3_SHADE_FRAGMENT_OFFSET;
 static_assert(sizeof(mh3_shade_vertex) <= MH3_SHADE_FRAGMENT_OFFSET);
-mh3_shade_draw* ShadeDrawMemory(uint8_t model, bool palette, AuroraNativeUniforms& memory) {
-    if (!aurora_allocate_native_uniforms(palette ? ShadePaletteOffset(model) + uint32_t(sizeof(mh3_shade_palette)) : MH3_SHADE_DRAW_BYTES(model), &memory))
+
+// A skinned mesh's palette block (docs/gpu-skinning.md): its rows, 48 bytes
+// each. GLES requires the bound range to cover the declared block (255 rows),
+// GXM reads only the rows the vertices index.
+uint32_t SkinPaletteBytes(uint32_t rows) {
+#ifdef __vita__
+    return rows * 48u;
+#else
+    (void)rows;
+    return MH3_PACK_SKIN_MAX_ROWS * 48u;
+#endif
+}
+
+// paletteBytes 0: no palette (material geometry).
+mh3_shade_draw* ShadeDrawMemory(uint8_t model, uint32_t paletteBytes, AuroraNativeUniforms& memory) {
+    if (!aurora_allocate_native_uniforms(paletteBytes ? ShadePaletteOffset(model) + paletteBytes : MH3_SHADE_DRAW_BYTES(model), &memory))
         return nullptr;
 
     return static_cast<mh3_shade_draw*>(memory.data);
 }
 
-mh3_shade_vertex* ShadeGpuDrawMemory(bool palette, AuroraNativeUniforms& memory) {
-    if (!aurora_allocate_native_uniforms(palette ? ShadeGpuPaletteOffset + uint32_t(sizeof(mh3_shade_palette)) : MH3_SHADE_FRAGMENT_OFFSET, &memory))
+mh3_shade_vertex* ShadeGpuDrawMemory(uint32_t paletteBytes, AuroraNativeUniforms& memory) {
+    if (!aurora_allocate_native_uniforms(paletteBytes ? ShadeGpuPaletteOffset + paletteBytes : MH3_SHADE_FRAGMENT_OFFSET, &memory))
         return nullptr;
 
     return static_cast<mh3_shade_vertex*>(memory.data);
 }
 
-std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& draw, uint8_t model, bool palette) {
+std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& draw, uint8_t model, uint32_t paletteBytes) {
     aurora::gl::ShadedBlocks blocks;
 
     if (!ShadeSceneMemory(blocks.sceneRevision))
@@ -466,9 +480,9 @@ std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& 
     blocks.shadeOffset = MH3_SHADE_FRAGMENT_OFFSET;
     blocks.shadeBytes = MH3_SHADE_FRAGMENT_BYTES(model);
 
-    if (palette) {
+    if (paletteBytes) {
         blocks.paletteOffset = ShadePaletteOffset(model);
-        blocks.paletteBytes = sizeof(mh3_shade_palette);
+        blocks.paletteBytes = paletteBytes;
     }
 
     blocks.scene = shade.sceneMemory.data;
@@ -848,7 +862,8 @@ struct ExternalDraw {
     uint8_t srtRoles = 0;
 } externalDraw;
 
-std::optional<aurora::gl::ShadedBlocks> ShadeGpuBlocks(const AuroraNativeUniforms& draw, bool palette, const aurora::gl::UniformBlock& material, const aurora::gl::UniformBlock& animatedBlock) {
+std::optional<aurora::gl::ShadedBlocks> ShadeGpuBlocks(const AuroraNativeUniforms& draw, uint32_t paletteBytes, const aurora::gl::UniformBlock& material,
+                                                       const aurora::gl::UniformBlock& animatedBlock) {
     aurora::gl::ShadedBlocks blocks;
 
     if (!ShadeSceneMemory(blocks.sceneRevision))
@@ -859,9 +874,9 @@ std::optional<aurora::gl::ShadedBlocks> ShadeGpuBlocks(const AuroraNativeUniform
     blocks.shadeOffset = MH3_SHADE_FRAGMENT_OFFSET;
     blocks.shadeBytes = 0;
 
-    if (palette) {
+    if (paletteBytes) {
         blocks.paletteOffset = ShadeGpuPaletteOffset;
-        blocks.paletteBytes = sizeof(mh3_shade_palette);
+        blocks.paletteBytes = paletteBytes;
     }
 
     blocks.scene = shade.sceneMemory.data;
@@ -1291,10 +1306,14 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     mh3_shade_draw* block = nullptr;
     mh3_shade_vertex* vertexBlock;
 
+    // A skinned mesh binds its own palette rows instead of the ten slots.
+    const bool skinned = mesh.skin_palette != nullptr;
+    const uint32_t paletteBytes = skinned ? SkinPaletteBytes(mesh.skin_row_count) : uint32_t(sizeof(mh3_shade_palette));
+
     if (gpu)
-        vertexBlock = ShadeGpuDrawMemory(true, memory);
+        vertexBlock = ShadeGpuDrawMemory(paletteBytes, memory);
     else {
-        block = ShadeDrawMemory(shading.model, true, memory);
+        block = ShadeDrawMemory(shading.model, paletteBytes, memory);
         vertexBlock = block ? &block->vertex : nullptr;
     }
 
@@ -1321,16 +1340,27 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     Check(mh3_model_gpu_prepare_draw(&draw, coordinates, lighting.lit(), viewport[4], viewport[5], &inputs,
                                    reinterpret_cast<mh3_matrix34*>(palette.position[0]), reinterpret_cast<mh3_matrix34*>(palette.normal[0]),
                                    reinterpret_cast<mh3_matrix34*>(palette.position[10])), "Native model GPU inputs");
+
+    if (skinned)
+        std::memcpy(&palette, mesh.skin_palette, size_t(mesh.skin_row_count) * 48u);
+
     const auto& layout = *resident.layout;
     const auto present = [&](unsigned location) {
         return std::any_of(layout.attributes.begin(), layout.attributes.end(), [&](const auto& a) { return a.location == location; });
     };
 
     // Shader inputs: 0 position, 1 normal, 2 colour0, 3..5 role coordinates,
-    // 6 PN selector, 7..9 role texture-matrix selectors (byte lanes).
+    // 6 PN selector, 7..9 role texture-matrix selectors (byte lanes), 10 skin
+    // rows, 11 skin weights.
     aurora::gl::ShadedMeshInputs bind;
-    bind.location = {0, 1, 2, -1, -1, -1, -1, -1, -1, -1};
+    bind.location = {0, 1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bind.lane.fill(-1);
+
+    if (skinned) {
+        bind.location[10] = MH3_SEMANTIC_SKIN_ROWS;
+        bind.location[11] = MH3_SEMANTIC_SKIN_WEIGHTS;
+    }
+
     std::memcpy(vertex.proj, inputs.projection, sizeof vertex.proj);
     std::array<float, 2> size{};
     GetNativeRenderViewportSize(size.data());
@@ -1338,7 +1368,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     vertex.viewport[1] = size[1];
     vertex.viewport[2] = -1.f / (6.f * std::max(std::fabs(size[0]), 1.f));
     vertex.viewport[3] = 1.f / (6.f * std::max(std::fabs(size[1]), 1.f));
-    vertex.flags[0] = (inputs.matrix_index_mask & 1 ? MH3_SHADE_FLAG_MATRIX_SELECTOR : 0) | (present(2) ? MH3_SHADE_FLAG_COLOR0 : 0);
+    vertex.flags[0] = (inputs.matrix_index_mask & 1 && !skinned ? MH3_SHADE_FLAG_MATRIX_SELECTOR : 0) | (present(2) ? MH3_SHADE_FLAG_COLOR0 : 0);
 
     if (inputs.matrix_index_mask & 1) {
         bind.location[6] = 12;
@@ -1396,7 +1426,11 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         if (row > 1)
             bind.location[3 + role] = int8_t(row <= 2 ? row : row - 1);
 
-        if (source.indexed) {
+        if (source.indexed && skinned) {
+            // The vertex's blended matrix: its position or environment form.
+            if (source.skin == MH3_SKIN_TEXGEN_ENVIRONMENT)
+                texgen.mode[1] |= MH3_SHADE_TEXGEN_SKIN_ENVIRONMENT;
+        } else if (source.indexed) {
             const unsigned packed = coordinate + 1;
             bind.location[7 + role] = int8_t(12 + packed / 4);
             bind.lane[7 + role] = int8_t(packed % 4);
@@ -1408,6 +1442,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     float bias[4];
     const auto units = ShadeTextures(shading, bias);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Mesh, lighting);
+    variant.skinned = skinned;
     std::copy(kinds.begin(), kinds.end(), variant.texgen);
     std::optional<aurora::gl::ShadedBlocks> blocks;
 
@@ -1432,7 +1467,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
-        blocks = ShadeGpuBlocks(memory, true, *materialBlock, *animatedBlock);
+        blocks = ShadeGpuBlocks(memory, paletteBytes, *materialBlock, *animatedBlock);
     } else if (gpu) {
         auto animatedBlock = ShadeAnimated(entry, bias, srt, srtRoles);
         const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values) : std::nullopt;
@@ -1445,11 +1480,11 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 #endif
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
-        blocks = ShadeGpuBlocks(memory, true, *materialBlock, *animatedBlock);
+        blocks = ShadeGpuBlocks(memory, paletteBytes, *materialBlock, *animatedBlock);
     } else {
         std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
         mh3_shade_fill(&shading, &material, block);
-        blocks = ShadeBlocks(memory, shading.model, true);
+        blocks = ShadeBlocks(memory, shading.model, paletteBytes);
     }
 
     if (!blocks)
@@ -1480,9 +1515,9 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     mh3_shade_vertex* vertexBlock;
 
     if (gpu)
-        vertexBlock = ShadeGpuDrawMemory(false, memory);
+        vertexBlock = ShadeGpuDrawMemory(0, memory);
     else {
-        block = ShadeDrawMemory(shading.model, false, memory);
+        block = ShadeDrawMemory(shading.model, 0, memory);
         vertexBlock = block ? &block->vertex : nullptr;
     }
 
@@ -1519,11 +1554,11 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
 #endif
         variant.material_gpu = true;
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
-        blocks = ShadeGpuBlocks(memory, false, *materialBlock, *animatedBlock);
+        blocks = ShadeGpuBlocks(memory, 0, *materialBlock, *animatedBlock);
     } else {
         std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
         mh3_shade_fill(&shading, &render.material, block);
-        blocks = ShadeBlocks(memory, shading.model, false);
+        blocks = ShadeBlocks(memory, shading.model, 0);
     }
 
     if (!blocks)

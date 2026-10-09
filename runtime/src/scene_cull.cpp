@@ -13,6 +13,8 @@
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/mh3_model_runtime.h"
 #include "runtime/native/mh3_scene_cull.h"
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -66,6 +68,44 @@ FastMap<uint32_t, Record> records;
 uint64_t recordsRevision = UINT64_MAX;
 NativeSceneCullStatistics stats;
 
+// The bounds of a box transformed by an affine 3x4 matrix.
+void TransformBox(const float* m, const float* min, const float* max, float* outMin, float* outMax) {
+    for (unsigned r = 0; r < 3; r++) {
+        outMin[r] = outMax[r] = m[r * 4 + 3];
+
+        for (unsigned c = 0; c < 3; c++) {
+            const float a = m[r * 4 + c] * min[c], b = m[r * 4 + c] * max[c];
+            outMin[r] += std::min(a, b);
+            outMax[r] += std::max(a, b);
+        }
+    }
+}
+
+// A skinned mesh (docs/gpu-skinning.md): every vertex blends its rows, so
+// the mesh lies within its bounds under each row matrix. A rigid row is a view
+// matrix; a skin bone row is its view matrix times the inverse bind matrix,
+// whose transform of the bounds goes into the view matrix's box.
+bool AddSkinRows(mh3_scene_cull_record& record, const mh3_prepared_mesh& prepared) {
+    const auto& mesh = prepared.immutable.mesh;
+
+    for (uint32_t i = 0; i < prepared.skin_row_count; i++) {
+        const auto& row = prepared.skin_rows[i];
+        float min[3], max[3];
+
+        if (row.kind)
+            TransformBox(row.inverse_bind, mesh.bounds_min, mesh.bounds_max, min, max);
+        else {
+            std::memcpy(min, mesh.bounds_min, sizeof min);
+            std::memcpy(max, mesh.bounds_max, sizeof max);
+        }
+
+        if (!mh3_scene_cull_add(&record, row.matrix, min, max))
+            return false;
+    }
+
+    return true;
+}
+
 void Build(Record& r, uint32_t model, std::shared_ptr<NativeModelDrawTable> table) {
     r = {};
     r.table = std::move(table);
@@ -109,7 +149,10 @@ void Build(Record& r, uint32_t model, std::shared_ptr<NativeModelDrawTable> tabl
         const int32_t matrix_id = int32_t(Memory::Read32(shape + 8));
         const bool selectors = (prepared->immutable.layout.flags >> MH3_LAYOUT_MATRIX_MASK_SHIFT) & 1;
 
-        if (!mh3_scene_cull_add_mesh(&record, &prepared->immutable.mesh, matrix_id, selectors, prepared->palette_batches, prepared->palette_batch_count))
+        if (prepared->skin_row_count) {
+            if (!AddSkinRows(record, *prepared))
+                return;
+        } else if (!mh3_scene_cull_add_mesh(&record, &prepared->immutable.mesh, matrix_id, selectors, prepared->palette_batches, prepared->palette_batch_count))
             return;
 
         r.meshes.push_back({prepared, matrix_id, selectors});
@@ -219,6 +262,38 @@ bool CheckCulled(const Record& r, uint32_t object, uint32_t model, const mh3_cul
 
     for (const auto& mesh : r.meshes) {
         const auto& prepared = *mesh.prepared;
+
+        if (prepared.skin_row_count) {
+            // The render thread's rows (model_scope.cpp SkinPalette).
+            std::vector<std::array<float, 12>> rows(prepared.skin_row_count);
+            std::vector<const float*> matrices(prepared.skin_row_count);
+            std::vector<mh3_cull_box> boxes(prepared.skin_row_count);
+
+            for (uint32_t i = 0; i < prepared.skin_row_count; i++) {
+                const auto& row = prepared.skin_rows[i];
+                mh3_matrix34 view;
+
+                if (mh3_matrix_read34(sources.positions, row.matrix, &view) != MH3_RES_OK)
+                    return false;
+
+                if (row.kind) {
+                    for (unsigned a = 0; a < 3; a++)
+                        for (unsigned c = 0; c < 4; c++)
+                            rows[i][a * 4 + c] = view.v[a][0] * row.inverse_bind[c] + view.v[a][1] * row.inverse_bind[4 + c] + view.v[a][2] * row.inverse_bind[8 + c] + (c == 3 ? view.v[a][3] : 0.f);
+                } else
+                    std::memcpy(rows[i].data(), &view, 48);
+
+                matrices[i] = rows[i].data();
+                std::memcpy(boxes[i].min, prepared.immutable.mesh.bounds_min, sizeof boxes[i].min);
+                std::memcpy(boxes[i].max, prepared.immutable.mesh.bounds_max, sizeof boxes[i].max);
+            }
+
+            if (!mh3_cull_boxes_outside(&f, matrices.data(), boxes.data(), prepared.skin_row_count))
+                return false;
+
+            continue;
+        }
+
         mh3_model_palette palette{};
 
         if (mesh.matrix_id >= 0) {

@@ -442,8 +442,8 @@ struct ShadedBlocks {
 // role selectors 0..2) each read one compact mesh attribute by its layout
 // location, or one byte lane of a U8 selector attribute; -1 leaves it unbound.
 struct ShadedMeshInputs {
-  std::array<int8_t, 10> location{};
-  std::array<int8_t, 10> lane{};
+  std::array<int8_t, 12> location{};
+  std::array<int8_t, 12> lane{};
   bool operator==(const ShadedMeshInputs&) const = default;
 };
 
