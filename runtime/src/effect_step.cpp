@@ -61,7 +61,7 @@ extern "C" void MH3_AnimCurveExecuteF32(CpuContext*);
 extern "C" void MH3_AnimCurveExecuteRotate(CpuContext*);
 
 #ifdef MH3_DEVELOPMENT
-void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
+#include "frame_split.h"
 #endif
 namespace {
 
@@ -629,6 +629,7 @@ extern "C" void MH3_EffectCalc(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     MH3FrameSplitCall(2);
 #endif
+    MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT_CALC);
     PortCheck::Call(ctx, "EffectCalc", func_800A4C20, EffectCalcPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A4C20, MH3_EffectCalc, "EffectCalc");

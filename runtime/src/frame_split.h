@@ -32,6 +32,8 @@ enum MH3SplitFamily : unsigned {
     // The whole DrawScene and its bucket walk (DrawAll), to locate the rest.
     MH3_SPLIT_SCENE,
     MH3_SPLIT_BUCKETS,
+    // Effect::Calc of every effect (the particle simulation), a logic part.
+    MH3_SPLIT_EFFECT_CALC,
     MH3_SPLIT_FAMILIES
 };
 // The split's clock. On the Vita steady_clock reads gettimeofday through a
