@@ -177,6 +177,7 @@ void DrawBucket(GuestCall& call, unsigned category, uint8_t pass) {
     }
 }
 void DrawAll(GuestCall& call) {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_BUCKETS);
     constexpr uint8_t sequence[][2] = {{0, 2}, {5, 0}, {0, 3}, {2, 2}, {1, 2}, {4, 0}, {2, 3}, {1, 3}, {3, 0}};
     for (const auto& entry : sequence)
         DrawBucket(call, entry[0], entry[1]);
@@ -193,6 +194,7 @@ void ResetIndirect() {
     SetNativeMaterial(material);
 }
 void DrawScene(CpuContext* cpu, bool split) {
+    MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
     GuestFrame frame(cpu, 0x30);
     GuestCall call{cpu};
     ResetAll();

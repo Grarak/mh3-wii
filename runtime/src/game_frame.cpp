@@ -212,7 +212,8 @@ struct FrameSplit {
                     "timed scopes/frame: traverse %u model %u effect %u node callback %u\n",
                     f(MH3_SPLIT_TRAVERSE), f(MH3_SPLIT_MODEL), f(MH3_SPLIT_EFFECT), f(MH3_SPLIT_NODE_CALLBACK), f(MH3_SPLIT_FONT), f(MH3_SPLIT_FADE), f(MH3_SPLIT_HUD),
                     f(MH3_SPLIT_MOVIE), n(MH3_SPLIT_TRAVERSE), n(MH3_SPLIT_MODEL), n(MH3_SPLIT_EFFECT), n(MH3_SPLIT_NODE_CALLBACK));
-        std::printf("MH3 scene split: setup %.2f finish %.2f post %.2f ms/frame\n", f(MH3_SPLIT_SCENE_SETUP), f(MH3_SPLIT_SCENE_FINISH), f(MH3_SPLIT_POST));
+        std::printf("MH3 scene split: scene %.2f buckets %.2f setup %.2f finish %.2f post %.2f ms/frame\n", f(MH3_SPLIT_SCENE), f(MH3_SPLIT_BUCKETS), f(MH3_SPLIT_SCENE_SETUP),
+                    f(MH3_SPLIT_SCENE_FINISH), f(MH3_SPLIT_POST));
         if (mh3SplitDetail)
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
                         f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));

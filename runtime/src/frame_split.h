@@ -29,6 +29,9 @@ enum MH3SplitFamily : unsigned {
     MH3_SPLIT_SCENE_SETUP,
     MH3_SPLIT_SCENE_FINISH,
     MH3_SPLIT_POST,
+    // The whole DrawScene and its bucket walk (DrawAll), to locate the rest.
+    MH3_SPLIT_SCENE,
+    MH3_SPLIT_BUCKETS,
     MH3_SPLIT_FAMILIES
 };
 // The split's clock. On the Vita steady_clock reads gettimeofday through a
