@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
+#include "runtime/native/adapters/model_material_bridge.h"
 #include "runtime/native/mh3_model_material_updates.h"
 #include "runtime/native/mh3_material_state.h"
 #include <array>
@@ -20,12 +21,7 @@ void Checked(mh3_res_status status) {
 uint32_t Data(CpuContext* cpu) {return MH3NativeResReference(cpu->gpr[3]);}
 void Submit(CpuContext* cpu,mh3_model_material_block kind,uint32_t count=1) {
     if((kind==MH3_MODEL_MATERIAL_INDIRECT || kind==MH3_MODEL_MATERIAL_TEXGEN) && !count) return;
-    uint32_t address=Data(cpu);
-    if(kind==MH3_MODEL_MATERIAL_PIPELINE) address+=32;
-    const auto block=ReadNativeLiveMaterialBlock(address,kind);
-    mh3_native_material_state selected{};
-    if(mh3_model_material_fields_select(&block.fields,kind,count,&selected)!=MH3_PACK_OK)
-        throw std::runtime_error("Material submit requires an unsupported or unproduced typed field");
+    const auto selected=ReadNativeModelMaterialGroup(Data(cpu),kind,count);
     auto next=GetNativeMaterialState();Checked(mh3_material_state_overlay(&next,&selected,0));
     SetNativeMaterial(next);
 }
@@ -48,6 +44,19 @@ template<class Producer> void Update(CpuContext* cpu,mh3_model_material_block ki
 std::array<uint8_t,4> Color(uint32_t address) {
     std::array<uint8_t,4> result{};std::memcpy(result.data(),Memory::GetPointer(address,4),4);return result;
 }
+}
+mh3_native_material_state ReadNativeModelMaterialGroup(uint32_t address,
+    mh3_model_material_block kind,uint32_t count) {
+    mh3_native_material_state selected{};
+    if((kind==MH3_MODEL_MATERIAL_INDIRECT || kind==MH3_MODEL_MATERIAL_TEXGEN) && !count) return selected;
+    if(kind==MH3_MODEL_MATERIAL_PIPELINE) {
+        if(address>UINT32_MAX-32) throw std::runtime_error("Material pipeline address overflows");
+        address+=32;
+    }
+    const auto block=ReadNativeLiveMaterialBlock(address,kind);
+    if(mh3_model_material_fields_select(&block.fields,kind,count,&selected)!=MH3_PACK_OK)
+        throw std::runtime_error("Material submit requires an unsupported or unproduced typed field");
+    return selected;
 }
 extern "C" void MH3_MatPixelSubmit(CpuContext* cpu) {Submit(cpu,MH3_MODEL_MATERIAL_PIXEL);} // 80094480
 REGISTER_NATIVE_FUNCTION_AS(0x80094480,MH3_MatPixelSubmit,"MatPixelSubmit");

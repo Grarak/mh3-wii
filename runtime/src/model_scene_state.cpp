@@ -132,18 +132,21 @@ extern "C" void MH3_ModelLightSetting(CpuContext* cpu) {
     light_slots.insert_or_assign(state,slots);SetNativeModelLights(slots);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8008551C,MH3_ModelLightSetting,"ModelLightSetting");
-extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
-    const auto found=light_slots.find(cpu->gpr[3]);
+mh3_native_light_slots SelectNativeModelLightSet(uint32_t state,uint32_t set_id) {
+    const auto found=light_slots.find(state);
     if (found==light_slots.end()) throw std::runtime_error("LightState selection has no typed import producer");
     auto& slots=found->second;
-    Checked(mh3_light_state_select(Mutable(cpu->gpr[3],MH3_LIGHT_STATE_BYTES),cpu->gpr[4],&slots));
+    Checked(mh3_light_state_select(Mutable(state,MH3_LIGHT_STATE_BYTES),set_id,&slots));
+    SetNativeModelLights(slots);return slots;
+}
+extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
+    const auto slots=SelectNativeModelLightSet(cpu->gpr[3],cpu->gpr[4]);
     const uint32_t masks[]{slots.diffuse_color,slots.diffuse_alpha,slots.specular_color,slots.specular_alpha};
     for (uint32_t i=0;i<4;i++) if (cpu->gpr[5+i]) Memory::Write32(cpu->gpr[5+i],masks[i]);
     if (cpu->gpr[9]) {
         auto* destination=Memory::GetPointer(cpu->gpr[9],4);
         destination[0]=slots.ambient.r;destination[1]=slots.ambient.g;destination[2]=slots.ambient.b;destination[3]=slots.ambient.a;
     }
-    SetNativeModelLights(slots);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80085758,MH3_ModelLightSelect,"ModelLightSelect");
 
