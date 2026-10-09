@@ -63,6 +63,42 @@ mh3_res_status mh3_texture_srt_read(mh3_res_span bytes, mh3_native_texture_srt *
     *out = x;
     return MH3_RES_OK;
 }
+mh3_res_status mh3_texture_srt_read_for_prepare(mh3_res_span bytes, mh3_native_texture_srt *out) {
+    size_t i, j;
+    const uint8_t *p = bytes.data;
+    if (!p || !out)
+        return MH3_RES_INVALID;
+    if (bytes.size < 0x248)
+        return MH3_RES_RANGE;
+    out->flags = be32(p);
+    out->mode = be32(p + 4);
+    for (i = 0; i < 8; i++) {
+        mh3_pack_texture_srt *s = &out->slot[i];
+        const uint8_t *values, *effect;
+        s->flags = (out->flags >> (4 * i)) & 15;
+        if (!(s->flags & 1))
+            continue;
+        values = p + 8 + i * 20;
+        effect = p + 0xa8 + i * 52;
+        s->map_mode = effect[2];
+        s->effect_flags = effect[3];
+        if (s->map_mode) {
+            s->camera_reference = (int8_t)effect[0];
+            s->light_reference = (int8_t)effect[1];
+        }
+        s->scale[0] = (s->flags & 2) ? 1.0f : real(values);
+        s->scale[1] = (s->flags & 2) ? 1.0f : real(values + 4);
+        s->rotation_degrees = (s->flags & 4) ? 0.0f : real(values + 8);
+        s->translation[0] = (s->flags & 8) ? 0.0f : real(values + 12);
+        s->translation[1] = (s->flags & 8) ? 0.0f : real(values + 16);
+        /* A mapped nonidentity SRT combines its stored effect even when the
+         * effect-identity bit is set. The complete identity nibble skips it. */
+        if (!(s->effect_flags & 1) || (s->map_mode && s->flags != 15))
+            for (j = 0; j < 12; j++)
+                s->effect_matrix[j] = real(effect + 4 + j * 4);
+    }
+    return MH3_RES_OK;
+}
 mh3_res_status mh3_texture_srt_calc(const mh3_pack_texture_srt *s, uint32_t mode, int set, mh3_matrix34 *matrix) {
     mh3_matrix34 m;
     uint32_t index;

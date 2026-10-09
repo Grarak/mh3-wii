@@ -18,6 +18,10 @@ were deleted on 2026-10-03; they remain in git history.
 - [vita-native-cdram-capacity.md](vita-native-cdram-capacity.md): CDRAM budgets.
 - [vita-runtime-shaders.md](vita-runtime-shaders.md): the devkit's runtime Cg compiler and cache.
 - [vita-fixed-shader-abi.md](vita-fixed-shader-abi.md), [vita-selector-preflight.md](vita-selector-preflight.md): actual GXP reflection, matrix-selector and RGBA hardware fixtures behind the hunter/tint fixes.
+- [vita-oct03-linear-fog.md](vita-oct03-linear-fog.md): exact linear fog specialization and optimized Sony shader cycle counts.
+- [native-model-preparation-recipes.md](native-model-preparation-recipes.md), [native-gpu-palette-preparation.md](native-gpu-palette-preparation.md), [native-texture-srt-preparation.md](native-texture-srt-preparation.md): admitted structural reuse, direct final palette writes and selective native SRT decoding.
+- [draw-memory-view-gate.md](draw-memory-view-gate.md), [vita-tls-lookup-optimization.md](vita-tls-lookup-optimization.md): default draw-memory TLS bypass and initialized VitaSDK TLS lookup routing.
+- [vita-gxm-scene-overlap.md](vita-gxm-scene-overlap.md): audited scene dependency removal; hardware timing remains to be measured.
 - [native-material-state.md](native-material-state.md), [native-material-group-publication.md](native-material-group-publication.md), [native-material-unchecked-publication.md](native-material-unchecked-publication.md), [native-material-update-origins.md](native-material-update-origins.md): typed material state and how it is published.
 - [native-resident-model-rendering.md](native-resident-model-rendering.md), [native-model-assets.md](native-model-assets.md), [native-model-draw-dispatch.md](native-model-draw-dispatch.md), [vita-model-conversion.md](vita-model-conversion.md), [vita-indexed-model-packs.md](vita-indexed-model-packs.md): converted models and their draw path.
 - [vita-native-assets.md](vita-native-assets.md), [vita-native-texture-formats.md](vita-native-texture-formats.md), [native-texture-processed-host.md](native-texture-processed-host.md), [native-texture-binding-origins.md](native-texture-binding-origins.md): texture formats and binding.
@@ -28,8 +32,11 @@ were deleted on 2026-10-03; they remain in git history.
 
 ## Profiling and capture
 
+- [vita-oct03-optimized-gpu-profile.md](vita-oct03-optimized-gpu-profile.md): latest complete GPU busyness, SCNE pass attribution, CPU supply and recorded gameplay.
 - [vita-oct03-fixed-render-profile.md](vita-oct03-fixed-render-profile.md): matching recorded gameplay, CPU samples with unwind coverage, GPU-only Razor/vprof and current frame-rate bottlenecks.
 - [vita-native-profiling.md](vita-native-profiling.md), [vita-native-stack-profiling.md](vita-native-stack-profiling.md), [vita-razor.md](vita-razor.md): Vita CPU and GPU profiling.
+- [vita-gxm-scene-trace.md](vita-gxm-scene-trace.md): bounded application scene records and required Sony LIVE settings.
+- [vita-memory-helper-selection.md](vita-memory-helper-selection.md): actual EABI versus public Sony libc routing, standalone correctness and register-preservation audit.
 - [vita-render-thread-statistics.md](vita-render-thread-statistics.md), [vita-profile-analysis-draft.md](vita-profile-analysis-draft.md): game/render counter scopes and offline import/unwind coverage rules.
 - [pi5-arm32-callstack-unwind.md](pi5-arm32-callstack-unwind.md): recovering ARM32 callers.
 - [hdmi-audio-capture.md](hdmi-audio-capture.md): the devkit HDMI video/audio capture.

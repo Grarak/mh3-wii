@@ -12,6 +12,15 @@ typedef struct {
     mh3_pack_texture_srt slot[8];
 } mh3_native_texture_srt;
 mh3_res_status mh3_texture_srt_read(mh3_res_span bytes, mh3_native_texture_srt *out);
+/* Preparation-only view of the same 0x248-byte resource. Decode live bit-0
+ * slots and only values consumed by mapping/matrices_prepare. Inactive slots
+ * contain only flags; unconsumed effect matrices remain untouched. Ignored
+ * SRT components receive identity defaults for the calc implementation's
+ * initial local reads. Camera/light references remain untouched for map 0.
+ * Source and output storage must be disjoint. Do not use this partial view as
+ * a complete source snapshot. Null/range failures leave out unchanged; no
+ * source is retained. */
+mh3_res_status mh3_texture_srt_read_for_prepare(mh3_res_span bytes, mh3_native_texture_srt *out);
 /* 80075F00/800D754C. flag is the source nibble (exists,scale-one,
  * rotation-zero,translation-zero). set replaces the matrix; otherwise the
  * original specialized XSI product formulas update its first two rows. */

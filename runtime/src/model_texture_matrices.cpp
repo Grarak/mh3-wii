@@ -76,8 +76,8 @@ extern "C" void MH3_LoadModelTextureSrt(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800871C0, MH3_LoadModelTextureSrt, "LoadModelTextureSrt");
 void LoadNativeModelTextureSrt(uint32_t resource) {
-    mh3_native_texture_srt srt{};
-    Checked(mh3_texture_srt_read(Bytes(resource, 0x248), &srt));
+    mh3_native_texture_srt srt;
+    Checked(mh3_texture_srt_read_for_prepare(Bytes(resource, 0x248), &srt));
     mh3_matrix34 maps[8]{};
     uint32_t sources[8]{};
     // The constructor defines these exact built-in mapping functions. Custom
