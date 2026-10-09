@@ -11,6 +11,7 @@ build, run and debug.
 - [native-resident-model-rendering.md](native-resident-model-rendering.md), [vita-model-conversion.md](vita-model-conversion.md): compact external models and prepared typed metadata; GPU/live-producer integration remains separate.
 - [vita-native-assets.md](vita-native-assets.md), [vita-texture-format-evaluation.md](vita-texture-format-evaluation.md), [vita-pvrt-evaluation.md](vita-pvrt-evaluation.md): installed asset support and offline format assessments. Assessment bytes are not runtime residency or proof of installation.
 - [native-material-state.md](native-material-state.md): persistent material mapping and explicit unsupported semantics.
+- [native-resource-lifetime.md](native-resource-lifetime.md): native copy/fill/heap producers, source retirement, exact address coverage and remaining inline-write boundaries.
 - [native-scene-queue.md](native-scene-queue.md), [native-ui-port.md](native-ui-port.md), [native-system-ui-port.md](native-system-ui-port.md), [native-effects-port.md](native-effects-port.md), [native-scene-feedback.md](native-scene-feedback.md): application family ports and focused evidence.
 - [vita-bringup.md](vita-bringup.md): platform setup, guest RAM layout and historical DevKit checkpoints.
 - [vita-launcher.md](vita-launcher.md): launcher, ROM processing and startup UI scope.

@@ -37,6 +37,7 @@
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
+#include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 
 #include <cstdint>
@@ -303,7 +304,11 @@ constexpr uint32_t kBillboards = 0x8056FDF8u;
 
 void LcStore(uint32_t dst, uint32_t cache, uint32_t blocks) {
     const uint32_t size = (blocks ? blocks : 128) * 32;
-    std::memcpy(Memory::GetPointer(dst & 0x1FFFFFE0u, size), Memory::GetPointer(cache & ~31u, size), size);
+    const uint32_t destination = dst & 0x1FFFFFE0u;
+    void* output = Memory::GetPointer(destination, size);
+    const void* input = Memory::GetPointer(cache & ~31u, size);
+    RetireNativeResourceOwner(destination, size);
+    std::memcpy(output, input, size);
 }
 
 // The node of matrix id: the model info's matrix-to-node table (-1 when none).

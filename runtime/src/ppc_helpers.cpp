@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "runtime_log.h"
 #include "timebase_contract.h"
+#include "runtime/native/adapters/model_catalog_bridge.h"
 
 #include <array>
 #include <bitset>
@@ -64,7 +65,10 @@ void TransferLockedCache(uint32_t lower) {
     auto* memory = Memory::GetPointer(memoryAddress, size);
     auto* cache = Memory::GetPointer(cacheAddress, size);
     const bool load = (lower & 16u) != 0;
-    if (!load) RecompMod::CheckExecutableWrite(memoryAddress, size, 0);
+    if (!load) {
+        RecompMod::CheckExecutableWrite(memoryAddress, size, 0);
+        RetireNativeResourceOwner(memoryAddress, size);
+    }
     std::memcpy(load ? cache : memory, load ? memory : cache, size);
     static unsigned traced = 0;
     if (std::getenv("MH3_TRACE_ERRORS") && traced++ < 3)
