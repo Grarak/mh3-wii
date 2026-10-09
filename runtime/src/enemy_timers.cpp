@@ -33,6 +33,7 @@
 // (counter % n == its field) is out of reach of the step counter's load hooks
 // (the phase is read after the counter), so only a port can test it in ticks. (The countdowns of
 // 0x80133B64 and 0x80133920 were still counting steps before these ports.)
+#include "cheats.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -104,6 +105,10 @@ void SlowCheckWhileCounting(CpuContext* ctx) {
 
     if (StepCounter::Every(32))
         game.Call<0x80133A24>({self, kSystem});
+    // Felvine lasts forever (cheats.h): the countdown's store dropped.
+    if (Cheats::On(Cheats::Id::FelvineForever))
+        return;
+
     // Read again: the call may change it (and leave it at 0, which the
     // original then takes 1 from as well).
     const int32_t left = S16(self + 0x94C), ticks = int32_t(GameStep::Ticks());

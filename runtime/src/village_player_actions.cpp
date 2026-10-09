@@ -41,6 +41,7 @@
 // glide and the yaw ease were amounts per step: here they follow the step's
 // length (GameStep::Scale()). At the stock 1/30 s step (one tick) these are
 // the originals.
+#include "cheats.h"
 #include "player_work.h"
 #include "port_check.h"
 
@@ -665,7 +666,7 @@ void StartRun(const Player& p, bool start) {
             p.SetX(3, 4, 0);
 
         if (!p.game.Call<SpecialStance>({plw}))
-            Memory::WriteFloat32(plw + kMotionSpeed, 1.25f);
+            Memory::WriteFloat32(plw + kMotionSpeed, Cheats::VillageDashSpeed()); // 1.25
     }
 
     Memory::Write8(plw + kMoveWait, 10);
@@ -717,7 +718,7 @@ void Run(CpuContext* ctx) {
         }
 
         game.Call<SteerByStick>({plw});
-        PushForward(p, frame[8], Start ? kStartPush : kRunPush);
+        PushForward(p, frame[8], !Start ? kRunPush : Stance12 ? kStartPush : Cheats::VillageDashPush());
 
         if (Start && game.Call<CommandBit>({plw, 0}) == 0 && MoveWaitOut(p))
             game.Call<SetAction>({plw, kind, run, 0});

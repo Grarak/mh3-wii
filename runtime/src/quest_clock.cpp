@@ -8,6 +8,13 @@
 // never less than one frame. At variable step the countdown uses the game time
 // of the step instead: a whole frame per call would run the clock several times
 // too fast at high frame rates.
+//
+// Cheats (cheats.h): the infinite time codes stop the countdown (Argon's made
+// the limit test pass, Skiller's subtracted 0) and run the time out on their
+// buttons (Skiller's stored 0; Argon's wrote a byte, quest work +0x2440, that
+// is 0 throughout a quest here); Instant flex runs it out under a minute
+// (the final clamp at 1800 frames instead of 0).
+#include "cheats.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
@@ -52,6 +59,17 @@ void QuestClockTick(CpuContext* ctx) {
     if (left >= kNoLimitMinutes * (60.0f * Memory::ReadFloat32(kFrameRate)))
         return;
 
+    const bool stopped = Cheats::On(Cheats::Id::ArgonInfiniteTime) || Cheats::On(Cheats::Id::SkillerInfiniteTime);
+
+    if (stopped && Cheats::QuestEndPressed()) {
+        Memory::WriteFloat64(work + kTimeLeftExact, 0.0);
+        Memory::Write32(work + kTimeLeft, 0);
+        return;
+    }
+
+    if (Cheats::On(Cheats::Id::ArgonInfiniteTime))
+        return;
+
     Memory::WriteFloat64(work + kPrevious, ReadF64(work + kNow));
     game.Call<OSGetTime>();
     const auto now = int64_t(uint64_t(ctx->gpr[3]) << 32 | ctx->gpr[4]);
@@ -71,18 +89,18 @@ void QuestClockTick(CpuContext* ctx) {
                 frames = 1.0;
         }
 
-        if (running == 0)
+        if (running == 0 || stopped)
             frames = 0.0;
 
         Memory::WriteFloat64(work + kTimeLeftExact, ReadF64(work + kTimeLeftExact) - frames);
-    } else if (running == 1) {
+    } else if (running == 1 && !stopped) {
         Memory::WriteFloat64(work + kTimeLeftExact, ReadF64(work + kTimeLeftExact) - 1.0);
     }
 
     if (int32_t(Memory::Read32(work + kTimeLeft)) > 0) {
         int32_t frames = int32_t(ReadF64(work + kTimeLeftExact));
 
-        if (frames < 0)
+        if (frames < (Cheats::On(Cheats::Id::InstantFlex) ? 1800 : 0))
             frames = 0;
 
         Memory::Write32(work + kTimeLeft, uint32_t(frames));

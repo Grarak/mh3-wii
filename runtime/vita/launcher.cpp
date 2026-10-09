@@ -5,7 +5,6 @@
 #include "launcher_font.h"
 #include "launcher_screen.h"
 #include "launcher_cheats.h"
-#include "player_health.h"
 #include "village_boot.h"
 #include "field_jump.h"
 #include "disc_image.h"
@@ -301,34 +300,42 @@ void Message(const std::string& text) {
     sceMsgDialogTerm();
 }
 
-// The system keyboard (SceImeDialog, part of SceCommonDialog like the message).
-void EditName(std::string& name) {
-    std::array<SceWChar16, 44> initial{}, output{};
+// The system keyboard (SceImeDialog, part of SceCommonDialog like the
+// message): a name of up to `length` characters, `what` ("quest name") in
+// its title and log lines.
+void TypeName(std::string& name, const std::string& what, size_t length) {
+    std::array<SceWChar16, 44> initial{}, output{}, title{};
+    length = std::min(length, initial.size() - 1);
 
-    for (size_t i = 0; i < std::min(name.size(), initial.size() - 1); ++i)
+    for (size_t i = 0; i < std::min(name.size(), length); ++i)
         initial[i] = uint8_t(name[i]);
 
-    const SceWChar16 title[] = {'Q', 'u', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e', 0};
+    for (size_t i = 0; i < std::min(what.size(), title.size() - 1); ++i)
+        title[i] = uint8_t(i == 0 ? std::toupper(static_cast<unsigned char>(what[i])) : what[i]);
+
+    std::string key = what;
+    std::replace(key.begin(), key.end(), ' ', '-');
+
     SceImeDialogParam param{};
     sceImeDialogParamInit(&param);
     param.type = SCE_IME_TYPE_BASIC_LATIN;
     param.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
-    param.title = title;
-    param.maxTextLength = initial.size() - 1;
+    param.title = title.data();
+    param.maxTextLength = length;
     param.initialText = initial.data();
     param.inputTextBuffer = output.data();
 
     if (const int error = sceImeDialogInit(&param); error < 0)
-        throw std::runtime_error("Cannot open the quest-name keyboard (error " + std::to_string(error) + ")");
+        throw std::runtime_error("Cannot open the " + key + " keyboard (error " + std::to_string(error) + ")");
 
-    Log("quest-name keyboard open");
+    Log("%s keyboard open", key.c_str());
     RunDialog(sceImeDialogGetStatus, sceImeDialogAbort);
     SceImeDialogResult result{};
     sceImeDialogGetResult(&result);
     sceImeDialogTerm();
 
     if (result.button != SCE_IME_DIALOG_BUTTON_ENTER) {
-        Log("quest-name keyboard closed without a name");
+        Log("%s keyboard closed without a name", key.c_str());
         return;
     }
 
@@ -339,7 +346,7 @@ void EditName(std::string& name) {
             break;
 
         if (c < 32 || c > 126)
-            throw std::runtime_error("Use printable Latin characters for quest names");
+            throw std::runtime_error("Use printable Latin characters for " + what + "s");
 
         value += char(c);
     }
@@ -351,7 +358,7 @@ void EditName(std::string& name) {
     if (!value.empty())
         name = std::move(value);
 
-    Log("quest name: %s", name.c_str());
+    Log("%s: %s", what.c_str(), name.c_str());
 }
 #else
 // A panel over the last menu frame; Cross, Circle or Start closes it.
@@ -402,8 +409,9 @@ void Message(const std::string& text) {
 }
 
 // No system keyboard on a development host: the name stays as it is.
-void EditName(const std::string& name) {
-    Log("quest-name keyboard: the Vita's system keyboard; the host keeps \"%s\"", name.c_str());
+void TypeName(const std::string& name, std::string what, size_t) {
+    std::replace(what.begin(), what.end(), ' ', '-');
+    Log("%s keyboard: the Vita's system keyboard; the host keeps \"%s\"", what.c_str(), name.c_str());
 }
 #endif
 class Input {
@@ -615,11 +623,12 @@ enum class Page {
     Custom,
     Templates,
     Editor,
-    Cheats
+    Cheats,
+    CheatList
 };
 
 const char* PageName(Page page) {
-    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats"};
+    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Templates", "Editor", "Cheats", "Cheat list"};
     return names[unsigned(page)];
 }
 
@@ -630,6 +639,36 @@ std::string DefaultName(const QuestCatalog::Quest& source) {
 
 const char* OnOff(bool on) {
     return on ? "ON" : "OFF";
+}
+
+// The cheats of a group, in table order.
+std::vector<size_t> GroupCheats(std::string_view group) {
+    std::vector<size_t> list;
+    const auto cheats = LauncherCheats::List();
+
+    for (size_t i = 0; i < cheats.size(); ++i)
+        if (group == cheats[i].group)
+            list.push_back(i);
+    return list;
+}
+
+// " Active: ..." for the main menu: the cheats' names, or how many.
+std::string ActiveCheats() {
+    const size_t count = LauncherCheats::EnabledCount();
+
+    if (count == 0)
+        return "";
+
+    if (count > 2)
+        return " Active: " + std::to_string(count) + " cheats.";
+
+    std::string names;
+    const auto cheats = LauncherCheats::List();
+
+    for (size_t i = 0; i < cheats.size(); ++i)
+        if (LauncherCheats::Enabled(i))
+            names += (names.empty() ? "" : ", ") + std::string(cheats[i].name);
+    return " Active: " + names + ".";
 }
 } // namespace
 
@@ -680,7 +719,9 @@ bool Run() {
         const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
         Page page = Page::Main;
         size_t selected = 0;
-        bool creating = false, noDamage = false, noStamina = false;
+        bool creating = false;
+        size_t cheatGroup = 0;
+        std::vector<size_t> groupCheats;
 
         // The game reads it once, at RenderInit, after the hand-off.
         bool widescreen = WidescreenSetting().value_or(true);
@@ -751,9 +792,7 @@ bool Run() {
             case Page::Main: {
                 title = "Main menu";
                 rows = {"Start game", "Quests", "Create custom quest", "Cheats", std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)")};
-                const std::string cheats = noDamage || noStamina ? std::string(" Active: ") + (noDamage ? "No damage" : "") + (noDamage && noStamina ? ", " : "") +
-                                                                       (noStamina ? "No action stamina drain" : "") + "."
-                                                                 : "";
+                const std::string cheats = ActiveCheats();
                 const std::string details[] = {"Continue through the game's title and character selection." + cheats,
                                                "Start a quest directly with an existing hunter." + cheats,
                                                "Make a hunt or capture quest from one of the game's quests.",
@@ -854,12 +893,39 @@ bool Run() {
 
                 break;
             }
-            case Page::Cheats:
+            case Page::Cheats: {
                 title = "Cheats";
-                rows = {std::string("No damage: ") + OnOff(noDamage), std::string("No action stamina drain: ") + OnOff(noStamina)};
-                detail = selected == 0 ? "The hunter takes no damage. For this launch." : "Running, guarding and other continuous actions cost no stamina. For this launch.";
-                footer = "X Toggle   O Back   D-pad Move";
+                const auto groups = LauncherCheats::Groups();
+
+                for (const char* group : groups) {
+                    const auto list = GroupCheats(group);
+                    const size_t on = std::count_if(list.begin(), list.end(), [](size_t i) { return LauncherCheats::Enabled(i); });
+                    rows.push_back(std::string(group) + "  (" + std::to_string(list.size()) + " codes" + (on ? ", " + std::to_string(on) + " on" : "") + ")");
+                }
+
+                if (selected == 0)
+                    detail = "The launcher's own toggles. For this launch.";
+                else
+                    detail = "Codes from the " + std::string(groups[std::min(selected, groups.size() - 1)]) + " Gecko list, ported to this disc. For this launch.";
+
                 break;
+            }
+            case Page::CheatList: {
+                const auto cheats = LauncherCheats::List();
+                title = std::string("Cheats: ") + LauncherCheats::Groups()[cheatGroup];
+
+                for (size_t i : groupCheats) {
+                    const std::string value = LauncherCheats::ValueLabel(i);
+                    rows.push_back(std::string(cheats[i].name) + ": " + OnOff(LauncherCheats::Enabled(i)) + (value.empty() ? "" : "  [" + value + "]"));
+                }
+
+                const size_t cheat = groupCheats[std::min(selected, groupCheats.size() - 1)];
+                detail = cheats[cheat].detail;
+                footer = LauncherCheats::Choices(cheat) ? "X Toggle   Left / Right Value   O Back   L / R Page"
+                         : LauncherCheats::TextLength(cheat) ? "X Toggle   Left / Right Type the name   O Back   L / R Page"
+                                                             : "X Toggle   O Back   D-pad Move   L / R Page";
+                break;
+            }
             }
 
             if (rows.empty())
@@ -910,6 +976,10 @@ bool Run() {
                     enter(Page::Main);
                     selected = 3;
                     break;
+                case Page::CheatList:
+                    enter(Page::Cheats);
+                    selected = cheatGroup;
+                    break;
                 case Page::Main:
                     break;
                 }
@@ -923,7 +993,7 @@ bool Run() {
 
                 if (page == Page::Editor && (direction || accept)) {
                     if (selected == 0 && accept)
-                        EditName(edit.name);
+                        TypeName(edit.name, "quest name", 43);
 
                     const auto cycle = [&](size_t index, size_t count) {
                         return (index + count + (direction ? direction : 1)) % count;
@@ -980,6 +1050,23 @@ bool Run() {
                             enter(Page::Custom);
                         } else
                             enter(Page::Main);
+                    }
+
+                    continue;
+                }
+
+                if (page == Page::CheatList && direction) {
+                    const size_t cheat = groupCheats[selected];
+                    const size_t choices = LauncherCheats::Choices(cheat);
+
+                    if (choices) {
+                        LauncherCheats::Select(cheat, (LauncherCheats::Selected(cheat) + choices + direction) % choices);
+                        Log("cheat %s: %s", LauncherCheats::List()[cheat].name, LauncherCheats::ValueLabel(cheat).c_str());
+                    } else if (const size_t length = LauncherCheats::TextLength(cheat)) {
+                        std::string name = LauncherCheats::Text(cheat);
+                        TypeName(name, "hunter name", length);
+                        LauncherCheats::SetText(cheat, name);
+                        Log("cheat %s: %s", LauncherCheats::List()[cheat].name, LauncherCheats::ValueLabel(cheat).c_str());
                     }
 
                     continue;
@@ -1085,16 +1172,17 @@ bool Run() {
 
                     break;
                 case Page::Cheats:
-                    if (selected == 0) {
-                        noDamage = !noDamage;
-                        PlayerHealth::SetNoDamage(noDamage);
-                    } else {
-                        noStamina = !noStamina;
-                        LauncherCheats::SetNoStaminaDrain(noStamina);
-                    }
-
-                    Log("cheats: no damage %s, no action stamina drain %s", noDamage ? "on" : "off", noStamina ? "on" : "off");
+                    cheatGroup = selected;
+                    groupCheats = GroupCheats(LauncherCheats::Groups()[cheatGroup]);
+                    enter(Page::CheatList);
                     break;
+                case Page::CheatList: {
+                    const size_t cheat = groupCheats[selected];
+                    LauncherCheats::Enable(cheat, !LauncherCheats::Enabled(cheat));
+                    const std::string value = LauncherCheats::ValueLabel(cheat);
+                    Log("cheat %s %s%s", LauncherCheats::List()[cheat].name, LauncherCheats::Enabled(cheat) ? "on" : "off", value.empty() ? "" : (" (" + value + ")").c_str());
+                    break;
+                }
                 case Page::Editor:
                     break;
                 }

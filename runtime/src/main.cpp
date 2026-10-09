@@ -7,7 +7,7 @@
 #include "gx_panic.h"
 #include "field_jump.h"
 #include "quest_catalog.h"
-#include "player_health.h"
+#include "launcher_cheats.h"
 #include "guest_worker.h"
 #include <algorithm>
 #include <chrono>
@@ -97,6 +97,10 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 Moga Woods free roam from the village; --spawn\n"
                                "                                 moves the hunter there (arena pit: 0,300,0)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
+                               "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
+                               "                                 the launcher's list by its name (\"InfHP\"; with its\n"
+                               "                                 group when lists share it, \"Bully:ActionRepeater\"),\n"
+                               "                                 with a value by label or number\n"
                                "  --rom <image>                  (with any of the above) play from the European disc\n"
                                "                                 (RVZ, WIA or ISO); remembered in disc/ next to the executable\n";
 
@@ -247,13 +251,32 @@ int main(int argc, char** argv) {
                 break;
             }
 #endif
-        // --no-damage goes with any other option.
+        // --no-damage and --cheat go with any other option.
         const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });
 
         if (noDamage != argv + argc) {
-            PlayerHealth::SetNoDamage(true);
+            LauncherCheats::EnableByName("No damage", "");
             std::cerr << "MH3: no damage\n";
             argc = int(noDamage - argv);
+        }
+
+        for (int i = 1; i + 1 < argc;) {
+            if (std::string_view(argv[i]) != "--cheat") {
+                ++i;
+                continue;
+            }
+
+            const std::string_view cheat = argv[i + 1];
+            const size_t equals = cheat.find('=');
+            const std::string_view name = cheat.substr(0, equals);
+            const std::string_view value = equals == std::string_view::npos ? std::string_view() : cheat.substr(equals + 1);
+
+            if (!LauncherCheats::EnableByName(name, value))
+                throw std::runtime_error("Unknown cheat or value: " + std::string(cheat));
+
+            std::cerr << "MH3: cheat " << cheat << "\n";
+            std::copy(argv + i + 2, argv + argc, argv + i);
+            argc -= 2;
         }
 #ifdef MH3_HAS_AURORA
         if (argc == 2 && std::string_view(argv[1]) == "--efb-check")

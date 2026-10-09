@@ -17,6 +17,7 @@
 // tick per step) every read is the counter itself. The player's step counter
 // (PLW+0x20, a tick at a time) gets the same for its tests in code that runs
 // once a step (kind 2 sites).
+#include "cheats.h"
 #include "game_step.h"
 #include "step_counter.h"
 #include "port_check.h"
@@ -117,8 +118,12 @@ extern "C" void MH3_RunTasks(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x800416F8, MH3_RunTasks, "RunTasks");
 
 // The play-time clock (0x800D2F80, called by each scene's step): steps, and
-// seconds every 30 of them. One pass per tick.
+// seconds every 30 of them. One pass per tick. No playtime increase
+// (cheats.h) drops the step count's store, which stops both.
 static void PlayTimeTickPort(CpuContext*) {
+    if (Cheats::On(Cheats::Id::NoPlaytimeIncrease))
+        return;
+
     for (uint32_t i = 0, ticks = GameStep::Ticks(); i < ticks; ++i) {
         const uint32_t steps = Memory::Read32(kPlaySteps) + 1;
         Memory::Write32(kPlaySteps, steps);

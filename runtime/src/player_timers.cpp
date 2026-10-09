@@ -10,6 +10,13 @@
 // step (GameStep::Ticks: none on a step shorter than a tick, several on a long
 // one), so all of it keeps the Wii's rate at any step length. At the stock
 // 1/30 s step it runs once, as the original.
+//
+// Cheats (cheats.h), by the instruction they replaced: Super speed sets the
+// motion speed (+0x354) to 5 before the stamina recovery reads it; On hit
+// long sword power max stores 100 to the spirit gauge and its level (+0x384,
+// +0x386) where the gauge would go down; the drinks' codes drop the timers'
+// countdown outside their climate (Hot drink +0x466, Cold drink +0x464).
+#include "cheats.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
@@ -99,6 +106,9 @@ void Tick(GuestCall& game, const Plw p) {
     p.Down16(0x45C);
 
     if (p.S16(0x264) < 30000) { // stamina recovery: 2 * rate per step, up to 30000
+        if (Cheats::Toggled(Cheats::Id::SuperSpeed))
+            Memory::WriteFloat32(pl + 0x354, 5.0f);
+
         const int16_t rate = int16_t(int32_t(Memory::ReadFloat32(pl + 0x354)));
         p.W16(0x264, uint16_t(p.S16(0x264) + int16_t(rate * 2)));
 
@@ -271,8 +281,14 @@ void Tick(GuestCall& game, const Plw p) {
     }
 
     if (p.U8(2) == 7) {
-        if (p.S16(0x468) == 0 && p.S16(0x384) > 0 && p.S32(0x20) % 10 == 0)
-            p.W16(0x384, p.U16(0x384) - 1);
+        if (p.S16(0x468) == 0 && p.S16(0x384) > 0 && p.S32(0x20) % 10 == 0) {
+            if (Cheats::On(Cheats::Id::LongSwordPowerMax)) {
+                p.W16(0x386, 100);
+                p.W16(0x384, 100);
+            } else {
+                p.W16(0x384, p.U16(0x384) - 1);
+            }
+        }
 
         if (uint8_t(game.Call<ArmorLevel>({pl})) > 2 && p.Expired16(0x46A))
             p.W16(0x386, 0);
@@ -295,7 +311,7 @@ void Tick(GuestCall& game, const Plw p) {
 
             if (p.S16(timer) < 0)
                 p.W16(timer, 0);
-        } else {
+        } else if (!Cheats::On(timer == 0x464u ? Cheats::Id::ColdDrinkForever : Cheats::Id::HotDrinkForever)) {
             p.W16(timer, p.U16(timer) - 1);
         }
 

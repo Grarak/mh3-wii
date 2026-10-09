@@ -89,6 +89,7 @@
 // and the movement is scaled by the step length, so the actions take the
 // same time and cover the same ground at any step length; at the stock 1/30 s
 // step (one tick) these are the originals.
+#include "cheats.h"
 #include "player_work.h"
 #include "port_check.h"
 
@@ -1200,7 +1201,8 @@ void Walk53(CpuContext* ctx) {
         if (game.Call<MasterCheck>({plw}) == 0)
             break;
 
-        if (game.Call<0x80277E10>({plw, 0}, {85.0, -60.0}) != 0) {
+        // The drop's -60 is the guest's (r2 - 15260): the leap cheats change it.
+        if (game.Call<0x80277E10>({plw, 0}, {85.0, Memory::ReadFloat32(0x8079FF60 - 15260)}) != 0) {
             Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2) & 0xFFFF);
             p.Next(6, arg ? 68 : 48, 0);
             break;
@@ -2072,19 +2074,21 @@ void FallStart(const Player& p, uint32_t kind) {
 
 // The velocity takes the acceleration (forward and sideways not below 0) and
 // moves the player turned by the facing, times the step length. True when
-// the player is airborne (0x80245ED0) and falling.
-bool FallMove(const Player& p, uint32_t move) {
+// the player is airborne (0x80245ED0) and falling. The components in `keep`
+// (bits 0-2: x, y, z) stay (cheats: Jump15's stores dropped); the least
+// sideways and forward speeds are 0 but for Jump15's cheats.
+bool FallMove(const Player& p, uint32_t move, uint32_t keep = 0, float floorX = 0.0f, float floorZ = 0.0f) {
     const uint32_t plw = p.plw;
     const float s = float(GameStep::Scale());
 
     for (uint32_t k = 0; k < 12; k += 4)
         Memory::WriteFloat32(plw + kVelocity + k, Memory::ReadFloat32(plw + kVelocity + k) + Memory::ReadFloat32(plw + kAcceleration + k) * s);
 
-    if (Memory::ReadFloat32(plw + kVelocity + 0) < 0.0f)
-        Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
+    if (Memory::ReadFloat32(plw + kVelocity + 0) < floorX)
+        Memory::WriteFloat32(plw + kVelocity + 0, floorX);
 
-    if (Memory::ReadFloat32(plw + kVelocity + 8) < 0.0f)
-        Memory::WriteFloat32(plw + kVelocity + 8, 0.0f);
+    if (Memory::ReadFloat32(plw + kVelocity + 8) < floorZ)
+        Memory::WriteFloat32(plw + kVelocity + 8, floorZ);
 
     for (uint32_t k = 0; k < 12; k += 4)
         Memory::WriteFloat32(move + k, Memory::ReadFloat32(plw + kVelocity + k) * s);
@@ -2092,8 +2096,8 @@ bool FallMove(const Player& p, uint32_t move) {
     p.game.Call<RotVecY>({move, Memory::Read32(plw + kAngle2)});
 
     for (uint32_t k = 0; k < 12; k += 4)
-        Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(move + k));
-
+        if (!(keep >> (k / 4) & 1))
+            Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(move + k));
     return p.game.Call<0x80245ED0>({plw}) != 1 && Memory::ReadFloat32(plw + kVelocity + 4) < 0.0f;
 }
 
@@ -2386,7 +2390,7 @@ void Run119(CpuContext* ctx) {
 
         Memory::WriteFloat32(move + 0, 0.0f);
         Memory::WriteFloat32(move + 4, 0.0f);
-        Memory::WriteFloat32(move + 8, float(2.0 * GameStep::Scale()));
+        Memory::WriteFloat32(move + 8, float(Cheats::RunStep() * GameStep::Scale()));
         game.Call<RotVecXYZ>({move, plw + 0x54});
 
         for (uint32_t k = 0; k < 12; k += 4)
@@ -2409,6 +2413,7 @@ void Jump15(CpuContext* ctx) {
     GuestCall game{ctx};
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw, kind = frame.Arg(4), move = frame[16], height = frame[12], hit = frame[8];
+    const Cheats::JumpValues jump = Cheats::Jump(plw);
     game.Call<Vec3Ctor>({move});
     p.CountUp();
 
@@ -2420,11 +2425,11 @@ void Jump15(CpuContext* ctx) {
 
         if (kind == 0) {
             p.Set(15, 0, 0);
-            Memory::WriteFloat32(plw + kVelocity + 0, 0.0f);
-            Memory::WriteFloat32(plw + kVelocity + 4, 18.0f);
+            Memory::WriteFloat32(plw + kVelocity + 0, jump.sideways);
+            Memory::WriteFloat32(plw + kVelocity + 4, jump.rise);
             Memory::WriteFloat32(plw + kVelocity + 8, 20.0f);
-            Memory::WriteFloat32(plw + kAcceleration + 0, 0.0f);
-            Memory::WriteFloat32(plw + kAcceleration + 8, 0.0f);
+            Memory::WriteFloat32(plw + kAcceleration + 0, jump.sideways);
+            Memory::WriteFloat32(plw + kAcceleration + 8, jump.sideways);
             game.Call<0x8026A608>({plw, 19});
         } else if (kind == 1) {
             Memory::Write8(plw + 0x585, 0);
@@ -2442,10 +2447,10 @@ void Jump15(CpuContext* ctx) {
         Memory::Write8(plw + kFlag7, 0);
         break;
     case 1: {
-        if (!FallMove(p, move))
+        if (!FallMove(p, move, Cheats::FallKeeps(plw), jump.floorX, jump.floorZ))
             break;
 
-        if (game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1 && Memory::Read8(plw + kClimbs) <= 20) {
+        if (game.Call<0x80277CF8>({plw, height}, {jump.reach, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1 && Memory::Read8(plw + kClimbs) <= 20) {
             Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(height));
             Memory::WriteFloat32(plw + kLastY, Memory::ReadFloat32(height));
             Memory::Write8(plw + 27, 1);
@@ -2559,7 +2564,7 @@ void ClimbOver(CpuContext* ctx) {
 
         p.NextState();
         game.Call<ClearAcceleration>({plw});
-        const float speed = 15.0f * (Memory::Read8(plw + kFlag24) == 1 ? 0.8f : 1.0f);
+        const float speed = Cheats::Jump(plw).climbSpeed * (Memory::Read8(plw + kFlag24) == 1 ? 0.8f : 1.0f);
         Memory::WriteFloat32(plw + kVelocity + 4, 2.0f * speed);
         game.Call<0x8026A608>({plw, 20});
         p.Set(12, 2, 0);
@@ -2574,7 +2579,7 @@ void ClimbOver(CpuContext* ctx) {
         if (game.Call<0x80245ED0>({plw}) == 1 || !(Memory::ReadFloat32(plw + kVelocity + 4) < 0.0f))
             break;
 
-        if (kind != 2 && game.Call<0x80277CF8>({plw, height}, {180.0, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1) {
+        if (kind != 2 && game.Call<0x80277CF8>({plw, height}, {Cheats::Jump(plw).reach, 30.0}) != 0 && game.Call<0x802762D4>({plw, 1}) == 1) {
             Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
             Memory::WriteFloat32(plw + kPosition + 4, Memory::ReadFloat32(height));
             Memory::WriteFloat32(plw + kLastY, Memory::ReadFloat32(height));

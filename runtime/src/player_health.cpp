@@ -5,10 +5,20 @@
 // Player work (PLW): +0x0A u8 action group (8: down), +0x370 s16 health,
 // +0x372 s16 maximum health, +0x376 s16 recoverable ("red") health.
 //
-// The optional --no-damage cheat drops the negative amounts.
+// The optional --no-damage cheat drops the negative amounts. The Gecko codes
+// patched here (cheats.h), by the instruction they replaced:
+//   - Invincible players: the event scene's test for damage, always taken;
+//   - Infinite health (Bully's): the add stores the health as the maximum
+//     instead, so the health stays and the maximum drops to it;
+//   - Toggle infinite health (Seth's): the add, switched by its buttons;
+//   - Alternate infinite health (Seth's): the health's store, so only the
+//     clamps below write (empty at 0 or less, full at the maximum);
+//   - Daredevil mode: the branch over the clamp at 0, so any change empties
+//     the health.
 #include "player_health.h"
 
 #include "abi_bridge.h"
+#include "cheats.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -52,7 +62,9 @@ static void PlAddHealthPort(CpuContext* ctx) {
         if (!game.Call<Pl_master_ck>({player}))
             return;
 
-        if (game.Call<PlInEventDemo>({0}) == 1 && amount < 0)
+        const bool invincible = Cheats::On(Cheats::Id::InvinciblePlayers) || game.Call<PlInEventDemo>({0}) == 1;
+
+        if (invincible && amount < 0)
             return;
     }
 
@@ -62,17 +74,32 @@ static void PlAddHealthPort(CpuContext* ctx) {
     if (noDamage && amount < 0)
         return;
 
-    int16_t health = int16_t(Read16s(player + kHealth) + amount);
+    using Cheats::Id;
 
-    if (health <= 0)
+    const int16_t current = Read16s(player + kHealth);
+    int16_t health = int16_t(current + amount);
+
+    if (Cheats::On(Id::BullyInfiniteHealth)) {
+        Memory::Write16(player + kMaxHealth, uint16_t(current));
+        health = current;
+    } else if (Cheats::Toggled(Id::ToggleInfiniteHealth)) {
+        health = current;
+    }
+
+    if (!Cheats::On(Id::AltInfiniteHealth))
+        Memory::Write16(player + kHealth, uint16_t(health));
+
+    if (health <= 0 || Cheats::On(Id::Daredevil)) {
         health = 0;
+        Memory::Write16(player + kHealth, 0);
+    }
 
     const int16_t maxHealth = Read16s(player + kMaxHealth);
 
-    if (health >= maxHealth)
+    if (health >= maxHealth) {
         health = maxHealth;
-
-    Memory::Write16(player + kHealth, uint16_t(health));
+        Memory::Write16(player + kHealth, uint16_t(health));
+    }
 
     if (Read16s(player + kRedHealth) < health)
         Memory::Write16(player + kRedHealth, uint16_t(health));

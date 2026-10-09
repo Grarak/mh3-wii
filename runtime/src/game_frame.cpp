@@ -12,6 +12,7 @@
 // The phase byte (0x8065AA83) records how far the frame got (1 started,
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
+#include "cheats.h"
 #include "frame_split.h"
 #include "game_step.h"
 #include "game_tasks.h"
@@ -386,6 +387,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
 #endif
         GameTasks::SkipStrapScreen();
         StepVillageBoot(ctx);
+        Cheats::Step(ctx);
 
         // The task pass's Effect::Calc calls run on the guest worker during
         // the scene's traverse and opaque draws (EffectStep::Launch in the
