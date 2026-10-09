@@ -1131,15 +1131,20 @@ uint64_t movie_generation = 1;
 // and the render thread converts a bound frame one or more packets after the
 // game thread recorded it: by then the next frame's decode may have rewritten
 // the planes' top rows (a tear at the top). Each packet slot keeps a copy of
-// the planes it binds; the ring never records into the slot being drawn.
+// the planes it binds; the ring never records into the slot being drawn. A
+// copy is never written again, so the packets that bind the same decoded
+// frame (two a frame at 60 fps) share it: one 450 KiB copy per frame.
 struct MovieFrame {
-    std::unique_ptr<uint8_t[]> bytes;
+    std::shared_ptr<const uint8_t[]> bytes;
     size_t size = 0;
     uint32_t address = 0;
     uint64_t generation = 0;
 };
 
 std::array<MovieFrame, kNativeFramePacketSlots> movie_frames;
+
+// The copy made last, for the next packets binding the same frame.
+MovieFrame movie_latest;
 
 // The packet that last copied a movie frame, and the planes it bound until
 // the movie's texture is retired.
@@ -1156,14 +1161,13 @@ void CopyMovieFrame(uint32_t address, size_t bytes) {
     if (frame.address == address && frame.generation == movie_generation && frame.size >= bytes)
         return;
 
-    if (frame.size < bytes) {
-        frame.bytes.reset(new uint8_t[bytes]);
-        frame.size = bytes;
+    if (movie_latest.address != address || movie_latest.generation != movie_generation || movie_latest.size < bytes) {
+        std::shared_ptr<uint8_t[]> copy(new uint8_t[bytes]);
+        std::memcpy(copy.get(), Memory::GetPointer(address, bytes), bytes);
+        movie_latest = {std::move(copy), bytes, address, movie_generation};
     }
 
-    std::memcpy(frame.bytes.get(), Memory::GetPointer(address, bytes), bytes);
-    frame.address = address;
-    frame.generation = movie_generation;
+    frame = movie_latest;
 }
 } // namespace
 
@@ -1178,6 +1182,8 @@ void ReleaseMovieFrameCopy() {
     // The movie's last frame: 640x480 planes are 450 KiB in each slot.
     if (auto& frame = movie_frames[NativeFramePacketSlot()]; frame.bytes)
         frame = {};
+
+    movie_latest = {};
 
     // The player keeps its planes after the movie ends (no heap frees them):
     // its frame texture leaves CDRAM once no packet in the ring draws it.

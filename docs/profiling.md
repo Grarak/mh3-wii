@@ -93,6 +93,24 @@ vprof-cli functions RUN/native-cpu.vprof --elf RUN/game.elf --thread thread-0xTI
 vprof-cli callers RUN/native-cpu.vprof SYMBOL --elf RUN/game.elf
 ```
 
+`scripts/vita-perf-data.py RUN` converts the DTrace samples
+(`native-cpu.samples`, no vprof capture involved) to Linux perf's format,
+`RUN/native-cpu.perf.data` (`devkit-heartbeat.sh` writes it after every
+profile), for perf and the tools that read it:
+
+```sh
+perf report -i RUN/native-cpu.perf.data --sort comm,dso,sym
+perf report -i RUN/native-cpu.perf.data --comms game --sort sym
+perf script -i RUN/native-cpu.perf.data | stackcollapse-perf.pl | flamegraph.pl > flame.svg
+```
+
+Each sample is a `cpu-clock` event of the sampler's period on its CPU and
+thread; threads are named as in `profile-summary.txt` (`game`, `render`,
+`audio-mixer`, the others by ID). The game's addresses are moved back to the
+ELF's, so perf reads `RUN/game.elf`'s symbols and inlined frames itself.
+Samples in Sony's modules show as `[unknown]`, kernel samples as kernel mode.
+The counts match vprof-cli's.
+
 Rules for reading them:
 
 - Percentages are of the thread's available user-PC samples. Rows with only a
@@ -113,7 +131,12 @@ python3 scripts/vita_vprof.py --samples RUN/analysis/snapshot-cfi.samples \
   --stacks RUN/analysis/snapshot-cfi.stacks.jsonl --stack-source 'SHA-verified ARM32 DWARF CFI' \
   --deci-log RUN/deci4p.log --elf RUN/game.elf --hz 199 --out RUN/analysis/snapshot-cfi
 vprof-cli functions RUN/analysis/snapshot-cfi.vprof --elf RUN/game.elf --inclusive --top 30
+python3 scripts/vita-perf-data.py RUN --samples RUN/analysis/snapshot-cfi.samples
+perf report -i RUN/analysis/snapshot-cfi.perf.data --comms game --children --sort sym
 ```
+
+In perf the unwound stacks (`snapshot-cfi.stacks.jsonl`) are callchains
+(`perf report -g`, flame graphs).
 
 The unwinder checks the recorded hashes, the exact ELF and the interrupted
 context, reads only the captured stack bytes and uses DWARF CFI; it never
