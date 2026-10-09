@@ -164,7 +164,11 @@ void GuestThread::Wait() {
 void GuestThread::Await() const {
     const uint32_t target = submitted_.Load();
 
-    for (uint32_t done = finished_.Load(); done != target;)
+    // Until the job is done or a later one: the submitter may hand the thread
+    // its next job meanwhile (the next logic step's world split beside the
+    // draw thread's effect join), and a spin that missed the moment the count
+    // equalled the target would wait for ever.
+    for (uint32_t done = finished_.Load(); int32_t(done - target) < 0;)
         done = finished_.SpinForChange(done);
 }
 
