@@ -11,7 +11,9 @@
 // root/cache/index.log) and queues its conversion on worker threads that are
 // free to run on any core. Converted packs are written under root/cache/ and
 // reused by later launches. Consumers that need a pack before its conversion
-// finishes wait for it; the game's loading screens absorb that time.
+// finishes wait for it; the game's loading screens absorb that time. Audio
+// stream files are extracted the same way, at their first read (the quest's
+// loading screen), to plain files that later reads use directly.
 class AssetCache {
   public:
     struct SourceFile {
@@ -21,7 +23,9 @@ class AssetCache {
     };
     // Reads decrypted partition bytes without native texture tags.
     using RawRead = std::function<void(uint64_t offset, uint8_t* out, size_t bytes)>;
-    AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, RawRead read);
+    // Streams are copied out to cache/files at their first read and then read
+    // from there (least recently used copies make room).
+    AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read);
     ~AssetCache();
     AssetCache(const AssetCache&) = delete;
     // A game disc read: indexes the source files it touches and patches their

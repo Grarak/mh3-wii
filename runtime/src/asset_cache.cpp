@@ -32,6 +32,16 @@ constexpr size_t MaxPendingBytes = 16u << 20;
 constexpr unsigned ModelWorkers = Workers;
 constexpr size_t MaxPendingBytes = 48u << 20;
 #endif
+// Extracted stream files (cache/files): the disc's audio streams, copied out
+// as plain files at their first read so that later reads skip the image's
+// decompression and decryption. Least recently used files go beyond this.
+#ifdef __vita__
+constexpr uint64_t MaxExtractedBytes = 64ull << 20;
+#else
+constexpr uint64_t MaxExtractedBytes = 512ull << 20;
+#endif
+// Small enough that game reads waiting on the image's lock are not delayed long.
+constexpr size_t ExtractChunk = 256u << 10;
 
 uint32_t Le32(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
@@ -93,15 +103,26 @@ struct AssetCache::Impl {
         // The whole file while its conversion is pending; game reads are served from it.
         std::shared_ptr<const std::vector<uint8_t>> data;
     };
-    enum class Kind { Textures, Models };
+    enum class Kind { Textures, Models, Extract };
+    // A disc file served from a plain copy once extracted.
+    struct Extract {
+        SourceFile file;
+        enum class State { None, Queued, Ready } state = State::None;
+        std::FILE* copy = nullptr; // open while Ready
+        uint64_t used = 0;         // last read, for eviction
+        bool failed = false;       // no retry this launch
+    };
     struct Job {
         Source* source;
         Kind kind;
+        Extract* extract = nullptr;
     };
 
     std::filesystem::path root, cache;
     RawRead read;
     std::vector<Source> sources;        // by partition offset
+    std::vector<Extract> extracts;      // by partition offset
+    uint64_t extractedBytes = 0, reads = 0;
     std::map<uint32_t, Source*> byTexture; // first texture ID -> source
     uint32_t nextTexture = 1, nextModel = 1;
     std::mutex lock;
@@ -115,8 +136,9 @@ struct AssetCache::Impl {
     std::filesystem::path TexturePath(const Source& s) const { return cache / "textures" / (Hex16(s.file.offset) + "-" + std::to_string(s.firstTexture) + ".bin"); }
     std::filesystem::path ModelPath(const Source& s) const { return cache / "models" / (Hex16(s.file.offset) + "-" + std::to_string(s.firstModel) + ".bin"); }
     std::filesystem::path SkipPath(const Source& s) const { return cache / "models" / (Hex16(s.file.offset) + "-" + std::to_string(s.firstModel) + ".skip"); }
+    std::filesystem::path ExtractPath(const Extract& e) const { return cache / "files" / (Hex16(e.file.offset) + "-" + std::to_string(e.file.bytes) + ".bin"); }
 
-    Impl(const std::filesystem::path& r, std::vector<SourceFile> files, RawRead raw) : root(r), cache(r / "cache"), read(std::move(raw)) {
+    Impl(const std::filesystem::path& r, std::vector<SourceFile> files, std::vector<SourceFile> streams, RawRead raw) : root(r), cache(r / "cache"), read(std::move(raw)) {
         std::sort(files.begin(), files.end(), [](const SourceFile& a, const SourceFile& b) { return a.offset < b.offset; });
         sources.resize(files.size());
         for (size_t i = 0; i < files.size(); ++i)
@@ -129,6 +151,19 @@ struct AssetCache::Impl {
             Publish(cache / "version.txt", {reinterpret_cast<const uint8_t*>(Version), std::strlen(Version)});
         }
         LoadIndex();
+        std::sort(streams.begin(), streams.end(), [](const SourceFile& a, const SourceFile& b) { return a.offset < b.offset; });
+        std::filesystem::create_directories(cache / "files");
+        extracts.resize(streams.size());
+        for (size_t i = 0; i < streams.size(); ++i) {
+            extracts[i].file = std::move(streams[i]);
+            // A file under its final name is complete (Publish order).
+            std::error_code error;
+            const auto size = std::filesystem::file_size(ExtractPath(extracts[i]), error);
+            if (!error && size == extracts[i].file.bytes && (extracts[i].copy = std::fopen(ExtractPath(extracts[i]).string().c_str(), "rb"))) {
+                extracts[i].state = Extract::State::Ready;
+                extractedBytes += size;
+            }
+        }
         threads.resize(Workers);
         for (auto& thread : threads) {
             pthread_attr_t attributes;
@@ -154,6 +189,97 @@ struct AssetCache::Impl {
         changed.notify_all();
         for (auto thread : threads)
             pthread_join(thread, nullptr);
+        for (auto& e : extracts)
+            if (e.copy)
+                std::fclose(e.copy);
+    }
+    Extract* FindExtract(uint64_t at) {
+        auto it = std::upper_bound(extracts.begin(), extracts.end(), at, [](uint64_t value, const Extract& e) { return value < e.file.offset; });
+        if (it == extracts.begin())
+            return nullptr;
+        --it;
+        return at - it->file.offset < it->file.bytes ? &*it : nullptr;
+    }
+    // Lock held. Serves [at, stop) of an extracted file; false when not extracted
+    // (and queues its extraction).
+    bool ReadExtracted(Extract& e, uint64_t at, uint64_t stop, uint8_t* out) {
+        e.used = ++reads;
+        if (e.state == Extract::State::None && !e.failed) {
+            e.state = Extract::State::Queued;
+            jobs.push_back({nullptr, Kind::Extract, &e});
+            changed.notify_all();
+        }
+        if (e.state != Extract::State::Ready)
+            return false;
+        const size_t count = size_t(stop - at);
+        if (std::fseek(e.copy, long(at - e.file.offset), SEEK_SET) || std::fread(out, 1, count, e.copy) != count)
+            throw std::runtime_error("Cannot read the extracted " + e.file.path);
+        return true;
+    }
+    // Worker: copies the file out of the image, making room by evicting the
+    // least recently used copies, and publishes it.
+    void RunExtract(Extract& e, std::unique_lock<std::mutex>& guard) {
+        while (extractedBytes + e.file.bytes > MaxExtractedBytes) {
+            Extract* oldest = nullptr;
+            for (auto& other : extracts)
+                if (other.state == Extract::State::Ready && (!oldest || other.used < oldest->used))
+                    oldest = &other;
+            if (!oldest)
+                break;
+            std::fclose(oldest->copy);
+            oldest->copy = nullptr;
+            oldest->state = Extract::State::None;
+            extractedBytes -= oldest->file.bytes;
+            std::error_code ignored;
+            std::filesystem::remove(ExtractPath(*oldest), ignored);
+        }
+        if (extractedBytes + e.file.bytes > MaxExtractedBytes) {
+            // Larger than the whole budget: keep reading it from the image.
+            e.state = Extract::State::None;
+            e.failed = true;
+            return;
+        }
+        extractedBytes += e.file.bytes; // reserved while copying
+        guard.unlock();
+        const auto path = ExtractPath(e), temporary = std::filesystem::path(path.string() + ".tmp");
+        std::FILE* copy = nullptr;
+        bool written = false;
+        try {
+            std::vector<uint8_t> chunk(ExtractChunk);
+            if (std::FILE* out = std::fopen(temporary.string().c_str(), "wb")) {
+                written = true;
+                for (uint64_t done = 0; done < e.file.bytes && written;) {
+                    const size_t count = size_t(std::min<uint64_t>(ExtractChunk, e.file.bytes - done));
+                    read(e.file.offset + done, chunk.data(), count);
+                    written = std::fwrite(chunk.data(), 1, count, out) == count;
+                    done += count;
+                }
+                written = std::fclose(out) == 0 && written;
+            }
+            if (written) {
+                std::error_code ignored;
+                std::filesystem::remove(path, ignored);
+                std::filesystem::rename(temporary, path);
+                copy = std::fopen(path.string().c_str(), "rb");
+            }
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "MH3 asset cache: extracting %s failed: %s\n", e.file.path.c_str(), error.what());
+            written = false;
+        }
+        if (!copy) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+        }
+        guard.lock();
+        if (copy) {
+            e.copy = copy;
+            e.state = Extract::State::Ready;
+        } else {
+            // Not enough space or a read error: keep reading from the image.
+            extractedBytes -= e.file.bytes;
+            e.state = Extract::State::None;
+            e.failed = true;
+        }
     }
 
     Source* Find(uint64_t at) {
@@ -302,13 +428,18 @@ struct AssetCache::Impl {
                 converter.reset(); // Return the model workspace while idle.
             auto next = jobs.end();
             changed.wait(guard, [&] {
-                next = std::find_if(jobs.begin(), jobs.end(), [&](const Job& j) { return j.kind == Kind::Textures || modelJobs < ModelWorkers; });
+                next = std::find_if(jobs.begin(), jobs.end(), [&](const Job& j) { return j.kind != Kind::Models || modelJobs < ModelWorkers; });
                 return stopping || next != jobs.end();
             });
             if (stopping)
                 return;
             const Job job = *next;
             jobs.erase(next);
+            if (job.kind == Kind::Extract) {
+                RunExtract(*job.extract, guard);
+                changed.notify_all();
+                continue;
+            }
             if (job.kind == Kind::Models)
                 ++modelJobs;
             auto& s = *job.source;
@@ -387,7 +518,8 @@ struct AssetCache::Impl {
     }
 };
 
-AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, RawRead read) : impl(std::make_unique<Impl>(root, std::move(sources), std::move(read))) {}
+AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read)
+    : impl(std::make_unique<Impl>(root, std::move(sources), std::move(streams), std::move(read))) {}
 AssetCache::~AssetCache() = default;
 
 void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
@@ -397,9 +529,22 @@ void AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
     for (uint64_t at = offset; at < end;) {
         auto* s = m.Find(at);
         if (!s) {
+            if (auto* e = m.FindExtract(at)) {
+                const uint64_t stop = std::min(end, e->file.offset + e->file.bytes);
+                if (!m.ReadExtracted(*e, at, stop, out + (at - offset))) {
+                    guard.unlock();
+                    m.read(at, out + (at - offset), stop - at);
+                    guard.lock();
+                }
+                at = stop;
+                continue;
+            }
             // Not a source file: read up to the next one.
             auto next = std::upper_bound(m.sources.begin(), m.sources.end(), at, [](uint64_t value, const Impl::Source& source) { return value < source.file.offset; });
-            const uint64_t stop = next == m.sources.end() ? end : std::min(end, next->file.offset);
+            uint64_t stop = next == m.sources.end() ? end : std::min(end, next->file.offset);
+            auto stream = std::upper_bound(m.extracts.begin(), m.extracts.end(), at, [](uint64_t value, const Impl::Extract& e) { return value < e.file.offset; });
+            if (stream != m.extracts.end())
+                stop = std::min(stop, stream->file.offset);
             guard.unlock();
             m.read(at, out + (at - offset), stop - at);
             guard.lock();
@@ -477,7 +622,12 @@ struct Game {
                 throw std::runtime_error("Oversized texture source: " + name);
             sources.push_back({name, image.FileOffset(name), bytes});
         }
-        cache = std::make_unique<AssetCache>(root, std::move(sources), [this](uint64_t offset, uint8_t* output, size_t length) { image.ReadRaw(offset, output, length); });
+        // The audio streams (16/srt): read in small pieces over minutes of play.
+        std::vector<AssetCache::SourceFile> streams;
+        for (const auto& name : image.FileNames())
+            if (name.rfind("16/srt/", 0) == 0)
+                streams.push_back({name, image.FileOffset(name), image.FileSize(name)});
+        cache = std::make_unique<AssetCache>(root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { image.ReadRaw(offset, output, length); });
         image.SetReader([this](uint64_t offset, uint8_t* output, size_t length) { cache->Read(offset, output, length); });
     }
     ~Game() { image.SetReader({}); }
