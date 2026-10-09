@@ -349,10 +349,23 @@ struct ShadeLighting {
     bool lit() const { return kind != NativeShaderLighting::None; }
 };
 
+// The GX form of a directional light: no angle or distance attenuation
+// (coefficients 1, 0, 0) and at least 1e6 units from the eye. Lit from the
+// eye's direction to it instead of the vertex's, a vertex 2e4 units away is
+// lit at most about a degree off (Alatreon's lights are 3e6-8e6 away).
+constexpr int32_t kFarLights = 0x10000; // draw.channel.w (native_shader_source.cpp far_light)
+
+bool FarLight(const mh3_shader_light& light) {
+    const float* p = light.position;
+    const float distance2 = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
+    return light.angular[0] == 1.0f && light.angular[1] == 0.0f && light.angular[2] == 0.0f && light.distance[0] == 1.0f && light.distance[1] == 0.0f && light.distance[2] == 0.0f &&
+           std::isfinite(distance2) && distance2 >= 1e12f;
+}
+
 // Lighting channel feeding the vertex colour: channel 0 unless the material
 // reads colour channel 1 (channel 1 then replaces channel 0, an approximation).
 // Colour-only spot lighting with clamped diffuse gets the Spot program with the
-// active light indices packed one per nibble.
+// active light indices packed one per nibble, flagged far when all of them are.
 ShadeLighting ShadeChannels(const mh3_shade_material& shading, mh3_shade_vertex& out) {
     const auto& material = render.material;
     const auto& lightSlots = render.lightSlots;
@@ -379,11 +392,19 @@ ShadeLighting ShadeChannels(const mh3_shade_material& shading, mh3_shade_vertex&
 
     ShadeLighting lighting{NativeShaderLighting::Spot, 0};
     uint32_t packed = 0;
+    bool far = true;
 
     for (unsigned light = 0; light < 8; ++light)
-        if (colorMask & (1u << light))
+        if (colorMask & (1u << light)) {
             packed |= light << (4 * lighting.lights++);
+            far = far && FarLight(render.preparedLights[light]);
+        }
+
     out.channel[0] = int32_t(packed);
+
+    if (far)
+        out.channel[3] |= kFarLights;
+
     return lighting;
 }
 

@@ -146,8 +146,8 @@ vec2 srt2d(int role, vec2 uv) {
 // channel: x colour light mask (LIT 2) or packed light indices (LIT 1), y alpha
 // light mask, z bits (1 colour lit, 2 alpha lit, 4/16 material from vertex,
 // 8/32 ambient from vertex), w light functions (colour diffuse | attenuation
-// << 2, alpha in bits 8..11). LIT 1 is colour-only spot lighting over LIGHTS
-// lights; LIT 2 evaluates any GX channel.
+// << 2, alpha in bits 8..11; bit 16: LIT 1's lights are all far). LIT 1 is
+// colour-only spot lighting over LIGHTS lights; LIT 2 evaluates any GX channel.
 constexpr const char* GlslVertexCommon = R"GLSL(
 #if LIT == 1
 // Spot attenuation with clamped diffuse, the only colour lighting MH3 models use.
@@ -161,6 +161,15 @@ vec3 spot_light(int i, vec3 position, vec3 normal) {
     float cosine = max(0.0, dot(ldir, light.direction.xyz));
     float attn = max(0.0, dot(light.angular.xyz, vec3(1.0, cosine, cosine * cosine)) / dot(light.distance.xyz, vec3(1.0, dist, dist2)));
     return attn * max(0.0, dot(ldir, normal)) * light.color.rgb;
+}
+
+// A far light (channel.w bit 16: every light of the draw has neither angle nor
+// distance attenuation and lies at least 1e6 units from the eye, the GX form
+// of a directional light): its direction from the eye stands for the one from
+// the vertex.
+vec3 far_light(int i, vec3 normal) {
+    Light light = scene.lights[i];
+    return max(0.0, dot(normalize(light.position.xyz), normal)) * light.color.rgb;
 }
 #elif LIT == 2
 float light_term(int i, vec3 position, vec3 normal, int functions) {
@@ -195,8 +204,13 @@ vec4 light_channel(vec3 position, vec3 normal, vec4 vertex) {
 #if LIT == 1
     // channel.x packs the active light indices, one per nibble.
     vec3 ambient = (bits & 8) != 0 ? vertex.rgb : draw.channel_ambient.rgb;
-    for (int n = 0; n < LIGHTS; ++n)
-        ambient += spot_light((draw.channel.x >> (4 * n)) & 7, position, normal);
+    if ((draw.channel.w & 0x10000) != 0) {
+        for (int n = 0; n < LIGHTS; ++n)
+            ambient += far_light((draw.channel.x >> (4 * n)) & 7, normal);
+    } else {
+        for (int n = 0; n < LIGHTS; ++n)
+            ambient += spot_light((draw.channel.x >> (4 * n)) & 7, position, normal);
+    }
     result.rgb = material * clamp(ambient, 0.0, 1.0);
 #elif LIT == 2
     if ((bits & 1) != 0) {
@@ -221,6 +235,17 @@ float fog_distance(vec4 clip) {
     float depth = 1.0 - clip.z / clip.w;
     float ze = scene.fog_shape.z != 0.0 ? scene.fog.x * depth : scene.fog.x / (scene.fog.y - depth * scene.fog.w);
     return ze - scene.fog.z;
+}
+
+// The fog amount at a vertex (the curve of its clamped distance; a linear
+// curve is the distance itself), which the fragment blends by as
+// interpolated. Exact for linear fog wherever a triangle's corners are all
+// inside the fog range; across its ends the clamp is taken at the corners.
+float fog_amount(vec4 clip) {
+    float f = clamp(fog_distance(clip), 0.0, 1.0);
+    float g = scene.fog_curve.x + scene.fog_curve.y * f;
+    g = mix(g, g * g, scene.fog_curve.z);
+    return clamp(scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0 * g), 0.0, 1.0);
 }
 )GLSL";
 
@@ -332,7 +357,7 @@ void main() {
 #else
     v_color0 = light_channel(position, vec3(0.0), vertex);
 #endif
-    v_fog = fog_distance(projected);
+    v_fog = fog_amount(projected);
     projected.xy += projected.w * draw.viewport.zw;
     TEXGEN_OUTPUTS
     gl_Position = vec4(projected.x, -projected.y, 2.0 * projected.z - projected.w, projected.w);
@@ -359,7 +384,7 @@ void main() {
     v_color0 = light_channel(a_view_position, a_normal, a_color0);
     // a_position is GL clip space (z in [-w, w]); fog reads the GX depth.
     vec4 p = a_position;
-    v_fog = fog_distance(vec4(p.xy, 0.5 * (p.z + p.w), p.w));
+    v_fog = fog_amount(vec4(p.xy, 0.5 * (p.z + p.w), p.w));
     v_uv0 = affine(a_uv0);
     v_uv1 = affine(a_uv1);
     v_uv2 = affine(a_uv2);
@@ -502,15 +527,8 @@ void main() {
         discard;
 #endif
 #if FOG
-    float f = clamp(v_fog, 0.0, 1.0);
-#if LINEAR_FOG
-    float amount = scene.fog_curve.w * f + scene.fog_shape.x;
-#else
-    float g = scene.fog_curve.x + scene.fog_curve.y * f;
-    g = mix(g, g * g, scene.fog_curve.z);
-    float amount = scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0 * g);
-#endif
-    result.rgb = mix(result.rgb, scene.fog_color.rgb, clamp(amount, 0.0, 1.0));
+    // v_fog is the amount the vertices computed (fog_amount).
+    result.rgb = mix(result.rgb, scene.fog_color.rgb, v_fog);
 #endif
 #if TARGET_ALPHA_ONE
     result.a = 1.0;
@@ -640,6 +658,11 @@ float3 spot_light(int i, float3 position, float3 normal) {
     float attn = max(0.0f, dot(light.angular.xyz, float3(1.0f, cosine, cosine * cosine)) / dot(light.distance.xyz, float3(1.0f, dist, dist2)));
     return attn * max(0.0f, dot(ldir, normal)) * light.color.rgb;
 }
+// A far light (channel.w bit 16, as the GLSL): a quarter of spot_light's cost.
+float3 far_light(int i, float3 normal) {
+    Light light = scene.lights[i];
+    return max(0.0f, dot(normalize(light.position.xyz), normal)) * light.color.rgb;
+}
 #elif LIT == 2
 float light_term(int i, float3 position, float3 normal, int functions) {
     Light light = scene.lights[i];
@@ -673,8 +696,14 @@ float4 light_channel(float3 position, float3 normal, float4 vertex) {
     float4 result = float4(material, material_alpha);
 #if LIT == 1
     float3 ambient = (bits & 8) != 0 ? vertex.rgb : draw.channel_ambient.rgb;
-    for (int n = 0; n < LIGHTS; ++n)
-        ambient += spot_light((draw.channel.x >> (4 * n)) & 7, position, normal);
+    // A branch on a uniform keeps the program in parallel mode.
+    if ((draw.channel.w & 0x10000) != 0) {
+        for (int n = 0; n < LIGHTS; ++n)
+            ambient += far_light((draw.channel.x >> (4 * n)) & 7, normal);
+    } else {
+        for (int n = 0; n < LIGHTS; ++n)
+            ambient += spot_light((draw.channel.x >> (4 * n)) & 7, position, normal);
+    }
     result.rgb = material * saturate(ambient);
 #elif LIT == 2
     if ((bits & 1) != 0) {
@@ -698,6 +727,13 @@ float fog_distance(float4 clip) {
     float depth = 1.0f - clip.z / clip.w;
     float ze = scene.fog_shape.z != 0.0f ? scene.fog.x * depth : scene.fog.x / (scene.fog.y - depth * scene.fog.w);
     return ze - scene.fog.z;
+}
+// The fog amount at a vertex (as the GLSL): the fragment blends by it.
+float fog_amount(float4 clip) {
+    float f = saturate(fog_distance(clip));
+    float g = scene.fog_curve.x + scene.fog_curve.y * f;
+    g = lerp(g, g * g, scene.fog_curve.z);
+    return saturate(scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0f * g));
 }
 )CG";
 
@@ -798,7 +834,7 @@ void main(float3 a_position, float3 a_normal, float4 a_color0, float2 a_uv0, flo
 #else
     v_color0 = light_channel(position, float3(0.0f, 0.0f, 0.0f), vertex);
 #endif
-    v_fog = fog_distance(projected);
+    v_fog = fog_amount(projected);
     projected.xy += projected.w * draw.viewport.zw;
     TEXGEN_OUTPUTS
     v_position = float4(projected.x, projected.y, 2.0f * projected.z - projected.w, projected.w);
@@ -812,7 +848,7 @@ void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_c
           float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float out v_fog : TEXCOORD3) {
     v_color0 = light_channel(a_view_position, a_normal, a_color0);
     float4 p = a_position;
-    v_fog = fog_distance(float4(p.xy, 0.5f * (p.z + p.w), p.w));
+    v_fog = fog_amount(float4(p.xy, 0.5f * (p.z + p.w), p.w));
     v_uv0 = affine(a_uv0);
     v_uv1 = affine(a_uv1);
     v_uv2 = affine(a_uv2);
@@ -966,15 +1002,9 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
         discard;
 #endif
 #if FOG
-    real f = saturate(v_fog);
-#if LINEAR_FOG
-    real amount = scene.fog_curve.w * f + scene.fog_shape.x;
-#else
-    real g = scene.fog_curve.x + scene.fog_curve.y * f;
-    g = lerp(g, g * g, real(scene.fog_curve.z));
-    real amount = scene.fog_curve.w * f + scene.fog_shape.x + scene.fog_shape.y * exp2(-8.0h * g);
-#endif
-    result.rgb = lerp(result.rgb, scene.fog_color.rgb, saturate(amount));
+    // v_fog is the amount the vertices computed (fog_amount): psp2shaderperf
+    // modulate_t1_pure_fog_linear 12 -> 7 cycles.
+    result.rgb = lerp(result.rgb, scene.fog_color.rgb, v_fog);
 #endif
 #if TARGET_ALPHA_ONE
     result.a = 1.0h;
