@@ -19,7 +19,10 @@
 // The math keeps the PPC single-precision rounding of the translated code, so
 // the output matches it bit for bit; the port saves the per-access guest
 // memory checks and the register spills, and keeps the delay-line positions,
-// gains and lowpass state in registers for the frame.
+// gains and lowpass state in registers for the frame. Every operand is a
+// single, and a single-precision add, subtract or multiply rounded once from
+// double equals the same operation done in float, so the filter runs in float
+// (host FZ follows NI either way) and stores its results' bits as they are.
 #include "abi_bridge.h"
 #include "memory.h"
 #include "port_check.h"
@@ -71,21 +74,24 @@ void StoreU32(uint8_t* p, uint32_t v) {
     v = __builtin_bswap32(v);
     std::memcpy(p, &v, 4);
 }
-double LoadF(const uint8_t* p) {
+float LoadF(const uint8_t* p) {
     const uint32_t bits = LoadU32(p);
     float f;
     std::memcpy(&f, &bits, 4);
     return f;
 }
-void StoreF(uint8_t* p, double v) { StoreU32(p, MemoryInline::ConvertPpcDoubleToSingleBits(v)); }
+void StoreF(uint8_t* p, float v) {
+    uint32_t bits;
+    std::memcpy(&bits, &v, 4);
+    StoreU32(p, bits);
+}
 
-// PPC single-precision arithmetic, as the translated code does it. Every
-// operand here is a single (loaded as one, or a rounded result), which fmuls's
-// 25-bit rounding of the second operand leaves unchanged, so Muls skips it.
-double Adds(double a, double b) { return PpcForceSingleValueInline(a + b); }
-double Subs(double a, double b) { return PpcForceSingleValueInline(a - b); }
-double Muls(double a, double c) { return PpcForceSingleValueInline(a * c); }
-uint32_t ToInt(double v) { return PPC_FprLowWordInline(PPC_Fctiwz(v)); }
+// PPC single-precision arithmetic (fadds, fsubs, fmuls) on singles; separate
+// functions, so no two are ever fused.
+float Adds(float a, float b) { return a + b; }
+float Subs(float a, float b) { return a - b; }
+float Muls(float a, float c) { return a * c; }
+uint32_t ToInt(float v) { return PPC_FprLowWordInline(PPC_Fctiwz(v)); }
 
 // A delay line: its samples and the guest RAM behind them.
 uint8_t* Line(uint32_t address, uint32_t length) { return Memory::GetPointer(address, size_t(length) * 4); }
@@ -122,13 +128,13 @@ static void AudioReverb(CpuContext* ctx) {
         last[c] = Line(u32(kLastLines + 4 * c), u32(kLastLength + 4 * c));
     }
 
-    const double coef = f32(kLowpassCoef);
-    const double coefRest = Subs(1.0, coef);
-    const double wetScale = Muls(0.6000000238418579, f32(kLevel));
-    const double cross = Muls(0.5, f32(kCrosstalk));
-    const double apGain = f32(kAllpassGain);
-    const double outGain = f32(kOutputGain), sendGain = f32(kSendGain);
-    double earlyGain[3], combGain[3], lowpassState[3];
+    const float coef = f32(kLowpassCoef);
+    const float coefRest = Subs(1.0f, coef);
+    const float wetScale = Muls(0.6f, f32(kLevel));
+    const float cross = Muls(0.5f, f32(kCrosstalk));
+    const float apGain = f32(kAllpassGain);
+    const float outGain = f32(kOutputGain), sendGain = f32(kSendGain);
+    float earlyGain[3], combGain[3], lowpassState[3];
     uint32_t taps[3], combPos[3], combLength[3], apPos[2], apLength[2], lastPos[3], lastLength[3];
     for (unsigned k = 0; k < 3; ++k) {
         earlyGain[k] = f32(kEarlyGains + 4 * k);
@@ -148,45 +154,45 @@ static void AudioReverb(CpuContext* ctx) {
     auto advance = [](uint32_t& pos, uint32_t length) { pos = pos + 1 < length ? pos + 1 : 0; };
 
     for (unsigned s = 0; s < kSamples; ++s) {
-        double wet[3];
+        float wet[3];
         for (unsigned c = 0; c < 3; ++c) {
             uint32_t sample = LoadU32(in[c] + 4 * s);
             if (aux[c]) sample += LoadU32(aux[c] + 4 * s);
-            const double x = PpcForceSingleValueInline(double(int32_t(sample)));
+            const float x = float(int32_t(sample));
 
             uint8_t* e = early[c];
-            const double e0 = Muls(earlyGain[0], LoadF(e + 4 * taps[0]));
-            const double e1 = Muls(earlyGain[1], LoadF(e + 4 * taps[1]));
-            const double tap2 = LoadF(e + 4 * taps[2]);
+            const float e0 = Muls(earlyGain[0], LoadF(e + 4 * taps[0]));
+            const float e1 = Muls(earlyGain[1], LoadF(e + 4 * taps[1]));
+            const float tap2 = LoadF(e + 4 * taps[2]);
             StoreF(e + 4 * taps[2], x);
-            const double e2 = Muls(earlyGain[2], tap2);
-            double sum = Adds(e2, Adds(e0, e1));
+            const float e2 = Muls(earlyGain[2], tap2);
+            const float sum = Adds(e2, Adds(e0, e1));
 
-            double delayed = x;
+            float delayed = x;
             if (preDelayLength) {
                 uint8_t* p = preDelay[c] + 4 * preDelayPos;
                 delayed = LoadF(p);
                 StoreF(p, x);
             }
-            double combs = 0.0;
+            float combs = 0.0f;
             for (unsigned k = 0; k < 3; ++k) {
                 uint8_t* p = comb[c][k] + 4 * combPos[k];
-                const double y = LoadF(p);
-                const double fed = Muls(y, combGain[k]);
+                const float y = LoadF(p);
+                const float fed = Muls(y, combGain[k]);
                 combs = Adds(combs, y);
                 StoreF(p, Adds(delayed, fed));
             }
             uint8_t* p = allpass[c][0] + 4 * apPos[0];
-            double y = LoadF(p);
-            double v = Adds(combs, Muls(y, apGain));
+            float y = LoadF(p);
+            float v = Adds(combs, Muls(y, apGain));
             StoreF(p, v);
-            const double ap1 = Subs(y, Muls(v, apGain));
+            const float ap1 = Subs(y, Muls(v, apGain));
             p = allpass[c][1] + 4 * apPos[1];
             y = LoadF(p);
             v = Adds(ap1, Muls(y, apGain));
             StoreF(p, v);
-            const double ap2 = Subs(y, Muls(v, apGain));
-            const double lowpass = Adds(Muls(coefRest, ap2), Muls(coef, lowpassState[c]));
+            const float ap2 = Subs(y, Muls(v, apGain));
+            const float lowpass = Adds(Muls(coefRest, ap2), Muls(coef, lowpassState[c]));
             lowpassState[c] = lowpass;
 
             p = last[c] + 4 * lastPos[c];
@@ -194,13 +200,13 @@ static void AudioReverb(CpuContext* ctx) {
             v = Adds(lowpass, Muls(y, apGain));
             StoreF(p, v);
             advance(lastPos[c], lastLength[c]);
-            const double out = Subs(y, Muls(v, apGain));
+            const float out = Subs(y, Muls(v, apGain));
             wet[c] = Adds(Muls(out, wetScale), sum);
         }
 
-        const double out0 = Adds(wet[0], Muls(Adds(wet[1], wet[2]), cross));
-        const double out1 = Adds(wet[1], Muls(Adds(wet[0], wet[2]), cross));
-        const double out2 = Adds(wet[2], Muls(Adds(wet[0], wet[1]), cross));
+        const float out0 = Adds(wet[0], Muls(Adds(wet[1], wet[2]), cross));
+        const float out1 = Adds(wet[1], Muls(Adds(wet[0], wet[2]), cross));
+        const float out2 = Adds(wet[2], Muls(Adds(wet[0], wet[1]), cross));
         StoreU32(in[0] + 4 * s, ToInt(Muls(out0, outGain)));
         StoreU32(in[1] + 4 * s, ToInt(Muls(out1, outGain)));
         StoreU32(in[2] + 4 * s, ToInt(Muls(out2, outGain)));
