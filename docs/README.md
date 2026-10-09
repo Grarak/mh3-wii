@@ -1,7 +1,8 @@
 # Notes
 
 Start with [HANDOVER.md](../HANDOVER.md): current state, next steps, and how to
-build, run (including the Vita devkit) and debug.
+build, run (including the Vita devkit) and debug. [flags.md](flags.md) lists
+every runtime environment variable.
 
 Topic notes below are dated. Notes describing removed systems (TEV shader
 generation, capture and the GXP bank audits, offline asset preparation, the

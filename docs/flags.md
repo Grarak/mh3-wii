@@ -2,7 +2,8 @@
 
 Every environment variable the runtime reads (2026-10-03). The Vita reads
 them from `host0:/game/runtime.env` (one `NAME=value` per line) in
-development builds launched over host0.
+development builds launched over host0. Development builds report a variable
+listed under [Renamed and removed](#renamed-and-removed) that is still set.
 
 ## Settings
 
@@ -108,9 +109,50 @@ PATH; with `gate`, only once the file MARKER exists. Instrument with
 ([gameplay debugging](gameplay-debugging.md)); `scripts/replay_village.py
 --dock-edge` creates the marker.
 
-## Renamed and removed
+## Asset overrides
 
-A development build names any of these that is still set at startup.
+| Variable | Effect | Builds |
+| --- | --- | --- |
+| `MH3_NATIVE_MODEL_INDEX` | a converted model index to use instead of `native-models/models.index.bin` | all |
+| `MH3_NATIVE_MODEL_PACK` | one converted model pack instead of the index (not with `MH3_NATIVE_MODEL_INDEX`) | all |
+
+The model tests and the asset scripts (`vita-active-play.py`,
+`profile_native_host.py`, `capture_native_material_keys.py`) use them.
+
+## Not yet merged
+
+These are read in files that other work is changing at the moment; they are
+merged or removed in a second pass.
+
+| Variable | Effect | Builds | Plan |
+| --- | --- | --- | --- |
+| `MH3_INPUT_FILE`, `MH3_INPUT_RECORD`, `MH3_INPUT_PLAYBACK` | scripted controller input; record and play back | development | one input family |
+| `MH3_VARIABLE_STEP` | `0`: the game's fixed 1/30 s steps | development | keep |
+| `MH3_VCNT` | `n`: the fixed step's retrace budget | development | remove |
+| `MH3_STEP_SCALE` | `s`: every variable step is s ticks long | development | remove |
+| `MH3_RAM_DUMP` | `FIRST,COUNT`: MEM1+MEM2 to `mh3-ram-<frame>.bin` after COUNT frames from FIRST | development | into `MH3_CAPTURE` |
+| `MH3_TRACE_PLAYER` | player 0's position and motion by game time | development | remove |
+| `MH3_RENDER_PREP` | model preparation: `0` game thread, `1` (default) render thread, `2` both, checked | all (`2`: development) | `2` into `MH3_VERIFY` |
+| `MH3_DRAW_TABLE` | draw items: `1` (default) through the model's draw table, `0` by address, `2` both, compared | all (`2`: development) | `2` into `MH3_VERIFY` |
+| `MH3_DRAW_TABLE_DISCOVER` | `0`: draw tables only for models already drawn | all | remove |
+| `MH3_DRAW_TABLE_TRACE` | draw-table statistics | development | remove |
+| `MH3_MATERIAL_GPU` | `0`: the per-draw Shade uniforms instead of material blocks in GPU memory | all | remove |
+| `MH3_MATERIAL_GPU_RING` | route the render thread's Animated sections through the producer ring (self-test) | development | remove |
+| `MH3_MATERIAL_GPU_VERIFY` | compare the material programs' coefficients with `mh3_shade_fill` | development | into `MH3_VERIFY` |
+| `MH3_MODEL_CULL` | `0`: draw models whose mesh box is off screen | all | remove after its A/B |
+| `MH3_DRAW_CENSUS` | `N`: the model draw pass's owners every N frames | development | remove |
+| `MH3_PREPARE_DIAGNOSTICS` | model preparation diagnostics for a frame range | development | remove |
+| `MH3_NATIVE_ASSET_TRACE` | model catalog registration log (`model_catalog.cpp`) | development | remove |
+| `MH3_TRACE_ERRORS` | WPAD data-format log (`wpad_services.cpp`) | all | remove |
+| `MH3_GXM_ALPHA_ONE` | `0`: no alpha-one shortcut for shaded draws | Vita | remove |
+| `MH3_GXM_SERIAL_SCENES` | `1`: serialize GXM scenes | Vita | remove |
+| `MH3_GXM_SHADE_PROBE` | replace a shaded program's output stage (`blue`, ...) | Vita | remove |
+| `MH3_GXM_SHADE_DATA_DUMP` | dump shaded programs' uniform blocks | Vita | remove |
+| `MH3_GXM_SHADER_ABI_TRACE` | log runtime program reflection | Vita | remove |
+| `MH3_GXM_WAIT_TRACE` | log the first `sceGxmFinish` waits | Vita | remove |
+| `MH3_GXM_SHADER_DUMP` | mirror runtime-compiled GXPs to a directory (set by the selector preflight) | Vita | keep for the preflight |
+
+## Renamed and removed
 
 | Was | Now |
 | --- | --- |

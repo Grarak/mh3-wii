@@ -133,8 +133,8 @@ MKW_MEMORY_FORCE_INLINE float PpcSingleBitsToFloat(uint32_t bits) {
 
 #ifdef MH3_WRITE_WATCH
 // Debug build (MH3_WRITE_WATCH): guest stores into [start, start + length)
-// are reported with the translated function doing them. With
-// MH3_WRITE_WATCH_LIST, only the listed words of the range: one bit per word
+// are reported with the translated function doing them. With its list=
+// option, only the listed words of the range: one bit per word
 // from `start` in g_writeWatchWords.
 inline uint32_t g_writeWatchStart = 0, g_writeWatchLength = 0;
 inline const uint8_t* g_writeWatchWords = nullptr;

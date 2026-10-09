@@ -384,8 +384,6 @@ double EvaluateLean(uint32_t r2, uint32_t anm, float frame, const CpuContext& cp
 }
 
 // The evaluation the ports use: lean when the GQRs have the types it assumes.
-// MH3_ANM_KEYS_CHECK=1 (debugging): compare it with the Gekko path and report
-// the calls that differ by more than 1e-4 relative.
 template <typename Track>
 double EvaluateFast(const CpuContext& cpu, uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
     if (!LeanGqrs(cpu.gqr[2], cpu.gqr[3], cpu.gqr[6], cpu.gqr[7])) [[unlikely]] {

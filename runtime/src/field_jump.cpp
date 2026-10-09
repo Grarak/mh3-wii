@@ -26,8 +26,7 @@
 // more than once while it starts. The arena's start area is its waiting room;
 // --spawn 0,300,0 drops the hunter into the pit.
 //
-// MH3_FIELD_WAIT=steps (default 30) runs the village that many steps in its
-// main state before leaving.
+// The village runs 30 steps in its main state before leaving.
 #include "field_jump.h"
 
 #include "abi_bridge.h"
