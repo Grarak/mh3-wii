@@ -23,7 +23,7 @@ void SetNativeViewport(float x, float y, float width, float height, float near_z
 void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height);
 // Returns the published logical rectangle, including skipped-frame changes.
 // An unpublished rectangle returns false and leaves out untouched.
-bool GetNativeScissor(int32_t out[4]);
+bool GetNativeScissor(int32_t out[4], NativeOwner owner = NativeOwner::Game);
 void SetNativeRaster(const mh3_raster_state& raster);
 // Render/Shadow: logical raster publication of deferred model preparation.
 void SetNativeRaster(const mh3_raster_state& raster, NativeOwner owner);

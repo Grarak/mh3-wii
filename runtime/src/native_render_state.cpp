@@ -89,12 +89,13 @@ void SetNativeViewport(float x, float y, float width, float height, float near_z
     d.viewportKnown = true;
     Changed();
 }
-bool GetNativeScissor(int32_t out[4]) {
+bool GetNativeScissor(int32_t out[4], NativeOwner owner) {
     if (!out)
         throw std::runtime_error("Null native scissor destination");
-    if (!D().scissorKnown)
+    const auto& d = D(owner);
+    if (!d.scissorKnown)
         return false;
-    std::memcpy(out, D().scissor.data(), sizeof(int32_t) * 4);
+    std::memcpy(out, d.scissor.data(), sizeof(int32_t) * 4);
     return true;
 }
 void SetNativeScissor(int32_t x, int32_t y, int32_t width, int32_t height) {

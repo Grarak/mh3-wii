@@ -19,6 +19,7 @@
 #include "native_shade_snapshot.h"
 #include "native_frame_packet.h"
 #include "native_material_gpu.h"
+#include "model_cull.h"
 #include "../native/mh3_shade.h"
 #ifdef MH3_DEVELOPMENT
 #include "gfx/port_capture.hpp"
@@ -1525,6 +1526,9 @@ void SubmitNativeModelMesh(const mh3_resolved_mesh_submit& mesh) {
     const auto resident = ResolveNativeModelGPU(mesh);
     if (mesh.material != &render.material)
         throw std::runtime_error("Model draw material is not the render owner's");
+    // Residency and demand above stay counted: a culled mesh keeps its assets.
+    if (CullNativeModelMesh(mesh))
+        return;
     SubmitShadedModelMesh(mesh, resident);
 }
 void ClearNativeMaterialPrograms() {
