@@ -4,10 +4,11 @@
 //
 // The game thread captures only the dispatch's inputs: a shared immutable
 // record of the material's static inputs (texture/palette objects, frozen
-// pipeline block), its small per-draw records (genmode, channels, texture
-// SRT) and typed group fields (pixel, colours, indirect, texgen), the
-// selected lights' masks, the indirect operator and the shape's matrix inputs. Fog and light-set
-// selection stay on the game thread (they publish the lighting snapshot).
+// pipeline, indirect and texgen blocks), its small per-draw records (genmode,
+// channels, texture SRT) and the animated typed group fields (pixel,
+// colours), the selected lights' masks, the indirect operator and the shape's
+// matrix inputs. Fog and light-set selection stay on the game thread (they
+// publish the lighting snapshot).
 // The render thread replays the original step order against a host mirror of
 // the G3DState CPU caches and the Render owner's material, texture and post
 // matrix state. Nothing on the render thread reads guest memory.
@@ -30,17 +31,18 @@ ModelPrepMode NativeModelPrepMode();
 
 // A material's static dispatch inputs, immutable once captured and shared
 // with the render thread: its texture and palette object records with their
-// typed bindings, and its frozen pipeline block (TEV stages, swaps and the
-// coordinate map, which change only with a new material version). Captures
-// reuse a record while these are unchanged; a replaced record is deleted
-// after the packets recorded meanwhile have rendered.
+// typed bindings, and its frozen pipeline (TEV stages, swaps and the
+// coordinate map), indirect and texgen blocks, which change only with a new
+// material version. Captures reuse a record while these are unchanged; a
+// replaced record is deleted after the packets recorded meanwhile have
+// rendered.
 struct ModelPrepMaterial {
     uint8_t palette_objects[100]{}, texture_objects[260]{};
     mh3_native_palette_source palettes[8]{};
     mh3_native_texture_binding textures[8]{};
     uint32_t pipeline_address = 0;
-    // Owned by its live block; valid while the record is (see CaptureModelPrepMaterial).
-    const NativeFrozenMaterialBlock* pipeline = nullptr;
+    // Owned by their live blocks; valid while the record is (see CaptureModelPrepMaterial).
+    const NativeFrozenMaterialBlock *pipeline = nullptr, *indirect = nullptr, *texgen = nullptr;
 };
 // The texture SRT inputs of a dispatch whose material has a TEXTURE_SRT
 // record (written by texture animations every frame).
@@ -78,16 +80,14 @@ struct ModelPrepInputs {
     uint8_t depth_before_texture = 0;
     uint8_t genmode[8]{};
     uint8_t channels[40]{};
-    // The fields the pixel, colour, indirect and texgen typed blocks publish
-    // (mh3_material_group_publish), copied per dispatch: per-instance
-    // alpha compare, blend and konst colours change between draws.
-    uint8_t groups = 0; // 1 << mh3_model_material_block of each group copied
-    uint8_t texgen_count = 0;
+    // The fields the pixel and colour typed blocks publish
+    // (mh3_material_group_publish), copied per dispatch: per-instance alpha
+    // compare, blend and konst colours change between draws.
+    uint8_t groups = 0; // 1 << MH3_MODEL_MATERIAL_PIXEL / _COLORS when copied
     mh3_pack_pixel_inputs pixel{};
     mh3_pack_tev_color color[4]{}, konst[4]{};
-    mh3_pack_indirect_matrix indirect_matrix[3]{};
-    mh3_pack_indirect_stage indirect[4]{};
-    mh3_pack_texgen texgen[8]{};
+    // The record's indirect block, or the replaced one of an ignored material.
+    const NativeFrozenMaterialBlock* indirect = nullptr;
     uint32_t light_masks[4]{};
     uint8_t ambient[4]{};
     int32_t srt = -1; // index in the packet's ModelPrepSrtList, or -1
@@ -122,8 +122,9 @@ void ForgetNativeModelPrepCaches();
 // Reads the material's resource records: the shared record (made or reused),
 // the per-dispatch records and typed groups, and its texture SRT into `srts`.
 void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scope& scope, ModelPrepSrtList& srts);
-// Copies one typed block's group fields into `in` (in.groups).
-void CaptureModelPrepGroup(ModelPrepInputs& in, uint32_t address, mh3_model_material_block kind);
+// The frozen current version of a live typed block (an ignored material's
+// replaced indirect block).
+const NativeFrozenMaterialBlock* CaptureModelPrepBlock(uint32_t address, mh3_model_material_block kind);
 // Pending G3DState::Invalidate fields since the previous capture.
 uint32_t TakeNativeModelPrepInvalidate();
 void NoteNativeModelPrepInvalidate(uint32_t fields);

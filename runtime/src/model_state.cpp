@@ -44,31 +44,41 @@ uint32_t Resource(uint32_t reference) {
         throw std::runtime_error("Null native resource data");
     return resource;
 }
+// Re-storing an unchanged object (UI and effects do every frame) keeps the revision.
 void PutTexture(uint32_t object, const mh3_native_texture_binding& binding) {
-    O().textures.insert_or_assign(object, binding);
+    auto [it, inserted] = O().textures.try_emplace(object, binding);
+    if (!inserted) {
+        if (EqualNativeTextureBinding(it->second, binding))
+            return;
+        it->second = binding;
+    }
     ++O().revision;
 }
 void PutPalette(uint32_t object, const mh3_native_palette_source& palette) {
-    O().palettes.insert_or_assign(object, palette);
+    auto [it, inserted] = O().palettes.try_emplace(object, palette);
+    if (!inserted) {
+        if (EqualNativePaletteSource(it->second, palette))
+            return;
+        it->second = palette;
+    }
     ++O().revision;
 }
 void PutCopiedObjects(uint32_t destination, bool palette, const std::array<bool, 8>& present, const std::array<mh3_native_texture_binding, 8>& textures,
                       const std::array<mh3_native_palette_source, 8>& colors) {
     auto& o = O();
-    ++o.revision;
     for (uint32_t i = 0; i < 8; i++) {
         if (palette) {
             const uint32_t target = destination + 4 + i * 12;
             if (present[i])
-                o.palettes.insert_or_assign(target, colors[i]);
-            else
-                o.palettes.erase(target);
+                PutPalette(target, colors[i]);
+            else if (o.palettes.erase(target))
+                ++o.revision;
         } else {
             const uint32_t target = destination + 4 + i * 32;
             if (present[i])
-                o.textures.insert_or_assign(target, textures[i]);
-            else
-                o.textures.erase(target);
+                PutTexture(target, textures[i]);
+            else if (o.textures.erase(target))
+                ++o.revision;
         }
     }
 }
@@ -95,13 +105,16 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
             throw std::runtime_error("Native texture producer generation went backwards");
         previous = generation;
     }
-    ++O().revision;
     for (auto& item : O().textures)
-        if (item.second.source.payload_address == payload)
+        if (item.second.source.payload_address == payload && generation > item.second.source.generation) {
             mh3_texture_source_updated(&item.second.source, generation);
+            ++O().revision;
+        }
     for (auto& item : O().palettes)
-        if (item.second.payload_address == payload)
+        if (item.second.payload_address == payload && item.second.generation != generation) {
             item.second.generation = generation;
+            ++O().revision;
+        }
 }
 mh3_native_texture_source ReadNativeResTexture(uint32_t reference) {
     const uint32_t resource = Resource(reference), size = Memory::Read32(resource + 4);
@@ -122,6 +135,19 @@ void StoreNativeTextureObject(uint32_t object, const mh3_native_texture_binding&
     auto copy = binding;
     mh3_texture_source_updated(&copy.source, ReadNativeTextureGeneration(copy.source.payload_address));
     PutTexture(object, copy);
+}
+bool EqualNativeTextureBinding(const mh3_native_texture_binding& a, const mh3_native_texture_binding& b) {
+    const auto& x = a.source;
+    const auto& y = b.source;
+    const auto& p = a.sampler;
+    const auto& q = b.sampler;
+    return x.resource_address == y.resource_address && x.payload_address == y.payload_address && x.asset_id == y.asset_id && x.format == y.format && x.width == y.width &&
+           x.height == y.height && x.levels == y.levels && x.min_lod == y.min_lod && x.max_lod == y.max_lod && x.generation == y.generation && x.indexed == y.indexed &&
+           x.mutable_source == y.mutable_source && p.wrap_s == q.wrap_s && p.wrap_t == q.wrap_t && p.min_filter == q.min_filter && p.mag_filter == q.mag_filter &&
+           p.anisotropy == q.anisotropy && p.lod_bias == q.lod_bias && p.bias_clamp == q.bias_clamp && p.edge_lod == q.edge_lod && a.map_id == b.map_id && a.tlut_id == b.tlut_id;
+}
+bool EqualNativePaletteSource(const mh3_native_palette_source& a, const mh3_native_palette_source& b) {
+    return a.resource_address == b.resource_address && a.payload_address == b.payload_address && a.format == b.format && a.entries == b.entries && a.generation == b.generation;
 }
 uint64_t ReadNativeTextureObjectRevision() {
     return O().revision;

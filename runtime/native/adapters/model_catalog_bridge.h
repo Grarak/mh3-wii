@@ -113,9 +113,9 @@ struct NativeLiveMaterialBlock {
     uint64_t resident_generation, origin_offset, source_generation;
     // The frozen copy of fields.generation, made on demand.
     mutable NativeFrozenCopy frozen;
-    // The catalog's write version at which typed writes may update this node
-    // in place (0: not writable; any publication clears it).
-    uint64_t writable = 0;
+    // Typed writes may update this node in place (any publication, and a new
+    // block or owner over its bytes, clears it).
+    bool writable = false;
 };
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
 /* Game thread. The live block a typed producer may update in place: its
@@ -123,7 +123,7 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_
  * no provenance event and no publication. Null when the write must take
  * RecordNativeTypedMaterialWrite and PublishNativeLiveMaterialBlock: before the
  * block's first such write, while its bytes have tracked provenance, or after
- * the owner set changed or another block was admitted. */
+ * another block or a model owner over its bytes was admitted. */
 NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
 /* After a full typed write or copy of exactly this block was recorded and
  * published: its next writes may take the in-place path. */

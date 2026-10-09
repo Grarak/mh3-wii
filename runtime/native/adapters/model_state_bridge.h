@@ -10,6 +10,9 @@ mh3_native_palette_source ReadNativePaletteObject(uint32_t object);
 /* Advances whenever a typed texture or palette object, or the generation of
  * an image one refers to, changes (game thread). */
 uint64_t ReadNativeTextureObjectRevision();
+/* Field-wise equality (no padding bytes). */
+bool EqualNativeTextureBinding(const mh3_native_texture_binding& a, const mh3_native_texture_binding& b);
+bool EqualNativePaletteSource(const mh3_native_palette_source& a, const mh3_native_palette_source& b);
 void StoreNativePaletteObject(uint32_t object, const mh3_native_palette_source& palette);
 void SelectNativeModelTextureObjects(uint32_t state, uint32_t objects);
 void SelectNativeModelPaletteObjects(uint32_t state, uint32_t objects);

@@ -821,8 +821,7 @@ void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_
         in.srt = -1;
         // An ignored material still applies a replaced indirect matrix block.
         const uint32_t indirect = (scope.replacement_mask & (1u << MH3_MAT_INDIRECT_MATRIX_SCALE)) ? scope.selected.resource_slots[MH3_MAT_INDIRECT_MATRIX_SCALE] : 0;
-        if (indirect)
-            CaptureModelPrepGroup(in, indirect, MH3_MODEL_MATERIAL_INDIRECT);
+        in.indirect = indirect ? CaptureModelPrepBlock(indirect, MH3_MODEL_MATERIAL_INDIRECT) : nullptr;
     }
     in.indirect_operator = d.descriptor != 0;
     if (in.indirect_operator) {

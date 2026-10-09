@@ -69,10 +69,12 @@ struct Catalog {
     // erased). Change both through PutLiveBlock and EraseLiveBlock.
     std::map<uint64_t, NativeLiveMaterialBlock> live_blocks;
     FastMap<uint64_t, NativeLiveMaterialBlock*> live_index;
-    // Advanced when the owner set changes or a new live block node appears:
-    // a block marked writable at the current version is still the only block
-    // over its bytes and its typed write was validated against these owners.
-    uint64_t write_version = 1;
+    // Certificate ranges sorted by start, with the running maximum end: a
+    // write that ends before every range or starts after all of their ends
+    // retires no certificate. Rebuilt after the owner set changed.
+    std::vector<std::pair<uint32_t, uint64_t>> certificate_ranges;
+    std::vector<uint64_t> certificate_ends;
+    bool certificates_dirty = true;
     uint64_t material_revision = 0;
     NativeModelPreparationDiagnostics* diagnostics = nullptr;
     bool diagnostics_initialized = false;
@@ -132,13 +134,25 @@ void EpochDiagnostic(Catalog& c, NativeSourceEpochReason reason, NativeSourceEpo
 Catalog& C() {
     return catalog;
 }
+// Typed writes of a writable block were validated with no other block over
+// its bytes and against the current owners: a new block or owner over them
+// takes that back (ForbidInPlaceWrites).
+void ForbidInPlaceWrites(uint32_t address, uint64_t bytes) {
+    // Every admitted group is at most 480 bytes.
+    const uint32_t start = address > 480 ? address - 480 : 0;
+    const uint64_t end = uint64_t(address) + bytes;
+    for (auto it = C().live_blocks.lower_bound(uint64_t(start) << 3); it != C().live_blocks.end() && it->second.address < end; ++it)
+        if (uint64_t(it->second.address) + it->second.bytes > address)
+            it->second.writable = false;
+}
 NativeLiveMaterialBlock& PutLiveBlock(uint64_t key, NativeLiveMaterialBlock block) {
-    block.writable = 0;
+    const uint32_t address = block.address, bytes = block.bytes;
     const auto [it, inserted] = C().live_blocks.insert_or_assign(key, std::move(block));
     if (inserted) {
         C().live_index.insert_or_assign(key, &it->second);
-        ++C().write_version;
+        ForbidInPlaceWrites(address, bytes);
     }
+    it->second.writable = false;
     return it->second;
 }
 std::map<uint64_t, NativeLiveMaterialBlock>::iterator EraseLiveBlock(std::map<uint64_t, NativeLiveMaterialBlock>::iterator it) {
@@ -197,6 +211,37 @@ void InvalidateSourceCache(Catalog& c, NativeSourceEpochReason reason, NativeSou
     ++c.source_epoch;
     EpochDiagnostic(c, reason, producer, destination, source, bytes, offset, conditions, frame);
 }
+void OwnersChanged() {
+    C().certificates_dirty = true;
+}
+// A new owner's certificate may reject typed writes inside its container.
+void OwnerAdded(const CachedOwner& owner) {
+    OwnersChanged();
+    ForbidInPlaceWrites(owner.certificate.container_address, owner.certificate.file_bytes);
+}
+// False when no certificate can intersect [address, address + bytes).
+bool MayHitCertificate(uint32_t address, uint32_t bytes) {
+    auto& c = C();
+    if (c.certificates_dirty) {
+        c.certificate_ranges.clear();
+        for (const auto& item : c.owners) {
+            const auto& certificate = item.second.certificate;
+            c.certificate_ranges.emplace_back(certificate.container_address, uint64_t(certificate.container_address) + certificate.file_bytes);
+        }
+        std::sort(c.certificate_ranges.begin(), c.certificate_ranges.end());
+        c.certificate_ends.resize(c.certificate_ranges.size());
+        uint64_t end = 0;
+        for (size_t i = 0; i < c.certificate_ranges.size(); i++)
+            c.certificate_ends[i] = end = std::max(end, c.certificate_ranges[i].second);
+        c.certificates_dirty = false;
+    }
+    const uint64_t end = uint64_t(address) + bytes;
+    // Ranges starting before the write's end; one of them must end after its start.
+    const size_t n = size_t(std::lower_bound(c.certificate_ranges.begin(), c.certificate_ranges.end(), std::make_pair(uint32_t(0), uint64_t(0)),
+                                             [end](const std::pair<uint32_t, uint64_t>& range, const std::pair<uint32_t, uint64_t>&) { return range.first < end; }) -
+                            c.certificate_ranges.begin());
+    return n && c.certificate_ends[n - 1] > address;
+}
 void InvalidateBlockCache() {
     if (C().block_epoch == UINT64_MAX)
         throw std::runtime_error("Native model block cache epoch overflow");
@@ -204,10 +249,12 @@ void InvalidateBlockCache() {
 }
 bool RetireCertificates(uint32_t address, uint32_t bytes) {
     bool retired = false;
+    if (!MayHitCertificate(address, bytes))
+        return false;
     for (auto it = C().owners.begin(); it != C().owners.end();) {
         if (mh3_source_owner_intersects(&it->second.certificate, address, bytes)) {
             it = C().owners.erase(it);
-            ++C().write_version;
+            OwnersChanged();
             retired = true;
         } else
             ++it;
@@ -261,6 +308,8 @@ std::vector<NativeLiveMaterialBlock> SnapshotLiveCopy(uint32_t source, uint32_t 
 }
 std::vector<CachedOwner> SnapshotOwnerCopy(uint32_t source, uint32_t destination, uint32_t bytes, uint64_t generation) {
     std::vector<CachedOwner> result;
+    if (!MayHitCertificate(source, bytes))
+        return result;
     for (const auto& item : C().owners) {
         const auto& certificate = item.second.certificate;
         if (certificate.container_address < source || (uint64_t)certificate.container_address + certificate.file_bytes > (uint64_t)source + bytes)
@@ -288,10 +337,10 @@ void InstallPack(const std::shared_ptr<const Pack>& pack, uint32_t diagnostic_fr
 // Certificates carry state the tracker alone cannot rebuild once typed writes
 // retire content provenance.
 void Certify(const std::vector<CachedOwner>& certified) {
-    for (const auto& item : certified)
+    for (const auto& item : certified) {
         C().owners.insert_or_assign(item.owner.model_address, item);
-    if (!certified.empty())
-        ++C().write_version;
+        OwnerAdded(item);
+    }
 }
 void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
     const uint32_t destination = cpu->gpr[3], source = cpu->gpr[4], bytes = cpu->gpr[5];
@@ -416,10 +465,10 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     // A complete memmove/memcpy of a certified container preserves its proven
     // structure, including typed material holes. Partial copies never certify
     // a model. Snapshots also preserve overlapping memmove source semantics.
-    for (const auto& copy : owner_copies)
+    for (const auto& copy : owner_copies) {
         C().owners.insert_or_assign(copy.owner.model_address, copy);
-    if (!owner_copies.empty())
-        ++C().write_version;
+        OwnerAdded(copy);
+    }
     for (const auto& copy : copies)
         PutLiveBlock(LiveKey(copy.address, copy.kind), copy);
     if (!copies.empty())
@@ -593,7 +642,7 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
             for (auto owner = C().owners.begin(); owner != C().owners.end();) {
                 if (owner->second.owner.resident_handle == handle) {
                     owner = C().owners.erase(owner);
-                    ++C().write_version;
+                    OwnersChanged();
                 } else
                     ++owner;
             }
@@ -795,7 +844,7 @@ NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_m
     auto* block = found->second;
     // A disc write or copy over the bytes would have erased the node; the
     // tracker check keeps the in-place path to untracked bytes regardless.
-    if (block->writable != c.write_version || mh3_source_intersects(&c.tracker, block->address, block->bytes))
+    if (!block->writable || mh3_source_intersects(&c.tracker, block->address, block->bytes))
         return nullptr;
     return block;
 }
@@ -804,7 +853,7 @@ void MarkNativeLiveMaterialBlockWritable(uint32_t address, mh3_model_material_bl
     const auto found = c.live_index.find(LiveKey(Canonical(address, 1), kind));
     if (found == c.live_index.end())
         throw std::runtime_error("Writable native material block is not live");
-    found->second->writable = c.write_version;
+    found->second->writable = true;
 }
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
     if (!block.fields.generation || block.fields.generation > C().material_revision || Canonical(block.address, block.bytes) != block.address)
@@ -864,6 +913,23 @@ const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveM
     block.frozen.Reset(frozen.release());
     return block.frozen.get();
 }
+namespace {
+// The fields a typed block's group publication reads are equal.
+bool SameGroup(const mh3_native_material_state& a, const mh3_native_material_state& b, mh3_model_material_block kind) {
+    switch (kind) {
+    case MH3_MODEL_MATERIAL_PIXEL:
+        return !std::memcmp(&a.pixel, &b.pixel, sizeof a.pixel);
+    case MH3_MODEL_MATERIAL_COLORS:
+        return !std::memcmp(a.color, b.color, sizeof a.color) && !std::memcmp(a.konst, b.konst, sizeof a.konst);
+    case MH3_MODEL_MATERIAL_INDIRECT:
+        return !std::memcmp(a.indirect_matrix, b.indirect_matrix, sizeof a.indirect_matrix) && !std::memcmp(a.indirect, b.indirect, sizeof a.indirect);
+    case MH3_MODEL_MATERIAL_TEXGEN:
+        return a.texgen_count == b.texgen_count && !std::memcmp(a.texgen, b.texgen, sizeof a.texgen);
+    default:
+        return false;
+    }
+}
+} // namespace
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind) {
     const auto& from = ReadNativeLiveMaterialBlockView(source, kind);
     const uint32_t bytes = from.bytes;
@@ -875,12 +941,14 @@ void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_mode
         return;
     // Instance materials re-copy their groups every frame (8007E4FC). Onto a
     // writable block of the same size the copy replaces its fields in place;
-    // the destination keeps no byte provenance, as after a typed write.
+    // the destination keeps no byte provenance, as after a typed write. An
+    // unchanged group keeps its generation (frozen copies stay current).
     if (auto* to = WritableNativeLiveMaterialBlock(destination, kind); to && to->bytes == bytes && to->address == destination &&
         (uint64_t(destination) + bytes <= source || uint64_t(source) + bytes <= destination)) {
         mh3_model_copy_bytes(output, input, bytes);
+        const uint64_t generation = SameGroup(to->fields, from.fields, kind) ? to->fields.generation : NextNativeMaterialRevision();
         to->fields = from.fields;
-        to->fields.generation = NextNativeMaterialRevision();
+        to->fields.generation = generation;
         to->resident_handle = from.resident_handle;
         to->resident_generation = from.resident_generation;
         to->origin_offset = from.origin_offset;
