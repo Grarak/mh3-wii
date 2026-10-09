@@ -3,17 +3,15 @@
 Monster Hunter Tri's PowerPC code (European disc `RMHP08`) is statically
 recompiled to C++ and linked with a native runtime into one executable. There
 is no interpreter or JIT fallback. Aurora provides **OpenGL ES 3.0** on Linux
-and native **GXM** on Vita.
+and native **GXM** on Vita, driven by a render thread; materials are drawn
+with fixed hand-written shaders instead of TEV.
 
 - **Targets:** Vita (ARM32, Cortex-A9, GXM), arm32 Linux (armhf, Cortex-A9
-  build tested on Pi 5), and arm64 Linux for development.
-- **Status, 2026-10-03:** a render thread draws frame packets recorded by
-  the game thread, with fixed hand-written shaders instead of TEV. The Pi runs
-  Alatreon at full speed (game thread 143–146 fps moving). The Vita devkit
-  completes a scripted quest at ~10 fps. The hunter matrix-selection and
-  yellow-tint faults are fixed and verified in recorded gameplay. See
-  [HANDOVER.md](HANDOVER.md), [renderer status](docs/native-renderer-status.md)
-  and [the corrected-image CPU/GPU profile](docs/vita-oct03-fixed-render-profile.md).
+  build tested on a Raspberry Pi 5), and arm64 Linux for development.
+- **Status:** Alatreon (`--quest 19001 --area 1`, the benchmark) plays on the
+  Vita devkit at 27–34 fps; the game thread runs at 200–210 fps moving on the
+  Pi 5. See [HANDOVER.md](HANDOVER.md) and
+  [renderer status](docs/native-renderer-status.md).
 
 ## Build
 
@@ -44,28 +42,33 @@ the body of an existing native port only needs a rebuild.
 
 ### 2. Build the executable
 
-arm64 (development host, `build/linux-arm64/MH3`):
+arm64 (development host):
 
 ```sh
-MH3_ARCH=arm64 MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON scripts/build-aurora.sh
-cmake --build build/linux-arm64 -j$(nproc) --target MH3     # later rebuilds
+MH3_ARCH=arm64 MH3_BUILD_DIR=build/linux-arm64-dev MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON \
+  scripts/build-aurora.sh
+cmake --build build/linux-arm64-dev --target MH3     # later rebuilds
 ```
 
-arm32 (the target: armhf, Cortex-A9 code generation, `build/linux-arm32/MH3`),
+arm32 (armhf, Cortex-A9 code generation, `build/linux-arm32/MH3`),
 cross-compiled in the `mh3-armhf-cross` image, which `docker-build.sh`
 builds on first use:
 
 ```sh
 MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=ON -DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' \
   scripts/docker-build.sh scripts/build-aurora.sh
-scripts/docker-build.sh cmake --build build/linux-arm32 -j$(nproc) --target MH3   # later rebuilds
+scripts/docker-build.sh cmake --build build/linux-arm32 --target MH3   # later rebuilds
 ```
+
+Vita: `BUILD_JOBS=$(nproc) scripts/build-vita.sh` (VitaSDK, clang-21 and the
+patched `vita-elf-create`; [Vita platform](docs/vita-platform.md)).
 
 The container mounts the checkout at the same absolute path because the
 translated data blobs use absolute `.incbin` paths; configure and build arm32
 only inside it. `MH3_DEVELOPMENT` adds statistics, captures, scripted input
-and port checks; leave it OFF for a plain build. Assertions follow
-Release/NDEBUG independently. Configure and build logs go to `logs/aurora-*.log`.
+and port checks; leave it OFF for a plain build (without `MH3_BUILD_DIR` the
+build goes to `build/linux-<arch>`). Assertions follow Release/NDEBUG
+independently. Configure and build logs go to `logs/aurora-*.log`.
 
 Build options: `-DMH3_ROM_DECODER=OFF` builds without Rust (only a decrypted
 ISO from `nodtool convert --decrypt` can then be read).
@@ -78,24 +81,24 @@ packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
 Pass the disc image once. The game reads it in place: the first launch only
 writes the disc metadata (about 7 MB) to `disc/` next to the executable and
 records where the image is, which takes well under a second. Textures and
-models are converted while the game loads them, on three worker threads, and
-kept in `disc/cache/`, so each one is converted only once. Every launch checks
-that the image is still there and unchanged; pass `--rom` again after moving
-it:
+models are converted while the game loads them, on worker threads, and kept
+in `disc/cache/`, so each one is converted only once. Every launch checks that
+the image is still there and unchanged; pass `--rom` again after moving it:
 
 ```sh
-build/linux-arm64/MH3 --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --village
-build/linux-arm64/MH3 --village                 # File 1, character 1, straight into the village
-build/linux-arm64/MH3 --list quests             # also online-quests, arena-quests
-build/linux-arm64/MH3 --quest 19001 --area 1 --no-damage    # Alatreon, the benchmark quest
+MH3 --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --village
+MH3 --village                 # File 1, character 1, straight into the village
+MH3 --list quests             # also online-quests, arena-quests
+MH3 --quest 19001 --area 1 --no-damage    # Alatreon, the benchmark quest
+MH3 --launcher                # development builds: the Vita launcher's menus
 ```
 
 `--quest <id>|free [--area <n>] [--spawn x,y,z] [--no-damage]` starts a quest
 directly. `MH3_DISC_DIR` points at another prepared data directory instead.
-Saves default to `saves/` (`MH3_USER_DIR` changes the root); `MH3_STATS=1`
-prints game speed and fps periodically. On a VM without a working GPU driver
-use `DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe; virgl draws the geometry
-wrong).
+Saves default to `saves/` (`MH3_USER_DIR` changes the root); development
+builds print game speed and fps once a second (`MH3_STATS=0` turns that off).
+On a VM without a working GPU driver use `DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1`
+(llvmpipe; virgl draws the geometry wrong).
 
 On the Vita, put the disc image in `ux0:/data/mh3-wii/`; the launcher writes
 the same metadata and cache to `ux0:/data/mh3-wii/disc/`
@@ -106,22 +109,21 @@ copy of the post-Chief save fixture, dumps a frame every 150 game frames and
 prints a heartbeat every minute:
 
 ```sh
-MH3_ARGS="--quest 19001 --area 1 --no-damage" scripts/dev/run-heartbeat.sh alat 150
+MH3_BIN=build/linux-arm64-dev/MH3 MH3_ARGS="--quest 19001 --area 1 --no-damage" \
+  scripts/dev/run-heartbeat.sh alat 150
 ```
 
 On the Raspberry Pi 5 (64-bit Raspberry Pi OS with armhf multiarch), copy
 `build/linux-arm32/MH3` over and run it the same way, with `--rom` on the
 first launch. `scripts/pi/benchmark.py` measures a quest with isolated saves
-and scripted movement (`--binary MH3 --revision R --name N --quest 19001
---area 1`). It expects the save fixture at `/tmp/post-chief-data00.bin`
-(`cat fixtures/post-chief-data00.bin | ssh PI 'cat > /tmp/post-chief-data00.bin'`).
+and scripted movement ([HANDOVER](HANDOVER.md#run)).
 
-Keyboard: Space = A, Left Shift = B, WASD = left stick, arrows = D-pad,
-Enter = Plus ([controls](docs/controller-bringup.md)). Unported or unsupported
-rendering paths fail explicitly rather than falling back.
+Keyboard: Space = A, Left Shift = B, WASD = left stick, IJKL = right stick,
+arrows = D-pad, Enter = Plus ([controls](docs/vita-controls.md)). Unported or
+unsupported rendering paths fail explicitly rather than falling back.
 
-[HANDOVER.md](HANDOVER.md) covers debugging tools, environment variables,
-tests and conventions; the `docs/` notes are listed in
+[HANDOVER.md](HANDOVER.md) covers the current state, open work, debugging
+tools, tests and conventions; the `docs/` notes are listed in
 [docs/README.md](docs/README.md).
 
 ## Verified facts

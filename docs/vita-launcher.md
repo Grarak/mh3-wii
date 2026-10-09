@@ -96,10 +96,12 @@ effect archives) reads the whole file, parses its textures and models, and
 assigns their IDs: the next free texture and model IDs, recorded for good in
 `disc/cache/index.log` with each texture's tag offset. The read returns at once
 with the native texture tags patched in; the file's textures and models are
-queued for three conversion workers whose affinity covers all user cores.
-While a file awaits conversion its bytes stay in memory and the game's further
-reads of it are served from there; past 48 MiB of pending files the game
-thread waits for the workers.
+queued for three conversion workers whose affinity covers all user cores (on
+the Vita only one of them converts models at a time). While a file awaits
+conversion its bytes stay in memory and the game's further reads of it are
+served from there; past 16 MiB (Vita) or 48 MiB (other hosts) of pending files
+the game thread waits for the workers. The disc's audio streams are copied to
+plain files in `disc/cache/files/` the same way ([native audio](native-audio.md#streams-from-the-disc-image)).
 
 Results go to `disc/cache/textures/` (one M3VT v2 pack per file; header word 4
 holds the ID before its first record) and `disc/cache/models/` (M3MP/M3ID pair,
@@ -118,8 +120,8 @@ layout, and model packs assembled by the bounded C assembler
 bind textures of their own container only, so each file converts on its own.
 BRRES source files are limited to 8 MiB and textures to 2048 pixels per
 dimension; RMHP08's largest BRRES is approximately 5.4 MiB. A model
-conversion workspace is about 30 MiB per worker and is released when the
-queue is empty.
+conversion workspace is about 30 MiB and is released when the queue is
+empty.
 
 `10/em001/em001_shadow.brres` binds two textures (`em001_BM_01`,
 `light016_SM`) that its own file does not contain; it is left out
@@ -159,8 +161,7 @@ The pad is read with `sceCtrlPeekBufferPositive2`, port 1 first and port 0
 when that fails, as the game's own input reads it (SDL's Vita driver, and
 the Classic Controller mapping's `vita_controller.cpp`): a PS TV controller
 or the devkit harness's CTRLP pad drives the menus too. With this call the
-handheld's L/R report as L1/R1. (Until October 2026 the launcher read port 0
-with `sceCtrlPeekBufferPositive`, which CTRLP, on port 1, does not reach.)
+handheld's L/R report as L1/R1.
 
 The main menu contains `Start game`, `Quests`, `Create custom quest`,
 `Cheats` and `Widescreen`. `Widescreen` toggles the game's 16:9 mode for this
@@ -288,41 +289,20 @@ verify MH3 save checksums/populated slots, bad save/quest rejection, full and
 partial raw DVD quest overlays, live/summary objective consistency, compatible
 authored placement transfer, smaller objective counts, incompatible-map and
 scripted-mode rejection, exact ISO extraction, read-only ROM handling, and
-rejection of a truncated native texture pack. The external European quest audit
-passed for 107 authored base/encounter/hunt-or-capture configurations. This
-checks parser and overlay consistency; it is not a gameplay completion test.
+rejection of a truncated native texture pack. `--quest-audit` checks the
+parser and quest overlays against every authored base/encounter/hunt-or-capture
+configuration of the external disc (107 on the European disc).
 
-The earlier standalone-only production processor was run on the external European RVZ
-and nodtool-decrypted ISO through the native C/Rust bridge. Both produced
-1,522 BRRES resources and 8,394 native textures. Offline SHA-256 comparisons
-matched `partition.bin`, `sys/main.dol`, `sys/fst.bin`,
-`native-textures.bin` and `native-texture-map.bin` byte for byte against the
-existing host pipeline. Those hashes were test comparisons only; runtime
-texture binding does not use content hashes.
+## Devkit testing
 
-On the host, ISO processing took 6.94 seconds with peak RSS 31,692 KiB; RVZ
-processing took 9.88 seconds with peak RSS 32,492 KiB. These measurements do
-not represent Vita performance. Vita release source checks and the decoder's
-Vita clang codec build passed. For the launcher on hardware, see
-[Devkit testing](#devkit-testing-2026-10-03).
-
-The updated production texture stage converted all 8,562 resources in an isolated
-host output in 2.34 seconds with 35,000 KiB peak RSS. Its complete tag map matched
-the offline inventory byte for byte. Seven focused portable parser/production
-tests and the existing save/quest/ISO tests pass; independent clang 21 host and
-Vita launcher objects compile. This does not measure on-device preparation or
-certify the pending native model conversion stage.
-
-## Devkit testing (2026-10-03)
-
-`scripts/vita-hardware-test.py RUN --launcher` launches `host0:/game/eboot.bin`
-without arguments. Without `MH3_DISC_DIR`, the launcher checks
-`ux0:/data/mh3-wii` itself. The devkit still holds an older prepared install
-there (`partition.bin`, `native-textures.bin`), which this check would use as
-is, so test runs set `MH3_DISC_DIR=ux0:/data/mh3-wii/disc`. Menu input comes from
-`MH3_LAUNCHER_INPUT` (development builds): lines `FRAME BUTTONS`. Each line holds
-its buttons from that launcher input frame on: names joined by `+`, `none`, or
-`SCE_CTRL` bits. While a script runs, dialogs close after 2.5 s. For example,
+`scripts/dev/devkit-heartbeat.sh RUN --launcher` launches `host0:/game/eboot.bin` without
+arguments. Without `MH3_DISC_DIR`, the launcher checks `ux0:/data/mh3-wii`
+itself; the devkit still holds an older prepared install there
+(`partition.bin`, `native-textures.bin`) that this check would use as is, so
+test runs set `MH3_DISC_DIR=ux0:/data/mh3-wii/disc`. Menu input comes from
+`MH3_LAUNCHER_INPUT` (development builds): lines `FRAME BUTTONS`, each holding
+its buttons from that launcher frame on (names joined by `+`, `none`, or
+`SCE_CTRL` bits). While a script runs, dialogs close after 2.5 s. For example,
 Quests > Online quests > three pages down > quest 10057:
 
 ```text
@@ -345,61 +325,40 @@ Quests > Online quests > three pages down > quest 10057:
 ```
 
 The launcher logs its pages, inputs, dialogs and
-`starting the game (...) after N launcher frames`. The harness counts
-readiness frames from that point. `--pad-script` sends timed CTRLP `pad`
-states. The game sees them (Circle, the Classic Controller's A, skips the
-intro movie: `scripts/launcher-input/skip-intro.pad`). The launcher reads
-port 1 too since October 2026 ([controls](#navigation-and-menus)); that it
-sees CTRLP is still to be checked ([checklist](#devkit-checklist)). Pad
-script entries not yet sent when the readiness count is reached are
-dropped. On the host, `MH3 --launcher-screen-check` draws launcher frames
-through the render thread, hands off, restarts the renderer at the game's
-640×456 render mode (764×544 on the 960×544 display) and checks pixels and
-the target size.
+`starting the game (...) after N launcher frames`; the harness counts readiness
+frames from that point. `--pad-script` sends timed CTRLP `pad` states, which the
+game sees (Circle, the Classic Controller's A, skips the intro movie:
+`scripts/launcher-input/skip-intro.pad`); pad entries not yet sent when the
+readiness count is reached are dropped. On the host, `MH3 --launcher-screen-check`
+draws launcher frames through the render thread, hands off, restarts the
+renderer at the game's 640×456 render mode (764×544 on the 960×544 display) and
+checks pixels and the target size.
 
-Results, run directories under `build/vita-devkit/`:
+Verified on the devkit: the menu at full screen, script navigation with L/R
+paging, the no-save message dialog over the menu, the hand-off into a quest
+(10057, replayed movement) and into Start game's intro and title, and
+Widescreen off in the menu giving a 4:3 pillarboxed title. The render-thread
+restart and target resize work; there is no hand-off stall. Two things seen
+in those runs belong to the game:
 
-| Run | Result |
-| --- | --- |
-| `launcher-baseline-1` (before this work) | The launcher stopped at its first frame: `[fatal] [aurora::native_geometry] Geometry allocated outside game thread`. HDMI was black after the home screen. |
-| `launcher-quest-1` | The menu renders at full screen and the script navigates to quest 10057 (L/R paging included). The hand-off frame shows, and the game boots into the quest's loading screen. 253 KiB peak native vertex memory. The run ended 15.6 s into the shader freeze below. |
-| `launcher-start-1` | The no-save message (`SceMsgDialog`) draws over the menu and closes. Start game hands off and the game reaches the THP intro, where the process output stopped with the profiler running (below). |
-| `launcher-direct-area0-1` | Control run: the same build, launched with `--quest 10057 --area -1`. Packets also stop for 25 s (51.5–76.1 s) and 21 s (92.2–113.9 s) while the render thread creates GXM programs. |
-| `launcher-diag-quest-1` | `0db3efe` plus the stall report and the Widescreen row (committed as `4e1a6a6`, `b7cd2b9`): quest 10057 through the menu. Freeze 56.6–81.2 s at packet 769 (records 1..13, model draws), then gameplay; the replay moves the hunter into the next area. Profiled. |
-| `launcher-diag-start-1` | Start game, profiler started before the intro: process output stops mid-line 7.6 s later, DECI requests time out (as in `launcher-start-1`). |
-| `launcher-diag-start-2` | Start game without a profiler during the intro: the intro plays, slowly (below). |
-| `launcher-diag-start-3` | Start game, Circle skips the intro, the title (PRESS A) shows; profiled at the title. |
-| `launcher-final-quest-1` | Final build `b7cd2b9`: quest 10057 through the menu, freeze 58–77 s, then the 3D scene and the replay (`--playback`; movement and camera confirmed). Profiled in gameplay. |
-| `launcher-final-start-4x3-1` | Final build, `widescreen-off-start.tsv`: Widescreen off in the menu, Start game, Circle skips the intro; the title shows in 4:3, pillarboxed (the 960×544 target shrinks to 777×544 after the hand-off). Profiled at the title. |
-
-**No hand-off stall.** The render-thread restart and the target resize work;
-the two stalls the first runs showed belong to the game, not the launcher:
-
-- **Quest: runtime GXM program creation.** At the quest's first model draws
-  the render thread creates about 25 GXM programs
-  (`aurora::gxm::runtime_shader_binary`): about 1 s per cached program
-  (`MH3 loaded cached GXM shader`), 3–5 s per compiled one. It replays no
-  packet meanwhile, so the screen holds the loading screen for about 20–25 s,
-  in a direct `--quest` launch as well. In `launcher-diag-quest-1`'s profile
-  (59–89 s, mostly this freeze) 73% of the render thread's samples are in the
-  kernel, at about 20% CPU: waiting, not computing (the profile has no
-  render-thread stacks). Likely file I/O: the cached path reads three files
-  and rewrites two (`.cg`, `.origin.json`) in `ux0:/data/mh3-wii/shaders` per
-  program while the asset-cache workers and disc reads also use `ux0`. Shader
-  work, outside the launcher.
-- **Start game: the THP intro.** The intro movie decodes on the game thread at
-  about 320 ms per step (93% of its core, about 3 logical fps; the picture
-  shows only its blue channel). It is slow, not stopped. With the vprof
-  register profiler (8 KiB stack snapshots) running during the intro, the
-  process output (TTY and `host0:` log) stopped mid-line about 7 s after the
-  profiler started, twice, and its DECI requests timed out. Profile after the
-  intro: skip it with Circle (`--pad-script scripts/launcher-input/skip-intro.pad`)
-  and set `--ready-copies` past it (1100 frames after the hand-off).
+- **Shader program creation.** At a quest's first model draws the render
+  thread creates about 25 GXM programs. Before the cache pack (24eee8c) each
+  cached program cost about 1 s of `ux0` file I/O and the screen held the
+  loading screen for 20–25 s; with the pack, warm runs load them without a
+  stall ([runtime shaders](vita-runtime-shaders.md)). A cold compile still
+  takes 3–5 s per program.
+- **The THP intro** decodes on the game thread at about 320 ms per step (about
+  3 logical fps). Its colours were fixed afterwards (3e4fabc: the YUV planes
+  are converted to RGB when the texture is made); the devkit has not shown the
+  intro since. Running the vprof register profiler during the intro stopped
+  the process's output, so profile after it: skip it with Circle
+  (`--pad-script scripts/launcher-input/skip-intro.pad`) and set
+  `--ready-copies` past it (1100 frames after the hand-off).
 
 Development builds report a render thread that makes no progress for two
 statistics intervals: `MH3 render thread: no progress for N reports in draw
-of packet P, record R kind K` (or the task stage). A slow but moving freeze,
-such as the program creation above, does not trigger it.
+of packet P, record R kind K` (or the task stage). A slow but moving freeze
+does not trigger it.
 
 Input scripts are in `scripts/launcher-input/`:
 
@@ -461,8 +420,9 @@ runs short. Results (VM, llvmpipe, October 2026):
 
 Not run yet on hardware: the custom quest tour (editor, IME keyboard, save,
 saved quest launch, cheats), the missing-disc message, the launcher reading
-CTRLP, re-enabling Widescreen, and a release build of the launcher. Each run
-is a new directory `build/vita-devkit/RUN`, staged as before:
+CTRLP, re-enabling Widescreen, and a release build of the launcher. Run each
+through `scripts/dev/devkit-heartbeat.sh` (main session only), in a new
+directory `build/vita-devkit/RUN` staged like this:
 
 ```
 build/vita-devkit/RUN/host0/game/eboot.bin           # build/vita/eboot.bin
@@ -483,10 +443,10 @@ MH3_LAUNCHER_INPUT=host0:/game/launcher-input.tsv
 
 Build: `scripts/build-vita.sh` (development, the default). Release check:
 `MH3_VITA_BUILD_DIR=build/vita-release MH3_DEVELOPMENT=OFF scripts/build-vita.sh`
-(both built in October 2026; the release eboot has no input script code).
+(the release eboot has no input script code).
 
 1. **Tour** (`launcher-tour-1`): `tour-custom-quest.tsv`;
-   `scripts/vita-hardware-test.py build/vita-devkit/launcher-tour-1 --launcher --timeout 600`.
+   `scripts/dev/devkit-heartbeat.sh build/vita-devkit/launcher-tour-1 --launcher --timeout 600`.
    Expect in the log: `cheats: no damage on, no action stamina drain on`,
    `quest-name keyboard open` with the keyboard over the editor on HDMI for
    2.5 s, `custom quest saved: Custom The Horned Dragon (template 1027,

@@ -29,4 +29,6 @@ against Debian's armhf packages.
 
 The translator and its notices are under `toolchain/`.
 `runtime/assets/dsp/dsp_coef.bin` is the free Dolphin DSP coefficient table,
-with provenance in `toolchain/THIRD-PARTY-NOTICES.md`.
+with provenance in `toolchain/THIRD-PARTY-NOTICES.md`; the build scripts still
+check it (`scripts/prepare_audio_assets.py`), but the native mixer does not
+read it.

@@ -147,7 +147,7 @@ through the fast paths in [vita-tls-lookup-optimization.md](vita-tls-lookup-opti
 
 `scripts/pi/benchmark.py` (copied to `~/mh3` on the Pi) runs a quest with an
 isolated save and scripted movement and reports idle and movement game fps
-and scheduled CPU ms per frame; see [HANDOVER.md](../HANDOVER.md#pi-5).
+and scheduled CPU ms per frame; see [HANDOVER.md](../HANDOVER.md#run).
 
 The Pi's `perf report` gives no usable ARM32 call stacks. For call graphs,
 profile the arm64 build on the VM with `perf record --call-graph fp`
