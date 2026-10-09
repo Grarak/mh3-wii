@@ -73,6 +73,9 @@ void MH3FrameSplitCall(unsigned kind);
 
 // The MH3 field split line (field_frame.cpp), which it then resets.
 void MH3PrintFieldSplit(unsigned frames);
+
+// The MH3 world split line (scene_world.cpp), which it then resets.
+void MH3PrintWorldSplit(unsigned frames);
 void MH3FrameSplitTime(unsigned family, MH3SplitClock::duration elapsed);
 extern uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 extern uint32_t mh3SplitFrame; // frame bodies started

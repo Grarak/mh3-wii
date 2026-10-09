@@ -21,6 +21,13 @@ inline constexpr uint32_t kGuestStackBytes = 32 * 1024;
 // Boot: the guest stack is [base, base + kGuestStackBytes).
 void ReserveGuestStack(uint32_t base);
 
+// The worker's copy of the scratch the g3d matrix passes share (0x8066D300 on
+// the game thread, g3d_calc_world.cpp), reserved at the top of the MEM2 arena
+// at boot: [base, base + kWorkAreaBytes).
+inline constexpr uint32_t kWorkAreaBytes = 0x18000;
+void ReserveWorkArea(uint32_t base);
+uint32_t WorkArea();
+
 // Whether jobs can run on the worker (a guest stack was reserved and the
 // thread started or can start).
 bool Available();
@@ -35,6 +42,13 @@ void Wait();
 
 // True from Submit until Wait returns.
 bool Pending();
+
+#ifdef MH3_DEVELOPMENT
+// Development: called by paths that use host state without a lock (resource
+// provenance, the locked cache, the effect call list); the first use of each
+// on the worker is reported (MH3 guest worker: unsafe ...).
+void NoteShared(const char* what);
+#endif
 
 // Development statistics: the worker's job time and the game thread's waits.
 struct Statistics {

@@ -470,7 +470,11 @@ int main(int argc, char** argv) {
         Memory::Write32(0x8000311C, 0x04000000);
         Memory::Write32(0x80003120, 0x93600000);
         Memory::Write32(0x80003124, 0x90000800);
-        Memory::Write32(0x80003128, 0x935E0000);
+
+        // The guest worker's copy of the g3d scratch ends the MEM2 arena.
+        const uint32_t mem2ArenaHi = 0x935E0000 - GuestWorker::kWorkAreaBytes;
+        GuestWorker::ReserveWorkArea(mem2ArenaHi);
+        Memory::Write32(0x80003128, mem2ArenaHi);
         Memory::Write32(0x80003130, 0x935E0000);
         Memory::Write32(0x80003134, 0x93600000);
         Memory::Write32(0x80003138, 0x11);

@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "spin_signal.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -13,6 +14,10 @@
 #include <pthread.h>
 #include <stdexcept>
 #include <thread>
+#ifdef MH3_DEVELOPMENT
+#include <mutex>
+#include <vector>
+#endif
 
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
@@ -21,7 +26,7 @@
 
 namespace GuestWorker {
 namespace {
-uint32_t stackBase = 0;
+uint32_t stackBase = 0, workArea = 0;
 bool started = false;
 pthread_t thread;
 
@@ -140,8 +145,16 @@ void ReserveGuestStack(uint32_t base) {
     stackBase = base;
 }
 
+void ReserveWorkArea(uint32_t base) {
+    workArea = base;
+}
+
+uint32_t WorkArea() {
+    return workArea;
+}
+
 bool Available() {
-    return stackBase != 0;
+    return stackBase != 0 && workArea != 0;
 }
 
 void Submit(const CpuContext& game, Job work, void* data) {
@@ -181,6 +194,23 @@ void Wait() {
 bool Pending() {
     return finished.Load() != submitted.Load();
 }
+
+#ifdef MH3_DEVELOPMENT
+void NoteShared(const char* what) {
+    if (PpcThread::CurrentThread() != PpcThread::Worker)
+        return;
+
+    static std::mutex lock;
+    static std::vector<const char*> reported;
+    std::lock_guard guard(lock);
+
+    if (std::find(reported.begin(), reported.end(), what) != reported.end())
+        return;
+
+    reported.push_back(what);
+    std::printf("MH3 guest worker: unsafe %s on the worker\n", what);
+}
+#endif
 
 Statistics TakeStatistics() {
     Statistics out;

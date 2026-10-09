@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include <aurora/fast_map.h>
 #include "guest_span.h"
+#include "guest_worker.h"
 #include "memory.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -570,6 +571,9 @@ void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes
 void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes, NativeSourceEpochProducer producer, uint32_t diagnostic_frame) {
     if (!bytes || destination == source)
         return;
+#ifdef MH3_DEVELOPMENT
+    GuestWorker::NoteShared("resource copy");
+#endif
 
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);
@@ -625,6 +629,9 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
 void RetireNativeResourceOwner(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer, uint32_t diagnostic_frame) {
     if (!bytes)
         return;
+#ifdef MH3_DEVELOPMENT
+    GuestWorker::NoteShared("resource owner retirement");
+#endif
 
     auto& c = Initialize();
     const uint32_t frame = DiagnosticFrame(c, diagnostic_frame);

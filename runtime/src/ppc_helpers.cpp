@@ -2,6 +2,7 @@
 // ppc_runtime.h re-exports the rest of the ISA package; the CR tier is pulled in
 // by abi_bridge.h for generated code, so this TU asks for it directly.
 #include "isa/ppc_isa_cr.h"
+#include "guest_worker.h"
 #include "memory.h"
 #include "runtime_log.h"
 #include "timebase_contract.h"
@@ -12,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -47,6 +49,18 @@ const auto g_timeBaseStart = std::chrono::steady_clock::now();
 void TransferLockedCache(uint32_t lower) {
     if (!(lower & 2u))
         return;
+#ifdef MH3_DEVELOPMENT
+    GuestWorker::NoteShared("locked-cache DMA");
+
+    // g3d no longer gets the locked cache (LockedCacheAcquire); report any
+    // other user once.
+    static bool reported = false;
+
+    if (!reported) {
+        reported = true;
+        std::printf("MH3 locked cache: DMA by guest code near 0x%08x\n", PpcThread::Current().executionAddress);
+    }
+#endif
 
     const uint32_t upper = g_sprShadow[922];
     const uint32_t memoryAddress = upper & ~31u;

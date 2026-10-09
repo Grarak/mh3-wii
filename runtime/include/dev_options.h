@@ -206,14 +206,15 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc]:
+// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,unpaced][,disc][,serial-world]:
 // the frame profile and GX counters every N frames (graphics_host.cpp), the
 // per-draw split timers (game_frame.cpp), the render thread's sampled split,
 // serial frames, dropped draw kinds and unpaced packets
 // (native_frame_packet.cpp), material geometry screen area
-// (native_material.cpp), the disc image's read speed (rom_image.cpp).
+// (native_material.cpp), the disc image's read speed (rom_image.cpp), the
+// scene's world matrix pass on the game thread alone (scene_world.cpp).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "disc"});
+    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "unpaced", "disc", "serial-world"});
     return options;
 }
 

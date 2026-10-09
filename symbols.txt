@@ -699,6 +699,16 @@
 80074180 G3dCalcSkinning
 80071cac G3dCalcView
 800711fc G3dCalcViewLc
+80070884 G3dCalcViewPlain
+80502dd0 LockedCacheAcquire
+80502e40 LockedCacheRelease
+8007f480 ScnMdlSimpleCalcWorld
+8007f7e0 ScnMdlSimpleCalcSkinning
+8007fadc ScnMdlSimpleCalcView
+8007d4e0 ScnMdlCalcWorldTask
+80081e50 ScnGroupCalcWorld
+800832f4 ScnRootCalcWorld
+8028cce0 FieldFrameUpdate
 80078b00 G3dDrawOpaXlu
 8007dc40 ScnMdlDrawOpa
 8007dd1c ScnMdlDrawXlu

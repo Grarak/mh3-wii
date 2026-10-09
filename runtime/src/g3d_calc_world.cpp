@@ -1,8 +1,9 @@
 // NW4R g3d world-matrix bytecode, RMHP08. C reconstructions from the
 // disassembly of calc_world.cpp's two passes over a model's nodes, 0x80073830
 // (G3dCalcWorld) and 0x80074180 (G3dCalcSkinning). Both use the scratch
-// buffer at 0x8066D300: CalcWorld's per-matrix scales (12 bytes each, the
-// matrix ids it wrote at +0x6000), then Skinning's matrices.
+// buffer at 0x8066D300 (the guest worker its own copy): CalcWorld's
+// per-matrix scales (12 bytes each, the matrix ids it wrote at +0x6000), then
+// Skinning's matrices.
 //
 // G3dCalcWorld(world, flags, code, base, mdl, anmObj, callback, rootFlags)
 // runs the "NodeTree" byte code (looked up by name when code is 0):
@@ -34,6 +35,7 @@
 #include "abi_bridge.h"
 #include "g3d_native.h"
 #include "guest_call.h"
+#include "guest_worker.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -49,8 +51,14 @@ void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
 #endif
 namespace {
 
-constexpr uint32_t kWorkMatrices = 0x8066D300u;
-constexpr uint32_t kScales = 0x8066D300u, kMatrixIds = 0x80673300u;
+// The passes' scratch (0x18000 bytes): the game thread's at 0x8066D300, the
+// guest worker's its own (guest_worker.h), so models can calculate on both.
+// CalcWorld keeps the scales at its start and the matrix ids at +0x6000.
+constexpr uint32_t kWorkArea = 0x8066D300u, kMatrixIdsOffset = 0x6000;
+
+uint32_t WorkArea() {
+    return PpcThread::CurrentThread() == PpcThread::Worker ? GuestWorker::WorkArea() : kWorkArea;
+}
 
 uint32_t Read32(uint32_t a) {
     return MemoryInline::FlatRead32(a);
@@ -85,6 +93,8 @@ uint32_t NodeDic(uint32_t mdl) {
 }
 
 void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
+    const uint32_t work = WorkArea();
+
     for (uint8_t op; (op = Read8(code)) != 1;) {
         if (op == 3) {
             const uint32_t dst = Read16(code + 1), count = Read8(code + 3);
@@ -104,7 +114,7 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
                     std::memcpy(&f, &bits, 4);
                     return f;
                 }();
-                const uint32_t m = kWorkMatrices + 0x30 * src;
+                const uint32_t m = work + 0x30 * src;
 
                 for (unsigned k = 0; k < 12; ++k)
                     sum[k] = ReadFloat(m + 4 * k) * weight + sum[k];
@@ -118,7 +128,7 @@ void Skinning(uint32_t out, uint32_t flags, uint32_t mdl, uint32_t code) {
             // 5 (anything else is an assert in the original).
             const uint32_t dst = Read16(code + 1);
             const uint32_t node = G3dNative::ResDicAtOffset14(mdl, Read16(code + 3));
-            G3dNative::MtxConcat(out + 0x30 * dst, node + 0xA0, kWorkMatrices + 0x30 * dst);
+            G3dNative::MtxConcat(out + 0x30 * dst, node + 0xA0, work + 0x30 * dst);
             code += 5;
         }
     }
@@ -218,13 +228,14 @@ void CalcWorld(CpuContext* ctx) {
 
     if (code == 0 && (code = call(func_80097DA4, {mdl, 0x8058E938u})) == 0)
         return; // "NodeTree"
+    const uint32_t scales = WorkArea(), ids = scales + kMatrixIdsOffset;
     const uint32_t info = Read32(mdl) + 0x4C;
     const bool maya = Read32(info + 8) == 1;
     const bool segmentScale = (rootFlags & 0x08000000u) != 0;
     const float one = ReadFloat(0x80798280u);
 
     for (uint32_t k = 0; k < 12; k += 4)
-        WriteFloat(kScales + k, one);
+        WriteFloat(scales + k, one);
 
     G3dNative::MtxCopy(base, world);
     MemoryInline::FlatWrite32(flags, rootFlags);
@@ -237,12 +248,12 @@ void CalcWorld(CpuContext* ctx) {
 
         if (op != 2) {
             // 6 (anything else is an assert in the original).
-            MemoryInline::FlatWrite32(kMatrixIds + 4 * count++, a);
+            MemoryInline::FlatWrite32(ids + 4 * count++, a);
             MemoryInline::FlatWrite32(flags + 4 * a, Read32(flags + 4 * b));
             G3dNative::MtxCopy(world + 0x30 * b, world + 0x30 * a);
 
             for (uint32_t k = 0; k < 12; k += 4)
-                MemoryInline::FlatWrite32(kScales + 12 * a + k, Read32(kScales + 12 * b + k));
+                MemoryInline::FlatWrite32(scales + 12 * a + k, Read32(scales + 12 * b + k));
 
             continue;
         }
@@ -251,8 +262,8 @@ void CalcWorld(CpuContext* ctx) {
         const uint32_t node = G3dNative::ResDicAtOffset14(mdl, nodeIndex);
         MemoryInline::FlatWrite32(frame[kNode], node);
         const uint32_t id = node ? Read32(node + 0x10) : 0;
-        MemoryInline::FlatWrite32(kMatrixIds + 4 * count++, id);
-        const uint32_t nodeWorld = world + 0x30 * id, nodeScale = kScales + 12 * id;
+        MemoryInline::FlatWrite32(ids + 4 * count++, id);
+        const uint32_t nodeWorld = world + 0x30 * id, nodeScale = scales + 12 * id;
         const uint32_t parentFlags = Read32(flags + 4 * parent);
 
         uint32_t chr = 0;
@@ -300,8 +311,8 @@ void CalcWorld(CpuContext* ctx) {
         }
 
         const uint32_t flagsAt = flags + 4 * id;
-        const uint32_t stepped = maya ? G3dNative::WorldMtxNodeStepMayaScale(nodeWorld, nodeScale, world + 0x30 * parent, kScales + 12 * parent, parentFlags, chr)
-                                      : call(func_800D7D88, {nodeWorld, nodeScale, world + 0x30 * parent, kScales + 12 * parent, parentFlags, chr});
+        const uint32_t stepped = maya ? G3dNative::WorldMtxNodeStepMayaScale(nodeWorld, nodeScale, world + 0x30 * parent, scales + 12 * parent, parentFlags, chr)
+                                      : call(func_800D7D88, {nodeWorld, nodeScale, world + 0x30 * parent, scales + 12 * parent, parentFlags, chr});
         MemoryInline::FlatWrite32(flagsAt, (stepped & 0xFFFFFF00u) | (node ? Read32(node + 0x18) : 0));
 
         if (callback && Read16(callback + 6) == nodeIndex && (Read8(callback + 4) & 2) != 0) {
@@ -311,8 +322,8 @@ void CalcWorld(CpuContext* ctx) {
     }
 
     for (uint32_t i = 0; i < count; ++i) {
-        const uint32_t id = Read32(kMatrixIds + 4 * i);
-        const uint32_t s = kScales + 12 * id;
+        const uint32_t id = Read32(ids + 4 * i);
+        const uint32_t s = scales + 12 * id;
 
         if (ReadFloat(s) != one || ReadFloat(s + 4) != one || ReadFloat(s + 8) != one)
             G3dNative::MtxApplyScale(world + 0x30 * id, world + 0x30 * id, s);
@@ -382,7 +393,9 @@ int32_t MatrixNode(uint32_t info, uint32_t id) {
     return int32_t(Read32(table + 4 + 4 * id));
 }
 
-void CalcViewLc(CpuContext* ctx) {
+// CalcView_LC, or with lockedCache false the plain CalcView (0x80070884,
+// the same arguments), which writes every result in place.
+void CalcView(CpuContext* ctx, bool lockedCache) {
     GuestFrame frame(ctx, 0x100);
     const uint32_t viewPos = frame.Arg(3), nrm = frame.Arg(4), model = frame.Arg(5), attrib = frame.Arg(6);
     const uint32_t count = frame.Arg(7), view = frame.Arg(8), mdl = frame.Arg(9), tex = frame.Arg(10);
@@ -399,10 +412,11 @@ void CalcViewLc(CpuContext* ctx) {
     // batches stay aligned) the results go straight to them instead; only the
     // bytes past the last matrix of a batch, which the DMA fills with stale
     // cache contents, keep their old values.
-    const bool direct = ((viewPos | nrm | tex) & 31) == 0;
+    const bool direct = !lockedCache || ((viewPos | nrm | tex) & 31) == 0;
     const uint32_t info = Read32(mdl) + 0x4C;
     const float zero = ReadFloat(0x80798268u);
     const uint32_t inverse = frame[0x58];
+    const uint32_t work = WorkArea();
     GuestCall game{ctx};
 
     for (uint32_t first = 0; first < count; first += 40) {
@@ -440,7 +454,7 @@ void CalcViewLc(CpuContext* ctx) {
                 if (node == 0 || Read32(node + 0x60) == 0)
                     continue;
                 // A billboard with children: what they are relative to.
-                const uint32_t scratch = kWorkMatrices + 0x30 * id;
+                const uint32_t scratch = work + 0x30 * id;
 
                 if (G3dNative::MtxInv34(inverse, model + 0x30 * id) == 1) {
                     G3dNative::MtxConcat(mtx, inverse, scratch);
@@ -467,7 +481,7 @@ void CalcViewLc(CpuContext* ctx) {
 
             const uint32_t parent = G3dNative::ResDicAtOffset14(mdl, Read32(node + 0x1C));
             const uint32_t parentId = parent ? Read32(parent + 0x10) : 0;
-            G3dNative::MtxConcat(kWorkMatrices + 0x30 * parentId, model + 0x30 * id, mtx);
+            G3dNative::MtxConcat(work + 0x30 * parentId, model + 0x30 * id, mtx);
         }
 
         if (!direct)
@@ -508,6 +522,14 @@ void CalcViewLc(CpuContext* ctx) {
     }
 }
 
+void CalcViewLc(CpuContext* ctx) {
+    CalcView(ctx, true);
+}
+
+void CalcViewPlain(CpuContext* ctx) {
+    CalcView(ctx, false);
+}
+
 } // namespace
 
 extern "C" void func_800711FC(CpuContext* ctx);
@@ -530,3 +552,29 @@ extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
     PublishNativeModelPose(position, normal, environment, count, model_reference);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800711FC, MH3_G3dCalcViewLc, "G3dCalcViewLc");
+
+// 0x80070884, the plain CalcView, which 0x8007FADC (ScnMdlSimple's view
+// task) runs when the locked cache is not granted, as it never is now.
+extern "C" void func_80070884(CpuContext* ctx);
+extern "C" void MH3_G3dCalcViewPlain(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    MH3FrameSplitCall(3);
+#endif
+    const uint32_t position = ctx->gpr[3], normal = ctx->gpr[4], environment = ctx->gpr[10];
+    const uint32_t count = ctx->gpr[7], model_reference = ctx->gpr[9];
+    PortCheck::Call(ctx, "G3dCalcViewPlain", func_80070884, CalcViewPlain);
+    PublishNativeModelPose(position, normal, environment, count, model_reference);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80070884, MH3_G3dCalcViewPlain, "G3dCalcViewPlain");
+
+// 0x80502DD0, g3d's locked-cache acquire: under the OS mutex at 0x8076313C,
+// 1 (the mutex kept until 0x80502E40) while the byte at 0x80763138 says the
+// cache is enabled. Never granted here: ScnMdlSimple's world, skinning and
+// view passes (0x8007F480, 0x8007F7E0, 0x8007FADC) then work in main memory
+// instead of staging matrices in the cache and copying them out, and the
+// game thread and the guest worker, one guest thread to the mutex, cannot
+// share the cache.
+extern "C" void MH3_LockedCacheAcquire(CpuContext* ctx) {
+    ctx->gpr[3] = 0;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80502DD0, MH3_LockedCacheAcquire, "LockedCacheAcquire");

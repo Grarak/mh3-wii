@@ -814,6 +814,9 @@ void Join(CpuContext* cpu) {
 extern "C" void func_800A5C6C(CpuContext* ctx);
 extern "C" void MH3_EffectSystemRetireEffect(CpuContext* ctx) {
     const uint32_t effect = ctx->gpr[4];
+#ifdef MH3_DEVELOPMENT
+    GuestWorker::NoteShared("effect retirement");
+#endif
 
     if (deferral.launched) {
         EffectStep::Join(ctx);
@@ -844,6 +847,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x800D4910, MH3_EffectSystemView, "EffectSystemView"
 
 extern "C" void MH3_EffectCalc(CpuContext* ctx) {
     if (deferral.collecting) {
+#ifdef MH3_DEVELOPMENT
+        GuestWorker::NoteShared("Effect::Calc collection");
+#endif
         deferral.calls.emplace_back(ctx->gpr[3], ctx->gpr[4] & 0xFF);
         return;
     }

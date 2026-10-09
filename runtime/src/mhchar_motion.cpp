@@ -19,6 +19,7 @@
 #include "game_step.h"
 #include "port_check.h"
 #include "guest_call.h"
+#include "guest_worker.h"
 
 #include <algorithm>
 #include <array>
@@ -326,6 +327,9 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
     // only advances for the part of the step after the pause, and the
     // character only moves for the part after the hold.
     const double step = GameStep::Scale();
+#ifdef MH3_DEVELOPMENT
+    GuestWorker::NoteShared("MHchar motion counters");
+#endif
     Counters& state = counters[self];
     const bool pausing = Memory::Read8(self + kPauseSteps) != 0;
     const double animated = pausing ? Spend(self + kPauseSteps, state.pause, step) : step;
